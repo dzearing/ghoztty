@@ -95,6 +95,8 @@ class AppDelegate: NSObject,
     /// This is the current configuration from the Ghostty configuration that we need.
     private var derivedConfig: DerivedConfig = DerivedConfig()
 
+    private lazy var ipcServer = IPCServer(ghostty: ghostty)
+
     /// The ghostty global state. Only one per process.
     let ghostty: Ghostty.App
 
@@ -220,6 +222,8 @@ class AppDelegate: NSObject,
 
         // This registers the Ghostty => Services menu to exist.
         NSApp.servicesMenu = menuServices
+
+        ipcServer.start()
 
         // Setup a local event monitor for app-level keyboard shortcuts. See
         // localEventHandler for more info why.
@@ -425,6 +429,8 @@ class AppDelegate: NSObject,
         // so remove them all now. In the future we may want to be
         // more selective and only remove surface-targeted notifications.
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+
+        ipcServer.stop()
     }
 
     /// This is called when the application is already open and someone double-clicks the icon
