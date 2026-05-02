@@ -73,6 +73,9 @@ pub const Action = union(enum) {
     /// The arguments to pass to Ghostty as the command.
     new_window: NewWindow,
 
+    /// Create a split in an existing window.
+    split: Split,
+
     pub const NewWindow = struct {
         /// A list of command arguments to launch in the new window. If this is
         /// `null` the command configured in the config or the user's default
@@ -110,9 +113,47 @@ pub const Action = union(enum) {
         }
     };
 
+    pub const Split = struct {
+        /// A list of command arguments to launch in the split. If this is
+        /// `null` the command configured in the config or the user's default
+        /// shell should be launched.
+        ///
+        /// It is an error for this to be non-`null`, but zero length.
+        arguments: ?[][:0]const u8,
+
+        pub const C = extern struct {
+            /// null terminated list of arguments
+            /// it will be null itself if there are no arguments
+            arguments: ?[*]?[*:0]const u8,
+
+            pub fn deinit(self: *Split.C, alloc: Allocator) void {
+                if (self.arguments) |arguments| alloc.free(arguments);
+            }
+        };
+
+        pub fn cval(self: *Split, alloc: Allocator) Allocator.Error!Split.C {
+            var result: Split.C = undefined;
+
+            if (self.arguments) |arguments| {
+                result.arguments = try alloc.alloc([*:0]const u8, arguments.len + 1);
+
+                for (arguments, 0..) |argument, i|
+                    result.arguments[i] = argument.ptr;
+
+                // add null terminator
+                result.arguments[arguments.len] = null;
+            } else {
+                result.arguments = null;
+            }
+
+            return result;
+        }
+    };
+
     /// Sync with: ghostty_ipc_action_tag_e
     pub const Key = enum(c_int) {
         new_window,
+        split,
 
         test "ghostty.h Action.Key" {
             try lib.checkGhosttyHEnum(Key, "GHOSTTY_IPC_ACTION_");
