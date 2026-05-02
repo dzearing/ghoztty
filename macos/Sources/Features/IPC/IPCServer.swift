@@ -234,6 +234,7 @@ class IPCServer {
         var splitCommand: String?
         var target: String?
         var name: String?
+        var title: String?
     }
 
     private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
@@ -258,6 +259,10 @@ class IPCServer {
 
         DispatchQueue.main.async { [ghostty = self.ghostty, weak self] in
             let controller = TerminalController.newWindow(ghostty, withBaseConfig: parsed.config)
+
+            if let title = parsed.title {
+                controller.titleOverride = title
+            }
 
             if let target = parsed.target {
                 self?.targetRegistry[target] = .window(WeakRef(controller))
@@ -477,6 +482,11 @@ class IPCServer {
 
             if let value = arg.dropPrefix("--name=") {
                 result.name = String(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--title=") {
+                result.title = String(value)
                 continue
             }
         }
