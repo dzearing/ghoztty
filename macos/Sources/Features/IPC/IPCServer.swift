@@ -211,7 +211,7 @@ class IPCServer {
                 // Defer the split to the next run loop tick so the window's
                 // surface view is fully initialized
                 DispatchQueue.main.async {
-                    guard let surfaceView = controller.focusedSurface ?? controller.surfaceTree.first else {
+                    guard let surfaceView = controller.focusedSurface else {
                         Self.logger.warning("IPC: no surface view for split")
                         return
                     }
