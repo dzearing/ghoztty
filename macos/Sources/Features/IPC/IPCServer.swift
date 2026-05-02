@@ -18,8 +18,11 @@ class IPCServer {
     init(ghostty: Ghostty.App) {
         self.ghostty = ghostty
         let uid = getuid()
+        let suffix = Ghostty.info.mode == GHOSTTY_BUILD_MODE_DEBUG
+            || Ghostty.info.mode == GHOSTTY_BUILD_MODE_RELEASE_SAFE
+            ? "-debug" : ""
         self.socketPath = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("ghostty-\(uid).sock").path
+            .appendingPathComponent("ghostty\(suffix)-\(uid).sock").path
     }
 
     func start() {
