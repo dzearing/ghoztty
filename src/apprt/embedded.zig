@@ -441,7 +441,7 @@ pub const App = struct {
         const parsed = std.json.parseFromSlice(
             struct { success: bool = false },
             alloc,
-            resp_buf[0..resp_read],
+            resp_buf,
             .{ .ignore_unknown_fields = true },
         ) catch {
             stderr.print("IPC response is not valid JSON\n", .{}) catch {};
