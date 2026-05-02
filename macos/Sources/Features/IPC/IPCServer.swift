@@ -14,6 +14,11 @@ class IPCServer {
     private var listenSocket: Int32 = -1
     private var acceptSource: DispatchSourceRead?
     private let queue = DispatchQueue(label: "com.mitchellh.ghostty.ipc", qos: .utility)
+    private var targetRegistry: [String: WeakController] = [:]
+
+    private struct WeakController {
+        weak var controller: TerminalController?
+    }
 
     init(ghostty: Ghostty.App) {
         self.ghostty = ghostty
@@ -187,6 +192,8 @@ class IPCServer {
         switch request.action {
         case "new-window":
             return handleNewWindow(request)
+        case "split":
+            return handleSplit(request)
         default:
             return IPCResponse(success: false, error: "unknown action: \(request.action)")
         }
@@ -196,6 +203,7 @@ class IPCServer {
         var config: Ghostty.SurfaceConfiguration
         var splitDirection: String?
         var splitCommand: String?
+        var target: String?
     }
 
     private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
@@ -206,13 +214,16 @@ class IPCServer {
             parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
         }
 
-        DispatchQueue.main.async { [ghostty = self.ghostty] in
+        DispatchQueue.main.async { [ghostty = self.ghostty, weak self] in
             let controller = TerminalController.newWindow(ghostty, withBaseConfig: parsed.config)
+
+            if let target = parsed.target {
+                self?.targetRegistry[target] = WeakController(controller: controller)
+                Self.logger.info("IPC: registered target '\(target)'")
+            }
 
             if let splitDir = parsed.splitDirection,
                let direction = Self.parseSplitDirection(splitDir) {
-                // Defer the split to the next run loop tick so the window's
-                // surface view is fully initialized
                 DispatchQueue.main.async {
                     guard let surfaceView = controller.focusedSurface else {
                         Self.logger.warning("IPC: no surface view for split")
@@ -237,6 +248,66 @@ class IPCServer {
         }
 
         return .ok
+    }
+
+    private func handleSplit(_ request: IPCRequest) -> IPCResponse {
+        let parsed: ParsedArguments
+        if let arguments = request.arguments {
+            parsed = parseArguments(arguments)
+        } else {
+            parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
+        }
+
+        let directionStr = parsed.splitDirection ?? "right"
+        guard let direction = Self.parseSplitDirection(directionStr) else {
+            return IPCResponse(success: false, error: "invalid direction: \(directionStr)")
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            let controller: TerminalController?
+            if let target = parsed.target {
+                self?.pruneStaleTargets()
+                controller = self?.targetRegistry[target]?.controller
+                if controller == nil {
+                    Self.logger.warning("IPC: target '\(target)' not found")
+                }
+            } else {
+                controller = TerminalController.preferredParent
+            }
+
+            guard let controller else {
+                Self.logger.warning("IPC: no controller found for split")
+                return
+            }
+
+            guard let surfaceView = controller.focusedSurface else {
+                Self.logger.warning("IPC: no focused surface for split")
+                return
+            }
+
+            var splitConfig = Ghostty.SurfaceConfiguration()
+            if let splitCommand = parsed.splitCommand {
+                splitConfig.command = splitCommand
+            }
+            if let workingDirectory = parsed.config.workingDirectory {
+                splitConfig.workingDirectory = workingDirectory
+            }
+
+            NotificationCenter.default.post(
+                name: Ghostty.Notification.ghosttyNewSplit,
+                object: surfaceView,
+                userInfo: [
+                    "direction": direction,
+                    Ghostty.Notification.NewSurfaceConfigKey: splitConfig,
+                ]
+            )
+        }
+
+        return .ok
+    }
+
+    private func pruneStaleTargets() {
+        targetRegistry = targetRegistry.filter { $0.value.controller != nil }
     }
 
     private static func parseSplitDirection(_ value: String) -> ghostty_action_split_direction_e? {
@@ -282,6 +353,16 @@ class IPCServer {
 
             if let value = arg.dropPrefix("--split-command=") {
                 result.splitCommand = String(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--target=") {
+                result.target = String(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--direction=") {
+                result.splitDirection = String(value)
                 continue
             }
         }
