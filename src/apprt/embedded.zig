@@ -347,11 +347,13 @@ pub const App = struct {
         var stderr_writer = std.fs.File.stderr().writer(&buf);
         const stderr = &stderr_writer.interface;
 
-        // Build socket path: $TMPDIR/ghostty-$UID.sock
+        // Build socket path: $TMPDIR/ghostty[-debug]-$UID.sock
         const tmpdir = std.posix.getenv("TMPDIR") orelse "/tmp";
         const uid = std.c.getuid();
-        const sock_path = std.fmt.allocPrintSentinel(alloc, "{s}ghostty-{d}.sock", .{
-            tmpdir, uid,
+        const build_config = @import("../build_config.zig");
+        const suffix = if (build_config.is_debug) "-debug" else "";
+        const sock_path = std.fmt.allocPrintSentinel(alloc, "{s}ghostty{s}-{d}.sock", .{
+            tmpdir, suffix, uid,
         }, 0) catch |err| {
             stderr.print("Failed to build socket path: {}\n", .{err}) catch {};
             stderr.flush() catch {};
