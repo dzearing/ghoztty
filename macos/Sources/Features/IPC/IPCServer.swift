@@ -18,8 +18,8 @@ class IPCServer {
     init(ghostty: Ghostty.App) {
         self.ghostty = ghostty
         let uid = getuid()
-        let tmpdir = NSTemporaryDirectory().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        self.socketPath = "/\(tmpdir)/ghostty-\(uid).sock"
+        self.socketPath = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("ghostty-\(uid).sock").path
     }
 
     func start() {
@@ -29,8 +29,10 @@ class IPCServer {
     }
 
     func stop() {
-        acceptSource?.cancel()
-        acceptSource = nil
+        queue.sync {
+            acceptSource?.cancel()
+            acceptSource = nil
+        }
         unlink(socketPath)
         Self.logger.info("IPC server stopped")
     }
@@ -41,9 +43,12 @@ class IPCServer {
 
         listenSocket = socket(AF_UNIX, SOCK_STREAM, 0)
         guard listenSocket >= 0 else {
-            Self.logger.error("Failed to create IPC socket: \(errno)")
+            let err = errno
+            Self.logger.error("Failed to create IPC socket: \(String(cString: strerror(err))) (\(err))")
             return
         }
+
+        fcntl(listenSocket, F_SETFD, FD_CLOEXEC)
 
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
@@ -69,17 +74,18 @@ class IPCServer {
             }
         }
         guard bindResult == 0 else {
-            Self.logger.error("Failed to bind IPC socket: \(errno)")
+            let err = errno
+            Self.logger.error("Failed to bind IPC socket: \(String(cString: strerror(err))) (\(err))")
             Darwin.close(listenSocket)
             listenSocket = -1
             return
         }
 
-        // Set permissions to 0600 (owner read/write only)
         chmod(socketPath, 0o600)
 
         guard listen(listenSocket, 5) == 0 else {
-            Self.logger.error("Failed to listen on IPC socket: \(errno)")
+            let err = errno
+            Self.logger.error("Failed to listen on IPC socket: \(String(cString: strerror(err))) (\(err))")
             Darwin.close(listenSocket)
             listenSocket = -1
             return
@@ -113,7 +119,6 @@ class IPCServer {
     }
 
     private func handleClient(fd: Int32) {
-        // Read 4-byte length prefix (big-endian uint32)
         var lengthBytes: [UInt8] = [0, 0, 0, 0]
         let bytesRead = recv(fd, &lengthBytes, 4, MSG_WAITALL)
         guard bytesRead == 4 else {
@@ -133,7 +138,6 @@ class IPCServer {
             return
         }
 
-        // Read JSON payload
         var payload = Data(count: Int(length))
         let payloadRead = payload.withUnsafeMutableBytes { buf in
             recv(fd, buf.baseAddress!, Int(length), MSG_WAITALL)
@@ -144,7 +148,6 @@ class IPCServer {
             return
         }
 
-        // Parse JSON
         let request: IPCRequest
         do {
             request = try JSONDecoder().decode(IPCRequest.self, from: payload)
@@ -154,7 +157,6 @@ class IPCServer {
             return
         }
 
-        // Dispatch action
         Self.logger.info("IPC: received action '\(request.action)'")
         let response = dispatchAction(request)
         sendResponse(fd: fd, response: response)
@@ -163,11 +165,18 @@ class IPCServer {
     private func sendResponse(fd: Int32, response: IPCResponse) {
         guard let data = try? JSONEncoder().encode(response) else { return }
         var length = UInt32(data.count).bigEndian
-        withUnsafeBytes(of: &length) { buf in
-            _ = send(fd, buf.baseAddress!, 4, 0)
+        let lengthSent = withUnsafeBytes(of: &length) { buf in
+            send(fd, buf.baseAddress!, 4, 0)
         }
-        data.withUnsafeBytes { buf in
-            _ = send(fd, buf.baseAddress!, data.count, 0)
+        if lengthSent != 4 {
+            Self.logger.warning("IPC: failed to send response length")
+            return
+        }
+        let dataSent = data.withUnsafeBytes { buf in
+            send(fd, buf.baseAddress!, data.count, 0)
+        }
+        if dataSent != data.count {
+            Self.logger.warning("IPC: failed to send response payload")
         }
     }
 
@@ -187,18 +196,13 @@ class IPCServer {
             parseArguments(arguments, into: &config)
         }
 
-        let semaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.async { [ghostty = self.ghostty] in
             _ = TerminalController.newWindow(ghostty, withBaseConfig: config)
-            semaphore.signal()
         }
-        semaphore.wait()
 
         return .ok
     }
 
-    /// Parse CLI-style arguments into a SurfaceConfiguration.
-    /// Mirrors the GTK argument parsing in application.zig:1723-1778.
     private func parseArguments(_ arguments: [String], into config: inout Ghostty.SurfaceConfiguration) {
         var eFlag = false
         var commandParts: [String] = []
