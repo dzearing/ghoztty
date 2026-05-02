@@ -20,6 +20,8 @@ pub const Options = struct {
 
     /// Manual parse hook, collect all of the arguments after `+close`.
     pub fn parseManuallyHook(self: *Options, alloc: Allocator, arg: []const u8, iter: anytype) (error{InvalidValue} || Allocator.Error)!bool {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) return true;
+
         if (try self.checkArg(alloc, arg)) |a| try self._arguments.append(alloc, a);
 
         while (iter.next()) |param| {
@@ -46,10 +48,9 @@ pub const Options = struct {
     }
 };
 
-/// The `close` command will use native platform IPC to close a named
-/// pane or window in a running Ghostty instance.
+/// Close a named pane or window in a running Ghostty instance.
 ///
-/// The command is idempotent — closing a target that doesn't exist
+/// This command is idempotent: closing a target that doesn't exist
 /// (or was already closed) is a no-op and returns success.
 ///
 /// Flags:
