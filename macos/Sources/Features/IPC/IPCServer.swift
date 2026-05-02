@@ -31,10 +31,6 @@ class IPCServer {
     func stop() {
         acceptSource?.cancel()
         acceptSource = nil
-        if listenSocket >= 0 {
-            Darwin.close(listenSocket)
-            listenSocket = -1
-        }
         unlink(socketPath)
         Self.logger.info("IPC server stopped")
     }
