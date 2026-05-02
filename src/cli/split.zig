@@ -21,6 +21,8 @@ pub const Options = struct {
 
     /// Manual parse hook, collect all of the arguments after `+split`.
     pub fn parseManuallyHook(self: *Options, alloc: Allocator, arg: []const u8, iter: anytype) (error{InvalidValue} || Allocator.Error)!bool {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) return true;
+
         var e_seen: bool = std.mem.eql(u8, arg, "-e");
 
         if (try self.checkArg(alloc, arg)) |a| try self._arguments.append(alloc, a);
@@ -58,12 +60,15 @@ pub const Options = struct {
     }
 };
 
-/// The `split` command will use native platform IPC to create a new split
-/// in a running Ghostty window.
+/// Create a new split pane in a running Ghostty window.
 ///
-/// If `--target` is specified, the split will be added to the window that
-/// was created with the matching `--target` name. If `--target` is not
-/// specified, the split will be added to the most recently focused window.
+/// If `--target` is specified, the split will be added to the window
+/// with that name. If not specified, the split is added to the most
+/// recently focused window.
+///
+/// This command is idempotent: if `--name` is specified and a pane with
+/// that name already exists, the existing pane is focused instead of
+/// creating a new split.
 ///
 /// Flags:
 ///

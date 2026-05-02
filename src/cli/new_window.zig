@@ -127,7 +127,7 @@ pub const Options = struct {
 /// of Ghostty if it is not already running. See the Ghostty website for
 /// information on properly configuring D-Bus activation.
 ///
-/// Supported on GTK (via D-Bus) and macOS (via Unix domain socket IPC).
+/// Supported on GTK and macOS.
 ///
 /// Flags:
 ///
@@ -144,6 +144,10 @@ pub const Options = struct {
 ///   * `-e`: Any arguments after this will be interpreted as a command to
 ///     execute inside the first surface of the new window instead of the
 ///     default command.
+///
+///   * `--target=<name>`: Register this window with a name. If a window
+///     with this name already exists, it is focused instead of creating
+///     a new one. Named windows can be targeted by `+split` and `+close`.
 ///
 ///   * `--split=right|down|left|up`: After creating the new window, create a
 ///     split in the given direction.
