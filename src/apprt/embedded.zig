@@ -408,16 +408,11 @@ pub const App = struct {
 
         // Read response length
         var resp_len_bytes: [4]u8 = undefined;
-        const resp_len_read = std.posix.read(fd, &resp_len_bytes) catch |err| {
-            stderr.print("Failed to read IPC response: {}\n", .{err}) catch {};
+        readFull(fd, &resp_len_bytes) catch {
+            stderr.print("Failed to read IPC response length\n", .{}) catch {};
             stderr.flush() catch {};
             return error.IPCFailed;
         };
-        if (resp_len_read != 4) {
-            stderr.print("IPC response truncated\n", .{}) catch {};
-            stderr.flush() catch {};
-            return error.IPCFailed;
-        }
 
         const resp_len = std.mem.bigToNative(u32, std.mem.bytesAsValue(u32, &resp_len_bytes).*);
         if (resp_len == 0 or resp_len > 1048576) {
@@ -434,16 +429,11 @@ pub const App = struct {
         };
         defer alloc.free(resp_buf);
 
-        const resp_read = std.posix.read(fd, resp_buf) catch |err| {
-            stderr.print("Failed to read IPC response: {}\n", .{err}) catch {};
+        readFull(fd, resp_buf) catch {
+            stderr.print("Failed to read IPC response\n", .{}) catch {};
             stderr.flush() catch {};
             return error.IPCFailed;
         };
-        if (resp_read != resp_len) {
-            stderr.print("IPC response truncated\n", .{}) catch {};
-            stderr.flush() catch {};
-            return error.IPCFailed;
-        }
 
         // Parse response — look for "success":true
         const parsed = std.json.parseFromSlice(
@@ -476,6 +466,15 @@ pub const App = struct {
 
         try std.posix.connect(fd, @ptrCast(&addr), @sizeOf(std.posix.sockaddr.un));
         return fd;
+    }
+
+    fn readFull(fd: std.posix.fd_t, buffer: []u8) !void {
+        var total: usize = 0;
+        while (total < buffer.len) {
+            const n = std.posix.read(fd, buffer[total..]) catch |err| return err;
+            if (n == 0) return error.EndOfStream;
+            total += n;
+        }
     }
 };
 

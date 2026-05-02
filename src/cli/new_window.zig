@@ -127,7 +127,7 @@ pub const Options = struct {
 /// of Ghostty if it is not already running. See the Ghostty website for
 /// information on properly configuring D-Bus activation.
 ///
-/// Only supported on GTK.
+/// Supported on GTK (via D-Bus) and macOS (via Unix domain socket IPC).
 ///
 /// Flags:
 ///
