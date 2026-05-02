@@ -145,6 +145,12 @@ pub const Options = struct {
 ///     execute inside the first surface of the new window instead of the
 ///     default command.
 ///
+///   * `--split=right|down|left|up`: After creating the new window, create a
+///     split in the given direction.
+///
+///   * `--split-command=<command>`: The command to run in the split pane.
+///     Only meaningful when `--split` is also specified.
+///
 /// Available since: 1.2.0
 pub fn run(alloc: Allocator) !u8 {
     var iter = try args.argsIterator(alloc);
