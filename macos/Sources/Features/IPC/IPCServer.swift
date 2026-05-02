@@ -189,21 +189,65 @@ class IPCServer {
         }
     }
 
-    private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
-        var config = Ghostty.SurfaceConfiguration()
+    struct ParsedArguments {
+        var config: Ghostty.SurfaceConfiguration
+        var splitDirection: String?
+        var splitCommand: String?
+    }
 
+    private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
+        let parsed: ParsedArguments
         if let arguments = request.arguments {
-            parseArguments(arguments, into: &config)
+            parsed = parseArguments(arguments)
+        } else {
+            parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
         }
 
         DispatchQueue.main.async { [ghostty = self.ghostty] in
-            _ = TerminalController.newWindow(ghostty, withBaseConfig: config)
+            let controller = TerminalController.newWindow(ghostty, withBaseConfig: parsed.config)
+
+            if let splitDir = parsed.splitDirection,
+               let direction = Self.parseSplitDirection(splitDir) {
+                // Defer the split to the next run loop tick so the window's
+                // surface view is fully initialized
+                DispatchQueue.main.async {
+                    guard let surfaceView = controller.focusedSurface ?? controller.surfaceTree.first else {
+                        Self.logger.warning("IPC: no surface view for split")
+                        return
+                    }
+
+                    var splitConfig = Ghostty.SurfaceConfiguration()
+                    if let splitCommand = parsed.splitCommand {
+                        splitConfig.command = splitCommand
+                    }
+
+                    NotificationCenter.default.post(
+                        name: Ghostty.Notification.ghosttyNewSplit,
+                        object: surfaceView,
+                        userInfo: [
+                            "direction": direction,
+                            Ghostty.Notification.NewSurfaceConfigKey: splitConfig,
+                        ]
+                    )
+                }
+            }
         }
 
         return .ok
     }
 
-    private func parseArguments(_ arguments: [String], into config: inout Ghostty.SurfaceConfiguration) {
+    private static func parseSplitDirection(_ value: String) -> ghostty_action_split_direction_e? {
+        switch value.lowercased() {
+        case "right": return GHOSTTY_SPLIT_DIRECTION_RIGHT
+        case "down": return GHOSTTY_SPLIT_DIRECTION_DOWN
+        case "left": return GHOSTTY_SPLIT_DIRECTION_LEFT
+        case "up": return GHOSTTY_SPLIT_DIRECTION_UP
+        default: return nil
+        }
+    }
+
+    private func parseArguments(_ arguments: [String]) -> ParsedArguments {
+        var result = ParsedArguments(config: Ghostty.SurfaceConfiguration())
         var eFlag = false
         var commandParts: [String] = []
 
@@ -219,19 +263,31 @@ class IPCServer {
             }
 
             if let value = arg.dropPrefix("--working-directory=") {
-                config.workingDirectory = String(value)
+                result.config.workingDirectory = String(value)
                 continue
             }
 
             if let value = arg.dropPrefix("--command=") {
-                config.command = String(value)
+                result.config.command = String(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--split=") {
+                result.splitDirection = String(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--split-command=") {
+                result.splitCommand = String(value)
                 continue
             }
         }
 
         if !commandParts.isEmpty {
-            config.command = commandParts.joined(separator: " ")
+            result.config.command = commandParts.joined(separator: " ")
         }
+
+        return result
     }
 }
 
