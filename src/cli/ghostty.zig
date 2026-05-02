@@ -21,6 +21,7 @@ const show_face = @import("show_face.zig");
 const boo = @import("boo.zig");
 const new_window = @import("new_window.zig");
 const split = @import("split.zig");
+const close = @import("close.zig");
 
 /// Special commands that can be invoked via CLI flags. These are all
 /// invoked by using `+<action>` as a CLI flag. The only exception is
@@ -76,6 +77,9 @@ pub const Action = enum {
 
     // Use IPC to tell the running Ghostty to create a split in an existing window.
     split,
+
+    // Use IPC to close a named pane or window.
+    close,
 
     pub fn detectSpecialCase(arg: []const u8) ?SpecialCase(Action) {
         // If we see a "-e" and we haven't seen a command yet, then
@@ -157,6 +161,7 @@ pub const Action = enum {
             .boo => try boo.run(alloc),
             .@"new-window" => try new_window.run(alloc),
             .split => try split.run(alloc),
+            .close => try close.run(alloc),
         };
     }
 
@@ -198,6 +203,7 @@ pub const Action = enum {
                 .boo => boo.Options,
                 .@"new-window" => new_window.Options,
                 .split => split.Options,
+                .close => close.Options,
             };
         }
     }

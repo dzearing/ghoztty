@@ -337,6 +337,7 @@ pub const App = struct {
         switch (action) {
             .new_window => return ipcNewWindow(alloc, value),
             .split => return ipcSplit(alloc, value),
+            .close => return ipcClose(alloc, value),
         }
     }
 
@@ -495,6 +496,120 @@ pub const App = struct {
         jws.beginObject() catch return error.IPCFailed;
         jws.objectField("action") catch return error.IPCFailed;
         jws.write("split") catch return error.IPCFailed;
+
+        if (value.arguments) |arguments| {
+            jws.objectField("arguments") catch return error.IPCFailed;
+            jws.beginArray() catch return error.IPCFailed;
+            for (arguments) |arg| {
+                jws.write(arg) catch return error.IPCFailed;
+            }
+            jws.endArray() catch return error.IPCFailed;
+        }
+
+        jws.endObject() catch return error.IPCFailed;
+
+        const json_bytes = json_buf.written();
+
+        // Send length-prefixed message (4-byte big-endian uint32)
+        const len: u32 = @intCast(json_bytes.len);
+        const len_bytes = std.mem.toBytes(std.mem.nativeToBig(u32, len));
+        _ = std.posix.write(fd, &len_bytes) catch |err| {
+            stderr.print("Failed to send IPC message: {}\n", .{err}) catch {};
+            stderr.flush() catch {};
+            return error.IPCFailed;
+        };
+        _ = std.posix.write(fd, json_bytes) catch |err| {
+            stderr.print("Failed to send IPC message: {}\n", .{err}) catch {};
+            stderr.flush() catch {};
+            return error.IPCFailed;
+        };
+
+        // Read response length
+        var resp_len_bytes: [4]u8 = undefined;
+        readFull(fd, &resp_len_bytes) catch {
+            stderr.print("Failed to read IPC response length\n", .{}) catch {};
+            stderr.flush() catch {};
+            return error.IPCFailed;
+        };
+
+        const resp_len = std.mem.bigToNative(u32, std.mem.bytesAsValue(u32, &resp_len_bytes).*);
+        if (resp_len == 0 or resp_len > 1048576) {
+            stderr.print("IPC response has invalid length: {d}\n", .{resp_len}) catch {};
+            stderr.flush() catch {};
+            return error.IPCFailed;
+        }
+
+        // Read response payload
+        const resp_buf = alloc.alloc(u8, resp_len) catch {
+            stderr.print("Out of memory reading IPC response\n", .{}) catch {};
+            stderr.flush() catch {};
+            return error.IPCFailed;
+        };
+        defer alloc.free(resp_buf);
+
+        readFull(fd, resp_buf) catch {
+            stderr.print("Failed to read IPC response\n", .{}) catch {};
+            stderr.flush() catch {};
+            return error.IPCFailed;
+        };
+
+        // Parse response -- look for "success":true
+        const parsed = std.json.parseFromSlice(
+            struct { success: bool = false },
+            alloc,
+            resp_buf,
+            .{ .ignore_unknown_fields = true },
+        ) catch {
+            stderr.print("IPC response is not valid JSON\n", .{}) catch {};
+            stderr.flush() catch {};
+            return error.IPCFailed;
+        };
+        defer parsed.deinit();
+
+        return parsed.value.success;
+    }
+
+    fn ipcClose(
+        alloc: Allocator,
+        value: apprt.ipc.Action.Close,
+    ) (Allocator.Error || std.posix.WriteError || apprt.ipc.Errors)!bool {
+        var buf: [256]u8 = undefined;
+        var stderr_writer = std.fs.File.stderr().writer(&buf);
+        const stderr = &stderr_writer.interface;
+
+        // Build socket path: $TMPDIR/ghostty[-debug]-$UID.sock
+        const tmpdir = std.posix.getenv("TMPDIR") orelse "/tmp";
+        const uid = std.c.getuid();
+        const build_config = @import("../build_config.zig");
+        const suffix = if (build_config.is_debug) "-debug" else "";
+        const sock_path = std.fmt.allocPrintSentinel(alloc, "{s}ghostty{s}-{d}.sock", .{
+            tmpdir, suffix, uid,
+        }, 0) catch |err| {
+            stderr.print("Failed to build socket path: {}\n", .{err}) catch {};
+            stderr.flush() catch {};
+            return error.IPCFailed;
+        };
+        defer alloc.free(sock_path);
+
+        // Connect to Unix domain socket
+        const fd = connectUnixSocket(sock_path) catch {
+            stderr.print(
+                "Failed to connect to Ghostty IPC socket at {s}\nIs Ghostty running?\n",
+                .{sock_path},
+            ) catch {};
+            stderr.flush() catch {};
+            return error.IPCFailed;
+        };
+        defer std.posix.close(fd);
+
+        // Build JSON payload using std.json.Stringify + std.Io.Writer.Allocating
+        var json_buf: std.Io.Writer.Allocating = .init(alloc);
+        defer json_buf.deinit();
+        var jws: std.json.Stringify = .{ .writer = &json_buf.writer };
+
+        jws.beginObject() catch return error.IPCFailed;
+        jws.objectField("action") catch return error.IPCFailed;
+        jws.write("close") catch return error.IPCFailed;
 
         if (value.arguments) |arguments| {
             jws.objectField("arguments") catch return error.IPCFailed;
