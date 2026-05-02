@@ -5,13 +5,12 @@ const Action = @import("../cli.zig").ghostty.Action;
 const apprt = @import("../apprt.zig");
 const args = @import("args.zig");
 const diagnostics = @import("diagnostics.zig");
-const lib = @import("../lib/main.zig");
 
 pub const Options = struct {
     /// This is set by the CLI parser for deinit.
     _arena: ?ArenaAllocator = null,
 
-    /// All of the arguments after `+split`. They will be sent to Ghostty
+    /// All of the arguments after `+close`. They will be sent to Ghostty
     /// for processing.
     _arguments: std.ArrayList([:0]const u8) = .empty,
 
@@ -19,22 +18,11 @@ pub const Options = struct {
     /// there is a "normal" config setting on the cli.
     _diagnostics: diagnostics.DiagnosticList = .{},
 
-    /// Manual parse hook, collect all of the arguments after `+split`.
+    /// Manual parse hook, collect all of the arguments after `+close`.
     pub fn parseManuallyHook(self: *Options, alloc: Allocator, arg: []const u8, iter: anytype) (error{InvalidValue} || Allocator.Error)!bool {
-        var e_seen: bool = std.mem.eql(u8, arg, "-e");
-
         if (try self.checkArg(alloc, arg)) |a| try self._arguments.append(alloc, a);
 
         while (iter.next()) |param| {
-            if (e_seen) {
-                try self._arguments.append(alloc, try alloc.dupeZ(u8, param));
-                continue;
-            }
-            if (std.mem.eql(u8, param, "-e")) {
-                e_seen = true;
-                try self._arguments.append(alloc, try alloc.dupeZ(u8, param));
-                continue;
-            }
             if (try self.checkArg(alloc, param)) |a| try self._arguments.append(alloc, a);
         }
 
@@ -58,29 +46,17 @@ pub const Options = struct {
     }
 };
 
-/// The `split` command will use native platform IPC to create a new split
-/// in a running Ghostty window.
+/// The `close` command will use native platform IPC to close a named
+/// pane or window in a running Ghostty instance.
 ///
-/// If `--target` is specified, the split will be added to the window that
-/// was created with the matching `--target` name. If `--target` is not
-/// specified, the split will be added to the most recently focused window.
+/// The command is idempotent — closing a target that doesn't exist
+/// (or was already closed) is a no-op and returns success.
 ///
 /// Flags:
 ///
-///   * `--target=<name>`: The target window name to add the split to.
-///     The target must have been created with `+new-window --target=<name>`.
-///
-///   * `--name=<name>`: Register this split pane with a name for later
-///     targeting. If a pane with this name already exists, it will be
-///     focused instead of creating a new split.
-///
-///   * `--direction=right|down|left|up`: The direction to split. Defaults
-///     to `right` if not specified.
-///
-///   * `--command=<command>`: The command to run in the split pane.
-///
-///   * `-e`: Any arguments after this will be interpreted as a command to
-///     execute in the split pane.
+///   * `--target=<name>`: The name of the pane or window to close.
+///     Required. The target must have been created with
+///     `+new-window --target=<name>` or `+split --name=<name>`.
 ///
 /// Available since: 1.2.0
 pub fn run(alloc: Allocator) !u8 {
@@ -119,7 +95,7 @@ fn runArgs(
     if (apprt.App.performIpc(
         alloc,
         .detect,
-        .split,
+        .close,
         .{
             .arguments = if (opts._arguments.items.len == 0) null else opts._arguments.items,
         },
@@ -131,6 +107,6 @@ fn runArgs(
         },
     }) return 0;
 
-    try stderr.print("+split is not supported on this platform.\n", .{});
+    try stderr.print("+close is not supported on this platform.\n", .{});
     return 1;
 }
