@@ -14,10 +14,37 @@ class IPCServer {
     private var listenSocket: Int32 = -1
     private var acceptSource: DispatchSourceRead?
     private let queue = DispatchQueue(label: "com.mitchellh.ghostty.ipc", qos: .utility)
-    private var targetRegistry: [String: WeakController] = [:]
+    private var targetRegistry: [String: TargetEntry] = [:]
 
-    private struct WeakController {
-        weak var controller: TerminalController?
+    private enum TargetEntry {
+        case window(WeakRef<TerminalController>)
+        case pane(controller: WeakRef<TerminalController>, surface: WeakRef<Ghostty.SurfaceView>)
+
+        var controller: TerminalController? {
+            switch self {
+            case .window(let ref): return ref.value
+            case .pane(let ref, _): return ref.value
+            }
+        }
+
+        var surfaceView: Ghostty.SurfaceView? {
+            switch self {
+            case .window(let ref): return ref.value?.focusedSurface
+            case .pane(_, let ref): return ref.value
+            }
+        }
+
+        var isAlive: Bool {
+            switch self {
+            case .window(let ref): return ref.value != nil
+            case .pane(_, let ref): return ref.value != nil
+            }
+        }
+    }
+
+    private class WeakRef<T: AnyObject> {
+        weak var value: T?
+        init(_ value: T) { self.value = value }
     }
 
     init(ghostty: Ghostty.App) {
@@ -194,6 +221,8 @@ class IPCServer {
             return handleNewWindow(request)
         case "split":
             return handleSplit(request)
+        case "close":
+            return handleClose(request)
         default:
             return IPCResponse(success: false, error: "unknown action: \(request.action)")
         }
@@ -204,6 +233,7 @@ class IPCServer {
         var splitDirection: String?
         var splitCommand: String?
         var target: String?
+        var name: String?
     }
 
     private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
@@ -214,17 +244,29 @@ class IPCServer {
             parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
         }
 
+        // Idempotent: if target exists and window is alive, focus it
+        if let target = parsed.target {
+            pruneStaleTargets()
+            if let entry = targetRegistry[target], let controller = entry.controller {
+                DispatchQueue.main.async {
+                    controller.window?.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                return .ok
+            }
+        }
+
         DispatchQueue.main.async { [ghostty = self.ghostty, weak self] in
             let controller = TerminalController.newWindow(ghostty, withBaseConfig: parsed.config)
 
             if let target = parsed.target {
-                self?.targetRegistry[target] = WeakController(controller: controller)
-                Self.logger.info("IPC: registered target '\(target)'")
+                self?.targetRegistry[target] = .window(WeakRef(controller))
+                Self.logger.info("IPC: registered window target '\(target)'")
             }
 
             if let splitDir = parsed.splitDirection,
                let direction = Self.parseSplitDirection(splitDir) {
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     guard let surfaceView = controller.focusedSurface else {
                         Self.logger.warning("IPC: no surface view for split")
                         return
@@ -243,6 +285,14 @@ class IPCServer {
                             Ghostty.Notification.NewSurfaceConfigKey: splitConfig,
                         ]
                     )
+
+                    if let name = parsed.name, let newSurface = controller.focusedSurface {
+                        self?.targetRegistry[name] = .pane(
+                            controller: WeakRef(controller),
+                            surface: WeakRef(newSurface)
+                        )
+                        Self.logger.info("IPC: registered pane target '\(name)'")
+                    }
                 }
             }
         }
@@ -256,6 +306,19 @@ class IPCServer {
             parsed = parseArguments(arguments)
         } else {
             parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
+        }
+
+        // Idempotent: if --name exists and pane is alive, focus it
+        if let name = parsed.name {
+            pruneStaleTargets()
+            if let entry = targetRegistry[name], let surface = entry.surfaceView {
+                DispatchQueue.main.async {
+                    if let controller = entry.controller {
+                        controller.focusSurface(surface)
+                    }
+                }
+                return .ok
+            }
         }
 
         let directionStr = parsed.splitDirection ?? "right"
@@ -289,6 +352,9 @@ class IPCServer {
             if let splitCommand = parsed.splitCommand {
                 splitConfig.command = splitCommand
             }
+            if let command = parsed.config.command {
+                splitConfig.command = command
+            }
             if let workingDirectory = parsed.config.workingDirectory {
                 splitConfig.workingDirectory = workingDirectory
             }
@@ -301,13 +367,56 @@ class IPCServer {
                     Ghostty.Notification.NewSurfaceConfigKey: splitConfig,
                 ]
             )
+
+            // Register pane name after split creation
+            if let name = parsed.name, let newSurface = controller.focusedSurface {
+                self?.targetRegistry[name] = .pane(
+                    controller: WeakRef(controller),
+                    surface: WeakRef(newSurface)
+                )
+                Self.logger.info("IPC: registered pane target '\(name)'")
+            }
+        }
+
+        return .ok
+    }
+
+    private func handleClose(_ request: IPCRequest) -> IPCResponse {
+        let parsed: ParsedArguments
+        if let arguments = request.arguments {
+            parsed = parseArguments(arguments)
+        } else {
+            parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
+        }
+
+        guard let target = parsed.target else {
+            return IPCResponse(success: false, error: "--target is required for +close")
+        }
+
+        pruneStaleTargets()
+
+        guard let entry = targetRegistry[target] else {
+            // Idempotent: already gone
+            return .ok
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            switch entry {
+            case .pane(let controllerRef, let surfaceRef):
+                if let controller = controllerRef.value, let surface = surfaceRef.value {
+                    controller.closeSurface(surface, withConfirmation: false)
+                }
+            case .window(let controllerRef):
+                controllerRef.value?.closeWindowImmediately()
+            }
+            self?.targetRegistry.removeValue(forKey: target)
         }
 
         return .ok
     }
 
     private func pruneStaleTargets() {
-        targetRegistry = targetRegistry.filter { $0.value.controller != nil }
+        targetRegistry = targetRegistry.filter { $0.value.isAlive }
     }
 
     private static func parseSplitDirection(_ value: String) -> ghostty_action_split_direction_e? {
@@ -363,6 +472,11 @@ class IPCServer {
 
             if let value = arg.dropPrefix("--direction=") {
                 result.splitDirection = String(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--name=") {
+                result.name = String(value)
                 continue
             }
         }
