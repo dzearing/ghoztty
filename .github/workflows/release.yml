@@ -23,9 +23,17 @@ jobs:
 
       - uses: mlugg/setup-zig@v2
 
-      - name: Build macOS app
+      - name: Set release variables
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
+          ARCH=$(uname -m)
+          DMG_NAME="Ghoztty-${VERSION}-${ARCH}.dmg"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "ARCH=$ARCH" >> $GITHUB_ENV
+          echo "DMG_NAME=$DMG_NAME" >> $GITHUB_ENV
+
+      - name: Build macOS app
+        run: |
           zig build -Doptimize=ReleaseFast -Demit-macos-app -Dxcframework-target=native -Dversion-string="$VERSION"
 
       - name: Codesign app bundle
@@ -61,7 +69,7 @@ jobs:
             --identity="$MACOS_CERTIFICATE_NAME" \
             ./macos/build/ReleaseLocal/Ghoztty.app \
             ./
-          mv ./*.dmg ./Ghoztty.dmg
+          mv ./*.dmg "./$DMG_NAME"
 
       - name: Notarize DMG
         env:
@@ -73,13 +81,13 @@ jobs:
           xcrun notarytool store-credentials "notarytool-profile" --key notarization_key.p8 --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER"
           rm notarization_key.p8
 
-          xcrun notarytool submit "Ghoztty.dmg" --keychain-profile "notarytool-profile" --wait
+          xcrun notarytool submit "$DMG_NAME" --keychain-profile "notarytool-profile" --wait
 
-          xcrun stapler staple "Ghoztty.dmg"
+          xcrun stapler staple "$DMG_NAME"
           xcrun stapler staple "macos/build/ReleaseLocal/Ghoztty.app"
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: Ghoztty.dmg
+          files: ${{ env.DMG_NAME }}
           body: |
-            Custom Ghoztty build (macOS arm64, signed and notarized).
+            Custom Ghoztty build (macOS ${{ env.ARCH }}, signed and notarized).
