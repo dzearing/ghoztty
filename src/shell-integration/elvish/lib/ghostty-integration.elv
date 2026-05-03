@@ -108,7 +108,7 @@
       }
 
       if (not-eq $ssh-hostname "") {
-        var ghostty = $E:GHOSTTY_BIN_DIR/"ghostty"
+        var ghostty = $E:GHOSTTY_BIN_DIR/"ghoztty"
         var ssh-target = $ssh-user"@"$ssh-hostname
 
         # Check if terminfo is already cached
@@ -142,7 +142,7 @@
             echo "Warning: Could not generate terminfo data." >&2
           }
         } else {
-          echo "Warning: ghostty command not available for cache management." >&2
+          echo "Warning: ghoztty command not available for cache management." >&2
         }
       }
     }

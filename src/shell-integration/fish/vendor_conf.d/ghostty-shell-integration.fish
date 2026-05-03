@@ -156,7 +156,7 @@ function __ghostty_setup --on-event fish_prompt -d "Setup ghostty integration"
                     set -l ssh_target "$ssh_user@$ssh_hostname"
 
                     # Check if terminfo is already cached
-                    if test -x "$GHOSTTY_BIN_DIR/ghostty"; and "$GHOSTTY_BIN_DIR/ghostty" +ssh-cache --host="$ssh_target" >/dev/null 2>&1
+                    if test -x "$GHOSTTY_BIN_DIR/ghoztty"; and "$GHOSTTY_BIN_DIR/ghoztty" +ssh-cache --host="$ssh_target" >/dev/null 2>&1
                         set ssh_term xterm-ghostty
                     else if command -q infocmp
                         set -l ssh_terminfo
@@ -181,8 +181,8 @@ function __ghostty_setup --on-event fish_prompt -d "Setup ghostty integration"
                                 set -a ssh_opts -o "ControlPath=$ssh_cpath"
 
                                 # Cache successful installation
-                                if test -x "$GHOSTTY_BIN_DIR/ghostty"
-                                    "$GHOSTTY_BIN_DIR/ghostty" +ssh-cache --add="$ssh_target" >/dev/null 2>&1; or true
+                                if test -x "$GHOSTTY_BIN_DIR/ghoztty"
+                                    "$GHOSTTY_BIN_DIR/ghoztty" +ssh-cache --add="$ssh_target" >/dev/null 2>&1; or true
                                 end
                             else
                                 echo "Warning: Failed to install terminfo." >&2
@@ -191,7 +191,7 @@ function __ghostty_setup --on-event fish_prompt -d "Setup ghostty integration"
                             echo "Warning: Could not generate terminfo data." >&2
                         end
                     else
-                        echo "Warning: ghostty command not available for cache management." >&2
+                        echo "Warning: ghoztty command not available for cache management." >&2
                     end
                 end
             end
