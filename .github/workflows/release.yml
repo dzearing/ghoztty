@@ -61,7 +61,7 @@ jobs:
             --identity="$MACOS_CERTIFICATE_NAME" \
             ./macos/build/ReleaseLocal/Ghostty.app \
             ./
-          mv ./Ghostty*.dmg ./Ghostty.dmg
+          mv ./*.dmg ./Ghoztty.dmg
 
       - name: Notarize DMG
         env:
@@ -73,13 +73,13 @@ jobs:
           xcrun notarytool store-credentials "notarytool-profile" --key notarization_key.p8 --key-id "$APPLE_NOTARIZATION_KEY_ID" --issuer "$APPLE_NOTARIZATION_ISSUER"
           rm notarization_key.p8
 
-          xcrun notarytool submit "Ghostty.dmg" --keychain-profile "notarytool-profile" --wait
+          xcrun notarytool submit "Ghoztty.dmg" --keychain-profile "notarytool-profile" --wait
 
-          xcrun stapler staple "Ghostty.dmg"
+          xcrun stapler staple "Ghoztty.dmg"
           xcrun stapler staple "macos/build/ReleaseLocal/Ghostty.app"
 
       - uses: softprops/action-gh-release@v2
         with:
-          files: Ghostty.dmg
+          files: Ghoztty.dmg
           body: |
             Custom Ghostty build (macOS arm64, signed and notarized).
