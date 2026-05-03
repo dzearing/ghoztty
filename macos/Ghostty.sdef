@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
 
-<dictionary title="Ghostty Scripting Dictionary">
-  <suite name="Ghostty Suite" code="Ghst" description="Ghostty scripting support.">
-    <class name="application" code="capp" description="The Ghostty application.">
+<dictionary title="Ghoztty Scripting Dictionary">
+  <suite name="Ghoztty Suite" code="Ghst" description="Ghoztty scripting support.">
+    <class name="application" code="capp" description="The Ghoztty application.">
       <cocoa class="NSApplication"/>
       <property name="name" code="pnam" type="text" access="r" description="The name of the application."/>
       <property name="frontmost" code="pisf" type="boolean" access="r" description="Is this the active application?">
