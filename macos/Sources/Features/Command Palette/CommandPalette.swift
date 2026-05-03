@@ -75,8 +75,7 @@ struct CommandPaletteView: View {
     @State private var hoveredOptionID: UUID?
 
     private var allOptions: [CommandOption] {
-        var seen = Set<UUID>()
-        return sections.flatMap(\.options).filter { seen.insert($0.id).inserted }
+        sections.flatMap(\.options)
     }
 
     var query: String {
