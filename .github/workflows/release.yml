@@ -18,7 +18,9 @@ jobs:
       - uses: mlugg/setup-zig@v2
 
       - name: Build macOS app
-        run: zig build -Doptimize=ReleaseFast -Demit-macos-app
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          zig build -Doptimize=ReleaseFast -Demit-macos-app -Dversion-string="$VERSION"
 
       - name: Codesign app bundle
         env:
