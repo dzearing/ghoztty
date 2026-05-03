@@ -89,9 +89,12 @@ struct TerminalCommandPaletteView: View {
 
         if !recentOptions.isEmpty {
             sections.append(CommandPaletteSection(title: "Recent", options: recentOptions))
+            let recentIdSet = Set(recentIds)
+            let remaining = defaultSorted.filter { $0.commandIdentifier == nil || !recentIdSet.contains($0.commandIdentifier!) }
+            sections.append(CommandPaletteSection(title: "All Commands", options: remaining))
+        } else {
+            sections.append(CommandPaletteSection(title: nil, options: defaultSorted))
         }
-
-        sections.append(CommandPaletteSection(title: recentOptions.isEmpty ? nil : "All Commands", options: defaultSorted))
 
         return sections
     }
