@@ -31,7 +31,7 @@ struct TerminalCommandPaletteView: View {
                         CommandPaletteView(
                             isPresented: $isPresented,
                             backgroundColor: ghosttyConfig.backgroundColor,
-                            options: commandOptions
+                            sections: commandSections
                         )
                         .zIndex(1) // Ensure it's on top
 
@@ -55,29 +55,45 @@ struct TerminalCommandPaletteView: View {
         }
     }
 
-    /// All commands available in the command palette, combining update and terminal options.
-    private var commandOptions: [CommandOption] {
-        var options: [CommandOption] = []
-        // Updates always appear first
-        options.append(contentsOf: updateOptions)
+    /// All commands available in the command palette, organized into sections.
+    /// An optional "Recent" section surfaces the 10 most recently used commands
+    /// in recency order; an "All Commands" section (or untitled section when there
+    /// are no recent commands) lists every command alphabetically.
+    private var commandSections: [CommandPaletteSection] {
+        var sections: [CommandPaletteSection] = []
 
-        // Sort the rest. We replace ":" with a character that sorts before space
-        // so that "Foo:" sorts before "Foo Bar:". Use sortKey as a tie-breaker
-        // for stable ordering when titles are equal.
-        options.append(contentsOf: (jumpOptions + terminalOptions).sorted { a, b in
+        let updates = updateOptions
+        if !updates.isEmpty {
+            sections.append(CommandPaletteSection(title: nil, options: updates))
+        }
+
+        let rest = jumpOptions + terminalOptions
+
+        let defaultSorted = rest.sorted { a, b in
             let aNormalized = a.title.replacingOccurrences(of: ":", with: "\t")
             let bNormalized = b.title.replacingOccurrences(of: ":", with: "\t")
             let comparison = aNormalized.localizedCaseInsensitiveCompare(bNormalized)
             if comparison != .orderedSame {
                 return comparison == .orderedAscending
             }
-            // Tie-breaker: use sortKey if both have one
             if let aSortKey = a.sortKey, let bSortKey = b.sortKey {
                 return aSortKey < bSortKey
             }
             return false
-        })
-        return options
+        }
+
+        let recentIds = PaletteHistory.shared.recentIdentifiers(limit: 10)
+        let recentOptions = recentIds.compactMap { id in
+            defaultSorted.first { $0.commandIdentifier == id }
+        }
+
+        if !recentOptions.isEmpty {
+            sections.append(CommandPaletteSection(title: "Recent", options: recentOptions))
+        }
+
+        sections.append(CommandPaletteSection(title: recentOptions.isEmpty ? nil : "All Commands", options: defaultSorted))
+
+        return sections
     }
 
     /// Commands for installing or canceling available updates.
@@ -127,8 +143,10 @@ struct TerminalCommandPaletteView: View {
                 return CommandOption(
                     title: c.title,
                     description: c.description,
-                    symbols: symbols
+                    symbols: symbols,
+                    commandIdentifier: c.action
                 ) {
+                    PaletteHistory.shared.recordUsage(for: c.action)
                     onAction(c.action)
                 }
             }
