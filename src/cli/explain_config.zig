@@ -11,12 +11,12 @@ const Pager = @import("Pager.zig");
 pub const Options = struct {
     /// The config option to explain. For example:
     ///
-    ///   ghostty +explain-config --option=font-size
+    ///   ghoztty +explain-config --option=font-size
     option: ?[]const u8 = null,
 
     /// The keybind action to explain. For example:
     ///
-    ///   ghostty +explain-config --keybind=copy_to_clipboard
+    ///   ghoztty +explain-config --keybind=copy_to_clipboard
     keybind: ?[]const u8 = null,
 
     pub fn deinit(self: Options) void {

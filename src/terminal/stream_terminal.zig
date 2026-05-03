@@ -79,7 +79,7 @@ pub const Handler = struct {
         title_changed: ?*const fn (*Handler) void,
 
         /// Called in response to an XTVERSION query. Returns the version
-        /// string to report (e.g. "ghostty 1.2.3"). The returned memory
+        /// string to report (e.g. "ghoztty 1.2.3"). The returned memory
         /// must be valid for the lifetime of the call. The maximum length
         /// is 256 bytes; longer strings will be silently ignored.
         xtversion: ?*const fn (*Handler) []const u8,
@@ -1515,7 +1515,7 @@ test "xtversion with effect" {
             written = data;
         }
         fn xtversion(_: *Handler) []const u8 {
-            return "ghostty 1.2.3";
+            return "ghoztty 1.2.3";
         }
     };
     S.written = null;

@@ -50,11 +50,11 @@ pub fn run(alloc: Allocator) !u8 {
         \\
         \\A special command line argument `-e <command>` can be used to run
         \\the specific command inside the terminal emulator. For example,
-        \\`ghostty -e top` will run the `top` command inside the terminal.
+        \\`ghoztty -e top` will run the `top` command inside the terminal.
         \\
         \\On macOS, launching the terminal emulator from the CLI is not
-        \\supported and only actions are supported. Use `open -na Ghostty.app`
-        \\instead, or `open -na ghostty.app --args --foo=bar --baz=quz` to pass
+        \\supported and only actions are supported. Use `open -na Ghoztty.app`
+        \\instead, or `open -na Ghoztty.app --args --foo=bar --baz=quz` to pass
         \\arguments.
         \\
         \\Available actions:

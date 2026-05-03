@@ -107,7 +107,7 @@ pub export fn ghostty_init(argc: usize, argv: [*][*:0]u8) c_int {
 
     std.os.argv = argv[0..argc];
     state.init() catch |err| {
-        std.log.err("failed to initialize ghostty error={}", .{err});
+        std.log.err("failed to initialize ghoztty error={}", .{err});
         return 1;
     };
 

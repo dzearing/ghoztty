@@ -652,7 +652,7 @@ const Subprocess = struct {
             try env.put("TERMINFO", dir);
         } else {
             if (comptime builtin.target.os.tag.isDarwin()) {
-                log.warn("ghostty terminfo not found, using xterm-256color", .{});
+                log.warn("ghoztty terminfo not found, using xterm-256color", .{});
                 log.warn("the terminfo SHOULD exist on macos, please ensure", .{});
                 log.warn("you're using a valid app bundle.", .{});
             }

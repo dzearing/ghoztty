@@ -74,7 +74,7 @@ const Effects = struct {
     pub const EnquiryFn = *const fn (Terminal, ?*anyopaque) callconv(lib.calling_conv) lib.String;
 
     /// C function pointer type for the xtversion callback.
-    /// Returns the version string (e.g. "ghostty 1.2.3"). The memory
+    /// Returns the version string (e.g. "ghoztty 1.2.3"). The memory
     /// must remain valid until the callback returns. An empty string
     /// (len=0) causes the default "libghostty" to be reported.
     pub const XtversionFn = *const fn (Terminal, ?*anyopaque) callconv(lib.calling_conv) lib.String;

@@ -1,4 +1,4 @@
-//! The main entrypoint for the `ghostty` application. This also serves
+//! The main entrypoint for the `ghoztty` application. This also serves
 //! as the process initialization code for the `libghostty` library.
 
 const std = @import("std");
@@ -44,7 +44,7 @@ pub fn main() !MainReturn {
             error.InvalidAction => try stderr.print(
                 "Error: unknown CLI action specified. CLI actions are specified with\n" ++
                     "the '+' character.\n\n" ++
-                    "All valid CLI actions can be listed with `ghostty +help`\n",
+                    "All valid CLI actions can be listed with `ghoztty +help`\n",
                 .{},
             ),
 
@@ -73,15 +73,15 @@ pub fn main() !MainReturn {
 
     if (comptime build_config.app_runtime == .none) {
         const stdout = std.io.getStdOut().writer();
-        try stdout.print("Usage: ghostty +<action> [flags]\n\n", .{});
+        try stdout.print("Usage: ghoztty +<action> [flags]\n\n", .{});
         try stdout.print(
-            \\This is the Ghostty helper CLI that accompanies the graphical Ghostty app.
+            \\This is the Ghoztty helper CLI that accompanies the graphical Ghoztty app.
             \\To launch the terminal directly, please launch the graphical app
-            \\(i.e. Ghostty.app on macOS). This CLI can be used to perform various
+            \\(i.e. Ghoztty.app on macOS). This CLI can be used to perform various
             \\actions such as inspecting the version, listing fonts, etc.
             \\
-            \\On macOS, the terminal can also be launched using `open -na Ghostty.app`,
-            \\or `open -na Ghostty.app --args --foo=bar --baz=qux` to pass arguments.
+            \\On macOS, the terminal can also be launched using `open -na Ghoztty.app`,
+            \\or `open -na Ghoztty.app --args --foo=bar --baz=qux` to pass arguments.
             \\
             \\We don't have proper help output yet, sorry! Please refer to the
             \\source code or Discord community for help for now. We'll fix this in time.

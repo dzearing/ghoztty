@@ -1597,7 +1597,7 @@ const Preview = struct {
                 }
                 _ = child.print(
                     &.{
-                        .{ .text = "ghostty ", .style = color6 },
+                        .{ .text = "ghoztty ", .style = color6 },
                         .{ .text = "on ", .style = standard },
                         .{ .text = " main ", .style = color4 },
                         .{ .text = "[+] ", .style = color1 },

@@ -1336,7 +1336,7 @@ pub const Surface = struct {
                 env.remove("XPC_SERVICE_NAME");
             }
 
-            // Remove this so that running `ghostty` within Ghostty works.
+            // Remove this so that running `ghoztty` within Ghoztty works.
             env.remove("GHOSTTY_MAC_LAUNCH_SOURCE");
 
             // If we were launched from the desktop then we want to

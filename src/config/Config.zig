@@ -121,7 +121,7 @@ language: ?[:0]const u8 = null,
 ///
 /// You can generate the list of valid values using the CLI:
 ///
-///     ghostty +list-fonts
+///     ghoztty +list-fonts
 ///
 /// This configuration can be repeated multiple times to specify preferred
 /// fallback fonts when the requested codepoint is not available in the primary
@@ -561,7 +561,7 @@ language: ?[:0]const u8 = null,
 /// list is in the `share/ghostty/themes` directory (wherever you installed the
 /// Ghostty "share" directory.
 ///
-/// To see a list of available themes, run `ghostty +list-themes`.
+/// To see a list of available themes, run `ghoztty +list-themes`.
 ///
 /// A theme file is simply another Ghostty configuration file. They share
 /// the same syntax and same configuration options. A theme can set any valid
@@ -1156,7 +1156,7 @@ palette: Palette = .{},
 /// created when Ghostty starts, use the `initial-command` configuration.
 ///
 /// Ghostty supports the common `-e` flag for executing a command with
-/// arguments. For example, `ghostty -e fish --with --custom --args`.
+/// arguments. For example, `ghoztty -e fish --with --custom --args`.
 /// This flag sets the `initial-command` configuration, see that for more
 /// information.
 command: ?Command = null,
@@ -1170,14 +1170,14 @@ command: ?Command = null,
 /// this at runtime works but will only affect the next terminal surface
 /// if it is the first one ever created.
 ///
-/// If you're using the `ghostty` CLI there is also a shortcut to set this
-/// with arguments directly: you can use the `-e` flag. For example: `ghostty -e
+/// If you're using the `ghoztty` CLI there is also a shortcut to set this
+/// with arguments directly: you can use the `-e` flag. For example: `ghoztty -e
 /// fish --with --custom --args`. The `-e` flag automatically forces some
 /// other behaviors as well:
 ///
 ///   * Disables shell expansion since the input is expected to already
 ///     be shell-expanded by the upstream (e.g. the shell used to type in
-///     the `ghostty -e` command).
+///     the `ghoztty -e` command).
 ///
 ///   * `gtk-single-instance=false` - This ensures that a new instance is
 ///     launched and the CLI args are respected.
@@ -1508,7 +1508,7 @@ class: ?[:0]const u8 = null,
 /// This controls the instance name field of the `WM_CLASS` X11 property when
 /// running under X11. It has no effect otherwise.
 ///
-/// The default is `ghostty`.
+/// The default is `ghoztty`.
 ///
 /// This only affects GTK builds.
 @"x11-instance-name": ?[:0]const u8 = null,
@@ -1537,7 +1537,7 @@ class: ?[:0]const u8 = null,
 
 /// Key bindings. The format is `trigger=action`. Duplicate triggers will
 /// overwrite previously set values. The list of actions is available in
-/// the documentation or using the `ghostty +list-actions` command.
+/// the documentation or using the `ghoztty +list-actions` command.
 ///
 /// Trigger: `+`-separated list of keys and modifiers. Example: `ctrl+a`,
 /// `ctrl+shift+b`, `up`.
@@ -1615,9 +1615,9 @@ class: ?[:0]const u8 = null,
 /// is sometimes called a leader key, a key chord, a key table, etc. There
 /// is no hardcoded limit on the number of parts in a sequence.
 ///
-/// Warning: If you define a sequence as a CLI argument to `ghostty`,
+/// Warning: If you define a sequence as a CLI argument to `ghoztty`,
 /// you probably have to quote the keybind since `>` is a special character
-/// in most shells. Example: ghostty --keybind='ctrl+a>n=new_window'
+/// in most shells. Example: ghoztty --keybind='ctrl+a>n=new_window'
 ///
 /// A trigger sequence has some special handling:
 ///
@@ -1668,7 +1668,7 @@ class: ?[:0]const u8 = null,
 ///     e.g. `text:\x15` sends Ctrl-U.
 ///
 ///   * All other actions can be found in the documentation or by using the
-///     `ghostty +list-actions` command.
+///     `ghoztty +list-actions` command.
 ///
 /// Some notes for the action:
 ///
@@ -2118,7 +2118,7 @@ keybind: Keybinds = .{},
 ///   * `light` - Use the light theme regardless of system theme.
 ///   * `dark` - Use the dark theme regardless of system theme.
 ///   * `ghostty` - Use the background and foreground colors specified in the
-///     Ghostty configuration. This is only supported on Linux builds.
+///     Ghoztty configuration. This is only supported on Linux builds.
 ///
 /// On macOS, if `macos-titlebar-style` is `tabs` or `transparent`, the window theme will be
 /// automatically set based on the luminosity of the terminal background color.
@@ -2845,7 +2845,7 @@ keybind: Keybinds = .{},
 ///     cache manually using various arguments.
 ///     (Available since: 1.2.0)
 ///
-///   * `path` - Add Ghostty's binary directory to PATH. This ensures the `ghostty`
+///   * `path` - Add Ghoztty's binary directory to PATH. This ensures the `ghoztty`
 ///     command is available in the shell even if shell init scripts reset PATH.
 ///     This is particularly useful on macOS where PATH is often overridden by
 ///     system scripts. The directory is only added if not already present.
@@ -3564,11 +3564,11 @@ else
 /// Available since: 1.1.0
 @"gtk-opengl-debug": bool = builtin.mode == .Debug,
 
-/// If `true`, the Ghostty GTK application will run in single-instance mode:
-/// each new `ghostty` process launched will result in a new window if there is
+/// If `true`, the Ghoztty GTK application will run in single-instance mode:
+/// each new `ghoztty` process launched will result in a new window if there is
 /// already a running process.
 ///
-/// If `false`, each new ghostty process will launch a separate application.
+/// If `false`, each new ghoztty process will launch a separate application.
 ///
 /// If `detect`, Ghostty will assume true (single instance) unless one of
 /// the following scenarios is found:

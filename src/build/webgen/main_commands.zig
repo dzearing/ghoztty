@@ -44,8 +44,8 @@ pub fn genActions(writer: *std.Io.Writer) !void {
             }
             try writer.writeAll("\n```\n");
             switch (action) {
-                .help, .version => try writer.writeAll("ghostty --" ++ field.name ++ "\n"),
-                else => try writer.writeAll("ghostty +" ++ field.name ++ "\n"),
+                .help, .version => try writer.writeAll("ghoztty --" ++ field.name ++ "\n"),
+                else => try writer.writeAll("ghoztty +" ++ field.name ++ "\n"),
             }
             try writer.writeAll("```\n\n");
         }
