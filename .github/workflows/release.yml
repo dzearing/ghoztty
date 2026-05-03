@@ -28,6 +28,9 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/v}
           zig build -Doptimize=ReleaseFast -Demit-macos-app -Dxcframework-target=native -Dversion-string="$VERSION"
 
+      - name: Rename app bundle
+        run: mv macos/build/ReleaseLocal/Ghostty.app macos/build/ReleaseLocal/Ghoztty.app
+
       - name: Codesign app bundle
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
@@ -43,14 +46,14 @@ jobs:
           security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CI_KEYCHAIN_PWD" build.keychain
 
-          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime "macos/build/ReleaseLocal/Ghostty.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
-          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime "macos/build/ReleaseLocal/Ghostty.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"
-          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime "macos/build/ReleaseLocal/Ghostty.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
-          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime "macos/build/ReleaseLocal/Ghostty.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
-          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime "macos/build/ReleaseLocal/Ghostty.app/Contents/Frameworks/Sparkle.framework"
-          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime "macos/build/ReleaseLocal/Ghostty.app/Contents/PlugIns/DockTilePlugin.plugin"
+          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime "macos/build/ReleaseLocal/Ghoztty.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
+          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime "macos/build/ReleaseLocal/Ghoztty.app/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"
+          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime "macos/build/ReleaseLocal/Ghoztty.app/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
+          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime "macos/build/ReleaseLocal/Ghoztty.app/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
+          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime "macos/build/ReleaseLocal/Ghoztty.app/Contents/Frameworks/Sparkle.framework"
+          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime "macos/build/ReleaseLocal/Ghoztty.app/Contents/PlugIns/DockTilePlugin.plugin"
 
-          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime --entitlements "macos/Ghostty.entitlements" macos/build/ReleaseLocal/Ghostty.app
+          /usr/bin/codesign --verbose -f -s "$MACOS_CERTIFICATE_NAME" -o runtime --entitlements "macos/Ghostty.entitlements" macos/build/ReleaseLocal/Ghoztty.app
 
       - name: Create DMG
         env:
@@ -59,7 +62,7 @@ jobs:
           npm install --global create-dmg
           create-dmg \
             --identity="$MACOS_CERTIFICATE_NAME" \
-            ./macos/build/ReleaseLocal/Ghostty.app \
+            ./macos/build/ReleaseLocal/Ghoztty.app \
             ./
           mv ./*.dmg ./Ghoztty.dmg
 
@@ -76,10 +79,10 @@ jobs:
           xcrun notarytool submit "Ghoztty.dmg" --keychain-profile "notarytool-profile" --wait
 
           xcrun stapler staple "Ghoztty.dmg"
-          xcrun stapler staple "macos/build/ReleaseLocal/Ghostty.app"
+          xcrun stapler staple "macos/build/ReleaseLocal/Ghoztty.app"
 
       - uses: softprops/action-gh-release@v2
         with:
           files: Ghoztty.dmg
           body: |
-            Custom Ghostty build (macOS arm64, signed and notarized).
+            Custom Ghoztty build (macOS arm64, signed and notarized).
