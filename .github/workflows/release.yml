@@ -28,9 +28,6 @@ jobs:
           VERSION=${GITHUB_REF#refs/tags/v}
           zig build -Doptimize=ReleaseFast -Demit-macos-app -Dxcframework-target=native -Dversion-string="$VERSION"
 
-      - name: Rename app bundle
-        run: mv macos/build/ReleaseLocal/Ghostty.app macos/build/ReleaseLocal/Ghoztty.app
-
       - name: Codesign app bundle
         env:
           MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
