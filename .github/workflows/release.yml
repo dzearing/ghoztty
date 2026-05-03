@@ -7,13 +7,19 @@ name: Release
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-15
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Select latest Xcode
+        run: |
+          LATEST=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$LATEST"
+          xcodebuild -version
 
       - uses: mlugg/setup-zig@v2
 
