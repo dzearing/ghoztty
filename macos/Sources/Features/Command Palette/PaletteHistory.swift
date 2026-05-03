@@ -1,5 +1,6 @@
 import Foundation
 
+@MainActor
 final class PaletteHistory {
     static let shared = PaletteHistory()
 
@@ -16,11 +17,6 @@ final class PaletteHistory {
 
         fileURL = URL(fileURLWithPath: configDir).appendingPathComponent("palette-history.json")
         load()
-    }
-
-    func lastUsed(for identifier: String) -> Date? {
-        guard let timestamp = history[identifier] else { return nil }
-        return Date(timeIntervalSince1970: timestamp)
     }
 
     func recordUsage(for identifier: String) {
