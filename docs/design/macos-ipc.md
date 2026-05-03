@@ -140,11 +140,15 @@ private enum TargetEntry {
 
 ## Implementation Details
 
+### Auto-Launch
+
+When `+new-window` is invoked and no running instance is found (socket connection fails), the binary becomes the master process instead of erroring. The CLI action stores the IPC request as JSON in `GlobalState.pending_ipc_json`, returns exit code 200, and `main` falls through to GUI startup. `GlobalState.skip_cli_args` prevents the config parser from interpreting IPC-specific flags (e.g. `--target`) as config keys. After the IPC server starts, `AppDelegate` dispatches the pending JSON through `IPCServer.dispatchPendingJson()`.
+
+For `+split`, no auto-launch — it requires an existing window. For `+close`, no-op if no instance (idempotent).
+
 ### Split Creation (bypasses `ghostty_surface_split`)
 
-Splits are created entirely on the Swift side by posting `Notification.ghosttyNewSplit` directly with a custom `SurfaceConfiguration`. This bypasses the `ghostty_surface_split()` C export because that function only accepts a direction — it has no way to pass a custom command or working directory.
-
-The notification is handled by `BaseTerminalController.ghosttyDidNewSplit()` which creates the new `SurfaceView` synchronously and moves focus to it. After the notification is posted, `controller.focusedSurface` returns the newly created surface — this is what gets registered for pane names.
+Splits are created by calling `BaseTerminalController.newSplit()` directly rather than posting `Notification.ghosttyNewSplit`. This bypasses `ghostty_surface_split()` (which only accepts a direction) and also avoids a timing issue: `replaceSurfaceTree` moves focus via `DispatchQueue.main.async`, so checking `controller.focusedSurface` immediately after a notification would return the old surface, causing pane names to register to the wrong surface. Calling `newSplit()` directly returns the new `SurfaceView`, which is used for pane name registration.
 
 ### Thread Safety
 
@@ -161,16 +165,19 @@ Uses `std.json.Stringify` with `std.Io.Writer.Allocating` (same pattern as `src/
 
 | File | Role |
 |------|------|
-| `src/apprt/embedded.zig` | Unix socket client: `performIpc` → `ipcNewWindow` / `ipcSplit` / `ipcClose` |
-| `src/apprt/ipc.zig` | IPC action types: `NewWindow`, `Split`, `Close` (with C ABI structs) |
-| `src/cli/new_window.zig` | `+new-window` CLI action (argument collection, `performIpc` call) |
+| `src/apprt/embedded.zig` | Unix socket client: `performIpc` → `sendIpc` (shared helper) |
+| `src/apprt/ipc.zig` | IPC action types, error set (`IPCFailed`, `NoRunningInstance`) |
+| `src/global.zig` | `pending_ipc_json`, `skip_cli_args` fields for auto-launch |
+| `src/main_c.zig` | `ghostty_cli_try_action` (exit code 200 handling), `ghostty_pending_ipc_json` export |
+| `src/config/Config.zig` | `loadCliArgs` respects `skip_cli_args` flag |
+| `src/cli/new_window.zig` | `+new-window` CLI action, auto-launch JSON builder |
 | `src/cli/split.zig` | `+split` CLI action |
 | `src/cli/close.zig` | `+close` CLI action |
 | `src/cli/ghostty.zig` | CLI action registry (enum + runMain dispatch) |
-| `include/ghostty.h` | C header for IPC action enums and structs |
-| `macos/Sources/Features/IPC/IPCServer.swift` | Socket server, target registry, action handlers |
+| `include/ghostty.h` | C header for IPC action enums, structs, and pending IPC exports |
+| `macos/Sources/Features/IPC/IPCServer.swift` | Socket server, target registry, action handlers, `dispatchPendingJson` |
 | `macos/Sources/Features/IPC/IPCMessage.swift` | `IPCRequest` (Decodable) / `IPCResponse` (Encodable) |
-| `macos/Sources/App/macOS/AppDelegate.swift` | Lifecycle: `ipcServer.start()` / `.stop()` |
+| `macos/Sources/App/macOS/AppDelegate.swift` | Lifecycle: `ipcServer.start()` / `.stop()`, pending IPC dispatch |
 
 ## Build & Test
 
@@ -178,19 +185,16 @@ Uses `std.json.Stringify` with `std.Io.Writer.Allocating` (same pattern as `src/
 # Build (from repo root — requires Zig 0.15.2+, Xcode 26, Metal Toolchain)
 PATH="/opt/homebrew/opt/zig@0.15/bin:$PATH" zig build -Doptimize=Debug
 
-# Launch the debug build (uses separate socket from release)
-./zig-out/Ghostty.app/Contents/MacOS/ghostty
+# +new-window auto-launches the app if no instance is running
+./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +new-window --target=test --title=test --command=bash
+./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +split --target=test --name=right --direction=right --command=top
+./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +close --target=right
+./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +close --target=test
 
-# Test from another terminal
-./zig-out/Ghostty.app/Contents/MacOS/ghostty +new-window --target=test --command=bash
-./zig-out/Ghostty.app/Contents/MacOS/ghostty +split --target=test --name=right --direction=right --command=top
-./zig-out/Ghostty.app/Contents/MacOS/ghostty +close --target=right
-./zig-out/Ghostty.app/Contents/MacOS/ghostty +close --target=test
-
-# Re-runnable workspace script
-./zig-out/Ghostty.app/Contents/MacOS/ghostty +new-window --target=dev --command=vim
-./zig-out/Ghostty.app/Contents/MacOS/ghostty +split --target=dev --name=server --direction=right --command="npm start"
-./zig-out/Ghostty.app/Contents/MacOS/ghostty +split --target=dev --name=tests --direction=down --command="npm test"
+# Re-runnable workspace script (no need to launch app separately)
+./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +new-window --target=dev --command=vim
+./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +split --target=dev --name=server --direction=right --command="npm start"
+./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +split --target=dev --name=tests --direction=down --command="npm test"
 # Run again — focuses existing panes, no duplicates
 ```
 
@@ -201,5 +205,4 @@ Consult `HACKING.md` for full build prerequisites.
 - Windows support (no macOS IPC on Windows)
 - Replacing the existing GTK D-Bus implementation
 - Full remote control API (focused on workspace setup/teardown)
-- `--title` support (SurfaceConfiguration doesn't have a title field)
 - `--tab` support (could be added later)

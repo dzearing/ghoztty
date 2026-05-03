@@ -1077,6 +1077,8 @@ typedef enum {
 
 GHOSTTY_API int ghostty_init(uintptr_t, char**);
 GHOSTTY_API void ghostty_cli_try_action(void);
+GHOSTTY_API const char* ghostty_pending_ipc_json(void);
+GHOSTTY_API void ghostty_consume_pending_ipc_json(void);
 GHOSTTY_API ghostty_info_s ghostty_info(void);
 GHOSTTY_API const char* ghostty_translate(const char*);
 GHOSTTY_API void ghostty_string_free(ghostty_string_s);

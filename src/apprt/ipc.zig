@@ -10,6 +10,9 @@ pub const Errors = error{
     /// an a more specific error message will have been written to stderr (or
     /// otherwise shown to the user in an appropriate way).
     IPCFailed,
+
+    /// No running instance was found (socket does not exist).
+    NoRunningInstance,
 };
 
 pub const Target = union(Key) {

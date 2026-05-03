@@ -129,6 +129,10 @@ fn runArgs(
             .arguments = if (opts._arguments.items.len == 0) null else opts._arguments.items,
         },
     ) catch |err| switch (err) {
+        error.NoRunningInstance => {
+            try stderr.print("No running Ghoztty instance found. Start one with +new-window first.\n", .{});
+            return 1;
+        },
         error.IPCFailed => return 1,
         else => {
             try stderr.print("Sending the IPC failed: {}", .{err});

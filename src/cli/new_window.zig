@@ -7,6 +7,7 @@ const args = @import("args.zig");
 const diagnostics = @import("diagnostics.zig");
 const lib = @import("../lib/main.zig");
 const homedir = @import("../os/homedir.zig");
+const global = &@import("../global.zig").state;
 
 pub const Options = struct {
     /// This is set by the CLI parser for deinit.
@@ -216,26 +217,57 @@ fn runArgs(
     defer arena.deinit();
     const alloc = arena.allocator();
 
+    const arguments = if (opts._arguments.items.len == 0) null else opts._arguments.items;
+
     if (apprt.App.performIpc(
         alloc,
         if (opts.class) |class| .{ .class = class } else .detect,
         .new_window,
         .{
-            .arguments = if (opts._arguments.items.len == 0) null else opts._arguments.items,
+            .arguments = arguments,
         },
     ) catch |err| switch (err) {
-        error.IPCFailed => {
-            // The apprt should have printed a more specific error message
-            // already.
-            return 1;
+        error.NoRunningInstance => {
+            global.pending_ipc_json = buildIpcJson(global.alloc, "new-window", arguments) catch {
+                try stderr.print("Failed to build IPC JSON for auto-launch\n", .{});
+                return 1;
+            };
+            return 200;
         },
+        error.IPCFailed => return 1,
         else => {
             try stderr.print("Sending the IPC failed: {}", .{err});
             return 1;
         },
     }) return 0;
 
-    // If we get here, the platform is not supported.
     try stderr.print("+new-window is not supported on this platform.\n", .{});
     return 1;
+}
+
+fn buildIpcJson(alloc: Allocator, action_name: []const u8, arguments: ?[][:0]const u8) ![:0]const u8 {
+    var json_buf: std.Io.Writer.Allocating = .init(alloc);
+    errdefer json_buf.deinit();
+    var jws: std.json.Stringify = .{ .writer = &json_buf.writer };
+
+    try jws.beginObject();
+    try jws.objectField("action");
+    try jws.write(action_name);
+
+    if (arguments) |args_list| {
+        try jws.objectField("arguments");
+        try jws.beginArray();
+        for (args_list) |arg| {
+            try jws.write(arg);
+        }
+        try jws.endArray();
+    }
+
+    try jws.endObject();
+
+    const written = json_buf.written();
+    const result = try alloc.allocSentinel(u8, written.len, 0);
+    @memcpy(result, written);
+    json_buf.deinit();
+    return result;
 }

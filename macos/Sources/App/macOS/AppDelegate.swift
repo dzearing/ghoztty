@@ -96,6 +96,7 @@ class AppDelegate: NSObject,
     private var derivedConfig: DerivedConfig = DerivedConfig()
 
     private lazy var ipcServer = IPCServer(ghostty: ghostty)
+    private var hasPendingIpc = false
 
     /// The ghostty global state. Only one per process.
     let ghostty: Ghostty.App
@@ -224,6 +225,13 @@ class AppDelegate: NSObject,
         NSApp.servicesMenu = menuServices
 
         ipcServer.start()
+
+        if let jsonPtr = ghostty_pending_ipc_json() {
+            let json = String(cString: jsonPtr)
+            ghostty_consume_pending_ipc_json()
+            hasPendingIpc = true
+            ipcServer.dispatchPendingJson(json)
+        }
 
         // Setup a local event monitor for app-level keyboard shortcuts. See
         // localEventHandler for more info why.
@@ -354,7 +362,7 @@ class AppDelegate: NSObject,
             // is possible to have other windows in a few scenarios:
             //   - if we're opening a URL since `application(_:openFile:)` is called before this.
             //   - if we're restoring from persisted state
-            if TerminalController.all.isEmpty && derivedConfig.initialWindow {
+            if TerminalController.all.isEmpty && derivedConfig.initialWindow && !hasPendingIpc {
                 undoManager.disableUndoRegistration()
                 _ = TerminalController.newWindow(ghostty)
                 undoManager.enableUndoRegistration()

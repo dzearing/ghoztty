@@ -33,6 +33,8 @@ pub const GlobalState = struct {
     action: ?cli.ghostty.Action,
     logging: Logging,
     rlimits: ResourceLimits = .{},
+    pending_ipc_json: ?[:0]const u8 = null,
+    skip_cli_args: bool = false,
 
     /// The app resources directory, equivalent to zig-out/share when we build
     /// from source. This is null if we can't detect it.
@@ -183,6 +185,7 @@ pub const GlobalState = struct {
     /// Cleans up the global state. This doesn't _need_ to be called but
     /// doing so in dev modes will check for memory leaks.
     pub fn deinit(self: *GlobalState) void {
+        if (self.pending_ipc_json) |json| self.alloc.free(json);
         self.resources_dir.deinit(self.alloc);
 
         // Flush our crash logs

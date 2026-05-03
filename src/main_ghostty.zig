@@ -64,11 +64,18 @@ pub fn main() !MainReturn {
     // Execute our action if we have one
     if (state.action) |action| {
         std.log.info("executing CLI action={}", .{action});
-        posix.exit(action.run(alloc) catch |err| err: {
+        const exit_code = action.run(alloc) catch |err| err: {
             std.log.err("CLI action failed error={}", .{err});
             break :err 1;
-        });
-        return;
+        };
+        if (exit_code == 200) {
+            state.action = null;
+            state.skip_cli_args = true;
+            std.log.info("no running instance, becoming master process", .{});
+        } else {
+            posix.exit(exit_code);
+            return;
+        }
     }
 
     if (comptime build_config.app_runtime == .none) {

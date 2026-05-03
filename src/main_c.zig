@@ -119,12 +119,31 @@ pub export fn ghostty_init(argc: usize, argv: [*][*:0]u8) c_int {
 pub export fn ghostty_cli_try_action() void {
     const action = state.action orelse return;
     std.log.info("executing CLI action={}", .{action});
-    posix.exit(action.run(state.alloc) catch |err| {
+    const exit_code = action.run(state.alloc) catch |err| {
         std.log.err("CLI action failed error={}", .{err});
         posix.exit(1);
-    });
+    };
 
-    posix.exit(0);
+    if (exit_code == 200) {
+        state.action = null;
+        state.skip_cli_args = true;
+        std.log.info("no running instance, becoming master process", .{});
+        return;
+    }
+
+    posix.exit(exit_code);
+}
+
+pub export fn ghostty_pending_ipc_json() ?[*:0]const u8 {
+    if (state.pending_ipc_json) |json| return json.ptr;
+    return null;
+}
+
+pub export fn ghostty_consume_pending_ipc_json() void {
+    if (state.pending_ipc_json) |json| {
+        state.alloc.free(json);
+        state.pending_ipc_json = null;
+    }
 }
 
 /// Return metadata about Ghostty, such as version, build mode, etc.

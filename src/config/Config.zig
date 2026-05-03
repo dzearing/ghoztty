@@ -4096,6 +4096,8 @@ pub fn loadDefaultFiles(self: *Config, alloc: Allocator) !void {
 
 /// Load and parse the CLI args.
 pub fn loadCliArgs(self: *Config, alloc_gpa: Allocator) !void {
+    if (@import("../global.zig").state.skip_cli_args) return;
+
     switch (builtin.os.tag) {
         .windows => {},
 

@@ -215,6 +215,24 @@ class IPCServer {
         }
     }
 
+    func dispatchPendingJson(_ json: String) {
+        guard let data = json.data(using: .utf8) else {
+            Self.logger.warning("IPC: pending JSON is not valid UTF-8")
+            return
+        }
+
+        let request: IPCRequest
+        do {
+            request = try JSONDecoder().decode(IPCRequest.self, from: data)
+        } catch {
+            Self.logger.warning("IPC: pending JSON is malformed: \(error)")
+            return
+        }
+
+        Self.logger.info("IPC: processing pending action '\(request.action)'")
+        _ = dispatchAction(request)
+    }
+
     private func dispatchAction(_ request: IPCRequest) -> IPCResponse {
         switch request.action {
         case "new-window":
@@ -282,19 +300,16 @@ class IPCServer {
                         splitConfig.command = splitCommand
                     }
 
-                    NotificationCenter.default.post(
-                        name: Ghostty.Notification.ghosttyNewSplit,
-                        object: surfaceView,
-                        userInfo: [
-                            "direction": direction,
-                            Ghostty.Notification.NewSurfaceConfigKey: splitConfig,
-                        ]
+                    let newView = controller.newSplit(
+                        at: surfaceView,
+                        direction: direction,
+                        baseConfig: splitConfig
                     )
 
-                    if let name = parsed.name, let newSurface = controller.focusedSurface {
+                    if let name = parsed.name, let newView {
                         self?.targetRegistry[name] = .pane(
                             controller: WeakRef(controller),
-                            surface: WeakRef(newSurface)
+                            surface: WeakRef(newView)
                         )
                         Self.logger.info("IPC: registered pane target '\(name)'")
                     }
@@ -364,20 +379,16 @@ class IPCServer {
                 splitConfig.workingDirectory = workingDirectory
             }
 
-            NotificationCenter.default.post(
-                name: Ghostty.Notification.ghosttyNewSplit,
-                object: surfaceView,
-                userInfo: [
-                    "direction": direction,
-                    Ghostty.Notification.NewSurfaceConfigKey: splitConfig,
-                ]
+            let newView = controller.newSplit(
+                at: surfaceView,
+                direction: direction,
+                baseConfig: splitConfig
             )
 
-            // Register pane name after split creation
-            if let name = parsed.name, let newSurface = controller.focusedSurface {
+            if let name = parsed.name, let newView {
                 self?.targetRegistry[name] = .pane(
                     controller: WeakRef(controller),
-                    surface: WeakRef(newSurface)
+                    surface: WeakRef(newView)
                 )
                 Self.logger.info("IPC: registered pane target '\(name)'")
             }
@@ -424,12 +435,12 @@ class IPCServer {
         targetRegistry = targetRegistry.filter { $0.value.isAlive }
     }
 
-    private static func parseSplitDirection(_ value: String) -> ghostty_action_split_direction_e? {
+    private static func parseSplitDirection(_ value: String) -> SplitTree<Ghostty.SurfaceView>.NewDirection? {
         switch value.lowercased() {
-        case "right": return GHOSTTY_SPLIT_DIRECTION_RIGHT
-        case "down": return GHOSTTY_SPLIT_DIRECTION_DOWN
-        case "left": return GHOSTTY_SPLIT_DIRECTION_LEFT
-        case "up": return GHOSTTY_SPLIT_DIRECTION_UP
+        case "right": return .right
+        case "down": return .down
+        case "left": return .left
+        case "up": return .up
         default: return nil
         }
     }

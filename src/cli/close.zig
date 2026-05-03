@@ -101,6 +101,7 @@ fn runArgs(
             .arguments = if (opts._arguments.items.len == 0) null else opts._arguments.items,
         },
     ) catch |err| switch (err) {
+        error.NoRunningInstance => return 0,
         error.IPCFailed => return 1,
         else => {
             try stderr.print("Sending the IPC failed: {}", .{err});
