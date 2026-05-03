@@ -50,17 +50,17 @@ This triggers the release workflow which builds, signs, notarizes, and publishes
 
 Watch the release workflow:
 ```bash
-gh run list --repo dzearing/ghostty --workflow release.yml --limit 1
+gh run list --repo dzearing/ghoztty --workflow release.yml --limit 1
 ```
 
-Monitor it until completion. If it fails, check logs with `gh run view <id> --repo dzearing/ghostty --log-failed` and fix the issue.
+Monitor it until completion. If it fails, check logs with `gh run view <id> --repo dzearing/ghoztty --log-failed` and fix the issue.
 
 ### Step 5: Publish Release
 
 Once the DMG is built, update the GitHub release with the friendly notes:
 
 ```bash
-gh release edit vX.Y.Z-dz.N --repo dzearing/ghostty --title "Ghoztty vX.Y.Z-dz.N" --notes "$(cat <<'NOTES'
+gh release edit vX.Y.Z-dz.N --repo dzearing/ghoztty --title "Ghoztty vX.Y.Z-dz.N" --notes "$(cat <<'NOTES'
 ## What's new in Ghoztty vX.Y.Z-dz.N
 
 {the approved release notes from step 2}
