@@ -21,6 +21,8 @@ struct CommandOption: Identifiable, Hashable {
     let emphasis: Bool
     /// Sort key for stable ordering when titles are equal.
     let sortKey: AnySortKey?
+    /// Stable identifier used for MRU tracking. Nil for options that shouldn't be tracked.
+    let commandIdentifier: String?
     /// The action to perform when this option is selected.
     let action: () -> Void
 
@@ -34,6 +36,7 @@ struct CommandOption: Identifiable, Hashable {
         badge: String? = nil,
         emphasis: Bool = false,
         sortKey: AnySortKey? = nil,
+        commandIdentifier: String? = nil,
         action: @escaping () -> Void
     ) {
         self.title = title
@@ -45,6 +48,7 @@ struct CommandOption: Identifiable, Hashable {
         self.badge = badge
         self.emphasis = emphasis
         self.sortKey = sortKey
+        self.commandIdentifier = commandIdentifier
         self.action = action
     }
 
@@ -57,13 +61,22 @@ struct CommandOption: Identifiable, Hashable {
     }
 }
 
+struct CommandPaletteSection {
+    let title: String?
+    let options: [CommandOption]
+}
+
 struct CommandPaletteView: View {
     @Binding var isPresented: Bool
     var backgroundColor: Color = Color(nsColor: .windowBackgroundColor)
-    var options: [CommandOption]
+    var sections: [CommandPaletteSection]
     @State private var rawQuery = ""
     @State private var selectedIndex: UInt?
     @State private var hoveredOptionID: UUID?
+
+    private var allOptions: [CommandOption] {
+        sections.flatMap(\.options)
+    }
 
     var query: String {
         rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -73,10 +86,10 @@ struct CommandPaletteView: View {
     // the query. Options with matching leadingColor are ranked higher.
     var filteredOptions: [CommandOption] {
         if query.isEmpty {
-            return options
+            return allOptions
         } else {
             // Filter by title/subtitle match OR color match
-            let filtered = options.filter {
+            let filtered = allOptions.filter {
                 $0.title.matchedIndices(for: query) != nil ||
                 ($0.subtitle?.matchedIndices(for: query) != nil) ||
                 colorMatchScore(for: $0.leadingColor, query: query) > 0
@@ -154,6 +167,7 @@ struct CommandPaletteView: View {
             Divider()
 
             CommandTable(
+                sections: sections,
                 options: filteredOptions,
                 query: query,
                 selectedIndex: $selectedIndex,
@@ -285,6 +299,7 @@ private struct CommandPaletteQuery: View {
 }
 
 private struct CommandTable: View {
+    var sections: [CommandPaletteSection]
     var options: [CommandOption]
     var query: String
     @Binding var selectedIndex: UInt?
@@ -292,7 +307,7 @@ private struct CommandTable: View {
     var action: (CommandOption) -> Void
 
     var body: some View {
-        if options.isEmpty {
+        if options.isEmpty && !query.isEmpty {
             Text("No matches")
                 .foregroundStyle(.secondary)
                 .padding()
@@ -300,23 +315,10 @@ private struct CommandTable: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
-                        ForEach(Array(options.enumerated()), id: \.1.id) { index, option in
-                            CommandRow(
-                                option: option,
-                                query: query,
-                                isSelected: {
-                                    if let selected = selectedIndex {
-                                        return selected == index ||
-                                            (selected >= options.count &&
-                                                index == options.count - 1)
-                                    } else {
-                                        return false
-                                    }
-                                }(),
-                                hoveredID: $hoveredOptionID
-                            ) {
-                                action(option)
-                            }
+                        if query.isEmpty {
+                            sectionContent
+                        } else {
+                            flatContent
                         }
                     }
                     .padding(10)
@@ -330,6 +332,61 @@ private struct CommandTable: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var sectionContent: some View {
+        ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
+            if !section.options.isEmpty {
+                if let title = section.title {
+                    Text(title)
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 8)
+                        .padding(.bottom, 2)
+                }
+
+                ForEach(section.options, id: \.id) { option in
+                    let index = flatIndex(of: option)
+                    CommandRow(
+                        option: option,
+                        query: query,
+                        isSelected: isSelected(at: index),
+                        hoveredID: $hoveredOptionID
+                    ) {
+                        action(option)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var flatContent: some View {
+        ForEach(Array(options.enumerated()), id: \.1.id) { index, option in
+            CommandRow(
+                option: option,
+                query: query,
+                isSelected: isSelected(at: index),
+                hoveredID: $hoveredOptionID
+            ) {
+                action(option)
+            }
+        }
+    }
+
+    private func isSelected(at index: Int) -> Bool {
+        guard let selected = selectedIndex else { return false }
+        if selected == index { return true }
+        if selected >= options.count && index == options.count - 1 { return true }
+        return false
+    }
+
+    private func flatIndex(of option: CommandOption) -> Int {
+        options.firstIndex(where: { $0.id == option.id }) ?? 0
     }
 }
 
