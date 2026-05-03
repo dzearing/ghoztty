@@ -20,7 +20,7 @@ jobs:
       - name: Build macOS app
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          zig build -Doptimize=ReleaseFast -Demit-macos-app -Dversion-string="$VERSION"
+          zig build -Doptimize=ReleaseFast -Demit-macos-app -Dxcframework-target=native -Dversion-string="$VERSION"
 
       - name: Codesign app bundle
         env:
