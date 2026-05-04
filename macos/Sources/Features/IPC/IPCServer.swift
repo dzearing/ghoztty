@@ -253,6 +253,8 @@ class IPCServer {
         var target: String?
         var name: String?
         var title: String?
+        var percent: Int?
+        var pane: String?
     }
 
     private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
@@ -498,6 +500,21 @@ class IPCServer {
 
             if let value = arg.dropPrefix("--title=") {
                 result.title = String(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--percent=") {
+                result.percent = Int(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--split-percent=") {
+                result.percent = Int(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--pane=") {
+                result.pane = String(value)
                 continue
             }
         }
