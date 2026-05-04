@@ -129,6 +129,32 @@ struct SplitTreeTests {
         #expect(result.contains(.leaf(view: view2)))
     }
 
+    @Test func insertingWithCustomRatio() throws {
+        let view1 = MockView()
+        let view2 = MockView()
+        var tree = SplitTree<MockView>(view: view1)
+        tree = try tree.inserting(view: view2, at: view1, direction: .right, ratio: 0.7)
+
+        guard case .split(let split) = tree.root else {
+            Issue.record("Expected split node")
+            return
+        }
+        #expect(split.ratio == 0.7)
+    }
+
+    @Test func insertingWithDefaultRatioIsHalf() throws {
+        let view1 = MockView()
+        let view2 = MockView()
+        var tree = SplitTree<MockView>(view: view1)
+        tree = try tree.inserting(view: view2, at: view1, direction: .right)
+
+        guard case .split(let split) = tree.root else {
+            Issue.record("Expected split node")
+            return
+        }
+        #expect(split.ratio == 0.5)
+    }
+
     // MARK: - Focus Target
 
     @Test func focusTargetOnEmptyTreeReturnsNil() {
