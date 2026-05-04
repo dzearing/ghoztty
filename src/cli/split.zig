@@ -60,7 +60,7 @@ pub const Options = struct {
     }
 };
 
-/// Create a new split pane in a running Ghostty window.
+/// Create a new split pane in a running Ghoztty window.
 ///
 /// If `--target` is specified, the split will be added to the window
 /// with that name. If not specified, the split is added to the most
@@ -81,6 +81,15 @@ pub const Options = struct {
 ///
 ///   * `--direction=right|down|left|up`: The direction to split. Defaults
 ///     to `right` if not specified.
+///
+///   * `--percent=<1-99>`: The percentage of space allocated to the
+///     existing pane. Defaults to 50 if not specified. Values outside
+///     1-99 return an error.
+///
+///   * `--pane=<name>`: Split adjacent to the named pane instead of the
+///     focused surface. The pane must exist (returns an error if not
+///     found). Can be used without `--target` to search across all
+///     registered targets.
 ///
 ///   * `--command=<command>`: The command to run in the split pane.
 ///

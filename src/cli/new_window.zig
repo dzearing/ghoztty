@@ -137,7 +137,7 @@ pub const Options = struct {
 ///
 ///   * `--command`: The command to be executed in the first surface of the new window.
 ///
-///   * `--working-directory=<directory>`: The working directory to pass to Ghostty.
+///   * `--working-directory=<directory>`: The working directory to pass to Ghoztty.
 ///
 ///   * `--title`: A title that will override the title of the first surface in
 ///     the new window. The title override may be edited or removed later.
@@ -155,6 +155,11 @@ pub const Options = struct {
 ///
 ///   * `--split-command=<command>`: The command to run in the split pane.
 ///     Only meaningful when `--split` is also specified.
+///
+///   * `--split-percent=<1-99>`: The percentage of space allocated to the
+///     existing pane when creating the initial split. Defaults to 50.
+///     Only meaningful when `--split` is also specified. Values outside
+///     1-99 return an error.
 ///
 /// Available since: 1.2.0
 pub fn run(alloc: Allocator) !u8 {
