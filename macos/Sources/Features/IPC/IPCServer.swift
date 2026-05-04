@@ -277,6 +277,17 @@ class IPCServer {
             }
         }
 
+        // Validate percent if provided
+        let ratio: Double
+        if let percent = parsed.percent {
+            guard (1...99).contains(percent) else {
+                return IPCResponse(success: false, error: "percent must be between 1 and 99, got \(percent)")
+            }
+            ratio = min(0.9, max(0.1, Double(percent) / 100.0))
+        } else {
+            ratio = 0.5
+        }
+
         DispatchQueue.main.async { [ghostty = self.ghostty, weak self] in
             let controller = TerminalController.newWindow(ghostty, withBaseConfig: parsed.config)
 
@@ -305,7 +316,8 @@ class IPCServer {
                     let newView = controller.newSplit(
                         at: surfaceView,
                         direction: direction,
-                        baseConfig: splitConfig
+                        baseConfig: splitConfig,
+                        ratio: ratio
                     )
 
                     if let name = parsed.name, let newView {
