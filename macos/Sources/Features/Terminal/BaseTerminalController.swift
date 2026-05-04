@@ -236,7 +236,8 @@ class BaseTerminalController: NSWindowController,
     func newSplit(
         at oldView: Ghostty.SurfaceView,
         direction: SplitTree<Ghostty.SurfaceView>.NewDirection,
-        baseConfig config: Ghostty.SurfaceConfiguration? = nil
+        baseConfig config: Ghostty.SurfaceConfiguration? = nil,
+        ratio: Double = 0.5
     ) -> Ghostty.SurfaceView? {
         // We can only create new splits for surfaces in our tree.
         guard surfaceTree.root?.node(view: oldView) != nil else { return nil }
@@ -251,7 +252,8 @@ class BaseTerminalController: NSWindowController,
             newTree = try surfaceTree.inserting(
                 view: newView,
                 at: oldView,
-                direction: direction)
+                direction: direction,
+                ratio: ratio)
         } catch {
             // If splitting fails for any reason (it should not), then we just log
             // and return. The new view we created will be deinitialized and its
