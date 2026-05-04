@@ -343,6 +343,63 @@ class IPCServer {
             }
         }
 
+        // Validate percent if provided
+        let ratio: Double
+        if let percent = parsed.percent {
+            guard (1...99).contains(percent) else {
+                return IPCResponse(success: false, error: "percent must be between 1 and 99, got \(percent)")
+            }
+            ratio = min(0.9, max(0.1, Double(percent) / 100.0))
+        } else {
+            ratio = 0.5
+        }
+
+        // Resolve --pane targeting: find the named pane's surface and controller
+        if let paneName = parsed.pane {
+            pruneStaleTargets()
+            guard let entry = targetRegistry[paneName] else {
+                return IPCResponse(success: false, error: "pane '\(paneName)' not found")
+            }
+            guard let surface = entry.surfaceView, let controller = entry.controller else {
+                return IPCResponse(success: false, error: "pane '\(paneName)' not found")
+            }
+
+            let directionStr = parsed.splitDirection ?? "right"
+            guard let direction = Self.parseSplitDirection(directionStr) else {
+                return IPCResponse(success: false, error: "invalid direction: \(directionStr)")
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                var splitConfig = Ghostty.SurfaceConfiguration()
+                if let splitCommand = parsed.splitCommand {
+                    splitConfig.command = splitCommand
+                }
+                if let command = parsed.config.command {
+                    splitConfig.command = command
+                }
+                if let workingDirectory = parsed.config.workingDirectory {
+                    splitConfig.workingDirectory = workingDirectory
+                }
+
+                let newView = controller.newSplit(
+                    at: surface,
+                    direction: direction,
+                    baseConfig: splitConfig,
+                    ratio: ratio
+                )
+
+                if let name = parsed.name, let newView {
+                    self?.targetRegistry[name] = .pane(
+                        controller: WeakRef(controller),
+                        surface: WeakRef(newView)
+                    )
+                    Self.logger.info("IPC: registered pane target '\(name)'")
+                }
+            }
+
+            return .ok
+        }
+
         let directionStr = parsed.splitDirection ?? "right"
         guard let direction = Self.parseSplitDirection(directionStr) else {
             return IPCResponse(success: false, error: "invalid direction: \(directionStr)")
@@ -384,7 +441,8 @@ class IPCServer {
             let newView = controller.newSplit(
                 at: surfaceView,
                 direction: direction,
-                baseConfig: splitConfig
+                baseConfig: splitConfig,
+                ratio: ratio
             )
 
             if let name = parsed.name, let newView {
