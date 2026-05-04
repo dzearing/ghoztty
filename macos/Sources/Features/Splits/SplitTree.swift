@@ -539,7 +539,7 @@ extension SplitTree.Node {
         let existingNode: Node = .leaf(view: at)
         let newSplit: Node = .split(.init(
             direction: splitDirection,
-            ratio: ratio,
+            ratio: newViewOnLeft ? (1.0 - ratio) : ratio,
             left: newViewOnLeft ? newNode : existingNode,
             right: newViewOnLeft ? existingNode : newNode
         ))

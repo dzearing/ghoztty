@@ -681,6 +681,20 @@ struct SplitTreeTests {
         #expect(nodeIds.count == 3)
     }
 
+    @Test func insertingLeftWithCustomRatioAllocatesExistingPane() throws {
+        let view1 = MockView()
+        let view2 = MockView()
+        var tree = SplitTree<MockView>(view: view1)
+        tree = try tree.inserting(view: view2, at: view1, direction: .left, ratio: 0.7)
+
+        guard case .split(let split) = tree.root else {
+            Issue.record("Expected split node")
+            return
+        }
+        // ratio=0.7 means existing pane gets 70%; new view is on left, so left child gets 30%
+        #expect(split.ratio == 1.0 - 0.7)
+    }
+
     @Test func nodeStructuralIdentityDistinguishesLeaves() throws {
         let (tree, _, _) = try makeHorizontalSplit()
 

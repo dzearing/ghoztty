@@ -574,12 +574,12 @@ class IPCServer {
             }
 
             if let value = arg.dropPrefix("--percent=") {
-                result.percent = Int(value)
+                result.percent = Int(value) ?? -1
                 continue
             }
 
             if let value = arg.dropPrefix("--split-percent=") {
-                result.percent = Int(value)
+                result.percent = Int(value) ?? -1
                 continue
             }
 
