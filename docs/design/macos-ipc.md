@@ -6,13 +6,13 @@ Enable programmatic, declarative terminal workspace setup on macOS via CLI comma
 
 ```bash
 # Create a named workspace — re-running focuses instead of duplicating
-ghostty +new-window --target=dev --working-directory=~/project --command=vim
-ghostty +split --target=dev --name=server --direction=right --command="npm run dev"
-ghostty +split --target=dev --name=tests --direction=down --command="npm test"
+ghoztty +new-window --target=dev --working-directory=~/project --command=vim
+ghoztty +split --target=dev --name=server --direction=right --percent=30 --command="npm run dev"
+ghoztty +split --pane=server --name=tests --direction=down --command="npm test"
 
 # Tear down specific panes or entire windows
-ghostty +close --target=tests    # closes just the test pane
-ghostty +close --target=dev      # closes the entire window
+ghoztty +close --target=tests    # closes just the test pane
+ghoztty +close --target=dev      # closes the entire window
 ```
 
 ## Background
@@ -81,6 +81,7 @@ ghostty +new-window [flags]
 | `--command=<cmd>` | Command to run in the initial surface |
 | `--split=right\|down\|left\|up` | Create an initial split after window creation |
 | `--split-command=<cmd>` | Command to run in the initial split pane |
+| `--split-percent=<1-99>` | Percentage of space for the existing pane in the initial split. Defaults to 50. Only meaningful with `--split`. |
 | `--name=<name>` | Name for the initial split pane (if `--split` is used) |
 | `-e <cmd> [args...]` | Command (everything after `-e` becomes the command) |
 
@@ -97,6 +98,8 @@ ghostty +split [flags]
 | `--target=<name>` | Window to add the split to (by name). Defaults to frontmost. |
 | `--name=<name>` | Register the pane with a name. If exists, focuses instead of creating. |
 | `--direction=right\|down\|left\|up` | Split direction. Defaults to `right`. |
+| `--percent=<1-99>` | Percentage of space for the existing pane. Defaults to 50. Values outside 1-99 return an error. |
+| `--pane=<name>` | Split adjacent to the named pane instead of the focused surface. Returns an error if the pane doesn't exist. Can be used without `--target` to search across all registered targets. |
 | `--command=<cmd>` | Command to run in the new pane |
 | `--working-directory=<path>` | Working directory for the new pane |
 | `-e <cmd> [args...]` | Command (everything after `-e` becomes the command) |
@@ -187,14 +190,14 @@ PATH="/opt/homebrew/opt/zig@0.15/bin:$PATH" zig build -Doptimize=Debug
 
 # +new-window auto-launches the app if no instance is running
 ./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +new-window --target=test --title=test --command=bash
-./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +split --target=test --name=right --direction=right --command=top
+./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +split --target=test --name=right --direction=right --percent=30 --command=top
 ./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +close --target=right
 ./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +close --target=test
 
 # Re-runnable workspace script (no need to launch app separately)
 ./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +new-window --target=dev --command=vim
-./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +split --target=dev --name=server --direction=right --command="npm start"
-./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +split --target=dev --name=tests --direction=down --command="npm test"
+./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +split --target=dev --name=server --direction=right --percent=30 --command="npm start"
+./zig-out/Ghoztty.app/Contents/MacOS/ghoztty +split --pane=server --name=tests --direction=down --command="npm test"
 # Run again — focuses existing panes, no duplicates
 ```
 
