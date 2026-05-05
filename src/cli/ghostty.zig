@@ -81,6 +81,29 @@ pub const Action = enum {
     // Use IPC to close a named pane or window.
     close,
 
+    pub fn description(comptime self: Action) []const u8 {
+        return switch (self) {
+            .version => "Output the version and exit",
+            .help => "Output help information for the CLI or configuration",
+            .@"list-fonts" => "List available fonts",
+            .@"list-keybinds" => "List available keybinds",
+            .@"list-themes" => "List available themes",
+            .@"list-colors" => "List named RGB colors",
+            .@"list-actions" => "List keybind actions",
+            .@"ssh-cache" => "Manage SSH terminfo cache for remote host setup",
+            .@"edit-config" => "Edit the config file in the configured terminal editor",
+            .@"show-config" => "Dump the config to stdout",
+            .@"explain-config" => "Explain a single config option",
+            .@"validate-config" => "Validate passed config file",
+            .@"show-face" => "Show which font face a codepoint is loaded from",
+            .@"crash-report" => "List, view, and send crash reports",
+            .boo => "Boo!",
+            .@"new-window" => "Open a new window via IPC",
+            .split => "Create a split pane via IPC",
+            .close => "Close a named pane or window via IPC",
+        };
+    }
+
     pub fn detectSpecialCase(arg: []const u8) ?SpecialCase(Action) {
         // If we see a "-e" and we haven't seen a command yet, then
         // we are done looking for commands. This special case enables

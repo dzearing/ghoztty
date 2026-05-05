@@ -29,6 +29,8 @@ pub const Options = struct {
 
     /// Manual parse hook, collect all of the arguments after `+new-window`.
     pub fn parseManuallyHook(self: *Options, alloc: Allocator, arg: []const u8, iter: anytype) (error{InvalidValue} || homedir.ExpandError || std.fs.Dir.RealPathAllocError || Allocator.Error)!bool {
+        if (std.mem.eql(u8, arg, "--help") or std.mem.eql(u8, arg, "-h")) return true;
+
         var e_seen: bool = std.mem.eql(u8, arg, "-e");
 
         // Include the argument that triggered the manual parse hook.

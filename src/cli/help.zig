@@ -3,6 +3,12 @@ const Allocator = std.mem.Allocator;
 const args = @import("args.zig");
 const Action = @import("ghostty.zig").Action;
 
+fn padding(comptime name_len: usize) []const u8 {
+    const col = 20;
+    const pad_len = if (name_len < col) col - name_len else 2;
+    return " " ** pad_len;
+}
+
 // Note that this options struct doesn't implement the `help` decl like other
 // actions. That is because the help command is special and wants to handle its
 // own logic around help detection.
@@ -30,7 +36,7 @@ pub fn run(alloc: Allocator) !u8 {
         try args.parse(Options, alloc, &opts, &iter);
     }
 
-    var buffer: [2048]u8 = undefined;
+    var buffer: [4096]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&buffer);
     const stdout = &stdout_writer.interface;
     try stdout.writeAll(
@@ -63,7 +69,12 @@ pub fn run(alloc: Allocator) !u8 {
     );
 
     inline for (@typeInfo(Action).@"enum".fields) |field| {
-        try stdout.print("  +{s}\n", .{field.name});
+        const action = @field(Action, field.name);
+        try stdout.print("  +{s}{s}{s}\n", .{
+            field.name,
+            padding(field.name.len),
+            action.description(),
+        });
     }
 
     try stdout.writeAll(
