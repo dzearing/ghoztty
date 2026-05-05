@@ -2,26 +2,110 @@
 <h1>
 <p align="center">
   <img src="https://github.com/user-attachments/assets/fe853809-ba8b-400b-83ab-a9a0da25be8a" alt="Logo" width="128">
-  <br>Ghostty
+  <br>Ghoztty
 </h1>
   <p align="center">
-    Fast, native, feature-rich terminal emulator pushing modern features.
+    A fork of <a href="https://github.com/ghostty-org/ghostty">Ghostty</a> with CLI-driven window management for AI agents and automation.
     <br />
-    A native GUI or embeddable library via <code>libghostty</code>.
-    <br />
-    <a href="#about">About</a>
+    <a href="#why-this-fork">Why This Fork</a>
     ·
-    <a href="https://ghostty.org/download">Download</a>
+    <a href="#cli-window-management">CLI Commands</a>
     ·
-    <a href="https://ghostty.org/docs">Documentation</a>
-    ·
-    <a href="CONTRIBUTING.md">Contributing</a>
+    <a href="https://ghostty.org/docs">Ghostty Docs</a>
     ·
     <a href="HACKING.md">Developing</a>
   </p>
 </p>
 
-## About
+## Why This Fork
+
+Ghoztty adds IPC-based window management to Ghostty so that external tools — especially AI coding agents like Claude Code — can programmatically create, arrange, and tear down terminal pane layouts.
+
+Upstream Ghostty has no CLI mechanism for creating splits or targeting specific panes. Ghoztty adds three commands (`+new-window`, `+split`, `+close`) that communicate with a running instance over a Unix domain socket, enabling scripted multi-pane workflows.
+
+## CLI Window Management
+
+All commands are **idempotent** — repeating them is safe and will not create duplicates. Named targets that already exist are focused instead of recreated.
+
+### `ghoztty +new-window`
+
+Create a new terminal window (or focus an existing named one). If no running Ghoztty instance is found, one is launched automatically.
+
+```
+ghoztty +new-window [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--target=<name>` | Register the window with a name. If a window with this name exists, it is focused instead. |
+| `--working-directory=<path>` | Set the working directory. Relative paths resolve from cwd. |
+| `--command=<cmd>` | Command to run in the window. |
+| `--title=<title>` | Override the window title. |
+| `--split=right\|down\|left\|up` | Immediately create a split after the window is created. |
+| `--split-command=<cmd>` | Command to run in the split pane (requires `--split`). |
+| `-e <args...>` | Everything after `-e` becomes the command. |
+
+### `ghoztty +split`
+
+Create a split pane in a running window. Requires a running Ghoztty instance.
+
+```
+ghoztty +split [flags]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--direction=right\|down\|left\|up` | Split direction. Default: `right`. |
+| `--target=<name>` | Target a named window (from `+new-window --target`). Default: most recently focused window. |
+| `--name=<name>` | Register this pane with a name. If a pane with this name exists, it is focused instead. |
+| `--command=<cmd>` | Command to run in the new pane. |
+| `--working-directory=<path>` | Working directory for the new pane. |
+| `-e <args...>` | Everything after `-e` becomes the command. |
+
+### `ghoztty +close`
+
+Close a named pane or window. Idempotent — closing a nonexistent target succeeds silently.
+
+```
+ghoztty +close --target=<name>
+```
+
+| Flag | Description |
+|------|-------------|
+| `--target=<name>` | **Required.** The named pane or window to close. |
+
+### Naming and Targeting
+
+- `+new-window --target=<name>` registers a **window** by name
+- `+split --name=<name>` registers a **pane** by name
+- Both `+split --target` and `+close --target` can reference either kind of name
+- Names are arbitrary strings you choose (e.g., `editor`, `logs`, `tests`)
+
+### Examples
+
+**Two-pane layout:**
+```bash
+ghoztty +new-window --target=dev
+ghoztty +split --target=dev --name=sidebar --direction=right
+```
+
+**Three-pane IDE layout:**
+```bash
+ghoztty +new-window --target=ide --command="nvim ."
+ghoztty +split --target=ide --name=term --direction=down --command=zsh
+ghoztty +split --target=ide --name=logs --direction=right --command="tail -f app.log"
+```
+
+**Teardown:**
+```bash
+ghoztty +close --target=logs
+ghoztty +close --target=term
+ghoztty +close --target=ide
+```
+
+---
+
+## About Ghostty
 
 Ghostty is a terminal emulator that differentiates itself by being
 fast, feature-rich, and native. While there are many excellent terminal
