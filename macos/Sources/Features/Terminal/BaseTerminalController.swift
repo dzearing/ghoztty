@@ -247,9 +247,15 @@ class BaseTerminalController: NSWindowController,
         // We can only create new splits for surfaces in our tree.
         guard surfaceTree.root?.node(view: oldView) != nil else { return nil }
 
+        // If no explicit config tint, inherit from the parent and shift it
+        var effectiveConfig = config ?? Ghostty.SurfaceConfiguration()
+        if effectiveConfig.backgroundTint == nil, let parentTint = oldView.backgroundTint {
+            effectiveConfig.backgroundTint = Self.shiftedTint(parentTint)
+        }
+
         // Create a new surface view
         guard let ghostty_app = ghostty.app else { return nil }
-        let newView = Ghostty.SurfaceView(ghostty_app, baseConfig: config)
+        let newView = Ghostty.SurfaceView(ghostty_app, baseConfig: effectiveConfig)
 
         // Do the split
         let newTree: SplitTree<Ghostty.SurfaceView>
@@ -1506,6 +1512,18 @@ extension BaseTerminalController: NSMenuItemValidation {
 
         default:
             return true
+        }
+    }
+
+    // MARK: - Background Tint
+
+    /// Shift a tint color away from the base: lighten dark colors, darken light ones.
+    static func shiftedTint(_ color: Color) -> Color {
+        let nsColor = NSColor(color)
+        if nsColor.isLightColor {
+            return Color(nsColor.darken(by: 0.06))
+        } else {
+            return Color(nsColor.lighten(by: 0.06))
         }
     }
 

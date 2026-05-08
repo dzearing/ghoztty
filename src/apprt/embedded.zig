@@ -1873,6 +1873,38 @@ pub const CAPI = struct {
         surface.colorSchemeCallback(scheme);
     }
 
+    /// Set a color on the surface's terminal. kind: 0=palette, 1=foreground, 2=background.
+    /// For palette colors, index selects which of the 256 entries. For fg/bg, index is ignored.
+    export fn ghostty_surface_set_color(
+        surface: *Surface,
+        kind: c_int,
+        index: u8,
+        r: u8,
+        g: u8,
+        b: u8,
+    ) void {
+        const color: terminal.color.RGB = .{ .r = r, .g = g, .b = b };
+        var t = &surface.core_surface.io.terminal;
+        switch (kind) {
+            0 => {
+                t.colors.palette.set(index, color);
+                t.flags.dirty.palette = true;
+            },
+            1 => t.colors.foreground.set(color),
+            2 => t.colors.background.set(color),
+            else => return,
+        }
+    }
+
+    /// Reset all dynamic colors on the surface back to their defaults.
+    export fn ghostty_surface_reset_colors(surface: *Surface) void {
+        var t = &surface.core_surface.io.terminal;
+        t.colors.palette.resetAll();
+        t.colors.foreground.reset();
+        t.colors.background.reset();
+        t.flags.dirty.palette = true;
+    }
+
     /// Update the content scale of the surface.
     export fn ghostty_surface_set_content_scale(surface: *Surface, x: f64, y: f64) void {
         surface.updateContentScale(x, y);

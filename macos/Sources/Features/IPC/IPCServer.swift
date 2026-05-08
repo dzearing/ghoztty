@@ -549,10 +549,22 @@ class IPCServer {
     private static func applyColorScheme(for tintColor: Color?, to surfaceView: Ghostty.SurfaceView) {
         guard let tintColor, let surface = surfaceView.surface else { return }
         let nsColor = NSColor(tintColor)
-        let scheme: ghostty_color_scheme_e = nsColor.isLightColor
-            ? GHOSTTY_COLOR_SCHEME_LIGHT
-            : GHOSTTY_COLOR_SCHEME_DARK
-        ghostty_surface_set_color_scheme(surface, scheme)
+
+        // Set terminal background color
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        (nsColor.usingColorSpace(.sRGB) ?? nsColor).getRed(&r, green: &g, blue: &b, alpha: &a)
+        ghostty_surface_set_color(surface, 2, 0,
+            UInt8(r * 255), UInt8(g * 255), UInt8(b * 255))
+
+        // Set foreground for contrast
+        let fgColor: NSColor = nsColor.isLightColor ? .black : .white
+        var fr: CGFloat = 0, fg: CGFloat = 0, fb: CGFloat = 0
+        fgColor.getRed(&fr, green: &fg, blue: &fb, alpha: &a)
+        ghostty_surface_set_color(surface, 1, 0,
+            UInt8(fr * 255), UInt8(fg * 255), UInt8(fb * 255))
+
+        // Adjust ANSI palette for contrast
+        Ghostty.SurfaceView.adjustPaletteForContrast(surface: surface, background: nsColor)
     }
 
     private static func parseSplitDirection(_ value: String) -> SplitTree<Ghostty.SurfaceView>.NewDirection? {

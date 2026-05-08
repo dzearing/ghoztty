@@ -1723,10 +1723,82 @@ extension Ghostty {
             backgroundTint = Color(color)
 
             guard let surface = self.surface else { return }
-            let scheme: ghostty_color_scheme_e = color.isLightColor
-                ? GHOSTTY_COLOR_SCHEME_LIGHT
-                : GHOSTTY_COLOR_SCHEME_DARK
-            ghostty_surface_set_color_scheme(surface, scheme)
+
+            // Set the terminal background to the chosen color
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            (color.usingColorSpace(.sRGB) ?? color).getRed(&r, green: &g, blue: &b, alpha: &a)
+            ghostty_surface_set_color(surface, 2, 0,
+                UInt8(r * 255), UInt8(g * 255), UInt8(b * 255))
+
+            // Adjust foreground for contrast
+            let fgColor: NSColor = color.isLightColor ? .black : .white
+            var fr: CGFloat = 0, fg: CGFloat = 0, fb: CGFloat = 0
+            fgColor.getRed(&fr, green: &fg, blue: &fb, alpha: &a)
+            ghostty_surface_set_color(surface, 1, 0,
+                UInt8(fr * 255), UInt8(fg * 255), UInt8(fb * 255))
+
+            // Adjust the 16 ANSI colors for contrast against the new background
+            Self.adjustPaletteForContrast(surface: surface, background: color)
+        }
+
+        private static let defaultAnsiColors: [(CGFloat, CGFloat, CGFloat)] = [
+            // Standard 8 colors (dark)
+            (0.00, 0.00, 0.00), // 0: black
+            (0.80, 0.00, 0.00), // 1: red
+            (0.00, 0.80, 0.00), // 2: green
+            (0.80, 0.80, 0.00), // 3: yellow
+            (0.00, 0.00, 0.80), // 4: blue
+            (0.80, 0.00, 0.80), // 5: magenta
+            (0.00, 0.80, 0.80), // 6: cyan
+            (0.75, 0.75, 0.75), // 7: white
+            // Bright 8 colors
+            (0.50, 0.50, 0.50), // 8: bright black
+            (1.00, 0.33, 0.33), // 9: bright red
+            (0.33, 1.00, 0.33), // 10: bright green
+            (1.00, 1.00, 0.33), // 11: bright yellow
+            (0.33, 0.33, 1.00), // 12: bright blue
+            (1.00, 0.33, 1.00), // 13: bright magenta
+            (0.33, 1.00, 1.00), // 14: bright cyan
+            (1.00, 1.00, 1.00), // 15: bright white
+        ]
+
+        static func adjustPaletteForContrast(surface: ghostty_surface_t, background: NSColor) {
+            let bgLum = background.luminance
+
+            for (i, base) in defaultAnsiColors.enumerated() {
+                let baseColor = NSColor(red: base.0, green: base.1, blue: base.2, alpha: 1)
+                let adjusted = ensureContrast(baseColor, against: bgLum)
+
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                (adjusted.usingColorSpace(.sRGB) ?? adjusted).getRed(&r, green: &g, blue: &b, alpha: &a)
+                ghostty_surface_set_color(surface, 0, UInt8(i),
+                    UInt8(min(r, 1) * 255), UInt8(min(g, 1) * 255), UInt8(min(b, 1) * 255))
+            }
+        }
+
+        /// Adjust a color's brightness to ensure minimum contrast against a background luminance.
+        /// Preserves hue and saturation, only shifts brightness.
+        private static func ensureContrast(_ color: NSColor, against bgLum: Double) -> NSColor {
+            let minContrast: CGFloat = 0.35
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            (color.usingColorSpace(.sRGB) ?? color).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+
+            let colorLum = color.luminance
+            let contrast = abs(colorLum - bgLum)
+
+            if contrast >= minContrast { return color }
+
+            // Push brightness away from the background
+            let targetB: CGFloat
+            if bgLum > 0.5 {
+                // Light background: darken the color
+                targetB = max(b - (minContrast - contrast), 0.05)
+            } else {
+                // Dark background: lighten the color
+                targetB = min(b + (minContrast - contrast), 1.0)
+            }
+
+            return NSColor(hue: h, saturation: s, brightness: targetB, alpha: a)
         }
 
         @IBAction func changeTitle(_ sender: Any) {
