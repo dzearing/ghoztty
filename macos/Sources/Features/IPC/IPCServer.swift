@@ -2,6 +2,7 @@ import Cocoa
 import Darwin
 import GhosttyKit
 import OSLog
+import SwiftUI
 
 class IPCServer {
     private static let logger = Logger(
@@ -250,11 +251,13 @@ class IPCServer {
         var config: Ghostty.SurfaceConfiguration
         var splitDirection: String?
         var splitCommand: String?
+        var splitColor: String?
         var target: String?
         var name: String?
         var title: String?
         var percent: Int?
         var pane: String?
+        var color: String?
     }
 
     private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
@@ -288,11 +291,23 @@ class IPCServer {
             ratio = 0.5
         }
 
+        // Convert color strings to Color values
+        var config = parsed.config
+        if let colorHex = parsed.color, let nsColor = NSColor(hex: colorHex) {
+            config.backgroundTint = Color(nsColor)
+        }
+
+        let windowTint: Color? = config.backgroundTint
         DispatchQueue.main.async { [ghostty = self.ghostty, weak self] in
-            let controller = TerminalController.newWindow(ghostty, withBaseConfig: parsed.config)
+            let controller = TerminalController.newWindow(ghostty, withBaseConfig: config)
 
             if let title = parsed.title {
                 controller.titleOverride = title
+            }
+
+            // Apply color scheme based on tint luminance
+            if let surface = controller.focusedSurface {
+                Self.applyColorScheme(for: windowTint, to: surface)
             }
 
             if let target = parsed.target {
@@ -312,6 +327,13 @@ class IPCServer {
                     if let splitCommand = parsed.splitCommand {
                         splitConfig.command = splitCommand
                     }
+                    let splitTint: Color?
+                    if let splitColorHex = parsed.splitColor, let nsColor = NSColor(hex: splitColorHex) {
+                        splitConfig.backgroundTint = Color(nsColor)
+                        splitTint = Color(nsColor)
+                    } else {
+                        splitTint = nil
+                    }
 
                     let newView = controller.newSplit(
                         at: surfaceView,
@@ -319,6 +341,10 @@ class IPCServer {
                         baseConfig: splitConfig,
                         ratio: ratio
                     )
+
+                    if let newView {
+                        Self.applyColorScheme(for: splitTint, to: newView)
+                    }
 
                     if let name = parsed.name, let newView {
                         self?.targetRegistry[name] = .pane(
@@ -341,6 +367,9 @@ class IPCServer {
         } else {
             parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
         }
+
+        // Convert color string to Color
+        let tintColor: Color? = parsed.color.flatMap { NSColor(hex: $0) }.map { Color($0) }
 
         // Idempotent: if --name exists and pane is alive, focus it
         if let name = parsed.name {
@@ -392,6 +421,7 @@ class IPCServer {
                 if let workingDirectory = parsed.config.workingDirectory {
                     splitConfig.workingDirectory = workingDirectory
                 }
+                splitConfig.backgroundTint = tintColor
 
                 let newView = controller.newSplit(
                     at: surface,
@@ -399,6 +429,10 @@ class IPCServer {
                     baseConfig: splitConfig,
                     ratio: ratio
                 )
+
+                if let newView {
+                    Self.applyColorScheme(for: tintColor, to: newView)
+                }
 
                 if let name = parsed.name, let newView {
                     self?.targetRegistry[name] = .pane(
@@ -449,6 +483,7 @@ class IPCServer {
             if let workingDirectory = parsed.config.workingDirectory {
                 splitConfig.workingDirectory = workingDirectory
             }
+            splitConfig.backgroundTint = tintColor
 
             let newView = controller.newSplit(
                 at: surfaceView,
@@ -456,6 +491,10 @@ class IPCServer {
                 baseConfig: splitConfig,
                 ratio: ratio
             )
+
+            if let newView {
+                Self.applyColorScheme(for: tintColor, to: newView)
+            }
 
             if let name = parsed.name, let newView {
                 self?.targetRegistry[name] = .pane(
@@ -505,6 +544,15 @@ class IPCServer {
 
     private func pruneStaleTargets() {
         targetRegistry = targetRegistry.filter { $0.value.isAlive }
+    }
+
+    private static func applyColorScheme(for tintColor: Color?, to surfaceView: Ghostty.SurfaceView) {
+        guard let tintColor, let surface = surfaceView.surface else { return }
+        let nsColor = NSColor(tintColor)
+        let scheme: ghostty_color_scheme_e = nsColor.isLightColor
+            ? GHOSTTY_COLOR_SCHEME_LIGHT
+            : GHOSTTY_COLOR_SCHEME_DARK
+        ghostty_surface_set_color_scheme(surface, scheme)
     }
 
     private static func parseSplitDirection(_ value: String) -> SplitTree<Ghostty.SurfaceView>.NewDirection? {
@@ -585,6 +633,16 @@ class IPCServer {
 
             if let value = arg.dropPrefix("--pane=") {
                 result.pane = String(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--color=") {
+                result.color = String(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--split-color=") {
+                result.splitColor = String(value)
                 continue
             }
         }

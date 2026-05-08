@@ -96,6 +96,9 @@ extension Ghostty {
         /// dynamically updated. Otherwise, the background color is the default background color.
         @Published private(set) var backgroundColor: Color?
 
+        /// Background tint color. Set via IPC --color flag or the context menu color picker.
+        @Published var backgroundTint: Color?
+
         /// True when the bell is active. This is set inactive on focus or event.
         @Published private(set) var bell: Bool = false
 
@@ -342,6 +345,7 @@ extension Ghostty {
 
             // Setup our surface. This will also initialize all the terminal IO.
             let surface_cfg = baseConfig ?? SurfaceConfiguration()
+            self.backgroundTint = surface_cfg.backgroundTint
             let surface = surface_cfg.withCValue(view: self) { surface_cfg_c in
                 ghostty_surface_new(app, &surface_cfg_c)
             }
@@ -1569,6 +1573,9 @@ extension Ghostty {
             item.setImageIfDesired(systemSymbolName: "eye.fill")
             item.state = readonly ? .on : .off
             menu.addItem(.separator())
+            item = menu.addItem(withTitle: "Background Color...", action: #selector(pickBackgroundColor(_:)), keyEquivalent: "")
+            item.setImageIfDesired(systemSymbolName: "paintpalette")
+            menu.addItem(.separator())
             item = menu.addItem(withTitle: "Change Tab Title...", action: #selector(BaseTerminalController.changeTabTitle(_:)), keyEquivalent: "")
             item.setImageIfDesired(systemSymbolName: "pencil.line")
             item = menu.addItem(withTitle: "Change Terminal Title...", action: #selector(changeTitle(_:)), keyEquivalent: "")
@@ -1700,6 +1707,26 @@ extension Ghostty {
             if !ghostty_surface_binding_action(surface, action, UInt(action.lengthOfBytes(using: .utf8))) {
                 AppDelegate.logger.warning("action failed action=\(action)")
             }
+        }
+
+        @objc func pickBackgroundColor(_ sender: Any) {
+            let panel = NSColorPanel.shared
+            panel.setTarget(self)
+            panel.setAction(#selector(backgroundColorDidChange(_:)))
+            panel.color = backgroundTint.flatMap { NSColor($0) } ?? .windowBackgroundColor
+            panel.showsAlpha = false
+            panel.orderFront(nil)
+        }
+
+        @objc private func backgroundColorDidChange(_ sender: NSColorPanel) {
+            let color = sender.color
+            backgroundTint = Color(color)
+
+            guard let surface = self.surface else { return }
+            let scheme: ghostty_color_scheme_e = color.isLightColor
+                ? GHOSTTY_COLOR_SCHEME_LIGHT
+                : GHOSTTY_COLOR_SCHEME_DARK
+            ghostty_surface_set_color_scheme(surface, scheme)
         }
 
         @IBAction func changeTitle(_ sender: Any) {
