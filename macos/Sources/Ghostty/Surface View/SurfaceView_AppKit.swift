@@ -351,9 +351,8 @@ extension Ghostty {
             // Setup our surface. This will also initialize all the terminal IO.
             let surface_cfg = baseConfig ?? SurfaceConfiguration()
             self.backgroundTint = surface_cfg.backgroundTint
-            if let tint = surface_cfg.backgroundTint {
-                self.backgroundTintNSColor = NSColor(tint).usingColorSpace(.sRGB) ?? NSColor(tint)
-            }
+            self.backgroundTintNSColor = surface_cfg.backgroundTintNSColor
+                ?? surface_cfg.backgroundTint.map { NSColor($0).resolvedSRGB }
             let surface = surface_cfg.withCValue(view: self) { surface_cfg_c in
                 ghostty_surface_new(app, &surface_cfg_c)
             }

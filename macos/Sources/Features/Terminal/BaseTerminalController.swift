@@ -257,6 +257,7 @@ class BaseTerminalController: NSWindowController,
                 ?? NSColor(oldView.derivedConfig.backgroundColor).resolvedSRGB
             let shifted = Self.shiftedTint(parentNSColor)
             effectiveConfig.backgroundTint = Color(shifted)
+            effectiveConfig.backgroundTintNSColor = shifted
         }
 
         // Create a new surface view
@@ -285,18 +286,12 @@ class BaseTerminalController: NSWindowController,
             moveFocusFrom: oldView,
             undoAction: "New Split")
 
-        // Store the resolved NSColor for the color picker and future inheritance
-        if let tint = effectiveConfig.backgroundTint {
-            let nsColor = NSColor(tint).resolvedSRGB
-            newView.backgroundTintNSColor = nsColor
-
-            // Only adjust the terminal palette for explicit IPC --color flags.
-            // Auto-shifted splits use the SwiftUI overlay for visual depth
-            // without touching the terminal (which may still be initializing).
-            if hasExplicitTint {
-                DispatchQueue.main.async {
-                    newView.applyPaletteForColor(nsColor)
-                }
+        // Only adjust the terminal palette for explicit IPC --color flags.
+        // Auto-shifted splits use the SwiftUI overlay for visual depth
+        // without touching the terminal (which may still be initializing).
+        if hasExplicitTint, let nsColor = newView.backgroundTintNSColor {
+            DispatchQueue.main.async {
+                newView.applyPaletteForColor(nsColor)
             }
         }
 

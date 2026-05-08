@@ -295,6 +295,7 @@ class IPCServer {
         var config = parsed.config
         if let colorHex = parsed.color, let nsColor = NSColor(hex: colorHex) {
             config.backgroundTint = Color(nsColor)
+            config.backgroundTintNSColor = nsColor
         }
 
         let windowTint: Color? = config.backgroundTint
@@ -330,6 +331,7 @@ class IPCServer {
                     let splitTint: Color?
                     if let splitColorHex = parsed.splitColor, let nsColor = NSColor(hex: splitColorHex) {
                         splitConfig.backgroundTint = Color(nsColor)
+                        splitConfig.backgroundTintNSColor = nsColor
                         splitTint = Color(nsColor)
                     } else {
                         splitTint = nil
@@ -369,7 +371,8 @@ class IPCServer {
         }
 
         // Convert color string to Color
-        let tintColor: Color? = parsed.color.flatMap { NSColor(hex: $0) }.map { Color($0) }
+        let tintNSColor: NSColor? = parsed.color.flatMap { NSColor(hex: $0) }
+        let tintColor: Color? = tintNSColor.map { Color($0) }
 
         // Idempotent: if --name exists and pane is alive, focus it
         if let name = parsed.name {
@@ -422,6 +425,7 @@ class IPCServer {
                     splitConfig.workingDirectory = workingDirectory
                 }
                 splitConfig.backgroundTint = tintColor
+                splitConfig.backgroundTintNSColor = tintNSColor
 
                 let newView = controller.newSplit(
                     at: surface,

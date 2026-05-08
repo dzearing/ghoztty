@@ -638,6 +638,11 @@ extension Ghostty {
         /// Background tint color from IPC --color flag
         var backgroundTint: Color?
 
+        #if canImport(AppKit)
+        /// Resolved NSColor for the tint, avoiding lossy SwiftUI Color roundtrips
+        var backgroundTintNSColor: NSColor?
+        #endif
+
         init() {}
 
         init(from config: ghostty_surface_config_s) {
