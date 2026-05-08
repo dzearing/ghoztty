@@ -2084,6 +2084,21 @@ pub const CAPI = struct {
         };
     }
 
+    /// Swap the focused split with the neighbor in the given direction.
+    export fn ghostty_surface_split_swap(
+        ptr: *Surface,
+        direction: apprt.action.GotoSplit,
+    ) void {
+        _ = ptr.app.performAction(
+            .{ .surface = &ptr.core_surface },
+            .swap_split,
+            direction,
+        ) catch |err| {
+            log.err("error swapping split err={}", .{err});
+            return;
+        };
+    }
+
     /// Resize the current split by moving the split divider in the given
     /// direction. `direction` specifies which direction the split divider will
     /// move relative to the focused split. `amount` is a fractional value

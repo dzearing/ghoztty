@@ -139,6 +139,9 @@ pub const Action = union(Key) {
     /// Jump to a specific split.
     goto_split: GotoSplit,
 
+    /// Swap the focused split with a neighbor.
+    swap_split: GotoSplit,
+
     /// Jump to next/previous window.
     goto_window: GotoWindow,
 
@@ -362,6 +365,7 @@ pub const Action = union(Key) {
         move_tab,
         goto_tab,
         goto_split,
+        swap_split,
         goto_window,
         resize_split,
         equalize_splits,

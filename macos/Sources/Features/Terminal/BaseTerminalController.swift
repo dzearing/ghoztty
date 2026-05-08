@@ -195,6 +195,11 @@ class BaseTerminalController: NSWindowController,
             object: nil)
         center.addObserver(
             self,
+            selector: #selector(ghosttyDidSwapSplit(_:)),
+            name: Ghostty.Notification.ghosttySwapSplit,
+            object: nil)
+        center.addObserver(
+            self,
             selector: #selector(ghosttyDidToggleSplitZoom(_:)),
             name: Ghostty.Notification.didToggleSplitZoom,
             object: nil)
@@ -656,6 +661,33 @@ class BaseTerminalController: NSWindowController,
         // Move focus to the next surface
         DispatchQueue.main.async {
             Ghostty.moveFocus(to: nextSurface, from: target)
+        }
+    }
+
+    @objc private func ghosttyDidSwapSplit(_ notification: Notification) {
+        guard let target = notification.object as? Ghostty.SurfaceView else { return }
+        guard surfaceTree.root?.node(view: target) != nil else { return }
+
+        guard let directionAny = notification.userInfo?[Ghostty.Notification.SwapSplitDirectionKey] else { return }
+        guard let direction = directionAny as? Ghostty.SplitFocusDirection else { return }
+
+        guard let targetNode = surfaceTree.root?.node(view: target) else { return }
+
+        let focusDirection: SplitTree<Ghostty.SurfaceView>.FocusDirection = direction.toSplitTreeFocusDirection()
+        guard let neighborView = surfaceTree.focusTarget(for: focusDirection, from: targetNode) else {
+            return
+        }
+
+        guard let neighborNode = surfaceTree.root?.node(view: neighborView) else { return }
+
+        do {
+            surfaceTree = try surfaceTree.swapping(targetNode, with: neighborNode)
+        } catch {
+            return
+        }
+
+        DispatchQueue.main.async {
+            Ghostty.moveFocus(to: target)
         }
     }
 

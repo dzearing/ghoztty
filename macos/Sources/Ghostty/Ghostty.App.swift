@@ -521,6 +521,9 @@ extension Ghostty {
             case GHOSTTY_ACTION_GOTO_SPLIT:
                 return gotoSplit(app, target: target, direction: action.action.goto_split)
 
+            case GHOSTTY_ACTION_SWAP_SPLIT:
+                return swapSplit(app, target: target, direction: action.action.swap_split)
+
             case GHOSTTY_ACTION_GOTO_WINDOW:
                 return gotoWindow(app, target: target, direction: action.action.goto_window)
 
@@ -1195,6 +1198,47 @@ extension Ghostty {
                         object: surfaceView,
                         userInfo: [
                             Notification.SplitDirectionKey: splitDirection as Any,
+                        ]
+                    )
+
+                    return true
+
+                default:
+                    assertionFailure()
+                    return false
+                }
+        }
+
+        private static func swapSplit(
+            _ app: ghostty_app_t,
+            target: ghostty_target_s,
+            direction: ghostty_action_goto_split_e) -> Bool {
+                switch target.tag {
+                case GHOSTTY_TARGET_APP:
+                    Ghostty.logger.warning("swap split does nothing with an app target")
+                    return false
+
+                case GHOSTTY_TARGET_SURFACE:
+                    guard let surface = target.target.surface else { return false }
+                    guard let surfaceView = self.surfaceView(from: surface) else { return false }
+                    guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
+
+                    guard controller.surfaceTree.isSplit else { return false }
+
+                    guard let splitDirection = SplitFocusDirection.from(direction: direction) else { return false }
+
+                    guard let targetNode = controller.surfaceTree.root?.node(view: surfaceView) else { return false }
+
+                    let focusDirection: SplitTree<Ghostty.SurfaceView>.FocusDirection = splitDirection.toSplitTreeFocusDirection()
+                    guard controller.surfaceTree.focusTarget(for: focusDirection, from: targetNode) != nil else {
+                        return false
+                    }
+
+                    NotificationCenter.default.post(
+                        name: Notification.ghosttySwapSplit,
+                        object: surfaceView,
+                        userInfo: [
+                            Notification.SwapSplitDirectionKey: splitDirection as Any,
                         ]
                     )
 

@@ -347,6 +347,29 @@ pub const Action = union(enum) {
     reset,
 
     /// Copy the selected text to the clipboard.
+    ///
+    /// Valid values:
+    ///
+    ///   - `plain`
+    ///
+    ///     Copy the selection as plain text only.
+    ///
+    ///   - `vt`
+    ///
+    ///     Copy the selection as plain text, preserving terminal escape
+    ///     sequences (such as colors and styles).
+    ///
+    ///   - `html`
+    ///
+    ///     Copy the selection as HTML, preserving colors and styles as
+    ///     HTML markup.
+    ///
+    ///   - `mixed` (default)
+    ///
+    ///     Place multiple representations on the clipboard at once
+    ///     (e.g. plain text and HTML), each tagged with its content type
+    ///     so the receiving OS or application can pick the most appropriate
+    ///     representation when pasting.
     copy_to_clipboard: CopyToClipboard,
 
     /// Paste the contents of the default clipboard.
@@ -398,6 +421,8 @@ pub const Action = union(enum) {
 
     /// Navigate the search results. If there is no active search, this
     /// is not performed.
+    ///
+    /// Valid values: `previous`, `next`.
     navigate_search: NavigateSearch,
 
     /// Start a search if it isn't started already. This doesn't set any
@@ -608,6 +633,12 @@ pub const Action = union(enum) {
     /// (`previous` and `next`).
     goto_split: SplitFocusDirection,
 
+    /// Swap the focused split pane with its neighbor in the given direction
+    /// (`right`, `down`, `left` and `up`), or in the adjacent split in the
+    /// order of creation (`previous` and `next`). Focus follows the
+    /// original pane after the swap.
+    swap_split: SplitFocusDirection,
+
     /// Focus on either the previous window or the next one ('previous', 'next')
     goto_window: GotoWindow,
 
@@ -681,10 +712,21 @@ pub const Action = union(enum) {
     /// of the `confirm-close-surface` configuration setting.
     close_surface,
 
-    /// Close the current tab and all splits therein, close all other tabs, or
-    /// close every tab to the right of the current one depending on the mode.
+    /// Close the specified tabs and all splits therein.
     ///
-    /// If the mode is not specified, defaults to closing the current tab.
+    /// Valid values:
+    ///
+    ///   - `this` (default)
+    ///
+    ///     Close the current tab and all splits within it.
+    ///
+    ///   - `other`
+    ///
+    ///     Close every tab in the current window except the current tab.
+    ///
+    ///   - `right`
+    ///
+    ///     Close every tab to the right of the current tab.
     ///
     /// This might trigger a close confirmation popup, depending on the value
     /// of the `confirm-close-surface` configuration setting.
@@ -1385,6 +1427,7 @@ pub const Action = union(enum) {
             .toggle_tab_overview,
             .new_split,
             .goto_split,
+            .swap_split,
             .goto_window,
             .toggle_split_zoom,
             .toggle_readonly,
