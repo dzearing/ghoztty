@@ -99,6 +99,11 @@ extension Ghostty {
         /// Background tint color. Set via IPC --color flag or the context menu color picker.
         @Published var backgroundTint: Color?
 
+        /// Canonical NSColor for the background tint. Source of truth for color
+        /// manipulation (picker, split inheritance, palette adjustment).
+        /// The SwiftUI `backgroundTint` is derived from this for overlay rendering.
+        var backgroundTintNSColor: NSColor?
+
         /// True when the bell is active. This is set inactive on focus or event.
         @Published private(set) var bell: Bool = false
 
@@ -346,6 +351,9 @@ extension Ghostty {
             // Setup our surface. This will also initialize all the terminal IO.
             let surface_cfg = baseConfig ?? SurfaceConfiguration()
             self.backgroundTint = surface_cfg.backgroundTint
+            if let tint = surface_cfg.backgroundTint {
+                self.backgroundTintNSColor = NSColor(tint).usingColorSpace(.sRGB) ?? NSColor(tint)
+            }
             let surface = surface_cfg.withCValue(view: self) { surface_cfg_c in
                 ghostty_surface_new(app, &surface_cfg_c)
             }
@@ -391,6 +399,10 @@ extension Ghostty {
 
             // Cancel progress report timer
             progressReportTimer?.invalidate()
+
+            // Clean up color picker state
+            colorUpdateTimer?.invalidate()
+            dismissColorPanel()
         }
 
         override func endSearch() {
@@ -1709,35 +1721,59 @@ extension Ghostty {
             }
         }
 
+        private var colorUpdateTimer: Timer?
+
+        private func dismissColorPanel() {
+            guard NSColorPanel.sharedColorPanelExists else { return }
+            let panel = NSColorPanel.shared
+            panel.setTarget(nil)
+            panel.setAction(nil)
+            panel.close()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil {
+                dismissColorPanel()
+            }
+        }
+
         @objc func pickBackgroundColor(_ sender: Any) {
             let panel = NSColorPanel.shared
             panel.setTarget(self)
             panel.setAction(#selector(backgroundColorDidChange(_:)))
-            panel.color = backgroundTint.flatMap { NSColor($0) } ?? .windowBackgroundColor
+            panel.color = backgroundTintNSColor ?? .windowBackgroundColor
             panel.showsAlpha = false
+            panel.isContinuous = true
             panel.orderFront(nil)
         }
 
         @objc private func backgroundColorDidChange(_ sender: NSColorPanel) {
             let color = sender.color
-            backgroundTint = Color(color)
+            let srgbColor = color.usingColorSpace(.sRGB) ?? color
+            backgroundTintNSColor = srgbColor
+            backgroundTint = Color(srgbColor)
 
+            colorUpdateTimer?.invalidate()
+            colorUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+                self?.applyPaletteForColor(srgbColor)
+            }
+        }
+
+        func applyPaletteForColor(_ color: NSColor) {
             guard let surface = self.surface else { return }
 
-            // Set the terminal background to the chosen color
             var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
             (color.usingColorSpace(.sRGB) ?? color).getRed(&r, green: &g, blue: &b, alpha: &a)
             ghostty_surface_set_color(surface, 2, 0,
                 UInt8(r * 255), UInt8(g * 255), UInt8(b * 255))
 
-            // Adjust foreground for contrast
             let fgColor: NSColor = color.isLightColor ? .black : .white
             var fr: CGFloat = 0, fg: CGFloat = 0, fb: CGFloat = 0
             fgColor.getRed(&fr, green: &fg, blue: &fb, alpha: &a)
             ghostty_surface_set_color(surface, 1, 0,
                 UInt8(fr * 255), UInt8(fg * 255), UInt8(fb * 255))
 
-            // Adjust the 16 ANSI colors for contrast against the new background
             Self.adjustPaletteForContrast(surface: surface, background: color)
         }
 

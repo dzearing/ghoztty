@@ -247,10 +247,16 @@ class BaseTerminalController: NSWindowController,
         // We can only create new splits for surfaces in our tree.
         guard surfaceTree.root?.node(view: oldView) != nil else { return nil }
 
-        // If no explicit config tint, inherit from the parent and shift it
+        // Inherit and shift the parent's background color for visual depth.
+        // Use explicit tint if set, otherwise fall back to the terminal's
+        // actual background color from the config.
         var effectiveConfig = config ?? Ghostty.SurfaceConfiguration()
-        if effectiveConfig.backgroundTint == nil, let parentTint = oldView.backgroundTint {
-            effectiveConfig.backgroundTint = Self.shiftedTint(parentTint)
+        let hasExplicitTint = effectiveConfig.backgroundTint != nil
+        if !hasExplicitTint {
+            let parentNSColor = oldView.backgroundTintNSColor
+                ?? NSColor(oldView.derivedConfig.backgroundColor).resolvedSRGB
+            let shifted = Self.shiftedTint(parentNSColor)
+            effectiveConfig.backgroundTint = Color(shifted)
         }
 
         // Create a new surface view
@@ -278,6 +284,21 @@ class BaseTerminalController: NSWindowController,
             moveFocusTo: newView,
             moveFocusFrom: oldView,
             undoAction: "New Split")
+
+        // Store the resolved NSColor for the color picker and future inheritance
+        if let tint = effectiveConfig.backgroundTint {
+            let nsColor = NSColor(tint).resolvedSRGB
+            newView.backgroundTintNSColor = nsColor
+
+            // Only adjust the terminal palette for explicit IPC --color flags.
+            // Auto-shifted splits use the SwiftUI overlay for visual depth
+            // without touching the terminal (which may still be initializing).
+            if hasExplicitTint {
+                DispatchQueue.main.async {
+                    newView.applyPaletteForColor(nsColor)
+                }
+            }
+        }
 
         return newView
     }
@@ -1518,12 +1539,12 @@ extension BaseTerminalController: NSMenuItemValidation {
     // MARK: - Background Tint
 
     /// Shift a tint color away from the base: lighten dark colors, darken light ones.
-    static func shiftedTint(_ color: Color) -> Color {
-        let nsColor = NSColor(color)
-        if nsColor.isLightColor {
-            return Color(nsColor.darken(by: 0.06))
+    static func shiftedTint(_ color: NSColor) -> NSColor {
+        let srgb = color.usingColorSpace(.sRGB) ?? color
+        if srgb.isLightColor {
+            return srgb.darken(by: 0.15)
         } else {
-            return Color(nsColor.lighten(by: 0.06))
+            return srgb.lighten(by: 0.15)
         }
     }
 
