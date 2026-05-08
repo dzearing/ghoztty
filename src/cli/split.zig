@@ -46,11 +46,17 @@ pub const Options = struct {
     fn checkArg(self: *Options, alloc: Allocator, arg: []const u8) (error{InvalidValue} || Allocator.Error)!?[:0]const u8 {
         _ = self;
         if (lib.cutPrefix(u8, arg, "--color=")) |rest| {
-            if (!isValidHexColor(std.mem.trim(u8, rest, &std.ascii.whitespace)))
+            const trimmed = std.mem.trim(u8, rest, &std.ascii.whitespace);
+            if (!isValidColor(trimmed))
                 return error.InvalidValue;
             return try alloc.dupeZ(u8, arg);
         }
         return try alloc.dupeZ(u8, arg);
+    }
+
+    fn isValidColor(value: []const u8) bool {
+        if (std.mem.eql(u8, value, "random")) return true;
+        return isValidHexColor(value);
     }
 
     fn isValidHexColor(value: []const u8) bool {

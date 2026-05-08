@@ -1302,6 +1302,12 @@ class BaseTerminalController: NSWindowController,
     }
 
     func windowDidResignKey(_ notification: Notification) {
+        // When the color panel is open, the terminal should still appear focused
+        // so the user sees accurate colors while picking.
+        if NSColorPanel.sharedColorPanelExists && NSColorPanel.shared.isVisible {
+            return
+        }
+
         // Becoming/losing key means we have to notify our surface(s) that we have focus
         // so things like cursors blink, pty events are sent, etc.
         self.syncFocusToSurfaceTree()

@@ -1730,20 +1730,18 @@ extension Ghostty {
             panel.close()
         }
 
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if window == nil {
-                dismissColorPanel()
-            }
-        }
 
         @objc func pickBackgroundColor(_ sender: Any) {
             let panel = NSColorPanel.shared
-            panel.setTarget(self)
-            panel.setAction(#selector(backgroundColorDidChange(_:)))
+            // Clear action before setting color to prevent the panel from
+            // firing backgroundColorDidChange during initialization.
+            panel.setTarget(nil)
+            panel.setAction(nil)
             panel.color = backgroundTintNSColor ?? .windowBackgroundColor
             panel.showsAlpha = false
             panel.isContinuous = true
+            panel.setTarget(self)
+            panel.setAction(#selector(backgroundColorDidChange(_:)))
             panel.orderFront(nil)
         }
 

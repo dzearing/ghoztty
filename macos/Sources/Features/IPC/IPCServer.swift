@@ -293,9 +293,14 @@ class IPCServer {
 
         // Convert color strings to Color values
         var config = parsed.config
-        if let colorHex = parsed.color, let nsColor = NSColor(hex: colorHex) {
-            config.backgroundTint = Color(nsColor)
-            config.backgroundTintNSColor = nsColor
+        if let colorStr = parsed.color {
+            let nsColor: NSColor? = colorStr == "random"
+                ? Self.randomDarkColor()
+                : NSColor(hex: colorStr)
+            if let nsColor {
+                config.backgroundTint = Color(nsColor)
+                config.backgroundTintNSColor = nsColor
+            }
         }
 
         let windowTint: Color? = config.backgroundTint
@@ -329,7 +334,10 @@ class IPCServer {
                         splitConfig.command = splitCommand
                     }
                     let splitTint: Color?
-                    if let splitColorHex = parsed.splitColor, let nsColor = NSColor(hex: splitColorHex) {
+                    let splitNSColor: NSColor? = parsed.splitColor.flatMap {
+                        $0 == "random" ? Self.randomDarkColor() : NSColor(hex: $0)
+                    }
+                    if let nsColor = splitNSColor {
                         splitConfig.backgroundTint = Color(nsColor)
                         splitConfig.backgroundTintNSColor = nsColor
                         splitTint = Color(nsColor)
@@ -371,7 +379,9 @@ class IPCServer {
         }
 
         // Convert color string to Color
-        let tintNSColor: NSColor? = parsed.color.flatMap { NSColor(hex: $0) }
+        let tintNSColor: NSColor? = parsed.color.flatMap {
+            $0 == "random" ? Self.randomDarkColor() : NSColor(hex: $0)
+        }
         let tintColor: Color? = tintNSColor.map { Color($0) }
 
         // Idempotent: if --name exists and pane is alive, focus it
@@ -548,6 +558,13 @@ class IPCServer {
 
     private func pruneStaleTargets() {
         targetRegistry = targetRegistry.filter { $0.value.isAlive }
+    }
+
+    private static func randomDarkColor() -> NSColor {
+        let hue = CGFloat.random(in: 0...1)
+        let saturation = CGFloat.random(in: 0.3...0.7)
+        let brightness = CGFloat.random(in: 0.15...0.35)
+        return NSColor(hue: hue, saturation: saturation, brightness: brightness, alpha: 1)
     }
 
     private static func applyColorScheme(for tintColor: Color?, to surfaceView: Ghostty.SurfaceView) {

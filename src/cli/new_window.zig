@@ -60,13 +60,15 @@ pub const Options = struct {
         }
 
         if (lib.cutPrefix(u8, arg, "--color=")) |rest| {
-            if (!isValidHexColor(std.mem.trim(u8, rest, &std.ascii.whitespace)))
+            const trimmed = std.mem.trim(u8, rest, &std.ascii.whitespace);
+            if (!isValidColor(trimmed))
                 return error.InvalidValue;
             return try alloc.dupeZ(u8, arg);
         }
 
         if (lib.cutPrefix(u8, arg, "--split-color=")) |rest| {
-            if (!isValidHexColor(std.mem.trim(u8, rest, &std.ascii.whitespace)))
+            const trimmed = std.mem.trim(u8, rest, &std.ascii.whitespace);
+            if (!isValidColor(trimmed))
                 return error.InvalidValue;
             return try alloc.dupeZ(u8, arg);
         }
@@ -85,6 +87,11 @@ pub const Options = struct {
         }
 
         return try alloc.dupeZ(u8, arg);
+    }
+
+    fn isValidColor(value: []const u8) bool {
+        if (std.mem.eql(u8, value, "random")) return true;
+        return isValidHexColor(value);
     }
 
     fn isValidHexColor(value: []const u8) bool {
