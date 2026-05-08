@@ -173,6 +173,22 @@ extension SplitTree {
         return .init(root: newRoot, zoomed: newZoomed)
     }
 
+    /// Swap two leaf nodes in the tree by exchanging their views.
+    func swapping(_ nodeA: Node, with nodeB: Node) throws -> Self {
+        guard let root else { throw SplitError.viewNotFound }
+
+        guard case .leaf(let viewA) = nodeA else { throw SplitError.viewNotFound }
+        guard case .leaf(let viewB) = nodeB else { throw SplitError.viewNotFound }
+
+        guard let pathA = root.path(to: nodeA) else { throw SplitError.viewNotFound }
+        guard let pathB = root.path(to: nodeB) else { throw SplitError.viewNotFound }
+
+        let intermediate = try root.replacingNode(at: pathA, with: .leaf(view: viewB))
+        let newRoot = try intermediate.replacingNode(at: pathB, with: .leaf(view: viewA))
+
+        return .init(root: newRoot, zoomed: zoomed)
+    }
+
     /// Find the next view to focus based on the current focused node and direction
     func focusTarget(for direction: FocusDirection, from currentNode: Node) -> ViewType? {
         guard let root else { return nil }

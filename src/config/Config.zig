@@ -6752,6 +6752,32 @@ pub const Keybinds = struct {
                 .{ .performable = true },
             );
 
+            // Swapping splits
+            try self.set.putFlags(
+                alloc,
+                .{ .key = .{ .physical = .arrow_up }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .swap_split = .up },
+                .{ .performable = true },
+            );
+            try self.set.putFlags(
+                alloc,
+                .{ .key = .{ .physical = .arrow_down }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .swap_split = .down },
+                .{ .performable = true },
+            );
+            try self.set.putFlags(
+                alloc,
+                .{ .key = .{ .physical = .arrow_left }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .swap_split = .left },
+                .{ .performable = true },
+            );
+            try self.set.putFlags(
+                alloc,
+                .{ .key = .{ .physical = .arrow_right }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .swap_split = .right },
+                .{ .performable = true },
+            );
+
             // Viewport scrolling
             try self.set.put(
                 alloc,
@@ -7109,6 +7135,32 @@ pub const Keybinds = struct {
                 alloc,
                 .{ .key = .{ .unicode = '=' }, .mods = .{ .super = true, .ctrl = true } },
                 .{ .equalize_splits = {} },
+            );
+
+            // Swapping splits
+            try self.set.putFlags(
+                alloc,
+                .{ .key = .{ .physical = .arrow_up }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .swap_split = .up },
+                .{ .performable = true },
+            );
+            try self.set.putFlags(
+                alloc,
+                .{ .key = .{ .physical = .arrow_down }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .swap_split = .down },
+                .{ .performable = true },
+            );
+            try self.set.putFlags(
+                alloc,
+                .{ .key = .{ .physical = .arrow_left }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .swap_split = .left },
+                .{ .performable = true },
+            );
+            try self.set.putFlags(
+                alloc,
+                .{ .key = .{ .physical = .arrow_right }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .swap_split = .right },
+                .{ .performable = true },
             );
 
             // Jump to prompt, matches Terminal.app

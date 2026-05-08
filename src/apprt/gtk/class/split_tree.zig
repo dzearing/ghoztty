@@ -646,6 +646,35 @@ pub const SplitTree = extern struct {
         self.setTree(&new_tree);
     }
 
+    pub fn swapSplit(self: *Self, to: Surface.Tree.Goto) bool {
+        const tree = self.getTree() orelse return false;
+        const active = self.getActiveSurfaceHandle() orelse return false;
+        const target = if (tree.goto(
+            Application.default().allocator(),
+            active,
+            to,
+        )) |handle_|
+            handle_ orelse return false
+        else |err| switch (err) {
+            error.OutOfMemory => return false,
+        };
+
+        if (active == target) return false;
+
+        const gpa = Application.default().allocator();
+        var new_tree = tree.swap(gpa, active, target) catch |err| {
+            log.warn("unable to swap splits: {}", .{err});
+            return false;
+        };
+        defer new_tree.deinit();
+        self.setTree(&new_tree);
+
+        const surface = self.getTree().?.nodes[target.idx()].leaf;
+        surface.grabFocus();
+
+        return true;
+    }
+
     pub fn actionZoom(
         _: *gio.SimpleAction,
         _: ?*glib.Variant,

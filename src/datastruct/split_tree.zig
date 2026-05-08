@@ -794,6 +794,36 @@ pub fn SplitTree(comptime V: type) type {
             };
         }
 
+        /// Swap the views of two leaf nodes, returning a new tree.
+        /// Both handles must point to leaf nodes.
+        pub fn swap(
+            self: *const Self,
+            gpa: Allocator,
+            a: Node.Handle,
+            b: Node.Handle,
+        ) Allocator.Error!Self {
+            if (self.isEmpty()) return .empty;
+
+            var arena = ArenaAllocator.init(gpa);
+            errdefer arena.deinit();
+            const alloc = arena.allocator();
+
+            const nodes = try alloc.dupe(Node, self.nodes);
+
+            const view_a = nodes[a.idx()].leaf;
+            const view_b = nodes[b.idx()].leaf;
+            nodes[a.idx()] = .{ .leaf = view_b };
+            nodes[b.idx()] = .{ .leaf = view_a };
+
+            try refNodes(gpa, nodes);
+
+            return .{
+                .arena = arena,
+                .nodes = nodes,
+                .zoomed = self.zoomed,
+            };
+        }
+
         fn weight(
             self: *const Self,
             from: Node.Handle,

@@ -633,6 +633,12 @@ pub const Action = union(enum) {
     /// (`previous` and `next`).
     goto_split: SplitFocusDirection,
 
+    /// Swap the focused split pane with its neighbor in the given direction
+    /// (`right`, `down`, `left` and `up`), or in the adjacent split in the
+    /// order of creation (`previous` and `next`). Focus follows the
+    /// original pane after the swap.
+    swap_split: SplitFocusDirection,
+
     /// Focus on either the previous window or the next one ('previous', 'next')
     goto_window: GotoWindow,
 
@@ -1421,6 +1427,7 @@ pub const Action = union(enum) {
             .toggle_tab_overview,
             .new_split,
             .goto_split,
+            .swap_split,
             .goto_window,
             .toggle_split_zoom,
             .toggle_readonly,

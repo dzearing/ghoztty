@@ -393,6 +393,10 @@ extension Ghostty.Notification {
     static let ghosttyFocusSplit = Notification.Name("com.mitchellh.ghostty.focusSplit")
     static let SplitDirectionKey = ghosttyFocusSplit.rawValue
 
+    /// Swap the focused split with a neighbor. Has a SplitFocusDirection in the userinfo.
+    static let ghosttySwapSplit = Notification.Name("com.mitchellh.ghostty.swapSplit")
+    static let SwapSplitDirectionKey = ghosttySwapSplit.rawValue
+
     /// Goto tab. Has tab index in the userinfo.
     static let ghosttyGotoTab = Notification.Name("com.mitchellh.ghostty.gotoTab")
     static let GotoTabKey = ghosttyGotoTab.rawValue
