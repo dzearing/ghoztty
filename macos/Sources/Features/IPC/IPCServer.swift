@@ -241,6 +241,8 @@ class IPCServer {
             return handleSplit(request)
         case "close":
             return handleClose(request)
+        case "list":
+            return handleList()
         default:
             return IPCResponse(success: false, error: "unknown action: \(request.action)")
         }
@@ -501,6 +503,132 @@ class IPCServer {
         }
 
         return .ok
+    }
+
+    private func handleList() -> IPCResponse {
+        var windowsData: [IPCData.WindowData] = []
+        let semaphore = DispatchSemaphore(value: 0)
+
+        DispatchQueue.main.async { [weak self] in
+            defer { semaphore.signal() }
+
+            MainActor.assumeIsolated {
+                guard let self else { return }
+
+                self.pruneStaleTargets()
+
+                let reverseTargetMap = self.buildReverseTargetMap()
+                let scriptWindows = NSApp.scriptWindows
+
+                let frontWindow = scriptWindows.first
+
+                for scriptWindow in scriptWindows {
+                    let isFocused = scriptWindow.stableID == frontWindow?.stableID
+
+                    var tabsData: [IPCData.TabData] = []
+                    for tab in scriptWindow.tabs {
+                        guard let controller = tab.parentController else { continue }
+
+                        let splitsData = Self.buildSplitNodeData(
+                            node: controller.surfaceTree.root,
+                            focusedSurface: controller.focusedSurface,
+                            reverseTargetMap: reverseTargetMap
+                        )
+
+                        tabsData.append(IPCData.TabData(
+                            id: tab.idValue,
+                            title: tab.title,
+                            index: tab.index,
+                            selected: tab.selected,
+                            splits: splitsData
+                        ))
+                    }
+
+                    windowsData.append(IPCData.WindowData(
+                        id: scriptWindow.stableID,
+                        title: scriptWindow.title,
+                        target: reverseTargetMap[scriptWindow.stableID],
+                        focused: isFocused,
+                        tabs: tabsData
+                    ))
+                }
+            }
+        }
+
+        semaphore.wait()
+
+        let data = IPCData.listState(IPCData.ListStateData(windows: windowsData))
+        return IPCResponse(success: true, data: data)
+    }
+
+    @MainActor
+    private func buildReverseTargetMap() -> [String: String] {
+        var map: [String: String] = [:]
+        for (name, entry) in targetRegistry {
+            switch entry {
+            case .window(let ref):
+                if let controller = ref.value {
+                    let windowID = ScriptWindow.stableID(primaryController: controller)
+                    map[windowID] = name
+                }
+            case .pane(_, let surfaceRef):
+                if let surface = surfaceRef.value {
+                    map[surface.id.uuidString] = name
+                }
+            }
+        }
+        return map
+    }
+
+    @MainActor
+    private static func buildSplitNodeData(
+        node: SplitTree<Ghostty.SurfaceView>.Node?,
+        focusedSurface: Ghostty.SurfaceView?,
+        reverseTargetMap: [String: String]
+    ) -> IPCData.SplitNodeData {
+        guard let node else {
+            return .leaf(IPCData.TerminalData(
+                id: "",
+                title: "",
+                working_directory: "",
+                pid: 0,
+                tty: "",
+                name: nil,
+                focused: false
+            ))
+        }
+
+        switch node {
+        case .leaf(let view):
+            return .leaf(IPCData.TerminalData(
+                id: view.id.uuidString,
+                title: view.title ?? "",
+                working_directory: view.pwd ?? "",
+                pid: view.surfaceModel?.foregroundPID ?? 0,
+                tty: view.surfaceModel?.ttyName ?? "",
+                name: reverseTargetMap[view.id.uuidString],
+                focused: view === focusedSurface
+            ))
+        case .split(let split):
+            let direction: String = switch split.direction {
+            case .horizontal: "horizontal"
+            case .vertical: "vertical"
+            }
+            return .split(
+                direction: direction,
+                ratio: split.ratio,
+                left: buildSplitNodeData(
+                    node: split.left,
+                    focusedSurface: focusedSurface,
+                    reverseTargetMap: reverseTargetMap
+                ),
+                right: buildSplitNodeData(
+                    node: split.right,
+                    focusedSurface: focusedSurface,
+                    reverseTargetMap: reverseTargetMap
+                )
+            )
+        }
     }
 
     private func pruneStaleTargets() {

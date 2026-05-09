@@ -22,6 +22,7 @@ const boo = @import("boo.zig");
 const new_window = @import("new_window.zig");
 const split = @import("split.zig");
 const close = @import("close.zig");
+const list = @import("list.zig");
 
 /// Special commands that can be invoked via CLI flags. These are all
 /// invoked by using `+<action>` as a CLI flag. The only exception is
@@ -81,6 +82,9 @@ pub const Action = enum {
     // Use IPC to close a named pane or window.
     close,
 
+    // Use IPC to list open windows, tabs, and panes.
+    list,
+
     pub fn description(comptime self: Action) []const u8 {
         return switch (self) {
             .version => "Output the version and exit",
@@ -101,6 +105,7 @@ pub const Action = enum {
             .@"new-window" => "Open a new window via IPC",
             .split => "Create a split pane via IPC",
             .close => "Close a named pane or window via IPC",
+            .list => "List open windows, tabs, and panes via IPC",
         };
     }
 
@@ -185,6 +190,7 @@ pub const Action = enum {
             .@"new-window" => try new_window.run(alloc),
             .split => try split.run(alloc),
             .close => try close.run(alloc),
+            .list => try list.run(alloc),
         };
     }
 
@@ -227,6 +233,7 @@ pub const Action = enum {
                 .@"new-window" => new_window.Options,
                 .split => split.Options,
                 .close => close.Options,
+                .list => list.Options,
             };
         }
     }
