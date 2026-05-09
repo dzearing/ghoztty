@@ -103,7 +103,7 @@ pub const Options = struct {
 ///     to `right` if not specified.
 ///
 ///   * `--percent=<1-99>`: The percentage of space allocated to the
-///     existing pane. Defaults to 50 if not specified. Values outside
+///     new split pane. Defaults to 50 if not specified. Values outside
 ///     1-99 return an error.
 ///
 ///   * `--pane=<name>`: Split adjacent to the named pane instead of the
