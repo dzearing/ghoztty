@@ -141,6 +141,12 @@ nav { position: fixed; top: 0; left: 0; right: 0; z-index: 100; padding: 0 24px;
 .hl-ok { color: #9ece6a; }
 .hl-dim { color: #565f89; }
 .hl-cursor { display: inline-block; width: 8px; height: 16px; background: var(--accent); animation: blink 1s step-end infinite; vertical-align: text-bottom; }
+.pane-color-blue { border-left: 2px solid var(--blue); background: rgba(96, 165, 250, 0.04); }
+.pane-color-blue .pane-label { color: var(--blue); }
+.pane-color-green { border-left: 2px solid var(--green); background: rgba(48, 209, 88, 0.04); }
+.pane-color-green .pane-label { color: var(--green); }
+.pane-color-orange { border-left: 2px solid var(--orange); background: rgba(255, 159, 10, 0.04); }
+.pane-color-orange .pane-label { color: var(--orange); }
 @keyframes blink { 50% { opacity: 0; } }
 
 /* ── Sections ── */
