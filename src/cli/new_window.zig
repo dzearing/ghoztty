@@ -187,9 +187,8 @@ pub const Options = struct {
 ///     Only meaningful when `--split` is also specified.
 ///
 ///   * `--split-percent=<1-99>`: The percentage of space allocated to the
-///     existing pane when creating the initial split. Defaults to 50.
-///     Only meaningful when `--split` is also specified. Values outside
-///     1-99 return an error.
+///     new split pane. Defaults to 50. Only meaningful when `--split` is
+///     also specified. Values outside 1-99 return an error.
 ///
 ///   * `--color=<#hex>`: A hex color (e.g. `#1a1a2e` or `#abc`) to apply
 ///     as a background tint on the new window.

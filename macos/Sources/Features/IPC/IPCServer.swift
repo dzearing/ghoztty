@@ -294,7 +294,7 @@ class IPCServer {
             guard (1...99).contains(percent) else {
                 return IPCResponse(success: false, error: "percent must be between 1 and 99, got \(percent)")
             }
-            ratio = min(0.9, max(0.1, Double(percent) / 100.0))
+            ratio = min(0.9, max(0.1, Double(100 - percent) / 100.0))
         } else {
             ratio = 0.5
         }
@@ -424,7 +424,7 @@ class IPCServer {
             guard (1...99).contains(percent) else {
                 return IPCResponse(success: false, error: "percent must be between 1 and 99, got \(percent)")
             }
-            ratio = min(0.9, max(0.1, Double(percent) / 100.0))
+            ratio = min(0.9, max(0.1, Double(100 - percent) / 100.0))
         } else {
             ratio = 0.5
         }
