@@ -59,6 +59,20 @@ pub const Options = struct {
             return null;
         }
 
+        if (lib.cutPrefix(u8, arg, "--color=")) |rest| {
+            const trimmed = std.mem.trim(u8, rest, &std.ascii.whitespace);
+            if (!isValidColor(trimmed))
+                return error.InvalidValue;
+            return try alloc.dupeZ(u8, arg);
+        }
+
+        if (lib.cutPrefix(u8, arg, "--split-color=")) |rest| {
+            const trimmed = std.mem.trim(u8, rest, &std.ascii.whitespace);
+            if (!isValidColor(trimmed))
+                return error.InvalidValue;
+            return try alloc.dupeZ(u8, arg);
+        }
+
         if (lib.cutPrefix(u8, arg, "--working-directory=")) |rest| {
             const stripped = std.mem.trim(u8, rest, &std.ascii.whitespace);
             if (std.mem.eql(u8, stripped, "home")) return try alloc.dupeZ(u8, arg);
@@ -73,6 +87,20 @@ pub const Options = struct {
         }
 
         return try alloc.dupeZ(u8, arg);
+    }
+
+    fn isValidColor(value: []const u8) bool {
+        if (std.mem.eql(u8, value, "random")) return true;
+        return isValidHexColor(value);
+    }
+
+    fn isValidHexColor(value: []const u8) bool {
+        if (value.len != 7 and value.len != 4) return false;
+        if (value[0] != '#') return false;
+        for (value[1..]) |c| {
+            if (!std.ascii.isHex(c)) return false;
+        }
+        return true;
     }
 
     pub fn deinit(self: *Options) void {
@@ -162,6 +190,13 @@ pub const Options = struct {
 ///     existing pane when creating the initial split. Defaults to 50.
 ///     Only meaningful when `--split` is also specified. Values outside
 ///     1-99 return an error.
+///
+///   * `--color=<#hex>`: A hex color (e.g. `#1a1a2e` or `#abc`) to apply
+///     as a background tint on the new window.
+///
+///   * `--split-color=<#hex>`: A hex color to apply as a background tint
+///     on the initial split pane. Only meaningful when `--split` is also
+///     specified.
 ///
 /// Available since: 1.2.0
 pub fn run(alloc: Allocator) !u8 {

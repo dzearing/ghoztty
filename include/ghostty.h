@@ -1138,6 +1138,10 @@ GHOSTTY_API uint64_t ghostty_surface_foreground_pid(ghostty_surface_t);
 GHOSTTY_API ghostty_string_s ghostty_surface_tty_name(ghostty_surface_t);
 GHOSTTY_API void ghostty_surface_set_color_scheme(ghostty_surface_t,
                                                      ghostty_color_scheme_e);
+GHOSTTY_API void ghostty_surface_set_color(ghostty_surface_t,
+                                              int kind, uint8_t index,
+                                              uint8_t r, uint8_t g, uint8_t b);
+GHOSTTY_API void ghostty_surface_reset_colors(ghostty_surface_t);
 GHOSTTY_API ghostty_input_mods_e ghostty_surface_key_translation_mods(ghostty_surface_t,
                                                                          ghostty_input_mods_e);
 GHOSTTY_API bool ghostty_surface_key(ghostty_surface_t, ghostty_input_key_s);

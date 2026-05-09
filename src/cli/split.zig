@@ -45,7 +45,27 @@ pub const Options = struct {
 
     fn checkArg(self: *Options, alloc: Allocator, arg: []const u8) (error{InvalidValue} || Allocator.Error)!?[:0]const u8 {
         _ = self;
+        if (lib.cutPrefix(u8, arg, "--color=")) |rest| {
+            const trimmed = std.mem.trim(u8, rest, &std.ascii.whitespace);
+            if (!isValidColor(trimmed))
+                return error.InvalidValue;
+            return try alloc.dupeZ(u8, arg);
+        }
         return try alloc.dupeZ(u8, arg);
+    }
+
+    fn isValidColor(value: []const u8) bool {
+        if (std.mem.eql(u8, value, "random")) return true;
+        return isValidHexColor(value);
+    }
+
+    fn isValidHexColor(value: []const u8) bool {
+        if (value.len != 7 and value.len != 4) return false;
+        if (value[0] != '#') return false;
+        for (value[1..]) |c| {
+            if (!std.ascii.isHex(c)) return false;
+        }
+        return true;
     }
 
     pub fn deinit(self: *Options) void {
@@ -92,6 +112,9 @@ pub const Options = struct {
 ///     registered targets.
 ///
 ///   * `--command=<command>`: The command to run in the split pane.
+///
+///   * `--color=<#hex>`: A hex color (e.g. `#1a1a2e` or `#abc`) to apply
+///     as a background tint on the split pane.
 ///
 ///   * `-e`: Any arguments after this will be interpreted as a command to
 ///     execute in the split pane.

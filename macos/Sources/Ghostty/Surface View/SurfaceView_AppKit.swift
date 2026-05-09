@@ -96,6 +96,14 @@ extension Ghostty {
         /// dynamically updated. Otherwise, the background color is the default background color.
         @Published private(set) var backgroundColor: Color?
 
+        /// Background tint color. Set via IPC --color flag or the context menu color picker.
+        @Published var backgroundTint: Color?
+
+        /// Canonical NSColor for the background tint. Source of truth for color
+        /// manipulation (picker, split inheritance, palette adjustment).
+        /// The SwiftUI `backgroundTint` is derived from this for overlay rendering.
+        var backgroundTintNSColor: NSColor?
+
         /// True when the bell is active. This is set inactive on focus or event.
         @Published private(set) var bell: Bool = false
 
@@ -342,6 +350,9 @@ extension Ghostty {
 
             // Setup our surface. This will also initialize all the terminal IO.
             let surface_cfg = baseConfig ?? SurfaceConfiguration()
+            self.backgroundTint = surface_cfg.backgroundTint
+            self.backgroundTintNSColor = surface_cfg.backgroundTintNSColor
+                ?? surface_cfg.backgroundTint.map { NSColor($0).resolvedSRGB }
             let surface = surface_cfg.withCValue(view: self) { surface_cfg_c in
                 ghostty_surface_new(app, &surface_cfg_c)
             }
@@ -350,6 +361,14 @@ extension Ghostty {
                 return
             }
             self.surfaceModel = Ghostty.Surface(cSurface: surface)
+
+            // Apply background tint after the terminal IO has finished initializing.
+            // The IO thread resets colors during startup, so we delay briefly.
+            if let nsColor = self.backgroundTintNSColor {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    self?.applyPaletteForColor(nsColor)
+                }
+            }
 
             // Setup our tracking area so we get mouse moved events
             updateTrackingAreas()
@@ -387,6 +406,10 @@ extension Ghostty {
 
             // Cancel progress report timer
             progressReportTimer?.invalidate()
+
+            // Clean up color picker state
+            colorUpdateTimer?.invalidate()
+            dismissColorPanel()
         }
 
         override func endSearch() {
@@ -1569,6 +1592,9 @@ extension Ghostty {
             item.setImageIfDesired(systemSymbolName: "eye.fill")
             item.state = readonly ? .on : .off
             menu.addItem(.separator())
+            item = menu.addItem(withTitle: "Background Color...", action: #selector(pickBackgroundColor(_:)), keyEquivalent: "")
+            item.setImageIfDesired(systemSymbolName: "paintpalette")
+            menu.addItem(.separator())
             item = menu.addItem(withTitle: "Change Tab Title...", action: #selector(BaseTerminalController.changeTabTitle(_:)), keyEquivalent: "")
             item.setImageIfDesired(systemSymbolName: "pencil.line")
             item = menu.addItem(withTitle: "Change Terminal Title...", action: #selector(changeTitle(_:)), keyEquivalent: "")
@@ -1700,6 +1726,119 @@ extension Ghostty {
             if !ghostty_surface_binding_action(surface, action, UInt(action.lengthOfBytes(using: .utf8))) {
                 AppDelegate.logger.warning("action failed action=\(action)")
             }
+        }
+
+        private var colorUpdateTimer: Timer?
+
+        private func dismissColorPanel() {
+            guard NSColorPanel.sharedColorPanelExists else { return }
+            let panel = NSColorPanel.shared
+            panel.setTarget(nil)
+            panel.setAction(nil)
+            panel.close()
+        }
+
+
+        @objc func pickBackgroundColor(_ sender: Any) {
+            let panel = NSColorPanel.shared
+            // Clear action before setting color to prevent the panel from
+            // firing backgroundColorDidChange during initialization.
+            panel.setTarget(nil)
+            panel.setAction(nil)
+            panel.color = backgroundTintNSColor ?? .windowBackgroundColor
+            panel.showsAlpha = false
+            panel.isContinuous = true
+            panel.setTarget(self)
+            panel.setAction(#selector(backgroundColorDidChange(_:)))
+            panel.orderFront(nil)
+        }
+
+        @objc private func backgroundColorDidChange(_ sender: NSColorPanel) {
+            let color = sender.color
+            let srgbColor = color.usingColorSpace(.sRGB) ?? color
+            backgroundTintNSColor = srgbColor
+            backgroundTint = Color(srgbColor)
+
+            colorUpdateTimer?.invalidate()
+            colorUpdateTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: false) { [weak self] _ in
+                self?.applyPaletteForColor(srgbColor)
+            }
+        }
+
+        func applyPaletteForColor(_ color: NSColor) {
+            guard let surface = self.surface else { return }
+            let resolved = color.resolvedSRGB
+
+            var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            resolved.getRed(&r, green: &g, blue: &b, alpha: &a)
+            ghostty_surface_set_color(surface, 2, 0,
+                UInt8(r * 255), UInt8(g * 255), UInt8(b * 255))
+
+            let fg: (UInt8, UInt8, UInt8) = resolved.isLightColor
+                ? (0, 0, 0) : (255, 255, 255)
+            ghostty_surface_set_color(surface, 1, 0, fg.0, fg.1, fg.2)
+
+            Self.adjustPaletteForContrast(surface: surface, background: resolved)
+        }
+
+        private static let defaultAnsiColors: [(CGFloat, CGFloat, CGFloat)] = [
+            // Standard 8 colors (dark)
+            (0.00, 0.00, 0.00), // 0: black
+            (0.80, 0.00, 0.00), // 1: red
+            (0.00, 0.80, 0.00), // 2: green
+            (0.80, 0.80, 0.00), // 3: yellow
+            (0.00, 0.00, 0.80), // 4: blue
+            (0.80, 0.00, 0.80), // 5: magenta
+            (0.00, 0.80, 0.80), // 6: cyan
+            (0.75, 0.75, 0.75), // 7: white
+            // Bright 8 colors
+            (0.50, 0.50, 0.50), // 8: bright black
+            (1.00, 0.33, 0.33), // 9: bright red
+            (0.33, 1.00, 0.33), // 10: bright green
+            (1.00, 1.00, 0.33), // 11: bright yellow
+            (0.33, 0.33, 1.00), // 12: bright blue
+            (1.00, 0.33, 1.00), // 13: bright magenta
+            (0.33, 1.00, 1.00), // 14: bright cyan
+            (1.00, 1.00, 1.00), // 15: bright white
+        ]
+
+        static func adjustPaletteForContrast(surface: ghostty_surface_t, background: NSColor) {
+            let bgLum = background.luminance
+
+            for (i, base) in defaultAnsiColors.enumerated() {
+                let baseColor = NSColor(red: base.0, green: base.1, blue: base.2, alpha: 1)
+                let adjusted = ensureContrast(baseColor, against: bgLum)
+
+                var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+                (adjusted.usingColorSpace(.sRGB) ?? adjusted).getRed(&r, green: &g, blue: &b, alpha: &a)
+                ghostty_surface_set_color(surface, 0, UInt8(i),
+                    UInt8(min(r, 1) * 255), UInt8(min(g, 1) * 255), UInt8(min(b, 1) * 255))
+            }
+        }
+
+        /// Adjust a color's brightness to ensure minimum contrast against a background luminance.
+        /// Preserves hue and saturation, only shifts brightness.
+        private static func ensureContrast(_ color: NSColor, against bgLum: Double) -> NSColor {
+            let minContrast: CGFloat = 0.35
+            var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+            (color.usingColorSpace(.sRGB) ?? color).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+
+            let colorLum = color.luminance
+            let contrast = abs(colorLum - bgLum)
+
+            if contrast >= minContrast { return color }
+
+            // Push brightness away from the background
+            let targetB: CGFloat
+            if bgLum > 0.5 {
+                // Light background: darken the color
+                targetB = max(b - (minContrast - contrast), 0.05)
+            } else {
+                // Dark background: lighten the color
+                targetB = min(b + (minContrast - contrast), 1.0)
+            }
+
+            return NSColor(hue: h, saturation: s, brightness: targetB, alpha: a)
         }
 
         @IBAction func changeTitle(_ sender: Any) {

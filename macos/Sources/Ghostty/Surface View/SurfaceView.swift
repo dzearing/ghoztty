@@ -106,6 +106,12 @@ extension Ghostty {
                 }
                 .ghosttySurfaceView(surfaceView)
 
+                // Background tint from IPC --color flag
+                if let tint = surfaceView.backgroundTint {
+                    tint.opacity(0.3)
+                        .allowsHitTesting(false)
+                }
+
                 // Progress report
                 if let progressReport = surfaceView.progressReport, progressReport.state != .remove {
                     VStack(spacing: 0) {
@@ -628,6 +634,14 @@ extension Ghostty {
 
         /// Context for surface creation
         var context: ghostty_surface_context_e = GHOSTTY_SURFACE_CONTEXT_WINDOW
+
+        /// Background tint color from IPC --color flag
+        var backgroundTint: Color?
+
+        #if canImport(AppKit)
+        /// Resolved NSColor for the tint, avoiding lossy SwiftUI Color roundtrips
+        var backgroundTintNSColor: NSColor?
+        #endif
 
         init() {}
 

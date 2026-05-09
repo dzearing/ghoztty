@@ -95,6 +95,14 @@ class BaseTerminalController: NSWindowController,
         didSet { applyTitleToWindow() }
     }
 
+    var windowName: String = "window-\(BaseTerminalController.nextWindowId())"
+
+    private static var _nextWindowId: Int = 0
+    private static func nextWindowId() -> Int {
+        _nextWindowId += 1
+        return _nextWindowId
+    }
+
     /// The last computed title from the focused surface (without the override).
     private var lastComputedTitle: String = "👻"
 
@@ -137,9 +145,15 @@ class BaseTerminalController: NSWindowController,
 
         super.init(window: nil)
 
-        // Initialize our initial surface.
+        // Initialize our initial surface, injecting the window name env var.
         guard let ghostty_app = ghostty.app else { preconditionFailure("app must be loaded") }
-        self.surfaceTree = tree ?? .init(view: Ghostty.SurfaceView(ghostty_app, baseConfig: base))
+        var initialConfig = base ?? Ghostty.SurfaceConfiguration()
+        if let existingName = initialConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] {
+            self.windowName = existingName
+        } else {
+            initialConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] = windowName
+        }
+        self.surfaceTree = tree ?? .init(view: Ghostty.SurfaceView(ghostty_app, baseConfig: initialConfig))
 
         // Setup our bell state for the window
         setupBellNotificationPublisher()
@@ -247,9 +261,27 @@ class BaseTerminalController: NSWindowController,
         // We can only create new splits for surfaces in our tree.
         guard surfaceTree.root?.node(view: oldView) != nil else { return nil }
 
+        // Inherit and shift the parent's background color for visual depth.
+        // Use explicit tint if set, otherwise fall back to the terminal's
+        // actual background color from the config.
+        var effectiveConfig = config ?? Ghostty.SurfaceConfiguration()
+        let hasExplicitTint = effectiveConfig.backgroundTint != nil
+        if !hasExplicitTint {
+            let parentNSColor = oldView.backgroundTintNSColor
+                ?? NSColor(oldView.derivedConfig.backgroundColor).resolvedSRGB
+            let shifted = Self.shiftedTint(parentNSColor)
+            effectiveConfig.backgroundTint = Color(shifted)
+            effectiveConfig.backgroundTintNSColor = shifted
+        }
+
+        // Inject the window name env var.
+        if effectiveConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] == nil {
+            effectiveConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] = windowName
+        }
+
         // Create a new surface view
         guard let ghostty_app = ghostty.app else { return nil }
-        let newView = Ghostty.SurfaceView(ghostty_app, baseConfig: config)
+        let newView = Ghostty.SurfaceView(ghostty_app, baseConfig: effectiveConfig)
 
         // Do the split
         let newTree: SplitTree<Ghostty.SurfaceView>
@@ -272,6 +304,15 @@ class BaseTerminalController: NSWindowController,
             moveFocusTo: newView,
             moveFocusFrom: oldView,
             undoAction: "New Split")
+
+        // Only adjust the terminal palette for explicit IPC --color flags.
+        // Auto-shifted splits use the SwiftUI overlay for visual depth
+        // without touching the terminal (which may still be initializing).
+        if hasExplicitTint, let nsColor = newView.backgroundTintNSColor {
+            DispatchQueue.main.async {
+                newView.applyPaletteForColor(nsColor)
+            }
+        }
 
         return newView
     }
@@ -1280,6 +1321,12 @@ class BaseTerminalController: NSWindowController,
     }
 
     func windowDidResignKey(_ notification: Notification) {
+        // When the color panel is open, the terminal should still appear focused
+        // so the user sees accurate colors while picking.
+        if NSColorPanel.sharedColorPanelExists && NSColorPanel.shared.isVisible {
+            return
+        }
+
         // Becoming/losing key means we have to notify our surface(s) that we have focus
         // so things like cursors blink, pty events are sent, etc.
         self.syncFocusToSurfaceTree()
@@ -1506,6 +1553,18 @@ extension BaseTerminalController: NSMenuItemValidation {
 
         default:
             return true
+        }
+    }
+
+    // MARK: - Background Tint
+
+    /// Shift a tint color away from the base: lighten dark colors, darken light ones.
+    static func shiftedTint(_ color: NSColor) -> NSColor {
+        let srgb = color.usingColorSpace(.sRGB) ?? color
+        if srgb.isLightColor {
+            return srgb.darken(by: 0.05)
+        } else {
+            return srgb.lighten(by: 0.05)
         }
     }
 

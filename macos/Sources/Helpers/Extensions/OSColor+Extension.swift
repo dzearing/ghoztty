@@ -13,14 +13,7 @@ extension OSColor {
         var g: CGFloat = 0
         var b: CGFloat = 0
         var a: CGFloat = 0
-
-        // getRed:green:blue:alpha requires sRGB space
-        #if canImport(AppKit)
-        guard let rgb = self.usingColorSpace(.sRGB) else { return 0 }
-        #else
-        let rgb = self
-        #endif
-        rgb.getRed(&r, green: &g, blue: &b, alpha: &a)
+        resolvedSRGB.getRed(&r, green: &g, blue: &b, alpha: &a)
         return (0.299 * r) + (0.587 * g) + (0.114 * b)
     }
 
@@ -83,13 +76,45 @@ extension OSColor {
 
     func darken(by amount: CGFloat) -> OSColor {
         var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        self.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        resolvedSRGB.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
         return OSColor(
             hue: h,
             saturation: s,
             brightness: min(b * (1 - amount), 1),
             alpha: a
         )
+    }
+
+    func lighten(by amount: CGFloat) -> OSColor {
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        resolvedSRGB.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        return OSColor(
+            hue: h,
+            saturation: s,
+            brightness: min(b + (1 - b) * amount, 1),
+            alpha: a
+        )
+    }
+
+    /// Resolve to a concrete sRGB NSColor that is safe for getHue/getRed.
+    /// Falls back through CGColor decomposition to handle catalog/dynamic colors.
+    var resolvedSRGB: OSColor {
+        #if canImport(AppKit)
+        if let srgb = self.usingColorSpace(.sRGB) { return srgb }
+        let cg = self.cgColor
+        let comps = cg.components ?? []
+        if comps.count >= 3 {
+            return OSColor(red: comps[0], green: comps[1], blue: comps[2],
+                           alpha: comps.count >= 4 ? comps[3] : 1)
+        }
+        if comps.count >= 1 {
+            return OSColor(white: comps[0],
+                           alpha: comps.count >= 2 ? comps[1] : 1)
+        }
+        return OSColor(red: 0.15, green: 0.15, blue: 0.18, alpha: 1)
+        #else
+        return self
+        #endif
     }
 }
 
