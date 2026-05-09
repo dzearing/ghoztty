@@ -86,8 +86,70 @@ jobs:
           xcrun stapler staple "$DMG_NAME"
           xcrun stapler staple "macos/build/ReleaseLocal/Ghoztty.app"
 
+      - name: Download Sparkle tools
+        run: |
+          curl -L -o /tmp/Sparkle.tar.xz "https://github.com/sparkle-project/Sparkle/releases/download/2.9.0/Sparkle-2.9.0.tar.xz"
+          mkdir -p /tmp/sparkle
+          tar xf /tmp/Sparkle.tar.xz -C /tmp/sparkle
+
+      - name: Sign DMG with Sparkle EdDSA key
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          SIGN_OUTPUT=$(echo "$SPARKLE_PRIVATE_KEY" | /tmp/sparkle/bin/sign_update "$DMG_NAME" --ed-key-file -)
+          echo "SPARKLE_SIGN_OUTPUT=$SIGN_OUTPUT" >> $GITHUB_ENV
+          DMG_LENGTH=$(stat -f%z "$DMG_NAME")
+          echo "DMG_LENGTH=$DMG_LENGTH" >> $GITHUB_ENV
+
       - uses: softprops/action-gh-release@v2
         with:
           files: ${{ env.DMG_NAME }}
           body: |
             Custom Ghoztty build (macOS ${{ env.ARCH }}, signed and notarized).
+
+      - name: Update appcast and deploy to GitHub Pages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          DOWNLOAD_URL="https://github.com/dzearing/ghoztty/releases/download/v${VERSION}/${DMG_NAME}"
+          PUB_DATE=$(date -u '+%a, %d %b %Y %H:%M:%S %z')
+
+          ED_SIGNATURE=$(echo "$SPARKLE_SIGN_OUTPUT" | grep -o 'sparkle:edSignature="[^"]*"' | cut -d'"' -f2)
+
+          REPO_URL="https://x-access-token:${GITHUB_TOKEN}@github.com/dzearing/ghoztty.git"
+          git clone --branch gh-pages --single-branch "$REPO_URL" /tmp/gh-pages
+          cd /tmp/gh-pages
+
+          python3 - "$VERSION" "$DOWNLOAD_URL" "$ED_SIGNATURE" "$DMG_LENGTH" "$PUB_DATE" <<'PYEOF'
+          import sys, xml.etree.ElementTree as ET
+
+          version, url, sig, length, pub_date = sys.argv[1:6]
+
+          ns = {"sparkle": "http://www.andymatuschak.net/xml-namespaces/sparkle"}
+          ET.register_namespace("sparkle", ns["sparkle"])
+          ET.register_namespace("dc", "http://purl.org/dc/elements/1.1/")
+
+          tree = ET.parse("appcast.xml")
+          channel = tree.find("channel")
+
+          item = ET.SubElement(channel, "item")
+          ET.SubElement(item, "title").text = f"Version {version}"
+          ET.SubElement(item, "{%s}version" % ns["sparkle"]).text = version
+          ET.SubElement(item, "{%s}shortVersionString" % ns["sparkle"]).text = version
+          ET.SubElement(item, "pubDate").text = pub_date
+
+          enclosure = ET.SubElement(item, "enclosure")
+          enclosure.set("url", url)
+          enclosure.set("type", "application/octet-stream")
+          enclosure.set("{%s}edSignature" % ns["sparkle"], sig)
+          enclosure.set("length", length)
+
+          ET.indent(tree, space="    ")
+          tree.write("appcast.xml", xml_declaration=True, encoding="utf-8")
+          PYEOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add appcast.xml
+          git commit -m "Update appcast for v${VERSION}"
+          git push origin gh-pages

@@ -75,6 +75,17 @@ pub fn init(
         // to xcodebuild.
         if (xc_arch) |arch| step.addArgs(&.{ "-arch", arch });
 
+        // Pass the version to xcodebuild so it lands in the app's Info.plist.
+        var version_buf: [64]u8 = undefined;
+        const marketing_version = std.fmt.bufPrint(&version_buf, "{d}.{d}.{d}", .{
+            config.version.major,
+            config.version.minor,
+            config.version.patch,
+        }) catch "0.0.0";
+        step.addArgs(&.{
+            b.fmt("MARKETING_VERSION={s}", .{marketing_version}),
+        });
+
         // We need the xcframework
         deps.xcframework.addStepDependencies(&step.step);
 

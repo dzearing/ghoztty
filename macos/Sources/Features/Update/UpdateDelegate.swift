@@ -11,8 +11,8 @@ extension UpdateDriver: SPUUpdaterDelegate {
         // you share a single appcast file. We don't want to do that so we
         // do this instead.
         switch appDelegate.ghostty.config.autoUpdateChannel {
-        case .tip: return "https://tip.files.ghostty.org/appcast.xml"
-        case .stable: return "https://release.files.ghostty.org/appcast.xml"
+        case .tip: return "https://dzearing.github.io/ghoztty/appcast-tip.xml"
+        case .stable: return "https://dzearing.github.io/ghoztty/appcast.xml"
         }
     }
 

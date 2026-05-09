@@ -274,15 +274,13 @@ pub fn init(b: *std.Build, appVersion: []const u8, libVersion: []const u8) !Conf
                     app_version.patch,
                 });
 
-                if (!std.mem.eql(u8, tag, expected)) {
-                    @panic("tagged releases must be in vX.Y.Z format matching build.zig");
+                if (std.mem.eql(u8, tag, expected)) {
+                    break :version .{
+                        .major = app_version.major,
+                        .minor = app_version.minor,
+                        .patch = app_version.patch,
+                    };
                 }
-
-                break :version .{
-                    .major = app_version.major,
-                    .minor = app_version.minor,
-                    .patch = app_version.patch,
-                };
             }
         }
 
