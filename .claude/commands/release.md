@@ -8,10 +8,9 @@ Run `git log $(git describe --tags --abbrev=0 2>/dev/null || echo HEAD~20)..HEAD
 
 Categorize changes into: new features, improvements, bug fixes, upstream syncs.
 
-Recommend a version tag (e.g. `v1.3.2-dz.2`) with clear reasoning:
-- The base version (1.3.2) should match the upstream Ghostty version the fork is based on
-- The `-dz.N` suffix increments with each fork release
-- Bump the base version when syncing with a new upstream release
+Recommend a version tag (e.g. `v1.4.1`) with clear reasoning:
+- Use standard semver — bump patch for fixes, minor for features, major for breaking changes
+- The base version should stay in sync with the upstream Ghostty version when syncing
 
 Present the recommendation and ask the user to confirm or override. Do NOT proceed until confirmed.
 
@@ -24,7 +23,7 @@ From the categorized commits, write user-facing release notes. Rules:
 - Separate fork-specific changes from upstream syncs
 - Format:
   ```
-  ## What's new in Ghoztty vX.Y.Z-dz.N
+  ## What's new in Ghoztty vX.Y.Z
 
   ### Fork Changes
   - **Feature name** — What the user can now do, in plain language.
@@ -40,8 +39,8 @@ Present the notes and ask the user to approve or edit. Do NOT proceed until appr
 ### Step 3: Tag and Push
 
 ```bash
-git tag vX.Y.Z-dz.N
-git push fork main --tags
+git tag vX.Y.Z
+git push origin main --tags
 ```
 
 This triggers the release workflow which builds, signs, notarizes, and publishes a DMG to GitHub Releases.
@@ -60,8 +59,8 @@ Monitor it until completion. If it fails, check logs with `gh run view <id> --re
 Once the DMG is built, update the GitHub release with the friendly notes:
 
 ```bash
-gh release edit vX.Y.Z-dz.N --repo dzearing/ghoztty --title "Ghoztty vX.Y.Z-dz.N" --notes "$(cat <<'NOTES'
-## What's new in Ghoztty vX.Y.Z-dz.N
+gh release edit vX.Y.Z --repo dzearing/ghoztty --title "Ghoztty vX.Y.Z" --notes "$(cat <<'NOTES'
+## What's new in Ghoztty vX.Y.Z
 
 {the approved release notes from step 2}
 
