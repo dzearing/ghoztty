@@ -672,11 +672,6 @@ class IPCServer {
                 return name
             }
         }
-        // Fall back to the surface ID hex format (matches GHOZTTY_PANE_NAME env var)
-        if let cValue = view.surfaceModel?.unsafeCValue {
-            let ptr = UInt(bitPattern: cValue)
-            return String(format: "0x%016llx", UInt64(ptr))
-        }
         return view.id.uuidString
     }
 
