@@ -95,6 +95,14 @@ class BaseTerminalController: NSWindowController,
         didSet { applyTitleToWindow() }
     }
 
+    var windowName: String = "window-\(BaseTerminalController.nextWindowId())"
+
+    private static var _nextWindowId: Int = 0
+    private static func nextWindowId() -> Int {
+        _nextWindowId += 1
+        return _nextWindowId
+    }
+
     /// The last computed title from the focused surface (without the override).
     private var lastComputedTitle: String = "👻"
 
@@ -137,9 +145,15 @@ class BaseTerminalController: NSWindowController,
 
         super.init(window: nil)
 
-        // Initialize our initial surface.
+        // Initialize our initial surface, injecting the window name env var.
         guard let ghostty_app = ghostty.app else { preconditionFailure("app must be loaded") }
-        self.surfaceTree = tree ?? .init(view: Ghostty.SurfaceView(ghostty_app, baseConfig: base))
+        var initialConfig = base ?? Ghostty.SurfaceConfiguration()
+        if let existingName = initialConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] {
+            self.windowName = existingName
+        } else {
+            initialConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] = windowName
+        }
+        self.surfaceTree = tree ?? .init(view: Ghostty.SurfaceView(ghostty_app, baseConfig: initialConfig))
 
         // Setup our bell state for the window
         setupBellNotificationPublisher()
@@ -258,6 +272,11 @@ class BaseTerminalController: NSWindowController,
             let shifted = Self.shiftedTint(parentNSColor)
             effectiveConfig.backgroundTint = Color(shifted)
             effectiveConfig.backgroundTintNSColor = shifted
+        }
+
+        // Inject the window name env var.
+        if effectiveConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] == nil {
+            effectiveConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] = windowName
         }
 
         // Create a new surface view

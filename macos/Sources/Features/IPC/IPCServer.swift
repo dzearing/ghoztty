@@ -261,7 +261,7 @@ class IPCServer {
     }
 
     private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
-        let parsed: ParsedArguments
+        var parsed: ParsedArguments
         if let arguments = request.arguments {
             parsed = parseArguments(arguments)
         } else {
@@ -278,6 +278,12 @@ class IPCServer {
                 }
                 return .ok
             }
+        }
+
+        // Inject window/pane name env vars for the main surface
+        if let target = parsed.target {
+            parsed.config.environmentVariables["GHOZTTY_WINDOW_NAME"] = target
+            parsed.config.environmentVariables["GHOZTTY_PANE_NAME"] = target
         }
 
         // Validate percent if provided
@@ -337,6 +343,15 @@ class IPCServer {
                     if let splitCommand = parsed.splitCommand {
                         splitConfig.command = splitCommand
                     }
+
+                    // Inject window/pane name env vars for the inline split
+                    if let target = parsed.target {
+                        splitConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] = target
+                    }
+                    if let name = parsed.name {
+                        splitConfig.environmentVariables["GHOZTTY_PANE_NAME"] = name
+                    }
+
                     let splitTint: Color?
                     let splitNSColor: NSColor? = parsed.splitColor.flatMap {
                         $0 == "random" ? Self.randomDarkColor() : NSColor(hex: $0)
@@ -441,6 +456,13 @@ class IPCServer {
                 splitConfig.backgroundTint = tintColor
                 splitConfig.backgroundTintNSColor = tintNSColor
 
+                if let windowName = self?.windowName(for: controller) {
+                    splitConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] = windowName
+                }
+                if let name = parsed.name {
+                    splitConfig.environmentVariables["GHOZTTY_PANE_NAME"] = name
+                }
+
                 let newView = controller.newSplit(
                     at: surface,
                     direction: direction,
@@ -503,6 +525,15 @@ class IPCServer {
             }
             splitConfig.backgroundTint = tintColor
 
+            if let target = parsed.target {
+                splitConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] = target
+            } else if let windowName = self?.windowName(for: controller) {
+                splitConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] = windowName
+            }
+            if let name = parsed.name {
+                splitConfig.environmentVariables["GHOZTTY_PANE_NAME"] = name
+            }
+
             let newView = controller.newSplit(
                 at: surfaceView,
                 direction: direction,
@@ -562,6 +593,15 @@ class IPCServer {
 
     private func pruneStaleTargets() {
         targetRegistry = targetRegistry.filter { $0.value.isAlive }
+    }
+
+    private func windowName(for controller: TerminalController) -> String? {
+        for (name, entry) in targetRegistry {
+            if case .window(let ref) = entry, ref.value === controller {
+                return name
+            }
+        }
+        return nil
     }
 
     private static func randomDarkColor() -> NSColor {

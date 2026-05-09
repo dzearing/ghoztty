@@ -649,10 +649,10 @@ pub fn init(
         env.remove("GHOSTTY_LOG");
 
         var buf: [18]u8 = undefined;
-        try env.put(
-            "GHOSTTY_SURFACE_ID",
-            std.fmt.bufPrint(&buf, "0x{x:0>16}", .{self.id}) catch unreachable,
-        );
+        const surface_id_str = std.fmt.bufPrint(&buf, "0x{x:0>16}", .{self.id}) catch unreachable;
+        try env.put("GHOSTTY_SURFACE_ID", surface_id_str);
+        try env.put("GHOZTTY_WINDOW_NAME", surface_id_str);
+        try env.put("GHOZTTY_PANE_NAME", surface_id_str);
 
         // Initialize our IO backend
         var io_exec = try termio.Exec.init(alloc, .{
