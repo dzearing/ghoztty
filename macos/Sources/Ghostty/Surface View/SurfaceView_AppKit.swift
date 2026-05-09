@@ -362,6 +362,14 @@ extension Ghostty {
             }
             self.surfaceModel = Ghostty.Surface(cSurface: surface)
 
+            // Apply background tint after the terminal IO has finished initializing.
+            // The IO thread resets colors during startup, so we delay briefly.
+            if let nsColor = self.backgroundTintNSColor {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    self?.applyPaletteForColor(nsColor)
+                }
+            }
+
             // Setup our tracking area so we get mouse moved events
             updateTrackingAreas()
 
@@ -1759,19 +1767,18 @@ extension Ghostty {
 
         func applyPaletteForColor(_ color: NSColor) {
             guard let surface = self.surface else { return }
+            let resolved = color.resolvedSRGB
 
             var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-            (color.usingColorSpace(.sRGB) ?? color).getRed(&r, green: &g, blue: &b, alpha: &a)
+            resolved.getRed(&r, green: &g, blue: &b, alpha: &a)
             ghostty_surface_set_color(surface, 2, 0,
                 UInt8(r * 255), UInt8(g * 255), UInt8(b * 255))
 
-            let fgColor: NSColor = color.isLightColor ? .black : .white
-            var fr: CGFloat = 0, fg: CGFloat = 0, fb: CGFloat = 0
-            fgColor.getRed(&fr, green: &fg, blue: &fb, alpha: &a)
-            ghostty_surface_set_color(surface, 1, 0,
-                UInt8(fr * 255), UInt8(fg * 255), UInt8(fb * 255))
+            let fg: (UInt8, UInt8, UInt8) = resolved.isLightColor
+                ? (0, 0, 0) : (255, 255, 255)
+            ghostty_surface_set_color(surface, 1, 0, fg.0, fg.1, fg.2)
 
-            Self.adjustPaletteForContrast(surface: surface, background: color)
+            Self.adjustPaletteForContrast(surface: surface, background: resolved)
         }
 
         private static let defaultAnsiColors: [(CGFloat, CGFloat, CGFloat)] = [

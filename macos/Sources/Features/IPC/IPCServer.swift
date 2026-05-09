@@ -311,9 +311,13 @@ class IPCServer {
                 controller.titleOverride = title
             }
 
-            // Apply color scheme based on tint luminance
-            if let surface = controller.focusedSurface {
-                Self.applyColorScheme(for: windowTint, to: surface)
+            // Apply color scheme after the surface has initialized
+            if windowTint != nil {
+                DispatchQueue.main.async {
+                    if let surface = controller.focusedSurface {
+                        Self.applyColorScheme(for: windowTint, to: surface)
+                    }
+                }
             }
 
             if let target = parsed.target {
@@ -562,30 +566,28 @@ class IPCServer {
 
     private static func randomDarkColor() -> NSColor {
         let hue = CGFloat.random(in: 0...1)
-        let saturation = CGFloat.random(in: 0.3...0.7)
-        let brightness = CGFloat.random(in: 0.15...0.35)
+        let saturation = CGFloat.random(in: 0.2...0.3)
+        let brightness = CGFloat.random(in: 0.1...0.15)
         return NSColor(hue: hue, saturation: saturation, brightness: brightness, alpha: 1)
     }
 
     private static func applyColorScheme(for tintColor: Color?, to surfaceView: Ghostty.SurfaceView) {
         guard let tintColor, let surface = surfaceView.surface else { return }
-        let nsColor = NSColor(tintColor)
+        let resolved = NSColor(tintColor).resolvedSRGB
 
         // Set terminal background color
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        (nsColor.usingColorSpace(.sRGB) ?? nsColor).getRed(&r, green: &g, blue: &b, alpha: &a)
+        resolved.getRed(&r, green: &g, blue: &b, alpha: &a)
         ghostty_surface_set_color(surface, 2, 0,
             UInt8(r * 255), UInt8(g * 255), UInt8(b * 255))
 
         // Set foreground for contrast
-        let fgColor: NSColor = nsColor.isLightColor ? .black : .white
-        var fr: CGFloat = 0, fg: CGFloat = 0, fb: CGFloat = 0
-        fgColor.getRed(&fr, green: &fg, blue: &fb, alpha: &a)
-        ghostty_surface_set_color(surface, 1, 0,
-            UInt8(fr * 255), UInt8(fg * 255), UInt8(fb * 255))
+        let fg: (UInt8, UInt8, UInt8) = resolved.isLightColor
+            ? (0, 0, 0) : (255, 255, 255)
+        ghostty_surface_set_color(surface, 1, 0, fg.0, fg.1, fg.2)
 
         // Adjust ANSI palette for contrast
-        Ghostty.SurfaceView.adjustPaletteForContrast(surface: surface, background: nsColor)
+        Ghostty.SurfaceView.adjustPaletteForContrast(surface: surface, background: resolved)
     }
 
     private static func parseSplitDirection(_ value: String) -> SplitTree<Ghostty.SurfaceView>.NewDirection? {

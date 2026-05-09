@@ -1543,9 +1543,9 @@ extension BaseTerminalController: NSMenuItemValidation {
     static func shiftedTint(_ color: NSColor) -> NSColor {
         let srgb = color.usingColorSpace(.sRGB) ?? color
         if srgb.isLightColor {
-            return srgb.darken(by: 0.15)
+            return srgb.darken(by: 0.05)
         } else {
-            return srgb.lighten(by: 0.15)
+            return srgb.lighten(by: 0.05)
         }
     }
 
