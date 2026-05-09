@@ -1,9 +1,16 @@
-<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.net/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+<?xml version='1.0' encoding='utf-8'?>
+<rss xmlns:sparkle="http://www.andymatuschak.net/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>Ghoztty</title>
         <link>https://github.com/dzearing/ghoztty</link>
         <description>Ghoztty updates</description>
         <language>en</language>
+        <item>
+            <title>Version 1.4.0</title>
+            <sparkle:version>1.4.0</sparkle:version>
+            <sparkle:shortVersionString>1.4.0</sparkle:shortVersionString>
+            <pubDate>Sat, 09 May 2026 21:09:15 +0000</pubDate>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.4.0/Ghoztty-1.4.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="BwlL/GVtfQQDevpC5tAS+HQrDKokSXyNmH5d41c96m4ozzN3CN2j8lubAe07AbAlu1DpBmgGgtTNHd4PsFEFAw==" length="22588004" />
+        </item>
     </channel>
 </rss>
