@@ -605,9 +605,7 @@ class IPCServer {
 
                 self.pruneStaleTargets()
 
-                let reverseTargetMap = self.buildReverseTargetMap()
                 let scriptWindows = NSApp.scriptWindows
-
                 let frontWindow = scriptWindows.first
 
                 for scriptWindow in scriptWindows {
@@ -617,10 +615,13 @@ class IPCServer {
                     for tab in scriptWindow.tabs {
                         guard let controller = tab.parentController else { continue }
 
-                        let splitsData = Self.buildSplitNodeData(
+                        let windowName = controller.windowName
+                        self.ensureWindowRegistered(name: windowName, controller: controller)
+
+                        let splitsData = self.buildSplitNodeData(
                             node: controller.surfaceTree.root,
                             focusedSurface: controller.focusedSurface,
-                            reverseTargetMap: reverseTargetMap
+                            controller: controller
                         )
 
                         tabsData.append(IPCData.TabData(
@@ -632,10 +633,11 @@ class IPCServer {
                         ))
                     }
 
+                    let windowName = scriptWindow.preferredController?.windowName
                     windowsData.append(IPCData.WindowData(
                         id: scriptWindow.stableID,
                         title: scriptWindow.title,
-                        target: reverseTargetMap[scriptWindow.stableID],
+                        target: windowName,
                         focused: isFocused,
                         tabs: tabsData
                     ))
@@ -650,29 +652,39 @@ class IPCServer {
     }
 
     @MainActor
-    private func buildReverseTargetMap() -> [String: String] {
-        var map: [String: String] = [:]
-        for (name, entry) in targetRegistry {
-            switch entry {
-            case .window(let ref):
-                if let controller = ref.value {
-                    let windowID = ScriptWindow.stableID(primaryController: controller)
-                    map[windowID] = name
-                }
-            case .pane(_, let surfaceRef):
-                if let surface = surfaceRef.value {
-                    map[surface.id.uuidString] = name
-                }
-            }
+    private func ensureWindowRegistered(name: String, controller: BaseTerminalController) {
+        if targetRegistry[name] == nil, let tc = controller as? TerminalController {
+            targetRegistry[name] = .window(WeakRef(tc))
         }
-        return map
     }
 
     @MainActor
-    private static func buildSplitNodeData(
+    private func ensurePaneRegistered(name: String, controller: BaseTerminalController, surface: Ghostty.SurfaceView) {
+        if targetRegistry[name] == nil, let tc = controller as? TerminalController {
+            targetRegistry[name] = .pane(controller: WeakRef(tc), surface: WeakRef(surface))
+        }
+    }
+
+    @MainActor
+    private func paneNameForSurface(_ view: Ghostty.SurfaceView) -> String {
+        for (name, entry) in targetRegistry {
+            if case .pane(_, let surfaceRef) = entry, surfaceRef.value === view {
+                return name
+            }
+        }
+        // Fall back to the surface ID hex format (matches GHOZTTY_PANE_NAME env var)
+        if let cValue = view.surfaceModel?.unsafeCValue {
+            let ptr = UInt(bitPattern: cValue)
+            return String(format: "0x%016llx", UInt64(ptr))
+        }
+        return view.id.uuidString
+    }
+
+    @MainActor
+    private func buildSplitNodeData(
         node: SplitTree<Ghostty.SurfaceView>.Node?,
         focusedSurface: Ghostty.SurfaceView?,
-        reverseTargetMap: [String: String]
+        controller: BaseTerminalController
     ) -> IPCData.SplitNodeData {
         guard let node else {
             return .leaf(IPCData.TerminalData(
@@ -688,13 +700,16 @@ class IPCServer {
 
         switch node {
         case .leaf(let view):
+            let paneName = paneNameForSurface(view)
+            ensurePaneRegistered(name: paneName, controller: controller, surface: view)
+
             return .leaf(IPCData.TerminalData(
                 id: view.id.uuidString,
                 title: view.title ?? "",
                 working_directory: view.pwd ?? "",
                 pid: view.surfaceModel?.foregroundPID ?? 0,
                 tty: view.surfaceModel?.ttyName ?? "",
-                name: reverseTargetMap[view.id.uuidString],
+                name: paneName,
                 focused: view === focusedSurface
             ))
         case .split(let split):
@@ -708,12 +723,12 @@ class IPCServer {
                 left: buildSplitNodeData(
                     node: split.left,
                     focusedSurface: focusedSurface,
-                    reverseTargetMap: reverseTargetMap
+                    controller: controller
                 ),
                 right: buildSplitNodeData(
                     node: split.right,
                     focusedSurface: focusedSurface,
-                    reverseTargetMap: reverseTargetMap
+                    controller: controller
                 )
             )
         }
