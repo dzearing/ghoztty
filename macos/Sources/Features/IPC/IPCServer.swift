@@ -246,6 +246,8 @@ class IPCServer {
             return handleRename(request)
         case "list":
             return handleList()
+        case "read":
+            return handleRead(request)
         default:
             return IPCResponse(success: false, error: "unknown action: \(request.action)")
         }
@@ -262,6 +264,7 @@ class IPCServer {
         var percent: Int?
         var pane: String?
         var color: String?
+        var lines: Int?
     }
 
     private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
@@ -630,6 +633,74 @@ class IPCServer {
         return .ok
     }
 
+    private func handleRead(_ request: IPCRequest) -> IPCResponse {
+        let parsed: ParsedArguments
+        if let arguments = request.arguments {
+            parsed = parseArguments(arguments)
+        } else {
+            parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
+        }
+
+        guard let name = parsed.name else {
+            return IPCResponse(success: false, error: "--name is required for +read")
+        }
+
+        let lineCount = parsed.lines ?? 50
+
+        pruneStaleTargets()
+
+        guard let entry = targetRegistry[name] else {
+            return IPCResponse(success: false, error: "pane '\(name)' not found in registry")
+        }
+
+        guard let surfaceView = entry.surfaceView else {
+            return IPCResponse(success: false, error: "pane '\(name)' is no longer alive")
+        }
+
+        var resultText = ""
+        let semaphore = DispatchSemaphore(value: 0)
+
+        DispatchQueue.main.async {
+            defer { semaphore.signal() }
+
+            guard let surface = surfaceView.surface else { return }
+
+            var text = ghostty_text_s()
+            let sel = ghostty_selection_s(
+                top_left: ghostty_point_s(
+                    tag: GHOSTTY_POINT_SCREEN,
+                    coord: GHOSTTY_POINT_COORD_TOP_LEFT,
+                    x: 0,
+                    y: 0),
+                bottom_right: ghostty_point_s(
+                    tag: GHOSTTY_POINT_SCREEN,
+                    coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
+                    x: 0,
+                    y: 0),
+                rectangle: false)
+
+            guard ghostty_surface_read_text(surface, sel, &text) else { return }
+            defer { ghostty_surface_free_text(surface, &text) }
+
+            let fullText = String(cString: text.text)
+            let allLines = fullText.components(separatedBy: "\n")
+
+            // Take the last N lines, dropping any trailing empty line from the split
+            let trimmed = allLines.last == "" ? Array(allLines.dropLast()) : allLines
+            let lastLines = trimmed.suffix(lineCount)
+            resultText = lastLines.joined(separator: "\n")
+        }
+
+        semaphore.wait()
+
+        if resultText.isEmpty {
+            return IPCResponse(success: false, error: "failed to read terminal content from '\(name)'")
+        }
+
+        let data = IPCData.readResult(IPCData.ReadResultData(text: resultText))
+        return IPCResponse(success: true, data: data)
+    }
+
     private func handleList() -> IPCResponse {
         var windowsData: [IPCData.WindowData] = []
         let semaphore = DispatchSemaphore(value: 0)
@@ -888,6 +959,11 @@ class IPCServer {
 
             if let value = arg.dropPrefix("--color=") {
                 result.color = String(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--lines=") {
+                result.lines = Int(value)
                 continue
             }
 
