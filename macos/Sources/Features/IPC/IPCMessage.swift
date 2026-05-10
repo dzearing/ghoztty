@@ -21,6 +21,7 @@ struct IPCResponse: Encodable {
 
 enum IPCData: Encodable {
     case listState(ListStateData)
+    case readResult(ReadResultData)
 
     struct ListStateData: Encodable {
         let windows: [WindowData]
@@ -93,8 +94,13 @@ enum IPCData: Encodable {
         }
     }
 
+    struct ReadResultData: Encodable {
+        let text: String
+    }
+
     private enum CodingKeys: String, CodingKey {
         case windows
+        case text
     }
 
     func encode(to encoder: Encoder) throws {
@@ -102,6 +108,9 @@ enum IPCData: Encodable {
         case .listState(let data):
             var container = encoder.container(keyedBy: CodingKeys.self)
             try container.encode(data.windows, forKey: .windows)
+        case .readResult(let data):
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(data.text, forKey: .text)
         }
     }
 }
