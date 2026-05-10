@@ -4,7 +4,7 @@ A fork of [Ghostty](https://github.com/ghostty-org/ghostty) that adds CLI-driven
 
 ## CLI Window Management
 
-Three IPC commands communicate with a running Ghoztty instance over a Unix domain socket. All commands are idempotent — named targets that already exist are focused instead of recreated.
+IPC commands communicate with a running Ghoztty instance over a Unix domain socket. All commands are idempotent — named targets that already exist are focused instead of recreated.
 
 ### `ghoztty +new-window`
 
@@ -34,6 +34,17 @@ Close a named pane or window. Closing a nonexistent target succeeds silently.
 ghoztty +close --target=<name>
 ```
 
+### `ghoztty +read`
+
+Read the last N lines of terminal output from a named pane and print to stdout.
+
+```
+ghoztty +read --name=<pane> --lines=<N>
+```
+
+- `--name`: Named pane to read from (required).
+- `--lines`: Number of lines from the end of scrollback (default: 50).
+
 ### Naming
 
 - `+new-window --target=<name>` registers a **window**
@@ -46,6 +57,8 @@ ghoztty +close --target=<name>
 ghoztty +new-window --target=ide --command="nvim ."
 ghoztty +split --target=ide --name=term --direction=down --command=zsh
 ghoztty +split --target=ide --name=logs --direction=right --command="tail -f app.log"
+# read output from a pane
+ghoztty +read --name=logs --lines=5
 # teardown
 ghoztty +close --target=logs
 ghoztty +close --target=term
