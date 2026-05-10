@@ -607,8 +607,8 @@ class IPCServer {
             return IPCResponse(success: false, error: "--target is required for +rename")
         }
 
-        guard let newName = parsed.name else {
-            return IPCResponse(success: false, error: "--name is required for +rename")
+        guard let newTitle = parsed.title else {
+            return IPCResponse(success: false, error: "--title is required for +rename")
         }
 
         pruneStaleTargets()
@@ -617,9 +617,15 @@ class IPCServer {
             return IPCResponse(success: false, error: "target '\(target)' not found in registry")
         }
 
-        targetRegistry.removeValue(forKey: target)
-        targetRegistry[newName] = entry
-        Self.logger.info("IPC: renamed target '\(target)' to '\(newName)'")
+        guard let controller = entry.controller else {
+            return IPCResponse(success: false, error: "target '\(target)' is no longer alive")
+        }
+
+        DispatchQueue.main.async {
+            controller.titleOverride = newTitle
+        }
+
+        Self.logger.info("IPC: renamed display title for '\(target)' to '\(newTitle)'")
 
         return .ok
     }

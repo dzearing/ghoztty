@@ -41,18 +41,17 @@ pub const Options = struct {
     }
 };
 
-/// Rename a named pane or window in the target registry.
+/// Rename the display title of a named window.
 ///
-/// This updates the target registry so the old name no longer
-/// resolves and the new name does. The underlying window or pane
-/// is not affected.
+/// Changes the title shown in the window's title bar. The target
+/// registry name is not affected.
 ///
 /// Flags:
 ///
-///   * `--target=<name>`: The current name of the pane or window
-///     to rename. Required.
+///   * `--target=<name>`: The named window or pane whose title
+///     to change. Required.
 ///
-///   * `--name=<new-name>`: The new name to assign. Required.
+///   * `--title=<new-title>`: The new display title. Required.
 ///
 /// Available since: 1.2.0
 pub fn run(alloc: Allocator) !u8 {
