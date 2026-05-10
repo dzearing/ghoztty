@@ -74,6 +74,23 @@ enum IPCData: Encodable {
         let tty: String
         let name: String?
         let focused: Bool
+        let exit_code: Int?
+
+        private enum CodingKeys: String, CodingKey {
+            case id, title, working_directory, pid, tty, name, focused, exit_code
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encode(title, forKey: .title)
+            try container.encode(working_directory, forKey: .working_directory)
+            try container.encode(pid, forKey: .pid)
+            try container.encode(tty, forKey: .tty)
+            try container.encode(name, forKey: .name)
+            try container.encode(focused, forKey: .focused)
+            try container.encode(exit_code, forKey: .exit_code)
+        }
     }
 
     private enum CodingKeys: String, CodingKey {

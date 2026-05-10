@@ -726,7 +726,8 @@ class IPCServer {
                 pid: 0,
                 tty: "",
                 name: nil,
-                focused: false
+                focused: false,
+                exit_code: nil
             ))
         }
 
@@ -742,7 +743,8 @@ class IPCServer {
                 pid: view.surfaceModel?.foregroundPID ?? 0,
                 tty: view.surfaceModel?.ttyName ?? "",
                 name: paneName,
-                focused: view === focusedSurface
+                focused: view === focusedSurface,
+                exit_code: view.exitCode.map { Int($0) }
             ))
         case .split(let split):
             let direction: String = switch split.direction {
