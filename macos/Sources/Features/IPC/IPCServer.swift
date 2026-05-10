@@ -244,6 +244,8 @@ class IPCServer {
             return handleClose(request)
         case "rename":
             return handleRename(request)
+        case "rearrange":
+            return handleRearrange(request)
         case "list":
             return handleList()
         default:
@@ -262,6 +264,7 @@ class IPCServer {
         var percent: Int?
         var pane: String?
         var color: String?
+        var layout: String?
     }
 
     private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
@@ -630,6 +633,235 @@ class IPCServer {
         return .ok
     }
 
+    // MARK: - Rearrange
+
+    private final class LayoutNode: Decodable {
+        let pane: String?
+        let direction: String?
+        let ratio: Double?
+        let left: LayoutNode?
+        let right: LayoutNode?
+    }
+
+    private func handleRearrange(_ request: IPCRequest) -> IPCResponse {
+        let parsed: ParsedArguments
+        if let arguments = request.arguments {
+            parsed = parseArguments(arguments)
+        } else {
+            parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
+        }
+
+        guard let layoutJSON = parsed.layout else {
+            return IPCResponse(success: false, error: "--layout is required for +rearrange")
+        }
+
+        guard let layoutData = layoutJSON.data(using: .utf8) else {
+            return IPCResponse(success: false, error: "invalid UTF-8 in layout JSON")
+        }
+
+        let layout: LayoutNode
+        do {
+            layout = try JSONDecoder().decode(LayoutNode.self, from: layoutData)
+        } catch {
+            return IPCResponse(success: false, error: "invalid layout JSON: \(error.localizedDescription)")
+        }
+
+        // Collect all pane names referenced in the layout
+        var layoutPaneNames: [String] = []
+        if let err = collectPaneNames(layout, into: &layoutPaneNames) {
+            return err
+        }
+
+        // Check for duplicates
+        let nameSet = Set(layoutPaneNames)
+        if nameSet.count != layoutPaneNames.count {
+            let dupes = layoutPaneNames.filter { name in
+                layoutPaneNames.filter { $0 == name }.count > 1
+            }
+            return IPCResponse(success: false, error: "duplicate pane name in layout: '\(Set(dupes).first ?? "")'")
+        }
+
+        // Must have at least one pane
+        if layoutPaneNames.isEmpty {
+            return IPCResponse(success: false, error: "layout must contain at least one pane")
+        }
+
+        var result: IPCResponse = .ok
+        let semaphore = DispatchSemaphore(value: 0)
+
+        DispatchQueue.main.async { [weak self] in
+            defer { semaphore.signal() }
+
+            MainActor.assumeIsolated {
+                guard let self else {
+                    result = IPCResponse(success: false, error: "IPC server no longer available")
+                    return
+                }
+
+                self.pruneStaleTargets()
+
+                // Resolve target controller
+                let controller: TerminalController?
+                if let target = parsed.target {
+                    controller = self.targetRegistry[target]?.controller
+                    if controller == nil {
+                        result = IPCResponse(success: false, error: "target window '\(target)' not found")
+                        return
+                    }
+                } else {
+                    controller = TerminalController.preferredParent
+                    if controller == nil {
+                        result = IPCResponse(success: false, error: "no focused window found")
+                        return
+                    }
+                }
+
+                guard let controller else { return }
+
+                // Resolve all pane names to surfaces in this controller's tree
+                var surfacesByName: [String: Ghostty.SurfaceView] = [:]
+                for name in layoutPaneNames {
+                    guard let entry = self.targetRegistry[name] else {
+                        result = IPCResponse(success: false, error: "pane '\(name)' not found in registry")
+                        return
+                    }
+                    guard let surface = entry.surfaceView else {
+                        result = IPCResponse(success: false, error: "pane '\(name)' is no longer alive")
+                        return
+                    }
+                    guard controller.surfaceTree.root?.node(view: surface) != nil else {
+                        result = IPCResponse(success: false, error: "pane '\(name)' is not in the target window")
+                        return
+                    }
+                    surfacesByName[name] = surface
+                }
+
+                // Build the new split tree from the layout
+                let newRoot: SplitTree<Ghostty.SurfaceView>.Node
+                do {
+                    newRoot = try self.buildSplitNode(from: layout, surfaces: surfacesByName)
+                } catch {
+                    result = IPCResponse(success: false, error: "failed to build layout: \(error)")
+                    return
+                }
+
+                // Collect all current surfaces in the tree
+                let currentSurfaces = Set(controller.surfaceTree.map { $0 })
+                let keptSurfaces = Set(surfacesByName.values)
+                let removedSurfaces = currentSurfaces.subtracting(keptSurfaces)
+
+                // Remember the currently focused surface
+                let focusedSurface = controller.focusedSurface
+                let newFocus: Ghostty.SurfaceView? = if let focusedSurface, keptSurfaces.contains(focusedSurface) {
+                    focusedSurface
+                } else {
+                    newRoot.leftmostLeaf()
+                }
+
+                // Replace the tree
+                let newTree = SplitTree<Ghostty.SurfaceView>(root: newRoot, zoomed: nil)
+                controller.replaceSurfaceTree(
+                    newTree,
+                    moveFocusTo: newFocus,
+                    moveFocusFrom: focusedSurface,
+                    undoAction: "Rearrange Layout"
+                )
+
+                // Remove registry entries for panes no longer in the tree
+                for surface in removedSurfaces {
+                    for (name, entry) in self.targetRegistry {
+                        if case .pane(_, let surfaceRef) = entry, surfaceRef.value === surface {
+                            self.targetRegistry.removeValue(forKey: name)
+                            break
+                        }
+                    }
+                }
+
+                Self.logger.info("IPC: rearranged layout with \(layoutPaneNames.count) panes")
+            }
+        }
+
+        semaphore.wait()
+        return result
+    }
+
+    private func collectPaneNames(_ node: LayoutNode, into names: inout [String]) -> IPCResponse? {
+        if let pane = node.pane {
+            names.append(pane)
+            return nil
+        }
+
+        guard node.direction != nil else {
+            return IPCResponse(success: false, error: "layout node must have either 'pane' or 'direction'")
+        }
+        guard let left = node.left else {
+            return IPCResponse(success: false, error: "split node must have 'left' child")
+        }
+        guard let right = node.right else {
+            return IPCResponse(success: false, error: "split node must have 'right' child")
+        }
+
+        if let err = collectPaneNames(left, into: &names) { return err }
+        if let err = collectPaneNames(right, into: &names) { return err }
+        return nil
+    }
+
+    @MainActor
+    private func buildSplitNode(
+        from layout: LayoutNode,
+        surfaces: [String: Ghostty.SurfaceView]
+    ) throws -> SplitTree<Ghostty.SurfaceView>.Node {
+        if let paneName = layout.pane {
+            guard let surface = surfaces[paneName] else {
+                throw RearrangeError.paneNotFound(paneName)
+            }
+            return .leaf(view: surface)
+        }
+
+        guard let dirStr = layout.direction else {
+            throw RearrangeError.invalidNode
+        }
+
+        let direction: SplitTree<Ghostty.SurfaceView>.Direction = switch dirStr.lowercased() {
+        case "horizontal": .horizontal
+        case "vertical": .vertical
+        default: throw RearrangeError.invalidDirection(dirStr)
+        }
+
+        guard let leftLayout = layout.left, let rightLayout = layout.right else {
+            throw RearrangeError.missingSplitChildren
+        }
+
+        let ratioPercent = layout.ratio ?? 50
+        let clampedRatio = min(0.9, max(0.1, ratioPercent / 100.0))
+
+        let leftNode = try buildSplitNode(from: leftLayout, surfaces: surfaces)
+        let rightNode = try buildSplitNode(from: rightLayout, surfaces: surfaces)
+
+        return .split(.init(
+            direction: direction,
+            ratio: clampedRatio,
+            left: leftNode,
+            right: rightNode
+        ))
+    }
+
+    private enum RearrangeError: Error, CustomStringConvertible {
+        case paneNotFound(String)
+        case invalidNode
+        case invalidDirection(String)
+        case missingSplitChildren
+
+        var description: String {
+            switch self {
+            case .paneNotFound(let name): return "pane '\(name)' not found"
+            case .invalidNode: return "node must have 'pane' or 'direction'"
+            case .invalidDirection(let dir): return "invalid direction '\(dir)' (expected 'horizontal' or 'vertical')"
+            case .missingSplitChildren: return "split node must have 'left' and 'right' children"
+            }
+        }
+    }
+
     private func handleList() -> IPCResponse {
         var windowsData: [IPCData.WindowData] = []
         let semaphore = DispatchSemaphore(value: 0)
@@ -893,6 +1125,11 @@ class IPCServer {
 
             if let value = arg.dropPrefix("--split-color=") {
                 result.splitColor = String(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--layout=") {
+                result.layout = String(value)
                 continue
             }
         }
