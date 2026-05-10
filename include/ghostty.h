@@ -1067,11 +1067,18 @@ typedef struct {
   const char **arguments;
 } ghostty_ipc_action_rename_s;
 
+// apprt.ipc.Action.Rearrange
+typedef struct {
+  // This should be a null terminated list of strings.
+  const char **arguments;
+} ghostty_ipc_action_rearrange_s;
+
 typedef union {
   ghostty_ipc_action_new_window_s new_window;
   ghostty_ipc_action_split_s split;
   ghostty_ipc_action_close_s close;
   ghostty_ipc_action_rename_s rename;
+  ghostty_ipc_action_rearrange_s rearrange;
 } ghostty_ipc_action_u;
 
 // apprt.ipc.Action.Key
@@ -1080,6 +1087,7 @@ typedef enum {
   GHOSTTY_IPC_ACTION_SPLIT,
   GHOSTTY_IPC_ACTION_CLOSE,
   GHOSTTY_IPC_ACTION_RENAME,
+  GHOSTTY_IPC_ACTION_REARRANGE,
 } ghostty_ipc_action_tag_e;
 
 //-------------------------------------------------------------------

@@ -85,6 +85,9 @@ pub const Action = union(enum) {
     /// Rename a named pane or window in the target registry.
     rename: Rename,
 
+    /// Rearrange the pane layout of a window.
+    rearrange: Rearrange,
+
     pub const NewWindow = struct {
         /// A list of command arguments to launch in the new window. If this is
         /// `null` the command configured in the config or the user's default
@@ -224,12 +227,42 @@ pub const Action = union(enum) {
         }
     };
 
+    pub const Rearrange = struct {
+        arguments: ?[][:0]const u8,
+
+        pub const C = extern struct {
+            arguments: ?[*]?[*:0]const u8,
+
+            pub fn deinit(self: *Rearrange.C, alloc: Allocator) void {
+                if (self.arguments) |arguments| alloc.free(arguments);
+            }
+        };
+
+        pub fn cval(self: *Rearrange, alloc: Allocator) Allocator.Error!Rearrange.C {
+            var result: Rearrange.C = undefined;
+
+            if (self.arguments) |arguments| {
+                result.arguments = try alloc.alloc([*:0]const u8, arguments.len + 1);
+
+                for (arguments, 0..) |argument, i|
+                    result.arguments[i] = argument.ptr;
+
+                result.arguments[arguments.len] = null;
+            } else {
+                result.arguments = null;
+            }
+
+            return result;
+        }
+    };
+
     /// Sync with: ghostty_ipc_action_tag_e
     pub const Key = enum(c_int) {
         new_window,
         split,
         close,
         rename,
+        rearrange,
 
         test "ghostty.h Action.Key" {
             try lib.checkGhosttyHEnum(Key, "GHOSTTY_IPC_ACTION_");

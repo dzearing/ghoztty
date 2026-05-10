@@ -339,6 +339,7 @@ pub const App = struct {
             .split => "split",
             .close => "close",
             .rename => "rename",
+            .rearrange => "rearrange",
         };
 
         return sendIpc(alloc, action_name, value.arguments);
