@@ -242,6 +242,8 @@ class IPCServer {
             return handleSplit(request)
         case "close":
             return handleClose(request)
+        case "rename":
+            return handleRename(request)
         case "list":
             return handleList()
         default:
@@ -589,6 +591,41 @@ class IPCServer {
             }
             self?.targetRegistry.removeValue(forKey: target)
         }
+
+        return .ok
+    }
+
+    private func handleRename(_ request: IPCRequest) -> IPCResponse {
+        let parsed: ParsedArguments
+        if let arguments = request.arguments {
+            parsed = parseArguments(arguments)
+        } else {
+            parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
+        }
+
+        guard let target = parsed.target else {
+            return IPCResponse(success: false, error: "--target is required for +rename")
+        }
+
+        guard let newTitle = parsed.title else {
+            return IPCResponse(success: false, error: "--title is required for +rename")
+        }
+
+        pruneStaleTargets()
+
+        guard let entry = targetRegistry[target] else {
+            return IPCResponse(success: false, error: "target '\(target)' not found in registry")
+        }
+
+        guard let controller = entry.controller else {
+            return IPCResponse(success: false, error: "target '\(target)' is no longer alive")
+        }
+
+        DispatchQueue.main.async {
+            controller.titleOverride = newTitle
+        }
+
+        Self.logger.info("IPC: renamed display title for '\(target)' to '\(newTitle)'")
 
         return .ok
     }

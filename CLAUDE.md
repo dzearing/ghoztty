@@ -52,11 +52,13 @@ ghoztty +close --target=term
 ghoztty +close --target=ide
 ```
 
-## Build
+## Build & Test
 
 ```bash
 zig build -Doptimize=Debug
 ```
+
+**NEVER modify, replace, copy over, or touch `/Applications/Ghoztty.app` in any way.** The installed app is the user's primary terminal. Always test with the debug build at `zig-out/Ghoztty.app`. The debug build uses a separate socket (`ghostty-debug-<uid>.sock`) so it can run alongside the release app.
 
 ## Architecture
 

@@ -338,6 +338,7 @@ pub const App = struct {
             .new_window => "new-window",
             .split => "split",
             .close => "close",
+            .rename => "rename",
         };
 
         return sendIpc(alloc, action_name, value.arguments);
