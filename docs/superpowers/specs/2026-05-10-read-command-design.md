@@ -2,17 +2,15 @@
 
 ## Summary
 
-Add a `ghoztty +read` command that captures the last N lines of terminal output from a named pane or window and writes them to stdout. This is the primary missing feature for agent orchestration — currently agents must use log files because there's no way to programmatically read pane content from another process.
+Add a `ghoztty +read` command that captures the last N lines of terminal output from a named pane and writes them to stdout. This is the primary missing feature for agent orchestration — currently agents must use log files because there's no way to programmatically read pane content from another process.
 
 ## CLI Interface
 
 ```
-ghoztty +read --target=<window> --name=<pane> --lines=<N>
+ghoztty +read --name=<pane> --lines=<N>
 ```
 
-- `--target=<window>`: Read from the focused pane of a named window.
-- `--name=<pane>`: Read from a specific named pane.
-- Exactly one of `--target` or `--name` must be provided. If both or neither are given, exit 1 with a usage error.
+- `--name=<pane>` (required): The named pane to read from. Must have been created with `+split --name=<name>` or registered via `+new-window --target=<name>`.
 - `--lines=<N>` (optional, default 50): Number of lines from the end of the scrollback+screen buffer. No artificial cap — the user can request as many lines as exist.
 
 ### Output
@@ -28,8 +26,8 @@ ghoztty +read --target=<window> --name=<pane> --lines=<N>
 # Read last 5 lines from a specific pane
 ghoztty +read --name=worker1 --lines=5
 
-# Read from the focused pane of a window (default 50 lines)
-ghoztty +read --target=ide
+# Default 50 lines
+ghoztty +read --name=build
 
 # Pipe for searching
 ghoztty +read --name=build --lines=1000 | grep "ERROR"
@@ -69,13 +67,14 @@ The Zig CLI sends the standard JSON format over the Unix domain socket:
 
 Follows the `+list` pattern: direct socket I/O with data response parsing. Does not use `performIpc` (which only returns success/failure).
 
-1. Parse `Options` struct with `--target`, `--name`, `--lines` (default 50), `--help`.
-2. Connect to Unix socket at `$TMPDIR/ghostty[-debug]-<uid>.sock`.
-3. Construct and send JSON message: `{"action":"read","arguments":[...]}` with 4-byte big-endian length header.
-4. Read response: 4-byte big-endian length + JSON body.
-5. Parse response — if `success` is false, print `error` field to stderr, exit 1.
-6. Extract `data.text` from the JSON response.
-7. Write text to stdout, exit 0.
+1. Parse `Options` struct with `--name`, `--lines` (default 50), `--help`.
+2. Validate that `--name` was provided; exit 1 with usage error if missing.
+3. Connect to Unix socket at `$TMPDIR/ghostty[-debug]-<uid>.sock`.
+4. Construct and send JSON message: `{"action":"read","arguments":[...]}` with 4-byte big-endian length header.
+5. Read response: 4-byte big-endian length + JSON body.
+6. Parse response — if `success` is false, print `error` field to stderr, exit 1.
+7. Extract `data.text` from the JSON response.
+8. Write text to stdout, exit 0.
 
 ### Zig CLI dispatcher (`src/cli/ghostty.zig`)
 
@@ -88,10 +87,7 @@ Follows the `+list` pattern: direct socket I/O with data response parsing. Does 
 Add `"read"` case to `dispatchAction` switch, and implement `handleRead`:
 
 1. Parse arguments using `parseArguments()` (add `lines: Int?` field to `ParsedArguments`, parse `--lines=<N>`).
-2. Resolve the target surface:
-   - If `--name` is set: look up pane in `targetRegistry`, get its `.surfaceView`.
-   - If `--target` is set: look up window in `targetRegistry`, get the window's focused surface via `.surfaceView`.
-   - If neither: return error response.
+2. Resolve the surface: look up `--name` in `targetRegistry`, get its `.surfaceView`.
 3. Get the surface's underlying `ghostty_surface_t` pointer via `surfaceView.surface`.
 4. Read full screen content using `ghostty_surface_read_text` with `GHOSTTY_POINT_SCREEN` / `GHOSTTY_POINT_COORD_TOP_LEFT` and `GHOSTTY_POINT_COORD_BOTTOM_RIGHT` tags.
 5. Convert to Swift `String`, split by newlines, take the last N lines (default 50).
@@ -126,8 +122,8 @@ No changes to `src/apprt/ipc.zig` or `src/apprt/embedded.zig` — `+read` bypass
 
 ## Design Decisions
 
+- **Just `--name`**: Agents create panes and know their names. No need for `--target=<window>` shortcut — keeps the interface simple.
 - **Server-side line limiting**: The Swift handler reads the full buffer but only sends the last N lines over the socket. This keeps IPC payloads small for the common case (5-50 lines) while allowing large requests.
 - **GHOSTTY_POINT_SCREEN**: Reads scrollback + visible area, not just the viewport. Agents need to see output that has scrolled past.
 - **No ANSI stripping needed**: `ghostty_surface_read_text` returns cell content as plain UTF-8, not raw PTY bytes.
 - **Direct socket I/O (like +list)**: `performIpc` only returns a boolean success. `+read` needs to return data, so it manages its own socket connection and JSON parsing.
-- **Separate --target/--name**: Matches the existing naming convention where `--target` means a window and `--name` means a pane.
