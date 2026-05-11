@@ -1197,6 +1197,15 @@ command: ?Command = null,
 ///     manually.
 @"initial-command": ?Command = null,
 
+/// The shell to use when running commands specified via IPC (e.g.
+/// `ghoztty +new-window --command=...`). The shell is invoked with
+/// `-lic` so that the user's profile is loaded and aliases are available.
+///
+/// If this is not set, the `--shell` flag on the IPC command is used,
+/// then the `SHELL` environment variable, then `/bin/zsh` on macOS or
+/// `/bin/sh` on other platforms.
+@"command-shell": ?[:0]const u8 = null,
+
 /// Controls when command finished notifications are sent. There are
 /// three options:
 ///

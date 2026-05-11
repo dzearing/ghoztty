@@ -186,6 +186,11 @@ pub const Options = struct {
 ///   * `--split-command=<command>`: The command to run in the split pane.
 ///     Only meaningful when `--split` is also specified.
 ///
+///   * `--shell=<path>`: The shell to use when running `--command` or
+///     `--split-command`. The shell is invoked with `-lic` so the user's
+///     profile is loaded. Defaults to the `command-shell` config, then
+///     `$SHELL`, then `/bin/zsh`.
+///
 ///   * `--split-percent=<1-99>`: The percentage of space allocated to the
 ///     new split pane. Defaults to 50. Only meaningful when `--split` is
 ///     also specified. Values outside 1-99 return an error.

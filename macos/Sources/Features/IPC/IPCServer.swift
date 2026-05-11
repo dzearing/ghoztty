@@ -268,6 +268,7 @@ class IPCServer {
         var color: String?
         var layout: String?
         var lines: Int?
+        var shell: String?
     }
 
     private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
@@ -276,6 +277,14 @@ class IPCServer {
             parsed = parseArguments(arguments)
         } else {
             parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
+        }
+
+        // Wrap IPC commands in the user's shell so aliases and PATH are available
+        if let command = parsed.config.command {
+            parsed.config.command = wrapCommandInShell(command, shell: parsed.shell)
+        }
+        if let splitCommand = parsed.splitCommand {
+            parsed.splitCommand = wrapCommandInShell(splitCommand, shell: parsed.shell)
         }
 
         // Idempotent: if target exists and window is alive, focus it
@@ -400,11 +409,19 @@ class IPCServer {
     }
 
     private func handleSplit(_ request: IPCRequest) -> IPCResponse {
-        let parsed: ParsedArguments
+        var parsed: ParsedArguments
         if let arguments = request.arguments {
             parsed = parseArguments(arguments)
         } else {
             parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
+        }
+
+        // Wrap IPC commands in the user's shell so aliases and PATH are available
+        if let command = parsed.config.command {
+            parsed.config.command = wrapCommandInShell(command, shell: parsed.shell)
+        }
+        if let splitCommand = parsed.splitCommand {
+            parsed.splitCommand = wrapCommandInShell(splitCommand, shell: parsed.shell)
         }
 
         // Convert color string to Color
@@ -1210,6 +1227,11 @@ class IPCServer {
                 result.layout = String(value)
                 continue
             }
+
+            if let value = arg.dropPrefix("--shell=") {
+                result.shell = String(value)
+                continue
+            }
         }
 
         if !commandParts.isEmpty {
@@ -1217,6 +1239,19 @@ class IPCServer {
         }
 
         return result
+    }
+
+    private func resolveShell(explicit: String?) -> String {
+        if let explicit, !explicit.isEmpty { return explicit }
+        if let configShell = ghostty.config.commandShell { return configShell }
+        if let envShell = ProcessInfo.processInfo.environment["SHELL"], !envShell.isEmpty { return envShell }
+        return "/bin/zsh"
+    }
+
+    private func wrapCommandInShell(_ command: String, shell: String?) -> String {
+        let shellPath = resolveShell(explicit: shell)
+        let escaped = command.replacingOccurrences(of: "'", with: "'\\''")
+        return "\(shellPath) -lic '\(escaped)'"
     }
 }
 
