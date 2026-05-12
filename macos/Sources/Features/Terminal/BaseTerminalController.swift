@@ -89,6 +89,9 @@ class BaseTerminalController: NSWindowController,
     /// Cancellable for aggregating bell state across all surfaces in this controller.
     private var bellStateCancellable: AnyCancellable?
 
+    /// Cancellable for aggregating activity state across all surfaces in this controller.
+    private var activityStateCancellable: AnyCancellable?
+
     /// An override title for the tab/window set by the user via prompt_tab_title.
     /// When set, this takes precedence over the computed title from the terminal.
     var titleOverride: String? {
@@ -157,6 +160,9 @@ class BaseTerminalController: NSWindowController,
 
         // Setup our bell state for the window
         setupBellNotificationPublisher()
+
+        // Setup activity state aggregation for the window
+        setupActivityStatePublisher()
 
         // Setup our notifications for behaviors
         let center = NotificationCenter.default
@@ -1619,6 +1625,37 @@ extension BaseTerminalController {
                     userInfo: [Notification.Name.terminalWindowHasBellKey: hasBell]
                 )
             }
+    }
+
+    /// Aggregates activity state across all surfaces and sets the AX attribute on the window.
+    /// Triggers requestUserAttention when the window transitions to needs_input.
+    private func setupActivityStatePublisher() {
+        activityStateCancellable = surfaceValuesPublisher(
+            valueKeyPath: \.activityState,
+            publisherKeyPath: \.$activityState
+        )
+        .map { values -> Ghostty.ActivityState in
+            if values.values.contains(.needsInput) { return .needsInput }
+            if values.values.contains(.busy) { return .busy }
+            return .idle
+        }
+        .removeDuplicates()
+        .receive(on: DispatchQueue.main)
+        .sink { [weak self] newState in
+            guard let self else { return }
+
+            let previousState = (self.window as? TerminalWindow)?.activityState ?? .idle
+
+            if let termWindow = self.window as? TerminalWindow {
+                termWindow.activityState = newState
+            }
+
+            if newState == .needsInput && previousState != .needsInput {
+                if !(self.window?.isKeyWindow ?? false) {
+                    NSApp.requestUserAttention(.informationalRequest)
+                }
+            }
+        }
     }
 
     /// Creates a publisher for values on all surfaces in this controller's tree.

@@ -53,6 +53,14 @@ class TerminalWindow: NSWindow {
     /// Glass effect view for liquid glass background when transparency is enabled
     private var glassEffectView: NSView?
 
+    /// The aggregated activity state for this window, set by the controller.
+    var activityState: Ghostty.ActivityState = .idle {
+        didSet {
+            guard activityState != oldValue else { return }
+            NSAccessibility.post(element: self, notification: .valueChanged)
+        }
+    }
+
     /// Gets the terminal controller from the window controller.
     var terminalController: TerminalController? {
         windowController as? TerminalController
@@ -842,5 +850,24 @@ extension TerminalWindow: TabTitleEditorDelegate {
               let focusedSurface = controller.focusedSurface
         else { return }
         makeFirstResponder(focusedSurface)
+    }
+}
+
+// MARK: Accessibility
+
+extension TerminalWindow {
+    static let axActivityState = NSAccessibility.Attribute(rawValue: "AXWindowActivityState")
+
+    override func accessibilityAttributeNames() -> [NSAccessibility.Attribute] {
+        var names = super.accessibilityAttributeNames()
+        names.append(Self.axActivityState)
+        return names
+    }
+
+    override func accessibilityAttributeValue(_ attribute: NSAccessibility.Attribute) -> Any? {
+        if attribute == Self.axActivityState {
+            return activityState.rawValue
+        }
+        return super.accessibilityAttributeValue(attribute)
     }
 }

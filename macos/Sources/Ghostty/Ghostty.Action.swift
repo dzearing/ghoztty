@@ -164,6 +164,25 @@ extension Ghostty.Action {
     }
 }
 
+extension Ghostty {
+    enum ActivityState: String {
+        case idle
+        case busy
+        case needsInput = "needs_input"
+
+        init(c: ghostty_activity_state_e) {
+            switch c {
+            case GHOSTTY_ACTIVITY_STATE_BUSY:
+                self = .busy
+            case GHOSTTY_ACTIVITY_STATE_NEEDS_INPUT:
+                self = .needsInput
+            default:
+                self = .idle
+            }
+        }
+    }
+}
+
 // Putting the initializer in an extension preserves the automatic one.
 extension Ghostty.Action.ProgressReport {
     init(c: ghostty_action_progress_report_s) {

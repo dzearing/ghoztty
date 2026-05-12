@@ -881,6 +881,13 @@ typedef struct {
   uint64_t len;
 } ghostty_action_scrollbar_s;
 
+// terminal.osc.Command.ActivityState
+typedef enum {
+  GHOSTTY_ACTIVITY_STATE_IDLE,
+  GHOSTTY_ACTIVITY_STATE_BUSY,
+  GHOSTTY_ACTIVITY_STATE_NEEDS_INPUT,
+} ghostty_activity_state_e;
+
 // apprt.Action.Key
 typedef enum {
   GHOSTTY_ACTION_QUIT,
@@ -949,6 +956,7 @@ typedef enum {
   GHOSTTY_ACTION_SEARCH_SELECTED,
   GHOSTTY_ACTION_READONLY,
   GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD,
+  GHOSTTY_ACTION_ACTIVITY_STATE,
 } ghostty_action_tag_e;
 
 typedef union {
@@ -991,6 +999,7 @@ typedef union {
   ghostty_action_search_total_s search_total;
   ghostty_action_search_selected_s search_selected;
   ghostty_action_readonly_e readonly;
+  ghostty_activity_state_e activity_state;
 } ghostty_action_u;
 
 typedef struct {

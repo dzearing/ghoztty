@@ -1,5 +1,6 @@
 const std = @import("std");
 
+pub const activity_state = @import("parsers/activity_state.zig");
 pub const change_window_icon = @import("parsers/change_window_icon.zig");
 pub const context_signal = @import("parsers/context_signal.zig");
 pub const change_window_title = @import("parsers/change_window_title.zig");

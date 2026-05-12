@@ -51,6 +51,9 @@ extension Ghostty {
         /// True when the surface should show a highlight effect (e.g., when presented via goto_split).
         @Published private(set) var highlighted: Bool = false
 
+        /// The activity state reported by the terminal process via OSC 7777.
+        @Published var activityState: Ghostty.ActivityState = .idle
+
         /// The exit code from the child process, or nil if still running.
         @Published private(set) var exitCode: UInt32?
 

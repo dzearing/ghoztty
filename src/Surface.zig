@@ -1128,6 +1128,16 @@ pub fn handleMessage(self: *Surface, msg: Message) !void {
             };
         },
 
+        .activity_state => |state| {
+            _ = self.rt_app.performAction(
+                .{ .surface = self },
+                .activity_state,
+                state,
+            ) catch |err| {
+                log.warn("apprt failed to set activity state err={}", .{err});
+            };
+        },
+
         .selection_scroll_tick => |active| {
             self.selection_scroll_active = active;
             try self.selectionScrollTick();

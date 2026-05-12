@@ -674,6 +674,8 @@ extension Ghostty {
                 return showChildExited(app, target: target, v: action.action.child_exited)
             case GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD:
                 return copyTitleToClipboard(app, target: target)
+            case GHOSTTY_ACTION_ACTIVITY_STATE:
+                activityState(app, target: target, v: action.action.activity_state)
             default:
                 Ghostty.logger.warning("unknown action action=\(action.tag.rawValue)")
                 return false
@@ -2063,6 +2065,24 @@ extension Ghostty {
 
             default:
                 assertionFailure()
+            }
+        }
+
+        private static func activityState(
+            _ app: ghostty_app_t,
+            target: ghostty_target_s,
+            v: ghostty_activity_state_e
+        ) {
+            switch target.tag {
+            case GHOSTTY_TARGET_SURFACE:
+                guard let surface = target.target.surface else { return }
+                guard let surfaceView = self.surfaceView(from: surface) else { return }
+                let state = Ghostty.ActivityState(c: v)
+                DispatchQueue.main.async {
+                    surfaceView.activityState = state
+                }
+
+            default: return
             }
         }
 

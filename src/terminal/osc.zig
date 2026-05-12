@@ -160,6 +160,15 @@ pub const Command = union(Key) {
     /// https://uapi-group.org/specifications/specs/osc_context/
     context_signal: parsers.context_signal.Command,
 
+    /// OSC 7777. Activity state reporting (Ghoztty extension).
+    activity_state: ActivityState,
+
+    pub const ActivityState = enum(c_int) {
+        idle = 0,
+        busy = 1,
+        needs_input = 2,
+    };
+
     pub const SemanticPrompt = parsers.semantic_prompt.Command;
 
     pub const KittyClipboardProtocol = parsers.kitty_clipboard_protocol.OSC;
@@ -193,6 +202,7 @@ pub const Command = union(Key) {
             "kitty_text_sizing",
             "kitty_clipboard_protocol",
             "context_signal",
+            "activity_state",
         },
     );
 
@@ -359,6 +369,7 @@ pub const Parser = struct {
         @"133",
         @"552",
         @"777",
+        @"7777",
         @"1337",
         @"5522",
     };
@@ -422,6 +433,7 @@ pub const Parser = struct {
             .kitty_text_sizing,
             .kitty_clipboard_protocol,
             .context_signal,
+            .activity_state,
             => {},
         }
 
@@ -726,10 +738,20 @@ pub const Parser = struct {
 
             .@"0",
             .@"22",
-            .@"777",
             .@"8",
             .@"9",
             => switch (c) {
+                ';' => self.captureTrailing(.fixed),
+                else => self.state = .invalid,
+            },
+
+            .@"777" => switch (c) {
+                ';' => self.captureTrailing(.fixed),
+                '7' => self.state = .@"7777",
+                else => self.state = .invalid,
+            },
+
+            .@"7777" => switch (c) {
                 ';' => self.captureTrailing(.fixed),
                 else => self.state = .invalid,
             },
@@ -812,6 +834,8 @@ pub const Parser = struct {
             .@"552" => null,
 
             .@"777" => parsers.rxvt_extension.parse(self, terminator_ch),
+
+            .@"7777" => parsers.activity_state.parse(self, terminator_ch),
 
             .@"1337" => parsers.iterm2.parse(self, terminator_ch),
 

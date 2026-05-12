@@ -125,6 +125,7 @@ pub const Action = union(Key) {
     kitty_color_report: kitty.color.OSC,
     color_operation: ColorOperation,
     semantic_prompt: SemanticPrompt,
+    activity_state: osc.Command.ActivityState,
 
     pub const Key = lib.Enum(
         lib.target,
@@ -222,6 +223,7 @@ pub const Action = union(Key) {
             "kitty_color_report",
             "color_operation",
             "semantic_prompt",
+            "activity_state",
         },
     );
 
@@ -2045,6 +2047,10 @@ pub fn Stream(comptime H: type) type {
 
                 .conemu_progress_report => |v| {
                     self.handler.vt(.progress_report, v);
+                },
+
+                .activity_state => |v| {
+                    self.handler.vt(.activity_state, v);
                 },
 
                 .conemu_sleep,
