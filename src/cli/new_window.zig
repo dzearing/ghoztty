@@ -197,6 +197,10 @@ pub const Options = struct {
 ///     on the initial split pane. Only meaningful when `--split` is also
 ///     specified.
 ///
+///   * `--no-focus`: Create the window without stealing focus. The window
+///     will appear but will not become the active window. If the target
+///     already exists, it will not be focused.
+///
 /// Available since: 1.2.0
 pub fn run(alloc: Allocator) !u8 {
     var iter = try args.argsIterator(alloc);

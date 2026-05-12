@@ -119,6 +119,10 @@ pub const Options = struct {
 ///   * `-e`: Any arguments after this will be interpreted as a command to
 ///     execute in the split pane.
 ///
+///   * `--no-focus`: Create the split without stealing focus. The split
+///     pane will be created but the current focus will not change. If
+///     the named pane already exists, it will not be focused.
+///
 /// Available since: 1.2.0
 pub fn run(alloc: Allocator) !u8 {
     var iter = try args.argsIterator(alloc);

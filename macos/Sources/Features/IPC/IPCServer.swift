@@ -262,6 +262,7 @@ class IPCServer {
         var percent: Int?
         var pane: String?
         var color: String?
+        var noFocus: Bool = false
     }
 
     private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
@@ -276,9 +277,11 @@ class IPCServer {
         if let target = parsed.target {
             pruneStaleTargets()
             if let entry = targetRegistry[target], let controller = entry.controller {
-                DispatchQueue.main.async {
-                    controller.window?.makeKeyAndOrderFront(nil)
-                    NSApp.activate(ignoringOtherApps: true)
+                if !parsed.noFocus {
+                    DispatchQueue.main.async {
+                        controller.window?.makeKeyAndOrderFront(nil)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
                 }
                 return .ok
             }
@@ -314,8 +317,12 @@ class IPCServer {
         }
 
         let windowTint: Color? = config.backgroundTint
+        let noFocus = parsed.noFocus
+        let previousApp = noFocus ? NSWorkspace.shared.frontmostApplication : nil
         DispatchQueue.main.async { [ghostty = self.ghostty, weak self] in
-            let controller = TerminalController.newWindow(ghostty, withBaseConfig: config)
+            if noFocus { Self.suppressActivation() }
+
+            let controller = TerminalController.newWindow(ghostty, withBaseConfig: config, noFocus: noFocus)
 
             if let title = parsed.title {
                 controller.titleOverride = title
@@ -372,7 +379,8 @@ class IPCServer {
                         at: surfaceView,
                         direction: direction,
                         baseConfig: splitConfig,
-                        ratio: ratio
+                        ratio: ratio,
+                        noFocus: noFocus
                     )
 
                     if let newView {
@@ -388,6 +396,8 @@ class IPCServer {
                     }
                 }
             }
+
+            if noFocus { Self.restoreActivation(previousApp: previousApp) }
         }
 
         return .ok
@@ -401,6 +411,8 @@ class IPCServer {
             parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
         }
 
+        let previousApp = parsed.noFocus ? NSWorkspace.shared.frontmostApplication : nil
+
         // Convert color string to Color
         let tintNSColor: NSColor? = parsed.color.flatMap {
             $0 == "random" ? Self.randomDarkColor() : NSColor(hex: $0)
@@ -411,9 +423,11 @@ class IPCServer {
         if let name = parsed.name {
             pruneStaleTargets()
             if let entry = targetRegistry[name], let surface = entry.surfaceView {
-                DispatchQueue.main.async {
-                    if let controller = entry.controller {
-                        controller.focusSurface(surface)
+                if !parsed.noFocus {
+                    DispatchQueue.main.async {
+                        if let controller = entry.controller {
+                            controller.focusSurface(surface)
+                        }
                     }
                 }
                 return .ok
@@ -447,6 +461,8 @@ class IPCServer {
             }
 
             DispatchQueue.main.async { [weak self] in
+                if parsed.noFocus { Self.suppressActivation() }
+
                 var splitConfig = Ghostty.SurfaceConfiguration()
                 if let splitCommand = parsed.splitCommand {
                     splitConfig.command = splitCommand
@@ -467,11 +483,13 @@ class IPCServer {
                     splitConfig.environmentVariables["GHOZTTY_PANE_NAME"] = name
                 }
 
+                let noFocus = parsed.noFocus
                 let newView = controller.newSplit(
                     at: surface,
                     direction: direction,
                     baseConfig: splitConfig,
-                    ratio: ratio
+                    ratio: ratio,
+                    noFocus: noFocus
                 )
 
                 if let newView {
@@ -485,6 +503,8 @@ class IPCServer {
                     )
                     Self.logger.info("IPC: registered pane target '\(name)'")
                 }
+
+                if noFocus { Self.restoreActivation(previousApp: previousApp) }
             }
 
             return .ok
@@ -496,6 +516,8 @@ class IPCServer {
         }
 
         DispatchQueue.main.async { [weak self] in
+            if parsed.noFocus { Self.suppressActivation() }
+
             let controller: TerminalController?
             if let target = parsed.target {
                 self?.pruneStaleTargets()
@@ -508,11 +530,13 @@ class IPCServer {
             }
 
             guard let controller else {
+                if parsed.noFocus { Self.restoreActivation(previousApp: previousApp) }
                 Self.logger.warning("IPC: no controller found for split")
                 return
             }
 
             guard let surfaceView = controller.focusedSurface else {
+                if parsed.noFocus { Self.restoreActivation(previousApp: previousApp) }
                 Self.logger.warning("IPC: no focused surface for split")
                 return
             }
@@ -538,11 +562,13 @@ class IPCServer {
                 splitConfig.environmentVariables["GHOZTTY_PANE_NAME"] = name
             }
 
+            let noFocus = parsed.noFocus
             let newView = controller.newSplit(
                 at: surfaceView,
                 direction: direction,
                 baseConfig: splitConfig,
-                ratio: ratio
+                ratio: ratio,
+                noFocus: noFocus
             )
 
             if let newView {
@@ -556,6 +582,8 @@ class IPCServer {
                 )
                 Self.logger.info("IPC: registered pane target '\(name)'")
             }
+
+            if noFocus { Self.restoreActivation(previousApp: previousApp) }
         }
 
         return .ok
@@ -895,6 +923,11 @@ class IPCServer {
                 result.splitColor = String(value)
                 continue
             }
+
+            if arg == "--no-focus" {
+                result.noFocus = true
+                continue
+            }
         }
 
         if !commandParts.isEmpty {
@@ -902,6 +935,17 @@ class IPCServer {
         }
 
         return result
+    }
+
+    private static func suppressActivation() {
+        NSApp.setActivationPolicy(.accessory)
+    }
+
+    private static func restoreActivation(previousApp: NSRunningApplication?) {
+        NSApp.setActivationPolicy(.regular)
+        if let previousApp, previousApp.bundleIdentifier != Bundle.main.bundleIdentifier {
+            previousApp.activate()
+        }
     }
 }
 

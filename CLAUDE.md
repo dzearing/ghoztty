@@ -11,7 +11,7 @@ Three IPC commands communicate with a running Ghoztty instance over a Unix domai
 Create or focus a terminal window. Auto-launches Ghoztty if no instance is running.
 
 ```
-ghoztty +new-window --target=<name> --working-directory=<path> --command=<cmd> --title=<title> --split=right|down|left|up --split-command=<cmd> -e <args...>
+ghoztty +new-window --target=<name> --working-directory=<path> --command=<cmd> --title=<title> --split=right|down|left|up --split-command=<cmd> --no-focus -e <args...>
 ```
 
 ### `ghoztty +split`
@@ -19,7 +19,7 @@ ghoztty +new-window --target=<name> --working-directory=<path> --command=<cmd> -
 Create a split pane in a running window.
 
 ```
-ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --command=<cmd> --working-directory=<path> -e <args...>
+ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --command=<cmd> --working-directory=<path> --no-focus -e <args...>
 ```
 
 - `--direction`: Split direction. Default: `right`.

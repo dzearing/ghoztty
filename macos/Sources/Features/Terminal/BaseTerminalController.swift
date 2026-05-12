@@ -256,7 +256,8 @@ class BaseTerminalController: NSWindowController,
         at oldView: Ghostty.SurfaceView,
         direction: SplitTree<Ghostty.SurfaceView>.NewDirection,
         baseConfig config: Ghostty.SurfaceConfiguration? = nil,
-        ratio: Double = 0.5
+        ratio: Double = 0.5,
+        noFocus: Bool = false
     ) -> Ghostty.SurfaceView? {
         // We can only create new splits for surfaces in our tree.
         guard surfaceTree.root?.node(view: oldView) != nil else { return nil }
@@ -283,6 +284,10 @@ class BaseTerminalController: NSWindowController,
         guard let ghostty_app = ghostty.app else { return nil }
         let newView = Ghostty.SurfaceView(ghostty_app, baseConfig: effectiveConfig)
 
+        if noFocus {
+            newView.suppressFirstResponder = true
+        }
+
         // Do the split
         let newTree: SplitTree<Ghostty.SurfaceView>
         do {
@@ -301,9 +306,15 @@ class BaseTerminalController: NSWindowController,
 
         replaceSurfaceTree(
             newTree,
-            moveFocusTo: newView,
-            moveFocusFrom: oldView,
+            moveFocusTo: noFocus ? nil : newView,
+            moveFocusFrom: noFocus ? nil : oldView,
             undoAction: "New Split")
+
+        if noFocus {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                newView.suppressFirstResponder = false
+            }
+        }
 
         // Only adjust the terminal palette for explicit IPC --color flags.
         // Auto-shifted splits use the SwiftUI overlay for visual depth

@@ -215,8 +215,10 @@ extension Ghostty {
         /// Event monitor (see individual events for why)
         private var eventMonitor: Any?
 
+        var suppressFirstResponder: Bool = false
+
         // We need to support being a first responder so that we can get input events
-        override var acceptsFirstResponder: Bool { return true }
+        override var acceptsFirstResponder: Bool { return !suppressFirstResponder }
 
         init(_ app: ghostty_app_t, baseConfig: SurfaceConfiguration? = nil, uuid: UUID? = nil) {
             self.markedText = NSMutableAttributedString()
