@@ -195,6 +195,10 @@ pub const Options = struct {
 ///     new split pane. Defaults to 50. Only meaningful when `--split` is
 ///     also specified. Values outside 1-99 return an error.
 ///
+///   * `--env=<KEY=VALUE>`: Set an environment variable in the spawned
+///     process. Can be specified multiple times for multiple variables.
+///     Values are passed through literally (no shell expansion).
+///
 ///   * `--color=<#hex>`: A hex color (e.g. `#1a1a2e` or `#abc`) to apply
 ///     as a background tint on the new window.
 ///

@@ -485,6 +485,9 @@ class IPCServer {
                 splitConfig.backgroundTint = tintColor
                 splitConfig.backgroundTintNSColor = tintNSColor
 
+                for (key, val) in parsed.config.environmentVariables {
+                    splitConfig.environmentVariables[key] = val
+                }
                 if let windowName = self?.windowName(for: controller) {
                     splitConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] = windowName
                 }
@@ -554,6 +557,9 @@ class IPCServer {
             }
             splitConfig.backgroundTint = tintColor
 
+            for (key, val) in parsed.config.environmentVariables {
+                splitConfig.environmentVariables[key] = val
+            }
             if let target = parsed.target {
                 splitConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] = target
             } else if let windowName = self?.windowName(for: controller) {
@@ -1260,6 +1266,16 @@ class IPCServer {
 
             if let value = arg.dropPrefix("--pane=") {
                 result.pane = String(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--env=") {
+                let envStr = String(value)
+                if let eqIdx = envStr.firstIndex(of: "=") {
+                    let key = String(envStr[envStr.startIndex..<eqIdx])
+                    let val = String(envStr[envStr.index(after: eqIdx)...])
+                    result.config.environmentVariables[key] = val
+                }
                 continue
             }
 
