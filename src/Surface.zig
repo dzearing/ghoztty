@@ -3257,6 +3257,17 @@ fn encodeKeyOpts(self: *const Surface) input.key_encode.Options {
 /// from the clipboard so the same logic will be applied. Namely,
 /// if bracketed mode is on this will do a bracketed paste. Otherwise,
 /// this will filter newlines to '\r'.
+/// Write raw bytes directly to the PTY without paste encoding or
+/// control character stripping. Used by +send-keys.
+pub fn writePtyRaw(self: *Surface, data: []const u8) !void {
+    if (data.len == 0) return;
+
+    self.queueIo(try termio.Message.writeReq(
+        self.alloc,
+        data,
+    ), .unlocked);
+}
+
 pub fn textCallback(self: *Surface, text: []const u8) !void {
     // Crash metadata in case we crash in here
     crash.sentry.thread_state = self.crashThreadState();

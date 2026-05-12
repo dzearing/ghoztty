@@ -35,6 +35,18 @@ extension Ghostty {
             }
         }
 
+        /// Write raw bytes directly to the PTY without paste encoding or
+        /// control character stripping. Used by +send-keys.
+        @MainActor
+        func writePtyRaw(_ text: String) {
+            let len = text.utf8CString.count
+            if len == 0 { return }
+
+            text.withCString { ptr in
+                ghostty_surface_write_pty(surface, ptr, UInt(len - 1))
+            }
+        }
+
         /// Send text to the terminal as if it was typed. This doesn't send the key events so keyboard
         /// shortcuts and other encodings do not take effect.
         @MainActor

@@ -250,6 +250,8 @@ class IPCServer {
             return handleList()
         case "read":
             return handleRead(request)
+        case "send-keys":
+            return handleSendKeys(request)
         default:
             return IPCResponse(success: false, error: "unknown action: \(request.action)")
         }
@@ -719,6 +721,59 @@ class IPCServer {
 
         let data = IPCData.readResult(IPCData.ReadResultData(text: resultText))
         return IPCResponse(success: true, data: data)
+    }
+
+    private func handleSendKeys(_ request: IPCRequest) -> IPCResponse {
+        guard let arguments = request.arguments, !arguments.isEmpty else {
+            return IPCResponse(success: false, error: "arguments required for +send-keys")
+        }
+
+        var target: String?
+        var text: String?
+
+        for arg in arguments {
+            if let value = arg.dropPrefix("--target=") {
+                target = String(value)
+            } else if let value = arg.dropPrefix("--keys=") {
+                text = String(value)
+            }
+        }
+
+        guard let target else {
+            return IPCResponse(success: false, error: "--target is required for +send-keys")
+        }
+
+        guard let text, !text.isEmpty else {
+            return IPCResponse(success: false, error: "text is required for +send-keys")
+        }
+
+        pruneStaleTargets()
+
+        guard let entry = targetRegistry[target] else {
+            return IPCResponse(success: false, error: "target '\(target)' not found")
+        }
+
+        var sendError: String?
+        let semaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.main.async {
+            defer { semaphore.signal() }
+
+            guard let surface = entry.surfaceView else {
+                sendError = "target '\(target)' is no longer alive"
+                return
+            }
+            guard let surfaceModel = surface.surfaceModel else {
+                sendError = "target '\(target)' has no surface model"
+                return
+            }
+            surfaceModel.writePtyRaw(text)
+        }
+        semaphore.wait()
+
+        if let sendError {
+            return IPCResponse(success: false, error: sendError)
+        }
+        return .ok
     }
 
     // MARK: - Rearrange
