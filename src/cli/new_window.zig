@@ -186,9 +186,18 @@ pub const Options = struct {
 ///   * `--split-command=<command>`: The command to run in the split pane.
 ///     Only meaningful when `--split` is also specified.
 ///
+///   * `--shell=<path>`: The shell to use when running `--command` or
+///     `--split-command`. The shell is invoked with `-lic` so the user's
+///     profile is loaded. Defaults to the `command-shell` config, then
+///     `$SHELL`, then `/bin/zsh`.
+///
 ///   * `--split-percent=<1-99>`: The percentage of space allocated to the
 ///     new split pane. Defaults to 50. Only meaningful when `--split` is
 ///     also specified. Values outside 1-99 return an error.
+///
+///   * `--env=<KEY=VALUE>`: Set an environment variable in the spawned
+///     process. Can be specified multiple times for multiple variables.
+///     Values are passed through literally (no shell expansion).
 ///
 ///   * `--color=<#hex>`: A hex color (e.g. `#1a1a2e` or `#abc`) to apply
 ///     as a background tint on the new window.

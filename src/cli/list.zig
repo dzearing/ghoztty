@@ -263,6 +263,14 @@ fn formatTerminal(stdout: *std.Io.Writer, terminal_val: std.json.Value) !void {
         }
     }
 
+    if (term.get("exit_code")) |exit_code| {
+        switch (exit_code) {
+            .integer => |code| try stdout.print("  exited({d})", .{code}),
+            .null => try stdout.writeAll("  running"),
+            else => {},
+        }
+    }
+
     if (focused) {
         try stdout.writeAll(" *");
     }

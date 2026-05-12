@@ -51,6 +51,9 @@ extension Ghostty {
         /// True when the surface should show a highlight effect (e.g., when presented via goto_split).
         @Published private(set) var highlighted: Bool = false
 
+        /// The exit code from the child process, or nil if still running.
+        @Published private(set) var exitCode: UInt32?
+
         /// A message sent from `ghostty_surface_t` when a child process exited
         @Published private(set) var childExitedMessage: ChildExitedMessage?
 
@@ -93,6 +96,10 @@ extension Ghostty {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
                 self?.highlighted = false
             }
+        }
+
+        func setExitCode(_ code: UInt32) {
+            self.exitCode = code
         }
 
         func setChildExitedMessage(_ message: ChildExitedMessage) {

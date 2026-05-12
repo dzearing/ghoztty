@@ -339,6 +339,8 @@ pub const App = struct {
             .split => "split",
             .close => "close",
             .rename => "rename",
+            .rearrange => "rearrange",
+            .send_keys => "send-keys",
         };
 
         return sendIpc(alloc, action_name, value.arguments);
@@ -1980,6 +1982,16 @@ pub const CAPI = struct {
     /// Send raw text to the terminal. This is treated like a paste
     /// so this isn't useful for sending escape sequences. For that,
     /// individual key input should be used.
+    export fn ghostty_surface_write_pty(
+        surface: *Surface,
+        ptr: [*]const u8,
+        len: usize,
+    ) void {
+        surface.core_surface.writePtyRaw(ptr[0..len]) catch |err| {
+            log.warn("failed to write to pty: {}", .{err});
+        };
+    }
+
     export fn ghostty_surface_text(
         surface: *Surface,
         ptr: [*]const u8,
