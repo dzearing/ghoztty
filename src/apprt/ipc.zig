@@ -88,6 +88,9 @@ pub const Action = union(enum) {
     /// Rearrange the pane layout of a window.
     rearrange: Rearrange,
 
+    /// Send text input to a named pane's terminal.
+    send_keys: SendKeys,
+
     pub const NewWindow = struct {
         /// A list of command arguments to launch in the new window. If this is
         /// `null` the command configured in the config or the user's default
@@ -256,6 +259,35 @@ pub const Action = union(enum) {
         }
     };
 
+    pub const SendKeys = struct {
+        arguments: ?[][:0]const u8,
+
+        pub const C = extern struct {
+            arguments: ?[*]?[*:0]const u8,
+
+            pub fn deinit(self: *SendKeys.C, alloc: Allocator) void {
+                if (self.arguments) |arguments| alloc.free(arguments);
+            }
+        };
+
+        pub fn cval(self: *SendKeys, alloc: Allocator) Allocator.Error!SendKeys.C {
+            var result: SendKeys.C = undefined;
+
+            if (self.arguments) |arguments| {
+                result.arguments = try alloc.alloc([*:0]const u8, arguments.len + 1);
+
+                for (arguments, 0..) |argument, i|
+                    result.arguments[i] = argument.ptr;
+
+                result.arguments[arguments.len] = null;
+            } else {
+                result.arguments = null;
+            }
+
+            return result;
+        }
+    };
+
     /// Sync with: ghostty_ipc_action_tag_e
     pub const Key = enum(c_int) {
         new_window,
@@ -263,6 +295,7 @@ pub const Action = union(enum) {
         close,
         rename,
         rearrange,
+        send_keys,
 
         test "ghostty.h Action.Key" {
             try lib.checkGhosttyHEnum(Key, "GHOSTTY_IPC_ACTION_");

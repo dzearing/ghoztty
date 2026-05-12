@@ -45,11 +45,31 @@ ghoztty +read --name=<pane> --lines=<N>
 - `--name`: Named pane to read from (required).
 - `--lines`: Number of lines from the end of scrollback (default: 50).
 
+### `ghoztty +send-keys`
+
+Send text input to a named pane's terminal PTY.
+
+```
+ghoztty +send-keys --target=<name> <text|key>...
+```
+
+- `--target`: Named pane or window to send input to. Required.
+- Positional arguments are text or key names, concatenated and written to the PTY.
+- Key notation: `C-c` (Ctrl-C), `C-d` (Ctrl-D), `C-z` (Ctrl-Z), etc.
+- Named keys: `Enter`, `Tab`, `Escape`, `Space`, `Backspace`
+- Escape sequences in text: `\n`, `\t`, `\r`, `\\`, `\e`
+
+```bash
+ghoztty +send-keys --target=term "ls -la" Enter
+ghoztty +send-keys --target=term C-c
+ghoztty +send-keys --target=term "hello\tworld\n"
+```
+
 ### Naming
 
 - `+new-window --target=<name>` registers a **window**
 - `+split --name=<name>` registers a **pane**
-- `+split --target` and `+close --target` reference either kind
+- `+split --target`, `+close --target`, and `+send-keys --target` reference either kind
 
 ### Example: three-pane layout
 
