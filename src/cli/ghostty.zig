@@ -27,6 +27,7 @@ const rearrange = @import("rearrange.zig");
 const list = @import("list.zig");
 const read = @import("read.zig");
 const send_keys = @import("send_keys.zig");
+const set_state = @import("set_state.zig");
 
 /// Special commands that can be invoked via CLI flags. These are all
 /// invoked by using `+<action>` as a CLI flag. The only exception is
@@ -101,6 +102,9 @@ pub const Action = enum {
     // Use IPC to send text input to a named pane's terminal.
     @"send-keys",
 
+    // Use IPC to set the activity state of a named pane or window.
+    @"set-state",
+
     pub fn description(comptime self: Action) []const u8 {
         return switch (self) {
             .version => "Output the version and exit",
@@ -126,6 +130,7 @@ pub const Action = enum {
             .list => "List open windows, tabs, and panes via IPC",
             .read => "Read terminal output from a pane via IPC",
             .@"send-keys" => "Send text input to a named pane via IPC",
+            .@"set-state" => "Set the activity state of a pane or window via IPC",
         };
     }
 
@@ -215,6 +220,7 @@ pub const Action = enum {
             .list => try list.run(alloc),
             .read => try read.run(alloc),
             .@"send-keys" => try send_keys.run(alloc),
+            .@"set-state" => try set_state.run(alloc),
         };
     }
 
@@ -262,6 +268,7 @@ pub const Action = enum {
                 .list => list.Options,
                 .read => read.Options,
                 .@"send-keys" => send_keys.Options,
+                .@"set-state" => set_state.Options,
             };
         }
     }

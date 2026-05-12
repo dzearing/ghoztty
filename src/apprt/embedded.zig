@@ -341,6 +341,7 @@ pub const App = struct {
             .rename => "rename",
             .rearrange => "rearrange",
             .send_keys => "send-keys",
+            .set_state => "set-state",
         };
 
         return sendIpc(alloc, action_name, value.arguments);

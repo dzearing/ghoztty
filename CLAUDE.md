@@ -67,6 +67,25 @@ ghoztty +send-keys --target=term C-c
 ghoztty +send-keys --target=term "hello\tworld\n"
 ```
 
+### `ghoztty +set-state`
+
+Set the activity state of a named window or pane. The state is aggregated across all panes in a window (priority: `needs_input` > `busy` > `idle`) and shown as a title suffix and custom `AXWindowActivityState` accessibility attribute.
+
+```
+ghoztty +set-state --target=<name> --state=<idle|busy|needs_input>
+```
+
+- `--target`: Named window or pane. Required.
+- `--state`: Activity state. Required. One of `idle`, `busy`, `needs_input`.
+
+```bash
+ghoztty +set-state --target=dev --state=busy
+ghoztty +set-state --target=dev --state=needs_input
+ghoztty +set-state --target=dev --state=idle
+```
+
+Processes can also set state via OSC escape sequence: `\033]7777;<state>\007`
+
 ### Naming
 
 - `+new-window --target=<name>` registers a **window**

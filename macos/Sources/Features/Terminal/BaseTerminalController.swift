@@ -923,14 +923,21 @@ class BaseTerminalController: NSWindowController,
     private func applyTitleToWindow() {
         guard let window else { return }
 
+        var title: String
         if let titleOverride {
-            window.title = computeTitle(
+            title = computeTitle(
                 title: titleOverride,
                 bell: focusedSurface?.bell ?? false)
-            return
+        } else {
+            title = lastComputedTitle
         }
 
-        window.title = lastComputedTitle
+        if let termWindow = window as? TerminalWindow,
+           termWindow.activityState != .idle {
+            title += " (\(termWindow.activityState.rawValue))"
+        }
+
+        window.title = title
     }
 
     func pwdDidChange(to: URL?) {
@@ -1649,6 +1656,8 @@ extension BaseTerminalController {
             if let termWindow = self.window as? TerminalWindow {
                 termWindow.activityState = newState
             }
+
+            self.applyTitleToWindow()
 
             if newState == .needsInput && previousState != .needsInput {
                 if !(self.window?.isKeyWindow ?? false) {

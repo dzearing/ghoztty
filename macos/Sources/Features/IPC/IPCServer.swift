@@ -252,6 +252,8 @@ class IPCServer {
             return handleRead(request)
         case "send-keys":
             return handleSendKeys(request)
+        case "set-state":
+            return handleSetState(request)
         default:
             return IPCResponse(success: false, error: "unknown action: \(request.action)")
         }
@@ -271,6 +273,7 @@ class IPCServer {
         var layout: String?
         var lines: Int?
         var shell: String?
+        var state: String?
     }
 
     private func handleNewWindow(_ request: IPCRequest) -> IPCResponse {
@@ -657,6 +660,63 @@ class IPCServer {
         }
 
         Self.logger.info("IPC: renamed display title for '\(target)' to '\(newTitle)'")
+
+        return .ok
+    }
+
+    private func handleSetState(_ request: IPCRequest) -> IPCResponse {
+        let parsed: ParsedArguments
+        if let arguments = request.arguments {
+            parsed = parseArguments(arguments)
+        } else {
+            parsed = ParsedArguments(config: Ghostty.SurfaceConfiguration())
+        }
+
+        guard let target = parsed.target else {
+            return IPCResponse(success: false, error: "--target is required for +set-state")
+        }
+
+        guard let stateStr = parsed.state else {
+            return IPCResponse(success: false, error: "--state is required for +set-state")
+        }
+
+        let activityState: Ghostty.ActivityState
+        switch stateStr {
+        case "idle":
+            activityState = .idle
+        case "busy":
+            activityState = .busy
+        case "needs_input":
+            activityState = .needsInput
+        default:
+            return IPCResponse(success: false, error: "invalid state '\(stateStr)': must be idle, busy, or needs_input")
+        }
+
+        pruneStaleTargets()
+
+        guard let entry = targetRegistry[target] else {
+            return IPCResponse(success: false, error: "target '\(target)' not found in registry")
+        }
+
+        guard let controller = entry.controller else {
+            return IPCResponse(success: false, error: "target '\(target)' is no longer alive")
+        }
+
+        DispatchQueue.main.async {
+            // Set activity state on all surfaces in the window, or just the targeted pane
+            switch entry {
+            case .pane(_, let surfaceRef):
+                if let surface = surfaceRef.value {
+                    surface.activityState = activityState
+                }
+            case .window:
+                for surface in controller.surfaceTree {
+                    surface.activityState = activityState
+                }
+            }
+        }
+
+        Self.logger.info("IPC: set activity state for '\(target)' to '\(stateStr)'")
 
         return .ok
     }
@@ -1251,6 +1311,11 @@ class IPCServer {
 
             if let value = arg.dropPrefix("--title=") {
                 result.title = String(value)
+                continue
+            }
+
+            if let value = arg.dropPrefix("--state=") {
+                result.state = String(value)
                 continue
             }
 

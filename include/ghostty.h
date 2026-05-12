@@ -1088,6 +1088,11 @@ typedef struct {
   const char **arguments;
 } ghostty_ipc_action_send_keys_s;
 
+// apprt.ipc.Action.SetState
+typedef struct {
+  const char **arguments;
+} ghostty_ipc_action_set_state_s;
+
 typedef union {
   ghostty_ipc_action_new_window_s new_window;
   ghostty_ipc_action_split_s split;
@@ -1095,6 +1100,7 @@ typedef union {
   ghostty_ipc_action_rename_s rename;
   ghostty_ipc_action_rearrange_s rearrange;
   ghostty_ipc_action_send_keys_s send_keys;
+  ghostty_ipc_action_set_state_s set_state;
 } ghostty_ipc_action_u;
 
 // apprt.ipc.Action.Key
@@ -1105,6 +1111,7 @@ typedef enum {
   GHOSTTY_IPC_ACTION_RENAME,
   GHOSTTY_IPC_ACTION_REARRANGE,
   GHOSTTY_IPC_ACTION_SEND_KEYS,
+  GHOSTTY_IPC_ACTION_SET_STATE,
 } ghostty_ipc_action_tag_e;
 
 //-------------------------------------------------------------------
