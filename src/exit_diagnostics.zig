@@ -9,18 +9,18 @@ pub fn logUnexpectedExit(exit_code: u32, runtime_ms: u64, context: []const u8) v
 
     const is_unexpected = switch (exit) {
         .Signal => true,
-        .Exited => |code| code != 0 and runtime_ms < 5000,
         .Stopped => true,
         .Unknown => true,
+        .Exited => |code| code != 0 or runtime_ms < 10_000,
     };
     if (!is_unexpected) return;
 
     var buf: [512]u8 = undefined;
     const msg = switch (exit) {
         .Signal => |sig| std.fmt.bufPrint(&buf, "[{s}] killed by signal={} runtime={}ms\n", .{ context, sig, runtime_ms }),
-        .Exited => |code| std.fmt.bufPrint(&buf, "[{s}] abnormal exit code={} runtime={}ms\n", .{ context, code, runtime_ms }),
+        .Exited => |code| std.fmt.bufPrint(&buf, "[{s}] exited code={} runtime={}ms\n", .{ context, code, runtime_ms }),
         .Stopped => |sig| std.fmt.bufPrint(&buf, "[{s}] stopped by signal={} runtime={}ms\n", .{ context, sig, runtime_ms }),
-        .Unknown => std.fmt.bufPrint(&buf, "[{s}] unknown status={} runtime={}ms\n", .{ context, exit_code, runtime_ms }),
+        .Unknown => std.fmt.bufPrint(&buf, "[{s}] unknown raw_status={} runtime={}ms\n", .{ context, exit_code, runtime_ms }),
     } catch return;
 
     appendToLog(msg);
