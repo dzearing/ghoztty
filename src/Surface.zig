@@ -28,6 +28,7 @@ const rendererpkg = @import("renderer.zig");
 const termio = @import("termio.zig");
 const font = @import("font/main.zig");
 const Command = @import("Command.zig");
+const exit_diagnostics = @import("exit_diagnostics.zig");
 const terminal = @import("terminal/main.zig");
 const configpkg = @import("config.zig");
 const Duration = configpkg.Config.Duration;
@@ -1247,6 +1248,7 @@ fn childExited(self: *Surface, info: apprt.surface.Message.ChildExited) void {
             .{ info.exit_code, info.runtime_ms, self.config.wait_after_command },
         ),
     }
+    exit_diagnostics.logUnexpectedExit(info.exit_code, info.runtime_ms, "surface.childExited");
 
     // If our runtime was below some threshold then we assume that this
     // was an abnormal exit and we show an error message.

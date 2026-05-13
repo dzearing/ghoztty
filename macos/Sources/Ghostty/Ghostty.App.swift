@@ -325,6 +325,9 @@ extension Ghostty {
         static func closeSurface(_ userdata: UnsafeMutableRawPointer?, processAlive: Bool) {
             let surface = self.surfaceUserdata(from: userdata)
             Ghostty.logger.warning("closeSurface callback processAlive=\(processAlive)")
+            if processAlive {
+                ExitDiagnostics.log("[closeSurface] process still alive during close")
+            }
             NotificationCenter.default.post(name: Notification.ghosttyCloseSurface, object: surface, userInfo: [
                 "process_alive": processAlive,
             ])

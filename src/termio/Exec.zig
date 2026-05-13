@@ -21,6 +21,7 @@ const shell_integration = @import("shell_integration.zig");
 const terminal = @import("../terminal/main.zig");
 const termio = @import("../termio.zig");
 const Command = @import("../Command.zig");
+const exit_diagnostics = @import("../exit_diagnostics.zig");
 const SegmentedPool = @import("../datastruct/main.zig").SegmentedPool;
 const ptypkg = @import("../pty.zig");
 const Pty = ptypkg.Pty;
@@ -301,6 +302,7 @@ fn processExitCommon(td: *termio.Termio.ThreadData, exit_code: u32) void {
             .{ exit_code, runtime_ms orelse 0 },
         ),
     }
+    exit_diagnostics.logUnexpectedExit(exit_code, runtime_ms orelse 0, "termio.processExit");
 
     // We always notify the surface immediately that the child has
     // exited and some metadata about the exit.
@@ -1108,6 +1110,7 @@ const Subprocess = struct {
     /// This does not close the pty.
     pub fn stop(self: *Subprocess) void {
         log.warn("subprocess stop requested", .{});
+        exit_diagnostics.logEvent("subprocess stop requested");
         switch (self.process orelse return) {
             .fork_exec => |*cmd| {
                 // Note: this will also wait for the command to exit, so
