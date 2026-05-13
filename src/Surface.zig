@@ -1236,6 +1236,18 @@ fn childExited(self: *Surface, info: apprt.surface.Message.ChildExited) void {
     // Mark our flag that we exited immediately
     self.child_exited = true;
 
+    const exit = Command.Exit.init(info.exit_code);
+    switch (exit) {
+        .Signal => |sig| log.err(
+            "surface child killed by signal={} runtime={}ms wait_after_command={}",
+            .{ sig, info.runtime_ms, self.config.wait_after_command },
+        ),
+        else => log.warn(
+            "surface child exited exit_code={} runtime={}ms wait_after_command={}",
+            .{ info.exit_code, info.runtime_ms, self.config.wait_after_command },
+        ),
+    }
+
     // If our runtime was below some threshold then we assume that this
     // was an abnormal exit and we show an error message.
     if (info.runtime_ms <= self.config.abnormal_command_exit_runtime_ms) runtime: {

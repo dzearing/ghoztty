@@ -1387,7 +1387,7 @@ class IPCServer {
     private func wrapCommandInShell(_ command: String, shell: String?) -> String {
         let shellPath = resolveShell(explicit: shell)
         let escaped = command.replacingOccurrences(of: "'", with: "'\\''")
-        return "\(shellPath) -lic '\(escaped)'"
+        return "\(shellPath) -lic '\(escaped); exec \(shellPath) -li'"
     }
 }
 

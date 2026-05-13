@@ -281,10 +281,26 @@ fn processExitCommon(td: *termio.Termio.ThreadData, exit_code: u32) void {
         const runtime_ms = runtime_ns / std.time.ns_per_ms;
         break :runtime runtime_ms;
     };
-    log.debug(
-        "child process exited status={} runtime={}ms",
-        .{ exit_code, runtime_ms orelse 0 },
-    );
+
+    const exit = Command.Exit.init(exit_code);
+    switch (exit) {
+        .Exited => |code| log.warn(
+            "child process exited normally code={} runtime={}ms",
+            .{ code, runtime_ms orelse 0 },
+        ),
+        .Signal => |sig| log.err(
+            "child process killed by signal={} runtime={}ms",
+            .{ sig, runtime_ms orelse 0 },
+        ),
+        .Stopped => |sig| log.warn(
+            "child process stopped by signal={} runtime={}ms",
+            .{ sig, runtime_ms orelse 0 },
+        ),
+        .Unknown => log.warn(
+            "child process exited unknown status={} runtime={}ms",
+            .{ exit_code, runtime_ms orelse 0 },
+        ),
+    }
 
     // We always notify the surface immediately that the child has
     // exited and some metadata about the exit.
@@ -1091,6 +1107,7 @@ const Subprocess = struct {
     /// for it to terminate, so it will not block.
     /// This does not close the pty.
     pub fn stop(self: *Subprocess) void {
+        log.warn("subprocess stop requested", .{});
         switch (self.process orelse return) {
             .fork_exec => |*cmd| {
                 // Note: this will also wait for the command to exit, so

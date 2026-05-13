@@ -639,9 +639,9 @@ class BaseTerminalController: NSWindowController,
     @objc private func ghosttyDidCloseSurface(_ notification: Notification) {
         guard let target = notification.object as? Ghostty.SurfaceView else { return }
         guard let node = surfaceTree.root?.node(view: target) else { return }
-        closeSurface(
-            node,
-            withConfirmation: (notification.userInfo?["process_alive"] as? Bool) ?? false)
+        let processAlive = (notification.userInfo?["process_alive"] as? Bool) ?? false
+        Ghostty.logger.warning("ghosttyDidCloseSurface processAlive=\(processAlive)")
+        closeSurface(node, withConfirmation: processAlive)
     }
 
     @objc private func ghosttyDidNewSplit(_ notification: Notification) {
