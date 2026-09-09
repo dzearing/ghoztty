@@ -439,8 +439,16 @@ function Invoke-Lane {
     # wait asked for whatever ran BEFORE this process (a hand-run acceptance
     # script, a lane from another invocation), and it is free when there is
     # nothing to wait for.
+    #
+    # `-IncludeAppTeardown` is the half that was missing (T678): an acceptance
+    # script opens VIEWER panes in a repo build and kills it on the way out, and
+    # that browser tree carries none of the test-lane markers -- so the wait
+    # above saw "nothing to settle" in exactly the case it was written for, and
+    # the host-floor test timed out behind it. Only an ORPHANED debug-profile
+    # tree counts, so a dev Ghoztty left open costs nothing and the user's own
+    # release terminal is never even looked at.
     if (-not $NoSweep) {
-        $settle = Wait-WebViewLaneSettle -ExeNames $TEST_EXE_NAMES -TimeoutSeconds $WebViewSettleSeconds
+        $settle = Wait-WebViewLaneSettle -ExeNames $TEST_EXE_NAMES -TimeoutSeconds $WebViewSettleSeconds -IncludeAppTeardown
         $settleLine = Format-WebViewSettle -Settle $settle
         if ($settleLine) { Write-Host "  $settleLine" }
     }

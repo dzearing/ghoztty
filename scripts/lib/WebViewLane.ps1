@@ -28,6 +28,13 @@
     dies, and a lane that starts on that return is racing the same teardown
     the kill was meant to end.
 
+  * The OTHER thing a lane can start into (T678): an acceptance script's viewer
+    panes. `test\win32\*.ps1` launch a repo-built debug Ghoztty, open viewer
+    panes in it and kill it at the end, and that browser tree carries neither
+    test marker -- so the wait above reported "nothing to settle" in precisely
+    the back-to-back case it exists for. `Get-WebViewAppDebugHost` names it by
+    the DEBUG profile folder, which a release install never uses.
+
   Nothing here ever touches a WebView2 process that is not a test lane's: the
   user's own Ghoztty runs its viewer panes out of the same exe, and a sweep
   that took those would close the panes they are reading this in.
@@ -36,6 +43,12 @@
 # Profile directories `webview2.TestProfile` mints, one per test-binary pid.
 # The name is the contract between the Zig side and this file.
 $script:WEBVIEW_LANE_PROFILE_PREFIX = 'ghoztty-wv2test-'
+
+# The profile a DEBUG ghoztty uses for its viewer panes -- the build every
+# acceptance script in test\win32 launches, and the one a lane can find still
+# tearing down when it starts (T678). A release install uses the same path
+# WITHOUT `-debug`, so this marker can never match the user's own terminal.
+$script:WEBVIEW_APP_DEBUG_PROFILE_MARKER = '\ghoztty\EBWebView-debug'
 
 function Get-WebViewLaneHost {
     <#
@@ -64,6 +77,44 @@ function Get-WebViewLaneHost {
     return $found
 }
 
+function Get-WebViewAppDebugHost {
+    <#
+    .SYNOPSIS
+        Every live msedgewebview2.exe process belonging to a DEBUG ghoztty --
+        an acceptance run's viewer panes (T678).
+    .DESCRIPTION
+        The lane's own settle only ever knew about test-binary browser trees, so
+        the shape it was built for -- an acceptance script, then a lane, back to
+        back -- was exactly the one it could not see: `viewer-panes.ps1` stands
+        up seventeen of these against a repo build and kills it at the end, and
+        every one of them carries the app's profile rather than either test
+        marker.
+
+        Identity is the DEBUG profile folder and nothing else. A release install
+        uses the same path WITHOUT `-debug`, so the user's own terminal -- whose
+        viewer panes run out of the same exe -- can never be matched here,
+        waited for, or (elsewhere in this file) killed. That exclusion is the
+        rule; everything else about this function is a wait.
+
+        It deliberately does NOT try to tell a tearing-down app from a healthy
+        one. That refinement was written first and measurement threw it out: an
+        acceptance script's app and its whole browser tree disappear inside a
+        single 250ms sample (kill-on-close job objects take the tree with the
+        app), so "orphaned" is a state that is essentially never observed, and a
+        wait keyed on it would have been a no-op wearing a fix's clothes. What
+        is left is honest: if a debug browser tree is up when a lane starts, the
+        lane waits for it, bounded, and SAYS so if it runs out -- which also
+        names the one case that legitimately costs the deadline, a dev Ghoztty
+        somebody left open.
+    .OUTPUTS
+        Zero or more Win32_Process instances. Wrap the call in @().
+    #>
+    param()
+
+    return @(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" -ErrorAction SilentlyContinue |
+            Where-Object { $_.CommandLine -and $_.CommandLine -like "*$script:WEBVIEW_APP_DEBUG_PROFILE_MARKER*" })
+}
+
 function Wait-WebViewLaneSettle {
     <#
     .SYNOPSIS
@@ -72,27 +123,41 @@ function Wait-WebViewLaneSettle {
         Returns rather than throws on a deadline: a lane that starts anyway is
         the behavior we have today, and the caller's job is to SAY that it did
         so the next red result can be read against it.
+    .PARAMETER IncludeAppTeardown
+        Also wait for a DEBUG-ghoztty browser tree (T678) -- an acceptance
+        script's viewer panes, on their way down or still up. This is for the
+        wait a lane does BEFORE it starts; the end-of-lane sweep stays strictly
+        about the lane's own leaks, because it KILLS what it finds.
     .OUTPUTS
-        [pscustomobject] Settled (bool), WaitedMs (int), Remaining (int).
+        [pscustomobject] Settled (bool), WaitedMs (int), Remaining (int),
+        RemainingApp (int).
     #>
     param(
         [string[]]$ExeNames,
         [int]$TimeoutSeconds = 20,
-        [int]$PollMs = 250
+        [int]$PollMs = 250,
+        [switch]$IncludeAppTeardown
     )
+
+    $count = {
+        $lane = @(Get-WebViewLaneHost -ExeNames $ExeNames).Count
+        $app = if ($IncludeAppTeardown) { @(Get-WebViewAppDebugHost).Count } else { 0 }
+        [pscustomobject]@{ Lane = $lane; App = $app; Total = $lane + $app }
+    }
 
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     $deadlineMs = [math]::Max(0, $TimeoutSeconds) * 1000
-    $remaining = @(Get-WebViewLaneHost -ExeNames $ExeNames).Count
-    while ($remaining -gt 0 -and $sw.ElapsedMilliseconds -lt $deadlineMs) {
+    $remaining = & $count
+    while ($remaining.Total -gt 0 -and $sw.ElapsedMilliseconds -lt $deadlineMs) {
         Start-Sleep -Milliseconds ([math]::Max(10, $PollMs))
-        $remaining = @(Get-WebViewLaneHost -ExeNames $ExeNames).Count
+        $remaining = & $count
     }
     $sw.Stop()
     return [pscustomobject]@{
-        Settled   = ($remaining -eq 0)
-        WaitedMs  = [int]$sw.ElapsedMilliseconds
-        Remaining = [int]$remaining
+        Settled      = ($remaining.Total -eq 0)
+        WaitedMs     = [int]$sw.ElapsedMilliseconds
+        Remaining    = [int]$remaining.Total
+        RemainingApp = [int]$remaining.App
     }
 }
 
@@ -179,9 +244,12 @@ function Format-WebViewSettle {
         [string]$Lane = ''
     )
     $where = if ($Lane) { "LANE $Lane " } else { '' }
+    $app = 0
+    if ($null -ne $Settle.PSObject.Properties['RemainingApp']) { $app = [int]$Settle.RemainingApp }
     if (-not $Settle.Settled) {
+        $whose = if ($app -gt 0) { "$app of them an acceptance run's viewer panes (T678)" } else { 'T592' }
         return ("${where}WEBVIEW NOT SETTLED: $($Settle.Remaining) browser process(es) still up after " +
-            "$([int]($Settle.WaitedMs / 1000))s - a WebView2 failure in this lane may be that teardown, not this code (T592)")
+            "$([int]($Settle.WaitedMs / 1000))s - a WebView2 failure in this lane may be that teardown, not this code ($whose)")
     }
     if ($Settle.WaitedMs -ge 500) {
         return "${where}waited $($Settle.WaitedMs)ms for the previous lane's WebView2 processes to exit"

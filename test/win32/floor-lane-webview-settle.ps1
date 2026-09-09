@@ -32,6 +32,13 @@
   wording, 8 the sweep, 9 the profile-directory prune, 10-11 the wiring in
   floor-lane.ps1, 12 end-to-end through a real lane run.
 
+  Arms 13-18 are the acceptance-run half (T678): a lane can also start into a
+  repo-built debug Ghoztty's viewer panes, which carry NEITHER test marker --
+  `viewer-panes.ps1` alone stands up seventeen of them. They cover the
+  debug-profile identity, the release profile being untouchable (that is the
+  user's own terminal), those panes never being claimed by the KILLING sweep,
+  and the wait being asked for by the lane that starts behind them.
+
   Prints a single ALL PASS / N FAILURE(S) line, like every other script here.
 
   ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
@@ -222,6 +229,61 @@ try {
     Check 'a real lane run waits for the marked process and says so' `
         ($out -match 'waited \d+ms for the previous lane') $out
     Check 'and the lane still reaches its verdict' ($out -match 'LANE command ') $out
+
+    # -- 13-18: the OTHER thing a lane starts into (T678). An acceptance script
+    # opens viewer panes in a repo-built debug Ghoztty and kills it on the way
+    # out; that browser tree carries neither test marker, so the settle above
+    # saw nothing to wait for in exactly the back-to-back case it exists for.
+    $devMarker = '--user-data-dir=C:\Users\David\AppData\Local\ghoztty\EBWebView-debug\EBWebView'
+
+    # -- 13: a debug-profile tree is claimed, whatever state its app is in.
+    # The liveness refinement this arm originally asserted was measured and
+    # thrown out: an acceptance script's app and its whole browser tree vanish
+    # inside one 250ms sample, so "orphaned" is never observed and a wait keyed
+    # on it would have been a no-op.
+    $fx7 = Start-Fixture -Marker $devMarker
+    $seen = @(Get-WebViewAppDebugHost)
+    Check 'a debug-profile WebView2 process is claimed as an app viewer pane' `
+        (@($seen | Where-Object { $_.ProcessId -eq $fx7.Id }).Count -eq 1) "found $($seen.Count)"
+
+    # -- 14: THE RULE, again. The release profile has no `-debug`, and that is
+    # the user's own terminal reading this -- it must not be waited on, ever.
+    $fx8 = Start-Fixture -Marker '--user-data-dir=C:\Users\David\AppData\Local\ghoztty\EBWebView\EBWebView'
+    $seen = @(Get-WebViewAppDebugHost)
+    Check 'a RELEASE-profile WebView2 process is never claimed' `
+        (@($seen | Where-Object { $_.ProcessId -eq $fx8.Id }).Count -eq 0) "found $($seen.Count)"
+    Stop-Fixture $fx8
+
+    # -- 15: and neither profile marker makes an app viewer pane a LANE host --
+    # the sweep kills those, and killing a viewer pane is the one thing this
+    # file exists to never do.
+    $laneSeen = @(Get-WebViewLaneHost -ExeNames @($FakeExe))
+    Check 'an app viewer pane is never a lane host (the sweep would kill it)' `
+        (@($laneSeen | Where-Object { $_.ProcessId -eq $fx7.Id }).Count -eq 0) "found $($laneSeen.Count)"
+
+    # -- 16: the wait only looks for viewer panes when it is asked to. The
+    # end-of-lane sweep KILLS what it finds, so it must never see these.
+    $laneOnly = Wait-WebViewLaneSettle -ExeNames @($FakeExe) -TimeoutSeconds 1
+    Check 'a lane-only settle ignores an acceptance run entirely' `
+        ($laneOnly.Settled -and $laneOnly.WaitedMs -lt 400) `
+        "settled=$($laneOnly.Settled) waited=$($laneOnly.WaitedMs)ms"
+
+    # -- 17: and it DOES wait when it is. fx7 is still up.
+    $withApp = Wait-WebViewLaneSettle -ExeNames @($FakeExe) -TimeoutSeconds 1 -IncludeAppTeardown
+    Check 'a pre-lane settle waits for an acceptance run teardown' `
+        ((-not $withApp.Settled) -and $withApp.RemainingApp -ge 1) `
+        "settled=$($withApp.Settled) app=$($withApp.RemainingApp)"
+    $appLine = Format-WebViewSettle -Settle $withApp -Lane 'win32'
+    Check 'and a give-up over one names T678, not the lane-boundary story' `
+        ($appLine -match 'NOT SETTLED' -and $appLine -match 'acceptance run' -and $appLine -match 'T678') $appLine
+    Stop-Fixture $fx7
+
+    # -- 18: the wiring. A lane must ask for the viewer-pane wait, or arms
+    # 13-17 are a library nothing calls.
+    Check 'floor-lane asks for the acceptance-run teardown wait' `
+        ($src -match 'Wait-WebViewLaneSettle -ExeNames \$TEST_EXE_NAMES[^\r\n]*-IncludeAppTeardown') $null
+    Check 'the end-of-lane sweep still does NOT (it kills what it finds)' `
+        ($src -notmatch 'Invoke-WebViewLaneSweep[^\r\n]*-IncludeAppTeardown') $null
 
     Complete-TestBody  # T1039: the run reached the end of its body
 }

@@ -26009,3 +26009,41 @@ reading `alphas=255,254,226,145,49,22,7,255` on a collapse and
 way, monotone, settling opaque. Floor: lib/none/win32/agent all PASS, P1–P3 ALL
 PASS, and the nine static test-harness audits re-run green over the harness
 edit.
+
+## 2026-09-09 — a lane no longer starts blind into an acceptance run's browser panes (T678)
+
+The floor lane has waited for the previous lane's WebView2 browser tree since
+T592, because starting into one that is still tearing down answers
+`hr=0x80004005` and reads as a red test rather than as a scheduling artifact.
+That wait knew about TEST-BINARY trees only — the private
+`ghoztty-wv2test-<pid>` profile, or `--webview-exe-name=<test exe>` — and an
+acceptance script's viewer panes carry neither: they run in a repo-built debug
+Ghoztty and use that app's own profile, `%LOCALAPPDATA%\ghoztty\EBWebView-debug`.
+So in the exact shape the wait exists for — an acceptance script, then a lane,
+back to back, which is how T678 was seen — it reported "nothing to settle" and
+the lane started blind. One `viewer-panes.ps1` run stands up seventeen of those
+browser processes; the settle saw zero of them.
+
+`Get-WebViewAppDebugHost` names them by the debug profile folder, and
+floor-lane's pre-lane settle now waits for them too. The release install uses
+the same path without `-debug`, which is what keeps the user's own terminal —
+whose viewer panes run out of the same exe — outside this entirely, and the
+end-of-lane sweep still cannot see them, because that one KILLS what it finds.
+
+The first version of this was cleverer and measurement threw it out: it waited
+only for an ORPHANED tree, so a dev Ghoztty somebody left open would cost a lane
+nothing. Sampling at 250ms through a whole viewer-panes run never once observed
+an orphan — the app and its entire browser tree disappear inside a single
+sample, because the kill-on-close job object takes the tree with the app. A wait
+keyed on a state that is never observed is a no-op wearing a fix's clothes, so
+what shipped is the plain rule: a debug browser tree up when a lane starts is
+waited for, bounded, and a give-up says what it was waiting on.
+
+Evidence: the flake did NOT reproduce — `pane-banner.ps1` immediately followed
+by `floor-lane.ps1 -Lane win32 -Repeat 3` was green three for three (411s /
+229s / 406s), and none of those lane logs carries a `SKIPPED live controller`
+line, so the host-floor test ran against the live runtime each time rather than
+standing down. `floor-lane-webview-settle.ps1` ALL PASS (28), six new arms
+covering the debug-profile identity, the release profile being untouchable, an
+app viewer pane never being claimed by the killing sweep, and the lane asking
+for the wait. Floor: lib/none/win32/agent all PASS, P1–P3 ALL PASS.
