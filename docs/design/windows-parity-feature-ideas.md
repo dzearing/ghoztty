@@ -262,3 +262,14 @@ as the digest that showed them.
 - A release the loop cannot forget to cut (publish on the day's last good commit, supervisor as backstop)
 - Tell me the gap in the app, not the digest (About names commits and headline fixes waiting)
 - A harness that has never gone red is not a harness (extend the demonstration rule to acceptance scripts)
+
+## 2026-09-09
+
+- Tell me what this release fixes, in my words (update prompt shows plain-language headlines from the tasks it carries)
+- A pane that reads back what you pasted (one-line summary of a multi-line paste before you hit Enter)
+- Search everything this window has printed (find-in-page for terminal scrollback, hits marked in the scrollbar)
+- Bookmark this spot in the scrollback (drop a mark, jump back after a noisy command)
+- A quiet hour (hold every notification until you turn it off, then say what was held)
+- Publish the moment work is worth publishing (release on the day's last good commit, not a clock hour)
+- Measure the pane, not the theory (standing pane-vs-conhost throughput benchmark script)
+- A guard that reports its own age in the app (summarise guard-due to a count plus exceptions)
