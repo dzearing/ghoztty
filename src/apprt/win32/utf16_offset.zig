@@ -42,6 +42,24 @@
 //! always answer with a boundary.
 const std = @import("std");
 
+/// TEST SEAM (T673): when true, both conversions below become the IDENTITY —
+/// a byte offset is handed to the control unchanged, which is precisely the
+/// defect T648 fixed.
+///
+/// It exists so the acceptance script that pins that fix can be shown to
+/// FAIL. Before this, teeth-checking `test/win32/viewer-feedback-utf16.ps1`
+/// meant editing this file, rebuilding, running, reverting and rebuilding
+/// again — enough friction that the check stops being run, and a check nobody
+/// re-runs has stopped being a check.
+///
+/// It is set ONCE, from `GHOZTTY_TEST_BREAK_UTF16=1`, by
+/// `ViewerFeedbackBar.readTestSeams` — and only in a debug build, so a stray
+/// environment variable can never corrupt what a user typed. Nothing in the
+/// product ever writes it, and it breaks exactly ONE thing: the byte ⇄ unit
+/// conversion, at every call site at once, because a half-converted composer
+/// is a smoke test rather than a targeted one.
+pub var break_identity: bool = false;
+
 /// How many UTF-16 code units of `text` precede byte offset `byte`.
 ///
 /// The number to put in a `CHARRANGE` when the offset came out of a pure
@@ -49,6 +67,7 @@ const std = @import("std");
 /// inside a multi-byte sequence answers for the characters strictly before it,
 /// never half of one.
 pub fn unitsBeforeByte(text: []const u8, byte: usize) usize {
+    if (break_identity) return @min(byte, text.len);
     var units: usize = 0;
     var i: usize = 0;
     while (i < text.len and i < byte) {
@@ -71,6 +90,7 @@ pub fn unitsBeforeByte(text: []const u8, byte: usize) usize {
 /// of a surrogate pair answers the byte offset of that character's start,
 /// because there is no byte offset between them.
 pub fn byteForUnits(text: []const u8, units: usize) usize {
+    if (break_identity) return @min(units, text.len);
     var seen: usize = 0;
     var i: usize = 0;
     while (i < text.len and seen < units) {
@@ -211,4 +231,27 @@ test "line breaks are one byte and one unit" {
     try testing.expectEqual(@as(usize, 5), unitLen(s));
     try testing.expectEqual(@as(usize, 2), unitsBeforeByte(s, 2));
     try testing.expectEqual(@as(usize, 4), byteForUnits(s, 4));
+}
+
+test "the identity seam is off by default, and is the identity when on" {
+    const s = "h\u{e9}llo \u{1f600}";
+    // Off by default: nothing about the seam changes an ordinary call.
+    try testing.expect(!break_identity);
+    try testing.expectEqual(@as(usize, 1), unitsBeforeByte(s, 1));
+    try testing.expectEqual(@as(usize, 3), byteForUnits(s, 2));
+
+    break_identity = true;
+    defer break_identity = false;
+
+    // On: a byte offset comes back unchanged in both directions, which is the
+    // pre-T648 defect the acceptance script exists to catch.
+    var i: usize = 0;
+    while (i <= s.len) : (i += 1) {
+        try testing.expectEqual(i, unitsBeforeByte(s, i));
+        try testing.expectEqual(i, byteForUnits(s, i));
+    }
+    // Past the end still clamps, because a seam that can hand the control an
+    // out-of-range index would be testing the clamp instead of the conversion.
+    try testing.expectEqual(s.len, unitsBeforeByte(s, 999));
+    try testing.expectEqual(s.len, byteForUnits(s, 999));
 }

@@ -1003,6 +1003,27 @@ nothing else move, which is how each arm was teeth-checked. A viewer pane has
 no shell; its equivalent claim is that the PAGE still responds — see the
 page-server oracle in `test\win32\viewer-restore.ps1`.
 
+**The feedback composer's offset arms have the same two switches** (T673). The
+composer converts between BYTES in the pane's UTF-8 buffer and UTF-16 CODE
+UNITS in the edit control, and the scripts that pin that conversion used to be
+teeth-checkable only by editing source and rebuilding twice. Two debug-only
+environment variables, read once when the first composer is created, break one
+rule each:
+
+- `GHOZTTY_TEST_BREAK_UTF16=1` makes the conversion the IDENTITY
+  (`utf16_offset.break_identity`), which is exactly the pre-T648 defect. It
+  reds the four offset arms of `test\win32\viewer-feedback-utf16.ps1` (chip
+  position, caret position, whole-chip Backspace, report body) and moves
+  nothing else.
+- `GHOZTTY_TEST_BREAK_CHIP_RANGE=1` makes a chip's selection range stop one
+  unit short (`ViewerFeedbackBar.chipRange`), i.e. a chip lookup that misses.
+  It reds the whole-chip deletion arms of `viewer-feedback-images.ps1` (2) and
+  `viewer-feedback-carousel.ps1` (1), whose composer text is pure ASCII and on
+  which the identity switch above is therefore a no-op (T672).
+
+They are two switches rather than one on purpose: a single one that broke both
+would make a red arm stop naming its cause.
+
 **A Debug pane's SCREEN runs about 12 KB/s, so never wait on it for a burst**
 (T1116, T1142). Measured on 2026-08-23 with 20000 numbered lines (180 KB) piped
 into a pane and `+read` polled for the highest line the app had reached: the app

@@ -109,6 +109,7 @@ const viewer_accel = @import("viewer_accel.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const viewer_worktree = @import("viewer_worktree.zig");
 const input = @import("../../input.zig");
+const build_config = @import("../../build_config.zig");
 
 const log = std.log.scoped(.viewer_feedback);
 
@@ -343,6 +344,7 @@ pub fn create(
     hinstance: ?w32.HINSTANCE,
     parent: w32.HWND,
 ) ?*ViewerFeedbackBar {
+    readTestSeams(alloc);
     registerClass(hinstance);
     if (!class_registered) return null;
 
@@ -1300,6 +1302,80 @@ const quote_indent_twips: i32 = @intFromFloat(quote_indent_dip * 15);
 // control and the pane are kept in step by `readBack`.
 // -------------------------------------------------------------------------
 
+// -------------------------------------------------------------------------
+// Test seams (T673)
+//
+// Two switches, each of which breaks exactly ONE offset rule this composer's
+// acceptance scripts assert, so those scripts can be SHOWN to fail instead of
+// being trusted. The alternative was a source edit plus two full rebuilds per
+// check, which is friction enough that the check stops happening — the same
+// argument that produced `GHOZTTY_TEST_LIVENESS_BREAK` for the restore
+// scripts (T532/T652).
+//
+// Debug builds only, and read once. A stray environment variable must never
+// be able to corrupt what a user typed into a report.
+//
+//   GHOZTTY_TEST_BREAK_UTF16=1       the byte <-> UTF-16 conversion becomes
+//                                    the identity (`utf16_offset.zig`), which
+//                                    is exactly the defect T648 fixed. Reds
+//                                    the offset arms of
+//                                    `viewer-feedback-utf16.ps1`.
+//   GHOZTTY_TEST_BREAK_CHIP_RANGE=1  a chip's selection range stops one unit
+//                                    short of the chip, i.e. a chip lookup
+//                                    that misses. Reds the whole-chip
+//                                    deletion arms of the composer suites —
+//                                    including `viewer-feedback-images.ps1`
+//                                    and `viewer-feedback-carousel.ps1`,
+//                                    whose composer text is pure ASCII and
+//                                    which the identity seam above therefore
+//                                    cannot touch at all (T672).
+//
+// They are deliberately two, not one: a single switch that broke both would
+// turn a targeted teeth check into a smoke test, and a red arm would no
+// longer name its cause.
+// -------------------------------------------------------------------------
+
+var test_seams_read: bool = false;
+
+/// See the block above. Never true in a release build, and never set by
+/// anything in the product.
+var break_chip_range: bool = false;
+
+/// Read the seam variables once, at the first composer's creation.
+fn readTestSeams(alloc: Allocator) void {
+    if (comptime !build_config.is_debug) return;
+    if (test_seams_read) return;
+    test_seams_read = true;
+
+    if (envIsOne(alloc, "GHOZTTY_TEST_BREAK_UTF16")) {
+        utf16_offset.break_identity = true;
+        log.warn("test seam active: GHOZTTY_TEST_BREAK_UTF16 " ++
+            "(byte<->UTF-16 conversion is the identity)", .{});
+    }
+    if (envIsOne(alloc, "GHOZTTY_TEST_BREAK_CHIP_RANGE")) {
+        break_chip_range = true;
+        log.warn("test seam active: GHOZTTY_TEST_BREAK_CHIP_RANGE " ++
+            "(chip selection stops one unit short)", .{});
+    }
+}
+
+fn envIsOne(alloc: Allocator, name: []const u8) bool {
+    const value = std.process.getEnvVarOwned(alloc, name) catch return false;
+    defer alloc.free(value);
+    return std.mem.eql(u8, value, "1");
+}
+
+/// The control-side selection that covers a whole chip, from the chip's byte
+/// span. The ONE home for that range: both the keyboard path
+/// (`selectChipForDelete`) and the thumbnail path (`activateThumb`) go through
+/// it, so the chip-range seam above cannot leave one of them converted while
+/// the other is not.
+fn chipRange(self: *const ViewerFeedbackBar, start: usize, end: usize) w32.CHARRANGE {
+    var cr: w32.CHARRANGE = .{ .cpMin = self.charIndex(start), .cpMax = self.charIndex(end) };
+    if (break_chip_range) cr.cpMax -= 1;
+    return cr;
+}
+
 /// A byte offset in the pane's buffer, as the character index the control
 /// understands.
 fn charIndex(self: *const ViewerFeedbackBar, byte: usize) i32 {
@@ -1556,7 +1632,7 @@ fn selectChipForDelete(self: *ViewerFeedbackBar, vk: u16) bool {
         else => null,
     } orelse return false;
 
-    const cr: w32.CHARRANGE = .{ .cpMin = self.charIndex(chip.start), .cpMax = self.charIndex(chip.end) };
+    const cr = self.chipRange(chip.start, chip.end);
     _ = w32.SendMessageW(self.edit, w32.EM_EXSETSEL, 0, @bitCast(@intFromPtr(&cr)));
     return true;
 }
@@ -1716,7 +1792,7 @@ fn activateThumb(self: *ViewerFeedbackBar, index: usize) void {
         wv.takeFocus();
         wv.pick(self.pane.feedbackImageEntry(s).number);
     } else {
-        const cr: w32.CHARRANGE = .{ .cpMin = self.charIndex(s.start), .cpMax = self.charIndex(s.end) };
+        const cr = self.chipRange(s.start, s.end);
         _ = w32.SetFocus(self.edit);
         _ = w32.SendMessageW(self.edit, w32.EM_EXSETSEL, 0, @bitCast(@intFromPtr(&cr)));
         _ = w32.SendMessageW(self.edit, w32.EM_SCROLLCARET, 0, 0);

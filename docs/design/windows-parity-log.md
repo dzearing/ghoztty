@@ -9,6 +9,50 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-09: T673 - **the composer's offset tests can now be shown to fail
+  without touching a line of source.** Two acceptance suites' worth of
+  assertions about where a picture lands in a feedback report were only ever
+  trustworthy on someone's word: proving they would catch a regression meant
+  stubbing `charIndex`/`byteOffset` back to identity, rebuilding, running,
+  reverting and rebuilding again. That is friction enough that the check stops
+  happening, and a check nobody re-runs has quietly stopped being one.
+
+  Two debug-only environment variables, read once when the first composer is
+  created, each break exactly one rule. `GHOZTTY_TEST_BREAK_UTF16=1` sets
+  `utf16_offset.break_identity`, which both conversions consult, so every call
+  site turns over at once - the two `CHARRANGE` helpers, the caret, and the
+  page's own span mapping - and there is no way to leave the composer half
+  converted. `GHOZTTY_TEST_BREAK_CHIP_RANGE=1` makes a chip's selection stop
+  one unit short, i.e. a chip lookup that misses.
+
+  The second one exists because of what T672 found the night before, and it is
+  the correction to this task's own plan: an identity conversion is a **no-op**
+  on pure-ASCII composer text, so it cannot teeth-check
+  `viewer-feedback-images.ps1` or `viewer-feedback-carousel.ps1` at all, and
+  the chip range is computed at TWO sites - the Backspace path and a thumbnail
+  click - which is how a stub of the first left the carousel suite green. Both
+  sites now go through one `chipRange` helper, so the switch cannot reach one
+  and miss the other. They are deliberately two switches rather than one: a
+  single one that broke both would turn a targeted check into a smoke test and
+  a red arm would stop naming its cause.
+
+  Measured on the box rather than argued: `viewer-feedback-utf16.ps1` ALL PASS
+  (30) clean and `4 FAILURE(S) (26 passed)` under the first switch, the four
+  being exactly chip position, caret position, whole-chip Backspace and the
+  report body. `viewer-feedback-images.ps1` ALL PASS (40) / 2 red, and
+  `viewer-feedback-carousel.ps1` ALL PASS (59) / 1 red under the second, in
+  both cases the whole-chip deletion arms and nothing else. A `none`-lane unit
+  test pins off-by-default and identity-when-on. Documented beside
+  `GHOZTTY_TEST_LIVENESS_BREAK` in `docs/claude/testing.md`, which is where
+  someone re-checking these arms will look.
+
+  Floor: all four lanes PASS, P1-P3 ALL PASS, and the five guards this touched
+  (viewer-feedback, printclient-audit, stderr-capture, docs-routing,
+  test-reach) re-run green. Filed T1472: nothing in `guard-due.ps1` covers
+  `utf16_offset.zig` or any of the three offset suites, so editing the
+  conversion still makes no harness due - the scheduling half of the same
+  problem this task solved the friction half of.
+
 - 2026-09-08: T670 - **the screenshot picker can take a whole window now, and
   it comes out without the rim of desktop a hand-dragged rectangle leaves.**
   T647 built the region half of Mac's `screencapture -i`; the other half is
