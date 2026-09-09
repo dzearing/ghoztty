@@ -9,6 +9,45 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-09: T676, T1474 - **the phantom-card hypothesis was wrong, and what
+  the sweep found instead is worse.** T676 was filed on the T122/T422 shape: a
+  card describing a defect that a later turn had already fixed from a user
+  report, so the queue counts work that does not exist and each such card burns
+  a turn's context to discover. One pass over its two stated scopes found
+  **zero** of them.
+
+  The dep-derived half is simply exhausted. All fifteen cards whose `deps:` name
+  T117 or T141 are accounted for: thirteen closed, and the two still open (T169,
+  T170) are `seat: mac`, which T676's own Details had already put outside this
+  seat. The M1 denominator does not move, which is a real answer to the question
+  the card asked and the reason it is closed rather than left open.
+
+  The grep-evidence half — seven cards whose Summary rests its claim on a grep
+  result — is all still real at HEAD, re-verified one at a time rather than
+  taken on the filing turn's word. But **three of the seven had rotted**: still
+  correct about the defect, wrong about its size. T1047 named
+  `hero-nav.ps1:464-465` and called it "the remaining instance in the suite";
+  the site is `:488-489` today and the shape appears in 15 files and ~38 sites.
+  T736 said `wasm_patch_growable_table.zig` was the one other file under
+  `src/build/` with `test` blocks; there are three, and the one that arrived
+  since was wired in correctly. T1437 said "roughly twenty" sites; there are 55
+  across 21 files. All three had their Summaries rewritten against HEAD, and all
+  seven carry a dated progress-log entry so the next agent does not re-derive
+  any of it.
+
+  That is the finding worth keeping. A phantom card wastes the turn that opens
+  it and then closes cleanly; a **rotted** card is never closable, so it sits
+  there indefinitely being planned as one size and discovered to be another —
+  which is the same context burn T676 existed to stop, with no closure at the
+  end of it. Three of seven after a month is not a tail case. The measurement
+  already exists and nothing reads it: `stale-scan`'s `touched=` column had
+  T1047 flagged the whole time. Filed as **T1474**, deliberately as a report and
+  not a gate, with the negative control the T1133 rule requires — a card given a
+  false `path:line` must be flagged, or the check cannot be shown to fail.
+
+  No source changed; the floor was run anyway (lib, none, win32, agent) and
+  `parity-tasks.ps1 validate` is clean at 1504 tasks.
+
 - 2026-09-09: T673 - **the composer's offset tests can now be shown to fail
   without touching a line of source.** Two acceptance suites' worth of
   assertions about where a picture lands in a feedback report were only ever
