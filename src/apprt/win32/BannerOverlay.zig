@@ -233,6 +233,14 @@ pub const BannerOverlay = struct {
     /// same observation is what `banner paint ... buffered=` logs.
     last_frame_buffered: bool = false,
 
+    /// The opacity the LAST paint gave the banner body (T677), 0–255. 255
+    /// whenever nothing is animating, which is every frame but the ~11 after
+    /// a toggle. Read by the unit lane and logged as `banner body alpha=`,
+    /// the same shape `banner collapse h=` uses for the card's travel — the
+    /// fade is a per-frame number, so it is asserted as one rather than
+    /// eyeballed.
+    last_body_alpha: u8 = 255,
+
     /// Height the window layout reserved for this strip ABOVE the owner
     /// pane (T101). The layout shrinks/offsets the owner HWND by this and
     /// `updatePosition` glues the strip into the vacated band, so the
@@ -1611,6 +1619,12 @@ pub const BannerOverlay = struct {
 
         _ = self.renderContent(hdc, inner, inner, content_w, true);
 
+        // The body cross-fades while the card travels (T677, Mac parity).
+        // AFTER the content pass, deliberately: the fade is applied to the
+        // pixels the walk just laid down, so the walk itself — and the link
+        // hit rects it builds as a side effect — is the settled one.
+        self.paintBodyFade(hdc, band);
+
         // Content overflows the card — collapsed, and every frame of a
         // collapse or expand on the way there — so its tail dissolves into
         // the card fill instead of being guillotined by the clip region
@@ -1621,6 +1635,82 @@ pub const BannerOverlay = struct {
         if (shown < wanted) self.paintCollapseFade(hdc, band);
 
         if (self.collapsible) self.paintChevron(hdc, client);
+    }
+
+    /// The body opacity the NEXT paint would use (T677), 0–255 — the fade's
+    /// analog of `paintedCardHeight`, and read by the collapse tick for the
+    /// same reason it reads that: a toggle's last frame can land the card on
+    /// its settled height while the body is still one step short of solid,
+    /// and a tick watching only the height calls that frame clean and leaves
+    /// the text permanently washed out.
+    fn paintedBodyAlpha(self: *BannerOverlay) u8 {
+        const anim = self.collapse_anim orelse return 255;
+        const p = self.collapseProgress() orelse return 255;
+        return banner_layout.collapseBodyAlpha(anim.from_h, self.cardHeight(), p);
+    }
+
+    /// Cross-fade the banner BODY — everything below the first line — while
+    /// a collapse or expand runs (T677).
+    ///
+    /// Mac hides the body behind an `if !collapsed`, so SwiftUI dissolves it
+    /// with the default opacity transition under the same easing that moves
+    /// the card. win32 had the motion and the soft cut edge but not this: the
+    /// body stayed at full strength until the shrinking card's edge reached
+    /// it, so the text was uncovered rather than dissolved.
+    ///
+    /// It is done by blending the CARD BACKDROP back over the body at
+    /// `255 - alpha` rather than by re-rendering the content into an
+    /// offscreen surface at a constant alpha. The body was drawn at full
+    /// strength over exactly those backdrop pixels one call ago, so laying
+    /// them back over it at `1 - a` leaves the text at `a` — the same result,
+    /// one blit, and — the reason it matters — no second content pass, so the
+    /// link hit rects stay the ones the settled walk built.
+    ///
+    /// `AlphaFormat` is 0 here on purpose: `banner_card.render` composites
+    /// the shadow, rim and sheen down into opaque RGB, so the surface's own
+    /// alpha channel says nothing and only the constant alpha should count.
+    fn paintBodyFade(self: *BannerOverlay, hdc: w32.HDC, band: w32.RECT) void {
+        const alpha = self.paintedBodyAlpha();
+        self.last_body_alpha = alpha;
+        log.debug("banner body alpha={}", .{alpha});
+        if (alpha >= 255) return;
+
+        // Without the cached card surface there is nothing to fade back over
+        // the text, so the frame keeps the pre-T677 clipped reveal. A missing
+        // backdrop already means a flat fallback card; losing the dissolve
+        // too is the right end of that trade.
+        const mem = self.card_dc orelse return;
+
+        const margin = self.px(MARGIN);
+        // The first line survives the whole animation — it is what a
+        // collapsed banner shows — so the fade starts under it.
+        const top = band.top + margin + self.px(PAD) + self.px(COLLAPSED_H);
+        const bottom = band.bottom - margin;
+        const left = band.left + margin;
+        const right = band.right - margin;
+        const w = right - left;
+        const h = bottom - top;
+        if (w <= 0 or h <= 0) return;
+
+        const blend = w32.BLENDFUNCTION{
+            .SourceConstantAlpha = 255 - alpha,
+            .AlphaFormat = 0,
+        };
+        _ = w32.AlphaBlend(
+            hdc,
+            left,
+            top,
+            w,
+            h,
+            mem,
+            // The card surface is built for the band and blitted at its
+            // origin, so its coordinates ARE the band's.
+            left - band.left,
+            top - band.top,
+            w,
+            h,
+            blend,
+        );
     }
 
     /// Fill `rect` with the pane's own background — the color the band
@@ -1908,7 +1998,13 @@ pub const BannerOverlay = struct {
         // Keyed on the height that was actually PAINTED, not on the one the
         // last tick wanted, so a frame that rounds to the same height still
         // has nothing to draw — the property the resize path had for free.
-        const dirty = !T833_NEUTERED and self.paintedCardHeight() != self.painted_h;
+        //
+        // The body's fade counts too (T677): the last frame of a toggle
+        // routinely settles the card on its target height while the body is
+        // still a step short of solid, and height alone calls that frame
+        // clean.
+        const dirty = !T833_NEUTERED and (self.paintedCardHeight() != self.painted_h or
+            self.paintedBodyAlpha() != self.last_body_alpha);
         if (dirty) _ = w32.InvalidateRect(self.hwnd, null, 1);
         // `updatePosition` invalidates and repaints synchronously whenever
         // the height actually changed, which is every frame of a COLLAPSE.
@@ -2549,6 +2645,111 @@ test "banner overlay: an expanding card repaints while the window keeps its size
     try std.testing.expect(saw_intermediate);
     // And it ends up showing the card it settled at, not a frame short of it.
     try std.testing.expectEqual(target, overlay.painted_h);
+}
+
+// T677: the body's opacity really MOVES during a toggle, and the links do not.
+//
+// The card's travel was already asserted (T149/T833); the body's fade was not,
+// because before this it did not exist — the content was drawn at full
+// strength every frame and simply uncovered by the moving edge. `painted_h`
+// could not have caught that, which is why this needs a number of its own.
+//
+// Two claims, and the second is the one the implementation could plausibly
+// break: the fade is applied to the pixels AFTER the content walk rather than
+// by a second, faded walk, so the link hit rects must be the settled ones on
+// every animated frame. A click landing in the wrong place for a fifth of a
+// second is a worse bug than the one being fixed.
+test "banner overlay: the body fades while the card travels, and the links hold still" {
+    const hinst = w32.GetModuleHandleW(null) orelse return error.SkipZigTest;
+    registerClassOnce(hinst) catch return error.SkipZigTest;
+
+    const owner = w32.CreateWindowExW(
+        w32.WS_EX_LAYERED | w32.WS_EX_NOACTIVATE | w32.WS_EX_TOOLWINDOW,
+        WINDOW_CLASS_NAME,
+        std.unicode.utf8ToUtf16LeStringLiteral(""),
+        w32.WS_POPUP,
+        0,
+        300,
+        600,
+        200,
+        null,
+        null,
+        hinst,
+        null,
+    ) orelse return error.SkipZigTest;
+    defer _ = w32.DestroyWindow(owner);
+    _ = w32.SetLayeredWindowAttributes(owner, 0, 0, w32.LWA_ALPHA);
+    _ = w32.ShowWindow(owner, w32.SW_SHOWNOACTIVATE);
+
+    const overlay = BannerOverlay.create(std.testing.allocator, null, owner, hinst) catch
+        return error.SkipZigTest;
+    defer overlay.destroy();
+    _ = w32.SetLayeredWindowAttributes(overlay.hwnd, 0, 0, w32.LWA_ALPHA);
+    overlay.alpha_set = true;
+    overlay.collapsible = true;
+    overlay.setText("**Build status**\nsecond line\n[a link](https://example.invalid)\nfourth line");
+
+    overlay.collapsed = true;
+    overlay.updatePosition(1.0);
+    overlay.inset = overlay.stripHeight();
+    overlay.updatePosition(1.0);
+    _ = w32.InvalidateRect(overlay.hwnd, null, 1);
+    _ = w32.UpdateWindow(overlay.hwnd);
+    const collapsed_h = overlay.painted_h;
+    try std.testing.expect(collapsed_h > 0);
+
+    // Settled paints leave the body alone — the fade is a toggle's business
+    // and nothing else's.
+    try std.testing.expectEqual(@as(u8, 255), overlay.last_body_alpha);
+
+    overlay.collapsed = false;
+    overlay.inset = overlay.stripHeight();
+    const target = overlay.cardHeight();
+    try std.testing.expect(target > collapsed_h);
+    overlay.updatePosition(1.0);
+    _ = w32.InvalidateRect(overlay.hwnd, null, 1);
+    _ = w32.UpdateWindow(overlay.hwnd);
+
+    // The settled link geometry, captured before a single animated frame.
+    var settled: std.ArrayList(w32.RECT) = .empty;
+    defer settled.deinit(std.testing.allocator);
+    for (overlay.links.items) |l| try settled.append(std.testing.allocator, l.rect);
+    try std.testing.expect(settled.items.len > 0);
+
+    overlay.collapse_anim = .{
+        .from_h = collapsed_h,
+        .start = std.time.Instant.now() catch return error.SkipZigTest,
+    };
+
+    var saw_partial = false;
+    var prev: u8 = 0;
+    var monotonic = true;
+    var guard: usize = 0;
+    while (overlay.collapse_anim != null and guard < 200) : (guard += 1) {
+        std.Thread.sleep(10 * std.time.ns_per_ms);
+        overlay.onCollapseTick();
+        const a = overlay.last_body_alpha;
+        if (a > 0 and a < 255) saw_partial = true;
+        if (a < prev) monotonic = false;
+        prev = a;
+
+        // Every frame, not just the last one: the hit rects are the settled
+        // walk's on the way through, or a click mid-animation misses.
+        try std.testing.expectEqual(settled.items.len, overlay.links.items.len);
+        for (overlay.links.items, settled.items) |got, want| {
+            try std.testing.expectEqual(want.left, got.rect.left);
+            try std.testing.expectEqual(want.top, got.rect.top);
+            try std.testing.expectEqual(want.right, got.rect.right);
+            try std.testing.expectEqual(want.bottom, got.rect.bottom);
+        }
+    }
+
+    // The body was somewhere between invisible and solid at least once — the
+    // whole point — it only ever grew, and it settles fully opaque rather
+    // than a step short, which would leave the text permanently washed out.
+    try std.testing.expect(saw_partial);
+    try std.testing.expect(monotonic);
+    try std.testing.expectEqual(@as(u8, 255), overlay.last_body_alpha);
 }
 
 // T165: the link hover affordance, in PIXELS.

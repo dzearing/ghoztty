@@ -1,12 +1,10 @@
 {
     "guard":  "verdict-exit",
     "script":  "test/win32/verdict-exit-audit.ps1",
-    "generated":  "2026-09-09T01:29:55-07:00",
-    "commit":  "4463d80bb",
+    "generated":  "2026-09-09T07:28:02-07:00",
+    "commit":  "2c075e9a9",
     "uncommitted":  [
-                        "test/win32/agent-job-escape.ps1",
-                        "test/win32/agent-upgrade.ps1",
-                        "test/win32/job-escape-startup.ps1"
+                        "test/win32/pane-banner.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "a3f98a551352e27d1ad9c1745e222757dc4b802efc5638fbe6ea4d3f621b6307",
@@ -224,7 +222,7 @@
                   "test/win32/overlay-zorder.ps1":  "0aecea140f4df82d4e0c6a52bdd358ba99b67bb2f656f8432a55e9ea5809a209",
                   "test/win32/palette-close-crash.ps1":  "e6046113e0de2c089224b358bac4ef12ed298e86983c3bf68bd48588a34c964d",
                   "test/win32/palette-jump.ps1":  "1745b9a557417e11bdfceaf4db1997de31bc457f7f9919664fa01b592f5b6ac7",
-                  "test/win32/pane-banner.ps1":  "585671bd04f8e963eff275b669bf618856b60528d234386cb7adb578e115a7ff",
+                  "test/win32/pane-banner.ps1":  "c27f5baf5bbbf42bbb78af021580e14ec5b0418296d330c9116bfe742978b170",
                   "test/win32/pane-capture.ps1":  "bafa49ecb514b76f8cafb16cb2a6172c04188e0081f28c759d939f1c378b8a4c",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "0c722d4f0cb52d3567b2d070362fa2cf825aafc952a81b1bcf01768203181161",

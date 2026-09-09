@@ -25924,3 +25924,40 @@ so the seam that task describes could not have teeth-checked either of them.
 Three more composer arms were tightened in passing (the post-paste chip and the
 two survivors in images, both chips in carousel). The same weak shape one level
 out, on `report.json`'s body, is filed as T1471.
+
+## 2026-09-09 — the banner body dissolves as the card closes over it (T677)
+
+Collapsing a banner moved the card with the right curve and softened the cut
+edge, but the text underneath never changed strength: a line sat at full ink
+until the shrinking edge reached it and then vanished. Mac hides the body
+behind an `if !collapsed`, so SwiftUI cross-fades it under the same
+easeInOut(0.18) that moves the card — the text dissolves rather than being
+uncovered. That was the last piece of T149 still unmatched.
+
+`banner_layout.collapseBodyAlpha` is the fade, a pure function reading the
+direction off the same two heights `collapseHeight` reads, so the pair cannot
+disagree about which way a toggle is going and the text is always exactly as
+far through its fade as the card is through its travel (asserted against
+`collapseHeight` itself rather than against a copy of the easing).
+
+The paint is one blit and no second render pass: `paintBodyFade` blends the
+CACHED CARD BACKDROP back over the body region at `255 - alpha` after the
+content walk, which lands text drawn at full strength over those same pixels at
+exactly `alpha`. Re-rendering the content into an offscreen surface would have
+worked too and would have rebuilt the link hit rects as a side effect — the
+walk builds them — so a click during the ~11 animated frames could have opened
+the wrong link. The win32 lane now asserts every link rect on every animated
+frame against the settled walk's, which is the claim that shape buys.
+
+One thing fell out of building it: the collapse tick decided whether a frame
+was dirty from the card height alone, and a toggle's last frame routinely lands
+the card on its target height while the body is still a step short of solid —
+so the fade could settle at 254 and leave the text permanently washed out. The
+tick now reads the body alpha too, the same way it reads the height.
+
+Evidence: `pane-banner.ps1` ALL PASS (139), with the new per-frame oracle
+reading `alphas=255,254,226,145,49,22,7,255` on a collapse and
+`0,0,8,11,56,158,204,249,255` on an expand — six distinct partial values each
+way, monotone, settling opaque. Floor: lib/none/win32/agent all PASS, P1–P3 ALL
+PASS, and the nine static test-harness audits re-run green over the harness
+edit.

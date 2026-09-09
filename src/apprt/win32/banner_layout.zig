@@ -172,6 +172,33 @@ pub fn collapseHeight(from: i32, to: i32, linear: f32) i32 {
     return @intFromFloat(@round(f + (t - f) * p));
 }
 
+/// The opacity (0–255) the banner BODY — everything below the first line —
+/// is painted at during a collapse or expand (T677).
+///
+/// Mac's `SurfacePaneBanner` puts the body behind an `if !collapsed`, so
+/// SwiftUI gives it the default insertion/removal transition — an opacity
+/// fade — running under the same `easeInOut(0.18)` as the card height. The
+/// body therefore DISSOLVES while the card closes over it, rather than being
+/// uncovered by a moving edge.
+///
+/// The direction comes from the heights, not from a flag: a card heading
+/// somewhere shorter than it started is collapsing (the body fades OUT), one
+/// heading taller is expanding (the body fades IN). That is the same source
+/// of truth `collapseHeight` already reads, so the two cannot disagree about
+/// which way a toggle is going — and a toggle with nowhere to go leaves the
+/// body alone.
+///
+/// The curve is `collapseHeight`'s, so the text is exactly as far through its
+/// fade as the card is through its travel.
+pub fn collapseBodyAlpha(from: i32, to: i32, linear: f32) u8 {
+    if (to == from) return 255;
+    const p = std.math.clamp(hero_math.easeInOutCubic(linear), 0.0, 1.0);
+    // Fraction of the body still showing: `p` of the way into an expand,
+    // `1 - p` of the way into a collapse.
+    const shown = if (to > from) p else 1.0 - p;
+    return @intFromFloat(@round(shown * 255.0));
+}
+
 /// The hover affordance for a banner link (T165, Mac `BannerText`'s
 /// `drawLinkUnderline`): a **dotted** rule at rest that becomes a **solid**
 /// one while the pointer is over that link. Drawn by hand rather than left to
@@ -723,4 +750,55 @@ test "collapseHeight: a toggle with nowhere to go stays put" {
     try std.testing.expectEqual(@as(i32, 54), collapseHeight(54, 54, 0.0));
     try std.testing.expectEqual(@as(i32, 54), collapseHeight(54, 54, 0.5));
     try std.testing.expectEqual(@as(i32, 54), collapseHeight(54, 54, 1.0));
+}
+
+test "collapseBodyAlpha: endpoints are exact in both directions" {
+    // A collapse starts with the body fully painted and ends with none of
+    // it; an expand is the same walk backwards. Endpoints are exact because
+    // a body that settles at 254 leaves the text permanently one step washed
+    // out against the card.
+    try std.testing.expectEqual(@as(u8, 255), collapseBodyAlpha(156, 54, 0.0));
+    try std.testing.expectEqual(@as(u8, 0), collapseBodyAlpha(156, 54, 1.0));
+    try std.testing.expectEqual(@as(u8, 0), collapseBodyAlpha(54, 156, 0.0));
+    try std.testing.expectEqual(@as(u8, 255), collapseBodyAlpha(54, 156, 1.0));
+}
+
+test "collapseBodyAlpha: monotonic, and mirrors the card's own curve" {
+    // The body is exactly as far through its fade as the card is through its
+    // travel — the thing that makes the two read as one motion rather than
+    // two. Asserted against `collapseHeight` rather than against a copy of
+    // the easing, so the pair cannot drift apart.
+    var prev_down: u8 = 255;
+    var prev_up: u8 = 0;
+    var i: usize = 0;
+    while (i <= 20) : (i += 1) {
+        const t = @as(f32, @floatFromInt(i)) / 20.0;
+
+        const down = collapseBodyAlpha(156, 54, t);
+        try std.testing.expect(down <= prev_down);
+        prev_down = down;
+
+        const up = collapseBodyAlpha(54, 156, t);
+        try std.testing.expect(up >= prev_up);
+        prev_up = up;
+
+        // The card's height and the body's opacity are the same fraction of
+        // the way along, within a rounding step of each other.
+        const h = collapseHeight(54, 156, t);
+        const h_frac = @as(f32, @floatFromInt(h - 54)) / @as(f32, @floatFromInt(156 - 54));
+        const a_frac = @as(f32, @floatFromInt(up)) / 255.0;
+        try std.testing.expect(@abs(h_frac - a_frac) < 0.02);
+    }
+    try std.testing.expectEqual(@as(u8, 0), prev_down);
+    try std.testing.expectEqual(@as(u8, 255), prev_up);
+}
+
+test "collapseBodyAlpha: a toggle with nowhere to go leaves the body alone" {
+    // Same degenerate banner `collapseHeight` guards against: collapsed and
+    // expanded heights coincide, so there is no direction to fade in and
+    // nothing to fade. Washing it out anyway would blink text that never
+    // moved.
+    try std.testing.expectEqual(@as(u8, 255), collapseBodyAlpha(54, 54, 0.0));
+    try std.testing.expectEqual(@as(u8, 255), collapseBodyAlpha(54, 54, 0.5));
+    try std.testing.expectEqual(@as(u8, 255), collapseBodyAlpha(54, 54, 1.0));
 }

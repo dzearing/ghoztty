@@ -547,8 +547,9 @@ try {
         # every painted frame after it, in order.
         function Get-AnimFrames {
             $from = $null; $to = $null; $toggles = 0
-            $frames = @(); $paints = @(); $buffered = @()
+            $frames = @(); $paints = @(); $buffered = @(); $alphas = @()
             foreach ($l in @(Get-Content $errlog -ErrorAction SilentlyContinue)) {
+                if ($l -match 'banner body alpha=(\d+)') { $alphas += [int]$Matches[1] }
                 if ($l -match 'banner collapse from=(-?\d+) to=(-?\d+)') {
                     $toggles++
                     $from = [int]$Matches[1]; $to = [int]$Matches[2]
@@ -564,7 +565,7 @@ try {
                     else { $buffered += -1 }
                 }
             }
-            return [pscustomobject]@{ From = $from; To = $to; Toggles = $toggles; Frames = $frames; Paints = $paints; Buffered = $buffered }
+            return [pscustomobject]@{ From = $from; To = $to; Toggles = $toggles; Frames = $frames; Paints = $paints; Buffered = $buffered; Alphas = $alphas }
         }
 
         $animMid = $ovA.Left + [int]($ovA.Width / 2)
@@ -643,6 +644,47 @@ try {
             $unbuffered = @($a.Buffered | Where-Object { $_ -ne 1 })
             Assert ($a.Buffered.Count -gt 0 -and $unbuffered.Count -eq 0) `
                 "T1344 ($dir): every animation frame is assembled offscreen ($($a.Buffered.Count) frames, $($unbuffered.Count) drawn straight on the window)"
+
+            # T677: the BODY dissolves while the card travels, instead of
+            # being uncovered by the moving edge at full strength. Mac hides
+            # the body behind an `if !collapsed`, so SwiftUI cross-fades it
+            # under the same easing that moves the card; win32 had the motion
+            # and the soft cut edge but never changed the text's opacity.
+            #
+            # Read from `banner body alpha=`, one line per painted frame, the
+            # same shape `banner collapse h=` uses for the height - the fade
+            # is a per-frame number, so it is asserted as one rather than
+            # eyeballed. A settled paint logs 255, which is why the animated
+            # run is the sequence with the trailing 255s stripped off.
+            Write-Host "INFO  T677 $dir : alphas=$($a.Alphas -join ',')"
+            $run = @($a.Alphas)
+            while ($run.Count -gt 0 -and $run[-1] -eq 255) { $run = @($run[0..($run.Count - 2)]) }
+            if ($dir -eq 'expand') {
+                # An expand's own last frame IS 255, so stripping ate it -
+                # put the sequence back and let monotonicity carry the claim.
+                $run = @($a.Alphas)
+            }
+            $partial = @($run | Where-Object { $_ -gt 0 -and $_ -lt 255 } | Sort-Object -Unique)
+            Assert ($partial.Count -ge 3) `
+                "T677 ($dir): the body passes through real partial opacity ($($partial.Count) distinct values between 0 and 255)"
+
+            $fadeOrdered = $true
+            for ($k = 1; $k -lt $run.Count; $k++) {
+                if ($dir -eq 'collapse') { if ($run[$k] -gt $run[$k - 1]) { $fadeOrdered = $false } }
+                else { if ($run[$k] -lt $run[$k - 1]) { $fadeOrdered = $false } }
+            }
+            Assert ($fadeOrdered -and $run.Count -gt 0) `
+                "T677 ($dir): the fade only ever moves one way - no flicker back toward the state it left"
+
+            # And it finishes: a body that settles a step short of solid is
+            # permanently washed out, which is the same defect T149 guards
+            # against for the card's height.
+            Assert ($a.Alphas.Count -gt 0 -and $a.Alphas[-1] -eq 255) `
+                "T677 ($dir): the settled banner is painted at full strength ($($a.Alphas[-1]) of 255)"
+            if ($dir -eq 'collapse') {
+                Assert ($run.Count -gt 0 -and $run[-1] -le 32) `
+                    "T677 (collapse): the body is all but gone by the time the card closes over it ($($run[-1]) of 255)"
+            }
 
             # ...and once it settles the popup is glued back over the pane at
             # the band the layout reserved, which is what Get-Overlay matches
