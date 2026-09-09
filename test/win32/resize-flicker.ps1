@@ -67,6 +67,24 @@
 #      with the anti-flicker path switched off, and section C2 above could not
 #      tell, because `Set-TestWindowPos` never opens a size loop either.
 #
+#   E. The frame the wait CAME BACK ON, added by T1476 - the same mechanism 4,
+#      one layer down. Waiting was never the whole guarantee: the wait ended on
+#      the next presented frame, and the frame that lands first after a resize
+#      is routinely one the renderer had ALREADY STARTED at the old size. So the
+#      UI thread walked away believing the pane was showing its new size while
+#      it was showing the previous one, and no timeout could see it because the
+#      wait had not timed out - it had been answered by the wrong frame. The
+#      renderer now stamps the size it presented at and the wait loops until
+#      every pane's LAST present is the size it was resized to, inside the same
+#      one-frame budget. `divider drag ... stale=N` is that number: panes whose
+#      wait ended on a frame drawn for the previous size. Measured on this box
+#      over a 25-tick posted drag: stale=2 timeouts=0 in the old shape,
+#      stale=0 after. `GHOZTTY_RESIZE_WAIT_ANY=1` restores the old shape, which
+#      is how the defect is reproduced on demand; it is not asserted here
+#      because WHETHER a given tick catches an in-flight frame is a race, and a
+#      test that needs a race to go its way is the thing this file's header
+#      already refuses to write.
+#
 # Mechanism 4 no longer has "no observable this script can reach": "the pane
 # blocked for a frame" is still a schedule rather than a pixel, but a schedule
 # the app can be asked about. The unit half of the fix -
@@ -77,8 +95,8 @@
 # Runs on the BACKGROUND test desktop (lib\TestDesktop.ps1), so it never takes
 # the user's foreground - asserted, not assumed.
 #
-# -NegativeControl inverts the erase and synchronous-present assertions and
-# MUST fail.
+# -NegativeControl inverts the erase, synchronous-present and stale-frame
+# assertions and MUST fail.
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
 #   powershell -NoProfile -File test\win32\resize-flicker.ps1
@@ -95,6 +113,12 @@ if (-not (Test-Path $exe)) { $exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe' }
 if ($ExePath) { $exe = $ExePath }
 
 $env:GHOZTTY_PIPE_SUFFIX = "-resizeflicker$PID"
+# T1476 section E reads the drag summary, which the app only prints under this.
+# It adds timers, not behavior - the wait shape is `GHOZTTY_DRAG_SERIAL_WAIT`'s
+# to change, and this script leaves that alone.
+$env:GHOZTTY_PERF = '1'
+# The pre-T1476 wait shape must NOT be inherited from the caller's shell.
+Remove-Item env:GHOZTTY_RESIZE_WAIT_ANY -ErrorAction SilentlyContinue
 $errlog = Join-Path $env:TEMP 'ghoztty-resize-flicker-stderr.log'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
@@ -181,6 +205,25 @@ function Get-ResizePasses([string]$log) {
                 Fresh    = [int]$Matches[4]
                 Waits    = [int]$Matches[5]
                 Timeouts = [int]$Matches[6]
+            }
+        }
+    }
+    return @($out)
+}
+
+# The `divider drag ...` summaries the app has printed, oldest first (T1476).
+# Only `stale` and `timeouts` are pulled out - drag-perf.ps1 owns the rest of
+# that line, and a second full parser here would be a copy to keep in step.
+function Get-DragSummaries([string]$log) {
+    if (-not (Test-Path $log)) { return @() }
+    $out = @()
+    foreach ($l in @(Get-Content $log -ErrorAction SilentlyContinue)) {
+        if ($l -match 'divider drag ticks=(\d+) .*waits_total=(\d+) timeouts=(\d+) stale=(\d+)') {
+            $out += [pscustomobject]@{
+                Ticks      = [int]$Matches[1]
+                WaitsTotal = [int]$Matches[2]
+                Timeouts   = [int]$Matches[3]
+                Stale      = [int]$Matches[4]
             }
         }
     }
@@ -310,27 +353,39 @@ try {
         $(if ($tv.Count) { ' -- ' + ($tv -join '; ') } else { '' }))
 
     # ---- C1. across a posted divider drag -------------------------------
-    $tr = Get-TestWindowRect -Window ([IntPtr]$top)
+    # SCREEN coordinates, handed to `Send-TestMouse`, which does the client
+    # conversion per target. This used to do the arithmetic itself against
+    # `Get-TestWindowRect` - i.e. against the WINDOW rect, caption and border
+    # included - so the button-down landed above the client area, the divider
+    # was never grabbed, and ten motion ticks asserted that two panes which had
+    # not moved still tiled. The exact trap drag-perf.ps1 records falling into
+    # (T1343), found again here by T1476 when the drag produced no summary at
+    # all. `$dragMoved` is the check that keeps it found.
     $sorted = @($panes | Sort-Object Left)
-    $startX = $sorted[0].Right - $tr.Left
-    $startY = [int](($sorted[0].Top + $sorted[0].Bottom) / 2) - $tr.Top
+    $second = @($panes | Where-Object { $_.Left -gt $sorted[0].Left } | Sort-Object Left)[0]
+    $startX = [int](($sorted[0].Right + $second.Left) / 2)
+    $startY = [int](($sorted[0].Top + $sorted[0].Bottom) / 2)
+    $widthBefore = $sorted[0].Right - $sorted[0].Left
 
     $dragViolations = @()
-    [void](Send-TestRawMessage -Window ([IntPtr]$top) -Message $WM_LBUTTONDOWN `
-        -WParam $MK_LBUTTON -LParam (New-LParam $startX $startY))
+    $dragMoved = $false
+    [void](Send-TestMouse -Window ([IntPtr]$top) -Target ([IntPtr]$top) `
+        -X $startX -Y $startY -Action down -HoldMs 0)
     Start-Sleep -Milliseconds 150
     for ($i = 1; $i -le 10; $i++) {
-        $nx = $startX + ($i * 20)
-        [void](Send-TestRawMessage -Window ([IntPtr]$top) -Message $WM_MOUSEMOVE `
-            -WParam $MK_LBUTTON -LParam (New-LParam $nx $startY))
+        [void](Send-TestMouse -Window ([IntPtr]$top) -Target ([IntPtr]$top) `
+            -X ($startX + ($i * 12)) -Y $startY -Action move -HoldMs 0)
         Start-Sleep -Milliseconds 60
         $now = Get-VisiblePanes ([IntPtr]$top)
         $dragViolations += Get-TileViolations $now "drag-$i" $maxBand
+        $left = @($now | Sort-Object Left)[0]
+        if (($left.Right - $left.Left) -ne $widthBefore) { $dragMoved = $true }
     }
-    [void](Send-TestRawMessage -Window ([IntPtr]$top) -Message $WM_LBUTTONUP `
-        -WParam ([IntPtr]::Zero) -LParam (New-LParam ($startX + 200) $startY))
+    [void](Send-TestMouse -Window ([IntPtr]$top) -Target ([IntPtr]$top) `
+        -X $startX -Y $startY -Action up -HoldMs 0)
     Start-Sleep -Milliseconds 400
 
+    Assert $dragMoved 'the posted drag actually grabbed the divider (the panes resized)'
     Assert ($dragViolations.Count -eq 0) ('panes tile at every step of a divider drag' +
         $(if ($dragViolations.Count) { ' -- ' + (($dragViolations | Select-Object -First 4) -join '; ') } else { '' }))
     $decisions = Get-EraseDecisions $errlog
@@ -338,6 +393,40 @@ try {
     Assert ($dragFilling.Count -eq 0) ('no pane blanks itself during a divider drag' +
         $(if ($dragFilling.Count) { ' -- ' + (($dragFilling | Select-Object -First 4) -join ', ') } else { '' }))
     $seen = $decisions.Count
+
+    # ---- E. the frame the wait came back on (T1476) ---------------------
+    # Not "did the pane wait" (section D) but "was the wait ANSWERED by a frame
+    # at the new size". The drag above just ran; its summary carries the count.
+    # Poll for it: the line is written at button-up and reaches the redirected
+    # stderr when the app's buffer next flushes, which is not instant.
+    $drags = @()
+    for ($t = 0; $t -lt 20; $t++) {
+        $drags = Get-DragSummaries $errlog
+        if ($drags.Count -gt 0) { break }
+        Start-Sleep -Milliseconds 250
+    }
+    if ($drags.Count -eq 0) {
+        $script:skipped++
+        Write-Host "SKIP  no ``divider drag`` oracle in the log - release build?" -ForegroundColor Yellow
+    } else {
+        $d = $drags[$drags.Count - 1]
+        Write-Host ("  drag summary: ticks=$($d.Ticks) waits=$($d.WaitsTotal) " +
+                    "timeouts=$($d.Timeouts) stale=$($d.Stale)")
+        # VACUITY: `stale=0` is free on a drag that never waited for anything,
+        # which is the exact state a regression in section D would produce. So
+        # the count only means something once the waits are shown to have
+        # happened at all.
+        Assert ($d.WaitsTotal -gt 0) `
+            ("the drag actually waited for frames ($($d.WaitsTotal) wait(s) over $($d.Ticks) tick(s)) - " +
+             "without this `stale=0` is true of a drag that guarded nothing")
+        # THE DEFECT: a wait ended with the pane's last present still drawn for
+        # the size it had BEFORE the pass. One displayed frame of the previous
+        # size in the new window, which is the blink that was reported.
+        $staleOk = ($d.Stale -eq 0)
+        if ($NegativeControl) { $staleOk = -not $staleOk }
+        Assert $staleOk ("every frame wait came back on a frame drawn at the new size " +
+            "(stale=$($d.Stale) of $($d.WaitsTotal) wait(s))")
+    }
 
     # ---- C2. across whole-window resizes --------------------------------
     $winViolations = @()

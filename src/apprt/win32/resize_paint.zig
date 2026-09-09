@@ -88,6 +88,26 @@ pub const Present = struct {
     has_presented_frame: bool,
 };
 
+/// A presented client size, packed into one word so it can cross the
+/// renderer/UI thread boundary as a single atomic load and store (T1476).
+///
+/// Zero is "nothing presented yet", which is why the pack is width-major and
+/// a zero-area frame can never be mistaken for a real one: the renderer
+/// declines to draw at all when either dimension is 0.
+pub fn packSize(width: u32, height: u32) u64 {
+    return (@as(u64, width) << 32) | @as(u64, height);
+}
+
+/// Did the frame the wait came back on actually cover the size the pane was
+/// resized to (T1476)?
+///
+/// `awaited` of 0 means the pane never went on the wait — a fresh pane, or a
+/// pass that is not live — and there is nothing to be stale about.
+pub fn presentIsStale(awaited: u64, presented: u64) bool {
+    if (awaited == 0) return false;
+    return presented != awaited;
+}
+
 /// True when `handleResize` should block for a frame at the new size.
 pub fn shouldPresentSynchronously(p: Present) bool {
     // Nothing on screen to go stale: waiting here buys no pixels and costs the
@@ -159,4 +179,26 @@ test "an unwatched relayout stays asynchronous" {
         .in_live_layout = false,
         .has_presented_frame = true,
     }));
+}
+
+test "packed sizes distinguish a transposed resize" {
+    // 800x600 and 600x800 are the same two numbers, and a pack that could not
+    // tell them apart would call a drag that swapped them "already presented".
+    try std.testing.expect(packSize(800, 600) != packSize(600, 800));
+    try std.testing.expectEqual(@as(u64, 0), packSize(0, 0));
+}
+
+test "a pane that never waited is never stale" {
+    try std.testing.expect(!presentIsStale(0, packSize(800, 600)));
+    try std.testing.expect(!presentIsStale(0, 0));
+}
+
+test "the frame the wait came back on has to be the size that was asked for" {
+    const want = packSize(800, 600);
+    // The defect: the renderer signals having presented the PREVIOUS size,
+    // because that frame was already in flight when the resize landed.
+    try std.testing.expect(presentIsStale(want, packSize(760, 600)));
+    // Nothing presented at all is stale too — the wait timed out.
+    try std.testing.expect(presentIsStale(want, 0));
+    try std.testing.expect(!presentIsStale(want, want));
 }

@@ -86,6 +86,11 @@ pub const Sample = struct {
     /// How many of those waits ran out the full timeout rather than being woken
     /// by a presented frame — the shape that costs the drag a whole frame each.
     timeouts: usize = 0,
+    /// Panes whose wait came back on a frame the renderer had drawn at the
+    /// PREVIOUS size (T1476). Distinct from `timeouts`: the wait was answered,
+    /// promptly, by the wrong frame — which is a blink the timeout count calls
+    /// a clean tick.
+    stale: usize = 0,
     /// The layered-chrome fan-out this tick paid for (T1345): how many
     /// `SetWindowPos` calls landed on a chrome popup, how many
     /// `UpdateLayeredWindow` blits were handed to the compositor, and how many
@@ -129,6 +134,7 @@ pub const Stats = struct {
     resizes_max: usize = 0,
     waits_total: u64 = 0,
     timeouts_total: u64 = 0,
+    stale_total: u64 = 0,
     overlay_us: u64 = 0,
     resize_us: u64 = 0,
     layout_us: u64 = 0,
@@ -164,6 +170,7 @@ pub const Stats = struct {
         self.resize_us += s.resize_us;
         self.waits_total += s.waits;
         self.timeouts_total += s.timeouts;
+        self.stale_total += s.stale;
         if (s.chrome_moves > self.chrome_moves_max) self.chrome_moves_max = s.chrome_moves;
         if (s.chrome_sb_moves > self.chrome_sb_moves_max) self.chrome_sb_moves_max = s.chrome_sb_moves;
         if (s.chrome_dim_moves > self.chrome_dim_moves_max) self.chrome_dim_moves_max = s.chrome_dim_moves;

@@ -25,7 +25,7 @@
 # tick broken into the parts it is actually made of:
 #
 #   divider drag ticks=.. mean_us=.. max_us=.. mean_wait_us=.. fps=.. panes=..
-#                resizes_max=.. waits_max=.. waits_total=.. timeouts=..
+#                resizes_max=.. waits_max=.. waits_total=.. timeouts=.. stale=..
 #                mean_layout_us=.. mean_place_us=.. mean_paint_us=..
 #                mean_overlay_us=.. mean_resize_us=.. over_budget=..
 #                wait=serial|batched verdict=..
@@ -131,7 +131,7 @@ function Get-DragSamples([string]$log) {
     foreach ($l in @(Get-Content $log -ErrorAction SilentlyContinue)) {
         if ($l -match ('divider drag ticks=(\d+) mean_us=(\d+) max_us=(\d+) ' +
                 'mean_wait_us=(\d+) fps=(\d+) panes=(\d+) resizes_max=(\d+) waits_max=(\d+) ' +
-                'waits_total=(\d+) timeouts=(\d+) mean_layout_us=(\d+) ' +
+                'waits_total=(\d+) timeouts=(\d+) stale=(\d+) mean_layout_us=(\d+) ' +
                 'mean_place_us=(\d+) mean_paint_us=(\d+) ' +
                 'mean_overlay_us=(\d+) mean_resize_us=(\d+) ' +
                 'chrome_moves=(\d+) chrome_sb=(\d+) chrome_dim=(\d+) ' +
@@ -149,21 +149,22 @@ function Get-DragSamples([string]$log) {
                 WaitsMax    = [int]$Matches[8]
                 WaitsTotal  = [int]$Matches[9]
                 Timeouts    = [int]$Matches[10]
-                LayoutUs    = [int]$Matches[11]
-                PlaceUs     = [int]$Matches[12]
-                PaintUs     = [int]$Matches[13]
-                OverlayUs   = [int]$Matches[14]
-                ResizeUs    = [int]$Matches[15]
-                ChromeMoves = [int]$Matches[16]
-                ChromeSb    = [int]$Matches[17]
-                ChromeDim   = [int]$Matches[18]
-                ChromeBlits = [int]$Matches[19]
-                ChromeHeals = [int]$Matches[20]
-                ChromeSkip  = [int]$Matches[21]
-                OverBudget  = [int]$Matches[22]
-                Wait        = $Matches[23]
-                Chrome      = $Matches[24]
-                Verdict     = $Matches[25]
+                Stale       = [int]$Matches[11]
+                LayoutUs    = [int]$Matches[12]
+                PlaceUs     = [int]$Matches[13]
+                PaintUs     = [int]$Matches[14]
+                OverlayUs   = [int]$Matches[15]
+                ResizeUs    = [int]$Matches[16]
+                ChromeMoves = [int]$Matches[17]
+                ChromeSb    = [int]$Matches[18]
+                ChromeDim   = [int]$Matches[19]
+                ChromeBlits = [int]$Matches[20]
+                ChromeHeals = [int]$Matches[21]
+                ChromeSkip  = [int]$Matches[22]
+                OverBudget  = [int]$Matches[23]
+                Wait        = $Matches[24]
+                Chrome      = $Matches[25]
+                Verdict     = $Matches[26]
             }
         }
     }

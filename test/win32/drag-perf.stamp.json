@@ -1,14 +1,15 @@
 {
     "guard":  "drag-perf",
     "script":  "test/win32/drag-perf.ps1",
-    "generated":  "2026-09-07T01:24:12-07:00",
-    "commit":  "dcd7d1fcc",
+    "generated":  "2026-09-09T10:37:37-07:00",
+    "commit":  "66aafcc1a",
     "uncommitted":  [
-                        "src/apprt/win32/chrome_fanout.zig"
+                        "src/apprt/win32/drag_perf.zig",
+                        "test/win32/drag-perf.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/chrome_fanout.zig":  "8a2d0a770e17ac5b110ce074e787dcdb63eed6591591460690810566ecf0022a",
-                  "src/apprt/win32/drag_perf.zig":  "84bb2a4bcfce60fea15b52eb0672a3de258d5a52ac2df2594eab79a71ef48c72",
-                  "test/win32/drag-perf.ps1":  "d6077a30dfd50fb3fe9cc0e8b019b76dc8830f6b36e47bfd851282cdf508bf26"
+                  "src/apprt/win32/drag_perf.zig":  "f76f14e1d537d974bc738356639d818846b0ef1e498d2f27cbe0f39c7fca750d",
+                  "test/win32/drag-perf.ps1":  "c9a8403c5c39980a8851c4f24ecc57613d1a50a29a2f748c80733ab19355a43f"
               }
 }

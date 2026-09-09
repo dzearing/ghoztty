@@ -169,6 +169,23 @@ in_live_resize: bool = false,
 /// but "only ever" is not a thing to guess about across threads.
 has_presented_frame: std.atomic.Value(bool) = .init(false),
 
+/// The client size of the LAST frame the renderer presented into this window,
+/// packed `width << 32 | height` by `resize_paint.packSize` (T1476).
+///
+/// `has_presented_frame` answers "are there pixels", which is what the erase
+/// rule needs. It cannot answer the question the resize wait actually asks —
+/// "are there pixels AT THIS SIZE" — and that gap is the defect: the wait
+/// resets the event and blocks for the next present, but a frame the renderer
+/// was ALREADY drawing at the old size ends a moment later and signals, so the
+/// wait returns having protected nothing. Written on the renderer thread after
+/// the swap, read on the UI thread.
+presented_size: std.atomic.Value(u64) = .init(0),
+
+/// The size this surface is waiting to see presented — set by `handleResize`
+/// before it blocks, read by the layout pass when the wait comes back. Only
+/// meaningful on the UI thread, which is the only thread that touches it.
+awaited_size: u64 = 0,
+
 /// Manual-reset event signaled by the renderer thread after presenting
 /// a frame. The main thread waits on this during live resize to
 /// synchronize rendering with the DWM compositor.
@@ -3413,12 +3430,17 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
     // covers the gestures with no loop to be inside of.
     const presented = self.has_presented_frame.load(.acquire);
     if (!presented) self.parent_window.noteFreshPane();
+    // T1476: the size this pane is now waiting to SEE. The renderer reads the
+    // whole client rect (`OpenGL.surfaceSize`), not the grid width the
+    // scrollbar carved out of it, so this is the raw WM_SIZE pair.
+    self.awaited_size = 0;
     if (resize_paint.shouldPresentSynchronously(.{
         .in_live_resize = self.in_live_resize,
         .in_live_layout = self.parent_window.in_live_layout,
         .has_presented_frame = presented,
     })) {
         self.parent_window.notePresentSync();
+        self.awaited_size = resize_paint.packSize(width, height);
         if (self.frame_event) |event| {
             // Reset the event before waking the renderer, so we
             // wait for a NEW frame, not a previously drawn one.
@@ -3428,7 +3450,7 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
         // Wake the renderer to redraw at the new size.
         self.core_surface.renderer_thread.wakeup.notify() catch {};
 
-        if (self.frame_event) |event| {
+        if (self.frame_event) |_| {
             // T1343: hand the event to the layout pass, which waits for every
             // pane at once when it closes. Paid per pane this wait was the
             // whole reason a splitter drag got slower with each split — four
@@ -3436,18 +3458,15 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
             // with no pass around it (or `GHOZTTY_DRAG_SERIAL_WAIT`, which
             // exists so the two shapes can be measured against each other)
             // falls through to waiting for itself.
-            if (!self.parent_window.deferFrameWait(event)) {
+            if (!self.parent_window.deferFrameWait(self)) {
                 var timer = if (self.parent_window.drag_perf_on)
                     std.time.Timer.start() catch null
                 else
                     null;
-                const rc = w32.WaitForSingleObject(
-                    event,
-                    @intCast(drag_perf.frame_wait_ms),
-                );
+                const timed_out = self.waitForAwaitedFrame();
                 self.parent_window.addFrameWait(
                     if (timer) |*t| t.read() / std.time.ns_per_us else 0,
-                    rc == w32.WAIT_TIMEOUT,
+                    timed_out,
                 );
             }
         }
@@ -4790,10 +4809,51 @@ fn writeWin32InputSequence(
     self.core_surface.io.queueMessage(msg, .unlocked);
 }
 
+/// Block until the renderer has presented a frame at `awaited_size`, or the
+/// pass's one-frame budget runs out. Returns true if it ran out (T1476).
+///
+/// The serial half of the batched loop in `Window.endFrameWaitBatch`, and it
+/// exists for the same reason: a signalled event only says a frame landed, and
+/// the frame that lands first after a resize is routinely the one the renderer
+/// had already started at the OLD size.
+fn waitForAwaitedFrame(self: *Surface) bool {
+    const event = self.frame_event orelse return false;
+    var budget = std.time.Timer.start() catch null;
+    var timed_out = false;
+    var answered = false;
+    while (true) {
+        // Reset before reading, so a signal cleared here belongs to a frame
+        // whose size the load below can already see.
+        _ = w32.ResetEvent(event);
+        if (!resize_paint.presentIsStale(
+            self.awaited_size,
+            self.presented_size.load(.acquire),
+        )) return false;
+        if (timed_out or (answered and self.parent_window.frame_wait_any)) {
+            self.parent_window.noteStalePresent();
+            return true;
+        }
+        const spent_ms = if (budget) |*t| t.read() / std.time.ns_per_ms else drag_perf.frame_wait_ms;
+        if (spent_ms >= drag_perf.frame_wait_ms) {
+            timed_out = true;
+            continue; // one last look before giving up
+        }
+        const rc = w32.WaitForSingleObject(
+            event,
+            @intCast(drag_perf.frame_wait_ms - spent_ms),
+        );
+        if (rc == w32.WAIT_TIMEOUT) timed_out = true else answered = true;
+    }
+}
+
 /// Called by the renderer thread after SwapBuffers to signal that a
 /// frame has been presented. Wakes the main thread if it's blocking
 /// in handleResize during live resize.
-pub fn signalFrameDrawn(self: *Surface) void {
+pub fn signalFrameDrawn(self: *Surface, width: u32, height: u32) void {
+    // Ordered before the event for the same reason `has_presented_frame` is:
+    // a thread the event wakes must never read a size older than the frame it
+    // was woken for (T1476).
+    self.presented_size.store(resize_paint.packSize(width, height), .release);
     // Ordered before the event: a thread woken by the event must never see
     // "no frame yet" for a frame that has already been presented (T1031).
     // Load-then-store so the steady state is a relaxed read rather than a

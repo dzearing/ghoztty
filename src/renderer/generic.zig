@@ -1513,7 +1513,17 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 // set. Same comptime shape as `heroSnapshot` below, and for
                 // the same reason: the concept is win32's, the hook is here
                 // because here is where the swap happens.
-                if (comptime apprt.runtime == apprt.win32) self.rt_surface.signalFrameDrawn();
+                //
+                // T1476: it carries the size it presented AT, because "a
+                // frame happened" and "a frame at the new size happened" are
+                // different facts and only the second one is what the waiting
+                // GUI thread needs. `self.size.screen` is the size this pass
+                // drew for — updated above when the surface had grown, and
+                // otherwise already equal to it.
+                if (comptime apprt.runtime == apprt.win32) self.rt_surface.signalFrameDrawn(
+                    self.size.screen.width,
+                    self.size.screen.height,
+                );
             }
 
             // Win32 hero mode (T59a): registered after the drawFrameEnd

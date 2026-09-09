@@ -26047,3 +26047,53 @@ standing down. `floor-lane-webview-settle.ps1` ALL PASS (28), six new arms
 covering the debug-profile identity, the release profile being untouchable, an
 app viewer pane never being claimed by the killing sweep, and the lane asking
 for the wait. Floor: lib/none/win32/agent all PASS, P1–P3 ALL PASS.
+
+## 2026-09-09 — a divider drag stops blinking through to the previous size (T1476)
+
+The user reported that dragging the bar between two panes makes the window blink
+every so often, showing an empty frame instead of terminal content. Two earlier
+fixes had already taken the obvious causes off the table: T1031 stopped the pane
+erasing itself to flat background, and T1393 made every watched resize block for
+a frame at the new size. The wait was there, it ran, and it was still blinking.
+
+It was being answered by the wrong frame. `handleResize` reset the frame event,
+woke the renderer and blocked for the next present — but the renderer is another
+thread, and a frame it had ALREADY STARTED at the pre-resize size lands a moment
+later and sets that event. The UI thread then walks away believing the pane is
+showing its new size while it is showing the previous one: one displayed frame
+of the old picture in the new window. No timeout could see it, because the wait
+had not timed out. It had been satisfied early, by a frame that guaranteed
+nothing.
+
+So the signal now carries a size. The renderer stamps `Surface.presented_size`
+with the client size it drew for before it sets the event, `handleResize`
+records the size it is waiting to see, and both wait shapes — the per-pane one
+and `Window.endFrameWaitBatch`'s batched `WaitForMultipleObjects` — loop until
+every pane's LAST present is that size, inside the same single-frame budget. A
+pane that genuinely misses the budget is still left behind rather than allowed
+to stall the drag; it is counted rather than passed off as clean.
+
+That count is the oracle, and it is the only honest one available here: the
+terminal surface does not come back from `PrintWindow` off the input desktop,
+and a sub-frame flash polled from another process is a coin flip — which is why
+`resize-flicker.ps1` already asks the app what it decided instead of
+photographing it. `divider drag ... stale=N` and `window resize ... stale=N` are
+that question for this defect, and `GHOZTTY_RESIZE_WAIT_ANY=1` restores the old
+wait so the defect can be produced on demand.
+
+Section C1 of that script turned out to have been asserting nothing. It computed
+its drag coordinates against the WINDOW rect, so the button-down landed in the
+caption, the divider was never grabbed, and ten motion ticks checked that two
+panes which had not moved still tiled — the exact trap `drag-perf.ps1` records
+falling into and solving. It drives through `Send-TestMouse` now and asserts the
+panes actually resized, which is what made the missing drag summary visible in
+the first place.
+
+Evidence: six runs of a 41-tick posted drag each side. The pre-fix wait shape
+produced `stale>0` in two of six (`stale=2` both times) with `timeouts=0`
+throughout — intermittent, which is exactly the "occasionally" in the report.
+The fixed shape: `stale=0` six for six, `verdict=smooth`, mean tick 4.6–6.6ms
+against a 16.7ms budget, idle and with a pane flooding output, so the extra
+looping costs nothing measurable. `resize-flicker.ps1` ALL PASS (24, no skips),
+and `-NegativeControl` fails the new assertion by name. Floor: lib/none/win32/
+agent all PASS, P1–P3 ALL PASS.

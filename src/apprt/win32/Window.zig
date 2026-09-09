@@ -18,6 +18,7 @@ const activity_borrow = @import("activity_borrow.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
 const RenameDialog = @import("RenameDialog.zig");
 const BannerDialog = @import("BannerDialog.zig");
+const resize_paint = @import("resize_paint.zig");
 const Surface = @import("Surface.zig");
 const window_chord = @import("window_chord.zig");
 const paint_probe = @import("paint_probe.zig");
@@ -447,6 +448,15 @@ drag_perf_on: bool = false,
 /// ONCE at the end, and the anti-flicker guarantee survives at a flat cost.
 frame_wait_events: [MAX_FRAME_WAITS]w32.HANDLE = undefined,
 frame_wait_len: usize = 0,
+/// The panes behind those events (T1476). The wait has to be able to ask each
+/// one "was the frame you just signalled drawn at the size I resized you to?",
+/// and an event handle alone cannot answer that — which is how the wait came
+/// to return satisfied on a frame the renderer had started BEFORE the resize.
+frame_wait_panes: [MAX_FRAME_WAITS]*Surface = undefined,
+/// Panes whose wait ended with the renderer's last present still at the OLD
+/// size (T1476). This is the blink, counted: one displayed frame in which the
+/// pane holds content for a size it no longer is.
+frame_wait_stale: u32 = 0,
 /// Panes that handed this pass a frame event, i.e. that took the
 /// synchronous-present path (T1393). `frame_wait_len` is consumed by the
 /// close, so it cannot answer "did anybody wait?" afterwards, and that is the
@@ -495,6 +505,10 @@ frame_wait_resizes: usize = 0,
 /// nothing in the product sets it, and `test\win32\drag-perf.ps1` is what it
 /// exists for.
 frame_wait_serial: bool = false,
+/// `GHOZTTY_RESIZE_WAIT_ANY`: end the resize wait on ANY presented frame, the
+/// way it worked before T1476, instead of on one presented at the new size.
+/// The negative control for the blink — and the shape that made it possible.
+frame_wait_any: bool = false,
 
 /// The keyboard's equivalent of that snapshot (T1129). `resize_split` has no
 /// key-up to end a gesture on, so the gesture ends itself: it remembers the
@@ -986,6 +1000,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     // the harness can measure both shapes on one build.
     self.drag_perf_on = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_PERF");
     self.frame_wait_serial = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_DRAG_SERIAL_WAIT");
+    self.frame_wait_any = std.process.hasNonEmptyEnvVarConstant("GHOZTTY_RESIZE_WAIT_ANY");
     // T1345's control, read the same way and for the same reason: the pre-fix
     // chrome fan-out, so both shapes are measurable on one build.
     chrome_fanout.state.legacy = std.process.hasNonEmptyEnvVarConstant(
@@ -3157,6 +3172,7 @@ fn reportDragCost(self: *Window) void {
     if (!self.drag_perf_on or st.ticks == 0) return;
     const fmt = "divider drag ticks={d} mean_us={d} max_us={d} mean_wait_us={d} " ++
         "fps={d} panes={d} resizes_max={d} waits_max={d} waits_total={d} timeouts={d} " ++
+        "stale={d} " ++
         "mean_layout_us={d} mean_place_us={d} mean_paint_us={d} " ++
         "mean_overlay_us={d} mean_resize_us={d} " ++
         "chrome_moves={d} chrome_sb={d} chrome_dim={d} " ++
@@ -3173,6 +3189,7 @@ fn reportDragCost(self: *Window) void {
         st.waits_max,
         st.waits_total,
         st.timeouts_total,
+        st.stale_total,
         st.meanLayoutUs(),
         st.meanPlaceUs(),
         st.meanPaintUs(),
@@ -3210,6 +3227,7 @@ fn beginFrameWaitBatch(self: *Window) void {
         self.frame_wait_resizes = 0;
         self.frame_wait_deferred = 0;
         self.frame_wait_fresh = 0;
+        self.frame_wait_stale = 0;
         self.frame_overlay_us = 0;
         self.frame_resize_us = 0;
         self.frame_place_us = 0;
@@ -3237,7 +3255,7 @@ pub fn noteResize(self: *Window) void {
 /// relayout the user watched with no anti-flicker guarantee.
 fn reportResizePass(self: *Window, cause: []const u8) void {
     log.debug(
-        "window resize cause={s} panes={d} sync={d} fresh={d} waits={d} timeouts={d}",
+        "window resize cause={s} panes={d} sync={d} fresh={d} waits={d} timeouts={d} stale={d}",
         .{
             cause,
             self.frame_wait_resizes,
@@ -3245,6 +3263,7 @@ fn reportResizePass(self: *Window, cause: []const u8) void {
             self.frame_wait_fresh,
             self.frame_wait_count,
             self.frame_wait_timeouts,
+            self.frame_wait_stale,
         },
     );
 }
@@ -3266,6 +3285,12 @@ pub fn noteFreshPane(self: *Window) void {
     self.frame_wait_fresh +|= 1;
 }
 
+/// Record that a pane's wait ended with its renderer's last present still at
+/// the pre-resize size (T1476) — the blink, counted rather than photographed.
+pub fn noteStalePresent(self: *Window) void {
+    self.frame_wait_stale +|= 1;
+}
+
 /// Record one frame wait against the current pass: how long it blocked, and
 /// whether it was woken by a presented frame or ran out the timeout.
 pub fn addFrameWait(self: *Window, us: u64, timed_out: bool) void {
@@ -3277,11 +3302,12 @@ pub fn addFrameWait(self: *Window, us: u64, timed_out: bool) void {
 /// Take a pane's frame event instead of letting it wait for itself.
 /// Returns false when there is no open batch or the batch is full, which is
 /// the caller's signal to wait inline the way it always did.
-pub fn deferFrameWait(self: *Window, event: w32.HANDLE) bool {
+pub fn deferFrameWait(self: *Window, surface: *Surface) bool {
     if (self.frame_wait_serial) return false;
     if (self.frame_wait_depth == 0) return false;
     if (self.frame_wait_len >= MAX_FRAME_WAITS) return false;
-    self.frame_wait_events[self.frame_wait_len] = event;
+    if (surface.frame_event == null) return false;
+    self.frame_wait_panes[self.frame_wait_len] = surface;
     self.frame_wait_len += 1;
     return true;
 }
@@ -3301,15 +3327,59 @@ fn endFrameWaitBatch(self: *Window) void {
     if (n == 0) return;
 
     var timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
-    const rc = w32.WaitForMultipleObjects(
-        @intCast(n),
-        &self.frame_wait_events,
-        1, // bWaitAll: every pane, not the first one to finish
-        @intCast(drag_perf.frame_wait_ms),
-    );
+    // T1476: keep waiting while any pane's LAST PRESENT is still at the size
+    // it had before this pass. Signalling used to be enough, and it is not: a
+    // frame the renderer began before the `SetWindowPos` lands a moment after
+    // it, sets the event, and the UI thread walks away believing the pane is
+    // showing its new size when it is showing the old one — which is the blink
+    // the user reported and which no timeout could see, because the wait had
+    // not timed out. It had been answered by the wrong frame.
+    var budget = std.time.Timer.start() catch null;
+    var timed_out = false;
+    var answered = false;
+    while (true) {
+        // Reset BEFORE reading the size. The renderer stores the size and then
+        // sets the event, so a signal cleared here belongs to a frame whose
+        // size is already visible to the load below — the other order could
+        // drop a present.
+        var live: usize = 0;
+        for (self.frame_wait_panes[0..n]) |pane| {
+            const event = pane.frame_event orelse continue;
+            _ = w32.ResetEvent(event);
+            if (!resize_paint.presentIsStale(
+                pane.awaited_size,
+                pane.presented_size.load(.acquire),
+            )) continue;
+            self.frame_wait_events[live] = event;
+            live += 1;
+        }
+        if (live == 0) break;
+        // `answered` is the PRE-T1476 shape, kept behind
+        // `GHOZTTY_RESIZE_WAIT_ANY` so the defect can still be produced on
+        // demand: one wait, and any frame at all ends it. That is the negative
+        // control the acceptance script needs, and it is the only way the
+        // `stale=` count can be non-zero without the box actually missing the
+        // frame budget.
+        if (timed_out or (answered and self.frame_wait_any)) {
+            self.frame_wait_stale +|= @intCast(live);
+            break;
+        }
+        const spent_ms = if (budget) |*t| t.read() / std.time.ns_per_ms else drag_perf.frame_wait_ms;
+        if (spent_ms >= drag_perf.frame_wait_ms) {
+            timed_out = true;
+            continue; // one last look before giving up on them
+        }
+        const rc = w32.WaitForMultipleObjects(
+            @intCast(live),
+            &self.frame_wait_events,
+            1, // bWaitAll: every pane still behind, not the first to finish
+            @intCast(drag_perf.frame_wait_ms - spent_ms),
+        );
+        if (rc == w32.WAIT_TIMEOUT) timed_out = true else answered = true;
+    }
     self.addFrameWait(
         if (timer) |*t| t.read() / std.time.ns_per_us else 0,
-        rc == w32.WAIT_TIMEOUT,
+        timed_out,
     );
 }
 
@@ -4092,6 +4162,7 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
             .panes = panes,
             .waits = self.frame_wait_count,
             .timeouts = self.frame_wait_timeouts,
+            .stale = self.frame_wait_stale,
             .resizes = self.frame_wait_resizes,
             .overlay_us = self.frame_overlay_us,
             .resize_us = self.frame_resize_us,
