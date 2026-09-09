@@ -9,6 +9,54 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-09: T1458, T1475 - **the pane-lag report closes, and the cause was
+  none of the six things it was filed against.** The user reported on 2026-09-08
+  that Claude Code inside a Ghoztty pane felt heavier than a plain conhost
+  window on the same machine. Six suspects were each killed by a measurement
+  rather than an argument: software OpenGL (the NVIDIA driver was loaded, the
+  Mesa fallback was not), the present on a streamed virtual display
+  (`swapBuffers` costs 15-194 us and `swap_max_ms` was 0 across 1,240 samples),
+  renderer-mutex starvation (T1460: lock wait 0.08% of the drain), the ANSI
+  parser (T1463: 0.06-0.07 us/byte on an optimized build - the ~10 us/byte that
+  made it look guilty was a Debug artifact), and the relay's framing and message
+  count (T1464: every leg under 7 us of pipe syscalls, all carrying the same
+  rate; a 1 ms coalescing wait halved the frame count and moved throughput not
+  at all, so it was reverted rather than shipping echo latency for nothing).
+
+  The cause (T1465) was **where the pty holder's process tree ran**: on the
+  efficiency cores, where the shell->conhost round trip behind every ~73-byte
+  chunk costs ~122 us against ~55 us on a performance core. `src/os/power.zig`
+  derives the performance-core set from `GetSystemCpuSetInformation`'s
+  `EfficiencyClass` - null on a non-hybrid CPU, so a no-op there - and the
+  holder pins itself to it before creating the ConPTY. The user's own shell gets
+  the full machine back, which is **D94**: pinning the shell subtree too would
+  take the ratio to ~1.05 and cost a build inside a persisted pane half the
+  CPUs, and the user chose the whole machine. So 1.75 is the permanent bound,
+  T1466 closed as skipped, and the shipped pane went from ~1.9x conhost to
+  ~1.45x with `pane-ingest-ab.ps1` armed at 1.75 - above every measurement of
+  the fixed path, below every measurement of the broken one.
+
+  What this umbrella is worth beyond the fix is the instruments that did not
+  exist when it was filed and now do: `swap_max_ms`/`swap_avg_us` on the
+  present, `perf agent_feed` on the relay's receiving end (every previous
+  "is the terminal keeping up?" number instrumented `Exec.zig`, a path the
+  shipped agent-held pane never takes), and `relay_perf.zig`'s four meters
+  across the holder and the agent - two of those three processes were
+  unmeasurable in principle before it, because nothing redirects their stderr.
+
+  The remaining criterion is the reporter's own eyes, which this box cannot
+  produce: acceptance runs on a background desktop where the streamed-display
+  condition does not exist. Closing a `user-report` files the publish request,
+  so the fix reaches their terminal rather than only the tracker.
+
+  Evidence: floor lib/none/win32/agent all PASS, P1 ALL PASS (25), P2 ALL PASS
+  (20), P3 ALL PASS (16), `resize-flicker.ps1` ALL PASS (21) for the shared
+  present path. P2 scored `1 FAILURE(S) (0 assertions passed)` on the day's
+  first run - zero assertions, so it died in preflight before any check - and
+  then passed twice on the same code including an explicit p1-then-p2 sequence.
+  Filed as T1475 with the honest note that the failing line was lost to output
+  truncation, rather than recorded as a pass.
+
 - 2026-09-09: T676, T1474 - **the phantom-card hypothesis was wrong, and what
   the sweep found instead is worse.** T676 was filed on the T122/T422 shape: a
   card describing a defect that a later turn had already fixed from a user
