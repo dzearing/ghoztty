@@ -16,7 +16,8 @@
 //! exists, the app asks where it is (`job_object.selfJob`): inside a
 //! kill-on-close job, it respawns its own command line through the escape
 //! tiers (`job_spawn.spawnEscapedOnly` — breakaway, then the shell-parent
-//! hop) and exits, and the escaped twin carries on as THE app. This covers
+//! hop, then a jobless donor found by enumeration) and exits, and the escaped
+//! twin carries on as THE app. This covers
 //! every launch path at once — `ghoztty` typed in a pane, the upgrade script's
 //! hidden relaunch, a script's `Start-Process` — instead of patching spawn
 //! sites one at a time.
@@ -33,7 +34,7 @@
 //!   jailed right beside us would be a pure loss.
 //! - **The command line and environment survive byte-exact.** The twin is
 //!   `GetCommandLineW()` verbatim (flags, `-e`, `--config` intact) with our
-//!   environment (the shell-parent tier passes it explicitly; T506's
+//!   environment (both parent-hop tiers pass it explicitly; T506's
 //!   launched-from-CLI marker and the pane's variables ride along).
 //! - **CLI verbs never do this.** The check is gated (in `main_ghostty`) on
 //!   there being no `+action`: a verb lives milliseconds, its console wiring

@@ -43,8 +43,9 @@
 //!   watching, before executing one instruction. A supervisor that shares its
 //!   subject's fate supervises nothing. `job_spawn.spawnEscapingJob` escapes
 //!   in tiers: `CREATE_BREAKAWAY_FROM_JOB`, then a shell-parent hop for the
-//!   job chains that refuse breakaway (this box's do), then in-job as a loud
-//!   last resort. It lives in its own module because the local agent needs
+//!   job chains that refuse breakaway (this box's do), then a jobless donor
+//!   found by enumeration where there is no shell window to ask (T674), then
+//!   in-job as a loud last resort. It lives in its own module because the local agent needs
 //!   the identical escape for the identical reason (T426).
 //! - **No new CLI surface.** It is an environment variable, not a `+verb`:
 //!   `ghoztty`'s command set stays identical on both platforms (CLAUDE.md's

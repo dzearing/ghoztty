@@ -24,15 +24,32 @@
 # Hermetic: a per-run $env:LOCALAPPDATA and a private IPC pipe suffix, and it
 # only ever touches ghoztty processes launched from the -Exe under test.
 #
+#   E: T674 - the escape holds with NO SHELL WINDOW. `-TestDesktop` runs the
+#      same measurement on the background test desktop, where GetShellWindow()
+#      answers nothing and tier 2 therefore cannot fire; the app must reach the
+#      jobless-donor tier instead of degrading into the job. Before T674 this
+#      arm was the one place the escape was conditional, and a Ghoztty started
+#      from a service or a scheduled task was in exactly that position.
+#
 #   powershell -NoProfile -File test\win32\agent-job-escape.ps1
+#   powershell -NoProfile -File test\win32\agent-job-escape.ps1 -TestDesktop
 param(
-    [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe'
+    [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
+    # Run on the background test desktop (no shell window), which is where the
+    # escape used to degrade. Off by default so the plain run keeps measuring
+    # the shape a user actually has.
+    [switch]$TestDesktop,
+    # Keep the per-run root, where the app's captured stderr lives. A failure
+    # in B or C is a question about what the app did, and the log that answers
+    # it is otherwise deleted by the same `finally` that printed the failure.
+    [switch]$KeepRoot
 )
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+if ($TestDesktop) { . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1') }
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
@@ -137,6 +154,7 @@ Remove-Item env:GHOZTTY_IPC_SOCKET -ErrorAction SilentlyContinue
 $env:LOCALAPPDATA = $root
 
 $job = [IntPtr]::Zero
+$appLog = $null
 try {
     Stop-TestProcs
 
@@ -153,8 +171,18 @@ try {
     Assert "A0 premise: a kill-on-close job exists" ($job -ne [IntPtr]::Zero -and $jobSet)
 
     # persistence: on (default) - the pane shell must be the AGENT's child for the job-escape assertion to mean anything.
-    $appProc = Start-Process -FilePath $Exe -ArgumentList @('--title=t426a') -PassThru
-    $appPid = $appProc.Id
+    # On the test desktop the app's stderr is captured, because the TIER it
+    # reached is the whole point of that arm and only the log names it.
+    if ($TestDesktop) {
+        $appLog = Join-Path $root 'app.err.txt'
+        $td = New-TestDesktop
+        $started = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t426a') -StdErr $appLog
+        $appProc = $started.Process
+        $appPid = $started.Pid
+    } else {
+        $appProc = Start-Process -FilePath $Exe -ArgumentList @('--title=t426a') -PassThru
+        $appPid = $appProc.Id
+    }
     $ready = $false
     $deadline = (Get-Date).AddSeconds(40)
     while ((Get-Date) -lt $deadline) {
@@ -176,16 +204,33 @@ try {
     # startup - i.e. BEFORE it was jailed - and find-or-spawn would simply adopt
     # that one, which would measure a process nobody spawned from inside the
     # job. Kill it, and the next window makes the jailed app spawn a fresh one.
-    foreach ($p in (Get-TestAgents)) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
-    Start-Sleep -Milliseconds 800
+    #
+    # The premise is that nothing B measures PREDATES the jail - not that the
+    # box is momentarily agentless. An app with a live session re-resolves its
+    # agent the instant the old one dies, and on the test desktop that happens
+    # inside the settle window below; asserting "zero agents" there failed on a
+    # recovery that is exactly the spawn this test wants to measure.
     $before = @((Get-TestAgents) | ForEach-Object { [int]$_.ProcessId })
-    Assert "A3 premise: no local agent is running before the spawn" ($before.Count -eq 0)
+    foreach ($p in $before) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }
+    # 5s, not 800ms: the app must have NOTICED the death before B asks it for
+    # anything. A request that lands inside that gap degrades the pane to a
+    # plain local shell and the app then never spawns an agent at all (T1473),
+    # which reds B and C about a defect neither one is measuring.
+    Start-Sleep -Seconds 5
+    $survivors = @((Get-TestAgents) | Where-Object { $before -contains [int]$_.ProcessId })
+    Assert "A3 premise: every pre-jail agent is dead, so B can only see one spawned from inside the job" `
+        ($survivors.Count -eq 0)
 
     # ========================================================================
     Say "== B: the agent that jailed app spawns lands OUTSIDE the job"
     # ========================================================================
     # A new window is a new surface, and a persistent surface is what makes the
     # app resolve (and, with no agent alive, spawn) its local agent.
+    # Retrying this is NOT the answer if it ever goes quiet again: a second
+    # window with the same name is focused rather than created (named targets
+    # are idempotent - docs/claude/cli.md), and once the app has fallen into
+    # T1473 no number of fresh names brings the agent back either. The settle
+    # above is what keeps this arm deterministic.
     & $Exe +new-window --target=t426win 2>$null | Out-Null
     $agentPid = Wait-NewAgent $before 40
     Assert "B1 premise: the app spawned a local agent" ($agentPid -ne 0)
@@ -216,14 +261,34 @@ try {
     $agentAlive = ($agentPid -ne 0) -and
         ($null -ne (Get-Process -Id $agentPid -ErrorAction SilentlyContinue))
     Assert "C1 the local agent SURVIVED the job teardown" $agentAlive
+
+    if ($TestDesktop) {
+        # ====================================================================
+        Say "== E: T674 - with no shell window, a jobless donor carried it"
+        # ====================================================================
+        # B2/C1 above prove the agent got OUT; this names HOW, because on this
+        # desktop "out" is only reachable through the tier T674 added. Without
+        # it the tier ordering could silently change and the arm would still
+        # pass on a lucky breakaway.
+        $logText = ''
+        try { $logText = Get-Content -Raw -LiteralPath $appLog -ErrorAction Stop } catch { }
+        Assert "E1 premise: tier 2 could not fire - there is no shell window here" `
+            ($logText -match 'shell-parent spawn unavailable err=error\.NoShellWindow')
+        Assert "E2 the agent spawn escaped via the jobless-donor tier" `
+            ($logText -match 'job escape=jobless-parent')
+        Assert "E3 no spawn on this desktop degraded into the job" `
+            ($logText -notmatch 'job escape=IN-JOB')
+    }
 } finally {
     if ($job -ne [IntPtr]::Zero) { [T426Job]::CloseHandle($job) | Out-Null }
     Stop-TestProcs
+    if ($TestDesktop) { try { Remove-TestDesktop } catch { } }
     $env:LOCALAPPDATA = $savedLocalAppData
     if ($savedPipe) { $env:GHOZTTY_PIPE_SUFFIX = $savedPipe }
     else { Remove-Item env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue }
     if ($savedSocket) { $env:GHOZTTY_IPC_SOCKET = $savedSocket }
-    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    if ($KeepRoot) { Say "kept run root: $root" }
+    else { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 Say ""

@@ -875,18 +875,21 @@ Assert "J22 T426: ... including whether the agent shares OUR job" `
 # membership probe: test\win32\agent-job-escape.ps1.
 Assert "J23 T426: the agent spawn NAMES which job escape it got" `
     (Wait-LogMatch $logJ 'spawned local agent pid \d+ \(job escape=[^)]+\)' 30)
-# Escaping is environment-dependent - tier 1 needs a job chain that permits
-# breakaway (this box's does not: ACCESS_DENIED, measured) and tier 2 needs a
-# shell window, which THIS harness's background test desktop does not have. So
-# the invariant asserted here is the one that holds everywhere: a degraded
-# spawn is LOUD. The outcome itself - the agent is not a member of the app's
-# job, and survives its teardown - is measured directly by
-# test\win32\agent-job-escape.ps1, which runs on a desktop that has a shell.
+# T674 TIGHTENED THIS. It used to accept "escaped OR said so loudly", because
+# tier 1 needs a job chain that permits breakaway (this box's does not:
+# ACCESS_DENIED, measured) and tier 2 needs a shell window, which THIS
+# harness's background test desktop does not have - so degrading was the
+# expected outcome here and the only assertable invariant was that it was loud.
+# The jobless-donor tier removed that excuse: there is no shell window here
+# either, and the escape still happens. Anything less than an escape on this
+# desktop is now a regression, and this arm is where it gets caught, because
+# the background desktop is the one environment that exercises tier 3. The
+# membership outcome itself is measured by test\win32\agent-job-escape.ps1.
 $logTextJ = Read-AppLog $logJ
-$escapedJ = $logTextJ -match 'spawned local agent pid \d+ \(job escape=(breakaway|shell-parent)\)'
-$loudJ = $logTextJ -match 'local agent pid \d+ is INSIDE this app''s job object'
-Assert "J24 T426: it either escaped, or said out loud that it did not" `
-    ($escapedJ -or $loudJ)
+$escapedJ = $logTextJ -match 'spawned local agent pid \d+ \(job escape=(breakaway|shell-parent|jobless-parent)\)'
+Assert "J24 T674: it ESCAPED - with no shell window, via the jobless-donor tier" $escapedJ
+Assert "J25 T674: and nothing here degraded into the job" `
+    ($logTextJ -notmatch 'local agent pid \d+ is INSIDE this app''s job object')
 # The notes overrides belong to this arm; arm N sets its own.
 $env:GHOZTTY_WHATS_NEW_VERSION = $null
 Stop-TestProcs

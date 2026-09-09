@@ -258,9 +258,11 @@ $GuardTable = @(
     },
     # The startup job self-escape (T675): the only harness that proves a
     # pane-launched app respawns itself OUT of a kill-on-close job and
-    # survives the teardown that used to kill it mid-refresh. Interactive
-    # desktop only (the escape rides the shell-parent hop), so it is not in
-    # the P1-P3 floor; the unit lanes see shouldEscape but never a real job.
+    # survives the teardown that used to kill it mid-refresh. Not in the
+    # P1-P3 floor because it needs a real job object; the unit lanes see
+    # shouldEscape but never one. (It used to need the interactive desktop
+    # too - the escape rode the shell-parent hop - until T674's jobless-donor
+    # tier made the escape work with no shell window at all.)
     [pscustomobject]@{
         Name   = 'job-escape-startup'
         Script = 'test\win32\job-escape-startup.ps1'

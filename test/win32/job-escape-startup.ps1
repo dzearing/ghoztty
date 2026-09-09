@@ -24,9 +24,10 @@
 #      kills the jailed control and NOT the escaped twin, which is the outcome
 #      the membership probe is a proxy for.
 #
-# Needs the interactive desktop: breakaway is forbidden (field shape), so the
-# escape rides the shell-parent hop, and GetShellWindow() answers nothing on a
-# background test desktop (T674 tracks a headless tier). SKIPs there, loudly.
+# Runs anywhere as of T674: breakaway is forbidden (field shape) and
+# GetShellWindow() answers nothing on a background test desktop, but the
+# jobless-donor tier escapes without either, so this no longer skips itself
+# off the interactive desktop.
 #
 # Hermetic: a per-run $env:LOCALAPPDATA and a private IPC pipe suffix, and it
 # only ever touches ghoztty processes launched from the -Exe under test.
@@ -85,24 +86,22 @@ public static class T675Job {
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool TerminateJobObject(IntPtr job, uint exitCode);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool CloseHandle(IntPtr handle);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
-  [DllImport("user32.dll")] public static extern IntPtr GetShellWindow();
 }
 '@
 Add-Type -TypeDefinition $jobSig -ErrorAction SilentlyContinue
 
-# The escape under test rides the shell-parent hop (breakaway is forbidden in
-# the field shape this jail reproduces). No shell window means no hop - a
-# SKIP, not a failure, and T674 is the task that makes this unconditional.
+# This run USED to skip itself here when GetShellWindow() answered nothing:
+# breakaway is forbidden in the field shape this jail reproduces, the escape
+# rode the shell-parent hop, and no shell window meant no hop - so a
+# background-desktop run measured no part of the escape and was scored as
+# ASSERTED NOTHING rather than as a pass.
 #
-# It is scored as ASSERTED NOTHING (exit 2), not as a pass: this run measured
-# no part of the escape, and a green line over zero assertions is the exact
-# T271 shape - it read as "the escape still works" on every background-desktop
-# run. Exit 2 keeps that distinct from a 1, which would say the escape broke.
-if ([T675Job]::GetShellWindow() -eq [IntPtr]::Zero) {
-    Say ""
-    Write-TestAssertedNothing -Skipped 1 `
-        -Reason "no shell window on this desktop; the shell-parent escape tier cannot run here (see T674)"
-}
+# T674 removed the excuse. The jobless-donor tier finds a parent by enumerating
+# the session instead of by asking for a window, so the escape no longer needs
+# a desktop and this script no longer needs an environment. The skip is gone on
+# purpose: a shell-less desktop is now the environment that exercises the tier
+# the shell-less case depends on, which makes it the MOST valuable place to run
+# this, not a place to opt out of.
 
 # $true / $false / $null when the process is gone or unopenable.
 function Test-InJob($procId, $job) {
@@ -250,7 +249,7 @@ Set-Content -Path '$appPidFile' -Value `$app.Id
     Assert "B2 the jailed app DETECTED the kill-on-close job" `
         (Wait-LogMatch $errFile 'startup escape: this process is inside a kill-on-close job' 30)
     Assert "B3 ... and respawned itself outside it, naming the tier" `
-        (Wait-LogMatch $errFile 'startup escape: respawned as pid \d+ \((breakaway|shell-parent)\)' 30)
+        (Wait-LogMatch $errFile 'startup escape: respawned as pid \d+ \((breakaway|shell-parent|jobless-parent)\)' 30)
 
     $twinPid = 0
     if ((Read-AppLog $errFile) -match 'startup escape: respawned as pid (\d+)') {
