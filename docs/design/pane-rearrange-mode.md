@@ -63,14 +63,18 @@ alongside `heroModeState`.
 (`window.toggleTabBar(nil)` when `tabGroup?.isTabBarVisible == false`),
 remembering that it was forced so exit can put it back.
 
-**On exit** — the toggle again, `Escape`, or a click in a pane's *content*
-(not its header, which is the drag grip) — headers go away and the tab bar
-reverts to whatever it was. A click that exits also focuses the pane it
-landed in: leaving the mode by clicking where you want to work is the point.
+**On exit** — the toggle again, `Escape`, or the menu item — headers go away
+and the tab bar reverts to whatever it was.
 
 `Escape` is overloaded and resolves innermost-first: **during a drag it
-cancels the drag** (the existing `SurfaceDragSourceView` escape monitor) and
-leaves the mode on; with no drag in flight it exits the mode.
+cancels the drag** (`PaneDragSourceView`'s own escape monitor) and leaves the
+mode on; with no drag in flight it exits the mode.
+
+**Click-to-exit was dropped.** The first draft had a click in a pane's content
+leave the mode. It is the weakest of the exits and the most invasive to build
+— the terminal wants those clicks — and clicking a pane while rearranging
+most often means "focus this one and carry on", not "I am finished". Three
+exits are enough.
 
 **The mode persists across drops.** Rearranging is usually several moves in a
 row, so a drop does not exit. Focus follows the moved pane, and **the mode
@@ -110,8 +114,9 @@ cost of a header that occludes nothing.
 - **Pop-out** (`macwindow.badge.plus`, tooltip "Move to New Window") on the
   right. Disabled when the window holds a single pane — the same guard the
   existing tear-off uses (`guard surfaceTree.isSplit`).
-- The focused pane's header carries an accent tint, so focus stays visible
-  when every pane has chrome.
+- **No focus tint.** The first draft called for one; it is redundant. Ghostty
+  already dims unfocused splits (`unfocused-split-opacity`), so a second focus
+  indicator in the header would be two answers to one question.
 
 Both leaf kinds get it: `TerminalSplitLeaf` and `ViewerSplitLeaf` compose the
 same `PaneHeaderView`.
@@ -239,6 +244,14 @@ Holds the dragged pane, the source controller, the live
 that already exists and already spans every window. Each window's overlay
 observes it and draws the feedback for its own frame.
 
+### `SplitTree.insertingAtTopLevel(view:side:)`
+
+The one genuinely new tree primitive. A window-edge drop is not expressible as
+`inserting(view:at:direction:)`, which splits ONE pane and so produces a view
+only as tall (or wide) as the pane it split; this wraps the whole root. It
+lives on `SplitTree` beside the other mutations rather than in the
+coordinator, which also makes it testable with the existing `MockView`.
+
 ### `PaneMoveCoordinator` — `MainActor`, applies a target
 
 One function per target, all of them rebuilding trees out of the existing
@@ -280,23 +293,41 @@ The existing `ghosttySurfaceDragEndedNoTarget` notification is subsumed:
 
 ## Session safety
 
-This is the sharpest correctness hazard, and it is an *ordering* rule, not a
-missing mechanism. `SessionCloseIntentPolicy` already buckets a leaf that left
-a tree as `close` (mark the agent session CLOSE-on-free) and a leaf present in
-a tree as `keepAlive` (clear the mark, clear any `SessionDetachPin`). A
-cross-controller move fires both, once per controller:
+This is the sharpest correctness hazard. `SessionCloseIntentPolicy` buckets a
+leaf that left a tree as `close` (mark the agent session CLOSE-on-free) and a
+leaf present in a tree as `keepAlive` (clear the mark, clear any
+`SessionDetachPin`). A cross-controller move fires that policy twice, once per
+controller.
 
-- **Remove from the source first, then insert into the destination.** The
-  destination's `keepAlive` then lands last and clears the source's `close`.
-  Reversed, the source's `close` lands last and the agent session of a pane
-  that is alive on screen gets terminated when the view is finally freed.
+**Ordering is necessary but NOT sufficient**, which is a correction to this
+design's first draft. Remove-from-source-then-insert-into-destination does fix
+a plain move: the destination's `keepAlive` lands last and clears the source's
+`close`. It cannot fix a cross-window **swap**, where each pane departs one
+tree and arrives in the other — whichever controller is updated last, the
+other one's departing pane is left marked, and a pane that is alive on screen
+would have its session terminated when the view is finally freed. There is no
+order that works.
+
+So `PaneMoveCoordinator.finishRelocation` **declares the relocated panes
+alive** once both trees are in place: it clears the close intent, clears the
+detach pin, and un-marks the session. The policy's "left the tree ⇒ closed"
+reading is a default for changes whose intent it cannot see; the coordinator
+is the one thing that knows this was a move, so it says so, and ordering stops
+being load-bearing. Ordering is still done, because it is free and it keeps
+the common case correct even if the declaration were ever missed.
+
 - The move never goes through `removeSurfaceNode` (that is the *close* path,
   with its own undo action and focus-retarget semantics). It calls
   `replaceSurfaceTree` directly on both controllers inside one undo group
   named "Move Pane".
 - Pop-out to a new window is the same coordinator path with `.newWindow`.
+- **A drag never closes a window.** A move that would empty the source window
+  is refused (`PaneMoveCoordinator.canMove`): an emptied window closing as a
+  side effect of a drag would bypass the close confirmation and the remote
+  Disconnect prompt. That also disables the pop-out button on a lone pane.
 
-A regression test pins the rule by composing the two plans in both orders.
+`PaneMoveSessionSafetyTests` pins all of it, including a test that states the
+swap hazard outright in both orders.
 
 Remote and session-persistence panes need nothing beyond this: the pane keeps
 its `PaneView`, its `SurfaceView`, and its bound session, and no
@@ -318,17 +349,20 @@ A viewer is an ordinary leaf and must rearrange like any other. Two changes:
 Pure and unit-tested, per the constraint; the gesture itself is not
 automatable and is not automated.
 
-- `PaneDropResolverTests` — every zone; band-beats-pane precedence; band
-  corner ties; the swap rect's floor and cap on tiny and huge panes; tab-bar
-  index selection; multi-window arbitration by z-order; self-drop rejection.
-  Absorbs `TerminalSplitDropZoneTests`.
-- `SplitTreeRearrangeTests` — split, swap, top-level insert on each side,
-  removal collapse, ratio preservation, and `PaneView` identity preservation
-  across each mutation.
-- `SessionCloseIntentPolicyTests` — the cross-controller move ordering, in
-  both orders, asserting the correct one leaves the moved leaf unmarked.
-- `RearrangeModeStateTests` — entry/exit, tab-bar force-visible restore, hero
-  mode mutual exclusion.
+- `PaneDropResolverTests` (30 tests) — every zone; band-beats-pane
+  precedence; band corner ties; points-not-fractions in the band; the swap
+  rect's floor and cap on tiny and huge panes; tab-bar index selection;
+  multi-window arbitration by z-order; self-drop rejection. Absorbs
+  `TerminalSplitDropZoneTests`, which is deleted.
+- `SplitTreeRearrangeTests` — top-level insert on each side (including that
+  `.vertical`'s `left` is the TOP), that it spans the tree where a pane split
+  nests, zoom clearing, removal collapse, swap, and leaf-identity preservation
+  across every mutation.
+- `PaneMoveSessionSafetyTests` — the cross-controller intent composition: the
+  ordering rule for a plain move, the swap that no ordering fixes, the
+  declaration that fixes both, and that a real close still marks.
+- `RearrangeModeStateTests` — entry/exit and the tab-bar force-visible
+  restore, including that re-entering does not forget it.
 
 Manual verification is one debug window (`zig-out/Ghoztty-Debug.app`) driven
 by hand. `/Applications/Ghoztty.app` is never touched; debug builds are killed

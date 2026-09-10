@@ -56,6 +56,7 @@ class AppDelegate: NSObject,
     @IBOutlet private var menuBringAllToFront: NSMenuItem?
     @IBOutlet private var menuZoomSplit: NSMenuItem?
     @IBOutlet private var menuHeroMode: NSMenuItem?
+    @IBOutlet private var menuRearrangeMode: NSMenuItem?
     @IBOutlet private var menuPreviousSplit: NSMenuItem?
     @IBOutlet private var menuNextSplit: NSMenuItem?
     @IBOutlet private var menuSelectSplitAbove: NSMenuItem?
@@ -2183,6 +2184,7 @@ extension AppDelegate {
 
         syncMenuShortcut(config, action: "toggle_split_zoom", menuItem: self.menuZoomSplit)
         syncMenuShortcut(config, action: "toggle_hero_mode", menuItem: self.menuHeroMode)
+        syncMenuShortcut(config, action: "toggle_rearrange_mode", menuItem: self.menuRearrangeMode)
         syncMenuShortcut(config, action: "goto_split:previous", menuItem: self.menuPreviousSplit)
         syncMenuShortcut(config, action: "goto_split:next", menuItem: self.menuNextSplit)
         syncMenuShortcut(config, action: "goto_split:up", menuItem: self.menuSelectSplitAbove)

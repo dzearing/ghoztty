@@ -74,6 +74,7 @@
                 <outlet property="menuUseAsDefault" destination="TrB-O8-g8H" id="af4-Jh-2HU"/>
                 <outlet property="menuZoomSplit" destination="oPd-mn-IEH" id="wTu-jK-egI"/>
                 <outlet property="menuHeroMode" destination="hRm-Tg-001" id="hRm-Tg-003"/>
+                <outlet property="menuRearrangeMode" destination="rAr-Mo-001" id="rAr-Mo-003"/>
             </connections>
         </customObject>
         <customObject id="YLy-65-1bz" customClass="NSFontManager"/>
@@ -445,6 +446,12 @@
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
                                     <action selector="toggleHeroMode:" target="-1" id="hRm-Tg-002"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Toggle Rearrange Mode" id="rAr-Mo-001">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="toggleRearrangeMode:" target="-1" id="rAr-Mo-002"/>
                                 </connections>
                             </menuItem>
                             <menuItem title="Select Previous Split" id="Lic-px-1wg">
