@@ -30,6 +30,12 @@ enum PaneMoveCoordinator {
             return
         }
 
+        guard allows(
+            target,
+            sourcePaneCount: source.surfaceTree.count,
+            targetIsSourceWindow: target.window == PaneDropWindowRef(source)
+        ) else { return }
+
         switch target {
         case .split(let window, let destPaneID, let direction):
             guard let destination = controller(for: window),
@@ -64,17 +70,47 @@ enum PaneMoveCoordinator {
     /// without the drag.
     static func popOut(pane: PaneView, from source: BaseTerminalController) {
         guard let node = source.surfaceTree.root?.node(view: pane) else { return }
+        guard canPopOut(pane: pane, from: source) else { return }
         moveToNewWindow(pane: pane, node: node, from: source, at: nil)
     }
 
-    /// Whether `pane` can leave `source` at all.
+    /// Whether `target` may be applied, given the source window's pane count
+    /// and whether the target lands back in that same window.
     ///
-    /// A drag never closes a window. Moving a window's ONLY pane out would
-    /// empty it, and an emptied window closing as a side effect of a drag is
-    /// both surprising and dangerous — it would bypass the close confirmation
-    /// and the remote Disconnect prompt that `SessionDisconnectPolicy` exists
-    /// to present. If you want the window gone, close it.
-    static func canMove(pane: PaneView, from source: BaseTerminalController) -> Bool {
+    /// The ONLY thing refused is a move that would destroy and recreate a
+    /// window for no change: a window's last pane detaching into a brand-new
+    /// window (or into a new tab beside its own window) empties the source,
+    /// closes it, and opens another to hold the same pane. Upstream's tear-off
+    /// has always had that guard.
+    ///
+    /// **Joining an EXISTING window is always allowed, including for a
+    /// window's last pane.** An earlier draft refused that too, under a "a drag
+    /// never closes a window" rule — which broke the most natural gesture in
+    /// the whole feature: pop a pane out, change your mind, drag it back. The
+    /// rule was wrong about what is happening. Nothing is being closed: the
+    /// pane lives on in the destination, and the emptied source window going
+    /// away is the ordinary outcome of moving its contents elsewhere, not the
+    /// termination of anything a close prompt exists to protect.
+    static func allows(
+        _ target: PaneDropTarget,
+        sourcePaneCount: Int,
+        targetIsSourceWindow: Bool
+    ) -> Bool {
+        switch target {
+        case .newWindow:
+            return sourcePaneCount > 1
+        case .newTab:
+            // A new tab beside SOME OTHER window is a real relocation; a new
+            // tab beside your own lone-pane window is the churn case.
+            return sourcePaneCount > 1 || !targetIsSourceWindow
+        case .split, .swap, .topLevel:
+            return true
+        }
+    }
+
+    /// Whether the header's pop-out button is enabled: the `.newWindow` case
+    /// of `allows`, which is the only question that button asks.
+    static func canPopOut(pane: PaneView, from source: BaseTerminalController) -> Bool {
         source.surfaceTree.isSplit
     }
 
@@ -100,7 +136,6 @@ enum PaneMoveCoordinator {
             return
         }
 
-        guard canMove(pane: pane, from: source) else { return }
         guard let inserted = try? destination.surfaceTree.inserting(
             view: pane, at: destPane, direction: direction)
         else {
@@ -134,7 +169,7 @@ enum PaneMoveCoordinator {
 
         // A cross-window swap is an EXCHANGE: each pane leaves one tree and
         // arrives in the other, so both controllers keep their pane count and
-        // neither window can be emptied. `canMove` therefore does not apply.
+        // neither window can be emptied.
         guard let newSourceTree = try? source.surfaceTree.replacing(
                 node: node, with: .leaf(view: destPane)),
               let newDestTree = try? destination.surfaceTree.replacing(
@@ -173,7 +208,6 @@ enum PaneMoveCoordinator {
             commit(in: source, tree: wrapped, focus: pane)
             return
         }
-        guard canMove(pane: pane, from: source) else { return }
         crossWindowCommit(
             pane: pane,
             source: source, sourceTree: sourceTree,
@@ -187,7 +221,6 @@ enum PaneMoveCoordinator {
         near destination: BaseTerminalController,
         index: Int
     ) {
-        guard canMove(pane: pane, from: source) else { return }
         guard let destWindow = destination.window else { return }
         let ghostty = source.ghostty
 
@@ -223,7 +256,6 @@ enum PaneMoveCoordinator {
         from source: BaseTerminalController,
         at point: CGPoint?
     ) {
-        guard canMove(pane: pane, from: source) else { return }
         let ghostty = source.ghostty
 
         source.undoManager?.beginUndoGrouping()

@@ -99,13 +99,19 @@ final class PaneDragSourceView: NSView, NSDraggingSource {
     override func mouseDragged(with event: NSEvent) {
         guard !isTracking, let pane else { return }
 
-        // A window's last pane cannot leave it (see
-        // `PaneMoveCoordinator.canMove`), and a same-window drag of the only
-        // pane has nowhere to go either. Refusing to start the drag is
-        // clearer than starting one that can only be cancelled.
-        guard let controller = pane.contentView.window?.windowController as? BaseTerminalController,
-              controller.surfaceTree.isSplit || NSApp.orderedWindows.count > 1
-        else { return }
+        // A lone pane in the only terminal window has nowhere to go: every
+        // target would either be itself or a new window holding the same pane.
+        // Refusing to start that drag is clearer than starting one that can
+        // only be cancelled. A lone pane with ANOTHER window open is very much
+        // draggable — that is how you undo a pop-out.
+        guard let controller = pane.contentView.window?.windowController
+                as? BaseTerminalController else { return }
+        let otherTerminalWindows = NSApp.windows.contains { window in
+            window.isVisible
+                && window.windowController !== controller
+                && window.windowController is BaseTerminalController
+        }
+        guard controller.surfaceTree.isSplit || otherTerminalWindows else { return }
 
         // The payload is a type marker only. The authoritative reference to
         // the dragged pane lives in `PaneDragSession`, which is safe because

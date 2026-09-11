@@ -2167,6 +2167,28 @@ class BaseTerminalController: NSWindowController,
         return false
     }
 
+    /// Whether `pane` is currently a leaf of some OTHER live window's tree.
+    ///
+    /// Such a pane was not closed by this window — it was MOVED OUT of it, by
+    /// a rearrange drag that took the window's last pane and so emptied it.
+    /// Marking it CLOSE-on-free would terminate the agent session of a pane
+    /// the user is still looking at.
+    ///
+    /// This has to be a check rather than a flag, because the closing window's
+    /// own `surfaceTree` still contains the departed pane:
+    /// `TerminalController.replaceSurfaceTree` short-circuits an empty tree
+    /// straight into `closeTabImmediately()` and returns WITHOUT assigning it,
+    /// so what is iterated above is the tree as it was before the last pane
+    /// left.
+    private func isAliveInAnotherWindow(_ pane: PaneView) -> Bool {
+        for window in NSApp.windows {
+            guard let controller = window.windowController as? BaseTerminalController,
+                  controller !== self else { continue }
+            if controller.surfaceTree.contains(where: { $0 === pane }) { return true }
+        }
+        return false
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let window else { return }
 
@@ -2179,7 +2201,9 @@ class BaseTerminalController: NSWindowController,
         do {
             let delegate = NSApp.delegate as? AppDelegate
             if delegate?.isQuitting != true && delegate?.isSigningOut != true {
-                for view in surfaceTree { view.setSessionCloseIntent(true) }
+                for view in surfaceTree where !isAliveInAnotherWindow(view) {
+                    view.setSessionCloseIntent(true)
+                }
             }
         }
 

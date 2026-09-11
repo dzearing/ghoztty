@@ -7,9 +7,14 @@ import Testing
 /// backwards is the easiest mistake in the whole feature, so the tests state
 /// it in their arithmetic rather than trusting a comment.
 struct PaneDropResolverTests {
-    // Two throwaway identities to name windows with.
-    private let windowA = PaneDropWindowRef(NSObject())
-    private let windowB = PaneDropWindowRef(NSObject())
+    // Two identities to name windows with. The TOKENS are stored, not just
+    // the refs: `PaneDropWindowRef` holds an `ObjectIdentifier` and does not
+    // retain, so a temporary `NSObject()` would deallocate and the next
+    // allocation could reuse its address — making windowA == windowB.
+    private let tokenA = NSObject()
+    private let tokenB = NSObject()
+    private var windowA: PaneDropWindowRef { PaneDropWindowRef(tokenA) }
+    private var windowB: PaneDropWindowRef { PaneDropWindowRef(tokenB) }
 
     private let paneOne = UUID()
     private let paneTwo = UUID()

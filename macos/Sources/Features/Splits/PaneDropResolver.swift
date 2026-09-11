@@ -6,6 +6,13 @@ import AppKit
 /// test must be able to fabricate a window identity out of nothing. Both fall
 /// out of wrapping `ObjectIdentifier`: the coordinator maps a ref back to its
 /// controller by scanning live windows, and a test hands in any object.
+///
+/// Because it does NOT retain, the caller must keep the object alive for as
+/// long as the ref is meaningful. In the app that is free (a ref is only ever
+/// made from a live controller); in a test, `PaneDropWindowRef(NSObject())`
+/// is a trap — the temporary deallocates and the next allocation can land on
+/// the same address, so two "different" windows compare EQUAL. Hold the
+/// tokens in stored properties.
 struct PaneDropWindowRef: Hashable, CustomStringConvertible {
     private let id: ObjectIdentifier
 

@@ -18,12 +18,14 @@ struct PaneHeaderView: View {
     @State private var isDragging: Bool = false
     @State private var isHovering: Bool = false
 
-    /// Whether this pane is allowed to leave its window. A window's last pane
-    /// is not — see `PaneMoveCoordinator.canMove`.
+    /// Whether the pop-out button is enabled. A window's last pane cannot pop
+    /// out — the window would close and another open to hold the same pane.
+    /// Dragging it into an EXISTING window is still fine; see
+    /// `PaneMoveCoordinator.allows`.
     private var canPopOut: Bool {
         guard let controller = pane.contentView.window?.windowController
                 as? BaseTerminalController else { return false }
-        return PaneMoveCoordinator.canMove(pane: pane, from: controller)
+        return PaneMoveCoordinator.canPopOut(pane: pane, from: controller)
     }
 
     var body: some View {
