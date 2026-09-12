@@ -807,10 +807,15 @@ function Wait-LoopPaneReady {
     $prev = $null
     $stable = 0
     $last = ''
+    $sawText = $false
+    $failed = 0
+    $lastError = ''
     for ($i = 1; $i -le $MaxPolls; $i++) {
         $tail = ''
-        try { $tail = [string](& $ReadTail) } catch { $tail = '' }
+        try { $tail = [string](& $ReadTail) }
+        catch { $tail = ''; $failed++; $lastError = $_.Exception.Message }
         if ($null -eq $tail) { $tail = '' }
+        if ($tail -ne '') { $sawText = $true }
         $last = $tail
         # Compare through the same normalization the arrival gate uses, so a
         # repainting cursor or a shifting box border is not mistaken for the
@@ -821,12 +826,29 @@ function Wait-LoopPaneReady {
         else { $stable = 1 }
         $prev = $norm
         if ($stable -ge $StableReads) {
-            return @{ Ready = $true; Why = "tail settled after $i read(s)"; Polls = $i; Tail = $tail }
+            return @{
+                Ready = $true; Why = "tail settled after $i read(s)"; Polls = $i; Tail = $tail
+                SawText = $true; Reads = $i; Failures = $failed; LastError = $lastError
+            }
         }
         if ($PollMs -gt 0) { Start-Sleep -Milliseconds $PollMs }
     }
-    $why = if ($last) { "tail never settled in $MaxPolls read(s)" } else { "pane produced no text in $MaxPolls read(s)" }
-    return @{ Ready = $false; Why = $why; Polls = $MaxPolls; Tail = $last }
+    # T698: say which of the two things happened, because they are different
+    # facts about different subjects. "The pane printed nothing" is a claim
+    # about the PANE; "not one of N reads captured a byte" is a claim about the
+    # READER, and it is the one that is true when the reader is broken - which
+    # is what T663 turned out to be, after months of delivery logs saying the
+    # first sentence. $sawText spans every read rather than only the last one,
+    # so a pane that printed and then went quiet is no longer described as
+    # having printed nothing either.
+    $why = if ($sawText) { "tail never settled in $MaxPolls read(s)" }
+    elseif ($failed -ge $MaxPolls) { "the pane could not be READ: every one of $MaxPolls read(s) failed ($lastError)" }
+    elseif ($failed -gt 0) { "the pane could not be READ: $failed of $MaxPolls read(s) failed ($lastError) and the rest captured nothing" }
+    else { "the pane could not be READ: not one of $MaxPolls read(s) captured a byte - that describes the reader, not the pane" }
+    return @{
+        Ready = $false; Why = $why; Polls = $MaxPolls; Tail = $last
+        SawText = $sawText; Reads = $MaxPolls; Failures = $failed; LastError = $lastError
+    }
 }
 
 # Type $Text into a pane and confirm it ARRIVED, retrying the whole cycle
@@ -860,6 +882,11 @@ function Send-LoopPromptVerified {
     $say = { param($m) if ($Log) { & $Log $m } }
     $reads = 0
     $tail = ''
+    # T698: the arrival gate reads through the same path the readiness gate
+    # does, so it inherits the same ambiguity - "the prompt never read back
+    # intact" is indistinguishable from "nothing ever read back at all". Track
+    # it, and say which one happened when the run fails.
+    $sawText = $false
     for ($a = 1; $a -le $Attempts; $a++) {
         if ($a -gt 1) {
             & $say "resume send: attempt $a of $Attempts (clearing the composer first)"
@@ -876,8 +903,9 @@ function Send-LoopPromptVerified {
             $reads++
             try { $tail = [string](& $ReadTail) } catch { $tail = '' }
             if ($null -eq $tail) { $tail = '' }
+            if ($tail -ne '') { $sawText = $true }
             if (Test-LoopPromptArrived -Tail $tail -Text $Text) {
-                return @{ Arrived = $true; Attempts = $a; Reads = $reads; Why = "arrived on attempt $a"; Tail = $tail }
+                return @{ Arrived = $true; Attempts = $a; Reads = $reads; Why = "arrived on attempt $a"; Tail = $tail; SawText = $true }
             }
         }
         & $say "resume send: attempt $a - the prompt did not read back intact after $ReadsPerAttempt read(s)"
@@ -885,7 +913,9 @@ function Send-LoopPromptVerified {
     # Leave nothing behind: an unverified fragment sitting in the composer is
     # what the watchdog's next nudge would concatenate onto.
     try { [void](& $Clear) } catch { }
-    return @{ Arrived = $false; Attempts = $Attempts; Reads = $reads; Why = "never read back intact in $Attempts attempt(s)"; Tail = $tail }
+    $why = if ($sawText) { "never read back intact in $Attempts attempt(s)" }
+    else { "the pane could not be READ: not one of $reads read(s) captured a byte across $Attempts attempt(s) - that describes the reader, not the pane" }
+    return @{ Arrived = $false; Attempts = $Attempts; Reads = $reads; Why = $why; Tail = $tail; SawText = $sawText }
 }
 
 # One BOUNDED `ghoztty +list --json` probe (tracker T187).

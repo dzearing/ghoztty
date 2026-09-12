@@ -996,11 +996,25 @@ if ($action -eq 'reuse') {
     # T663: through $oldExe this read ZERO bytes every time - the pane was
     # always "produced no text", and the gate below always missed - so the
     # reader is the console twin.
-    $ready = Wait-LoopPaneReady -ReadTail { (& $cliExe +read "--name=$LoopPaneId" --lines=40 2>$null) | Out-String }
+    # T698: a read that FAILS is a different fact from a read that succeeds and
+    # comes back empty, and `2>$null | Out-String` flattened both to ''. Surface
+    # the exit code so the verdict below can name the reader when the reader is
+    # what is broken.
+    $ready = Wait-LoopPaneReady -ReadTail {
+        $out = (& $cliExe +read "--name=$LoopPaneId" --lines=40 2>$null) | Out-String
+        if ($LASTEXITCODE -ne 0) { throw "+read exited $LASTEXITCODE" }
+        $out
+    }
     # Not fatal. A pane that never settles may just be one whose session is
     # printing, and the arrival gate below is the real evidence either way -
     # refusing to type here would trade a recoverable miss for a certain stall.
+    # What DOES change is the sentence: for months this logged "pane produced no
+    # text", which is a claim about the pane, over a reader (T663's console
+    # twin) that was returning zero bytes every time. Never having captured a
+    # byte is a claim about the READER, and it is also a prediction about the
+    # arrival gate below, which reads through the same path.
     if ($ready.Ready) { Log "reuse: pane ready ($($ready.Why))" }
+    elseif (-not $ready.SawText) { Log "WARNING: reuse: pane $LoopPaneId could not be READ ($($ready.Why)); typing anyway - but the arrival gate below reads through this same path, so expect it to fail too, and suspect the reader ($cliExe) rather than the pane" }
     else { Log "WARNING: reuse: pane $LoopPaneId not settled ($($ready.Why)); typing anyway - the arrival gate below is what protects the run" }
 
     # T210: the prompt goes through a FILE, never argv - this was the LAST argv

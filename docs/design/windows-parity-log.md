@@ -26562,3 +26562,53 @@ lib/none/win32/agent all PASS, and the nine meta-audits that sweep every test
 script (isolation, launch-preflight, verdict-exit, cleanslate, stderr ×2,
 body-complete, desktop-launch, command-resolve) are ALL PASS, so `guard-due
 check` is back to only its three pre-existing advisories.
+
+## 2026-09-12 — a reader that captures nothing is not a quiet pane (T698)
+
+The upgrade's last act is to type a prompt back into the pane it interrupted,
+and before it types it waits for that pane to settle. When the wait ran out with
+nothing captured, the log said this:
+
+    WARNING: reuse: pane <id> not settled (pane produced no text in 60 read(s)); typing anyway
+
+That sentence is a claim about the PANE. Through T663 the thing that had
+produced no text was the READER — a GUI-subsystem `ghoztty.exe` whose redirected
+stdout writes nowhere — and the true sentence was available in every delivery
+log for months, in the wrong words. `Wait-LoopPaneReady` could not tell the two
+apart because it consulted only the LAST read, and because its `try/catch`
+flattened a read that FAILED into the same empty string as a read that succeeded
+and found an empty pane.
+
+Three changes, no behavior change: the readiness result now carries `SawText`
+spanning every read, `Failures` counting the reads that threw, and `LastError`;
+the exhausted verdict picks between "tail never settled", "every one of N reads
+failed (<error>)", "N of M reads failed and the rest captured nothing", and "not
+one of N reads captured a byte — that describes the reader, not the pane"; and
+the upgrade's reader throws on a non-zero `+read` exit instead of swallowing it
+through `2>$null | Out-String`. The WARNING branches on `SawText` and, when
+nothing was ever captured, predicts that the arrival gate below will fail too
+and names the exe to suspect. `Send-LoopPromptVerified` got the same treatment
+for the same reason — it reads through the same path, so "the prompt never read
+back intact" was equally able to point at the wrong subject.
+
+The typing-anyway behaviour is deliberately untouched: a genuinely silent pane
+must not stall a delivery, and the arrival gate is the real evidence either way.
+Only what is SAID about it changed.
+
+Evidence: `test\win32\upgrade-resume-readiness.ps1` ALL PASS (83 assertions),
+grown by A11–A19, B7b–B7e and E7b/E7c — including a pre-fix oracle for the
+last-read-only bug (a pane that printed once and then went quiet is never called
+unreadable) and one for the flattening (an all-throwing reader is reported with
+its error). Floor lanes lib/none/win32/agent all PASS, and the twelve guards
+this change made due — go-loop, upgrade-staleness, upgrade-no-fork,
+install-ownership and the eight meta-audits that sweep every script — are ALL
+PASS.
+
+Two findings from the same hour, both filed: the floor lanes opened red on a
+torn `JetBrainsMono` package in the global cache, and the automatic heal
+recognized it (T1436's rule fired) but could not delete it — the package held
+AppleDouble sidecars, and a file literally named `._.` defeats both the
+PowerShell delete cmdlet and cmd.exe's recursive remove, so the heal returned 0
+and the lane re-ran into the identical failure. It took `[System.IO.File]::Delete`
+over a `\\?\` path, by hand, to clear it. That is **T1499** (P1). **T1408**,
+which asked for the detection half, is closed as superseded by T1436.

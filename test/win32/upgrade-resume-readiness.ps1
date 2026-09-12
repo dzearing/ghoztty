@@ -79,7 +79,12 @@ AssertEq 'A2 ready is not declared before the content stops changing' 9 $res.Pol
 $r = New-Reader @('', '', '', '', '', '', '', '')
 $res = Wait-LoopPaneReady -ReadTail $r.Read -MaxPolls 8 -StableReads 3 -PollMs 0
 Assert 'A3 PRE-FIX ORACLE: an un-replayed (empty) pane is NOT ready' (-not $res.Ready)
-Assert 'A4 and the reason says so' ($res.Why -match 'no text')
+# T698: and the reason names the READER. "The pane produced no text" is a claim
+# about the pane, and it was the wrong claim for months - T663's reader returned
+# zero bytes on every read and the log blamed the pane every time.
+Assert 'A4 and the reason names the reader, not the pane' ($res.Why -match 'could not be READ')
+Assert 'A4b it says not one read captured a byte' ($res.Why -match 'not one of 8 read')
+Assert 'A4c and the result carries the fact a caller needs' ($false -eq $res.SawText)
 
 # A5: a pane that never stops changing is not ready either, and says why.
 $frames = 1..10 | ForEach-Object { "output line $_" }
@@ -105,6 +110,41 @@ Assert 'A9 a throwing reader is handled as not-ready' (-not $res.Ready)
 $r = New-Reader @("| settled  >", "|  settled >", "|   settled  >")
 $res = Wait-LoopPaneReady -ReadTail $r.Read -MaxPolls 6 -StableReads 3 -PollMs 0
 Assert 'A10 cosmetic repaints do not count as changes' $res.Ready
+
+# --- T698: a reader that captures nothing is not a quiet pane ---------------
+# A11-A13: every read THREW. That is a stronger statement than "empty" and the
+# reason should carry the error, because the error is the lead the old sentence
+# threw away.
+$res = Wait-LoopPaneReady -ReadTail { throw 'pipe not up yet' } -MaxPolls 5 -StableReads 3 -PollMs 0
+Assert 'A11 an all-throwing reader is reported as a reader failure' ($res.Why -match 'could not be READ')
+Assert 'A12 and the count of failed reads is stated' ($res.Why -match 'every one of 5 read\(s\) failed')
+Assert 'A13 and the error itself survives into the result' ($res.LastError -match 'pipe not up yet')
+AssertEq 'A13b every read counted as a failure' 5 $res.Failures
+
+# A14-A15: a reader that fails some of the time and captures nothing the rest
+# of the time is still a reader story, and both halves are stated.
+$script:n = 0
+$res = Wait-LoopPaneReady -ReadTail { $script:n++; if ($script:n % 2) { throw 'pipe closed' } ; '' } `
+    -MaxPolls 6 -StableReads 3 -PollMs 0
+Assert 'A14 a partly-failing reader is reported as a reader failure' ($res.Why -match 'could not be READ')
+Assert 'A15 and both halves are counted' ($res.Why -match '3 of 6 read\(s\) failed' -and $res.Why -match 'rest captured nothing')
+
+# A16-A17: the PRE-FIX ORACLE for the other half of the defect. A pane that
+# printed and then went quiet used to be described as having "produced no text",
+# because only the LAST read was consulted. Seeing text once is a fact about the
+# whole run.
+$r = New-Reader @('first paint', 'changed once', '', '', '', '')
+$res = Wait-LoopPaneReady -ReadTail $r.Read -MaxPolls 6 -StableReads 3 -PollMs 0
+Assert 'A16 PRE-FIX ORACLE: a pane that printed once is never called unreadable' ($res.Why -notmatch 'could not be READ')
+Assert 'A17 it is reported as a tail that never settled' ($res.Why -match 'never settled')
+Assert 'A18 and SawText records that the reader worked' ($true -eq $res.SawText)
+
+# A19: the ready path carries the same fields, so a caller can read them
+# unconditionally instead of testing for their existence.
+$r = New-Reader @('quiet')
+$res = Wait-LoopPaneReady -ReadTail $r.Read -MaxPolls 9 -StableReads 3 -PollMs 0
+Assert 'A19 a ready result carries SawText/Reads/Failures too' `
+    ($res.Ready -and $res.SawText -and $res.Reads -eq 3 -and $res.Failures -eq 0)
 
 # ============================================================================
 "== B: Send-LoopPromptVerified"
@@ -139,6 +179,23 @@ $res = Send-LoopPromptVerified -Text $prompt `
 Assert 'B5 a prompt that never arrives is not reported as arrived' (-not $res.Arrived)
 AssertEq 'B6 every attempt was made' 3 $res.Attempts
 Assert 'B7 the composer is cleared on the way out' ($script:clears -ge 3)
+Assert 'B7b a pane that answered with text is described as a miss, not a dead reader' `
+    ($res.Why -match 'never read back intact' -and $true -eq $res.SawText)
+
+# B7c-B7e (T698): the arrival gate reads through the same path the readiness
+# gate does, so it inherits the same ambiguity. When not one read captured a
+# byte, "the prompt never read back intact" is technically true and points at
+# the wrong subject - the run should say so, because this is the line a human
+# reads when the delivery fails.
+$script:clears = 0
+$res = Send-LoopPromptVerified -Text $prompt `
+    -SendText { return $true } `
+    -ReadTail { return '' } `
+    -Clear { $script:clears++ } `
+    -Attempts 2 -ReadsPerAttempt 3 -PollMs 0
+Assert 'B7c a gate that captured nothing names the reader' ($res.Why -match 'could not be READ')
+Assert 'B7d and counts the reads it made' ($res.Why -match 'not one of 6 read')
+Assert 'B7e and SawText says the reader never worked' ($false -eq $res.SawText)
 
 # B8-B9: the happy path costs exactly one send and no clear.
 $script:sends = 0
@@ -322,7 +379,13 @@ Assert 'E6 a prompt full of > and | still matches a tail that wrapped it' `
 
 # Wiring: the gates must read through the resolved CLI, not through $oldExe.
 Assert 'E7 the readiness gate reads through the resolved CLI' `
-    ($src -match 'Wait-LoopPaneReady -ReadTail \{ \(& \$cliExe \+read')
+    ($src -match '(?s)Wait-LoopPaneReady -ReadTail \{[^}]{0,240}\(& \$cliExe \+read')
+# T698: and it notices when that read FAILS rather than flattening a failure
+# and an empty capture into the same '' through `2>$null | Out-String`.
+Assert 'E7b the readiness reader surfaces a non-zero exit as a failed read' `
+    ($src -match '(?s)Wait-LoopPaneReady -ReadTail \{[^}]{0,240}LASTEXITCODE -ne 0.{0,40}throw')
+Assert 'E7c and the verdict names the reader when nothing was ever captured' `
+    ($src -match 'not \$ready\.SawText' -and $src -match 'could not be READ')
 Assert 'E8 the arrival gate reads through the resolved CLI' `
     ($src -match '-ReadTail \{ \(& \$cliExe \+read')
 Assert 'E9 the submitted gate reads through the resolved CLI' `

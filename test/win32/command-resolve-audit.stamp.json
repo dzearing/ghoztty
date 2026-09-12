@@ -1,14 +1,10 @@
 {
     "guard":  "command-resolve",
     "script":  "test/win32/command-resolve-audit.ps1",
-    "generated":  "2026-09-12T11:14:49-07:00",
-    "commit":  "c7f4d280b",
+    "generated":  "2026-09-12T11:26:06-07:00",
+    "commit":  "a415d6685",
     "uncommitted":  [
-                        "test/win32/agent-instance-lineage.ps1",
-                        "test/win32/agent-relay-session-e2e.ps1",
-                        "test/win32/lib/PersistenceSweep.ps1",
-                        "test/win32/persistence-flag.ps1",
-                        "test/win32/stderr-launch-capture.ps1"
+                        "test/win32/upgrade-resume-readiness.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "a3f98a551352e27d1ad9c1745e222757dc4b802efc5638fbe6ea4d3f621b6307",
@@ -320,7 +316,7 @@
                   "test/win32/update-progress.ps1":  "3107586eba654bf2021e46c47be937e37e59a66aee947129ddc5729a9405783d",
                   "test/win32/update-real-msi.ps1":  "f85b807fb0ad7870a0e20e46268c4f6a7691bc7edfb0f5ac180a367192ee499a",
                   "test/win32/upgrade-no-fork.ps1":  "76264704b07c6d8267edda9d19349210a5462999cc8321b7c6b4d1f5e09df56c",
-                  "test/win32/upgrade-resume-readiness.ps1":  "a74e399b5a439a145964471b2273a606714b6d7477156a5a62debf057f54272c",
+                  "test/win32/upgrade-resume-readiness.ps1":  "8b7e8b9244e5c2241aaff71ad4038ebde680105e8ba8a36b6dea1257ae2d3186",
                   "test/win32/upgrade-staleness.ps1":  "2e051bb04cbfafc0b002f3e2510ad3133713487d485ad4db6ebd03f989a68bec",
                   "test/win32/upstream-remote.ps1":  "83328f27ade7ea1a627c898462f14319f6ca2503a25511c41b9b4c5ac9047698",
                   "test/win32/url-scheme.ps1":  "18d667f6dd3cc51627926901654339da82fcdc2c31ffb07cfffdb2dd126c96e2",
