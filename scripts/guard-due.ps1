@@ -140,6 +140,23 @@ $GuardTable = @(
             'test\win32\go-loop-guard.ps1'
         )
     },
+    # The stop/resume recovery path (T1478). It shares its code with the guard
+    # above, and a shared row would be worse than no row: a green go-loop-guard
+    # would stamp away a question it never asked. The 2026-09-09 failure was
+    # entirely in the seam between `resume`, the watchdog's re-entry choice and
+    # the lock - three files each of which the guard exercises for other
+    # reasons - so it gets its own stamp and its own end-to-end run.
+    [pscustomobject]@{
+        Name   = 'go-loop-resume'
+        Script = 'test\win32\go-loop-resume.ps1'
+        Stamp  = 'test\win32\go-loop-resume.stamp.json'
+        Covers = @(
+            'scripts\go-loop-watchdog.ps1',
+            'scripts\go-loop-exec.ps1',
+            'scripts\go-loop-lock.ps1',
+            'test\win32\go-loop-resume.ps1'
+        )
+    },
     # The ship workflow (T1058): the cutover readiness gate and the per-feature
     # worktree/branch/PR lifecycle. Neither is touched by any lane - one only
     # reads git and the tracker, the other only runs when somebody starts or

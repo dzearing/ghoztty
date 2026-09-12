@@ -29,7 +29,8 @@
 #
 # Actions: claim | mark | unmark | list | stop | resume
 # Exit codes: 0 primary (carry on), 3 stood down (stop), 4 stopped by request
-#             (the queue is drained; do not pick a task), 2 error.
+#             (the queue is drained; do not pick a task), 5 resume did not bring
+#             the loop back, 2 error.
 #
 #   powershell -NoProfile -File scripts\go-loop-exec.ps1 claim
 #   powershell -NoProfile -File scripts\go-loop-exec.ps1 list
@@ -52,6 +53,11 @@ param(
     [string]$StopPath,        # override the stop-flag location (tests)
     [string]$Reason,          # stop: why, recorded in the flag for whoever finds it
     [switch]$Force,           # stop: also give up the lock now, do not wait for the turn
+    # resume: how long to wait for the restarted loop to take the lock before
+    # calling the resume incomplete (T1478).
+    [int]$HeldTimeoutSeconds = 150,
+    [switch]$NoRecover,       # resume: clear the flag only, restart nothing (tests)
+    [string]$StatePath,       # resume: the watchdog's rearm/beacon state (tests)
     [switch]$Json
 )
 
@@ -216,11 +222,55 @@ switch ($Action) {
     'resume' {
         if (Clear-LoopStop -Repo $Repo -Path $StopPath) {
             "RESUMED stop request cleared"
-            "  claim will take the loop again on the next turn"
         } else {
             "RESUMED no stop request was set (nothing to clear)"
         }
-        exit 0
+
+        # Clearing the flag used to be the whole of `resume`, and it said
+        # "claim will take the loop again on the next turn" - a future that
+        # cannot arrive (T1478). A stop makes the session running the loop
+        # PARK: go.md step 0 tells it not to pick a task and not to
+        # /reset-context, so it reports and goes idle at its composer. Nothing
+        # then re-triggers it, so there is no next turn to claim anything. On
+        # 2026-09-09 that left the loop down for seven minutes across three
+        # recovery commands that each exited 0.
+        #
+        # So resume RESTARTS the loop and is judged on the loop coming back:
+        # the watchdog's forced tick decides what the parked window needs
+        # (a prompt typed into the idle session, a shim, or a new window) and
+        # -WaitForHeldSeconds gates the verdict on the lock reaching `held`.
+        if ($NoRecover) {
+            "  -NoRecover: the stop flag is clear, but nothing was restarted"
+            exit 0
+        }
+        # A loop that is already running needs nothing typed at it. -Force below
+        # deliberately skips the watchdog's "is this session healthy" gate, so
+        # without this a resume on a live loop would nudge a working turn.
+        $cur = Get-LockStatus
+        if ($cur -and $cur.state -eq 'held' -and $cur.owner_alive) {
+            "  the loop is already running (pane=$($cur.pane_id)); nothing to restart"
+            exit 0
+        }
+        $dog = Join-Path $PSScriptRoot 'go-loop-watchdog.ps1'
+        $dogArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $dog,
+            '-Repo', $Repo, '-Once', '-Force', '-RearmMinutes', '0',
+            '-WaitForHeldSeconds', $HeldTimeoutSeconds)
+        if ($LockPath) { $dogArgs += @('-LockPath', $LockPath) }
+        if ($StopPath) { $dogArgs += @('-StopPath', $StopPath) }
+        if ($StatePath) { $dogArgs += @('-StatePath', $StatePath) }
+        if ($GhozttyExe) { $dogArgs += @('-GhozttyExe', $GhozttyExe) }
+        "  restarting the loop (watchdog forced tick, up to ${HeldTimeoutSeconds}s for it to take the lock)"
+        $out = (& powershell @dogArgs 2>&1 | ForEach-Object { $_.ToString() } | Out-String).Trim()
+        $code = $LASTEXITCODE
+        foreach ($line in ($out -split "`r?`n")) { if ($line.Trim()) { "    $line" } }
+        if ($code -eq 0) {
+            "RESUMED the loop is running again (lock held)"
+            exit 0
+        }
+        "RESUME INCOMPLETE the stop flag is clear but the loop did not come back"
+        "  read the loop pane: ghoztty +read --name=<pane>   (or go-loop-health.ps1 -Postmortem)"
+        "  then retry: powershell -NoProfile -File scripts\go-loop-exec.ps1 resume"
+        exit 5
     }
 
     'claim' {

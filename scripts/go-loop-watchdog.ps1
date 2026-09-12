@@ -41,8 +41,16 @@
 #                                 a second task in the same context.
 #        pane alive but sitting at a shell prompt
 #                              -> send-keys the resume shim + Enter
+#        no lock at all, but the ledger's last pane is still open
+#                              -> decide about THAT pane (T1478), which is the
+#                                 parked-after-a-stop case: the session is idle
+#                                 in a window nothing points at any more.
 #        no lock / pane gone   -> +new-window running the resume shim
 #      then hold off for -RearmMinutes so a wedged box is not spammed.
+#
+# None of those actions is evidence on its own: a focused window and a typed
+# prompt both exit 0 over a loop that never comes back. -WaitForHeldSeconds
+# gates the verdict on the LOCK reaching `held` instead (T1478).
 #
 # "A claude is alive IN THE PANE" is deliberately not "the pid I recorded is
 # alive" (T241). A claude relaunched in the pane has a new pid and has not
@@ -143,6 +151,20 @@ param(
     [string]$StopPath,
     [string]$StatePath,
     [switch]$Once,          # single tick then exit (used by the acceptance test)
+    # Recovery is gated on the LOOP, not on the exit code of the thing that
+    # types (T1478). `+new-window` and `+send-keys` both answer "did the window
+    # operation work", which is the one question that cannot see this failure:
+    # on 2026-09-09 a resume, a forced tick and a `+new-window` all exited 0
+    # over a loop that stayed down for seven minutes. With this set, a tick that
+    # takes an action then polls the lock until it reads `held`, and says
+    # RECOVERY UNCONFIRMED - and, under -Once, exits 5 - when it never does.
+    # Zero (the daemon's default) keeps the poll loop non-blocking: the next
+    # tick is the daemon's own confirmation.
+    [int]$WaitForHeldSeconds = 0,
+    # Negative control for the same arm. The history lookup below is what finds
+    # a parked-but-idle loop pane once the lock is gone; this switch turns it
+    # off so a test can prove the old behavior goes red.
+    [switch]$NoPaneHistory,
     # Re-enter even though the lock looks healthy (T439). The two gates this
     # skips - "state is held" and the rearm hold-off - both exist to keep the
     # watchdog from interrupting a session that is working. A caller that KNOWS
@@ -350,6 +372,33 @@ function Get-Lock {
     $raw = & powershell -NoProfile -ExecutionPolicy Bypass -File $lockScript status `
         -Repo $Repo -LockPath $LockPath -StaleMinutes $StaleMinutes -NoPaneProbe -Json 2>&1 | Out-String
     try { return ($raw | ConvertFrom-Json) } catch { return $null }
+}
+
+# The loop's last known pane, from the lock's own append-only ledger (T1478).
+#
+# `Get-Lock` can only name a pane while a lock EXISTS, and the shape this
+# answers is the one where it does not: a stop request makes the next claim
+# RELEASE the lock and unmark the window, so the session parks at its composer
+# with nothing anywhere pointing at it. The watchdog then read `state=free`,
+# found no pane, and logged "no live loop pane, opening a new window" over a
+# window that was open and occupied - while `+new-window --target=main` focused
+# that same window (named targets are focused, not recreated) and exited 0.
+# Three commands, three successes, seven minutes down.
+#
+# The ledger is written on every transition including `release`, so the pane
+# that parked is the last row's pane_id. It is a CANDIDATE, never an answer:
+# the pane must still exist, and the occupant probe below decides what - if
+# anything - to type into it.
+function Get-HistoryPane {
+    $path = Join-Path (Split-Path -Parent $LockPath) 'go-loop-history.jsonl'
+    if (-not (Test-Path $path)) { return '' }
+    $rows = @(Get-Content -Path $path -Tail 40 -ErrorAction SilentlyContinue)
+    for ($i = $rows.Count - 1; $i -ge 0; $i--) {
+        $row = $null
+        try { $row = $rows[$i] | ConvertFrom-Json } catch { continue }
+        if ($row -and $row.pane_id) { return [string]$row.pane_id }
+    }
+    return ''
 }
 
 function Invoke-Ghoztty($argList) {
@@ -602,6 +651,19 @@ function Invoke-Tick {
     $paneId = ''
     if ($lock) { $paneId = $lock.pane_id }
     $paneAlive = Test-PaneExists $paneId
+    # No lock, or a lock naming a pane that is gone: the loop's own ledger still
+    # remembers where it was parked (T1478). Without this the next branch is the
+    # new-window one, whose log line is false in exactly the state that needs it
+    # most - a session sitting idle in the window it was told to stand down in.
+    if (-not $paneAlive -and -not $NoPaneHistory) {
+        $histPane = Get-HistoryPane
+        if ($histPane -and (Test-PaneExists $histPane)) {
+            Log ("no pane on the lock, but the loop's last pane $histPane is still open " +
+                 '(from go-loop-history.jsonl) - deciding about that pane, not a new window')
+            $paneId = $histPane
+            $paneAlive = $true
+        }
+    }
     $ownerAlive = $false
     if ($lock -and $null -ne $lock.owner_alive) { $ownerAlive = [bool]$lock.owner_alive }
 
@@ -699,7 +761,12 @@ function Invoke-Tick {
         return 'restart-in-pane'
     }
 
-    Log "re-entering: no live loop pane, opening a new window (state=$state, remaining=$remaining)"
+    # Reached only when NOTHING is open to type into: no lock pane, no ledger
+    # pane, or one that no longer exists. Say which, because "no live loop pane"
+    # used to print over a pane that was alive and merely idle (T1478).
+    Log ("re-entering: no live loop pane anywhere (lock pane=$(if ($lock -and $lock.pane_id) { $lock.pane_id } else { 'none' }), " +
+         "last pane=$(if ($NoPaneHistory) { 'not looked up' } else { $(if (Get-HistoryPane) { (Get-HistoryPane) + ' (closed)' } else { 'none' }) })) - " +
+         "opening a new window (state=$state, remaining=$remaining)")
     if ($DryRun) { return 'new-window' }
     $r = Invoke-Ghoztty @('+new-window', "--target=$WindowTarget", "--working-directory=$Repo", "--command=$shim")
     Log "  new-window exit=$($r.Code) $($r.Out)"
@@ -707,11 +774,47 @@ function Invoke-Tick {
     return 'new-window'
 }
 
+# The only question worth gating a recovery on (T1478): did the LOOP come back?
+#
+# Every exit code on the path here answers something narrower - the window was
+# focused, the bytes reached the pane - and on 2026-09-09 all of them were 0
+# while health kept reading DOWN. The lock going `held` is the loop itself
+# saying a session ran go.md step 0, so it is the one signal that cannot be
+# produced by a malformed `+send-keys` or an idempotent `+new-window`.
+function Wait-LoopHeld([int]$seconds) {
+    $deadline = (Get-Date).AddSeconds($seconds)
+    while ((Get-Date) -lt $deadline) {
+        $l = Get-Lock
+        if ($l -and $l.state -eq 'held' -and $l.owner_alive) { return $true }
+        Start-Sleep -Seconds 3
+    }
+    return $false
+}
+
+# Returns the action, and reports whether the loop actually came back when the
+# caller asked to be gated on it.
+function Confirm-Recovery($action) {
+    if ($WaitForHeldSeconds -le 0) { return $true }
+    if ($action -notin @('nudge', 'restart-in-pane', 'new-window')) { return $true }
+    if ($DryRun) { return $true }
+    if (Wait-LoopHeld $WaitForHeldSeconds) {
+        Log "  RECOVERED: the lock reads held within ${WaitForHeldSeconds}s of the $action"
+        return $true
+    }
+    Log ("  RECOVERY UNCONFIRMED: the $action reported success but the lock never reached held " +
+         "within ${WaitForHeldSeconds}s - the loop is still down. Read the pane: " +
+         "ghoztty +read --name=<pane>")
+    return $false
+}
+
 # --- main -----------------------------------------------------------------
 
 if ($Once) {
     $action = Invoke-Tick
+    if ($action -is [array]) { $action = $action[-1] }
+    $ok = Confirm-Recovery $action
     "ACTION $action"
+    if (-not $ok) { "RECOVERY UNCONFIRMED"; exit 5 }
     exit 0
 }
 

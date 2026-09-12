@@ -131,6 +131,13 @@ $Registry = @(
     [pscustomobject]@{ Label = 'STOPPED'; Kind = 'gate'; Demo = $Loop; Marker = 'STOPPED by request' }
     [pscustomobject]@{ Label = 'STOP REQUESTED'; Kind = 'status' }
     [pscustomobject]@{ Label = 'RESUMED'; Kind = 'status' }
+    # T1478. `resume` restarts the parked loop and is judged on the loop coming
+    # back, so its failure is a gate: exit 5 with the remedy, rather than the
+    # 2026-09-09 exit 0 over a loop that stayed down for seven minutes. Its
+    # demonstration is section X of the loop guard, which resumes against a
+    # fixture that cannot come back; the end-to-end recovery it replaces is
+    # test\win32\go-loop-resume.ps1.
+    [pscustomobject]@{ Label = 'RESUME INCOMPLETE'; Kind = 'gate'; Demo = $Loop; Marker = 'RESUME INCOMPLETE' }
 
     # --- what claim DELEGATES ----------------------------------------------
     [pscustomobject]@{ Label = 'GUARD DUE'; Kind = 'gate'; Demo = 'test\win32\guard-due.ps1'

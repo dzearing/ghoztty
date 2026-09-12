@@ -26,7 +26,14 @@ Concretely, in order, with no stops in between:
      parked; the window has already unmarked itself and given up the lock. This
      is not a failure: it is quiet on purpose, and nothing needs diagnosing.
      Only the user resumes it, with
-     `powershell -NoProfile -File scripts\go-loop-exec.ps1 resume`.
+     `powershell -NoProfile -File scripts\go-loop-exec.ps1 resume` — which since
+     T1478 **restarts the parked session** as well as clearing the flag, and is
+     judged on the loop reaching `held`. Clearing the flag alone used to say
+     "claim will take the loop again on the next turn", a future that cannot
+     arrive: the parked session is idle at its composer and nothing re-triggers
+     it. A resume that does not bring the loop back now exits 5 and says
+     `RESUME INCOMPLETE` with the remedy, instead of the 2026-09-09 exit 0 over
+     a loop that stayed down for seven minutes.
    - What it does: takes the lock (`scripts\go-loop-lock.ps1`), pins this
      window's title to `[go-loop] …` so the execution window is identifiable
      on sight and in `+list --json`, then resolves duplicates **without

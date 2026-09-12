@@ -26097,3 +26097,37 @@ against a 16.7ms budget, idle and with a pane flooding output, so the extra
 looping costs nothing measurable. `resize-flicker.ps1` ALL PASS (24, no skips),
 and `-NegativeControl` fails the new assertion by name. Floor: lib/none/win32/
 agent all PASS, P1–P3 ALL PASS.
+
+## 2026-09-12 — resuming a stopped loop actually restarts it (T1478)
+
+Stopping the loop to run the lanes and then resuming it left the loop down for
+seven minutes on 2026-09-09, while `resume`, a forced watchdog tick and
+`+new-window` each exited 0. The stop works by making the loop's session PARK —
+go.md step 0 tells it not to pick a task and not to reset — so it releases the
+lock, unmarks its window and goes idle at its composer. From there `resume` only
+cleared a flag and promised that "claim will take the loop again on the next
+turn", and there was no next turn to take it. The watchdog then found no pane on
+the (released) lock and fell through to `+new-window --target=main`, which
+focuses a window that already exists, exits 0, and re-entered nothing. Health
+read `DOWN state=free windows=0` throughout.
+
+Two fixes, because either alone leaves the other half lying. The watchdog now
+reads the loop's own append-only ledger for the last pane it ran in, so a
+released lock no longer means "no pane anywhere", and it decides about that pane
+the way it already decides about a lock's pane — nudge an idle claude, shim a
+shell, open a window only when nothing is there. And no action on that path is
+treated as evidence any more: `-WaitForHeldSeconds` polls the lock until it
+reads `held`, which is the loop's own signal that a session ran step 0 and the
+one thing a focused window or a malformed `+send-keys` cannot fake. `resume`
+runs that forced tick itself and exits 5 with `RESUME INCOMPLETE` and the
+remedy when the loop does not come back; a loop that is already running is left
+alone, and `-NoRecover` is the flag-only half for callers that want it.
+
+Evidence: `test\win32\go-loop-resume.ps1` (new) stages the exact sequence — a
+stop, a session parked and idle in its pane, a resume — and asserts the loop
+returns to `held` with nothing typed by hand. Its negative control is today's
+watchdog exactly: with the ledger lookup switched off the same staging opens a
+window, and the held gate scores it exit 5 / RECOVERY UNCONFIRMED. ALL PASS (22
+assertions). `go-loop-guard.ps1` gained X5a–X5d for the resume gate itself and
+is ALL PASS; `gate-negatives.ps1` carries `RESUME INCOMPLETE` as a declared gate
+with that demonstration. Floor: lib/none/win32/agent all PASS, P1–P3 ALL PASS.

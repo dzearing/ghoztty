@@ -1691,8 +1691,25 @@ $hCode = $LASTEXITCODE
 Assert 'X4 health calls it STOPPED (exit 3), not DOWN - a supervisor must not revive it' `
     ($hCode -eq 3 -and $r -match 'STOPPED')
 
-$r = XExec @('resume', '-Repo', $xRepo, '-PaneId', 'none')
+# -NoRecover is the flag-only half of resume. Since T1478 the full command also
+# RESTARTS the loop - clearing the flag alone left it parked, because the stopped
+# session released the lock and went idle, so there was no next turn to claim
+# anything. This fixture repo has no pane and no session, so the restart could
+# only ever report failure; the arm below scores that failure on purpose.
+$r = XExec @('resume', '-Repo', $xRepo, '-PaneId', 'none', '-NoRecover')
 Assert 'X5 resume clears the flag' ($r.Code -eq 0 -and -not (Test-Path -LiteralPath $xFlag) -and $r.Out -match 'RESUMED')
+Assert 'X5a -NoRecover says it restarted nothing' ($r.Out -match 'nothing was restarted')
+
+# And the full command, against a loop that cannot come back: it must go RED
+# rather than report the 2026-09-09 success over a loop that is still down.
+XExec @('stop', '-Repo', $xRepo, '-PaneId', 'none', '-Reason', 'harness arm 2') | Out-Null
+$r = XExec @('resume', '-Repo', $xRepo, '-PaneId', 'none', '-HeldTimeoutSeconds', 5,
+    '-GhozttyExe', (Join-Path $xRoot 'no-such-ghoztty.exe'))
+Assert 'X5b a resume that does not bring the loop back exits 5' ($r.Code -eq 5)
+Assert 'X5c and says the loop did not come back, with the remedy' `
+    ($r.Out -match 'RESUME INCOMPLETE' -and $r.Out -match '\+read')
+Assert 'X5d but the stop flag is still cleared - the failure is the restart, not the flag' `
+    (-not (Test-Path -LiteralPath $xFlag))
 
 # -NoSelfClose -NoClose: this arm runs a REAL claim, and claim resolves
 # duplicates by closing windows. The fixture must never be able to reach the
