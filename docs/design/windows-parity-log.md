@@ -26657,3 +26657,60 @@ rather than 0, the marker making a previously-clean package report torn, and
 `Clear-BuildCache` over a cache holding `._.`. `test\win32\build-cache.ps1` ALL
 PASS (76 assertions). Floor lanes lib/none/win32/agent all PASS, and the nine
 meta-audit guards this change made due are ALL PASS.
+
+## 2026-09-12 — the reset handoff is checked whole, not by its file name (T699)
+
+Every turn of this loop ends by handing the next session one sentence: *"Read
+C:\…\cont-ab12cd.txt - it contains your instructions for this session. Follow
+them."* The helper that types it reads the pane back to prove it arrived — and
+what it looked for was the cont file's BASENAME, which sits in the middle of
+that sentence. So every truncation at the front was invisible to it. A pane
+showing `ead C:/…/cont-ab12cd.txt - it contains…` satisfied the probe exactly as
+an intact delivery did, and that loss really happened on 2026-08-10: it was
+caught by eye, T664 taught the acceptance suite to see it, and production went
+on checking the basename for a month.
+
+What is at stake depends on where the byte went. One lost inside the fixed prose
+is survivable — the session still reads the file. One lost inside the PATH is
+not: the file does not exist, the fresh session reads nothing, and the loop
+stalls with nothing saying why.
+
+The helper now carries an INTEGRITY verdict, separate from the motion gate
+T562 added. It normalizes the pane read — every whitespace byte and every
+non-ASCII byte, which is what the composer's box-drawing rules are — and then
+asks whether `Read <full path>` survives as one contiguous run. Normalizing
+sidesteps the question the task was filed with: it does not matter where the
+line broke or whether `+read` re-joins a soft wrap, because neither a wrap nor a
+border survives it. The needle spans the whole path, so a byte lost anywhere in
+it fails; it opens at `Read`, so a leading truncation fails too. It is logged as
+its own verdict on purpose — a session handed a corrupted path repaints exactly
+like one handed a good path, so folding the two claims together is how the last
+two of these went unnoticed.
+
+Evidence: `test\win32\reset-context.ps1` ALL PASS (62 assertions), grown by
+sections I and J — a handoff delivered minus its first character, and one with a
+byte dropped from the path's directory part, both produced on demand by the
+helper's own `GHOZTTY_TEST_T699_BREAK`. Both sections assert BOTH halves: every
+pre-T699 check still passes over those deliveries (the basename reaches the
+screen, the motion gate calls it delivered) and only the new verdict says
+CORRUPTED — the blindness measured next to the cure. The healthy case was
+measured rather than assumed, on the soft-wrapping proxy pane (A6b) and on this
+loop's own live Claude Code pane, where the TUI lays the sentence across several
+rows inside its composer box. Helper source and the active plugin cache are
+byte-identical, `dzearing-skills` bumped 0.12.3 → 0.12.4. Floor lanes
+lib/none/win32/agent all PASS.
+
+One thing this turn found on the way past, filed as **T1502**. Validating
+against the current helper meant taking the marketplace repo's newer copy, whose
+2026-08-25 change replaced the clear check's whole-screen grep for `/clear` -
+which cried wolf on every healthy run, because Claude Code echoes the command it
+just ran into the fresh transcript - with a check on the COMPOSER. That idea is
+right and its signature is wrong: it greps for a prompt glyph that appears
+**zero** times in a 400-line `+read` of a live Claude Code pane. The gate is
+therefore unconditional, and section B caught it doing exactly that - logging
+`verified: /clear landed` over a pane the same section had just proved was never
+cleared. Section B's four shouted-failure arms are gone rather than re-pointed:
+a submitted-as-ordinary-text `/clear` leaves an empty composer, so that shape is
+invisible to the new check by design. They are recorded in place, with the id
+that owes their replacement, so the hole has a name instead of being an absence
+nobody can see.

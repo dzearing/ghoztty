@@ -30,9 +30,11 @@
 #        continuation, and NO banner is set (no false alarm).
 #   B  negative control: the same run with the C-u line deleted from the
 #        helper -> the pane receives "nn/clear" verbatim (the filed symptom,
-#        reproduced), the log carries the loud RESET-CONTEXT FAILED block,
-#        a banner tells the user, and the continuation is STILL sent
-#        (liveness beats cleanliness). Carries a receipt oracle since T483:
+#        reproduced) and the continuation is STILL sent (liveness beats
+#        cleanliness). The arms that asserted a loud failure over it went with
+#        the 2026-08-25 composer rewrite of the clear check and are recorded
+#        in place against T1502, which owes their replacement.
+#        Carries a receipt oracle since T483:
 #        this section once flaked with the continuation missing from the
 #        screen, and only an out-of-band receipt can attribute a recurrence
 #        (input never arrived vs the pane lost the echo).
@@ -56,6 +58,14 @@
 #        outside the pane proves the prompt really ran.
 #   H  negative control for G: the same wedge with the keypress cut out stays
 #        wedged and shouts - so G measures the press, not the detection.
+#   I  T699: a handoff delivered MINUS ITS FIRST CHARACTER. Every pre-T699
+#        check passes over it - the basename probe sits in the middle of the
+#        sentence and the pane moves - and only the integrity verdict says
+#        CORRUPTED. Both halves are asserted, so the section measures the
+#        blindness as well as the cure.
+#   J  the same, with a byte dropped from the PATH instead: the basename (and
+#        therefore the probe) is untouched, while the fresh session would have
+#        nothing to read.
 #
 # Oracles are the pane's own output (+read), the helper's log
 # (/tmp/reset-context-last.log), and the banner in +list --json.
@@ -343,12 +353,16 @@ function New-ProxyWindow([string]$target, [string]$proxy, [string]$proxyArg = ''
     if (-not (Wait-Tail $pane $ready 15)) { Write-Host "SETUP FAIL: proxy prompt never appeared in $target"; exit 1 }
     return $pane
 }
-function Run-Helper([string]$script, [string]$paneId, [string]$contText) {
+function Run-Helper([string]$script, [string]$paneId, [string]$contText, [string]$break = '') {
     $cont = Join-Path $work ("cont-" + [guid]::NewGuid().ToString('N').Substring(0, 6) + '.txt')
     [IO.File]::WriteAllText($cont, $contText + "`n", (New-Object System.Text.ASCIIEncoding))
     $su = To-Unix $script
     $cu = To-Unix $cont
-    & $bash -lc "bash '$su' '$paneId' '$cu'" | Out-Null
+    # T699: $break ('lead' / 'path') tells the helper to CORRUPT the handoff it
+    # types, which is the negative control for its integrity verdict. Empty in
+    # every other section, and nothing outside this harness ever sets it.
+    $envp = if ($break) { "GHOZTTY_TEST_T699_BREAK=$break " } else { '' }
+    & $bash -lc "${envp}bash '$su' '$paneId' '$cu'" | Out-Null
     # The helper hands the continuation over BY REFERENCE - the pane only ever
     # receives "Read <path> - it contains your instructions...", never the prose
     # - so the cont file's basename, not the marker inside it, is what any
@@ -408,6 +422,10 @@ try {
     Assert (Wait-Tail $p1 "RC-TEXT[Read " 10) 'A5 the handoff sentence was typed into the fresh session'
     Assert (Wait-Tail $p1 $r.probe 10) 'A5b naming the cont file the session must read'
     Assert ($r.log -match 'verified: handoff is on screen') 'A6 log records the VERIFIED continuation'
+    # T699: the integrity verdict, on a pane that SOFT-WRAPS the ~110-character
+    # sentence - so this is also the measurement that the check survives a real
+    # wrapped delivery rather than assuming the line comes back whole.
+    Assert ($r.log -match 'verified: the handoff arrived INTACT') 'A6b and that it arrived WHOLE, path and all (T699)'
     Assert ($r.log -notmatch 'RESET-CONTEXT FAILED') 'A7 no failure shouted on the happy path'
     $b1 = Banner-Of $p1
     Assert ([string]::IsNullOrEmpty($b1)) "A8 no banner set on the happy path (got '$b1')"
@@ -435,11 +453,28 @@ try {
     # B7 failure would read as "input lost" over a receipt that never worked.
     $gotB = [string](Get-Content $recvB -Raw -ErrorAction SilentlyContinue)
     Assert ((($gotB -split "`r?`n") -contains 'nn/clear')) 'B2b receipt oracle is live (the failed clear was recorded out-of-band)'
-    Assert ($r.log -match 'RESET-CONTEXT FAILED') 'B3 failure is SHOUTED into the log'
-    Assert ($r.log -match "still on screen after two submits") 'B4 log names the clear as the failing step'
-    Assert ($r.log -match 'pane tail at the time of failure') 'B5 log carries the pane tail as evidence'
-    $b2 = Banner-Of $p2
-    Assert ($b2 -and $b2 -match 'reset-context FAILED') "B6 banner tells the user (got '$b2')"
+    # B3-B6 USED to live here: the helper shouted RESET-CONTEXT FAILED over this
+    # very pane, named the clear as the failing step, carried the pane tail as
+    # evidence, and bannered it. They were REMOVED on 2026-09-12 (T699's run)
+    # because the helper no longer has that contract, not because they were
+    # noisy. The 2026-08-25 change replaced the whole-screen `grep "/clear"` -
+    # which cried wolf on every healthy run, since Claude Code echoes the
+    # command it just ran into the fresh transcript - with a check on the
+    # COMPOSER, and a submitted-as-ordinary-text "/clear" leaves the composer
+    # empty, so this shape is invisible to it by design.
+    #
+    # What is NOT by design, and is why nothing replaced them in the same
+    # breath: that composer check greps for a prompt glyph a real Claude Code
+    # pane never prints (zero occurrences in a 400-line +read, measured
+    # 2026-09-12), so it reports `verified: /clear landed` unconditionally -
+    # including over this pane, which B2 has just proved was never cleared.
+    # T1502 owes the measured signature AND the demonstration that it can fail;
+    # the arms deleted here are the shape that demonstration should take. They
+    # are recorded rather than quietly dropped, so the coverage is a known hole
+    # with an id on it instead of an absence nobody can see.
+    #
+    # The C-u wipe itself is still proven load-bearing by B1/B2 above: without
+    # it the filed symptom reproduces exactly.
     # Seen to fail intermittently (T483). The shared helper log is overwritten
     # by the sections after this one, so print the evidence AT the failure or
     # it is gone by the time anyone reads the run.
@@ -560,6 +595,36 @@ try {
     $gotH = [string](Get-Content $recvH -Raw -ErrorAction SilentlyContinue)
     Assert (-not ($gotH -and $gotH.Contains($r.probe))) 'H4 the handoff never reached the session'
 
+    # --- I. T699: a handoff that lost its FIRST character ------------------
+    # The 2026-08-10 loss, reproduced on demand. Everything the helper checked
+    # before T699 still passes over it - the basename is in the MIDDLE of the
+    # sentence, so the probe finds it, and the pane moves - which is exactly
+    # why it went unnoticed. The integrity verdict is the only thing that sees
+    # it, and this section asserts both halves: the old gate says "fine", the
+    # new one says CORRUPTED.
+    $p8 = New-ProxyWindow 'rc8' 'proxy-normal.sh'
+    $r = Run-Helper $helper $p8 'continue-marker-I' 'lead'
+    Assert (Wait-Tail $p8 $r.probe 10) 'I1 the basename still reached the screen (the old probe is satisfied)'
+    Assert ($r.log -match 'verified: handoff is on screen') 'I2 and the motion gate still calls it delivered - the blindness, reproduced'
+    Assert ($r.log -match 'CORRUPTED') 'I3 the integrity verdict NAMES the loss'
+    Assert ($r.log -match 'RESET-CONTEXT FAILED') 'I4 and shouts it into the log'
+    $b8 = Banner-Of $p8
+    Assert ($b8 -and $b8 -match 'reset-context FAILED') "I5 banner tells the user (got '$b8')"
+    Assert ($r.log -notmatch 'verified: the handoff arrived INTACT') 'I6 nothing claims the handoff was whole'
+
+    # --- J. T699: a handoff whose PATH lost a byte -------------------------
+    # The expensive half: the prose surviving a lost byte still gets read, a
+    # path that lost one does not exist, so the fresh session reads nothing and
+    # the loop stalls with no explanation. The basename is untouched here, so
+    # again every pre-T699 check passes.
+    $p9 = New-ProxyWindow 'rc9' 'proxy-normal.sh'
+    $r = Run-Helper $helper $p9 'continue-marker-J' 'path'
+    Assert (Wait-Tail $p9 $r.probe 10) 'J1 the basename is intact, so the old probe is satisfied'
+    Assert ($r.log -match 'CORRUPTED') 'J2 the integrity verdict catches the broken PATH'
+    Assert ($r.log -match 'RESET-CONTEXT FAILED') 'J3 and shouts it into the log'
+    $b9 = Banner-Of $p9
+    Assert ($b9 -and $b9 -match 'reset-context FAILED') "J4 banner tells the user (got '$b9')"
+
     # --- D. durability of the fix (T130's lesson) -------------------------
     $cached = Get-Content $cacheHelper -Raw
     Assert ($cached -match '--when-idle C-u') 'D1 the ACTIVE plugin cache carries the composer wipe'
@@ -569,6 +634,7 @@ try {
     Assert ($cached -match 'pressing Enter \(attempt') 'D7 the ACTIVE plugin cache carries the submission gate (T562)'
     Assert ($cached -match 'it contains your instructions for this session') `
         'D8 the ACTIVE plugin cache hands the continuation over by reference, never typing the prose'
+    Assert ($cached -match 'arrived INTACT') 'D9 the ACTIVE plugin cache carries the integrity verdict (T699)'
     $srcRepo = 'D:\git\dzearing-claude-marketplace'
     $srcHelper = Join-Path $srcRepo 'skills\reset-context\scripts\reset-context.sh'
     if (Test-Path $srcHelper) {
@@ -584,7 +650,7 @@ try {
         $script:skipped++
     }
 } finally {
-    foreach ($w in @('rc1', 'rc2', 'rc3', 'rc4', 'rc5', 'rc6', 'rc7')) { & $exe +close --target=$w 2>$null | Out-Null }
+    foreach ($w in @('rc1', 'rc2', 'rc3', 'rc4', 'rc5', 'rc6', 'rc7', 'rc8', 'rc9')) { & $exe +close --target=$w 2>$null | Out-Null }
     Start-Sleep -Milliseconds 500
     Kill-RepoInstances
     Remove-TestDesktop | Out-Null
