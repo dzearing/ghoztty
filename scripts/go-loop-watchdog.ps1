@@ -123,6 +123,11 @@ param(
     [int]$PollSeconds = 300,
     [int]$StaleMinutes = 45,
     [int]$RearmMinutes = 20,
+    # How many re-entries inside one unmoved turn before the log stops reading
+    # like routine maintenance and says so (T1483). Three is one rearm window
+    # short of an hour: long enough that a slow recovery is not shouted at,
+    # short enough that 180 of them cannot pass unremarked for 63 hours.
+    [int]$IneffectiveLimit = 3,
     # The PROGRESS clock, beside the liveness one above (T1319). -StaleMinutes
     # asks "has anything touched this session lately"; these two ask "has the
     # loop finished a turn lately", which is the question a supervisor is for.
@@ -505,6 +510,32 @@ function Write-State($action) {
     Update-State @{ last_action = $action; last_action_at = (Get-Date).ToString('o') }
 }
 
+# --- the repetition clock (T1483) -------------------------------------------
+#
+# A re-entry is only worth taking if the LAST one achieved something, and until
+# now nothing here asked. `last_action_at` says when the watchdog last typed;
+# these two say whether any of it worked. The key is the turn the loop was on
+# when the action fired, so the count resets the moment a turn completes and
+# climbs only while the same one refuses to move.
+
+# Get-LoopTurnKey and Get-LoopIneffectiveCount are the pure halves, in
+# loop-session.ps1 - so the harness can compute the same key the watchdog will,
+# rather than asserting against a number only this file knows how to derive.
+function Get-IneffectiveCount([string]$turnKey) {
+    return (Get-LoopIneffectiveCount -State (Read-State) -TurnKey $turnKey)
+}
+
+function Add-Ineffective([string]$turnKey, $blocker) {
+    Update-State @{
+        recovery_turn_key    = $turnKey
+        recovery_ineffective = (Get-IneffectiveCount $turnKey) + 1
+        recovery_blocked     = [bool]$blocker.Blocked
+        recovery_blocked_kind = [string]$blocker.Kind
+        recovery_blocked_why  = [string]$blocker.Why
+        recovery_blocked_resets_at = [string]$blocker.ResetsAt
+    }
+}
+
 # The beacon this watchdog is judged by (T440). A supervisor that is doing its
 # job writes no actions at all, so "last action" cannot distinguish healthy from
 # gone - and the only other evidence was a log that stops, which nobody reads
@@ -549,6 +580,10 @@ if ($Status) {
         "running:    $(Test-WatchdogRunning)",
         "pids:       $((Get-WatchdogProcs).ProcessId -join ', ')",
         "last tick:  $tickAge (action=$(if ($s) { $s.last_tick } else { '-' }))",
+        "recovery:   $(if ($s -and $s.recovery_ineffective) { "$($s.recovery_ineffective) re-entry(s) inside one unmoved turn" +
+            $(if ($s.recovery_blocked) { " - BLOCKED($($s.recovery_blocked_kind)): $($s.recovery_blocked_why)" +
+                $(if ($s.recovery_blocked_resets_at) { " (clears $($s.recovery_blocked_resets_at))" } else { '' }) } else { '' }) }
+            else { 'nothing repeating' })",
         "run entry:  $(if ($run) { 'present' } else { 'MISSING' })",
         "revive task:$(if (Test-ReviveTask) { " present (every ${ReviveMinutes}m)" } else { ' MISSING' })",
         "state file: $StatePath"
@@ -588,6 +623,8 @@ function Invoke-Tick {
         $turnAge = [double]$lock.turn_age_minutes
     }
     $turnText = if ([double]::IsInfinity($turnAge)) { 'unknown' } else { '{0:N1}m' -f $turnAge }
+    # Assigned unconditionally: the lines below the held block quote it too, and
+    # an undefined variable interpolates to nothing rather than saying so.
     # Every decision line carries BOTH clocks and the limit each was measured
     # against. The 2026-09-04 log said `healthy` thirty times and the number it
     # believed - 31.51m of transcript age against a 2h32m turn - could only be
@@ -641,6 +678,39 @@ function Invoke-Tick {
              "deciding by the turn clock, not the pane pulse ($clocks $seen; T1319)")
     }
     if ($Force) { Log "forced: re-entry requested despite state=$state (caller knows the loop is broken; T439)" }
+
+    # WHY THE TURN IS NOT MOVING, not just that it is not (T1483). The stall
+    # line above was correct 716 times over 63.5 hours and carried no reason,
+    # while the reason sat in the session transcript in machine-readable form:
+    # every nudge was answered "You've hit your monthly spend limit ... resets
+    # Sep 12, 1am", and the loop came back when the quota reset rather than
+    # because the 180th nudge differed from the 179th. Read it here, once, so
+    # every line downstream can say it.
+    $blocker = @{ Blocked = $false; Kind = 'none'; Why = ''; ResetsAt = ''; Source = 'none' }
+    try {
+        $tp = if ($lock -and ($lock.PSObject.Properties.Name -contains 'transcript')) { [string]$lock.transcript } else { '' }
+        $blocker = Resolve-LoopBlocker -TranscriptPath $tp
+    } catch { Log "  note: the blocker probe failed: $($_.Exception.Message)" }
+    $blockText = ''
+    if ($blocker.Blocked) {
+        $blockText = ("BLOCKED($($blocker.Kind), by=$($blocker.Source)): the session's last answer was not work, it was " +
+                      "'" + $blocker.Why + "'" +
+                      $(if ($blocker.ResetsAt) { " - clears $($blocker.ResetsAt)" } else { '' }))
+    }
+
+    # And how many times this exact non-recovery has already been attempted.
+    # 180 identical re-entries inside one unmoved turn is the signal nobody was
+    # reading; it is a number now, on the line, rather than 951 log lines a
+    # human would have to count.
+    $turnKey = Get-LoopTurnKey $lock
+    $ineffective = Get-IneffectiveCount $turnKey
+    if ($blocker.Blocked) { Log "  $blockText" }
+    if ($ineffective -ge $IneffectiveLimit) {
+        Log ("RECOVERY INEFFECTIVE: $ineffective re-entries inside this same turn have changed nothing " +
+             "(turn=$($lock.turn) $clocks). " +
+             $(if ($blocker.Blocked) { "This is why: $blockText. Typing cannot clear it; the loop resumes when it clears." }
+               else { "Nothing in the transcript explains it - read the pane with 'ghoztty +read --name=$($lock.pane_id)'." }))
+    }
 
     $since = Get-MinutesSinceAction
     if ($since -lt $RearmMinutes -and -not $Force) {
@@ -730,6 +800,7 @@ function Invoke-Tick {
         # The lock still names a dead pid, so every later tick would re-decide
         # from scratch. Hand it the pane's own claude when that is unambiguous.
         if (-not $ownerAlive) { Invoke-Adopt $lock $paneId }
+        Add-Ineffective $turnKey $blocker
         Write-State 'nudge'
         return 'nudge'
     }
@@ -757,6 +828,7 @@ function Invoke-Tick {
         if ($after -eq 'claude') { Log "  RESTART-IN-PANE OK: pane $paneId is running claude" }
         elseif ($after -eq 'shell') { Log "  RESTART-IN-PANE UNVERIFIED: pane $paneId is still at a shell prompt after ${VerifySeconds}s" }
         else { Log "  RESTART-IN-PANE UNVERIFIED: pane $paneId occupant is $after" }
+        Add-Ineffective $turnKey $blocker
         Write-State 'restart-in-pane'
         return 'restart-in-pane'
     }
@@ -770,6 +842,7 @@ function Invoke-Tick {
     if ($DryRun) { return 'new-window' }
     $r = Invoke-Ghoztty @('+new-window', "--target=$WindowTarget", "--working-directory=$Repo", "--command=$shim")
     Log "  new-window exit=$($r.Code) $($r.Out)"
+    Add-Ineffective $turnKey $blocker
     Write-State 'new-window'
     return 'new-window'
 }

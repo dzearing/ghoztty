@@ -135,6 +135,7 @@ $loopPid = 0
 $ageMin = [double]::PositiveInfinity
 $turnAgeMin = [double]::PositiveInfinity
 $turnStarted = ''
+$transcript = ''
 if ($lock -and $lock.state) {
     $state = [string]$lock.state
     if ($lock.PSObject.Properties.Name -contains 'uptime') { $uptime = [string]$lock.uptime }
@@ -147,6 +148,7 @@ if ($lock -and $lock.state) {
         $turnAgeMin = [double]$lock.turn_age_minutes
     }
     if ($lock.PSObject.Properties.Name -contains 'turn_started') { $turnStarted = [string]$lock.turn_started }
+    if ($lock.PSObject.Properties.Name -contains 'transcript') { $transcript = [string]$lock.transcript }
 }
 
 # --- the marked execution window -------------------------------------------
@@ -362,6 +364,33 @@ if ($alive -and $turnAgeMin -gt $TurnStaleMinutes) {
         'moving without the loop working; read it with `ghoztty +read --name=<pane>` before theorising ' +
         '(an API 529 sits there looking exactly like a live session)')
 }
+# AND SAY WHY, WHEN THE SESSION ITSELF SAYS WHY (T1483).
+#
+# The note above ends "read the pane before theorising", which is sound advice
+# and useless to a loop running unattended: between 2026-09-09 and 2026-09-12
+# nobody read the pane for 63.5 hours, and the reason was sitting in the session
+# transcript the whole time in machine-readable form - every turn's first reply
+# was "You've hit your monthly spend limit ... your weekly limit resets Sep 12,
+# 1am". This line is the one a controller actually reads, so it carries the
+# answer rather than the instruction to go looking for it. Same classifier the
+# watchdog uses, for the same reason AF exists: two supervisors must not reach
+# different conclusions about one session.
+$blocker = @{ Blocked = $false; Kind = 'none'; Why = ''; ResetsAt = ''; Source = 'none' }
+if ($alive -and $turnAgeMin -gt $TurnSuspectMinutes) {
+    try {
+        . (Join-Path $PSScriptRoot 'loop-session.ps1')
+        $blocker = Resolve-LoopBlocker -TranscriptPath $transcript
+    } catch {
+        $notes += "the session transcript could not be classified, so an external blocker would be invisible here: $($_.Exception.Message)"
+    }
+}
+if ($blocker.Blocked) {
+    $notes += ("the session is BLOCKED($($blocker.Kind)) and no amount of nudging clears it - its last answer was " +
+        "'$($blocker.Why)'" +
+        $(if ($blocker.ResetsAt) { " (clears $($blocker.ResetsAt))" } else { '' }) +
+        ' - the loop resumes on its own once that lifts')
+}
+
 # HEALTH AND THE WATCHDOG MUST NOT DISAGREE (user, 2026-09-06).
 #
 # The 180m backstop above was this line's only turn arm, so twice in one
@@ -472,6 +501,10 @@ if ($Json) {
         turn_started     = $turnStarted
         turn_age_minutes = if ([double]::IsInfinity($turnAgeMin)) { $null } else { $turnAgeMin }
         turn_stalled     = $turnStalled
+        blocked          = [bool]$blocker.Blocked
+        blocked_kind     = [string]$blocker.Kind
+        blocked_why      = [string]$blocker.Why
+        blocked_resets_at = [string]$blocker.ResetsAt
         marked_windows = $marked
         watchdog       = $watchdog
         dashboard      = $dashboard
@@ -491,7 +524,7 @@ if ($Json) {
 } else {
     $task = if ($inProgress.Count) { $inProgress -join ',' } else { 'none' }
     "$(Now-Iso) $($verdict.ToUpper()) uptime=$uptime turn=$turn turn_age=$(Format-Age $turnAgeMin) state=$state pane=$pane pid=$loopPid " +
-    "task=$task decisions_open=$openDecisions digest=$digestState publish=$publishState windows=$marked watchdog=$watchdog dashboard=$dashboard"
+    "task=$task decisions_open=$openDecisions digest=$digestState publish=$publishState blocked=$(if ($blocker.Blocked) { $blocker.Kind } else { 'no' }) windows=$marked watchdog=$watchdog dashboard=$dashboard"
     foreach ($n in $notes) { "  - $n" }
 }
 

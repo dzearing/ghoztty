@@ -68,6 +68,11 @@
 #  BB. The WATCHDOG decides by that same clock (T1319): a held lock whose turn
 #      has not completed is re-entered, and a composer holding unsent text is
 #      read as a stalled turn rather than as activity.
+#  CC. WHY the turn is not moving, and how many times that has been ignored
+#      (T1483): a session blocked from OUTSIDE this box - a spend limit, a 5xx -
+#      is named by both supervisors from the transcript it wrote, with the
+#      instant it clears; and re-entries inside one unmoved turn are counted, so
+#      180 of them cannot read like the first one.
 #
 # Hermetic: every lock/state/tracker file lives under a per-run temp dir, the
 # repo's own temp\go-loop.lock.json is never touched, and only ghoztty
@@ -2429,6 +2434,232 @@ Assert 'BB33 an idle pane early in a turn is between turns, not a stall' (-not $
 $bbBlind = Resolve-LoopStallVerdict -TurnAgeMinutes 152 -StaleMinutes 180 -SuspectMinutes 45 `
     -ComposerText '' -PaneState 'unknown'
 Assert 'BB34 a pane the probe could not classify is not nudged' (-not $bbBlind.Stalled)
+
+Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
+
+# --- CC. an external blocker is NAMED, and repetition is counted (T1483) ----
+#
+# WHY. Between 2026-09-09 09:46 and 2026-09-12 01:11 the loop did no work for
+# 63.5 hours. Nothing failed to detect it: the watchdog logged STALLED(by=turn)
+# 716 times, turn_age climbing from 604m to 3,804m, and it nudged the pane 180
+# times. Every nudge was answered in under a second by:
+#
+#   "You've hit your monthly spend limit - raise it at claude.ai/settings/usage
+#    - your weekly limit resets Sep 12, 1am (America/Los_Angeles)"
+#
+# and the loop came back at 01:11 because the quota reset at 01:00, not because
+# the 180th nudge differed from the 179th. Two things were missing, and neither
+# is the detector:
+#   1. The REASON. It was machine-readable the whole time - Claude Code writes
+#      that reply into the session transcript with `isApiErrorMessage: true` and
+#      a `quotaLimits.resetsAt` epoch - and neither supervisor read it. The
+#      health note said "read the pane before theorising"; nobody was standing
+#      in front of the pane for three days.
+#   2. The COUNT. 180 identical re-entries inside one unmoved turn read exactly
+#      like the first one. A repetition nobody totals is a repetition nobody
+#      sees.
+#
+# The fixture below is the real thing: entries shaped exactly like the ones in
+# transcript c41566bf for 2026-09-10 12:00-13:00, quotaLimits and all.
+""
+"CC. the blocker is named and the repetition is counted"
+
+$ccRoot = Join-Path $root 'blocker'
+New-Item -ItemType Directory -Force $ccRoot | Out-Null
+$ccBlocked = Join-Path $ccRoot 'blocked.jsonl'
+$ccClear = Join-Path $ccRoot 'clear.jsonl'
+$ccRecovered = Join-Path $ccRoot 'recovered.jsonl'
+$ccApi = Join-Path $ccRoot 'api.jsonl'
+
+# The measured message, written from code points so this file stays ASCII (the
+# real one carries U+00B7 separators, which is also what the classifier's
+# whitespace normalisation has to survive).
+$ccDot = [string][char]0x00B7
+$ccLimitText = ("You've hit your monthly spend limit $ccDot raise it at " +
+    "claude.ai/settings/usage?from=cc_cli_limit_message $ccDot your weekly limit resets " +
+    'Sep 12, 1am (America/Los_Angeles)')
+# 1789200000 = 2026-09-12 01:00 America/Los_Angeles, the instant the loop
+# actually came back. The prose and the epoch are both in the real entry.
+$ccResetEpoch = 1789200000
+$ccResetLocal = ([datetimeoffset]::FromUnixTimeSeconds($ccResetEpoch)).LocalDateTime.ToString('yyyy-MM-dd HH:mm')
+
+function CCEntry($type, $text, [switch]$ApiError, [int]$Resets) {
+    $o = [ordered]@{
+        type      = $type
+        timestamp = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')
+        message   = [ordered]@{ role = $type; content = @([ordered]@{ type = 'text'; text = $text }) }
+    }
+    if ($ApiError) { $o['isApiErrorMessage'] = $true }
+    if ($Resets) { $o['quotaLimits'] = [ordered]@{ status = 'rejected'; resetsAt = $Resets } }
+    return ($o | ConvertTo-Json -Depth 6 -Compress)
+}
+
+# The exact 20-minute cycle the log shows, three times over: the nudge arrives,
+# the answer is the limit, nothing happens.
+$ccNudge = 'Before starting any task, run /reset-context read go.md and go'
+$ccBlockedLines = @()
+foreach ($i in 1..3) {
+    $ccBlockedLines += (CCEntry 'user' $ccNudge)
+    $ccBlockedLines += (CCEntry 'assistant' $ccLimitText -ApiError -Resets $ccResetEpoch)
+}
+Set-Content -LiteralPath $ccBlocked -Encoding utf8 -Value ($ccBlockedLines -join "`n")
+# A session doing ordinary work.
+Set-Content -LiteralPath $ccClear -Encoding utf8 -Value ((@(
+    (CCEntry 'user' 'read go.md and go'),
+    (CCEntry 'assistant' 'Claiming the loop.')) -join "`n"))
+# The same blocker, followed by a turn that worked - which is what 01:11 looked
+# like, and must NOT read as blocked.
+Set-Content -LiteralPath $ccRecovered -Encoding utf8 -Value ((@(
+    (CCEntry 'assistant' $ccLimitText -ApiError -Resets $ccResetEpoch),
+    (CCEntry 'user' $ccNudge),
+    (CCEntry 'assistant' 'Claiming the loop.')) -join "`n"))
+# The OTHER shape this classifier meets - transient, no quota, worth retrying.
+Set-Content -LiteralPath $ccApi -Encoding utf8 -Value (CCEntry 'assistant' 'API Error: 529 Overloaded' -ApiError)
+
+$ccBlock = Resolve-LoopBlocker -TranscriptPath $ccBlocked
+Assert 'CC1 the measured 2026-09-10 rejection is classified as a usage limit' `
+    ($ccBlock.Blocked -and $ccBlock.Kind -eq 'usage-limit' -and $ccBlock.Source -eq 'transcript')
+Assert 'CC2 and it quotes the sentence, so the log needs no second lookup' `
+    ($ccBlock.Why -match 'monthly spend limit')
+Assert 'CC3 and it names the instant the loop actually came back, from the epoch' `
+    ($ccBlock.ResetsAt -eq $ccResetLocal)
+Assert 'CC4 a working session is not blocked' `
+    (-not (Resolve-LoopBlocker -TranscriptPath $ccClear).Blocked)
+# THE false positive that would park the supervisor forever: an error the
+# session has already recovered from. Only the newest answer counts.
+Assert 'CC5 a blocker the session has since recovered from is history, not a blocker' `
+    (-not (Resolve-LoopBlocker -TranscriptPath $ccRecovered).Blocked)
+$ccApiV = Resolve-LoopBlocker -TranscriptPath $ccApi
+Assert 'CC6 a transport error is api-error, not a quota - the two need different answers' `
+    ($ccApiV.Blocked -and $ccApiV.Kind -eq 'api-error')
+Assert 'CC7 a transcript that does not exist answers "not blocked" rather than throwing' `
+    (-not (Resolve-LoopBlocker -TranscriptPath (Join-Path $ccRoot 'nope.jsonl')).Blocked)
+Assert 'CC8 no transcript at all is the same' `
+    (-not (Resolve-LoopBlocker -TranscriptPath '').Blocked)
+# The fallback for a lock with no transcript field: the same sentence is on the
+# SCREEN, so a supervisor that can see the pane is never blind.
+$ccPane = Resolve-LoopBlocker -TranscriptPath '' -PaneTail ("* Read(go.md)`r`n" + $ccLimitText)
+Assert 'CC9 the pane carries the same sentence, and is read when the transcript cannot be' `
+    ($ccPane.Blocked -and $ccPane.Kind -eq 'usage-limit' -and $ccPane.Source -eq 'pane')
+Assert 'CC10 and it recovers the reset from the prose when there is no epoch' `
+    ($ccPane.ResetsAt -match 'Sep 12')
+# The pane arm must MATCH, never assume: an ordinary screen is not a blocker.
+Assert 'CC11 an ordinary pane is not a blocker' `
+    (-not (Resolve-LoopBlocker -TranscriptPath '' -PaneTail 'PS> git status').Blocked)
+
+# --- the watchdog says it -------------------------------------------------
+Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
+$ccProc = Start-Sleeper; $sleepers += $ccProc
+Lock-Run @('acquire', '-PaneId', 'PANE-CC', '-ClaudePid', $ccProc.Id, '-TranscriptPath', $ccBlocked) | Out-Null
+$L = Read-LockFile
+$L.turn_started = (Get-Date).AddMinutes(-3800).ToString('o')
+Write-LockFile $L
+$r = Dog-Run @('-DryRun')
+Assert 'CC12 the 63-hour shape still re-enters - naming the blocker must not stop the retry' `
+    ($r.Out -match 'ACTION ')
+Assert 'CC13 and the decision line now says WHY the turn is not moving' `
+    ($r.Out -match 'BLOCKED\(usage-limit, by=transcript\)')
+Assert 'CC14 and names when it clears, which is the one fact that predicts recovery' `
+    ($r.Out -match [regex]::Escape($ccResetLocal))
+# The negative control for CC13: the identical fixture with a working session
+# must produce no BLOCKED line at all. Without this arm CC13 passes against a
+# watchdog that prints the word unconditionally.
+$L.transcript = $ccClear
+Write-LockFile $L
+$r = Dog-Run @('-DryRun')
+Assert 'CC15 a stalled-but-unblocked loop prints no blocker line' `
+    ($r.Out -match 'ACTION ' -and $r.Out -notmatch 'BLOCKED\(')
+
+# --- the repetition is counted --------------------------------------------
+# Replay of the real 2026-09-09..12 shape by its own numbers: 180 re-entries
+# inside ONE turn that never completes. Seeded into the watchdog's state rather
+# than performed, because performing them means 180 real `+new-window` calls
+# against the user's terminal - and what is under test is the COUNT, which the
+# watchdog reads from that file on every tick.
+$L.transcript = $ccBlocked
+Write-LockFile $L
+$ccTurnKey = Get-LoopTurnKey (Read-LockFile)
+Assert 'CC16 the turn key is the turn-start instant, so it moves only when a turn completes' `
+    ($ccTurnKey -eq ("started=" + [string](Read-LockFile).turn_started))
+function CCSeed([int]$n, [string]$key) {
+    Set-Content -LiteralPath $state -Encoding utf8 -Value (@{
+        last_action = 'nudge'
+        last_action_at = (Get-Date).AddHours(-1).ToString('o')
+        recovery_turn_key = $key
+        recovery_ineffective = $n
+        recovery_blocked = $true
+        recovery_blocked_kind = 'usage-limit'
+        recovery_blocked_why = $ccLimitText
+    } | ConvertTo-Json -Depth 4)
+}
+CCSeed 180 $ccTurnKey
+$r = Dog-Run @('-DryRun')
+Assert 'CC17 the 180 re-entries of 2026-09-09..12 escalate into one countable line' `
+    ($r.Out -match 'RECOVERY INEFFECTIVE: 180 re-entries')
+Assert 'CC18 and it names the blocker as the reason, rather than sending a reader to the pane' `
+    ($r.Out -match 'Typing cannot clear it')
+# Teeth: below the limit the same fixture stays quiet. Without this arm CC17
+# passes against a watchdog that shouts on every tick, which is the same thing
+# as never shouting.
+CCSeed 1 $ccTurnKey
+$r = Dog-Run @('-DryRun')
+Assert 'CC19 one re-entry is ordinary maintenance and is not shouted about' `
+    ($r.Out -notmatch 'RECOVERY INEFFECTIVE')
+# THE arm that keeps the counter honest: the count belongs to a TURN, so a
+# completed turn clears it. Without this, one bad night leaves the watchdog
+# shouting forever.
+CCSeed 180 'started=some-older-turn'
+$r = Dog-Run @('-DryRun')
+Assert 'CC20 a count from a turn that has since completed does not carry over' `
+    ($r.Out -notmatch 'RECOVERY INEFFECTIVE')
+Assert 'CC21 and the pure counter agrees, keyed on the turn and nothing else' `
+    ((Get-LoopIneffectiveCount -State (Get-Content $state -Raw | ConvertFrom-Json) -TurnKey $ccTurnKey) -eq 0)
+CCSeed 7 $ccTurnKey
+Assert 'CC22 while a matching turn reads its count back' `
+    ((Get-LoopIneffectiveCount -State (Get-Content $state -Raw | ConvertFrom-Json) -TurnKey $ccTurnKey) -eq 7)
+# And the wiring: every action the watchdog can take has to advance the count,
+# or the seeded arms above are measuring a number nothing writes.
+$ccDogSrc = Get-Content $dogScript -Raw
+Assert 'CC23 all three re-entry actions advance the count' `
+    (([regex]::Matches($ccDogSrc, 'Add-Ineffective \$turnKey \$blocker')).Count -eq 3)
+
+# --- health says it too ---------------------------------------------------
+# AF's rule, applied to the new fact: the actor and the observer must not reach
+# different conclusions about one session.
+$L = Read-LockFile
+$L.turn_started = (Get-Date).AddMinutes(-3800).ToString('o')
+$L.transcript = $ccBlocked
+Write-LockFile $L
+function CCHealth([switch]$AsJson) {
+    $a = @('-Repo', $Repo, '-LockPath', $lock, '-NoPaneProbe')
+    if ($AsJson) { $a += '-Json' }
+    return (& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\go-loop-health.ps1') @a 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String)
+}
+$ccH = CCHealth
+Assert 'CC24 the health line names the blocker where a controller actually looks' `
+    ($ccH -match 'blocked=usage-limit')
+Assert 'CC25 and the note explains that nudging cannot clear it' `
+    ($ccH -match 'BLOCKED\(usage-limit\)' -and $ccH -match 'monthly spend limit')
+Assert 'CC26 and a blocked loop is never HEALTHY' ($ccH -match 'DEGRADED')
+$ccHJson = $null
+try { $ccHJson = (CCHealth -AsJson) | ConvertFrom-Json } catch { }
+Assert 'CC27 -Json carries it for the dashboard' `
+    ($null -ne $ccHJson -and $ccHJson.blocked -eq $true -and $ccHJson.blocked_kind -eq 'usage-limit' -and
+     $ccHJson.blocked_resets_at -eq $ccResetLocal)
+# The negative control for CC24-CC27, the AA1b way: the same stalled fixture
+# with a working transcript reports no blocker.
+$L = Read-LockFile
+$L.transcript = $ccClear
+Write-LockFile $L
+$ccClearH = CCHealth
+Assert 'CC28 an unblocked stall still reports blocked=no' `
+    ($ccClearH -match 'blocked=no' -and $ccClearH -notmatch 'BLOCKED\(')
+# And the wiring, AF6's way: both supervisors must go through the one
+# classifier, or every assertion above is about a copy that can drift.
+Assert 'CC29 health and the watchdog call the same classifier' `
+    ((Get-Content (Join-Path $Repo 'scripts\go-loop-health.ps1') -Raw) -match 'Resolve-LoopBlocker' -and
+     (Get-Content $dogScript -Raw) -match 'Resolve-LoopBlocker')
 
 Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
 

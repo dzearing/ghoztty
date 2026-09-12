@@ -9,6 +9,61 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-12: T1483 - **the loop was dark for 63.5 hours and the reason was in
+  its own transcript the whole time.** Between 2026-09-09 09:46 and 2026-09-12
+  01:11 no turn completed. The watchdog was not asleep: it logged
+  `STALLED(by=turn)` 716 times, `turn_age` climbing from 604.8m to 3,804.5m
+  against a 180m limit, and it nudged the pane 180 times. Every nudge was
+  answered inside a second by Claude Code itself - *"You've hit your monthly
+  spend limit ... your weekly limit resets Sep 12, 1am"* - and the loop came
+  back at 01:11 because the quota reset at 01:00, not because the 180th nudge
+  differed from the 179th.
+
+  Two of the three diagnoses the task was filed with did not survive reading the
+  code, and both are recorded in T1483 so nobody re-implements them. The rearm
+  gate is **not** starvable by pane chatter: its input is
+  `Get-MinutesSinceAction`, the age of the watchdog's own last *action*, and the
+  5m/10m/15m readings in the log are that clock restarting after each nudge -
+  they matched `age(by=transcript)` only because typing into a pane also touches
+  the transcript. And `go-loop-health.ps1` does not print HEALTHY over a stale
+  turn clock; T1290's gate is at `:358` and sections AA/AF already hold it to a
+  14.5h fixture. What was missing was the third bullet, and it was the whole
+  defect: **a supervisor that repeats one ineffective action 180 times and
+  cannot say why is reporting a symptom.**
+
+  So there is now a classifier for a session blocked from OUTSIDE this box.
+  `Resolve-LoopBlocker` reads the transcript the lock already names - Claude Code
+  writes such replies with `isApiErrorMessage: true` and, for a quota, a
+  `quotaLimits.resetsAt` epoch - and answers `usage-limit` (with the instant it
+  clears: 1789200000 is 2026-09-12 01:00, the minute the loop resumed) or
+  `api-error`, falling back to the pane tail when there is no transcript. Only
+  the session's newest answer counts, so a blocker it has already recovered from
+  is history rather than a park. The watchdog prints
+  `BLOCKED(usage-limit, by=transcript): ... - clears 2026-09-12 01:00` on the
+  decision line and keeps a repetition clock keyed on `turn_started`: past three
+  re-entries inside one unmoved turn it says `RECOVERY INEFFECTIVE: N re-entries
+  ... Typing cannot clear it`, and a completed turn resets the count. The health
+  line carries `blocked=<kind|no>` where a controller actually looks, with the
+  three fields in `-Json` for the dashboard - through the **same** classifier,
+  per AF's rule that the actor and the observer must not reach different
+  conclusions about one session. The retry itself is unchanged: nudging is still
+  how the loop discovers the block has lifted; it just cannot do it silently.
+
+  29 new arms (section CC of `test\win32\go-loop-guard.ps1`), fixtured on the
+  real 2026-09-10 entries, with negative controls in both directions - an
+  unblocked stall prints no blocker line and reports `blocked=no`, one re-entry
+  is not shouted about, a count from a completed turn does not carry over. The
+  demonstration that they could fail: none of `blocked=`, `Resolve-LoopBlocker`,
+  `BLOCKED(usage-limit` or `RECOVERY INEFFECTIVE` exists in the scripts at
+  `HEAD~`. Whole harness green at 398 assertions, 0 skipped.
+
+  Two follow-ups, because this closes the diagnosis gap and not the one that
+  cost the 63 hours. **T1484** (P1): everything above is *pull* - a blocked loop
+  is still only visible to somebody who runs a command, and for 63.5 hours
+  nobody did. The dashboard already polls the payload that now carries it.
+  **T1485** (P2): while a quota blocks the loop, retry at the `resetsAt` the
+  message hands us instead of every 20 minutes regardless.
+
 - 2026-09-12: T1481 - **an unrelated apt repository had been deciding whether
   this branch had a Windows build signal at all.** fork-ci's `windows-cross`
   job had died in "Build and install msitools" on every push since 2026-09-09,

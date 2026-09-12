@@ -286,6 +286,174 @@ function Resolve-LoopStallVerdict {
     return @{ Stalled = $false; Clock = 'none'; Why = '' }
 }
 
+# --- the external blocker (T1483) -------------------------------------------
+#
+# WHY. Between 2026-09-09 09:46 and 2026-09-12 01:11 the loop did no work for
+# 63.5 hours. The watchdog detected the stall correctly 716 times and nudged the
+# pane 180 times, and every single nudge was answered inside a second by:
+#
+#   "You've hit your monthly spend limit - raise it at claude.ai/settings/usage
+#    - your weekly limit resets Sep 12, 1am (America/Los_Angeles)"
+#
+# The loop came back at 01:11 because the quota reset at 01:00, not because the
+# 180th nudge differed from the 179th. Nothing was wedged; the session was
+# BLOCKED by something outside this box, and no supervisor here can type its way
+# past that. The defect is that neither supervisor could SAY so: the watchdog
+# logged `STALLED(by=turn)` 716 times with no reason attached, and the health
+# line's note sent the reader to the pane - which nobody was standing in front
+# of for three days.
+#
+# The answer was machine-readable the whole time. Claude Code writes each such
+# reply into the session transcript with `isApiErrorMessage: true`, and a quota
+# rejection carries `quotaLimits.status = "rejected"` and a `resetsAt` epoch. So
+# the classifier reads the transcript the lock already names, and both
+# supervisors report the blocker instead of narrating the symptom.
+#
+# Pure half, so the whole thing is testable without a live session: hand it the
+# transcript's parsed entries, oldest first.
+#
+# Returns @{ Blocked; Kind; Why; ResetsAt; Source }. Kind is 'usage-limit' (a
+# quota the user can raise or wait out), 'api-error' (transport, 5xx, overload -
+# transient and worth retrying), or 'none'.
+function Resolve-LoopBlockerFromEntries {
+    param(
+        [object[]]$Entries = @(),
+        [AllowEmptyString()][string]$PaneTail = ''
+    )
+    $none = @{ Blocked = $false; Kind = 'none'; Why = ''; ResetsAt = ''; Source = 'none' }
+
+    # Only the session's MOST RECENT answer counts. An error from four turns ago
+    # is history: the loop demonstrably recovered from it, and treating it as a
+    # live blocker would park the supervisor over a session that is working.
+    $last = $null
+    for ($i = $Entries.Count - 1; $i -ge 0; $i--) {
+        $e = $Entries[$i]
+        if ($null -eq $e) { continue }
+        if ([string]$e.type -eq 'assistant') { $last = $e; break }
+    }
+    if ($last -and $last.isApiErrorMessage) {
+        $text = Get-LoopEntryText $last
+        $v = Resolve-LoopBlockerText $text
+        $v.Source = 'transcript'
+        # The epoch beats the prose: the message says "Sep 12, 1am" in the
+        # user's words, `quotaLimits.resetsAt` says it in seconds and is what a
+        # caller can compare against a clock.
+        $resets = $null
+        try { $resets = $last.quotaLimits.resetsAt } catch { $resets = $null }
+        if ($resets) {
+            try {
+                $v.ResetsAt = ([datetimeoffset]::FromUnixTimeSeconds([int64]$resets)).LocalDateTime.ToString('yyyy-MM-dd HH:mm')
+            } catch { }
+        }
+        return $v
+    }
+
+    # The fallback for a transcript that cannot be read at all - a lock written
+    # before the field existed, a session whose file has been rotated. The pane
+    # is where the same text is VISIBLE, so a supervisor that can see the screen
+    # is never blind just because the file moved.
+    if ($PaneTail) {
+        $v = Resolve-LoopBlockerText $PaneTail -RequireMatch
+        if ($v.Blocked) { $v.Source = 'pane'; return $v }
+    }
+    return $none
+}
+
+# The text -> verdict half, shared by both sources above. Separate so the
+# patterns have exactly one home: the pane and the transcript carry the same
+# sentence, and two copies of these regexes would eventually disagree.
+function Resolve-LoopBlockerText {
+    param([AllowEmptyString()][string]$Text = '', [switch]$RequireMatch)
+    $t = ($Text -replace '\s+', ' ').Trim()
+    $quota = 'spend limit|usage limit|rate limit|limit reached|hit your .*limit|quota'
+    $kind = if ($t -match $quota) { 'usage-limit' }
+            elseif ($RequireMatch) { 'none' }
+            else { 'api-error' }
+    if ($kind -eq 'none') { return @{ Blocked = $false; Kind = 'none'; Why = ''; ResetsAt = ''; Source = 'none' } }
+    $why = $t
+    if ($why.Length -gt 200) { $why = $why.Substring(0, 200) + '...' }
+    $resets = ''
+    $m = [regex]::Match($t, 'resets?\s+(?:at\s+)?([^.;]{3,60})', 'IgnoreCase')
+    if ($m.Success) { $resets = $m.Groups[1].Value.Trim() }
+    return @{ Blocked = $true; Kind = $kind; Why = $why; ResetsAt = $resets; Source = 'text' }
+}
+
+# The text of a transcript entry, whichever shape its content takes. Claude Code
+# writes `message.content` as a string for some entries and an array of typed
+# blocks for others; an error message is the array shape.
+function Get-LoopEntryText {
+    param($Entry)
+    if ($null -eq $Entry) { return '' }
+    $c = $null
+    try { $c = $Entry.message.content } catch { return '' }
+    if ($null -eq $c) { return '' }
+    if ($c -is [string]) { return $c }
+    $parts = @()
+    foreach ($b in @($c)) {
+        if ($null -eq $b) { continue }
+        if ($b -is [string]) { $parts += $b; continue }
+        if ($b.PSObject.Properties.Name -contains 'text' -and $b.text) { $parts += [string]$b.text }
+    }
+    return ($parts -join ' ')
+}
+
+# The IO half: the last $Count entries of a Claude Code transcript, oldest
+# first. A file that cannot be read answers with nothing rather than throwing -
+# a supervisor must never die because a log line was half-written under it.
+function Read-LoopTranscriptTail {
+    param([string]$Path, [int]$Count = 40)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return @() }
+    $lines = @()
+    # -Encoding UTF8 is not optional: the transcript is UTF-8 and PS 5.1 reads
+    # the ANSI codepage by default, which mojibakes the very punctuation the
+    # quota message is written with.
+    try { $lines = @(Get-Content -LiteralPath $Path -Tail $Count -Encoding UTF8 -ErrorAction Stop) } catch { return @() }
+    $out = @()
+    foreach ($l in $lines) {
+        if (-not $l -or -not $l.Trim()) { continue }
+        try { $out += ($l | ConvertFrom-Json) } catch { }
+    }
+    return $out
+}
+
+# What both supervisors call. Transcript first, pane as the fallback.
+function Resolve-LoopBlocker {
+    param(
+        [string]$TranscriptPath = '',
+        [AllowEmptyString()][string]$PaneTail = '',
+        [int]$Count = 40
+    )
+    return (Resolve-LoopBlockerFromEntries `
+        -Entries (Read-LoopTranscriptTail -Path $TranscriptPath -Count $Count) `
+        -PaneTail $PaneTail)
+}
+
+# --- the repetition clock (T1483) -------------------------------------------
+#
+# A re-entry is only worth taking if the LAST one achieved something, and until
+# 2026-09-12 nothing asked. The watchdog's `last_action_at` says when it last
+# typed; these say whether any of it worked. The key is the TURN an action was
+# aimed at, so the count resets the instant a turn completes and climbs only
+# while one and the same turn refuses to move - which is how 180 re-entries
+# inside a single turn become a number instead of 951 log lines.
+function Get-LoopTurnKey($Lock) {
+    if (-not $Lock) { return 'none' }
+    if (($Lock.PSObject.Properties.Name -contains 'turn_started') -and $Lock.turn_started) {
+        return "started=$([string]$Lock.turn_started)"
+    }
+    return "turn=$([string]$Lock.turn)"
+}
+
+# Pure: what the watchdog's persisted state says about THIS turn. A state that
+# names a different turn counts as zero rather than as history, which is the
+# whole point of keying it.
+function Get-LoopIneffectiveCount($State, [string]$TurnKey) {
+    if (-not $State) { return 0 }
+    if (-not ($State.PSObject.Properties.Name -contains 'recovery_turn_key')) { return 0 }
+    if ([string]$State.recovery_turn_key -ne $TurnKey) { return 0 }
+    try { return [int]$State.recovery_ineffective } catch { return 0 }
+}
+
 # The prompt to type into a surviving session, derived from the resume command
 # so the two can never disagree: `claude ... --continue "read go.md and go"`
 # resumes with exactly the text a reused session is sent.
