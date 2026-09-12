@@ -97,6 +97,7 @@ function Get-Http([string]$url, [int]$timeoutSec = 30) {
 }
 
 Write-Host "task-dashboard acceptance (T505) on port $Port"
+# stderr: n/a - this starts node (the dashboard server), not ghoztty.
 $srv = Start-Process -FilePath $node.Source -ArgumentList ('"' + $dash + '" --port ' + $Port) `
     -WorkingDirectory $Repo -WindowStyle Hidden -PassThru
 try {

@@ -101,7 +101,10 @@ function Stop-TestApps {
 # Returns the pid, or 0.
 function Start-TestApp($tag) {
     # persistence: on (default) - the guard path under test is the one a persistent app takes; this script counts PROCESSES, not panes.
-    $p = Start-Process -FilePath $Exe -ArgumentList @("--title=$tag") -PassThru
+    # T689: one log per tag, so a script that starts the app several times keeps
+    # each launch's account of itself.
+    $p = Start-Process -FilePath $Exe -ArgumentList @("--title=$tag") -PassThru `
+        -RedirectStandardError (Join-Path $root "app-$tag.err.txt")
     $appPid = $p.Id
     $deadline = (Get-Date).AddSeconds(40)
     while ((Get-Date) -lt $deadline) {
@@ -119,7 +122,9 @@ function Start-Guard($appPid, $marker) {
     $env:GHOZTTY_RELAUNCH_GUARD = "$appPid|$marker|$Exe"
     try {
         # persistence: on (default) - see Start-TestApp above.
-        return (Start-Process -FilePath $Exe -PassThru -WindowStyle Hidden)
+        # T689: the guard's own stderr, named after the marker it was armed with.
+        $guardLog = Join-Path $root ("guard-" + ($marker -replace '[^\w\-]', '_') + '.err.txt')
+        return (Start-Process -FilePath $Exe -PassThru -WindowStyle Hidden -RedirectStandardError $guardLog)
     } finally {
         Remove-Item env:GHOZTTY_RELAUNCH_GUARD -ErrorAction SilentlyContinue
     }
@@ -250,7 +255,10 @@ try {
     $env:GHOZTTY_RELAUNCH_GUARD = 'this-is-not-a-spec'
     try {
         # persistence: on (default) - see Start-TestApp above.
-        $bad = Start-Process -FilePath $Exe -PassThru -WindowStyle Hidden
+        # T689: this launch is EXPECTED to refuse the spec and exit, so its
+        # stderr is the only place the refusal reason is ever written down.
+        $bad = Start-Process -FilePath $Exe -PassThru -WindowStyle Hidden `
+            -RedirectStandardError (Join-Path $root 'bad-spec.err.txt')
     } finally {
         Remove-Item env:GHOZTTY_RELAUNCH_GUARD -ErrorAction SilentlyContinue
     }

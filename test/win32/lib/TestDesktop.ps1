@@ -2185,6 +2185,82 @@ $script:GhozttyTestDesktopAllPids = @()
 # teardown report does not present a deliberate Stop-Process as a mystery.
 $script:GhozttyTestDesktopLaunches = @()
 
+# T689: where a launch that named no -StdErr gets its log.
+#
+# A debug build writes std.log to stderr and NOTHING else - no event-log record,
+# no crash dump - so a launch that redirects nowhere throws the app's whole
+# account of itself away at exactly the moment it becomes interesting. That is
+# the state `pane-banner.ps1` was in when its instance disappeared mid-run: a red
+# line, no log, and a re-run with an edit as the only way to find out anything.
+# 138 launch sites in this suite passed -StdErr and 127 did not, which is what a
+# per-call-site convention decays to.
+#
+# So the redirect is the helper's job rather than each caller's. A caller that
+# names its own path still wins (many do, and their oracles read those files
+# back); a caller that names none gets one here, and `Write-TestGuiPostmortem`
+# and the teardown's died-on-its-own report - both of which already read the
+# record's StdErr field - print its tail without another edit anywhere.
+#
+# One directory per run per script, one numbered file per launch inside it, so a
+# script that launches nine times cannot overwrite its own evidence. Nothing
+# deletes them at the end of a run: the failure this exists for is the one where
+# the run is already over by the time anyone asks.
+$script:GhozttyTestStdErrDir = $null
+$script:GhozttyTestStdErrSeq = 0
+
+# How many previous runs' directories survive under the shared root. The logs
+# are small (a debug GUI writes a few KB), and keeping the last few dozen means
+# the answer to "what did it say yesterday" is usually still on disk.
+$script:GhozttyTestStdErrKeep = 40
+
+<#
+This run's stderr directory, created (and the older ones trimmed) on first use.
+
+The name comes from the outermost script on the call stack that is not part of
+`lib\`, so `caption-bar-12345\` is legible in a directory listing next to
+`tab-strip-23456\`.
+#>
+function Get-TestStdErrDir {
+    if ($script:GhozttyTestStdErrDir) { return $script:GhozttyTestStdErrDir }
+
+    $caller = 'test'
+    foreach ($frame in (Get-PSCallStack)) {
+        if (-not $frame.ScriptName) { continue }
+        if ($frame.ScriptName -like '*\lib\*') { continue }
+        $caller = [IO.Path]::GetFileNameWithoutExtension($frame.ScriptName)
+    }
+    $root = Join-Path ([IO.Path]::GetTempPath()) 'ghoztty-test-stderr'
+    if (-not (Test-Path $root)) { New-Item -ItemType Directory -Force $root | Out-Null }
+
+    # Trim oldest-first. Wrapped because another script's run may be deleting
+    # the same directory at the same moment, and losing that race must not take
+    # a test down with it.
+    try {
+        $old = @(Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -Skip $script:GhozttyTestStdErrKeep)
+        foreach ($d in $old) { Remove-Item -Recurse -Force $d.FullName -ErrorAction SilentlyContinue }
+    } catch { }
+
+    $dir = Join-Path $root ("{0}-{1}" -f $caller, $PID)
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Force $dir | Out-Null }
+    $script:GhozttyTestStdErrDir = $dir
+    return $dir
+}
+
+<#
+The next default stderr path for a launch of $Exe. Numbered so a multi-launch
+script keeps every launch's output, and named after the image so a fixture
+(cmd.exe, node.exe) is not mistaken for the app under test.
+#>
+function New-TestStdErrPath {
+    param([Parameter(Mandatory = $true)][string]$Exe)
+    $dir = Get-TestStdErrDir
+    $script:GhozttyTestStdErrSeq++
+    $leaf = [IO.Path]::GetFileNameWithoutExtension($Exe)
+    if (-not $leaf) { $leaf = 'child' }
+    return (Join-Path $dir ("{0:d3}-{1}.err.txt" -f $script:GhozttyTestStdErrSeq, $leaf))
+}
+
 . (Join-Path $PSScriptRoot 'GuiPostmortem.ps1')
 
 # T43: measure the chrome the USER gets, not the chrome a dev build wears.
@@ -2341,6 +2417,9 @@ function Start-OnTestDesktop {
         Clear-TestWindowPlacement | Out-Null
     }
     $argLine = ($Arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
+    # T689: a launch that named no log gets one anyway. See the block above
+    # New-TestStdErrPath for why this is the helper's job and not the caller's.
+    if (-not $StdErr) { $StdErr = New-TestStdErrPath -Exe $Exe }
     $procId = $td.StartProcess($Exe, $argLine, $WorkingDirectory, $StdErr)
     if ($procId -eq 0) { throw "Start-OnTestDesktop failed: $($td.LastError)" }
     $script:GhozttyTestDesktopPids += $procId

@@ -156,6 +156,15 @@ function Get-StampFromAgentVersionText {
     foreach ($raw in ($Text -split "`n")) {
         $line = $raw.Trim()
         if (-not $line) { continue }
+        # T1492: the agent talks on its way up. A debug build opens with
+        # `debug(os_power): power throttling disabled for this process` before
+        # it prints anything else, and bailing on the first non-matching line
+        # read that as "this binary told me nothing" - which took ten AGENT
+        # VERIFY assertions in upgrade-staleness.ps1 red for four days over an
+        # agent that answers correctly. Only std.log's own shape is skipped, so
+        # the strictness that matters is intact: junk still yields no stamp, and
+        # an unread stamp is still an unverified delivery.
+        if ($line -match '^(debug|info|warn|warning|err|error)\([^)]*\):') { continue }
         if ($line -notmatch '^ghoztty-agent\s+(\S.*)$') { return '' }
         $rest = $Matches[1].Trim()
         $tokens = @($rest -split '\s+' | Where-Object { $_ })

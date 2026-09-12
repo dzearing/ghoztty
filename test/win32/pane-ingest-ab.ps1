@@ -501,6 +501,8 @@ try {
     # --- Section D: conhost, for context ------------------------------------
     "== D: conhost control"
     $ch = New-RunShim 'conhost'
+    # stderr: n/a - this is cmd.exe running the shim, the conhost CONTROL arm;
+    # the shim writes its own measurements to a file the section reads back.
     $cp = Start-Process -FilePath $env:ComSpec -WindowStyle Minimized -PassThru `
         -ArgumentList '/c', $ch.Shim
     $null = $cp.Handle   # exitcode-audit: cache before any wait (T197)

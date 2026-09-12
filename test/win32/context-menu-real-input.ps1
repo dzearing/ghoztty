@@ -212,7 +212,10 @@ function Start-Gui([string]$label, [string[]]$extraArgs) {
     # reason. Quote anything containing a space, here, once.
     $argList = @('--config-default-files=false', '--session-persistence=false') + $extraArgs |
         ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }
-    $p = Start-Process -FilePath $exe -ArgumentList $argList -PassThru
+    # T689: one log per label, so the two launches this script makes cannot
+    # overwrite each other's account of a death.
+    $errLog = Join-Path $env:TEMP ("ghoztty-t{0}-ctxreal-{1}.err.txt" -f $PID, ($label -replace '[^\w\-]', '_'))
+    $p = Start-Process -FilePath $exe -ArgumentList $argList -PassThru -RedirectStandardError $errLog
     Start-Sleep -Seconds 4
     if ($p.HasExited) { Write-Host "SETUP FAIL ($label): GUI died at launch"; exit 1 }
     $top = [CtxRealInput]::FindTop($p.Id, 'GhozttyWindow')

@@ -988,6 +988,30 @@ anyway. Enumerator: `test/win32/lib/PersistenceSweep.ps1`; acceptance (and the
 live control that the flag really stops a restore):
 `test/win32/persistence-flag.ps1`.
 
+**Every launch in an acceptance script keeps the app's stderr** (T689). A debug
+build writes `std.log` to stderr and nothing else — no event-log record, no
+crash dump — so a launch that redirects nowhere discards the whole story at the
+moment the GUI dies, which is the moment it matters. `pane-banner.ps1` was in
+exactly that state when its instance disappeared mid-run: a red line, no log,
+and a re-run with an edit as the only way to learn anything. Half the suite's
+launch sites were there when this was written, which is what a per-call-site
+convention decays to — so the redirect is now the HELPER's job:
+**`Start-OnTestDesktop` fills `-StdErr` in when the caller names none**, one
+numbered file per launch under `%TEMP%\ghoztty-test-stderr\<script>-<pid>\`,
+kept after the run (the failure this exists for is the one where the run is
+already over when someone asks). `Write-TestGuiPostmortem` and the teardown's
+died-on-its-own report print its tail with no further edit. Pass `-StdErr`
+yourself when an oracle reads the file back, or to give it a name that says
+which section it belongs to.
+
+`Start-Process` is PowerShell's own cmdlet and nothing can put a default on it,
+so those sites still say it themselves: `-RedirectStandardError <path>`, or a
+`# stderr: <reason>` marker where capture is not the answer (a `cmd.exe`
+fixture wearing our leaf name, a `node` server). Enumerator: the same
+`PersistenceSweep.ps1` (`CapturesStderr` / `StderrHow` per row); acceptance,
+including the live proof that the helper's default really lands on disk:
+`test/win32/stderr-launch-capture.ps1`.
+
 **A restore test must prove the pane is LIVE, not painted** (T532, T652). A
 pane that came back as a frozen picture is byte-identical to a working one for
 every assertion that reads the screen or `+list --json` — a replayed marker is

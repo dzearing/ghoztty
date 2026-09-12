@@ -404,6 +404,9 @@ try {
     Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\cmd.exe') -Destination $leakExe -Force
     Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\cmd.exe') -Destination $ctrlExe -Force
 
+    # stderr: n/a - both of these are copies of cmd.exe running ping, wearing
+    # our leaf name so the sweep's path filter sees them. What is asserted is
+    # which one survives, not anything either of them said.
     $leakProc = Start-Process -FilePath $leakExe -ArgumentList '/c', 'ping -n 120 127.0.0.1 > nul' -PassThru -WindowStyle Hidden
     $null = $leakProc.Handle
     $ctrlProc = Start-Process -FilePath $ctrlExe -ArgumentList '/c', 'ping -n 120 127.0.0.1 > nul' -PassThru -WindowStyle Hidden
@@ -423,6 +426,7 @@ try {
         ((@($sI.results | Where-Object { $_.Name -eq 'b-pass.ps1' })[0].Leaked) -ge 1) ''
 
     $dirI2 = Join-Path $Fixture 'runI2'
+    # stderr: n/a - the same cmd.exe copy as above, for the -NoSweep control.
     $leak2 = Start-Process -FilePath $leakExe -ArgumentList '/c', 'ping -n 120 127.0.0.1 > nul' -PassThru -WindowStyle Hidden
     $null = $leak2.Handle
     Start-Sleep -Milliseconds 700

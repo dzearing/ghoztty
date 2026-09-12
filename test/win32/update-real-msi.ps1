@@ -168,7 +168,11 @@ $env:GHOZTTY_UPDATE_URL = $feedUrl
 $env:GHOZTTY_UPDATE_RECHECK_MS = '10000'
 $app = $null
 try {
-    $app = Start-Process -FilePath $testExe -PassThru
+    # T689: the installed build's own stderr. This launch is the one expected
+    # to find and stage the update, so when it does not, its log is the only
+    # record of how far it got.
+    $app = Start-Process -FilePath $testExe -PassThru `
+        -RedirectStandardError (Join-Path $work 'app-update.err.txt')
     $null = $app.Handle
     # The check runs in the background at startup and the download follows it;
     # poll for the staged package rather than guessing a sleep. A released
@@ -309,7 +313,8 @@ if ($holdersBefore.Count -gt 0) {
 # The holders are stopped by now, so this launch is that next one - and it is
 # the only thing that can prove the leftovers are temporary rather than
 # permanent.
-$again = Start-Process -FilePath $testExe -PassThru
+$again = Start-Process -FilePath $testExe -PassThru `
+    -RedirectStandardError (Join-Path $work 'app-sweep.err.txt')   # T689
 $null = $again.Handle
 $clean = $false
 for ($i = 0; $i -lt 30; $i++) {

@@ -182,7 +182,10 @@ try {
 } catch {
     "  NOTE test desktop unavailable ($_); falling back to the interactive desktop"
     $td = $null
-    Start-Process $Exe -ArgumentList '--session-persistence=false' | Out-Null
+    # T689: the fallback keeps the app's stderr the same way the test-desktop
+    # path does - this is the branch that runs when something is already wrong.
+    Start-Process $Exe -ArgumentList '--session-persistence=false' `
+        -RedirectStandardError (Join-Path $root 'app-fallback.err.txt') | Out-Null
 }
 $ready = $false
 for ($i = 0; $i -lt 40; $i++) {

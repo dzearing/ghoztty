@@ -55,6 +55,9 @@ if (-not $UserDesktop) { $script:td = New-TestDesktop }
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
+# T689: numbers the per-launch stderr logs, so repeated Launch calls with the
+# same title do not overwrite each other's evidence.
+$script:launchSeq = 0
 $root = Join-Path $env:TEMP "ghoztty-session-relaunch-$PID"
 
 function Assert($name, $cond) {
@@ -239,11 +242,18 @@ function Launch($tmp, $title, $relaunch, $restore) {
     $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
     $launchArgs = @("--session-relaunch=$relaunch")
     if (-not $restore) { $launchArgs += "--title=$title" }
-    # persistence: on (default) - session persistence IS this script's subject.
+    # T689: the user-desktop path keeps the same log the test-desktop path gets
+    # from Start-OnTestDesktop, so a relaunch that dies is readable whichever
+    # desktop the run chose. Numbered, because Launch is called repeatedly.
+    $script:launchSeq++
+    $relErr = Join-Path $tmp ("relaunch-{0:d2}-{1}.err.txt" -f $script:launchSeq, ($title -replace '[^\w\-]', '_'))
     if ($UserDesktop) {
-        Start-Process -FilePath $Exe -WindowStyle Minimized -ArgumentList $launchArgs | Out-Null
+        # persistence: on (default) - session persistence IS this script's subject.
+        Start-Process -FilePath $Exe -WindowStyle Minimized -ArgumentList $launchArgs `
+            -RedirectStandardError $relErr | Out-Null
     } else {
-        Start-OnTestDesktop -Exe $Exe -Arguments $launchArgs -Desktop $script:td | Out-Null
+        # persistence: on (default) - session persistence IS this script's subject.
+        Start-OnTestDesktop -Exe $Exe -Arguments $launchArgs -Desktop $script:td -StdErr $relErr | Out-Null
     }
 }
 

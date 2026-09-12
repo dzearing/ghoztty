@@ -138,6 +138,7 @@ try {
     $stubArgs = @('"' + $stub + '"', '--page', '"' + $page + '"', '--driver', '"' + $driver + '"',
                   '--data', '"' + $dataJson + '"', '--port', $Port)
     if ($NegativeControl) { $stubArgs += @('--break', 'two-step') }
+    # stderr: n/a - this starts node (the dashboard stub server), not ghoztty.
     $srv = Start-Process -FilePath $node.Source -ArgumentList ($stubArgs -join ' ') `
         -WorkingDirectory $Repo -WindowStyle Hidden -PassThru
 

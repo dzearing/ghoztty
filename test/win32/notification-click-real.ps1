@@ -247,7 +247,9 @@ Remove-Item "$env:LOCALAPPDATA\ghoztty\session-layout-debug.json" -Force -ErrorA
 Write-Host '== setup: two windows, the notification raised from the first'
 # --session-persistence=false: a restored layout would decide the window count
 # and the foreground this test asserts on.
-$app = Start-Process -FilePath $exe -PassThru `
+# T689: the GUI's own stderr, for the 'GUI died at launch' branch two lines down.
+$appErr = Join-Path $env:TEMP "ghoztty-notify-click-$PID.err.txt"
+$app = Start-Process -FilePath $exe -PassThru -RedirectStandardError $appErr `
     -ArgumentList @('--config-default-files=false', '--session-persistence=false')
 Start-Sleep -Seconds 4
 if ($app.HasExited) { Write-Host 'SETUP FAIL: GUI died at launch'; exit 1 }

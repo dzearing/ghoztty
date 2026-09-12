@@ -1,6 +1,8 @@
 # PersistenceSweep.ps1 - T158. Enumerate every launch of the app under test in
 # test\win32 and answer, per site, whether that launch STATES what it wants
-# session persistence to do.
+# session persistence to do - and, since T689, whether it keeps what the app
+# says on its way out (`CapturesStderr` / `StderrHow`, same four declaration
+# forms, documented at the stderr patterns below).
 #
 # WHY THIS EXISTS
 #
@@ -66,6 +68,22 @@ $script:PersistenceFlagPattern = '--session-persistence=(1|t|T|true|on|yes|0|f|F
 # is enough for a marker written above a short comment block explaining the
 # launch, and short enough that it cannot be credited to the wrong site.
 $script:PersistenceMarkerLookback = 6
+
+# T689: the same question asked of the app's OUTPUT. A debug build writes
+# std.log to stderr and nothing else - no event-log record, no crash dump - so a
+# launch that redirects neither stream throws the whole story away the moment
+# the GUI dies. `pane-banner.ps1` was the case that made it concrete: its
+# instance disappeared mid-run and there was nothing at all to read.
+#
+# Two spellings capture it: `-StdErr <path>` on Start-OnTestDesktop and
+# `-RedirectStandardError <path>` on Start-Process. A splat carries the same
+# choice as a hash key, which is the second pattern.
+$script:StderrFlagPattern = '-(StdErr|RedirectStandardError)\s+\S'
+$script:StderrKeyPattern = '\b(StdErr|RedirectStandardError)\s*=\s*\S'
+
+# Same shape as the persistence marker, for a site where capture is genuinely
+# not the answer: `# stderr: <reason>`.
+$script:StderrMarkerPattern = '#\s*stderr:'
 
 <#
 Drop a trailing `# comment` from one line, leaving a `#` that sits inside a
@@ -159,10 +177,11 @@ One level of indirection is the common shape here: a script builds
 the references (bounded, and never twice) keeps that idiom declared without
 asking those scripts to repeat themselves.
 #>
-function Test-VarDeclaresPersistence {
+function Test-VarDeclaresPattern {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
         [Parameter(Mandatory = $true)][string]$Name,
+        [Parameter(Mandatory = $true)][string]$Pattern,
         [int]$Depth = 3,
         [System.Collections.Generic.HashSet[string]]$Seen = $null
     )
@@ -172,13 +191,13 @@ function Test-VarDeclaresPersistence {
 
     $defs = @(Get-VarAssignmentText -Text $Text -Name $Name)
     foreach ($def in $defs) {
-        if ($def -match $script:PersistenceFlagPattern) { return $true }
+        if ($def -match $Pattern) { return $true }
     }
     foreach ($def in $defs) {
         foreach ($m in [regex]::Matches($def, '\$(\w+)')) {
             $inner = $m.Groups[1].Value
             if ($inner -imatch '^(exe|PSScriptRoot|null|true|false|PID|env)$') { continue }
-            if (Test-VarDeclaresPersistence -Text $Text -Name $inner -Depth ($Depth - 1) -Seen $Seen) { return $true }
+            if (Test-VarDeclaresPattern -Text $Text -Name $inner -Pattern $Pattern -Depth ($Depth - 1) -Seen $Seen) { return $true }
         }
     }
     return $false
@@ -198,7 +217,8 @@ function Get-HelperCallerDeclaration {
         # NOT [Parameter(Mandatory)]: a mandatory [string[]] rejects any array
         # holding a blank line, which every script here has.
         [string[]]$Lines,
-        [int]$Index
+        [int]$Index,
+        [string]$Pattern = $script:PersistenceFlagPattern
     )
     $name = $null
     for ($k = $Index; $k -ge 0; $k--) {
@@ -224,7 +244,7 @@ function Get-HelperCallerDeclaration {
             $call += ' ' + (Remove-PsLineComment $Lines[$m]).Trim()
         }
         $calls++
-        if ($call -match $script:PersistenceFlagPattern) { $declared++ }
+        if ($call -match $Pattern) { $declared++ }
     }
     if ($calls -gt 0 -and $calls -eq $declared) { return $name }
     return $null
@@ -276,8 +296,39 @@ function Test-GhozttyImage {
 }
 
 <#
+Is EVERY spelling of a launch keyword on this line inside a quoted string?
+
+True means the line mentions a launch without making one - fixture text handed
+to an analyzer. False the moment one occurrence sits in code, so a real launch
+that follows a quoted string on the same line is still swept.
+#>
+function Test-LaunchTokenQuoted {
+    param([string]$Line)
+    if ($null -eq $Line) { return $false }
+    $found = $false
+    foreach ($name in @('Start-OnTestDesktop', 'Start-Process')) {
+        $at = 0
+        while ($true) {
+            $idx = $Line.IndexOf($name, $at, [StringComparison]::OrdinalIgnoreCase)
+            if ($idx -lt 0) { break }
+            $found = $true
+            $at = $idx + $name.Length
+            $inS = $false; $inD = $false
+            for ($c = 0; $c -lt $idx; $c++) {
+                $ch = $Line[$c]
+                if ($ch -eq "'" -and -not $inD) { $inS = -not $inS }
+                elseif ($ch -eq '"' -and -not $inS) { $inD = -not $inD }
+            }
+            if (-not ($inS -or $inD)) { return $false }
+        }
+    }
+    return $found
+}
+
+<#
 Every launch site in $Root's *.ps1 scripts, with a Declared flag and how it was
-declared. Shape per row: File, Line, Kind (TD|SP), Declared, How, Stmt.
+declared. Shape per row: File, Line, Kind (TD|SP), Declared, How,
+CapturesStderr, StderrHow, Stmt.
 #>
 function Get-GhozttyLaunchSites {
     param(
@@ -289,12 +340,29 @@ function Get-GhozttyLaunchSites {
         if ($Exclude -contains $f.Name) { continue }
         $text = Get-Content $f.FullName -Raw
         $lines = @(Get-Content $f.FullName)
+        $inBlockComment = $false
         for ($i = 0; $i -lt $lines.Count; $i++) {
             $line = $lines[$i]
+            # A `<# ... #>` header is prose, and every script here has one that
+            # DESCRIBES launches ("counts a BARE launch (`Start-Process $exe`)").
+            # Reading those as sites put five phantom rows in the inventory that
+            # no edit to any script could ever declare.
+            if ($inBlockComment) {
+                if ($line -match '#>') { $inBlockComment = $false }
+                continue
+            }
+            if ($line -match '<#' -and $line -notmatch '#>') { $inBlockComment = $true; continue }
             if ($line -match '^\s*#') { continue }
             $isTd = $line -match 'Start-OnTestDesktop'
             $isSp = $line -match 'Start-Process'
             if (-not ($isTd -or $isSp)) { continue }
+            # A launch spelled inside a STRING is a fixture, not a launch: the
+            # analyzer harnesses (desktop-launch-audit, launch-preflight-audit)
+            # hand their analyzers source text to score, and eight of those rows
+            # read as undeclared launches nobody could fix. Judged at the token
+            # rather than the line, so `Write-Host "x"; Start-Process $exe` -
+            # a real launch after a quoted string - still counts.
+            if (Test-LaunchTokenQuoted -Line $line) { continue }
 
             # Join continuation lines until the brackets balance. The naive
             # "ends with a comma or a backtick" rule stops early on the shape
@@ -328,7 +396,7 @@ function Get-GhozttyLaunchSites {
                 foreach ($m in [regex]::Matches($stmt, '[@$](\w+)')) {
                     $v = $m.Groups[1].Value
                     if ($v -imatch '^(exe|PSScriptRoot|null|true|false)$') { continue }
-                    if (Test-VarDeclaresPersistence -Text $text -Name $v) { $how = "var:`$$v"; break }
+                    if (Test-VarDeclaresPattern -Text $text -Name $v -Pattern $script:PersistenceFlagPattern) { $how = "var:`$$v"; break }
                 }
             }
             if (-not $how) {
@@ -342,13 +410,50 @@ function Get-GhozttyLaunchSites {
                 }
             }
 
+            # T689: the same four ways of declaring, asked of the app's stderr.
+            # The order matters for the same reason it does above - a literal
+            # redirect is the strongest answer and a marker the weakest, and the
+            # reported How is what a reader chases when the sweep goes red.
+            $errHow = ''
+            if ($stmt -match $script:StderrFlagPattern) {
+                $errHow = 'literal'
+            } else {
+                foreach ($m in [regex]::Matches($stmt, '[@$](\w+)')) {
+                    $v = $m.Groups[1].Value
+                    if ($v -imatch '^(exe|PSScriptRoot|null|true|false)$') { continue }
+                    if (Test-VarDeclaresPattern -Text $text -Name $v -Pattern $script:StderrKeyPattern) { $errHow = "var:`$$v"; break }
+                }
+            }
+            if (-not $errHow) {
+                $helper = Get-HelperCallerDeclaration -Lines $lines -Index $i -Pattern $script:StderrFlagPattern
+                if ($helper) { $errHow = "callers:$helper" }
+            }
+            if (-not $errHow) {
+                $from = [Math]::Max(0, $i - $script:PersistenceMarkerLookback)
+                for ($k = $from; $k -le $j; $k++) {
+                    if ($lines[$k] -match $script:StderrMarkerPattern) { $errHow = 'marker'; break }
+                }
+            }
+            # A test-desktop launch that named no path still gets one:
+            # Start-OnTestDesktop fills `-StdErr` in for its caller (T689), so
+            # the capture is a property of the helper rather than of this line.
+            # That is deliberately NOT how `Start-Process` is scored - it is
+            # PowerShell's own cmdlet and nothing here can put a default on it,
+            # so those sites still have to say it themselves. The live proof
+            # that this credit is worth anything is section E of
+            # stderr-launch-capture.ps1, which launches through the helper with
+            # no -StdErr and reads the file back.
+            if (-not $errHow -and $isTd) { $errHow = 'helper' }
+
             $rows += [pscustomobject]@{
-                File     = $f.Name
-                Line     = $i + 1
-                Kind     = $(if ($isTd) { 'TD' } else { 'SP' })
-                Declared = [bool]$how
-                How      = $how
-                Stmt     = $stmt
+                File           = $f.Name
+                Line           = $i + 1
+                Kind           = $(if ($isTd) { 'TD' } else { 'SP' })
+                Declared       = [bool]$how
+                How            = $how
+                CapturesStderr = [bool]$errHow
+                StderrHow      = $errHow
+                Stmt           = $stmt
             }
         }
     }

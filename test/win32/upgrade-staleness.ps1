@@ -162,6 +162,17 @@ AssertEq "A23 empty output yields no stamp" '' (Get-StampFromAgentVersionText ''
 # must not be able to vouch for itself. The B-section stub prints exactly this.
 AssertEq "A24 output from some other program yields no stamp" '' `
     (Get-StampFromAgentVersionText 'nothing useful here')
+# T1492: the agent TALKS on its way up. A debug build opens with a std.log line
+# before it answers, and anchoring on the first non-empty line read that as an
+# agent that said nothing - ten AGENT VERIFY assertions below went red for four
+# days over a binary answering correctly. Both directions, because the skip must
+# not become a hole: only std.log's own shape is stepped over.
+AssertEq "A24a a std.log line ahead of the banner does not hide the stamp" '20260811-3bbf0eefb' `
+    (Get-StampFromAgentVersionText "debug(os_power): power throttling disabled for this process`nghoztty-agent 20260811-3bbf0eefb")
+AssertEq "A24b every std.log level is stepped over, not just debug" '20260811-3bbf0eefb' `
+    (Get-StampFromAgentVersionText "info(x): a`nwarning(y): b`nerr(z): c`nghoztty-agent 20260811-3bbf0eefb")
+AssertEq "A24c but junk BEFORE the banner still yields no stamp" '' `
+    (Get-StampFromAgentVersionText "nothing useful here`nghoztty-agent 20260811-3bbf0eefb")
 AssertEq "A25 the commit is the half after the date" '3bbf0eefb' (Get-CommitFromAgentStamp '20260811-3bbf0eefb')
 AssertEq "A26 a dev stamp carries no commit, and never guesses one" '' (Get-CommitFromAgentStamp 'dev')
 Assert "A27 identical stamps match" (Test-AgentStampsMatch '20260811-3bbf0eefb' '20260811-3BBF0EEFB')
@@ -839,6 +850,8 @@ if (-not $haveAgent) {
     # The decoy: a process NAMED ghoztty running FROM the install dir - the
     # exact shape the kill matches - that is not a terminal at all.
     Copy-Item -LiteralPath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $gInstalledExe -Force
+    # stderr: n/a - the decoy is powershell.exe wearing our name, sleeping; the
+    # assertion is that the kill leaves it alone, not what it printed.
     $decoy = Start-Process -FilePath $gInstalledExe -WindowStyle Hidden -PassThru `
         -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep 300')
     $null = $decoy.Handle

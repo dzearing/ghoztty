@@ -363,7 +363,10 @@ if ($PureOnly) {
 
         # persistence: stated false - this section builds its own pane and must
         # not have the debug manifest's panes restored on top of it.
-        $fApp = Start-Process -FilePath $fExe -ArgumentList '--session-persistence=false' -PassThru
+        # T689: this section drives a FRESHLY built app through a CLI verb; when
+        # the window never appears, its stderr is the only account of why.
+        $fApp = Start-Process -FilePath $fExe -ArgumentList '--session-persistence=false' -PassThru `
+            -RedirectStandardError (Join-Path $root 'fresh-app.err.txt')
         Start-Sleep -Seconds 3
         $fPane = 't663pane'
         & $fExe +new-window "--target=$fPane" 2>&1 | Out-Null

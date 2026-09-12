@@ -175,6 +175,7 @@ if ($Register -eq 1) {
     else { Register-HarnessGhozttyRoot -Root $Root | Out-Null }
 }
 # persistence: n/a - this is a copy of cmd.exe wearing the name, not the app.
+# stderr: n/a - same reason; ping has nothing to say and the subject is the reap.
 Start-Process -FilePath $FakeExe -ArgumentList '/c', 'ping -n 120 127.0.0.1 > nul' `
     -WindowStyle Hidden | Out-Null
 Start-Sleep -Milliseconds 800

@@ -2714,6 +2714,23 @@ $GuardTable = @(
     # reason - the property must be re-proved whenever ANY script changes, and
     # the scan is AST over source in about a second. lib\ IS covered here: one
     # of the 56 swept sites was in lib\BuildMode.ps1.
+    # The launch-capture sweep (T689): every launch of the app under test keeps
+    # what the app said on its way out, either by naming a path or by going
+    # through the helper that names one for it. Same wide net as the sweeps
+    # above and for the same reason - the property is about the whole
+    # directory, so ANY script gaining a launch has to re-prove it. Static over
+    # source apart from one cmd.exe launch, a couple of seconds.
+    [pscustomobject]@{
+        Name   = 'stderr-launch-capture'
+        Script = 'test\win32\stderr-launch-capture.ps1'
+        Stamp  = 'test\win32\stderr-launch-capture.stamp.json'
+        Covers = @(
+            'test\win32\*.ps1',
+            'test\win32\lib\PersistenceSweep.ps1',
+            'test\win32\lib\TestDesktop.ps1',
+            'docs\claude\testing.md'
+        )
+    },
     [pscustomobject]@{
         Name   = 'stderr-capture'
         Script = 'test\win32\stderr-capture-audit.ps1'

@@ -26365,3 +26365,48 @@ the one harness that drives `CleanSlate.ps1` against real processes. P1–P3 ALL
 PASS (25/20/16), floor lanes lib/none/win32/agent all PASS, and the six corpus
 audits the edit made due are green. Follow-up T1490: the refusal is correct but
 arrives as a PowerShell error record instead of the suite's `SETUP FAIL` line.
+
+## 2026-09-12 — a test launch that dies now leaves its log behind (T689, T1492)
+
+When the app under test died during a Windows acceptance run, half the suite
+threw away everything it had said on the way out. A debug build writes its log
+to stderr and nowhere else — no event-log record, no crash dump — so a launch
+that redirected nothing left a red line and no explanation, and the next turn
+re-ran blind with an edit as the only way to learn anything. That is the state
+`pane-banner.ps1` was in when its instance disappeared mid-run.
+
+The inventory said 163 of 301 launch sites were there, which is what a
+per-call-site convention decays to. So the redirect is the HELPER's job now:
+`Start-OnTestDesktop` fills `-StdErr` in when the caller names none — one
+numbered file per launch under `%TEMP%\ghoztty-test-stderr\<script>-<pid>\`,
+kept after the run, because the failure this exists for is the one where the run
+is over by the time anybody asks. The postmortem machinery already read that
+field, so 124 launches gained a diagnosis with no edit of their own. PowerShell's
+`Start-Process` cannot be defaulted, so those eleven real sites now name a path,
+and the fixtures that are not the app at all (a `cmd.exe` copy wearing our leaf
+name, a `node` server) carry a `# stderr: <reason>` marker.
+
+The sweep that answers the question is T158's launch inventory, extended with
+`CapturesStderr` / `StderrHow`. It also learned that a launch spelled inside a
+quoted string, or named in a block comment, is not a launch — fifteen phantom
+rows came out that no edit to any script could ever have declared.
+
+Running the harnesses those edits made due turned up an unrelated red:
+`upgrade-staleness.ps1` had been 10-FAIL since 2026-09-08 because the agent
+gained a `debug(os_power)` line at startup and the stamp reader anchors on the
+first non-empty line, so a binary that answers correctly read as one that said
+nothing. Fixed here (T1492) by stepping over `std.log`'s own shape and nothing
+else — junk before the banner still yields no stamp, asserted both ways. A
+ReleaseFast agent never emitted that line, so the delivery path was never
+broken; what was broken was the verification of every debug agent.
+
+Evidence: `stderr-launch-capture.ps1` ALL PASS (20) with `-TeethCheck` — 0
+uncaptured of 287 sites (`literal=152, helper=124, marker=11`), the analyzer
+proved against fixtures for each declaration form, the string/comment filter both
+ways, and a live arm that launches through the helper with no `-StdErr` and reads
+the child's stderr back off disk. `upgrade-staleness.ps1` ALL PASS (156).
+P1–P3 ALL PASS (25/20/16), floor lanes lib/none/win32/agent all PASS, and every
+other harness `guard-due` named as stale is green — `guard-due check` now exits 0
+with only the three pre-existing advisories. Follow-up T1491: the same
+measurement found T158's own section A sitting red, 61 undeclared launches on a
+pristine HEAD, with no coverage row to report it.

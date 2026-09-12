@@ -170,17 +170,20 @@ try {
     $jobSet = [T426Job]::SetInformationJobObject($job, 9, [ref]$jobInfo, $jobLen)
     Assert "A0 premise: a kill-on-close job exists" ($job -ne [IntPtr]::Zero -and $jobSet)
 
-    # persistence: on (default) - the pane shell must be the AGENT's child for the job-escape assertion to mean anything.
-    # On the test desktop the app's stderr is captured, because the TIER it
-    # reached is the whole point of that arm and only the log names it.
+    # The app's stderr is captured on EITHER path, because the TIER it reached
+    # is the whole point of that arm and only the log names it (T689 gave the
+    # interactive-desktop half the same log the test-desktop half always had).
+    $appLog = Join-Path $root 'app.err.txt'
     if ($TestDesktop) {
-        $appLog = Join-Path $root 'app.err.txt'
         $td = New-TestDesktop
+        # persistence: on (default) - the pane shell must be the AGENT's child for the job-escape assertion to mean anything.
         $started = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t426a') -StdErr $appLog
         $appProc = $started.Process
         $appPid = $started.Pid
     } else {
-        $appProc = Start-Process -FilePath $Exe -ArgumentList @('--title=t426a') -PassThru
+        # persistence: on (default) - the pane shell must be the AGENT's child for the job-escape assertion to mean anything.
+        $appProc = Start-Process -FilePath $Exe -ArgumentList @('--title=t426a') -PassThru `
+            -RedirectStandardError $appLog
         $appPid = $appProc.Id
     }
     $ready = $false

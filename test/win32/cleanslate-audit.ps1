@@ -245,6 +245,8 @@ New-Item -ItemType Directory -Force -Path $fakeDir | Out-Null
 # cleanslate-exempt: cmd.exe under a repo scratch path, wearing our leaf name so
 # the path-exact filter sees it. This script's own litter, created three lines up.
 Copy-Item -Path (Join-Path $env:WINDIR 'System32\cmd.exe') -Destination $fakeExe -Force
+# stderr: n/a - a copy of cmd.exe running ping, not the app under test; it has
+# no std.log to lose and the assertion is about whether it is REAPED.
 $fake = Start-Process -FilePath $fakeExe -ArgumentList '/c', 'ping -n 30 127.0.0.1 > NUL' `
     -WindowStyle Hidden -PassThru
 Start-Sleep -Milliseconds 400

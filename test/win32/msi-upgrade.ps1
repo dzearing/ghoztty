@@ -87,8 +87,11 @@ function Test-ExeRuns([string]$label) {
     $exe = Join-Path $installDir 'ghoztty.exe'
     $out = Join-Path $env:TEMP 't23-version-out.txt'
     # persistence: n/a - a CLI invocation, which opens no window.
+    # T689: stdout carries the version string this reads back; stderr carries
+    # the reason when there is no version string, which is the failing case.
+    $err = Join-Path $env:TEMP 't23-version-err.txt'
     $p = Start-Process $exe -ArgumentList '+version' -RedirectStandardOutput $out `
-        -NoNewWindow -PassThru
+        -RedirectStandardError $err -NoNewWindow -PassThru
     if (-not $p.WaitForExit(15000)) {
         try { $p.Kill() } catch {}
         Assert $false "$label (+version hung)"
