@@ -273,3 +273,14 @@ as the digest that showed them.
 - Publish the moment work is worth publishing (release on the day's last good commit, not a clock hour)
 - Measure the pane, not the theory (standing pane-vs-conhost throughput benchmark script)
 - A guard that reports its own age in the app (summarise guard-due to a count plus exceptions)
+
+## 2026-09-12
+
+- Explain what just went wrong, without leaving the terminal (select output, answer opens in a viewer pane)
+- Every keybinding, one keypress away (searchable overlay built from the live config)
+- Change a setting from the command palette (search and toggle settings in place)
+- Windows come back where you left them, per monitor (placement keyed to the monitor layout)
+- Type the split you want (exact ratio or column count instead of dragging)
+- Protect a pane from an accidental close (pin a pane so Ctrl+W asks first)
+- Tell me the instant a remote pane drops, and offer the way back (toast plus one-click reconnect)
+- A crash that files its own report (next launch offers the captured stack with one button to send)
