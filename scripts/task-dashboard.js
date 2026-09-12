@@ -6,6 +6,7 @@
  *   node scripts/task-dashboard.js            # serve on http://localhost:7788
  *   node scripts/task-dashboard.js --port 9000
  *   node scripts/task-dashboard.js --once     # print the JSON payload and exit
+ *   node scripts/task-dashboard.js --loop     # just the loop/watchdog state
  *
  * WHY A SERVER AND NOT A .html FILE. A Ghoztty viewer pane renders `.md`
  * through markdown-it and treats every other extension as CODE — see
@@ -43,6 +44,11 @@ const REL_INDEX = 'docs/design/windows-parity-tasks.md';
 const TASK_DIR = process.env.GHOZTTY_TASK_DIR || path.join(REPO, ...REL_TASK_DIR.split('/'));
 const DECISION_DIR = process.env.GHOZTTY_DECISION_DIR || path.join(REPO, ...REL_DECISION_DIR.split('/'));
 const DIGEST_DIR = process.env.GHOZTTY_DIGEST_DIR || path.join(REPO, ...REL_DIGEST_DIR.split('/'));
+// The two files the loop's own state lives in, seams for the same reason
+// (T1484): "the loop is blocked" is a state a test may never wait for on a live
+// box, so the harness stages it in a fixture pair rather than simulating it.
+const LOCK_FILE = process.env.GHOZTTY_LOOP_LOCK || path.join(REPO, 'temp', 'go-loop.lock.json');
+const WATCHDOG_FILE = process.env.GHOZTTY_WATCHDOG_STATE || path.join(REPO, 'temp', 'go-loop.watchdog.json');
 const PAGE = path.join(__dirname, 'task-dashboard.page.html');
 const CACHE = path.join(REPO, 'temp', 'task-dashboard-history.json');
 
@@ -703,7 +709,7 @@ function branchName() {
 function loopState() {
   let raw;
   try {
-    raw = fs.readFileSync(path.join(REPO, 'temp', 'go-loop.lock.json'), 'utf8');
+    raw = fs.readFileSync(LOCK_FILE, 'utf8');
   } catch {
     return null;
   }
@@ -731,6 +737,62 @@ function loopState() {
     running: pidAlive(j.claude_pid) || paneHoldsClaude(j),
     // Kept for the watchdog's own framing: past this it WILL re-enter.
     checkpointStale: age != null && age >= 45 * 60 * 1000,
+    // Why it is not turning, when the answer is one only the user can fix.
+    blocked: loopBlocker(j),
+  };
+}
+
+/**
+ * The turn the loop is on, as a key — the same string
+ * `Get-LoopTurnKey` (scripts/loop-session.ps1) builds, because the watchdog
+ * stamps ITS key into the state file and the two have to compare equal. Only a
+ * completed turn moves it, which is exactly what makes it a freshness test.
+ */
+function loopTurnKey(lock) {
+  if (!lock) return 'none';
+  return lock.turn_started ? 'started=' + String(lock.turn_started) : 'turn=' + String(lock.turn);
+}
+
+/**
+ * Why the loop stopped turning, when the reason is not something the box can
+ * fix by trying again (T1484).
+ *
+ * Between 2026-09-09 and 2026-09-12 the loop did nothing for 63.5 hours
+ * because the account had hit its monthly spend limit. T1483 made that
+ * legible — the watchdog classifies the session's last answer and
+ * `go-loop-health.ps1` reports it — but both are PULL, and nobody pulled for
+ * two and a half days. This is the push half: the state the watchdog already
+ * writes, on the screen the user already has open.
+ *
+ * The classification is NOT redone here. The watchdog stamps
+ * `recovery_blocked*` into its own state file every time it takes an
+ * ineffective recovery action, using the shared PowerShell classifier; a
+ * second implementation in JS would eventually disagree with the supervisors,
+ * which is the one failure worse than not reporting at all.
+ *
+ * Freshness is the turn key, not a clock: the watchdog records the turn it was
+ * looking at, and only a COMPLETED turn changes that key. So a block that has
+ * lifted (the loop turned, the key moved) reports nothing, and a stale
+ * "blocked" banner over a working loop — worse than no banner — cannot happen
+ * without the loop being genuinely stuck on that same turn.
+ */
+function loopBlocker(lock, file) {
+  let j;
+  try {
+    j = JSON.parse(
+      fs.readFileSync(file || WATCHDOG_FILE, 'utf8').replace(/^﻿/, '')
+    );
+  } catch {
+    return null;
+  }
+  if (!j || !j.recovery_blocked) return null;
+  if (String(j.recovery_turn_key || '') !== loopTurnKey(lock)) return null;
+  const tick = j.tick_at ? Date.parse(j.tick_at) : NaN;
+  return {
+    kind: String(j.recovery_blocked_kind || 'unknown'),
+    why: String(j.recovery_blocked_why || ''),
+    resetsAt: String(j.recovery_blocked_resets_at || ''),
+    observedAt: isNaN(tick) ? null : tick,
   };
 }
 
@@ -787,7 +849,7 @@ function watchdogState(file) {
   let j;
   try {
     j = JSON.parse(
-      fs.readFileSync(file || path.join(REPO, 'temp', 'go-loop.watchdog.json'), 'utf8').replace(/^﻿/, '')
+      fs.readFileSync(file || WATCHDOG_FILE, 'utf8').replace(/^﻿/, '')
     );
   } catch {
     return { present: false, running: false };
@@ -1392,6 +1454,14 @@ function main() {
   if (argv.includes('--selftest')) return selfTest();
   if (argv.includes('--once')) {
     process.stdout.write(JSON.stringify(buildPayload(), null, 2) + '\n');
+    return;
+  }
+  // Just the loop half of the payload, which `--once` takes half a minute to
+  // reach because it walks the whole task history first (T1484). The blocked
+  // bar's freshness rule is the part worth asserting three ways, and a harness
+  // that pays 30s per assertion gets run once and then stops being run.
+  if (argv.includes('--loop')) {
+    process.stdout.write(JSON.stringify({ loop: loopState(), watchdog: watchdogState() }, null, 2) + '\n');
     return;
   }
   const pi = argv.indexOf('--port');

@@ -9,6 +9,37 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-12: T1484 - **a loop stopped by something only the user can fix now
+  says so on the screen they already have open.** T1483 made the 63.5-hour
+  outage legible - the watchdog classifies the session's last answer, health
+  reports `blocked=usage-limit` - and both of those are PULL. Nobody pulled for
+  two and a half days. This is the push half: the dashboard paints a red bar
+  across the top of every view reading *"The loop is stopped: this Claude
+  account has hit its usage limit"*, quoting the message that caused it and
+  naming the minute it clears.
+
+  The classification is not redone in the page or the server. The watchdog
+  already stamps `recovery_blocked*` into its own state file using the shared
+  PowerShell classifier, so the dashboard reads that record rather than growing
+  a second opinion two supervisors could disagree with. What it adds is the
+  freshness rule, which is the part worth getting right: the record is keyed on
+  the TURN the watchdog was looking at, and only a completed turn moves that
+  key - so the bar goes away by itself when the loop turns again, and a stale
+  "blocked" over a working loop (worse than no bar at all) would take the loop
+  being genuinely stuck on that same turn.
+
+  Evidence: `test\win32\task-dashboard.ps1` gained section F, which stages the
+  lock/watchdog pair through two new seams (`GHOZTTY_LOOP_LOCK`,
+  `GHOZTTY_WATCHDOG_STATE`) and a `--loop` print mode, and asserts all three
+  cases - blocked reaches the payload with its reason and reset time, a record
+  belonging to an older turn does not, an unblocked supervisor reports nothing.
+  ALL PASS (27 assertions). `test\win32\dashboard-dom.ps1` C31-C35 drive the
+  real page in a real browser: the bar is there with nothing clicked, it carries
+  the reason and the reset time, and `/api/_unblock` + a real re-fetch makes it
+  disappear. ALL PASS (45 assertions). The arm was proved able to score red
+  against a copy of the page with the `renderBlockBar(d)` call removed
+  (`T565-DOM-SELFTEST 4 FAIL`). Floor: lib/none/win32/agent all PASS.
+
 - 2026-09-12: T1483 - **the loop was dark for 63.5 hours and the reason was in
   its own transcript the whole time.** Between 2026-09-09 09:46 and 2026-09-12
   01:11 no turn completed. The watchdog was not asleep: it logged

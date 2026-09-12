@@ -26,6 +26,9 @@
  *   POST /api/resolve      likewise
  *   GET  /api/_posted      the recorded POSTs, so the harness can assert that a
  *                          click produced a real request rather than only DOM text
+ *   GET  /api/_unblock     flips the fixture's loop from blocked to working, so
+ *                          the blocked bar (T1484) can be shown to CLEAR itself
+ *                          through the page's real fetch-and-render path
  *
  * Usage:
  *   node dashboard-stub-server.js --page <html> --driver <js> --data <json>
@@ -125,7 +128,34 @@ payload.tasks = (payload.tasks || [])
 payload.decisions = [DECISION];
 payload.openDecisions = 1;
 
-const dataJson = JSON.stringify(payload);
+/* A loop stopped by something only the user can clear (T1484). The real
+   payload only carries this while the box is genuinely blocked, which is not a
+   state a test may wait for, so it is injected here the same way the blocked
+   task above is — over whatever the real builder produced, so every other loop
+   field stays real. */
+const BLOCKED_LOOP = Object.assign(
+  { paneId: 'FIXTURE-PANE', claudePid: 1, turn: 7, acquired: Date.now() - 3 * DAY,
+    heartbeat: Date.now() - 4 * 3600e3, heartbeatAgeMs: 4 * 3600e3,
+    running: true, checkpointStale: true },
+  payload.loop || {},
+  { blocked: {
+      kind: 'usage-limit',
+      why: "You've hit your monthly spend limit - your weekly limit resets Sep 12, 1am",
+      resetsAt: '2026-09-12 01:00',
+      observedAt: Date.now() - 4 * 60e3
+  } }
+);
+payload.loop = BLOCKED_LOOP;
+
+/* The negative control for that bar, served rather than simulated: after
+   GET /api/_unblock the SAME payload comes back with no `blocked` field, so
+   the page's own fetch-and-render path is what has to make the bar go away.
+   A bar that only ever appears has not been shown to clear itself. */
+let blockedNow = true;
+const dataJsonBlocked = JSON.stringify(payload);
+const dataJsonClear = JSON.stringify(
+  Object.assign({}, payload, { loop: Object.assign({}, BLOCKED_LOOP, { blocked: null }) })
+);
 
 /* --- the page ------------------------------------------------------------- */
 
@@ -170,7 +200,13 @@ const server = http.createServer(async (req, res) => {
   if (url === '/selftest-dom.js') {
     return send(res, 200, 'text/javascript; charset=utf-8', fs.readFileSync(DRIVER, 'utf8'));
   }
-  if (url === '/api/data') return send(res, 200, 'application/json', dataJson);
+  if (url === '/api/data') {
+    return send(res, 200, 'application/json', blockedNow ? dataJsonBlocked : dataJsonClear);
+  }
+  if (url === '/api/_unblock') {
+    blockedNow = false;
+    return send(res, 200, 'application/json', JSON.stringify({ ok: true, blocked: false }));
+  }
   if (url === '/api/_posted') return send(res, 200, 'application/json', JSON.stringify(posted));
   if (url === '/api/task') {
     return send(res, 200, 'application/json', JSON.stringify({

@@ -17,6 +17,10 @@
     - a stale in-progress row resets to to-do;
     - a decision resolves with the option that was clicked, and refuses to
       resolve when neither an option nor a note was given;
+    - a loop blocked by something only the user can fix (a spend limit) puts a
+      bar across the top of the page with no interaction, naming the reason and
+      when it clears - and that bar goes away by itself once the payload says
+      the block has lifted (T1484);
     - the tasks table filters, opens a task dialog, and closes it again;
     - the data and digest views render without throwing.
 

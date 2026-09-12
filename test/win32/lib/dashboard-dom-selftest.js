@@ -300,6 +300,35 @@
         });
       })
       .then(function () {
+        /* --- the blocked bar (T1484) -------------------------------------- */
+        /* Asserted with no interaction at all: the whole point is that a
+           person who only WALKS PAST the screen learns the loop is stopped. */
+        var bar = document.querySelector('#blockbar.blockbar');
+        var txt = bar ? (bar.textContent || '') : '';
+        check('C31 a blocked loop announces itself without anybody clicking', !!bar,
+          'no #blockbar.blockbar in the document');
+        check('C32 the bar says the loop is stopped and why, in plain words',
+          txt.indexOf('The loop is stopped') >= 0 && txt.indexOf('usage limit') >= 0, txt);
+        check('C33 the bar quotes the message and says when it clears',
+          txt.indexOf('monthly spend limit') >= 0 && txt.indexOf('2026-09-12 01:00') >= 0, txt);
+        check('C34 the bar is on every view, not just the one it was rendered under',
+          bar !== null && bar.parentNode === document.body);
+        /* The negative control: the same page, the same render path, a payload
+           that is no longer blocked. A bar that cannot go away is worse than
+           no bar at all. */
+        return fetch('/api/_unblock', { cache: 'no-store' })
+          .then(function () { return refresh(true); })
+          .then(function () {
+            return waitFor(function () {
+              return !document.querySelector('#blockbar.blockbar');
+            }, 'bar gone');
+          })
+          .then(function (gone) {
+            check('C35 the bar clears itself once the block lifts', !!gone,
+              'the bar is still up over an unblocked loop');
+          });
+      })
+      .then(function () {
         check('C30 nothing threw during the whole run', errors.length === 0, errors.join(' | '));
       })
       .catch(function (e) {

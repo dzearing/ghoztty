@@ -16,7 +16,11 @@
       git show -s on the same sha), and refuses a malformed or unknown sha
       with 400/404 rather than resolving whatever it was handed;
     - the pre-existing /api/task surface still answers, as the regression
-      control.
+      control;
+    - a loop blocked by something only the user can clear reaches the payload
+      with its reason and reset time (T1484), and a record belonging to a turn
+      the loop has since completed does NOT - a stale "blocked" over a working
+      loop being worse than none at all.
 
   The server is started on a port this script verified free first, because the
   server treats EADDRINUSE as "already serving" and exits 0 - a leftover
@@ -230,6 +234,78 @@ try {
     } else {
         Write-Host 'SKIP  E1: Edge is not installed on this box'
         $script:skipped++
+    }
+
+    # --- section F: the blocked loop the payload has to report (T1484) ------
+    # A loop stopped by something only the user can clear - a spend limit - is
+    # what the page's top bar exists for, and "blocked" is a state no harness
+    # can wait for on a live box. So the two files the answer is derived from
+    # are staged: the loop lock, and the watchdog state the supervisor stamps
+    # its classification into. `--loop` prints exactly that half of the
+    # payload, so all three cases cost milliseconds instead of a history walk.
+    #
+    # The third case is the one that matters most. The bar clearing itself is
+    # not a timer: the watchdog records the TURN it was looking at, and a turn
+    # that has since completed makes the record history. A stale "blocked" over
+    # a working loop is worse than no bar at all, so it is measured here rather
+    # than assumed.
+    $fix = Join-Path $env:TEMP "dashboard-loop-$PID"
+    New-Item -ItemType Directory -Force -Path $fix | Out-Null
+    try {
+        $lockFile = Join-Path $fix 'lock.json'
+        $wdFile   = Join-Path $fix 'watchdog.json'
+        # A live pid, so the payload reads the loop as running without shelling
+        # out to the real lock for a second opinion.
+        @{ state = 'held'; pane_id = 'FIXTURE'; claude_pid = $PID; turn = 12
+           turn_started = '2026-09-09T13:00:00.0000000-07:00'
+           acquired = '2026-09-09T13:00:00.0000000-07:00'
+           heartbeat = (Get-Date).ToString('o') } |
+            ConvertTo-Json | Out-File -FilePath $lockFile -Encoding utf8
+        function Write-WdFixture($turnKey, $blocked) {
+            @{ watchdog_pid = $PID; tick_at = (Get-Date).ToString('o'); poll_seconds = 300
+               last_tick = 'nudge'; recovery_turn_key = $turnKey; recovery_ineffective = 180
+               recovery_blocked = $blocked; recovery_blocked_kind = 'usage-limit'
+               recovery_blocked_why = "You've hit your monthly spend limit"
+               recovery_blocked_resets_at = '2026-09-12 01:00' } |
+                ConvertTo-Json | Out-File -FilePath $wdFile -Encoding utf8
+        }
+        function Get-LoopJson {
+            $env:GHOZTTY_LOOP_LOCK = $lockFile
+            $env:GHOZTTY_WATCHDOG_STATE = $wdFile
+            try { $out = & $node.Source $dash --loop 2>$null } finally {
+                Remove-Item Env:GHOZTTY_LOOP_LOCK, Env:GHOZTTY_WATCHDOG_STATE -ErrorAction SilentlyContinue
+            }
+            try { return ($out -join "`n" | ConvertFrom-Json) } catch { return $null }
+        }
+
+        Write-WdFixture 'started=2026-09-09T13:00:00.0000000-07:00' $true
+        $j = Get-LoopJson
+        Assert 'F1 a blocked loop reaches the payload' `
+            ($null -ne $j -and $null -ne $j.loop -and $null -ne $j.loop.blocked) `
+            "loop=$($j.loop | ConvertTo-Json -Compress)"
+        Assert 'F2 it carries the reason and when it clears, not just a flag' `
+            ($null -ne $j.loop.blocked -and $j.loop.blocked.kind -eq 'usage-limit' -and
+             $j.loop.blocked.why -match 'monthly spend limit' -and
+             $j.loop.blocked.resetsAt -eq '2026-09-12 01:00') `
+            "$($j.loop.blocked | ConvertTo-Json -Compress)"
+
+        # The freshness rule: the same record, against a loop that has since
+        # completed that turn.
+        Write-WdFixture 'started=2026-09-08T09:00:00.0000000-07:00' $true
+        $j = Get-LoopJson
+        Assert 'F3 a block recorded against an older turn is history, not news' `
+            ($null -ne $j -and $null -ne $j.loop -and $null -eq $j.loop.blocked) `
+            "$($j.loop.blocked | ConvertTo-Json -Compress)"
+
+        # And the plain negative control: the supervisor looked and found no
+        # blocker.
+        Write-WdFixture 'started=2026-09-09T13:00:00.0000000-07:00' $false
+        $j = Get-LoopJson
+        Assert 'F4 a loop the supervisor found unblocked reports nothing' `
+            ($null -ne $j -and $null -ne $j.loop -and $null -eq $j.loop.blocked) `
+            "$($j.loop.blocked | ConvertTo-Json -Compress)"
+    } finally {
+        Remove-Item $fix -Recurse -Force -ErrorAction SilentlyContinue
     }
 } catch {
     # An abort mid-suite (server died, JSON refused to parse where an Assert

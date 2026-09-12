@@ -413,10 +413,20 @@ pre.cmd { margin: 10px 0 0; padding: 9px 11px; background: var(--surface-2); bor
 #toast.bad { border-left-color: var(--critical); }
 .err { background: var(--surface-1); border: 1px solid var(--critical); border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; font-size: 12px; }
 .loading { color: var(--muted); padding: 40px 0; text-align: center; }
+/* The blocked bar (T1484). Across the top of every view, because the thing it
+   reports is "nothing is happening and only you can change that" — a card
+   inside one view would be exactly as findable as the command nobody ran. */
+.blockbar { position: sticky; top: 0; z-index: 50; background: var(--critical); color: #fff;
+  padding: 10px 16px; font-size: 13px; box-shadow: var(--shadow); }
+.blockbar .bb-in { max-width: 1180px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.blockbar b { font-size: 14px; }
+.blockbar .bb-why { opacity: 0.92; }
+.blockbar .bb-note { opacity: 0.85; font-size: 12px; width: 100%; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
 <body>
+<div id="blockbar"></div>
 <div class="shell">
   <aside class="side">
     <div class="brand">Windows parity</div>
@@ -933,6 +943,41 @@ function watchdogRows(d) {
       text: why + ' Nothing will restart the loop if it stops. Re-installing also registers the every-10-minute revival task, so this cannot go unnoticed for a day again.' }),
     h('div', { class: 'dec-note' }, [copyBtn('powershell -NoProfile -File scripts\\go-loop-watchdog.ps1 -Install')])
   ];
+}
+
+/**
+ * The bar across the top of the page when the loop is stopped for a reason
+ * only the user can clear (T1484).
+ *
+ * The 2026-09-09..12 outage was 63.5 hours of nothing, because the account had
+ * hit its monthly spend limit. The reason was knowable within a minute — and
+ * the only way to learn it was to type a command nobody typed. So it is said
+ * here, in the words of the message that caused it, on every view, without
+ * anybody asking. It is deliberately loud: this is not a card competing for
+ * attention with the rest of the page, it is the answer to "why has nothing
+ * happened all day".
+ *
+ * Rendered from `loop.blocked`, which the server only reports while the block
+ * is live (see loopBlocker in task-dashboard.js) — so the bar disappears on the
+ * poll after the loop turns again, rather than needing to be dismissed.
+ */
+function renderBlockBar(d) {
+  var host = $('#blockbar');
+  if (!host) return;
+  var B = d && d.loop && d.loop.blocked;
+  if (!B) { host.innerHTML = ''; host.className = ''; return; }
+  var head = B.kind === 'usage-limit'
+    ? 'The loop is stopped: this Claude account has hit its usage limit.'
+    : 'The loop is stopped: the session keeps getting an error instead of doing work.';
+  var kids = [h('b', { text: head })];
+  if (B.why) kids.push(h('span', { class: 'bb-why', text: '“' + B.why + '”' }));
+  kids.push(h('span', { class: 'bb-note',
+    text: (B.resetsAt ? 'It clears ' + B.resetsAt + '. ' : '') +
+      'Nothing on this box can clear it — no restart, no nudge; the loop picks up on its own the moment it lifts.' +
+      (B.observedAt ? ' Last confirmed ' + fDur(Date.now() - B.observedAt) + ' ago.' : '') }));
+  host.className = 'blockbar';
+  host.innerHTML = '';
+  host.appendChild(h('div', { class: 'bb-in' }, kids));
 }
 
 /** What the loop is doing right now — or that it has stopped. */
@@ -2079,6 +2124,10 @@ function refresh(force) {
       $('#err').innerHTML = '';
       var sig = signature(d);
       state.data = d;
+      // Outside the signature gate on purpose: the block bar must appear (and
+      // vanish) on the poll it changed, even on a page whose task data has not
+      // moved in days — which, while the loop is blocked, is precisely the case.
+      renderBlockBar(d);
       if (force || sig !== state.sig) { state.sig = sig; renderNav(); renderView(); }
       setMeta(d, false);
     })
