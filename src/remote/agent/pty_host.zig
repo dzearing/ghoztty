@@ -57,7 +57,7 @@ pub const Options = struct {
     rows: u16 = 24,
     cols: u16 = 80,
     cwd: ?[]const u8 = null,
-    /// One-shot command (per-shell flag synthesis, `windowsCommandArg`); null ⇒
+    /// One-shot command (per-shell argv synthesis, `windowsCommandArgs`); null ⇒
     /// interactive shell.
     command: ?[]const u8 = null,
     /// Shell override; null ⇒ %COMSPEC% → cmd.exe (the `resolveShellPath` chain).

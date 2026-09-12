@@ -32,7 +32,15 @@ ghoztty +new-remote-window --host=<host> --port=<port> --relay=<base> --device=<
   `powershell.exe`, `/bin/zsh`). Overrides the machine's per-host default.
 - `--command`: Command to run in the remote session instead of an interactive
   shell. Runs through the resolved shell using its native convention (POSIX
-  `-lic`, cmd `/c`, powershell/pwsh `-Command`, wsl `--`).
+  `-lic`, cmd `/c`, powershell/pwsh `-Command`, wsl `-e /bin/sh -c`). The wsl
+  row is the one that is not a single flag: `wsl -- <cmd>` hands the rest of the
+  *Windows* command line to the distro's default shell as written, so Windows'
+  quoting of a spaced argument survives into the distro and bash looks for a
+  program literally named `"echo hi"` (T704 — the cross-machine half of T656).
+  `-e` execs an argv instead, and the inner `/bin/sh -c` gives the command
+  string its shell parsing back. Unlike the LOCAL table, the agent's rows do not
+  keep the shell alive afterwards: `cmd /c` exits with its command and every
+  remote row matches that.
 
 ```bash
 ghoztty +new-remote-window --host=127.0.0.1 --port=7777

@@ -7,6 +7,7 @@
 #
 # Covers: dial + open window (happy path), terminal round-trip through the
 # agent (send-keys -> read), --command forwarded into the agent OPEN,
+# --shell=wsl.exe --command reaching the distro unquoted (T704),
 # dial-failure error (no listener), PROTOCOL-SKEW error against a real agent
 # advertising a different proto version (T628), tokenless relay-args refusal
 # (T21b; the full relay path is covered by ipc-relay.ps1), +close teardown
@@ -109,6 +110,35 @@ Start-Sleep -Seconds 3
 $dump = Read-Pane 'remcmd'
 Assert "command output visible" ($dump -match 'remote-cmd-marker')
 
+"== 3b: --shell=wsl.exe --command runs in the distro (T704)"
+# The cross-machine half of T656. The agent applies its OWN per-shell table
+# (`windowsCommandArgs` in src\remote\agent\pty_child.zig), and its wsl row used
+# to be `--`, which hands the rest of the WINDOWS command line to the distro's
+# default shell as written: Windows' quoting of the spaced argument survived into
+# bash, which then looked for a program literally named "echo <marker>". So the
+# marker ALONE is not enough evidence here - the broken build printed it inside
+# the `command not found` line - and both halves are asserted, exactly as arm I
+# of ipc-command-keepalive.ps1 does for the local table.
+#
+# Gated on a distro that actually RUNS rather than on wsl.exe existing: the exe
+# ships with Windows and answers even with no distro installed.
+$wslOk = $false
+if (Get-Command wsl.exe -ErrorAction SilentlyContinue) {
+    cmd /c "wsl.exe -e /bin/true > `"$tmp\wsl-probe.txt`" 2>&1" | Out-Null
+    $wslOk = ($LASTEXITCODE -eq 0)
+}
+if (-not $wslOk) {
+    "  SKIP 3b wsl.exe - no WSL distro on this box that can run /bin/true"
+} else {
+    $r = Ghoz @('+new-remote-window', '--host=127.0.0.1', "--port=$Port", '--name=remwsl', '--shell=wsl.exe', '--command=echo remote-wsl-marker')
+    Assert "wsl remote exit 0" ($r.ExitCode -eq 0)
+    Start-Sleep -Seconds 5
+    $dump = Read-Pane 'remwsl'
+    Assert "wsl command output visible" ($dump -match 'remote-wsl-marker')
+    Assert "no command-not-found in the wsl pane" ($dump -notmatch 'command not found')
+    if ($dump -match 'command not found') { "    pane tail: $dump" }
+}
+
 "== 4: dial failure surfaces the Mac-parity error"
 # A port DRAWN and then deliberately not bound (T694). `$Port + 1` was a guess
 # about what the neighbour of an ephemeral port is doing, and the one thing this
@@ -153,6 +183,11 @@ $err = $r.Output
 Assert "error names an incompatible version" ($err -match 'incompatible Ghoztty version')
 Assert "error names the endpoint" ($err -match "127\.0\.0\.1:$skewPort")
 Assert "error does NOT blame reachability" (-not ($err -match 'failed to reach'))
+if (($err -notmatch 'incompatible Ghoztty version') -or ($err -match 'failed to reach')) {
+    # What the CLI actually said, so a red run here is diagnosable from the log
+    # instead of needing the scenario rebuilt by hand.
+    "    skew error was: $err"
+}
 Assert "no window was opened for the skewed machine" (-not ((Get-List) -match '\[target: remskew\]'))
 
 if (-not $skewAgent.HasExited) { Stop-Process -Id $skewAgent.Id -Force -ErrorAction SilentlyContinue }

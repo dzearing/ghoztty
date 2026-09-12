@@ -26831,3 +26831,42 @@ repo-wide audit guards the test edit made due re-run green. Plugin 0.17.1 ->
 0.17.2, source repo and active cache byte-identical. **T1504** files one thing
 seen on the way past: the harness's own postmortem calls the GUI it deliberately
 terminated at teardown a CRASH, in the same shape a real crash report takes.
+
+## 2026-09-12 - A remote WSL pane runs its command instead of reporting it missing (T704)
+
+`+new-remote-window --shell=wsl.exe --command="echo hi"` answered
+`/bin/bash: line 1: echo hi: command not found` - T656's defect, still standing
+on the cross-machine path a month after the local one was fixed. The two are
+separate on purpose: a cross-machine agent applies its OWN per-shell convention,
+and the agent's table (`windowsCommandArg` in `src/remote/agent/pty_child.zig`)
+still answered `--` for wsl. `wsl -- <cmd>` hands the rest of the WINDOWS command
+line to the distro's default shell as written, so the quoting Windows applies to
+a spaced argument survives into the distro and bash looks for a program literally
+named `"echo hi"`.
+
+The fix is the signature, which is why the row survived being known-wrong.
+`windowsCommandArg` returned ONE flag, and every row but wsl genuinely is one
+flag; it is now `windowsCommandArgs`, returning the argv elements that go between
+the shell and the command string, and the wsl row is `-e /bin/sh -c`. `-e` execs
+an argv rather than passing a command line along, and the inner `sh -c` is what
+gives the command string its shell parsing back - `-e "<one string>"` alone would
+exec it as a bare binary. Deliberately NOT the local table's
+`-lic "…; exec \"$SHELL\" -li"`: the agent's rows do not keep the shell alive
+(`cmd /c` exits with its command) and this one matches its neighbours. The two
+tables stay independent, so `wsl_inner_shell` is a parallel constant rather than
+an import.
+
+Acceptance is a new arm 3b in `test/win32/ipc-remote.ps1`, gated on a distro that
+can actually run `/bin/true` rather than on `wsl.exe` existing. It asserts the
+marker AND the absence of `command not found`, because the marker alone passes on
+a pre-fix binary - the broken build printed it *inside* the error line, which is
+the trap T656 recorded. ALL PASS for that arm; the four floor lanes green.
+`docs/claude/remote.md` listed the remote conventions as "wsl `--`" and now says
+what the code does, including the keep-alive difference from the local table.
+
+One thing filed on the way past. **T1507**: arm 4b of the same harness is red for
+an unrelated reason - a proto-version skew is being classified as an unreachable
+machine again, which is exactly the wrong answer T628 removed, and the arm now
+prints the error it got so a red run is diagnosable from the log. The skewed agent
+was measured alive and accepting TCP, so the misclassification is the product's,
+not the harness's.

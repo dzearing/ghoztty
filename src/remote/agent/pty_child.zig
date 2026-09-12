@@ -1107,11 +1107,12 @@ pub const PtySpawner = struct {
         // after (see the deferred frees below).
         //   - POSIX: with a command → `<shell> -lic <command>`; without → `<shell>
         //     -li` (login interactive) — mirroring the local CLI's shell convention.
-        //   - Windows: the command flag is PER-SHELL (see `windowsCommandArg`):
-        //     cmd.exe `/c <command>`, powershell/pwsh `-Command <command>`,
-        //     wsl `-- <command>` (run via the distro's default shell). Without a
-        //     command → just `<shell>` (interactive). `-lic`/`-li` are
-        //     POSIX-shell flags with no Windows analogue.
+        //   - Windows: the command args are PER-SHELL (see `windowsCommandArgs`):
+        //     cmd.exe `/c <command>`, powershell/pwsh `-Command <command>`, wsl
+        //     `-e /bin/sh -c <command>` (an argv into an inner shell, so the
+        //     distro never sees Windows' quoting — T704). Without a command →
+        //     just `<shell>` (interactive). `-lic`/`-li` are POSIX-shell flags
+        //     with no Windows analogue.
         const shell_z = try self.alloc.dupeZ(u8, shell_path);
         defer self.alloc.free(shell_z);
 
@@ -1146,7 +1147,8 @@ pub const PtySpawner = struct {
             try args_list.append(self.alloc, try self.alloc.dupeZ(u8, shell_path));
             if (is_windows) {
                 if (open.command) |cmd| if (cmd.len > 0) {
-                    try args_list.append(self.alloc, try self.alloc.dupeZ(u8, windowsCommandArg(shell_path)));
+                    for (windowsCommandArgs(shell_path)) |a|
+                        try args_list.append(self.alloc, try self.alloc.dupeZ(u8, a));
                     try args_list.append(self.alloc, try self.alloc.dupeZ(u8, cmd));
                 };
             } else if (open.command) |cmd| {
@@ -1241,16 +1243,31 @@ fn cloneEnvMap(alloc: Allocator, src: *const std.process.EnvMap) !std.process.En
     return out;
 }
 
-/// The argv flag that makes a WINDOWS shell run a single command string, chosen
-/// by the shell's basename (case-insensitive, `.exe` optional, full paths ok):
+/// The interpreter the wsl row runs the command through inside the distro. The
+/// one binary every distro is guaranteed to have, and the same choice the local
+/// table makes (`apprt.ipc.args.wsl_inner_shell`); a cross-machine agent applies
+/// its OWN convention, so this is a parallel constant rather than an import.
+const wsl_inner_shell = "/bin/sh";
+
+/// The argv elements that go BETWEEN a Windows shell and the single command
+/// string it should run, chosen by the shell's basename (case-insensitive,
+/// `.exe` optional, full paths ok):
 ///   - `powershell` / `pwsh` → `-Command` (`/c` is not a PowerShell flag; it
 ///     would be parsed as a path fragment and the spawn fails)
-///   - `wsl` → `--` (everything after it runs via the distro's DEFAULT shell;
-///     `-e` would exec the string as a bare binary with no shell parsing)
+///   - `wsl` → `-e /bin/sh -c` — the one row that is not a single flag, and
+///     the reason this returns a slice. `wsl -- <cmd>` hands the rest of the
+///     WINDOWS command line to the distro's default shell verbatim, so the
+///     quoting Windows applies to a spaced argument survives into the distro
+///     and bash looks for a program literally named `"echo hi"` (T704, the
+///     cross-machine half of T656). `-e` execs an ARGV instead, and the inner
+///     `/bin/sh -c` is what gives the command string its shell parsing back.
 ///   - anything else (cmd.exe, COMSPEC fallbacks, unknown shells) → `/c`,
 ///     the historical cmd.exe convention.
+/// The agent's rows do NOT keep the shell alive afterwards — `cmd /c` exits with
+/// its command and every row here matches that — which is where this
+/// deliberately differs from the local table's `-lic "…; exec …"` form.
 /// Interactive opens (no command) never use this — the shell is argv[0] alone.
-fn windowsCommandArg(shell_path: []const u8) []const u8 {
+fn windowsCommandArgs(shell_path: []const u8) []const []const u8 {
     // Basename: strip directories (both separators appear in Windows paths).
     var base = shell_path;
     if (std.mem.lastIndexOfAny(u8, base, "\\/")) |i| base = base[i + 1 ..];
@@ -1259,32 +1276,41 @@ fn windowsCommandArg(shell_path: []const u8) []const u8 {
         base = base[0 .. base.len - 4];
 
     if (std.ascii.eqlIgnoreCase(base, "powershell") or
-        std.ascii.eqlIgnoreCase(base, "pwsh")) return "-Command";
-    if (std.ascii.eqlIgnoreCase(base, "wsl")) return "--";
-    return "/c";
+        std.ascii.eqlIgnoreCase(base, "pwsh")) return &.{"-Command"};
+    if (std.ascii.eqlIgnoreCase(base, "wsl")) return &.{ "-e", wsl_inner_shell, "-c" };
+    return &.{"/c"};
 }
 
-test "windowsCommandArg: per-shell command flag" {
-    const t = std.testing;
+test "windowsCommandArgs: per-shell command argv" {
+    const expectArgs = struct {
+        fn f(expected: []const []const u8, actual: []const []const u8) !void {
+            try std.testing.expectEqual(expected.len, actual.len);
+            for (expected, actual) |e, a| try std.testing.expectEqualStrings(e, a);
+        }
+    }.f;
+
     // cmd.exe style — bare, .exe, full path, COMSPEC default, unknown shells.
-    try t.expectEqualStrings("/c", windowsCommandArg("cmd"));
-    try t.expectEqualStrings("/c", windowsCommandArg("cmd.exe"));
-    try t.expectEqualStrings("/c", windowsCommandArg("C:\\Windows\\System32\\cmd.exe"));
-    try t.expectEqualStrings("/c", windowsCommandArg("C:\\weird\\myshell.exe"));
+    try expectArgs(&.{"/c"}, windowsCommandArgs("cmd"));
+    try expectArgs(&.{"/c"}, windowsCommandArgs("cmd.exe"));
+    try expectArgs(&.{"/c"}, windowsCommandArgs("C:\\Windows\\System32\\cmd.exe"));
+    try expectArgs(&.{"/c"}, windowsCommandArgs("C:\\weird\\myshell.exe"));
     // PowerShell (Windows PowerShell + pwsh 7), any casing, any location.
-    try t.expectEqualStrings("-Command", windowsCommandArg("powershell.exe"));
-    try t.expectEqualStrings("-Command", windowsCommandArg("PowerShell.EXE"));
-    try t.expectEqualStrings(
-        "-Command",
-        windowsCommandArg("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
+    try expectArgs(&.{"-Command"}, windowsCommandArgs("powershell.exe"));
+    try expectArgs(&.{"-Command"}, windowsCommandArgs("PowerShell.EXE"));
+    try expectArgs(
+        &.{"-Command"},
+        windowsCommandArgs("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"),
     );
-    try t.expectEqualStrings("-Command", windowsCommandArg("pwsh"));
-    try t.expectEqualStrings("-Command", windowsCommandArg("C:\\Program Files\\PowerShell\\7\\pwsh.exe"));
-    // WSL: run via the distro's default shell.
-    try t.expectEqualStrings("--", windowsCommandArg("wsl.exe"));
-    try t.expectEqualStrings("--", windowsCommandArg("C:\\Windows\\System32\\wsl.exe"));
+    try expectArgs(&.{"-Command"}, windowsCommandArgs("pwsh"));
+    try expectArgs(&.{"-Command"}, windowsCommandArgs("C:\\Program Files\\PowerShell\\7\\pwsh.exe"));
+    // WSL: exec an argv into an inner /bin/sh, NOT `--` (T704) — `--` would hand
+    // the quoted Windows command line to the distro's shell as a single word.
+    try expectArgs(&.{ "-e", "/bin/sh", "-c" }, windowsCommandArgs("wsl.exe"));
+    try expectArgs(&.{ "-e", "/bin/sh", "-c" }, windowsCommandArgs("WSL"));
+    try expectArgs(&.{ "-e", "/bin/sh", "-c" }, windowsCommandArgs("C:\\Windows\\System32\\wsl.exe"));
     // Forward slashes work too (users type them; Win32 accepts them).
-    try t.expectEqualStrings("-Command", windowsCommandArg("C:/Program Files/PowerShell/7/pwsh.exe"));
+    try expectArgs(&.{"-Command"}, windowsCommandArgs("C:/Program Files/PowerShell/7/pwsh.exe"));
+    try expectArgs(&.{ "-e", "/bin/sh", "-c" }, windowsCommandArgs("C:/Windows/System32/wsl.exe"));
 }
 
 /// Runs in the forked child before exec: set up the controlling terminal via the
