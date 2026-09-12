@@ -2820,8 +2820,11 @@ pub const AttachProbe = struct {
     /// It is what the REMOTE paths keep, because across a network our own
     /// attach can outlive the connection that made it (a half-open TCP the peer
     /// has not reaped), so "the roster says attached" there is not evidence
-    /// that somebody else is holding the session — `attached_elsewhere` and the
-    /// steal retry adjudicate that case instead.
+    /// that somebody else is holding the session, and withholding on it would
+    /// refuse to restore our OWN sessions. Nothing adjudicates it wire-side
+    /// either: the agent takes the newest attach and never reports who held it
+    /// (T703), so the remote arms accept the steal and T1506 tracks telling the
+    /// loser about it.
     ///
     /// `.skip_live_holders` additionally excludes every session the agent
     /// reports as ATTACHED (T851). The agent rebinds a session to the newest

@@ -109,8 +109,9 @@ session out of the chooser. It used to arrive at the pane as a bare
 text. It is two mechanisms, split by what each can carry, and the split is the
 design:
 
-- **The reason for `not_found` / `dead` / `attached_elsewhere` is derived on the
-  CLIENT** from the `AttachStatus` the agent already sends. Those are complete
+- **The reason for `not_found` / `dead` is derived on the CLIENT** from the
+  `AttachStatus` the agent already sends (the mapping also renders
+  `attached_elsewhere`, a reserved field no agent sets — T703). Those are complete
   answers that arrive in milliseconds and have on every agent that ever shipped,
   so the sentence needs **no capability and no wire change** and works against an
   agent of any age. Mapping: `src/termio/attach_failed_notice.zig` (pure,
@@ -167,7 +168,10 @@ the two LOCAL rebuilds (launch restore, the chooser's local Restore All) use
 `attached` and records it in the probe's `held` set instead. The two REMOTE arms
 (`RemoteReconnect`, `RestoreAllRelay`) keep `.attachable`: across a relay that
 flag is as likely to be our own dropped connection the far agent has not reaped,
-and the steal there is adjudicated by `attached_elsewhere` instead. Crash
+so withholding there would refuse to restore our own sessions. Nothing
+adjudicates the remote case wire-side: the agent takes the newest attach and
+says nothing about who held it (T703), so the roster flag plus this policy is
+the whole of the decision on both arms. Crash
 recovery is not weakened, because the local flag is only trusted after it
 SETTLES — `restoreSessionLayout` re-probes every 200 ms for up to 2 s while a
 window it would restore reads held, which a dead holder's flag clears out of

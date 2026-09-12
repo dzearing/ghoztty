@@ -1342,6 +1342,27 @@ pub const Server = struct {
         // reconnect path. The session may have been orphaned (its previous
         // connection dropped); binding repoints the bridge at our writer so live
         // output resumes flowing, and clears the orphan/idle-reap eligibility.
+        //
+        // UNCONDITIONALLY, including when another connection still holds the
+        // bridge, and that is the contract rather than an oversight (T703): the
+        // newest ATTACH wins, `Attached.attached_elsewhere` is never set and
+        // `att.force` is never read. §5.3 once specified a polite refusal here,
+        // but the two paths that re-attach most — the reconnect swap and launch
+        // restore, both re-attaching a session their OWN superseded connection
+        // holds — would each have paid a refusal plus a forced retry to reach
+        // the same bind. The loser is not notified — its stream simply stops —
+        // but it cannot take the session down with it either: `detachAll` only
+        // unbinds sessions whose `bridge_ctx` is still that connection, so the
+        // stolen-from viewer's eventual shutdown leaves this bind alone.
+        //
+        // The consequence the app owns, not us: a second viewer attaching to a
+        // session somebody is looking at TAKES it. `App.AttachProbe`'s
+        // `.skip_live_holders` policy is where that is adjudicated (T851), on
+        // the roster's attached flag, because the client is the side that knows
+        // whether the holder is a live window or its own dropped connection.
+        //
+        // A future agent that does want to refuse must gate the refusal on a
+        // negotiated capability — see `protocol.Attach.force`.
         self.bindLocked(s);
 
         // Capture the snapshot anchor S (= current outbound offset; a real grid
@@ -6268,6 +6289,95 @@ test "P1: session survives connection drop; reattach replays the ring gap (catch
     const dp2 = try protocol.DataPayload.decode(d2.?.payload);
     try testing.expectEqual(@as(u64, 16), dp2.byte_offset);
     try testing.expectEqualSlices(u8, "+live", dp2.bytes);
+}
+
+test "T703: a second viewer's ATTACH takes a still-bound session, silently — no attached_elsewhere, force ignored" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{ .ms = 1000 };
+    var fc: FakeChild = .{ .alloc = alloc };
+    defer fc.deinit();
+    var kids = [_]*FakeChild{&fc};
+    var sp: FakeSpawner = .{ .children = &kids };
+    var prng = std.Random.DefaultPrng.init(37);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    try h.client.handshake();
+    _ = try h.server.waitHandshake();
+
+    // Viewer 1 opens a session and is BOUND to it — nothing dropped, nothing
+    // detached. This is the contended case §5.3 described and no agent has ever
+    // produced: somebody is genuinely holding the bridge.
+    const o = try doOpen(&h, .{ .rows = 24, .cols = 80 });
+    var id_buf: [32]u8 = o.id;
+    h.server.onChildOutput(o.channel, "hello"); // offset 0, S=5
+    _ = try h.client.nextData();
+    {
+        h.store.mutex.lock();
+        defer h.store.mutex.unlock();
+        try testing.expect(h.store.table.getByChannel(o.channel).?.bound);
+    }
+
+    // Viewer 2 attaches over the SAME store, with force=false — the flag the
+    // §5.3 retry would have set only on a second try.
+    var rc = try ReConn.init(&h, .raw);
+    defer rc.deinit();
+    try rc.server.start();
+    try rc.client.handshake();
+    _ = try rc.server.waitHandshake();
+    try rc.client.sendControlJson(.attach, protocol.control_channel, protocol.Attach{
+        .session_id = id_buf[0..],
+        .rows = 24,
+        .cols = 80,
+        .last_byte_offset = 5,
+        .force = false,
+    });
+    const af = try rc.client.waitControl(.attached);
+    var ap = try protocol.parseJson(protocol.Attached, alloc, af.payload);
+    defer ap.deinit();
+
+    // The answer is an ordinary successful attach: alive, no refusal, and the
+    // field the client's dead retry branch waited on is false. THIS is the
+    // assertion T703 exists for — it goes red the day the agent starts
+    // refusing, which is the day the client needs a capability and a retry.
+    try testing.expectEqual(protocol.Attached.AttachStatus.alive, ap.value.status);
+    try testing.expect(!ap.value.attached_elsewhere);
+
+    // And the bridge really moved: the session is bound to viewer 2's server,
+    // so live output goes THERE. Viewer 1 is not told; its stream simply stops.
+    {
+        h.store.mutex.lock();
+        defer h.store.mutex.unlock();
+        const s2 = h.store.table.getByChannel(o.channel).?;
+        try testing.expect(s2.bound);
+        try testing.expect(s2.bridge_ctx == @as(?*anyopaque, rc.server));
+    }
+    h.server.onChildOutput(o.channel, "+after");
+    const d = try rc.client.nextData();
+    const dp = try protocol.DataPayload.decode(d.?.payload);
+    try testing.expectEqualSlices(u8, "+after", dp.bytes);
+
+    // Viewer 1 takes it back with force=false as easily as it lost it: `force`
+    // is read by nobody, so the two spellings of an ATTACH are one behavior.
+    try h.client.sendControlJson(.attach, protocol.control_channel, protocol.Attach{
+        .session_id = id_buf[0..],
+        .rows = 24,
+        .cols = 80,
+        .last_byte_offset = dp.byte_offset + dp.bytes.len,
+        .force = false,
+    });
+    const af2 = try h.client.waitControl(.attached);
+    var ap2 = try protocol.parseJson(protocol.Attached, alloc, af2.payload);
+    defer ap2.deinit();
+    try testing.expectEqual(protocol.Attached.AttachStatus.alive, ap2.value.status);
+    try testing.expect(!ap2.value.attached_elsewhere);
+    {
+        h.store.mutex.lock();
+        defer h.store.mutex.unlock();
+        try testing.expect(h.store.table.getByChannel(o.channel).?.bridge_ctx ==
+            @as(?*anyopaque, h.server));
+    }
 }
 
 test "P1: explicit DETACH orphans the session (kept alive, unbound, not streaming)" {

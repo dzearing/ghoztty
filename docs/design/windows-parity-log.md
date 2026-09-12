@@ -9,6 +9,34 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-12: T703 (T1506 filed) - **the polite "may I steal this session?"
+  handshake was written in three design docs and implemented nowhere, and it is
+  now written down the way the code actually behaves.** `protocol.Attached.
+  attached_elsewhere` and `protocol.Attach.force` were §5.3's refusal-and-retry
+  pair; the agent has never set the first or read the second - `handleAttach`
+  binds a live session to the NEWEST attach unconditionally - so the client's
+  half (withhold the pane in `connection.zig`, re-attach with `force = true` in
+  `termio/Remote.zig`) could only ever run against the test fake that produced
+  the field. Resolution: spec follows code, which is also the behavior the two
+  busiest callers need - the reconnect swap and launch restore both re-attach a
+  session their OWN superseded connection still holds, and a refusal would have
+  cost each of them a round trip to arrive at the same bind. Both wire fields
+  are now RESERVED, with the rule a future refusal must follow (gate it on a
+  negotiated capability; never redefine a field), and the two client branches
+  are gone. The evidence is a REAL-server test rather than a fake: a second
+  viewer attaching over a live bind gets `alive` + `attached_elsewhere == false`,
+  the bridge demonstrably moves, and the first viewer takes it back with
+  `force = false`. Green: floor-lane -Lane all ALL LANES PASS,
+  session-persistence ALL PASS, remote-reconnect-relay/-fresh ALL PASS (12 each)
+  with the relay run's own log showing one ATTACH per session and no retry, plus
+  the nine guards the edit made due (sessions-running-cmd, session-relaunch-
+  notify, pane-ingest-lag, pane-ingest-ab, chooser-restore-all-remote, agent-
+  relay-session-e2e, docs-routing, thread-join, test-reach, msg-timer-ids,
+  printclient-audit) all green and re-stamped. **T1506** carries what this task
+  deliberately did not fix: the OTHER half of §5.3 is missing too - no attach
+  epoch and no `DETACHED` frame - so the viewer that loses a session is told
+  nothing and its keystrokes still reach the shell somebody else is now using.
+
 - 2026-09-12: T702 (T1505 filed) - **a test that spawns a thread and can return
   without joining it is now a red line, not a thing somebody remembers.** T693
   fixed two such sites by hand in `src\remote\connection.zig`; T702 was filed to

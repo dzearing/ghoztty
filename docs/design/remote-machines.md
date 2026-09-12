@@ -387,6 +387,20 @@ prominently to the evicted side; sensitive deployments can require a confirmatio
 token. This prevents dual keystroke streams and `RESIZE` thrash from a second Mac or a
 stale bridge.
 
+> **As built (T703, 2026-09-12): none of the handshake above exists, and this
+> section is kept as the design it was, not as a description of the code.** The
+> agent binds a live session to the NEWEST `ATTACH`, unconditionally: it never
+> sets `attached_elsewhere`, never reads `Attach.force`, stamps no attach-epoch
+> and sends no `DETACHED`. The loser's stream simply stops. That is deliberate —
+> the two paths that re-attach most (the reconnect swap and launch restore) are
+> re-attaching a session their own superseded connection still holds, and a
+> refusal would cost each of them a round trip to arrive at the same bind — and
+> the contended case is adjudicated CLIENT-side instead, by `AttachProbe`'s
+> `.skip_live_holders` policy on the roster's attached flag (T851). Both wire
+> fields stay reserved; a future refusal must be gated on a negotiated
+> capability rather than starting to set them. The unfenced evicted bridge is
+> tracked separately (T1506).
+
 ### 5.4 Resize during disconnect
 The GUI may resize while DEGRADED/RECONNECTING. On REATTACHING: send `ATTACH` with
 the *new* size; the client **ignores DATA until the snapshot arrives**; the agent

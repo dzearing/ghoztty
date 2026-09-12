@@ -266,8 +266,10 @@ fn worker(job: *Job) void {
 
     // `.attachable` on the CROSS-MACHINE arm (T851 keeps the local one). A
     // remote roster's attached flag can be our own dropped connection the far
-    // agent has not reaped, and the relay path already adjudicates a genuine
-    // second holder with `attached_elsewhere` + the steal retry.
+    // agent has not reaped, so withholding on it would refuse to restore our
+    // own sessions. A genuine second holder is NOT adjudicated on the wire —
+    // the agent takes the newest attach and says nothing (T703) — so this arm
+    // accepts the steal deliberately; T1506 tracks telling the loser.
     job.probe = App.AttachProbe.take(alloc, pull.conn(), .attachable);
     const attach_ptr = job.probe.attachSet();
 

@@ -617,12 +617,12 @@ pub fn streamPosAfter(
     return @max(current, covered);
 }
 
-/// The outcome of `attachChannel` (§3.3/§5.3/§7.3). Surfaces everything the caller
-/// needs to decide recovery tier (§7.4) or to retry a steal with `force=true`.
+/// The outcome of `attachChannel` (§3.3/§7.3). Surfaces everything the caller
+/// needs to decide recovery tier (§7.4).
 pub const AttachOutcome = struct {
     /// The pane handle. Non-null on `.alive` (the channel is registered and live);
-    /// null on `.dead`/`.not_found`/`attached_elsewhere` (nothing was registered —
-    /// the caller cleans up by retrying or giving up; no `closeChannel` needed).
+    /// null on `.dead`/`.not_found` (nothing was registered — the caller gives up
+    /// or relaunches; no `closeChannel` needed).
     pane: ?*Pane,
     /// Liveness tier from the agent (§7.4).
     status: protocol.Attached.AttachStatus,
@@ -637,8 +637,13 @@ pub const AttachOutcome = struct {
     /// every later `appliedOffset()` — and the manifest entry written from it —
     /// back in the future, and the next restore would freeze again.
     resume_offset: u64 = 0,
-    /// The session already had an attached bridge (§5.3). When true with
-    /// `force=false`, the caller may retry `attachChannel(..., force=true)` to steal.
+    /// `ATTACHED.attached_elsewhere` as it arrived on the wire — always false
+    /// from every agent that has shipped (T703). §5.3 wrote it as "somebody
+    /// else holds this, retry with `force = true`"; the agent re-binds a live
+    /// session to the newest ATTACH instead, so there is nothing to retry and a
+    /// live attach yields a pane regardless of this flag. Carried out because a
+    /// future, capability-gated refusal would use the same name, and because a
+    /// diagnostic is cheaper than re-deriving it from the frame.
     attached_elsewhere: bool,
     /// Present iff `status == .dead` (tombstone exit code, §7.1/§7.4).
     exit_code: ?i64,
@@ -2188,15 +2193,20 @@ pub const Connection = struct {
     }
 
     /// Re-attach to an existing session (§3.3 attach / §7.3 sequence-anchored
-    /// resync / §5.3 steal). Mints a fresh channel id (§7.1), registers an inbound
-    /// ring, sends `ATTACH{session_id, rows, cols, last_byte_offset, force}`, and
-    /// awaits `ATTACHED`. Returns an `AttachOutcome`:
+    /// resync). Mints a fresh channel id (§7.1), registers an inbound ring, sends
+    /// `ATTACH{session_id, rows, cols, last_byte_offset, force}`, and awaits
+    /// `ATTACHED`. Returns an `AttachOutcome`:
     ///   - `.alive`: a live `*Pane` is returned (registered + tracked) with
     ///     `discard_below = snapshot_at_offset` so the data reader drops already-
     ///     applied DATA (§7.3).
     ///   - `.dead` / `.not_found`: no pane; the channel is deregistered/freed here.
-    ///   - `attached_elsewhere && !force`: no pane; the caller may retry with
-    ///     `force=true` to steal (§5.3). We do NOT auto-steal.
+    ///
+    /// `force` is RESERVED (T703): it still rides the frame for an agent that
+    /// might one day read it, but every attach to a live session already wins —
+    /// the agent re-binds to the newest ATTACH — so passing `true` changes
+    /// nothing today. Attaching to a session another viewer holds TAKES it;
+    /// deciding whether that is wanted is the caller's job, not this call's (see
+    /// `App.AttachProbe`'s `.skip_live_holders`).
     ///
     /// The caller frees the outcome's `cwd`/`title` via `AttachOutcome.deinit`.
     pub fn attachChannel(
@@ -2263,11 +2273,11 @@ pub const Connection = struct {
     /// `error.AttachRefused` and, if `refusal` is non-null, fills it with the
     /// reason token and detail.
     ///
-    /// Note what does NOT come back this way: `not_found`, `dead` and
-    /// `attached_elsewhere` are ordinary `AttachOutcome`s carrying that status
-    /// — they always were, they arrive at once, and the client renders the
-    /// user-facing reason from the status itself. This error is for the
-    /// refusals no `Attached` payload could describe.
+    /// Note what does NOT come back this way: `not_found` and `dead` are
+    /// ordinary `AttachOutcome`s carrying that status — they always were, they
+    /// arrive at once, and the client renders the user-facing reason from the
+    /// status itself. This error is for the refusals no `Attached` payload could
+    /// describe.
     ///
     /// Every other failure is unchanged, `error.Timeout` included: an agent too
     /// old to advertise `capability.attach_failed` never sends the frame, so
@@ -2337,9 +2347,9 @@ pub const Connection = struct {
         defer parsed.deinit();
         const a = parsed.value;
 
-        // Register the inbound ring on the agent's channel. On any early return
-        // (dead/not_found, or a non-forced steal) we tear it back down; only a kept
-        // pane disarms this by flipping `keep_channel`.
+        // Register the inbound ring on the agent's channel. On an early return
+        // (dead/not_found) we tear it back down; only a kept pane disarms this by
+        // flipping `keep_channel`.
         const ch = try self.alloc.create(ring.Channel);
         errdefer self.alloc.destroy(ch);
         ch.* = try ring.Channel.init(self.alloc, id, .{});
@@ -2385,10 +2395,17 @@ pub const Connection = struct {
             .alloc = self.alloc,
         };
 
-        // Only a live, non-stolen attach yields a pane. For everything else
-        // (.dead/.not_found, or a non-forced steal) we keep no pane and explicitly
-        // tear the channel back down here (a value return doesn't fire `errdefer`).
-        const keep = a.status == .alive and !(a.attached_elsewhere and !force);
+        // A live attach yields a pane. For .dead/.not_found we keep no pane and
+        // explicitly tear the channel back down here (a value return doesn't fire
+        // `errdefer`).
+        //
+        // `attached_elsewhere` used to withhold the pane here as well, so the
+        // caller could retry with `force = true` and steal (§5.3). No agent has
+        // ever set that field — an ATTACH on a live session always re-binds
+        // (T703) — so the branch answered a question nobody asks, and the retry
+        // it existed for is gone with it. A future refusal arrives as a
+        // capability-gated addition, not as this flag turning up unannounced.
+        const keep = a.status == .alive;
         if (!keep) {
             self.deregisterChannel(id);
             ch.deinit(self.alloc);
@@ -5307,7 +5324,10 @@ const LifecycleAgent = struct {
     // ATTACHED reply contents (only used when an ATTACH arrives).
     attach_status: protocol.Attached.AttachStatus = .alive,
     snapshot_at_offset: u64 = 0,
-    attached_elsewhere_first: bool = false, // true → first ATTACH reports stolen
+    /// true → the FIRST ATTACH reply sets `attached_elsewhere`. Nothing but this
+    /// fake ever does (T703); it exists to pin what the client does with the
+    /// field, not to model an agent.
+    attached_elsewhere_first: bool = false,
     exit_code: ?i64 = null,
     /// Reported in ATTACHED (T12c): a dead session materialized from disk that
     /// can be respawned via RELAUNCH. Set alongside `attach_status = .dead`.
@@ -5456,8 +5476,8 @@ const LifecycleAgent = struct {
                         );
                         continue;
                     }
-                    // If configured, the FIRST attach reports attached_elsewhere; a
-                    // retry (which carries force=true) succeeds.
+                    // If configured, the FIRST attach reports attached_elsewhere.
+                    // A real agent never does (T703) — see the field's comment.
                     const elsewhere = self.attached_elsewhere_first and n == 0;
                     try self.ctrl.sendJson(.attached, frame.channel, protocol.Attached{
                         .status = self.attach_status,
@@ -6809,30 +6829,38 @@ test "attachChannel: not_found surfaces; no pane" {
     try testing.expect(outcome.pane == null);
 }
 
-test "attachChannel: steal — attached_elsewhere without force, then force succeeds (§5.3)" {
+test "attachChannel: an ATTACHED that sets attached_elsewhere still yields a pane (wire shape, T703)" {
     const alloc = testing.allocator;
     const h = try LifecycleHarness.create(alloc);
     defer h.destroy();
     const a = h.configure();
     a.attach_status = .alive;
-    a.attached_elsewhere_first = true; // first ATTACH reports stolen
+    a.attached_elsewhere_first = true; // only this fake ever sets the field
     try h.start();
 
-    // First attempt: no force → attached_elsewhere, no pane (we do NOT auto-steal).
+    // This pins a WIRE SHAPE, not a behavior: no agent sets `attached_elsewhere`
+    // (T703), so the only producer is the fake above. What is asserted is that
+    // the flag rides out onto the outcome for a caller that wants to log it, and
+    // that it does NOT withhold the pane — the client used to drop the pane here
+    // and retry with `force = true`, a round trip for an answer it can never be
+    // given. A future refusal is a capability-gated addition, and it gets its own
+    // test then.
     var first = try h.conn.attachChannel("contended", 24, 80, 0, false);
     defer first.deinit();
     try testing.expect(first.attached_elsewhere);
-    try testing.expect(first.pane == null);
+    const pane = first.pane orelse return error.NoPane;
+    try testing.expectEqual(protocol.Attached.AttachStatus.alive, first.status);
 
-    // Retry with force=true → the agent (n==1) no longer reports elsewhere; success.
+    // And `force` changes nothing on the second attach: it rides the frame, the
+    // agent ignores it, the pane comes back either way.
     var second = try h.conn.attachChannel("contended", 24, 80, 0, true);
     defer second.deinit();
     try testing.expect(!second.attached_elsewhere);
-    const pane = second.pane orelse return error.NoPane;
-    try testing.expectEqual(protocol.Attached.AttachStatus.alive, second.status);
+    const pane2 = second.pane orelse return error.NoPane;
 
     try testing.expectEqual(@as(u32, 2), a.attach_count.load(.monotonic));
     h.conn.closeChannel(pane);
+    h.conn.closeChannel(pane2);
 }
 
 test "attachChannelRefusable: ATTACH_FAILED is the ATTACH's answer, with its reason (T657)" {

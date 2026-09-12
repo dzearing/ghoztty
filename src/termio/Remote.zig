@@ -680,8 +680,8 @@ fn recordAttachRefusal(self: *Remote, refusal: protocol.RefusalCopy) void {
 
 /// ...and for an ATTACH the agent DID answer, with a status that yields no pane
 /// (T657). This is the common case by far — a session the agent no longer has,
-/// one whose process ended for good, one another window is already showing —
-/// and it needs no capability at all, because the status has ridden `ATTACHED`
+/// or one whose process ended for good — and it needs no capability at all,
+/// because the status has ridden `ATTACHED`
 /// since long before there was a frame to refuse on. Before this the answer
 /// reached the pane as a bare `error.RemoteAttachFailed` and the generic paint
 /// blamed the system for "exhausting a system resource".
@@ -835,32 +835,16 @@ pub fn threadEnter(
             if (err == error.AttachRefused) self.recordAttachRefusal(attach_refusal);
             return err;
         };
-        // `attached_elsewhere` without force (§5.3): the session's bridge still
-        // belongs to another connection — for THIS surface that is our own
-        // superseded/zombie connection (the WP-D1 reconnect swap re-attaches
-        // the same window; WP-D2 restore re-attaches the same user's session
-        // after a relaunch), so reclaim it with force=true (the agent evicts
-        // the stale bridge and DETACHes the loser). Without the retry the
-        // swapped-in surface came up dead (no pane) while the UI said healthy.
-        if (outcome.pane == null and
-            outcome.status == .alive and
-            outcome.attached_elsewhere)
-        {
-            outcome.deinit();
-            log.info("attach: session attached elsewhere; reclaiming with force=true", .{});
-            outcome = self.conn.attachChannelRefusable(
-                sid,
-                rows,
-                cols,
-                self.attach_offset,
-                true,
-                &self.canceller,
-                &attach_refusal,
-            ) catch |err| {
-                if (err == error.AttachRefused) self.recordAttachRefusal(attach_refusal);
-                return err;
-            };
-        }
+        // There is no steal retry here any more (T703). §5.3 specified one — a
+        // live ATTACH could come back `attached_elsewhere` with no pane, and
+        // this is where we re-attached with `force = true` to reclaim it — but
+        // no agent has ever refused: an ATTACH on a live session re-binds it to
+        // the newest caller, which is precisely what the two paths through here
+        // need (the WP-D1 reconnect swap re-attaches the same window, WP-D2
+        // restore re-attaches after a relaunch, and in both the previous holder
+        // is our OWN superseded connection). The retry could only ever run
+        // against a hypothetical agent, and a real refusal will arrive
+        // capability-gated with a retry written for it.
         defer outcome.deinit();
         if (outcome.pane) |p| {
             // T739: the two numbers whose disagreement is the whole defect —

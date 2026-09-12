@@ -138,8 +138,9 @@ pub const FrameType = enum(u8) {
     // "I cannot answer this ATTACH." The negative reply to `ATTACH`, for the
     // refusals `ATTACHED` has no way to express (T657).
     //
-    // Note what this is NOT: `not_found`, `dead` and `attached_elsewhere` are
-    // already complete, immediate answers carried by `ATTACHED.status` — a
+    // Note what this is NOT: `not_found` and `dead` are already complete,
+    // immediate answers carried by `ATTACHED.status` (and `attached_elsewhere`
+    // is a reserved field no agent sets — T703) — a
     // second vocabulary for them would be two ways to say one thing across a
     // compatibility boundary, which is exactly what the agent contract asks us
     // not to build. This frame covers what the status enum cannot say at all:
@@ -761,8 +762,9 @@ pub const capability = struct {
     /// paths dropped the request on the floor, so the client discovered them
     /// 10 s later as `error.Timeout`.
     ///
-    /// Deliberately NOT a re-statement of `not_found`/`dead`/
-    /// `attached_elsewhere`: those already ride `ATTACHED` and arrive at once.
+    /// Deliberately NOT a re-statement of `not_found`/`dead`: those already
+    /// ride `ATTACHED` and arrive at once (`attached_elsewhere` rides it too,
+    /// as a field no shipped agent sets — T703).
     /// What the user sees for THEM is a client-side mapping of that status
     /// (`termio/attach_failed_notice.zig`), which needs no wire change and so
     /// works against an agent of any age.
@@ -1233,12 +1235,14 @@ pub const AttachFailed = struct {
     /// sentence for a token it does not recognize, so new ones never need a
     /// capability of their own.
     ///
-    /// Note the absences. `session_not_found`, `session_ended` and
-    /// `attached_elsewhere` are NOT here: the agent answers all three with an
-    /// ordinary `ATTACHED` carrying the matching `AttachStatus`, immediately,
-    /// and it has done so since long before this frame existed. They are
-    /// reasons a USER sees — `termio/attach_failed_notice.zig` names them from
-    /// that status — not reasons that need a wire frame.
+    /// Note the absences. `session_not_found` and `session_ended` are NOT here:
+    /// the agent answers both with an ordinary `ATTACHED` carrying the matching
+    /// `AttachStatus`, immediately, and it has done so since long before this
+    /// frame existed. They are reasons a USER sees —
+    /// `termio/attach_failed_notice.zig` names them from that status — not
+    /// reasons that need a wire frame. `attached_elsewhere` is absent for a
+    /// second reason on top of that one: no agent produces it at all (T703),
+    /// and the notice keeps its sentence only so a future refusal has one.
     pub const Reason = struct {
         /// The `ATTACH` payload did not parse.
         pub const malformed_request = "malformed_request";
@@ -1301,7 +1305,18 @@ pub const Attach = struct {
     rows: u16,
     cols: u16,
     last_byte_offset: u64 = 0,
-    /// Set by a client retrying after `attached_elsewhere` to steal (§5.3).
+    /// RESERVED, and read by nobody (T703). It was specified as the retry half
+    /// of §5.3's steal handshake — "you said `attached_elsewhere`, give it to
+    /// me anyway" — but no agent has ever asked the question: `handleAttach`
+    /// re-binds a live session to the newest ATTACH unconditionally, so every
+    /// attach is already a steal and this flag has nothing left to say. It
+    /// stays on the wire because an older client still sends it, and an unknown
+    /// field is not a thing this decoder should start rejecting.
+    ///
+    /// If a future agent DOES want to refuse a live attach, it must gate the
+    /// refusal on a negotiated capability rather than reviving this field's
+    /// meaning: a client that never asked for the handshake would otherwise get
+    /// no pane and no retry, which is the one skew this reservation prevents.
     force: bool = false,
 };
 
@@ -1317,8 +1332,18 @@ pub const Attached = struct {
     snapshot_at_offset: u64 = 0,
     /// Present iff `status == .dead` (a tombstone, §7.1/§7.4).
     exit_code: ?i64 = null,
-    /// Set when the session already had an attached bridge (§5.3); the client may
-    /// retry with `force = true` to steal.
+    /// RESERVED, and never set by any agent that has shipped (T703). §5.3 wrote
+    /// it as the polite half of a steal handshake — "somebody else holds this;
+    /// retry with `force = true`" — and the agent has always bound the session
+    /// to the newest ATTACH instead, which is the behavior the reconnect swap
+    /// and launch restore depend on (both re-attach a session their own
+    /// superseded connection still holds, and a refusal would cost each of them
+    /// a round trip to arrive in the same place).
+    ///
+    /// Left on the wire, and still surfaced on `AttachOutcome`, so an older
+    /// peer's frame decodes and so a future handshake has a name to use — but
+    /// see `Attach.force`: such a handshake is a capability-gated addition, not
+    /// a change of heart about this field.
     attached_elsewhere: bool = false,
 
     /// Set (with `status == .dead`) when this dead session is a RELAUNCHABLE

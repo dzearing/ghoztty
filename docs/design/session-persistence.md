@@ -195,8 +195,10 @@ exactly what remote windows are today, minus the network.
   but owned by the same component, so one code path.
 - **Portability:** falls out. A local session and a remote session are the
   same object; the Mac is already enrollable as a relay device. Moving a
-  window = ATTACH from elsewhere (the protocol already has
-  `attached_elsewhere` + `force` steal semantics, `protocol.zig:429,447`).
+  window = ATTACH from elsewhere (which always wins: the agent re-binds a live
+  session to the newest attach. The protocol's `attached_elsewhere` + `force`
+  fields were specified for a polite steal and are reserved, unset and unread —
+  T703).
 - **Performance:** emulation and rendering stay in-app (§3.2). The added cost
   per byte is one local socket traversal plus a demux-thread → per-pane-ring →
   async-wake handoff that the remote path already implements. Measured on
@@ -634,10 +636,12 @@ mismatched number.
 - The Mac enrolls as a relay device (already supported; this Mac has a device
   id). The machine chooser gains a per-machine session list: dial → 
   `LIST_SESSIONS` → "Terminals on MaximusHome (3)" with title/cwd/liveness.
-- **Move = re-attach elsewhere.** ATTACH from machine B with `force` steals
-  the single-viewer slot; the protocol's `attached_elsewhere` already models
-  this. The losing viewer (if alive) gets a `DETACHED{reason=stolen}` frame
-  and shows a placeholder pane: "Attached on Mac B — [Take back]". Its
+- **Move = re-attach elsewhere.** ATTACH from machine B takes the
+  single-viewer slot — no `force` needed, since the agent re-binds a live
+  session to the newest attach (T703: `attached_elsewhere` and `force` are
+  reserved and unimplemented). The losing viewer is currently told nothing; the
+  design here wants it to get a `DETACHED{reason=stolen}` frame and show a
+  placeholder pane: "Attached on Mac B — [Take back]" (T1506). Its
   manifest entry stays, so "take back" is one click and reboot-restore on A
   doesn't resurrect a window B now owns without saying so (it restores as the
   placeholder).
