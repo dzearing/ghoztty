@@ -18,6 +18,9 @@
 #   proxy-amnesia  same, but keeps clearing the screen after the clear, so
 #                  the continuation lands and then vanishes - a session that
 #                  cleared but ate the prompt (the T132-class stall).
+#   proxy-clearwedge  a composer that TAKES "/clear" and swallows the CR, so
+#                  the pane sits at a full composer that never ran the command
+#                  (T1502). It paints the real composer marker, '>' + U+00A0.
 #   proxy-working  what a session that ACCEPTS the prompt looks like: no echo
 #                  at all, then a spinner repainting for 15s. The only
 #                  on-screen evidence of delivery is the paint (T182/T261),
@@ -31,9 +34,10 @@
 #   B  negative control: the same run with the C-u line deleted from the
 #        helper -> the pane receives "nn/clear" verbatim (the filed symptom,
 #        reproduced) and the continuation is STILL sent (liveness beats
-#        cleanliness). The arms that asserted a loud failure over it went with
-#        the 2026-08-25 composer rewrite of the clear check and are recorded
-#        in place against T1502, which owes their replacement.
+#        cleanliness). It does NOT shout: a "/clear" submitted as ordinary text
+#        leaves the composer empty, and the composer is what the clear gate
+#        reads. Sections K-M carry the loud half, against the pane that really
+#        produces it.
 #        Carries a receipt oracle since T483:
 #        this section once flaked with the continuation missing from the
 #        screen, and only an out-of-band receipt can attribute a recurrence
@@ -66,6 +70,16 @@
 #   J  the same, with a byte dropped from the PATH instead: the basename (and
 #        therefore the probe) is untouched, while the fresh session would have
 #        nothing to read.
+#   K  T1502: a composer that takes "/clear" and swallows the CR that came
+#        with it. The gate must find the composer by its MEASURED marker, name
+#        the wedge, press Enter, and an out-of-band receipt must show the clear
+#        really ran - not merely that the screen looked cleared.
+#   L  the same wedge, permanent: three Enters and it is still sitting there,
+#        so it is shouted and bannered, and the continuation goes out anyway.
+#   M  negative control for K/L: the same pane driven by a helper whose
+#        composer marker is a glyph no pane prints - the state of the gate from
+#        2026-08-25 to 2026-09-12. It reports "verified: /clear landed" over a
+#        session that cleared nothing, which is the defect as filed.
 #
 # Oracles are the pane's own output (+read), the helper's log
 # (/tmp/reset-context-last.log), and the banner in +list --json.
@@ -141,8 +155,17 @@ Write-Sh (Join-Path $work 'proxy-normal.sh') @'
 # oracle OUTSIDE the pane, so a T483-class miss can be attributed: a line in
 # the receipt but not on screen is a display/read-side loss, a line in
 # neither never reached the shell at all.
+# The prompt carries the REAL composer marker (T1502): '>' followed by U+00A0,
+# which is what a live Claude Code composer draws and what the helper's clear
+# gate anchors on. Measured with +read against v2.1.266 and v2.1.269 panes on
+# 2026-09-12 - exactly one occurrence per 40-line dump, on the composer row,
+# while the transcript's echo of an already-run command uses an ordinary
+# space. Written with printf rather than as a literal because Write-Sh emits
+# ASCII, and a proxy without the marker would exercise the helper's fallback
+# instead of the check under test.
 R="$1"
-while IFS= read -r -e -p 'rc> ' l; do
+RCP="rc>$(printf '\302\240')"
+while IFS= read -r -e -p "$RCP" l; do
   [ -n "$R" ] && printf '%s\n' "$l" >> "$R"
   if [ "$l" = "/clear" ]; then printf '\033[2J\033[3J\033[H'; echo "RC-CLEARED"
   else echo "RC-TEXT[$l]"; fi
@@ -153,9 +176,58 @@ Write-Sh (Join-Path $work 'proxy-amnesia.sh') @'
 # Same, but every line AFTER the clear also wipes the screen: a session that
 # accepted /clear and then ate whatever was typed into it.
 S=0
-while IFS= read -r -e -p 'rc> ' l; do
+RCP="rc>$(printf '\302\240')"
+while IFS= read -r -e -p "$RCP" l; do
   if [ "$l" = "/clear" ] || [ "$S" = "1" ]; then S=1; printf '\033[2J\033[3J\033[H'
   else echo "RC-TEXT[$l]"; fi
+done
+'@
+Write-Sh (Join-Path $work 'proxy-clearwedge.sh') @'
+#!/bin/bash
+# T1502: a composer that TAKES "/clear" and SWALLOWS the CR that arrived with
+# it. This is the state the clear gate exists to catch, and the state it was
+# blind to from 2026-08-25 (when the gate started grepping for a prompt glyph
+# no pane prints) until 2026-09-12.
+#
+# Echo is off and every character is painted by hand behind the same prompt
+# marker a real Claude Code composer draws - '>' + U+00A0 - so the pane holding
+# an unsubmitted "/clear" is STATIC and looks to +read exactly like the real
+# one does.
+#
+# $1 receipt file: every SUBMITTED line, out of band, so "the clear really ran"
+# can be told from "the screen looked like it did".
+# $2 how many CRs to swallow after "/clear" (default 1 = one Enter recovers it;
+# a large number = permanently wedged, which must be shouted about).
+R="${1:-$(dirname "$0")/received.txt}"
+SWALLOW="${2:-1}"
+NB=$(printf '\302\240')
+stty -echo 2>/dev/null
+printf 'rc-ready\n'
+BUF=''
+prompt(){ printf '\r\033[K>%s%s' "$NB" "$BUF"; }
+prompt
+while IFS= read -r -N1 c; do
+  case "$c" in
+    $'\r'|$'\n')
+      if [ "$BUF" = "/clear" ] && [ "$SWALLOW" -gt 0 ]; then
+        SWALLOW=$((SWALLOW - 1)); continue
+      fi
+      [ -z "$BUF" ] && continue
+      printf '%s\n' "$BUF" >> "$R"
+      if [ "$BUF" = "/clear" ]; then
+        printf '\033[2J\033[3J\033[H'; printf 'RC-CLEARED\n'; BUF=''; prompt; continue
+      fi
+      BUF=''
+      # A submitted continuation makes the pane WORK, the way proxy-working
+      # does: otherwise the motion gate below the clear gate would fail this
+      # pane for its own reasons and the section could not assert a clean run.
+      i=0
+      while [ "$i" -lt 15 ]; do i=$((i + 1)); printf '\r  * Working... (%ss)  ' "$i"; sleep 1; done
+      printf '\n'; prompt
+      ;;
+    $'\025') BUF=''; prompt ;;
+    *) BUF="$BUF$c"; printf '%s' "$c" ;;
+  esac
 done
 '@
 Write-Sh (Join-Path $work 'proxy-working.sh') @'
@@ -276,6 +348,36 @@ if ($nsText -match 'pressing Enter \(attempt') {
 if ($nsText -notmatch 'TYPED BUT NOT SUBMITTED') {
     Write-Host 'SETUP FAIL: pre-T562 copy lost the wedge verdict too'; exit 1
 }
+# Fourth negative control (T1502): the helper with its MEASURED composer marker
+# swapped for a glyph the pane never prints - which is what the gate really
+# looked for between 2026-08-25 and 2026-09-12, and why it reported
+# "verified: /clear landed" over panes that had cleared nothing. The whole
+# marker block (and the fallback that now backs it) is replaced by the original
+# four-line function, so section M measures the SIGNATURE rather than the
+# plumbing around it. The sentinel is ASCII on purpose: Write-Sh emits ASCII,
+# and U+276F itself would not survive the file.
+Write-Sh (Join-Path $work 'drop-marker.sed') @'
+/^NBSP=/,/^attempt=0$/c\
+composer_holds_clear(){\
+  ghoztty +read --name="$P" --lines=40 2>/dev/null \\\
+    | grep '^ZZ-A-GLYPH-NO-PANE-EVER-PRINTS' | tail -1 | grep -qF "/clear"\
+}\
+attempt=0
+'@
+$blindWin = Join-Path $work 'reset-context-blind.sh'
+$dropMarkerU = To-Unix (Join-Path $work 'drop-marker.sed')
+$blindU = To-Unix $blindWin
+& $bash -lc "sed -f '$dropMarkerU' '$helperU' > '$blindU'" | Out-Null
+$blText = Get-Content $blindWin -Raw
+if ($blText -match '(?m)^NBSP=') {
+    Write-Host 'SETUP FAIL: pre-T1502 copy still carries the measured marker'; exit 1
+}
+if ($blText -notmatch 'ZZ-A-GLYPH-NO-PANE-EVER-PRINTS') {
+    Write-Host 'SETUP FAIL: pre-T1502 copy did not get the blind glyph'; exit 1
+}
+if ($blText -notmatch 'is still in the composer after') {
+    Write-Host 'SETUP FAIL: pre-T1502 copy lost the clear verdict too'; exit 1
+}
 $logWin = Join-Path (& $bash -lc 'cygpath -w /tmp' | ForEach-Object { $_.Trim() }) 'reset-context-last.log'
 
 # ---- instance ------------------------------------------------------------
@@ -339,9 +441,11 @@ function Wait-Tail([string]$paneId, [string]$needle, [int]$secs = 10) {
     }
     return $false
 }
-function New-ProxyWindow([string]$target, [string]$proxy, [string]$proxyArg = '', [string]$ready = 'rc>') {
+function New-ProxyWindow([string]$target, [string]$proxy, [string]$proxyArg = '', [string]$ready = 'rc>', [string]$proxyArg2 = '') {
     $u = To-Unix (Join-Path $work $proxy)
-    $cmd = if ($proxyArg) { "bash $u '$proxyArg'" } else { "bash $u" }
+    $cmd = if ($proxyArg2) { "bash $u '$proxyArg' '$proxyArg2'" }
+           elseif ($proxyArg) { "bash $u '$proxyArg'" }
+           else { "bash $u" }
     # T1241: through the test desktop. `+new-window` is the one verb that
     # auto-launches, and the window it opens lands on the desktop of whoever
     # ran the CLI - so on the user's screen, every time this helper was called.
@@ -463,15 +567,16 @@ try {
     # COMPOSER, and a submitted-as-ordinary-text "/clear" leaves the composer
     # empty, so this shape is invisible to it by design.
     #
-    # What is NOT by design, and is why nothing replaced them in the same
-    # breath: that composer check greps for a prompt glyph a real Claude Code
+    # What was NOT by design, and is why nothing replaced them in the same
+    # breath: that composer check greped for a prompt glyph a real Claude Code
     # pane never prints (zero occurrences in a 400-line +read, measured
-    # 2026-09-12), so it reports `verified: /clear landed` unconditionally -
+    # 2026-09-12), so it reported `verified: /clear landed` unconditionally -
     # including over this pane, which B2 has just proved was never cleared.
-    # T1502 owes the measured signature AND the demonstration that it can fail;
-    # the arms deleted here are the shape that demonstration should take. They
-    # are recorded rather than quietly dropped, so the coverage is a known hole
-    # with an id on it instead of an absence nobody can see.
+    # T1502 measured the marker a live composer really draws ('>' + U+00A0) and
+    # put the loud arms where the state that produces them actually lives:
+    # sections K (a recoverable wedge), L (a permanent one, shouted and
+    # bannered) and M (the blind gate, still calling it a clean clear). This
+    # section stays quiet, and now on purpose rather than by accident.
     #
     # The C-u wipe itself is still proven load-bearing by B1/B2 above: without
     # it the filed symptom reproduces exactly.
@@ -625,6 +730,62 @@ try {
     $b9 = Banner-Of $p9
     Assert ($b9 -and $b9 -match 'reset-context FAILED') "J4 banner tells the user (got '$b9')"
 
+    # --- K. T1502: the composer swallowed the /clear, one Enter recovers it -
+    # The clear gate's own T562: "/clear" is typed, the CR that came with it is
+    # eaten, and the pane sits at a full composer. From 2026-08-25 the gate
+    # grepped for a prompt glyph no Claude Code pane prints, so it saw an empty
+    # composer here and wrote "verified" over a session that had cleared
+    # nothing. The marker it anchors on now was measured in live panes; this
+    # section is the demonstration that it can see this state at all.
+    $recvK = Join-Path $work 'received-K.txt'
+    $p10 = New-ProxyWindow 'rc10' 'proxy-clearwedge.sh' (To-Unix $recvK) 'rc-ready'
+    $r = Run-Helper $helper $p10 'continue-marker-K'
+    Assert ($r.log -match "clear check: reading the composer") 'K1 the gate found the composer by its measured marker'
+    Assert ($r.log -match 'UNSUBMITTED: /clear is in the composer') 'K2 the wedge is NAMED, not reported as a clean clear'
+    Assert ($r.log -match 'pressing Enter \(attempt 1/3\)') 'K3 the gate presses Enter itself'
+    $gotK = ''
+    for ($t = 0; $t -lt 40 -and -not (($gotK -split "`r?`n") -contains '/clear'); $t++) {
+        $gotK = [string](Get-Content $recvK -Raw -ErrorAction SilentlyContinue); Start-Sleep -Milliseconds 250
+    }
+    Assert ((($gotK -split "`r?`n") -contains '/clear')) 'K4 the clear really RAN (out-of-band receipt), not merely looked cleared'
+    Assert ($r.log -match 'verified: /clear landed') 'K5 and the recovered clear verifies'
+    Assert ($r.log -notmatch 'RESET-CONTEXT FAILED') 'K6 no failure shouted over a recovered wedge'
+    $b10 = Banner-Of $p10
+    Assert ([string]::IsNullOrEmpty($b10)) "K7 no banner over a recovered wedge (got '$b10')"
+
+    # --- L. T1502: a composer that will NEVER submit the /clear ------------
+    # Three Enters and it is still sitting there. That is the state the loop
+    # cannot recover from by itself, so it must be shouted at the user rather
+    # than written off - the arms section B lost on 2026-09-12 are this shape,
+    # against the pane that actually produces it.
+    $recvL = Join-Path $work 'received-L.txt'
+    $p11 = New-ProxyWindow 'rc11' 'proxy-clearwedge.sh' (To-Unix $recvL) 'rc-ready' '99'
+    $r = Run-Helper $helper $p11 'continue-marker-L'
+    Assert ($r.log -match 'pressing Enter \(attempt 3/3\)') 'L1 the gate spends its whole Enter budget'
+    Assert ($r.log -match "still in the composer after 3 Enter press\(es\)") 'L2 and NAMES the /clear that never ran'
+    Assert ($r.log -match 'RESET-CONTEXT FAILED') 'L3 and shouts it into the log'
+    Assert ($r.log -notmatch 'verified: /clear landed') 'L4 nothing claims the clear landed'
+    $gotL = [string](Get-Content $recvL -Raw -ErrorAction SilentlyContinue)
+    Assert (-not (($gotL -split "`r?`n") -contains '/clear')) 'L5 the receipt agrees: the clear never ran'
+    $b11 = Banner-Of $p11
+    Assert ($b11 -and $b11 -match 'reset-context FAILED') "L6 banner tells the user (got '$b11')"
+    # Liveness still beats cleanliness: an uncleared context is survivable, a
+    # continuation that never arrives is not.
+    Assert (Wait-Tail $p11 'Working...' 20) 'L7 the continuation is sent anyway'
+
+    # --- M. negative control for K/L: the pre-T1502 blind gate -------------
+    # The same permanently wedged pane, driven by a helper whose composer
+    # marker is a glyph no pane prints. It must report success - that is the
+    # filed defect, reproduced - which is what makes K and L measurements of
+    # the signature rather than of the machinery around it.
+    $recvM = Join-Path $work 'received-M.txt'
+    $p12 = New-ProxyWindow 'rc12' 'proxy-clearwedge.sh' (To-Unix $recvM) 'rc-ready' '99'
+    $r = Run-Helper $blindWin $p12 'continue-marker-M'
+    Assert ($r.log -match 'verified: /clear landed') 'M1 pre-T1502: a wedged composer is called a clean clear (the filed bug)'
+    Assert ($r.log -notmatch 'UNSUBMITTED: /clear is in the composer') 'M2 pre-T1502: the wedge is never even noticed'
+    $gotM = [string](Get-Content $recvM -Raw -ErrorAction SilentlyContinue)
+    Assert (-not (($gotM -split "`r?`n") -contains '/clear')) 'M3 while the receipt shows the clear never ran'
+
     # --- D. durability of the fix (T130's lesson) -------------------------
     $cached = Get-Content $cacheHelper -Raw
     Assert ($cached -match '--when-idle C-u') 'D1 the ACTIVE plugin cache carries the composer wipe'
@@ -635,6 +796,8 @@ try {
     Assert ($cached -match 'it contains your instructions for this session') `
         'D8 the ACTIVE plugin cache hands the continuation over by reference, never typing the prose'
     Assert ($cached -match 'arrived INTACT') 'D9 the ACTIVE plugin cache carries the integrity verdict (T699)'
+    Assert ($cached -match '(?m)^NBSP=') 'D10 the ACTIVE plugin cache anchors the clear gate on the measured composer marker (T1502)'
+    Assert ($cached -notmatch [char]0x276F) 'D11 and no longer greps for the glyph no pane prints'
     $srcRepo = 'D:\git\dzearing-claude-marketplace'
     $srcHelper = Join-Path $srcRepo 'skills\reset-context\scripts\reset-context.sh'
     if (Test-Path $srcHelper) {
@@ -650,7 +813,7 @@ try {
         $script:skipped++
     }
 } finally {
-    foreach ($w in @('rc1', 'rc2', 'rc3', 'rc4', 'rc5', 'rc6', 'rc7', 'rc8', 'rc9')) { & $exe +close --target=$w 2>$null | Out-Null }
+    foreach ($w in @('rc1', 'rc2', 'rc3', 'rc4', 'rc5', 'rc6', 'rc7', 'rc8', 'rc9', 'rc10', 'rc11', 'rc12')) { & $exe +close --target=$w 2>$null | Out-Null }
     Start-Sleep -Milliseconds 500
     Kill-RepoInstances
     Remove-TestDesktop | Out-Null

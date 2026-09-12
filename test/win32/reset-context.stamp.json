@@ -1,12 +1,12 @@
 {
     "guard":  "reset-context",
     "script":  "test/win32/reset-context.ps1",
-    "generated":  "2026-09-12T13:17:18-07:00",
-    "commit":  "41761aad1",
+    "generated":  "2026-09-12T13:42:51-07:00",
+    "commit":  "5e60f312b",
     "uncommitted":  [
                         "test/win32/reset-context.ps1"
                     ],
     "files":  {
-                  "test/win32/reset-context.ps1":  "18bf1ba18fe3645181c372df93345f482422d293f245d15144e444cffcba1f67"
+                  "test/win32/reset-context.ps1":  "fdf581c0ed62f5cc1495c0e7970fb21d49870fc8051a75e3a7151cffbe2aeb1f"
               }
 }

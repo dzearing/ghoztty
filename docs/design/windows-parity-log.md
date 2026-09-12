@@ -26714,3 +26714,49 @@ a submitted-as-ordinary-text `/clear` leaves an empty composer, so that shape is
 invisible to the new check by design. They are recorded in place, with the id
 that owes their replacement, so the hole has a name instead of being an absence
 nobody can see.
+
+## 2026-09-12 - The reset helper's clear check reads a composer it can actually see (T1502)
+
+Before this session hands the next one its instructions it types `/clear` and
+then checks that the clear really happened. That check has been unable to fail
+since 2026-08-25: it looked for the composer by grepping for a prompt glyph
+(U+276F) that a real Claude Code pane never prints, so it matched nothing,
+concluded the composer was empty, and wrote `verified: /clear landed` over every
+run - including, as section B of the acceptance suite proved on 2026-09-12, a
+pane the same section had just shown was never cleared. The loop's safety net
+had no net in it.
+
+The fix starts with a measurement rather than a guess. Dumping three live panes
+with `+read` (Claude Code v2.1.266 busy, v2.1.269 empty and then holding an
+unsubmitted `/clear`) says what a composer actually draws: `>` followed by a
+NO-BREAK SPACE, occurring **exactly once** per 40-line dump, on the composer
+row. The transcript's echo of a command that already ran uses an ordinary space
+and is therefore invisible to it - which is the property the 2026-08-25 rewrite
+was reaching for, and the reason the whole-screen grep before it cried wolf on
+every healthy run. Two details came out of the same dumps: `+read` can join the
+composer row and the status row into one line, so the content is cut at the
+first run of two spaces rather than taken to end of line (filed as **T1503**);
+and a missing marker is now a THIRD answer, not a silent "empty" - it falls back
+to the bottom of the pane, which needs no glyph, and says so in the log. "The
+composer is empty" and "I cannot see the composer" being the same answer is
+precisely the bug that was fixed.
+
+The gate ships with the demonstration that it can fail. `proxy-clearwedge.sh`
+models a composer that takes `/clear` and swallows the CR that came with it -
+painting the measured marker, so the section exercises the check and not the
+fallback - and three new sections drive it: **K**, a recoverable wedge, where
+the gate names the state, presses Enter, and an out-of-band receipt proves the
+clear really RAN rather than merely looked like it; **L**, a permanent one,
+where the whole Enter budget is spent and the failure is shouted and bannered
+while the continuation still goes out (liveness beats cleanliness); and **M**,
+the negative control - the same pane under a gate whose marker is a glyph no
+pane prints still reports a clean clear, which is the defect as filed. Section
+B's shouted arms are not restored: a `/clear` submitted as ordinary text leaves
+the composer empty, so that shape is invisible to a composer check by design,
+and the comment now says so as a decision instead of as a hole.
+
+Suite ALL PASS (81), the four floor lanes and P1-P3 green, and the eight
+repo-wide audit guards the test edit made due re-run green. Plugin 0.17.1 ->
+0.17.2, source repo and active cache byte-identical. **T1504** files one thing
+seen on the way past: the harness's own postmortem calls the GUI it deliberately
+terminated at teardown a CRASH, in the same shape a real crash report takes.

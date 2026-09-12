@@ -1,8 +1,8 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-12T13:20:52-07:00",
-    "commit":  "41761aad1",
+    "generated":  "2026-09-12T14:05:41-07:00",
+    "commit":  "5e60f312b",
     "uncommitted":  [
                         "test/win32/reset-context.ps1"
                     ],
@@ -215,7 +215,7 @@
                   "test/win32/remote-pill.ps1":  "220f8acc13fbe2ef04a5cadb89cc7c946cfaedd1e3ca81e1432ba4cc8d11f7ca",
                   "test/win32/remote-reconnect-fresh.ps1":  "f52527a7db54f7bf55b5902c89110bd20119b718a10cf669f9096ec09cb6650f",
                   "test/win32/remote-reconnect-relay.ps1":  "b5bda33dbb4def8b2cc882ffd1bb6d13d55069d3f60f0079178e1dcc23554831",
-                  "test/win32/reset-context.ps1":  "18bf1ba18fe3645181c372df93345f482422d293f245d15144e444cffcba1f67",
+                  "test/win32/reset-context.ps1":  "fdf581c0ed62f5cc1495c0e7970fb21d49870fc8051a75e3a7151cffbe2aeb1f",
                   "test/win32/reset-window-size.ps1":  "163ab9bfcf216a224adcd886da9787dc33e5d1d3ed078a541028e3116918526c",
                   "test/win32/resize-flicker.ps1":  "1d26095577e205443d15d2ba97385f887cf09c6b28a016cd520d9056ad8f2772",
                   "test/win32/restore-late-agent.ps1":  "c4c66e059613f345e285d2f4d82ed42188a1bcbc6632867d2f01792771ff69e8",
