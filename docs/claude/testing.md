@@ -458,8 +458,9 @@ that threw two thirds of the way through section B with B5-B9 unmeasured.
 **And there is exactly ONE way to put the box back to empty** (T248, T351). A
 script never writes its own kill of the app under test or its sibling agent:
 `Stop-RepoGhoztty` in `test\win32\lib\CleanSlate.ps1` is it, with `-AppOnly` /
-`-AgentOnly` for the two narrower scopes and `Reset-GhozttyTestState` on top when
-the debug restore state must go too. It matches the EXACT ExecutablePath of the
+`-AgentOnly` for the two narrower scopes, `-ScopeToLineage` for a suite that
+owns its own agent lineage (T691, below), and `Reset-GhozttyTestState` on top
+when the debug restore state must go too. It matches the EXACT ExecutablePath of the
 exe under test and refuses outright an exe that is not under the repo — the
 guarantee no private copy ever had, because they all filtered and none of them
 refused. This rule has been paid for twice: T248 hoisted the reset and converted
@@ -937,8 +938,27 @@ over-long value rejected rather than truncated (truncation would silently merge
 two sandboxes into one lineage). Unset — every production run — reproduces each
 legacy name byte for byte. Rules: `src/remote/agent_lineage.zig`; acceptance:
 `test/win32/agent-instance-lineage.ps1` (which carries a `-TeethCheck` self-test
-for its own end-to-end arm). Converting the existing suites onto it is T691; the
-Swift half is T692.
+for its own end-to-end arm). The Swift half is T692.
+
+**And a converted suite kills only what it owns** (T691). Three lines convert
+one: `Set-GhozttyTestAgentLineage -Tag '<suite>'` next to the existing
+`Set-GhozttyTestIsolation`, `-ScopeToLineage` on every `Stop-RepoGhoztty`, and
+`Get-GhozttyAgentStateDir -Root $tmp` in place of a hardcoded
+`ghoztty\local-agent-debug` (`test\win32\lib\AgentLineage.ps1`). A scoped kill
+takes the agents and ConPTY holders whose COMMAND LINE names this run's lineage,
+plus the `ghoztty.exe` pids `lib\TestDesktop.ps1` recorded launching — and it
+REFUSES when it cannot scope both halves rather than widening back to the blunt
+kill, because a suite built on a guarantee it does not have is worse than one
+with no guarantee at all. Two things had to become attributable for that to be
+possible: a holder's spawn spec now carries the lineage in its file NAME
+(`%TEMP%\ghoztty-ptyhost-<lineage>-<sid>.json`), since a holder escapes its
+agent's job and its parent on purpose and nothing else about it says whose it
+is; and the session manifest follows the lineage the way the agent state dir
+does (`session-layout-debug-<lineage>.json`), so one sandbox's clean slate
+cannot throw away the windows another is describing. The payoff is that two
+persistence suites run AT THE SAME TIME — measured, not asserted, by
+`test\win32\agent-lineage-suites.ps1` section D, whose `-TeethCheck` reverts to
+the unscoped kill and requires the bystander-survives arm to go red.
 
 **Tests must never touch live user state.** The WebView2 live-runtime tests run
 under `webview2.TestProfile`, which points `LOCALAPPDATA` at a private per-run

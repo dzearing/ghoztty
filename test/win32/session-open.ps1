@@ -23,6 +23,20 @@ param(
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
+# T691: and this run's own AGENT lineage, which is the other half of driving
+# only our own app. The pipe suffix above forks the APP endpoint; without a
+# lineage the agent is still the single per-user one, so this script used to
+# have to KILL whatever agent was holding the box's panes just to have one -
+# rude to live sessions, and the reason two acceptance scripts could never run
+# at the same time. Minted here, ahead of the first reset, because a run that
+# mints one after it has already started an agent has two.
+#
+# lib\TestDesktop.ps1 is dot-sourced with it rather than further down: the
+# scoped kill asks it which ghoztty.exe pids are OURS, and a scoped kill that
+# cannot answer that REFUSES rather than quietly widening.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+[void](Set-GhozttyTestAgentLineage -Tag 'sessopen')
+
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
 $root = Join-Path $env:TEMP "ghoztty-session-open-$PID"
@@ -36,7 +50,7 @@ function Stop-TestProcs {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 700)
+    [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 700)
 }
 
 # Kill ONLY the zig-out GUI (ghoztty.exe), leaving any local agent running — so
@@ -46,7 +60,7 @@ function Stop-GuiOnly {
     # point of this helper - the agent (and its PTYs) stay up - and exact-exe is
     # what the private copy's '*zig-out*' filter got wrong: that also matched a
     # detached instance running from zig-out-release (T53b).
-    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 800)
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -ScopeToLineage -SettleMs 800)
 }
 
 # Run a zig-out ghoztty +command with a hard timeout; stdout+stderr -> $out.
@@ -148,7 +162,7 @@ function Is-DescendantOf($procId, $ancestor, $maxDepth = 12) {
 # override, launches the GUI with $extraArgs, returns @{ Tmp; Proc }.
 function Start-Gui($label, $agentBin, $extraArgs) {
     $tmp = Join-Path $root $label
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     $env:LOCALAPPDATA = $tmp
     if ($null -ne $agentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $agentBin }
     else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
@@ -176,7 +190,6 @@ Assert-GhozttyPrivateEndpoint -Exe $Exe
 
 # T1238: the GUI and every CLI call below start on a background test desktop,
 # so this floor no longer throws windows across whatever the user is reading.
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 $td = New-TestDesktop
 
 # ============================================================================
@@ -189,7 +202,7 @@ Assert-GhozttyIsolated -Exe $Exe
 $paneId = if ($null -ne $pane) { $pane.id } else { '' }
 
 # The agent should have been found-or-spawned and written its port.json.
-$portFile = Join-Path $a.Tmp 'ghoztty\local-agent-debug\port.json'
+$portFile = Join-Path (Get-GhozttyAgentStateDir -Root $a.Tmp) 'port.json'
 $agentPid = 0
 $info = $null
 if (Test-Path $portFile) {
@@ -262,7 +275,7 @@ Assert "B1 GUI opened a pane with persistence off" ($null -ne $pane)
 $paneId = if ($null -ne $pane) { $pane.id } else { '' }
 Assert "B2 typing works on the plain exec pane" (Test-Typing $b.Tmp $paneId 18)
 # No agent should have been spawned (no port.json) and +sessions finds none.
-$portFileB = Join-Path $b.Tmp 'ghoztty\local-agent-debug\port.json'
+$portFileB = Join-Path (Get-GhozttyAgentStateDir -Root $b.Tmp) 'port.json'
 Assert "B3 no local agent was spawned (no port.json)" (-not (Test-Path $portFileB))
 $code = Run-Cli '+sessions --json' "$($b.Tmp)\sess.json"
 $rowsB = $null

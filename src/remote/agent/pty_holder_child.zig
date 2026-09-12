@@ -50,6 +50,7 @@ const relay_perf = @import("relay_perf.zig");
 const server = @import("server.zig");
 const session = @import("session.zig");
 const internal_os = @import("../../os/main.zig");
+const agent_lineage = @import("../agent_lineage.zig");
 const foreground = @import("foreground.zig");
 
 const is_windows = builtin.os.tag == .windows;
@@ -861,7 +862,18 @@ const win = struct {
         errdefer alloc.free(pipe_name);
 
         // 1. Stage the spawn spec (the whole OPEN, verbatim).
-        const spec_path = try spec_mod.tempPath(alloc, opts.session_id);
+        //
+        // T691: the spec's FILE NAME carries this agent's lineage, because the
+        // `--spec <path>` argument is the only thing about the holder's spawn
+        // that is visible from outside it — and a holder is deliberately
+        // unreachable through the job and the process tree, so a teardown
+        // scoped to one lineage has nothing else to recognise it by.
+        var lineage_buf: [agent_lineage.max_len]u8 = undefined;
+        const spec_path = try spec_mod.tempPath(
+            alloc,
+            opts.session_id,
+            agent_lineage.fromEnv(&lineage_buf),
+        );
         defer alloc.free(spec_path);
         try spec_mod.write(alloc, spec_path, .{
             .session_id = opts.session_id,

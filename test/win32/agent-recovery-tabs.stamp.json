@@ -1,13 +1,13 @@
 {
     "guard":  "agent-recovery-tabs",
     "script":  "test/win32/agent-recovery-tabs.ps1",
-    "generated":  "2026-09-03T19:04:06-07:00",
-    "commit":  "2c79f4a2c",
+    "generated":  "2026-09-12T08:49:47-07:00",
+    "commit":  "f1d06293e",
     "uncommitted":  [
                         "src/apprt/win32/session_layout.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/session_layout.zig":  "5048978477b59859d7da7018cc8d842f14a63946cf6ffcdf81cad57b056c647a",
+                  "src/apprt/win32/session_layout.zig":  "fd41a3935c10d696db8ecf2b3a12c5065e692c97396db420e52de44f385c49c0",
                   "test/win32/agent-recovery-tabs.ps1":  "3e74e147cffb4b016360debf13adf87e9d6381c0b4f4511a62621754c973313d"
               }
 }

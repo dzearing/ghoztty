@@ -591,6 +591,27 @@ $GuardTable = @(
             'src\remote\agent\session_meta.zig'
         )
     },
+    # Suite LINEAGE ISOLATION (T691): the only harness that measures whether an
+    # acceptance run cleans up after ITSELF. Everything it covers is shared by
+    # every persistence-touching script here - the scoped kill, the lineage
+    # naming, and the two product derivations (the agent's spec path and the
+    # session manifest) that make a run's processes and files attributable at
+    # all. A regression in any of them is silent in the ordinary direction: the
+    # kill simply widens back to "every agent on the box", every suite still
+    # passes, and the only symptom is somebody's live panes disappearing.
+    [pscustomobject]@{
+        Name   = 'agent-lineage-suites'
+        Script = 'test\win32\agent-lineage-suites.ps1'
+        Stamp  = 'test\win32\agent-lineage-suites.stamp.json'
+        Covers = @(
+            'test\win32\agent-lineage-suites.ps1',
+            'test\win32\lib\AgentLineage.ps1',
+            'test\win32\lib\CleanSlate.ps1',
+            'src\remote\agent_lineage.zig',
+            'src\remote\agent\pty_host_spec.zig',
+            'src\apprt\win32\session_layout.zig'
+        )
+    },
     # Holder RE-ADOPTION (T906): the only harness that measures the number that
     # separates adoption from the relaunch path agent-recovery.ps1 covers - the
     # SHELL PID is unchanged across a manager kill. It also owns the orphan

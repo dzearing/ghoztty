@@ -40,6 +40,20 @@ param(
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
+# T691: and this run's own AGENT lineage, which is the other half of driving
+# only our own app. The pipe suffix above forks the APP endpoint; without a
+# lineage the agent is still the single per-user one, so this script used to
+# have to KILL whatever agent was holding the box's panes just to have one -
+# rude to live sessions, and the reason two acceptance scripts could never run
+# at the same time. Minted here, ahead of the first reset, because a run that
+# mints one after it has already started an agent has two.
+#
+# lib\TestDesktop.ps1 is dot-sourced with it rather than further down: the
+# scoped kill asks it which ghoztty.exe pids are OURS, and a scoped kill that
+# cannot answer that REFUSES rather than quietly widening.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+[void](Set-GhozttyTestAgentLineage -Tag 'sessclose')
+
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
 $root = Join-Path $env:TEMP "ghoztty-session-close-$PID"
@@ -53,7 +67,7 @@ function Stop-TestProcs {
     # T351: one shared, path-exact kill (lib\CleanSlate.ps1) instead of a private
     # copy - the filter this replaced also matched a detached instance running from
     # zig-out-release (T53b), and every copy answered "does the agent go too" alone.
-    [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 700)
+    [void](Stop-RepoGhoztty -Exe $Exe -ScopeToLineage -SettleMs 700)
 }
 
 # Kill ONLY the zig-out GUI (ghoztty.exe), leaving the local agent running — the
@@ -63,7 +77,7 @@ function Stop-GuiOnly {
     # point of this helper - the agent (and its PTYs) stay up - and exact-exe is
     # what the private copy's '*zig-out*' filter got wrong: that also matched a
     # detached instance running from zig-out-release (T53b).
-    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 900)
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -ScopeToLineage -SettleMs 900)
 }
 
 # Run a zig-out ghoztty +command with a hard timeout; stdout+stderr -> $out.
@@ -149,7 +163,7 @@ function Wait-AliveCount($tmp, $tag, $target, $timeoutSec = 15) {
 # @{ Tmp; PaneId; SessId; Ok }.
 function Start-Backed($label) {
     $tmp = Join-Path $root $label
-    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    New-Item -ItemType Directory -Force (Get-GhozttyAgentStateDir -Root $tmp) | Out-Null
     $env:LOCALAPPDATA = $tmp
     $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
     # persistence: on (default) - session persistence IS this script's subject.
@@ -181,7 +195,6 @@ Assert-GhozttyPrivateEndpoint -Exe $Exe
 # T1238: every launch below - the GUI and the CLI verbs that talk to it - goes
 # through the harness, so the window lands on a background desktop instead of
 # across whatever the user is reading.
-. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 $td = New-TestDesktop
 
 # ============================================================================

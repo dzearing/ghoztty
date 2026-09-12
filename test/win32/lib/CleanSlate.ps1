@@ -69,6 +69,12 @@ Remove-Item Env:GHOZTTY_IPC_SOCKET -ErrorAction SilentlyContinue
 # A crash is exactly when this leaks, so the next run's reset is the backstop.
 . (Join-Path $PSScriptRoot 'HarnessLeak.ps1')
 
+# T691: and the lineage helpers, which are what let the kills below be scoped
+# to the agents THIS run owns instead of every agent running out of the repo.
+# A script opts in by minting a lineage (Set-GhozttyTestAgentLineage) and
+# passing -ScopeToLineage; an unconverted script is untouched by loading this.
+. (Join-Path $PSScriptRoot 'AgentLineage.ps1')
+
 # Repo root, derived from this file's location (test\win32\lib -> repo).
 $script:CleanSlateRepo = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 
@@ -152,11 +158,23 @@ function Stop-RepoGhoztty {
     -SettleMs keeps its old meaning - "at least this long since the kill" - and
     is measured from the start of the wait rather than added to it, so the
     ordinary clean-box case costs exactly what it did before.
+
+    T691: -ScopeToLineage narrows the whole thing from "every ghoztty and agent
+    running out of this repo" to "the ones THIS run owns" - the agents and
+    ConPTY holders whose command line names our GHOZTTY_AGENT_INSTANCE, and the
+    app pids the test-desktop helpers recorded launching. That is what lets two
+    acceptance scripts run at the same time, and what stops a run killing the
+    agent holding somebody's live panes. It REFUSES rather than quietly widening
+    when it cannot scope both halves (no lineage minted, or an app killed
+    without -AgentOnly by a script that does not launch through the harness):
+    a scope that silently falls back to the blunt kill is worse than no scope,
+    because the suite would be built on a guarantee it does not have.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Exe,
         [switch]$AppOnly,
         [switch]$AgentOnly,
+        [switch]$ScopeToLineage,
         [int]$SettleMs = 800,
         [int]$TimeoutMs = 5000,
         [int]$PollMs = 100
@@ -173,11 +191,53 @@ function Stop-RepoGhoztty {
     if (-not $AgentOnly) { $targets += $Exe }
     if (-not $AppOnly) { $targets += (Get-GhozttyAgentPath -Exe $Exe) }
 
+    # T691. Resolve the scope BEFORE the first kill round, and refuse here
+    # rather than in the loop: a caller that asked for a scoped kill and cannot
+    # have one must find out before anything has died.
+    $lineage = $null
+    $ownPids = $null
+    if ($ScopeToLineage) {
+        $lineage = Get-GhozttyAgentLineage
+        if (-not $lineage) {
+            throw ("Stop-RepoGhoztty -ScopeToLineage: no GHOZTTY_AGENT_INSTANCE is set. " +
+                "Mint one with Set-GhozttyTestAgentLineage (lib\AgentLineage.ps1) before the first reset.")
+        }
+        if (-not $AgentOnly) {
+            $ownPids = Get-GhozttyHarnessLaunchedPid
+            if ($null -eq $ownPids) {
+                throw ("Stop-RepoGhoztty -ScopeToLineage: the app half cannot be scoped - this script " +
+                    "does not launch through lib\TestDesktop.ps1, so there is no record of which " +
+                    "ghoztty.exe is ours. Launch through Start-OnTestDesktop, or pass -AgentOnly.")
+            }
+        }
+    }
+
+    $agentPath = Get-GhozttyAgentPath -Exe $Exe
+    $mine = {
+        param($proc)
+        if (-not $ScopeToLineage) { return $true }
+        if ($proc.ExecutablePath -eq $agentPath) {
+            # The agent and its holders say which lineage they are in, on their
+            # own command line. Nothing else on the box does.
+            return (Test-GhozttyAgentLineageOwned -CommandLine $proc.CommandLine -Instance $lineage)
+        }
+        return ($ownPids -contains [int]$proc.ProcessId)
+    }
+
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
     $stopped = @{}
     $survivors = @()
     while ($true) {
-        $live = Get-RepoGhozttyProcess -Paths $targets
+        # ASSIGN, then filter. `Get-RepoGhozttyProcess` returns `, @(...)` so a
+        # one-element result does not unroll into a `.Count` of $null - and that
+        # wrapper is stripped by the RETURN pipeline, not by a pipeline the
+        # caller starts. Piping the call straight into Where-Object therefore
+        # hands the filter ONE object, the whole array, whose `.ProcessId` is
+        # null: the scoped kill matched nothing and reported a clean box.
+        # (Found by this feature's own -TeethCheck arm, which is the only reason
+        # it was not shipped as a scope that silently killed nothing.)
+        $all = Get-RepoGhozttyProcess -Paths $targets
+        $live = @($all | Where-Object { & $mine $_ })
         if ($live.Count -eq 0) { $survivors = @(); break }
 
         foreach ($p in $live) {
@@ -186,7 +246,8 @@ function Stop-RepoGhoztty {
         }
 
         if ($clock.ElapsedMilliseconds -ge $TimeoutMs) {
-            $survivors = Get-RepoGhozttyProcess -Paths $targets
+            $stillThere = Get-RepoGhozttyProcess -Paths $targets
+            $survivors = @($stillThere | Where-Object { & $mine $_ })
             break
         }
         Start-Sleep -Milliseconds $PollMs
@@ -220,7 +281,13 @@ function Clear-DebugSessionLayout {
     # only some dot-source this file. One copy, in the file that launches.
     $local = $env:LOCALAPPDATA
     if (-not $local) { return $false }
-    $path = Join-Path $local 'ghoztty\session-layout-debug.json'
+    # T691: and only ever THIS lineage's file. The manifest follows
+    # GHOZTTY_AGENT_INSTANCE the way the agent's state dir does
+    # (src\apprt\win32\session_layout.zig `layoutPath`), so under a lineage the
+    # unsuffixed one describes somebody else's windows.
+    $inst = Get-GhozttyAgentLineage
+    $stem = if ($inst) { "session-layout-debug-$inst" } else { 'session-layout-debug' }
+    $path = Join-Path $local (Join-Path 'ghoztty' "$stem.json")
     if (-not (Test-Path $path)) { return $false }
     Remove-Item $path -Force -ErrorAction SilentlyContinue
     return (-not (Test-Path $path))
@@ -249,7 +316,10 @@ function Clear-DebugAgentLayouts {
     #>
     $local = $env:LOCALAPPDATA
     if (-not $local) { return $false }
-    $path = Join-Path $local 'ghoztty\local-agent-debug\layouts.json'
+    # T691: under a lineage the store lives in that lineage's state dir, and the
+    # unsuffixed one belongs to somebody else - clearing it would be both
+    # ineffective for this run and destructive to theirs.
+    $path = Join-Path (Get-GhozttyAgentStateDir -Root $local) 'layouts.json'
     if (-not (Test-Path $path)) { return $false }
     Remove-Item $path -Force -ErrorAction SilentlyContinue
     return (-not (Test-Path $path))
@@ -324,6 +394,7 @@ function Reset-GhozttyTestState {
     param(
         [Parameter(Mandatory = $true)][string]$Exe,
         [switch]$AppOnly,
+        [switch]$ScopeToLineage,
         [int]$SettleMs = 800,
         [switch]$AllowReleaseBuild
     )
@@ -341,7 +412,7 @@ function Reset-GhozttyTestState {
     # not after the assertions have measured the wrong app.
     Assert-GhozttyUnderTest -Exe $Exe -Quiet | Out-Null
 
-    $killed = Stop-RepoGhoztty -Exe $Exe -AppOnly:$AppOnly -SettleMs $SettleMs
+    $killed = Stop-RepoGhoztty -Exe $Exe -AppOnly:$AppOnly -ScopeToLineage:$ScopeToLineage -SettleMs $SettleMs
     $cleared = Clear-DebugSessionLayout
     $layoutsCleared = if ($AppOnly) { $false } else { Clear-DebugAgentLayouts }
 

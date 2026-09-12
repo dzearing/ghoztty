@@ -9,6 +9,56 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-12: T691 (T1494/T1495/T1496 filed) - **an acceptance run now cleans up
+  after itself instead of after the box, and two of them can run at once.** Every
+  persistence-touching script here opened by killing every ghoztty and
+  ghoztty-agent running out of the repo. That is somebody else's agent - the dev
+  install's, and on this box the one holding the loop's own panes - and it is
+  also the reason two acceptance scripts could never run at the same time, which
+  is why a 241-script suite is measured in hours. T167 built the knob that makes
+  the killing unnecessary and deliberately did not spend it; this spends it.
+
+  Two things had to become ATTRIBUTABLE first, and both are product changes. A
+  per-session ConPTY holder is spawned out of its agent's kill-on-close job and,
+  on the second tier of that escape, with a spoofed parent - so neither the job
+  nor the process tree says whose it is, and a teardown scoped to "the agents of
+  MY lineage" would have left the other run's holders and their PTYs alive. Its
+  spawn spec now carries the lineage in its FILE NAME
+  (`%TEMP%\ghoztty-ptyhost-<lineage>-<sid>.json`), which is the only part of a
+  holder's spawn that survives into its command line. And the session manifest
+  now follows the lineage the way the agent state dir already did
+  (`session-layout-debug-<lineage>.json`): it is the OTHER thing a launch
+  restores from, so leaving it lineage-blind left two sandboxes sharing one
+  restore state, where one's clean slate throws away what the other is
+  describing. Unset - every production run - reproduces both legacy names byte
+  for byte, asserted directly.
+
+  On top of that, `test\win32\lib\AgentLineage.ps1` and
+  `Stop-RepoGhoztty -ScopeToLineage`, which takes the agents and holders whose
+  command line names this run's lineage plus the app pids the test-desktop
+  helpers recorded launching. It REFUSES rather than quietly widening when it
+  cannot scope both halves, because a suite built on a guarantee it does not
+  have is worse than one built on none. Converting a script is three lines, and
+  `session-open.ps1` / `session-close.ps1` are the worked examples.
+
+  Evidence: `test\win32\agent-lineage-suites.ps1` ALL PASS (21 checks) - the
+  naming and the ownership predicate including the prefix trap (A1-A12), the
+  three refusals (B1-B3), a bystander debug agent still running and still
+  holding its state after our reset (C1-C3), and section D starting both
+  converted suites AT ONCE and reading each one's own verdict. `-TeethCheck`
+  reverts to the unscoped kill and turns C2 red and nothing else - and it earned
+  its keep before it shipped: it is what caught the scoped kill silently
+  matching NOTHING, because piping `Get-RepoGhozttyProcess` straight into
+  `Where-Object` hands the filter the whole `, @()` array as one object whose
+  `.ProcessId` is null. Every other arm had scored that as a pass. Both suites
+  also pass standalone. `floor-lane.ps1 -Lane all` ALL LANES PASS; P1-P3 ALL
+  PASS; all 24 guards the touched files made due, re-run green.
+
+  Next: ~57 suites still carry the blunt kill, filed as T1494 (session/layout)
+  and T1495 (agent/chooser), and the payoff - running the suite with real
+  concurrency - is T1496. The value only fully arrives when NO suite kills the
+  lineage, since one that still does takes every concurrent run down with it.
+
 - 2026-09-12: T1484 - **a loop stopped by something only the user can fix now
   says so on the screen they already have open.** T1483 made the 63.5-hour
   outage legible - the watchdog classifies the session's last answer, health

@@ -32,6 +32,7 @@
 //! host.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const protocol = @import("../protocol.zig");
@@ -108,19 +109,41 @@ pub fn readAndDelete(alloc: Allocator, path: []const u8) !Parsed {
     return parse(alloc, bytes);
 }
 
-/// Where the agent stages one session's spec: `%TEMP%\ghoztty-ptyhost-<id>.json`.
-/// The session id is unique and charset-checked before it reaches here, so the
-/// name cannot collide or escape the directory. Caller frees.
+/// Where the agent stages one session's spec:
+/// `%TEMP%\ghoztty-ptyhost-<id>.json`, or `...-<lineage>-<id>.json` when the
+/// agent runs under a `GHOZTTY_AGENT_INSTANCE` lineage. The session id is
+/// unique and charset-checked before it reaches here, so the name cannot
+/// collide or escape the directory. Caller frees.
 ///
 /// TEMP rather than the agent state directory on purpose: the spec is not agent
 /// state, it is a handoff that has already been consumed by the time anyone
 /// could look for it — and TEMP is the one per-user, always-writable directory
 /// both processes agree on without either being told where it is.
-pub fn tempPath(alloc: Allocator, session_id: []const u8) ![]u8 {
+///
+/// **Why the lineage is in the NAME** (T691). This path is the only part of a
+/// holder's spawn that survives into its command line (`--pty-host --spec
+/// <path>`), and a holder is otherwise unattributable: it is deliberately
+/// spawned OUT of the agent's kill-on-close job and, on the second tier of
+/// that escape, with a spoofed parent — so neither the job nor the process
+/// tree says whose it is. Without the lineage here, a teardown scoped to "the
+/// agents of MY lineage" leaves the other lineage's holders running, and the
+/// only teardown that catches them is the blunt kill-every-agent-on-the-box
+/// one that makes two acceptance runs mutually destructive (T691). The value
+/// is PASSED rather than read from the environment so this module stays pure
+/// (`std` + `protocol`); a null reproduces the legacy name byte for byte,
+/// which is every production run.
+pub fn tempPath(alloc: Allocator, session_id: []const u8, lineage: ?[]const u8) ![]u8 {
     const dir = std.process.getEnvVarOwned(alloc, "TEMP") catch
         (std.process.getEnvVarOwned(alloc, "TMP") catch return error.NoTempDir);
     defer alloc.free(dir);
     if (dir.len == 0) return error.NoTempDir;
+    if (lineage) |lin| {
+        if (lin.len > 0) return std.fmt.allocPrint(
+            alloc,
+            "{s}\\ghoztty-ptyhost-{s}-{s}.json",
+            .{ dir, lin, session_id },
+        );
+    }
     return std.fmt.allocPrint(alloc, "{s}\\ghoztty-ptyhost-{s}.json", .{ dir, session_id });
 }
 
@@ -238,4 +261,39 @@ test "spec: write then readAndDelete leaves nothing behind" {
 
     // Consumed: a second read finds nothing, so no forwarded env lingers.
     try testing.expectError(error.FileNotFound, readAndDelete(testing.allocator, path));
+}
+
+// T691. The spec path is the holder's only visible identity, so these two
+// assertions are what a lineage-scoped teardown rests on: a production run's
+// name is unchanged, and a sandbox's name carries its lineage where a
+// `--spec` command line will show it.
+test "spec: tempPath without a lineage reproduces the legacy name" {
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    const path = tempPath(testing.allocator, "0123456789abcdef", null) catch |err| switch (err) {
+        error.NoTempDir => return error.SkipZigTest,
+        else => return err,
+    };
+    defer testing.allocator.free(path);
+    try testing.expect(std.mem.endsWith(u8, path, "\\ghoztty-ptyhost-0123456789abcdef.json"));
+
+    // An EMPTY lineage is the same as none: `fromEnv` can only ever hand us a
+    // sanitized non-empty value or null, but the boundary is cheap to pin.
+    const empty = try tempPath(testing.allocator, "0123456789abcdef", "");
+    defer testing.allocator.free(empty);
+    try testing.expectEqualStrings(path, empty);
+}
+
+test "spec: tempPath under a lineage names it, and two lineages never collide" {
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    const a = tempPath(testing.allocator, "0123456789abcdef", "sbx1") catch |err| switch (err) {
+        error.NoTempDir => return error.SkipZigTest,
+        else => return err,
+    };
+    defer testing.allocator.free(a);
+    const b = try tempPath(testing.allocator, "0123456789abcdef", "sbx2");
+    defer testing.allocator.free(b);
+
+    try testing.expect(std.mem.endsWith(u8, a, "\\ghoztty-ptyhost-sbx1-0123456789abcdef.json"));
+    try testing.expect(std.mem.endsWith(u8, b, "\\ghoztty-ptyhost-sbx2-0123456789abcdef.json"));
+    try testing.expect(!std.mem.eql(u8, a, b));
 }

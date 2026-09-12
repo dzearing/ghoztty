@@ -50,6 +50,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const agent_lineage = @import("../../remote/agent_lineage.zig");
 const Allocator = std.mem.Allocator;
 const atomic_write = @import("../../remote/agent/atomic_write.zig");
 
@@ -337,18 +338,34 @@ pub fn load(alloc: Allocator, path: []const u8) !?Parsed {
     return try parse(alloc, bytes);
 }
 
-/// Resolve `%LOCALAPPDATA%\ghoztty\session-layout[-debug].json`. Caller frees.
-/// Null when `%LOCALAPPDATA%` is unset (never on a real Windows session) or the
-/// join fails. Debug builds get their own file — the same coexistence pattern
-/// as the debug IPC pipe and `window_memory` — so test/dev never clobbers the
-/// release app's restore state.
+/// Resolve `%LOCALAPPDATA%\ghoztty\session-layout[-debug][-<lineage>].json`.
+/// Caller frees. Null when `%LOCALAPPDATA%` is unset (never on a real Windows
+/// session) or the join fails. Debug builds get their own file — the same
+/// coexistence pattern as the debug IPC pipe and `window_memory` — so test/dev
+/// never clobbers the release app's restore state.
+///
+/// T691: and a `GHOZTTY_AGENT_INSTANCE` lineage gets its own file again, for
+/// the same reason its agent state dir does. The manifest is the OTHER thing a
+/// launch restores from, so leaving it lineage-blind left two sandboxes sharing
+/// one restore state: the second one's clean-slate delete would throw away the
+/// windows the first is still describing. Unset — every production run —
+/// reproduces both legacy names byte for byte.
 pub fn layoutPath(alloc: Allocator) ?[]u8 {
     const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return null;
     defer alloc.free(dir);
-    const name = if (builtin.mode == .Debug)
-        "session-layout-debug.json"
+    const stem = if (builtin.mode == .Debug)
+        "session-layout-debug"
     else
-        "session-layout.json";
+        "session-layout";
+
+    var lineage_buf: [agent_lineage.max_len]u8 = undefined;
+    const lineage = agent_lineage.fromEnv(&lineage_buf);
+
+    var stem_buf: [64]u8 = undefined;
+    const full_stem = agent_lineage.appendSuffix(&stem_buf, stem, lineage) catch stem;
+
+    var name_buf: [80]u8 = undefined;
+    const name = std.fmt.bufPrint(&name_buf, "{s}.json", .{full_stem}) catch return null;
     return std.fs.path.join(alloc, &.{ dir, "ghoztty", name }) catch null;
 }
 
@@ -1593,4 +1610,58 @@ test "T1048: an empty capture pairs nothing and an empty live walk is empty" {
     const empty = try pairTabs(alloc, &captured, &.{});
     defer alloc.free(empty);
     try testing.expectEqual(@as(usize, 0), empty.len);
+}
+
+fn setLayoutEnvForTest(name: []const u8, value: ?[]const u8) !void {
+    if (comptime builtin.os.tag != .windows) return;
+    const w32 = @import("win32.zig");
+    var name_buf: [128]u16 = undefined;
+    var value_buf: [128]u16 = undefined;
+    const nl = try std.unicode.utf8ToUtf16Le(&name_buf, name);
+    name_buf[nl] = 0;
+    var val_ptr: ?[*:0]const u16 = null;
+    if (value) |v| {
+        const vl = try std.unicode.utf8ToUtf16Le(&value_buf, v);
+        value_buf[vl] = 0;
+        val_ptr = value_buf[0..vl :0].ptr;
+    }
+    if (w32.SetEnvironmentVariableW(name_buf[0..nl :0].ptr, val_ptr) == 0) return error.SetEnvFailed;
+}
+
+test "T691: the manifest follows the lineage, and without one is byte-for-byte what it was" {
+    // The manifest is the second thing a launch restores from (the agent's
+    // layout-blob store is the first), so a lineage that forks the agent and
+    // not this file leaves two sandboxes sharing one restore state - and the
+    // clean-slate delete of one throws away what the other is describing.
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+
+    try setLayoutEnvForTest(agent_lineage.env_var, null);
+    const base = layoutPath(alloc) orelse return error.SkipZigTest;
+    defer alloc.free(base);
+    const legacy = if (builtin.mode == .Debug) "session-layout-debug.json" else "session-layout.json";
+    try std.testing.expect(std.mem.endsWith(u8, base, legacy));
+
+    try setLayoutEnvForTest(agent_lineage.env_var, "sbx1");
+    defer setLayoutEnvForTest(agent_lineage.env_var, null) catch {};
+    const one = layoutPath(alloc) orelse return error.SkipZigTest;
+    defer alloc.free(one);
+    const suffixed = if (builtin.mode == .Debug)
+        "session-layout-debug-sbx1.json"
+    else
+        "session-layout-sbx1.json";
+    try std.testing.expect(std.mem.endsWith(u8, one, suffixed));
+
+    // Two sandboxes share nothing, which is the coexistence claim.
+    try setLayoutEnvForTest(agent_lineage.env_var, "sbx2");
+    const two = layoutPath(alloc) orelse return error.SkipZigTest;
+    defer alloc.free(two);
+    try std.testing.expect(!std.mem.eql(u8, one, two));
+
+    // An unusable value is NOT a lineage: it falls back to the shared name
+    // rather than inventing a nameless one.
+    try setLayoutEnvForTest(agent_lineage.env_var, "");
+    const empty = layoutPath(alloc) orelse return error.SkipZigTest;
+    defer alloc.free(empty);
+    try std.testing.expectEqualStrings(base, empty);
 }
