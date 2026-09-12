@@ -576,6 +576,12 @@ fn actionCommands(action: Action.Key) []const Command {
             .description = "Toggle hero mode, showing the focused pane full-size with a carousel of all panes.",
         }},
 
+        .toggle_rearrange_mode => comptime &.{.{
+            .action = .toggle_rearrange_mode,
+            .title = "Toggle Rearrange Mode",
+            .description = "Toggle pane rearrange mode, giving every pane a drag header so panes can be moved between splits, tabs, and windows.",
+        }},
+
         .toggle_readonly => comptime &.{.{
             .action = .toggle_readonly,
             .title = "Toggle Read-Only Mode",

@@ -14,6 +14,14 @@ extension Ghostty {
         @State private var isHovering: Bool = false
         @State private var isDragging: Bool = false
 
+        /// The tree leaf wrapping this surface. Nil only while the surface
+        /// is not mounted in a terminal window.
+        private var pane: PaneView? {
+            guard let controller = surfaceView.window?.windowController
+                    as? BaseTerminalController else { return nil }
+            return controller.surfaceTree.pane(for: surfaceView)
+        }
+
         private var handleVisible: Bool {
             // Handle should always be visible in non-fullscreen
             guard let window = surfaceView.window else { return true }
@@ -39,13 +47,15 @@ extension Ghostty {
         var body: some View {
             if handleVisible {
                 ZStack {
-                    SurfaceDragSource(
-                        surfaceView: surfaceView,
-                        isDragging: $isDragging,
-                        isHovering: $isHovering
-                    )
-                    .frame(width: Self.handleSize.width, height: Self.handleSize.height)
-                    .contentShape(Rectangle())
+                    if let pane {
+                        PaneDragSource(
+                            pane: pane,
+                            isDragging: $isDragging,
+                            isHovering: $isHovering
+                        )
+                        .frame(width: Self.handleSize.width, height: Self.handleSize.height)
+                        .contentShape(Rectangle())
+                    }
 
                     if ellipsisVisible {
                         Image(systemName: "ellipsis")

@@ -53,6 +53,16 @@ class BaseTerminalController: NSWindowController,
     private var dividerDragOrigin: (tree: SplitTree<PaneView>, node: SplitTree<PaneView>.Node)?
 
     let heroModeState = HeroModeState()
+
+    /// Pane rearrange mode: every pane grows a drag header and the tab bar
+    /// is forced visible because it is a drop target.
+    let rearrangeModeState = RearrangeModeState()
+
+    /// Names this window when resolving a pane drop.
+    var rearrangeWindowRef: PaneDropWindowRef { PaneDropWindowRef(self) }
+
+    /// Live only while rearrange mode is on. See `installRearrangeEscapeMonitor`.
+    private var rearrangeEscapeMonitor: Any?
     private var heroSelectionCancellable: AnyCancellable?
 
     /// This can be set to show/hide the command palette.
@@ -494,11 +504,6 @@ class BaseTerminalController: NSWindowController,
             self,
             selector: #selector(ghosttyDidPresentTerminal(_:)),
             name: Ghostty.Notification.ghosttyPresentTerminal,
-            object: nil)
-        center.addObserver(
-            self,
-            selector: #selector(ghosttySurfaceDragEndedNoTarget(_:)),
-            name: .ghosttySurfaceDragEndedNoTarget,
             object: nil)
 
         // Listen for local events that we need to know of outside of
@@ -1581,6 +1586,10 @@ class BaseTerminalController: NSWindowController,
     /// above), and the menu accelerator (`toggleHeroMode(_:)` IBAction) when
     /// a viewer pane has focus.
     private func toggleHeroMode(target pane: PaneView) {
+        // Hero mode replaces the split tree view wholesale, so the rearrange
+        // headers would have nothing to sit on. The two modes are exclusive.
+        exitRearrangeMode()
+
         if heroModeState.isActive {
             let previousPane = heroPaneForCurrentSelection()
             heroModeState.deactivate()
@@ -1603,6 +1612,83 @@ class BaseTerminalController: NSWindowController,
         }
 
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: Rearrange Mode
+
+    /// Toggle pane rearrange mode for this window.
+    func toggleRearrangeMode() {
+        if rearrangeModeState.isActive {
+            exitRearrangeMode()
+        } else {
+            enterRearrangeModeIfNeeded()
+        }
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Enter rearrange mode, if it is not already on.
+    ///
+    /// Also called by `PaneMoveCoordinator` after a drop into this window, so
+    /// the mode follows the pane: you are still rearranging, and the window
+    /// you are now looking at should still be rearrangeable.
+    func enterRearrangeModeIfNeeded() {
+        guard !rearrangeModeState.isActive else { return }
+
+        // Hero mode and zoom both hide panes, and you cannot rearrange what
+        // you cannot see.
+        if heroModeState.isActive { heroModeState.deactivate() }
+        if surfaceTree.zoomed != nil {
+            surfaceTree = SplitTree(root: surfaceTree.root, zoomed: nil)
+        }
+
+        // The tab bar is a drop target in this mode, so it has to be on
+        // screen even for a lone window. Remember whether WE turned it on:
+        // a bar the user already had must survive the mode.
+        var forcedTabBar = false
+        if let window, window.tabGroup?.isTabBarVisible != true {
+            window.toggleTabBar(nil)
+            forcedTabBar = true
+        }
+
+        rearrangeModeState.activate(forcingTabBar: forcedTabBar)
+        installRearrangeEscapeMonitor()
+    }
+
+    /// Leave rearrange mode, restoring the tab bar if entering forced it on.
+    func exitRearrangeMode() {
+        let restoreTabBar = rearrangeModeState.deactivate()
+        removeRearrangeEscapeMonitor()
+        guard restoreTabBar else { return }
+        guard let window, window.tabGroup?.isTabBarVisible == true else { return }
+        // Only ever collapses a bar that is showing a single tab; a real tab
+        // group keeps its bar.
+        if (window.tabGroup?.windows.count ?? 1) <= 1 {
+            window.toggleTabBar(nil)
+        }
+    }
+
+    /// Escape leaves rearrange mode — but only when there is no drag in
+    /// flight. Mid-drag, Escape belongs to the drag (`PaneDragSourceView`
+    /// cancels it), and stealing it would drop you out of the mode while a
+    /// pane was still in the air. Innermost gesture wins.
+    private func installRearrangeEscapeMonitor() {
+        guard rearrangeEscapeMonitor == nil else { return }
+        rearrangeEscapeMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: .keyDown
+        ) { [weak self] event in
+            guard let self, self.rearrangeModeState.isActive else { return event }
+            guard event.keyCode == 53 else { return event }          // Escape
+            guard self.window?.isKeyWindow == true else { return event }
+            guard !PaneDragSession.shared.isDragging else { return event }
+            self.exitRearrangeMode()
+            return nil
+        }
+    }
+
+    private func removeRearrangeEscapeMonitor() {
+        guard let rearrangeEscapeMonitor else { return }
+        NSEvent.removeMonitor(rearrangeEscapeMonitor)
+        self.rearrangeEscapeMonitor = nil
     }
 
     private func heroPaneForCurrentSelection() -> PaneView? {
@@ -1664,42 +1750,6 @@ class BaseTerminalController: NSWindowController,
 
         // Show a brief highlight to help the user locate the presented terminal.
         target.highlight()
-    }
-
-    @objc private func ghosttySurfaceDragEndedNoTarget(_ notification: Notification) {
-        guard let target = notification.object as? Ghostty.SurfaceView else { return }
-        guard let targetNode = surfaceTree.root?.node(view: target) else { return }
-
-        // If our tree isn't split, then we never create a new window, because
-        // it is already a single split.
-        guard surfaceTree.isSplit else { return }
-
-        // If we are removing our focused surface then we move it. We need to
-        // keep track of our old one so undo sends focus back to the right place.
-        let oldFocusedSurface = focusedSurface
-        if focusedSurface == target {
-            focusedSurface = findNextFocusTargetAfterClosing(node: targetNode)?.surfaceView
-        }
-
-        // Remove the surface from our tree
-        let removedTree = surfaceTree.removing(targetNode)
-
-        // Create a new tree with the dragged surface and open a new window
-        let newTree = SplitTree<PaneView>(view: target)
-
-        // Treat our undo below as a full group.
-        undoManager?.beginUndoGrouping()
-        undoManager?.setActionName("Move Split")
-        defer {
-            undoManager?.endUndoGrouping()
-        }
-
-        replaceSurfaceTree(removedTree, moveFocusFrom: oldFocusedSurface)
-        _ = TerminalController.newWindow(
-            ghostty,
-            tree: newTree,
-            position: notification.userInfo?[Notification.Name.ghosttySurfaceDragEndedNoTargetPointKey] as? NSPoint,
-            confirmUndo: false)
     }
 
     // MARK: Local Events
@@ -1834,8 +1884,6 @@ class BaseTerminalController: NSWindowController,
         switch action {
         case .resize(let resize):
             splitDidResize(resize)
-        case .drop(let drop):
-            splitDidDrop(source: drop.payload, destination: drop.destination, zone: drop.zone)
         }
     }
 
@@ -1869,85 +1917,6 @@ class BaseTerminalController: NSWindowController,
                 Ghostty.logger.warning("failed to move split divider: \(error)")
             }
         }
-    }
-
-    private func splitDidDrop(
-        source: Ghostty.SurfaceView,
-        destination: Ghostty.SurfaceView,
-        zone: TerminalSplitDropZone
-    ) {
-        // Map drop zone to split direction
-        let direction: SplitTree<PaneView>.NewDirection = switch zone {
-        case .top: .up
-        case .bottom: .down
-        case .left: .left
-        case .right: .right
-        }
-
-        // Check if source is in our tree
-        if let sourceNode = surfaceTree.root?.node(view: source) {
-            // Source is in our tree - same window move
-            let treeWithoutSource = surfaceTree.removing(sourceNode)
-            let newTree: SplitTree<PaneView>
-            do {
-                newTree = try treeWithoutSource.inserting(view: source, at: destination, direction: direction)
-            } catch {
-                Ghostty.logger.warning("failed to insert surface during drop: \(error)")
-                return
-            }
-
-            replaceSurfaceTree(
-                newTree,
-                moveFocusTo: source,
-                moveFocusFrom: focusedSurface,
-                undoAction: "Move Split")
-            return
-        }
-
-        // Source is not in our tree - search other windows
-        var sourceController: BaseTerminalController?
-        var sourceNode: SplitTree<PaneView>.Node?
-        for window in NSApp.windows {
-            guard let controller = window.windowController as? BaseTerminalController else { continue }
-            guard controller !== self else { continue }
-            if let node = controller.surfaceTree.root?.node(view: source) {
-                sourceController = controller
-                sourceNode = node
-                break
-            }
-        }
-
-        guard let sourceController, let sourceNode else {
-            Ghostty.logger.warning("source surface not found in any window during drop")
-            return
-        }
-
-        // Remove from source controller's tree and add it to our tree.
-        // We do this first because if there is an error then we can
-        // abort.
-        let newTree: SplitTree<PaneView>
-        do {
-            newTree = try surfaceTree.inserting(view: source, at: destination, direction: direction)
-        } catch {
-            Ghostty.logger.warning("failed to insert surface during cross-window drop: \(error)")
-            return
-        }
-
-        // Treat our undo below as a full group.
-        undoManager?.beginUndoGrouping()
-        undoManager?.setActionName("Move Split")
-        defer {
-            undoManager?.endUndoGrouping()
-        }
-
-        // Remove the node from the source.
-        sourceController.removeSurfaceNode(sourceNode)
-
-        // Add in the surface to our tree
-        replaceSurfaceTree(
-            newTree,
-            moveFocusTo: source,
-            moveFocusFrom: focusedSurface)
     }
 
     func performAction(_ action: String, on surfaceView: Ghostty.SurfaceView) {
@@ -2198,6 +2167,28 @@ class BaseTerminalController: NSWindowController,
         return false
     }
 
+    /// Whether `pane` is currently a leaf of some OTHER live window's tree.
+    ///
+    /// Such a pane was not closed by this window — it was MOVED OUT of it, by
+    /// a rearrange drag that took the window's last pane and so emptied it.
+    /// Marking it CLOSE-on-free would terminate the agent session of a pane
+    /// the user is still looking at.
+    ///
+    /// This has to be a check rather than a flag, because the closing window's
+    /// own `surfaceTree` still contains the departed pane:
+    /// `TerminalController.replaceSurfaceTree` short-circuits an empty tree
+    /// straight into `closeTabImmediately()` and returns WITHOUT assigning it,
+    /// so what is iterated above is the tree as it was before the last pane
+    /// left.
+    private func isAliveInAnotherWindow(_ pane: PaneView) -> Bool {
+        for window in NSApp.windows {
+            guard let controller = window.windowController as? BaseTerminalController,
+                  controller !== self else { continue }
+            if controller.surfaceTree.contains(where: { $0 === pane }) { return true }
+        }
+        return false
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let window else { return }
 
@@ -2210,7 +2201,9 @@ class BaseTerminalController: NSWindowController,
         do {
             let delegate = NSApp.delegate as? AppDelegate
             if delegate?.isQuitting != true && delegate?.isSigningOut != true {
-                for view in surfaceTree { view.setSessionCloseIntent(true) }
+                for view in surfaceTree where !isAliveInAnotherWindow(view) {
+                    view.setSessionCloseIntent(true)
+                }
             }
         }
 
@@ -3284,6 +3277,10 @@ class BaseTerminalController: NSWindowController,
         }
         guard let surface = focusedSurface?.surface else { return }
         ghostty.splitToggleZoom(surface: surface)
+    }
+
+    @IBAction func toggleRearrangeMode(_ sender: Any) {
+        toggleRearrangeMode()
     }
 
     @IBAction func toggleHeroMode(_ sender: Any) {

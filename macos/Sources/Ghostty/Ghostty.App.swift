@@ -543,6 +543,9 @@ extension Ghostty {
             case GHOSTTY_ACTION_TOGGLE_HERO_MODE:
                 return toggleHeroMode(app, target: target)
 
+            case GHOSTTY_ACTION_TOGGLE_REARRANGE_MODE:
+                return toggleRearrangeMode(app, target: target)
+
             case GHOSTTY_ACTION_INSPECTOR:
                 controlInspector(app, target: target, mode: action.action.inspector)
 
@@ -1435,6 +1438,32 @@ extension Ghostty {
                     name: Notification.didToggleHeroMode,
                     object: surfaceView
                 )
+                return true
+
+            default:
+                assertionFailure()
+                return false
+            }
+        }
+
+        private static func toggleRearrangeMode(
+            _ app: ghostty_app_t,
+            target: ghostty_target_s) -> Bool {
+            switch target.tag {
+            case GHOSTTY_TARGET_APP:
+                Ghostty.logger.warning("toggle rearrange mode does nothing with an app target")
+                return false
+
+            case GHOSTTY_TARGET_SURFACE:
+                guard let surface = target.target.surface else { return false }
+                guard let surfaceView = self.surfaceView(from: surface) else { return false }
+                guard let controller = surfaceView.window?.windowController
+                        as? BaseTerminalController else { return false }
+
+                // Unlike hero mode there is no `isSplit` gate: a lone pane in
+                // a lone window is exactly the case where you want to drag it
+                // somewhere else, and the tab bar this mode reveals is how.
+                controller.toggleRearrangeMode()
                 return true
 
             default:

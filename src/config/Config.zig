@@ -7024,6 +7024,13 @@ pub const Keybinds = struct {
             .{ .toggle_hero_mode = {} },
         );
 
+        // Toggle pane rearrange mode
+        try self.set.put(
+            alloc,
+            .{ .key = .{ .physical = .period }, .mods = inputpkg.ctrlOrSuper(.{ .shift = true }) },
+            .{ .toggle_rearrange_mode = {} },
+        );
+
         // Toggle command palette, matches VSCode
         try self.set.put(
             alloc,

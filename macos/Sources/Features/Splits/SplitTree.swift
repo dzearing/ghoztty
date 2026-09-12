@@ -128,6 +128,35 @@ extension SplitTree {
             root: try root.inserting(view: view, at: at, direction: direction, ratio: ratio),
             zoomed: nil)
     }
+    /// Insert a view at the TOP level of the tree, on the given side, so it
+    /// spans the tree's full width or height.
+    ///
+    /// This is what a drop on the window's edge means, and it is NOT
+    /// expressible as `inserting(view:at:direction:)` — that splits ONE pane,
+    /// producing a new view only as tall (or wide) as the pane it split. An
+    /// empty tree just becomes the view.
+    func insertingAtTopLevel(view: ViewType, side: NewDirection, ratio: Double = 0.5) -> Self {
+        guard let root else { return .init(view: view) }
+
+        // `.horizontal` lays children out left/right; `.vertical` lays them
+        // out top/bottom, so for a vertical split `left` IS the top.
+        let direction: Direction = switch side {
+        case .left, .right: .horizontal
+        case .up, .down: .vertical
+        }
+        let leaf = Node.leaf(view: view)
+        let newRoot: Node = switch side {
+        case .left, .up:
+            .split(.init(direction: direction, ratio: ratio, left: leaf, right: root))
+        case .right, .down:
+            .split(.init(direction: direction, ratio: ratio, left: root, right: leaf))
+        }
+
+        // A top-level insert reshapes the whole window, so a zoom that hid
+        // most of it can no longer be meaningful.
+        return .init(root: newRoot, zoomed: nil)
+    }
+
     /// Find a node containing a view with the specified ID.
     /// - Parameter id: The ID of the view to find
     /// - Returns: The node containing the view if found, nil otherwise
