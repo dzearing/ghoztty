@@ -269,11 +269,11 @@ if ($popup -ne [IntPtr]::Zero) {
     # dropped, which is what made this assertion the run's only red (T157).
     # Send-TestKeys is still wrong here: it would SetFocus the pane first and
     # dismiss the palette out from under the key.
-    # Find-TestWindowEx, not Get-TestChildWindow: the latter compares class
-    # names with a case-SENSITIVE ==, and the control's registered class is
-    # "Edit", so 'EDIT' silently found nothing. FindWindowExW is
-    # case-insensitive, which is why the confirm-dialog 'BUTTON' lookup above
-    # has never had this problem.
+    # Either finder works now: every class filter in the suite matches the way
+    # win32 matches, case-insensitively (T687). It did not when this was
+    # written - Get-TestChildWindow -Class 'EDIT' silently found nothing
+    # against a control registered as "Edit" - which is why the lookup is
+    # spelled this way and why the comment is kept.
     $palEdit = Find-TestWindowEx -Parent $popup -Class 'EDIT'
     Assert ($palEdit -ne [IntPtr]::Zero) 'palette has a focused search edit to receive keys'
     [void](Send-TestControlKey -Control $palEdit -Key Escape)

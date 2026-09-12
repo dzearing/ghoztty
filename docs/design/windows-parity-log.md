@@ -26290,3 +26290,33 @@ two rim thresholds `tab-strip.ps1` can only measure on screen.
 (139). Floor: lib/none/win32/agent all PASS, P1–P3 ALL PASS, and the nine
 test-harness audits the script edits made due are green, so `guard-due.ps1`
 exits 0.
+
+## 2026-09-12 — the test suite's window finders match a class the way win32 does (T687)
+
+Two finders sat next to each other in the acceptance library and disagreed
+about what a class name is. `Find-TestWindowEx` goes through `FindWindowExW`,
+which matches a class case-INSENSITIVELY, so `-Class 'BUTTON'` has always found
+the confirm dialog's buttons. The four enumerating finders — `FindTopImpl`,
+`Children`, `Tops`, `FirstChild` — compared with C#'s `==`, which is ordinal, so
+`Get-TestChildWindow -Class 'EDIT'` returned `IntPtr::Zero` against a control
+registered as `Edit`. The failure said "this dialog has no edit control", which
+is a statement about the app rather than about the spelling, and it cost T157 a
+debugging cycle before it was worked around there rather than fixed here.
+
+All four now go through one `ClassMatches()` helper beside `NoFilter()`, using
+`OrdinalIgnoreCase`. The change can only turn a missed match into a match, so
+the thing to audit was any assertion that a class is ABSENT and passes today
+only because of a casing mismatch. There are none: the only mis-cased class
+filters in the whole suite are `EDIT` (30 sites), `BUTTON` (4) and `STATIC` (1),
+and every one of them calls `Find-TestWindowEx` — the path that was already
+case-insensitive. Nothing ever reached the changed code with a filter whose
+casing mattered.
+
+Evidence: five new assertions in `test\win32\test-desktop-harness.ps1` against
+the rename dialog, covering both the child finders (`EDIT` / `Edit` / `edit`
+all landing on the same control Find-TestWindowEx returns) and the top-level
+ones (`GHOZTTYRENAMEDIALOG` / `ghozttyrenamedialog`); every one of them read
+zero before the fix. `test-desktop-harness.ps1` ALL PASS (74),
+`keybinds-t01.ps1` ALL PASS (31), P1–P3 ALL PASS (25/20/16), floor lanes
+lib/none/win32/agent all PASS, and the seven static harness audits the edits
+made due are green.

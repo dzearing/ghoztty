@@ -618,6 +618,19 @@ public class GhozttyTestDesktop {
     // silently matches nothing. Every filter is normalised through this.
     static string NoFilter(string s) { return string.IsNullOrEmpty(s) ? null : s; }
 
+    // Class-name comparison, done the way win32 does it. FindWindowExW and
+    // friends match a class name case-INSENSITIVELY, so a filter of "EDIT"
+    // finds a control registered as "Edit". Comparing with C#'s `==` is
+    // ordinal and case-sensitive, which made every finder below disagree with
+    // the win32 finder sitting next to it: `Find-TestWindowEx -Class 'BUTTON'`
+    // has always worked while `Get-TestChildWindow -Class 'EDIT'` silently
+    // returned IntPtr::Zero, and the failure read as "there is no edit
+    // control" rather than "you spelled it EDIT and it is Edit" (T157, T687).
+    // A null filter means "no filter" and matches everything.
+    static bool ClassMatches(string actual, string cls) {
+        return cls == null || string.Equals(actual, cls, StringComparison.OrdinalIgnoreCase);
+    }
+
     static IntPtr FindTopImpl(uint pid, string cls, bool requireVisible, IntPtr exclude) {
         cls = NoFilter(cls);
         IntPtr found = IntPtr.Zero;
@@ -627,7 +640,7 @@ public class GhozttyTestDesktop {
             if (requireVisible && !IsWindowVisible(h)) return true;
             var sb = new StringBuilder(128);
             GetClassNameW(h, sb, 128);
-            if (cls == null || sb.ToString() == cls) { found = h; return false; }
+            if (ClassMatches(sb.ToString(), cls)) { found = h; return false; }
             return true;
         }, IntPtr.Zero);
         return found;
@@ -662,7 +675,7 @@ public class GhozttyTestDesktop {
             EnumChildWindows(top, delegate(IntPtr h, IntPtr l) {
                 var sb = new StringBuilder(128);
                 GetClassNameW(h, sb, 128);
-                if (cls == null || sb.ToString() == cls) {
+                if (ClassMatches(sb.ToString(), cls)) {
                     RECT r; GetWindowRect(h, out r);
                     lines.Add(h.ToInt64() + ":" + (IsWindowVisible(h) ? 1 : 0) + ":" +
                               r.left + "," + r.top + "," + r.right + "," + r.bottom + ":" +
@@ -692,7 +705,7 @@ public class GhozttyTestDesktop {
                 if (requireVisible && !vis) return true;
                 var sb = new StringBuilder(128);
                 GetClassNameW(h, sb, 128);
-                if (cls == null || sb.ToString() == cls) {
+                if (ClassMatches(sb.ToString(), cls)) {
                     RECT r; GetWindowRect(h, out r);
                     lines.Add(h.ToInt64() + ":" + (vis ? 1 : 0) + ":" +
                               r.left + "," + r.top + "," + r.right + "," + r.bottom + ":" +
@@ -712,7 +725,7 @@ public class GhozttyTestDesktop {
                 if (requireVisible && !IsWindowVisible(h)) return true;
                 var sb = new StringBuilder(128);
                 GetClassNameW(h, sb, 128);
-                if (cls == null || sb.ToString() == cls) { found = h; return false; }
+                if (ClassMatches(sb.ToString(), cls)) { found = h; return false; }
                 return true;
             }, IntPtr.Zero);
             return found;

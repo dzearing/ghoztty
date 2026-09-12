@@ -594,6 +594,32 @@ try {
     if ($dlg -ne [IntPtr]::Zero) {
         $edit = Find-TestWindowEx -Parent $dlg -Class 'EDIT'
         Assert ($edit -ne [IntPtr]::Zero) 'rename dialog EDIT found'
+
+        # --- class filters match the way win32 matches (T687). FindWindowExW
+        #     compares a class name case-INSENSITIVELY, and the enumerating
+        #     finders here used C# `==`, which does not. The symptom was a
+        #     finder that disagreed with the finder beside it: the line above
+        #     has always worked with 'EDIT', while Get-TestChildWindow -Class
+        #     'EDIT' returned nothing and read as "this dialog has no edit
+        #     control". Both spellings, through the case-sensitive path, must
+        #     land on the same control the win32 path found.
+        $editUpper = Get-TestChildWindow -Window $dlg -Class 'EDIT'
+        $editExact = Get-TestChildWindow -Window $dlg -Class 'Edit'
+        $editLower = Get-TestChildWindow -Window $dlg -Class 'edit'
+        Assert ($editExact -ne [IntPtr]::Zero) 'Get-TestChildWindow -Class Edit finds the rename EDIT'
+        Assert ($editUpper -eq $editExact -and $editLower -eq $editExact) `
+            "Get-TestChildWindow matches a class case-insensitively (EDIT=$editUpper Edit=$editExact edit=$editLower)"
+        Assert ($editExact -eq $edit) 'and it is the same control Find-TestWindowEx returns'
+        $kidsUpper = @(Get-TestChildWindows -Window $dlg -Class 'EDIT')
+        $kidsExact = @(Get-TestChildWindows -Window $dlg -Class 'Edit')
+        Assert ($kidsUpper.Count -eq $kidsExact.Count -and $kidsExact.Count -ge 1) `
+            "Get-TestChildWindows matches a class case-insensitively (EDIT=$($kidsUpper.Count) Edit=$($kidsExact.Count))"
+        $dlgUpper = Get-TestWindow -ProcessId $app.Pid -Class 'GHOZTTYRENAMEDIALOG'
+        Assert ($dlgUpper -eq $dlg) `
+            "Get-TestWindow matches a top-level class case-insensitively (got $dlgUpper, want $dlg)"
+        $topsUpper = @(Get-TestWindows -ProcessId $app.Pid -Class 'ghozttyrenamedialog')
+        Assert ($topsUpper.Count -ge 1) `
+            "Get-TestWindows matches a top-level class case-insensitively ($($topsUpper.Count) found)"
         if ($edit -ne [IntPtr]::Zero) {
             # No ctrl+A first: a modifier chord does NOT survive into a
             # standard control this way. The app TranslateMessage's dialog

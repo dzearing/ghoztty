@@ -1,11 +1,12 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-09-12T05:24:58-07:00",
-    "commit":  "863945e47",
+    "generated":  "2026-09-12T06:09:14-07:00",
+    "commit":  "8fa646c13",
     "uncommitted":  [
-                        "test/win32/lib/ChromeGeometry.ps1",
-                        "test/win32/tab-strip.ps1"
+                        "test/win32/keybinds-t01.ps1",
+                        "test/win32/lib/TestDesktop.ps1",
+                        "test/win32/test-desktop-harness.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "14bd519168af3e7f458b66cd97603f94a7921fb619360e0eb16379e3b1ec9cab",
@@ -159,7 +160,7 @@
                   "test/win32/isolation-meta.ps1":  "a994164d5072ab6f71a18a81749ddb36df0391db7463c79192b1087b5a9dd256",
                   "test/win32/job-escape-startup.ps1":  "1e7dc7bfa24cc690dbc9df6abe446a6368e3666849a646f9e055deb06426f385",
                   "test/win32/kb-actions.ps1":  "a589bfdeeec3f9f956c9770d4b11854eca51cde7f4ba5da225983686ac956786",
-                  "test/win32/keybinds-t01.ps1":  "ac1e277c3a4f77d58bb8dc615487d11438843d5143f1f75cfb079f883755176a",
+                  "test/win32/keybinds-t01.ps1":  "f2741b9bccb67146c95b5dbe117197f803e45474f728700c6ddcc12cb3babace",
                   "test/win32/key-state-pill.ps1":  "a056a02beff362ab460424d9002aeef76cf852bd0fb5da162b92110ee5d764dd",
                   "test/win32/launch-preflight-audit.ps1":  "474a31cc4abb0fc92c75e577bb81e1b5a6e9ff9e6548f2438d6b0fd5eead2178",
                   "test/win32/layout-blob-cross-lineage.ps1":  "87f15d32d375a5262334a59d3e8a0f7f37f8d8647c2000686f532c7df1417324",
@@ -203,7 +204,7 @@
                   "test/win32/lib/SkipAudit.ps1":  "1f144bf0f762eebc385656df1fa39d7629363d44164393de241248c4a231eade",
                   "test/win32/lib/StderrCaptureAudit.ps1":  "69d0a25615d35acc06bf6c1471016186163ae1881ae70a12461425546ac4b7d8",
                   "test/win32/lib/TestClient.ps1":  "98b5449096d7103ec31d8eb19b2d0d84985c48fddc88a5871eeb641ec43091f8",
-                  "test/win32/lib/TestDesktop.ps1":  "168318748faed7482739c8ce15a33cb3460d17b7a04ed1c65bf9ab0d66299789",
+                  "test/win32/lib/TestDesktop.ps1":  "6198385399c5f0887280c0449f8aa2ae212daf4715be0225e3a3e88bf74d2017",
                   "test/win32/lib/TestReachAudit.ps1":  "3b2fb64aee74f3451127f4f9776141f5781dd210a6fdf0019410485664f0a840",
                   "test/win32/lib/TestScore.ps1":  "1bc571121b1b60ce5d9b63a0e1c8ebf23f6da575f8e9f7dab1a410cbc2888acc",
                   "test/win32/lib/ThrowawayProduct.ps1":  "d0754fbb3791ee3d5fec2369a523df0c23ccb6d4738bad21dd37c25cf86c82fd",
@@ -299,7 +300,7 @@
                   "test/win32/terminal-link-paths.ps1":  "f3ba874ca9f97125334319222b41e785a24c9168e6bbb3b78205a1c3bc85b161",
                   "test/win32/test-binary-soak.ps1":  "d467c64271dcab231f453a2172f51239b8677391948065e16e0b75acf143fbce",
                   "test/win32/test-client-build.ps1":  "4151eff034e0de3acacf2e176c97702fd757f2c83f863476a115da9dc34e7b2b",
-                  "test/win32/test-desktop-harness.ps1":  "e4fb2e7aa54684ef7745dbad908342df608c2bf32cb37d6b429a20b6cfc08e8d",
+                  "test/win32/test-desktop-harness.ps1":  "3c1a39fc11f7c8cd662aa3a09d99f4831290ea309a3a30909c2d47259b95b8df",
                   "test/win32/test-desktop-spike.ps1":  "fe210e65c149640f7641882b23be4f13d9ec43be05d0b1347de88576950d7b54",
                   "test/win32/test-filter-guard.ps1":  "acc3723dfbbaec62341d3593a2e41af3d0cdb026391289d4e6412ae4ff1ac69f",
                   "test/win32/test-reach-audit.ps1":  "9987988dde78037ac8545dd70de97e50d2d9312bca3e9c0ee89d0be955eb638e",
