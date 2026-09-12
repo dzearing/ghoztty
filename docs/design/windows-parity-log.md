@@ -9,6 +9,40 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-12: T1481 - **an unrelated apt repository had been deciding whether
+  this branch had a Windows build signal at all.** fork-ci's `windows-cross`
+  job had died in "Build and install msitools" on every push since 2026-09-09,
+  before it compiled a line, so for three days the one check that answers "does
+  this branch build for Windows?" answered nothing and every turn's close was
+  reaching for `validate -NoCiCheck` - a permanently-excused gate, which is not
+  a gate. Nothing was wrong with the tree: `install-msitools.sh` opened with a
+  bare `sudo apt-get update`, and apt exits **100** when *any* configured index
+  fails to download. The runner image ships third-party sources we install
+  nothing from, and `dl.google.com`'s chrome-stable served a `Packages.gz`
+  whose hash did not match its own `Release` file. `set -e` did the rest.
+
+  Two guards, since either alone still leaves the way back open. The install
+  now moves every non-ubuntu source list aside before the update (guarded on
+  `ubuntu.sources` existing, so a future image layout degrades to today's
+  behavior instead of leaving apt with no sources at all), retries the update,
+  and stops treating its exit code as the verdict - refreshing an index is not
+  what we need, installing the packages is, and that step already fails loudly
+  and specifically. And the ORDER changed: `build-release-artifacts.sh` gained
+  `--build-only` (the mirror image of `--skip-build`), so the job now compiles
+  first, installs msitools second, and packages third over the same `zig-out`.
+  A packaging dependency that moves can no longer cost us the compile verdict.
+  The build flags stay in exactly one place - two invocations of the same
+  script, never a zig command line pasted into the workflow.
+
+  Proven on the build machine, not argued: run 34686679169 is green, its log
+  shows `--build-only` finishing the compile at 09:56:36 and the very next step
+  disabling `google-chrome.sources` and `microsoft-prod.list`, and
+  `ci-status.ps1 check` now reports OK so `validate` passes without the hatch.
+  No follow-up filed: the task asked whether msitools should be cached rather
+  than built from source, and the answer measured out at **31 seconds** for the
+  whole clone-configure-build-install, which is not worth a cache. Acceptance:
+  E8-E11 in `test\win32\release-artifacts.ps1`.
+
 - 2026-09-09: T1458, T1475 - **the pane-lag report closes, and the cause was
   none of the six things it was filed against.** The user reported on 2026-09-08
   that Claude Code inside a Ghoztty pane felt heavier than a plain conhost
