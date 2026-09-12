@@ -87,26 +87,79 @@ function Test-UnderRepo {
     return $Path.StartsWith($script:CleanSlateRepo, [StringComparison]::OrdinalIgnoreCase)
 }
 
+# The one process query the kill below runs, behind a seam (T688). A scriptblock
+# rather than a plain function because the acceptance has to drive the poll
+# through states a real box cannot be held in - a survivor that outlasts the old
+# blind sleep, and one that never leaves - and shadowing `Stop-RepoGhoztty`
+# itself to get there is the exact shape `cleanslate-audit.ps1` exists to refuse.
+# Override it, call, restore; `Get-RepoGhozttyProcess` is the only caller.
+$script:CleanSlateProcQuery = {
+    param([string[]]$Paths)
+    $found = @()
+    foreach ($path in $Paths) {
+        $leaf = Split-Path -Leaf $path
+        $found += @(Get-CimInstance Win32_Process -Filter "Name='$leaf'" |
+            Where-Object { $_.ExecutablePath -eq $path })
+    }
+    return $found
+}
+
+function Get-RepoGhozttyProcess {
+    <#
+    .SYNOPSIS
+    The live processes whose ExecutablePath is exactly one of -Paths.
+
+    .DESCRIPTION
+    Path-exact enumeration, never a match on process NAME alone - that would
+    also see the user's installed release and its live sessions. Returns an
+    array (possibly empty) of Win32_Process instances.
+    #>
+    # The `, @(...)` is load-bearing (PS 5.1): a one-element result unrolls on
+    # return and its `.Count` is then $null, which reads as "nothing is running".
+    # The wrapper is stripped by the return pipeline, so callers use the result
+    # directly - wrapping the CALL in `@()` would re-nest it one level.
+    param([Parameter(Mandatory = $true)][string[]]$Paths)
+    return , @(& $script:CleanSlateProcQuery $Paths)
+}
+
 function Stop-RepoGhoztty {
     <#
     .SYNOPSIS
-    Kill the app under test and (unless -AppOnly) its sibling agent.
+    Kill the app under test and (unless -AppOnly) its sibling agent, and WAIT
+    until they are actually gone.
 
     .DESCRIPTION
     Path-exact, and refuses outright to touch an exe that does not live under
     the repo - so a mistyped -Exe can never reach the user's install.
-    Returns the number of processes stopped.
+    Returns the number of distinct processes stopped.
 
     -AgentOnly is the mirror of -AppOnly and exists for the scripts whose
     subject is the agent alone (T351: `agent-pipe.ps1` restarts the agent under
     a live app). Passing both is a contradiction, so it throws rather than
     quietly killing nothing.
+
+    T688: this used to kill once, sleep -SettleMs and return, which made the
+    slate a hope rather than a fact. When one process outlived the sleep the
+    script's own launch found the pipe already owned, forwarded its
+    `new-window` and exited - and three seconds later the caller printed
+    `SETUP FAIL: GUI died at launch`, which reads as a crash and is not one.
+    Every misread cost a triage. So the kill now POLLS until nothing matching
+    remains, re-issuing the stop each round (a process that ignored the first
+    one, or that was spawned between rounds, is killed again), and THROWS
+    naming the surviving pids when -TimeoutMs expires. A box that is not clean
+    says so in the setup instead of libelling the app.
+
+    -SettleMs keeps its old meaning - "at least this long since the kill" - and
+    is measured from the start of the wait rather than added to it, so the
+    ordinary clean-box case costs exactly what it did before.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Exe,
         [switch]$AppOnly,
         [switch]$AgentOnly,
-        [int]$SettleMs = 800
+        [int]$SettleMs = 800,
+        [int]$TimeoutMs = 5000,
+        [int]$PollMs = 100
     )
 
     if (-not (Test-UnderRepo $Exe)) {
@@ -120,19 +173,34 @@ function Stop-RepoGhoztty {
     if (-not $AgentOnly) { $targets += $Exe }
     if (-not $AppOnly) { $targets += (Get-GhozttyAgentPath -Exe $Exe) }
 
-    $killed = 0
-    foreach ($path in $targets) {
-        $leaf = Split-Path -Leaf $path
-        Get-CimInstance Win32_Process -Filter "Name='$leaf'" |
-            Where-Object { $_.ExecutablePath -eq $path } |
-            ForEach-Object {
-                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-                $killed++
-            }
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $stopped = @{}
+    $survivors = @()
+    while ($true) {
+        $live = Get-RepoGhozttyProcess -Paths $targets
+        if ($live.Count -eq 0) { $survivors = @(); break }
+
+        foreach ($p in $live) {
+            Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+            $stopped[[string]$p.ProcessId] = $true
+        }
+
+        if ($clock.ElapsedMilliseconds -ge $TimeoutMs) {
+            $survivors = Get-RepoGhozttyProcess -Paths $targets
+            break
+        }
+        Start-Sleep -Milliseconds $PollMs
     }
 
-    if ($SettleMs -gt 0) { Start-Sleep -Milliseconds $SettleMs }
-    return $killed
+    if ($survivors.Count -gt 0) {
+        $who = ($survivors | ForEach-Object { "pid $($_.ProcessId) $($_.ExecutablePath)" }) -join '; '
+        throw ("Stop-RepoGhoztty: $($survivors.Count) process(es) survived $TimeoutMs ms of stops - $who. " +
+            "The box is not clean, so anything measured from here would be measuring them.")
+    }
+
+    $remaining = $SettleMs - $clock.ElapsedMilliseconds
+    if ($remaining -gt 0) { Start-Sleep -Milliseconds $remaining }
+    return $stopped.Count
 }
 
 function Clear-DebugSessionLayout {

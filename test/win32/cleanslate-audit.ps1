@@ -4,7 +4,9 @@
 #   powershell -NoProfile -File test\win32\cleanslate-audit.ps1
 #
 # Non-interactive. Launches no Ghoztty and touches no user state: the subject is
-# the HARNESS, so this reads .ps1 text and nothing else.
+# the HARNESS, so this reads .ps1 text - plus, in section D, one copy of cmd.exe
+# it creates under temp\ and kills itself, so the wait loop is measured against a
+# real process without a real Ghoztty ever being started or stopped.
 #
 # Why it exists. T248 hoisted the pre-fixture reset into lib\CleanSlate.ps1 and
 # converted 19 scripts to it. By the time T351 looked, 133 scripts carried a
@@ -18,6 +20,7 @@
 # A: the analyzer catches the shapes it exists for, and only those shapes.
 # B: the sweep - no acceptance script carries an unexplained ghoztty kill.
 # C: the shared helper does what the copies were doing, on real processes.
+# D: the kill WAITS for the processes to go, and says so when they do not.
 #
 # `-TeethCheck` proves section B can go red at all: it synthesizes a violator no
 # exemption covers and PASSES only if the assertion turns over. A green sweep
@@ -223,6 +226,73 @@ Assert 'C7 the reset sweeps leaked agent autostart entries' `
     ($resetSrc -match 'Remove-LeakedAgentRunValue')
 Assert 'C8 and reports how many it swept, so a silent no-op is visible' `
     ($resetSrc -match 'RunValuesSwept')
+
+# ============================================================================
+"== D: the kill WAITS for the processes to go, and says so when they do not"
+# ============================================================================
+# T688: the shared kill used to stop once, sleep ~500ms and return. When one
+# process outlived the sleep, the caller's own launch found the pipe already
+# owned, forwarded its new-window and exited - and the script then printed
+# `SETUP FAIL: GUI died at launch`, which reads as a crash and is not one.
+#
+# The states that misread cannot be held on a real box (a -Force stop on a real
+# process returns immediately), so D2/D3 drive the poll through the process
+# QUERY seam: override `$script:CleanSlateProcQuery`, call, restore. D1 keeps a
+# real process in the loop so the seam is not the only thing ever measured.
+$fakeDir = Join-Path $Repo 'temp\t688-cleanslate'
+$fakeExe = Join-Path $fakeDir 'ghoztty.exe'
+New-Item -ItemType Directory -Force -Path $fakeDir | Out-Null
+# cleanslate-exempt: cmd.exe under a repo scratch path, wearing our leaf name so
+# the path-exact filter sees it. This script's own litter, created three lines up.
+Copy-Item -Path (Join-Path $env:WINDIR 'System32\cmd.exe') -Destination $fakeExe -Force
+$fake = Start-Process -FilePath $fakeExe -ArgumentList '/c', 'ping -n 30 127.0.0.1 > NUL' `
+    -WindowStyle Hidden -PassThru
+Start-Sleep -Milliseconds 400
+Assert 'D1a a repo-path process wearing our name is seen' `
+    ((Get-RepoGhozttyProcess -Paths @($fakeExe)).Count -ge 1)
+$d1 = Stop-RepoGhoztty -Exe $fakeExe -AppOnly -SettleMs 0
+Assert 'D1b the kill reports it stopped it' ($d1 -ge 1)
+Assert 'D1c and it is gone by the time the kill returns' `
+    ((Get-RepoGhozttyProcess -Paths @($fakeExe)).Count -eq 0)
+if (-not $fake.HasExited) { Stop-Process -Id $fake.Id -Force -ErrorAction SilentlyContinue }
+Remove-Item $fakeDir -Recurse -Force -ErrorAction SilentlyContinue
+
+$saved = $script:CleanSlateProcQuery
+try {
+    # A survivor that outlasts the old 500ms sleep and then goes. The kill must
+    # still be waiting when it does, and must not have returned at 500ms.
+    $script:linger = [System.Diagnostics.Stopwatch]::StartNew()
+    $script:CleanSlateProcQuery = {
+        param([string[]]$Paths)
+        if ($script:linger.ElapsedMilliseconds -lt 1200) {
+            return @([pscustomobject]@{ ProcessId = 999991; ExecutablePath = $Paths[0] })
+        }
+        return @()
+    }
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $d2 = Stop-RepoGhoztty -Exe (Join-Path $Repo 'zig-out\bin\ghoztty.exe') -AppOnly -SettleMs 0 -TimeoutMs 6000
+    $waited = $clock.ElapsedMilliseconds
+    Assert "D2a the kill waited for the survivor, not 500ms ($waited ms)" ($waited -ge 1000)
+    Assert 'D2b and reported the stop once it took' ($d2 -ge 1)
+
+    # A survivor that never goes. This is the misread's own state, and the point
+    # of the task: it has to end the run loudly, naming who is still there.
+    $script:CleanSlateProcQuery = {
+        param([string[]]$Paths)
+        return @([pscustomobject]@{ ProcessId = 999992; ExecutablePath = $Paths[0] })
+    }
+    $msg = $null
+    try {
+        Stop-RepoGhoztty -Exe (Join-Path $Repo 'zig-out\bin\ghoztty.exe') -AppOnly `
+            -SettleMs 0 -TimeoutMs 400 -PollMs 50 | Out-Null
+    } catch { $msg = $_.Exception.Message }
+    Assert 'D3a a process that never goes throws instead of returning' ($null -ne $msg)
+    Assert 'D3b and the message names the surviving pid' ($msg -match '999992')
+    Assert 'D3c and says the box is not clean, not that the GUI died' `
+        ($msg -match 'not clean')
+} finally {
+    $script:CleanSlateProcQuery = $saved
+}
 
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1 can
 # answer "has this sweep been run against the suite as it now stands?" - which is

@@ -1,12 +1,11 @@
 {
     "guard":  "command-resolve",
     "script":  "test/win32/command-resolve-audit.ps1",
-    "generated":  "2026-09-12T06:09:53-07:00",
-    "commit":  "8fa646c13",
+    "generated":  "2026-09-12T06:23:59-07:00",
+    "commit":  "a1c907981",
     "uncommitted":  [
-                        "test/win32/keybinds-t01.ps1",
-                        "test/win32/lib/TestDesktop.ps1",
-                        "test/win32/test-desktop-harness.ps1"
+                        "test/win32/cleanslate-audit.ps1",
+                        "test/win32/lib/CleanSlate.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "a3f98a551352e27d1ad9c1745e222757dc4b802efc5638fbe6ea4d3f621b6307",
@@ -64,7 +63,7 @@
                   "test/win32/chrome-merged-row.ps1":  "d33d8e41a1c00c40822433b47ddc00ea9cb572cf42829277c39d3334cd3a8020",
                   "test/win32/chrome-theme.ps1":  "f50b264e05a6f56e3741f8ed280fc150f12b7987b5bd308f8dc3356ae8ecebd6",
                   "test/win32/claude-integration.ps1":  "16d2c597e5b841736107ef63e8f9a76a0331d38dd5320be3a8c6301bad15cde4",
-                  "test/win32/cleanslate-audit.ps1":  "a7b050d055c846a95d3a7ed3ba067d832a8b2f6dbeee36cc9d57b780559e66e9",
+                  "test/win32/cleanslate-audit.ps1":  "ba692084de83d6df7896fe966203fb0d1452b310a7867e7459e243b8d31ff93b",
                   "test/win32/cli-argv-fidelity.ps1":  "8dc75be398dc946aa824a4b083fead479f6fcb2abf810168595413bf42979854",
                   "test/win32/cli-launch-cwd.ps1":  "4a377618f1c5954fa3459d6e1582cee72aa72a86b7346be41f96dc7aacc5b1a0",
                   "test/win32/clipboard-paste.ps1":  "b833f84a976a2c56012b8bb45e84580b92a2050b1acd04576759e6ef81239e02",
@@ -174,7 +173,7 @@
                   "test/win32/lib/ChooserControls.ps1":  "a89ca8550ef8143250eb27df76bfa9e11b5c1af46f086ea23e07defd5d8eaec0",
                   "test/win32/lib/ChooserCursor.ps1":  "07632267956e7b2647f6227181d98c0ca50e8d68556c7e987e1817424d583e74",
                   "test/win32/lib/ChromeGeometry.ps1":  "1b8e59d8fd07b0b470f6a83cdb53791e688a4b0d15e88bb3a16beefa115cc06a",
-                  "test/win32/lib/CleanSlate.ps1":  "ce93870a036687c374efd190a6b2f6f1728b554262186736d54b6dee3a46e72a",
+                  "test/win32/lib/CleanSlate.ps1":  "32f3d21de012b04d3ec6b80f773fffa596f64377498d8d5b5e17513c0eca3707",
                   "test/win32/lib/CleanSlateAudit.ps1":  "bf059c29d82282e5e559747a42b1a81f463abf60c22474a273aa23ed95c772e5",
                   "test/win32/lib/ColorMath.ps1":  "a825f6793a37181cb68b840042fa4403b08a60de696e36e677bb3d3cdda16e04",
                   "test/win32/lib/CommandResolveAudit.ps1":  "9ed2f0925dfee89eb032a932ef0d0b046f5d5ed38a7e1a5c4cef19cb2109e424",

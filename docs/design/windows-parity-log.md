@@ -26320,3 +26320,48 @@ zero before the fix. `test-desktop-harness.ps1` ALL PASS (74),
 `keybinds-t01.ps1` ALL PASS (31), P1–P3 ALL PASS (25/20/16), floor lanes
 lib/none/win32/agent all PASS, and the seven static harness audits the edits
 made due are green.
+
+## 2026-09-12 — the clean-slate kill waits for the processes to die (T688)
+
+An acceptance script that reported `SETUP FAIL: GUI died at launch` was, some
+of the time, telling the truth about nothing at all. `Stop-RepoGhoztty` —
+the one shared kill every script in `test\win32\` routes through — stopped the
+matching processes, slept `-SettleMs` (500–800ms) and returned. It never looked
+again. When one survived the sleep, the script's own launch found the IPC pipe
+already owned, forwarded its `new-window` to the old instance and exited; three
+seconds later `$proc.HasExited` was true and the setup blamed the app. Every
+occurrence cost a triage, and the triage never found anything, because there
+was nothing to find.
+
+The kill now polls. Each round re-issues the stop — so a process that ignored
+the first one, or that a stray auto-launching `+list` created between rounds,
+is stopped again — until nothing path-exact matches or `-TimeoutMs` (5s) runs
+out, and a timeout THROWS naming the surviving pids and saying the box is not
+clean. `-SettleMs` keeps its old meaning, "at least this long since the kill",
+measured from the start of the wait rather than added to it, so the ordinary
+clean-box case costs exactly what it did before. The path-exact filter is
+untouched: a match on process NAME would take the user's installed release and
+its live sessions with it.
+
+The other half of the card was already closed. T688 was filed against 34
+private `Kill-RepoInstances` copies; T351 had since converted all of them (50
+today), and `cleanslate-audit.ps1` section B is the standing gate that keeps a
+new one out — so this turn re-verified that rather than re-doing it, and spent
+itself on the verify the shared helper still lacked.
+
+Making the wait testable needed a seam: the states that misread cannot be held
+on a real box, because a `-Force` stop on a real process returns immediately.
+So the single process query now lives behind `$script:CleanSlateProcQuery`,
+which `Get-RepoGhozttyProcess` is the only caller of — an override rather than
+the shadowing of `Stop-RepoGhoztty` itself that `cleanslate-audit.ps1` exists
+to refuse.
+
+Evidence: `cleanslate-audit.ps1` section D, ALL PASS (29 assertions) — a real
+repo-path process wearing our leaf name, killed and confirmed gone (D1); a
+survivor held for 1200ms, with the kill observed waiting 1222ms rather than
+returning at 500ms (D2); one that never goes, with the throw naming its pid and
+saying the box is not clean (D3). `harness-process-leak.ps1` ALL PASS (42) is
+the one harness that drives `CleanSlate.ps1` against real processes. P1–P3 ALL
+PASS (25/20/16), floor lanes lib/none/win32/agent all PASS, and the six corpus
+audits the edit made due are green. Follow-up T1490: the refusal is correct but
+arrives as a PowerShell error record instead of the suite's `SETUP FAIL` line.
