@@ -20,12 +20,21 @@
 #
 # Usage:
 #   dist/windows-installer/build-release-artifacts.sh --semver <X.Y.Z>
-#       [--build-num <N>] [--stamp <s>] [--out-dir <dir>] [--skip-build]
+#       [--build-num <N>] [--stamp <s>] [--out-dir <dir>]
+#       [--skip-build | --build-only]
 #
 #   --skip-build  reuse zig-out/bin/ghoztty.exe + zig-out/share. The exe
 #                 must ALREADY carry -Dversion-string=<semver>+<hash> (the
 #                 on-box script builds natively on Windows, then packages
 #                 here); this script verifies that rather than assuming it.
+#   --build-only  the mirror image: cross-compile the exe (and assert its
+#                 embedded version) and STOP, packaging nothing. It exists so
+#                 a caller can get the compile verdict before it has touched
+#                 the packaging toolchain at all -- fork-ci runs this first,
+#                 then installs msitools, then runs --skip-build over the
+#                 same zig-out (T1481). Same one definition of the build
+#                 command either way; the split is in when it runs, not what
+#                 it does.
 #
 # Requires: wixl + msiinfo + python3 (packaging), and zig unless
 # --skip-build. Everything runs on Linux/macOS -- no Windows box needed.
@@ -39,6 +48,7 @@ BUILD_NUM=1
 STAMP=""
 OUT_DIR=""
 SKIP_BUILD=0
+BUILD_ONLY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -51,10 +61,16 @@ while [[ $# -gt 0 ]]; do
     --out-dir)     OUT_DIR="${2:?--out-dir needs a value}"; shift 2 ;;
     --out-dir=*)   OUT_DIR="${1#*=}"; shift ;;
     --skip-build)  SKIP_BUILD=1; shift ;;
-    -h|--help)     sed -n '2,34p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    --build-only)  BUILD_ONLY=1; shift ;;
+    -h|--help)     awk 'NR==1 {next} /^#/ {print; next} {exit}' "${BASH_SOURCE[0]}"; exit 0 ;;
     *)             echo "error: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+if [[ "$SKIP_BUILD" -eq 1 && "$BUILD_ONLY" -eq 1 ]]; then
+  echo "error: --skip-build and --build-only are opposites; pass at most one" >&2
+  exit 2
+fi
 
 [[ -n "$SEMVER" ]] || { echo "error: --semver <X.Y.Z> is required" >&2; exit 2; }
 [[ "$SEMVER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -132,6 +148,15 @@ if needle not in data and needle.decode().encode("utf-16-le") not in data:
              "(stale zig-out, or the build lost -Dversion-string)")
 print(f"==> exe embeds {want}")
 PYEOF
+
+# --build-only stops here, with the compile verdict delivered and no
+# packaging tool yet consulted. A caller that then installs wixl and re-runs
+# this script with --skip-build gets the identical artifacts, because
+# everything below reads zig-out rather than rebuilding it.
+if [[ "$BUILD_ONLY" -eq 1 ]]; then
+  echo "==> --build-only: exe is built and verified; packaging skipped"
+  exit 0
+fi
 
 # -- 1b. sign the payload ------------------------------------------------
 # Before the packages are cut, not after: the MSI and the portable ZIP are

@@ -541,6 +541,59 @@ Assert "E6 windows-cross detects the win32 tree" ($jobM.Success -and
 # E7: the runbook expects CI to have proven the build, not the release.
 Assert "E7 release.md points at the windows-cross job" ($releaseMd -match 'windows-cross')
 
+# ----------------------------------------------------------------------------
+# E8-E11: the compile verdict is not hostage to the packaging toolchain
+# (T1481).
+#
+# On 2026-09-09 this job died inside install-msitools.sh -- a third-party apt
+# repo the runner image ships (dl.google.com's chrome-stable, which we install
+# nothing from) served an index whose hash did not match its Release file,
+# `apt-get update` exited 100, and `set -e` ended the script. The compile step
+# after it never ran, so for three days every push read red with nothing wrong
+# in the tree, and every turn's close had to reach for validate's -NoCiCheck
+# hatch. Two independent guards, because either one alone still leaves a way
+# back to that morning.
+
+# E8: ORDER. The cross-compile runs BEFORE the msitools install, so a
+# packaging dependency that moves cannot cost us the answer to "does the
+# branch build?".
+# Anchored on the full run commands, not the bare flags: the comment above
+# them names both flags, so a bare-flag IndexOf finds the prose instead of the
+# step and reports an order the job does not have.
+$compileAt = $jobM.Value.IndexOf('build-release-artifacts.sh --semver 0.0.0 --build-only')
+$msitoolsAt = $jobM.Value.IndexOf('run: dist/windows-installer/install-msitools.sh')
+$packageAt = $jobM.Value.IndexOf('build-release-artifacts.sh --semver 0.0.0 --skip-build')
+Assert "E8 windows-cross cross-compiles before installing msitools" (
+    $compileAt -ge 0 -and $msitoolsAt -ge 0 -and $compileAt -lt $msitoolsAt)
+Assert "E8b windows-cross packages after installing msitools" (
+    $packageAt -gt $msitoolsAt)
+
+# E9: still ONE definition of the build flags. The split is two invocations of
+# the shared script, never a zig command line pasted into the workflow -- that
+# is the whole reason the artifact script exists.
+Assert "E9 windows-cross never spells out its own zig build" (
+    $jobM.Value -notmatch 'zig build')
+
+# E10: --build-only and --skip-build are opposites the script itself rejects
+# together, so a caller cannot ask for a run that builds nothing.
+$sharedArtifacts = Get-Content -LiteralPath (
+    Join-Path $Repo 'dist\windows-installer\build-release-artifacts.sh') -Raw
+Assert "E10 the artifact script implements --build-only" (
+    $sharedArtifacts -match '--build-only\)\s+BUILD_ONLY=1')
+Assert "E10b --build-only and --skip-build are mutually exclusive" (
+    $sharedArtifacts -match 'SKIP_BUILD"\s+-eq\s+1\s+&&\s+"\$BUILD_ONLY"\s+-eq\s+1')
+
+# E11: the msitools install no longer lets an apt source we never use decide
+# the run. Third-party source lists are moved aside before the update, and the
+# update itself retries and is not the gate -- the package installs are.
+Assert "E11 install-msitools disables third-party apt sources" (
+    $msiInstall -match 'apt-sources-disabled')
+Assert "E11b it keeps ubuntu's own archives" (
+    $msiInstall -match 'ubuntu\.sources')
+Assert "E11c apt-get update is retried and non-fatal" (
+    $msiInstall -match 'apt_update_retried' -and
+    $msiInstall -notmatch '(?m)^sudo apt-get update$')
+
 # ============================================================================
 "== F: a published build can sign in (T795, pure)"
 # ============================================================================

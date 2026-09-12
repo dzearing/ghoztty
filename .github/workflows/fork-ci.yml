@@ -168,25 +168,43 @@ jobs:
         if: steps.detect.outputs.present == 'true'
         uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
 
-      - name: Build and install msitools 0.106 (wixl, msiinfo, msibuild)
-        if: steps.detect.outputs.present == 'true'
-        run: dist/windows-installer/install-msitools.sh
-
+      # COMPILE FIRST, package second -- deliberately, and the order is the
+      # fix for T1481. The compile is the signal this loop gates on ("does the
+      # branch build for Windows?"); msitools is a packaging dependency that
+      # is fetched from apt and gitlab at job time. While the install ran
+      # first, any wobble in either source made the compile verdict
+      # unobtainable: on 2026-09-09 an unrelated third-party apt repo on the
+      # runner image served a bad index, this job died before it compiled a
+      # line, and every push read red for three days with nothing wrong in the
+      # tree. Now a broken packaging toolchain fails a step that has already
+      # been told the code compiles.
+      #
       # The exact command the release runs, at a version no release will ever
       # carry. 0.0.0 keeps the artifacts unmistakably CI-only while
       # exercising every real step: the ReleaseFast x86_64-windows-gnu
       # cross-compile, the version-string embedding check, wixl's MSI build
-      # (PATH component included), and the portable-ZIP layout gates.
-      #
+      # (PATH component included), and the portable-ZIP layout gates. Split
+      # across two invocations of the SAME script -- --build-only, then
+      # --skip-build over the zig-out it produced -- so the build flags still
+      # live in exactly one place.
+      - name: Cross-compile the Windows exe
+        if: steps.detect.outputs.present == 'true'
+        run: |
+          dist/windows-installer/build-release-artifacts.sh --semver 0.0.0 --build-only
+
+      - name: Build and install msitools 0.106 (wixl, msiinfo, msibuild)
+        if: steps.detect.outputs.present == 'true'
+        run: dist/windows-installer/install-msitools.sh
+
       # Deliberately NOT signed (T1203): the signing secrets are not passed
       # here, so sign-artifacts.sh takes its unsigned path and says so. A
       # per-commit artifact nobody downloads has nothing to gain from the
       # release certificate, and everything to lose by being one more place it
       # is decrypted.
-      - name: Build Windows release artifacts (not published)
+      - name: Package Windows release artifacts (not published)
         if: steps.detect.outputs.present == 'true'
         run: |
-          dist/windows-installer/build-release-artifacts.sh --semver 0.0.0
+          dist/windows-installer/build-release-artifacts.sh --semver 0.0.0 --skip-build
 
   # T579. Until the cutover a full release is two tag pushes (v* on main for
   # macOS, win-v* on the Windows branch), and forgetting the second one

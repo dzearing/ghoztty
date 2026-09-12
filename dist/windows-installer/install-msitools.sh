@@ -33,6 +33,33 @@ set -euo pipefail
 
 MSITOOLS_TAG="${MSITOOLS_TAG:-v0.106}"
 
+# Everything we install comes from ubuntu's own archives. The runner image
+# also ships third-party apt sources -- Google Chrome, Microsoft, and whatever
+# the next image adds -- that we never fetch a byte from, and `apt-get update`
+# exits 100 when ANY configured index fails to download. Under `set -e` that
+# is fatal, so an unrelated vendor's broken mirror kills this script before it
+# has fetched a single package of ours: on 2026-09-09 dl.google.com served a
+# chrome-stable Packages.gz whose hash did not match its own Release file, and
+# fork-ci's windows-cross job died right here on every push afterwards
+# (T1481) -- before it compiled anything, so the one signal that says "the
+# branch builds" said nothing for three days.
+#
+# So move them out of the way rather than hoping they stay healthy. Guarded on
+# ubuntu.sources actually being there: if a future image moves the distro
+# archives somewhere else, disabling everything would leave apt with no
+# sources at all, which is a worse failure than the one this prevents.
+APT_SOURCES_DIR=/etc/apt/sources.list.d
+if [ -f "$APT_SOURCES_DIR/ubuntu.sources" ]; then
+  sudo mkdir -p /tmp/apt-sources-disabled
+  for src in "$APT_SOURCES_DIR"/*; do
+    [ -e "$src" ] || continue
+    if [ "$(basename "$src")" != "ubuntu.sources" ]; then
+      echo "disabling third-party apt source: $src"
+      sudo mv "$src" /tmp/apt-sources-disabled/
+    fi
+  done
+fi
+
 # Ask apt for msitools' OWN declared build dependencies rather than naming
 # -dev packages one at a time. Hand-listing them found libgsf/libgcab and
 # then still missed gobject-introspection, and each miss costs a round trip;
@@ -43,7 +70,24 @@ MSITOOLS_TAG="${MSITOOLS_TAG:-v0.106}"
 # behavior instead of failing the run.
 sudo sed -i 's/^Types: deb$/Types: deb deb-src/' \
   /etc/apt/sources.list.d/ubuntu.sources || true
-sudo apt-get update
+# Retried, and NOT the gate. A mirror that is briefly out of sync is the
+# commonest failure here and a second attempt clears it; a stubborn one must
+# not fail the run on its own, because `update` refreshing an index is not the
+# thing we need -- installing the packages is, and the install below says so
+# loudly and specifically when an index we actually depend on never arrived.
+# The old unconditional `sudo apt-get update` turned every flake in every
+# configured repo into a red build.
+apt_update_retried() {
+  for attempt in 1 2 3; do
+    if sudo apt-get update; then return 0; fi
+    echo "apt-get update failed (attempt $attempt); retrying"
+    sleep $((attempt * 5))
+  done
+  echo "::warning::apt-get update still failing after 3 attempts; continuing --" \
+    "the package installs below are what decide"
+  return 0
+}
+apt_update_retried
 sudo apt-get build-dep -y msitools || echo "build-dep unavailable, relying on the explicit list"
 
 sudo apt-get install -y --no-install-recommends \
