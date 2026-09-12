@@ -1,11 +1,11 @@
 {
     "guard":  "command-resolve",
     "script":  "test/win32/command-resolve-audit.ps1",
-    "generated":  "2026-09-12T04:18:29-07:00",
-    "commit":  "53d7497f1",
+    "generated":  "2026-09-12T05:32:37-07:00",
+    "commit":  "863945e47",
     "uncommitted":  [
-                        "test/win32/dashboard-dom.ps1",
-                        "test/win32/task-dashboard.ps1"
+                        "test/win32/lib/ChromeGeometry.ps1",
+                        "test/win32/tab-strip.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "a3f98a551352e27d1ad9c1745e222757dc4b802efc5638fbe6ea4d3f621b6307",
@@ -172,7 +172,7 @@
                   "test/win32/lib/BuildMode.ps1":  "063d3e59680f1dbf49e9d93e795c460ddf7cffc8d8cc1b3ec3bf078b773b911a",
                   "test/win32/lib/ChooserControls.ps1":  "a89ca8550ef8143250eb27df76bfa9e11b5c1af46f086ea23e07defd5d8eaec0",
                   "test/win32/lib/ChooserCursor.ps1":  "07632267956e7b2647f6227181d98c0ca50e8d68556c7e987e1817424d583e74",
-                  "test/win32/lib/ChromeGeometry.ps1":  "e5b6cf38520a759171f517ac943642e0235ea5b9af4b2cf6828a3bd91b4b11b0",
+                  "test/win32/lib/ChromeGeometry.ps1":  "1b8e59d8fd07b0b470f6a83cdb53791e688a4b0d15e88bb3a16beefa115cc06a",
                   "test/win32/lib/CleanSlate.ps1":  "ce93870a036687c374efd190a6b2f6f1728b554262186736d54b6dee3a46e72a",
                   "test/win32/lib/CleanSlateAudit.ps1":  "bf059c29d82282e5e559747a42b1a81f463abf60c22474a273aa23ed95c772e5",
                   "test/win32/lib/ColorMath.ps1":  "a825f6793a37181cb68b840042fa4403b08a60de696e36e677bb3d3cdda16e04",
@@ -290,7 +290,7 @@
                   "test/win32/stderr-capture-audit.ps1":  "04424b778285df67f2eeed9c8ee354d1446c62a920ab8de56bf8b4475569cf9b",
                   "test/win32/suite-run.ps1":  "3c37cfa6e61d92129c9f09d957787b9e1275dc4def354e2785edb38a9d142884",
                   "test/win32/tab-color.ps1":  "af75bcd47eeb68cf93ee056b7aa4e14e147314ab8b4adc3a9c0eb27dfb43f967",
-                  "test/win32/tab-strip.ps1":  "bebef6b697c8389c7bf92194380461b93114732f2a4b3cf26aaea6936e46377b",
+                  "test/win32/tab-strip.ps1":  "9568c7aab558f226c25f24da312535830a8d154b8b7c5be171520fea63208178",
                   "test/win32/tab-strip-autohide.ps1":  "53655e95850098c972752b1deee1a16488c6c1abd4b46b6734c7500b896bae50",
                   "test/win32/tab-tooltip.ps1":  "2c16b672ae68453765b7c6b86419b4e93d783c063e67985a7789e41eead227a7",
                   "test/win32/target-staleness.ps1":  "25c28c99d39716155584ecda6f7a826dae310b3adaad3ae6dbb962c38f7f7d80",

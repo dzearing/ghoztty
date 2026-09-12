@@ -62,14 +62,18 @@ pub const FILL_DARKEN: f32 = 0.04;
 /// the upper corners, nearly gone along the bottom. Mac: `EllipticalGradient`
 /// 0.28 @ 0 → 0.10 @ 0.7 → 0.04 @ 1.
 ///
-/// `RIM_TOP`/`RIM_BOT` are public because the tab strip's rim is the SAME rim
-/// (T206 — "tabs should have similar borders to the banner. It should feel
-/// cohesive"). Importing these beats copying them: a copy stops matching the
-/// first time either side is tuned, and nobody notices until the user does.
-/// Note the tab reads them as the endpoints of a straight vertical ramp
-/// (`tab_shape.rimAlpha`) — these are the GRADIENT's stops, and the ellipse's
-/// bright center sits above the card, so no pixel of a card is ever lit at
-/// the full `RIM_TOP`. See T679.
+/// These are the GRADIENT's stops, not the alphas any pixel takes: the first
+/// one sits at the ellipse's center, which is above the card, so no pixel of
+/// a card is ever lit at the full `RIM_TOP`.
+///
+/// The tab strip's rim is the SAME rim (T206 — "tabs should have similar
+/// borders to the banner. It should feel cohesive"), and since T679 it is the
+/// same rim by construction: `tab_shape.rimAlpha` evaluates `rimEllipse` /
+/// `rimGradient` against the TAB's rect, so both surfaces are lit by one
+/// overhead light and neither can be retuned without the other following.
+/// (It used to read `RIM_TOP`/`RIM_BOT` as the endpoints of a straight
+/// vertical ramp, which lit a tab's top edge at the full 0.28 while the
+/// card's brightest pixel was ~0.18.)
 pub const RIM_TOP: f32 = 0.28;
 pub const RIM_MID: f32 = 0.10;
 pub const RIM_BOT: f32 = 0.04;
@@ -249,9 +253,23 @@ pub fn sheenAlpha(x: f32, y: f32, c: Rect) f32 {
     return gradient(&SHEEN_STOPS, Ellipse.init(c, SHEEN_RADIUS).at(x, y));
 }
 
+/// The rim's specular ellipse for rect `c`. Public so a caller painting a
+/// rim pixel by pixel can build it once and hoist `rowTerm` out of its inner
+/// loop — which is what the tab strip does (T679).
+pub fn rimEllipse(c: Rect) Ellipse {
+    return Ellipse.init(c, RIM_RADIUS);
+}
+
+/// The rim's alpha in the ellipse's own parameter space (0 at the light, 1 on
+/// its boundary). Paired with `rimEllipse` so another surface can be lit by
+/// this exact rim without re-deriving either half.
+pub fn rimGradient(t: f32) f32 {
+    return gradient(&RIM_STOPS, t);
+}
+
 /// White alpha of the hairline rim at (`x`, `y`) on card `c`.
 pub fn rimAlpha(x: f32, y: f32, c: Rect) f32 {
-    return gradient(&RIM_STOPS, Ellipse.init(c, RIM_RADIUS).at(x, y));
+    return rimGradient(rimEllipse(c).at(x, y));
 }
 
 /// Black alpha of the linear darkening that grounds the card's bottom edge.
@@ -596,8 +614,8 @@ test "rimAlpha: lit from the same overhead ellipse as the sheen" {
     // The bottom has run past the ellipse, so it holds the last stop.
     try testing.expectApproxEqAbs(RIM_BOT, bottom, 0.001);
     // No pixel of the card reaches RIM_TOP: that stop is at the ellipse's
-    // center, which is above the card. This is the difference the tab strip's
-    // straight ramp does NOT model (T679).
+    // center, which is above the card. The tab strip's rim is lit by this
+    // same ellipse over its own rect (T679), so it does not reach it either.
     try testing.expect(top_center < RIM_TOP);
     try testing.expect(top_center > RIM_MID);
 }

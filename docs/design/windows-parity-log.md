@@ -26251,3 +26251,42 @@ window, and the held gate scores it exit 5 / RECOVERY UNCONFIRMED. ALL PASS (22
 assertions). `go-loop-guard.ps1` gained X5a–X5d for the resume gate itself and
 is ALL PASS; `gate-negatives.ps1` carries `RESUME INCOMPLETE` as a declared gate
 with that demonstration. Floor: lib/none/win32/agent all PASS, P1–P3 ALL PASS.
+
+## 2026-09-12 — a tab's highlight is the banner card's, not a near-miss of it (T679)
+
+The little specular highlight along a tab's top edge was brighter than the one
+along a banner card's, even though T206 put them there precisely so the two
+would read as the same material. T124 is where they parted: it made the card's
+rim a real elliptical gradient lit from a point half a card-height above the
+card, which turned `RIM_TOP` (0.28) from "the alpha at the top edge" into "the
+alpha at the light", a value no pixel of a card ever takes. The tab kept
+reading that number as the endpoint of a straight vertical ramp, so its top
+edge was lit at 0.28 against the card's brightest 0.18.
+
+The fix is the one the T206 rule asks for: the tab is lit by the SAME ellipse,
+evaluated over the tab's own rect. `banner_card` exposes the rim's ellipse and
+its gradient so the tab can share both halves rather than re-matching numbers,
+`renderTab` builds the ellipse once per tab and hoists the row term, and the
+`sqrt` is paid only on rim pixels. Because the gradient is normalized per axis
+to each surface's rect, a 29px tab and a 66px card take the same alpha at the
+same relative point — 0.1794 against 0.1796 at the top edge — and neither can
+be retuned now without the other following.
+
+One real consequence turned up by rebuilding HEAD to a side prefix and running
+the harness against both: the selected tab's FLARE tips used to be lightened by
+the brighter rim to within about two levels of the strip, so the chiclet scan
+lost them, and with the card's rim they read as tab paint and the run is
+legitimately 3px wider than the rect the app publishes. That comparison is now
+two assertions instead of one absolute delta — the scan must find every
+published chiclet (no more than 2px inside one), and no run may be wider than
+the paint can reach (the flare's radius plus a pixel on the selected tab, 2px
+of corner antialiasing elsewhere) — with `FlareR` added to the chrome metrics
+so the allowance is the flare's own constant rather than a number.
+
+Evidence: three new `none`-lane tests — the tab/card agreement at the same
+relative point, the horizontal falloff toward a tab's ends, and a mirror of the
+two rim thresholds `tab-strip.ps1` can only measure on screen.
+`test\win32\tab-strip.ps1` ALL PASS (71 assertions), `pane-banner.ps1` ALL PASS
+(139). Floor: lib/none/win32/agent all PASS, P1–P3 ALL PASS, and the nine
+test-harness audits the script edits made due are green, so `guard-due.ps1`
+exits 0.

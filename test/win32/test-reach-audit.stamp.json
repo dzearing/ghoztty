@@ -1,13 +1,11 @@
 {
     "guard":  "test-reach",
     "script":  "test/win32/test-reach-audit.ps1",
-    "generated":  "2026-09-09T10:35:40-07:00",
-    "commit":  "66aafcc1a",
+    "generated":  "2026-09-12T05:31:55-07:00",
+    "commit":  "863945e47",
     "uncommitted":  [
-                        "src/apprt/win32/drag_perf.zig",
-                        "src/apprt/win32/resize_paint.zig",
-                        "src/apprt/win32/Surface.zig",
-                        "src/apprt/win32/Window.zig"
+                        "src/apprt/win32/banner_card.zig",
+                        "src/apprt/win32/tab_shape.zig"
                     ],
     "files":  {
                   "src/apprt/win32.zig":  "37c4f7349426b449ac7ece79cab52211c264458ba698e08ef66bf9123565c4b2",
@@ -33,7 +31,7 @@
                   "src/apprt/win32/AgentIntegration.zig":  "ce4bbfbbf2bc5159eab352bda4d83b4039616b94fc14f938274e3a97efdb945d",
                   "src/apprt/win32/AgentIntegrationsDialog.zig":  "bae8123be8ee78f13e7c5008ef66f2589e26eaf047e42163a3be94879952d92d",
                   "src/apprt/win32/App.zig":  "cd79c6de3b86d5d6aa92bfdf12bab1200785a7d6c610d824a0a69a0f1911ad81",
-                  "src/apprt/win32/banner_card.zig":  "87659068b86b4875b1890d1ce2d4ff1a671bb3ddc817d05d8983a13d5a9a95c8",
+                  "src/apprt/win32/banner_card.zig":  "8a8ae5c2bc901bfc594b23bb443f6d919bdc4756d9f42d7c9c102f5e05a13b90",
                   "src/apprt/win32/banner_layout.zig":  "9a4fef1af1553e28f590f3bd5efab4791d03bddea0122b0b53b2cf92cd80f195",
                   "src/apprt/win32/banner_link.zig":  "77bd381ab5cca8cf4a4d12d9e15971303d5d4e83ea600fe4576c9e5bf4a34c95",
                   "src/apprt/win32/banner_markdown.zig":  "399bf6befc69a6a78be4f76e12ae92b42f7ea49396a42b61cfb23ef4e8e22e86",
@@ -174,7 +172,7 @@
                   "src/apprt/win32/surface_window_role.zig":  "a92643966de125115d58668bd4073483fe1225aa7581351470d718924a042c4e",
                   "src/apprt/win32/system_colors.zig":  "0634f5778186d7f3a7359689523fc96b9b9c273bbc211b824951f19a69ebbe47",
                   "src/apprt/win32/tab_color.zig":  "ee99fbcd94d862893aa21d4bcd3c3f7f393bcb56efd94d9061a4697971973063",
-                  "src/apprt/win32/tab_shape.zig":  "7c541f941138a65e31b833a8a9d2b6340ffa755a8705c3cb280eb714a36eadd2",
+                  "src/apprt/win32/tab_shape.zig":  "df05afbe96f60a3155b90060436079f8414d1461e6e66b8381be74965e00cb0a",
                   "src/apprt/win32/tab_strip_layout.zig":  "afc7394c72159360da98751ab6b7c35cfb1c7d824c76f12f6ffe435599985908",
                   "src/apprt/win32/tab_tooltip.zig":  "9dbb27927b691d7776b74d10e6cadaf911a7e50c548b1a6f80ceab3752473303",
                   "src/apprt/win32/text_search.zig":  "61d8c7e9acd3f1e40c54c543e904c11ef80ac25d4b49bb0304dbc5cfdb9bee4a",

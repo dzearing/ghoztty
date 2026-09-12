@@ -648,16 +648,39 @@ try {
     Write-Host "INFO  shape: $($tabs.Count) tabs measured"
     $pub = @((Get-TestStripRegions -Window $top -Exe $exe).Tabs | Where-Object { $null -ne $_ })
     if ($tabs.Count -eq $pub.Count) {
-        $worst = 0
+        # Two different disagreements, and only one of them is a scan fault.
+        # INSIDE the published rect means the scan could not see tab pixels that
+        # are there. OUTSIDE means it found painted pixels the rect does not
+        # cover - which for the SELECTED tab is the flare, real tab paint that
+        # reaches `corner_bottom` past its own rect as it curves into the
+        # baseline, and this scan row is 2px above that baseline. Before T679
+        # the flare's outermost pixels were lightened by a brighter rim to
+        # within ~2 levels of the strip and the scan simply lost them; the rim
+        # now matches the banner card's, the tips read as tab, and the run is
+        # legitimately 3px wider than the rect at 125%.
+        $selIdx = $pub.Count - 1
+        $worstIn = 0
+        $worstOut = 0
         for ($i = 0; $i -lt $pub.Count; $i++) {
-            $worst = [Math]::Max($worst, [Math]::Abs($tabs[$i].Left - $pub[$i].Left))
-            $worst = [Math]::Max($worst, [Math]::Abs($tabs[$i].Right - $pub[$i].Right))
+            Write-Host "INFO  shape: tab$i measured $($tabs[$i].Left)..$($tabs[$i].Right) published $($pub[$i].Left)..$($pub[$i].Right)"
+            $worstIn = [Math]::Max($worstIn, [Math]::Max($tabs[$i].Left - $pub[$i].Left, $pub[$i].Right - $tabs[$i].Right))
+            $out = [Math]::Max($pub[$i].Left - $tabs[$i].Left, $tabs[$i].Right - $pub[$i].Right)
+            # The selected tab may run out as far as its flare reaches, plus a
+            # pixel for that flare's antialiased tip; every other tab gets the
+            # one pixel of corner antialiasing and nothing more.
+            $allow = if ($i -eq $selIdx) { [int]$m.FlareR + 1 } else { 2 }
+            $worstOut = [Math]::Max($worstOut, $out - $allow)
         }
-        # 2px: a chiclet's rounded corners antialias into the strip, so the scan
-        # is generous by a pixel at each end. Anything past that is the scan
-        # locking onto something that is not a tab.
-        Assert ($worst -le 2) `
-            "T231: the measured chiclets match the rects the app publishes (worst edge delta ${worst}px)"
+        # 2px on the inward side: a chiclet's rounded corners antialias into the
+        # strip, so the scan is shy by a pixel at each end. Anything past that is
+        # the scan failing to find a tab that is painted.
+        Assert ($worstIn -le 2) `
+            "T231: the scan finds every chiclet the app publishes (worst ${worstIn}px inside a published rect)"
+        # And nothing may run wider than the paint can reach: the flare on the
+        # selected tab, a pixel of antialiasing on the others. Past that the scan
+        # has locked onto something that is not a tab.
+        Assert ($worstOut -le 0) `
+            "T231: no measured chiclet runs wider than its paint can reach (worst ${worstOut}px past the allowance)"
     } else {
         Write-Host "INFO  shape: published $($pub.Count) tab rects vs $($tabs.Count) measured"
     }
@@ -714,11 +737,12 @@ try {
         }
 
         # 6. THE RIM, and that it is a GRADIENT rather than a border.
-        #    `rimAlpha` ramps banner_card's own RIM_TOP (0.28) -> RIM_BOT
-        #    (0.04) down the tab's height, so the top edge is a bright hairline
-        #    and the same rim near the baseline is nearly gone. Measured as a
-        #    max over a short scan so one antialiased pixel neither makes nor
-        #    breaks it.
+        #    `rimAlpha` lights the tab from banner_card's own overhead specular
+        #    ellipse, evaluated over the TAB's rect (T679) - so the top edge is
+        #    a bright hairline, the same rim near the baseline is nearly gone,
+        #    and the alpha at any relative point is the one the banner card
+        #    takes there. Measured as a max over a short scan so one
+        #    antialiased pixel neither makes nor breaks it.
         function Max-Lum($shot, [int]$x0, [int]$x1, [int]$y) {
             $best = -1
             for ($x = $x0; $x -le $x1; $x++) {
@@ -752,8 +776,14 @@ try {
         # The SAME rim, on the tab's right side, at half height and again just
         # above the baseline. Same edge, same construction - only `y` differs,
         # which is exactly what the gradient is a function of.
-        $sideHi = Max-Lum $shot ($sel.Right - 2) ($sel.Right + $outPad) $selMidY
-        $sideLo = Max-Lum $shot ($sel.Right - 2) ($sel.Right + $outPad) ($stripTop + $barH - 3)
+        # Scanned strictly INSIDE the tab's right edge. Past it is strip, and
+        # the strip is brighter than the selected tab's fill plus a rim this
+        # far down the gradient (T679 retuned the rim to the card's ellipse,
+        # which is ~0.07 at half height where the old straight ramp was 0.16) -
+        # so a scan that reaches outboard reads the strip on both rows and
+        # reports a flat rim however the rim actually behaves.
+        $sideHi = Max-Lum $shot ($sel.Right - 3) ($sel.Right - 1) $selMidY
+        $sideLo = Max-Lum $shot ($sel.Right - 3) ($sel.Right - 1) ($stripTop + $barH - 3)
         Write-Host "INFO  rim gradient: side@mid=$sideHi side@baseline=$sideLo"
         Assert-Wash ($sideHi -ge ($sideLo + 12)) `
             "T206: the rim FADES down the tab - a gradient, not a border (mid=$sideHi baseline=$sideLo)"

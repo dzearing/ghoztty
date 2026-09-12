@@ -17,8 +17,8 @@
 //! Every one of those needs something GDI does not have:
 //!
 //!   * A **gradient rim** — `FrameRgn`/`CreatePen` stroke ONE flat color.
-//!     The banner card's rim fades 0.28 → 0.04 down its height, and matching
-//!     it means computing the alpha per scanline.
+//!     The banner card's rim is an elliptical gradient lit from above the
+//!     card, and matching it means computing the alpha per pixel.
 //!   * **Flared bottom corners** that curve OUT into the strip baseline (the
 //!     Chrome/Safari/macOS tab silhouette). That is not a rounded rect at
 //!     all, so `CreateRoundRectRgn` cannot express it.
@@ -234,16 +234,44 @@ pub fn sdTab(x: f32, y: f32, t: Tab, m: Metrics) f32 {
     return @max(sdTabRim(x, y, t, m), y - b);
 }
 
-/// The rim's alpha at height `y` within a tab: brightest along the top edge,
-/// nearly gone at the baseline. Mac's card rim is an elliptical gradient
-/// 0.28 → 0.04; a tab is short enough that a linear ramp between the same two
-/// endpoints is indistinguishable, and it is one multiply.
-pub fn rimAlpha(y: f32, t: Tab, active: bool) f32 {
-    const tp: f32 = @floatFromInt(t.top);
-    const b: f32 = @floatFromInt(t.bottom);
-    const h = @max(b - tp, 1.0);
-    const k = std.math.clamp((y - tp) / h, 0.0, 1.0);
-    const a = mix(card.RIM_TOP, card.RIM_BOT, k);
+/// The tab's own rect, as the banner card's geometry type — the rect the
+/// specular ellipse is normalized to. The visible chiclet, `top`..`bottom`:
+/// the rim's SDF deliberately runs below the baseline (see `sdTabRim`), but
+/// the light is over the tab you can see, not over the part clipped away.
+pub fn tabRect(t: Tab) card.Rect {
+    return .{
+        .left = @floatFromInt(t.left),
+        .top = @floatFromInt(t.top),
+        .right = @floatFromInt(t.right),
+        .bottom = @floatFromInt(t.bottom),
+    };
+}
+
+/// The rim's alpha at (`x`, `y`) within a tab: the banner card's rim,
+/// evaluated against the TAB's rect (T679).
+///
+/// It used to be a straight vertical ramp between `card.RIM_TOP` and
+/// `card.RIM_BOT`, on the premise that "a tab is short enough that a linear
+/// ramp between the same two endpoints is indistinguishable". That premise
+/// died when T124 made the card's rim a real elliptical gradient: those two
+/// numbers became STOPS of that gradient, the bright one sitting at a light
+/// half a card-height above the card and reached by no pixel of it, so the
+/// tab's top edge was lit at 0.28 against the card's ~0.18 — two pieces of
+/// chrome T206 deliberately gave the same rim, visibly different materials.
+///
+/// Sharing the ellipse rather than re-matching its endpoints is what keeps
+/// that from happening again: the gradient is normalized to each surface's own
+/// rect, so one overhead light lights a 29px tab and a 66px card identically
+/// in relative terms, and neither can be retuned without the other following.
+pub fn rimAlpha(x: f32, y: f32, t: Tab, active: bool) f32 {
+    return rimFrom(card.rimEllipse(tabRect(t)).at(x, y), active);
+}
+
+/// The rim alpha for a point already reduced to the ellipse's parameter — so
+/// `renderTab` can hoist the ellipse and its row term out of the pixel loop
+/// without expressing the rim a second time.
+fn rimFrom(e: f32, active: bool) f32 {
+    const a = card.rimGradient(e);
     // An unselected tab's rim is softer — at full strength every tab would
     // shout as loudly as the selected one and the selection cue would be lost.
     return if (active) a else a * 0.6;
@@ -312,10 +340,15 @@ pub fn renderTab(
     const y0 = @max(t.top - pad, 0);
     const y1 = @min(t.bottom + pad, h);
 
+    // The overhead specular light, built once per tab: only its row and
+    // column terms vary per pixel, and the column term is the only thing that
+    // costs a `sqrt` — paid on rim pixels alone, below.
+    const rim_e = card.rimEllipse(tabRect(t));
+
     var y = y0;
     while (y < y1) : (y += 1) {
         const fy: f32 = @as(f32, @floatFromInt(y)) + 0.5;
-        const rim_a = if (T206_NEUTERED) 0.0 else rimAlpha(fy, t, active);
+        const rim_row = rim_e.rowTerm(fy);
         const row = @as(usize, @intCast(y)) * @as(usize, @intCast(w));
         var x = x0;
         while (x < x1) : (x += 1) {
@@ -339,7 +372,8 @@ pub fn renderTab(
             // not an edge, so it gets no rim. Everywhere else the two fields
             // agree, so this is the same ring it always was.
             const sd_rim = if (T206_NEUTERED) sd else sdTabRim(fx, fy, t, m);
-            const rim = if (T206_NEUTERED) 0.0 else (coverage(sd_rim) - coverage(sd_rim + m.rim_w)) * rim_a;
+            const ring = if (T206_NEUTERED) 0.0 else @max(coverage(sd_rim) - coverage(sd_rim + m.rim_w), 0.0);
+            const rim = if (ring > 0.0) ring * rimFrom(rim_e.atRow(fx, rim_row), active) else 0.0;
 
             const i = row + @as(usize, @intCast(x));
             const dst = pixels[i];
@@ -409,18 +443,57 @@ test "the inactive lift is the banner card's own, not a second opinion" {
 
 test "the rim fades from top to bottom, like the card's" {
     const t = testTab(.active);
-    const top = rimAlpha(@floatFromInt(t.top), t, true);
-    const mid = rimAlpha(@as(f32, @floatFromInt(t.top + t.bottom)) / 2.0, t, true);
-    const bot = rimAlpha(@floatFromInt(t.bottom), t, true);
+    const cx = @as(f32, @floatFromInt(t.left + t.right)) / 2.0;
+    const top = rimAlpha(cx, @floatFromInt(t.top), t, true);
+    const mid = rimAlpha(cx, @as(f32, @floatFromInt(t.top + t.bottom)) / 2.0, t, true);
+    const bot = rimAlpha(cx, @floatFromInt(t.bottom), t, true);
     try testing.expect(top > mid);
     try testing.expect(mid > bot);
-    try testing.expectApproxEqAbs(card.RIM_TOP, top, 0.001);
+    // The gradient's stops bracket what any pixel takes: the bright one sits
+    // at the light, which is above the tab, and the dim one is held past the
+    // ellipse's boundary — which the baseline is already past.
+    try testing.expect(top < card.RIM_TOP);
+    try testing.expect(top > card.RIM_MID);
     try testing.expectApproxEqAbs(card.RIM_BOT, bot, 0.001);
+}
+
+test "the tab's rim and the card's agree at the same relative point (T679)" {
+    // The defect: with the tab on a straight RIM_TOP -> RIM_BOT ramp, its top
+    // edge was lit at the full 0.28 while the card's brightest pixel was
+    // ~0.18 — two surfaces T206 gave the same rim reading as different
+    // materials. One shared overhead light is what makes them agree, and it
+    // has to hold across the aspect difference (a 29px tab vs a 66px card),
+    // which is exactly what a hand-matched pair of endpoints cannot promise.
+    const t = testTab(.active);
+    const tab_cx = @as(f32, @floatFromInt(t.left + t.right)) / 2.0;
+    const tab_top = rimAlpha(tab_cx, @as(f32, @floatFromInt(t.top)) + 0.5, t, true);
+
+    const m = card.Metrics.init(400, 90, 1.0);
+    const c = m.card();
+    const card_top = card.rimAlpha(c.left + c.width() * 0.5, c.top + 0.5, c);
+
+    // Within a level of 255 — the whole remaining difference is that half a
+    // pixel is a different fraction of a tab's height than of a card's.
+    try testing.expectApproxEqAbs(card_top, tab_top, 1.0 / 255.0);
+    // And both are well under the stop the old ramp handed the tab.
+    try testing.expect(tab_top < card.RIM_TOP - 0.05);
+}
+
+test "the rim dims toward a tab's ends, as the card's does" {
+    // The horizontal half of the same light: the ellipse is normalized per
+    // axis, so a tab's top corners fall off at the same relative rate a
+    // card's do. A vertical-only ramp lit them exactly as brightly as the
+    // middle, which is what made a tab read as a stripe-lit slab.
+    const t = testTab(.active);
+    const y = @as(f32, @floatFromInt(t.top)) + 0.5;
+    const mid = rimAlpha(@as(f32, @floatFromInt(t.left + t.right)) / 2.0, y, t, true);
+    const end = rimAlpha(@as(f32, @floatFromInt(t.left)) + 0.5, y, t, true);
+    try testing.expect(mid > end);
 }
 
 test "an unselected tab's rim is softer than the selected one's" {
     const t = testTab(.inactive);
-    try testing.expect(rimAlpha(10.0, t, false) < rimAlpha(10.0, t, true));
+    try testing.expect(rimAlpha(70.0, 10.0, t, false) < rimAlpha(70.0, 10.0, t, true));
 }
 
 test "the silhouette contains its interior and excludes the strip above it" {
@@ -521,6 +594,53 @@ test "renderTab paints a rim brighter than both the fill and the strip" {
     }
     try testing.expect(brightest > lumOf(strip_packed));
     try testing.expect(brightest > lumOf(inside));
+}
+
+test "the rim clears the margins test/win32/tab-strip.ps1 measures on screen" {
+    // T679 retuned the rim DOWN (a tab's top edge no longer takes the full
+    // 0.28), and the two numbers that decide whether that went too far live in
+    // a screenshot script that cannot run on the test desktop. So the same two
+    // measurements, on the same geometry, in a lane that always runs: max over
+    // a short scan, so one antialiased pixel neither makes nor breaks it.
+    const w: i32 = 260;
+    const h: i32 = 34;
+    var pixels = [_]u32{0} ** (260 * 34);
+    const strip_packed: u32 = (@as(u32, STRIP.r) << 16) | (@as(u32, STRIP.g) << 8) | STRIP.b;
+    for (&pixels) |*p| p.* = strip_packed;
+
+    // A real chiclet: 5px top pad under a 34px bar, ~160px wide.
+    const t = Tab{ .left = 20, .top = 5, .right = 180, .bottom = 34, .surface = .active };
+    const m = Metrics.init(1.0);
+    renderTab(&pixels, w, h, t, m, STRIP, DARK);
+
+    const scan = struct {
+        fn maxLum(p: []const u32, bw: i32, x0: i32, x1: i32, y: i32) u32 {
+            var best: u32 = 0;
+            var x = x0;
+            while (x <= x1) : (x += 1) best = @max(best, lumOf(px(p, bw, x, y)));
+            return best;
+        }
+    };
+
+    const fill_lum = lumOf(px(&pixels, w, 100, 20));
+    const strip_lum = lumOf(strip_packed);
+    const arc: i32 = @as(i32, @intFromFloat(m.corner_top)) + 4;
+    // The script's first assertion: the top edge is a rim brighter than both
+    // its own fill and the strip, by 30 levels summed over RGB.
+    const top_rim = scan.maxLum(&pixels, w, t.left + arc, t.right - arc, t.top);
+    try testing.expect(top_rim > fill_lum + 30);
+    try testing.expect(top_rim > strip_lum + 30);
+
+    // The script's second: the SAME rim on the tab's side is a gradient, not a
+    // border — mid-height at least 12 levels over just above the baseline.
+    //
+    // Scanned strictly INSIDE the tab's right edge. Past it is strip, and the
+    // strip is brighter than the selected tab's own fill plus a rim this far
+    // down the gradient, so a scan that reaches outboard measures the strip on
+    // both rows and reports a flat rim no matter what the rim does.
+    const side_hi = scan.maxLum(&pixels, w, t.right - 3, t.right - 1, @divTrunc(t.top + t.bottom, 2));
+    const side_lo = scan.maxLum(&pixels, w, t.right - 3, t.right - 1, t.bottom - 3);
+    try testing.expect(side_hi >= side_lo + 12);
 }
 
 test "the rim field keeps the tab's real edges and drops its baseline" {

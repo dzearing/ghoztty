@@ -291,6 +291,11 @@ function Get-TestChromeMetrics {
         TabTopPad = $padSm                  # tab_top_pad
         MinTabW = & $px 60.0                # the one width constant T235 kept
         CornerR = & $px 6.0
+        # tab_shape.CORNER_BOTTOM - the FLARE radius, how far the selected
+        # tab's foot reaches OUTBOARD of its own rect as it curves into the
+        # baseline. A scan near the baseline sees those pixels, and they are
+        # deliberately not part of the rect the app publishes for the tab.
+        FlareR = & $px 7.0
         TextPad = & $px 8.0
         StripeH = [Math]::Max((& $px 3.0), 2)
         Hairline = [Math]::Max((& $px 1.0), 1)
