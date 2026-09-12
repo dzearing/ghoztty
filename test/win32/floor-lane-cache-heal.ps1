@@ -35,6 +35,8 @@ $ErrorActionPreference = 'Stop'
 
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 . (Join-Path $RepoRoot 'scripts\lib\CacheHeal.ps1')
+# Clear-BuildCache: the whole-cache clear takes the same hard delete (T1499).
+. (Join-Path $RepoRoot 'scripts\lib\BuildCache.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:Failures = 0
@@ -50,7 +52,10 @@ function Check {
 
 # A private sandbox standing in for the repo + both caches.
 $Sandbox = Join-Path $env:TEMP ("cache-heal-test-{0}" -f $PID)
-if (Test-Path $Sandbox) { Remove-Item $Sandbox -Recurse -Force }
+# Remove-TreeHard, not Remove-Item: the fixtures below plant the very filename
+# (`._.`) that defeats the ordinary recursive delete, so a harness that tore
+# down with Remove-Item would leave its own sandbox behind (T1499).
+if (Test-Path $Sandbox) { Remove-TreeHard -Path $Sandbox | Out-Null }
 $FakeRepo = Join-Path $Sandbox 'repo'
 $LocalCache = Join-Path $FakeRepo '.zig-cache'
 $GlobalCache = Join-Path $Sandbox 'zig-global-cache'
@@ -245,12 +250,22 @@ try {
     $PkgAnon = 'N-V-__8AAIC5lwAVPJJzxnCAahSvZTIlG-HhtOvnM1uh-66x'
     $PkgNamed = 'libxev-0.0.0-86vtc4IcEwCqEYxEYoN_3KXmc6A9VLcm22aVImfvecYs'
 
+    # T1499: written through a `\\?\` path, because `Set-Content` CANNOT
+    # create a file named `._.` -- it strips the trailing dot and silently
+    # leaves `._` instead. That is why every arm below was green while the
+    # real heal could not delete the real package: the fixture had never
+    # contained the one name that defeats the delete.
+    function New-CacheFile {
+        param([string]$Dir, [string]$Name, [string]$Content = 'x')
+        [System.IO.File]::WriteAllText((ConvertTo-ExtendedPath -Path (Join-Path $Dir $Name)), $Content)
+    }
+
     function New-TornPackageDir {
         param([string]$Root, [string]$Name)
         $d = Join-Path $Root "p\$Name"
         New-Item -ItemType Directory -Path $d -Force | Out-Null
         foreach ($f in '._.', '._AUTHORS.txt', '._fonts', '._OFL.txt', 'AUTHORS.txt', 'OFL.txt') {
-            Set-Content -Path (Join-Path $d $f) -Value 'x' -Encoding Ascii
+            New-CacheFile -Dir $d -Name $f
         }
         return $d
     }
@@ -332,7 +347,7 @@ try {
     $good = Join-Path $CleanCache "p\$PkgAnon"
     New-Item -ItemType Directory -Path (Join-Path $good 'fonts') -Force | Out-Null
     foreach ($f in '._.', '._fonts', '._OFL.txt', 'OFL.txt') {
-        Set-Content -Path (Join-Path $good $f) -Value 'x' -Encoding Ascii
+        New-CacheFile -Dir $good -Name $f
     }
     New-Item -ItemType Directory -Path (Join-Path $CleanCache 'p\tmp') -Force | Out-Null
     Check 'an intact package (with a ._. root sidecar) is not flagged' `
@@ -377,10 +392,83 @@ try {
     Check 'floor-lane says it healed and re-ran' ($laneOut -match 'healed 1 torn cache entr') $laneOut
     Check 'and the re-run passes, so the lane is not a bare FAIL' ($laneOut -match 'FLOOR SUMMARY: command=PASS') $laneOut
 
+    # =====================================================================
+    # T1499: the delete has to be able to WIN. On 2026-09-12 all four floor
+    # lanes died on a real torn package, the heal FOUND it, and the delete
+    # then threw on the AppleDouble file named `._.` -- so the lane re-ran
+    # into the same failure and the box stayed red until a human deleted it
+    # by hand with a `\\?\` path. Arms 23-26 are that failure as a test.
+    # =====================================================================
+
+    # -- 23: the hard case is real. The ordinary recursive delete cannot
+    # remove a directory holding `._.`, and this arm is the proof: without it
+    # the arms below could pass against a delete that never needed fixing.
+    $HardCache = Join-Path $Sandbox 'hard-cache'
+    $hardPkg = New-TornPackageDir -Root $HardCache -Name $PkgAnon
+    $ordinaryFailed = $false
+    try { Remove-Item -LiteralPath $hardPkg -Recurse -Force -ErrorAction Stop }
+    catch { $ordinaryFailed = $true }
+    Check 'Remove-Item cannot delete a package holding a ._. file' `
+        ($ordinaryFailed -and (Test-Path -LiteralPath $hardPkg)) `
+        "threw=$ordinaryFailed still-there=$(Test-Path -LiteralPath $hardPkg)"
+
+    # -- 24: the heal deletes it anyway, and says which path it needed.
+    $log = New-Log @("error: failed to check cache: '$hardPkg\fonts\ttf\x.ttf' file_hash FileNotFound")
+    $torn = @(Get-TornCacheEntry -LogPath $log -RepoPath $FakeRepo -GlobalCacheDir $HardCache)
+    $hardHeal = @(Invoke-CacheHeal -Entries $torn 6>&1)
+    $hardOut = ($hardHeal | ForEach-Object { $_.ToString() }) -join "`n"
+    $hardCount = @($hardHeal | Where-Object { $_ -is [int] })
+    Check 'the heal deletes a package holding a ._. file' (-not (Test-Path -LiteralPath $hardPkg)) $hardOut
+    Check 'and reports one entry healed, not zero' `
+        ($hardCount.Count -eq 1 -and $hardCount[0] -eq 1) "$($hardCount -join ',')`n$hardOut"
+    Check 'and names the extended-path fallback it needed' ($hardOut -match 'extended-delete') $hardOut
+
+    # Remove-TreeHard on its own terms: a nested `._.`, and an absent path.
+    $nest = Join-Path $Sandbox 'nested\sub\deeper'
+    New-Item -ItemType Directory -Path $nest -Force | Out-Null
+    New-CacheFile -Dir $nest -Name '._.'
+    New-CacheFile -Dir (Split-Path -Parent $nest) -Name '._.'
+    $rh = Remove-TreeHard -Path (Join-Path $Sandbox 'nested')
+    Check 'Remove-TreeHard removes a nested ._. tree whole' `
+        ($rh.Removed -and -not (Test-Path -LiteralPath (Join-Path $Sandbox 'nested'))) "$($rh.Method) $($rh.Error)"
+    $rhAbsent = Remove-TreeHard -Path (Join-Path $Sandbox 'no-such-thing')
+    Check 'Remove-TreeHard on an absent path is a no-op success' `
+        ($rhAbsent.Removed -and $rhAbsent.Method -eq 'absent') $rhAbsent.Method
+
+    # -- 25: a heal that genuinely cannot finish leaves a tell, so the next
+    # `build-cache check` cannot call the half-removed package clean. That was
+    # the second half of the 2026-09-12 hour: the partial delete had taken the
+    # `._fonts` sidecar with it, which was the only thing the integrity scan
+    # could see, and the report then said the cache was fine.
+    $MarkCache = Join-Path $Sandbox 'marker-cache'
+    $markPkg = Join-Path $MarkCache "p\$PkgAnon"
+    New-Item -ItemType Directory -Path $markPkg -Force | Out-Null
+    New-CacheFile -Dir $markPkg -Name 'AUTHORS.txt'
+    Check 'a package with no sidecar tell scans clean before the marker' `
+        ((@(Get-TornPackage -GlobalCacheDir $MarkCache)).Count -eq 0) ''
+    Set-CacheHealFailedMarker -Entry $markPkg
+    $marked = @(Get-TornPackage -GlobalCacheDir $MarkCache)
+    Check 'a failed heal makes the same package report torn' `
+        ($marked.Count -eq 1 -and $marked[0].Reason -eq 'heal-failed') `
+        (($marked | ForEach-Object { "$($_.Reason):$($_.Detail)" }) -join '; ')
+    $bcMarked = & powershell -NoProfile -ExecutionPolicy Bypass -File $bcScript check `
+        -Repo $FakeRepo -CacheDir $MarkCache -MinFreeGB 0 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String
+    Check 'build-cache check names the failed heal' ($bcMarked -match 'heal-failed') $bcMarked
+
+    # -- 26: the whole-cache clear takes the same route, so `build-cache
+    # clear` cannot be defeated by the same filename.
+    $ClearCache = Join-Path $Sandbox 'clear-cache'
+    New-TornPackageDir -Root $ClearCache -Name $PkgAnon | Out-Null
+    $cleared = Clear-BuildCache -CacheDir $ClearCache
+    Check 'Clear-BuildCache removes a cache holding a ._. file' `
+        ($cleared.Removed -and -not (Test-Path -LiteralPath $ClearCache)) `
+        "removed=$($cleared.Removed) err=$($cleared.Error)"
+
     Complete-TestBody  # T1039: the run reached the end of its body
 }
 finally {
-    if (Test-Path $Sandbox) { Remove-Item $Sandbox -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path $Sandbox) { Remove-TreeHard -Path $Sandbox | Out-Null }
 }
 
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1 can

@@ -1,10 +1,10 @@
 {
     "guard":  "command-resolve",
     "script":  "test/win32/command-resolve-audit.ps1",
-    "generated":  "2026-09-12T11:26:06-07:00",
-    "commit":  "a415d6685",
+    "generated":  "2026-09-12T12:12:47-07:00",
+    "commit":  "306498f41",
     "uncommitted":  [
-                        "test/win32/upgrade-resume-readiness.ps1"
+                        "test/win32/floor-lane-cache-heal.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "a3f98a551352e27d1ad9c1745e222757dc4b802efc5638fbe6ea4d3f621b6307",
@@ -98,7 +98,7 @@
                   "test/win32/feedback-user-report.ps1":  "0b85eddc062d701c1cfe16d603156cdc5702e2d6c78fdc5a2bbd70b088f292cc",
                   "test/win32/fixed-ports.ps1":  "fcc484417429118fdba46e3e3c66023ddde55c80dee258c689fc0a1213a8d03e",
                   "test/win32/float-on-top.ps1":  "da3cb0f45c2e3a8e48609bc4bf1b047a9fe67405c406b471d65d79e48cce68a8",
-                  "test/win32/floor-lane-cache-heal.ps1":  "73ad6725c8aecda59ca021e439990c6f9ac89208e8adc6695fcafa3f20413bae",
+                  "test/win32/floor-lane-cache-heal.ps1":  "814c599c4306d278e54ea6d1e6fda19ace7e327a18774f79737bf0804e63896a",
                   "test/win32/floor-lane-commit-headroom.ps1":  "63aed36ba60ecbd7af05f2349f050a390eccfa1f6768b52b416d9d27b60837ec",
                   "test/win32/floor-lane-compiler-crash.ps1":  "34827f1ed2d63df665d72275f13211f6a3f8273c44561b09396ffdc3f7505470",
                   "test/win32/floor-lane-leak-sweep.ps1":  "c339c10d3445889e7107e6158a32c593bad1ce2454b107551561b39e9f1fd24d",

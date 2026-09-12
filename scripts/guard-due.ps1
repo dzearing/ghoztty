@@ -1792,6 +1792,11 @@ $GuardTable = @(
         Stamp  = 'test\win32\floor-lane-cache-heal.stamp.json'
         Covers = @(
             'scripts\lib\CacheHeal.ps1',
+            # T1499: the heal's delete lives here, and the arms proving a
+            # package holding `._.` can be removed at all are in this harness.
+            # An edit to the hard delete with nothing re-run is exactly how the
+            # heal came to be a no-op against the real torn package.
+            'scripts\lib\HardDelete.ps1',
             'test\win32\floor-lane-cache-heal.ps1'
         )
     },
@@ -3085,6 +3090,9 @@ $GuardTable = @(
         Stamp  = 'test\win32\build-cache.stamp.json'
         Covers = @(
             'scripts\lib\BuildCache.ps1',
+            # T1499: Clear-BuildCache deletes through Remove-TreeHard, so the
+            # whole-cache clear inherits whatever that file does.
+            'scripts\lib\HardDelete.ps1',
             'scripts\build-cache.ps1',
             'test\win32\build-cache.ps1',
             # T1431 put the OTHER drive under the same argument: zig's C/C++

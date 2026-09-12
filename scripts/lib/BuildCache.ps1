@@ -41,6 +41,11 @@
     (scripts\build-cache.ps1) or a harness.
 #>
 
+# Remove-TreeHard: the clear has to survive the filenames a fetched package
+# can hold (T1499). Sourcing it here rather than at every caller keeps
+# `Clear-BuildCache` usable from a harness that knows nothing about it.
+. (Join-Path $PSScriptRoot 'HardDelete.ps1')
+
 # Measured on 2026-08-21: 31,359 entries in `.zig-cache\o` totalled 1,235 GB.
 # Used to turn the cheap entry count into a size estimate, and documented as an
 # average rather than a rule -- entries range from a few KB of generated zig to
@@ -327,12 +332,14 @@ function Clear-BuildCache {
     if ($WhatIf) {
         return [pscustomobject]@{ Path = $CacheDir; Removed = $false; FreedGB = 0; Error = 'what-if' }
     }
+    # Remove-TreeHard rather than Remove-Item (T1499): a cache holds whatever
+    # the archives it fetched held, and one AppleDouble `._.` inside any
+    # package is enough to make the ordinary recursive delete refuse the whole
+    # tree -- which here would read as a locked file and leave the
+    # dangling-manifest state described below.
     $err = ''
-    try {
-        Remove-Item -LiteralPath $CacheDir -Recurse -Force -ErrorAction Stop
-    } catch {
-        $err = $_.Exception.Message
-    }
+    $r = Remove-TreeHard -Path $CacheDir
+    if (-not $r.Removed) { $err = $r.Error }
     # A locked file (a lane still running, a virus scanner holding a handle)
     # leaves part of the tree behind. That is reported, not retried: a partial
     # clear is exactly the dangling-manifest state above, so the caller must be

@@ -68,7 +68,27 @@
     therefore never aim the delete at source, and a genuine compile error in
     generated-but-correct cache content simply fails again on the retry, which
     the caller reports as final.
+
+    And the delete has to be able to WIN, which it could not until T1499: the
+    real torn package on this box held AppleDouble sidecars including a file
+    named `._.`, which defeats `Remove-Item -Recurse -Force` outright -- the
+    name resolves to the directory itself, the delete reports it missing, and
+    the non-empty parent is then refused. The heal printed FAILED, returned 0,
+    and every lane re-ran into the same failure until a human deleted it by
+    hand with a `\\?\` path. `Remove-TreeHard` (scripts\lib\HardDelete.ps1) is
+    that hand-delete as code, and Invoke-CacheHeal names which attempt it took.
 #>
+
+. (Join-Path $PSScriptRoot 'HardDelete.ps1')
+
+# Dropped inside a cache entry whose delete could not finish, so the
+# half-removed state has a tell of its own (T1499). Without it a partial
+# delete is INVISIBLE to the integrity scan: on 2026-09-12 the failed heal had
+# already removed the `._fonts` sidecar, which was the only thing
+# Get-TornPackage could see, and `build-cache.ps1 check` then called the still
+# broken cache clean. The marker dies with the entry the moment a later delete
+# succeeds, so it cannot go stale.
+function Get-CacheHealFailedMarkerName { return '.ghoztty-heal-failed' }
 
 function Get-TornCacheEntry {
     <#
@@ -263,7 +283,19 @@ function Get-TornPackage {
         $names = @()
         try { foreach ($e in [System.IO.Directory]::EnumerateFileSystemEntries($d)) { $names += (Split-Path -Leaf $e) } }
         catch { continue }
-        if ($names.Count -eq 0) {
+        $marker = Get-CacheHealFailedMarkerName
+        if ($names -contains $marker) {
+            # A heal already tried and could not finish here (T1499). Nothing
+            # else about this directory can be trusted, and the state is
+            # otherwise invisible: the partial delete on 2026-09-12 had removed
+            # the one sidecar the orphan rule below could see.
+            $out += [pscustomobject]@{
+                Entry  = $d
+                Reason = 'heal-failed'
+                Detail = "a previous cache heal could not delete this entry ('$marker' is still here)"
+            }
+        }
+        elseif ($names.Count -eq 0) {
             $out += [pscustomobject]@{ Entry = $d; Reason = 'empty-package'; Detail = 'directory holds no entries' }
         }
         else {
@@ -423,13 +455,43 @@ function Invoke-CacheHeal {
         Write-Host "CACHE HEAL: deleting torn cache entry $dir"
         Write-Host "  rule: $why"
         Write-Host "  blamed by: $($e.Line)"
-        try {
-            Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop
+        # Remove-TreeHard, not Remove-Item: a torn package can hold a name
+        # (`._.`) that the ordinary delete cannot address at all, and a heal
+        # that cannot delete is a heal that does not exist (T1499).
+        $r = Remove-TreeHard -Path $dir
+        if ($r.Removed) {
+            if ($r.Method -ne 'remove-item') {
+                Write-Host "  took the $($r.Method) path: $(@($r.Attempts) -join '; ')"
+            }
             $healed++
         }
-        catch {
-            Write-Host "  CACHE HEAL FAILED to delete: $($_.Exception.Message)"
+        else {
+            Write-Host "  CACHE HEAL FAILED to delete: $($r.Error)"
+            foreach ($a in @($r.Attempts)) { Write-Host "    tried $a" }
+            Set-CacheHealFailedMarker -Entry $dir
         }
     }
     return $healed
+}
+
+function Set-CacheHealFailedMarker {
+    <#
+    .SYNOPSIS
+        Leave a tell inside a cache entry whose delete could not finish.
+    .DESCRIPTION
+        Best effort and deliberately quiet on failure: this runs in the arm of
+        a heal that has already failed, and a marker that cannot be written
+        must not turn into a second error on top of the first. The value is
+        for the NEXT reader -- Get-TornPackage reports the marker, so a
+        half-removed package is named by `build-cache.ps1 check` instead of
+        counting as a healthy entry.
+    #>
+    param([Parameter(Mandatory)][string]$Entry)
+    try {
+        if (-not [System.IO.Directory]::Exists((ConvertTo-ExtendedPath -Path $Entry))) { return }
+        $p = ConvertTo-ExtendedPath -Path (Join-Path $Entry (Get-CacheHealFailedMarkerName))
+        $when = (Get-Date).ToString('s')
+        [System.IO.File]::WriteAllText($p, "cache heal could not delete this entry at $when`r`n")
+    }
+    catch { }
 }

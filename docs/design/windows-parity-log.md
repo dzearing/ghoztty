@@ -26612,3 +26612,48 @@ PowerShell delete cmdlet and cmd.exe's recursive remove, so the heal returned 0
 and the lane re-ran into the identical failure. It took `[System.IO.File]::Delete`
 over a `\\?\` path, by hand, to clear it. That is **T1499** (P1). **T1408**,
 which asked for the detection half, is closed as superseded by T1436.
+
+## 2026-09-12 — the cache heal's delete cannot be beaten by a filename (T1499)
+
+When a fetched zig package lands half-extracted, every build on the box dies at
+once, and the automatic repair that exists for exactly that morning could not
+finish: on 2026-09-12 the heal FOUND the torn `JetBrainsMono` package, its
+delete threw `Could not find file '._.'`, and the package stayed on disk — so
+the retry hit the identical failure and all four floor lanes stayed red until a
+human deleted it by hand with a `\\?\` path. The name is the whole defect: the
+Win32 path parser normalizes a `._.`-shaped leaf as a relative segment, so the
+delete resolves the child to the directory it is standing in, reports it
+missing, and then refuses the non-empty parent. `Remove-Item -Recurse -Force`
+and cmd.exe's recursive remove both lose to it.
+
+`scripts\lib\HardDelete.ps1` is that hand-delete as code. `Remove-TreeHard`
+tries three things in order and names the one it needed: the ordinary recursive
+delete, then `[System.IO.Directory]::Delete` over a `\\?\` path (which skips
+path parsing entirely, and is what fixes this), then a manual walk over
+extended paths that clears ReadOnly/Hidden/System leaf by leaf. `Invoke-CacheHeal`
+and `Clear-BuildCache` both delete through it now, so neither the per-entry heal
+nor the whole-cache clear can be defeated by the contents of an archive somebody
+else built.
+
+The second half of that hour was the report going quiet: the failed delete had
+already taken the `._fonts` sidecar with it, which was the only tell
+`Get-TornPackage` could see, and `build-cache.ps1 check` then called the still
+broken cache clean. A heal that cannot finish now leaves `.ghoztty-heal-failed`
+inside the entry, and the integrity scan reports that as `heal-failed` — a
+marker that dies with the entry the moment a later delete succeeds, so it cannot
+go stale.
+
+And the reason the harness had been green through all of this: `Set-Content`
+CANNOT create a file named `._.`. It strips the trailing dot and silently writes
+`._`, so T1436's fixtures — which reproduce the real package's contents
+otherwise exactly — had never contained the one name that defeats the delete.
+The fixtures write through an extended path now, and the harness tears its own
+sandbox down with `Remove-TreeHard` for the same reason.
+
+Evidence: `test\win32\floor-lane-cache-heal.ps1` ALL PASS (66 assertions), grown
+by arms 23–26 — including the negative control that `Remove-Item` throws and
+leaves the tree, the heal removing that same package and reporting 1 healed
+rather than 0, the marker making a previously-clean package report torn, and
+`Clear-BuildCache` over a cache holding `._.`. `test\win32\build-cache.ps1` ALL
+PASS (76 assertions). Floor lanes lib/none/win32/agent all PASS, and the nine
+meta-audit guards this change made due are ALL PASS.
