@@ -1,10 +1,10 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-12T14:05:41-07:00",
-    "commit":  "5e60f312b",
+    "generated":  "2026-09-12T14:46:28-07:00",
+    "commit":  "838ce27a0",
     "uncommitted":  [
-                        "test/win32/reset-context.ps1"
+                        "test/win32/thread-join-audit.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "5a2be2d5d80e580bc08a266c5007b1656573ffaddd93ded8b7019442a23dbbe5",
@@ -264,6 +264,7 @@
                   "test/win32/test-desktop-spike.ps1":  "fe210e65c149640f7641882b23be4f13d9ec43be05d0b1347de88576950d7b54",
                   "test/win32/test-filter-guard.ps1":  "acc3723dfbbaec62341d3593a2e41af3d0cdb026391289d4e6412ae4ff1ac69f",
                   "test/win32/test-reach-audit.ps1":  "9987988dde78037ac8545dd70de97e50d2d9312bca3e9c0ee89d0be955eb638e",
+                  "test/win32/thread-join-audit.ps1":  "636191df9344abe883a41479504bef2f67fae58e0fff5e609c3050ca793ce219",
                   "test/win32/title-font.ps1":  "946fd12880bb0433a535283fb6146fb7d2a8fd1b2d1f0f74e00fa7ce1720dcb8",
                   "test/win32/title-jitter.ps1":  "305bd304faf09988c8852f7fa69f2c780212b639fb837085b5869ab5457acab7",
                   "test/win32/update-apply.ps1":  "c26d2dfa2d8fdfa3a667c1cffd2e7e0943cb5feb138a04f900efb5bb0ab5d023",

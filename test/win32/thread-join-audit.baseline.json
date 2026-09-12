@@ -1,0 +1,15 @@
+﻿{
+    "note":  "Per-file counts of thread-join-audit findings not yet fixed. May only go DOWN, and the run that lowers one rewrites this file with -UpdateBaseline. See docs/design/windows-parity-tasks/T1505.md.",
+    "generated":  "2026-09-12",
+    "files":  {
+                  "src\\remote\\agent\\keepalive.zig":  5,
+                  "src\\remote\\agent\\link_control.zig":  8,
+                  "src\\remote\\agent\\server.zig":  1,
+                  "src\\remote\\client_mux.zig":  1,
+                  "src\\remote\\inbound_ring.zig":  2,
+                  "src\\remote\\pipe_stream.zig":  5,
+                  "src\\remote\\socket_stream.zig":  1,
+                  "src\\remote\\tcp_dial.zig":  7,
+                  "src\\terminal\\search\\Thread.zig":  1
+              }
+}

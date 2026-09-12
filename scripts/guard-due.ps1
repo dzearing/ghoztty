@@ -3196,6 +3196,26 @@ $GuardTable = @(
         )
     }
 
+    # T702 - the thread-join sweep. It covers the directories whose tests
+    # actually spawn threads, because the case the rule exists for is a test
+    # ADDING a spawn, and a row that watched only the analyzer would go green on
+    # the day that test lands. The sweep itself reads every `.zig` file under
+    # `src`; these are the ones where a change can move the verdict.
+    [pscustomobject]@{
+        Name   = 'thread-join'
+        Script = 'test\win32\thread-join-audit.ps1'
+        Stamp  = 'test\win32\thread-join-audit.stamp.json'
+        Covers = @(
+            'test\win32\thread-join-audit.ps1',
+            'test\win32\lib\ThreadJoinAudit.ps1',
+            'test\win32\thread-join-audit.baseline.json',
+            'src\remote\*.zig',
+            'src\remote\agent\*.zig',
+            'src\terminal\search\*.zig',
+            'src\datastruct\*.zig'
+        )
+    }
+
     # T1191 - the reachability sweep. It covers `src\apprt\win32.zig` itself,
     # which is unusual for a row and is the whole point: the file the rule is
     # about is a hand-written list, and the moment somebody adds a win32 module

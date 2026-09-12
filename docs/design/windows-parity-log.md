@@ -9,6 +9,49 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-12: T702 (T1505 filed) - **a test that spawns a thread and can return
+  without joining it is now a red line, not a thing somebody remembers.** T693
+  fixed two such sites by hand in `src\remote\connection.zig`; T702 was filed to
+  sweep the other nineteen. Picking it up 33 days later, `CHECK FIRST` earned its
+  keep: the sweep had already landed in `a667007a7` (T536) and all 17 test-local
+  spawn sites in the file were guarded with the disarming errdefer. Re-verifying
+  that by hand produced no code, and a second hand audit would have been worth
+  exactly what the first one was, because nothing re-asks the question. On this
+  shape the *test* is the deliverable, so that is what landed.
+
+  `test\win32\thread-join-audit.ps1` and `test\win32\lib\ThreadJoinAudit.ps1`
+  check one rule over every `.zig` file under `src`: a thread spawned inside a
+  `test` block onto a local handle is joined on every path out of that block -
+  either because nothing between the spawn and the join can return, or because a
+  `defer`/`errdefer` in the block joins it. `connection.zig` is asserted CLEAN
+  (section B), and section B2 asserts the analyzer actually found its 18 spawn
+  sites, because "no findings" and "looked at nothing" print the same.
+
+  The other nine files still carry the defect - 31 sites, `link_control.zig` and
+  `tcp_dial.zig` worst - and fixing them is T1505, not this turn. So the sweep is
+  scored against a per-file baseline that may only go DOWN: a file above its
+  count fails, a file BELOW it fails too and names `-UpdateBaseline`, and a file
+  with findings and no baseline entry fails. A ratchet that tightens only when
+  somebody remembers to tighten it is a wishlist.
+
+  Two rounds of the analyzer were thrown away for being right about nothing. The
+  first judged everything after a file's first `test` declaration, which in
+  `src\apprt\win32` is most of the frontend, and reported ~20 production spawns
+  whose handles a struct field owns. The second still reported the teardowns that
+  get the LOCKING right - `Connection.shutdown` may not hold `state_mutex` across
+  a join, so it claims the field into a local first - which would have made the
+  one correct shape the only reported one. What ships reports 31 sites and zero
+  false positives; section D3 is the assertion that keeps it that way.
+
+  The teeth, both kinds. `-TeethCheck` strips a real guard out of
+  `connection.zig`, plants an unknown file carrying the defect, and plants one
+  under `src\apprt\win32`: all three score red. And the runtime half, which is
+  what the card actually asked for - a `return error.DeliberateT702TeethCheck`
+  planted between the spawn and the join in the T739 repaint test, run through
+  `-Dtest-filter`, reported `82/83 passed, 1 failed` at `connection.zig:4344`
+  with no hang and no panic. That is the guard working: before T693's shape, the
+  same failure took the run down somewhere else.
+
 - 2026-09-12: T697 (T1012 updated, T1498 filed and skipped as a duplicate) - **a
   test script's answer to "do you want the last run's panes back" now counts
   wherever a person would write it.** The T158 sweep accepts a
