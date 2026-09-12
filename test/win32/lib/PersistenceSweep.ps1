@@ -30,11 +30,25 @@
 #      launch statement itself;
 #   2. pass it through a variable or splat built in the same file - the sweep
 #      resolves those definitions;
-#   3. write a `# persistence: <reason>` marker on the launch statement or in
-#      the six lines above it, for a site where neither fits: a CLI invocation
-#      that opens no window, a launch into a throwaway `$env:LOCALAPPDATA` where
-#      there is no shared manifest to restore from, or a helper whose callers
-#      each pass their own choice.
+#   3. write a `# persistence: <reason>` marker on the launch statement, in the
+#      comment block above it, or on the ENCLOSING function's header (or the
+#      comment block above that), for a site where neither fits: a CLI
+#      invocation that opens no window, a launch into a throwaway
+#      `$env:LOCALAPPDATA` where there is no shared manifest to restore from, or
+#      a helper whose callers each pass their own choice.
+#
+# T697: the marker window used to be a fixed six lines above the statement and
+# nothing else, which is one line short of the shape a reader writes most
+# naturally - a marker on the function header, explaining every launch in the
+# function. agent-instance-lineage.ps1 wrote exactly that, seven lines up, and
+# the sweep reported the site as undeclared: as work nobody had thought about,
+# when the reasoning was right there. A false `undeclared` is worse than a
+# missed one, because the remedy applied to it is a fix to a site that was
+# already correct. So the window is now a property of the COMMENT BLOCK (the
+# contiguous `#` lines - or a `<# ... #>` block - above the statement, however
+# long) rather than a line count, and a marker on the enclosing function
+# declares every launch inside that function, reported as `marker:fn:<name>` so
+# the sweep can say WHERE it read the declaration.
 #
 # The marker is a comment, so a site can be declared without touching behavior -
 # which is the whole reason this is a static sweep rather than a runtime guard in
@@ -64,10 +78,17 @@ $script:PersistenceVarWindow = 800
 # in 8f7af4466; a comment in the suite still says they are rejected.)
 $script:PersistenceFlagPattern = '--session-persistence=(1|t|T|true|on|yes|0|f|F|false|off|no)(\b|$|[''"])'
 
-# Lines above a launch statement that a `# persistence:` marker may sit on. Six
-# is enough for a marker written above a short comment block explaining the
-# launch, and short enough that it cannot be credited to the wrong site.
+# Lines above a launch statement that a `# persistence:` marker may sit on, when
+# there is no comment block to measure. Six is enough for a marker written above
+# a short comment block explaining the launch, and short enough that it cannot be
+# credited to the wrong site. A contiguous comment block extends the window past
+# it (T697) - a block is a unit of prose about the statement it sits on, so a
+# marker anywhere in it is about that statement however long the block runs.
 $script:PersistenceMarkerLookback = 6
+
+# The `# persistence:` marker itself, so the two scans below and the
+# function-header scan cannot drift apart.
+$script:PersistenceMarkerPattern = '#\s*persistence:'
 
 # T689: the same question asked of the app's OUTPUT. A debug build writes
 # std.log to stderr and nothing else - no event-log record, no crash dump - so a
@@ -251,6 +272,90 @@ function Get-HelperCallerDeclaration {
 }
 
 <#
+The first line of the comment block that sits immediately above $Index, or
+$Index itself when the line above it is code. Contiguous `#` lines count, and a
+block comment (the angle-hash kind, like this one) is swallowed whole - both are
+one unit of prose about whatever follows them. Blank lines end the block, which
+is what keeps a marker from being credited to a statement it was never written
+about.
+#>
+function Get-CommentBlockStart {
+    param([string[]]$Lines, [int]$Index)
+    $start = $Index
+    for ($k = $Index - 1; $k -ge 0; $k--) {
+        $l = $Lines[$k]
+        if ($l -match '#>') {
+            $j = $k
+            while ($j -ge 0 -and $Lines[$j] -notmatch '<#') { $j-- }
+            if ($j -lt 0) { break }
+            $start = $j
+            $k = $j
+            continue
+        }
+        if ($l -match '^\s*#') { $start = $k; continue }
+        break
+    }
+    return $start
+}
+
+<#
+Where the marker scan for the launch on line $Index starts: the fixed lookback,
+widened to take in the whole comment block above the statement (T697).
+#>
+function Get-MarkerWindowStart {
+    param([string[]]$Lines, [int]$Index)
+    $from = [Math]::Max(0, $Index - $script:PersistenceMarkerLookback)
+    $block = Get-CommentBlockStart -Lines $Lines -Index $Index
+    if ($block -lt $from) { $from = $block }
+    return $from
+}
+
+<#
+Is there a marker on the header of a function that ENCLOSES line $Index - on the
+header line itself, or in the comment block above it?
+
+This is the declaration a reader assumes they are writing when they explain a
+helper once, at the top, instead of at each launch inside it (T697). Enclosure is
+checked by brackets rather than by "the nearest `function` line above", so a
+marker on a SIBLING function that happens to sit higher in the file declares
+nothing. The search walks outward, so a nested function inherits the outer
+declaration.
+
+Returns the declaring function's name, else $null.
+#>
+function Get-EnclosingFunctionMarker {
+    param(
+        [string[]]$Lines,
+        [int]$Index,
+        [string]$MarkerPattern = $script:PersistenceMarkerPattern
+    )
+    for ($k = $Index; $k -ge 0; $k--) {
+        if ($Lines[$k] -notmatch '^\s*function\s+([\w\-]+)') { continue }
+        $name = $matches[1]
+
+        # The body's last line: count brackets from the header down and stop
+        # where the depth comes back to zero after having opened.
+        $depth = 0
+        $opened = $false
+        $end = $Lines.Count - 1
+        for ($m = $k; $m -lt $Lines.Count; $m++) {
+            $depth += (Measure-BracketDepth (Remove-PsLineComment $Lines[$m]))
+            if ($depth -gt 0) { $opened = $true }
+            elseif ($opened) { $end = $m; break }
+        }
+        if ($Index -gt $end) { continue }
+
+        if ($Lines[$k] -match $MarkerPattern) { return $name }
+        $from = Get-CommentBlockStart -Lines $Lines -Index $k
+        for ($m = $from; $m -lt $k; $m++) {
+            if ($Lines[$m] -match $MarkerPattern) { return $name }
+        }
+        # This function did not declare it; an enclosing one still might.
+    }
+    return $null
+}
+
+<#
 Does this launch statement start the app under test?
 
 Resolved from the image variable's own assignments: a script that launches
@@ -262,7 +367,8 @@ has looked at.
 function Test-GhozttyImage {
     param(
         [Parameter(Mandatory = $true)][string]$Text,
-        [Parameter(Mandatory = $true)][string]$Stmt
+        [Parameter(Mandatory = $true)][string]$Stmt,
+        [int]$Depth = 2
     )
     $var = $null
     if ($Stmt -match '-Exe\s+\$(\w+)') { $var = $matches[1] }
@@ -286,6 +392,26 @@ function Test-GhozttyImage {
         # unrelated code.
         $head = $def.Substring(0, [Math]::Min(200, $def.Length))
         if ($head -imatch 'ghoztty(-debug)?\.(exe|com)') { return $true }
+    }
+    # A path DERIVED from another variable names its image one hop away:
+    # `$CliExe = [IO.Path]::ChangeExtension($Exe, '.com')` is the CLI twin of
+    # whatever `$Exe` is, and the check below read the `'.com'` literal as "some
+    # other image" and dropped the site (T697). Follow the reference before
+    # concluding that.
+    # Only two shapes count as "the same image under another name": a plain
+    # alias, and an extension swap. Anything that BUILDS a new filename
+    # (`Join-Path (Split-Path $exe) 'victim.exe'`) names its own image and is
+    # judged on that, or three fixture launches - a crash victim, a sleeper, an
+    # update applier - would be swept as if they were the app.
+    if ($Depth -gt 0) {
+        foreach ($def in $defs) {
+            $head = $def.Substring(0, [Math]::Min(200, $def.Length))
+            $alias = $null
+            if ($head -match 'ChangeExtension\(\s*\$(\w+)') { $alias = $matches[1] }
+            elseif ($head.Trim() -match '^\$(\w+)$') { $alias = $matches[1] }
+            if (-not $alias -or $alias -ieq $var) { continue }
+            if (Test-GhozttyImage -Text $Text -Stmt ('-Exe $' + $alias) -Depth ($Depth - 1)) { return $true }
+        }
     }
     # Every assignment named something else (av.exe, ghoztty-agent.exe, ...).
     foreach ($def in $defs) {
@@ -404,10 +530,15 @@ function Get-GhozttyLaunchSites {
                 if ($helper) { $how = "callers:$helper" }
             }
             if (-not $how) {
-                $from = [Math]::Max(0, $i - $script:PersistenceMarkerLookback)
+                $from = Get-MarkerWindowStart -Lines $lines -Index $i
                 for ($k = $from; $k -le $j; $k++) {
-                    if ($lines[$k] -match '#\s*persistence:') { $how = 'marker'; break }
+                    if ($lines[$k] -match $script:PersistenceMarkerPattern) { $how = 'marker'; break }
                 }
+            }
+            if (-not $how) {
+                $fn = Get-EnclosingFunctionMarker -Lines $lines -Index $i `
+                    -MarkerPattern $script:PersistenceMarkerPattern
+                if ($fn) { $how = "marker:fn:$fn" }
             }
 
             # T689: the same four ways of declaring, asked of the app's stderr.
@@ -429,10 +560,15 @@ function Get-GhozttyLaunchSites {
                 if ($helper) { $errHow = "callers:$helper" }
             }
             if (-not $errHow) {
-                $from = [Math]::Max(0, $i - $script:PersistenceMarkerLookback)
+                $from = Get-MarkerWindowStart -Lines $lines -Index $i
                 for ($k = $from; $k -le $j; $k++) {
                     if ($lines[$k] -match $script:StderrMarkerPattern) { $errHow = 'marker'; break }
                 }
+            }
+            if (-not $errHow) {
+                $fn = Get-EnclosingFunctionMarker -Lines $lines -Index $i `
+                    -MarkerPattern $script:StderrMarkerPattern
+                if ($fn) { $errHow = "marker:fn:$fn" }
             }
             # A test-desktop launch that named no path still gets one:
             # Start-OnTestDesktop fills `-StdErr` in for its caller (T689), so

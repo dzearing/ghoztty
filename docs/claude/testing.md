@@ -1004,9 +1004,17 @@ marker for a site where none of those fit (a CLI verb, a throwaway-
 `LOCALAPPDATA` launch, a forward-and-exit second instance). The value must be
 one `parseBool` accepts (`1/t/T/true/on/yes`, `0/f/F/false/off/no`) — anything
 else is logged, dropped, and leaves a launch that looks explicit and restores
-anyway. Enumerator: `test/win32/lib/PersistenceSweep.ps1`; acceptance (and the
-live control that the flag really stops a restore):
-`test/win32/persistence-flag.ps1`.
+anyway. **Where the marker may sit** (T697): on the launch statement, anywhere
+in the comment block above it (however long the block runs), or on the
+ENCLOSING function's header or its comment block — one marker explaining a
+helper declares every launch inside it, and the sweep reports that as
+`marker:fn:<name>` so a reader can see where it read the declaration. The
+window used to be six lines flat, which is one short of a marker on a function
+header, and the sweep reported those sites as work nobody had considered; a
+false `undeclared` is worse than a missed one, because the fix applied to it
+lands on a site that was already correct. Enumerator:
+`test/win32/lib/PersistenceSweep.ps1`; acceptance (and the live control that the
+flag really stops a restore): `test/win32/persistence-flag.ps1`.
 
 **Every launch in an acceptance script keeps the app's stderr** (T689). A debug
 build writes `std.log` to stderr and nothing else — no event-log record, no

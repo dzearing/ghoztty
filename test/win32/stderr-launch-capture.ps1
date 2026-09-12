@@ -140,6 +140,24 @@ $app = @@TD@@ -Exe $exe -StdErr (Join-Path $root 'app.err.txt')
 $agentExe = Join-Path $repo 'zig-out\bin\ghoztty-agent.exe'
 $a = @@SP@@ -FilePath $agentExe -ArgumentList @('--listen') -PassThru
 '@
+    # T697: a marker written once on the helper's header, further above the
+    # launch than the fixed six-line window used to reach.
+    $spFnMarker = @'
+$exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
+# Runs one CLI verb and hands back the process.
+# stderr: the verb's own output file is what the caller reads.
+function Run-Verb($argv) {
+    $a = 1
+    $b = 2
+    $c = 3
+    $d = 4
+    $e = 5
+    $f = 6
+    $p = @@SP@@ -FilePath $exe -PassThru
+    return $p
+}
+$r = Run-Verb @('+list')
+'@
 
     foreach ($pair in @(
             @{ Name = 'spliteral.ps1'; Body = $spLiteral },
@@ -149,7 +167,8 @@ $a = @@SP@@ -FilePath $agentExe -ArgumentList @('--listen') -PassThru
             @{ Name = 'spuncaptured.ps1'; Body = $spUncaptured },
             @{ Name = 'tdbare.ps1'; Body = $tdBare },
             @{ Name = 'tdexplicit.ps1'; Body = $tdExplicit },
-            @{ Name = 'otherimage.ps1'; Body = $otherImage })) {
+            @{ Name = 'otherimage.ps1'; Body = $otherImage },
+            @{ Name = 'spfnmarker.ps1'; Body = $spFnMarker })) {
         $body = $pair.Body -replace '@@SP@@', 'Start-Process' -replace '@@TD@@', 'Start-OnTestDesktop'
         Set-Content -Path (Join-Path $fix $pair.Name) -Value $body -Encoding ASCII
     }
@@ -177,6 +196,10 @@ $a = @@SP@@ -FilePath $agentExe -ArgumentList @('--listen') -PassThru
         "B7 an explicit -StdErr still reads as the caller's own choice (got '$(Fix-Err 'tdexplicit.ps1')')"
     Assert (@($fixSites | Where-Object { $_.File -eq 'otherimage.ps1' }).Count -eq 0) `
         'B8 a launch of a different image (the agent) is not swept at all'
+    # T697: the same marker window as the persistence scan, so a `# stderr:`
+    # written on a helper's header is read rather than silently missed.
+    Assert ((Fix-Err 'spfnmarker.ps1') -eq 'marker:fn:Run-Verb') `
+        "B9 a '# stderr:' marker on the enclosing function's header declares its launch (got '$(Fix-Err 'spfnmarker.ps1')')"
 
     # -----------------------------------------------------------------------
     # C: text that MENTIONS a launch is not a launch

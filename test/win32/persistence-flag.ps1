@@ -194,6 +194,65 @@ $badValue = @'
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
 $app = @@LAUNCH@@ -Exe $exe -Arguments @('--session-persistence=nope')
 '@
+# T697: the shape the sweep used to miss - a marker written once on the helper's
+# own header, further above the launch than the fixed six-line window reached.
+$viaFnMarker = @'
+$exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
+# `ghoztty <argv>`, with the CLI's own environment.
+# persistence: a CLI invocation - it opens no window, so there is nothing to restore.
+function Run-Cli($argv) {
+    $saved = $env:LOCALAPPDATA
+    $env:LOCALAPPDATA = $tmp
+    $out = Join-Path $tmp 'out.txt'
+    $err = "$out.err"
+    $code = $null
+    $p = @@LAUNCH@@ -Exe $exe -Arguments $argv
+    $env:LOCALAPPDATA = $saved
+    return $p
+}
+$r = Run-Cli @('+list')
+'@
+# ... and the boundary that keeps it honest: the marker declares the function it
+# is written on, not every function that happens to sit below it.
+$fnScope = @'
+$exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
+# persistence: a CLI invocation - nothing to restore.
+function Run-Declared($argv) {
+    $g = 1
+    $h = 2
+    $i = 3
+    $j = 4
+    $k = 5
+    $l = 6
+    $p = @@LAUNCH@@ -Exe $exe -Arguments $argv
+    return $p
+}
+function Run-Other($argv) {
+    $a = 1
+    $b = 2
+    $c = 3
+    $d = 4
+    $e = 5
+    $f = 6
+    $q = @@LAUNCH@@ -Exe $exe -Arguments $argv
+    return $q
+}
+$x = Run-Declared @('+list')
+$y = Run-Other @('+list')
+'@
+# The other half of T697: the window is the comment BLOCK, not a line count, so a
+# marker at the top of a long explanation still declares the launch under it.
+$longBlock = @'
+$exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
+# persistence: on (default) - the first line of a long block that explains why.
+# This launch restores on purpose: the section below is about what comes back,
+# so turning persistence off would delete the fixture the assertions read.
+# The block runs past six lines deliberately, because that is what a reader
+# writes when the reason takes a paragraph rather than a sentence, and the
+# marker belongs at the top of the reason rather than buried at the bottom of
+# it where a fixed-size window would happen to catch it.
+$app = @@LAUNCH@@ -Exe $exe
+'@
 
 foreach ($pair in @(
         @{ Name = 'literal.ps1'; Body = $literal },
@@ -202,7 +261,10 @@ foreach ($pair in @(
         @{ Name = 'viacallers.ps1'; Body = $viaCallers },
         @{ Name = 'undeclared.ps1'; Body = $undeclaredFix },
         @{ Name = 'otherimage.ps1'; Body = $otherImage },
-        @{ Name = 'badvalue.ps1'; Body = $badValue })) {
+        @{ Name = 'badvalue.ps1'; Body = $badValue },
+        @{ Name = 'fnmarker.ps1'; Body = $viaFnMarker },
+        @{ Name = 'fnscope.ps1'; Body = $fnScope },
+        @{ Name = 'longblock.ps1'; Body = $longBlock })) {
     $body = $pair.Body -replace '@@LAUNCH@@', 'Start-OnTestDesktop'
     Set-Content -Path (Join-Path $fix $pair.Name) -Value $body -Encoding ASCII
 }
@@ -228,6 +290,19 @@ Assert (@($fixSites | Where-Object { $_.File -eq 'otherimage.ps1' }).Count -eq 0
 $badRow = @($fixSites | Where-Object { $_.File -eq 'badvalue.ps1' })
 Assert ($badRow.Count -eq 1 -and -not $badRow[0].Declared) `
     "B7 a flag with a value the CLI rejects is NOT a declaration (got $($badRow.Count) site(s), declared=$(if ($badRow.Count) { $badRow[0].Declared } else { 'n/a' }))"
+
+# T697. The sweep read a marker on a function header as no marker at all, and
+# reported the site as work nobody had considered. These three say the opposite
+# in both directions: the header declares the launches inside its function, it
+# does NOT declare the next function's, and a long comment block is one unit.
+Assert ((Fix-How 'fnmarker.ps1') -eq 'marker:fn:Run-Cli') `
+    "B8 a marker on the enclosing function's header declares its launch, and says where (got '$(Fix-How 'fnmarker.ps1')')"
+$scoped = @($fixSites | Where-Object { $_.File -eq 'fnscope.ps1' } | Sort-Object Line)
+Assert ($scoped.Count -eq 2 -and $scoped[0].How -eq 'marker:fn:Run-Declared' -and -not $scoped[1].Declared) `
+    ("B9 that marker declares ONLY its own function - the next one is still undeclared " +
+        "(got $($scoped.Count) site(s): $(($scoped | ForEach-Object { if ($_.How) { $_.How } else { 'undeclared' } }) -join ', '))")
+Assert ((Fix-How 'longblock.ps1') -eq 'marker') `
+    "B10 a marker at the top of a comment block longer than six lines still declares it (got '$(Fix-How 'longblock.ps1')')"
 
 # ---------------------------------------------------------------------------
 # C: the class negative control, live

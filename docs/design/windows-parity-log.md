@@ -9,6 +9,60 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-12: T697 (T1012 updated, T1498 filed and skipped as a duplicate) - **a
+  test script's answer to "do you want the last run's panes back" now counts
+  wherever a person would write it.** The T158 sweep accepts a
+  `# persistence: <reason>` comment as a declaration, and it looked for one on
+  the launch statement or in the six lines above it - and nowhere else.
+  `agent-instance-lineage.ps1` wrote a correct, well-argued marker on the header
+  of the helper the launch lives in, seven lines up, and the sweep reported the
+  site as UNDECLARED: as a launch nobody had thought about. That is the
+  expensive direction for this check to be wrong in, because the remedy applied
+  to a false `undeclared` is a fix to a site that was already right - which is
+  what T663 did, repeating the marker next to the statement with a comment
+  apologising for the window.
+
+  So the window is no longer a line count. A marker anywhere in the contiguous
+  comment block above the statement declares it, however long the block runs,
+  and a marker on the ENCLOSING function's header (or its own comment block)
+  declares every launch inside that function - which is what a reader assumes
+  they are writing when they explain a helper once, at the top. The sweep now
+  reports WHERE it read the declaration (`marker:fn:<name>`) rather than only
+  that it found one. Enclosure is decided by brackets, not by "the nearest
+  `function` line above", so a marker on a sibling helper higher up the file
+  declares nothing - `persistence-flag.ps1` B9 constructs exactly that shape and
+  requires the second function to stay undeclared. The same window serves the
+  `# stderr:` marker, which shares the scan (`stderr-launch-capture.ps1` B9).
+
+  A second silent under-report turned up in the same file while proving the
+  first: `Test-GhozttyImage` resolves the image a launch names, and
+  `$CliExe = [IO.Path]::ChangeExtension($Exe, '.com')` - our own CLI twin - read
+  as "some other program" because the head of that assignment contains a
+  `.com` literal. It dropped the site from the inventory entirely, so the very
+  launch T697 was filed about was not being swept at all by the time this turn
+  reached it. It now follows an alias or an extension swap one hop to the
+  variable it derives from, and ONLY those two shapes: a path that BUILDS a new
+  filename (`Join-Path (Split-Path $exe) 'victim.exe'`) still names its own
+  image, or three fixture launches - a crash victim, a sleeper, an update
+  applier - would have been swept as if they were the app.
+
+  Evidence that the rest of the suite is untouched: a before/after diff of all
+  287 rows shows exactly two new rows, both declared -
+  `agent-instance-lineage.ps1:173` (now `marker:fn:Run-Cli`, with the duplicated
+  workaround marker deleted) and `agent-relay-session-e2e.ps1:164`, which was
+  invisible for the same `.com` reason and is now declared on its helper's
+  header. `stderr-launch-capture.ps1` is ALL PASS (20) and re-stamped.
+
+  What this turn did NOT fix, and filed instead: `persistence-flag.ps1` section
+  A1 is RED at **52 undeclared of 289** and was red before this change (the
+  baseline sweep agrees to the row). That is T1012, still open, growing with the
+  suite - 14 of 219 when it was filed. The reason it grew unnoticed is worth as
+  much as the count: `persistence-flag.ps1` is the only sweep of its shape with
+  no row in `scripts\guard-due.ps1`, so nothing has re-run it since. T1012 now
+  carries both halves, in the only safe order - declare the 52, THEN register
+  the guard, because registering a red harness wedges `validate` on a failure
+  nobody owns.
+
 - 2026-09-12: T691 (T1494/T1495/T1496 filed) - **an acceptance run now cleans up
   after itself instead of after the box, and two of them can run at once.** Every
   persistence-touching script here opened by killing every ghoztty and

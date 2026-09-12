@@ -157,6 +157,7 @@ function Stop-TestAgents {
 # `+sessions --json` against THIS lineage's agent, over the local pipe. Returns
 # @{ Code; Rows } - Rows is an array of parsed session objects (empty on an empty
 # roster or a failed run).
+# persistence: a CLI invocation - it opens no window, so there is nothing to restore.
 function Get-LocalSessions($tag) {
     $out = Join-Path $root "sessions-$tag.json"
     $err = "$out.err"
