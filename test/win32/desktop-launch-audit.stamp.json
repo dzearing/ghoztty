@@ -1,10 +1,10 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-09-12T03:04:43-07:00",
-    "commit":  "ff37830fb",
+    "generated":  "2026-09-12T04:02:55-07:00",
+    "commit":  "b0b7a8333",
     "uncommitted":  [
-
+                        "test/win32/go-loop-guard.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "ef54b501298cfda9306cfb958c1094db24ee30f355b25865656b3e2bc713bcd7",
@@ -110,7 +110,7 @@
                   "test/win32/fork-identity.ps1":  "2a83e77b4f6fc5127e583e44175dc00a350ef16cacf5b9404c9e6e8fb388ab71",
                   "test/win32/gate-negatives.ps1":  "8d4d4ac4d615dcba90ba14153ed6bc802473e7c3554a9c90c1826848b46605c6",
                   "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76",
-                  "test/win32/go-loop-guard.ps1":  "f423b85a4d151d9b162ae286a620aa21a452dbba6ae9c4648539a4b5b5a3d1d2",
+                  "test/win32/go-loop-guard.ps1":  "07864c4dea0f60059ae772a9ec9098618f8aead5d7ebf7310a5ab8cd6094aac7",
                   "test/win32/go-loop-resume.ps1":  "673158349b0172b89caf2649f7ca64c2b438f961273ce3bd49b63b7c033a64ab",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "306e120c7282b5c4c50c75ac9d7a30a8db84e94e92745cc79caa6ea4eb437d01",
