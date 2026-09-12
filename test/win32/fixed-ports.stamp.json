@@ -1,0 +1,16 @@
+{
+    "guard":  "fixed-ports",
+    "script":  "test/win32/fixed-ports.ps1",
+    "generated":  "2026-09-12T10:28:41-07:00",
+    "commit":  "5b3f96767",
+    "uncommitted":  [
+                        "test/win32/fixed-ports.ps1",
+                        "test/win32/lib/FixedPortAudit.ps1",
+                        "test/win32/lib/FreePort.ps1"
+                    ],
+    "files":  {
+                  "test/win32/fixed-ports.ps1":  "fcc484417429118fdba46e3e3c66023ddde55c80dee258c689fc0a1213a8d03e",
+                  "test/win32/lib/FixedPortAudit.ps1":  "5b8eae57bc3afba34e185140098cce1509f5a3ebca7d5e67d59f1c6d2ad21212",
+                  "test/win32/lib/FreePort.ps1":  "1f6d3230171a1f76c1f1327e8ad01ddd9c65aba78cbe70f7b7716b9a1a2109c7"
+              }
+}

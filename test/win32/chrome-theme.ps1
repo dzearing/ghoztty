@@ -158,12 +158,16 @@
 # previous run's window.
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
-param([string]$ExePath, [switch]$NegativeControl, [switch]$Interactive, [int]$DirPort = 45812)
+param([string]$ExePath, [switch]$NegativeControl, [switch]$Interactive, [int]$DirPort = 0)
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+# T694: the port the OS just handed out, asserted free and printed, instead of a
+# number this script and some other one both guessed.
+$DirPort = Resolve-TestPort -Name 'directory' -Port $DirPort
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'

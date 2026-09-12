@@ -64,6 +64,7 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -218,7 +219,7 @@ function Alive-Ids {
 # carries that request's ordinal and Cache-Control: no-store. `+list --json`
 # reports a viewer leaf's title, so an ADVANCING number is proof of the whole
 # round trip; a pane holding a last painted frame keeps the number it had.
-$vrPort = 47652
+$vrPort = Resolve-TestPort -Name 'restore page server'
 $vrHits = Join-Path $env:TEMP "ghoztty-vr-hits-$PID.txt"
 Remove-Item $vrHits -ErrorAction SilentlyContinue
 $vrUrl = "http://127.0.0.1:$vrPort/"

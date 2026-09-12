@@ -24,13 +24,17 @@ param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
     [string]$RelaySrc = 'D:\git\ghoztty\relay',
-    [int]$RelayPort = 47911
+    [int]$RelayPort = 0
 )
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+# T694: the port the OS just handed out, asserted free and printed, instead of a
+# number this script and some other one both guessed.
+$RelayPort = Resolve-TestPort -Name 'relay' -Port $RelayPort
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0

@@ -73,8 +73,8 @@
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
-    [int]$DirPort = 47941,
-    [int]$AgentPort = 47942,
+    [int]$DirPort = 0,
+    [int]$AgentPort = 0,
     [switch]$NegativeControl,
     [switch]$Interactive
 )
@@ -97,6 +97,11 @@ if (-not (Test-Path $AgentExe)) { $AgentExe = Join-Path $repo 'zig-out\bin\ghozt
 $env:GHOZTTY_PIPE_SUFFIX = "-hstest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+# T694: the port the OS just handed out, asserted free and printed, instead of a
+# number this script and some other one both guessed.
+$DirPort = Resolve-TestPort -Name 'directory' -Port $DirPort
+$AgentPort = Resolve-TestPort -Name 'agent' -Port $AgentPort
 
 $tmp = Join-Path $env:TEMP "ghoztty-hs-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null

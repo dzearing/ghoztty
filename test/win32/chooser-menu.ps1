@@ -59,7 +59,7 @@
 # Only touches ghoztty processes running from this repo's zig-out.
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
-    [int]$DirPort = 47931,
+    [int]$DirPort = 0,
     [switch]$NegativeControl,
     [switch]$Interactive
 )
@@ -72,6 +72,10 @@ if (-not (Test-Path $Exe)) { $Exe = Join-Path $repo 'zig-out\bin\ghoztty.exe' }
 $env:GHOZTTY_PIPE_SUFFIX = "-cmenutest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+# T694: the port the OS just handed out, asserted free and printed, instead of a
+# number this script and some other one both guessed.
+$DirPort = Resolve-TestPort -Name 'directory' -Port $DirPort
 
 $script:pass = 0
 $script:fail = 0

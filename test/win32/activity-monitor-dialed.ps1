@@ -84,8 +84,8 @@
 # Only touches ghoztty processes running from this repo's zig-out.
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
-    [int]$AgentPort = 47971,
-    [int]$RelayPort = 47972,
+    [int]$AgentPort = 0,
+    [int]$RelayPort = 0,
     [switch]$NegativeControl,
     [switch]$Interactive
 )
@@ -94,6 +94,11 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+# T694: the port the OS just handed out, asserted free and printed, instead of a
+# number this script and some other one both guessed.
+$AgentPort = Resolve-TestPort -Name 'agent' -Port $AgentPort
+$RelayPort = Resolve-TestPort -Name 'relay' -Port $RelayPort
 
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent

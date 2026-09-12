@@ -49,6 +49,7 @@ param([string]$ExePath, [switch]$NegativeControl, [switch]$Interactive)
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -100,7 +101,7 @@ function Wait-Client([IntPtr]$top, [string]$want, [int]$ms = 5000) {
 # A raw-TCP server, not HttpListener: the latter needs a URL ACL this box does
 # not grant a non-elevated test (relay-account.ps1's shape, reused by
 # viewer-panes.ps1). The page records every keydown into document.title.
-$script:port = 47682
+$script:port = Resolve-TestPort -Name 'key-log page server'
 $script:pageJob = Start-Job -ScriptBlock {
     param($port)
     $html = '<html><head><title>keys=none</title></head><body>t682' +

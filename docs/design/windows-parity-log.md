@@ -26460,3 +26460,51 @@ other harness `guard-due` named as stale is green — `guard-due check` now exit
 with only the three pre-existing advisories. Follow-up T1491: the same
 measurement found T158's own section A sitting red, 61 undeclared launches on a
 pristine HEAD, with no coverage row to report it.
+
+## 2026-09-12 — an acceptance script takes the port the OS hands it (T694)
+
+Eleven acceptance scripts reserved a TCP port by writing a number in their
+param block and hoping. Six of them wrote the SAME number as another script —
+47931, 47941/47942, 47911, 47951/47952, 47961/47962, and 47913 three ways — so
+"these two cannot run near each other" was a standing constraint nobody had
+written down, and a back-to-back re-run of one script could meet its own
+previous listener still dying in the port. Both failure shapes read as a
+product bug: a fake relay that "never came up", or a `TcpClient.Connect` that
+succeeds against a socket which will never answer.
+
+T171 had already solved this once, inside `relay-account.ps1`. This is that
+solution, shared, plus the sweep that keeps it. `lib\FreePort.ps1` carries
+`Get-FreePort`, `Test-PortFree` and `Resolve-TestPort` — the last of which
+draws an ephemeral port when given 0, re-draws if it goes busy between the draw
+and the check, prints the number it drew, and THROWS when a port a caller
+pinned by hand is already held, because a silent fallback there hides an
+operator error.
+
+Thirty-two sites across twenty-six scripts were converted, and the shapes went
+further than the param defaults the task listed: `$ppPort = 47163` one scope in,
+and `"http://127.0.0.1:47999"` baked into an address. The last of those is worth
+naming — `chooser-link-hover.ps1` pointed its fake account store at a "dead port
+on purpose". A drawn port is strictly better there: it was verified unowned a
+moment ago, where a guessed one only assumed it. Same for `ipc-remote.ps1`,
+whose unreachable endpoint was `$Port + 1` — a guess about what the neighbour of
+an ephemeral port is doing.
+
+The keeping half is `lib\FixedPortAudit.ps1` and section C of
+`test\win32\fixed-ports.ps1`: it names three violating shapes and sweeps every
+script in the directory, so a copy-paste that reintroduces a fixed number fails
+here rather than on some future Tuesday in some other script. It skips block
+comments and here-strings, because a port named in prose or in fixture text
+nothing executes is not a port this box binds.
+
+Evidence: `fixed-ports.ps1` ALL PASS (16 assertions), with `-TeethCheck`
+proving section C goes red on a synthesized violator; the sweep is 32 → 0. All
+26 converted scripts ran serially through `suite-run.ps1`
+(`temp\suite-runs\t694`, 37m 31s) and 25 were green, with every ex-collision
+group passing back to back in that order. The one red,
+`ipc-machine-chooser.ps1`, was ALL PASS on the runner's alone re-run — four
+row-pill PIXEL probes, every port-dependent assertion green in both runs — so it
+is order-dependence in that script and is filed as **T1497**. Floor lanes
+lib/none/win32/agent all PASS, and the nine meta-audits that sweep every test
+script (isolation, launch-preflight, verdict-exit, cleanslate, stderr ×2,
+body-complete, desktop-launch, command-resolve) are ALL PASS, so `guard-due
+check` is back to only its three pre-existing advisories.

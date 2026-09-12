@@ -1,13 +1,13 @@
 {
     "guard":  "restore-all-remote",
     "script":  "test/win32/chooser-restore-all-remote.ps1",
-    "generated":  "2026-09-07T23:38:12-07:00",
-    "commit":  "e3bb45f74",
+    "generated":  "2026-09-12T10:02:51-07:00",
+    "commit":  "5b3f96767",
     "uncommitted":  [
-                        "src/apprt/win32/RestoreAllRelay.zig"
+                        "test/win32/chooser-restore-all-remote.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/RestoreAllRelay.zig":  "a97d10d209c332e3049267732420b190c3e5b37fdfd268d08dbcc432a962583a",
-                  "test/win32/chooser-restore-all-remote.ps1":  "af28e12d0961ae25230932836a7e3bf1621e0b7a1edd6bcdf76638edfa2b4696"
+                  "test/win32/chooser-restore-all-remote.ps1":  "c57f9521d1995a8406363fa5cd3851a05450bd497171f8e95b4bb67effbe52b1"
               }
 }

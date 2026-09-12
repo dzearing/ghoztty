@@ -95,6 +95,8 @@ param(
     [string]$Repo = 'D:\git\ghoztty'
 )
 
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
 # Set when a section could not run at all (node absent). A run with a skipped
@@ -643,8 +645,9 @@ else {
     Reset-Fixture
     New-FixtureTask -Id 'T1' -Status 'blocked(armed watch - needs an occurrence)'
     # A port of its own: 7788 is very likely serving the real tracker right now,
-    # and this section must never write into it.
-    $port = 7913
+    # and this section must never write into it. Drawn rather than guessed
+    # (T694), so back-to-back runs cannot meet each other's TIME_WAIT.
+    $port = Resolve-TestPort -Name 'dashboard server'
     $dash = Join-Path $Repo 'scripts\task-dashboard.js'
     $env:GHOZTTY_TASK_DIR = $fixture
     # persistence: n/a - this starts node (the dashboard server), not ghoztty.

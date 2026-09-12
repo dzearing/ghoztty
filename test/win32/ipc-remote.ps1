@@ -14,7 +14,7 @@
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
-    [int]$Port = 47901
+    [int]$Port = 0
 )
 
 $ErrorActionPreference = 'Continue'
@@ -27,6 +27,10 @@ function Assert($name, $cond) {
 }
 
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+# T694: the port the OS just handed out, asserted free and printed, instead of a
+# number this script and some other one both guessed.
+$Port = Resolve-TestPort -Name 'agent' -Port $Port
 
 # T441: this run's own IPC endpoint, before any CLI call — otherwise every
 # `& $Exe` inherits the caller pane's baked `$GHOZTTY_IPC_SOCKET` and the
@@ -106,7 +110,10 @@ $dump = Read-Pane 'remcmd'
 Assert "command output visible" ($dump -match 'remote-cmd-marker')
 
 "== 4: dial failure surfaces the Mac-parity error"
-$deadPort = $Port + 1
+# A port DRAWN and then deliberately not bound (T694). `$Port + 1` was a guess
+# about what the neighbour of an ephemeral port is doing, and the one thing this
+# section needs is that nothing answers there.
+$deadPort = Get-FreePort
 $r = Ghoz @('+new-remote-window', '--host=127.0.0.1', "--port=$deadPort", '--name=remdead')
 Assert "exit nonzero" ($r.ExitCode -ne 0)
 $err = $r.Output
@@ -119,7 +126,7 @@ Assert "error names the endpoint" ($err -match "failed to reach 127.0.0.1:$deadP
 # GHOZTTY_AGENT_PROTO_VERSION is the debug-only seam on the AGENT (T125); a skew
 # cannot otherwise be produced from one tree, since both ends compile the same
 # protocol.proto_version.
-$skewPort = $Port + 2
+$skewPort = Resolve-TestPort -Name 'skewed agent'
 $savedProto = $env:GHOZTTY_AGENT_PROTO_VERSION
 $savedInstance = $env:GHOZTTY_AGENT_INSTANCE
 # A DISTINCT lineage suffix, not just a distinct lock path: the agent's

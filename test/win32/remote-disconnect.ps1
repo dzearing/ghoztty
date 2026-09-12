@@ -46,7 +46,7 @@
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
-    [int]$Port = 47913,
+    [int]$Port = 0,
     [switch]$NegativeControl
 )
 
@@ -63,6 +63,10 @@ function Assert($cond, $name) {
 }
 
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+# T694: the port the OS just handed out, asserted free and printed, instead of a
+# number this script and some other one both guessed.
+$Port = Resolve-TestPort -Name 'agent' -Port $Port
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')

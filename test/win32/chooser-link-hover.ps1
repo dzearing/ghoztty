@@ -68,6 +68,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-linkhover$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -97,11 +98,13 @@ $errlog = Join-Path $tmp 'stderr.log'
 # chooser opens ALREADY signed in and shows the link rather than the sign-in
 # button. Relay base points at a dead port on purpose: the device fetch is not
 # what this script is about, and a chooser with only the Local row still paints
-# the whole account band.
+# the whole account band. T694: that port is DRAWN and then never bound, so it
+# was verified unowned a moment ago - the guessed 47999 only assumed it.
+$DeadRelayPort = Get-FreePort
 function Write-AccountStore {
     $exp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 3600
     $json = '{"session_token":"sess-linkhover","expiry":' + $exp +
-        ',"email":"e2e@example.com","relay_base":"http://127.0.0.1:47999"}'
+        ',"email":"e2e@example.com","relay_base":"http://127.0.0.1:' + $DeadRelayPort + '"}'
     $enc = [Security.Cryptography.ProtectedData]::Protect(
         [Text.Encoding]::UTF8.GetBytes($json), $null, 'CurrentUser')
     [IO.File]::WriteAllBytes($AccountStore, $enc)

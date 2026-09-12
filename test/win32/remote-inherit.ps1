@@ -32,7 +32,7 @@
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
-    [int]$Port = 47911,
+    [int]$Port = 0,
     [switch]$NegativeControl,
     [switch]$Interactive
 )
@@ -46,6 +46,10 @@ New-Item -ItemType Directory -Force $tmp | Out-Null
 $env:GHOZTTY_PIPE_SUFFIX = "-reminherit$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+# T694: the port the OS just handed out, asserted free and printed, instead of a
+# number this script and some other one both guessed.
+$Port = Resolve-TestPort -Name 'agent' -Port $Port
 
 function Assert($name, $cond) {
     if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }

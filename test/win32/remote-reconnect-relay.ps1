@@ -67,8 +67,8 @@
 param(
     [string]$ExePath,
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
-    [int]$RelayPort = 47961,
-    [int]$AgentPort = 47962,
+    [int]$RelayPort = 0,
+    [int]$AgentPort = 0,
     [switch]$TeethCheck
 )
 $ErrorActionPreference = 'Continue'
@@ -78,6 +78,11 @@ if ($ExePath) { $Exe = $ExePath }
 $env:GHOZTTY_PIPE_SUFFIX = "-relrecon$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+# T694: the port the OS just handed out, asserted free and printed, instead of a
+# number this script and some other one both guessed.
+$RelayPort = Resolve-TestPort -Name 'relay' -Port $RelayPort
+$AgentPort = Resolve-TestPort -Name 'agent' -Port $AgentPort
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\FakeRelay.ps1')
 . (Join-Path $PSScriptRoot 'lib\HarnessLeak.ps1')

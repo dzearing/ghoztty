@@ -2391,6 +2391,21 @@ $GuardTable = @(
             'test\win32\count-or-zero.ps1'
         )
     },
+    # The drawn-port helpers and the sweep that keeps them (T694). A script that
+    # goes back to guessing a TCP port does not fail here - it fails on some
+    # OTHER Tuesday, in some other script, as a fake relay that "never came up",
+    # which is the shape T171 spent a whole task diagnosing. Nothing in the
+    # P1-P3 floor scores it.
+    [pscustomobject]@{
+        Name   = 'fixed-ports'
+        Script = 'test\win32\fixed-ports.ps1'
+        Stamp  = 'test\win32\fixed-ports.stamp.json'
+        Covers = @(
+            'test\win32\lib\FreePort.ps1',
+            'test\win32\lib\FixedPortAudit.ps1',
+            'test\win32\fixed-ports.ps1'
+        )
+    },
     # The acceptance-suite runner (T361). It is the one tool whose subject is
     # the other 241 scripts, so a regression in it does not fail loudly - it
     # mis-scores a sweep, and a wall of green is exactly what nobody re-reads.

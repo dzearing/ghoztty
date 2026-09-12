@@ -69,6 +69,7 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -1090,7 +1091,7 @@ try {
 
     $t161Hits = Join-Path $env:TEMP 'ghoztty-t161-hits.txt'
     Remove-Item $t161Hits -ErrorAction SilentlyContinue
-    $t161Port = 47161
+    $t161Port = Resolve-TestPort -Name 't161 page server'
     $t161Job = Start-Job -ScriptBlock {
         param($port, $hitsFile)
         $html = '<html><head><title>dpr</title></head><body>t161' +

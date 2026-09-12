@@ -59,6 +59,7 @@ param(
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
 $ErrorActionPreference = 'Continue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -162,7 +163,7 @@ function Wait-For($pred, $timeoutSec = 40) {
 # Two routes. `/opener.html` opens the popup on load and writes a document into
 # the handle it got back; `/gate` answers `wait` until this script drops the
 # flag file, then `close`, which is what makes the close deterministic.
-$ppPort = 47163
+$ppPort = Resolve-TestPort -Name 'popup page server'
 $ppGate = Join-Path $env:TEMP "ghoztty-popup-gate-$PID.flag"
 Remove-Item $ppGate -ErrorAction SilentlyContinue
 $ppUrl = "http://127.0.0.1:$ppPort/opener.html"
