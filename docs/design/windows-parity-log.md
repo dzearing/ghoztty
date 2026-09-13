@@ -27823,3 +27823,72 @@ guard is due.
 
 Follow-ups filed: T1541 (the tab you are dwelling on gives no sign the clock is
 running) and T1542 (a lone pane's drag onto the strip should move its tab).
+
+## 2026-09-13 - A pane can be dragged into another window, and keeps running (T1538)
+
+A pane no longer lives in the window it was born in. Drag it by its rearrange
+header onto another Ghoztty window and it lands there - splitting a pane,
+trading places with one, spanning that window's edge, or becoming a tab on its
+strip - and the pane that arrives is the pane that left: same child HWND, same
+process, same scrollback, same agent session. Released over nothing it becomes a
+window of its own, and the pop-out button that has been drawn on every pane
+header since T1530 is live at last.
+
+The relocation primitive is new to this apprt - nothing under
+`src/apprt/win32/` had ever called `SetParent`. Three rules make it survivable,
+and the order they are written in is the whole of it. Both destination trees are
+built before either source tree is released, so the pane's reference count never
+passes through zero (a count that touched zero would free the `Surface` under
+it, and the user would watch their shell die on a gesture meant to move it).
+Nothing on the path marks a session CLOSE - `closeSplitPane` sets that intent on
+the pane it removes, and a relocation takes the same removal without it, because
+the session is not ending, it is changing windows. And the HWND is re-parented
+once the trees are installed and before either window lays out, since
+`SetParent` clears the child's position and the layout pass that follows is what
+puts it where the new tree says.
+
+The window a pane LEAVES is three outcomes, not two, and `pane_relocate.zig`
+names them: the tab re-lays out, the emptied tab's slot goes, or - when that was
+the last pane in the last tab - the window closes. The slot is always dropped
+through `removeTabSlot` and never `closeTabByIndex`, because the close path ends
+the sessions of the tree it removes and the pane that emptied this tab is still
+running next door. That is also T1526 answered: Mac shipped rearrange mode
+refusing to drag a window's last pane and fixed it a commit later; this seat
+never shipped the refusal.
+
+One real defect surfaced in the shared resolver on the way. `pane_drop.resolve`
+searched every candidate's TAB STRIP across the whole set before it looked at
+any content, which is invisible with one window and wrong with two: a point over
+the front window's panes is very often also a point over the strip of a window
+behind it, and the drop would have opened a tab in a window the user could not
+see. One window owns the point now - the frontmost that covers it at all - and
+everything is answered against that window alone. Candidates carry a
+`frame_rect` for the same reason, so a release on a window's own chrome is a
+miss rather than a new window somebody never asked for.
+
+Two smaller things the feature needed. The preview is owned by the window the
+drag started in, so z-order puts it above THAT window and behind the one the
+pointer is over - a promise drawn where nobody can see it; it takes the
+always-on-top band while it is over another window and gives it back the moment
+the drop comes home. And a `.new_window` drop previews the FRAME the window will
+take (`pane_relocate.newWindowFrame`, clamped into the monitor's work area),
+because a release that conjures a window is entitled to say where.
+
+Validated on box: `rearrange-window-drop.ps1` ALL PASS (39) - the preview stands
+over the destination window and is the half-pane the drop would take; the pane
+arrives as the SAME child HWND under the other window and is gone from the one
+it left; a window whose last pane is dragged away closes without taking the pane
+with it; and the pop-out button opens a new window holding that same handle.
+`-NegativeControl` red as designed. Floor lib/none/win32/agent ALL LANES PASS,
+P1-P3 ALL PASS, `rearrange-drag` (58) and `rearrange-tab-drop` (62) still green.
+Guards re-run green over this code: 12 static audits plus rearrange-header,
+rearrange-mode-action, viewer-close, close-confirm-idle, job-teardown,
+persistence-flag, remote-disconnect and activity-monitor-remote. No
+non-advisory guard is due.
+
+Follow-ups filed: T1543 (resting on a background WINDOW's tab button should open
+that tab mid-drag - the dwell is deliberately still scoped to one window), T1544
+(a relocated pane should come back in its new window after a restart; the
+manifest is re-pushed but nothing measures the round trip) and T1545 (the
+six-window cap on drop targets, which exists because the candidate geometry is
+built on the stack every mouse-move).
