@@ -144,6 +144,9 @@ function Run-Cli($argsLine, $out, $timeoutSec = 15) {
 
 # The same call in ONE process launch, for the latency-bound step in section C.
 # Arguments go straight to the exe as an array: `cmd /c` re-parses the line.
+#
+# persistence: n/a - this is a `ghoztty +...` CLI invocation that opens no
+# window, so there is no layout for it to restore.
 function Run-CliOne($argv, $out, $timeoutSec = 15) {
     $p = Start-Process -FilePath $Exe -WindowStyle Hidden -PassThru `
         -ArgumentList $argv -RedirectStandardOutput $out -RedirectStandardError "$out.err"
@@ -251,6 +254,9 @@ $agentPid = 0
 try {
     # ============================================================ A: baseline
     "== A: three single-pane tabs, each on its own shell"
+    # persistence: on (default) - the run has a per-run $env:LOCALAPPDATA, so
+    # the baseline launch has no manifest to restore, and the recovery arms
+    # below deliberately re-attach to what it records.
     $app = Start-OnTestDesktop -Exe $Exe -StdErr $appLog `
         -Arguments @('--title=t1048-tabs', '--window-show-tab-bar=always')
     $appPid = $app.Pid

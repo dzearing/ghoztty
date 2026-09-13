@@ -156,6 +156,9 @@ function Probe-PaneEnv($tmp, $target, $var, $valueRe, $tag, $timeoutSec = 25) {
 
 # One hermetic GUI launch. On $restore we pass NO --title so restore rebuilds
 # the recorded layout instead of opening a blank window.
+#
+# persistence: on (default) - the restore IS the subject, and each call runs in
+# its own $env:LOCALAPPDATA, so nothing outside this script can be restored.
 function Launch($tmp, $title, $restore) {
     New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
     $env:LOCALAPPDATA = $tmp

@@ -196,7 +196,12 @@ try {
     # is the one it is dialed with, which is the state the defect lived in.
     $env:GHOSTTY_ACCOUNT_STORE = (Join-Path $tmp 'account.dat')
     Remove-Item env:GHOSTTY_RELAY_TOKEN -ErrorAction SilentlyContinue
-    $script:app = Start-OnTestDesktop -Exe $Exe -Arguments @('--window-width=100', '--window-height=30') -StdErr $errlog
+    # The run keeps the ambient $env:LOCALAPPDATA, so a restore would reopen an
+    # earlier debug run's panes into the window this script counts. The subject
+    # is a window dialed at the relay, which nothing restores.
+    $script:app = Start-OnTestDesktop -Exe $Exe `
+        -Arguments @('--window-width=100', '--window-height=30', '--session-persistence=false') `
+        -StdErr $errlog
     Start-Sleep -Seconds 4
     Remove-Item env:GHOSTTY_ACCOUNT_STORE -ErrorAction SilentlyContinue
 

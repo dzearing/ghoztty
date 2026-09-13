@@ -407,6 +407,8 @@ try {
     # stderr: n/a - both of these are copies of cmd.exe running ping, wearing
     # our leaf name so the sweep's path filter sees them. What is asserted is
     # which one survives, not anything either of them said.
+    # persistence: n/a - same reason: neither is the terminal, so neither has a
+    # session to restore.
     $leakProc = Start-Process -FilePath $leakExe -ArgumentList '/c', 'ping -n 120 127.0.0.1 > nul' -PassThru -WindowStyle Hidden
     $null = $leakProc.Handle
     $ctrlProc = Start-Process -FilePath $ctrlExe -ArgumentList '/c', 'ping -n 120 127.0.0.1 > nul' -PassThru -WindowStyle Hidden
@@ -427,6 +429,7 @@ try {
 
     $dirI2 = Join-Path $Fixture 'runI2'
     # stderr: n/a - the same cmd.exe copy as above, for the -NoSweep control.
+    # persistence: n/a - cmd.exe has no session to restore.
     $leak2 = Start-Process -FilePath $leakExe -ArgumentList '/c', 'ping -n 120 127.0.0.1 > nul' -PassThru -WindowStyle Hidden
     $null = $leak2.Handle
     Start-Sleep -Milliseconds 700

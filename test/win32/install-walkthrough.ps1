@@ -388,6 +388,9 @@ Assert "B7 the installed exe answers +version ('$installedVersion')" ($installed
 # result.
 New-TestDesktop | Out-Null
 $desktopUp = $true
+# persistence: on (default) - the -ReleaseSandbox isolation gave this walk its
+# own $env:LOCALAPPDATA, so the packaged build has no manifest to restore from,
+# and B8 only asks whether a window opens at all.
 $app = Start-OnTestDesktop -Exe $installedExe -AllowReleaseBuild
 $win = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 45000
 Assert 'B8 launching the installed exe opens a terminal window' ($win -ne [IntPtr]::Zero)

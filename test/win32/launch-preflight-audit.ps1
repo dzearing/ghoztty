@@ -211,6 +211,9 @@ New-Item -ItemType Directory -Force $stubDir | Out-Null
 # for the same reason a ReleaseFast one is - a run we cannot vouch for is
 # exactly the run that leaks into the user's terminal.
 $stubApp = Join-Path $stubDir 'ghoztty.exe'
+# persistence: n/a - every $stubApp launch below is REFUSED by the preflight
+# gate (or stops at "No test desktop"), so no app ever starts and there is
+# nothing for a session to restore into.
 $msgUnreadable = Get-Throw { Start-OnTestDesktop -Exe $stubApp }
 Assert 'B1 Start-OnTestDesktop refuses an exe it cannot vouch for' `
     ($null -ne $msgUnreadable)
@@ -240,6 +243,7 @@ $savedB5Lad = $env:LOCALAPPDATA
 $env:GHOZTTY_PIPE_SUFFIX = "-lpa$PID"
 Remove-Item Env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
 $env:LOCALAPPDATA = [Environment]::GetFolderPath('LocalApplicationData')
+# persistence: n/a - refused by the gate; nothing starts.
 $msgPartial = Get-Throw { Start-OnTestDesktop -Exe $stubApp -AllowReleaseBuild }
 Assert 'B5z -AllowReleaseBuild does not excuse a partly-isolated release run' `
     ($msgPartial -match 'REFUSING TO RUN') "(got: $msgPartial)"
@@ -248,6 +252,7 @@ Assert 'B5y and the refusal names the knob that is missing' `
 
 $env:GHOZTTY_AGENT_INSTANCE = "lpa$PID"
 $env:LOCALAPPDATA = Join-Path $stubDir 'sandbox-lad'
+# persistence: n/a - stops at "No test desktop"; the stub never runs.
 $msgAllow = Get-Throw { Start-OnTestDesktop -Exe $stubApp -AllowReleaseBuild }
 Assert 'B5 -AllowReleaseBuild reaches the gate and passes through once isolated' `
     ($msgAllow -match 'No test desktop') "(got: $msgAllow)"

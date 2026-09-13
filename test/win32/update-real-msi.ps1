@@ -38,6 +38,10 @@
 # the run its own pipe, its own agent lineage and its own LOCALAPPDATA, and the
 # product itself is a throwaway identity installed in its own directory, which
 # section E measures against the user's install on every run.
+# persistence: on (default) for every launch here - `-ReleaseSandbox` gives the
+# run its own LOCALAPPDATA, so the first launch has nothing to restore and the
+# post-update launch picks up only what this run itself recorded, which is also
+# the shape a real user's update walks.
 param(
     [string]$Identity = 'GhozttyT1194Test',
     [string]$OldTag = 'win-v1.35.0',

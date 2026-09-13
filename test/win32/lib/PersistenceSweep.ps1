@@ -356,6 +356,42 @@ function Get-EnclosingFunctionMarker {
 }
 
 <#
+Does the script's HEADER - the comment block it opens with, before the first
+line of code - carry the marker?
+
+The header is where a script explains itself, so a persistence decision that
+covers the whole run is written there rather than repeated over every launch.
+Only the leading block counts: the scan stops at the first line that is not a
+comment or blank, so a marker further down belongs to whatever it sits on.
+#>
+function Test-FileHeaderMarker {
+    param(
+        # No [Parameter(Mandatory)] on $Lines: a script's blank lines arrive as
+        # empty strings, and a mandatory string[] refuses the whole array over
+        # them.
+        [AllowEmptyCollection()][string[]]$Lines,
+        [string]$MarkerPattern = $script:PersistenceMarkerPattern
+    )
+    $inBlock = $false
+    foreach ($line in $Lines) {
+        if ($inBlock) {
+            if ($line -match $MarkerPattern) { return $true }
+            if ($line -match '#>') { $inBlock = $false }
+            continue
+        }
+        if ($line -match '^\s*$') { continue }
+        if ($line -match '^\s*<#') {
+            $inBlock = ($line -notmatch '#>')
+            if ($line -match $MarkerPattern) { return $true }
+            continue
+        }
+        if ($line -notmatch '^\s*#') { return $false }
+        if ($line -match $MarkerPattern) { return $true }
+    }
+    return $false
+}
+
+<#
 Does this launch statement start the app under test?
 
 Resolved from the image variable's own assignments: a script that launches
@@ -371,6 +407,16 @@ function Test-GhozttyImage {
         [int]$Depth = 2
     )
     $var = $null
+    # An image taken from the ENVIRONMENT is never the app under test: this
+    # suite always launches the build in `zig-out`, and `$env:ComSpec` is
+    # cmd.exe running a `ping` fixture. Left to the `$(\w+)` matches below it
+    # resolved to a variable named `env`, whose assignments do not exist, and
+    # five cmd.exe fixtures were reported as ghoztty launches nobody had
+    # declared - work that could not be done, since cmd.exe has no session to
+    # persist. An env var whose NAME says ghoztty is still ours.
+    if ($Stmt -match '-(Exe|FilePath)\s+\$env:(\w+)' -or $Stmt -match 'Start-Process\s+\$env:(\w+)') {
+        return ($matches[$matches.Count - 1] -imatch 'ghoztty|ghostty')
+    }
     if ($Stmt -match '-Exe\s+\$(\w+)') { $var = $matches[1] }
     elseif ($Stmt -match '-FilePath\s+\$(\w+)') { $var = $matches[1] }
     elseif ($Stmt -match 'Start-Process\s+\$(\w+)') { $var = $matches[1] }
@@ -387,6 +433,15 @@ function Test-GhozttyImage {
 
     $defs = Get-VarAssignmentText -Text $Text -Name $var
     if ($defs.Count -eq 0) { return $true }
+    # A tool looked up on PATH names itself: `$node = Get-Command node` launched
+    # as `$node.Source` is node.exe serving the dashboard, not the terminal, and
+    # it carries no `.exe` literal for the check below to read.
+    foreach ($def in $defs) {
+        $head = $def.Substring(0, [Math]::Min(200, $def.Length))
+        if ($head -imatch 'Get-Command\s+([\w.-]+)') {
+            return ($matches[1] -imatch 'ghoztty|ghostty')
+        }
+    }
     foreach ($def in $defs) {
         # Only the head of the assignment names the image; the window past it is
         # unrelated code.
@@ -539,6 +594,18 @@ function Get-GhozttyLaunchSites {
                 $fn = Get-EnclosingFunctionMarker -Lines $lines -Index $i `
                     -MarkerPattern $script:PersistenceMarkerPattern
                 if ($fn) { $how = "marker:fn:$fn" }
+            }
+            if (-not $how -and (Test-FileHeaderMarker -Lines $lines `
+                    -MarkerPattern $script:PersistenceMarkerPattern)) {
+                # A script whose HEADER reasons about persistence for the whole
+                # run has declared every launch in it - the widest of the three
+                # marker scopes, and the one update-graceful.ps1 wrote ("session
+                # persistence is left at its default (ON) on purpose - a
+                # restored, still-live session on the far side of the update IS
+                # the subject"). Reading only statement and function scopes
+                # reported that site as work nobody had thought about, with the
+                # thinking sitting at the top of the same file.
+                $how = 'marker:file'
             }
 
             # T689: the same four ways of declaring, asked of the app's stderr.

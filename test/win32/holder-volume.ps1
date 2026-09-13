@@ -308,6 +308,9 @@ try {
     Say "== A: baseline - a holder-backed pane, and ring snapshots proven live"
     # ========================================================================
     $before = @((Get-TestAgents) | ForEach-Object { [int]$_.ProcessId })
+    # persistence: on (default) - Set-GhozttyTestIsolation gave this run its own
+    # $env:LOCALAPPDATA, so the baseline launch has no manifest to restore from,
+    # and the later arms re-attach to what it records.
     [void](Start-OnTestDesktop -Exe $Exe -Arguments @(
         '--title=t969-volume', '--window-width=100', '--window-height=30'))
 

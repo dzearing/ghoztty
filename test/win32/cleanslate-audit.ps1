@@ -253,6 +253,8 @@ New-Item -ItemType Directory -Force -Path $fakeDir | Out-Null
 Copy-Item -Path (Join-Path $env:WINDIR 'System32\cmd.exe') -Destination $fakeExe -Force
 # stderr: n/a - a copy of cmd.exe running ping, not the app under test; it has
 # no std.log to lose and the assertion is about whether it is REAPED.
+# persistence: n/a - same reason: cmd.exe wearing our leaf name has no session
+# to restore, and the flag would not reach anything that reads it.
 $fake = Start-Process -FilePath $fakeExe -ArgumentList '/c', 'ping -n 30 127.0.0.1 > NUL' `
     -WindowStyle Hidden -PassThru
 Start-Sleep -Milliseconds 400

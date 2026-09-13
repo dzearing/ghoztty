@@ -27416,3 +27416,47 @@ Docker precondition this box may not satisfy. Those five are now `deps:` on
 T1511, so it leaves the queue until they close instead of being handed out to a
 turn that cannot move it - and the table naming what each one waits on is in the
 task file rather than in this entry.
+
+## 2026-09-13 - Every acceptance launch says again whether it wants the last run's windows back (T1012)
+
+Session persistence is on by default, so a test script that launches the
+terminal without saying either way gets back whatever the previous launch left
+behind - and then measures its own setup assertions against somebody else's
+layout. The sweep that asks each launch to STATE its intent had drifted to 52
+unstated sites out of 289, up from the 14 this card was filed over, because
+nothing re-ran it while the suite grew. It reads `undeclared: 0 of 280` again.
+
+Three of those 52 were work nobody could have done, and they were fixed in the
+sweep rather than in the scripts. A launch of `$env:ComSpec` resolved to a
+variable named `env`, whose assignments do not exist, so five cmd.exe `ping`
+fixtures were reported as undeclared ghoztty launches - and cmd.exe has no
+session to persist. A tool found on PATH read the same way: `$node = Get-Command
+node` carries no `.exe` literal, so the dashboard's node server looked like the
+terminal. And a persistence decision written in a script's HEADER - the place a
+decision covering the whole run belongs, and where `update-graceful.ps1` had
+already written one - counted for nothing, so a site whose reasoning sat at the
+top of its own file was reported as unconsidered. Each new read ships with the
+control that keeps it from swallowing a real site: an env var whose NAME says
+ghoztty is still swept and still has to declare, and the same header sentence
+written after the code starts declares nothing (sections B11-B15).
+
+The other 49 declare where they stand. Markers for the launches that want the
+restore (the session, holder, agent and chooser families, where the restore IS
+the fixture), for the ones that run in a throwaway `$env:LOCALAPPDATA` with no
+manifest to restore from, and for the ones that never open a window at all - a
+CLI invocation, a refused preflight, a copy of cmd.exe wearing our name. And
+`--session-persistence=false` for the only two that keep the ambient
+`$env:LOCALAPPDATA` and would otherwise reopen an earlier debug run's panes into
+what they measure: `chooser-selection.ps1` (ALL PASS, 35) and
+`remote-reconnect-relay.ps1` (ALL PASS, 12).
+
+The reason the count could quadruple unnoticed is closed too: `persistence-flag`
+is a row in `scripts\guard-due.ps1` now, stamped by its own green run, so an edit
+to any `test\win32` script makes the sweep due again.
+
+Two follow-ons. T707 - "agent-attach-refused.ps1's third launch never states
+whether it wants a restore" - was an already-fixed subset of this card and is
+closed against 87c762ec1, the commit that actually fixed it. And T1521 was filed
+for what this pass paid: a comment-only edit to 25 test scripts made 27 unrelated
+guards due, because the stamp compares bytes rather than what runs, which is the
+pressure that trains people to reach for `-NoGuardDue` - as this commit had to.

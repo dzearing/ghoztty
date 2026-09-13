@@ -151,6 +151,8 @@ try {
     $env:LOCALAPPDATA = $tmpA
     $env:GHOZTTY_STARTUP_FAIL = 'no-window'
 
+    # persistence: on (default) - this arm runs in a brand-new $env:LOCALAPPDATA
+    # ($tmpA), so there is no manifest anywhere for the launch to restore.
     $appA = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t1177-a')
     # Cache the process HANDLE now, while the process is alive: without it
     # `.ExitCode` reads back EMPTY once it exits, and `'' -ne 0` is $true - so
@@ -212,6 +214,8 @@ try {
     New-Item -ItemType Directory -Force $tmpC | Out-Null
     $env:LOCALAPPDATA = $tmpC
 
+    # persistence: on (default) - this arm runs in a brand-new $env:LOCALAPPDATA
+    # ($tmpC), so there is no manifest anywhere for the launch to restore.
     $appC = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t1177-c')
     $winC = Wait-TestWindow -ProcessId $appC.Pid -Class 'GhozttyWindow' -TimeoutMs 30000
     Assert "C1 the healthy launch opened a terminal window" ($winC -ne [IntPtr]::Zero)
@@ -237,6 +241,8 @@ try {
     $env:LOCALAPPDATA = $tmpD
     $env:GHOSTTY_LOCAL_AGENT_BIN = Join-Path $tmpD 'no-such-ghoztty-agent.exe'
 
+    # persistence: on (default) - this arm runs in a brand-new $env:LOCALAPPDATA
+    # ($tmpD), so there is no manifest anywhere for the launch to restore.
     $appD = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t1177-d')
     $winD = Wait-TestWindow -ProcessId $appD.Pid -Class 'GhozttyWindow' -TimeoutMs 30000
     Assert "D1 the terminal still opens without an agent (degraded, not fatal)" `
@@ -290,6 +296,8 @@ try {
     Assert "E0 the state under test really has no fallback in reach" `
         (-not (Test-Path $env:GHOZTTY_GL_FALLBACK_DLL))
 
+    # persistence: on (default) - this arm runs in a brand-new $env:LOCALAPPDATA
+    # ($tmpE), so there is no manifest anywhere for the launch to restore.
     $appE = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t1224-e')
     $procE = $appE.Process
     if ($procE) { $null = $procE.Handle }
@@ -358,6 +366,8 @@ try {
     # renderer's own account of what it loaded is captured from the child's
     # stderr here rather than read out of the log file.
     $errF = Join-Path $tmpF 'stderr.txt'
+    # persistence: on (default) - this arm runs in a brand-new $env:LOCALAPPDATA
+    # ($tmpF), so there is no manifest anywhere for the launch to restore.
     $appF = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t1251-f') -StdErr $errF
     $winF = Wait-TestWindow -ProcessId $appF.Pid -Class 'GhozttyWindow' -TimeoutMs 30000
     Assert "F1 the terminal opened despite the system GL being below the floor" `
@@ -389,6 +399,8 @@ try {
     Remove-Item env:GHOZTTY_GL_FORCE_VERSION -ErrorAction SilentlyContinue
 
     $errG = Join-Path $tmpG 'stderr.txt'
+    # persistence: on (default) - this arm runs in a brand-new $env:LOCALAPPDATA
+    # ($tmpG), so there is no manifest anywhere for the launch to restore.
     $appG = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t1251-g') -StdErr $errG
     $winG = Wait-TestWindow -ProcessId $appG.Pid -Class 'GhozttyWindow' -TimeoutMs 30000
     Assert "F5 a healthy display opens a window with the fallback still in reach" `
@@ -431,6 +443,8 @@ try {
     Remove-Item env:GHOZTTY_GL_FALLBACK_DLL -ErrorAction SilentlyContinue
 
     $errH = Join-Path $tmpH 'stderr.txt'
+    # persistence: on (default) - this arm runs in a brand-new $env:LOCALAPPDATA
+    # ($tmpH), so there is no manifest anywhere for the launch to restore.
     $appH = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t1252-h') -StdErr $errH
     $winH = Wait-TestWindow -ProcessId $appH.Pid -Class 'GhozttyWindow' -TimeoutMs 45000
     Assert "H1 the terminal opened on the SHIPPED fallback, with no seam pointing at one" `

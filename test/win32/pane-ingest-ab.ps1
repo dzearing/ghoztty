@@ -298,6 +298,9 @@ function Measure-Pane([string]$tag, [bool]$persistence, [bool]$warmAgent) {
         Start-Sleep -Seconds 2
     }
 
+    # persistence: the flag IS passed, from this function's own $persistence
+    # parameter - the A/B comparison is persistence-on against persistence-off,
+    # so the value is the experiment and every caller states which side it wants.
     $app = Start-OnTestDesktop -Exe $Exe `
         -Arguments @("--session-persistence=$($persistence.ToString().ToLower())") `
         -StdErr $errFile -AllowReleaseBuild:$ReleaseSandbox

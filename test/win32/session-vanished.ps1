@@ -231,6 +231,10 @@ function Get-Tree([string]$tag) {
 }
 
 # Bring the app up and wait for it to answer IPC. Returns its pid, or 0.
+#
+# persistence: on (default) - every call runs inside this script's per-run
+# $env:LOCALAPPDATA, so the first launch has no manifest to restore from and the
+# second deliberately picks up what the first one recorded.
 function Start-TestApp([string]$title, [int]$timeoutSec = 45) {
     [void](Start-OnTestDesktop -Exe $Exe -Arguments @(
         "--title=$title", '--window-width=100', '--window-height=30'))

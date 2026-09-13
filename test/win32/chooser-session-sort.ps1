@@ -96,6 +96,9 @@ function Get-Sessions {
 
 function Get-RosterGeometry([double]$s) { return Get-TestChooserRosterGeometry -Scale $s }
 
+# persistence: the flag is passed on every launch, from this helper's own
+# $persistence parameter - the roster arms need the previous launch's sessions
+# back, and the one arm that must start clean passes 'false'.
 function Launch-Gui($errlog, [string]$persistence = 'true') {
     $args = @('--window-width=100', '--window-height=30', "--session-persistence=$persistence")
     $app = Start-OnTestDesktop -Exe $Exe -Arguments $args -StdErr $errlog

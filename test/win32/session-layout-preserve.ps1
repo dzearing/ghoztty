@@ -177,6 +177,9 @@ try {
 
     # ---- A: a healthy launch records the 'solo' window ----------------------
     Say '== A: capture a terminal window with a live agent session'
+    # persistence: on (default) - this launch runs in a throwaway
+    # $env:LOCALAPPDATA with no manifest yet, so there is nothing to restore,
+    # and arms B and C below restore exactly what it records.
     $app = Start-OnTestDesktop -Exe $exe
     if ((Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
         Say 'SETUP FAIL: no GhozttyWindow'; exit 1
@@ -209,6 +212,9 @@ try {
         'B0 the agent binary override points at nothing (setup control)'
     $mtime0 = (Get-Item (Manifest-Path $tmp)).LastWriteTimeUtc
 
+    # persistence: on (default) - the arm's whole subject is what an agentless
+    # restore does to the manifest arm A left behind, so the flag would delete
+    # the fixture.
     $agentless = Start-OnTestDesktop -Exe $exe
     if ((Wait-TestWindow -ProcessId $agentless.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
         Say 'SETUP FAIL: agentless app has no GhozttyWindow'
@@ -247,6 +253,8 @@ try {
     Say '== C: relaunch with the real agent - the kept entry restores'
     Stop-AppOnly
     $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
+    # persistence: on (default) - the carried entry restoring into a live pane
+    # IS this arm's assertion.
     $healthy = Start-OnTestDesktop -Exe $exe
     if ((Wait-TestWindow -ProcessId $healthy.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
         Say 'SETUP FAIL: healthy relaunch has no GhozttyWindow'

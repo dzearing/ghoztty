@@ -425,6 +425,9 @@ try {
         @(Get-ChildItem -Path $tmp -Filter 'sessions.json' -Recurse -File -ErrorAction SilentlyContinue).Count -eq 0)
 
     $beforeD = @((Get-TestAgents) | ForEach-Object { [int]$_.ProcessId })
+    # persistence: on (default) - the subject is what a NORMAL startup does to
+    # an orphaned holder inside this run's private state dir, so the launch has
+    # to be the ordinary one; whatever it restores is this script's own work.
     [void](Start-OnTestDesktop -Exe $Exe -Arguments @(
         '--title=t906-reap', '--window-width=100', '--window-height=30'))
     $reapAgent = Wait-NewAgent $beforeD 60

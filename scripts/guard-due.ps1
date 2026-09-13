@@ -2779,6 +2779,24 @@ $GuardTable = @(
     # above and for the same reason - the property is about the whole
     # directory, so ANY script gaining a launch has to re-prove it. Static over
     # source apart from one cmd.exe launch, a couple of seconds.
+    # The persistence-declaration sweep (T158/T1012): every launch of the app
+    # under test says whether it wants the previous launch's windows back. Same
+    # wide net and the same reason as the launch-capture row below it - a
+    # property of the whole directory, so any script that gains a launch has to
+    # re-prove it. This row is why the count cannot quadruple unnoticed again:
+    # nothing re-ran the sweep between 14 undeclared sites in August and 52 in
+    # September, because no guard owned it. About two minutes (it opens two GUIs
+    # for the live control).
+    [pscustomobject]@{
+        Name   = 'persistence-flag'
+        Script = 'test\win32\persistence-flag.ps1'
+        Stamp  = 'test\win32\persistence-flag.stamp.json'
+        Covers = @(
+            'test\win32\*.ps1',
+            'test\win32\lib\PersistenceSweep.ps1',
+            'test\win32\lib\TestDesktop.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'stderr-launch-capture'
         Script = 'test\win32\stderr-launch-capture.ps1'

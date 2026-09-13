@@ -180,6 +180,8 @@ try {
 
     # ---- A: record a layout against a healthy agent -------------------------
     Say '== A: capture three windows with live agent sessions'
+    # persistence: on (default) - a throwaway $env:LOCALAPPDATA with no manifest
+    # yet, and arms B and C restore precisely what this launch records.
     $app = Start-OnTestDesktop -Exe $exe
     if ((Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
         Say 'SETUP FAIL: no GhozttyWindow'; exit 1
@@ -218,6 +220,8 @@ try {
     Assert (-not (Test-Path $env:GHOSTTY_LOCAL_AGENT_BIN)) `
         'B0 the agent binary override points at nothing (setup control)'
 
+    # persistence: on (default) - the arm asserts that a launch with no agent
+    # restores NOTHING from arm A's manifest, which the flag would erase.
     $late = Start-OnTestDesktop -Exe $exe
     if ((Wait-TestWindow -ProcessId $late.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
         Say 'SETUP FAIL: the agentless app has no GhozttyWindow'

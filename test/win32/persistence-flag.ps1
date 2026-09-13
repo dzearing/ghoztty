@@ -254,8 +254,64 @@ $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
 $app = @@LAUNCH@@ -Exe $exe
 '@
 
+# T1012. An image taken from the ENVIRONMENT is cmd.exe, not the terminal: five
+# `ping` fixtures were reported as ghoztty launches nobody had declared, and no
+# edit to any of them could have been right, since cmd.exe has no session to
+# persist. The pair says it in both directions - an env var whose name says
+# ghoztty is still ours, and still has to declare.
+$envImage = @'
+$d = @@LAUNCH@@ -Exe $env:ComSpec -Arguments @('/c', 'ping -n 3 127.0.0.1 >nul')
+'@
+$envOurs = @'
+$d = @@LAUNCH@@ -Exe $env:GHOZTTY_TEST_EXE -Arguments @('--window-width=100')
+'@
+# T1012. Same shape one hop away: a tool looked up on PATH names itself, and
+# `$node = Get-Command node` carries no `.exe` literal for the image check to
+# read, so the dashboard's node server read as an undeclared ghoztty launch.
+$pathTool = @'
+$node = Get-Command node -ErrorAction SilentlyContinue
+$srv = @@LAUNCH@@ -FilePath $node.Source -ArgumentList '--port 7788'
+'@
+# T1012. The third marker scope: a script whose HEADER reasons about persistence
+# for the whole run has declared every launch in it (update-graceful.ps1 wrote
+# exactly that and was still reported undeclared). Only the LEADING block counts
+# - `headerlate.ps1` writes the same sentence after the code starts, where it
+# belongs to whatever it sits on and declares nothing.
+$fileHeader = @'
+# A fixture script.
+# persistence: on (default) - the run has its own LOCALAPPDATA.
+$exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
+$a = 1
+$b = 2
+$c = 3
+$d = 4
+$e = 5
+$f = 6
+$g = 7
+$app = @@LAUNCH@@ -Exe $exe -Arguments @('--window-width=100')
+'@
+$headerLate = @'
+$exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
+$other = 1
+# persistence: on (default) - written too late to be the file's header.
+$a = 1
+$b = 2
+$c = 3
+$d = 4
+$e = 5
+$f = 6
+$g = 7
+function Run-Other { return $other }
+$app = @@LAUNCH@@ -Exe $exe -Arguments @('--window-width=100')
+'@
+
 foreach ($pair in @(
         @{ Name = 'literal.ps1'; Body = $literal },
+        @{ Name = 'envimage.ps1'; Body = $envImage },
+        @{ Name = 'envours.ps1'; Body = $envOurs },
+        @{ Name = 'pathtool.ps1'; Body = $pathTool },
+        @{ Name = 'fileheader.ps1'; Body = $fileHeader },
+        @{ Name = 'headerlate.ps1'; Body = $headerLate },
         @{ Name = 'viavar.ps1'; Body = $viaVar },
         @{ Name = 'viamarker.ps1'; Body = $viaMarker },
         @{ Name = 'viacallers.ps1'; Body = $viaCallers },
@@ -303,6 +359,23 @@ Assert ($scoped.Count -eq 2 -and $scoped[0].How -eq 'marker:fn:Run-Declared' -an
         "(got $($scoped.Count) site(s): $(($scoped | ForEach-Object { if ($_.How) { $_.How } else { 'undeclared' } }) -join ', '))")
 Assert ((Fix-How 'longblock.ps1') -eq 'marker') `
     "B10 a marker at the top of a comment block longer than six lines still declares it (got '$(Fix-How 'longblock.ps1')')"
+
+# T1012. Three sweep reads that produced work nobody could do, each with the
+# control that keeps the new rule from swallowing a real site.
+Assert (@($fixSites | Where-Object { $_.File -eq 'envimage.ps1' }).Count -eq 0) `
+    'B11 a launch of $env:ComSpec (cmd.exe) is not swept as the terminal'
+$envOursRow = @($fixSites | Where-Object { $_.File -eq 'envours.ps1' })
+Assert ($envOursRow.Count -eq 1 -and -not $envOursRow[0].Declared) `
+    ("B12 but an env var whose NAME says ghoztty IS swept, and still has to declare " +
+        "(got $($envOursRow.Count) site(s), declared=$(if ($envOursRow.Count) { $envOursRow[0].Declared } else { 'n/a' }))")
+Assert (@($fixSites | Where-Object { $_.File -eq 'pathtool.ps1' }).Count -eq 0) `
+    'B13 a tool found on PATH (Get-Command node) is not swept as the terminal'
+Assert ((Fix-How 'fileheader.ps1') -eq 'marker:file') `
+    "B14 a marker in the script's HEADER declares the launches in it (got '$(Fix-How 'fileheader.ps1')')"
+$lateRow = @($fixSites | Where-Object { $_.File -eq 'headerlate.ps1' })
+Assert ($lateRow.Count -eq 1 -and -not $lateRow[0].Declared) `
+    ("B15 and the same sentence written after the code starts is not a header, so it " +
+        "declares nothing (got $($lateRow.Count) site(s), declared=$(if ($lateRow.Count) { $lateRow[0].Declared } else { 'n/a' }))")
 
 # ---------------------------------------------------------------------------
 # C: the class negative control, live
@@ -396,6 +469,17 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($fgSeen.Count -gt 0) 'Z1 the foreground watcher actually sampled (negative control)'
     $leaked = @($launched | Where-Object { $fgSeen -contains $_ })
     Assert ($leaked.Count -eq 0) 'Z2 no test-desktop app ever became foreground on the interactive desktop'
+}
+
+# --- stamp (T783/T1012) ----------------------------------------------------
+# A clean green run RECORDS the content of everything this covers, so
+# scripts\guard-due.ps1 can answer "has anybody asked the suite as it now stands
+# whether every launch declares its intent?". Red stays due: only a green sweep
+# re-stamps. Nothing owned that question until now, which is how the undeclared
+# count went from 14 to 52 with no run in between.
+if ($script:fail -eq 0) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard persistence-flag -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Say ''

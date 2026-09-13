@@ -368,6 +368,9 @@ try {
     $env:GHOZTTY_PERF = '1'
 
     $errLog = Join-Path $root 'stderr.txt'
+    # persistence: on (default) - the section points $env:LOCALAPPDATA at an
+    # empty per-run directory three lines up, so nothing can be restored here,
+    # and section F below relaunches to restore exactly what this run records.
     $app = Start-OnTestDesktop -Exe $Exe -StdErr $errLog
     $win = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 40000
     Assert 'B1 a terminal window came up in the remote session' ($win -ne [IntPtr]::Zero)
@@ -635,6 +638,8 @@ try {
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 1200)
     $env:LOCALAPPDATA = $tmp
     $env:GHOSTTY_LOCAL_AGENT_BIN = $Agent
+    # persistence: on (default) - restoring the named window this script itself
+    # recorded IS section F's assertion, so the flag would delete the fixture.
     $relaunch = Start-OnTestDesktop -Exe $Exe
     [void](Wait-TestWindow -ProcessId $relaunch.Pid -Class 'GhozttyWindow' -TimeoutMs 40000)
     $post = @()

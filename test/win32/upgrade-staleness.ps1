@@ -852,6 +852,8 @@ if (-not $haveAgent) {
     Copy-Item -LiteralPath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" $gInstalledExe -Force
     # stderr: n/a - the decoy is powershell.exe wearing our name, sleeping; the
     # assertion is that the kill leaves it alone, not what it printed.
+    # persistence: n/a - powershell.exe has no session to restore; the flag
+    # would be an argument it does not understand.
     $decoy = Start-Process -FilePath $gInstalledExe -WindowStyle Hidden -PassThru `
         -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep 300')
     $null = $decoy.Handle

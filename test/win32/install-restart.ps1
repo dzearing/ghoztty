@@ -437,6 +437,8 @@ try {
         New-Item -ItemType Directory -Force $tmpL | Out-Null
         $env:LOCALAPPDATA = $tmpL
 
+        # persistence: on (default) - arm L gets its own empty $env:LOCALAPPDATA
+        # ($tmpL) two lines up, so there is no manifest to restore from.
         $app = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t1204-live')
         $proc = $app.Process
         if ($proc) { $null = $proc.Handle }
@@ -486,6 +488,8 @@ try {
         New-Item -ItemType Directory -Force $tmpM | Out-Null
         $env:LOCALAPPDATA = $tmpM
 
+        # persistence: on (default) - the control arm gets its own empty
+        # $env:LOCALAPPDATA ($tmpM), so nothing is there to restore.
         $app2 = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t1204-control')
         $proc2 = $app2.Process
         if ($proc2) { $null = $proc2.Handle }
@@ -523,12 +527,17 @@ try {
         $env:LOCALAPPDATA = $tmpN
         $installDir = Split-Path -Parent $Exe
 
+        # persistence: on (default) - the offer arm gets its own empty
+        # $env:LOCALAPPDATA ($tmpN), so nothing is there to restore.
         $app3 = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t1352-offer')
         $proc3 = $app3.Process
         if ($proc3) { $null = $proc3.Handle }
         $win3 = Wait-TestWindow -ProcessId $app3.Pid -Class 'GhozttyWindow' -TimeoutMs 30000
         Assert 'L8 the instance to be offered up came up' ($win3 -ne [IntPtr]::Zero)
 
+        # persistence: on (default) - this launch is a CLI invocation that opens
+        # no window of its own (it hands the restart offer to the running app and
+        # exits), and it shares arm N's private $env:LOCALAPPDATA.
         function Invoke-Offer($offerArgs, $tag, $timeoutMs) {
             $errFile = Join-Path $root "offer-$tag.err"
             $h = Start-OnTestDesktop -Exe $Exe -Arguments $offerArgs -StdErr $errFile

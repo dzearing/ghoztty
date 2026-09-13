@@ -230,6 +230,10 @@ function Read-PaneText([string]$target, [string]$tag) {
 # works" assertion downstream would then be measuring the wrong pane, which is
 # how the drain arm managed to observe zero live sessions on a box with a window
 # open.
+#
+# persistence: on (default) - every call gets a state dir of its OWN
+# ($env:LOCALAPPDATA = state-<tag>), which is precisely how this helper keeps one
+# launch from restoring the previous one's layout.
 function Start-AppAndWait([string]$title, [string]$paneName, [string]$stateTag, [int]$timeoutSec = 60) {
     $state = Join-Path $root "state-$stateTag"
     New-Item -ItemType Directory -Force $state | Out-Null

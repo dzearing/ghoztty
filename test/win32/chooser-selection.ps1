@@ -133,7 +133,13 @@ function Get-ModalColor($shot, [int]$x0, [int]$y0, [int]$x1, [int]$y1, [int]$ste
 }
 
 function Launch-Gui($errlog) {
-    $app = Start-OnTestDesktop -Exe $Exe -Arguments @('--window-width=100', '--window-height=30') -StdErr $errlog
+    # This script keeps the ambient $env:LOCALAPPDATA, so a restore here would
+    # reopen whatever an earlier debug run left behind and measure the chooser
+    # over somebody else's windows. Nothing in T828 needs a restore: it opens
+    # one window and reads the chooser's pixels.
+    $app = Start-OnTestDesktop -Exe $Exe `
+        -Arguments @('--window-width=100', '--window-height=30', '--session-persistence=false') `
+        -StdErr $errlog
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { return $null }
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'

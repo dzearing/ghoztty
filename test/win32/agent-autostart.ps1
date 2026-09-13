@@ -356,6 +356,8 @@ $env:GHOZTTY_AGENT_AUTOSTART = 'gate'
 $tmpE = Join-Path $root 'e'
 New-Item -ItemType Directory -Force (Join-Path $tmpE 'ghoztty\local-agent-debug') | Out-Null
 $env:LOCALAPPDATA = $tmpE
+# persistence: on (default) - section E gets its own empty $env:LOCALAPPDATA
+# ($tmpE) three lines up, so this copy has no manifest to restore from.
 $pe = Start-OnTestDesktop -Exe $outsideExe -Arguments @('--title=t1146-outside')
 $runCmdE = $null
 $deadline = (Get-Date).AddSeconds(25)

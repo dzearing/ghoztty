@@ -431,6 +431,10 @@ if ($live) {
 try {
     if ($live) {
         "== install-maintenance L: the dialog and its exit codes, live =="
+        # persistence: n/a - `--install-maintenance` puts up the maintenance
+        # prompt and exits; it opens no terminal window, and the run holds its
+        # own $env:LOCALAPPDATA (Set-GhozttyTestIsolation) either way.
+        #
         # Runs the prompt with no -Answer seam and returns what happened:
         # the button captions it offered, and the exit code pressing $Press
         # left behind.

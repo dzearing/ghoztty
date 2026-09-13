@@ -79,6 +79,8 @@ function Stop-TestProcs {
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 700)
 }
 
+# persistence: n/a - a `ghoztty +...` CLI invocation that opens no window, so
+# there is no layout for it to restore.
 function Run-CliArgs($argv, $out, $timeoutSec = 15) {
     $p = Start-Process -FilePath $Exe -WindowStyle Hidden -PassThru `
         -ArgumentList $argv -RedirectStandardOutput $out -RedirectStandardError "$out.err"
