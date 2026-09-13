@@ -62,6 +62,10 @@ $root = Join-Path $env:TEMP "ghoztty-late-agent-$PID"
 # T350: refuse a non-debug zig-out before anything is launched - this script
 # kills agents and takes the per-user pipe.
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 # Write-Host, not the pipeline: a helper that asserts must never also return a
 # value, or its return silently becomes an array (T217 batch 5).
@@ -265,6 +269,14 @@ try {
     Assert ($dupes.Count -eq 0) `
         "C4 every window still has a target name nobody else holds (dupes: $($dupes -join ', '); all: $($after -join ', '))"
 
+} catch {
+    # T1511: this try is not the whole body - the foreground-leak check below
+    # it is part of the run - so it cannot end in `Complete-TestBody`. It
+    # SCORES its own throw instead, which is the other half of the same rule:
+    # an unwind here can no longer reach a green verdict.
+    $script:fail++
+    Say "FAIL  script terminated: $($_.Exception.Message)"
+    Say "      at $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
 } finally {
     Say '== cleanup'
     if ($null -ne $script:lateAgent) {
@@ -288,6 +300,8 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($leaked.Count -eq 0) 'Z2 no test-desktop app ever became foreground on the interactive desktop'
 }
 
+Complete-TestBody  # T1039: the last statement of the body an unwind can skip
+
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1 can
 # answer "has this harness been run against the restore path as it now stands?".
 # Red leaves the stamp alone - red stays due.
@@ -297,6 +311,4 @@ if ($script:fail -eq 0) {
 }
 
 Say ''
-if ($script:fail -eq 0) { Say "ALL PASS ($script:pass)"; exit 0 }
-Say "$script:fail FAILURE(S) ($script:pass passed)"
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

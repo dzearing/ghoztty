@@ -62,6 +62,10 @@ if ($ExePath) { $exe = $ExePath }
 . (Join-Path $PSScriptRoot 'lib\HarnessLeak.ps1')
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 Assert-GhozttyIsolatedBuild -Exe $exe
 
 $script:pass = 0
@@ -138,6 +142,13 @@ try {
     $killed = Stop-HarnessGhoztty -Root $bRoot -SettleMs 900
     Assert ($killed -ge 1) "B7 Stop-HarnessGhoztty killed it ($killed)"
     Assert (@(Get-HarnessGhozttyProcess -Root $bRoot).Count -eq 0) 'B8 and nothing is left under the scratch root'
+} catch {
+    # T1511: sections C-E below are part of this run too, so this try cannot end
+    # in `Complete-TestBody`. It SCORES its own throw instead - the other half of
+    # the same rule: an unwind here can no longer reach a green verdict.
+    $script:fail++
+    Say "FAIL  section B terminated: $($_.Exception.Message)"
+    Say "      at $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
 } finally {
     $env:LOCALAPPDATA = $savedLocal
     if ($null -eq $savedSuffix) { Remove-Item Env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue }
@@ -402,6 +413,8 @@ Assert ($leaks.Count -eq 0) "E1 no ghoztty process is running out of %TEMP% ($($
 # ---------------------------------------------------------------------------
 Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 
+Complete-TestBody  # T1039: the last statement of the body an unwind can skip
+
 # A clean green run stamps the files this harness covers (T783), so
 # `scripts\guard-due.ps1` can answer "has anybody run this against the leak
 # library as it now stands?" - the library is harness plumbing, so no lane and
@@ -414,7 +427,4 @@ if ($script:fail -eq 0 -and $script:pass -ge 42) {
 }
 
 Say ''
-if ($script:fail -eq 0) { Say "ALL PASS ($script:pass)" }
-else { Say "$script:fail FAILURE(S) ($script:pass passed)" }
-if ($script:fail -gt 0) { exit 1 }
-exit 0
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

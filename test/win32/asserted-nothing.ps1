@@ -300,7 +300,7 @@ Write-Host "  ($($uncountedFinal.Count) script(s) still print an UNCOUNTED final
 # viewer-find) each hand-rolled a bare "ALL PASS", against one (morning-refresh)
 # that was retired. All five are on the shared scorer now, so the ceiling comes
 # down past where T962 left it rather than up to where the drift landed.
-$ceiling = 36
+$ceiling = 31
 Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFinal.Count -le $ceiling)
 
 # T1510's ratchets, same contract as C3 and for a sharper reason: until a
@@ -323,8 +323,20 @@ Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFina
 # remote-disconnect, ipc-relay, remote-pill, activity-monitor-remote,
 # chooser-restore-all-remote, remote-reconnect-relay and chrome-theme - picked,
 # as every batch is, by whether this box can re-stamp the guard after the edit.
-$selfCeiling  = 164
-$stampCeiling = 45
+# 2026-09-12 (T1511, batch 4): 164 -> 158 and 45 -> 39. Six more GUI runs -
+# palette-jump, chooser-session-sort, chooser-resume, chooser-orphan-badge,
+# restore-late-agent and harness-process-leak. Three of them continue past their
+# top-level try (a foreground-leak check, or three more sections), so those
+# tries grew a SCORING catch instead of ending in the marker - the other honest
+# shape the body-completion rule names. Three more were converted and REVERTED
+# rather than shipped unproven, because this box cannot reach a green stamping
+# run of them at HEAD: tab-tooltip (T1515, sections A and E red - the tip now
+# carries an un-abbreviated title line above the cwd), layout-capture-cost
+# (T1516, a wall-clock frame budget that fails a DIFFERENT assertion each run
+# under box load) and relay-account (T1517, which wedges in its own teardown
+# after the last assertion and never prints a verdict at all).
+$selfCeiling  = 158
+$stampCeiling = 39
 
 $ratchetSweep = @($sweep)
 if ($TeethCheck) {

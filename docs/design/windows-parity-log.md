@@ -27130,3 +27130,54 @@ exits 0 with only the three standing advisories left.
 
 Forty-five unarmed stampers remain, all GUI acceptance runs, so T1511 stays open
 for batch 4.
+
+
+## 2026-09-12 - Six more GUI acceptance runs can no longer record a crashed run as proof (T1511 batch 4)
+
+`palette-jump`, `chooser-session-sort`, `chooser-resume`, `chooser-orphan-badge`,
+`restore-late-agent` and `harness-process-leak` are on the shared scorer now, so a
+run of any of them that unwinds part-way stops writing the note that says "this
+feature was proven against the code as it stands". Same three-line conversion as
+the batches before it: dot-source `lib\TestScore.ps1` (which is what ARMS the
+run), reach `Complete-TestBody` as the last statement an unwind can skip, and let
+`Write-TestVerdict` decide the last line and the exit code.
+
+Three of the six do not END at their top-level `try` - `palette-jump`,
+`restore-late-agent` and `harness-process-leak` all carry on afterwards, two with
+the foreground-leak control and one with three more sections - so those tries grew
+a SCORING `catch` instead, which is the other honest shape the body-completion
+rule names: an unwind there now costs a failure rather than falling through to the
+verdict with the count untouched. `relay-account` had an `Assert` that only ever
+counted failures, so it grew a passing counter.
+
+**Three were converted and then REVERTED rather than shipped unproven**, because a
+red or unfinished run cannot re-stamp the guard it would be claiming:
+
+- `tab-tooltip` is red at HEAD (T1515). The tip text is two lines now - the tab
+  TITLE, un-abbreviated, above the `~`-abbreviated cwd - where section A expects
+  the home prefix on the first line and section E expects a title that fits to
+  keep the tip cwd-only. Green since 2026-08-21, so something moved under it.
+- `layout-capture-cost` is red DIFFERENTLY each run (T1516): G4 and G5 on one run,
+  then G3 alone (17.45 ms against a 16.67 ms frame budget) minutes later. A
+  wall-clock budget measured on a box that is also building cannot separate a
+  regression from contention.
+- `relay-account` reached its LAST assertion and then wedged in its own teardown
+  (T1517) - 25+ minutes with the output frozen and the process pinned at 4.6
+  seconds of CPU, killed by hand. The four fake-relay jobs its `finally` stops are
+  the likely holder; the run had already printed a `Get-Content` failure on
+  `hits-a.log` with the file "used by another process". A harness that can hang in
+  cleanup is worse than a red one: no verdict, no exit code, and it holds the
+  per-user pipe against everything queued behind it.
+
+The ceilings come down by six rather than by nine, which is the honest number:
+C5 45 -> 39 and C4 164 -> 158 in `test\win32\asserted-nothing.ps1`, with
+`-TeethCheck` still red on a synthesized violator and `lib\BodyCompleteAudit.ps1`
+still a hard zero over six more files.
+
+Green: all six converted scripts run on the box, ALL PASS, each STAMPED by that
+run (25, 19, 29, 17, 19 and 42 assertions); body-complete-audit and
+asserted-nothing in both modes; `floor-lane -Lane all`; ipc-p1/p2/p3.
+
+Thirty-nine unarmed stampers remain, so T1511 stays open for batch 5 - and three
+of those thirty-nine are now blocked behind T1515, T1516 and T1517 rather than
+behind run time.

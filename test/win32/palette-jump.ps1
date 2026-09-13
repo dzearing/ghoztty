@@ -41,6 +41,10 @@ $env:GHOZTTY_PIPE_SUFFIX = "-palettejump$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -242,6 +246,14 @@ if ($null -ne $pal) {
 }
 Assert ($null -ne (Get-Process -Id $script:appPid -ErrorAction SilentlyContinue)) 'the app survived all arms'
 
+} catch {
+    # T1511: the foreground-leak check below is part of this run too, so this
+    # try cannot end in `Complete-TestBody`. It SCORES its own throw instead -
+    # the other half of the same rule: an unwind here can no longer reach a
+    # green verdict.
+    $script:fail++
+    Write-Host "FAIL  script terminated: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "      at $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
 } finally {
     & $Exe +close --target=pjB 2>&1 | Out-Null
     Remove-TestDesktop
@@ -257,6 +269,8 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
 }
 
+Complete-TestBody  # T1039: the last statement of the body an unwind can skip
+
 Write-Host ''
 if ($script:fail -eq 0) {
     # A clean green run records the covered files so scripts\guard-due.ps1
@@ -264,9 +278,5 @@ if ($script:fail -eq 0) {
     # stands?" (T783). Red runs leave the stamp alone - red must stay due.
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard palette-jump -Repo $repo 2>&1 | ForEach-Object { "  $_" }
-    Write-Host "PALETTE JUMP: ALL PASS ($script:pass assertions)"
-    exit 0
-} else {
-    Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red
-    exit 1
 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'PALETTE JUMP'

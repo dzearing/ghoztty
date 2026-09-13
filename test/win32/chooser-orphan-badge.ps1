@@ -72,6 +72,10 @@ $env:GHOZTTY_PIPE_SUFFIX = "-t520$PID"
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\PipeBridge.ps1')  # Get-LocalAgentPipeName
 . (Join-Path $PSScriptRoot 'lib\ChooserCursor.ps1')  # Walk-ChooserCursorToId (T602/T620)
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -308,6 +312,8 @@ try {
     $chooser = Open-Chooser $g
     Assert ($chooser -ne [IntPtr]::Zero) 'the chooser reopens once more'
     Assert (Wait-OrphanLine $errlog 0 $zeroBase 8000) 'the resumed session dropped its mark (count back to 0)'
+
+    Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } finally {
     Stop-RepoProcesses @('ghoztty', 'ghoztty-agent', 'remote-test-client')
     Remove-TestDesktop
@@ -321,6 +327,4 @@ if ($script:fail -eq 0) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

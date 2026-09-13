@@ -54,6 +54,10 @@ if (-not (Test-Path $Exe)) { $Exe = Join-Path $repo 'zig-out\bin\ghoztty.exe' }
 $env:GHOZTTY_PIPE_SUFFIX = "-t602$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -291,6 +295,8 @@ try {
         Assert ($ink3 -eq 0) `
             "headers over an empty roster are furniture and are not drawn ($ink3 vs run 1's $($script:headerInk))"
     }
+
+    Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } finally {
     Stop-RepoProcesses
     Remove-TestDesktop
@@ -305,6 +311,4 @@ if ($script:fail -eq 0) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass)" -ForegroundColor Green; exit 0 }
-Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

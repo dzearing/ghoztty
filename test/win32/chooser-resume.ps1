@@ -72,6 +72,10 @@ Remove-Item Env:\GHOZTTY_RESTORE_SKIP -ErrorAction SilentlyContinue
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\ChooserCursor.ps1')  # Step-ChooserCursor / Walk-ChooserCursorToId
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -421,6 +425,8 @@ try {
         'Return on a live row that is open here focuses its pane'
     Start-Sleep -Seconds 1
     Assert (-not (Test-TestWindowExists -Window $chooser)) 'and the chooser dismissed onto it'
+
+    Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } finally {
     Remove-Item Env:\GHOZTTY_RESTORE_SKIP -ErrorAction SilentlyContinue
     Stop-RepoProcesses @('ghoztty', 'ghoztty-agent')
@@ -440,6 +446,4 @@ if ($script:fail -eq 0) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+Write-TestVerdict -Pass $script:pass -Fail $script:fail
