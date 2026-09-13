@@ -85,6 +85,7 @@ if ($ExePath) { $exe = $ExePath }
 $env:GHOZTTY_PIPE_SUFFIX = "-bntest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -1605,6 +1606,14 @@ try {
     $json = (& $exe +list --json 2>$null | Out-String).Trim()
     Assert ($json -match '"success":true') '+list still responds'
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
+} catch {
+    # T1511: the foreground-leak check below is part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead -
+    # the other half of the same rule: an unwind here can no longer reach a
+    # green verdict.
+    $script:fail++
+    Write-Host "FAIL  the run terminated: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "      at $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
 } finally {
     Remove-TestDesktop
     Stop-RepoInstances
@@ -1622,6 +1631,8 @@ Assert ($leaked.Count -eq 0) "no test-desktop app ever became foreground on the 
 if ($NegativeControl -and -not $script:negReached) {
     Assert $false 'NEGATIVE CONTROL never reached its inverted assertion'
 }
+
+Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 
 # --- stamp (T783, row added by T835) --------------------------------------
 # A green run RECORDS the content of every banner source it covers, so
@@ -1642,5 +1653,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass)$(if ($script:skipped) { " ($script:skipped SKIPPED)" })" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)"; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skipped

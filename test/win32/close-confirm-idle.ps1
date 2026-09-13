@@ -105,6 +105,7 @@ if (-not $AgentExe) { $AgentExe = Join-Path (Split-Path $Exe -Parent) 'ghoztty-a
 $env:GHOZTTY_PIPE_SUFFIX = "-t41$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -721,6 +722,8 @@ try {
     Stop-RepoProcesses @('ghoztty')
     Reset-AgentState
     Invoke-ReadonlySection 'E/readonly'
+
+    Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } finally {
     Stop-RepoProcesses @('ghoztty', 'ghoztty-agent')
     $fgSeen = @(Stop-TestForegroundWatch)
@@ -739,6 +742,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ""
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass checks)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Unit 'checks'

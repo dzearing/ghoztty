@@ -357,8 +357,13 @@ Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFina
 # grew a SCORING catch; agent-autostart grew a pass counter it never had, and
 # gui-postmortem's verdict now derives its passing count from its assertion
 # counter minus its failures.
-$selfCeiling  = 134
-$stampCeiling = 15
+# 2026-09-13 (T1511, batch 9): 134 -> 128 and 15 -> 9. Six more stamping
+# harnesses - update-progress, update-apply, reset-context, close-confirm-idle,
+# pane-banner and activity-monitor. Four of the six run their foreground-leak
+# checks after the top-level try, so those tries grew a SCORING catch; the
+# other two end their body in the marker.
+$selfCeiling  = 128
+$stampCeiling = 9
 
 $ratchetSweep = @($sweep)
 if ($TeethCheck) {

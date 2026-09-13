@@ -119,6 +119,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-activitytest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\ColorMath.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 # The panel's colors are DERIVED from the surface `window-theme` puts the app
 # on (T308), which under the default `auto` is the terminal background - so the
@@ -1952,6 +1953,14 @@ try {
     Assert ((@(Get-Panels)).Count -eq 0) 'F Escape closes the panel'
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'F the app survives the panel closing'
     Assert (Select-String -Path $errlog -Pattern 'activity monitor: closed source=' -Quiet) 'F the panel tore itself down (sampler joined, registry slot freed)'
+} catch {
+    # T1511: the foreground-leak checks below are part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead -
+    # the other half of the same rule: an unwind here can no longer reach a
+    # green verdict.
+    $script:fail++
+    Write-Host "FAIL  the run terminated: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "      at $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
 } finally {
     # The throwaway from H, if I never got to kill it (an abort mid-section).
     if ($script:spawnPid -gt 0) {
@@ -1975,6 +1984,8 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
 }
 
+Complete-TestBody  # T1039: the last statement of the body an unwind can skip
+
 # --- stamp (T783) ----------------------------------------------------------
 # A clean green run records the covered files so scripts\guard-due.ps1 can
 # answer "has anyone run this harness against the code as it now stands?".
@@ -1986,5 +1997,4 @@ if ($script:fail -eq 0) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ACTIVITY MONITOR ACCEPTANCE: ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'ACTIVITY MONITOR ACCEPTANCE'

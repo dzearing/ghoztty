@@ -102,6 +102,7 @@ param([string]$ExePath, [string]$HelperPath)
 # of any isolation setup, because it drops an inherited $GHOZTTY_IPC_SOCKET - a
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -812,6 +813,8 @@ try {
         Write-Host 'SKIP  D3/D4: dzearing-claude-marketplace not cloned on this box' -ForegroundColor Yellow
         $script:skipped++
     }
+
+    Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } finally {
     foreach ($w in @('rc1', 'rc2', 'rc3', 'rc4', 'rc5', 'rc6', 'rc7', 'rc8', 'rc9', 'rc10', 'rc11', 'rc12')) { & $exe +close --target=$w 2>$null | Out-Null }
     Start-Sleep -Milliseconds 500
@@ -831,6 +834,4 @@ if ($script:fail -eq 0 -and -not $script:skipped) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass$(if ($script:skipped) { ", $script:skipped SKIPPED" }))" -ForegroundColor Green; exit 0 }
-Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped ([int]$script:skipped)

@@ -27304,3 +27304,33 @@ Fifteen unarmed stampers remain, so T1511 stays open for batch 9 - five of them
 blocked behind T1513, T1514, T1515, T1516 and T1517, and `release-artifacts`
 behind the Docker precondition this box may not satisfy, rather than behind run
 time.
+
+## 2026-09-13 - Six more stamping harnesses can no longer record a crashed run as proof (T1511 batch 9)
+
+An acceptance script leaves a stamp behind saying "the files this covers were
+proven against the code as it stands now", and that stamp is what stops the loop
+being told to run it again. Six more of them wrote that stamp even when the run
+had unwound halfway: `update-progress`, `update-apply`, `reset-context`,
+`close-confirm-idle`, `pane-banner` and `activity-monitor`. All six now
+dot-source `lib\TestScore.ps1` - which is what arms the run - reach
+`Complete-TestBody` before the stamp, and end in one `Write-TestVerdict` call, so
+only a run that got to its own end records anything.
+
+Four of the six run their foreground-leak checks after the top-level `try`, so
+those tries grew a SCORING catch rather than ending in the marker;
+`reset-context` and `close-confirm-idle` end their body in it directly. The
+ratchets in `asserted-nothing.ps1` come down with them: C4 134 -> 128 and C5
+15 -> 9, and `lib\BodyCompleteAudit.ps1`'s hard-zero sweep stays at zero over six
+more files.
+
+Green: all six converted scripts run on the box, ALL PASS, each STAMPED by that
+run (42, 52, 81, 58, 139 and 205 assertions); the eight sweep audits the edits
+made due, all re-stamped; body-complete-audit and asserted-nothing (both modes,
+including `-TeethCheck`); `floor-lane -Lane all` ALL LANES PASS; ipc-p1/p2/p3 ALL
+PASS; `guard-due check` exits 0 with only the three pre-existing advisories.
+
+Nine unarmed stampers remain, so T1511 stays open for batch 10 - five of them
+blocked behind T1513, T1514, T1515, T1516 and T1517, and `release-artifacts`
+behind the Docker precondition this box may not satisfy, rather than behind run
+time. The three left that this box can reach are `agent-upgrade`,
+`session-relaunch-notify` and `update-real-msi`.

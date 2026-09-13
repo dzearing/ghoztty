@@ -64,6 +64,7 @@ $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -399,6 +400,14 @@ Assert ((Get-AppLog) -notmatch 'the transfer was cut short') `
 
 Stop-AssetServer
 
+} catch {
+    # T1511: the foreground-leak checks below are part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead -
+    # the other half of the same rule: an unwind here can no longer reach a
+    # green verdict.
+    $script:fail++
+    Write-Host "FAIL  the run terminated: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "      at $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
 } finally {
     Write-Host '== teardown'
     Stop-AssetServer
@@ -423,6 +432,9 @@ Write-Host ''
 # next turn a whole reproduction.
 if ($script:fail -eq 0) { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue }
 else { Write-Host "logs kept in $work" }
+
+Complete-TestBody  # T1039: the last statement of the body an unwind can skip
+
 # --- stamp (T783) ----------------------------------------------------------
 if ($script:fail -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot '..\..\scripts\guard-due.ps1') `
@@ -430,5 +442,4 @@ if ($script:fail -eq 0) {
         ForEach-Object { Write-Host "  $_" }
 }
 
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass) assertions)"; exit 0 }
-else { Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed)" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

@@ -46,6 +46,7 @@ $ErrorActionPreference = 'Stop'
 # T1241: every launch below - the app and the applier copy - goes to the
 # background test desktop.
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 [void](Set-GhozttyTestIsolation -Tag 't1178')
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -449,6 +450,9 @@ Write-Host ''
 # next turn a whole reproduction.
 if ($script:fail -eq 0) { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue }
 else { Write-Host "logs kept in $work" }
+
+Complete-TestBody  # T1039: the last statement of the body an unwind can skip
+
 # --- stamp (T783) ----------------------------------------------------------
 if ($script:fail -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot '..\..\scripts\guard-due.ps1') `
@@ -456,5 +460,4 @@ if ($script:fail -eq 0) {
         ForEach-Object { Write-Host "  $_" }
 }
 
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail
