@@ -242,13 +242,12 @@ pub fn forwardsTag(tag: std.meta.Tag(input.Binding.Action)) bool {
         // terminal to press this from at all — so a bound "back to the
         // default size" chord has to answer from a focused viewer (T682).
         .reset_window_size,
-        // A no-op on this platform, as on Mac (only the GTK apprt has an
-        // overview to show) — and forwarded anyway, because a terminal pane
-        // CLAIMS this chord and does nothing with it. Leaving it out is not
-        // "no behavior", it is a different behavior: the page underneath a
-        // viewer would see a chord the same keystroke never reaches from any
-        // other pane. If win32 ever grows an overview, the arm already routes
-        // to the one implementation (T682).
+        // The overview IS hero mode here (T708), and a viewer is a full
+        // citizen of the carousel - so this chord has to answer from a
+        // focused viewer for the same reason `toggle_hero_mode` above does.
+        // It was forwarded before it meant anything (T682), on the narrower
+        // ground that a chord a terminal pane CLAIMS must not leak into a
+        // viewer's page; that still holds, and now it also does something.
         .toggle_tab_overview,
         .toggle_window_decorations,
         .toggle_command_palette,

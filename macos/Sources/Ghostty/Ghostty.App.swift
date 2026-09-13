@@ -543,6 +543,16 @@ extension Ghostty {
             case GHOSTTY_ACTION_TOGGLE_HERO_MODE:
                 return toggleHeroMode(app, target: target)
 
+            // The pane overview on this fork is hero mode, on both seats
+            // (T708): a carousel of every pane in the window with the
+            // selected one blown up beside it. Upstream leaves this action
+            // unimplemented outside GTK, which made a bound
+            // `toggle_tab_overview` a dead key here too. Note it takes a VOID
+            // payload and so must never read `action.action` — toggleHeroMode
+            // reads only the target, which is why it can serve both tags.
+            case GHOSTTY_ACTION_TOGGLE_TAB_OVERVIEW:
+                return toggleHeroMode(app, target: target)
+
             case GHOSTTY_ACTION_INSPECTOR:
                 controlInspector(app, target: target, mode: action.action.inspector)
 
@@ -675,19 +685,18 @@ extension Ghostty {
             // Known but unimplemented on macOS. These must NOT fall through
             // into an implemented case: every case reads `action.action` as a
             // different member of the same C union, and for a void-payload
-            // action (toggle_tab_overview, toggle_window_decorations,
-            // quit_timer) those bytes are UNDEFINED — Zig's `@unionInit` in
+            // action (toggle_window_decorations, quit_timer) those bytes are
+            // UNDEFINED — Zig's `@unionInit` in
             // `Action.cval` leaves the rest of the extern union
             // uninitialized. Falling through to showChildExited read
             // `child_exited.timetime_ms` out of that garbage and could show a
             // bogus "process exited" bar over a live surface.
             //
-            // These four were the shared "unimplemented" body until upstream
+            // These were the shared "unimplemented" body until upstream
             // 38e64c370 ("macOS: add bottom bar when child exits") replaced
             // that body with the showChildExited call and left them attached
-            // to it by fallthrough.
-            case GHOSTTY_ACTION_TOGGLE_TAB_OVERVIEW:
-                fallthrough
+            // to it by fallthrough. `toggle_tab_overview` left this group in
+            // T708, which gave it hero mode on both seats.
             case GHOSTTY_ACTION_TOGGLE_WINDOW_DECORATIONS:
                 fallthrough
             case GHOSTTY_ACTION_SIZE_LIMIT:

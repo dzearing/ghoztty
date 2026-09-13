@@ -9,6 +9,35 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-13: T708 - **a shortcut bound to `toggle_tab_overview` did nothing at
+  all, on either seat, while the overview it asks for has shipped here for
+  months under another name.** The win32 arm returned true and fell through to
+  the bottom of the function; the Mac dispatch had the action parked in its
+  known-but-unimplemented group. So the app CLAIMED the chord from every pane -
+  T682 had widened that claim to focused viewer panes too - and answered with
+  silence, which is the worst of the three possible behaviors: a user cannot
+  tell it from a broken keyboard. Hero mode IS a pane overview (every pane in
+  the tab as a live thumbnail in a carousel, the selected one blown up beside
+  it), so the action now opens it: `App.performAction` routes the surface
+  target to `Window.toggleHeroMode`, `Window.performViewerBindingAction` takes
+  the same window-scoped route `toggle_hero_mode` already takes (it used to
+  bounce through the App no-op and die there), and `Ghostty.App.swift` leaves
+  the fallthrough group for `toggleHeroMode` - safe because that helper reads
+  only the target and never the void action payload the comment beside it
+  warns about. Nothing was added to the palette or the menu on purpose:
+  "Toggle Hero Mode" already IS this entry, and a second name for one behavior
+  is a worse discovery story than one name. New acceptance
+  `test\win32\tab-overview-action.ps1` (18 assertions, ALL PASS) drives a
+  CUSTOM keybind - the action ships with no default, which is the user's
+  situation exactly - and reads the overview off geometry rather than pixels:
+  one visible leaf at the hero rect with every hidden leaf sized to it. Its
+  third claim is the viewer path, injected at the viewer's Chromium input child
+  with `toggle_hero_mode` as the positive control, so a dead subject chord
+  cannot be read as dead injection; that control is also what caught the first
+  draft, which posted to the GhozttyViewer host and measured nothing.
+  `-NegativeControl` inverts claim A to the pre-fix behavior and fails exactly
+  that assertion. Guard row `tab-overview-action` registered, stamped green.
+
 - 2026-09-13: T1517 - **a harness could hang in its own cleanup, and one did:
   `relay-account.ps1` finished every assertion and then sat in its top-level
   `finally` for 25+ minutes, so a run that had done all of its work reported no

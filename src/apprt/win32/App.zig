@@ -6884,8 +6884,21 @@ pub fn performAction(
             return true;
         },
 
-        .toggle_tab_overview => {
-            return true;
+        // The pane overview on this platform IS hero mode (T708): a
+        // full-window carousel of every pane in the tab, each with its own
+        // live thumbnail, with the selected one blown up beside it. This arm
+        // used to return true and do nothing, which made a bound
+        // `toggle_tab_overview` a dead key - the app claimed the chord from
+        // every pane and then showed the user silence. Routing it here is
+        // what makes the claim honest; the palette and menu already carry
+        // the same thing under its own name ("Toggle Hero Mode"), so nothing
+        // is added there.
+        .toggle_tab_overview => switch (target) {
+            .app => return false,
+            .surface => |core_surface| {
+                core_surface.rt_surface.parent_window.toggleHeroMode();
+                return true;
+            },
         },
 
         .initial_size => {

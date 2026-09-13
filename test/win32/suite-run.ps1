@@ -411,6 +411,11 @@ try {
     # session to restore.
     $leakProc = Start-Process -FilePath $leakExe -ArgumentList '/c', 'ping -n 120 127.0.0.1 > nul' -PassThru -WindowStyle Hidden
     $null = $leakProc.Handle
+    # stderr: n/a - the second copy, same reason as the first. The marker is
+    # repeated because the `$null = ...Handle` line between the two launches
+    # ends the comment block above this one, so the declaration above does not
+    # reach it.
+    # persistence: n/a - same reason: neither is the terminal.
     $ctrlProc = Start-Process -FilePath $ctrlExe -ArgumentList '/c', 'ping -n 120 127.0.0.1 > nul' -PassThru -WindowStyle Hidden
     $null = $ctrlProc.Handle
     Start-Sleep -Milliseconds 700

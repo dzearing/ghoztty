@@ -291,6 +291,20 @@ $GuardTable = @(
             'src\apprt\win32\job_object.zig'
         )
     },
+    # The overview action (T708): the only thing that proves a bound
+    # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
+    # a focused viewer. Covers the harness, the forwarding decision it rides
+    # (viewer_accel) and the hero geometry its oracle reads.
+    [pscustomobject]@{
+        Name   = 'tab-overview-action'
+        Script = 'test\win32\tab-overview-action.ps1'
+        Stamp  = 'test\win32\tab-overview-action.stamp.json'
+        Covers = @(
+            'test\win32\tab-overview-action.ps1',
+            'src\apprt\win32\viewer_accel.zig',
+            'src\apprt\win32\hero_math.zig'
+        )
+    },
     # The viewer suite carries the browser-leak tripwire (T594): the only
     # thing that scores whether a test run handed a page to the user's real
     # browser, and it is not in the P1-P3 floor. The zig-side guard

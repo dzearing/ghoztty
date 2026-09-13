@@ -4888,12 +4888,11 @@ pub fn performViewerBindingAction(
         // (T682).
         .reset_window_size => self.resetToDefaultSize(),
 
-        // Deliberately a no-op on this platform (see `viewer_accel.forwards`),
-        // routed through App so there is exactly one place that decides what
-        // an overview means here.
-        .toggle_tab_overview => _ = self.app.performAction(.app, .toggle_tab_overview, {}) catch |err| {
-            log.err("viewer chord toggle_tab_overview failed err={}", .{err});
-        },
+        // The overview on this platform is hero mode (T708), and hero mode is
+        // window-scoped - so this takes the same route `toggle_hero_mode`
+        // does above rather than the App arm, which reaches a window through
+        // a core surface a viewer has not got.
+        .toggle_tab_overview => self.toggleHeroMode(),
 
         // The palette UI is owned by a terminal Surface, so it opens on one
         // of this window's terminals (the active tab's first, by preference).
