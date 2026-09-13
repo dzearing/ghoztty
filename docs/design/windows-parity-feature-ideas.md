@@ -284,3 +284,13 @@ as the digest that showed them.
 - Protect a pane from an accidental close (pin a pane so Ctrl+W asks first)
 - Tell me the instant a remote pane drops, and offer the way back (toast plus one-click reconnect)
 - A crash that files its own report (next launch offers the captured stack with one button to send)
+
+## 2026-09-13
+
+- A second window onto the same pane (split-mirror of one shell)
+- Move panes with the keyboard, not just a drag (keyboard half of rearrange mode)
+- Tab groups (colour-labelled, collapsible, persisted)
+- Click any crumb of the path to go there (working-directory breadcrumb in the pane header)
+- A taskbar badge when a background window wants you
+- A config reload that says what changed, and refuses a broken file without dropping you
+- Copy with the colours intact (HTML/RTF clipboard flavours)
