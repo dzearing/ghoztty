@@ -27274,3 +27274,33 @@ Twenty-one unarmed stampers remain, so T1511 stays open for batch 8 - five of
 them blocked behind T1513, T1514, T1515, T1516 and T1517, and `release-artifacts`
 behind the Docker precondition this box may not satisfy, rather than behind run
 time.
+
+## 2026-09-13 - Six more stamping harnesses can no longer record a crashed run as proof (T1511 batch 8)
+
+Batch 8 of the T1511 burn-down: `agent-autostart`, `gui-postmortem`,
+`orphan-notify`, `update-check`, `claude-integration` and `menu-bar` now
+dot-source `lib\TestScore.ps1` - which is what ARMS the run, so the
+`guard-due.ps1 update` child that writes the stamp refuses to write one over a
+body that unwound - reach `Complete-TestBody` before the stamp, and end in
+`Write-TestVerdict`.
+
+`claude-integration` and `menu-bar` run their foreground-leak checks AFTER the
+top-level `try`, so neither try could END in the marker and both grew a SCORING
+`catch` instead. `agent-autostart` had no passing-assertion counter at all - its
+verdict was a bare `ALL PASS` - and grew one; `gui-postmortem`'s verdict derives
+its passing count from its assertion counter minus its failures.
+
+Ceilings: C3 29 -> 28, C4 140 -> 134 and C5 21 -> 15 in
+`test\win32\asserted-nothing.ps1`, with `lib\BodyCompleteAudit.ps1` still a hard
+zero over six more files.
+
+Green: all six converted scripts run on the box, ALL PASS, each STAMPED by that
+run (26, 33, 13, 17, 87 and 81 assertions); the eight sweep audits the edits made
+due, all re-stamped; body-complete-audit and asserted-nothing (both modes,
+including `-TeethCheck`); `floor-lane -Lane all` ALL LANES PASS; ipc-p1/p2/p3 ALL
+PASS; `guard-due check` exits 0 with only the three pre-existing advisories.
+
+Fifteen unarmed stampers remain, so T1511 stays open for batch 9 - five of them
+blocked behind T1513, T1514, T1515, T1516 and T1517, and `release-artifacts`
+behind the Docker precondition this box may not satisfy, rather than behind run
+time.
