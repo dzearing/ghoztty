@@ -362,8 +362,17 @@ Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFina
 # pane-banner and activity-monitor. Four of the six run their foreground-leak
 # checks after the top-level try, so those tries grew a SCORING catch; the
 # other two end their body in the marker.
-$selfCeiling  = 128
-$stampCeiling = 9
+# 2026-09-13 (T1511, batch 10): 128 -> 125 and 9 -> 6. The last three stamping
+# harnesses this box can reach at HEAD - agent-upgrade, session-relaunch-notify
+# and update-real-msi. agent-upgrade runs its foreground-leak checks after the
+# top-level try, so that try grew a SCORING catch; session-relaunch-notify had
+# already hand-rolled one and needed only the marker and the shared verdict;
+# update-real-msi ends its body in the marker and carries its SKIP count into
+# the verdict, which keeps its "a skipped run must not stamp" rule intact. The
+# six that remain are each blocked on something other than the conversion:
+# T1513-T1517, and release-artifacts, which needs wixl and therefore Docker.
+$selfCeiling  = 125
+$stampCeiling = 6
 
 $ratchetSweep = @($sweep)
 if ($TeethCheck) {

@@ -90,6 +90,7 @@ $script:failures = 0
 $script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-relaunch-notify-$PID"
 
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 # T652: the "attached is not alive" oracle. Read its header before adding an
 # assertion about a restored pane.
@@ -1247,9 +1248,9 @@ Stop-TestProcs
     # file, on T655's first run - a bad cast in a manifest helper skipped arms
     # A-F and M outright and the script printed "ALL PASS (12)" and STAMPED the
     # session-relaunch guard. The suite-wide rule and its sweep live in
-    # lib\BodyCompleteAudit.ps1, but they only reach scripts scored by
-    # lib\TestScore.ps1 and this one still hand-rolls its verdict (T775), so it
-    # scores its own throw here.
+    # lib\BodyCompleteAudit.ps1. T1511 moved this script onto that scorer, and
+    # the leak checks below are part of the run too - so this try cannot END in
+    # `Complete-TestBody` and scores its own throw here instead.
     Assert "RUN COMPLETED (the body threw: $($_.Exception.Message))" $false
     Say ($_.ScriptStackTrace)
 } finally {
@@ -1278,6 +1279,7 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 # recorded command - is invisible to every lane and to P1-P3, so without this a
 # Remote.zig edit that broke it would surface at the user's next reboot. Red
 # leaves the stamp alone, so a failure stays due.
+Complete-TestBody
 if ($script:failures -eq 0) {
     $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts\guard-due.ps1') `
@@ -1285,5 +1287,4 @@ if ($script:failures -eq 0) {
 }
 
 Say ""
-if ($script:failures -eq 0) { Say "SESSION-RELAUNCH-NOTIFY: ALL PASS ($script:passes)"; exit 0 }
-else { Say "SESSION-RELAUNCH-NOTIFY: $script:failures FAILURE(S) / $script:passes passed"; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'SESSION-RELAUNCH-NOTIFY'

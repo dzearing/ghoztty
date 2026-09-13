@@ -55,6 +55,7 @@ $realLocalAppData = $env:LOCALAPPDATA
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 # The throwaway product identity, its packages and its processes - shared with
 # test\win32\update-graceful.ps1, which drives the same machinery through the
 # graceful close-and-reopen this harness stubs out.
@@ -341,6 +342,8 @@ $userExeVersionAfter = if (Test-Path (Join-Path $userInstallDir 'ghoztty.exe')) 
 } else { 0 }
 Assert ($userExeVersionAfter -eq $userExeVersionBefore) 'E: the user''s ghoztty.exe was not rewritten'
 
+Complete-TestBody
+
 } finally {
     if (-not $KeepInstall) {
         Write-Host "`n-- cleanup --"
@@ -367,6 +370,4 @@ if ($script:fail -eq 0 -and $script:skip -eq 0) {
         ForEach-Object { Write-Host "  $_" }
 }
 
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass) checks, $($script:skip) skipped)" }
-else { Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skip -Unit 'checks'

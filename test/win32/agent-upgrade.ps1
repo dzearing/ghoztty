@@ -117,6 +117,7 @@ $script:failures = 0
 $script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-agent-upgrade-$PID"
 
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 # Write-Host, never the pipeline: a helper that asserts AND returns a value
 # would otherwise hand its caller an array of @('  PASS ...', $realValue), and
@@ -1155,6 +1156,14 @@ $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS = $null
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 Stop-TestProcs
 
+} catch {
+    # T1511: the foreground-leak checks below are part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead -
+    # the other half of the same rule: an unwind here can no longer reach a
+    # green verdict or write a stamp.
+    $script:failures++
+    Say "  FAIL the run terminated: $($_.Exception.Message)"
+    Say "       at $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
 } finally {
     Remove-TestDesktop
     Stop-TestProcs
@@ -1196,6 +1205,7 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 # upgrade DECISION to a run of the only thing that measures it end to end.
 # A clean green run stamps the code it covers; a red one leaves the stamp alone,
 # so red stays due.
+Complete-TestBody
 if ($script:failures -eq 0 -and -not $NegativeControl) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
@@ -1203,5 +1213,4 @@ if ($script:failures -eq 0 -and -not $NegativeControl) {
 }
 
 Say ""
-if ($script:failures -eq 0) { Say "AGENT-UPGRADE: ALL PASS ($script:passes)"; exit 0 }
-else { Say "AGENT-UPGRADE: $script:failures FAILURE(S) / $script:passes passed"; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'AGENT-UPGRADE'

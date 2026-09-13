@@ -27334,3 +27334,45 @@ blocked behind T1513, T1514, T1515, T1516 and T1517, and `release-artifacts`
 behind the Docker precondition this box may not satisfy, rather than behind run
 time. The three left that this box can reach are `agent-upgrade`,
 `session-relaunch-notify` and `update-real-msi`.
+
+## 2026-09-13 - The last three stamping harnesses this box can reach are on the shared scorer (T1511 batch 10)
+
+An acceptance script leaves a stamp behind saying "the files this covers were
+proven against the code as it stands now", and that stamp is what stops the loop
+being told to run it again. The last three that wrote it over an unwound run and
+that this box can actually re-stamp are converted: `agent-upgrade`,
+`session-relaunch-notify` and `update-real-msi`. All three now dot-source
+`lib\TestScore.ps1` - which is what arms the run - reach `Complete-TestBody`
+before the stamp, and end in one `Write-TestVerdict` call.
+
+Each needed a different one of the three honest shapes. `agent-upgrade` runs its
+foreground-leak checks after the top-level `try`, so that try grew a SCORING
+catch. `session-relaunch-notify` had already hand-rolled one for itself in T655
+and needed only the marker and the shared verdict, which retires the comment
+saying it scores its own throw because nothing else would.
+`update-real-msi` ends its body in the marker directly and passes its SKIP count
+through to the verdict, so its own older rule - a run that skipped proves nothing
+and must not stamp - is unchanged. The ratchets in `asserted-nothing.ps1` come
+down with them: C4 128 -> 125 and C5 9 -> 6.
+
+Green: all three run on the box, ALL PASS, each STAMPED by that run (139, 131 and
+30 assertions); the ten sweep audits the edits made due, all re-stamped;
+body-complete-audit and asserted-nothing (both modes, including `-TeethCheck`);
+`floor-lane -Lane all` ALL LANES PASS; ipc-p1/p2/p3 ALL PASS; `guard-due check`
+exits 0 with only the three pre-existing advisories.
+
+`agent-upgrade`'s FIRST run was `1 FAILURE(S) (136 assertions passed)` at N3 -
+`Wait-Dialog 60` timed out on a box that had just finished four zig lanes - and
+an immediate re-run of the same bytes was `ALL PASS (139 assertions)`. The turn's
+edits were scoring-only, so nothing under test moved between them. Filed as
+**T1518**: a control that fails should be able to say whether the app never
+reached the update decision or reached it and raised no dialog, rather than
+costing the next turn a six-minute re-run to find out.
+
+**The burn-down has run out of runway on this seat.** Six unarmed stampers
+remain and not one can reach a green stamping run here at HEAD: five are blocked
+behind T1513, T1514, T1515, T1516 and T1517, and `release-artifacts` behind the
+Docker precondition this box may not satisfy. Those five are now `deps:` on
+T1511, so it leaves the queue until they close instead of being handed out to a
+turn that cannot move it - and the table naming what each one waits on is in the
+task file rather than in this entry.
