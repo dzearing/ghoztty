@@ -9,6 +9,40 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-12: T1510 (T1511, T1512 filed) - **"a run that crashed halfway may not
+  say ALL PASS" was a rule for a sixth of the suite; the other 198 scripts are
+  now counted, capped, and have a worked example to convert against.** T1039
+  made the rule structural inside `lib\TestScore.ps1`, which only decides for a
+  script that calls `Write-TestVerdict`; the rest print their own verdict from
+  their own `$script:fail -eq 0` check, which an unwind leaves at 0. Two new
+  kinds in `lib\AssertedNothingAudit.ps1` name them: `self-verdict` (198 files)
+  and `unarmed-stamp` (79 files that also write a T783 guard stamp, which is the
+  half that outlives the red line - the stamping child inherits no
+  `GHOZTTY_TEST_BODY` because nothing armed the run, so a crashed run records the
+  covered code as proven). Both sit under a ceiling in sections C4/C5 of
+  `asserted-nothing.ps1`, and `-TeethCheck` proves each can go red against a real
+  fixture put through the analyzer rather than a hand-made finding object. The
+  shape this was all found on is now a demonstrated case on a real process -
+  `body-complete-audit.ps1` A9b-A9d, where assigning to `$home` (read-only)
+  unwinds the body and the verdict reads `RUN DID NOT FINISH (14 assertions
+  passed)`, exit 2. And `viewer-feedback-capture.ps1`, the script it was measured
+  on, is converted as the worked example, proven BOTH ways on the box: green at
+  92 assertions with its guard stamped, and - with the `$home` line put back -
+  `1 FAILURE(S)`, exit 1, stamp file untouched, where before the conversion the
+  same injection printed `ALL PASS (14)` and stamped. Its top-level try grew a
+  scoring `catch` rather than a trailing marker, because assertions run after its
+  `finally`; that is the pattern the batches copy. Green: floor-lane -Lane all
+  ALL LANES PASS, ipc-p1/p2/p3 ALL PASS, asserted-nothing (both modes),
+  body-complete-audit, viewer-feedback-capture, and the eight audits the edits
+  made due (isolation-meta, launch-preflight, verdict-exit, cleanslate,
+  stderr-launch-capture, stderr-capture, desktop-launch, command-resolve) all
+  green and re-stamped; `guard-due check` exits 0. **Not done, and split rather
+  than hidden**: the conversion is 198 files that each have to be RUN green, most
+  of them GUI scripts taking minutes. **T1511** takes the 79 that stamp (P1),
+  **T1512** the remainder plus promoting the three kinds into
+  `Get-AssertedNothingHardKinds`, with **T775** folding into it. The ceilings are
+  printed on every run, so the gap is a number that has to fall.
+
 - 2026-09-12: T703 (T1506 filed) - **the polite "may I steal this session?"
   handshake was written in three design docs and implemented nowhere, and it is
   now written down the way the code actually behaves.** `protocol.Attached.

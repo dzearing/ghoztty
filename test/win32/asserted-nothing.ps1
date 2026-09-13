@@ -16,13 +16,16 @@
          is named.
 
       C. The sweep over `test\win32\*.ps1`: no acceptance script may still have
-         a `zero-count` or `early-green` path. `uncounted-final` is reported
-         with its number rather than asserted - converting those onto the
-         shared scorer is T775.
+         a `zero-count` or `early-green` path. Three kinds are reported under a
+         RATCHET rather than asserted at zero, because converting the suite is
+         a burn-down and not a single change: `uncounted-final` (T775),
+         `self-verdict` and `unarmed-stamp` (T1510). The ceiling is what stops
+         the class GROWING while it falls.
 
-    `-TeethCheck` proves the section-C assertion can fail: it injects a
-    synthesized violator and requires the sweep to go red. Run it after any
-    change to the analyzer.
+    `-TeethCheck` proves the section-C assertions can fail: it injects a
+    synthesized violator - a real fixture put through the analyzer, not a
+    hand-made finding - and requires each of the three to go red. Run it after
+    any change to the analyzer.
 
     One `ALL PASS` / `N FAILURE(S)` line last, per the house convention.
 
@@ -128,13 +131,22 @@ function Get-Kinds([string[]]$Text) {
         ForEach-Object { $_.Kind })
 }
 
+# The fixtures below that assert "clean" are asking about the ENFORCED kinds -
+# they are hand-written verdict lines on purpose, so `self-verdict` is true of
+# them and says nothing about the shape each one is there to pin down. The
+# T1510 kinds have their own fixtures (B9-B13) and their own ratchets (C4/C5).
+function Get-EnforcedKinds([string[]]$Text) {
+    $adoption = @('self-verdict', 'unarmed-stamp')
+    return @(Get-Kinds $Text | Where-Object { $adoption -notcontains $_ })
+}
+
 $clean = @(
     '$script:pass = 0'
     'if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)"; exit 0 }'
     'Write-Host "$script:fail FAILURE(S)"'
     'exit 1'
 )
-AssertEq 'B1 a counted final verdict is clean' 0 (Get-Kinds $clean).Count
+AssertEq 'B1 a counted final verdict is clean' 0 (Get-EnforcedKinds $clean).Count
 
 $zero = @(
     'if ($noBuild) {'
@@ -163,7 +175,7 @@ $earlyRed = @(
     '}'
     'Write-Host "ALL PASS ($script:pass assertions)"'
 )
-AssertEq 'B4 the same branch exiting nonzero is clean' 0 (Get-Kinds $earlyRed).Count
+AssertEq 'B4 the same branch exiting nonzero is clean' 0 (Get-EnforcedKinds $earlyRed).Count
 
 $uncounted = @(
     'if ($script:failures -eq 0) { "ALL PASS"; exit 0 } else { "$($script:failures) FAILURE(S)"; exit 1 }'
@@ -184,13 +196,63 @@ $operand = @(
     'if ($fail -eq 0) { "ALL PASS ($pass assertions)"; exit 0 }'
     'exit 1'
 )
-AssertEq 'B7 a compared ALL PASS is not read as a verdict' 0 (Get-Kinds $operand).Count
+AssertEq 'B7 a compared ALL PASS is not read as a verdict' 0 (Get-EnforcedKinds $operand).Count
 
 $exempt = @(
     '# asserted-nothing-audit: a helper process with nothing to score'
     'if ($x) { "ALL PASS (0 checks)"; exit 0 }'
 )
 AssertEq 'B8 the stated-intent marker exempts a file' 0 (Get-Kinds $exempt).Count
+
+# --- T1510: the two kinds that say whether T1039's rule reaches a file -------
+# A COUNTED hand-rolled verdict is still a hand-rolled verdict: the count is of
+# the assertions that ran, and an unwound run has a truthful number in front of
+# a green word. That is the whole reason this kind is not `uncounted-final`.
+$countedSelf = @(
+    'if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }'
+    'else { Write-Host "$script:fail FAILURE(S)"; exit 1 }'
+)
+Assert 'B9 a counted hand-rolled verdict is still reported as self-verdict' (
+    (Get-Kinds $countedSelf) -contains 'self-verdict')
+Assert 'B9b and is NOT reported as uncounted-final' (
+    (Get-Kinds $countedSelf) -notcontains 'uncounted-final')
+
+AssertEq 'B10 a script on the shared scorer has no self-verdict' 0 (
+    @((Get-Kinds $scored) | Where-Object { $_ -eq 'self-verdict' })).Count
+
+$unarmedStamp = @(
+    'if ($script:fail -eq 0) {'
+    '    & powershell -NoProfile -File (Join-Path $repo "scripts\guard-due.ps1") `'
+    '        update -Guard some-harness -Repo $repo'
+    '}'
+    'if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass)" }'
+)
+Assert 'B11 a guard stamp written by an unarmed script is reported' (
+    (Get-Kinds $unarmedStamp) -contains 'unarmed-stamp')
+
+$armedStamp = @(
+    '. (Join-Path $PSScriptRoot "lib\TestScore.ps1")'
+    'Complete-TestBody'
+    'if ($script:fail -eq 0) {'
+    '    & powershell -NoProfile -File (Join-Path $repo "scripts\guard-due.ps1") `'
+    '        update -Guard some-harness -Repo $repo'
+    '}'
+    'Write-TestVerdict -Pass $script:pass -Fail $script:fail'
+)
+AssertEq 'B12 an armed script that stamps has nothing to report' 0 (Get-Kinds $armedStamp).Count
+
+# The comment that most often names the scorer is the one explaining why a
+# script does NOT use it, so a mention in a comment must not count as arming.
+$commentOnlyArm = @(
+    '# this script scores itself rather than through lib\TestScore.ps1'
+    'if ($script:fail -eq 0) {'
+    '    & powershell -NoProfile -File (Join-Path $repo "scripts\guard-due.ps1") `'
+    '        update -Guard some-harness -Repo $repo'
+    '}'
+    'if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass)" }'
+)
+Assert 'B13 a commented mention of the scorer does not count as armed' (
+    (Get-Kinds $commentOnlyArm) -contains 'unarmed-stamp')
 
 # ===========================================================================
 Write-Host ''
@@ -240,6 +302,49 @@ Write-Host "  ($($uncountedFinal.Count) script(s) still print an UNCOUNTED final
 # down past where T962 left it rather than up to where the drift landed.
 $ceiling = 36
 Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFinal.Count -le $ceiling)
+
+# T1510's ratchets, same contract as C3 and for a sharper reason: until a
+# script's verdict goes through the scorer, T1039's "a run that unwound is not
+# a pass" rule does not reach it AT ALL, and if it also stamps its guard the
+# damage outlives the run. LOWER THESE as scripts convert; never raise one.
+# 2026-09-12 (T1510): set at the measured state, minus the one script converted
+# in the same commit (viewer-feedback-capture, where the defect was observed).
+$selfCeiling  = 198
+$stampCeiling = 79
+
+$ratchetSweep = @($sweep)
+if ($TeethCheck) {
+    # A REAL violator, analyzed - not a hand-made finding object. The fixture
+    # is run through `Get-AssertedNothingFindings` and its findings joined to
+    # the sweep, and the ceilings are pinned to what the real suite scored, so
+    # a correctly wired assertion must go red. Injecting a finding without
+    # moving the ceiling would prove nothing (one more is still under 198), and
+    # moving the ceiling without injecting would prove only that `-le` works.
+    $teethFixture = @(
+        'if ($script:fail -eq 0) {'
+        '    & powershell -NoProfile -File (Join-Path $repo "scripts\guard-due.ps1") `'
+        '        update -Guard synthetic-violator -Repo $repo'
+        '}'
+        'if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }'
+    )
+    $ratchetSweep = @($sweep) + @(Get-AssertedNothingFindings -Path 'synthetic-violator.ps1' -Text $teethFixture)
+    $selfCeiling  = @($sweep | Where-Object { $_.Kind -eq 'self-verdict' }).Count
+    $stampCeiling = @($sweep | Where-Object { $_.Kind -eq 'unarmed-stamp' }).Count
+    Write-Host '  TEETH CHECK: one synthesized violator is in the sweep, with both ceilings at the real count'
+}
+
+$selfVerdict       = @($ratchetSweep | Where-Object { $_.Kind -eq 'self-verdict' })
+$unarmedStampSweep = @($ratchetSweep | Where-Object { $_.Kind -eq 'unarmed-stamp' })
+Write-Host "  ($($selfVerdict.Count) script(s) still PRINT their own verdict - T1039's unwind rule does not reach them)"
+Write-Host "  ($($unarmedStampSweep.Count) script(s) stamp a guard while unarmed - an unwound run still records the files as proven)"
+
+if ($TeethCheck) {
+    Assert 'C4 goes red when one more script prints its own verdict' ($selfVerdict.Count -gt $selfCeiling)
+    Assert 'C5 goes red when one more unarmed script stamps its guard' ($unarmedStampSweep.Count -gt $stampCeiling)
+} else {
+    Assert "C4 the self-verdict count did not grow past $selfCeiling" ($selfVerdict.Count -le $selfCeiling)
+    Assert "C5 the unarmed-stamp count did not grow past $stampCeiling" ($unarmedStampSweep.Count -le $stampCeiling)
+}
 
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 

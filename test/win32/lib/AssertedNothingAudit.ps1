@@ -18,15 +18,37 @@
 #                     different, entirely ordinary reason - a held port, a box
 #                     without a usable PATH entry, a missing staging build.
 #
-# One kind is reported but NOT yet enforced:
+# Three kinds are reported under a RATCHET but NOT yet enforced - the count may
+# fall, never rise, and the acceptance script prints the number rather than a
+# list of names that would be pure noise today:
 #
 #   * `uncounted-final` - the final verdict prints no assertion count at all
 #                     (`"ALL PASS"`), so neither a human nor a machine can tell
 #                     a full run from an empty one by reading it. 50-odd scripts
 #                     are in this state; converting them onto `Write-TestVerdict`
-#                     is T775's job, and the acceptance script prints the number
-#                     so the ratchet is visible rather than asserting a list of
-#                     names that would be pure noise today.
+#                     is T775's job.
+#
+#   * `self-verdict`  - (T1510) the final verdict is printed by the SCRIPT, from
+#                     its own `if ($script:fail -eq 0)` check, rather than by
+#                     `Write-TestVerdict`. This is the superset of the kind
+#                     above, and it is the one that says whether T1039's rule -
+#                     a run that UNWOUND may not print a pass - reaches the file
+#                     at all. It does not: a hand-rolled check reads a failure
+#                     counter an unwind leaves untouched, so the run that
+#                     stopped a third of the way through prints a green line
+#                     with an honest-looking count in front of it. Measured on
+#                     `viewer-feedback-capture.ps1`: an assignment to `$home`
+#                     (read-only) unwound the body, and the script printed
+#                     `ALL PASS (14)` over a 92-assertion sweep.
+#
+#   * `unarmed-stamp` - (T1510) the script writes a guard stamp (T783) without
+#                     dot-sourcing `lib\TestScore.ps1`. The stamp gate is
+#                     enforced in the CHILD process that writes it, from the
+#                     inherited `GHOZTTY_TEST_BODY`; a script that never arms
+#                     publishes nothing, so `guard-due.ps1 update` stamps the
+#                     covered files as proven over a run that unwound. This is
+#                     the half that outlives the red line, and 78 scripts have
+#                     it today.
 #
 # Exemption, narrow and stated: an `# asserted-nothing-audit: <reason>` marker
 # anywhere in the file, the same state-your-intent convention the
@@ -196,17 +218,60 @@ function Get-AssertedNothingFindings {
         }
     }
 
-    if (-not (Test-ScoreCountsAssertions $final) -and -not (Test-ScoreUsesSharedScorer $parsed.Ast)) {
+    $scored = Test-ScoreUsesSharedScorer $parsed.Ast
+
+    if (-not (Test-ScoreCountsAssertions $final) -and -not $scored) {
         [void]$findings.Add([pscustomobject]@{
             Path = $Path; Line = $final.Extent.StartLineNumber; Kind = 'uncounted-final'
             Detail = "the final verdict names no assertion count: $($final.Extent.Text.Trim())" })
     }
 
+    # T1510. The superset of `uncounted-final`, and the kind that says whether
+    # T1039's rule reaches this file at all: a verdict the script PRINTS ITSELF
+    # is decided by its own `$script:fail -eq 0` check, which an unwound run
+    # leaves at 0. A count in that line does not help - the count is of the
+    # assertions that DID run, and the run that stopped a third of the way
+    # through has an honest-looking number in front of a green word.
+    if (-not $scored) {
+        [void]$findings.Add([pscustomobject]@{
+            Path = $Path; Line = $final.Extent.StartLineNumber; Kind = 'self-verdict'
+            Detail = "the final verdict is printed by the script rather than by Write-TestVerdict, so an unwound run still reaches it green: $($final.Extent.Text.Trim())" })
+    }
+
+    if (-not (Test-ScoreArmed $lines) -and (Test-ScoreWritesGuardStamp $lines)) {
+        [void]$findings.Add([pscustomobject]@{
+            Path = $Path; Line = 1; Kind = 'unarmed-stamp'
+            Detail = "this script writes a guard stamp but never dot-sources lib\TestScore.ps1, so the stamping child process reads no GHOZTTY_TEST_BODY and records the covered files as proven even when the run unwound" })
+    }
+
     return $findings
 }
 
-# The kinds that are the defect and must stay at zero. `uncounted-final` is
-# reported and counted, not enforced - see the header.
+# Is the run ARMED - does the file dot-source the scorer, which is what
+# publishes `GHOZTTY_TEST_BODY` to the child process that writes the stamp? A
+# COMMENT naming the file does not arm anything, and the comment most likely to
+# name it is the one explaining why a script hand-rolls its scoring instead.
+function Test-ScoreArmed([string[]]$Lines) {
+    foreach ($l in $Lines) {
+        if ($l -match '^\s*#') { continue }
+        if ($l -match 'TestScore\.ps1') { return $true }
+    }
+    return $false
+}
+
+# Does this script record a guard stamp (T783)? Read as text: the call is a
+# child `powershell -File ... guard-due.ps1 update -Guard <name>` spread over a
+# continuation line in every script that has one, so the command name and its
+# arguments are not one AST node to interrogate.
+function Test-ScoreWritesGuardStamp([string[]]$Lines) {
+    $joined = ($Lines -join "`n")
+    if ($joined -notmatch 'guard-due\.ps1') { return $false }
+    return ($joined -match '(?m)^\s*update\s+-Guard\b' -or $joined -match 'guard-due\.ps1[^\n]*\bupdate\b')
+}
+
+# The kinds that are the defect and must stay at zero. `uncounted-final`,
+# `self-verdict` and `unarmed-stamp` are reported and counted under a ratchet,
+# not enforced - see the header.
 function Get-AssertedNothingHardKinds { return @('zero-count', 'early-green', 'parse-error') }
 
 # Sweep the acceptance scripts. NOT recursive, for the reason VerdictExitAudit

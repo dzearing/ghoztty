@@ -96,6 +96,13 @@ Set-ComposerSurface 'richedit'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1510: the shared scorer, which is also what ARMS the run - a body that
+# unwinds before `Complete-TestBody` may not print a pass and may not stamp.
+# This script is where that defect was measured: an assignment to `$home`
+# (read-only) unwound the body two thirds of the way through, and the run
+# printed `ALL PASS (14)` over a 92-assertion sweep and stamped its guard.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 Add-Type -AssemblyName System.Windows.Forms
 
 # The window-frame oracle for section I. Two answers rather than one, so the
@@ -859,6 +866,15 @@ try {
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
+} catch {
+    # T1510. Without this arm a statement-terminating error anywhere above -
+    # the `$home` assignment that was actually here, `$null.Trim()`, a null
+    # index - unwinds to the `finally`, and the run lands on the verdict with
+    # the failure count untouched. The foreground-leak checks below still have
+    # to run, so this scores the throw rather than rethrowing it, which is also
+    # the truer answer: the harness broke, and that is a failure of the run.
+    Assert $false "the run threw and did not finish its scenarios: $($_.Exception.Message)"
+    Write-Host $_.ScriptStackTrace
 } finally {
     Remove-TestDesktop
     Stop-RepoInstances
@@ -872,11 +888,11 @@ Assert ($leaked.Count -eq 0) "no test-desktop app ever became foreground on the 
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1
 # can answer "has this harness been run against the selector as it now stands?".
 # Red leaves the stamp alone - red stays due.
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:fail -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard viewer-feedback-capture -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)"; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'VIEWER FEEDBACK CAPTURE ACCEPTANCE'

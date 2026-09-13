@@ -155,6 +155,29 @@ Assert 'A8 the T329 shape (a .Trim() on an empty file) is caught by the same rul
     $r.Last -match 'ACTIVITY MONITOR DIALED ACCEPTANCE: RUN DID NOT FINISH \(27 assertions passed\)')
 AssertEq 'A9 and exits 2 where it used to exit 0' 2 $r.Code
 
+# The T1510 shape, also the original rather than a stand-in: `$home` is a
+# READ-ONLY automatic variable, so a script that reaches for it as an ordinary
+# local name - which is a perfectly natural thing to call the folder a fixture
+# lives in - gets a statement-terminating error out of an assignment. Found on
+# `viewer-feedback-capture.ps1`, where it unwound the body two thirds of the
+# way through and the script printed `ALL PASS (14)` over a 92-assertion sweep
+# and stamped its guard. Worth its own case because the failing statement looks
+# like nothing at all: no call, no operand, no cast.
+$r = Invoke-Fixture @'
+$pass = 14
+try {
+    $home = 'C:\somewhere'
+    $pass = 92
+    Complete-TestBody
+} finally { Write-Host '  cleanup ran' }
+Write-TestVerdict -Pass $pass -Fail 0 -Label 'VIEWER FEEDBACK CAPTURE ACCEPTANCE'
+'@ 'a-readonly-auto'
+Assert 'A9b assigning to a read-only automatic variable is caught by the same rule' (
+    $r.Last -match 'VIEWER FEEDBACK CAPTURE ACCEPTANCE: RUN DID NOT FINISH \(14 assertions passed\)')
+AssertEq 'A9c and exits 2 where it used to exit 0 under ALL PASS (14)' 2 $r.Code
+Assert 'A9d and the count it prints is the honest one - the assertions that DID run' (
+    $r.Last -notmatch '92')
+
 # The other verdicts must keep their own wording: this rule only ever speaks
 # over a verdict that would otherwise be GREEN.
 $r = Invoke-Fixture 'Write-TestVerdict -Pass 4 -Fail 2' 'a-fail'

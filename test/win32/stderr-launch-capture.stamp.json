@@ -1,9 +1,11 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-12T18:21:38-07:00",
-    "commit":  "19b485d08",
+    "generated":  "2026-09-12T18:43:47-07:00",
+    "commit":  "07513b4a7",
     "uncommitted":  [
+                        "test/win32/asserted-nothing.ps1",
+                        "test/win32/body-complete-audit.ps1",
                         "test/win32/viewer-feedback-capture.ps1"
                     ],
     "files":  {
@@ -32,10 +34,10 @@
                   "test/win32/agent-shell-integration.ps1":  "ebc70342790916e10144a3a565cc02675bbc7665ed48aaf46f0e5e331ca96611",
                   "test/win32/agent-upgrade.ps1":  "ecaaf13ebec603ee41c60bc061b299380821302c92f31354e1bf0ae60d290842",
                   "test/win32/agent-user-env.ps1":  "7ea19bc9332a520cec15cf4ff3c2b40a2c1daa7968c5a6bf9951d4c3151e9df3",
-                  "test/win32/asserted-nothing.ps1":  "3a930fa9a26bdf5ed95254373cb55c047d3f803d5cc413059ed94391d19126ed",
+                  "test/win32/asserted-nothing.ps1":  "c105168631d021b5d83a54d86361428cc067aa86d6246bb903fd304c2aa5915c",
                   "test/win32/auto-launch-cwd.ps1":  "eec10c5396d125e017edde1280851d1fce687337742a64ca5f34da9eee36bec3",
                   "test/win32/banner-resize-repaint.ps1":  "499fac53076f7641063f8ce3dab59a859ee9a947ce44ca6f2b05b08767c677f8",
-                  "test/win32/body-complete-audit.ps1":  "4eed0de529dad2bd28db2803a83f90ed800afb4726599ce225784dd229231540",
+                  "test/win32/body-complete-audit.ps1":  "ad5462f3989f2efbd5f3447b4fa9dd0cf5d56d69a89d7730816c7ad2baf4fc4f",
                   "test/win32/build-cache.ps1":  "3f99acf99163823a5b1393a03cbad8fab16f78837408b66744a02de777fede7e",
                   "test/win32/build-fresh-guard.ps1":  "e104706bfed3e0183b462abdf421b820556f5b1cb0552909c9d3c8e939870e65",
                   "test/win32/build-locked-artifact.ps1":  "5b9a47f783f56d1ecb35367bb360416a4798c04a165b63b2949a782a972e48a9",
@@ -287,7 +289,7 @@
                   "test/win32/viewer-error-card.ps1":  "bc486ca60cf4eaed7e2bb772a8e6dc80818ef04696f86ea7ea054238dacf2f4c",
                   "test/win32/viewer-feedback.ps1":  "d140744a28a0f13e0d6d7bcd3e58ba9f9cd4e5bc66137d104b8b0bfcb2c8dd65",
                   "test/win32/viewer-feedback-alpha.ps1":  "31c29c40f7afe3f8f06b028f05adc1dd82d19dd2537d5a580c632fbc3c4de2af",
-                  "test/win32/viewer-feedback-capture.ps1":  "a9f5c9af5f22779ef454d996e57cff8dada37e526cfe11df09a1acc90a52ce27",
+                  "test/win32/viewer-feedback-capture.ps1":  "83e46b33ef57964c51f711170eb675af06eb24e98eef58723b276d2c7bff83f7",
                   "test/win32/viewer-feedback-carousel.ps1":  "1314ea54a3791488a2a4eb2b3957ed3ba407a3ebdaa0dbc0a823ff9764574155",
                   "test/win32/viewer-feedback-images.ps1":  "94b4f8872030210fa2350ff841f37dc8550eb19ac120638753be2f429b402f2f",
                   "test/win32/viewer-feedback-utf16.ps1":  "0fc675f98d693d20c7f1db7510d3f60d0b284b2faa97ff52ca3954bcc058e88a",
