@@ -1,10 +1,10 @@
 {
     "guard":  "launch-preflight",
     "script":  "test/win32/launch-preflight-audit.ps1",
-    "generated":  "2026-09-12T17:39:44-07:00",
-    "commit":  "c3592a358",
+    "generated":  "2026-09-12T18:20:59-07:00",
+    "commit":  "19b485d08",
     "uncommitted":  [
-                        "test/win32/ipc-remote.ps1"
+                        "test/win32/viewer-feedback-capture.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "a3f98a551352e27d1ad9c1745e222757dc4b802efc5638fbe6ea4d3f621b6307",
@@ -331,7 +331,7 @@
                   "test/win32/viewer-error-card.ps1":  "bc486ca60cf4eaed7e2bb772a8e6dc80818ef04696f86ea7ea054238dacf2f4c",
                   "test/win32/viewer-feedback.ps1":  "d140744a28a0f13e0d6d7bcd3e58ba9f9cd4e5bc66137d104b8b0bfcb2c8dd65",
                   "test/win32/viewer-feedback-alpha.ps1":  "31c29c40f7afe3f8f06b028f05adc1dd82d19dd2537d5a580c632fbc3c4de2af",
-                  "test/win32/viewer-feedback-capture.ps1":  "a5302cb0c5519b5f966d12622a3dd1fffc7b8ee3f427ed82304a3eb46d6810ce",
+                  "test/win32/viewer-feedback-capture.ps1":  "a9f5c9af5f22779ef454d996e57cff8dada37e526cfe11df09a1acc90a52ce27",
                   "test/win32/viewer-feedback-carousel.ps1":  "1314ea54a3791488a2a4eb2b3957ed3ba407a3ebdaa0dbc0a823ff9764574155",
                   "test/win32/viewer-feedback-images.ps1":  "94b4f8872030210fa2350ff841f37dc8550eb19ac120638753be2f429b402f2f",
                   "test/win32/viewer-feedback-utf16.ps1":  "0fc675f98d693d20c7f1db7510d3f60d0b284b2faa97ff52ca3954bcc058e88a",

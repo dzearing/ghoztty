@@ -806,6 +806,16 @@ pub extern "user32" fn GetMonitorInfoW(
     lpmi: *MONITORINFO,
 ) callconv(.winapi) i32;
 
+/// Walks the desktop's monitors. `hdc`/`lprcClip` are null here — we want every
+/// monitor on the virtual screen, not the ones intersecting some device
+/// context — and the callback returns 0 to stop early.
+pub extern "user32" fn EnumDisplayMonitors(
+    hdc: ?HDC,
+    lprcClip: ?*const RECT,
+    lpfnEnum: *const fn (?HMONITOR, ?HDC, *RECT, isize) callconv(.winapi) i32,
+    dwData: isize,
+) callconv(.winapi) i32;
+
 pub extern "user32" fn IsZoomed(
     hWnd: HWND,
 ) callconv(.winapi) i32;

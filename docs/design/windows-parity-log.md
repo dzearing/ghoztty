@@ -26927,3 +26927,42 @@ every acceptance script drives logs only to a stderr nobody captures. Reading on
 `log.warn` line above cost a bespoke repro that pre-launches the app with
 `-RedirectStandardError`. The card for T1507 said the answer was in
 `%LOCALAPPDATA%\ghoztty[-debug]\ghoztty.log`; that file has never existed.
+## 2026-09-12 - A screenshot starts on the screen you are reporting from (T706)
+
+Start a screenshot from the keyboard on a two-monitor desk and the crosshair
+appeared wherever the mouse pointer happened to be parked - which, for somebody
+working from the keyboard, is a screen they have not touched all day. The hint
+card went with it. Both now start on the monitor holding the pane the report is
+about.
+
+The rule is pure and lives with the rest of the selector's geometry:
+`region_select.homeMonitor(monitors, owner, pointer, bounds)` takes the owner
+window's screen when there is an owner, the pointer's when there is not, and the
+whole virtual screen when it has neither - with "the monitor a window is on"
+spelled out (largest overlap, nearest to its middle when it overlaps nothing) so
+it is testable without a second screen plugged in. `RegionSelector` supplies the
+enumeration: `EnumDisplayMonitors` for the list, the owner's extended frame
+bounds, and `GetCursorPos` for the fallback.
+
+The pointer is still exactly right for a mouse capture, and nothing about a
+mouse capture changes: the owner window is on the screen the user is looking at
+whenever a pointer capture would have agreed, so the new answer is never the
+worse one.
+
+Proving it on the box needed a gesture the background test desktop can make, and
+it cannot move a pointer at all (T233). So section J of
+`test\win32\viewer-feedback-capture.ps1` proves it by moving the WINDOW: parked
+at the left end of the desktop the caret is announced at 1920,1080, parked at the
+right end it is 5760,1080 - the centres of the two real monitors on this box,
+with the pointer untouched in between. `capture=begin` now carries
+`home=<rect> source=owner|pointer|desktop`, which is both the oracle and the
+line that makes a multi-monitor report readable. ALL PASS (92); four floor lanes
+and P1-P3 green.
+
+**T1510** filed on the way past, and it is worth reading. Writing that arm hit a
+PowerShell error mid-run - `$home` is read-only - and the script skipped 78 of
+its 92 assertions, printed `ALL PASS (14)`, and STAMPED its guard. That is
+exactly the defect T1039 fixed; T1039's fix lives behind the shared scorer, and
+**200 of the 232 scripts in `test\win32` print their own verdict line instead**,
+80 of them stamping a guard from the same branch. A sixth of the suite is
+covered. Only reading the transcript caught it here.

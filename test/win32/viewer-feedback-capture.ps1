@@ -43,6 +43,11 @@
 #      a screen reader can reach, and it happens to be the one handle a
 #      background-desktop script has on text that is otherwise only painted.
 #
+#   J. THE CAPTURE STARTS ON THE PANE'S MONITOR (T706), not on whichever screen
+#      the mouse pointer happens to be parked on. The window is moved from one
+#      end of the desktop to the other with no pointer motion anywhere, and the
+#      announced caret follows it.
+#
 # ORACLES. This runs on the BACKGROUND test desktop, where SendInput and
 # CopyFromScreen are dead (T233), so nothing here looks at painted pixels and
 # nothing here moves a real mouse. Instead:
@@ -250,11 +255,21 @@ function Wait-FeedbackClosed($errlog, $paneId) {
 function Get-CaptureTally($errlog) {
     $begin = 0; $done = 0; $cancel = 0
     $lastRect = $null
+    $homeRect = $null
     foreach ($line in (Get-Content $errlog -ErrorAction SilentlyContinue)) {
         if ($line -match 'viewer feedback capture=begin bounds=(-?\d+),(-?\d+) (\d+)x(\d+)') {
             $begin++
             $script:vsX = [int]$Matches[1]; $script:vsY = [int]$Matches[2]
             $script:vsW = [int]$Matches[3]; $script:vsH = [int]$Matches[4]
+            # The home monitor rides on the same line (T706). Matched separately
+            # so an older build's shorter line still counts as a begin.
+            if ($line -match 'home=(-?\d+),(-?\d+) (\d+)x(\d+) source=(\w+)') {
+                $homeRect = [pscustomobject]@{
+                    X = [int]$Matches[1]; Y = [int]$Matches[2]
+                    W = [int]$Matches[3]; H = [int]$Matches[4]
+                    Source = [string]$Matches[5]
+                }
+            }
         } elseif ($line -match 'viewer feedback capture=done rect=(-?\d+),(-?\d+) (\d+)x(\d+) bytes=(\d+)') {
             $done++
             $lastRect = [pscustomobject]@{
@@ -266,7 +281,7 @@ function Get-CaptureTally($errlog) {
             $cancel++
         }
     }
-    return [pscustomobject]@{ Begin = $begin; Done = $done; Cancel = $cancel; Rect = $lastRect }
+    return [pscustomobject]@{ Begin = $begin; Done = $done; Cancel = $cancel; Rect = $lastRect; Home = $homeRect }
 }
 
 function Wait-Tally($errlog, [string]$Field, [int]$Want) {
@@ -765,6 +780,81 @@ try {
         $afterWindow = [System.Windows.Forms.Clipboard]::GetText()
         Assert ($afterWindow -eq $sentinel) `
             "the clipboard survived the window picks too (holds '$afterWindow')"
+    }
+
+    # --- J. the capture starts on the PANE's monitor, not the pointer's ------
+    # T706. The caret used to start in the middle of whichever monitor the mouse
+    # POINTER was parked on, which says nothing at all about where a keyboard
+    # user is looking. It now starts on the monitor holding the window the
+    # report is about.
+    #
+    # The oracle is the app's own `home=` readout plus the announced caret, and
+    # the proof is a MOVE: the pointer never moves in this arm (nothing here can
+    # move it - this is a background desktop), so a home monitor that follows the
+    # window across the desk cannot have come from the pointer. On a one-monitor
+    # box the two rules agree and only the containment half is asserted, which
+    # the run says out loud rather than passing quietly.
+    if ($fb) {
+        function Test-CaptureHome {
+            if (-not (Invoke-SnapshotButton $view $fb)) { return $null }
+            $ov = Wait-Overlay $appPid $true
+            if (-not $ov) { return $null }
+            $caret = Wait-Status $ov '^(-?\d+),(-?\d+)\s'
+            $tally = Get-CaptureTally $errlog
+            [void](Send-TestRawMessage -Window $ov -Message 0x0100 -WParam ([IntPtr]0x1B))
+            [void](Wait-Overlay $appPid $false)
+            if (-not $caret -or -not $tally.Home) { return $null }
+            return [pscustomobject]@{
+                Caret = $caret
+                Home  = $tally.Home
+                Frame = [GhozttyCaptureFrame]::Outer($view.Top)
+            }
+        }
+
+        function Test-Inside($rect, [int]$x, [int]$y) {
+            return ($x -ge $rect.X -and $x -lt ($rect.X + $rect.W) -and
+                    $y -ge $rect.Y -and $y -lt ($rect.Y + $rect.H))
+        }
+
+        # Park the window near the left edge of the desktop, then near the right
+        # edge. On a two-monitor desk those are two different screens.
+        $wr = [GhozttyCaptureFrame]::Outer($view.Top)
+        $ww = if ($wr) { $wr[2] } else { 900 }
+        $wh = if ($wr) { $wr[3] } else { 700 }
+
+        [void](Set-TestWindowPos -Window $view.Top -X ($script:vsX + 40) -Y ($script:vsY + 40))
+        Start-Sleep -Milliseconds 400
+        $left = Test-CaptureHome
+        Assert ($null -ne $left) 'the capture announces a home monitor with the window parked left'
+
+        [void](Set-TestWindowPos -Window $view.Top `
+            -X ($script:vsX + $script:vsW - $ww - 40) -Y ($script:vsY + 40))
+        Start-Sleep -Milliseconds 400
+        $right = Test-CaptureHome
+        Assert ($null -ne $right) '...and again with the window parked right'
+
+        foreach ($case in @(@{ N = 'left'; V = $left }, @{ N = 'right'; V = $right })) {
+            $v = $case.V
+            if (-not $v) { continue }
+            Assert ($v.Home.Source -eq 'owner') `
+                "the $($case.N) capture takes its home from the pane's own window (source=$($v.Home.Source))"
+            Assert (Test-Inside $v.Home ([int]$v.Caret.X) ([int]$v.Caret.Y)) `
+                "...and the caret starts inside that monitor (caret $($v.Caret.X),$($v.Caret.Y) in $($v.Home.X),$($v.Home.Y) $($v.Home.W)x$($v.Home.H))"
+            $cx = $v.Frame[0] + [int]($v.Frame[2] / 2)
+            $cy = $v.Frame[1] + [int]($v.Frame[3] / 2)
+            Assert (Test-Inside $v.Home $cx $cy) `
+                "...which is the monitor the window itself is on (window centre $cx,$cy)"
+        }
+
+        if ($left -and $right) {
+            $moved = ($left.Home.X -ne $right.Home.X) -or ($left.Home.Y -ne $right.Home.Y)
+            if ($moved) {
+                Assert ($left.Caret.X -ne $right.Caret.X -or $left.Caret.Y -ne $right.Caret.Y) `
+                    "moving the window to another monitor moves the caret with it ($($left.Caret.X),$($left.Caret.Y) -> $($right.Caret.X),$($right.Caret.Y)) - the pointer never moved"
+            } else {
+                Write-Host "SKIP  one monitor on this desk, so left and right are the same screen ($($left.Home.W)x$($left.Home.H)) - the cross-monitor half of T706 is unproven here"
+            }
+        }
     }
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'

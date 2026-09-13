@@ -141,6 +141,91 @@ pub fn clampPoint(p: Point, bounds: Rect) Point {
     };
 }
 
+/// The monitor a capture calls HOME: where the hint card sits, and where a
+/// keyboard caret starts.
+///
+/// The pointer used to decide this alone, which is right for a mouse capture —
+/// the pointer IS the user's attention — and wrong for a keyboard one (T706).
+/// Somebody framing a region with the arrows never moved that pointer, so on a
+/// two-monitor desk the crosshair would appear on the screen they are not
+/// looking at. The window the composer belongs to is the better answer and is
+/// never a worse one: the pane the report is about is on it by definition. So
+/// the OWNER decides whenever there is one, and the pointer is the fallback for
+/// a capture that has no owner window.
+///
+/// `monitors` and both anchors are in virtual-screen coordinates; the answer is
+/// rebased onto `bounds`, the snapshot's own buffer. No monitors and no usable
+/// anchor falls back to the whole virtual screen — a hint card in the middle of
+/// a two-monitor desktop is worse than ideal, never wrong.
+pub fn homeMonitor(
+    monitors: []const Rect,
+    owner: ?Rect,
+    pointer: ?Point,
+    bounds: Rect,
+) Rect {
+    const whole: Rect = .{ .x = 0, .y = 0, .w = bounds.w, .h = bounds.h };
+    if (monitors.len == 0) return whole;
+    if (owner) |o| {
+        if (o.w > 0 and o.h > 0) return relativeTo(monitorForRect(monitors, o), bounds);
+    }
+    if (pointer) |p| return relativeTo(monitorForPoint(monitors, p), bounds);
+    return whole;
+}
+
+/// The monitor a window is "on": the one it overlaps most, and — for a window
+/// dragged entirely into the gap of a non-rectangular arrangement — the one
+/// nearest its middle. Same rule `MonitorFromWindow(..., NEAREST)` uses, spelled
+/// out here so it is testable without a second screen plugged in.
+fn monitorForRect(monitors: []const Rect, r: Rect) Rect {
+    var best = monitors[0];
+    var best_area: i64 = 0;
+    for (monitors) |m| {
+        const area = intersectArea(m, r);
+        if (area > best_area) {
+            best_area = area;
+            best = m;
+        }
+    }
+    if (best_area > 0) return best;
+    return monitorForPoint(monitors, center(r));
+}
+
+/// The monitor holding `p`, or the nearest one when it falls in a gap between
+/// screens (or off the desktop entirely, which a captured pointer can report).
+fn monitorForPoint(monitors: []const Rect, p: Point) Rect {
+    var best = monitors[0];
+    var best_dist: i64 = std.math.maxInt(i64);
+    for (monitors) |m| {
+        if (m.contains(p)) return m;
+        const d = distanceSq(p, m);
+        if (d < best_dist) {
+            best_dist = d;
+            best = m;
+        }
+    }
+    return best;
+}
+
+fn intersectArea(a: Rect, b: Rect) i64 {
+    const w: i64 = @min(a.right(), b.right()) - @max(a.x, b.x);
+    const h: i64 = @min(a.bottom(), b.bottom()) - @max(a.y, b.y);
+    if (w <= 0 or h <= 0) return 0;
+    return w * h;
+}
+
+fn center(r: Rect) Point {
+    return .{ .x = r.x + @divTrunc(r.w, 2), .y = r.y + @divTrunc(r.h, 2) };
+}
+
+/// Squared distance from `p` to the nearest point of `r`; zero inside it.
+/// Squared because nothing compares it against a length — only against another
+/// distance — and a square root would only cost precision.
+fn distanceSq(p: Point, r: Rect) i64 {
+    const dx: i64 = @max(@max(r.x - p.x, p.x - (r.right() - 1)), 0);
+    const dy: i64 = @max(@max(r.y - p.y, p.y - (r.bottom() - 1)), 0);
+    return dx * dx + dy * dy;
+}
+
 /// Where a keyboard-driven capture starts: the middle of the monitor the user
 /// is on. The middle rather than a corner because it is the shortest average
 /// distance to anywhere on that screen, and because a caret at (0,0) is
@@ -629,6 +714,84 @@ test "the caret starts in the middle of the monitor the user is on" {
     // origin.
     const left: Rect = .{ .x = -1920, .y = -180, .w = 1920, .h = 1080 };
     try testing.expectEqual(Point{ .x = -960, .y = 360 }, caretStart(left));
+}
+
+test "the home monitor follows the window being reported on, not the pointer" {
+    // A two-monitor desk: the primary, and a second one to its right. The
+    // snapshot covers both, so the answer comes back rebased onto that buffer.
+    const primary: Rect = .{ .x = 0, .y = 0, .w = 1920, .h = 1080 };
+    const right: Rect = .{ .x = 1920, .y = 0, .w = 2560, .h = 1440 };
+    const monitors = [_]Rect{ primary, right };
+    const bounds: Rect = .{ .x = 0, .y = 0, .w = 4480, .h = 1440 };
+
+    // The pane is on the primary, the pointer is parked on the other screen:
+    // the window wins, which is the whole of T706.
+    const owner: Rect = .{ .x = 100, .y = 80, .w = 1200, .h = 800 };
+    const parked: Point = .{ .x = 3000, .y = 700 };
+    try testing.expectEqual(primary, homeMonitor(&monitors, owner, parked, bounds));
+    try testing.expectEqual(
+        Point{ .x = 960, .y = 540 },
+        caretStart(homeMonitor(&monitors, owner, parked, bounds)),
+    );
+
+    // Same call with no owner window at all still answers with the pointer's
+    // monitor, which is what a mouse capture wants.
+    try testing.expectEqual(right, homeMonitor(&monitors, null, parked, bounds));
+
+    // A window straddling the seam belongs to whichever screen holds more of
+    // it, exactly as MonitorFromWindow would say.
+    const straddling: Rect = .{ .x = 1620, .y = 100, .w = 900, .h = 600 };
+    try testing.expectEqual(right, homeMonitor(&monitors, straddling, null, bounds));
+    const mostly_left: Rect = .{ .x = 1320, .y = 100, .w = 900, .h = 600 };
+    try testing.expectEqual(primary, homeMonitor(&monitors, mostly_left, null, bounds));
+}
+
+test "the home monitor is rebased onto the snapshot, negative origins included" {
+    // A monitor above and left of the primary: the snapshot's buffer starts at
+    // its top-left, so every answer is shifted by that origin.
+    const left: Rect = .{ .x = -1920, .y = -200, .w = 1920, .h = 1080 };
+    const primary: Rect = .{ .x = 0, .y = 0, .w = 1920, .h = 1080 };
+    const monitors = [_]Rect{ left, primary };
+    const bounds: Rect = .{ .x = -1920, .y = -200, .w = 3840, .h = 1280 };
+
+    const owner: Rect = .{ .x = -1800, .y = -100, .w = 800, .h = 600 };
+    try testing.expectEqual(
+        Rect{ .x = 0, .y = 0, .w = 1920, .h = 1080 },
+        homeMonitor(&monitors, owner, null, bounds),
+    );
+    try testing.expectEqual(
+        Rect{ .x = 1920, .y = 200, .w = 1920, .h = 1080 },
+        homeMonitor(&monitors, null, .{ .x = 500, .y = 500 }, bounds),
+    );
+}
+
+test "an anchor that lands nowhere still names a real monitor" {
+    const primary: Rect = .{ .x = 0, .y = 0, .w = 1920, .h = 1080 };
+    const far: Rect = .{ .x = 4000, .y = 0, .w = 1920, .h = 1080 };
+    const monitors = [_]Rect{ primary, far };
+    const bounds: Rect = .{ .x = 0, .y = 0, .w = 5920, .h = 1080 };
+
+    // A window dragged into the gap between two screens, and a pointer reported
+    // off the desktop entirely: both resolve to the nearest monitor rather than
+    // to the whole virtual screen.
+    const in_the_gap: Rect = .{ .x = 3400, .y = 400, .w = 400, .h = 300 };
+    try testing.expectEqual(far, homeMonitor(&monitors, in_the_gap, null, bounds));
+    try testing.expectEqual(primary, homeMonitor(&monitors, null, .{ .x = -500, .y = 40 }, bounds));
+
+    // A zero-area owner rect is not an anchor: a minimized or not-yet-sized
+    // window must not out-vote the pointer.
+    const empty: Rect = .{ .x = 4200, .y = 200, .w = 0, .h = 0 };
+    try testing.expectEqual(primary, homeMonitor(&monitors, empty, .{ .x = 10, .y = 10 }, bounds));
+
+    // And with nothing to go on, the whole virtual screen.
+    try testing.expectEqual(
+        Rect{ .x = 0, .y = 0, .w = 5920, .h = 1080 },
+        homeMonitor(&monitors, null, null, bounds),
+    );
+    try testing.expectEqual(
+        Rect{ .x = 0, .y = 0, .w = 5920, .h = 1080 },
+        homeMonitor(&.{}, null, .{ .x = 10, .y = 10 }, bounds),
+    );
 }
 
 test "statusText announces the caret, then the live selection" {

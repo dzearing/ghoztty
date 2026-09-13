@@ -167,8 +167,9 @@ painted_caret: ?region.Point = null,
 status_buf: [region.status_max]u8 = undefined,
 status_len: usize = 0,
 
-/// The monitor the pointer was on when the capture began, in client
-/// coordinates — where the hint card goes.
+/// The monitor the capture began on, in client coordinates — where the hint
+/// card goes and where a keyboard caret starts. The owner window's screen when
+/// there is one, the pointer's otherwise (T706).
 home: region.Rect,
 scale: f32,
 font: ?*anyopaque = null,
@@ -255,7 +256,8 @@ pub fn begin(
     };
 
     const b = snap.bounds;
-    const home = homeMonitor(b);
+    const home_pick = homeMonitor(b, owner);
+    const home = home_pick.rect;
     self.* = .{
         .alloc = alloc,
         .hwnd = undefined,
@@ -321,7 +323,17 @@ pub fn begin(
     _ = w32.SetForegroundWindow(hwnd);
     _ = w32.SetFocus(hwnd);
 
-    log.info("viewer feedback capture=begin bounds={d},{d} {d}x{d}", .{ b.x, b.y, b.w, b.h });
+    // The home monitor rides along in VIRTUAL-SCREEN coordinates (the caret's
+    // own frame of reference), so a multi-monitor report says which screen the
+    // gesture started on without anybody having to infer it (T706).
+    log.info(
+        "viewer feedback capture=begin bounds={d},{d} {d}x{d} home={d},{d} {d}x{d} source={s}",
+        .{
+            b.x,           b.y,           b.w,           b.h,
+            home.x + b.x,  home.y + b.y,  home.w,        home.h,
+            @tagName(home_pick.source),
+        },
+    );
     return self;
 }
 
@@ -344,30 +356,75 @@ fn destroy(self: *RegionSelector) void {
     self.alloc.destroy(self);
 }
 
-/// The monitor the pointer is on, in the snapshot's client coordinates, so the
-/// hint card lands on the screen the user is looking at. Falls back to the
-/// whole virtual screen when the pointer cannot be located — a hint in the
-/// middle of a two-monitor desktop is worse than ideal, never wrong.
-fn homeMonitor(bounds: region.Rect) region.Rect {
+/// Which anchor the home monitor came from, for the `capture=begin` line: the
+/// difference between "the pane's screen" and "wherever the pointer was parked"
+/// is invisible on one monitor and the whole story on two.
+const HomeSource = enum { owner, pointer, desktop };
+
+const HomePick = struct { rect: region.Rect, source: HomeSource };
+
+/// The monitor the capture calls home, in the snapshot's client coordinates:
+/// where the hint card lands and where a keyboard caret starts.
+///
+/// The DECISION is `region.homeMonitor`, which is pure and unit-tested — the
+/// owner window's screen when there is an owner, the pointer's when there is
+/// not (T706). Everything here is the enumeration that feeds it: the desktop's
+/// monitors, the owner's frame, and the pointer, each of which may be
+/// unavailable, in which case the rule falls back on its own.
+fn homeMonitor(bounds: region.Rect, owner: ?w32.HWND) HomePick {
+    var mons: MonitorList = .{};
+    _ = w32.EnumDisplayMonitors(null, null, &monitorProc, @bitCast(@intFromPtr(&mons)));
+
+    const owner_rect: ?region.Rect = if (owner) |h| frameBounds(h) else null;
+
     var pt: w32.POINT = .{ .x = 0, .y = 0 };
-    if (w32.GetCursorPos_(&pt) == 0) return .{ .x = 0, .y = 0, .w = bounds.w, .h = bounds.h };
-    const mon = w32.MonitorFromPoint(pt, w32.MONITOR_DEFAULTTONEAREST) orelse
-        return .{ .x = 0, .y = 0, .w = bounds.w, .h = bounds.h };
-    var mi: w32.MONITORINFO = .{
-        .cbSize = @sizeOf(w32.MONITORINFO),
-        .rcMonitor = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
-        .rcWork = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
-        .dwFlags = 0,
-    };
-    if (w32.GetMonitorInfoW(mon, &mi) == 0) {
-        return .{ .x = 0, .y = 0, .w = bounds.w, .h = bounds.h };
-    }
+    const pointer: ?region.Point = if (w32.GetCursorPos_(&pt) != 0)
+        .{ .x = pt.x, .y = pt.y }
+    else
+        null;
+
+    const usable_owner = owner_rect != null and owner_rect.?.w > 0 and owner_rect.?.h > 0;
+    const source: HomeSource = if (mons.n == 0)
+        .desktop
+    else if (usable_owner)
+        .owner
+    else if (pointer != null)
+        .pointer
+    else
+        .desktop;
+
     return .{
-        .x = mi.rcMonitor.left - bounds.x,
-        .y = mi.rcMonitor.top - bounds.y,
-        .w = mi.rcMonitor.right - mi.rcMonitor.left,
-        .h = mi.rcMonitor.bottom - mi.rcMonitor.top,
+        .rect = region.homeMonitor(mons.list[0..mons.n], owner_rect, pointer, bounds),
+        .source = source,
     };
+}
+
+/// Enough for any desk. A machine with more screens than this still gets a home
+/// monitor — it is simply chosen from the first sixteen, which is a far better
+/// answer than refusing to place the caret.
+const max_monitors = 16;
+
+const MonitorList = struct {
+    list: [max_monitors]region.Rect = undefined,
+    n: usize = 0,
+};
+
+fn monitorProc(
+    _: ?w32.HMONITOR,
+    _: ?w32.HDC,
+    rc: *w32.RECT,
+    lparam: isize,
+) callconv(.winapi) i32 {
+    const mons: *MonitorList = @ptrFromInt(@as(usize, @bitCast(lparam)));
+    if (mons.n >= max_monitors) return 0;
+    mons.list[mons.n] = .{
+        .x = rc.left,
+        .y = rc.top,
+        .w = rc.right - rc.left,
+        .h = rc.bottom - rc.top,
+    };
+    mons.n += 1;
+    return 1;
 }
 
 /// A darkened copy of the snapshot, as a DIB section of the same geometry.
