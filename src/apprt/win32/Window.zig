@@ -124,6 +124,9 @@ const hero_math = @import("hero_math.zig");
 const dim_math = @import("dim_math.zig");
 const split_geometry = @import("split_geometry.zig");
 const rearrange_header = @import("rearrange_header.zig");
+const pane_drop = @import("pane_drop.zig");
+const drop_highlight = @import("drop_highlight.zig");
+const DropHighlight = @import("DropHighlight.zig");
 const split_resize = @import("split_resize.zig");
 const drag_perf = @import("drag_perf.zig");
 
@@ -254,6 +257,16 @@ rearrange_mode: bool = false,
 /// Drives the hover treatment the same way `hover_split` drives the divider's,
 /// and is cleared by `resetPointerTransients` with every other hover.
 rearrange_hover: ?RearrangeHover = null,
+
+/// The pane drag in flight, if one is (T1531). Non-null from the press on a
+/// pane header until the button comes back up (or the capture is taken away),
+/// and `active` only once the pointer has travelled past the click threshold.
+rearrange_drag: ?RearrangeDrag = null,
+
+/// The layered popup that previews where a dragged pane would land (T1531).
+/// Created on the first drag this window sees and destroyed with the window,
+/// like every other overlay of ours.
+drop_preview: ?*DropHighlight = null,
 
 /// Caption button under the pointer, if any (T254). The band's pixels are
 /// client but its mouse messages arrive as NC, so this is driven by
@@ -2638,6 +2651,10 @@ pub fn toggleHeroMode(self: *Window) void {
 /// window in hero mode leaves it on the way in rather than refusing the
 /// chord, which is the same courtesy the zoom path already extends.
 pub fn toggleRearrangeMode(self: *Window) void {
+    // A drag cannot outlive the mode it is part of (T1531): Escape arrives as
+    // a toggle, and a drag left armed here would still hold the capture and
+    // still commit on the next button-up.
+    self.endRearrangeDrag(false);
     self.rearrange_mode = !self.rearrange_mode;
     if (self.rearrange_mode and
         self.tab_count > 0 and
@@ -2679,6 +2696,339 @@ pub const RearrangeHover = struct {
     view: *PaneView,
     part: rearrange_header.Hit,
 };
+
+/// A pane drag in flight (T1531).
+///
+/// Non-null from the press on a pane header until the button comes back up or
+/// the capture is taken away. `active` is the click-vs-drag distinction: a
+/// press that never travels is a click on the header and must not move
+/// anything, so nothing is previewed and nothing is committed until the
+/// pointer has passed the threshold.
+pub const RearrangeDrag = struct {
+    /// The pane being moved. Its tree handle is deliberately NOT cached — it
+    /// is re-derived at commit, because a handle is an index into a node array
+    /// that any other event during the drag may have rebuilt.
+    view: *PaneView,
+
+    /// The press point, in client coordinates, for the threshold.
+    start_x: i32,
+    start_y: i32,
+
+    active: bool = false,
+
+    /// What releasing right now would do, as of the last move.
+    drop: ?Drop = null,
+
+    /// Where the preview sits for that drop, in screen coordinates.
+    highlight: ?drop_highlight.Highlight = null,
+
+    /// A resolved drop this window can commit, with the pane id COPIED.
+    ///
+    /// `pane_drop.Target` borrows its pane id out of the candidate array, and
+    /// that array is a stack temporary of the mouse-move that built it — so
+    /// the borrowed form cannot outlive the move, and the drag has to hold its
+    /// own. The three cases are the three drops T1531 commits; a new tab or a
+    /// new window resolves to `null` here and is T1532's.
+    pub const Drop = union(enum) {
+        split: struct { pane: pane_id.Buf, side: pane_drop.Side },
+        swap: struct { pane: pane_id.Buf },
+        top_level: struct { side: pane_drop.Side },
+    };
+};
+
+/// One leaf and the slot it occupies, in window CLIENT coordinates.
+const PaneSlot = struct {
+    view: *PaneView,
+    rect: w32.RECT,
+};
+
+/// This window's identity for the pure drop resolver, which must not hold an
+/// `HWND` of its own.
+fn dropWindowRef(self: *const Window) pane_drop.WindowRef {
+    return @intFromPtr(self.hwnd orelse return 0);
+}
+
+fn dropMetrics(self: *const Window) pane_drop.Metrics {
+    return pane_drop.Metrics.forScale(self.scale);
+}
+
+/// The window's client origin in screen coordinates, for lifting client rects
+/// into the space the resolver works in.
+fn clientOrigin(self: *const Window) w32.POINT {
+    var pt: w32.POINT = .{ .x = 0, .y = 0 };
+    if (self.hwnd) |h| _ = w32.ClientToScreen(h, &pt);
+    return pt;
+}
+
+fn toDropRect(r: w32.RECT, origin: w32.POINT) pane_drop.Rect {
+    return .{
+        .left = r.left + origin.x,
+        .top = r.top + origin.y,
+        .right = r.right + origin.x,
+        .bottom = r.bottom + origin.y,
+    };
+}
+
+/// Every leaf of the active tab with the slot it fills, in client coordinates.
+///
+/// The same geometry walk `hitTestRearrangeNode` does, and for the same reason
+/// it cannot just read the child HWNDs' rects: a pane's window is INSET by the
+/// rearrange header and by any sticky banner, and a drop target is the whole
+/// slot, header included. Returns the number written.
+fn collectPaneSlots(self: *Window, out: []PaneSlot) usize {
+    if (self.tab_count == 0) return 0;
+    if (self.tab_hero_active[self.active_tab]) return 0;
+    const tree = self.tab_trees[self.active_tab];
+    const rect = self.surfaceRect();
+    if (tree.zoomed) |zoomed_handle| {
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            if (entry.handle != zoomed_handle) continue;
+            if (out.len == 0) return 0;
+            out[0] = .{ .view = entry.view, .rect = rect };
+            return 1;
+        }
+        return 0;
+    }
+    var n: usize = 0;
+    self.collectPaneSlotsNode(tree, .root, rect, out, &n);
+    return n;
+}
+
+fn collectPaneSlotsNode(
+    self: *Window,
+    tree: SplitTree(PaneView),
+    handle: SplitTree(PaneView).Node.Handle,
+    rect: w32.RECT,
+    out: []PaneSlot,
+    n: *usize,
+) void {
+    if (handle.idx() >= tree.nodes.len) return;
+    switch (tree.nodes[handle.idx()]) {
+        .leaf => |view| {
+            if (n.* >= out.len) return;
+            out[n.*] = .{ .view = view, .rect = rect };
+            n.* += 1;
+        },
+        .split => |sp| {
+            if (sp.layout == .horizontal) {
+                const a = split_geometry.axis(rect.left, rect.right, sp.ratio, self.scale);
+                self.collectPaneSlotsNode(tree, sp.left, .{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom }, out, n);
+                self.collectPaneSlotsNode(tree, sp.right, .{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom }, out, n);
+                return;
+            }
+            const a = split_geometry.axis(rect.top, rect.bottom, sp.ratio, self.scale);
+            self.collectPaneSlotsNode(tree, sp.left, .{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo }, out, n);
+            self.collectPaneSlotsNode(tree, sp.right, .{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end }, out, n);
+        },
+    }
+}
+
+fn paneById(self: *Window, tab: usize, id: []const u8) ?*PaneView {
+    var it = self.tab_trees[tab].iterator();
+    while (it.next()) |entry| {
+        if (pane_id.eql(entry.view.paneId(), id)) return entry.view;
+    }
+    return null;
+}
+
+/// A resolved target this window can commit, with the pane id copied out of
+/// the caller's (temporary) candidate array. Null for the drops T1532 owns and
+/// for a target in another window.
+fn ownedDrop(target: ?pane_drop.Target, window: pane_drop.WindowRef) ?RearrangeDrag.Drop {
+    const t = target orelse return null;
+    if (t.window()) |w| {
+        if (w != window) return null;
+    } else return null;
+    return switch (t) {
+        .split => |sp| .{ .split = .{ .pane = copyPaneId(sp.pane) orelse return null, .side = sp.side } },
+        .swap => |sp| .{ .swap = .{ .pane = copyPaneId(sp.pane) orelse return null } },
+        .top_level => |sp| .{ .top_level = .{ .side = sp.side } },
+        .new_tab, .new_window => null,
+    };
+}
+
+fn copyPaneId(id: []const u8) ?pane_id.Buf {
+    if (id.len != pane_id.len) return null;
+    var buf: pane_id.Buf = undefined;
+    @memcpy(&buf, id);
+    return buf;
+}
+
+fn dropDirection(side: pane_drop.Side) SplitTree(PaneView).Split.Direction {
+    return switch (side) {
+        .left => .left,
+        .right => .right,
+        .up => .up,
+        .down => .down,
+    };
+}
+
+/// Start a pane drag from a press on that pane's header (T1531).
+fn beginRearrangeDrag(self: *Window, view: *PaneView, x: i32, y: i32) void {
+    self.rearrange_drag = .{ .view = view, .start_x = x, .start_y = y };
+    if (self.hwnd) |h| _ = w32.SetCapture(h);
+}
+
+/// Track a live pane drag: resolve what the pointer currently means and put
+/// the preview there.
+fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
+    if (self.rearrange_drag == null) return;
+    const d = &self.rearrange_drag.?;
+    if (!d.active) {
+        if (!drop_highlight.exceedsThreshold(
+            x - d.start_x,
+            y - d.start_y,
+            drop_highlight.thresholdPx(self.scale),
+        )) return;
+        d.active = true;
+    }
+
+    var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
+    const n = self.collectPaneSlots(&slots);
+    const origin = self.clientOrigin();
+    var rects: [MAX_DRAG_NODES]pane_drop.PaneRect = undefined;
+    for (slots[0..n], 0..) |slot, i| {
+        rects[i] = .{ .id = slot.view.paneId(), .rect = toDropRect(slot.rect, origin) };
+    }
+
+    // One candidate: T1531 is a drag within ONE window's own tree. The
+    // resolver takes a set precisely so T1532 can add the others here without
+    // touching anything else.
+    const candidate: pane_drop.Candidate = .{
+        .window = self.dropWindowRef(),
+        .z_order = 0,
+        .content_rect = toDropRect(self.surfaceRect(), origin),
+        .pane_rects = rects[0..n],
+    };
+
+    const point: pane_drop.Point = .{ .x = x + origin.x, .y = y + origin.y };
+    const target = pane_drop.resolve(
+        point,
+        &.{candidate},
+        d.view.paneId(),
+        self.dropMetrics(),
+    );
+
+    d.drop = ownedDrop(target, candidate.window);
+    d.highlight = drop_highlight.forTarget(
+        target,
+        candidate.window,
+        candidate.content_rect,
+        rects[0..n],
+    );
+    if (d.highlight) |hl| self.showDropPreview(hl) else self.hideDropPreview();
+}
+
+/// End a pane drag. `commit` is false for a cancel (Escape, a lost capture,
+/// the mode going away underneath it).
+fn endRearrangeDrag(self: *Window, commit: bool) void {
+    const d = self.rearrange_drag orelse return;
+    // Cleared FIRST: releasing the capture posts `WM_CAPTURECHANGED`, which
+    // cancels the drag, and a drag still in the field there would re-enter
+    // this.
+    self.rearrange_drag = null;
+    self.hideDropPreview();
+    if (self.hwnd) |h| {
+        if (w32.GetCapture() == h) _ = w32.ReleaseCapture();
+    }
+    if (!commit or !d.active) return;
+    const drop = d.drop orelse return;
+    self.commitRearrangeDrop(d.view, drop);
+}
+
+/// Apply a resolved drop to the active tab's split tree (T1529's mutations).
+fn commitRearrangeDrop(self: *Window, view: *PaneView, drop: RearrangeDrag.Drop) void {
+    if (self.tab_count == 0) return;
+    const tab = self.active_tab;
+    const alloc = self.app.core_app.alloc;
+    const at = self.findHandle(tab, view) orelse return;
+    const tree = &self.tab_trees[tab];
+
+    const new_tree: SplitTree(PaneView) = switch (drop) {
+        .split => |sp| blk: {
+            const other = self.paneById(tab, &sp.pane) orelse return;
+            const target = self.findHandle(tab, other) orelse return;
+            if (target == at) return;
+            break :blk tree.move(
+                alloc,
+                at,
+                target,
+                dropDirection(sp.side),
+                drop_highlight.insert_ratio,
+            ) catch |err| {
+                log.err("rearrange move failed: {}", .{err});
+                return;
+            };
+        },
+        .swap => |sp| blk: {
+            const other = self.paneById(tab, &sp.pane) orelse return;
+            const other_handle = self.findHandle(tab, other) orelse return;
+            if (other_handle == at) return;
+            break :blk tree.swap(alloc, at, other_handle) catch |err| {
+                log.err("rearrange swap failed: {}", .{err});
+                return;
+            };
+        },
+        .top_level => |sp| blk: {
+            // A window with one pane has no top level to insert at: the pane
+            // already spans it, and `remove(.root)` would empty the tab.
+            if (at == .root) return;
+            var leaf: SplitTree(PaneView) = SplitTree(PaneView).init(alloc, view) catch |err| {
+                log.err("rearrange top-level leaf failed: {}", .{err});
+                return;
+            };
+            defer leaf.deinit();
+            // Wrap FIRST and remove after, the order `move` uses and for the
+            // same reason: `split` leaves every existing handle naming the
+            // node it named, so `at` still names the dragged pane afterwards.
+            var wrapped = tree.insertAtTopLevel(
+                alloc,
+                dropDirection(sp.side),
+                drop_highlight.insert_ratio,
+                &leaf,
+            ) catch |err| {
+                log.err("rearrange top-level insert failed: {}", .{err});
+                return;
+            };
+            defer wrapped.deinit();
+            break :blk wrapped.remove(alloc, at) catch |err| {
+                log.err("rearrange top-level remove failed: {}", .{err});
+                return;
+            };
+        },
+    };
+
+    // Swap-then-release (T1356), the rule every other tree mutation follows.
+    var old_tree = self.tab_trees[tab];
+    self.tab_trees[tab] = new_tree;
+    old_tree.deinit();
+
+    self.tab_active_pane[tab] = view;
+    self.layoutSplits();
+    self.app.markLayoutDirty(); // T110: a rearranged layout must survive restore
+    if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
+    if (view.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
+}
+
+fn showDropPreview(self: *Window, hl: drop_highlight.Highlight) void {
+    const owner = self.hwnd orelse return;
+    if (self.drop_preview == null) {
+        self.drop_preview = DropHighlight.create(
+            self.app.core_app.alloc,
+            owner,
+            self.app.hinstance,
+        ) catch |err| {
+            log.warn("drop preview create failed err={}", .{err});
+            return;
+        };
+    }
+    self.drop_preview.?.show(hl, self.chromePalette(), self.scale);
+}
+
+fn hideDropPreview(self: *Window) void {
+    if (self.drop_preview) |p| p.hide();
+}
 
 /// Can a pane be moved out into a window of its own yet?
 ///
@@ -8316,6 +8666,10 @@ fn onDestroy(self: *Window) void {
 
     // Quick terminal windows are managed by QuickTerminal, not the windows list.
     if (self.is_quick_terminal) {
+        if (self.drop_preview) |dp| {
+            dp.destroy();
+            self.drop_preview = null;
+        }
         if (self.tab_font) |font| {
             _ = w32.DeleteObject(font);
             self.tab_font = null;
@@ -8381,6 +8735,10 @@ fn onDestroy(self: *Window) void {
     }
 
     // Clean up Window-level resources.
+    if (self.drop_preview) |dp| {
+        dp.destroy();
+        self.drop_preview = null;
+    }
     if (self.tab_font) |font| {
         _ = w32.DeleteObject(font);
         self.tab_font = null;
@@ -8840,6 +9198,13 @@ pub fn windowWndProc(
         // a child window and there is no parent-owned region left to hold a
         // stale line. The band itself is painted in WM_PAINT and after layout.
         w32.WM_ERASEBKGND => return 1,
+        // A capture taken away mid-drag (Alt+Tab, a system modal, a menu) is
+        // not a drop: there was no button-up, so the drag CANCELS rather than
+        // committing wherever the pointer happened to be (T1531).
+        w32.WM_CAPTURECHANGED => {
+            if (window.rearrange_drag != null) window.endRearrangeDrag(false);
+            return 0;
+        },
         w32.WM_LBUTTONDOWN => {
             const x: i32 = @as(i16, @truncate(lparam & 0xFFFF));
             const y: i32 = @as(i16, @truncate((lparam >> 16) & 0xFFFF));
@@ -8857,8 +9222,16 @@ pub fn windowWndProc(
             // T1531 and the pop-out button is disabled until T1532 — both
             // arrive as arms on this one hit.
             if (window.hitTestRearrangeHeader(x, y)) |hit| {
-                if (hit.part == .button and window.canPopOutPane()) {
-                    // T1532 lands the relocation this button asks for.
+                switch (hit.part) {
+                    .button => if (window.canPopOutPane()) {
+                        // T1532 lands the relocation this button asks for.
+                    },
+                    // The whole band is the drag surface (T1531). The press
+                    // only ARMS the drag — nothing moves and nothing is
+                    // previewed until the pointer passes the threshold, so a
+                    // click on a header stays a click.
+                    .drag => window.beginRearrangeDrag(hit.view, x, y),
+                    .none => {},
                 }
                 return 0;
             }
@@ -8872,6 +9245,10 @@ pub fn windowWndProc(
         },
         w32.WM_LBUTTONUP => {
             window.clearCaptionPress();
+            if (window.rearrange_drag != null) {
+                window.endRearrangeDrag(true);
+                return 0;
+            }
             if (window.hero_divider_drag) {
                 window.heroEndDividerDrag();
                 return 0;
@@ -8941,6 +9318,10 @@ pub fn windowWndProc(
         w32.WM_MOUSEMOVE => {
             const x: i32 = @as(i16, @truncate(lparam & 0xFFFF));
             const y: i32 = @as(i16, @truncate((lparam >> 16) & 0xFFFF));
+            if (window.rearrange_drag != null) {
+                window.updateRearrangeDrag(x, y);
+                return 0;
+            }
             if (window.hero_divider_drag) {
                 window.heroUpdateDividerDrag(x);
                 return 0;

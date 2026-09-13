@@ -337,6 +337,23 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T1531: the drag itself - the gesture, the live preview and the tree
+    # mutation it commits. Covers the harness, the pure preview geometry, the
+    # overlay that draws it, the resolver it asks, the tree mutations it
+    # applies, and the window that holds the capture.
+    [pscustomobject]@{
+        Name   = 'rearrange-drag'
+        Script = 'test\win32\rearrange-drag.ps1'
+        Stamp  = 'test\win32\rearrange-drag.stamp.json'
+        Covers = @(
+            'test\win32\rearrange-drag.ps1',
+            'src\apprt\win32\drop_highlight.zig',
+            'src\apprt\win32\DropHighlight.zig',
+            'src\apprt\win32\pane_drop.zig',
+            'src\datastruct\split_tree.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # The viewer suite carries the browser-leak tripwire (T594): the only
     # thing that scores whether a test run handed a page to the user's real
     # browser, and it is not in the P1-P3 floor. The zig-side guard

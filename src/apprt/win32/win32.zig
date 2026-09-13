@@ -185,6 +185,9 @@ pub const WM_MOUSEMOVE: u32 = 0x0200;
 pub const WM_LBUTTONDOWN: u32 = 0x0201;
 pub const WM_LBUTTONUP: u32 = 0x0202;
 pub const WM_LBUTTONDBLCLK: u32 = 0x0203;
+/// Sent when the mouse capture moves to another window. A drag that was
+/// holding the capture has to end here, because no button-up is coming.
+pub const WM_CAPTURECHANGED: u32 = 0x0215;
 pub const WM_RBUTTONDOWN: u32 = 0x0204;
 pub const WM_RBUTTONUP: u32 = 0x0205;
 pub const WM_MBUTTONDOWN: u32 = 0x0207;
@@ -769,6 +772,8 @@ pub extern "user32" fn SetCapture(
 ) callconv(.winapi) ?HWND;
 
 pub extern "user32" fn ReleaseCapture() callconv(.winapi) i32;
+
+pub extern "user32" fn GetCapture() callconv(.winapi) ?HWND;
 
 pub extern "user32" fn GetWindowLongW(
     hWnd: HWND,

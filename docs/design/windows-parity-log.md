@@ -27667,3 +27667,48 @@ and losing its agent session. Drawing it disabled is a state Mac's own header
 has rather than an invention, and it means the header's geometry does not move
 under the user on the day the feature lands. T1532 flips the constant and fills
 in the empty arm the press already routes to.
+
+## 2026-09-13 - A pane can now be picked up by its header and dropped somewhere else (T1531)
+
+Rearrange mode does what its name says on Windows. Press a pane's header band
+and drag: a coloured patch follows the pointer showing exactly where the pane
+will land, and letting go puts it there. Over the middle of another pane the two
+trade places; against one pane's edge it splits that pane; against the edge of
+the window it stretches the whole way across. The pane that arrives is the pane
+that left - same process, same scrollback, same rendered page in a viewer - so a
+rearrange never looks like the terminal restarting.
+
+This is the fourth of the five pieces T1525 was split into, and it is the one
+that joins the other three: T1528's resolver says what a point means, T1529's
+tree mutations carry it out, T1530's header is the thing you grab. What was
+missing was the gesture, and it lives in `Window.zig`: a press in the band arms a
+drag and takes the capture, every mouse move past the click threshold resolves
+the point and places the preview, the button coming up commits, and Escape, a
+lost capture or the mode going away cancel without committing anything.
+
+The preview is the rect the pane will ACTUALLY occupy, not a decoration near it.
+`src/apprt/win32/drop_highlight.zig` derives it from the same geometry the commit
+uses, down to sharing the insert ratio as one constant - a split takes half the
+pane it splits, a top-level insert takes half the window's content, a swap takes
+the whole of the pane it trades with. A preview is a promise about what releasing
+will do, and a preview derived any other way is one the user only discovers was
+wrong after letting go. The corollary is that the drops this task does not commit
+- a new tab, a new window, a pane in somebody else's window - preview NOTHING
+rather than something hopeful. T1532 lands those.
+
+It is drawn by a layered click-through popup (`DropHighlight.zig`, `DimOverlay`'s
+shape) because the panes are child windows over OpenGL and anything painted into
+the parent's DC is immediately covered.
+
+The acceptance script (`test\win32\rearrange-drag.ps1`) drives a real drag with
+posted down/move/up at the window - the code path the mouse takes, and the only
+one available on the background test desktop - and scores five claims across
+three app runs: a press that never travels moves nothing, Escape mid-drag
+cancels, a centre drop swaps, an edge drop stacks the panes, and a window-edge
+drop spans all three panes' width (three panes, because with two a top-level drop
+and a pane split draw the same picture). The oracle asserts IDENTITY as well as
+geometry: the same pane HWNDs have to come out of every move, so a rearrange that
+rebuilt the pane fails even though the layout would look right.
+
+Two things the drag still does not say about itself - the cursor never changes
+and the pane being carried is not marked - are T1536.
