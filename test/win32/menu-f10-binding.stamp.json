@@ -1,14 +1,13 @@
 {
     "guard":  "menu-f10-binding",
     "script":  "test/win32/menu-f10-binding.ps1",
-    "generated":  "2026-09-05T23:04:27-07:00",
-    "commit":  "ecc65036c",
+    "generated":  "2026-09-13T00:12:14-07:00",
+    "commit":  "3cb9dacfe",
     "uncommitted":  [
-                        "src/apprt/win32/menu_activation.zig",
                         "test/win32/menu-f10-binding.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/menu_activation.zig":  "139e31d1ccad3fab222128fd81c14189d290dbad5f11452f60bbf60b409b19b4",
-                  "test/win32/menu-f10-binding.ps1":  "8c77c7eb953af10168b12742133c673281299ca715870a69d3a17864f5ea687c"
+                  "test/win32/menu-f10-binding.ps1":  "2a0f0edd446c99a0ed1ffb5d1b0ce8e3e1a8ae8df140fd70fa5f6b5df37b8e22"
               }
 }

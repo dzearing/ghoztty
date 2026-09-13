@@ -60,6 +60,10 @@ $Repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 . (Join-Path $PSScriptRoot 'lib\PersistenceSweep.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1511: the shared scorer, which is also what ARMS the run - a body that
+# unwinds before `Complete-TestBody` may not print a pass and may not stamp.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 $root = Join-Path $env:TEMP "ghoztty-stderr-launch-$PID"
@@ -310,6 +314,13 @@ Write-Host "starting"; $p = @@SP@@ -FilePath $exe -PassThru
         }
     }
 
+} catch {
+    # T1511: this try does not END in `Complete-TestBody` (the stamp and the
+    # verdict follow it), so it SCORES its own throw instead - an unwind here
+    # can no longer reach a green verdict.
+    $script:fail++
+    Say "FAIL  the run terminated: $($_.Exception.Message)"
+    Say "      at $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
 } finally {
     if ($script:fail -eq 0) { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue }
     else { Say "artifacts preserved at $root" }
@@ -319,12 +330,11 @@ Write-Host "starting"; $p = @@SP@@ -FilePath $exe -PassThru
 # A clean green run RECORDS the content of everything this covers, so
 # scripts\guard-due.ps1 can answer "has anybody swept the suite as it now
 # stands?". Red stays due, because only a green sweep re-stamps.
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:fail -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard stderr-launch-capture -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Say ''
-if ($script:fail -eq 0) { Say "ALL PASS ($script:pass)"; exit 0 }
-Say "$script:fail FAILURE(S) ($script:pass passed)"
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'STDERR LAUNCH CAPTURE AUDIT'

@@ -64,6 +64,10 @@ $env:GHOZTTY_PIPE_SUFFIX = "-f10bindtest$PID"
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\HarnessLeak.ps1')
 
+# T1511: the shared scorer, which is also what ARMS the run - a body that
+# unwinds before `Complete-TestBody` may not print a pass and may not stamp.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 $script:negReached = $false
@@ -247,6 +251,13 @@ try {
         Assert ($m -eq [IntPtr]::Zero) 'D: the table key did NOT open the menu'
         if ($m -ne [IntPtr]::Zero) { Close-Menu $top $app.Pid }
     }
+} catch {
+    # T1511: the leak checks below are part of this run too, so this try cannot
+    # END in `Complete-TestBody`. It SCORES its own throw instead - the other
+    # half of the same rule: an unwind here can no longer reach a green verdict.
+    $script:fail++
+    Write-Host "FAIL  the run terminated: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "      at $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
 } finally {
     Remove-TestDesktop
     # Path-exact, so it can only ever reach zig-out's app and agent, never the
@@ -273,12 +284,11 @@ if ($NegativeControl -and -not $script:negReached) {
 # A green run stamps the covered files (T783/T987) so guard-due can answer "has
 # this harness been run against the F10 rule as it now stands?". Red leaves the
 # stamp alone: red stays due.
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:fail -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard menu-f10-binding -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)"; exit 0 }
-Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'MENU F10 BINDING ACCEPTANCE'

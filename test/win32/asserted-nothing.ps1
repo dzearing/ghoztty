@@ -345,8 +345,13 @@ Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFina
 # viewer-image, viewer-narrow-pane and viewer-nav-pin. All six run leak checks
 # AFTER their top-level try, so every one of those tries grew a SCORING catch
 # and the marker sits immediately before the stamp.
-$selfCeiling  = 146
-$stampCeiling = 27
+# 2026-09-13 (T1511, batch 7): 146 -> 140 and 27 -> 21. Six more stamping GUI
+# harnesses - readonly-badge, key-state-pill, menu-f10-binding, split-divider,
+# viewer-worktree-port and stderr-launch-capture. Four of the six run their
+# foreground-leak checks after the top-level try, so those tries grew a SCORING
+# catch; the other two already scored their throw.
+$selfCeiling  = 140
+$stampCeiling = 21
 
 $ratchetSweep = @($sweep)
 if ($TeethCheck) {

@@ -110,6 +110,10 @@ $conf = Join-Path $env:TEMP 'ghoztty-split-divider-test.conf'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1511: the shared scorer, which is also what ARMS the run - a body that
+# unwinds before `Complete-TestBody` may not print a pass and may not stamp.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $WM_NCHITTEST = 0x0084
 $HTTRANSPARENT = -1
 $HTCLIENT = 1
@@ -1150,6 +1154,13 @@ if ($a495.Process -and $a495.Process.HasExited) {
     }
 }
 
+} catch {
+    # T1511: the leak checks below are part of this run too, so this try cannot
+    # END in `Complete-TestBody`. It SCORES its own throw instead - the other
+    # half of the same rule: an unwind here can no longer reach a green verdict.
+    $script:fail++
+    Write-Host "FAIL  the run terminated: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "      at $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
 } finally {
     Remove-TestDesktop
     Kill-RepoInstances
@@ -1169,11 +1180,11 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 # this harness been run against the code as it now stands?" - the divider's
 # color arithmetic lives in split_geometry.zig and this is the only thing that
 # photographs it. Red leaves the stamp alone: red stays due.
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:fail -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard split-divider -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'SPLIT DIVIDER ACCEPTANCE'

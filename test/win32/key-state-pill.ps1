@@ -65,6 +65,10 @@ $errlog = Join-Path $env:TEMP 'ghoztty-key-state-stderr.log'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1511: the shared scorer, which is also what ARMS the run - a body that
+# unwinds before `Complete-TestBody` may not print a pass and may not stamp.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 $script:negReached = $false
@@ -563,11 +567,11 @@ if ($NegativeControl -and -not $script:negReached) {
 # pointer, and that the explainer reaches the screen and leaves with the card.
 # A red run leaves the stamp alone on purpose, and a -NegativeControl run never
 # stamps.
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:fail -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard key-state-pill -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'KEY-STATE PILL ACCEPTANCE'

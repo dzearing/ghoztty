@@ -27244,3 +27244,33 @@ no non-advisory guard due.
 
 Twenty-seven unarmed stampers remain, so T1511 stays open for batch 7 - three of
 them still blocked behind T1515, T1516 and T1517 rather than behind run time.
+
+## 2026-09-13 - Six more GUI acceptance harnesses can no longer record a crashed run as proof (T1511 batch 7)
+
+Batch 7 of the T1511 burn-down: `readonly-badge`, `key-state-pill`,
+`menu-f10-binding`, `split-divider`, `viewer-worktree-port` and
+`stderr-launch-capture` now dot-source `lib\TestScore.ps1`, mark completion with
+`Complete-TestBody` immediately before the guard stamp, and end in
+`Write-TestVerdict`. Until this, a run of any of them that unwound part way
+through still wrote the stamp that tells `guard-due` the covered files have been
+proven - and that stamp outlives the run, keeping the guard quiet until the code
+changes again.
+
+Four of the six run their foreground-leak checks AFTER the top-level `try`, so
+those tries could not END in the marker and grew a SCORING `catch` instead - the
+other half of the same rule. `readonly-badge` and `key-state-pill` already
+scored their own throw and needed only the marker and the shared verdict.
+
+Ceilings: C4 146 -> 140 and C5 27 -> 21 in `test\win32\asserted-nothing.ps1`,
+with `lib\BodyCompleteAudit.ps1` still a hard zero over six more files.
+
+Green: all six converted scripts run on the box, ALL PASS, each STAMPED by that
+run (37, 76, 14, 73, 23 and 20 assertions); the seven sweep audits the edits
+made due, all re-stamped; body-complete-audit and asserted-nothing;
+`floor-lane -Lane all` ALL LANES PASS; ipc-p1/p2/p3 ALL PASS; guard-due reports
+no non-advisory guard due.
+
+Twenty-one unarmed stampers remain, so T1511 stays open for batch 8 - five of
+them blocked behind T1513, T1514, T1515, T1516 and T1517, and `release-artifacts`
+behind the Docker precondition this box may not satisfy, rather than behind run
+time.
