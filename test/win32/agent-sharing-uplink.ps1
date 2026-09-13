@@ -105,6 +105,10 @@ $listener = Start-Job -ScriptBlock {
     $port = $l.LocalEndpoint.Port
     Set-Content -Path $portPath -Value $port -Encoding ascii
     while ($true) {
+        # Pending() first, never a bare accept: a job parked inside the
+        # synchronous AcceptTcpClient() can never service a stop request, so
+        # the harness's own teardown hangs on it forever (T1517).
+        if (-not $l.Pending()) { Start-Sleep -Milliseconds 25; continue }
         $client = $l.AcceptTcpClient()
         try {
             $client.ReceiveTimeout = 1500

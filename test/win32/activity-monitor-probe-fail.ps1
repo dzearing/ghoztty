@@ -177,6 +177,10 @@ $dirJob = Start-Job -ScriptBlock {
         "HTTP/1.1 200 OK`r`nContent-Type: application/json`r`nContent-Length: $($payload.Length)`r`nConnection: close`r`n`r`n") + $payload
     $no = [Text.Encoding]::UTF8.GetBytes("HTTP/1.1 404 Not Found`r`nContent-Length: 0`r`nConnection: close`r`n`r`n")
     while ($true) {
+        # Pending() first, never a bare accept: a job parked inside the
+        # synchronous AcceptTcpClient() can never service a stop request, so
+        # the harness's own teardown hangs on it forever (T1517).
+        if (-not $listener.Pending()) { Start-Sleep -Milliseconds 25; continue }
         $client = $listener.AcceptTcpClient()
         try {
             $stream = $client.GetStream()

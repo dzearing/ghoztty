@@ -2728,6 +2728,24 @@ $GuardTable = @(
             'test\win32\lib\*.ps1'
         )
     },
+    # The teardown meta-check (T1517): a harness's cleanup finishes in bounded
+    # time. `relay-account.ps1` reached its last assertion and then sat in its
+    # top-level `finally` for 25+ minutes - `Stop-Job` waiting on a job parked
+    # inside `AcceptTcpClient()`, which can never acknowledge - so a run that
+    # had done all of its work reported no verdict, no exit code, and held the
+    # per-user pipe against everything queued behind it. Same wide net as its
+    # siblings: section D is a rule about the CORPUS, so any new or edited
+    # acceptance script must re-prove that no job of its can park where a stop
+    # cannot reach it. Three loopback fixtures plus a text sweep, about 20s.
+    [pscustomobject]@{
+        Name   = 'job-teardown'
+        Script = 'test\win32\job-teardown.ps1'
+        Stamp  = 'test\win32\job-teardown.stamp.json'
+        Covers = @(
+            'test\win32\*.ps1',
+            'test\win32\lib\*.ps1'
+        )
+    },
     # One shared kill for the app under test and its sibling agent (T351). T248
     # hoisted it and converted 19 scripts; three weeks later 133 scripts carried
     # a private copy again, four of them redefining the shared NAME so the copy

@@ -560,6 +560,10 @@ try {
         $resp = "HTTP/1.1 200 OK`r`nContent-Type: application/json`r`nContent-Length: $($payload.Length)`r`nConnection: close`r`n`r`n"
         $respBytes = [Text.Encoding]::UTF8.GetBytes($resp) + $payload
         while ($true) {
+            # Pending() first, never a bare accept: a job parked inside the
+            # synchronous AcceptTcpClient() can never service a stop request, so
+            # the harness's own teardown hangs on it forever (T1517).
+            if (-not $listener.Pending()) { Start-Sleep -Milliseconds 25; continue }
             $client = $listener.AcceptTcpClient()
             try {
                 $stream = $client.GetStream()

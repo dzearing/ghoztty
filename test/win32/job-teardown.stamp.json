@@ -1,7 +1,7 @@
 {
-    "guard":  "stderr-capture",
-    "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-09-13T03:53:49-07:00",
+    "guard":  "job-teardown",
+    "script":  "test/win32/job-teardown.ps1",
+    "generated":  "2026-09-13T03:28:11-07:00",
     "commit":  "1176c796f",
     "uncommitted":  [
                         "test/win32/activity-monitor-probe-fail.ps1",
@@ -20,7 +20,6 @@
                         "test/win32/viewer-window-chords.ps1"
                     ],
     "files":  {
-                  "docs/claude/testing.md":  "5a2be2d5d80e580bc08a266c5007b1656573ffaddd93ded8b7019442a23dbbe5",
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",
                   "test/win32/activity-monitor-probe-fail.ps1":  "b8fb9258c879d5ec87aa62adffeb868423168684d2e880de1a1343985fd70bb6",

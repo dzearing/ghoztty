@@ -102,6 +102,15 @@ Add-Type -AssemblyName System.Security
 $env:GHOZTTY_PIPE_SUFFIX = "-relayacct$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# Bounded teardown for the fake-relay jobs (T1517): this script's `finally`
+# used to sit in `Stop-Job` forever, so a run that had finished all of its work
+# never printed a verdict.
+. (Join-Path $PSScriptRoot 'lib\JobTeardown.ps1')
+
+# Every fake relay started by this run, so teardown reaps them by construction
+# rather than by a hand-kept list of variables that the next section forgets to
+# extend.
+$script:relayJobs = New-Object System.Collections.ArrayList
 
 $script:failures = 0
 $script:skipped = 0
@@ -173,8 +182,24 @@ function Get-Out($outfile) {
     if (Test-Path "$tmp\$outfile") { Get-Content "$tmp\$outfile" -Raw } else { '' }
 }
 
+# The relay job APPENDS to this file from another process, so a read can land
+# exactly while `Add-Content` holds it and throw "the file is being used by
+# another process" - which under `$ErrorActionPreference = 'Continue'` returns
+# nothing and turns a hit that IS in the log into a FAIL. That is what produced
+# the bogus "FAIL signing back in RE-ENROLLED this machine (T1425)" in the run
+# T1517 was filed from. Retry briefly instead of scoring the collision (T1517).
 function Get-Hits($hitsFile) {
-    if (Test-Path $hitsFile) { Get-Content $hitsFile -Raw } else { '' }
+    if (-not (Test-Path $hitsFile)) { return '' }
+    foreach ($i in 1..20) {
+        try {
+            # FileShare::ReadWrite, so a read is legal while the job holds the
+            # file open for append rather than a coin toss on the timing.
+            $fs = New-Object IO.FileStream($hitsFile, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+            try { return (New-Object IO.StreamReader($fs)).ReadToEnd() } finally { $fs.Dispose() }
+        } catch { Start-Sleep -Milliseconds 50 }
+    }
+    Write-Host "  (could not read $hitsFile - held by the relay job for 1s)"
+    return ''
 }
 
 # Run the CLI with a hard timeout (a hung GUI must fail the script, not hang it).
@@ -245,8 +270,14 @@ function Test-InsideChooser([IntPtr]$chooser, [IntPtr]$h) {
 # is evidence about the app's traffic, and a harness probe in it would be a
 # second thing every "did the app call X" assertion has to reason around.
 function Start-FakeRelay($port, $tok, $ttl, $renewTok, $hitsFile, $nonce) {
-    Start-Job -ScriptBlock {
-        param($port, $tok, $ttl, $renewTok, $hitsFile, $nonce)
+    $pidFile = "$hitsFile.pid"
+    Remove-Item $pidFile -ErrorAction SilentlyContinue
+    $job = Start-Job -ScriptBlock {
+        param($port, $tok, $ttl, $renewTok, $hitsFile, $nonce, $pidFile)
+        # First statement, before anything can block: the harness ends this job
+        # by pid, which is the only teardown that is bounded no matter what the
+        # loop below is parked in (T1517).
+        Set-Content -Path $pidFile -Value $PID
         function Resp200($body) {
             $p = [Text.Encoding]::UTF8.GetBytes($body)
             $h = "HTTP/1.1 200 OK`r`nContent-Type: application/json`r`nContent-Length: $($p.Length)`r`nConnection: close`r`n`r`n"
@@ -257,6 +288,11 @@ function Start-FakeRelay($port, $tok, $ttl, $renewTok, $hitsFile, $nonce) {
         $r204 = [Text.Encoding]::UTF8.GetBytes("HTTP/1.1 204 No Content`r`nConnection: close`r`n`r`n")
         $r404 = [Text.Encoding]::UTF8.GetBytes("HTTP/1.1 404 Not Found`r`nContent-Length: 0`r`nConnection: close`r`n`r`n")
         while ($true) {
+            # Pending() + Start-Sleep, never a bare AcceptTcpClient(): a job
+            # parked in that synchronous call can never service a stop request,
+            # so the harness's own teardown hung forever on it (T1517). Polling
+            # keeps a pipeline-interruptible point in every pass of the loop.
+            if (-not $listener.Pending()) { Start-Sleep -Milliseconds 25; continue }
             $client = $listener.AcceptTcpClient()
             try {
                 $stream = $client.GetStream()
@@ -276,7 +312,15 @@ function Start-FakeRelay($port, $tok, $ttl, $renewTok, $hitsFile, $nonce) {
                 # pass $nonce into the job, and an empty one turns the pattern
                 # into "any /__probe/ path", i.e. a probe that answers itself.
                 $isProbe = ($nonce -and ($line -match "^GET /__probe/$nonce"))
-                if (-not $isProbe) { Add-Content -Path $hitsFile -Value "$line|auth=$auth" }
+                if (-not $isProbe) {
+                    # Retry: the harness reads this log while we append to it,
+                    # and a dropped hit line reads downstream as the app never
+                    # having made the call (T1517).
+                    foreach ($try in 1..20) {
+                        try { Add-Content -Path $hitsFile -Value "$line|auth=$auth" -ErrorAction Stop; break }
+                        catch { Start-Sleep -Milliseconds 25 }
+                    }
+                }
                 if ($isProbe) {
                     $out = Resp200 "{`"probe`":`"$nonce`"}"
                 } elseif ($line -match '^POST /oauth/exchange') {
@@ -308,7 +352,9 @@ function Start-FakeRelay($port, $tok, $ttl, $renewTok, $hitsFile, $nonce) {
             } catch {}
             $client.Close()
         }
-    } -ArgumentList $port, $tok, $ttl, $renewTok, $hitsFile, $nonce
+    } -ArgumentList $port, $tok, $ttl, $renewTok, $hitsFile, $nonce, $pidFile
+    $null = $script:relayJobs.Add(@{ Job = $job; PidFile = $pidFile; Label = "fake relay on $port" })
+    return $job
 }
 
 # Wait until the fake relay ANSWERS - not merely until something accepts on the
@@ -489,15 +535,14 @@ Remove-Item env:GHOSTTY_RELAY_TOKEN -ErrorAction SilentlyContinue
 
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
-$jobA = $null; $jobB = $null; $jobR = $null
 
 try {
     "== 0: start the fake brokered relays"
     "  ports: A=$FakeAPort B=$FakeBPort relay=$RelayPort  logs: $tmp"
     Assert "fake relay A port $FakeAPort is free before we bind it" (Test-PortFree $FakeAPort)
     Assert "fake relay B port $FakeBPort is free before we bind it" (Test-PortFree $FakeBPort)
-    $jobA = Start-FakeRelay $FakeAPort $SessTok 3600 $RenewedTok $HitsA $ProbeNonce
-    $jobB = Start-FakeRelay $FakeBPort $SessTok 30 $RenewedTok $HitsB $ProbeNonce
+    $null = Start-FakeRelay $FakeAPort $SessTok 3600 $RenewedTok $HitsA $ProbeNonce
+    $null = Start-FakeRelay $FakeBPort $SessTok 30 $RenewedTok $HitsB $ProbeNonce
     $upA = Wait-FakeRelay $FakeAPort $ProbeNonce
     if (-not $upA.Ok) { "  (relay A never answered: $($upA.Why))" }
     Assert "fake relay A answers its probe" $upA.Ok
@@ -948,7 +993,7 @@ try {
                         # Started HERE, not earlier: the first attempt fires as
                         # soon as the record is armed, and a relay that was
                         # already up would let a test pass with no retry at all.
-                        $jobR = Start-FakeRelay $RevokePort $SessTok 3600 $RenewedTok $HitsR $ProbeNonce
+                        $null = Start-FakeRelay $RevokePort $SessTok 3600 $RenewedTok $HitsR $ProbeNonce
 
                         $armed = $false
                         foreach ($i in 1..40) {
@@ -1285,7 +1330,7 @@ try {
 
     # The network comes back, and the next launch finishes the job with no
     # sign-out/sign-in cycle from the user.
-    $jobS = Start-FakeRelay $RestorePort $SessTok 3600 $RenewedTok $HitsS $ProbeNonce
+    $null = Start-FakeRelay $RestorePort $SessTok 3600 $RenewedTok $HitsS $ProbeNonce
     $upS = Wait-FakeRelay $RestorePort $ProbeNonce
     if (-not $upS.Ok) { "  (restore relay never answered: $($upS.Why))" }
     Assert "the restore relay is up now (the network came back)" $upS.Ok
@@ -1373,8 +1418,12 @@ try {
     Remove-Item env:GHOSTTY_ACCOUNT_STORE -ErrorAction SilentlyContinue
     if ($null -ne $savedTok) { $env:GHOSTTY_RELAY_TOKEN = $savedTok }
     Stop-TestProcs
-    foreach ($j in @($jobA, $jobB, $jobR, $jobS)) {
-        if ($j) { Stop-Job $j -ErrorAction SilentlyContinue; Remove-Job $j -Force -ErrorAction SilentlyContinue }
+    # Bounded, and reported when it gives up (T1517). The old two-liner here -
+    # `Stop-Job` then `Remove-Job -Force` over the four job variables - is what
+    # hung the run: `Stop-Job` waits for a child that is parked in a blocking
+    # accept to acknowledge, which it never does.
+    foreach ($r in @($script:relayJobs)) {
+        $null = Stop-JobBounded -Job $r.Job -PidFile $r.PidFile -TimeoutSec 10 -Label $r.Label
     }
     # A failing run keeps its evidence (both GUIs' stderr, every CLI's stdout,
     # both relays' hit logs). Deleting it was how T171's failure text was lost -

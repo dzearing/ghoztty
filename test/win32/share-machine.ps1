@@ -64,6 +64,8 @@ Assert-GhozttyIsolatedBuild -Exe $Exe
 
 # T248 shared reset, exact-exe scoped.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# Bounded teardown for the fake-relay job (T1517).
+. (Join-Path $PSScriptRoot 'lib\JobTeardown.ps1')
 function Stop-DebugGhoztty { Reset-GhozttyTestState -Exe $Exe -SettleMs 800 | Out-Null }
 
 function Get-FreePort {
@@ -77,8 +79,14 @@ function Get-FreePort {
 # poll answers complete with the device credential. Every non-probe hit is
 # logged so section B can assert the ABSENCE of enrollment traffic.
 function Start-FakeRelay($port, $hitsFile, $nonce) {
-    Start-Job -ScriptBlock {
-        param($port, $hitsFile, $nonce)
+    $pidFile = "$hitsFile.pid"
+    Remove-Item $pidFile -ErrorAction SilentlyContinue
+    $job = Start-Job -ScriptBlock {
+        param($port, $hitsFile, $nonce, $pidFile)
+        # First statement, before anything can block: teardown ends this job by
+        # pid, the only stop that is bounded whatever the loop is parked in
+        # (T1517).
+        Set-Content -Path $pidFile -Value $PID
         function Resp200($body) {
             $p = [Text.Encoding]::UTF8.GetBytes($body)
             $h = "HTTP/1.1 200 OK`r`nContent-Type: application/json`r`nContent-Length: $($p.Length)`r`nConnection: close`r`n`r`n"
@@ -88,6 +96,10 @@ function Start-FakeRelay($port, $hitsFile, $nonce) {
         $listener.Start()
         $r404 = [Text.Encoding]::UTF8.GetBytes("HTTP/1.1 404 Not Found`r`nContent-Length: 0`r`nConnection: close`r`n`r`n")
         while ($true) {
+            # Pending() + Start-Sleep, never a bare AcceptTcpClient(): a job
+            # parked in that synchronous call can never service a stop request,
+            # which is how a sibling harness's teardown hung forever (T1517).
+            if (-not $listener.Pending()) { Start-Sleep -Milliseconds 25; continue }
             $client = $listener.AcceptTcpClient()
             try {
                 $stream = $client.GetStream()
@@ -118,7 +130,9 @@ function Start-FakeRelay($port, $hitsFile, $nonce) {
             } catch {}
             $client.Close()
         }
-    } -ArgumentList $port, $hitsFile, $nonce
+    } -ArgumentList $port, $hitsFile, $nonce, $pidFile
+    $script:relayPidFile = $pidFile
+    return $job
 }
 
 function Wait-FakeRelay($port, $nonce) {
@@ -194,7 +208,7 @@ $port = Get-FreePort
 $relayJob = Start-FakeRelay $port $hitsFile $nonce
 if (-not (Wait-FakeRelay $port $nonce)) {
     "SETUP FAIL: fake relay never answered on port $port"
-    Stop-Job $relayJob -ErrorAction SilentlyContinue; Remove-Job $relayJob -Force -ErrorAction SilentlyContinue
+    $null = Stop-JobBounded -Job $relayJob -PidFile $script:relayPidFile -Label "fake relay on $port"
     Write-TestVerdict -Label 'T547 SHARE MACHINE' -Pass 0 -Fail 1
 }
 
@@ -293,8 +307,9 @@ try {
 } finally {
     Remove-TestDesktop
     Stop-DebugGhoztty
-    Stop-Job $relayJob -ErrorAction SilentlyContinue | Out-Null
-    Remove-Job $relayJob -Force -ErrorAction SilentlyContinue | Out-Null
+    # Bounded, and it says so when it gives up (T1517): `Stop-Job` waits for a
+    # child parked in a blocking accept to acknowledge, which it never does.
+    $null = Stop-JobBounded -Job $relayJob -PidFile $script:relayPidFile -Label 'fake relay'
 }
 
 $fgSeen = @(Stop-TestForegroundWatch)

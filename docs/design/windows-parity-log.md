@@ -9,6 +9,46 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-13: T1517 - **a harness could hang in its own cleanup, and one did:
+  `relay-account.ps1` finished every assertion and then sat in its top-level
+  `finally` for 25+ minutes, so a run that had done all of its work reported no
+  verdict and no exit code, and held the per-user pipe against everything queued
+  behind it.** Root cause reproduced rather than guessed: `Stop-Job` asks a job
+  to stop and then WAITS for it to acknowledge, and a job parked inside the
+  synchronous `TcpListener.AcceptTcpClient()` never reaches a point where it
+  can - the fixture is still inside `Stop-Job` at 90 seconds, while the same
+  listener written as `Pending()` + `Start-Sleep` polling stops in under one.
+  Both halves are fixed, because either alone leaves a hole: the fake-relay jobs
+  now poll and record their own PID as their first statement, and teardown goes
+  through the new `test\win32\lib\JobTeardown.ps1` (`Stop-JobBounded`), which
+  ends the job by that pid - the only stop that is bounded whatever the loop is
+  parked in - waits a capped 10s, and when it still cannot, prints one line
+  naming what it left behind and lets the run report its verdict anyway. A
+  wedged harness is worse than a red one: red is an answer. Also fixed in the
+  same file, because it is the same race: the harness read the relay's hit log
+  while the job appended to it, and the collision - "the file is being used by
+  another process" - returned nothing and scored a hit that WAS in the log as
+  `FAIL signing back in RE-ENROLLED this machine (T1425)`, a phantom product
+  defect. Both sides now retry, and the read opens with `FileShare::ReadWrite`.
+  The class is closed rather than the instance: new `test\win32\job-teardown.ps1`
+  proves the mechanism (A), the shipped shape (B), the bounded give-up (C) and
+  sweeps the corpus for a `Start-Job` body that blocks in a bare accept (D),
+  with `-TeethCheck` as the demonstration that D can go red. D found **10 more
+  harnesses** in exactly the same latent state (share-machine, the twelfth, was
+  fixed alongside relay-account before the sweep first ran) -
+  activity-monitor-probe-fail, agent-sharing-uplink, chooser-menu, chrome-theme,
+  host-settings, ipc-machine-chooser, viewer-panes, viewer-popup, viewer-restore,
+  viewer-window-chords - all now poll first, and the rule has a guard row in
+  `scripts\guard-due.ps1` so a new fake relay cannot reintroduce the wedge and
+  stay green until a run happens to hang. Green: relay-account ALL PASS (143
+  assertions, 0 skipped) in 4m42s **with an exit code**, job-teardown ALL PASS
+  (15) both modes, floor-lane -Lane all ALL LANES PASS, the nine static audits
+  the edits made due and the four GUI harnesses touched (agent-sharing-uplink 25,
+  share-machine 30, chrome-theme 136, viewer-panes 195) all green and re-stamped;
+  `guard-due check` exits 0. This unblocks T1511's conversion of
+  `relay-account.ps1`, which was written and reverted rather than shipped
+  unproven, because a run that never ends can never re-stamp its guard.
+
 - 2026-09-12: T1510 (T1511, T1512 filed) - **"a run that crashed halfway may not
   say ALL PASS" was a rule for a sixth of the suite; the other 198 scripts are
   now counted, capped, and have a worked example to convert against.** T1039

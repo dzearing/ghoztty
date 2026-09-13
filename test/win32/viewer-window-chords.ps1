@@ -114,6 +114,10 @@ $script:pageJob = Start-Job -ScriptBlock {
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
     $listener.Start()
     while ($true) {
+        # Pending() first, never a bare accept: a job parked inside the
+        # synchronous AcceptTcpClient() can never service a stop request, so
+        # the harness's own teardown hangs on it forever (T1517).
+        if (-not $listener.Pending()) { Start-Sleep -Milliseconds 25; continue }
         $client = $listener.AcceptTcpClient()
         try {
             $stream = $client.GetStream()
