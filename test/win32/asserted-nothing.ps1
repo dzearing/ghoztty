@@ -340,8 +340,13 @@ Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFina
 # url-scheme, clipboard-retry, gui-launch-command and go-loop-guard. ipc-version
 # had hand-rolled the completion marker as $script:reachedEnd and moved onto the
 # shared one, which its own "the script ran to the end" assertion now reads.
-$selfCeiling  = 152
-$stampCeiling = 33
+# 2026-09-12 (T1511, batch 6): 152 -> 146 and 33 -> 27. The six viewer
+# acceptance harnesses - viewer-composer, viewer-feedback, viewer-panes,
+# viewer-image, viewer-narrow-pane and viewer-nav-pin. All six run leak checks
+# AFTER their top-level try, so every one of those tries grew a SCORING catch
+# and the marker sits immediately before the stamp.
+$selfCeiling  = 146
+$stampCeiling = 27
 
 $ratchetSweep = @($sweep)
 if ($TeethCheck) {

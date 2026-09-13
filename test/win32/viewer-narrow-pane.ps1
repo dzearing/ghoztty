@@ -62,6 +62,10 @@ $env:GHOZTTY_PIPE_SUFFIX = "-vnp$PID"
 Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\HarnessLeak.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 # T1127: everything running out of this build's directory is reaped when this
 # PowerShell exits, including a detached `--pty-host` holder that no PID-based
@@ -718,6 +722,14 @@ try {
     Remove-Item $mdFile -ErrorAction SilentlyContinue
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'the GUI survived the whole run'
+} catch {
+    # T1511: the foreground-leak checks below are part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead -
+    # the other half of the same rule: an unwind here can no longer reach a
+    # green verdict.
+    $script:fail++
+    Write-Host "FAIL  the run terminated: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "      at $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
 } finally {
     Remove-TestDesktop
     [void](Stop-RepoGhoztty -Exe $exe -AppOnly -SettleMs 300)
@@ -732,6 +744,8 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
 }
 
+Complete-TestBody  # T1039: the last statement of the body an unwind can skip
+
 # A green run stamps the covered files (T783) so guard-due can answer "has this
 # harness been run against the code as it now stands?". Red leaves the stamp
 # alone: red stays due. A negative-control run is red by construction, so it
@@ -742,5 +756,4 @@ if ($script:fail -eq 0) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

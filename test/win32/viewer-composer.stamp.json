@@ -1,13 +1,16 @@
 {
     "guard":  "viewer-composer",
     "script":  "test/win32/viewer-composer.ps1",
-    "generated":  "2026-08-21T22:03:25-07:00",
-    "commit":  "56e310ef0",
+    "generated":  "2026-09-12T23:34:13-07:00",
+    "commit":  "aa208cbe7",
+    "uncommitted":  [
+                        "test/win32/viewer-composer.ps1"
+                    ],
     "files":  {
                   "src/apprt/win32/viewer_feedback_page.zig":  "ac36942837a410cfb0d4661bb78004aeef1168b41bb7d57deb745cb6e8c016b4",
                   "src/apprt/win32/ViewerFeedbackWeb.zig":  "bd420cf35aa02909c9632b2589b36b69ba0ac141a87add034ae7c0080af4f1f3",
                   "src/viewer/composer.css":  "8a70d88ddfddc3dc37a9905fd8e1e383ac8f8f906fbf828d1aa65553c8981669",
                   "src/viewer/composer.js":  "4581a5fa26d41e858808913edb947e5736fa44e61cda7ced862f114c14cf103f",
-                  "test/win32/viewer-composer.ps1":  "a6ee294b66489b65bad593890320052fe11c6677643cff68d4596719fb3e292f"
+                  "test/win32/viewer-composer.ps1":  "0dc8341a3d65144db26e9dbe193a77191a8059b5cc0d89fceab65a59d7c6c7cc"
               }
 }

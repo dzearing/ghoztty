@@ -27214,3 +27214,33 @@ check exits 0 with only the three standing advisories.
 
 Thirty-three unarmed stampers remain, so T1511 stays open for batch 6 - three of
 them still blocked behind T1515, T1516 and T1517 rather than behind run time.
+
+## 2026-09-13 - The six viewer acceptance harnesses can no longer record a crashed run as proof (T1511 batch 6)
+
+Batch 6 of the stamping burn-down: `viewer-nav-pin`, `viewer-narrow-pane`,
+`viewer-image`, `viewer-composer`, `viewer-feedback` and `viewer-panes` move
+onto the shared scorer, so a run of any of them that unwinds partway can no
+longer write the guard stamp that says "this viewer was proven against the code
+as it now stands".
+
+All six share one shape, and it is the shape that decides the conversion: the
+foreground-leak check (and, in `viewer-panes`, the browser-leak check) runs
+AFTER the top-level `try`, so none of those tries could END in
+`Complete-TestBody` without dropping the leak assertions out of the body. Each
+one grew a SCORING catch instead - the other honest shape the body-completion
+rule names - and the marker sits immediately before the stamp, after the leak
+checks have been counted. The final hand-rolled verdict in each is now one
+`Write-TestVerdict` call; `viewer-image` keeps its skip count by passing
+`-Skipped`.
+
+Ceilings: C4 152 -> 146 and C5 33 -> 27 in `test\win32\asserted-nothing.ps1`,
+with `lib\BodyCompleteAudit.ps1` still a hard zero over six more files.
+
+Green: all six converted scripts run on the box, ALL PASS, each STAMPED by that
+run (24, 63, 40, 30, 96 and 195 assertions); the eight sweep audits the edits
+made due, all re-stamped; body-complete-audit and asserted-nothing;
+`floor-lane -Lane all` ALL LANES PASS; ipc-p1/p2/p3 ALL PASS; guard-due reports
+no non-advisory guard due.
+
+Twenty-seven unarmed stampers remain, so T1511 stays open for batch 7 - three of
+them still blocked behind T1515, T1516 and T1517 rather than behind run time.
