@@ -236,6 +236,10 @@ pub fn forwardsTag(tag: std.meta.Tag(input.Binding.Action)) bool {
         // ctrl+shift+space into the page and the user could not leave hero
         // mode without first navigating to a terminal tile (T126).
         .toggle_hero_mode,
+        // Same ground as hero mode: the mode belongs to the window, and a
+        // viewer pane is one of the panes rearrange mode exists to move, so
+        // a focused viewer must not swallow the chord (T1524).
+        .toggle_rearrange_mode,
         .toggle_fullscreen,
         .toggle_maximize,
         // The window's size is the window's, and a viewer-only window has no
@@ -623,6 +627,10 @@ test "forwards: window/app commands yes, terminal-content commands no" {
     // found. All three of hero's chords answer from a focused viewer.
     try testing.expect(forwards(.toggle_hero_mode));
     try testing.expect(forwards(.{ .swap_split = .down }));
+
+    // Rearrange mode arrived on the same ground (T1524): window-scoped, and
+    // a viewer pane is one of the panes it exists to move.
+    try testing.expect(forwards(.toggle_rearrange_mode));
 
     // The two the same sweep left behind (T682). Both are the WINDOW's, and
     // a viewer-only window has no terminal to press them from at all.

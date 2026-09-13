@@ -6642,6 +6642,12 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             {},
         ),
 
+        .toggle_rearrange_mode => return try self.rt_app.performAction(
+            .{ .surface = self },
+            .toggle_rearrange_mode,
+            {},
+        ),
+
         .toggle_readonly => {
             self.readonly = !self.readonly;
             _ = try self.rt_app.performAction(

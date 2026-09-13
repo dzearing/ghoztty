@@ -7323,6 +7323,13 @@ pub const Keybinds = struct {
             .{ .toggle_hero_mode = {} },
         );
 
+        // Toggle pane rearrange mode
+        try self.set.put(
+            alloc,
+            .{ .key = .{ .physical = .period }, .mods = inputpkg.ctrlOrSuper(.{ .shift = true }) },
+            .{ .toggle_rearrange_mode = {} },
+        );
+
         // Toggle command palette, matches VSCode
         try self.set.put(
             alloc,
@@ -10889,6 +10896,28 @@ test "finalize: _command-explicit survives a conditional-state rebuild" {
     defer rebuilt.deinit();
     try testing.expect(rebuilt.command != null);
     try testing.expect(rebuilt.@"_command-explicit");
+}
+
+// T1524: rearrange mode arrives from main with a default chord, and a default
+// that is silently absent is indistinguishable from an action nobody can reach
+// - the acceptance script binds its own chord precisely so it is not also
+// scoring this. Held here instead, on the same key spelling main uses.
+test "default keybinds: ctrl/super+shift+period toggles rearrange mode" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var cfg = try Config.default(alloc);
+    defer cfg.deinit();
+
+    const entry = cfg.keybind.set.get(.{
+        .key = .{ .physical = .period },
+        .mods = inputpkg.ctrlOrSuper(.{ .shift = true }),
+    }) orelse return error.TestExpectedBinding;
+
+    try testing.expectEqual(
+        inputpkg.Binding.Action{ .toggle_rearrange_mode = {} },
+        entry.value_ptr.leaf.action,
+    );
 }
 
 // T154: on Windows the plain-ctrl clipboard mirrors MUST be performable.

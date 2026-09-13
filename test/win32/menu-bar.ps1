@@ -562,6 +562,7 @@ $expectedTree = @(
     '&Window/---'
     "&Window/&Zoom Split"
     "&Window/Toggle Hero &Mode"
+    "&Window/Toggle Re&arrange Mode"
     "&Window/Select &Previous Split"
     "&Window/Select &Next Split"
     '&Window/&Select Split >'

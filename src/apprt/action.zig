@@ -163,6 +163,9 @@ pub const Action = union(Key) {
     /// Toggle hero mode view for the window.
     toggle_hero_mode,
 
+    /// Toggle pane rearrange mode for the window.
+    toggle_rearrange_mode,
+
     /// Present the target terminal whether its a tab, split, or window.
     present_terminal,
 
@@ -389,6 +392,7 @@ pub const Action = union(Key) {
         equalize_splits,
         toggle_split_zoom,
         toggle_hero_mode,
+        toggle_rearrange_mode,
         present_terminal,
         size_limit,
         reset_window_size,

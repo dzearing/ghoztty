@@ -242,6 +242,13 @@ active_tab: usize = 0,
 /// Whether the tab bar is visible (shown when >1 tab).
 tab_bar_visible: bool = false,
 
+/// Whether this window is in pane rearrange mode (T1524). While it is on,
+/// the tab strip is forced visible because it is a drop target, and every
+/// pane carries a drag header (T1525). Window-scoped, not per-tab: the mode
+/// is about moving panes BETWEEN tabs, so a mode that ended at the tab
+/// boundary would be the wrong shape.
+rearrange_mode: bool = false,
+
 /// Caption button under the pointer, if any (T254). The band's pixels are
 /// client but its mouse messages arrive as NC, so this is driven by
 /// `WM_NCMOUSEMOVE`/`WM_NCMOUSELEAVE`, not by the strip's tracking.
@@ -2612,6 +2619,31 @@ pub fn toggleHeroMode(self: *Window) void {
     if (self.tab_active_pane[tab].hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
 }
 
+/// Toggle pane rearrange mode for this window (T1524).
+///
+/// The mode is window-scoped and survives a tab switch, because its whole
+/// point is moving panes between tabs. Entering it forces the tab strip
+/// visible (it is a drop target) and leaving it hands the strip back to the
+/// `window-show-tab-bar` config, so a window that normally shows no strip
+/// does not keep one afterwards.
+///
+/// Hero mode and rearrange mode are mutually exclusive: hero mode replaces
+/// the split layout with a carousel, so there are no pane rects to grab. A
+/// window in hero mode leaves it on the way in rather than refusing the
+/// chord, which is the same courtesy the zoom path already extends.
+pub fn toggleRearrangeMode(self: *Window) void {
+    self.rearrange_mode = !self.rearrange_mode;
+    if (self.rearrange_mode and
+        self.tab_count > 0 and
+        self.tab_hero_active[self.active_tab])
+    {
+        self.toggleHeroMode();
+    }
+    self.updateTabBarVisibility();
+    self.layoutSplits();
+    if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
+}
+
 /// Move the hero selection (clamped), focus it, and re-layout — animated
 /// (snapshot slide + carousel re-center) when possible, instant otherwise.
 fn heroSelect(self: *Window, index: isize) void {
@@ -4718,6 +4750,7 @@ pub const viewer_dispatch_tags = [_]std.meta.Tag(input.Binding.Action){
     .equalize_splits,
     .toggle_split_zoom,
     .toggle_hero_mode,
+    .toggle_rearrange_mode,
     .toggle_fullscreen,
     .toggle_maximize,
     .toggle_window_decorations,
@@ -4870,6 +4903,9 @@ pub fn performViewerBindingAction(
         // viewer already gets a carousel tile (T397) and already answers the
         // hero nav chords, so the toggle belongs here too (T126).
         .toggle_hero_mode => self.toggleHeroMode(),
+        // Rearrange mode is window-scoped for the same reason, and a viewer
+        // pane is one of the panes you would want to move (T1524).
+        .toggle_rearrange_mode => self.toggleRearrangeMode(),
 
         .toggle_fullscreen => self.toggleFullscreen(),
         .toggle_maximize => {
@@ -5232,13 +5268,23 @@ pub fn setTabTitlePin(self: *Window, tab_idx: usize, title: ?[]const u8) void {
 }
 
 /// Update tab bar visibility based on config and tab count.
-fn updateTabBarVisibility(self: *Window) void {
-    if (self.is_quick_terminal) {
-        self.tab_bar_visible = false;
-        return;
-    }
-    const show_config = self.app.config.@"window-show-tab-bar";
-    const should_show = switch (show_config) {
+/// Inputs to the tab-strip visibility decision, split out so the rule can be
+/// tested without a live window (T1524 added a third input to it and there
+/// was nowhere to assert the combination).
+pub const TabBarInputs = struct {
+    show_config: @import("../../config.zig").Config.WindowShowTabBar,
+    tab_count: usize,
+    /// Whether the window draws its own caption, which is where the menu
+    /// button lives when the strip is gone.
+    custom_caption: bool,
+    is_quick_terminal: bool = false,
+    rearrange_mode: bool = false,
+};
+
+/// Whether the tab strip should be showing, given everything that has a say.
+pub fn tabBarShouldShow(in: TabBarInputs) bool {
+    if (in.is_quick_terminal) return false;
+    return switch (in.show_config) {
         .always => true,
         // `auto` means "show the strip when it has something to show", which
         // is tabs — a strip at one tab spends 40 DIP (2-3 terminal rows, of
@@ -5257,9 +5303,25 @@ fn updateTabBarVisibility(self: *Window) void {
         //
         // (The quick terminal returned above, and `never` remains the opt-out
         // — F10 / a lone Alt / the command palette still reach the menu.)
-        .auto => self.tab_count > 1 or !self.customCaption(),
+        .auto => in.tab_count > 1 or !in.custom_caption,
         .never => false,
-    };
+    } or
+        // Rearrange mode overrides every one of the above, `never` included
+        // (T1524): the strip is where you drop a pane to move it to another
+        // tab, so a hidden strip is a missing drop target rather than a
+        // tidier window. It goes back to whatever the config asked for the
+        // moment the mode is switched off.
+        in.rearrange_mode;
+}
+
+fn updateTabBarVisibility(self: *Window) void {
+    const should_show = tabBarShouldShow(.{
+        .show_config = self.app.config.@"window-show-tab-bar",
+        .tab_count = self.tab_count,
+        .custom_caption = self.customCaption(),
+        .is_quick_terminal = self.is_quick_terminal,
+        .rearrange_mode = self.rearrange_mode,
+    });
     if (should_show != self.tab_bar_visible) {
         self.tab_bar_visible = should_show;
         self.handleResize("tabbar");
@@ -8632,6 +8694,56 @@ test "T228: split_geometry's divider cursor ids ARE the OS's IDC_* values" {
     try std.testing.expectEqual(w32.IDC_SIZEWE, split_geometry.DividerCursor.size_we.idc());
     try std.testing.expectEqual(w32.IDC_SIZENS, split_geometry.DividerCursor.size_ns.idc());
     try std.testing.expectEqual(w32.IDC_SIZEWE, split_geometry.HERO_DIVIDER_CURSOR.idc());
+}
+
+test "T1524: rearrange mode forces the tab strip, and only while it is on" {
+    // `auto` on a single-tab window that draws its own caption is the case
+    // that hides the strip, and it is also the case where a rearrange drag
+    // has nowhere to drop a pane for another tab. So this pair is the whole
+    // point of the override.
+    const hidden: TabBarInputs = .{
+        .show_config = .auto,
+        .tab_count = 1,
+        .custom_caption = true,
+    };
+    try std.testing.expect(!tabBarShouldShow(hidden));
+
+    var rearranging = hidden;
+    rearranging.rearrange_mode = true;
+    try std.testing.expect(tabBarShouldShow(rearranging));
+
+    // `never` is an explicit opt-out and the mode overrides it too - a drop
+    // target you cannot see is the same defect whichever setting hid it.
+    var never_on: TabBarInputs = .{
+        .show_config = .never,
+        .tab_count = 3,
+        .custom_caption = true,
+    };
+    try std.testing.expect(!tabBarShouldShow(never_on));
+    never_on.rearrange_mode = true;
+    try std.testing.expect(tabBarShouldShow(never_on));
+
+    // The quick terminal has no strip at all and the mode does not give it
+    // one: it is a single-surface drop-down, so there is nothing to arrange.
+    try std.testing.expect(!tabBarShouldShow(.{
+        .show_config = .always,
+        .tab_count = 1,
+        .custom_caption = true,
+        .is_quick_terminal = true,
+        .rearrange_mode = true,
+    }));
+
+    // And nothing about the ordinary answers moved.
+    try std.testing.expect(tabBarShouldShow(.{
+        .show_config = .auto,
+        .tab_count = 2,
+        .custom_caption = true,
+    }));
+    try std.testing.expect(tabBarShouldShow(.{
+        .show_config = .auto,
+        .tab_count = 1,
+        .custom_caption = false,
+    }));
 }
 
 test "T1419: an Activity panel names a machine by its identity, both entry points" {

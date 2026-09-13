@@ -199,6 +199,7 @@ const window_menu = [_]Node{
     .separator,
     .{ .item = .{ .cmd = .toggle_split_zoom, .title = u16lit("&Zoom Split") } },
     .{ .item = .{ .cmd = .toggle_hero_mode, .title = u16lit("Toggle Hero &Mode") } },
+    .{ .item = .{ .cmd = .toggle_rearrange_mode, .title = u16lit("Toggle Re&arrange Mode") } },
     .{ .item = .{ .cmd = .focus_split_previous, .title = u16lit("Select &Previous Split") } },
     .{ .item = .{ .cmd = .focus_split_next, .title = u16lit("Select &Next Split") } },
     .{ .submenu = .{ .title = u16lit("&Select Split"), .items = &select_split_menu } },
@@ -356,6 +357,13 @@ pub fn flags(cmd: commands.Id, state: State) Flags {
 
         // Needs more than one tab.
         .close_tab, .previous_tab, .next_tab, .last_tab => .{ .enabled = state.tab_count > 1 },
+
+        // Rearrange mode needs somewhere to move a pane TO, which is a second
+        // pane in this tab or a second tab to drop onto (T1524). A lone pane
+        // in a lone tab can still be dragged into another WINDOW, but the
+        // menu has no count of those, so the honest gate is the one it can
+        // see; the chord is unaffected either way.
+        .toggle_rearrange_mode => .{ .enabled = state.pane_count > 1 or state.tab_count > 1 },
 
         // Needs more than one pane in the tab.
         .close_surface,
@@ -561,6 +569,13 @@ test "state gates the rows whose target may not exist" {
 
     try std.testing.expect(!flags(.equalize_splits, empty).enabled);
     try std.testing.expect(flags(.equalize_splits, .{ .pane_count = 2 }).enabled);
+
+    // Rearrange mode takes EITHER count, because a pane can be dropped on a
+    // sibling split or on another tab (T1524). A lone pane in a lone tab has
+    // neither, so the row grays.
+    try std.testing.expect(!flags(.toggle_rearrange_mode, empty).enabled);
+    try std.testing.expect(flags(.toggle_rearrange_mode, .{ .pane_count = 2 }).enabled);
+    try std.testing.expect(flags(.toggle_rearrange_mode, .{ .tab_count = 2 }).enabled);
 
     // Unconditional rows stay enabled in the emptiest possible state.
     try std.testing.expect(flags(.new_window, empty).enabled);

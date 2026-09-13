@@ -9,6 +9,57 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-13: T1524 (+T1527 filed) - **main's new rearrange-mode command existed
+  in the Windows palette and did nothing when you picked it.** `b18ee2d77`
+  added `toggle_rearrange_mode` to the shared core - the action, the palette
+  entry, the default ctrl/super+shift+period chord - and the win32 apprt had no
+  arm for it, so the app claimed the chord from every pane and answered with
+  silence. This is the plumbing half; the drag itself is T1525. The shared-core
+  side is main's code verbatim (`action.zig`, `Binding.zig`, `command.zig`,
+  `Surface.zig`, `Config.zig`, `include/ghostty.h`) and the win32 side is the
+  mode: `Window.rearrange_mode` with `toggleRearrangeMode()`, the `App.zig` arm,
+  viewer forwarding so a focused viewer does not swallow the chord (the T682
+  path), and palette + menu entries. The one behavior the action's own doc
+  comment names is live - the tab strip is FORCED visible while the mode is on,
+  `window-show-tab-bar=never` included, because the strip is where a pane gets
+  dropped to become another tab, and it goes back to whatever the config asked
+  for on the way out. Hero mode and rearrange mode are mutually exclusive:
+  entering rearrange LEAVES hero rather than refusing the chord, since a
+  carousel has no pane rects to grab. `updateTabBarVisibility` was split into a
+  pure `tabBarShouldShow(TabBarInputs)` so the three-way rule could be asserted
+  without a live window.
+
+  New acceptance `test\win32\rearrange-mode-action.ps1` (18 assertions, ALL
+  PASS) launches with `--window-show-tab-bar=never` and scores GEOMETRY, not
+  pixels: the strip costs real client space, so a pane's top moves 40 -> 50 px
+  when it appears and back to exactly 40 when the mode leaves. Three claims -
+  enter from a terminal, leave again, and answer from a focused viewer - with a
+  `clear_screen` positive control ahead of them and `toggle_hero_mode` as the
+  viewer arm's own control, so dead injection can never read as a dead action.
+  `-NegativeControl` inverts claim A to the pre-fix behavior and fails exactly
+  that assertion. Guard row `rearrange-mode-action` registered over the harness,
+  `Window.zig`, `App.zig` and `viewer_accel.zig`, stamped green.
+
+  Three repairs found while validating. The script's own teardown was killing
+  the app with `Stop-Process` before `Remove-TestDesktop` read the corpses, so
+  an all-green run printed `GUI POSTMORTEM ... CRASHED - 0xFFFFFFFF` for its own
+  deliberate kill - noise that trains a reader to skip the block that exists to
+  catch a real crash. `menu-bar.ps1`'s expected-menu model gained the new
+  "Toggle Re&arrange Mode" row (it had gone red on a one-row offset). And the
+  new `Config.zig` test had landed between the T154 comment and the test that
+  comment describes.
+
+  Floor: lib/none/win32/agent ALL LANES PASS. Guards re-run green: menu-bar
+  (81), tab-overview-action (18), viewer-close (44), viewer-find (42),
+  rearrange-mode-action (18), body-complete (45), plus test-reach,
+  desktop-launch, command-resolve, isolation-meta, launch-preflight,
+  verdict-exit, job-teardown, cleanslate, persistence-flag,
+  stderr-launch-capture, stderr-capture, printclient and msg-timer-ids.
+  `close-confirm-idle` is the exception and the commit takes `-NoGuardDue`
+  naming it: two runs over IDENTICAL bytes failed DIFFERENT sections (run 1
+  C/remote, run 2 both D/always checks), which is non-determinism in its dialog
+  wait rather than a verdict about this change - filed T1527.
+
 - 2026-09-13: T708 - **a shortcut bound to `toggle_tab_overview` did nothing at
   all, on either seat, while the overview it asks for has shipped here for
   months under another name.** The win32 arm returned true and fell through to

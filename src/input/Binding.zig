@@ -668,6 +668,12 @@ pub const Action = union(enum) {
     /// on the right.
     toggle_hero_mode,
 
+    /// Toggle pane rearrange mode for the current window. In rearrange mode
+    /// every pane grows a header with a drag grip and a pop-out button, and
+    /// the tab bar is shown even when it normally would not be, because it
+    /// is a drop target.
+    toggle_rearrange_mode,
+
     /// Toggle read-only mode for the current surface.
     ///
     /// When a surface is in read-only mode:
@@ -1452,6 +1458,7 @@ pub const Action = union(enum) {
             .goto_window,
             .toggle_split_zoom,
             .toggle_hero_mode,
+            .toggle_rearrange_mode,
             .toggle_readonly,
             .resize_split,
             .equalize_splits,

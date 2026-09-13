@@ -7653,6 +7653,18 @@ pub fn performAction(
                 return true;
             },
         },
+
+        // Rearrange mode: every pane grows a drag header and the tab strip
+        // is forced visible because it is a drop target (T1524). The drag
+        // itself is T1525 - this arm owns the mode, so a bound chord is an
+        // honest claim the day the headers arrive rather than a dead key.
+        .toggle_rearrange_mode => switch (target) {
+            .app => return false,
+            .surface => |core_surface| {
+                core_surface.rt_surface.parent_window.toggleRearrangeMode();
+                return true;
+            },
+        },
     }
 }
 
