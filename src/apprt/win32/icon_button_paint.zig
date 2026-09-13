@@ -55,6 +55,7 @@ fn codepoint(which: icon_button.Glyph) u16 {
         .feedback => 0xED15, // Feedback — Windows' own "tell us about this"
         .send => 0xE74A, // Up — the composer's submit arrow
         .search => 0xE721, // Search - Windows' own magnifier
+        .new_window => 0xE8A7, // OpenInNewWindow
     };
 }
 
@@ -79,6 +80,10 @@ fn fontDip(which: icon_button.Glyph) f32 {
         // the toolbar cluster - the same optical relationship the caption
         // glyphs have to the strip's.
         .search => 11.0,
+        // The pane header's pop-out mark sits in a band-height square beside a
+        // title, the same relationship the nav cluster has to its address
+        // field, so it renders at the toolbar size.
+        .new_window => 12.0,
     };
 }
 

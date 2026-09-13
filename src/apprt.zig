@@ -217,6 +217,11 @@ test {
     // no-OS-imports deal.
     _ = @import("apprt/win32/pane_drop.zig");
 
+    // Pure win32 rearrange-mode pane-header geometry — the band a pane grows
+    // while the mode is on, and what a point in it means (T1530), same
+    // no-OS-imports deal.
+    _ = @import("apprt/win32/rearrange_header.zig");
+
     // Pure win32 split-divider drag SEMANTICS — which other boundaries hold
     // their pixel when one divider moves (T533), same no-OS-imports deal.
     _ = @import("apprt/win32/split_resize.zig");

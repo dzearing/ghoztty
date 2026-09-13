@@ -3586,10 +3586,14 @@ pub fn handleKeyEvent(self: *Surface, wparam: usize, lparam: isize, action: inpu
     // it was spelled out inline a focused viewer pane opened a plain window
     // and a focused top-level window did nothing at all (T746).
     if (action == .press and (lparam & (1 << 30)) == 0) {
-        if (window_chord.classify(vk, getModifiers())) |chord| switch (chord) {
+        if (window_chord.classify(vk, getModifiers(), self.parent_window.chordState())) |chord| switch (chord) {
             .new_remote_window => {
                 log.info("machine chooser: opening via ctrl+shift+n", .{});
                 self.parent_window.openMachineChooser();
+                return;
+            },
+            .leave_rearrange_mode => {
+                _ = self.parent_window.leaveRearrangeMode();
                 return;
             },
         };

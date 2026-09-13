@@ -405,6 +405,13 @@ pub const Glyph = enum {
     /// lens with a handle still reads unmistakably as "search", which is a
     /// fallback's whole bar (see the header of `icon_button_paint`).
     search,
+    /// "❐+" — move this pane out into a window of its own (T1530, Fluent
+    /// OpenInNewWindow; Mac uses `macwindow.badge.plus`). The FALLBACK is
+    /// `restore`'s two stacked squares, shared rather than re-derived: the
+    /// mark that reads as "a second window behind this one" is the same mark,
+    /// and a fallback's bar is "readable", not "identical" (see the header of
+    /// `icon_button_paint`).
+    new_window,
 };
 
 /// The maximum quads any glyph needs, so callers can size a stack buffer.
@@ -624,7 +631,7 @@ pub fn glyphQuads(m: Metrics, target: Rect, glyph: Glyph, out: []Quad) []const Q
             const b = centered(target, m.mark_caption, m.mark_caption);
             return squareOutline(b, m.stroke_outline, out);
         },
-        .restore => {
+        .restore, .new_window => {
             // Two squares, the front one down-left of the back one, and the
             // back one drawn only where it is not hidden (its top and right
             // edges) so it reads as being behind rather than crossing through.

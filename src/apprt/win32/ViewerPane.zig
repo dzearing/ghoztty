@@ -5286,8 +5286,18 @@ fn claimsChord(self: *ViewerPane, vk: u16, extended: bool, mods: inputpkg.Mods) 
     // cross-platform `new_window` default in the core set, so consulting the
     // table first is what made a focused viewer open a plain local window when
     // the user asked for the machine chooser.
-    if (window_chord.classify(vk, mods) != null) return true;
+    if (window_chord.classify(vk, mods, self.chordState()) != null) return true;
     return self.chordAction(vk, extended, mods) != null;
+}
+
+/// This pane's window state for the shared chord table (T1530).
+///
+/// Routed through `pane_view` rather than a raw back-pointer for the reason
+/// the chord dispatch beside it is: a bare test pane has no parent window, and
+/// it answers "no modes are on" rather than dereferencing one.
+fn chordState(self: *ViewerPane) window_chord.State {
+    const pv = self.pane_view orelse return .{};
+    return pv.parentWindow().chordState();
 }
 
 /// The composer's web surface saw a chord its page did not claim: does the
@@ -6017,12 +6027,16 @@ pub fn wndProc(
             // reason (T746). Routed through `pane_view` rather than the raw
             // `parent_window` back-pointer, which a bare test pane leaves
             // undefined — the pattern the hero-mode arm below already uses.
-            if (window_chord.classify(vk, mods)) |chord| switch (chord) {
+            if (window_chord.classify(vk, mods, self.chordState())) |chord| switch (chord) {
                 .new_remote_window => {
                     if (self.pane_view) |pv| {
                         log.info("machine chooser: opening via ctrl+shift+n (viewer focus)", .{});
                         pv.parentWindow().openMachineChooser();
                     }
+                    return 0;
+                },
+                .leave_rearrange_mode => {
+                    if (self.pane_view) |pv| _ = pv.parentWindow().leaveRearrangeMode();
                     return 0;
                 },
             };

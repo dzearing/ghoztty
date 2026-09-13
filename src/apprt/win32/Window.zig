@@ -123,6 +123,7 @@ const HeroCarousel = @import("HeroCarousel.zig");
 const hero_math = @import("hero_math.zig");
 const dim_math = @import("dim_math.zig");
 const split_geometry = @import("split_geometry.zig");
+const rearrange_header = @import("rearrange_header.zig");
 const split_resize = @import("split_resize.zig");
 const drag_perf = @import("drag_perf.zig");
 
@@ -248,6 +249,11 @@ tab_bar_visible: bool = false,
 /// is about moving panes BETWEEN tabs, so a mode that ended at the tab
 /// boundary would be the wrong shape.
 rearrange_mode: bool = false,
+
+/// Which pane header the pointer is inside, and which part of it (T1530).
+/// Drives the hover treatment the same way `hover_split` drives the divider's,
+/// and is cleared by `resetPointerTransients` with every other hover.
+rearrange_hover: ?RearrangeHover = null,
 
 /// Caption button under the pointer, if any (T254). The band's pixels are
 /// client but its mouse messages arrive as NC, so this is driven by
@@ -2639,9 +2645,90 @@ pub fn toggleRearrangeMode(self: *Window) void {
     {
         self.toggleHeroMode();
     }
+    self.rearrange_hover = null;
     self.updateTabBarVisibility();
     self.layoutSplits();
     if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
+}
+
+/// Leave rearrange mode if it is on, and say whether it was (T1530).
+///
+/// Escape's contract, kept separate from the toggle so the key can be claimed
+/// ONLY when there is a mode to leave — an Escape that turned the mode ON
+/// would be a chord nobody asked for, and one swallowed while the mode is off
+/// would take the key away from the terminal.
+pub fn leaveRearrangeMode(self: *Window) bool {
+    if (!self.rearrange_mode) return false;
+    self.toggleRearrangeMode();
+    return true;
+}
+
+/// What this window is doing, for the chords whose meaning depends on it
+/// (T1530). One accessor rather than a bool passed by hand at each of the four
+/// focus targets, so a chord that grows a second condition grows it once.
+pub fn chordState(self: *const Window) window_chord.State {
+    return .{ .rearrange_mode = self.rearrange_mode };
+}
+
+test "T1530: the pure chord table's escape matches the real VK" {
+    try std.testing.expectEqual(w32.VK_ESCAPE, window_chord.vk_escape);
+}
+
+/// Which pane header the pointer is inside, and which part of it (T1530).
+pub const RearrangeHover = struct {
+    view: *PaneView,
+    part: rearrange_header.Hit,
+};
+
+/// Can a pane be moved out into a window of its own yet?
+///
+/// **Not yet** (T1530). The header's pop-out button is drawn, measured and
+/// hit-tested here, but the thing it would DO — taking a live pane out of one
+/// top-level window and into another, with its process, scrollback and agent
+/// session intact — is cross-window pane relocation, which this apprt has
+/// never had (nothing in `src/apprt/win32/` calls `SetParent` today) and which
+/// T1532 owns along with the session-safety rule that makes it survivable.
+///
+/// So the button ships DISABLED, which is a state Mac's own header has
+/// (`PaneHeaderView.canPopOut` greys it on a window's last pane) rather than
+/// an invention, and T1532 flips this one constant. A disabled control that
+/// tells the truth beats a live one that loses a session, and beats a header
+/// whose geometry moves under the user the day the feature lands.
+const pane_pop_out_supported = false;
+
+/// Whether THIS window's pane could pop out, once the machinery exists. Mac's
+/// rule: a window's last pane cannot — the window would close and another open
+/// to hold the same pane.
+fn canPopOutPane(self: *const Window) bool {
+    if (!pane_pop_out_supported) return false;
+    if (self.tab_count == 0) return false;
+    return self.leafCount(self.active_tab) > 1 or self.tab_count > 1;
+}
+
+fn rearrangeMetrics(self: *const Window) rearrange_header.Metrics {
+    return rearrange_header.Metrics.forScale(self.scale);
+}
+
+fn toHeaderRect(r: w32.RECT) rearrange_header.Rect {
+    return .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+}
+
+/// The header band for a pane occupying `slot`, or null when there is none.
+///
+/// The ONE answer the layout pass, the paint pass and the hit test all take,
+/// which is what stops a reserved-but-unpainted band (dead window background
+/// that still eats clicks) from being representable — see the module header.
+fn rearrangeHeaderFor(self: *const Window, slot: w32.RECT) ?rearrange_header.Layout {
+    if (!self.rearrange_mode) return null;
+    if (self.tab_count > 0 and self.tab_hero_active[self.active_tab]) return null;
+    return rearrange_header.layout(toHeaderRect(slot), self.rearrangeMetrics());
+}
+
+/// How far down a pane starts because of its rearrange header. Zero when the
+/// mode is off or the pane is too small to carry one.
+fn rearrangeHeaderInset(self: *const Window, slot: w32.RECT) i32 {
+    const l = self.rearrangeHeaderFor(slot) orelse return 0;
+    return l.band.height();
 }
 
 /// Move the hero selection (clamped), focus it, and re-layout — animated
@@ -2833,6 +2920,7 @@ fn resetPointerTransients(self: *Window) void {
     self.hero_hover_tile = -1;
     self.hero_divider_hover = false;
     self.hover_split = null;
+    self.rearrange_hover = null;
     if (self.hero_divider_drag) {
         self.hero_divider_drag = false;
         _ = w32.ReleaseCapture();
@@ -3448,11 +3536,17 @@ pub fn layoutSplits(self: *Window) void {
             if (entry.handle == zoomed_handle) {
                 entry.view.setVisible(true);
                 if (entry.view.hwnd()) |h| {
-                    // Banner strip band above the zoomed terminal (T101).
-                    const inset = entry.view.bannerLayoutInset(rect.right - rect.left, rect.bottom - rect.top);
+                    // Rearrange header band, then the banner strip under it
+                    // (T1530/T101) — the header is the topmost thing in the
+                    // pane on Mac too, so the banner moves down with the
+                    // terminal rather than sitting above the grip.
+                    const header = self.rearrangeHeaderInset(rect);
+                    const top = rect.top + header;
+                    const avail = @max(rect.bottom - top, 1);
+                    const inset = entry.view.bannerLayoutInset(rect.right - rect.left, avail);
                     const w = @max(rect.right - rect.left, 1);
-                    const ht = @max(rect.bottom - rect.top - inset, 1);
-                    placePane(&hdwp, h, rect.left, rect.top + inset, @intCast(w), @intCast(ht), true);
+                    const ht = @max(avail - inset, 1);
+                    placePane(&hdwp, h, rect.left, top + inset, @intCast(w), @intCast(ht), true);
                 }
             } else {
                 entry.view.setVisible(false);
@@ -3492,6 +3586,9 @@ pub fn layoutSplits(self: *Window) void {
         const hdc = w32.GetDC(hwnd);
         if (hdc) |dc| {
             self.paintDividers(dc);
+            // Same moved-band argument, one level in: a pane that just slid
+            // takes its header band with it (T1530).
+            self.paintRearrangeHeaders(dc);
             _ = w32.ReleaseDC(hwnd, dc);
         }
         if (paint_timer) |*t| self.frame_paint_us +|= t.read() / std.time.ns_per_us;
@@ -3707,12 +3804,16 @@ fn layoutNode(self: *Window, tree: SplitTree(PaneView), handle: SplitTree(PaneVi
         .leaf => |view| {
             view.setVisible(true);
             if (view.hwnd()) |h| {
-                // Reserve the sticky-banner strip band above the terminal
-                // (T101): the grid starts below the strip, never under it.
-                const inset = view.bannerLayoutInset(rect.right - rect.left, rect.bottom - rect.top);
+                // Reserve the rearrange header (T1530) and then the sticky-
+                // banner strip band above the terminal (T101): the grid starts
+                // below both, never under either.
+                const header = self.rearrangeHeaderInset(rect);
+                const top = rect.top + header;
+                const avail = @max(rect.bottom - top, 1);
+                const inset = view.bannerLayoutInset(rect.right - rect.left, avail);
                 const w = @max(rect.right - rect.left, 1);
-                const ht = @max(rect.bottom - rect.top - inset, 1);
-                placePane(hdwp, h, rect.left, rect.top + inset, @intCast(w), @intCast(ht), true);
+                const ht = @max(avail - inset, 1);
+                placePane(hdwp, h, rect.left, top + inset, @intCast(w), @intCast(ht), true);
             }
         },
         .split => |s| {
@@ -3831,6 +3932,262 @@ fn paintDividerNode(
                 self.paintDividerNode(hdc, tree, s.right, bottom_rect, rest_brush, hot_brush, hot_handle);
             }
         },
+    }
+}
+
+/// Paint every pane's rearrange header (T1530). A no-op with the mode off, so
+/// it rides the ordinary chrome paint path rather than a conditional one.
+///
+/// Called from BOTH `paintChromeInto` (the paint cycle, which covers an
+/// exposed band) and the post-layout `GetDC` pass beside `paintDividers` —
+/// exactly the pair of sites a band that MOVES needs, and for the reason
+/// written out at that call site: a pane that just slid left leaves its old
+/// header pixels somewhere nothing will invalidate.
+fn paintRearrangeHeaders(self: *Window, hdc: w32.HDC) void {
+    if (!self.rearrange_mode) return;
+    if (self.tab_count == 0) return;
+    if (self.tab_hero_active[self.active_tab]) return;
+    const tree = self.tab_trees[self.active_tab];
+    const rect = self.surfaceRect();
+    const pal = self.chromePalette();
+    const ib = icon_button.Metrics.init(self.scale);
+    if (tree.zoomed) |zoomed_handle| {
+        // A zoomed pane owns the whole surface rect, so its header does too.
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            if (entry.handle != zoomed_handle) continue;
+            self.paintRearrangeHeader(hdc, entry.view, rect, pal, ib);
+            return;
+        }
+        return;
+    }
+    self.paintRearrangeNode(hdc, tree, .root, rect, pal, ib);
+}
+
+fn paintRearrangeNode(
+    self: *Window,
+    hdc: w32.HDC,
+    tree: SplitTree(PaneView),
+    handle: SplitTree(PaneView).Node.Handle,
+    rect: w32.RECT,
+    pal: chrome_theme.Palette,
+    ib: icon_button.Metrics,
+) void {
+    if (handle.idx() >= tree.nodes.len) return;
+    switch (tree.nodes[handle.idx()]) {
+        .leaf => |view| self.paintRearrangeHeader(hdc, view, rect, pal, ib),
+        .split => |s| {
+            // The SAME geometry `layoutNode` places panes with — a header
+            // computed from a rect the pane was not placed in is a band
+            // floating next to its own terminal.
+            if (s.layout == .horizontal) {
+                const a = split_geometry.axis(rect.left, rect.right, s.ratio, self.scale);
+                self.paintRearrangeNode(hdc, tree, s.left, .{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom }, pal, ib);
+                self.paintRearrangeNode(hdc, tree, s.right, .{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom }, pal, ib);
+            } else {
+                const a = split_geometry.axis(rect.top, rect.bottom, s.ratio, self.scale);
+                self.paintRearrangeNode(hdc, tree, s.left, .{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo }, pal, ib);
+                self.paintRearrangeNode(hdc, tree, s.right, .{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end }, pal, ib);
+            }
+        },
+    }
+}
+
+fn toIconRect(r: rearrange_header.Rect) icon_button.Rect {
+    return .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+}
+
+fn toWinRect(r: rearrange_header.Rect) w32.RECT {
+    return .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
+}
+
+/// One pane's header: the chrome band, the grip, the title and the pop-out
+/// button.
+///
+/// There is deliberately no focus treatment here, which is Mac's call and its
+/// reasoning: unfocused splits are already dimmed (`unfocused-split-opacity`),
+/// and a second focus indicator is two answers to one question.
+fn paintRearrangeHeader(
+    self: *Window,
+    hdc: w32.HDC,
+    view: *PaneView,
+    slot: w32.RECT,
+    pal: chrome_theme.Palette,
+    ib: icon_button.Metrics,
+) void {
+    const l = self.rearrangeHeaderFor(slot) orelse return;
+    const hovered: rearrange_header.Hit = if (self.rearrange_hover) |h|
+        (if (h.view == view) h.part else .none)
+    else
+        .none;
+
+    // The band reads as chrome, so it is painted out of the chrome palette
+    // rather than the terminal's background — Mac's `.regularMaterial`.
+    if (w32.CreateSolidBrush(w32.RGB(pal.bar.r, pal.bar.g, pal.bar.b))) |brush| {
+        defer _ = w32.DeleteObject(@ptrCast(brush));
+        var band = toWinRect(l.band);
+        _ = w32.FillRect(hdc, &band, brush);
+    }
+
+    // The rule along the bottom is the same line the panes are separated by,
+    // resolved once in `dividerConfiguredColor` so the window has ONE divider
+    // color rather than a second one invented here (T250's rule).
+    const cfg_bg = self.app.config.background;
+    const rule_rgb = split_geometry.dividerPaint(
+        self.dividerConfiguredColor(),
+        .{ .r = cfg_bg.r, .g = cfg_bg.g, .b = cfg_bg.b },
+        false,
+    );
+    if (w32.CreateSolidBrush(w32.RGB(rule_rgb.r, rule_rgb.g, rule_rgb.b))) |brush| {
+        defer _ = w32.DeleteObject(@ptrCast(brush));
+        var rule = toWinRect(l.rule);
+        _ = w32.FillRect(hdc, &rule, brush);
+    }
+
+    // The grip. Mac fades it from 0.6 to full opacity while the header is
+    // hovered; the chrome text ramp is this platform's version of that, so the
+    // resting grip is secondary ink and a hovered one is primary.
+    const grip_rgb = if (hovered == .none) pal.text_secondary else pal.text;
+    icon_paint.glyph(
+        hdc,
+        ib,
+        icon_button.glyphTarget(ib, toIconRect(l.grip), .menu),
+        .menu,
+        w32.RGB(grip_rgb.r, grip_rgb.g, grip_rgb.b),
+    );
+
+    // The title, in the same de-emphasized ink an inactive tab's is.
+    if (l.title.width() > 0) {
+        if (view.title()) |t| {
+            var wbuf: [256]u16 = undefined;
+            const wlen = std.unicode.utf8ToUtf16Le(&wbuf, t) catch 0;
+            if (wlen > 0) {
+                const old_font = if (self.tab_font) |f| w32.SelectObject(hdc, f) else null;
+                defer if (old_font) |f| {
+                    _ = w32.SelectObject(hdc, f);
+                };
+                const old_mode = w32.SetBkMode(hdc, w32.TRANSPARENT);
+                defer _ = w32.SetBkMode(hdc, old_mode);
+                const old_color = w32.SetTextColor(
+                    hdc,
+                    w32.RGB(pal.text_secondary.r, pal.text_secondary.g, pal.text_secondary.b),
+                );
+                defer _ = w32.SetTextColor(hdc, old_color);
+                var tr = toWinRect(l.title);
+                _ = w32.DrawTextW(
+                    hdc,
+                    &wbuf,
+                    @intCast(wlen),
+                    &tr,
+                    w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_END_ELLIPSIS | w32.DT_NOPREFIX,
+                );
+            }
+        }
+    }
+
+    // The pop-out button. Disabled until cross-window pane relocation exists
+    // (see `pane_pop_out_supported`), and a disabled control paints no fill —
+    // hover on a control that cannot act is a lie about what a click would do.
+    const enabled = self.canPopOutPane();
+    const btn_state: icon_button.State = if (!enabled)
+        .normal
+    else if (hovered == .button) .hover else .normal;
+    const btn_rgb = if (enabled) pal.text_secondary else disabledInk(pal);
+    paintIconButton(
+        hdc,
+        ib,
+        toIconRect(l.button),
+        .new_window,
+        btn_state,
+        pal.bar.r,
+        pal.bar.g,
+        pal.bar.b,
+        w32.RGB(btn_rgb.r, btn_rgb.g, btn_rgb.b),
+    );
+}
+
+/// Ink for a disabled chrome control: secondary text taken halfway back to the
+/// band it sits on. Mac's `.tertiary` in the one place this app needs one.
+fn disabledInk(pal: chrome_theme.Palette) color_math.Rgb {
+    return .{
+        .r = @intCast((@as(u16, pal.text_secondary.r) + pal.bar.r) / 2),
+        .g = @intCast((@as(u16, pal.text_secondary.g) + pal.bar.g) / 2),
+        .b = @intCast((@as(u16, pal.text_secondary.b) + pal.bar.b) / 2),
+    };
+}
+
+/// Which pane header (if any) the client point `(x, y)` is inside, and which
+/// part of it — the same `layout` the paint and placement passes used.
+pub fn hitTestRearrangeHeader(self: *Window, x: i32, y: i32) ?RearrangeHover {
+    if (!self.rearrange_mode) return null;
+    if (self.tab_count == 0) return null;
+    if (self.tab_hero_active[self.active_tab]) return null;
+    const tree = self.tab_trees[self.active_tab];
+    const rect = self.surfaceRect();
+    if (tree.zoomed) |zoomed_handle| {
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            if (entry.handle != zoomed_handle) continue;
+            return self.hitTestRearrangeLeaf(entry.view, rect, x, y);
+        }
+        return null;
+    }
+    return self.hitTestRearrangeNode(tree, .root, rect, x, y);
+}
+
+fn hitTestRearrangeNode(
+    self: *Window,
+    tree: SplitTree(PaneView),
+    handle: SplitTree(PaneView).Node.Handle,
+    rect: w32.RECT,
+    x: i32,
+    y: i32,
+) ?RearrangeHover {
+    if (handle.idx() >= tree.nodes.len) return null;
+    switch (tree.nodes[handle.idx()]) {
+        .leaf => |view| return self.hitTestRearrangeLeaf(view, rect, x, y),
+        .split => |s| {
+            if (s.layout == .horizontal) {
+                const a = split_geometry.axis(rect.left, rect.right, s.ratio, self.scale);
+                if (x < a.band_lo) return self.hitTestRearrangeNode(tree, s.left, .{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom }, x, y);
+                if (x >= a.band_hi) return self.hitTestRearrangeNode(tree, s.right, .{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom }, x, y);
+                return null;
+            }
+            const a = split_geometry.axis(rect.top, rect.bottom, s.ratio, self.scale);
+            if (y < a.band_lo) return self.hitTestRearrangeNode(tree, s.left, .{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo }, x, y);
+            if (y >= a.band_hi) return self.hitTestRearrangeNode(tree, s.right, .{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end }, x, y);
+            return null;
+        },
+    }
+}
+
+fn hitTestRearrangeLeaf(self: *Window, view: *PaneView, slot: w32.RECT, x: i32, y: i32) ?RearrangeHover {
+    const l = self.rearrangeHeaderFor(slot) orelse return null;
+    const hit = rearrange_header.hitTest(l, x, y);
+    if (hit == .none) return null;
+    return .{ .view = view, .part = hit };
+}
+
+/// Track the pointer over the pane headers, repainting only when the answer
+/// CHANGED (T1530) — the same idempotence the divider hover has, and for the
+/// same reason: `WM_MOUSEMOVE` fires for every pixel of travel.
+fn updateRearrangeHover(self: *Window, x: i32, y: i32) void {
+    const next = self.hitTestRearrangeHeader(x, y);
+    const same = blk: {
+        if (self.rearrange_hover) |a| {
+            if (next) |b| break :blk a.view == b.view and a.part == b.part;
+            break :blk false;
+        }
+        break :blk next == null;
+    };
+    if (same) return;
+    self.rearrange_hover = next;
+    if (self.hwnd) |h| {
+        const hdc = w32.GetDC(h);
+        if (hdc) |dc| {
+            self.paintRearrangeHeaders(dc);
+            _ = w32.ReleaseDC(h, dc);
+        }
     }
 }
 
@@ -6005,6 +6362,9 @@ fn paintChromeInto(self: *Window, hdc_screen: w32.HDC) void {
     // GetDC pass in layoutSplits is what updates a band that MOVED without
     // anything invalidating the old spot.
     self.paintDividers(hdc_screen);
+    // Pane headers ride the same cycle as the dividers (T1530): both are
+    // window-owned pixels in the band between children.
+    self.paintRearrangeHeaders(hdc_screen);
     if (self.tab_count > 0 and self.tab_hero_active[self.active_tab]) {
         HeroCarousel.paint(self, hdc_screen);
         // While a selection slide runs every hero HWND is hidden and the
@@ -8142,10 +8502,14 @@ pub fn windowWndProc(
             // set on autorepeat (the same rule Surface.handleKeyEvent uses).
             if ((lparam & (1 << 30)) == 0) {
                 const vk: u16 = @intCast(wparam & 0xFFFF);
-                if (window_chord.classify(vk, Surface.getModifiers())) |chord| switch (chord) {
+                if (window_chord.classify(vk, Surface.getModifiers(), window.chordState())) |chord| switch (chord) {
                     .new_remote_window => {
                         log.info("machine chooser: opening via ctrl+shift+n (window focus)", .{});
                         window.openMachineChooser();
+                        return 0;
+                    },
+                    .leave_rearrange_mode => {
+                        _ = window.leaveRearrangeMode();
                         return 0;
                     },
                 };
@@ -8487,6 +8851,17 @@ pub fn windowWndProc(
                 window.startDividerDrag(hit.handle, hit.layout);
                 return 0;
             }
+            // A press inside a pane header belongs to the header (T1530) and
+            // is CLAIMED here even when nothing acts on it yet, so it can
+            // never fall through to the chrome underneath. The drag itself is
+            // T1531 and the pop-out button is disabled until T1532 — both
+            // arrive as arms on this one hit.
+            if (window.hitTestRearrangeHeader(x, y)) |hit| {
+                if (hit.part == .button and window.canPopOutPane()) {
+                    // T1532 lands the relocation this button asks for.
+                }
+                return 0;
+            }
             if (window.inTabBar(y)) {
                 // A click is an answer to "which tab" — the cwd tooltip
                 // (T447) has nothing left to add.
@@ -8611,12 +8986,17 @@ pub fn windowWndProc(
             if (window.inTabBar(y)) {
                 window.handleTabBarMouseMove(@truncate(x), @truncate(window.toStripY(y)));
                 // Leaving the content area upward is a divider un-hover: the
-                // pointer never crosses WM_MOUSELEAVE to get here.
+                // pointer never crosses WM_MOUSELEAVE to get here. The pane
+                // headers un-hover for the same reason (T1530).
                 window.setDividerHover(null);
+                window.updateRearrangeHover(x, y);
             } else if (window.tab_count > 0 and window.tab_hero_active[window.active_tab]) {
                 window.heroMouseMove(x, y);
             } else {
                 window.updateDividerHover(x, y);
+                // The pane headers live in the same band the dividers do
+                // (T1530), so they track the same move.
+                window.updateRearrangeHover(x, y);
             }
             return 0;
         },

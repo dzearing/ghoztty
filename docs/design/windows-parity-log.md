@@ -27621,3 +27621,49 @@ zoom clearing, the collapse of the split a moved pane leaves behind, the
 cross-tree move including the source that empties out from under the last pane,
 and both swaps. All four floor lanes pass. T1531 and T1532 are the halves that
 put a mouse on top of this.
+
+## 2026-09-13 - Rearrange mode now looks like something: every pane grows a header (T1530)
+
+Turning on rearrange mode used to change one thing you could see - the tab bar
+came up - and nothing about the panes. There was no grip to take hold of and
+nothing saying which pane was about to move, so the mode announced itself and
+then left the user to guess. Now every pane grows a slim bar across its top: a
+drag grip on the left, the pane's own title so two shells are tellable apart at
+a glance, and a button on the right for sending the pane off into a window of
+its own. Escape puts it all away.
+
+The band takes REAL layout space rather than floating over the terminal, which
+is Mac's choice (`PaneHeaderView`) and worth keeping for its reason: a header
+that occludes nothing cannot hide the row of output you were about to read.
+Entering the mode therefore resizes every pane in the window, and that is what
+the acceptance script measures - `test\win32\rearrange-header.ps1` reads every
+pane child's rect before, during and after, with the tab strip pinned UP for the
+whole run so no chrome movement can be mistaken for the band. At 120 dpi both
+panes move down 30 px, which is the 24 DIP header, and lose exactly that off
+their HEIGHT while keeping their width. A band merely painted over the terminal
+- the shape this bug would take - moves nothing and reads as a failure.
+
+The geometry is its own pure module (`src/apprt/win32/rearrange_header.zig`, 11
+`none`-lane tests) for a reason that is structural rather than tidy: the layout
+pass, the paint pass and the hit test all call the SAME `layout`, so a band that
+is not drawn is also not clickable and does not steal a pixel from the terminal.
+When those three are allowed to disagree the result is a dead strip of window
+background that still swallows clicks, and one answer makes that unrepresentable.
+A pane too small to carry a header gets none at all rather than a squeezed one,
+and pays no inset for it.
+
+Escape joined `window_chord` rather than being an `if` in the terminal's key
+path - the T746 lesson, and the first chord in that table whose meaning is
+CONDITIONAL. It fires only while the mode is on, because Escape is the
+terminal's key every other moment of the day, and it is answered identically
+from a terminal pane, a viewer pane and the bare window because all four focus
+targets read one table.
+
+The pop-out button ships DISABLED, behind one constant. What it would do is
+cross-window pane relocation, which this apprt has never had - nothing under
+`src/apprt/win32/` calls `SetParent` today - and which T1532 owns together with
+the session-safety rule that stops a relocated pane from being read as closed
+and losing its agent session. Drawing it disabled is a state Mac's own header
+has rather than an invention, and it means the header's geometry does not move
+under the user on the day the feature lands. T1532 flips the constant and fills
+in the empty arm the press already routes to.

@@ -321,6 +321,22 @@ $GuardTable = @(
             'src\apprt\win32\viewer_accel.zig'
         )
     },
+    # T1530: the pane header rearrange mode grows - the band, its geometry, and
+    # the layout inset that proves it takes real space rather than floating
+    # over the terminal. Covers the harness, the pure geometry module, the
+    # window that places and paints the band, and the shared chord table
+    # Escape's exit lives in.
+    [pscustomobject]@{
+        Name   = 'rearrange-header'
+        Script = 'test\win32\rearrange-header.ps1'
+        Stamp  = 'test\win32\rearrange-header.stamp.json'
+        Covers = @(
+            'test\win32\rearrange-header.ps1',
+            'src\apprt\win32\rearrange_header.zig',
+            'src\apprt\win32\window_chord.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # The viewer suite carries the browser-leak tripwire (T594): the only
     # thing that scores whether a test run handed a page to the user's real
     # browser, and it is not in the P1-P3 floor. The zig-side guard
