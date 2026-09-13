@@ -70,6 +70,10 @@ $env:GHOZTTY_PIPE_SUFFIX = "-rempilltest$PID"
 # number this script and some other one both guessed.
 $Port = Resolve-TestPort -Name 'agent' -Port $Port
 . (Join-Path $PSScriptRoot 'lib\HarnessLeak.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 # T1127: the finally below kills the agent it started, and the agent's
 # `--pty-host` holders survive that by design - they own the ConPTY and escape
@@ -104,7 +108,6 @@ New-TestDesktop | Out-Null
 $agent = $null
 $tmp = Join-Path $env:TEMP "ghoztty-rempill-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
-$exitCode = 1
 try {
     Write-Host "T367 remote connection pill acceptance"
     Write-Host "  exe:   $exe"
@@ -373,29 +376,30 @@ try {
     } finally { Close-TestWindowPixels $lshot }
 
     Write-Host ""
-    if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass) checks)"; $exitCode = 0 }
-    else { Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed)"; $exitCode = 1 }
-
-    # --- stamp (T783, row added by T610) ----------------------------------
-    # A green run RECORDS the content of the pill's sources and this script, so
-    # scripts\guard-due.ps1 can answer "has anything run this harness against
-    # the code as it now stands?". Nothing tied an edit to `remote_pill.zig` or
-    # to the caption band's click routing to this script before T610, which is
-    # the gap that mattered the moment T610 INVERTED one of the assertions here
-    # (a connected pill answers HTOBJECT where it used to answer HTCAPTION). A
-    # red run leaves the stamp alone on purpose, and a -NegativeControl run
-    # never stamps.
-    if ($script:fail -eq 0 -and -not $NegativeControl) {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
-            update -Guard remote-pill -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
-    }
+    Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } catch {
+    $script:fail++
     Write-Host "  FAIL  $($_.Exception.Message)"
-    Write-Host "1 FAILURE(S)"
-    $exitCode = 1
 } finally {
     if ($null -ne $agent) { Stop-Process -Id $agent.Id -Force -ErrorAction SilentlyContinue }
     Remove-TestDesktop | Out-Null
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
-exit $exitCode
+
+# --- stamp (T783, row added by T610) --------------------------------------
+# A green run RECORDS the content of the pill's sources and this script, so
+# scripts\guard-due.ps1 can answer "has anything run this harness against the
+# code as it now stands?". Nothing tied an edit to `remote_pill.zig` or to the
+# caption band's click routing to this script before T610, which is the gap that
+# mattered the moment T610 INVERTED one of the assertions here (a connected pill
+# answers HTOBJECT where it used to answer HTCAPTION). A red run leaves the stamp
+# alone on purpose, and a -NegativeControl run never stamps. T1511 moved the
+# verdict and the stamp out of the try body so the body can END in
+# Complete-TestBody - which is also what lets the stamping child below refuse to
+# write over a run that unwound.
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard remote-pill -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
+}
+
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Unit 'checks'

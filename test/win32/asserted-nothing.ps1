@@ -317,8 +317,14 @@ Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFina
 # cannot reach a green stamping run at HEAD for reasons of their own:
 # website-windows-download (T1513, the gh-pages mirror has drifted) and
 # ghoztty-cleanup (T1514, a box-state skip means it can never re-stamp here).
-$selfCeiling  = 173
-$stampCeiling = 54
+# 2026-09-12 (T1511, batch 2): 181 -> 173 and 62 -> 54.
+# 2026-09-12 (T1511, batch 3): 173 -> 164 and 54 -> 45. The first nine GUI
+# acceptance runs - session-layout-preserve, sessions-running-cmd,
+# remote-disconnect, ipc-relay, remote-pill, activity-monitor-remote,
+# chooser-restore-all-remote, remote-reconnect-relay and chrome-theme - picked,
+# as every batch is, by whether this box can re-stamp the guard after the edit.
+$selfCeiling  = 164
+$stampCeiling = 45
 
 $ratchetSweep = @($sweep)
 if ($TeethCheck) {

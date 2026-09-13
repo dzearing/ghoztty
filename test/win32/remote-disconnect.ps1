@@ -70,6 +70,10 @@ $Port = Resolve-TestPort -Name 'agent' -Port $Port
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
 [void](Set-GhozttyTestIsolation -Tag 'remdisc')
@@ -459,6 +463,8 @@ try {
         Send-TestControlKey -Control $dlg -Key Escape | Out-Null
         [void](Wait-Dialog $g.Pid $false 4000)
     }
+
+    Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } finally {
     Write-Host ""
     Write-Host "== cleanup =="
@@ -479,5 +485,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ""
-if ($script:fail -eq 0) { "ALL PASS ($script:pass assertions)"; exit 0 }
-else { "$script:fail FAILURE(S) ($script:pass passed)"; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

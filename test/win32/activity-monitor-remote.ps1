@@ -115,6 +115,10 @@ $env:GHOZTTY_PIPE_SUFFIX = "-activityremote$PID"
 $env:GHOSTTY_AGENT_LOCK = Join-Path $tmp 'agent.lock'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -849,6 +853,8 @@ try {
         # Get-Panels site here wraps it for the same reason.
         Assert ((@(Get-Panels)).Count -ge 1) 'G4 the panel is still open, reporting the machine it can no longer reach'
     }
+
+    Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } finally {
     # cmd, not `& $exe ... 2>&1`: under $ErrorActionPreference='Stop' a native
     # command writing to stderr inside a redirected pipeline is a TERMINATING
@@ -872,8 +878,6 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ACTIVITY MONITOR REMOTE ACCEPTANCE: ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red; exit 1 }
 
 # --- stamp (T783, row added by T1419) ------------------------------------
 # A green run RECORDS the content of the borrowed-panel sources and this script,
@@ -881,9 +885,13 @@ else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundCol
 # code as it now stands?". Nothing tied the panel's IDENTITY derivation to this
 # script before T1419, which is exactly how T610 shipped a direct-host box
 # answering to two names with sections A and B red and nobody obliged to look. A
-# red run leaves the stamp alone on purpose (the `exit 1` above sees to that),
-# and a -NegativeControl run never stamps.
-if (-not $NegativeControl) {
+# red run leaves the stamp alone on purpose, and a -NegativeControl run never
+# stamps. T1511 moved this ahead of the verdict - Write-TestVerdict ends the
+# run - and gates it on the count rather than on an `exit 1` that is no longer
+# above it.
+if ($script:fail -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard activity-monitor-remote -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
 }
+
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'ACTIVITY MONITOR REMOTE ACCEPTANCE'

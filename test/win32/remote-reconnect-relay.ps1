@@ -86,6 +86,10 @@ $AgentPort = Resolve-TestPort -Name 'agent' -Port $AgentPort
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\FakeRelay.ps1')
 . (Join-Path $PSScriptRoot 'lib\HarnessLeak.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
 Register-RepoBuildTeardown -Exe $Exe | Out-Null
 
@@ -252,6 +256,8 @@ try {
     Check ($dials -eq 1) "D after exactly one rejected dial ($dials since the drop)"
     $unauth = @(Select-String -Path $errlog -Pattern 'relay dial .*WebSocketUnauthorized' -ErrorAction SilentlyContinue).Count
     Check ($unauth -ge 1) 'D and the verdict came from a 401, not from a missing credential'
+
+    Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } catch {
     Write-Host "  harness error: $($_.Exception.Message)"
     if ($script:fail -eq 0) { $script:fail++ }
@@ -274,6 +280,4 @@ if ($script:fail -eq 0 -and -not $TeethCheck) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard remote-reconnect-relay -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
-if ($script:fail -eq 0) { "ALL PASS ($script:pass checks)"; exit 0 }
-"$script:fail FAILURE(S) ($script:pass passed)"
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Unit 'checks'

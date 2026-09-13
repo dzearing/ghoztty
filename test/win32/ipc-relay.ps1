@@ -32,12 +32,17 @@ param(
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 . (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 # T694: the port the OS just handed out, asserted free and printed, instead of a
 # number this script and some other one both guessed.
 $RelayPort = Resolve-TestPort -Name 'relay' -Port $RelayPort
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
+$script:passes = 0
 $tmp = Join-Path $env:TEMP "ghoztty-ipc-relay-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 New-Item -ItemType Directory -Force "$tmp\state" | Out-Null
@@ -46,7 +51,7 @@ $DevToken = 'devtok-e2e'
 $RelayBase = "http://127.0.0.1:$RelayPort"
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 # Run the CLI with a hard timeout so a hung GUI can never hang the script
@@ -520,6 +525,8 @@ if ($agent2) { Stop-Process -Id $agent2.Id -Force -ErrorAction SilentlyContinue 
 Stop-Process -Id $relay.Id -Force -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 
+Complete-TestBody  # T1039: before the stamp, whose child process reads this run's state
+
 # A green run stamps the covered files (T783) so guard-due can answer "has this
 # harness been run against the code as it now stands?". Red leaves the stamp
 # alone - red stays due. T368 added the row: before it, nothing tied an edit to
@@ -531,5 +538,4 @@ if ($script:failures -eq 0) {
         update -Guard ipc-relay 2>&1 | ForEach-Object { "  $_" }
 }
 
-if ($script:failures -eq 0) { "ALL PASS"; exit 0 }
-else { "$($script:failures) FAILURE(S)"; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures

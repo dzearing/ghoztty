@@ -55,6 +55,10 @@ $root = Join-Path $env:TEMP "ghoztty-slpreserve-$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 function Assert([bool]$cond, [string]$label) {
     if ($cond) { $script:pass++; Write-Host "PASS  $label" }
@@ -265,6 +269,7 @@ try {
     Assert ($null -ne $m2 -and $null -eq (Manifest-Win $m2 'solo')) `
         'D1 the closed window left the manifest (carry-forward did not make it immortal)'
 
+    Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } finally {
     Say '== cleanup'
     Remove-TestDesktop
@@ -294,6 +299,4 @@ if ($script:fail -eq 0) {
 }
 
 Say ''
-if ($script:fail -eq 0) { Say "ALL PASS ($script:pass)"; exit 0 }
-Say "$script:fail FAILURE(S) ($script:pass passed)"
-exit 1
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

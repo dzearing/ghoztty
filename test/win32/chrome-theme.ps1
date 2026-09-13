@@ -217,6 +217,10 @@ function Kill-RepoInstances {
 # ---------------------------------------------------------------------------
 
 . (Join-Path $PSScriptRoot 'lib\ColorMath.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 # ---------------------------------------------------------------------------
 # Capture helpers
@@ -988,6 +992,7 @@ pub fn repaintForColorChange(hwnd: w32.HWND) void {
     Assert ($redraws -eq $true) `
         'F3 repaintForColorChange redraws the window AND EVERY CHILD (RDW_ALLCHILDREN) - the only route a child HWND has to a new accent'
 
+    Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } finally {
     if ($dirJob) { Stop-Job $dirJob -ErrorAction SilentlyContinue; Remove-Job $dirJob -Force -ErrorAction SilentlyContinue }
     Restore-Accent $origAccent
@@ -1006,6 +1011,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) of $($script:pass + $script:fail)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

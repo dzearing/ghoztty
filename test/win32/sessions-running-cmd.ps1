@@ -60,6 +60,10 @@ $script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-running-cmd-$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 # T1033: this script launches the app itself (Start-Process, not the test
 # desktop's helper), so it asks the pre-flight question the helper asks: are
 # these bytes ours to drive, or the ones the user's installed Ghoztty owns?
@@ -291,6 +295,7 @@ Assert "B an idle prompt reports no running command" (Wait-NoRunningCmd 'idle')
 $idleText = Get-RosterText 'idle'
 Assert "B the idle table prints no running= column" ($idleText -notmatch 'running=')
 
+Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 } catch {
     Write-Host "  FAIL harness: $_" -ForegroundColor Red
     $script:failures++
@@ -314,6 +319,4 @@ if ($script:failures -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-if ($script:failures -eq 0) { Write-Host "ALL PASS ($script:passes checks)" -ForegroundColor Green; exit 0 }
-Write-Host "$script:failures FAILURE(S) ($script:passes passed)" -ForegroundColor Red
-exit 1
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Unit 'checks'

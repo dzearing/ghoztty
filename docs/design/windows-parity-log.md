@@ -27087,3 +27087,46 @@ exits 0 with only the three standing advisories left.
 Fifty-four unarmed stampers remain, and what is left is the GUI acceptance
 suite - viewer panes, the chooser, the updater, the remote pills - where the
 cost per batch is the run time, not the edit.
+
+## 2026-09-12 - The first nine GUI acceptance runs can no longer record a crashed run as proof (T1511 batch 3)
+
+Batch 3 of the T1511 burn-down, and the first one made of GUI acceptance runs -
+the harnesses that drive a real app on the background test desktop and cost
+minutes apiece. Nine of them ship: `session-layout-preserve`,
+`sessions-running-cmd`, `remote-disconnect`, `ipc-relay`, `remote-pill`,
+`activity-monitor-remote`, `chooser-restore-all-remote`,
+`remote-reconnect-relay` and `chrome-theme`. Each dot-sources
+`lib\TestScore.ps1`, which is what ARMS the run; each reaches
+`Complete-TestBody` on a path an unwind cannot take; and each ends in one
+`Write-TestVerdict` instead of its own `$script:fail -eq 0` green line.
+
+Three needed structural work rather than the three-line conversion, and the
+shapes are worth naming for the batches after this one. `remote-pill.ps1` printed
+its verdict and wrote its stamp INSIDE the top-level try, so the body could not
+end in the marker; both moved out past the `finally`, and the `$exitCode`
+variable they were feeding is gone - the verdict decides the exit code now, and
+its `catch` scores a real failure instead of only setting a code.
+`activity-monitor-remote.ps1` had the opposite arrangement, a stamp AFTER a
+verdict that ends the run, gated on nothing but an `exit 1` sitting above it; the
+stamp moved ahead of the verdict and now gates on the failure count, which is
+the same rule stated where it can be read. `chooser-restore-all-remote.ps1` had
+hand-rolled the marker as `$script:bodyComplete` - correct, and the right
+instinct - so it simply moved onto the shared one. `ipc-relay.ps1` had no
+passing-assertion counter and grew a `$script:passes`, which also takes it off
+the `uncounted-final` list.
+
+The ceilings come down rather than the assertion being relaxed: C5 54 -> 45 and
+C4 173 -> 164 in `test\win32\asserted-nothing.ps1`, with `-TeethCheck` still red
+on a synthesized violator and `lib\BodyCompleteAudit.ps1`'s sweep still a hard
+zero with nine more files inside its scope - it caught `remote-pill`'s
+mid-body marker the moment the dot-source brought the file into range, which is
+the audit doing exactly the job it was built for.
+
+Green: all nine converted scripts run on the box, ALL PASS, each STAMPED by that
+run (19, 16, 49, 35, 13, 96, 47, 12 and 136 assertions); the eight sweep audits
+my edits made due, plus body-complete-audit and asserted-nothing in both modes;
+`floor-lane -Lane all` ALL LANES PASS; ipc-p1/p2/p3 ALL PASS; `guard-due check`
+exits 0 with only the three standing advisories left.
+
+Forty-five unarmed stampers remain, all GUI acceptance runs, so T1511 stays open
+for batch 4.

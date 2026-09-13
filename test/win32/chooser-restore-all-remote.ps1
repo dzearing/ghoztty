@@ -115,10 +115,13 @@ $env:GHOZTTY_PIPE_SUFFIX = "-t336$PID"
 . (Join-Path $PSScriptRoot 'lib\CountOrZero.ps1')
 . (Join-Path $PSScriptRoot 'lib\FakeRelay.ps1')
 . (Join-Path $PSScriptRoot 'lib\PipeBridge.ps1')
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 $script:pass = 0
 $script:fail = 0
-$script:bodyComplete = $false
 
 function Assert($cond, $name) {
     if ($cond) { Write-Host "  PASS $name"; $script:pass++ }
@@ -739,10 +742,8 @@ try {
             "the window count did not change ($($shapesFinal.Count))"
     }
     # The last statement of the body, so an unwind cannot reach it: the stamp
-    # below is only written for a run that got all the way here. (This script
-    # scores itself rather than through lib\TestScore.ps1, so it keeps its own
-    # flag instead of `Complete-TestBody`.)
-    $script:bodyComplete = $true
+    # below is only written for a run that got all the way here.
+    Complete-TestBody
 } finally {
     Stop-PipeBridge $script:bridge
     if ($null -ne $script:relay) { Stop-FakeRelay $script:relay }
@@ -754,12 +755,10 @@ try {
 # --- stamp (T616) ----------------------------------------------------------
 # A clean, complete run records the files the restore-all-remote guard covers,
 # so scripts\guard-due.ps1 stops asking until one of them changes again.
-if ($script:fail -eq 0 -and $script:bodyComplete) {
+if ($script:fail -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard restore-all-remote -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+Write-TestVerdict -Pass $script:pass -Fail $script:fail
