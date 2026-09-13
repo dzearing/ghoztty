@@ -354,6 +354,24 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T1537: the drops that leave the layout you are looking at - a pane onto
+    # the tab strip, and the dwell that carries a drag into another tab. Same
+    # covered set as the drag above, because it is the same gesture reaching
+    # further: the resolver already answered both questions, and what this
+    # adds is the window integration that honours the answers.
+    [pscustomobject]@{
+        Name   = 'rearrange-tab-drop'
+        Script = 'test\win32\rearrange-tab-drop.ps1'
+        Stamp  = 'test\win32\rearrange-tab-drop.stamp.json'
+        Covers = @(
+            'test\win32\rearrange-tab-drop.ps1',
+            'src\apprt\win32\drop_highlight.zig',
+            'src\apprt\win32\DropHighlight.zig',
+            'src\apprt\win32\pane_drop.zig',
+            'src\datastruct\split_tree.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # The viewer suite carries the browser-leak tripwire (T594): the only
     # thing that scores whether a test run handed a page to the user's real
     # browser, and it is not in the P1-P3 floor. The zig-side guard

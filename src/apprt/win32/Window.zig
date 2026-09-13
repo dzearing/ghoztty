@@ -199,6 +199,17 @@ const HERO_ANIM_TICK_MS: u32 = 16;
 /// fires. The delay itself is the system double-click time — the same
 /// value native tooltips use for their initial show.
 const TAB_TIP_TIMER_ID: usize = 0x5450; // 'TP'
+
+/// Dwell timer for a rearrange drag resting on a tab button (T1537): armed
+/// when the pointer settles on a tab mid-drag, cancelled the moment it moves
+/// to a different tab or off the strip, and it SWITCHES to that tab when it
+/// fires — so a pane can be carried into a tab it is not currently looking at.
+///
+/// 500ms is Mac's `PaneDragTabHover.dwell`. Shorter and the strip snatches
+/// tabs away while the pointer is merely crossing it on the way to the drop;
+/// longer and the gesture reads as broken.
+const TAB_DWELL_TIMER_ID: usize = 0x5457; // 'TW'
+const TAB_DWELL_MS: u32 = 500;
 pub const HERO_SLIDE_MS: f32 = 350.0;
 const HERO_RECENTER_MS: f32 = 300.0;
 
@@ -2155,6 +2166,19 @@ fn insertPaneAsTab(self: *Window, pane: *PaneView, tree: SplitTree(PaneView)) vo
         .current => if (self.tab_count > 0) self.active_tab + 1 else 0,
         .end => self.tab_count,
     };
+    self.insertPaneAsTabAt(pane, tree, pos);
+}
+
+/// The same, at an index the CALLER chose rather than the one the config
+/// implies: a pane dropped on the tab strip becomes a tab exactly where it was
+/// dropped (T1537), which is a position the user pointed at and not a policy.
+fn insertPaneAsTabAt(
+    self: *Window,
+    pane: *PaneView,
+    tree: SplitTree(PaneView),
+    at: usize,
+) void {
+    const pos: usize = @min(at, self.tab_count);
 
     // Shift elements right to make room at pos.
     var i: usize = self.tab_count;
@@ -2182,6 +2206,14 @@ fn insertPaneAsTab(self: *Window, pane: *PaneView, tree: SplitTree(PaneView)) vo
     self.tab_hero_index[pos] = 0;
     self.tab_hero_ratio[pos] = hero_math.RATIO_DEFAULT;
     self.tab_hero_scroll[pos] = 0;
+    // The shift moved the ACTIVE tab along with everything else at or after
+    // `pos`, so the index naming it has to move too (T1537). `insertPaneAsTab`
+    // never noticed, because its two configured positions are both strictly
+    // after the active tab; a pane dropped on the strip can land anywhere,
+    // and at index 0 the stale index named the NEW tab — so the tab that was
+    // on screen was never hidden and its panes stayed painted over the one
+    // that replaced them.
+    if (self.tab_count > 0 and pos <= self.active_tab) self.active_tab += 1;
     self.tab_count += 1;
 
     // Set default title.
@@ -2393,6 +2425,19 @@ fn closeTabByIndex(self: *Window, idx: usize) void {
         while (it.next()) |entry| entry.view.setSessionCloseIntent(true);
     }
     tree.deinit(); // This unrefs all surfaces → Surface.unref frees when ref_count=0
+    self.removeTabSlot(idx);
+}
+
+/// Drop tab slot `idx` from the window's parallel arrays and re-seat the
+/// active tab, WITHOUT touching the tree that was in it.
+///
+/// Split out of `closeTabByIndex` for the one caller that must not close
+/// anything (T1537): a pane carried into another tab can leave its old tab
+/// empty, and that slot has to go — but the close path marks every session in
+/// the tree it removes as ENDING, and the pane that emptied this tab is still
+/// running in the tab next door.
+fn removeTabSlot(self: *Window, idx: usize) void {
+    if (idx >= self.tab_count) return;
     var i: usize = idx;
     while (i + 1 < self.tab_count) : (i += 1) {
         self.tab_trees[i] = self.tab_trees[i + 1];
@@ -2710,11 +2755,25 @@ pub const RearrangeDrag = struct {
     /// that any other event during the drag may have rebuilt.
     view: *PaneView,
 
+    /// The tab the pane was picked up FROM.
+    ///
+    /// Not the same thing as `active_tab` at release: resting on a tab button
+    /// switches to it mid-drag (T1537), so by the time the button comes up the
+    /// window is showing the DESTINATION and the source is only remembered
+    /// here. Every commit below reads the pane out of this tab and puts it
+    /// into the active one.
+    source_tab: usize,
+
     /// The press point, in client coordinates, for the threshold.
     start_x: i32,
     start_y: i32,
 
     active: bool = false,
+
+    /// The tab button the pointer is currently resting on, and therefore the
+    /// tab the dwell timer will switch to when it fires (T1537). Null when the
+    /// pointer is not on a tab button at all.
+    dwell_tab: ?usize = null,
 
     /// What releasing right now would do, as of the last move.
     drop: ?Drop = null,
@@ -2727,12 +2786,13 @@ pub const RearrangeDrag = struct {
     /// `pane_drop.Target` borrows its pane id out of the candidate array, and
     /// that array is a stack temporary of the mouse-move that built it — so
     /// the borrowed form cannot outlive the move, and the drag has to hold its
-    /// own. The three cases are the three drops T1531 commits; a new tab or a
-    /// new window resolves to `null` here and is T1532's.
+    /// own. These are the four drops that land inside ONE window; a new
+    /// WINDOW resolves to `null` here and is T1538's.
     pub const Drop = union(enum) {
         split: struct { pane: pane_id.Buf, side: pane_drop.Side },
         swap: struct { pane: pane_id.Buf },
         top_level: struct { side: pane_drop.Side },
+        new_tab: struct { index: usize },
     };
 };
 
@@ -2833,9 +2893,14 @@ fn paneById(self: *Window, tab: usize, id: []const u8) ?*PaneView {
 }
 
 /// A resolved target this window can commit, with the pane id copied out of
-/// the caller's (temporary) candidate array. Null for the drops T1532 owns and
-/// for a target in another window.
-fn ownedDrop(target: ?pane_drop.Target, window: pane_drop.WindowRef) ?RearrangeDrag.Drop {
+/// the caller's (temporary) candidate array. Null for the cross-WINDOW drop
+/// T1538 owns, for a target in another window, and for a new-tab drop this
+/// window refuses (`can_new_tab`).
+fn ownedDrop(
+    target: ?pane_drop.Target,
+    window: pane_drop.WindowRef,
+    can_new_tab: bool,
+) ?RearrangeDrag.Drop {
     const t = target orelse return null;
     if (t.window()) |w| {
         if (w != window) return null;
@@ -2844,7 +2909,8 @@ fn ownedDrop(target: ?pane_drop.Target, window: pane_drop.WindowRef) ?RearrangeD
         .split => |sp| .{ .split = .{ .pane = copyPaneId(sp.pane) orelse return null, .side = sp.side } },
         .swap => |sp| .{ .swap = .{ .pane = copyPaneId(sp.pane) orelse return null } },
         .top_level => |sp| .{ .top_level = .{ .side = sp.side } },
-        .new_tab, .new_window => null,
+        .new_tab => |sp| if (can_new_tab) .{ .new_tab = .{ .index = sp.index } } else null,
+        .new_window => null,
     };
 }
 
@@ -2866,8 +2932,62 @@ fn dropDirection(side: pane_drop.Side) SplitTree(PaneView).Split.Direction {
 
 /// Start a pane drag from a press on that pane's header (T1531).
 fn beginRearrangeDrag(self: *Window, view: *PaneView, x: i32, y: i32) void {
-    self.rearrange_drag = .{ .view = view, .start_x = x, .start_y = y };
+    self.rearrange_drag = .{
+        .view = view,
+        .source_tab = self.active_tab,
+        .start_x = x,
+        .start_y = y,
+    };
     if (self.hwnd) |h| _ = w32.SetCapture(h);
+}
+
+/// May a new-tab drop be HONOURED right now (T1537)?
+///
+/// Only when the dragged pane shares its tab with another: a pane that is its
+/// tab's whole tree is already a tab of its own, so "make it a tab" has
+/// nothing to do and removing it would empty the tab out from under it. The
+/// preview reads the same answer, so the caret is never drawn over a release
+/// that will do nothing.
+fn canNewTabDrop(self: *Window, source_tab: usize) bool {
+    if (source_tab >= self.tab_count) return false;
+    return self.leafCount(source_tab) > 1;
+}
+
+/// The strip's band and tab buttons in SCREEN coordinates, for the resolver.
+/// Null when this window shows no strip — there is nothing to drop onto.
+fn dropStrip(self: *const Window, origin: w32.POINT, out: []pane_drop.Rect) ?struct {
+    band: pane_drop.Rect,
+    tabs: []const pane_drop.Rect,
+} {
+    const regions = self.stripRegions() orelse return null;
+    const n = @min(self.tab_count, out.len);
+    // Every tab gets a slot, INCLUDING one the strip could not lay out (a tab
+    // that did not fit reports an empty rect). Skipping those would renumber
+    // the ones after them, and the resolver answers with an INDEX — so a tab
+    // squeezed off the strip would silently make every drop to its right open
+    // its tab one place too early.
+    for (0..n) |i| {
+        const r = regions.tabs[i];
+        if (r.right <= r.left) {
+            out[i] = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+            continue;
+        }
+        out[i] = .{
+            .left = r.left + origin.x,
+            .top = r.top + origin.y,
+            .right = r.right + origin.x,
+            .bottom = r.bottom + origin.y,
+        };
+    }
+    return .{
+        .band = .{
+            .left = regions.band.left + origin.x,
+            .top = regions.band.top + origin.y,
+            .right = regions.band.right + origin.x,
+            .bottom = regions.band.bottom + origin.y,
+        },
+        .tabs = out[0..n],
+    };
 }
 
 /// Track a live pane drag: resolve what the pointer currently means and put
@@ -2892,14 +3012,18 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
         rects[i] = .{ .id = slot.view.paneId(), .rect = toDropRect(slot.rect, origin) };
     }
 
-    // One candidate: T1531 is a drag within ONE window's own tree. The
-    // resolver takes a set precisely so T1532 can add the others here without
-    // touching anything else.
+    // One candidate: this is a drag within ONE window. The resolver takes a
+    // set precisely so T1538 can add the others here without touching
+    // anything else.
+    var tab_rects: [MAX_TABS]pane_drop.Rect = undefined;
+    const strip = self.dropStrip(origin, &tab_rects);
     const candidate: pane_drop.Candidate = .{
         .window = self.dropWindowRef(),
         .z_order = 0,
         .content_rect = toDropRect(self.surfaceRect(), origin),
         .pane_rects = rects[0..n],
+        .tab_bar_rect = if (strip) |st| st.band else null,
+        .tab_button_rects = if (strip) |st| st.tabs else &.{},
     };
 
     const point: pane_drop.Point = .{ .x = x + origin.x, .y = y + origin.y };
@@ -2910,14 +3034,78 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
         self.dropMetrics(),
     );
 
-    d.drop = ownedDrop(target, candidate.window);
-    d.highlight = drop_highlight.forTarget(
-        target,
-        candidate.window,
-        candidate.content_rect,
-        rects[0..n],
-    );
+    const can_new_tab = self.canNewTabDrop(d.source_tab);
+    d.drop = ownedDrop(target, candidate.window, can_new_tab);
+    d.highlight = drop_highlight.forTarget(target, .{
+        .window = candidate.window,
+        .content_rect = candidate.content_rect,
+        .pane_rects = rects[0..n],
+        .tab_strip = candidate.tab_bar_rect,
+        .tab_rects = candidate.tab_button_rects,
+        .can_new_tab = can_new_tab,
+        .scale = self.scale,
+    });
     if (d.highlight) |hl| self.showDropPreview(hl) else self.hideDropPreview();
+
+    // The dwell (T1537): resting on a tab button opens that tab so the drag
+    // can continue into its layout. Re-armed only when the tab under the
+    // pointer CHANGES, so holding still keeps the one clock running instead of
+    // restarting it on every jitter — a timer restarted by movement never
+    // fires while the hand is moving, which is exactly when the user is
+    // waiting for it.
+    const hovered: ?usize = blk: {
+        const hit = pane_drop.hoveredTab(point, &.{candidate}) orelse break :blk null;
+        break :blk if (hit.index < self.tab_count) hit.index else null;
+    };
+    self.armTabDwell(d, hovered);
+}
+
+/// Point the dwell clock at `tab`, or stop it when there is no tab under the
+/// pointer. Idempotent while the pointer stays on the same tab.
+fn armTabDwell(self: *Window, d: *RearrangeDrag, tab: ?usize) void {
+    const hwnd = self.hwnd orelse return;
+    // The tab already showing is not somewhere to switch TO, so resting on it
+    // arms nothing — and the same applies once the dwell has fired.
+    const want: ?usize = if (tab) |t| (if (t == self.active_tab) null else t) else null;
+    if (want) |t| {
+        if (d.dwell_tab) |cur| if (cur == t) return;
+        d.dwell_tab = t;
+        _ = w32.SetTimer(hwnd, TAB_DWELL_TIMER_ID, TAB_DWELL_MS, null);
+        return;
+    }
+    if (d.dwell_tab == null) return;
+    d.dwell_tab = null;
+    _ = w32.KillTimer(hwnd, TAB_DWELL_TIMER_ID);
+}
+
+/// The dwell fired: show the tab the pointer has been resting on, so the drag
+/// continues against THAT tab's layout (T1537).
+fn onTabDwell(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    _ = w32.KillTimer(hwnd, TAB_DWELL_TIMER_ID);
+    const tab = tab: {
+        const d = if (self.rearrange_drag) |*p| p else return;
+        const t = d.dwell_tab orelse return;
+        d.dwell_tab = null;
+        if (!d.active or t >= self.tab_count or t == self.active_tab) return;
+        // The switch invalidates everything the last move resolved: the panes
+        // on screen are a different set. Drop the stale answer rather than
+        // leaving a preview pointing at a pane that is no longer visible — the
+        // next `WM_MOUSEMOVE` resolves against the new layout, and a release
+        // before then must not commit against the old one.
+        d.drop = null;
+        d.highlight = null;
+        break :tab t;
+    };
+    self.hideDropPreview();
+    self.selectTabIndex(tab);
+
+    // Nothing above is allowed to assume the drag survived: a tab switch runs
+    // a lot of window code, and anything in it that releases the capture sends
+    // `WM_CAPTURECHANGED` synchronously, which CANCELS the drag. Re-read the
+    // field rather than holding a pointer across the call.
+    if (self.rearrange_drag == null) return;
+    if (w32.GetCapture() != hwnd) _ = w32.SetCapture(hwnd);
 }
 
 /// End a pane drag. `commit` is false for a cancel (Escape, a lost capture,
@@ -2930,25 +3118,48 @@ fn endRearrangeDrag(self: *Window, commit: bool) void {
     self.rearrange_drag = null;
     self.hideDropPreview();
     if (self.hwnd) |h| {
+        _ = w32.KillTimer(h, TAB_DWELL_TIMER_ID);
         if (w32.GetCapture() == h) _ = w32.ReleaseCapture();
     }
     if (!commit or !d.active) return;
     const drop = d.drop orelse return;
-    self.commitRearrangeDrop(d.view, drop);
+    self.commitRearrangeDrop(d.view, d.source_tab, drop);
 }
 
-/// Apply a resolved drop to the active tab's split tree (T1529's mutations).
-fn commitRearrangeDrop(self: *Window, view: *PaneView, drop: RearrangeDrag.Drop) void {
+/// Apply a resolved drop (T1529's mutations).
+///
+/// `source_tab` is where the pane was picked up; the DESTINATION is whatever
+/// tab the window is showing now, which a dwell switch may have changed
+/// mid-drag (T1537). When the two are the same this is T1531's in-tree move;
+/// when they differ the pane crosses tabs, which is a pair of trees rather
+/// than one and is why `moveTo` / `swapWith` exist.
+fn commitRearrangeDrop(
+    self: *Window,
+    view: *PaneView,
+    source_tab: usize,
+    drop: RearrangeDrag.Drop,
+) void {
     if (self.tab_count == 0) return;
-    const tab = self.active_tab;
+    if (source_tab >= self.tab_count) return;
+    const dest_tab = self.active_tab;
     const alloc = self.app.core_app.alloc;
-    const at = self.findHandle(tab, view) orelse return;
-    const tree = &self.tab_trees[tab];
+    const at = self.findHandle(source_tab, view) orelse return;
 
+    if (drop == .new_tab) {
+        self.commitNewTabDrop(view, source_tab, at, drop.new_tab.index);
+        return;
+    }
+
+    if (source_tab != dest_tab) {
+        self.commitCrossTabDrop(view, source_tab, at, dest_tab, drop);
+        return;
+    }
+
+    const tree = &self.tab_trees[source_tab];
     const new_tree: SplitTree(PaneView) = switch (drop) {
         .split => |sp| blk: {
-            const other = self.paneById(tab, &sp.pane) orelse return;
-            const target = self.findHandle(tab, other) orelse return;
+            const other = self.paneById(source_tab, &sp.pane) orelse return;
+            const target = self.findHandle(source_tab, other) orelse return;
             if (target == at) return;
             break :blk tree.move(
                 alloc,
@@ -2962,8 +3173,8 @@ fn commitRearrangeDrop(self: *Window, view: *PaneView, drop: RearrangeDrag.Drop)
             };
         },
         .swap => |sp| blk: {
-            const other = self.paneById(tab, &sp.pane) orelse return;
-            const other_handle = self.findHandle(tab, other) orelse return;
+            const other = self.paneById(source_tab, &sp.pane) orelse return;
+            const other_handle = self.findHandle(source_tab, other) orelse return;
             if (other_handle == at) return;
             break :blk tree.swap(alloc, at, other_handle) catch |err| {
                 log.err("rearrange swap failed: {}", .{err});
@@ -2997,14 +3208,179 @@ fn commitRearrangeDrop(self: *Window, view: *PaneView, drop: RearrangeDrag.Drop)
                 return;
             };
         },
+        // Handled above, before the same-tab path is even chosen.
+        .new_tab => unreachable,
     };
 
     // Swap-then-release (T1356), the rule every other tree mutation follows.
-    var old_tree = self.tab_trees[tab];
-    self.tab_trees[tab] = new_tree;
+    var old_tree = self.tab_trees[source_tab];
+    self.tab_trees[source_tab] = new_tree;
     old_tree.deinit();
 
-    self.tab_active_pane[tab] = view;
+    self.tab_active_pane[source_tab] = view;
+    self.finishRearrangeDrop(view);
+}
+
+/// Move the dragged pane into a TAB OF ITS OWN, at `index` in the strip
+/// (T1537).
+///
+/// Pure tree editing: every pane in every tab of a window is already a child
+/// of the same HWND, so nothing is re-parented and the pane that arrives is
+/// the pane that left - same process, same scrollback, same session. The one
+/// thing that has to be got right is the reference count, and the order below
+/// is what keeps it off zero: the single-leaf tree is built FIRST, taking a
+/// second reference, and only then is the source tree's old value released.
+fn commitNewTabDrop(
+    self: *Window,
+    view: *PaneView,
+    source_tab: usize,
+    at: SplitTree(PaneView).Node.Handle,
+    index: usize,
+) void {
+    // A pane that is its tab's whole tree is already a tab of its own.
+    // `canNewTabDrop` refuses this before the preview is drawn; the rule is
+    // restated where the mutation happens because `remove(.root)` would empty
+    // the tab out from under the pane it is moving.
+    if (at == .root) return;
+    if (self.tab_count >= MAX_TABS) return;
+    const alloc = self.app.core_app.alloc;
+
+    var leaf: SplitTree(PaneView) = SplitTree(PaneView).init(alloc, view) catch |err| {
+        log.err("new-tab drop leaf failed: {}", .{err});
+        return;
+    };
+    var leaf_owned = true;
+    defer if (leaf_owned) leaf.deinit();
+
+    const trimmed = self.tab_trees[source_tab].remove(alloc, at) catch |err| {
+        log.err("new-tab drop remove failed: {}", .{err});
+        return;
+    };
+
+    var old_tree = self.tab_trees[source_tab];
+    self.tab_trees[source_tab] = trimmed;
+    old_tree.deinit();
+
+    // The source tab's active pane cannot be the one that just left it.
+    self.tab_active_pane[source_tab] = self.firstLeaf(source_tab) orelse view;
+
+    leaf_owned = false;
+    self.insertPaneAsTabAt(view, leaf, @min(index, self.tab_count));
+    self.app.markLayoutDirty();
+}
+
+/// Commit a drop whose destination tab is NOT the tab the pane came from
+/// (T1537): the pane was carried across the strip by a dwell switch.
+///
+/// Two trees change, so the window installs both before releasing either -
+/// `moveTo` and `swapWith` hand back exactly that pair, with the destination
+/// built while the source still holds its reference.
+fn commitCrossTabDrop(
+    self: *Window,
+    view: *PaneView,
+    source_tab: usize,
+    at: SplitTree(PaneView).Node.Handle,
+    dest_tab: usize,
+    drop: RearrangeDrag.Drop,
+) void {
+    const alloc = self.app.core_app.alloc;
+    const src = &self.tab_trees[source_tab];
+    const dst = &self.tab_trees[dest_tab];
+
+    var new_src: SplitTree(PaneView) = undefined;
+    var new_dst: SplitTree(PaneView) = undefined;
+
+    switch (drop) {
+        .split => |sp| {
+            const other = self.paneById(dest_tab, &sp.pane) orelse return;
+            const target = self.findHandle(dest_tab, other) orelse return;
+            const r = src.moveTo(
+                alloc,
+                at,
+                dst,
+                target,
+                dropDirection(sp.side),
+                drop_highlight.insert_ratio,
+            ) catch |err| {
+                log.err("cross-tab move failed: {}", .{err});
+                return;
+            };
+            new_src = r.source;
+            new_dst = r.dest;
+        },
+        .swap => |sp| {
+            const other = self.paneById(dest_tab, &sp.pane) orelse return;
+            const other_handle = self.findHandle(dest_tab, other) orelse return;
+            const r = src.swapWith(alloc, at, dst, other_handle) catch |err| {
+                log.err("cross-tab swap failed: {}", .{err});
+                return;
+            };
+            new_src = r.a;
+            new_dst = r.b;
+        },
+        .top_level => |sp| {
+            var leaf: SplitTree(PaneView) = SplitTree(PaneView).init(alloc, view) catch |err| {
+                log.err("cross-tab top-level leaf failed: {}", .{err});
+                return;
+            };
+            defer leaf.deinit();
+            new_dst = dst.insertAtTopLevel(
+                alloc,
+                dropDirection(sp.side),
+                drop_highlight.insert_ratio,
+                &leaf,
+            ) catch |err| {
+                log.err("cross-tab top-level insert failed: {}", .{err});
+                return;
+            };
+            new_src = src.remove(alloc, at) catch |err| {
+                log.err("cross-tab top-level remove failed: {}", .{err});
+                new_dst.deinit();
+                return;
+            };
+        },
+        // Handled by the caller, which never reaches this path with one.
+        .new_tab => unreachable,
+    }
+
+    var old_src = self.tab_trees[source_tab];
+    var old_dst = self.tab_trees[dest_tab];
+    self.tab_trees[source_tab] = new_src;
+    self.tab_trees[dest_tab] = new_dst;
+    old_src.deinit();
+    old_dst.deinit();
+
+    self.tab_active_pane[dest_tab] = view;
+
+    // The source tab may have just lost its last pane - that is what carrying
+    // a tab's only pane into another tab MEANS, and the empty slot has to go.
+    // `closeTabByIndex` is the wrong tool for it: that path ends every session
+    // in the tree it closes, and the pane this drop moved is still running.
+    if (self.tab_trees[source_tab].isEmpty()) {
+        self.removeTabSlot(source_tab);
+    } else {
+        self.tab_active_pane[source_tab] = self.firstLeaf(source_tab) orelse view;
+        // A pane may have arrived in the BACKGROUND tab — a cross-tab SWAP
+        // sends one there — and it was on screen a moment ago as part of the
+        // tab the drop landed in. Nothing else would ever hide it: the layout
+        // pass below only touches the active tab, so it would go on painting
+        // over the pane that replaced it until the next tab switch.
+        if (source_tab != self.active_tab) self.setTabSurfacesVisible(source_tab, false);
+    }
+    self.finishRearrangeDrop(view);
+}
+
+/// A tab's first leaf in tree order, or null for an empty tree.
+fn firstLeaf(self: *Window, tab: usize) ?*PaneView {
+    if (tab >= self.tab_count) return null;
+    var it = self.tab_trees[tab].leafIterator();
+    const entry = it.next() orelse return null;
+    return entry.view;
+}
+
+/// The shared tail of every rearrange commit: re-lay the window out, persist
+/// it, and put the keyboard back on the pane the user was carrying.
+fn finishRearrangeDrop(self: *Window, view: *PaneView) void {
     self.layoutSplits();
     self.app.markLayoutDirty(); // T110: a rearranged layout must survive restore
     if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
@@ -8957,6 +9333,10 @@ pub fn windowWndProc(
             }
             if (wparam == TAB_TIP_TIMER_ID) {
                 window.tabTipTimerFire();
+                return 0;
+            }
+            if (wparam == TAB_DWELL_TIMER_ID) {
+                window.onTabDwell();
                 return 0;
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);

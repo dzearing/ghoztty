@@ -27767,3 +27767,59 @@ T1537 (drop on the tab strip to make a tab, plus the 500ms hover-switch),
 T1538 (move a pane into another window without restarting it - the `SetParent`
 and session-safety primitive, and the pop-out button it gates), and T1539
 (release over nothing opens a new window).
+
+## 2026-09-13 - A pane can be dragged onto the tab strip to become its own tab (T1537)
+
+Rearrange mode could move a pane around the layout in front of you and no
+further. The one rearrangement people reach for most - "put this pane in a tab
+of its own" - could not be done by dragging at all; you opened a new tab and
+started the work over. The parts for it had been sitting there unused since
+T1528: `pane_drop.resolve` already answered `.new_tab` for a point on the strip
+and `pane_drop.hoveredTab` already answered the hover, and neither had a
+caller.
+
+Now a drag onto the tab bar shows a caret on the seam where the tab will open
+and the release opens it there - at the index you pointed at, not appended.
+Resting on an existing tab button for half a second opens THAT tab, so the drag
+can continue into a layout you were not looking at when you picked the pane up,
+and the drop lands in it. The pane that arrives is the pane that left: same
+process, same scrollback, same agent session. Every pane in every tab of a
+window is already a child of the same HWND, so none of this re-parents
+anything - it is tree editing, and the whole job is getting the reference count
+right (the single-leaf tree is built before the old one is released, so the
+count never touches zero) and the ownership of the tab a pane can EMPTY.
+
+That last one is the sharp edge. Carrying a tab's only pane into another tab
+leaves an empty slot that has to go, and `closeTabByIndex` is the wrong tool
+for it: that path marks every session in the tree it removes as ENDING, and the
+pane that emptied the tab is still running next door. So the slot bookkeeping
+is split out as `removeTabSlot` and the close path keeps its intent to itself.
+
+The refusal is read in one place and used by two. A pane that is its tab's
+whole tree is already a tab of its own, so the drop does nothing - and
+`canNewTabDrop` decides both whether the commit happens and whether the caret
+is drawn, because a preview over a release that does nothing is exactly the
+lying preview T1531's geometry rule exists to prevent. Filed as T1542 is the
+better answer for that gesture: move the tab to where the user pointed.
+
+One latent defect fell out. `insertPaneAsTab` never adjusted `active_tab` for
+the slot it shifted, which was invisible because its two configured positions
+are both strictly after the active tab. A pane dropped on the strip can land
+anywhere, and at index 0 the stale index named the NEW tab - so the tab that
+was on screen was never hidden and its panes went on painting over the one that
+replaced them.
+
+Validated on box: `rearrange-tab-drop.ps1` ALL PASS (62) - the caret is a real
+`GhozttyDropHighlight` window inside the strip band the product itself
+publishes through `+list --json`, the new tab holds the same child HWND that
+was dragged, a lone pane previews and opens nothing, and a dwell carries the
+pane across a tab both ways (a centre drop swaps and both tabs survive; an edge
+drop moves and the emptied tab is gone, with both panes still alive).
+`-NegativeControl` red as designed. Floor lib/none/win32/agent ALL LANES PASS.
+Guards re-run green over this code: 12 static audits plus rearrange-drag,
+rearrange-header, rearrange-mode-action, viewer-close, close-confirm-idle,
+activity-monitor-remote, job-teardown and remote-disconnect. No non-advisory
+guard is due.
+
+Follow-ups filed: T1541 (the tab you are dwelling on gives no sign the clock is
+running) and T1542 (a lone pane's drag onto the strip should move its tab).

@@ -41,6 +41,12 @@ pub const Kind = enum {
     top_level,
     /// The dragged pane and the pane filling this rect will exchange places.
     swap,
+    /// The dragged pane will become a NEW TAB, landing at this seam in the
+    /// strip (T1537). The rect is an insertion caret, not a footprint: the
+    /// pane's eventual rect is the whole of a tab that does not exist yet, so
+    /// promising it as a wash over the content area would say "it lands here"
+    /// about an area the drop is about to replace entirely.
+    new_tab,
 };
 
 pub const Highlight = struct {
@@ -48,43 +54,121 @@ pub const Highlight = struct {
     kind: Kind,
 };
 
+/// Everything the preview needs to know about the window it is being drawn
+/// in. A struct rather than five positional arguments because T1537 added the
+/// tab strip to it and the call is already the kind that a reader has to count
+/// commas to check.
+pub const Context = struct {
+    window: WindowRef,
+
+    /// The split-tree area, in screen coordinates.
+    content_rect: Rect,
+
+    /// Every leaf pane's frame, in screen coordinates.
+    pane_rects: []const PaneRect = &.{},
+
+    /// The tab strip's band, when this window shows one.
+    tab_strip: ?Rect = null,
+
+    /// The tab buttons in visual order, left to right.
+    tab_rects: []const Rect = &.{},
+
+    /// Whether a new-tab drop is one this window will actually HONOUR
+    /// (T1537). A pane that is its tab's only pane is already a tab of its
+    /// own, so the drop is refused — and a preview drawn for it would be the
+    /// one thing this module exists to prevent, a promise the release breaks.
+    can_new_tab: bool = false,
+
+    /// The monitor scale, for the caret's thickness.
+    scale: f32 = 1.0,
+};
+
 /// The preview for `target`, or null when there is nothing to draw in
 /// `window`.
 ///
-/// Null covers three different "nothing here" cases on purpose: no target at
+/// Null covers four different "nothing here" cases on purpose: no target at
 /// all (the pointer is over a divider or over the dragged pane itself), a
-/// target in a DIFFERENT window (T1532's cross-window drag — this window has
+/// target in a DIFFERENT window (T1538's cross-window drag — this window has
 /// no preview to draw for it, and drawing one in the wrong window is worse
-/// than drawing none), and the two drops this task does not commit yet, a new
-/// tab and a new window. A preview is a promise, so it is drawn only where the
-/// release is honoured.
-pub fn forTarget(
-    target: ?Target,
-    window: WindowRef,
-    content_rect: Rect,
-    pane_rects: []const PaneRect,
-) ?Highlight {
+/// than drawing none), the new-WINDOW drop T1538 also owns, and a new-tab drop
+/// this window would refuse (`can_new_tab`). A preview is a promise, so it is
+/// drawn only where the release is honoured.
+pub fn forTarget(target: ?Target, ctx: Context) ?Highlight {
     const t = target orelse return null;
     if (t.window()) |w| {
-        if (w != window) return null;
+        if (w != ctx.window) return null;
     } else return null; // .new_window
 
     return switch (t) {
         .split => |s| .{
-            .rect = halfOn(paneRect(pane_rects, s.pane) orelse return null, s.side),
+            .rect = halfOn(paneRect(ctx.pane_rects, s.pane) orelse return null, s.side),
             .kind = .split,
         },
         .swap => |s| .{
-            .rect = paneRect(pane_rects, s.pane) orelse return null,
+            .rect = paneRect(ctx.pane_rects, s.pane) orelse return null,
             .kind = .swap,
         },
         .top_level => |s| .{
-            .rect = halfOn(content_rect, s.side),
+            .rect = halfOn(ctx.content_rect, s.side),
             .kind = .top_level,
         },
-        // T1532 owns the drop; until it does, nothing is promised.
-        .new_tab => null,
+        .new_tab => |s| blk: {
+            if (!ctx.can_new_tab) break :blk null;
+            const strip = ctx.tab_strip orelse break :blk null;
+            break :blk .{
+                .rect = newTabCaret(strip, ctx.tab_rects, s.index, ctx.scale),
+                .kind = .new_tab,
+            };
+        },
+        // T1538 owns the cross-window drop; until it does, nothing is
+        // promised.
         .new_window => null,
+    };
+}
+
+/// How thick the new-tab insertion caret is, in DIP.
+pub const caret_dip: i32 = 4;
+
+pub fn caretPx(scale: f32) i32 {
+    const v: f32 = @round(@as(f32, @floatFromInt(caret_dip)) * scale);
+    return @max(@as(i32, @intFromFloat(v)), 1);
+}
+
+/// The insertion caret for a new tab landing at `index`: a slim bar the height
+/// of the strip, standing on the SEAM the tab will open at.
+///
+/// The seam is the left edge of the tab currently at `index`, or the right
+/// edge of the last tab when the drop appends. It is centred on that seam and
+/// then clamped into the strip, so a caret at index 0 does not hang off the
+/// window — a preview half outside the thing it is previewing reads as a
+/// glitch rather than as a position.
+pub fn newTabCaret(strip: Rect, tabs: []const Rect, index: usize, scale: f32) Rect {
+    const w = caretPx(scale);
+    const seam: i32 = seam: {
+        // A tab the strip could not lay out reports an EMPTY rect, and its
+        // `left` is 0 — a coordinate that means "the far edge of the primary
+        // monitor", not "the seam before this tab". Walk to the first tab that
+        // actually has a rect, then fall back to the last one that does.
+        var i = index;
+        while (i < tabs.len) : (i += 1) {
+            if (tabs[i].right > tabs[i].left) break :seam tabs[i].left;
+        }
+        i = tabs.len;
+        while (i > 0) {
+            i -= 1;
+            if (tabs[i].right > tabs[i].left) break :seam tabs[i].right;
+        }
+        break :seam strip.left;
+    };
+
+    var left = seam - @divFloor(w, 2);
+    left = @max(left, strip.left);
+    left = @min(left, @max(strip.right - w, strip.left));
+    return .{
+        .left = left,
+        .top = strip.top,
+        .right = left + w,
+        .bottom = strip.bottom,
     };
 }
 
@@ -149,12 +233,22 @@ const panes = [_]PaneRect{
 
 const win: WindowRef = 7;
 
+const empty_rect: Rect = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+const test_strip: Rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 40 };
+const test_tabs = [_]Rect{
+    .{ .left = 0, .top = 0, .right = 200, .bottom = 40 },
+    .{ .left = 200, .top = 0, .right = 400, .bottom = 40 },
+    .{ .left = 400, .top = 0, .right = 600, .bottom = 40 },
+};
+
+fn baseCtx() Context {
+    return .{ .window = win, .content_rect = content, .pane_rects = &panes };
+}
+
 test "T1531: a split preview is the half of the target pane the pane will take" {
     const h = forTarget(
         .{ .split = .{ .window = win, .pane = panes[1].id, .side = .left } },
-        win,
-        content,
-        &panes,
+        baseCtx(),
     ).?;
     try testing.expectEqual(Kind.split, h.kind);
     try testing.expectEqual(@as(i32, 500), h.rect.left);
@@ -186,9 +280,7 @@ test "T1531: an odd extent never overflows the rect it is halving" {
 test "T1531: a swap preview is the WHOLE pane being traded with" {
     const h = forTarget(
         .{ .swap = .{ .window = win, .pane = panes[0].id } },
-        win,
-        content,
-        &panes,
+        baseCtx(),
     ).?;
     try testing.expectEqual(Kind.swap, h.kind);
     try testing.expectEqual(pane_a, h.rect);
@@ -197,9 +289,7 @@ test "T1531: a swap preview is the WHOLE pane being traded with" {
 test "T1531: a top-level preview is half the window's CONTENT, not half a pane" {
     const h = forTarget(
         .{ .top_level = .{ .window = win, .side = .down } },
-        win,
-        content,
-        &panes,
+        baseCtx(),
     ).?;
     try testing.expectEqual(Kind.top_level, h.kind);
     // Spans the whole width — that is the difference from splitting a pane.
@@ -212,47 +302,129 @@ test "T1531: a top-level preview is half the window's CONTENT, not half a pane" 
 test "T1531: pane ids match case-insensitively, as everywhere else" {
     const h = forTarget(
         .{ .swap = .{ .window = win, .pane = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" } },
-        win,
-        content,
-        &panes,
+        baseCtx(),
     ).?;
     try testing.expectEqual(pane_a, h.rect);
 }
 
 test "T1531: nothing is previewed without a target" {
-    try testing.expectEqual(@as(?Highlight, null), forTarget(null, win, content, &panes));
+    try testing.expectEqual(@as(?Highlight, null), forTarget(null, baseCtx()));
 }
 
 test "T1531: a target in ANOTHER window draws nothing in this one" {
     try testing.expectEqual(@as(?Highlight, null), forTarget(
         .{ .swap = .{ .window = win + 1, .pane = panes[0].id } },
-        win,
-        content,
-        &panes,
+        baseCtx(),
     ));
 }
 
-test "T1531: the drops T1532 owns promise nothing yet" {
-    try testing.expectEqual(@as(?Highlight, null), forTarget(
-        .{ .new_tab = .{ .window = win, .index = 0 } },
-        win,
-        content,
-        &panes,
-    ));
+test "T1538's cross-window drop promises nothing yet" {
     try testing.expectEqual(@as(?Highlight, null), forTarget(
         .{ .new_window = .{ .x = 10, .y = 10 } },
-        win,
-        content,
-        &panes,
+        baseCtx(),
+    ));
+}
+
+test "T1537: a new-tab drop previews a caret on the seam the tab opens at" {
+    var c = baseCtx();
+    c.tab_strip = test_strip;
+    c.tab_rects = &test_tabs;
+    c.can_new_tab = true;
+
+    const h = forTarget(.{ .new_tab = .{ .window = win, .index = 1 } }, c).?;
+    try testing.expectEqual(Kind.new_tab, h.kind);
+    // Centred on tab 1's left edge (200), 4px wide at scale 1.
+    try testing.expectEqual(@as(i32, 198), h.rect.left);
+    try testing.expectEqual(@as(i32, 202), h.rect.right);
+    // ...and it stands the full height of the strip.
+    try testing.expectEqual(test_strip.top, h.rect.top);
+    try testing.expectEqual(test_strip.bottom, h.rect.bottom);
+}
+
+test "T1537: appending past the last tab puts the caret after it" {
+    var c = baseCtx();
+    c.tab_strip = test_strip;
+    c.tab_rects = &test_tabs;
+    c.can_new_tab = true;
+
+    const h = forTarget(.{ .new_tab = .{ .window = win, .index = test_tabs.len } }, c).?;
+    // The last tab's right edge (600).
+    try testing.expectEqual(@as(i32, 598), h.rect.left);
+    try testing.expectEqual(@as(i32, 602), h.rect.right);
+}
+
+test "T1537: the caret never hangs off the strip it is drawn in" {
+    const one = [_]Rect{.{ .left = 0, .top = 0, .right = 100, .bottom = 40 }};
+    const narrow: Rect = .{ .left = 0, .top = 0, .right = 100, .bottom = 40 };
+    const at_start = newTabCaret(narrow, &one, 0, 1.0);
+    try testing.expectEqual(@as(i32, 0), at_start.left);
+    try testing.expectEqual(@as(i32, 4), at_start.right);
+    const at_end = newTabCaret(narrow, &one, 1, 1.0);
+    try testing.expect(at_end.right <= narrow.right);
+    try testing.expectEqual(@as(i32, 96), at_end.left);
+    // A strip with no tabs at all still answers inside itself.
+    const empty = newTabCaret(narrow, &.{}, 0, 1.0);
+    try testing.expectEqual(@as(i32, 0), empty.left);
+    // ...and a strip narrower than the caret clamps rather than inverting.
+    const hair: Rect = .{ .left = 10, .top = 0, .right = 12, .bottom = 40 };
+    const clamped = newTabCaret(hair, &.{}, 0, 1.0);
+    try testing.expectEqual(@as(i32, 10), clamped.left);
+}
+
+test "T1537: a tab the strip could not lay out is not mistaken for x = 0" {
+    // The middle tab did not fit, so it reports an empty rect. Its index must
+    // fall through to a real seam rather than parking the caret at the far
+    // edge of the monitor.
+    const gappy = [_]Rect{
+        .{ .left = 100, .top = 0, .right = 300, .bottom = 40 },
+        empty_rect,
+        .{ .left = 300, .top = 0, .right = 500, .bottom = 40 },
+    };
+    const h = newTabCaret(test_strip, &gappy, 1, 1.0);
+    try testing.expectEqual(@as(i32, 298), h.left);
+    // ...and an index past every laid-out tab appends after the last real one.
+    const tail = newTabCaret(test_strip, &gappy, 3, 1.0);
+    try testing.expectEqual(@as(i32, 498), tail.left);
+    // A strip where NOTHING was laid out falls back to the band's own edge.
+    const none = [_]Rect{ empty_rect, empty_rect };
+    try testing.expectEqual(test_strip.left, newTabCaret(test_strip, &none, 0, 1.0).left);
+}
+
+test "T1537: the caret thickness scales with the monitor and never rounds away" {
+    try testing.expectEqual(@as(i32, 4), caretPx(1.0));
+    try testing.expectEqual(@as(i32, 5), caretPx(1.25));
+    try testing.expectEqual(@as(i32, 8), caretPx(2.0));
+    try testing.expectEqual(@as(i32, 1), caretPx(0.01));
+}
+
+test "T1537: a new-tab drop this window will REFUSE previews nothing" {
+    // A pane that is its tab's only pane is already a tab of its own, so the
+    // release is a no-op — and a caret promising otherwise is the lie this
+    // module exists to prevent.
+    var c = baseCtx();
+    c.tab_strip = test_strip;
+    c.tab_rects = &test_tabs;
+    c.can_new_tab = false;
+    try testing.expectEqual(@as(?Highlight, null), forTarget(
+        .{ .new_tab = .{ .window = win, .index = 1 } },
+        c,
+    ));
+}
+
+test "T1537: a window showing no strip previews no new-tab drop" {
+    var c = baseCtx();
+    c.can_new_tab = true;
+    c.tab_rects = &test_tabs;
+    try testing.expectEqual(@as(?Highlight, null), forTarget(
+        .{ .new_tab = .{ .window = win, .index = 1 } },
+        c,
     ));
 }
 
 test "T1531: a target naming a pane this window does not have draws nothing" {
     try testing.expectEqual(@as(?Highlight, null), forTarget(
         .{ .split = .{ .window = win, .pane = "cccccccccccccccccccccccccccccccc", .side = .up } },
-        win,
-        content,
-        &panes,
+        baseCtx(),
     ));
 }
 

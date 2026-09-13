@@ -33,6 +33,12 @@ pub const WINDOW_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyDro
 pub const alpha_insert: u8 = 110;
 pub const alpha_swap: u8 = 72;
 
+/// A new-tab caret is a solid mark rather than a wash (T1537): it is a few
+/// pixels wide, and a 43%-opaque sliver on chrome is not a thing the eye
+/// finds. It is the one preview that says "the tab opens HERE" rather than
+/// "the pane covers this", so it reads as a caret, not as a footprint.
+pub const alpha_caret: u8 = 235;
+
 /// The frame's thickness, in DIP, around a swap preview.
 pub const frame_dip: i32 = 3;
 
@@ -120,6 +126,7 @@ pub fn show(
     const want_alpha: u8 = switch (hl.kind) {
         .swap => alpha_swap,
         .split, .top_level => alpha_insert,
+        .new_tab => alpha_caret,
     };
     if (want_alpha != self.alpha) {
         _ = w32.SetLayeredWindowAttributes(self.hwnd, 0, want_alpha, w32.LWA_ALPHA);
