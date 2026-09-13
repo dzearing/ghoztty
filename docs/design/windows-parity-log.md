@@ -27585,3 +27585,39 @@ closed against 87c762ec1, the commit that actually fixed it. And T1521 was filed
 for what this pass paid: a comment-only edit to 25 test scripts made 27 unrelated
 guards due, because the stamp compares bytes rather than what runs, which is the
 pressure that trains people to reach for `-NoGuardDue` - as this commit had to.
+
+## 2026-09-13 - A pane can be moved and swapped in the split tree without being rebuilt (T1529)
+
+Rearrange mode can now say what a drop MEANS (T1528) and this is what carries it
+out: the tree mutations a dragged pane performs. `src/datastruct/split_tree.zig`
+gained four of them - `insertAtTopLevel` puts a pane down a whole side of the
+window, `move` re-places a leaf beside another leaf in the same tree, `moveTo`
+carries one into a different tree and hands back both, and `swapWith` exchanges a
+leaf with one in another tree, which `swap` cannot do because it works within a
+single node array.
+
+The requirement underneath all four is identity. A pane is a running process, a
+scrollback and, for a viewer, a rendered page with the reader's scroll position
+in it; a mutation that produced an equal-but-new leaf would look like the
+terminal restarting every time you dragged something. So every op rebuilds out
+of the existing view pointer, and the tests assert that rather than assuming it:
+`TestView` copies itself on every `ref`, which is fine for shape assertions and
+useless for this question, so the new `IdentityView` hands back the same pointer
+the way `PaneView` does and the tests check both the pointer and the reference
+count on the far side of deinit'ing the old tree.
+
+One ordering detail is load-bearing and is written into the code as a comment
+rather than left for the next reader to rediscover: `move` INSERTS before it
+removes. Removing first renumbers every handle after the hole, so the caller's
+target handle would name a different node - or none - by the time it was used.
+`split` leaves existing handles alone, so the moved leaf is still at the handle
+the caller named when the removal runs. `moveTo` orders itself for a different
+reason: the destination is built while the source tree still holds a reference,
+so the view cannot reach a zero count in between and free the pane mid-drag.
+
+13 unit tests in the `none` lane cover the four top-level sides, the wrap-vs-nest
+distinction the window-edge drop exists for, the empty-tree edges on both sides,
+zoom clearing, the collapse of the split a moved pane leaves behind, the
+cross-tree move including the source that empties out from under the last pane,
+and both swaps. All four floor lanes pass. T1531 and T1532 are the halves that
+put a mouse on top of this.

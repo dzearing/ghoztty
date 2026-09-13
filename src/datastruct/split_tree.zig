@@ -994,6 +994,152 @@ pub fn SplitTree(comptime V: type) type {
             };
         }
 
+        /// Insert another tree at the TOP LEVEL of this one: the whole
+        /// existing tree becomes one child of a new root split and `insert`
+        /// becomes the other, spanning the full side of the window.
+        ///
+        /// This is the window-edge drop of rearrange mode, and it is what
+        /// makes that drop different from splitting the pane under the
+        /// pointer: splitting pane `b` NESTS inside whatever split already
+        /// holds `b`, while this WRAPS everything. `.up` and `.left` put the
+        /// inserted tree first (top / left child); `.down` and `.right` put it
+        /// last.
+        ///
+        /// Zoom is cleared, because reshaping the top level makes "one pane
+        /// fills the window" meaningless. Inserting into an EMPTY tree simply
+        /// yields the inserted tree.
+        ///
+        /// Ownership follows `split`: the returned tree holds a reference on
+        /// every view in it, and the two input trees are untouched.
+        pub fn insertAtTopLevel(
+            self: *const Self,
+            gpa: Allocator,
+            direction: Split.Direction,
+            ratio: f16,
+            insert: *const Self,
+        ) Allocator.Error!Self {
+            if (insert.isEmpty()) return self.clone(gpa);
+            if (self.isEmpty()) return insert.clone(gpa);
+            return try self.split(gpa, .root, direction, ratio, insert);
+        }
+
+        /// Move a leaf somewhere else in the SAME tree: take the view at `at`
+        /// out of where it is and put it beside the view at `target`, on
+        /// `direction`'s side of it. Both handles must be leaves and they must
+        /// differ.
+        ///
+        /// The result holds the very same view — the same pointer, for a view
+        /// whose `ref` returns itself — so the terminal keeps its process and
+        /// its scrollback and a viewer keeps its rendered page. That is the
+        /// whole point of the operation: a rearrange that produced an
+        /// equal-but-new leaf would silently restart everything on screen.
+        ///
+        /// It inserts BEFORE it removes, deliberately. Removing first would
+        /// renumber every handle after the hole, so the caller's `target`
+        /// would name a different node (or none) by the time it was used;
+        /// `split` leaves the existing handles alone, so `at` still names the
+        /// leaf being moved when the removal runs.
+        pub fn move(
+            self: *const Self,
+            gpa: Allocator,
+            at: Node.Handle,
+            target: Node.Handle,
+            direction: Split.Direction,
+            ratio: f16,
+        ) Allocator.Error!Self {
+            assert(at != target);
+            assert(at.idx() < self.nodes.len);
+            assert(target.idx() < self.nodes.len);
+            assert(self.nodes[at.idx()] == .leaf);
+            assert(self.nodes[target.idx()] == .leaf);
+
+            // The moving view as a tree of its own, so `split` can insert it.
+            var leaf: Self = try .init(gpa, self.nodes[at.idx()].leaf);
+            defer leaf.deinit();
+
+            // Both copies of the view live in this tree at once; the removal
+            // below takes the original back out.
+            var inserted = try self.split(gpa, target, direction, ratio, &leaf);
+            defer inserted.deinit();
+
+            return try inserted.remove(gpa, at);
+        }
+
+        /// The two trees a cross-tree move produces, in the caller's hands.
+        /// The caller installs both and deinits the two originals.
+        pub const MoveResult = struct {
+            /// The tree the view left. `.empty` when it was the last leaf,
+            /// which is how a tab empties out from under a dragged pane.
+            source: Self,
+
+            /// The tree the view arrived in.
+            dest: Self,
+        };
+        /// Move a leaf out of this tree and into ANOTHER one, beside the view
+        /// at `dest_at`. This is the cross-tab and cross-window drag, and it
+        /// is the same identity-preserving rule as `move`: the pane that
+        /// arrives in `dest` is the pane that left `source`, still running.
+        ///
+        /// Order matters here too, for a different reason: the destination is
+        /// built FIRST, while this tree still holds a reference on the view,
+        /// so the view cannot reach a zero count in between.
+        pub fn moveTo(
+            self: *const Self,
+            gpa: Allocator,
+            at: Node.Handle,
+            dest: *const Self,
+            dest_at: Node.Handle,
+            direction: Split.Direction,
+            ratio: f16,
+        ) Allocator.Error!MoveResult {
+            assert(at.idx() < self.nodes.len);
+            assert(self.nodes[at.idx()] == .leaf);
+
+            var leaf: Self = try .init(gpa, self.nodes[at.idx()].leaf);
+            defer leaf.deinit();
+
+            var new_dest = if (dest.isEmpty())
+                try leaf.clone(gpa)
+            else
+                try dest.split(gpa, dest_at, direction, ratio, &leaf);
+            errdefer new_dest.deinit();
+
+            // `remove` takes a mutable self only because its recursive helper
+            // does; neither one writes to the OLD tree, and every other
+            // mutation here is const. The cast keeps this signature const
+            // rather than forcing every caller to hold a mutable source.
+            const source: *Self = @constCast(self);
+            return .{
+                .source = try source.remove(gpa, at),
+                .dest = new_dest,
+            };
+        }
+
+        /// The two trees a cross-tree swap produces.
+        pub const SwapResult = struct { a: Self, b: Self };
+
+        /// Exchange a leaf of this tree with a leaf of another tree, each
+        /// keeping the other's shape and ratios exactly. `swap` cannot do
+        /// this — it works within one node array — so each side is a
+        /// `replaceLeaf` on its own tree, which is also how Mac spells it.
+        pub fn swapWith(
+            self: *const Self,
+            gpa: Allocator,
+            at: Node.Handle,
+            other: *const Self,
+            other_at: Node.Handle,
+        ) Allocator.Error!SwapResult {
+            assert(self.nodes[at.idx()] == .leaf);
+            assert(other.nodes[other_at.idx()] == .leaf);
+
+            var a = try self.replaceLeaf(gpa, at, other.nodes[other_at.idx()].leaf);
+            errdefer a.deinit();
+            return .{
+                .a = a,
+                .b = try other.replaceLeaf(gpa, other_at, self.nodes[at.idx()].leaf),
+            };
+        }
+
         fn weight(
             self: *const Self,
             from: Node.Handle,
@@ -2839,4 +2985,540 @@ fn handleOf(tree: *const TestTree, label: []const u8) ?TestTree.Node.Handle {
         if (std.mem.eql(u8, entry.view.label, label)) return entry.handle;
     }
     return null;
+}
+
+// -------------------------------------------------------------------------
+// Rearrange-mode mutations (T1529)
+//
+// Every one of these has to preserve LEAF IDENTITY: the rebuilt tree must
+// hold the very same view, because that identity is the terminal's process
+// and scrollback and the viewer's rendered page. A mutation that produced an
+// equal-but-new leaf would silently restart everything on screen, which is
+// why `IdentityTree` below asserts the pointer and the reference count rather
+// than only the labels.
+// -------------------------------------------------------------------------
+
+/// The leaf labels in SCREEN order, comma separated, into `buf`.
+fn leafOrder(tree: *const TestTree, buf: []u8) []const u8 {
+    var len: usize = 0;
+    var it = tree.leafIterator();
+    while (it.next()) |entry| {
+        if (len > 0) {
+            buf[len] = ',';
+            len += 1;
+        }
+        const label = entry.view.label;
+        @memcpy(buf[len..][0..label.len], label);
+        len += label.len;
+    }
+    return buf[0..len];
+}
+
+/// `A | B`, a horizontal split, over two views owned by the caller.
+fn testPair(
+    alloc: Allocator,
+    a: *TestTree.View,
+    b: *TestTree.View,
+) Allocator.Error!TestTree {
+    var ta: TestTree = try .init(alloc, a);
+    defer ta.deinit();
+    var tb: TestTree = try .init(alloc, b);
+    defer tb.deinit();
+    return try ta.split(alloc, .root, .right, 0.5, &tb);
+}
+
+test "SplitTree: insertAtTopLevel puts the view down a whole side (T1529)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var buf: [64]u8 = undefined;
+
+    var a: TestTree.View = .{ .label = "A" };
+    var b: TestTree.View = .{ .label = "B" };
+    var c: TestTree.View = .{ .label = "C" };
+
+    var pair = try testPair(alloc, &a, &b);
+    defer pair.deinit();
+    var leaf: TestTree = try .init(alloc, &c);
+    defer leaf.deinit();
+
+    // Left: a horizontal root split with C first, and the whole previous
+    // tree untouched as the other child.
+    {
+        var result = try pair.insertAtTopLevel(alloc, .left, 0.5, &leaf);
+        defer result.deinit();
+        try testing.expect(result.nodes[0] == .split);
+        try testing.expectEqual(
+            TestTree.Split.Layout.horizontal,
+            result.nodes[0].split.layout,
+        );
+        try testing.expectEqual(@as(f16, 0.5), result.nodes[0].split.ratio);
+        try testing.expectEqualStrings("C,A,B", leafOrder(&result, &buf));
+    }
+
+    // Right: same layout, C last.
+    {
+        var result = try pair.insertAtTopLevel(alloc, .right, 0.5, &leaf);
+        defer result.deinit();
+        try testing.expectEqual(
+            TestTree.Split.Layout.horizontal,
+            result.nodes[0].split.layout,
+        );
+        try testing.expectEqualStrings("A,B,C", leafOrder(&result, &buf));
+    }
+
+    // Up is a VERTICAL split with C on the top branch. Getting this backwards
+    // would put every "drop at the top of the window" pane at the bottom.
+    {
+        var result = try pair.insertAtTopLevel(alloc, .up, 0.5, &leaf);
+        defer result.deinit();
+        try testing.expectEqual(
+            TestTree.Split.Layout.vertical,
+            result.nodes[0].split.layout,
+        );
+        try testing.expectEqualStrings("C,A,B", leafOrder(&result, &buf));
+    }
+
+    // Down is vertical with C on the bottom branch.
+    {
+        var result = try pair.insertAtTopLevel(alloc, .down, 0.5, &leaf);
+        defer result.deinit();
+        try testing.expectEqual(
+            TestTree.Split.Layout.vertical,
+            result.nodes[0].split.layout,
+        );
+        try testing.expectEqualStrings("A,B,C", leafOrder(&result, &buf));
+    }
+}
+
+test "SplitTree: a top-level insert wraps where a pane split nests (T1529)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    // The distinction the window-edge drop exists for. Splitting pane B puts
+    // C INSIDE the split that already holds B; a top-level insert puts C
+    // beside the entire tree.
+    var a: TestTree.View = .{ .label = "A" };
+    var b: TestTree.View = .{ .label = "B" };
+    var c: TestTree.View = .{ .label = "C" };
+
+    var pair = try testPair(alloc, &a, &b);
+    defer pair.deinit();
+    var leaf: TestTree = try .init(alloc, &c);
+    defer leaf.deinit();
+
+    var nested = try pair.split(
+        alloc,
+        handleOf(&pair, "B") orelse return error.NotFound,
+        .right,
+        0.5,
+        &leaf,
+    );
+    defer nested.deinit();
+    var top = try pair.insertAtTopLevel(alloc, .right, 0.5, &leaf);
+    defer top.deinit();
+
+    // Nested: the root's right child is itself a split.
+    try testing.expect(nested.nodes[nested.nodes[0].split.right.idx()] == .split);
+    // Top level: the root's right child is C itself.
+    const top_right = top.nodes[top.nodes[0].split.right.idx()];
+    try testing.expect(top_right == .leaf);
+    try testing.expectEqualStrings("C", top_right.leaf.label);
+}
+
+test "SplitTree: insertAtTopLevel handles an empty tree on either side (T1529)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var c: TestTree.View = .{ .label = "C" };
+    var leaf: TestTree = try .init(alloc, &c);
+    defer leaf.deinit();
+
+    // Into an empty tree the insert simply becomes the tree: a window with
+    // no panes left is not a split of nothing.
+    var empty: TestTree = .empty;
+    defer empty.deinit();
+    var into_empty = try empty.insertAtTopLevel(alloc, .left, 0.5, &leaf);
+    defer into_empty.deinit();
+    try testing.expect(!into_empty.isSplit());
+    try testing.expectEqualStrings("C", into_empty.nodes[0].leaf.label);
+
+    // And inserting nothing changes nothing.
+    var unchanged = try leaf.insertAtTopLevel(alloc, .left, 0.5, &empty);
+    defer unchanged.deinit();
+    try testing.expect(!unchanged.isSplit());
+    try testing.expectEqualStrings("C", unchanged.nodes[0].leaf.label);
+}
+
+test "SplitTree: insertAtTopLevel clears zoom (T1529)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    // A zoom hides every other pane; reshaping the top level makes that
+    // hidden state meaningless.
+    var a: TestTree.View = .{ .label = "A" };
+    var b: TestTree.View = .{ .label = "B" };
+    var c: TestTree.View = .{ .label = "C" };
+    var pair = try testPair(alloc, &a, &b);
+    defer pair.deinit();
+    pair.zoom(handleOf(&pair, "A") orelse return error.NotFound);
+    try testing.expect(pair.zoomed != null);
+
+    var leaf: TestTree = try .init(alloc, &c);
+    defer leaf.deinit();
+    var result = try pair.insertAtTopLevel(alloc, .up, 0.5, &leaf);
+    defer result.deinit();
+    try testing.expect(result.zoomed == null);
+}
+
+test "SplitTree: move re-places a pane and keeps every leaf (T1529)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var buf: [64]u8 = undefined;
+
+    // A | (B | C): move A to the right of C.
+    var a: TestTree.View = .{ .label = "A" };
+    var b: TestTree.View = .{ .label = "B" };
+    var c: TestTree.View = .{ .label = "C" };
+    var pair = try testPair(alloc, &b, &c);
+    defer pair.deinit();
+    var ta: TestTree = try .init(alloc, &a);
+    defer ta.deinit();
+    var trio = try pair.insertAtTopLevel(alloc, .left, 0.5, &ta);
+    defer trio.deinit();
+    try testing.expectEqualStrings("A,B,C", leafOrder(&trio, &buf));
+
+    var moved = try trio.move(
+        alloc,
+        handleOf(&trio, "A") orelse return error.NotFound,
+        handleOf(&trio, "C") orelse return error.NotFound,
+        .right,
+        0.5,
+    );
+    defer moved.deinit();
+    try testing.expectEqualStrings("B,C,A", leafOrder(&moved, &buf));
+}
+
+test "SplitTree: move collapses the split the pane left behind (T1529)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var buf: [64]u8 = undefined;
+
+    // (A | B) with C below: move A below C. The panes left behind reclaim
+    // the space rather than keeping a gap, so B is left alone at the top.
+    var a: TestTree.View = .{ .label = "A" };
+    var b: TestTree.View = .{ .label = "B" };
+    var c: TestTree.View = .{ .label = "C" };
+    var pair = try testPair(alloc, &a, &b);
+    defer pair.deinit();
+    var tc: TestTree = try .init(alloc, &c);
+    defer tc.deinit();
+    var trio = try pair.insertAtTopLevel(alloc, .down, 0.5, &tc);
+    defer trio.deinit();
+
+    var moved = try trio.move(
+        alloc,
+        handleOf(&trio, "A") orelse return error.NotFound,
+        handleOf(&trio, "C") orelse return error.NotFound,
+        .down,
+        0.5,
+    );
+    defer moved.deinit();
+    try testing.expectEqualStrings("B,C,A", leafOrder(&moved, &buf));
+
+    // The root is now B over (C over A): the horizontal split that held
+    // A and B is gone entirely.
+    try testing.expectEqual(
+        TestTree.Split.Layout.vertical,
+        moved.nodes[0].split.layout,
+    );
+    const left = moved.nodes[moved.nodes[0].split.left.idx()];
+    try testing.expect(left == .leaf);
+    try testing.expectEqualStrings("B", left.leaf.label);
+}
+
+test "SplitTree: moveTo carries a pane into another tree (T1529)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var buf: [64]u8 = undefined;
+
+    // Source A | B, destination C | D. Drag B onto D's right side.
+    var a: TestTree.View = .{ .label = "A" };
+    var b: TestTree.View = .{ .label = "B" };
+    var c: TestTree.View = .{ .label = "C" };
+    var d: TestTree.View = .{ .label = "D" };
+    var source = try testPair(alloc, &a, &b);
+    defer source.deinit();
+    var dest = try testPair(alloc, &c, &d);
+    defer dest.deinit();
+
+    var result = try source.moveTo(
+        alloc,
+        handleOf(&source, "B") orelse return error.NotFound,
+        &dest,
+        handleOf(&dest, "D") orelse return error.NotFound,
+        .right,
+        0.5,
+    );
+    defer result.source.deinit();
+    defer result.dest.deinit();
+
+    try testing.expectEqualStrings("A", leafOrder(&result.source, &buf));
+    try testing.expectEqualStrings("C,D,B", leafOrder(&result.dest, &buf));
+}
+
+test "SplitTree: moveTo empties a source that held only that pane (T1529)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var buf: [64]u8 = undefined;
+
+    // Dragging the last pane out of a tab leaves nothing behind, which is
+    // how the tab itself comes to close.
+    var a: TestTree.View = .{ .label = "A" };
+    var c: TestTree.View = .{ .label = "C" };
+    var d: TestTree.View = .{ .label = "D" };
+    var source: TestTree = try .init(alloc, &a);
+    defer source.deinit();
+    var dest = try testPair(alloc, &c, &d);
+    defer dest.deinit();
+
+    var result = try source.moveTo(
+        alloc,
+        .root,
+        &dest,
+        handleOf(&dest, "C") orelse return error.NotFound,
+        .left,
+        0.5,
+    );
+    defer result.source.deinit();
+    defer result.dest.deinit();
+
+    try testing.expect(result.source.isEmpty());
+    try testing.expectEqualStrings("A,C,D", leafOrder(&result.dest, &buf));
+}
+
+test "SplitTree: moveTo into an empty destination (T1529)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var buf: [64]u8 = undefined;
+
+    // Dropping onto empty space makes a new window, whose tree starts out
+    // with nothing in it.
+    var a: TestTree.View = .{ .label = "A" };
+    var b: TestTree.View = .{ .label = "B" };
+    var source = try testPair(alloc, &a, &b);
+    defer source.deinit();
+    var dest: TestTree = .empty;
+    defer dest.deinit();
+
+    var result = try source.moveTo(
+        alloc,
+        handleOf(&source, "A") orelse return error.NotFound,
+        &dest,
+        .root,
+        .right,
+        0.5,
+    );
+    defer result.source.deinit();
+    defer result.dest.deinit();
+
+    try testing.expectEqualStrings("B", leafOrder(&result.source, &buf));
+    try testing.expectEqualStrings("A", leafOrder(&result.dest, &buf));
+    try testing.expect(!result.dest.isSplit());
+}
+
+test "SplitTree: swapWith exchanges leaves across two trees (T1529)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var buf: [64]u8 = undefined;
+
+    // `swap` works within one node array, so a cross-window swap is a
+    // replace on each side; each tree keeps its own shape and ratios.
+    var a: TestTree.View = .{ .label = "A" };
+    var b: TestTree.View = .{ .label = "B" };
+    var c: TestTree.View = .{ .label = "C" };
+    var d: TestTree.View = .{ .label = "D" };
+    var left = try testPair(alloc, &a, &b);
+    defer left.deinit();
+    var right = try testPair(alloc, &c, &d);
+    defer right.deinit();
+
+    var result = try left.swapWith(
+        alloc,
+        handleOf(&left, "A") orelse return error.NotFound,
+        &right,
+        handleOf(&right, "D") orelse return error.NotFound,
+    );
+    defer result.a.deinit();
+    defer result.b.deinit();
+
+    try testing.expectEqualStrings("D,B", leafOrder(&result.a, &buf));
+    try testing.expectEqualStrings("C,A", leafOrder(&result.b, &buf));
+}
+
+test "SplitTree: swap exchanges two leaves in place (T1529)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    var buf: [64]u8 = undefined;
+
+    // The center-of-a-pane drop within one window.
+    var a: TestTree.View = .{ .label = "A" };
+    var b: TestTree.View = .{ .label = "B" };
+    var pair = try testPair(alloc, &a, &b);
+    defer pair.deinit();
+
+    var swapped = try pair.swap(
+        alloc,
+        handleOf(&pair, "A") orelse return error.NotFound,
+        handleOf(&pair, "B") orelse return error.NotFound,
+    );
+    defer swapped.deinit();
+    try testing.expectEqualStrings("B,A", leafOrder(&swapped, &buf));
+}
+
+/// A view whose `ref` hands back the SAME pointer, the way `PaneView` does.
+/// `TestView` copies itself on every ref, which is fine for shape assertions
+/// and useless for the question these mutations actually turn on: is the pane
+/// in the rebuilt tree the pane that was running before the drag?
+const IdentityView = struct {
+    label: []const u8,
+    refs: usize = 0,
+
+    pub fn ref(self: *IdentityView, alloc: Allocator) Allocator.Error!*IdentityView {
+        _ = alloc;
+        self.refs += 1;
+        return self;
+    }
+
+    pub fn unref(self: *IdentityView, alloc: Allocator) void {
+        _ = alloc;
+        assert(self.refs > 0);
+        self.refs -= 1;
+    }
+
+    pub fn splitTreeLabel(self: *const IdentityView) []const u8 {
+        return self.label;
+    }
+};
+
+const IdentityTree = SplitTree(IdentityView);
+
+fn identityHandleOf(
+    tree: *const IdentityTree,
+    label: []const u8,
+) ?IdentityTree.Node.Handle {
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        if (std.mem.eql(u8, entry.view.label, label)) return entry.handle;
+    }
+    return null;
+}
+
+test "SplitTree: move keeps the pane itself, not a copy of it (T1529)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var a: IdentityView = .{ .label = "A" };
+    var b: IdentityView = .{ .label = "B" };
+    var c: IdentityView = .{ .label = "C" };
+
+    var ta: IdentityTree = try .init(alloc, &a);
+    var tb: IdentityTree = try .init(alloc, &b);
+    var tc: IdentityTree = try .init(alloc, &c);
+    var pair = try ta.split(alloc, .root, .right, 0.5, &tb);
+    var trio = try pair.split(
+        alloc,
+        identityHandleOf(&pair, "B") orelse return error.NotFound,
+        .right,
+        0.5,
+        &tc,
+    );
+    // Everything that built the tree lets go of it, so the only references
+    // left are the ones the live tree holds: one per pane.
+    ta.deinit();
+    tb.deinit();
+    tc.deinit();
+    pair.deinit();
+    try testing.expectEqual(@as(usize, 1), a.refs);
+
+    var moved = try trio.move(
+        alloc,
+        identityHandleOf(&trio, "A") orelse return error.NotFound,
+        identityHandleOf(&trio, "C") orelse return error.NotFound,
+        .right,
+        0.5,
+    );
+    defer moved.deinit();
+
+    // The tree the window was showing is gone the moment the new one is
+    // installed, which is where a move that copied its leaves would drop the
+    // original panes on the floor.
+    trio.deinit();
+
+    // Same pointers, all three of them.
+    var seen: usize = 0;
+    var it = moved.iterator();
+    while (it.next()) |entry| {
+        seen += 1;
+        try testing.expect(entry.view == &a or entry.view == &b or entry.view == &c);
+    }
+    try testing.expectEqual(@as(usize, 3), seen);
+
+    // And exactly one reference each, the live tree's. A move that leaked a
+    // reference would keep a closed terminal's process alive forever.
+    try testing.expectEqual(@as(usize, 1), a.refs);
+    try testing.expectEqual(@as(usize, 1), b.refs);
+    try testing.expectEqual(@as(usize, 1), c.refs);
+}
+
+test "SplitTree: moveTo and swapWith keep the panes themselves (T1529)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var a: IdentityView = .{ .label = "A" };
+    var b: IdentityView = .{ .label = "B" };
+    var c: IdentityView = .{ .label = "C" };
+
+    var ta: IdentityTree = try .init(alloc, &a);
+    var tb: IdentityTree = try .init(alloc, &b);
+    var source = try ta.split(alloc, .root, .right, 0.5, &tb);
+    ta.deinit();
+    tb.deinit();
+    var dest: IdentityTree = try .init(alloc, &c);
+
+    // The cross-window drag: A leaves `source` and arrives in `dest`, still
+    // the same pane, while the source keeps B.
+    var moved = try source.moveTo(
+        alloc,
+        identityHandleOf(&source, "A") orelse return error.NotFound,
+        &dest,
+        .root,
+        .right,
+        0.5,
+    );
+    source.deinit();
+    dest.deinit();
+    defer moved.source.deinit();
+    defer moved.dest.deinit();
+
+    const a_handle = identityHandleOf(&moved.dest, "A") orelse return error.NotFound;
+    try testing.expect(moved.dest.nodes[a_handle.idx()].leaf == &a);
+    try testing.expectEqual(@as(usize, 1), a.refs);
+    try testing.expectEqual(@as(usize, 1), b.refs);
+
+    // The cross-window swap: each tree ends up holding the other's pane, and
+    // neither pane was rebuilt on the way.
+    var swapped = try moved.source.swapWith(
+        alloc,
+        identityHandleOf(&moved.source, "B") orelse return error.NotFound,
+        &moved.dest,
+        a_handle,
+    );
+    defer swapped.a.deinit();
+    defer swapped.b.deinit();
+
+    try testing.expect(swapped.a.nodes[0].leaf == &a);
+    const b_handle = identityHandleOf(&swapped.b, "B") orelse return error.NotFound;
+    try testing.expect(swapped.b.nodes[b_handle.idx()].leaf == &b);
+    try testing.expectEqual(@as(usize, 2), a.refs);
+    try testing.expectEqual(@as(usize, 2), b.refs);
 }
