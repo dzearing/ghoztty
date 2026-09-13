@@ -1,10 +1,10 @@
 {
     "guard":  "isolation-meta",
     "script":  "test/win32/isolation-meta.ps1",
-    "generated":  "2026-09-13T07:27:58-07:00",
-    "commit":  "0951bb6ed",
+    "generated":  "2026-09-13T08:19:11-07:00",
+    "commit":  "8caea4dd3",
     "uncommitted":  [
-                        "test/win32/rearrange-mode-action.ps1"
+
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -169,7 +169,7 @@
                   "test/win32/local-split-no-command-rerun.ps1":  "ee277b6308cdb172e153fe92d0624732f8b64743418134ce466da5534138fae2",
                   "test/win32/log-append.ps1":  "76f73c234de0498279a1678b94cd297fa0bdc5d83363e8e43e06999bfaa4b457",
                   "test/win32/machine-chooser.ps1":  "c69e331b19e83e300b5f0c22860220ea1d2de144d587db1ee4ae4e797ce6b79e",
-                  "test/win32/menu-bar.ps1":  "c187fbafec991f6ae477d3888bd4639eafa9267702b42368f177cb410c0e41ca",
+                  "test/win32/menu-bar.ps1":  "b8e8f1a38a3579f3df4b742b48d3df2dcc62a3d816b42d0af26db5664f77377e",
                   "test/win32/menu-f10-binding.ps1":  "2a0f0edd446c99a0ed1ffb5d1b0ce8e3e1a8ae8df140fd70fa5f6b5df37b8e22",
                   "test/win32/merge-terminology.ps1":  "7d155ca2da0de4866e7afab82df19ab046be33aa3c34655481192c1e158b5d25",
                   "test/win32/mouse-nc-routing.ps1":  "0e9c09958e46b3444898c47fdcadfbd1c509854b6c07e5bb8c5086abd2f80969",
