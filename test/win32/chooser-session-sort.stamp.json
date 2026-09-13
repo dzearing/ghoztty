@@ -1,13 +1,13 @@
 {
     "guard":  "chooser-session-sort",
     "script":  "test/win32/chooser-session-sort.ps1",
-    "generated":  "2026-09-12T21:52:52-07:00",
-    "commit":  "5b32f6a00",
+    "generated":  "2026-09-13T13:01:08-07:00",
+    "commit":  "ab9cdd351",
     "uncommitted":  [
-                        "test/win32/chooser-session-sort.ps1"
+
                     ],
     "files":  {
                   "src/apprt/win32/chooser_session_sort.zig":  "1316bcd3df281a34b77aeeb86ca107e651f41702b6d16df8422cd878d2c0b7a3",
-                  "test/win32/chooser-session-sort.ps1":  "b293aa47a32f23b07e4ed5ef082fcc9e72e15128c8c0e6bab2276aed4d2eeb9e"
+                  "test/win32/chooser-session-sort.ps1":  "0c056f4bea3e52e371f633afb02a08c33075053c3964a7a4d5434e4df0613b6a"
               }
 }

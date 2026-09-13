@@ -31,6 +31,11 @@
 #   text        Send-TestText into a terminal -> the characters appear in
 #               +read, exactly once (posting WM_CHAR as well as WM_KEYDOWN
 #               doubles every character; the T207 spike hit that).
+#   latches     (T1535) the same Send-TestText over a queue that already holds
+#               shift down and caps lock on - the state this box produces by
+#               itself - still types the literal string, and leaves nothing
+#               held. Without it the suite's typing means whatever the box's
+#               latches happen to say.
 #   chords      Send-TestKeys ctrl+shift+t -> a second tab in +list.
 #   controls    Send-TestControlText/Key into the rename dialog's EDIT, which
 #               is the OPPOSITE convention (standard controls need WM_CHAR,
@@ -468,6 +473,41 @@ try {
         ForEach-Object { $_.ToString() } | Out-String) }
     Assert ($paneText -match [regex]::Escape($token)) "Send-TestText delivered '$token' to the terminal"
     Assert (-not ($paneText -match 'hhaarrnneessss')) 'Send-TestText did NOT double characters (no WM_CHAR)'
+
+    # --- LATCHES (T1535): the same send, over an input queue that already
+    #     believes shift is held and caps lock is on.
+    #
+    #     This is not hypothetical box weather. The app reads modifiers with
+    #     GetKeyState, which answers from the queue we attach to, and posted
+    #     messages never update that queue - so whatever was physically down
+    #     when the app's UI thread was created is down for the process's whole
+    #     life. On 2026-09-13 the box's left shift read down in 17 of 60
+    #     samples with nobody at the keyboard and its caps lock was latched on,
+    #     and `remote-disconnect.ps1` section F typed `ping -n 100 127.0.0.1`
+    #     into a pane that received `PING -N 100 127.0.0.1`: ping rejects the
+    #     uppercase option, printed its usage, exited in milliseconds, and the
+    #     red claim read "the pane has no child process" - a harness artifact
+    #     wearing a product defect's clothes.
+    #
+    #     The token is chosen so BOTH latches are visible in the result: shift
+    #     turns `-` into `_` and `1` into `!`, caps lock turns the letters over,
+    #     and the comparison is case-SENSITIVE (-cmatch) so an uppercase echo
+    #     cannot pass.
+    $latch = 'latch-1-ok'
+    $latchReport = Send-TestTextOverLatches -Window $top -Target $pane `
+        -Text "echo $latch" -Modifiers shift -CapsLock
+    Send-TestKeys -Window $top -Target $pane -Key Enter | Out-Null
+    Start-Sleep -Milliseconds 1200
+    Assert ($latchReport -match 'before=[^ ]*shift' -and $latchReport -match 'before=[^=]*caps') `
+        "positive control: the app really saw shift+caps before the send ($latchReport)"
+    Assert ($latchReport -match 'after=$') `
+        "the send left the queue with NOTHING held ($latchReport)"
+    $latchText = ''
+    if ($paneName) { $latchText = (& $exe +read --name=$paneName --lines=20 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String) }
+    $latchOk = ($latchText -cmatch [regex]::Escape($latch))
+    if ($NegativeControl) { $latchOk = -not $latchOk }
+    Assert $latchOk 'Send-TestText types the literal string over a held shift and caps lock'
 
     # --- THE CAPTURE LIMIT, measured rather than asserted from the header
     #     (T214). The pane has just echoed a token, so it is definitely

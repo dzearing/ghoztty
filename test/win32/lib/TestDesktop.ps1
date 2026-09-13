@@ -1354,6 +1354,44 @@ public class GhozttyTestDesktop {
         return (IntPtr)(int)lp;
     }
 
+    // Every VK whose HELD state changes what a keystroke means. Cleared before
+    // each send (T1535) so a posted key carries the modifiers the caller named
+    // and nothing else.
+    static readonly int[] ModVks = new int[] {
+        0x10, 0xA0, 0xA1,   // shift, lshift, rshift
+        0x11, 0xA2, 0xA3,   // ctrl,  lctrl,  rctrl
+        0x12, 0xA4, 0xA5,   // alt,   lalt,   ralt
+        0x5B, 0x5C,         // lwin, rwin
+    };
+
+    // Release every modifier in the shared queue's key state, and turn CAPS
+    // LOCK off. Num lock's toggle is left alone - it decides what a NUMPAD vk
+    // means, which is a thing a caller can legitimately be testing.
+    //
+    // Why every send does this (T1535): the app reads modifiers with
+    // GetKeyState, which answers from the input queue we attach to, and that
+    // queue starts life holding whatever was physically down when the app's
+    // UI thread was created. Posted messages never update it, so a shift held
+    // at launch is held for the process's whole life. On 2026-09-13 the box's
+    // left shift was down in 17 of 60 samples while nobody was looking at it,
+    // and `remote-disconnect.ps1` section F typed `ping -n 100 127.0.0.1` into
+    // a pane that saw shift+every key: the command never ran, the pane had no
+    // child process, and the failure read as a product defect. Building on
+    // GetKeyboardState's answer means the harness sends a DIFFERENT chord
+    // depending on where a human's hands are.
+    //
+    // Caps lock is the same story told by a LATCH rather than a hand, and it
+    // is what survived fixing the first half: with the box's caps lock on,
+    // `ping -n 100 127.0.0.1` typed as `PING -N 100 127.0.0.1`, ping rejected
+    // `-N`, printed its usage and exited in milliseconds - a pane with no
+    // child process, which is exactly the symptom T1535 was filed for. A
+    // harness that types a literal string must produce that string whatever
+    // the box's latches say.
+    static void ClearMods(byte[] ks) {
+        foreach (int v in ModVks) ks[v] &= 0x7F;
+        ks[0x14] = 0; // VK_CAPITAL: held bit AND toggle bit
+    }
+
     static void ApplyMods(byte[] ks, ushort[] mods, bool down) {
         byte v = down ? (byte)0x80 : (byte)0x00;
         foreach (ushort m in mods) {
@@ -1392,6 +1430,7 @@ public class GhozttyTestDesktop {
 
                 var ks = new byte[256];
                 GetKeyboardState(ks);
+                ClearMods(ks);
                 ApplyMods(ks, mods, true);
                 SetKeyboardState(ks);
 
@@ -1447,6 +1486,7 @@ public class GhozttyTestDesktop {
 
                 var ks = new byte[256];
                 GetKeyboardState(ks);
+                ClearMods(ks);
                 ApplyMods(ks, mods, true);
                 SetKeyboardState(ks);
 
@@ -1511,6 +1551,7 @@ public class GhozttyTestDesktop {
 
                 var ks = new byte[256];
                 GetKeyboardState(ks);
+                ClearMods(ks);
                 ApplyMods(ks, mods, true);
                 SetKeyboardState(ks);
 
@@ -1564,10 +1605,122 @@ public class GhozttyTestDesktop {
         } finally { AttachThreadInput(cur, tid, false); }
     }
 
+    // What the APP believes is held down right now (T1535). Reads the input
+    // queue we share with it by AttachThreadInput - the same state
+    // `Surface.getModifiers` reads with GetKeyState - so a script can ask "is
+    // anything stuck down?" instead of inferring it from mangled output.
+    //
+    // Returns a space-separated list of the modifier names that are DOWN, or
+    // "" for none. Diagnostic only: nothing in the send paths consults it,
+    // they CLEAR the state rather than test it.
+    public string KeyboardMods(IntPtr top) {
+        return (string)Run(delegate() {
+            uint pid; uint tid = GetWindowThreadProcessId(top, out pid);
+            uint cur = GetCurrentThreadId();
+            if (!AttachThreadInput(cur, tid, true)) { LastError = "AttachThreadInput failed"; return ""; }
+            try { return ModsHeld(); }
+            finally { AttachThreadInput(cur, tid, false); }
+        });
+    }
+
+    static readonly string[] ModNames = new string[] {
+        "shift", "ctrl", "alt", "lshift", "rshift", "lctrl", "rctrl", "lalt", "ralt", "lwin", "rwin", "caps"
+    };
+    static readonly int[] ModReadVks = new int[] {
+        0x10, 0x11, 0x12, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C, 0x14
+    };
+
+    // The modifiers the SHARED queue currently reports, as names. The caller
+    // must already be attached. Caps lock is read off its TOGGLE bit - that is
+    // the bit that changes the letter ToUnicode produces.
+    static string ModsHeld() {
+        var ks = new byte[256];
+        if (GetKeyboardState(ks) == false) return "?";
+        var sb = new System.Text.StringBuilder();
+        for (int i = 0; i < ModReadVks.Length; i++) {
+            int v = ModReadVks[i];
+            bool on = (v == 0x14) ? ((ks[v] & 0x01) != 0) : ((ks[v] & 0x80) != 0);
+            if (!on) continue;
+            if (sb.Length > 0) sb.Append(' ');
+            sb.Append(ModNames[i]);
+        }
+        return sb.ToString();
+    }
+
+    // Type `text` into a surface over a queue that ALREADY holds `mods` down
+    // and, optionally, caps lock on (T1535). The regression fixture for the
+    // box's own failure mode: a hand resting on shift, a caps lock nobody
+    // turned off, or - the real mechanism - whatever was physically down when
+    // the app's UI thread was created, which posted messages never update.
+    //
+    // The poison and the typing have to happen inside ONE attached session:
+    // detaching hands each thread its own queue back and the poison goes with
+    // it, so a "hold it and return" helper could not set anything up.
+    //
+    // Runs the SAME per-character loop the ordinary send does, so what it
+    // proves is the real path. Returns "before=<mods> after=<mods>" - the
+    // positive control (the poison took) and the outcome (nothing left held)
+    // in one string.
+    //
+    // Nothing but that regression section should call it.
+    public string SendTextOverLatches(IntPtr top, IntPtr target, string text, int perKeyMs, ushort[] mods, bool caps) {
+        return (string)Run(delegate() {
+            uint pid; uint tid = GetWindowThreadProcessId(top, out pid);
+            uint cur = GetCurrentThreadId();
+            if (!AttachThreadInput(cur, tid, true)) { LastError = "AttachThreadInput failed"; return ""; }
+            try {
+                SetActiveWindow(top);
+                SetFocus(target == IntPtr.Zero ? top : target);
+                Thread.Sleep(40);
+                var ks = new byte[256];
+                GetKeyboardState(ks);
+                if (mods != null && mods.Length > 0) ApplyMods(ks, mods, true);
+                if (caps) ks[0x14] = 0x01;
+                SetKeyboardState(ks);
+                string before = ModsHeld();
+                TypeInto((target == IntPtr.Zero) ? top : target, text, perKeyMs);
+                string after = ModsHeld();
+                return "before=" + before + " after=" + after;
+            } finally { AttachThreadInput(cur, tid, false); }
+        });
+    }
+
     // Type a literal string into a TERMINAL surface (WM_KEYDOWN only; the
     // terminal runs ToUnicode itself). Shift is applied for characters whose
     // VkKeyScan asks for it, so mixed case survives.
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern short VkKeyScanW(char c);
+
+    // The per-character loop, shared by SendText and the latch fixture so the
+    // fixture cannot drift away from the path it exists to cover. The caller
+    // owns the AttachThreadInput session and the focus.
+    void TypeInto(IntPtr dst, string text, int perKeyMs) {
+        var ks = new byte[256];
+        foreach (char c in text) {
+            short scan = VkKeyScanW(c);
+            if (scan == -1) continue;
+            ushort vk = (ushort)(scan & 0xFF);
+            bool shift = (scan & 0x100) != 0;
+            if (Interactive) {
+                if (shift) SendInputKey(0x10, false);
+                SendInputKey(vk, false); SendInputKey(vk, true);
+                if (shift) SendInputKey(0x10, true);
+            } else {
+                // The state is written for EVERY character, shifted or not
+                // (T1535): an unshifted key posted over a queue that still
+                // believes shift is down types the shifted character, or is
+                // eaten as a chord.
+                GetKeyboardState(ks);
+                ClearMods(ks);
+                if (shift) { ks[0x10] = 0x80; ks[0xA0] = 0x80; }
+                SetKeyboardState(ks);
+                PostMessageW(dst, WM_KEYDOWN, (IntPtr)vk, KeyLParam(vk, false));
+                PostMessageW(dst, WM_KEYUP, (IntPtr)vk, KeyLParam(vk, true));
+                if (shift) { ks[0x10] = 0; ks[0xA0] = 0; SetKeyboardState(ks); }
+            }
+            Thread.Sleep(perKeyMs);
+        }
+        Thread.Sleep(80);
+    }
 
     public bool SendText(IntPtr top, IntPtr target, string text, int perKeyMs) {
         return (bool)Run(delegate() {
@@ -1578,27 +1731,7 @@ public class GhozttyTestDesktop {
                 SetActiveWindow(top);
                 SetFocus(target == IntPtr.Zero ? top : target);
                 Thread.Sleep(40);
-                IntPtr dst = (target == IntPtr.Zero) ? top : target;
-                var ks = new byte[256];
-                foreach (char c in text) {
-                    short scan = VkKeyScanW(c);
-                    if (scan == -1) continue;
-                    ushort vk = (ushort)(scan & 0xFF);
-                    bool shift = (scan & 0x100) != 0;
-                    if (Interactive) {
-                        if (shift) SendInputKey(0x10, false);
-                        SendInputKey(vk, false); SendInputKey(vk, true);
-                        if (shift) SendInputKey(0x10, true);
-                    } else {
-                        GetKeyboardState(ks);
-                        if (shift) { ks[0x10] = 0x80; ks[0xA0] = 0x80; SetKeyboardState(ks); }
-                        PostMessageW(dst, WM_KEYDOWN, (IntPtr)vk, KeyLParam(vk, false));
-                        PostMessageW(dst, WM_KEYUP, (IntPtr)vk, KeyLParam(vk, true));
-                        if (shift) { ks[0x10] = 0; ks[0xA0] = 0; SetKeyboardState(ks); }
-                    }
-                    Thread.Sleep(perKeyMs);
-                }
-                Thread.Sleep(80);
+                TypeInto((target == IntPtr.Zero) ? top : target, text, perKeyMs);
                 return true;
             } finally { AttachThreadInput(cur, tid, false); }
         });
@@ -1687,7 +1820,9 @@ public class GhozttyTestDesktop {
         return (bool)Run(delegate() {
             var ks = new byte[256];
             GetKeyboardState(ks);
-            if (mods != null && mods.Length > 0) { ApplyMods(ks, mods, true); SetKeyboardState(ks); }
+            ClearMods(ks);
+            if (mods != null && mods.Length > 0) ApplyMods(ks, mods, true);
+            SetKeyboardState(ks);
             PostMessageW(ctl, WM_KEYDOWN, (IntPtr)vk, KeyLParam(vk, false));
             Thread.Sleep(30);
             PostMessageW(ctl, WM_KEYUP, (IntPtr)vk, KeyLParam(vk, true));
@@ -1825,7 +1960,10 @@ public class GhozttyTestDesktop {
                 IntPtr dst = (target == IntPtr.Zero) ? top : target;
                 var ks = new byte[256];
                 bool haveMods = (mods != null && mods.Length > 0);
-                if (haveMods) { GetKeyboardState(ks); ApplyMods(ks, mods, true); SetKeyboardState(ks); }
+                GetKeyboardState(ks);
+                ClearMods(ks);
+                if (haveMods) ApplyMods(ks, mods, true);
+                SetKeyboardState(ks);
 
                 SetCursorPos(sx, sy);
 
@@ -3293,6 +3431,52 @@ function Send-TestViewerChordStarved {
     $td = Resolve-TestDesktop $Desktop
     $mods = @($Modifiers | ForEach-Object { ConvertTo-TestVk $_ })
     return $td.SendChordCrossStarved($Window, $Target, [uint16[]]$mods, (ConvertTo-TestVk $Key), $HoldMs, $StarveMs)
+}
+
+<#
+The modifier keys the APP currently believes are held down (T1535).
+
+    Get-TestKeyboardMods -Window $top     # "" when nothing is stuck
+
+Reads the input queue shared with the app's UI thread, which is exactly what
+`Surface.getModifiers` reads with GetKeyState. Diagnostic: the send paths do
+not consult it, they clear the state themselves.
+#>
+function Get-TestKeyboardMods {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$Window,
+        $Desktop
+    )
+    return (Resolve-TestDesktop $Desktop).KeyboardMods($Window)
+}
+
+<#
+Type text over an input queue that already holds modifiers / caps lock (T1535).
+
+    Send-TestTextOverLatches -Window $top -Target $pane -Text 'echo x' `
+        -Modifiers shift -CapsLock
+
+The BOX's own failure mode made reproducible - the app inherits whatever was
+physically down when its UI thread was created and posted messages never update
+it. Returns "before=<mods> after=<mods>": the positive control that the poison
+took, and the outcome that the send left nothing held.
+
+Exists for the regression section in test-desktop-harness.ps1. No ordinary
+script should call it - use Send-TestText.
+#>
+function Send-TestTextOverLatches {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$Window,
+        [IntPtr]$Target = [IntPtr]::Zero,
+        [Parameter(Mandatory = $true)][string]$Text,
+        [string[]]$Modifiers = @(),
+        [switch]$CapsLock,
+        [int]$PerKeyMs = 25,
+        $Desktop
+    )
+    $td = Resolve-TestDesktop $Desktop
+    $mods = @($Modifiers | ForEach-Object { ConvertTo-TestVk $_ })
+    return $td.SendTextOverLatches($Window, $Target, $Text, $PerKeyMs, [uint16[]]$mods, [bool]$CapsLock)
 }
 
 # Type literal text into a terminal surface (WM_KEYDOWN only - the terminal

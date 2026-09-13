@@ -27712,3 +27712,58 @@ rebuilt the pane fails even though the layout would look right.
 
 Two things the drag still does not say about itself - the cursor never changes
 and the pane being carried is not marked - are T1536.
+
+## 2026-09-13 - The test harness types what it says it types, whatever the box's latches say (T1535)
+
+`remote-disconnect.ps1` section F was red, and it was accusing the terminal. It
+types `ping -n 100 127.0.0.1` into a local pane and then waits for the shell to
+grow a child; it found none, which reads as "a pane whose command dies the
+instant it starts" - far worse than a red test.
+
+The pane was fine. `+read` on it showed what the shell actually received:
+`PING -N 100 127.0.0.1`. `ping` rejects the uppercase `-N`, prints its usage and
+exits in milliseconds, so there was nothing to find. An earlier run was worse
+still: with shift AND ctrl believed down, the typing was eaten as keybindings -
+`toggle_command_palette`, `new_window`, `decrease_font_size`, `goto_tab` - and
+the pane showed `.ahy^G`.
+
+The mechanism is one sentence long and it applies to every posted keystroke in
+the suite. The app reads modifiers with `GetKeyState`, which answers from the
+input queue the harness attaches to; a POSTED message never updates that queue;
+and the queue starts life holding whatever was physically down when the app's UI
+thread was created. So a latch at launch is a latch for the whole process. On
+this box, with nobody at the keyboard, left shift read down in **17 of 60**
+samples and caps lock was latched on - and `Send-TestText` / `SendChord` built
+their key state ON TOP of `GetKeyboardState`, i.e. on top of exactly that. The
+harness was sending a different chord depending on where a human's hands were.
+
+`ClearMods()` in `test\win32\lib\TestDesktop.ps1` now releases every modifier and
+clears the caps-lock toggle before every posted send - text, chords, control keys
+and mouse (a stuck shift makes a click a shift-click, which is the same bug
+wearing a selection's clothes). Num lock's toggle is left alone, because it
+decides what a numpad VK means and a caller can legitimately be testing that.
+`SendText`'s per-character loop moved into `TypeInto` so the regression fixture
+drives the real path rather than a copy of it.
+
+The demonstration is the point: `Send-TestTextOverLatches` poisons the queue with
+shift held and caps lock on and types through it, inside ONE attached session -
+detaching hands each thread its own queue back and the poison goes with it, which
+is why a "hold it and return" helper could not set anything up at all. The new
+`latches` section of `test-desktop-harness.ps1` asserts the app really saw
+`shift lshift caps` going in, that the send left NOTHING held, and that the pane
+shows the literal `latch-1-ok` under a case-SENSITIVE match. `Get-TestKeyboardMods`
+is the same reading made available to any script that wants to ask "is anything
+stuck down?" instead of inferring it from mangled output.
+
+Validated on box: `test-desktop-harness.ps1` ALL PASS (77), `-NegativeControl`
+red on the new claim; `remote-disconnect.ps1` ALL PASS (49); floor
+lib/none/win32/agent ALL LANES PASS. Changing the shared harness made 29 other
+acceptance guards stale, and all 29 were re-run: 28 green, and `agent-handoff.ps1`
+unwound at a `Copy-Item` over a `.bak` another process still held open, passed
+when re-run alone, and is filed as T1540. No non-advisory guard is due.
+
+T1532 was also split, having bundled four separate drops behind one card:
+T1537 (drop on the tab strip to make a tab, plus the 500ms hover-switch),
+T1538 (move a pane into another window without restarting it - the `SetParent`
+and session-safety primitive, and the pop-out button it gates), and T1539
+(release over nothing opens a new window).
