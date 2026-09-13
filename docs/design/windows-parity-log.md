@@ -26870,3 +26870,60 @@ machine again, which is exactly the wrong answer T628 removed, and the arm now
 prints the error it got so a red run is diagnosable from the log. The skewed agent
 was measured alive and accepting TCP, so the misclassification is the product's,
 not the harness's.
+
+## 2026-09-12 — T1507: the skew error was right; the test that said otherwise was not
+
+T1507 was filed yesterday as a product regression: `+new-remote-window` against
+an agent on an incompatible protocol version answered `failed to reach`, which is
+the exact wrong answer T628 removed. It is not a regression. The app path is
+correct on this build, and the measurement that says so is the one the card asked
+for and could not get:
+
+```
+warning(win32_ipc): IPC new-remote-window: dial failed host=127.0.0.1 port=61045
+                    err=error.ProtocolIncompatible
+CLI: incompatible Ghoztty version on 127.0.0.1:61045: update one side
+```
+
+Neither of the two branches the card proposed, then — `waitHandshakeTicking` does
+return `error.Incompatible`, and `peerProtoVersion()` is not null. A dial from a
+fresh process (`remote-test-client`) to the same skewed agent agrees. Six harness
+runs since have been green and the original red is not reproducible.
+
+What was actually wrong is arm 4b's precondition. It slept two seconds and
+asserted `-not $skewAgent.HasExited` — a live process, which says nothing about
+whether that process has bound its port or can answer a HELLO yet. An agent that
+starts slowly (a freshly built exe being scanned, a loaded box) is then dialed
+before it can speak, the dial legitimately reads as unreachable, and the arm
+reports that as a T628 regression. The card's own note that the skewed agent "was
+measured alive and accepting TCP" came from a *separate* run, not from the failing
+one — which is the whole shape of the mistake: the state under test was asserted
+somewhere other than where it was used.
+
+So the arm now measures it, in the failing run, before dialing: the port must
+accept a TCP connection, and a dial **from a fresh process** must come back
+`ProtocolIncompatible`. The second one establishes the skew on the wire
+independently of the app, so when the app then disagrees the failure is pinned on
+the app instead of on the box. The teeth check demonstrates precisely that split —
+with `classifyHandshakeError` collapsed back to `error.HandshakeFailed`, the arm
+reproduces the reported failure verbatim while the wire precondition stays green:
+
+```
+PASS a fresh-process dial sees the version skew on the wire
+FAIL error names an incompatible version
+  skew error was: failed to reach 127.0.0.1:53507: the agent is not running …
+```
+
+The skewed agent also gets its own `GHOSTTY_AGENT_LOCK` now rather than sharing
+the first agent's, so its startup no longer depends on what the other agent is
+doing with that file — two agents that must not know about each other get two
+locks, the same way they already get two lineage suffixes.
+
+`test/win32/ipc-remote.ps1` ALL PASS; the four floor lanes green.
+
+One thing filed on the way past. **T1508**: a Debug build has no file log sink at
+all — `logFn`'s Windows file block is compiled out below ReleaseSafe — so the app
+every acceptance script drives logs only to a stderr nobody captures. Reading one
+`log.warn` line above cost a bespoke repro that pre-launches the app with
+`-RedirectStandardError`. The card for T1507 said the answer was in
+`%LOCALAPPDATA%\ghoztty[-debug]\ghoztty.log`; that file has never existed.

@@ -166,14 +166,67 @@ $savedInstance = $env:GHOZTTY_AGENT_INSTANCE
 # downstream as an unreachable port and would quietly turn this section into a
 # re-test of section 4.
 $env:GHOZTTY_AGENT_INSTANCE = "ipcrem-skew-$PID"
+# And a lock file of its own (T1507). Sharing the first agent's lock made this
+# agent's startup depend on what the OTHER agent was doing with it, which is a
+# race the section does not mean to test: two agents that must not know about
+# each other get two locks, the same way they get two lineage suffixes.
+$savedLock = $env:GHOSTTY_AGENT_LOCK
+$env:GHOSTTY_AGENT_LOCK = Join-Path $tmp 'agent-skew.lock'
 $env:GHOZTTY_AGENT_PROTO_VERSION = '0'
 $skewAgent = Start-Process -FilePath $AgentExe `
     -ArgumentList "--listen", "127.0.0.1:$skewPort", "--headless" `
     -PassThru -WindowStyle Hidden
 $env:GHOZTTY_AGENT_PROTO_VERSION = $savedProto
 $env:GHOZTTY_AGENT_INSTANCE = $savedInstance
+$env:GHOSTTY_AGENT_LOCK = $savedLock
 Start-Sleep -Seconds 2
 Assert "skewed agent is running" (-not $skewAgent.HasExited)
+
+# A LIVE PROCESS IS NOT A DIALABLE AGENT (T1507). This section used to sleep two
+# seconds and assert `-not HasExited`, which says nothing about whether the
+# agent has bound its port or can answer a HELLO yet - so a slow start turned
+# into "failed to reach", i.e. this section quietly re-testing section 4 and
+# reporting it as a regression of T628. The precondition is now measured:
+#   1. the port accepts a TCP connection, and
+#   2. a dial from a FRESH PROCESS comes back `ProtocolIncompatible`.
+# (2) is the whole state under test, established independently of the app - so
+# when the app then disagrees, the failure is pinned on the app rather than on
+# the box, and the two DIAG lines below say which it was.
+$deadline = (Get-Date).AddSeconds(25)
+$skewListening = $false
+while ((Get-Date) -lt $deadline -and -not $skewListening) {
+    try {
+        $probe = New-Object System.Net.Sockets.TcpClient
+        $probe.Connect('127.0.0.1', $skewPort)
+        $skewListening = $probe.Connected
+        $probe.Close()
+    } catch { Start-Sleep -Milliseconds 250 }
+}
+Assert "skewed agent is accepting connections" $skewListening
+
+# The fresh-process dial. `remote-test-client` is not part of the default build
+# (`zig build remote-test-client`), so its absence degrades to the TCP gate
+# above and says so out loud rather than silently reinstating the flake.
+$tc = Join-Path (Split-Path $Exe) 'remote-test-client.exe'
+$skewHandshake = ''
+if (Test-Path $tc) {
+    $diagErr = Join-Path $tmp 'skew-diag.txt'
+    $diagOut = Join-Path $tmp 'skew-diag-out.txt'
+    while ((Get-Date) -lt $deadline) {
+        $p = Start-Process -FilePath $tc `
+            -ArgumentList '127.0.0.1', "$skewPort", '--exec', 'whoami', '--timeout', '2' `
+            -PassThru -NoNewWindow -RedirectStandardOutput $diagOut -RedirectStandardError $diagErr
+        $null = $p.Handle
+        [void]$p.WaitForExit(20000)
+        $skewHandshake = ((Get-Content $diagErr -ErrorAction SilentlyContinue) -join ' | ')
+        if ($skewHandshake -match 'ProtocolIncompatible') { break }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert "a fresh-process dial sees the version skew on the wire" ($skewHandshake -match 'ProtocolIncompatible')
+} else {
+    "  NOTE remote-test-client.exe not built - the wire-level precondition is unmeasured"
+}
+"  DIAG skew agent alive=$(-not $skewAgent.HasExited) listening=$skewListening wire='$skewHandshake'"
 
 $r = Ghoz @('+new-remote-window', '--host=127.0.0.1', "--port=$skewPort", '--name=remskew')
 Assert "skewed dial exits nonzero" ($r.ExitCode -ne 0)
