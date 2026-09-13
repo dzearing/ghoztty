@@ -9,6 +9,51 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-13: T1525 split -> T1528-T1532; T1528 landed - **the part that decides
+  what letting go of a dragged pane would mean.** Mac's `b18ee2d77` is 2500
+  lines across a resolver, tree mutations, pane chrome, the drag itself and the
+  cross-window cases, which is four or five turns of work here, so T1525 is
+  `skipped(split -> T1528 drop resolution, T1529 tree rearrange, T1530 the mode's
+  headers and forced tab strip, T1531 the in-window drag, T1532 cross-tab and
+  cross-window)`.
+
+  T1528 is `src/apprt/win32/pane_drop.zig`, a port of
+  `PaneDropResolver.swift` with no OS imports: a screen point plus a SET of
+  candidate windows in, and the drop that point means out as a value. Five
+  answers, Mac's - a quadrant of a pane splits it, the CENTER of a pane swaps
+  the two panes, an edge band of the window's content inserts at the TOP LEVEL
+  spanning the full side, the tab strip makes a new tab at the index under the
+  pointer, and anything else makes a new window. `hoveredTab` is separate
+  because it is a DWELL rather than a drop: the same point simultaneously means
+  "release here for a new tab" and "rest here to open that tab", which is
+  T1532's 500ms hover.
+
+  Taking a SET of windows rather than one is the whole reason the later
+  cross-window work is one code path instead of a second resolver, and it is why
+  z-order is a field: a point two overlapping windows both contain belongs to
+  the front one. The Zig picks the lowest-z candidate in a single pass rather
+  than sorting, so a pure function never asks for an allocator or mutates the
+  caller's slice.
+
+  Two deliberate divergences from the Swift, both forced and both tested.
+  **Coordinate space**: AppKit screen y grows UP and win32 screen y grows DOWN,
+  so every up/down comparison inverts - a pane's upper quadrant is proximity to
+  `top`, not to `maxY`, and getting that wrong would have put panes below where
+  the highlight promised. **Units**: Mac states 28pt edge band and 44pt swap
+  floor against a fixed point space; a win32 window can be on a 100%, 125%,
+  150% or 200% monitor, so those live in `Metrics.forScale` the way
+  `split_geometry.bandPx` does. A baked pixel count would make the swap target a
+  third of a pane on one monitor and a twentieth on another.
+
+  23 unit tests in the `none` lane cover each of the five drops, the
+  horizontal-first corner tie-break, the y-down inversion stated as its own
+  claim, drop-onto-self (case-insensitive, like every other pane-id compare
+  here), the divider gap, the edge band being absolute rather than fractional,
+  its suppression on a window too small for four bands, the swap rectangle's
+  floor-then-cap order (a 60px pane's cap of 36 beats its floor of 44, which is
+  Mac's order), and z-order arbitration for both panes and the tab strip.
+  Floor: lib/none/win32/agent all PASS.
+
 - 2026-09-13: T1524 (+T1527 filed) - **main's new rearrange-mode command existed
   in the Windows palette and did nothing when you picked it.** `b18ee2d77`
   added `toggle_rearrange_mode` to the shared core - the action, the palette
