@@ -61,14 +61,21 @@ param(
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
 $ErrorActionPreference = 'Continue'
+
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
+$script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-gui-launch-command-$PID"
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 function AssertEq($name, $expected, $actual) {
-    if ($expected -eq $actual) { "  PASS $name" }
+    if ($expected -eq $actual) { "  PASS $name"; $script:passes++ }
     else { "  FAIL $name (expected '$expected', got '$actual')"; $script:failures++ }
 }
 
@@ -472,6 +479,7 @@ Remove-TestDesktop | Out-Null
 
 # A green run stamps the covered files (T783) so guard-due can answer "has
 # this harness been run as it now stands?". Red leaves the stamp alone.
+Complete-TestBody  # T1039: before the stamp, a child process that reads this run's state
 if ($script:failures -eq 0) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
@@ -479,4 +487,4 @@ if ($script:failures -eq 0) {
 }
 
 ""
-if ($script:failures -eq 0) { "ALL PASS"; exit 0 } else { "$($script:failures) FAILURE(S)"; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures

@@ -24,12 +24,18 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
+$script:passes = 0
 # Initialised, not implied: `$null -eq 0` is FALSE in PowerShell, so an
 # uninitialised counter makes the "no skips" stamp condition below silently
 # unsatisfiable and the guard never re-stamps (caught in T1205).
 $script:skipped = 0
-$script:reachedEnd = $false
 $tmp = Join-Path $env:TEMP "ghoztty-ipc-version-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 # Isolate the IPC endpoint: the app inherits this through CreateProcessW and
@@ -39,7 +45,7 @@ $env:GHOZTTY_PIPE_SUFFIX = "-ipcversiontest$PID"
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
@@ -215,7 +221,7 @@ Assert "none detected" ((Get-Content "$tmp\version2.txt" -Raw) -match 'none dete
 # sections it never reached - which is exactly what a first cut of section 2b
 # did (T1205), and a green run that skipped half its checks is worse than a
 # red one.
-$script:reachedEnd = $true
+Complete-TestBody
 
 } finally {
     Remove-TestDesktop
@@ -232,7 +238,7 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert "no test-desktop app ever became foreground on the interactive desktop" ($leaked.Count -eq 0)
 }
 
-Assert "the script ran to the end (no section was skipped by an error)" $script:reachedEnd
+Assert "the script ran to the end (no section was skipped by an error)" (Test-TestBodyComplete)
 
 # A clean green run stamps the files this harness covers (T783/T1205). A run
 # with a SKIP did not cover everything, so it does not stamp; the negative
@@ -243,10 +249,4 @@ if ($script:failures -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl
 }
 
 ""
-if ($script:failures -eq 0) {
-    "T52 ACCEPTANCE: ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })"
-    exit 0
-} else {
-    "T52 ACCEPTANCE: $script:failures FAILURE(S)"
-    exit 1
-}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped ([int]$script:skipped) -Label 'T52 ACCEPTANCE'

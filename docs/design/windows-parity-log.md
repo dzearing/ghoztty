@@ -27181,3 +27181,36 @@ asserted-nothing in both modes; `floor-lane -Lane all`; ipc-p1/p2/p3.
 Thirty-nine unarmed stampers remain, so T1511 stays open for batch 5 - and three
 of those thirty-nine are now blocked behind T1515, T1516 and T1517 rather than
 behind run time.
+
+## 2026-09-12 - Six more acceptance harnesses can no longer record a crashed run as proof (T1511 batch 5)
+
+Batch 5 of the T1511 burn-down. A script that writes a T783 guard stamp without
+dot-sourcing `lib\TestScore.ps1` arms nothing, so the stamping child inherits no
+`GHOZTTY_TEST_BODY` and a run that unwound two thirds of the way through still
+records every file it covers as freshly proven. Six converted here, picked as
+every batch is - by whether this box can re-stamp the guard after the edit:
+`ipc-when-idle`, `ipc-version`, `url-scheme`, `clipboard-retry`,
+`gui-launch-command` and `go-loop-guard`.
+
+Five of the six had only a failure counter, so their green line was a bare
+ALL PASS with nothing behind it; each grew a `$script:passes` in its own Assert
+helper. `ipc-version` had hand-rolled the completion marker as
+`$script:reachedEnd` back in T1205 and simply moved onto the shared one - its
+"the script ran to the end" assertion now reads `Test-TestBodyComplete`, so the
+flag and the marker can no longer disagree. `url-scheme`, `clipboard-retry` and
+`go-loop-guard` needed the marker placed as the last statement of a top-level
+try rather than beside the stamp.
+
+The ceilings come down rather than the assertion being relaxed: C5 39 -> 33,
+C4 158 -> 152 and C3 31 -> 29 in `test\win32\asserted-nothing.ps1`, with
+`-TeethCheck` still red on a synthesized violator and `lib\BodyCompleteAudit.ps1`
+still a hard zero over six more files.
+
+Green: all six converted scripts run on the box, ALL PASS, each STAMPED by that
+run (22, 35, 39, 16, 29 and 395 assertions); the eight sweep audits the edits
+made due, all re-stamped; body-complete-audit and asserted-nothing in both
+modes; `floor-lane -Lane all` ALL LANES PASS; ipc-p1/p2/p3 ALL PASS; guard-due
+check exits 0 with only the three standing advisories.
+
+Thirty-three unarmed stampers remain, so T1511 stays open for batch 6 - three of
+them still blocked behind T1515, T1516 and T1517 rather than behind run time.

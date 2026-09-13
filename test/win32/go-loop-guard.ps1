@@ -85,7 +85,14 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
+$script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-go-loop-$PID"
 $lock = Join-Path $root 'go-loop.lock.json'
 $state = Join-Path $root 'go-loop.watchdog.json'
@@ -112,7 +119,7 @@ $execScript = Join-Path $Repo 'scripts\go-loop-exec.ps1'
 New-Item -ItemType Directory -Force $root | Out-Null
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 # Run the lock script and return @{ Code; Out; Raw }.
@@ -2680,6 +2687,7 @@ Remove-Item (Join-Path $env:TEMP 'ghoztty-go-loop-resume.cmd') -Force -ErrorActi
 # sections proved less than the whole harness claims, and a stamp written over
 # unmeasured code is the green hat this suite spends so much effort refusing.
 # A red run leaves the stamp alone on purpose - red must stay due.
+Complete-TestBody  # T1039: before the stamp, a child process that reads this run's state
 if ($script:failures -eq 0) {
     if ($script:skipped -gt 0) {
         "  stamp NOT updated: $($script:skipped) section(s) skipped, so this run did not cover the whole harness"
@@ -2690,5 +2698,4 @@ if ($script:failures -eq 0) {
 }
 
 ""
-if ($script:failures -eq 0) { "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })" ; exit 0 }
-else { "$($script:failures) FAILURE(S)" ; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped ([int]$script:skipped)

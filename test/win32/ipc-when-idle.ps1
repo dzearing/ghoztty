@@ -20,12 +20,19 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
+$script:passes = 0
 $tmp = Join-Path $env:TEMP "ghoztty-ipc-wi-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
@@ -164,6 +171,7 @@ Remove-TestDesktop | Out-Null
 # A green run records the content of every file this harness covers, so
 # scripts\guard-due.ps1 can answer "has anything run it against the code as it
 # now stands?". A red run leaves the stamp alone on purpose - red must stay due.
+Complete-TestBody  # T1039: before the stamp, a child process that reads this run's state
 if ($script:failures -eq 0) {
     $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts\guard-due.ps1') `
@@ -171,10 +179,4 @@ if ($script:failures -eq 0) {
 }
 
 ""
-if ($script:failures -eq 0) {
-    "WHEN-IDLE ACCEPTANCE: ALL PASS"
-    exit 0
-} else {
-    "WHEN-IDLE ACCEPTANCE: $script:failures FAILURE(S)"
-    exit 1
-}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'WHEN-IDLE ACCEPTANCE'

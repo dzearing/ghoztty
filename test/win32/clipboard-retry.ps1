@@ -66,10 +66,16 @@ $ErrorActionPreference = 'Continue'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 if (-not (Test-Path $Exe)) { $Exe = Join-Path $repo 'zig-out\bin\ghoztty.exe' }
 
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
+$script:passes = 0
 $script:skipped = 0
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 $root = Join-Path $env:TEMP "ghoztty-clipboard-retry-$PID"
@@ -417,6 +423,9 @@ try {
         }
     }
 
+    # The last statement of the body, so an unwind cannot reach it: the stamp
+    # below is only written for a run that got all the way here.
+    Complete-TestBody
 } finally {
     New-Item -ItemType File -Force $holderStop | Out-Null
     Stop-TestProcs
@@ -433,10 +442,4 @@ if ($script:failures -eq 0) {
         update -Guard clipboard-retry -Repo $repo 2>&1 | ForEach-Object { "  $($_.ToString())" }
 }
 
-if ($script:failures -eq 0) {
-    "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })"
-    exit 0
-} else {
-    "$($script:failures) FAILURE(S)$(if ($script:skipped) { " ($script:skipped SKIPPED)" })"
-    exit 1
-}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped ([int]$script:skipped)

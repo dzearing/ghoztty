@@ -97,6 +97,11 @@ public class UrlMenuRead {
 }
 '@
 
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 
@@ -452,6 +457,10 @@ try {
     $releaseEnd = Get-RegValue "$releaseKey\shell\open\command" ''
     Assert ($releaseEnd -eq $releaseBefore) `
         "the run leaves the release registration as it found it (before='$releaseBefore' after='$releaseEnd')"
+
+    # The last statement of the body, so an unwind cannot reach it: the stamp
+    # below is only written for a run that got all the way here.
+    Complete-TestBody
 } finally {
     Remove-Item Env:\GHOZTTY_URL_SCHEME -ErrorAction SilentlyContinue
     $env:GHOZTTY_URL_SCHEME_QUIET = '1'
@@ -470,6 +479,4 @@ if ($script:fail -eq 0) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($($script:pass) checks)" }
-else { Write-Host "$($script:fail) FAILURE(S) ($($script:pass) passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

@@ -300,7 +300,7 @@ Write-Host "  ($($uncountedFinal.Count) script(s) still print an UNCOUNTED final
 # viewer-find) each hand-rolled a bare "ALL PASS", against one (morning-refresh)
 # that was retired. All five are on the shared scorer now, so the ceiling comes
 # down past where T962 left it rather than up to where the drift landed.
-$ceiling = 31
+$ceiling = 29
 Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFinal.Count -le $ceiling)
 
 # T1510's ratchets, same contract as C3 and for a sharper reason: until a
@@ -335,8 +335,13 @@ Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFina
 # (T1516, a wall-clock frame budget that fails a DIFFERENT assertion each run
 # under box load) and relay-account (T1517, which wedges in its own teardown
 # after the last assertion and never prints a verdict at all).
-$selfCeiling  = 158
-$stampCeiling = 39
+# 2026-09-12 (T1511, batch 5): 158 -> 152, 39 -> 33 and C3 31 -> 29. Six more
+# stamping harnesses onto the shared scorer - ipc-when-idle, ipc-version,
+# url-scheme, clipboard-retry, gui-launch-command and go-loop-guard. ipc-version
+# had hand-rolled the completion marker as $script:reachedEnd and moved onto the
+# shared one, which its own "the script ran to the end" assertion now reads.
+$selfCeiling  = 152
+$stampCeiling = 33
 
 $ratchetSweep = @($sweep)
 if ($TeethCheck) {
