@@ -300,7 +300,7 @@ Write-Host "  ($($uncountedFinal.Count) script(s) still print an UNCOUNTED final
 # viewer-find) each hand-rolled a bare "ALL PASS", against one (morning-refresh)
 # that was retired. All five are on the shared scorer now, so the ceiling comes
 # down past where T962 left it rather than up to where the drift landed.
-$ceiling = 29
+$ceiling = 28
 Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFinal.Count -le $ceiling)
 
 # T1510's ratchets, same contract as C3 and for a sharper reason: until a
@@ -350,8 +350,15 @@ Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFina
 # viewer-worktree-port and stderr-launch-capture. Four of the six run their
 # foreground-leak checks after the top-level try, so those tries grew a SCORING
 # catch; the other two already scored their throw.
-$selfCeiling  = 140
-$stampCeiling = 21
+# 2026-09-13 (T1511, batch 8): 140 -> 134, 21 -> 15 and C3 29 -> 28. Six more
+# stamping harnesses - agent-autostart, gui-postmortem, orphan-notify,
+# update-check, claude-integration and menu-bar. claude-integration and menu-bar
+# run their foreground-leak checks after the top-level try, so those two tries
+# grew a SCORING catch; agent-autostart grew a pass counter it never had, and
+# gui-postmortem's verdict now derives its passing count from its assertion
+# counter minus its failures.
+$selfCeiling  = 134
+$stampCeiling = 15
 
 $ratchetSweep = @($sweep)
 if ($TeethCheck) {

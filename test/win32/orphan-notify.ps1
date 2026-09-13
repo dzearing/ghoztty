@@ -61,6 +61,11 @@ $env:GHOZTTY_ORPHAN_RENOTIFY_MS = '3600000'
 . (Join-Path $PSScriptRoot 'lib\PipeBridge.ps1')  # Get-LocalAgentPipeName
 . (Join-Path $PSScriptRoot 'lib\ChooserCursor.ps1')  # Walk-ChooserCursorToId (T602/T620)
 
+# T1511: the shared scorer. The dot-source is what ARMS the run, so the child
+# process that writes this harness's guard stamp below refuses to write one
+# over a run that unwound before its end.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 
@@ -255,6 +260,8 @@ try {
     Write-Host "     (attach landed after $($attach.ElapsedMs) ms)"
     Assert ($row.Count -eq 1 -and $row[0].attached) 'the agent reports the resumed session ATTACHED'
     Assert ($row.Count -eq 1 -and $null -eq $row[0].unattached_since) 'the attach reset unattached_since to null'
+
+    Complete-TestBody
 } finally {
     Stop-RepoProcesses @('ghoztty', 'ghoztty-agent', 'remote-test-client')
     Remove-Item $stampFile -ErrorAction SilentlyContinue
@@ -269,6 +276,4 @@ if ($script:fail -eq 0) {
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }
-exit ([int]($script:fail -gt 0))
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

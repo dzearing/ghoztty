@@ -70,6 +70,11 @@ $env:GHOZTTY_PIPE_SUFFIX = "-claudetest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1511: the shared scorer. The dot-source is what ARMS the run, so the child
+# process that writes this harness's guard stamp below refuses to write one
+# over a run that unwound before its end.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:pass = 0
 $script:fail = 0
 function Assert([bool]$cond, [string]$label) {
@@ -565,6 +570,14 @@ try {
         }
     }
     Assert (-not (Test-Path (Join-Path $state7 'claude_setup'))) 'opening the window burns no first-run state'
+} catch {
+    # T1511: the foreground-leak checks below are part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead -
+    # the other half of the same rule: an unwind here can no longer reach a
+    # green verdict.
+    $script:fail++
+    Write-Host "FAIL  the run terminated: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "      at $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
 } finally {
     Remove-TestDesktop
     Kill-RepoInstances
@@ -586,6 +599,7 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 # this harness been run against the flow as it now stands?". Red leaves the
 # stamp alone: red stays due. A -NegativeControl run must not stamp either —
 # its passing assertions prove the harness discriminates, not the flow.
+Complete-TestBody
 if ($script:fail -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard claude-integration -Repo $repo 2>&1 | ForEach-Object { "  $_" }
@@ -593,5 +607,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 
 Write-Host ''
 # A red script must exit 1 so a suite run cannot score it green.
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

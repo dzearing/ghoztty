@@ -34,6 +34,11 @@ $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
+# T1511: the shared scorer. The dot-source is what ARMS the run, so the child
+# process that writes this harness's guard stamp below refuses to write one
+# over a run that unwound before its end.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
 $script:skipped = 0
 $script:asserted = 0
@@ -234,6 +239,8 @@ Assert 'H1 every launch is still on the record after the desktop is gone' ($recs
 Assert 'H2 a record carries what a postmortem needs' `
     ($null -ne $recs[-1].Name -and $null -ne $recs[-1].StartedAt)
 
+Complete-TestBody
+
 } finally {
     Remove-TestDesktop
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
@@ -249,10 +256,4 @@ if ($script:failures -eq 0 -and $script:skipped -eq 0) {
 }
 
 ""
-if ($script:failures -eq 0) {
-    "ALL PASS ($($script:asserted) assertions$(if ($script:skipped) { ", $($script:skipped) SKIPPED" }))"
-    exit 0
-} else {
-    "$($script:failures) FAILURE(S)"
-    exit 1
-}
+Write-TestVerdict -Pass ($script:asserted - $script:failures) -Fail $script:failures -Skipped $script:skipped

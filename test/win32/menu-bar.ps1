@@ -75,6 +75,10 @@ $env:GHOZTTY_PIPE_SUFFIX = "-menubartest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\HarnessLeak.ps1')
+# T1511: the shared scorer. The dot-source is what ARMS the run, so the child
+# process that writes this harness's guard stamp below refuses to write one
+# over a run that unwound before its end.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 # T1127: the finally at the bottom is a full Stop-RepoGhoztty and reaps this
 # build cleanly - but the setup guards above it (`SETUP FAIL ...; exit 1`) walk
@@ -1164,6 +1168,14 @@ if ($g.Proc -and $g.Proc.HasExited) {
 
 Stop-Process -Id $g.Pid -Force -ErrorAction SilentlyContinue
 
+} catch {
+    # T1511: the foreground-leak checks below are part of this run too, so this
+    # try cannot END in `Complete-TestBody`. It SCORES its own throw instead -
+    # the other half of the same rule: an unwind here can no longer reach a
+    # green verdict.
+    $script:fail++
+    Write-Host "FAIL  the run terminated: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "      at $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim())"
 } finally {
     Remove-TestDesktop
     # The AGENT goes too, and only here (T1110). `Kill-RepoInstances` is
@@ -1192,11 +1204,11 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 # A green run stamps the covered files (T783/T987) so guard-due can answer
 # "has this harness been run against the menu tables as they now stand?". Red
 # leaves the stamp alone: red stays due.
+Complete-TestBody
 if ($script:fail -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard menu-bar -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

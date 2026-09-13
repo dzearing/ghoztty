@@ -41,6 +41,10 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 # T1241: every GUI launch below goes to the background test desktop.
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T1511: the shared scorer. The dot-source is what ARMS the run, so the child
+# process that writes this harness's guard stamp below refuses to write one
+# over a run that unwound before its end.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 [void](Set-GhozttyTestIsolation -Tag 't24')
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $exe = Join-Path $repo 'zig-out\bin\ghoztty.exe'
@@ -233,11 +237,11 @@ Write-Host ''
 # Only a clean run stamps, so a red harness stays due - which is the whole
 # point of the row this writes to: before T1171 nothing tied this script to
 # the code it covers, and it sat SETUP FAILing on a renamed `+version` string.
+Complete-TestBody
 if ($script:fail -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot '..\..\scripts\guard-due.ps1') `
         update -Guard update-check -Repo $repo 2>&1 |
         ForEach-Object { Write-Host "  $_" }
 }
 
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
-else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }
+Write-TestVerdict -Pass $script:pass -Fail $script:fail

@@ -57,14 +57,20 @@ $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 'agentauto')
 
+# T1511: the shared scorer. The dot-source is what ARMS the run, so the child
+# process that writes this harness's guard stamp below refuses to write one
+# over a run that unwound before its end.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
+$script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-agent-autostart-$PID"
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 $valueName = 'GhozttyAgent-debug'
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { $script:passes++; "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
 }
 
 function Stop-TestProcs {
@@ -385,6 +391,7 @@ Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 # Only from the bottom of a clean run, like every other stamping harness: a run
 # with a red section - or one that died before here - leaves the guard DUE,
 # which is the whole point of it.
+Complete-TestBody
 if ($script:failures -eq 0) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
@@ -392,5 +399,4 @@ if ($script:failures -eq 0) {
 }
 
 ""
-if ($script:failures -eq 0) { "ALL PASS" ; exit 0 }
-else { "$($script:failures) FAILURE(S)" ; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures
