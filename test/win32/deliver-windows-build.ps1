@@ -44,14 +44,21 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
+$script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-deliver-$PID"
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 function AssertEq($name, $expected, $actual) {
-    if ($expected -eq $actual) { "  PASS $name" }
+    if ($expected -eq $actual) { "  PASS $name"; $script:passes++ }
     else { "  FAIL $name (expected '$expected', got '$actual')"; $script:failures++ }
 }
 
@@ -137,8 +144,9 @@ AssertEq "A28 -PruneBackups 0 takes them all" 5 (@(Select-StaleBackups -Names $n
 
 if ($PureOnly) {
     ""
-    if ($script:failures -eq 0) { "ALL PASS" } else { "$script:failures FAILURE(S)" }
-    exit ([int]($script:failures -gt 0))
+    # The pure half IS the whole body of a -PureOnly run, so it completes here.
+    Complete-TestBody
+    Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'PURE ONLY'
 }
 
 # ============================================================================
@@ -337,11 +345,11 @@ if (-not $Keep) { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinu
 # can answer "has anybody proved the delivery still measures what it claims,
 # against the code as it now stands?". Red leaves the stamp alone, and so does
 # -PureOnly, which exits above without ever having run a delivery.
+Complete-TestBody  # T1039: before the stamp, a child process that reads this run's state
 if ($script:failures -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard deliver-verify -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 ""
-if ($script:failures -eq 0) { "ALL PASS" } else { "$script:failures FAILURE(S)" }
-exit ([int]($script:failures -gt 0))
+Write-TestVerdict -Pass $script:passes -Fail $script:failures

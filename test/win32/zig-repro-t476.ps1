@@ -28,14 +28,20 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 $reproDir = Join-Path $repo 'test\zig-repro\t476-selfhosted-backend'
 
 $script:failures = 0
 $script:skipped = 0
 $script:asserted = 0
+$script:passes = 0
 function Assert($name, $cond) {
     $script:asserted++
-    if ($cond) { Write-Host "  PASS $name" }
+    if ($cond) { Write-Host "  PASS $name"; $script:passes++ }
     else { Write-Host "  FAIL $name"; $script:failures++ }
 }
 
@@ -135,6 +141,7 @@ if ($SkipCompile) {
 # Only a CLEAN sweep stamps: a `-SkipCompile` run proved the copy has not
 # drifted but not that the bug is still there, which is half the question this
 # row exists to ask.
+Complete-TestBody  # T1039: before the stamp, a child process that reads this run's state
 if ($script:failures -eq 0) {
     if ($script:skipped -gt 0) {
         "  stamp NOT updated: $($script:skipped) section(s) skipped, so this run did not cover the whole harness"
@@ -145,10 +152,4 @@ if ($script:failures -eq 0) {
 }
 
 ""
-if ($script:failures -eq 0) {
-    "ALL PASS ($($script:asserted) assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))"
-    exit 0
-} else {
-    "$($script:failures) FAILURE(S)"
-    exit 1
-}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skipped

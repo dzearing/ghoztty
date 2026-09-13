@@ -1,8 +1,8 @@
 {
     "guard":  "go-loop-resume",
     "script":  "test/win32/go-loop-resume.ps1",
-    "generated":  "2026-09-12T07:34:07-07:00",
-    "commit":  "a349b7f53",
+    "generated":  "2026-09-12T20:30:24-07:00",
+    "commit":  "aa615ffbf",
     "uncommitted":  [
                         "test/win32/go-loop-resume.ps1"
                     ],
@@ -10,6 +10,6 @@
                   "scripts/go-loop-exec.ps1":  "a402bd511342cc317baf755f2cee0c48ce2226d2f439288b63ae7a1f795fb2f9",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-watchdog.ps1":  "fec6376034427796d1f9ad0b65d5fe8a46ce24a1702398844db3ea1483bada45",
-                  "test/win32/go-loop-resume.ps1":  "2b4e74e17c8039ae7321b57219ab2166debac9b5367349dcac05cab42309f5a0"
+                  "test/win32/go-loop-resume.ps1":  "3d83f2603cd0f5184d2d08087b2d8bc8a8e544c62bbc6ed1786e4e655ebe583a"
               }
 }

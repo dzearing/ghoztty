@@ -24,10 +24,16 @@ param(
 $ErrorActionPreference = 'Continue'
 . "$Repo\scripts\lib\CrashCatch.ps1"
 
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $failures = 0
+$script:passes = 0
 function Check {
     param([string]$Name, [bool]$Ok, [string]$Detail = '')
-    if ($Ok) { Write-Host "PASS $Name" }
+    if ($Ok) { Write-Host "PASS $Name"; $script:passes++ }
     else { Write-Host "FAIL $Name $Detail"; $script:failures++ }
 }
 
@@ -630,10 +636,10 @@ Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 # scripts\guard-due.ps1 can answer "has anybody run this harness against the
 # code as it now stands?". Only a CLEAN sweep stamps: a run with a skipped
 # section proved less than the harness claims, and a red run must stay due.
+Complete-TestBody  # T1039: before the stamp, a child process that reads this run's state
 if ($failures -eq 0 -and -not $script:skipped) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard crash-stacks -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
-if ($failures -eq 0) { Write-Host "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })" } else { Write-Host "$failures FAILURE(S)" }
-exit $(if ($failures -eq 0) { 0 } else { 1 })
+Write-TestVerdict -Pass $script:passes -Fail $failures -Skipped ([int]$script:skipped)

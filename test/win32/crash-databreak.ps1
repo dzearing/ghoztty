@@ -33,10 +33,16 @@ $ErrorActionPreference = 'Continue'
 . "$Repo\scripts\lib\CrashCatch.ps1"
 . "$Repo\scripts\lib\DataBreak.ps1"
 
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $failures = 0
+$script:passes = 0
 function Check {
     param([string]$Name, [bool]$Ok, [string]$Detail = '')
-    if ($Ok) { Write-Host "PASS $Name" }
+    if ($Ok) { Write-Host "PASS $Name"; $script:passes++ }
     else { Write-Host "FAIL $Name $Detail"; $script:failures++ }
 }
 
@@ -643,10 +649,10 @@ Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
 # could ever go green in `guard-due check` was somebody remembering to run
 # `guard-due update` by hand -- which is the remembering T783 exists to remove.
 # Only a CLEAN run stamps; a red one must stay due.
+Complete-TestBody  # T1039: before the stamp, a child process that reads this run's state
 if ($failures -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard crash-databreak -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
-if ($failures -eq 0) { Write-Host 'ALL PASS' } else { Write-Host "$failures FAILURE(S)" }
-exit $(if ($failures -eq 0) { 0 } else { 1 })
+Write-TestVerdict -Pass $script:passes -Fail $failures

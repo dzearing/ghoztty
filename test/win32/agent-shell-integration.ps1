@@ -45,13 +45,19 @@ param(
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
+$script:passes = 0
 $script:skips = 0
 $root = Join-Path $env:TEMP "ghoztty-t151-shellint-$PID"
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 function Stop-TestProcs {
@@ -349,6 +355,7 @@ Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 # A green run with no skipped sections stamps the covered files (T783) so
 # guard-due can answer "has this harness been run against shell_integration.zig
 # as it now stands?". Red or skipped leaves the stamp alone: both stay due.
+Complete-TestBody  # T1039: before the stamp, a child process that reads this run's state
 if ($script:failures -eq 0 -and $script:skips -eq 0) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
@@ -356,6 +363,4 @@ if ($script:failures -eq 0 -and $script:skips -eq 0) {
 }
 
 ""
-if ($script:failures -eq 0) {
-    "ALL PASS$(if ($script:skips) { " ($($script:skips) SKIPPED)" })"; exit 0
-} else { "$($script:failures) FAILURE(S)"; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skips

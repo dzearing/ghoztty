@@ -317,8 +317,8 @@ Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFina
 # cannot reach a green stamping run at HEAD for reasons of their own:
 # website-windows-download (T1513, the gh-pages mirror has drifted) and
 # ghoztty-cleanup (T1514, a box-state skip means it can never re-stamp here).
-$selfCeiling  = 181
-$stampCeiling = 62
+$selfCeiling  = 173
+$stampCeiling = 54
 
 $ratchetSweep = @($sweep)
 if ($TeethCheck) {

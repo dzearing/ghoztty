@@ -27050,3 +27050,40 @@ a skipped section deliberately does not stamp - so ANY edit to that file leaves
 its guard due here forever, which is a defect of its own (**T1514**, the same
 class T898 solved for the Docker-gated guard). Both convert in a later batch,
 once the thing blocking them is fixed.
+
+## 2026-09-12 - Eight more acceptance scripts can no longer record a crashed run as proof (T1511 batch 2)
+
+Batch 2 of the T1511 burn-down, and the selection criterion is the one that
+decides every batch: a conversion only ships if the harness can be RUN green on
+this box afterwards, because the conversion makes that harness's own guard due.
+The eight that clear it this turn are `test-filter-guard`, `build-fresh-guard`,
+`zig-repro-t476`, `deliver-windows-build`, `crash-stacks`, `crash-databreak`,
+`agent-shell-integration` and `go-loop-resume` - the crash tooling, the two
+build-honesty guards, the delivery verifier, the shell-integration harness and
+the resume arm of the loop guard. Each now dot-sources `lib\TestScore.ps1`,
+which is what ARMS the run; each reaches `Complete-TestBody` immediately before
+its stamping child process; and each ends in one `Write-TestVerdict` instead of
+its own `$script:fail -eq 0` green line.
+
+Seven of the eight had no passing-assertion counter at all - only a failure
+count - so their green line was a bare `ALL PASS` with nothing behind it and
+`Write-TestVerdict` would have called it ASSERTED NOTHING. Each grew a
+`$script:passes` incremented in its own Assert/Check helper, which also takes
+them off the `uncounted-final` list. `deliver-windows-build.ps1` needed the
+marker twice: its `-PureOnly` early exit IS the whole body of that mode of the
+run, so it completes and scores there rather than falling through.
+
+The ceilings come down rather than the assertion being relaxed: C5 62 -> 54 and
+C4 181 -> 173 in `test\win32\asserted-nothing.ps1`, with the `-TeethCheck` mode
+still red on a synthesized violator and `lib\BodyCompleteAudit.ps1`'s sweep
+still a hard zero with eight more files inside its scope.
+
+Green: all eight converted scripts run on the box, ALL PASS, each STAMPED by
+that run (21, 42, 12, 75, 91, 93, 27 and 22 assertions); the eight sweep audits
+my edits made due, plus body-complete-audit and asserted-nothing in both modes;
+`floor-lane -Lane all` ALL LANES PASS; ipc-p1/p2/p3 ALL PASS; `guard-due check`
+exits 0 with only the three standing advisories left.
+
+Fifty-four unarmed stampers remain, and what is left is the GUI acceptance
+suite - viewer panes, the chooser, the updater, the remote pills - where the
+cost per batch is the run time, not the edit.

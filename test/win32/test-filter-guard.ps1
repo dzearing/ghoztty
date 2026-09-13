@@ -22,7 +22,14 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
+$script:passes = 0
 $script:skipped = 0
 $script:negReached = $false
 $Repo = (Resolve-Path $Repo).Path
@@ -30,7 +37,7 @@ $tmp = Join-Path $env:TEMP "ghoztty-tfguard-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 # One `zig build` invocation. Returns the exit code and the combined log, which
@@ -146,6 +153,7 @@ if ($NegativeControl -and -not $script:negReached) {
 }
 
 # --- stamp (T783) -----------------------------------------------------------
+Complete-TestBody  # T1039: before the stamp, a child process that reads this run's state
 if ($script:failures -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass `
         -File (Join-Path $PSScriptRoot '..\..\scripts\guard-due.ps1') `
@@ -153,6 +161,4 @@ if ($script:failures -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl
 }
 
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
-if ($script:failures -eq 0) { "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })" }
-else { "$($script:failures) FAILURE(S)" }
-exit ($script:failures -gt 0)
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skipped
