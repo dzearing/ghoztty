@@ -43,6 +43,11 @@ param(
 $ErrorActionPreference = 'Stop'
 if (-not $Repo) { $Repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
 
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
 $script:passes = 0
 function Assert($name, $cond, $detail = '') {
@@ -179,11 +184,11 @@ if ($NegativeControl) {
 
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1 can
 # answer "has this scan been run against the tree as it now stands?".
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard feedback-user-report -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 ""
-if ($script:failures -eq 0) { "ALL PASS ($script:passes)"; exit 0 }
-else { "$script:failures FAILURE(S) ($script:passes passed)"; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures

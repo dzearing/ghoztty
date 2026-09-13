@@ -1,10 +1,13 @@
 {
     "guard":  "fork-identity",
     "script":  "test/win32/fork-identity.ps1",
-    "generated":  "2026-08-23T11:11:30-07:00",
-    "commit":  "2e3d4bde2",
+    "generated":  "2026-09-12T19:29:20-07:00",
+    "commit":  "6d185e11d",
+    "uncommitted":  [
+                        "test/win32/fork-identity.ps1"
+                    ],
     "files":  {
                   "scripts/fork-identity.ps1":  "0388b582e6b11d201d099a81533fdd4f84790c87b658c8cd75f09a00e10be8ac",
-                  "test/win32/fork-identity.ps1":  "2a83e77b4f6fc5127e583e44175dc00a350ef16cacf5b9404c9e6e8fb388ab71"
+                  "test/win32/fork-identity.ps1":  "9661dc44ad46212f55a3f65601c083cd0f1eebcba2e3a323f6fe4c4f44b62cbe"
               }
 }

@@ -98,7 +98,14 @@ param(
 . (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
 
 $ErrorActionPreference = 'Continue'
+
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
+$script:passes = 0
 # Set when a section could not run at all (node absent). A run with a skipped
 # section is green but not WHOLE, so it must not stamp the guard (T783's rule).
 $script:skipped = $false
@@ -108,7 +115,7 @@ $realDir = Join-Path $Repo 'docs\design\windows-parity-tasks'
 $fixture = Join-Path $env:TEMP "ghoztty-parity-seat-$PID"
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 # Run parity-tasks.ps1 against the fixture dir; return @{ Code; Out }.
@@ -990,6 +997,7 @@ if (Test-Path $fixture) { Remove-Item -Recurse -Force $fixture }
 # scripts\guard-due.ps1 can answer "has anyone run this harness against
 # parity-tasks.ps1 as it now stands?". Nothing in the zig lanes or the P1-P3
 # floor executes the tracker CLI, so this is its only gate.
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0 -and -not $script:skipped) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard parity-tasks -Repo $Repo 2>&1 | ForEach-Object { Write-Host "  $_" }
@@ -999,5 +1007,4 @@ elseif ($script:skipped) {
 }
 
 ""
-if ($script:failures -eq 0) { "ALL PASS" } else { "$($script:failures) FAILURE(S)" }
-exit ([int]($script:failures -gt 0))
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped ([int][bool]$script:skipped)

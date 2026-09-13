@@ -48,6 +48,11 @@ param([string]$Repo)
 $ErrorActionPreference = 'Stop'
 if (-not $Repo) { $Repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
 
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
 $script:passes = 0
 function Assert($name, $cond, $detail = '') {
@@ -213,6 +218,12 @@ try {
     )
     Assert 'A10 an EMPTY shared reason is still a violation' `
         ($null -ne (Get-SuffixUniquenessViolation $stamp))
+} catch {
+    # T1511: score the throw rather than unwinding past it to a green verdict.
+    # Sections B/C read the real tree and do not depend on these fixtures, so
+    # the honest answer is "this section failed" and the run carries on.
+    Assert 'A fixtures completed' $false "(threw: $($_.Exception.Message))"
+    $_.ScriptStackTrace
 } finally {
     Remove-Item -Recurse -Force $fixDir -ErrorAction SilentlyContinue
 }
@@ -249,11 +260,11 @@ Assert 'C1 no script pins a fixed pipe suffix' `
 
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1
 # can answer "has this scan been run against the test tree as it now stands?".
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard isolation-meta -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 ""
-if ($script:failures -eq 0) { "ALL PASS ($script:passes)"; exit 0 }
-else { "$script:failures FAILURE(S) ($script:passes passed)"; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures

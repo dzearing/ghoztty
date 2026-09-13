@@ -41,6 +41,11 @@ param(
 $ErrorActionPreference = 'Continue'
 if (-not $Repo) { $Repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
 
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
 $script:passes = 0
 $script:skips = 0
@@ -390,19 +395,11 @@ finally {
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1 can
 # answer "has anybody run this against the workflow as it now stands?". A red
 # run - or one with skipped sections - leaves the stamp alone.
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0 -and $script:skips -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard ship-workflow -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Say ''
-if ($script:failures -eq 0) {
-    $note = ''
-    if ($script:skips -gt 0) { $note = " / $script:skips skipped" }
-    Say "SHIP-WORKFLOW: ALL PASS ($script:passes$note)"
-    exit 0
-}
-else {
-    Say "SHIP-WORKFLOW: $script:failures FAILURE(S) / $script:passes passed"
-    exit 1
-}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skips -Label 'SHIP-WORKFLOW'

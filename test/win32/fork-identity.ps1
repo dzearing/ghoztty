@@ -53,6 +53,11 @@ param(
 $ErrorActionPreference = 'Continue'
 if (-not $Repo) { $Repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
 
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
 $script:passes = 0
 $script:skips = 0
@@ -612,6 +617,7 @@ try {
 # to absorb and no baseline to measure against, so one is written from this
 # run and the run stays red, which is the honest report of "this measured
 # nothing".
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 $greenRun = ($script:failures -eq 0 -and $script:skips -eq 0 -and -not $NegativeControl)
 if ($null -ne $script:ReproLive -and -not $NegativeControl -and
     ($greenRun -or $script:ReproManifestMissing)) {
@@ -627,12 +633,4 @@ if ($greenRun) {
 }
 
 Say ''
-if ($script:failures -eq 0) {
-    $note = ''
-    if ($script:skips -gt 0) { $note = " / $script:skips skipped" }
-    Say "FORK-IDENTITY: ALL PASS ($script:passes$note)"
-    exit 0
-} else {
-    Say "FORK-IDENTITY: $script:failures FAILURE(S) / $script:passes passed"
-    exit 1
-}
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skips -Label 'FORK-IDENTITY'

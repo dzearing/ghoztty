@@ -66,6 +66,12 @@ param(
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
 $ErrorActionPreference = 'Continue'
+
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
 $script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-xlineage-$PID"
@@ -412,6 +418,10 @@ if ($script:failures -gt 0) {
     }
 }
 
+} catch {
+    # T1511: score the throw rather than unwinding past it to a green verdict.
+    Assert "the run finished its sections (threw: $($_.Exception.Message))" $false
+    $_.ScriptStackTrace
 } finally {
     "== cleanup"
     Stop-TestProcs
@@ -426,6 +436,7 @@ if ($script:failures -gt 0) {
 # "has this harness been run against the code as it now stands?". Red leaves
 # the stamp alone (red stays due), and a -NegativeControl run - green or not -
 # is scoring an inverted claim, which is not a sweep of the guard's subject.
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0 -and -not $NegativeControl) {
     $repo = Split-Path (Split-Path $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
@@ -433,5 +444,4 @@ if ($script:failures -eq 0 -and -not $NegativeControl) {
 }
 
 ""
-if ($script:failures -eq 0) { "ALL PASS ($script:passes assertions)"; exit 0 }
-else { "$($script:failures) FAILURE(S) / $script:passes passed"; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures

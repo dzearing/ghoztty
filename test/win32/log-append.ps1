@@ -51,6 +51,12 @@ param(
 $env:GHOZTTY_NO_STARTUP_ESCAPE = '1'
 
 $ErrorActionPreference = 'Continue'
+
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
 $script:passes = 0
 function Assert($name, $cond) {
@@ -288,6 +294,10 @@ Assert "R10 the rotation section ran to completion" $rotationComplete
 
 }
 
+} catch {
+    # T1511: score the throw rather than unwinding past it to a green verdict.
+    Assert "the run finished its sections (threw: $($_.Exception.Message))" $false
+    $_.ScriptStackTrace
 } finally {
     $env:LOCALAPPDATA = $saved.lad
     $env:GHOZTTY_PIPE_SUFFIX = $saved.pipe
@@ -300,6 +310,7 @@ Assert "R10 the rotation section ran to completion" $rotationComplete
 # sink is compiled out of Debug builds, so this script is the only thing that
 # can answer it - and it is not in the P1-P3 floor. A negative-control run
 # never stamps: it asserts the OPPOSITE of the contract.
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot '..\..\scripts\guard-due.ps1') `
         update -Guard log-sink -Repo (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path 2>&1 |
@@ -307,5 +318,4 @@ if ($script:failures -eq 0 -and -not $NegativeControl) {
 }
 
 Say ""
-if ($script:failures -eq 0) { Say "LOG-APPEND: ALL PASS ($script:passes)"; exit 0 }
-else { Say "LOG-APPEND: $script:failures FAILURE(S) / $script:passes passed"; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'LOG-APPEND'

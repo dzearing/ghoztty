@@ -29,11 +29,18 @@
 param([switch]$TeethCheck)
 
 $ErrorActionPreference = 'Continue'
+
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
+$script:passes = 0
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 . (Join-Path $PSScriptRoot 'lib\VerdictExitAudit.ps1')
@@ -168,6 +175,10 @@ try {
                 ForEach-Object { "         L$($_.Line) $($_.Kind): $($_.Detail)" }
         }
     }
+} catch {
+    # T1511: score the throw rather than unwinding past it to a green verdict.
+    Assert "the sweep finished: $($_.Exception.Message)" $false
+    $_.ScriptStackTrace
 } finally {
     if ($planted) { Remove-Item -LiteralPath $planted -Force -ErrorAction SilentlyContinue }
 }
@@ -253,11 +264,11 @@ Assert "C and the analyzer would have caught it" ((KindsOf $broken) -eq 'fallthr
 # NOT under -TeethCheck: that run plants a violator in the swept directory and
 # scores the analyzer for finding it, so it never observes a clean suite and
 # must not claim to have.
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0 -and -not $TeethCheck) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard verdict-exit -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 ""
-if ($script:failures -eq 0) { "ALL PASS" } else { "$($script:failures) FAILURE(S)" }
-exit ([int]($script:failures -gt 0))
+Write-TestVerdict -Pass $script:passes -Fail $script:failures

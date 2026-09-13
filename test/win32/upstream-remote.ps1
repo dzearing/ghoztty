@@ -43,6 +43,11 @@ param(
 $ErrorActionPreference = 'Continue'
 if (-not $Repo) { $Repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
 
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
 $script:passes = 0
 function Assert($name, $cond, $detail = '') {
@@ -394,11 +399,11 @@ if ($NegativeControl) {
 # can answer "has this been run against the remote wiring and the merge drivers
 # as they now stand?". A run with a red assertion - or the -NegativeControl run,
 # which is red by construction - deliberately leaves the stamp alone.
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0 -and -not $NegativeControl) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard upstream-remote -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Say ''
-if ($script:failures -eq 0) { Say "UPSTREAM-REMOTE: ALL PASS ($script:passes)"; exit 0 }
-else { Say "UPSTREAM-REMOTE: $script:failures FAILURE(S) / $script:passes passed"; exit 1 }
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'UPSTREAM-REMOTE'

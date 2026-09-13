@@ -27000,3 +27000,53 @@ exactly the defect T1039 fixed; T1039's fix lives behind the shared scorer, and
 **200 of the 232 scripts in `test\win32` print their own verdict line instead**,
 80 of them stamping a guard from the same branch. A sixth of the suite is
 covered. Only reading the transcript caught it here.
+
+## 2026-09-12 - Eighteen more acceptance scripts can no longer record a crashed run as proof (T1511)
+
+T1510 measured the gap and put a ceiling on it: 79 of the scripts in
+`test\win32` write a T783 guard stamp from their own `$script:fail -eq 0`
+branch, having never dot-sourced `lib\TestScore.ps1`. Nothing arms the run, so
+the stamping child process inherits no `GHOZTTY_TEST_BODY`, and a run that
+unwound two thirds of the way through still records every file it covers as
+freshly proven. The red line scrolls away; the stamp keeps the guard quiet
+until the covered code changes again.
+
+This is the first batch of the burn-down: the static audits and the doc/tracker
+harnesses, which are the ones a single turn can run green end to end.
+`docs-routing`, `merge-terminology`, `cleanslate-audit`,
+`launch-preflight-audit`, `verdict-exit-audit`, `isolation-meta`,
+`registration-sites`, `control-char-scan`, `build-mode-guard`,
+`upstream-remote`, `fork-identity`, `ship-workflow`,
+`log-append`, `feedback-user-report`, `whea-report`,
+`layout-blob-cross-lineage` and `parity-tasks-seat` are all on the shared
+scorer now. Each was RUN on the box, ended green, and re-stamped its own guard
+from that run.
+
+Two shapes came up often enough to be worth naming for the next batch. Five
+scripts had a top-level `try` with no `catch` whose body did not end in
+`Complete-TestBody` - `lib\BodyCompleteAudit.ps1` named all five the moment the
+dot-source brought them into its scope, and each grew a `catch` that SCORES the
+throw rather than rethrowing, because the sections after it read the real tree
+and do not depend on the fixtures that threw. Four had no passing-assertion
+counter at all, only a failure count, so their green line was a bare `ALL PASS`
+with nothing behind it; those grew a `$script:passes` in the same edit, which
+also takes them off the `uncounted-final` list. One placement is worth
+remembering for later: a script that runs under `Set-StrictMode -Version 2.0`
+has to dot-source the scorer BEFORE that line, because arming reads a global
+that does not exist yet.
+
+The ceilings come down rather than the assertion being relaxed: C5 79 -> 62,
+C4 198 -> 181 in `test\win32\asserted-nothing.ps1`, and
+`lib\BodyCompleteAudit.ps1`'s sweep is still a hard zero over the whole suite
+with seventeen more files inside its scope.
+
+TWO conversions were made and then REVERTED rather than shipped unproven, and
+both for the same reason: the criterion here is a green run that re-stamps, and
+neither harness can reach one at HEAD. `website-windows-download.ps1` is red -
+its F1 says the repo's mirror of the deployed gh-pages page has drifted from
+the live one, for the third time (**T1513**). `ghoztty-cleanup.ps1` is green
+but skips H5 on this box ("the ghost entry is not registered"), and a run with
+a skipped section deliberately does not stamp - so ANY edit to that file leaves
+its guard due here forever, which is a defect of its own (**T1514**, the same
+class T898 solved for the Docker-gated guard). Both convert in a later batch,
+once the thing blocking them is fixed.

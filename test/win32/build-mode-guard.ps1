@@ -14,13 +14,20 @@ param(
 )
 
 $ErrorActionPreference = 'Continue'
+
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
+$script:passes = 0
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $tmp = Join-Path $env:TEMP "ghoztty-buildmode-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 # Run a scriptblock and return the exception message it threw, or $null.
@@ -264,6 +271,7 @@ Assert "G3 go.md carries the same warning" ($goMd -match 'endpoint isolation')
 # answer "has this gate been run against the code as it now stands?". Added with
 # T1158, whose defect lived in the file this script grades and which nothing was
 # obliged to notice.
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard build-mode -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
@@ -271,5 +279,4 @@ if ($script:failures -eq 0) {
 
 ""
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
-if ($script:failures -eq 0) { "ALL PASS$(if ($script:skipped) { " ($script:skipped SKIPPED)" })" } else { "$($script:failures) FAILURE(S)" }
-exit ($script:failures -gt 0)
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped ([int]$script:skipped)

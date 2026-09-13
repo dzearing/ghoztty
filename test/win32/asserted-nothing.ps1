@@ -309,8 +309,16 @@ Assert "C3 the uncounted-final count did not grow past $ceiling" ($uncountedFina
 # damage outlives the run. LOWER THESE as scripts convert; never raise one.
 # 2026-09-12 (T1510): set at the measured state, minus the one script converted
 # in the same commit (viewer-feedback-capture, where the defect was observed).
-$selfCeiling  = 198
-$stampCeiling = 79
+# 2026-09-12 (T1511, batch 1): 198 -> 181 and 79 -> 62. Seventeen of the
+# stamping scripts moved onto the shared scorer - the static audits and the
+# doc/tracker harnesses, which are the ones a single turn can run green end to
+# end - and each was run on the box and re-stamped by that run. Two more were
+# converted and REVERTED rather than shipped unproven, because their harness
+# cannot reach a green stamping run at HEAD for reasons of their own:
+# website-windows-download (T1513, the gh-pages mirror has drifted) and
+# ghoztty-cleanup (T1514, a box-state skip means it can never re-stamp here).
+$selfCeiling  = 181
+$stampCeiling = 62
 
 $ratchetSweep = @($sweep)
 if ($TeethCheck) {

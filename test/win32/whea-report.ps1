@@ -22,6 +22,11 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $script = Join-Path $repo 'scripts\whea-report.ps1'
 
+# T1511: the shared scorer, and the dot-source is also what ARMS the run - a
+# body that unwinds before `Complete-TestBody` may not print a pass, and the
+# guard-stamping child below reads the same state and refuses to write.
+. (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+
 $script:failures = 0
 $script:skipped = 0
 $script:asserted = 0
@@ -177,16 +182,13 @@ Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 # answer "has this been run against the code as it now stands?". A run with
 # skipped arms does not stamp - the question is about coverage, not about
 # whether the script exited zero.
+Complete-TestBody  # T1039: before the stamp, which is a child process reading this run's state
 if ($script:failures -eq 0 -and $script:skipped -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard whea-report -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 ""
-if ($script:failures -eq 0) {
-    "ALL PASS ($($script:asserted) assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))"
-    exit 0
-} else {
-    "$($script:failures) FAILURE(S)"
-    exit 1
-}
+# `asserted` counts every assertion, red included, so the PASSING count the
+# scorer wants is what is left after the failures.
+Write-TestVerdict -Pass ($script:asserted - $script:failures) -Fail $script:failures -Skipped $script:skipped
