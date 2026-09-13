@@ -60,6 +60,11 @@ frame_color: u32 = 0,
 frame_px: i32 = 1,
 alpha: u8 = 0,
 
+/// Is the preview currently in the always-on-top band (T1538)? Tracked rather
+/// than re-read from the ex-style because the band change is retried, and a
+/// no-op `show` must not pay for it on every mouse move.
+topmost: bool = false,
+
 pub fn create(
     alloc: std.mem.Allocator,
     owner: w32.HWND,
@@ -116,16 +121,17 @@ pub fn show(
     hl: drop_highlight.Highlight,
     pal: chrome_theme.Palette,
     scale: f32,
+    over_other_window: bool,
 ) void {
     if (self.shown) |cur| {
-        if (eql(cur, hl) and self.fill != null) return;
+        if (eql(cur, hl) and self.fill != null and self.topmost == over_other_window) return;
     }
 
     self.setBrushes(pal, scale);
 
     const want_alpha: u8 = switch (hl.kind) {
         .swap => alpha_swap,
-        .split, .top_level => alpha_insert,
+        .split, .top_level, .new_window => alpha_insert,
         .new_tab => alpha_caret,
     };
     if (want_alpha != self.alpha) {
@@ -134,6 +140,18 @@ pub fn show(
     }
 
     self.shown = hl;
+
+    // A preview over ANOTHER top-level window (T1538) cannot be seated by
+    // ownership: this popup is owned by the window the drag started in, so
+    // z-order puts it above THAT window and behind the one the pointer is
+    // over — a promise drawn where nobody can see it. The always-on-top band
+    // is the only place a window can outrank a window it does not own, and it
+    // is given up the moment the drop comes back home or the drag ends.
+    if (self.topmost != over_other_window) {
+        _ = w32.setTopmost(self.hwnd, over_other_window);
+        self.topmost = over_other_window;
+    }
+
     _ = w32.SetWindowPos(
         self.hwnd,
         null,
@@ -144,8 +162,10 @@ pub fn show(
         w32.SWP_NOACTIVATE | w32.SWP_NOZORDER | w32.SWP_SHOWWINDOW,
     );
     // Above the panes it is previewing, exactly like every other overlay of
-    // ours that has to sit over a child surface.
-    w32.healOverlayZOrderAfterMove(self.hwnd, self.owner, false);
+    // ours that has to sit over a child surface. A topmost preview is already
+    // above everything, and re-seating it against its owner would pull it back
+    // down behind the window it is being drawn over.
+    if (!self.topmost) w32.healOverlayZOrderAfterMove(self.hwnd, self.owner, false);
     _ = w32.InvalidateRect(self.hwnd, null, 1);
     _ = w32.UpdateWindow(self.hwnd);
 }
@@ -153,6 +173,10 @@ pub fn show(
 pub fn hide(self: *DropHighlight) void {
     if (self.shown == null) return;
     self.shown = null;
+    if (self.topmost) {
+        _ = w32.setTopmost(self.hwnd, false);
+        self.topmost = false;
+    }
     _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
 }
 
@@ -193,7 +217,10 @@ fn paintInto(self: *const DropHighlight, hwnd: w32.HWND, hdc: w32.HDC) void {
     _ = w32.FillRect(hdc, &rect, fill);
 
     const hl = self.shown orelse return;
-    if (hl.kind != .swap) return;
+    // A swap reads as "these two trade places", and the new window a pop-out
+    // creates is not on screen yet — both want the outline that says the rect
+    // is a destination rather than a fill over something already there.
+    if (hl.kind != .swap and hl.kind != .new_window) return;
     const brush = self.frame orelse return;
 
     // Four fills rather than `FrameRect`: the win32 binding has no

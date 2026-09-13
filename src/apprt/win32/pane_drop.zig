@@ -125,6 +125,18 @@ pub const Candidate = struct {
     /// The split-tree area: the window's client rect minus the chrome.
     content_rect: Rect,
 
+    /// The WHOLE window, chrome and borders included (T1538).
+    ///
+    /// Only used to decide which window OWNS an overlapped point — no drop is
+    /// ever resolved against it. Without it a point on a window's caption
+    /// belongs to no window, which reads as "over nothing" and makes a NEW
+    /// window out of a release on a title bar; with two windows it would also
+    /// hand the point to whatever window happens to lie behind.
+    ///
+    /// Optional because a caller that has only measured the split area is
+    /// still answerable — it just cannot claim its own chrome.
+    frame_rect: ?Rect = null,
+
     /// Every leaf pane's frame.
     pane_rects: []const PaneRect,
 
@@ -201,16 +213,33 @@ pub fn resolve(
     dragged: []const u8,
     metrics: Metrics,
 ) ?Target {
-    // The tab strip sits outside the content rect and outranks it: it is
-    // chrome, and a point on it is never also a point on a pane.
-    if (tabBarHit(point, candidates)) |hit| {
-        return .{ .new_tab = .{ .window = hit.window, .index = hit.index } };
-    }
-
-    const candidate = frontmost(candidates, point, contentHit) orelse {
+    // ONE window owns the point: the frontmost of ours that covers it at all,
+    // strip or content. Everything below is then answered against that window
+    // alone.
+    //
+    // The strip used to be searched across the whole candidate SET before the
+    // content was looked at, which is invisible with one window and wrong with
+    // two (T1538): a point over the front window's panes is also, quite often,
+    // a point over the tab strip of a window sitting BEHIND it, and the drop
+    // would open a tab in the window the user could not even see.
+    const candidate = frontmost(candidates, point, windowHit) orelse {
         // Over no window of ours at all.
         return .{ .new_window = point };
     };
+
+    // The tab strip sits outside the content rect and outranks it: it is
+    // chrome, and a point on it is never also a point on a pane.
+    if (tabBarContains(candidate, point)) {
+        return .{ .new_tab = .{
+            .window = candidate.window,
+            .index = tabIndexAt(candidate, point),
+        } };
+    }
+
+    // Over the window but on neither the strip nor the split area — a border,
+    // or the run of caption a strip does not claim. Nothing: a drop there is
+    // not a request for a window of its own, it is a miss.
+    if (!contentHit(candidate, point)) return null;
 
     // The window edge beats the pane under it. Dropping at the very edge of a
     // window reads as "put it down the whole side", which a pane's own
@@ -380,14 +409,25 @@ fn frontmost(
     return best;
 }
 
-fn tabBarHit(point: Point, candidates: []const Candidate) ?TabHit {
-    const candidate = frontmost(candidates, point, tabBarContains) orelse return null;
-    // Over a button: insert at that button's index. Over the strip's
-    // background or its "+": append. Either way the strip means "tab".
-    for (candidate.tab_button_rects, 0..) |r, i| {
-        if (r.contains(point)) return .{ .window = candidate.window, .index = i };
+/// Does this candidate cover the point at ALL?
+///
+/// The window's whole frame when it published one, and otherwise the two rects
+/// it did publish (they are disjoint — the strip sits above the content). This
+/// is what decides which window owns an overlapped point.
+fn windowHit(c: Candidate, p: Point) bool {
+    if (c.frame_rect) |f| {
+        if (f.contains(p)) return true;
     }
-    return .{ .window = candidate.window, .index = candidate.tab_button_rects.len };
+    return contentHit(c, p) or tabBarContains(c, p);
+}
+
+/// Over a button: insert at that button's index. Over the strip's background
+/// or its "+": append. Either way the strip means "tab".
+fn tabIndexAt(c: Candidate, point: Point) usize {
+    for (c.tab_button_rects, 0..) |r, i| {
+        if (r.contains(point)) return i;
+    }
+    return c.tab_button_rects.len;
 }
 
 // -- tests ----------------------------------------------------------------
@@ -694,6 +734,98 @@ test "z-order arbitrates the tab strip too" {
     const t = resolve(.{ .x = 60, .y = 20 }, &cands, dragged_id, m1).?;
     try testing.expectEqual(@as(WindowRef, 3), t.new_tab.window);
     try testing.expectEqual(@as(WindowRef, 3), hoveredTab(.{ .x = 60, .y = 20 }, &cands).?.window);
+}
+
+test "the front window's PANES beat a strip behind them (T1538)" {
+    // The shape a second window makes: a back window whose strip lies under
+    // the front window's split area. Before one window owned the point, the
+    // strip was searched across the whole set first and this dropped a tab
+    // into the window the user could not see.
+    const front_panes = [_]PaneRect{.{ .id = other_id, .rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 } }};
+    const buttons = [_]Rect{.{ .left = 0, .top = 380, .right = 120, .bottom = 420 }};
+    const cands = [_]Candidate{
+        .{
+            .window = 7,
+            .z_order = 0,
+            .content_rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 },
+            .pane_rects = &front_panes,
+        },
+        .{
+            .window = 8,
+            .z_order = 4,
+            .content_rect = .{ .left = 0, .top = 420, .right = 1000, .bottom = 800 },
+            .pane_rects = &.{},
+            .tab_bar_rect = .{ .left = 0, .top = 380, .right = 1000, .bottom = 420 },
+            .tab_button_rects = &buttons,
+        },
+    };
+    const t = resolve(.{ .x = 500, .y = 400 }, &cands, dragged_id, m1).?;
+    try testing.expect(t == .swap);
+    try testing.expectEqual(@as(WindowRef, 7), t.swap.window);
+}
+
+test "a point on a window's own chrome is a miss, not a new window" {
+    // Between the strip and the content — the caption run a strip does not
+    // claim. A new window there would be a gesture the user never made, and
+    // before the frame rect that is exactly what it was.
+    const cands = [_]Candidate{
+        .{
+            .window = 7,
+            .z_order = 0,
+            .frame_rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 },
+            .content_rect = .{ .left = 0, .top = 100, .right = 1000, .bottom = 800 },
+            .pane_rects = &.{},
+            .tab_bar_rect = .{ .left = 0, .top = 0, .right = 400, .bottom = 40 },
+            .tab_button_rects = &.{},
+        },
+    };
+    try testing.expect(resolve(.{ .x = 700, .y = 20 }, &cands, dragged_id, m1) == null);
+}
+
+test "a window's chrome still beats a window BEHIND it" {
+    const behind = [_]PaneRect{.{ .id = other_id, .rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 } }};
+    const cands = [_]Candidate{
+        .{
+            .window = 7,
+            .z_order = 0,
+            .frame_rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 },
+            .content_rect = .{ .left = 0, .top = 100, .right = 1000, .bottom = 800 },
+            .pane_rects = &.{},
+            .tab_bar_rect = .{ .left = 0, .top = 0, .right = 400, .bottom = 40 },
+            .tab_button_rects = &.{},
+        },
+        .{
+            .window = 8,
+            .z_order = 3,
+            .frame_rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 },
+            .content_rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 },
+            .pane_rects = &behind,
+        },
+    };
+    try testing.expect(resolve(.{ .x = 700, .y = 20 }, &cands, dragged_id, m1) == null);
+}
+
+test "a drop lands in ANOTHER window, named by that window's ref" {
+    const mine = [_]PaneRect{.{ .id = dragged_id, .rect = .{ .left = 0, .top = 0, .right = 500, .bottom = 800 } }};
+    const theirs = [_]PaneRect{.{ .id = other_id, .rect = .{ .left = 2000, .top = 0, .right = 3000, .bottom = 800 } }};
+    const cands = [_]Candidate{
+        .{
+            .window = 1,
+            .z_order = 1,
+            .content_rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 },
+            .pane_rects = &mine,
+        },
+        .{
+            .window = 2,
+            .z_order = 0,
+            .content_rect = .{ .left = 2000, .top = 0, .right = 3000, .bottom = 800 },
+            .pane_rects = &theirs,
+        },
+    };
+    const t = resolve(.{ .x = 2500, .y = 400 }, &cands, dragged_id, m1).?;
+    try testing.expect(t == .swap);
+    try testing.expectEqual(@as(WindowRef, 2), t.swap.window);
+    try testing.expectEqualStrings(other_id, t.swap.pane);
 }
 
 test "Target.window answers for every kind" {

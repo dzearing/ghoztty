@@ -150,6 +150,21 @@ pub fn parentWindow(self: *const PaneView) *Window {
     };
 }
 
+/// Point this pane at the window that now OWNS it (T1538).
+///
+/// The back-pointer is read by everything a pane does that needs its host —
+/// layout, the banner, the menu, the title — so it has to move in the same
+/// breath as the HWND re-parent, never separately: a pane whose `hwnd` lives
+/// under window B while its `parent_window` still names A reaches through the
+/// old window for its own geometry, which is a crash waiting for the first
+/// close.
+pub fn setParentWindow(self: *PaneView, window: *Window) void {
+    switch (self.kind) {
+        .terminal => |s| s.parent_window = window,
+        .viewer => |v| v.parent_window = window,
+    }
+}
+
 /// This pane's stable id (T113). Valid for both kinds.
 pub fn paneId(self: *const PaneView) []const u8 {
     return switch (self.kind) {

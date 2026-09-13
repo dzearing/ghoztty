@@ -2360,6 +2360,18 @@ pub const SW_SHOWNOACTIVATE: i32 = 4;
 pub const GW_HWNDPREV: u32 = 3;
 pub const GW_OWNER: u32 = 4;
 
+/// Re-parent a child window onto a different parent, keeping the window and
+/// everything it owns alive (T1538: a pane moving between top-level windows).
+///
+/// Returns the PREVIOUS parent, or null on failure. Note that Windows clears
+/// the child's position relative to the new parent's client area, so every
+/// caller must re-run its layout afterwards — which is the same thing a split
+/// mutation does anyway.
+pub extern "user32" fn SetParent(
+    hWndChild: HWND,
+    hWndNewParent: ?HWND,
+) callconv(.winapi) ?HWND;
+
 pub extern "user32" fn GetWindow(
     hWnd: HWND,
     uCmd: u32,

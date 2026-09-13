@@ -125,6 +125,7 @@ const dim_math = @import("dim_math.zig");
 const split_geometry = @import("split_geometry.zig");
 const rearrange_header = @import("rearrange_header.zig");
 const pane_drop = @import("pane_drop.zig");
+const pane_relocate = @import("pane_relocate.zig");
 const drop_highlight = @import("drop_highlight.zig");
 const DropHighlight = @import("DropHighlight.zig");
 const split_resize = @import("split_resize.zig");
@@ -2781,20 +2782,60 @@ pub const RearrangeDrag = struct {
     /// Where the preview sits for that drop, in screen coordinates.
     highlight: ?drop_highlight.Highlight = null,
 
-    /// A resolved drop this window can commit, with the pane id COPIED.
+    /// The window the current `drop` lands in (T1538). Null means this one.
+    ///
+    /// A raw pointer is safe to hold across the drag only because it is
+    /// re-checked against `app.windows` at commit: a window can close under a
+    /// drag (its shell exits, another session closes it), and a drop into a
+    /// freed Window is the one failure this whole feature could produce that
+    /// the user cannot recover from.
+    dest: ?*Window = null,
+
+    /// The other Ghoztty windows this drag may land in, FRONTMOST FIRST,
+    /// snapshotted at the press.
+    ///
+    /// Snapshotted rather than re-derived per mouse-move because the z-order
+    /// walk is the expensive half and the answer cannot change mid-drag: this
+    /// window holds the mouse capture, so nothing else is being activated.
+    others: [MAX_DROP_WINDOWS]*Window = undefined,
+    other_count: usize = 0,
+
+    /// This window's own depth in that z-order, so its candidate is arbitrated
+    /// against the others on the same scale rather than always winning.
+    self_depth: u32 = 0,
+    other_depth: [MAX_DROP_WINDOWS]u32 = undefined,
+
+    /// A resolved drop, with the pane id COPIED.
     ///
     /// `pane_drop.Target` borrows its pane id out of the candidate array, and
     /// that array is a stack temporary of the mouse-move that built it — so
     /// the borrowed form cannot outlive the move, and the drag has to hold its
-    /// own. These are the four drops that land inside ONE window; a new
-    /// WINDOW resolves to `null` here and is T1538's.
+    /// own. Which WINDOW these land in is `dest` beside them: the four
+    /// in-window drops read identically whether the destination is this window
+    /// or another one, and the commit is what branches.
     pub const Drop = union(enum) {
         split: struct { pane: pane_id.Buf, side: pane_drop.Side },
         swap: struct { pane: pane_id.Buf },
         top_level: struct { side: pane_drop.Side },
         new_tab: struct { index: usize },
+        /// Released over nothing: the pane becomes a window of its own, with
+        /// its frame at this screen rect (T1538).
+        new_window: drop_highlight.Rect,
     };
 };
+
+/// How many OTHER windows one drag resolves against, and how much of each is
+/// described to the resolver.
+///
+/// Bounded because the candidate geometry is built on the stack on every
+/// `WM_MOUSEMOVE` and an unbounded walk of `app.windows` there would put tens
+/// of kilobytes on it per move. The caps are generous against what a person
+/// actually has open; a window past them is simply not a drop target, which is
+/// the failure mode that costs nothing (the drag still works, that window just
+/// is not a destination) rather than one that loses a pane.
+const MAX_DROP_WINDOWS: usize = 6;
+const MAX_DROP_PANES: usize = 48;
+const MAX_DROP_TABS: usize = 24;
 
 /// One leaf and the slot it occupies, in window CLIENT coordinates.
 const PaneSlot = struct {
@@ -2892,20 +2933,18 @@ fn paneById(self: *Window, tab: usize, id: []const u8) ?*PaneView {
     return null;
 }
 
-/// A resolved target this window can commit, with the pane id copied out of
-/// the caller's (temporary) candidate array. Null for the cross-WINDOW drop
-/// T1538 owns, for a target in another window, and for a new-tab drop this
-/// window refuses (`can_new_tab`).
+/// A resolved target as the drag will hold it, with the pane id COPIED out of
+/// the caller's (temporary) candidate array.
+///
+/// Which window it lands in is the caller's to record — it resolved the target
+/// against a candidate set and therefore already knows. Null for a new-tab
+/// drop the destination refuses (`can_new_tab`), and for the new-WINDOW drop,
+/// which carries a frame the caller measures rather than a pane id.
 fn ownedDrop(
-    target: ?pane_drop.Target,
-    window: pane_drop.WindowRef,
+    target: pane_drop.Target,
     can_new_tab: bool,
 ) ?RearrangeDrag.Drop {
-    const t = target orelse return null;
-    if (t.window()) |w| {
-        if (w != window) return null;
-    } else return null;
-    return switch (t) {
+    return switch (target) {
         .split => |sp| .{ .split = .{ .pane = copyPaneId(sp.pane) orelse return null, .side = sp.side } },
         .swap => |sp| .{ .swap = .{ .pane = copyPaneId(sp.pane) orelse return null } },
         .top_level => |sp| .{ .top_level = .{ .side = sp.side } },
@@ -2938,7 +2977,147 @@ fn beginRearrangeDrag(self: *Window, view: *PaneView, x: i32, y: i32) void {
         .start_x = x,
         .start_y = y,
     };
+    const d = &self.rearrange_drag.?;
+    d.self_depth = if (self.hwnd) |h| zOrderDepth(h) else 0;
+    d.other_count = self.collectDropWindows(&d.others, &d.other_depth);
     if (self.hwnd) |h| _ = w32.SetCapture(h);
+}
+
+/// How many top-level windows sit ABOVE `hwnd` in the desktop's z-order — a
+/// SMALLER number is nearer the front, which is the scale
+/// `pane_drop.Candidate.z_order` is stated on.
+///
+/// Bounded: a pathological chain must fall out with a usable answer rather
+/// than spin the UI thread inside a mouse-move.
+fn zOrderDepth(hwnd: w32.HWND) u32 {
+    var n: u32 = 0;
+    var cur: ?w32.HWND = w32.GetWindow(hwnd, w32.GW_HWNDPREV);
+    while (cur) |c| {
+        if (n >= 512) break;
+        n += 1;
+        cur = w32.GetWindow(c, w32.GW_HWNDPREV);
+    }
+    return n;
+}
+
+/// The OTHER Ghoztty windows a drag starting here may land in, frontmost
+/// first (T1538).
+///
+/// Skipped: this window, a window with no HWND or no tabs, one that is already
+/// closing, a minimized or hidden one (it covers no point on screen, so a drop
+/// "on" it is a drop on whatever is actually there), and the quick terminal —
+/// which slides away on focus loss and would take the pane it was given with
+/// it.
+fn collectDropWindows(self: *Window, out: []*Window, depths: []u32) usize {
+    var n: usize = 0;
+    for (self.app.windows.items) |win| {
+        if (n >= out.len) break;
+        if (win == self) continue;
+        if (win.closing) continue;
+        if (win.is_quick_terminal) continue;
+        if (win.tab_count == 0) continue;
+        const h = win.hwnd orelse continue;
+        if (w32.IsWindowVisible(h) == 0) continue;
+        if (w32.IsIconic(h) != 0) continue;
+        out[n] = win;
+        depths[n] = zOrderDepth(h);
+        n += 1;
+    }
+    // Insertion sort, frontmost first. `n` is at most `MAX_DROP_WINDOWS`, so
+    // this is a handful of comparisons and needs no allocator.
+    var i: usize = 1;
+    while (i < n) : (i += 1) {
+        const w = out[i];
+        const z = depths[i];
+        var j: usize = i;
+        while (j > 0 and depths[j - 1] > z) : (j -= 1) {
+            out[j] = out[j - 1];
+            depths[j] = depths[j - 1];
+        }
+        out[j] = w;
+        depths[j] = z;
+    }
+    return n;
+}
+
+/// One window's geometry as the drop resolver sees it, written into the
+/// caller's buffers.
+///
+/// The slices are the caller's stack, and the returned candidate BORROWS them
+/// — which is why every use of one is inside the mouse-move that built it, and
+/// why a resolved target's pane id is copied before the drag holds onto it.
+fn dropCandidateFor(
+    win: *Window,
+    z: u32,
+    slots: []PaneSlot,
+    rects: []pane_drop.PaneRect,
+    tabs: []pane_drop.Rect,
+) ?pane_drop.Candidate {
+    if (win.hwnd == null) return null;
+    const n = win.collectPaneSlots(slots);
+    const origin = win.clientOrigin();
+    for (slots[0..n], 0..) |slot, i| {
+        rects[i] = .{ .id = slot.view.paneId(), .rect = toDropRect(slot.rect, origin) };
+    }
+    const strip = win.dropStrip(origin, tabs);
+    var frame: ?pane_drop.Rect = null;
+    if (win.hwnd) |h| {
+        var wr: w32.RECT = undefined;
+        if (w32.GetWindowRect(h, &wr) != 0) frame = .{
+            .left = wr.left,
+            .top = wr.top,
+            .right = wr.right,
+            .bottom = wr.bottom,
+        };
+    }
+    return .{
+        .window = win.dropWindowRef(),
+        .z_order = z,
+        .frame_rect = frame,
+        .content_rect = toDropRect(win.surfaceRect(), origin),
+        .pane_rects = rects[0..n],
+        .tab_bar_rect = if (strip) |st| st.band else null,
+        .tab_button_rects = if (strip) |st| st.tabs else &.{},
+    };
+}
+
+/// The work area of the monitor under `point`.
+fn workAreaAt(point: pane_drop.Point) ?pane_relocate.Rect {
+    const mon = w32.MonitorFromPoint(
+        .{ .x = point.x, .y = point.y },
+        w32.MONITOR_DEFAULTTONEAREST,
+    ) orelse return null;
+    var mi: w32.MONITORINFO = undefined;
+    mi.cbSize = @sizeOf(w32.MONITORINFO);
+    if (w32.GetMonitorInfoW(mon, &mi) == 0) return null;
+    return .{
+        .left = mi.rcWork.left,
+        .top = mi.rcWork.top,
+        .right = mi.rcWork.right,
+        .bottom = mi.rcWork.bottom,
+    };
+}
+
+/// Where a window holding the popped-out pane would land if the drop happened
+/// at `point` — this window's own frame size, placed against the point and
+/// clamped into that monitor's work area (T1538).
+///
+/// Same size as the window the pane is leaving, deliberately: the pane was
+/// laid out for that width, and a window that arrives at some default size
+/// reflows everything on screen the instant it appears.
+fn newWindowFrameAt(self: *const Window, point: pane_drop.Point) ?drop_highlight.Rect {
+    const h = self.hwnd orelse return null;
+    var wr: w32.RECT = undefined;
+    if (w32.GetWindowRect(h, &wr) == 0) return null;
+    const work = workAreaAt(point) orelse return null;
+    const f = pane_relocate.newWindowFrame(
+        .{ .x = point.x, .y = point.y },
+        wr.right - wr.left,
+        wr.bottom - wr.top,
+        work,
+        self.scale,
+    );
+    return .{ .left = f.left, .top = f.top, .right = f.right, .bottom = f.bottom };
 }
 
 /// May a new-tab drop be HONOURED right now (T1537)?
@@ -3004,48 +3183,116 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
         d.active = true;
     }
 
-    var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
-    const n = self.collectPaneSlots(&slots);
-    const origin = self.clientOrigin();
-    var rects: [MAX_DRAG_NODES]pane_drop.PaneRect = undefined;
-    for (slots[0..n], 0..) |slot, i| {
-        rects[i] = .{ .id = slot.view.paneId(), .rect = toDropRect(slot.rect, origin) };
+    // Every window the drop could land in, this one first (T1538). The
+    // buffers are the caller's stack and the candidates borrow them, so they
+    // and everything derived from them live and die inside this call.
+    var own_slots: [MAX_DRAG_NODES]PaneSlot = undefined;
+    var own_rects: [MAX_DRAG_NODES]pane_drop.PaneRect = undefined;
+    var own_tabs: [MAX_TABS]pane_drop.Rect = undefined;
+    var other_slots: [MAX_DROP_WINDOWS][MAX_DROP_PANES]PaneSlot = undefined;
+    var other_rects: [MAX_DROP_WINDOWS][MAX_DROP_PANES]pane_drop.PaneRect = undefined;
+    var other_tabs: [MAX_DROP_WINDOWS][MAX_DROP_TABS]pane_drop.Rect = undefined;
+
+    var cands: [MAX_DROP_WINDOWS + 1]pane_drop.Candidate = undefined;
+    var cand_windows: [MAX_DROP_WINDOWS + 1]*Window = undefined;
+    var n: usize = 0;
+    var own_idx: ?usize = null;
+
+    if (dropCandidateFor(self, d.self_depth, &own_slots, &own_rects, &own_tabs)) |c| {
+        own_idx = n;
+        cands[n] = c;
+        cand_windows[n] = self;
+        n += 1;
+    }
+    for (d.others[0..d.other_count], 0..) |win, i| {
+        // Re-checked every move, not trusted from the press: a window can
+        // close while the button is down, and a candidate built out of a freed
+        // Window is the one way this feature could take the app with it.
+        if (!self.app.hasWindow(win) or win.closing or win.hwnd == null) continue;
+        if (dropCandidateFor(
+            win,
+            d.other_depth[i],
+            &other_slots[i],
+            &other_rects[i],
+            &other_tabs[i],
+        )) |c| {
+            cands[n] = c;
+            cand_windows[n] = win;
+            n += 1;
+        }
     }
 
-    // One candidate: this is a drag within ONE window. The resolver takes a
-    // set precisely so T1538 can add the others here without touching
-    // anything else.
-    var tab_rects: [MAX_TABS]pane_drop.Rect = undefined;
-    const strip = self.dropStrip(origin, &tab_rects);
-    const candidate: pane_drop.Candidate = .{
-        .window = self.dropWindowRef(),
-        .z_order = 0,
-        .content_rect = toDropRect(self.surfaceRect(), origin),
-        .pane_rects = rects[0..n],
-        .tab_bar_rect = if (strip) |st| st.band else null,
-        .tab_button_rects = if (strip) |st| st.tabs else &.{},
-    };
-
+    const origin = self.clientOrigin();
     const point: pane_drop.Point = .{ .x = x + origin.x, .y = y + origin.y };
     const target = pane_drop.resolve(
         point,
-        &.{candidate},
+        cands[0..n],
         d.view.paneId(),
         self.dropMetrics(),
     );
 
-    const can_new_tab = self.canNewTabDrop(d.source_tab);
-    d.drop = ownedDrop(target, candidate.window, can_new_tab);
-    d.highlight = drop_highlight.forTarget(target, .{
-        .window = candidate.window,
-        .content_rect = candidate.content_rect,
-        .pane_rects = rects[0..n],
-        .tab_strip = candidate.tab_bar_rect,
-        .tab_rects = candidate.tab_button_rects,
-        .can_new_tab = can_new_tab,
-        .scale = self.scale,
-    });
-    if (d.highlight) |hl| self.showDropPreview(hl) else self.hideDropPreview();
+    d.drop = null;
+    d.dest = null;
+    d.highlight = null;
+    var over_other_window = false;
+
+    if (target) |t| resolved: {
+        if (t.window()) |ref| {
+            // A drop into a window — this one or another. Both the commit and
+            // the preview are answered against THAT window's geometry.
+            const i = blk: {
+                for (cands[0..n], 0..) |c, idx| if (c.window == ref) break :blk idx;
+                break :resolved;
+            };
+            const dest = cand_windows[i];
+            const can_new_tab = if (dest == self)
+                self.canNewTabDrop(d.source_tab)
+            else
+                // The pane is arriving from somewhere else entirely, so "make
+                // it a tab here" always has something to do — even when it is
+                // the source window's only pane, which is a move that empties
+                // that window rather than a no-op.
+                true;
+            if (ownedDrop(t, can_new_tab)) |drop| {
+                d.drop = drop;
+                d.dest = if (dest == self) null else dest;
+            }
+            d.highlight = drop_highlight.forTarget(t, .{
+                .window = cands[i].window,
+                .content_rect = cands[i].content_rect,
+                .pane_rects = cands[i].pane_rects,
+                .tab_strip = cands[i].tab_bar_rect,
+                .tab_rects = cands[i].tab_button_rects,
+                .can_new_tab = can_new_tab,
+                .scale = self.scale,
+            });
+            over_other_window = dest != self;
+        } else {
+            // Released over nothing: a window of its own (T1538). Refused for
+            // a window's last pane — that trade closes one window and opens
+            // another around the very same pane — and nothing is previewed for
+            // a release that would do nothing.
+            // Asked of the tab the pane was PICKED UP from, not the one on
+            // screen: a dwell switch can have moved the window on past it,
+            // and the question is what the source tab is left holding.
+            if (!pane_relocate.popOutAllowed(
+                self.leafCount(d.source_tab),
+                self.tab_count,
+            )) break :resolved;
+            const frame = self.newWindowFrameAt(point) orelse break :resolved;
+            d.drop = .{ .new_window = frame };
+            d.highlight = drop_highlight.forTarget(t, .{
+                .window = 0,
+                .content_rect = frame,
+                .new_window_frame = frame,
+                .scale = self.scale,
+            });
+            // Drawn out over the desktop, which this window's owned popup can
+            // never reach from where ownership puts it.
+            over_other_window = true;
+        }
+    }
+    if (d.highlight) |hl| self.showDropPreview(hl, over_other_window) else self.hideDropPreview();
 
     // The dwell (T1537): resting on a tab button opens that tab so the drag
     // can continue into its layout. Re-armed only when the tab under the
@@ -3053,8 +3300,15 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
     // restarting it on every jitter — a timer restarted by movement never
     // fires while the hand is moving, which is exactly when the user is
     // waiting for it.
+    //
+    // Only THIS window's strip arms it. Resting on another window's tab button
+    // would have to bring that window's tab up while the pointer is still
+    // held here, which reorders a window the user is not looking at; a drop on
+    // another window's strip already makes a tab there, which is the reachable
+    // half of the same intent.
     const hovered: ?usize = blk: {
-        const hit = pane_drop.hoveredTab(point, &.{candidate}) orelse break :blk null;
+        const own = own_idx orelse break :blk null;
+        const hit = pane_drop.hoveredTab(point, cands[own .. own + 1]) orelse break :blk null;
         break :blk if (hit.index < self.tab_count) hit.index else null;
     };
     self.armTabDwell(d, hovered);
@@ -3123,7 +3377,7 @@ fn endRearrangeDrag(self: *Window, commit: bool) void {
     }
     if (!commit or !d.active) return;
     const drop = d.drop orelse return;
-    self.commitRearrangeDrop(d.view, d.source_tab, drop);
+    self.commitRearrangeDrop(d.view, d.source_tab, drop, d.dest);
 }
 
 /// Apply a resolved drop (T1529's mutations).
@@ -3138,12 +3392,31 @@ fn commitRearrangeDrop(
     view: *PaneView,
     source_tab: usize,
     drop: RearrangeDrag.Drop,
+    dest_window: ?*Window,
 ) void {
     if (self.tab_count == 0) return;
     if (source_tab >= self.tab_count) return;
     const dest_tab = self.active_tab;
     const alloc = self.app.core_app.alloc;
     const at = self.findHandle(source_tab, view) orelse return;
+
+    // A window of its own (T1538). Not a destination at all, so it is answered
+    // before anything below reads one.
+    if (drop == .new_window) {
+        self.commitPopOutDrop(view, source_tab, at, drop.new_window);
+        return;
+    }
+
+    // Another WINDOW (T1538). Re-validated here rather than trusted from the
+    // move that resolved it: the pointer was recorded while the button was
+    // down and the window behind it may have closed since.
+    if (dest_window) |dest| {
+        if (dest == self) return;
+        if (!self.app.hasWindow(dest)) return;
+        if (dest.closing or dest.hwnd == null or dest.tab_count == 0) return;
+        self.commitCrossWindowDrop(view, source_tab, at, dest, drop);
+        return;
+    }
 
     if (drop == .new_tab) {
         self.commitNewTabDrop(view, source_tab, at, drop.new_tab.index);
@@ -3208,8 +3481,8 @@ fn commitRearrangeDrop(
                 return;
             };
         },
-        // Handled above, before the same-tab path is even chosen.
-        .new_tab => unreachable,
+        // Both handled above, before the same-tab path is even chosen.
+        .new_tab, .new_window => unreachable,
     };
 
     // Swap-then-release (T1356), the rule every other tree mutation follows.
@@ -3339,8 +3612,8 @@ fn commitCrossTabDrop(
                 return;
             };
         },
-        // Handled by the caller, which never reaches this path with one.
-        .new_tab => unreachable,
+        // Both handled by the caller, which never reaches this path with one.
+        .new_tab, .new_window => unreachable,
     }
 
     var old_src = self.tab_trees[source_tab];
@@ -3370,6 +3643,307 @@ fn commitCrossTabDrop(
     self.finishRearrangeDrop(view);
 }
 
+/// Move a live pane into ANOTHER top-level window (T1538).
+///
+/// The relocation PRIMITIVE, and the sharp edge of the whole feature: the pane
+/// that arrives must be the pane that left - same process, same scrollback,
+/// same agent session - which puts three rules on the order of what follows.
+///
+///   1. **Both destination trees are built before either source tree is
+///      released.** `moveTo` / `swapWith` / `insertAtTopLevel` each take the
+///      new reference first, so the pane's count never passes through zero;
+///      a count that touched zero would free the `Surface` under it, and the
+///      user would watch their shell die on a gesture that was supposed to
+///      move it.
+///   2. **Nothing on this path marks a session CLOSE.** `closeSplitPane`
+///      calls `setSessionCloseIntent(true)` on the pane it removes, which is
+///      how a closed pane's agent session ENDS rather than detaching. A
+///      relocation takes the removal without the intent - the session is not
+///      ending, it is changing windows.
+///   3. **The HWND is re-parented once the trees are installed and before
+///      either window lays out.** `SetParent` clears the child's position, so
+///      the layout pass that follows is what puts it where the new tree says;
+///      doing it the other way round lays the pane out in a window it does not
+///      belong to yet.
+fn commitCrossWindowDrop(
+    self: *Window,
+    view: *PaneView,
+    source_tab: usize,
+    at: SplitTree(PaneView).Node.Handle,
+    dest: *Window,
+    drop: RearrangeDrag.Drop,
+) void {
+    const alloc = self.app.core_app.alloc;
+    const dest_tab = dest.active_tab;
+    if (dest_tab >= dest.tab_count) return;
+
+    if (drop == .new_tab) {
+        self.commitCrossWindowNewTab(view, source_tab, at, dest, drop.new_tab.index);
+        return;
+    }
+
+    const src = &self.tab_trees[source_tab];
+    const dst = &dest.tab_trees[dest_tab];
+
+    var new_src: SplitTree(PaneView) = undefined;
+    var new_dst: SplitTree(PaneView) = undefined;
+
+    // The pane coming the OTHER way, on a swap. It has to make the same trip
+    // in reverse, or the destination window would be left holding a child HWND
+    // that still belongs to this one.
+    var swapped_in: ?*PaneView = null;
+
+    switch (drop) {
+        .split => |sp| {
+            const other = dest.paneById(dest_tab, &sp.pane) orelse return;
+            const target = dest.findHandle(dest_tab, other) orelse return;
+            const r = src.moveTo(
+                alloc,
+                at,
+                dst,
+                target,
+                dropDirection(sp.side),
+                drop_highlight.insert_ratio,
+            ) catch |err| {
+                log.err("cross-window move failed: {}", .{err});
+                return;
+            };
+            new_src = r.source;
+            new_dst = r.dest;
+        },
+        .swap => |sp| {
+            const other = dest.paneById(dest_tab, &sp.pane) orelse return;
+            const other_handle = dest.findHandle(dest_tab, other) orelse return;
+            const r = src.swapWith(alloc, at, dst, other_handle) catch |err| {
+                log.err("cross-window swap failed: {}", .{err});
+                return;
+            };
+            new_src = r.a;
+            new_dst = r.b;
+            swapped_in = other;
+        },
+        .top_level => |sp| {
+            var leaf: SplitTree(PaneView) = SplitTree(PaneView).init(alloc, view) catch |err| {
+                log.err("cross-window top-level leaf failed: {}", .{err});
+                return;
+            };
+            defer leaf.deinit();
+            new_dst = dst.insertAtTopLevel(
+                alloc,
+                dropDirection(sp.side),
+                drop_highlight.insert_ratio,
+                &leaf,
+            ) catch |err| {
+                log.err("cross-window top-level insert failed: {}", .{err});
+                return;
+            };
+            new_src = src.remove(alloc, at) catch |err| {
+                log.err("cross-window top-level remove failed: {}", .{err});
+                new_dst.deinit();
+                return;
+            };
+        },
+        .new_tab, .new_window => unreachable,
+    }
+
+    var old_src = self.tab_trees[source_tab];
+    var old_dst = dest.tab_trees[dest_tab];
+    self.tab_trees[source_tab] = new_src;
+    dest.tab_trees[dest_tab] = new_dst;
+    old_src.deinit();
+    old_dst.deinit();
+
+    adoptPane(view, dest);
+    if (swapped_in) |other| adoptPane(other, self);
+
+    dest.tab_active_pane[dest_tab] = view;
+    self.collapseAfterRelocation(source_tab, swapped_in orelse view);
+    dest.finishRearrangeDrop(view);
+    dest.raiseForDrop();
+}
+
+/// The same move, landing as a TAB OF ITS OWN in the other window's strip.
+fn commitCrossWindowNewTab(
+    self: *Window,
+    view: *PaneView,
+    source_tab: usize,
+    at: SplitTree(PaneView).Node.Handle,
+    dest: *Window,
+    index: usize,
+) void {
+    if (dest.tab_count >= MAX_TABS) return;
+    const alloc = self.app.core_app.alloc;
+
+    // The leaf takes its reference FIRST, so the source tree's release below
+    // is never the last one.
+    var leaf: SplitTree(PaneView) = SplitTree(PaneView).init(alloc, view) catch |err| {
+        log.err("cross-window new-tab leaf failed: {}", .{err});
+        return;
+    };
+    var leaf_owned = true;
+    defer if (leaf_owned) leaf.deinit();
+
+    const trimmed = self.tab_trees[source_tab].remove(alloc, at) catch |err| {
+        log.err("cross-window new-tab remove failed: {}", .{err});
+        return;
+    };
+
+    var old_tree = self.tab_trees[source_tab];
+    self.tab_trees[source_tab] = trimmed;
+    old_tree.deinit();
+
+    adoptPane(view, dest);
+
+    leaf_owned = false;
+    dest.insertPaneAsTabAt(view, leaf, @min(index, dest.tab_count));
+    self.collapseAfterRelocation(source_tab, view);
+    dest.finishRearrangeDrop(view);
+    dest.raiseForDrop();
+    self.app.markLayoutDirty();
+}
+
+/// Take a live pane out into a window of its OWN, at `frame` (T1538) - the
+/// drag released over nothing, and the header's pop-out button.
+fn commitPopOutDrop(
+    self: *Window,
+    view: *PaneView,
+    source_tab: usize,
+    at: SplitTree(PaneView).Node.Handle,
+    frame: drop_highlight.Rect,
+) void {
+    // A window's last pane has nowhere to go: the window would close and
+    // another open holding the same pane.
+    if (!pane_relocate.popOutAllowed(self.leafCount(source_tab), self.tab_count)) return;
+    const alloc = self.app.core_app.alloc;
+
+    // An EMPTY window - no first tab, and therefore no shell spawned for a
+    // pane that already exists and is about to be put in it.
+    const win = self.app.createEmptyWindow(.{
+        // Carry this window's opacity state across, the way `new_window`
+        // does: a pane popped out of an opaque window has no business
+        // arriving translucent.
+        .force_opaque = self.isForcedOpaque(),
+    }) catch |err| {
+        log.err("pop-out window create failed: {}", .{err});
+        return;
+    };
+    var win_owned = true;
+    defer if (win_owned) self.app.discardEmptyWindow(win);
+
+    // The preview promised a rect, so this window opens at that rect: a
+    // remembered or configured "start maximized" would otherwise show it full
+    // screen and make the preview a lie.
+    win.start_maximized = false;
+
+    // Placed BEFORE the pane goes in, because the first tab is what shows the
+    // window: sizing it afterwards is a window that appears and then jumps.
+    if (win.hwnd) |h| _ = w32.SetWindowPos(
+        h,
+        null,
+        frame.left,
+        frame.top,
+        @max(frame.right - frame.left, 1),
+        @max(frame.bottom - frame.top, 1),
+        w32.SWP_NOZORDER | w32.SWP_NOACTIVATE,
+    );
+
+    var leaf: SplitTree(PaneView) = SplitTree(PaneView).init(alloc, view) catch |err| {
+        log.err("pop-out leaf failed: {}", .{err});
+        return;
+    };
+    var leaf_owned = true;
+    defer if (leaf_owned) leaf.deinit();
+
+    const trimmed = self.tab_trees[source_tab].remove(alloc, at) catch |err| {
+        log.err("pop-out remove failed: {}", .{err});
+        return;
+    };
+
+    var old_tree = self.tab_trees[source_tab];
+    self.tab_trees[source_tab] = trimmed;
+    old_tree.deinit();
+
+    adoptPane(view, win);
+
+    leaf_owned = false;
+    win_owned = false;
+    win.insertPaneAsTabAt(view, leaf, 0);
+    self.collapseAfterRelocation(source_tab, view);
+    win.finishRearrangeDrop(view);
+    win.raiseForDrop();
+    self.app.markLayoutDirty();
+}
+
+/// Hand a live pane to `dest`: the child HWND moves under that window and the
+/// pane's own back-pointer moves with it, in one step so the two can never
+/// disagree (see `PaneView.setParentWindow`).
+///
+/// The pane's overlays - the dim wash, the banner strip, the scrollbar, the
+/// read-only badge - are owned POPUPS of the pane's own HWND rather than
+/// children of the window, so they follow it across without being touched.
+fn adoptPane(view: *PaneView, dest: *Window) void {
+    const dest_hwnd = dest.hwnd orelse return;
+    if (view.hwnd()) |h| {
+        if (w32.SetParent(h, dest_hwnd) == null) {
+            log.warn("pane re-parent failed pane={s}", .{view.paneId()});
+        }
+    }
+    view.setParentWindow(dest);
+    // The destination may be on a monitor with a different DPI, and a child
+    // window is never sent `WM_DPICHANGED` - the same reason a window dragged
+    // between monitors re-reads it rather than waiting to be told.
+    if (view.surface()) |surf| surf.handleDpiChange();
+}
+
+/// Repair the window a pane has just LEFT (T1538).
+///
+/// Three outcomes, the ones `pane_relocate.sourceAftermath` names: the tab
+/// re-lays out, the emptied tab's slot goes, or - when that was the window's
+/// last pane in its last tab - the window closes. The slot is dropped through
+/// `removeTabSlot` and never `closeTabByIndex`: the close path marks every
+/// session in the tree it removes as ENDING, and the pane that emptied this
+/// tab is still running next door.
+fn collapseAfterRelocation(self: *Window, source_tab: usize, fallback: *PaneView) void {
+    if (source_tab >= self.tab_count) return;
+    if (self.tab_trees[source_tab].isEmpty()) {
+        // `removeTabSlot` posts WM_CLOSE when this was the last tab, and the
+        // window then closes holding no trees - so nothing there can end a
+        // session either.
+        self.removeTabSlot(source_tab);
+        return;
+    }
+    self.tab_active_pane[source_tab] = self.firstLeaf(source_tab) orelse fallback;
+    // A pane may have arrived in a BACKGROUND tab - a cross-window swap sends
+    // one into whatever tab this window is showing, which need not be the tab
+    // the drag started in after a dwell switch.
+    if (source_tab != self.active_tab) self.setTabSurfacesVisible(source_tab, false);
+    self.layoutSplits();
+    self.app.markLayoutDirty();
+    if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
+}
+
+/// Has this window been toggled OPAQUE against a translucent config?
+///
+/// Read off the live ex-style rather than remembered, exactly the way the
+/// `new_window` action derives it (`toggle_background_opacity` is what moves
+/// the bit), so the two answers cannot drift.
+fn isForcedOpaque(self: *const Window) bool {
+    if (self.app.config.@"background-opacity" >= 1.0) return false;
+    const h = self.hwnd orelse return false;
+    return (w32.GetWindowLongW(h, w32.GWL_EXSTYLE) & w32.WS_EX_LAYERED) == 0;
+}
+
+/// Bring the window a pane was just dropped into to the front.
+///
+/// The drop is an explicit act of pointing at that window, so leaving it
+/// behind its neighbours would hide the result of the gesture. Focus INSIDE it
+/// is `finishRearrangeDrop`'s deferred `SetFocus`, which only reaches the
+/// keyboard once the window is foreground - which is this call.
+fn raiseForDrop(self: *Window) void {
+    const h = self.hwnd orelse return;
+    _ = w32.SetForegroundWindow(h);
+}
+
 /// A tab's first leaf in tree order, or null for an empty tree.
 fn firstLeaf(self: *Window, tab: usize) ?*PaneView {
     if (tab >= self.tab_count) return null;
@@ -3387,7 +3961,7 @@ fn finishRearrangeDrop(self: *Window, view: *PaneView) void {
     if (view.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
 }
 
-fn showDropPreview(self: *Window, hl: drop_highlight.Highlight) void {
+fn showDropPreview(self: *Window, hl: drop_highlight.Highlight, over_other_window: bool) void {
     const owner = self.hwnd orelse return;
     if (self.drop_preview == null) {
         self.drop_preview = DropHighlight.create(
@@ -3399,36 +3973,58 @@ fn showDropPreview(self: *Window, hl: drop_highlight.Highlight) void {
             return;
         };
     }
-    self.drop_preview.?.show(hl, self.chromePalette(), self.scale);
+    self.drop_preview.?.show(hl, self.chromePalette(), self.scale, over_other_window);
 }
 
 fn hideDropPreview(self: *Window) void {
     if (self.drop_preview) |p| p.hide();
 }
 
-/// Can a pane be moved out into a window of its own yet?
+/// Can a pane be moved out into a window of its own?
 ///
-/// **Not yet** (T1530). The header's pop-out button is drawn, measured and
-/// hit-tested here, but the thing it would DO — taking a live pane out of one
-/// top-level window and into another, with its process, scrollback and agent
-/// session intact — is cross-window pane relocation, which this apprt has
-/// never had (nothing in `src/apprt/win32/` calls `SetParent` today) and which
-/// T1532 owns along with the session-safety rule that makes it survivable.
+/// **Yes, since T1538.** The header's pop-out button was drawn, measured and
+/// hit-tested from T1530 and shipped DISABLED behind this constant, because
+/// the thing it asks for — taking a live pane out of one top-level window and
+/// into another with its process, scrollback and agent session intact — is
+/// cross-window relocation, which this apprt did not have. It has it now
+/// (`commitCrossWindowDrop` / `commitPopOutDrop`), under the rule that makes
+/// it survivable: the removal happens WITHOUT the session-close intent, so a
+/// rearrange never ends a session.
 ///
-/// So the button ships DISABLED, which is a state Mac's own header has
-/// (`PaneHeaderView.canPopOut` greys it on a window's last pane) rather than
-/// an invention, and T1532 flips this one constant. A disabled control that
-/// tells the truth beats a live one that loses a session, and beats a header
-/// whose geometry moves under the user the day the feature lands.
-const pane_pop_out_supported = false;
+/// The constant stays as the one place the capability is stated, so a build
+/// that ever has to take it away again turns off the button, the drop and the
+/// preview together rather than three-quarters of them.
+const pane_pop_out_supported = true;
 
-/// Whether THIS window's pane could pop out, once the machinery exists. Mac's
-/// rule: a window's last pane cannot — the window would close and another open
-/// to hold the same pane.
-fn canPopOutPane(self: *const Window) bool {
+/// Whether THIS window's pane could pop out. Mac's rule
+/// (`PaneHeaderView.canPopOut`), stated once in `pane_relocate`: a window's
+/// last pane cannot — the window would close and another open to hold the very
+/// same pane.
+fn canPopOutPane(self: *Window) bool {
     if (!pane_pop_out_supported) return false;
     if (self.tab_count == 0) return false;
-    return self.leafCount(self.active_tab) > 1 or self.tab_count > 1;
+    return pane_relocate.popOutAllowed(self.leafCount(self.active_tab), self.tab_count);
+}
+
+/// The pop-out button on `view`'s header: move that pane into a window of its
+/// own, beside the window it came from (T1538).
+///
+/// The button is a gesture with no pointer travel, so there is no drop point
+/// to place the new window against. It goes one header-step down and to the
+/// right of this window, the way a duplicated window does everywhere else —
+/// far enough that the two do not look like one window, near enough to read as
+/// having come out of it.
+fn popOutPane(self: *Window, view: *PaneView) void {
+    if (!self.canPopOutPane()) return;
+    const source_tab = self.findTabIndex(view) orelse return;
+    const at = self.findHandle(source_tab, view) orelse return;
+    const h = self.hwnd orelse return;
+    var wr: w32.RECT = undefined;
+    if (w32.GetWindowRect(h, &wr) == 0) return;
+    const step = rearrange_header.Metrics.forScale(self.scale).height;
+    const point: pane_drop.Point = .{ .x = wr.left + step, .y = wr.top + step };
+    const frame = self.newWindowFrameAt(point) orelse return;
+    self.commitPopOutDrop(view, source_tab, at, frame);
 }
 
 fn rearrangeMetrics(self: *const Window) rearrange_header.Metrics {
@@ -9597,15 +10193,14 @@ pub fn windowWndProc(
                 return 0;
             }
             // A press inside a pane header belongs to the header (T1530) and
-            // is CLAIMED here even when nothing acts on it yet, so it can
-            // never fall through to the chrome underneath. The drag itself is
-            // T1531 and the pop-out button is disabled until T1532 — both
-            // arrive as arms on this one hit.
+            // is CLAIMED here, so it can never fall through to the chrome
+            // underneath. The drag (T1531) and the pop-out button (T1538) are
+            // both arms on this one hit.
             if (window.hitTestRearrangeHeader(x, y)) |hit| {
                 switch (hit.part) {
-                    .button => if (window.canPopOutPane()) {
-                        // T1532 lands the relocation this button asks for.
-                    },
+                    // T1538 landed the relocation this button asks for, so
+                    // the press now does it rather than being swallowed.
+                    .button => window.popOutPane(hit.view),
                     // The whole band is the drag surface (T1531). The press
                     // only ARMS the drag — nothing moves and nothing is
                     // previewed until the pointer passes the threshold, so a

@@ -372,6 +372,27 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T1538: the drops that leave the WINDOW you are looking at - a pane into
+    # another window, and the header button that gives one a window of its own.
+    # Two files beyond the set above, because a relocation is the first thing
+    # here that re-parents a live child HWND: `pane_relocate.zig` states what
+    # the window a pane LEFT must do, and `App.zig` owns the empty window a
+    # pop-out fills.
+    [pscustomobject]@{
+        Name   = 'rearrange-window-drop'
+        Script = 'test\win32\rearrange-window-drop.ps1'
+        Stamp  = 'test\win32\rearrange-window-drop.stamp.json'
+        Covers = @(
+            'test\win32\rearrange-window-drop.ps1',
+            'src\apprt\win32\pane_relocate.zig',
+            'src\apprt\win32\drop_highlight.zig',
+            'src\apprt\win32\DropHighlight.zig',
+            'src\apprt\win32\pane_drop.zig',
+            'src\apprt\win32\PaneView.zig',
+            'src\apprt\win32\App.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # The viewer suite carries the browser-leak tripwire (T594): the only
     # thing that scores whether a test run handed a page to the user's real
     # browser, and it is not in the P1-P3 floor. The zig-side guard

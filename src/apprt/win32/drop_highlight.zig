@@ -47,6 +47,11 @@ pub const Kind = enum {
     /// promising it as a wash over the content area would say "it lands here"
     /// about an area the drop is about to replace entirely.
     new_tab,
+    /// The dragged pane will become a WINDOW OF ITS OWN, and this rect is
+    /// where that window lands (T1538). A footprint, like `split` and
+    /// `top_level` — the window is about to exist and the user is entitled to
+    /// know where.
+    new_window,
 };
 
 pub const Highlight = struct {
@@ -81,23 +86,40 @@ pub const Context = struct {
 
     /// The monitor scale, for the caret's thickness.
     scale: f32 = 1.0,
+
+    /// Where a `.new_window` drop would put the window it creates, in screen
+    /// coordinates (T1538) — `pane_relocate.newWindowFrame` against the live
+    /// window's size and the monitor under the pointer.
+    ///
+    /// Supplied by the caller rather than computed here because it needs the
+    /// monitor's work area, which is an OS question and this module has no OS.
+    /// Null ⇒ nothing is promised for that drop, which is what a caller that
+    /// cannot answer must say.
+    new_window_frame: ?Rect = null,
 };
 
 /// The preview for `target`, or null when there is nothing to draw in
 /// `window`.
 ///
-/// Null covers four different "nothing here" cases on purpose: no target at
-/// all (the pointer is over a divider or over the dragged pane itself), a
-/// target in a DIFFERENT window (T1538's cross-window drag — this window has
-/// no preview to draw for it, and drawing one in the wrong window is worse
-/// than drawing none), the new-WINDOW drop T1538 also owns, and a new-tab drop
-/// this window would refuse (`can_new_tab`). A preview is a promise, so it is
-/// drawn only where the release is honoured.
+/// `ctx` describes the window the TARGET names — which since T1538 is not
+/// necessarily the window the drag started in. The caller resolves the target
+/// first and then hands over that window's geometry; the guard below is what
+/// makes a mismatched pair impossible to draw from.
+///
+/// Null covers three "nothing here" cases on purpose: no target at all (the
+/// pointer is over a divider or over the dragged pane itself), a context that
+/// is not the target's window (a caller bug), and a new-tab drop the window
+/// would refuse (`can_new_tab`). A preview is a promise, so it is drawn only
+/// where the release is honoured.
 pub fn forTarget(target: ?Target, ctx: Context) ?Highlight {
     const t = target orelse return null;
     if (t.window()) |w| {
         if (w != ctx.window) return null;
-    } else return null; // .new_window
+    } else {
+        // `.new_window`: no window owns it, so the frame is whatever the
+        // caller measured — and nothing is promised when it could not.
+        return .{ .rect = ctx.new_window_frame orelse return null, .kind = .new_window };
+    }
 
     return switch (t) {
         .split => |s| .{
@@ -120,9 +142,8 @@ pub fn forTarget(target: ?Target, ctx: Context) ?Highlight {
                 .kind = .new_tab,
             };
         },
-        // T1538 owns the cross-window drop; until it does, nothing is
-        // promised.
-        .new_window => null,
+        // Answered above, before the per-window arms are reached.
+        .new_window => unreachable,
     };
 }
 
@@ -318,7 +339,16 @@ test "T1531: a target in ANOTHER window draws nothing in this one" {
     ));
 }
 
-test "T1538's cross-window drop promises nothing yet" {
+test "T1538: a new-window drop previews the frame that window will take" {
+    var c = baseCtx();
+    c.new_window_frame = .{ .left = 40, .top = 60, .right = 840, .bottom = 660 };
+    const h = forTarget(.{ .new_window = .{ .x = 100, .y = 76 } }, c).?;
+    try testing.expectEqual(Kind.new_window, h.kind);
+    try testing.expectEqual(@as(i32, 40), h.rect.left);
+    try testing.expectEqual(@as(i32, 840), h.rect.right);
+}
+
+test "T1538: a caller that could not measure the frame promises nothing" {
     try testing.expectEqual(@as(?Highlight, null), forTarget(
         .{ .new_window = .{ .x = 10, .y = 10 } },
         baseCtx(),

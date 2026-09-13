@@ -226,6 +226,11 @@ test {
     // no-OS-imports deal.
     _ = @import("apprt/win32/rearrange_header.zig");
 
+    // Pure win32 cross-window pane relocation rules — what the window a pane
+    // LEAVES has to do, and where a popped-out window lands (T1538), same
+    // no-OS-imports deal.
+    _ = @import("apprt/win32/pane_relocate.zig");
+
     // Pure win32 split-divider drag SEMANTICS — which other boundaries hold
     // their pixel when one divider moves (T533), same no-OS-imports deal.
     _ = @import("apprt/win32/split_resize.zig");

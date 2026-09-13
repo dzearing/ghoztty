@@ -5561,6 +5561,37 @@ fn reanchorFrame(frame: restore_frame.Rect) restore_frame.Rect {
 /// Create, track, and populate a new Window (with its first tab). Shared by
 /// the .new_window action and the IPC server.
 pub fn createWindow(self: *App, opts: Window.InitOptions) !*Window {
+    const window = try self.createEmptyWindow(opts);
+    errdefer {
+        _ = self.windows.pop();
+        window.deinit();
+        self.core_app.alloc.destroy(window);
+    }
+    // `--view` (T374): the window's one pane is a viewer, not a terminal. It
+    // goes through the same `addTab` bookkeeping — a viewer is a normal tab, so
+    // there is no second tab-creation path to keep in step.
+    if (opts.viewer_open) |open| {
+        _ = try window.addViewerTab(open);
+    } else {
+        _ = try window.addTab();
+    }
+    return window;
+}
+
+/// The same, STOPPING before the first tab: a tracked, empty window waiting for
+/// a pane to be put in it.
+///
+/// Split out for cross-window pane relocation (T1538), which has the pane
+/// already — it is the live one being carried out of another window, with its
+/// process and its agent session — and must NOT open a shell that would be torn
+/// down a millisecond later. Every caller other than the pop-out is
+/// `createWindow` above, which adds the tab and is the only shape the rest of
+/// the app uses.
+///
+/// The window is SHOWN by `insertPaneAsTabAt` when its first tab arrives, so an
+/// empty one is never on screen; a caller that fails to fill it must take it
+/// back off `self.windows` and tear it down.
+pub fn createEmptyWindow(self: *App, opts: Window.InitOptions) !*Window {
     const alloc = self.core_app.alloc;
     const window = try alloc.create(Window);
     errdefer alloc.destroy(window);
@@ -5589,16 +5620,37 @@ pub fn createWindow(self: *App, opts: Window.InitOptions) !*Window {
     }
 
     try self.windows.append(alloc, window);
-    errdefer _ = self.windows.pop();
-    // `--view` (T374): the window's one pane is a viewer, not a terminal. It
-    // goes through the same `addTab` bookkeeping — a viewer is a normal tab, so
-    // there is no second tab-creation path to keep in step.
-    if (opts.viewer_open) |open| {
-        _ = try window.addViewerTab(open);
-    } else {
-        _ = try window.addTab();
-    }
     return window;
+}
+
+/// Is `window` still one of ours?
+///
+/// Asked by anything holding a `*Window` across time it does not control
+/// (T1538: a pane drag records the window under the pointer and commits into
+/// it when the button comes up, and that window can close in between). Pointer
+/// identity is the whole test — a freed Window's slot is gone from this list
+/// before its memory is reused.
+pub fn hasWindow(self: *const App, window: *const Window) bool {
+    for (self.windows.items) |w| {
+        if (w == window) return true;
+    }
+    return false;
+}
+
+/// Tear down a window from `createEmptyWindow` that never got its pane.
+///
+/// Not `Window.close`: that path marks every session in the window CLOSE, and
+/// this window has no panes at all — the pane it was made for is still in the
+/// window it came from. Nothing was ever shown, either, so there is no close
+/// animation or confirmation to run.
+pub fn discardEmptyWindow(self: *App, window: *Window) void {
+    for (self.windows.items, 0..) |w, i| {
+        if (w != window) continue;
+        _ = self.windows.orderedRemove(i);
+        break;
+    }
+    window.deinit();
+    self.core_app.alloc.destroy(window);
 }
 
 /// Options for opening a remote-machine window (the shared open path below).
