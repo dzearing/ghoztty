@@ -35,9 +35,48 @@ const type_ramp = @import("type_ramp.zig");
 const list_selection = @import("list_selection.zig");
 
 /// Shape-coded reachability of a row, mirroring Mac's `statusIndicator`:
-/// online is a filled dot, offline a hollow ring, and `none` reserves the
-/// column without drawing (the Local row) so every row shares one grid.
-pub const Status = enum { none, online, offline };
+/// online is a filled dot, offline a hollow ring, `checking` a dimmed DOTTED
+/// ring, and `none` reserves the column without drawing (the Local row) so
+/// every row shares one grid.
+pub const Status = enum { none, online, offline, checking };
+
+/// What the chooser KNOWS about a machine's reachability right now (T711).
+///
+/// The third case is the one the cache made necessary: a row seeded from the
+/// last remembered device list is a real machine whose presence nobody has
+/// asked about yet. Drawing it as offline would be a confident lie and drawing
+/// it as online a worse one, so it draws as "checking" until the directory
+/// answers — and, exactly as on Mac, it stays SELECTABLE while it does.
+/// Presence never blocks a connect attempt; a dead machine fails at dial time.
+pub const Presence = enum {
+    online,
+    offline,
+    checking,
+
+    /// The presence the directory just reported.
+    pub fn fromOnline(online: bool) Presence {
+        return if (online) .online else .offline;
+    }
+
+    pub fn status(self: Presence) Status {
+        return switch (self) {
+            .online => .online,
+            .offline => .offline,
+            .checking => .checking,
+        };
+    }
+
+    /// What the detail pane calls it. Mac's chooser says "Checking status" for
+    /// the third state rather than "Status unknown" (`55dd70978`): the row is
+    /// mid-question, not unanswerable.
+    pub fn label(self: Presence) []const u8 {
+        return switch (self) {
+            .online => "Online",
+            .offline => "Offline",
+            .checking => "Checking status",
+        };
+    }
+};
 
 /// The machine glyph drawn in the icon column. Mac uses SF Symbols
 /// (`laptopcomputer` / `server.rack`); we draw the same two silhouettes with
@@ -68,11 +107,11 @@ pub fn localRow() RowText {
 /// or case-insensitively equal to the display name is noise ("MaximusHome" over
 /// "(maximushome)"), so it is dropped and the row falls back to naming the
 /// device's kind.
-pub fn deviceRow(name: []const u8, hostname: ?[]const u8, online: bool) RowText {
+pub fn deviceRow(name: []const u8, hostname: ?[]const u8, presence: Presence) RowText {
     return .{
         .title = name,
         .subtitle = hostnameSubtext(name, hostname) orelse "Relay device",
-        .status = if (online) .online else .offline,
+        .status = presence.status(),
         .glyph = .server,
     };
 }
@@ -115,8 +154,8 @@ pub fn localDetail() DetailText {
 ///
 /// `buf` backs the joined subtitle; the returned slice borrows it (and `name`
 /// and `hostname` borrow the caller's device list, as everywhere else here).
-pub fn deviceDetail(buf: []u8, name: []const u8, hostname: ?[]const u8, online: bool) DetailText {
-    const state: []const u8 = if (online) "Online" else "Offline";
+pub fn deviceDetail(buf: []u8, name: []const u8, hostname: ?[]const u8, presence: Presence) DetailText {
+    const state: []const u8 = presence.label();
     const host = hostnameSubtext(name, hostname);
     const subtitle: []const u8 = if (host) |h|
         std.fmt.bufPrint(buf, "{s} · {s}", .{ state, h }) catch state
@@ -412,21 +451,35 @@ test "localRow: pinned this-machine row, no status shape" {
 }
 
 test "deviceRow: hostname becomes the subline, online drives the shape" {
-    const r = deviceRow("Winbox", "winbox.local", true);
+    const r = deviceRow("Winbox", "winbox.local", .online);
     try testing.expectEqualStrings("Winbox", r.title);
     try testing.expectEqualStrings("winbox.local", r.subtitle);
     try testing.expectEqual(Status.online, r.status);
     try testing.expectEqual(Glyph.server, r.glyph);
 
-    const off = deviceRow("Winbox", "winbox.local", false);
+    const off = deviceRow("Winbox", "winbox.local", .offline);
     try testing.expectEqual(Status.offline, off.status);
+
+    // T711: a cache-seeded row is a real machine nobody has asked about yet.
+    const checking = deviceRow("Winbox", "winbox.local", .checking);
+    try testing.expectEqual(Status.checking, checking.status);
+}
+
+test "Presence: the third state says it is mid-question, not unanswerable" {
+    try testing.expectEqual(Presence.online, Presence.fromOnline(true));
+    try testing.expectEqual(Presence.offline, Presence.fromOnline(false));
+    try testing.expectEqualStrings("Checking status", Presence.checking.label());
+    try testing.expectEqualStrings("Online", Presence.online.label());
+    try testing.expectEqualStrings("Offline", Presence.offline.label());
+    // The directory never REPORTS checking - it is what the cache seeds.
+    try testing.expect(Presence.fromOnline(false) != .checking);
 }
 
 test "deviceRow: a redundant or missing hostname falls back, never blank" {
     // Case-insensitively equal to the name -> noise, per Mac's hostnameSubtext.
-    try testing.expectEqualStrings("Relay device", deviceRow("MaximusHome", "maximushome", true).subtitle);
-    try testing.expectEqualStrings("Relay device", deviceRow("Winbox", null, true).subtitle);
-    try testing.expectEqualStrings("Relay device", deviceRow("Winbox", "", true).subtitle);
+    try testing.expectEqualStrings("Relay device", deviceRow("MaximusHome", "maximushome", .checking).subtitle);
+    try testing.expectEqualStrings("Relay device", deviceRow("Winbox", null, .online).subtitle);
+    try testing.expectEqualStrings("Relay device", deviceRow("Winbox", "", .online).subtitle);
 }
 
 test "hostnameSubtext: keeps a genuinely different hostname" {
@@ -444,24 +497,24 @@ test "localDetail: the detail header names the machine, not the row" {
 
 test "deviceDetail: reachability leads, a useful hostname follows" {
     var buf: [128]u8 = undefined;
-    const on = deviceDetail(&buf, "Winbox", "winbox.local", true);
+    const on = deviceDetail(&buf, "Winbox", "winbox.local", .online);
     try testing.expectEqualStrings("Winbox", on.title);
     try testing.expectEqualStrings("Online · winbox.local", on.subtitle);
     try testing.expectEqual(Glyph.server, on.glyph);
 
-    const off = deviceDetail(&buf, "Winbox", "winbox.local", false);
+    const off = deviceDetail(&buf, "Winbox", "winbox.local", .offline);
     try testing.expectEqualStrings("Offline · winbox.local", off.subtitle);
 }
 
 test "deviceDetail: a redundant hostname leaves the state standing alone" {
     var buf: [128]u8 = undefined;
-    try testing.expectEqualStrings("Online", deviceDetail(&buf, "Maximus", "maximus", true).subtitle);
-    try testing.expectEqualStrings("Offline", deviceDetail(&buf, "Maximus", null, false).subtitle);
+    try testing.expectEqualStrings("Online", deviceDetail(&buf, "Maximus", "maximus", .online).subtitle);
+    try testing.expectEqualStrings("Offline", deviceDetail(&buf, "Maximus", null, .offline).subtitle);
 }
 
 test "deviceDetail: a buffer too small for the join degrades to the state" {
     var tiny: [3]u8 = undefined;
-    try testing.expectEqualStrings("Online", deviceDetail(&tiny, "Alpha", "prod-1.internal", true).subtitle);
+    try testing.expectEqualStrings("Online", deviceDetail(&tiny, "Alpha", "prod-1.internal", .online).subtitle);
 }
 
 test "rowMetrics: every piece nests inside the row height" {

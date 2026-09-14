@@ -2669,6 +2669,26 @@ $GuardTable = @(
             'test\win32\chooser-controls.ps1'
         )
     },
+    # The chooser's WARM LIST (T711): the remembered device cache, the refresh
+    # policy behind the 5s poll, and the off-thread fetch all three stand on.
+    # Nothing else on the box observes them - the floor lanes open no chooser,
+    # and every other chooser harness runs against whatever the relay says
+    # rather than against a list nobody could fetch. Coverage is deliberately
+    # the three new modules and the script, NOT MachineChooser.zig: that file
+    # hosts sixteen features and moves daily, and a gate on it would be due for
+    # reasons this script cannot fail on (the `machine-chooser` row below says
+    # the same thing for the same reason).
+    [pscustomobject]@{
+        Name   = 'chooser-warm-list'
+        Script = 'test\win32\chooser-warm-list.ps1'
+        Stamp  = 'test\win32\chooser-warm-list.stamp.json'
+        Covers = @(
+            'src\apprt\win32\machine_cache.zig',
+            'src\apprt\win32\chooser_refresh.zig',
+            'src\apprt\win32\DirectoryProbe.zig',
+            'test\win32\chooser-warm-list.ps1'
+        )
+    },
     # The chooser's PUSHED roster and the window rename that reaches its rows
     # (T710). Nothing else on the box drives a live roster: the P1-P3 floor
     # opens no chooser, and every other chooser harness asserts a list that was

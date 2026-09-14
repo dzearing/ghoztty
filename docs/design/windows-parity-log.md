@@ -28050,3 +28050,38 @@ the whole screen and has nothing smaller to go back to) and T1547 (the
 second-monitor case is right by construction - `MonitorFromPoint` plus the
 work-area clamp - and has never been measured, because this box has one
 monitor).
+
+## 2026-09-13 - The machine chooser opens on the machines it remembers (T711)
+
+Ctrl+Shift+N used to open an empty list and sit there until the relay answered:
+nothing was remembered between openings, the fetch ran inline on the open, and
+once the dialog was up the list was a photograph - a machine that came online,
+was renamed or was removed did not appear until you closed and reopened it. On
+a slow or dead connection it was a dialog that did nothing.
+
+It now opens instantly on the devices it saw last time, each row drawn as
+"checking" (a dotted ring) rather than a confident online/offline, then
+replaces them with the live answer when it arrives, and keeps re-asking every
+5s for as long as it is open. This is the Windows port of the Mac behaviour in
+66012e2ee / b0028112a / 55dd70978 / 27e639ae6.
+
+Three new modules keep the pieces separate and unit-testable:
+`machine_cache.zig` remembers the device list per account - identity only, so
+no presence and no token ever reach the file, and the blob is dropped on
+sign-out or a 401; `chooser_refresh.zig` holds the poll interval, the
+quiet-miss threshold and the change detection; `DirectoryProbe.zig` runs the
+fetch on a detached thread and routes the answer back by chooser id, the way
+`SessionRoster` already does. `MachineChooser.open` seeds from the cache,
+starts the fetch and arms a `WM_TIMER` poll; a failed fetch keeps what is on
+screen and stays quiet, and the selection is anchored by device id so a refresh
+that reorders rows does not move it under the user's hand. `App.init` warms the
+cache in the background at launch, so the first open of a session is warm too.
+
+Validated on box: `chooser-warm-list.ps1` ALL PASS (19) - a planted cache is on
+screen while the relay is black-holed (A), a failed fetch does not empty it
+(B), the poll keeps re-asking while the dialog is open (C), no tick outlives
+the chooser (D). `-NegativeControl` (claim C inverted to "never polls") red as
+designed. Floor lib/none/win32/agent ALL LANES PASS; P1 (25), P2 (20), P3 (16)
+ALL PASS. The rewrite was held to the chooser's existing harnesses too:
+`chooser-controls` (54) and `chooser-selection` (35) ALL PASS. New guard row
+`chooser-warm-list` registered in `scripts\guard-due.ps1` and stamped.

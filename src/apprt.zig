@@ -409,6 +409,16 @@ test {
     // no-OS-imports deal.
     _ = @import("apprt/win32/chooser_rows.zig");
 
+    // The machine chooser's WARM DEVICE CACHE (T711) - the blob format, and
+    // the account scoping that keeps one account's machines from ever being
+    // shown under another's sign-in.
+    _ = @import("apprt/win32/machine_cache.zig");
+
+    // The machine chooser's REFRESH POLICY (T711) - when the directory is
+    // re-asked, when a quiet failure is allowed to speak, and whether a landed
+    // answer is worth redrawing for.
+    _ = @import("apprt/win32/chooser_refresh.zig");
+
     // What a SELECTED ROW looks like in any win32 list (T828/T1008) — the
     // neutral washes, the accent indicator and the neutral focus rim, shared by
     // the machine chooser and the Activity Monitor's process table.

@@ -1,10 +1,10 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-09-13T20:03:09-07:00",
-    "commit":  "549c58d4b",
+    "generated":  "2026-09-13T21:47:46-07:00",
+    "commit":  "f851efa14",
     "uncommitted":  [
-                        "test/win32/chooser-sessions-push.ps1"
+                        "test/win32/chooser-warm-list.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -62,6 +62,7 @@
                   "test/win32/chooser-session-sort.ps1":  "0c056f4bea3e52e371f633afb02a08c33075053c3964a7a4d5434e4df0613b6a",
                   "test/win32/chooser-sessions-push.ps1":  "620396f231ee9ced118b5be197eb43cd9b2bd6fbeb705167ccbb7db96c119fa8",
                   "test/win32/chooser-sessions-remote.ps1":  "00f7ab5ee0f8f066d1e5c7cce32a7099987d4d9ef4d7408dc8f583fab1e9b85a",
+                  "test/win32/chooser-warm-list.ps1":  "c615a0de86c2debc15e196b56f97cc2021594a6548058fa4f9a48e991fca28f2",
                   "test/win32/chrome-merged-row.ps1":  "d33d8e41a1c00c40822433b47ddc00ea9cb572cf42829277c39d3334cd3a8020",
                   "test/win32/chrome-theme.ps1":  "877fa7b2a522777d301a763ad86ec521eff287ee3a48903a4c8b97463afc2af0",
                   "test/win32/claude-integration.ps1":  "b16a48c68de39133b6dfaa6bbbcf4112bbbf00e557b104a3c07025fdfbb8bb6d",

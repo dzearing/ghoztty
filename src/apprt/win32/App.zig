@@ -26,6 +26,9 @@ const MachineChooser = @import("MachineChooser.zig");
 const SessionRoster = @import("SessionRoster.zig");
 const SessionCpuProbe = @import("SessionCpuProbe.zig");
 const SessionRosterProbe = @import("SessionRosterProbe.zig");
+const DirectoryProbe = @import("DirectoryProbe.zig");
+const relay_directory = @import("../../remote/relay_directory.zig");
+const relay_signin = @import("../../remote/relay_signin.zig");
 const RestoreAllLocal = @import("RestoreAllLocal.zig");
 const RestoreAllRelay = @import("RestoreAllRelay.zig");
 const ActivityMonitor = @import("ActivityMonitor.zig");
@@ -925,6 +928,29 @@ pub fn init(
     // again, so every launch retries it. Both are no-ops (small local reads)
     // when there is nothing to do, and off-thread the moment there is.
     relay_suspend.launchAsync(self.core_app.alloc);
+
+    // Warm the machine list (T711). The chooser is a CHORD away and the first
+    // directory fetch of a session is the slow one - a token grant plus a round
+    // trip - so it runs here, in the background, while nobody is waiting. By
+    // ctrl+shift+n time the cache-seeded rows usually already carry live
+    // presence. Signed out it spawns nothing at all.
+    self.warmMachineCache();
+}
+
+/// Refresh the machine-chooser device cache in the background (T711). Nothing
+/// renders the result: it lands as `WM_APP_CHOOSER_DEVICES` with the
+/// `warm_only` id, matches no chooser, and updates `machine_cache` on its way
+/// past.
+fn warmMachineCache(self: *App) void {
+    const msg_hwnd = self.msg_hwnd orelse return;
+    const alloc = self.core_app.alloc;
+    var arena = std.heap.ArenaAllocator.init(alloc);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const token = IpcHandlers.resolveToken(a) orelse return;
+    const base = relay_directory.resolveBase(a) catch relay_directory.default_base;
+    const account = relay_signin.signedInEmail(a) orelse "";
+    _ = DirectoryProbe.start(alloc, msg_hwnd, DirectoryProbe.warm_only, base, token, account, true);
 }
 
 /// Defer a focus change to a terminal surface out of the current WndProc.
@@ -9906,6 +9932,20 @@ fn msgWndProc(
         // the same reason the roster's reply is: a chooser that closed first
         // must not be written through, and a dialog HWND can be recycled.
         MachineChooser.onSessionCpu(app, @intCast(wparam));
+        return 0;
+    }
+
+    if (msg == DirectoryProbe.WM_APP_CHOOSER_DEVICES) {
+        // wparam = heap *Result owned by the handler (T711): a relay device
+        // list fetched off the GUI thread. Here rather than on the chooser's
+        // own window for the reason the roster reply is - a chooser that closed
+        // first would have this discarded with its queue, leaking the list -
+        // and because the LAUNCH warm has no window at all: its whole product
+        // is the refreshed cache the handler writes.
+        if (wparam != 0) {
+            const res: *DirectoryProbe.Result = @ptrFromInt(wparam);
+            MachineChooser.onDevices(app, res);
+        }
         return 0;
     }
 

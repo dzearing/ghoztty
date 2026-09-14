@@ -24,11 +24,17 @@
 //! built from STATICs, so they can use the same GDI glyph routine the list rows
 //! do.
 //!
-//! Data: the device list is fetched once when the chooser opens, via
-//! `relay_directory.listDevices` (a synchronous authenticated GET on the GUI
-//! thread, bounded like the dial). No credential, or a fetch error, degrades
-//! to a "Local"-only list plus a footer hint — never a crash (T22a decision 1).
-//! Live re-poll while open is a deliberate non-goal for this first cut.
+//! Data (rewritten by T711): the dialog NEVER waits on the network to open.
+//! It seeds instantly from `machine_cache` — the last device list this account
+//! saw, with every seeded row drawn as "checking" because a remembered dot
+//! would be a lie — and a `DirectoryProbe` fetch runs on a detached thread,
+//! landing back here as `onDevices`. While the chooser is open that same fetch
+//! re-runs every `chooser_refresh.poll_ms`, so renames, removals and machines
+//! coming online appear under the user's eyes instead of on the next open; a
+//! transient failure keeps the list that is already true and stays quiet until
+//! it has missed three ticks in a row. No credential, or a fetch error,
+//! degrades to a "Local"-only list plus a footer hint — never a crash
+//! (T22a decision 1).
 //!
 //! Account (T141): the dialog's top row is the signed-in Google account —
 //! email plus a Sign In / Sign Out button — mirroring the Mac chooser's
@@ -67,6 +73,9 @@ const SessionRoster = @import("SessionRoster.zig");
 const SessionCpuProbe = @import("SessionCpuProbe.zig");
 const SessionRosterProbe = @import("SessionRosterProbe.zig");
 const chooser_session_sort = @import("chooser_session_sort.zig");
+const chooser_refresh = @import("chooser_refresh.zig");
+const machine_cache = @import("machine_cache.zig");
+const DirectoryProbe = @import("DirectoryProbe.zig");
 const machine_pool = @import("machine_pool.zig");
 const MachineConnectionPool = @import("MachineConnectionPool.zig");
 const RestoreAllLocal = @import("RestoreAllLocal.zig");
@@ -270,6 +279,32 @@ share_enabled: bool = false,
 parsed: ?relay_directory.Parsed = null,
 devices: []const relay_directory.Device = &.{},
 
+/// The REMEMBERED device list this dialog opened on (T711), owned by its own
+/// JSON arena and freed in `close`. `devices` borrows out of it until the live
+/// fetch lands, which is the whole reason the chooser can open with rows in it.
+cache: ?machine_cache.Parsed = null,
+
+/// The seeded `Device` array `devices` points at while `seeded` is true, owned
+/// by the app allocator (its STRINGS belong to `cache`). Freed by `dropSeed`
+/// the moment a live list replaces it.
+seeded_owned: ?[]relay_directory.Device = null,
+
+/// Whether `devices` is still the cache's list rather than the relay's. It is
+/// the one bit that turns every device row's presence into `checking`: nobody
+/// has asked the directory about these machines yet in this dialog.
+seeded: bool = false,
+
+/// A `DirectoryProbe` fetch is in flight. Gates the poll — ticking again
+/// behind a slow network is the one thing polling must not do.
+fetch_inflight: bool = false,
+
+/// Consecutive QUIET refresh failures (`chooser_refresh.Misses`). A blip must
+/// not flash an error over a list that still works.
+misses: chooser_refresh.Misses = .{},
+
+/// Whether the live poll timer is armed on this dialog's own HWND.
+poll_armed: bool = false,
+
 /// Current filtered rows (display order) mapped 1:1 to the listbox items.
 rows: [MAX_DEVICES + 1]Row = undefined,
 row_count: usize = 0,
@@ -399,6 +434,9 @@ pub fn open(window: *Window) void {
         .push = .{ .alloc = alloc },
     };
     next_chooser_id +%= 1;
+    // Id 0 is `DirectoryProbe.warm_only` — the launch warm, which nothing
+    // routes. A wrapped counter must not hand it to a real chooser.
+    if (next_chooser_id == DirectoryProbe.warm_only) next_chooser_id = 1;
     // The saved layout's titles are one rung of the session label ladder, and
     // the file does not change while a dialog is open — read it once here
     // rather than on every repaint.
@@ -423,7 +461,7 @@ pub fn open(window: *Window) void {
     // rules so the toggle writes exactly where the uplink reconciler reads.
     self.sharing_path = window.app.local_agent.sharingConfigPath(arena);
     if (self.sharing_path) |p| self.share_enabled = ShareMachineRow.isEnabled(arena, p);
-    const hint_text = self.fetchDevices(alloc);
+    const hint_text = self.seedFromCache(alloc);
 
     const style: u32 = w32.WS_POPUP | w32.WS_CAPTION | w32.WS_SYSMENU;
     const ex_style: u32 = w32.WS_EX_DLGMODALFRAME;
@@ -904,11 +942,247 @@ pub fn open(window: *Window) void {
     _ = w32.ShowWindow(hwnd, w32.SW_SHOW);
     _ = w32.SetForegroundWindow(hwnd);
     _ = w32.SetFocus(self.filter);
+
+    // The dialog is UP. Only now does anything touch the network (T711): the
+    // first live fetch, and the poll that keeps the list true while it is
+    // open. Both are no-ops when there is no credential to ask with.
+    self.startFetch(false);
+    // Armed even when signed out: a sign-in can happen in the account row
+    // above without the dialog closing, and `pollTick` skips a signed-out tick
+    // for the cost of one comparison.
+    if (w32.SetTimer(hwnd, POLL_TIMER_ID, chooser_refresh.poll_ms, null) != 0) {
+        self.poll_armed = true;
+    }
+}
+
+/// The live directory poll, on this dialog's OWN hwnd - its own timer id
+/// space, so it is not a `msg_timer` id (see that file's closing note).
+const POLL_TIMER_ID: usize = 1;
+
+/// The account the cache is keyed on: the signed-in email, or the empty
+/// "bare token" bucket when the credential came from `GHOSTTY_RELAY_TOKEN`.
+/// See `machine_cache.accountMatches` for why the empty key is not a wildcard.
+fn accountKey(self: *const MachineChooser) []const u8 {
+    return self.email orelse "";
+}
+
+/// Seed the list from the REMEMBERED devices for this account (T711) and
+/// return the footer hint to open with.
+///
+/// This is what replaced a blocking `listDevices` on the way in. Nothing here
+/// touches the network: the rows are on screen before the fetch that confirms
+/// them has even been spawned, and every one of them is drawn as `checking`
+/// until it lands.
+fn seedFromCache(self: *MachineChooser, list_alloc: Allocator) []const u8 {
+    if (self.token == null) return if (self.sign_in_configured)
+        "Not signed in — use Sign in with Google above to list your machines."
+    else
+        RelayAccountRow.unconfigured_hint;
+
+    const cached = machine_cache.load(list_alloc, self.accountKey()) orelse
+        return checking_hint;
+
+    var entries = cached.value.devices;
+    if (entries.len > MAX_DEVICES) entries = entries[0..MAX_DEVICES];
+    const devs = list_alloc.alloc(relay_directory.Device, entries.len) catch {
+        cached.deinit();
+        return checking_hint;
+    };
+    for (entries, devs) |e, *d| d.* = .{
+        .id = e.id,
+        .name = e.name,
+        .hostname = e.hostname,
+        // Presence is deliberately NOT remembered; `seeded` is what makes
+        // these rows read as "checking" rather than as offline.
+        .online = false,
+    };
+    self.cache = cached;
+    self.seeded_owned = devs;
+    self.devices = devs;
+    self.seeded = true;
+    log.info("chooser directory: seeded {d} machine(s) from cache", .{devs.len});
+    return "";
+}
+
+/// What the footer says while the first live answer is still coming. Named
+/// because the acceptance script reads it as the proof that the dialog opened
+/// WITHOUT waiting for the relay.
+pub const checking_hint = "Checking for your machines…";
+
+/// Free the seeded device array (the cache's strings belong to `cache`).
+fn dropSeed(self: *MachineChooser, alloc: Allocator) void {
+    if (self.seeded_owned) |d| {
+        alloc.free(d);
+        self.seeded_owned = null;
+    }
+    if (self.cache) |c| {
+        c.deinit();
+        self.cache = null;
+    }
+    self.seeded = false;
+}
+
+/// Start a device-list fetch off the GUI thread. `quiet` marks a poll tick:
+/// its failures keep the list that is on screen and stay silent until three
+/// have missed in a row.
+fn startFetch(self: *MachineChooser, quiet: bool) void {
+    const app = self.window.app;
+    const msg_hwnd = app.msg_hwnd orelse return;
+    if (DirectoryProbe.start(
+        app.core_app.alloc,
+        msg_hwnd,
+        self.id,
+        self.relay_base,
+        self.token,
+        self.accountKey(),
+        quiet,
+    )) self.fetch_inflight = true;
+}
+
+/// A poll tick on an OPEN chooser (T711). Mac's 5s task, as a WM_TIMER.
+fn pollTick(self: *MachineChooser) void {
+    switch (chooser_refresh.tick(self.token != null, self.fetch_inflight)) {
+        .skip_signed_out, .skip_inflight => {},
+        .fetch => self.startFetch(true),
+    }
+}
+
+/// GUI thread: a `DirectoryProbe` fetch landed. Routed by chooser id, so a
+/// dialog that closed in the meantime is simply not found - and the cache is
+/// still refreshed, which is the entire product of the LAUNCH warm.
+pub fn onDevices(app: *App, res: *DirectoryProbe.Result) void {
+    defer res.destroy();
+
+    if (res.unauthorized()) {
+        // The credential the list was fetched with is dead, so the remembered
+        // list is no longer authorized to exist (Mac's `clearRelayMachines`).
+        machine_cache.clear(app.core_app.alloc);
+    } else if (res.parsed != null) {
+        var buf: [MAX_DEVICES]machine_cache.Entry = undefined;
+        const devs = res.devices();
+        const n = @min(devs.len, buf.len);
+        for (devs[0..n], buf[0..n]) |d, *e| e.* = .{
+            .id = d.id,
+            .name = d.name,
+            .hostname = d.hostname,
+        };
+        machine_cache.save(app.core_app.alloc, res.account, buf[0..n]);
+        log.info("chooser directory: fetched {d} machine(s) quiet={}", .{ n, res.quiet });
+    }
+
+    for (app.windows.items) |win| {
+        const chooser = win.machine_chooser orelse continue;
+        if (chooser.id != res.chooser_id) continue;
+        chooser.adoptDevices(res);
+        return;
+    }
+    if (res.chooser_id != DirectoryProbe.warm_only) {
+        log.debug("chooser directory: reply landed after its chooser closed", .{});
+    }
+}
+
+/// Take a landed fetch into the open dialog.
+fn adoptDevices(self: *MachineChooser, res: *DirectoryProbe.Result) void {
+    self.fetch_inflight = false;
+    const alloc = self.window.app.core_app.alloc;
+
+    // The account changed while this was in flight (a sign-out, or a sign-in
+    // as somebody else). Showing the answer to the OLD question under the new
+    // account's name is the one thing account scoping exists to prevent; the
+    // sign-in path has already started its own reload.
+    if (!machine_cache.accountMatches(res.account, self.accountKey())) {
+        log.info("chooser directory: dropped a reply for another account", .{});
+        return;
+    }
+
+    const parsed = res.parsed orelse {
+        // Failed. A rejected credential is never quiet - it means the rows on
+        // screen are unauthorized, so they go.
+        if (res.unauthorized()) {
+            self.misses.succeeded();
+            self.dropSeed(alloc);
+            if (self.parsed) |*p| {
+                p.deinit();
+                self.parsed = null;
+            }
+            self.devices = &.{};
+            var fbuf: [256]u8 = undefined;
+            self.refilter(self.filterText(&fbuf));
+            self.setHint("Session expired — sign in again above.");
+            return;
+        }
+        const speak = self.misses.failed();
+        if (!res.quiet or speak) self.setHint(failureHint(res.err));
+        return;
+    };
+
+    self.misses.succeeded();
+
+    // Nothing the user can see changed: publishing would rebuild the listbox,
+    // drop the hover and repaint the dialog every five seconds for no reason.
+    var old_buf: [MAX_DEVICES]chooser_refresh.Fingerprint = undefined;
+    var new_buf: [MAX_DEVICES]chooser_refresh.Fingerprint = undefined;
+    const old_fp = fingerprints(&old_buf, self.devices);
+    var devs = parsed.value.devices;
+    if (devs.len > MAX_DEVICES) {
+        log.warn("machine chooser: {d} devices, showing first {d}", .{ devs.len, MAX_DEVICES });
+        devs = devs[0..MAX_DEVICES];
+    }
+    const new_fp = fingerprints(&new_buf, devs);
+    // A seeded list is always republished: the rows on screen say "checking",
+    // and the answer that resolves them is exactly what nothing must swallow.
+    const list_changed = self.seeded or chooser_refresh.changed(old_fp, new_fp);
+
+    // Ownership moves here; the result must not free it on the way out.
+    res.parsed = null;
+    if (self.parsed) |*p| p.deinit();
+    self.parsed = parsed;
+    self.dropSeed(alloc);
+    self.devices = devs;
+
+    if (!list_changed) return;
+
+    var anchor_buf: [128]u8 = undefined;
+    const anchor = self.anchorId(&anchor_buf);
+    var fbuf: [256]u8 = undefined;
+    self.refilter(self.filterText(&fbuf));
+    self.restoreAnchor(anchor);
+    self.setHint(if (devs.len == 0) "No enrolled machines for this account." else "");
+}
+
+/// The fingerprints of a device list, for `chooser_refresh.changed`.
+fn fingerprints(
+    buf: []chooser_refresh.Fingerprint,
+    devs: []const relay_directory.Device,
+) []const chooser_refresh.Fingerprint {
+    const n = @min(devs.len, buf.len);
+    for (devs[0..n], buf[0..n]) |d, *f| f.* = .{
+        .id = d.id,
+        .name = d.name,
+        .hostname = d.hostname orelse "",
+        .online = d.online,
+    };
+    return buf[0..n];
+}
+
+/// The footer text for a failed VISIBLE fetch.
+fn failureHint(err: ?anyerror) []const u8 {
+    return switch (err orelse error.Unexpected) {
+        error.Unauthorized => "Session expired — sign in again above.",
+        error.NotFound => "No device directory on this relay.",
+        else => "Couldn't reach the relay — showing this machine only.",
+    };
 }
 
 /// Fetch the device list into `self.parsed`/`self.devices`. Returns the footer
 /// hint text describing the outcome (empty when devices were listed).
 /// `list_alloc` backs the returned `Parsed` (freed in `close`).
+///
+/// SYNCHRONOUS, and deliberately still so: its callers are the explicit
+/// management actions (rename, remove, a completed sign-in) that just finished
+/// a blocking relay call of their own, so the answer is wanted before the next
+/// repaint. Opening and polling do NOT come through here - they go through
+/// `DirectoryProbe` (T711).
 fn fetchDevices(self: *MachineChooser, list_alloc: Allocator) []const u8 {
     // Pointing at a button that is not drawn — and could not work if it were —
     // is worse than saying nothing, so the unconfigured build gets the remedy
@@ -920,6 +1194,8 @@ fn fetchDevices(self: *MachineChooser, list_alloc: Allocator) []const u8 {
 
     const parsed = relay_directory.listDevices(list_alloc, self.relay_base, tok) catch |err| {
         log.warn("machine chooser: device list failed err={}", .{err});
+        // A rejected credential cannot leave an authorized-looking cache behind.
+        if (err == error.Unauthorized) machine_cache.clear(list_alloc);
         return switch (err) {
             error.Unauthorized => "Session expired — sign in again above.",
             error.NotFound => "No device directory on this relay.",
@@ -933,7 +1209,18 @@ fn fetchDevices(self: *MachineChooser, list_alloc: Allocator) []const u8 {
         log.warn("machine chooser: {d} devices, showing first {d}", .{ devs.len, MAX_DEVICES });
         devs = devs[0..MAX_DEVICES];
     }
+    self.dropSeed(list_alloc);
     self.devices = devs;
+    self.misses.succeeded();
+    // Remember it, so the NEXT open starts from this list instead of from an
+    // empty dialog (T711).
+    var buf: [MAX_DEVICES]machine_cache.Entry = undefined;
+    for (devs, buf[0..devs.len]) |d, *e| e.* = .{
+        .id = d.id,
+        .name = d.name,
+        .hostname = d.hostname,
+    };
+    machine_cache.save(list_alloc, self.accountKey(), buf[0..devs.len]);
     return if (devs.len == 0) "No enrolled machines for this account." else "";
 }
 
@@ -954,6 +1241,15 @@ fn refilter(self: *MachineChooser, needle: []const u8) void {
     self.refreshDetail();
 }
 
+/// What the chooser knows about device `i`'s reachability (T711). A row that
+/// is still the CACHE's is `checking`: it is a real machine whose presence
+/// nobody has asked about yet, and drawing it as offline would be a lie the
+/// user would act on.
+fn presence(self: *const MachineChooser, i: usize) chooser_rows.Presence {
+    if (self.seeded) return .checking;
+    return .fromOnline(self.devices[i].online);
+}
+
 /// What a row renders: title, dimmed subline, status shape and glyph. Pure
 /// derivation lives in `chooser_rows`; this just resolves the device.
 fn rowText(self: *const MachineChooser, row: Row) chooser_rows.RowText {
@@ -962,7 +1258,7 @@ fn rowText(self: *const MachineChooser, row: Row) chooser_rows.RowText {
         .device => |i| chooser_rows.deviceRow(
             self.devices[i].name,
             self.devices[i].hostname,
-            self.devices[i].online,
+            self.presence(i),
         ),
     };
 }
@@ -1165,6 +1461,10 @@ pub fn onAccountResult(self: *MachineChooser, res: *const RelayAccountRow.Result
 
     if (res.ok) {
         self.token = IpcHandlers.resolveToken(arena);
+        // A sign-out ends the authorization the remembered list was fetched
+        // under, so the list goes with it (T711, Mac's `clearRelayMachines`).
+        // The refetch below then re-seeds from whatever the new state is.
+        if (res.kind == .sign_out) machine_cache.clear(self.window.app.core_app.alloc);
         self.reloadDevices();
     }
     self.refreshAccountRow();
@@ -1256,20 +1556,33 @@ pub fn onShareResult(self: *MachineChooser, res: *const ShareMachineRow.Result) 
 /// `reanchorSelection`). Without the re-anchor, renaming a machine throws the
 /// user back to the Local row — and with it the detail pane and the management
 /// button that acted on the machine they were working with.
+/// The selected machine's id, COPIED into `buf` - the refetch frees the arena
+/// the live one points into. Null when the selection is Local or nothing.
+fn anchorId(self: *const MachineChooser, buf: []u8) ?[]const u8 {
+    switch (self.selectedRow() orelse return null) {
+        .local => return null,
+        .device => |i| {
+            if (i >= self.devices.len) return null;
+            const id = self.devices[i].id;
+            if (id.len > buf.len) return null;
+            @memcpy(buf[0..id.len], id);
+            return buf[0..id.len];
+        },
+    }
+}
+
+/// Put the highlight back on the machine `anchorId` remembered. A machine that
+/// is gone (removed, or filtered out) simply keeps `refilter`'s first row.
+fn restoreAnchor(self: *MachineChooser, anchor: ?[]const u8) void {
+    const id = anchor orelse return;
+    const row = rowForDeviceId(self.rows[0..self.row_count], self.devices, id) orelse return;
+    _ = w32.SendMessageW(self.list, w32.LB_SETCURSEL, row, 0);
+    self.refreshDetail();
+}
+
 fn reloadDevices(self: *MachineChooser) void {
-    // The id has to be COPIED: the refetch frees the arena it points into.
     var anchor_buf: [128]u8 = undefined;
-    const anchor: ?[]const u8 = anchor: {
-        switch (self.selectedRow() orelse break :anchor null) {
-            .local => break :anchor null,
-            .device => |i| {
-                const id = self.devices[i].id;
-                if (id.len > anchor_buf.len) break :anchor null;
-                @memcpy(anchor_buf[0..id.len], id);
-                break :anchor anchor_buf[0..id.len];
-            },
-        }
-    };
+    const anchor = self.anchorId(&anchor_buf);
 
     const alloc = self.window.app.core_app.alloc;
     if (self.parsed) |*p| {
@@ -1282,15 +1595,7 @@ fn reloadDevices(self: *MachineChooser) void {
 
     var buf: [256]u8 = undefined;
     self.refilter(self.filterText(&buf));
-
-    // A machine that is gone (removed, or filtered out) simply keeps
-    // `refilter`'s first-row selection.
-    if (anchor) |id| {
-        if (rowForDeviceId(self.rows[0..self.row_count], self.devices, id)) |row| {
-            _ = w32.SendMessageW(self.list, w32.LB_SETCURSEL, row, 0);
-            self.refreshDetail();
-        }
-    }
+    self.restoreAnchor(anchor);
 }
 
 /// The display row showing the device with `id`, or null when it is not in the
@@ -1527,7 +1832,7 @@ fn paintIdentity(self: *MachineChooser, hdc: w32.HDC, l: Layout) void {
             &sub_buf,
             self.devices[i].name,
             self.devices[i].hostname,
-            self.devices[i].online,
+            self.presence(i),
         ),
     };
 
@@ -2498,7 +2803,12 @@ fn drawStatusDot(
         chooser_rows.onlineOn(surface)
     else
         chooser_rows.secondaryOn(surface);
-    const pen = w32.CreatePen(w32.PS_SOLID, 1, rgb(color)) orelse return;
+    // A cache-seeded row draws a DOTTED ring (T711) - the same shape family as
+    // offline, visibly unsettled, and the same silhouette Mac uses for the
+    // third presence state. It is a shape difference rather than a color one so
+    // it survives a monochrome or high-contrast read.
+    const style: i32 = if (status == .checking) w32.PS_DOT else w32.PS_SOLID;
+    const pen = w32.CreatePen(style, 1, rgb(color)) orelse return;
     defer _ = w32.DeleteObject(pen);
     const brush: ?*anyopaque = if (online)
         w32.CreateSolidBrush(rgb(color))
@@ -2827,6 +3137,13 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
                 // The detail pane is the selection's mirror — it has to follow
                 // a click as well as an arrow key.
                 self.refreshDetail();
+                return 0;
+            }
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+        w32.WM_TIMER => {
+            if (wparam == POLL_TIMER_ID) {
+                self.pollTick();
                 return 0;
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -3467,7 +3784,7 @@ fn restoreAllFailed(self: *MachineChooser, err: App.RestoreAllError) void {
         error.NoAgent => "The session agent isn't running - there's nothing to restore from.",
         error.PullFailed => "Couldn't read this machine's saved layouts from the agent.",
         error.DialFailed => "Couldn't reach that machine - is its agent running?",
-        error.Unauthorized => "Session expired - sign in again above.",
+        error.Unauthorized => "Session expired — sign in again above.",
         error.IncompatibleVersion => dial_failure.incompatible_hint,
     });
 }
@@ -3902,6 +4219,7 @@ pub fn cancel(self: *MachineChooser) void {
 /// in `open`). Does NOT touch `machine_chooser` or the owner (never set yet).
 fn destroyState(self: *MachineChooser) void {
     self.releaseOwned();
+    self.dropSeed(self.window.app.core_app.alloc);
     if (self.parsed) |*p| p.deinit();
     self.arena.deinit();
     self.window.app.core_app.alloc.destroy(self);
@@ -3943,6 +4261,14 @@ fn close(self: *MachineChooser, refocus_owner: bool) void {
 
     if (window.hwnd) |owner| _ = w32.EnableWindow(owner, 1);
 
+    // Stop the poll before the window goes. `DestroyWindow` would take the
+    // timer with it, but an explicit kill is what keeps "no poll outlives the
+    // chooser" a property of this file rather than of the window manager.
+    if (self.poll_armed) {
+        _ = w32.KillTimer(self.hwnd, POLL_TIMER_ID);
+        self.poll_armed = false;
+    }
+
     // Put the link's own proc back before the dialog's userdata goes, else the
     // subclass loses its way to `self` and would answer the teardown's button
     // messages with `DefWindowProcW` instead of the BUTTON class.
@@ -3982,6 +4308,7 @@ fn close(self: *MachineChooser, refocus_owner: bool) void {
     }
 
     self.releaseOwned();
+    self.dropSeed(window.app.core_app.alloc);
     if (self.parsed) |*p| p.deinit();
     self.arena.deinit();
     window.app.core_app.alloc.destroy(self);

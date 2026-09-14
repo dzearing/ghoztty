@@ -1859,6 +1859,10 @@ pub extern "gdi32" fn GetTextExtentExPointW(
 ) callconv(.winapi) i32;
 pub extern "gdi32" fn CreatePen(iStyle: i32, cWidth: i32, color: u32) callconv(.winapi) ?*anyopaque;
 pub const PS_SOLID: i32 = 0;
+/// A dotted cosmetic pen. The machine chooser's "checking" presence ring
+/// (T711) is drawn with it, so a row seeded from the device cache is visibly
+/// unsettled by SHAPE rather than by color alone.
+pub const PS_DOT: i32 = 2;
 pub extern "gdi32" fn MoveToEx(hdc: HDC, x: i32, y: i32, lppt: ?*anyopaque) callconv(.winapi) i32;
 pub extern "gdi32" fn LineTo(hdc: HDC, x: i32, y: i32) callconv(.winapi) i32;
 
