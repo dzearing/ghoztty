@@ -28934,3 +28934,39 @@ violator, so the mode kept its teeth past the list emptying - which is the
 moment it would otherwise have stopped proving anything. `split-divider.ps1`
 runs green on the box (73 assertions, guard stamped), all four zig lanes PASS,
 and the harness floor lane PASS and re-stamped over 370 files.
+
+## 2026-09-14 - The test suite's house rules are written down, in the directory they govern (T732)
+
+`test\win32\` has a family of rules about how an acceptance script must report
+itself, and T725 gathered the checks for them into one lane. What it did not give
+them was a place to be READ: there was no README in the directory, so the rules
+were still learned the way T732 filed them - by tripping over one, weeks apart,
+whenever somebody happened to run the right audit. Twenty-three rules is worse
+for that than the four the task was filed about, not better.
+
+`test\win32\README.md` is now the entry point: the one command
+(`floor-lane.ps1 -Lane harness`), the guard row that makes it standing, the
+pending ratchet, the two conventions every script here already follows, and a row
+per rule naming its audit AND the marker that declares an exception to it - the
+thing that was previously only discoverable by reading the analyzer.
+
+A document that describes a set can rot the day a row joins the set, so it is
+CHECKED against the set rather than trusted to agree with it. Section F of
+`test\win32\harness-floor.ps1` asserts every audit in `$HARNESS_FLOOR_AUDITS` is
+named in the README, and that the README names the command, the guard row and the
+static-sweep membership criterion. An audit added to the floor and left
+undocumented now fails the floor's own harness.
+
+Writing that table is also what found T1572: `caller-anchor.ps1` is in the floor
+set, and it is T1079's GUI product script - it launches two windows and drags
+panes. The set's header states the criterion it breaks ("no GUI, no app launch,
+no `zig build`"), and T1571 had already recorded the symptom without naming the
+cause: the harness lane going red on a stale app build. A5 enforces that
+criterion on exactly one case today; T1572 makes it general and moves that script
+onto a `guard-due` row, which is the mechanism for a behavior script.
+
+Evidence: `harness-floor.ps1` ALL PASS (46 assertions, was 41), and red in the
+one way that matters - with the README moved aside it scores 5 FAILURE(S) with F2
+naming all 23 undocumented audits; `-NegativeControl` still scores exactly 1.
+The harness floor lane PASS over 23 audits, all four zig lanes PASS, ipc-p1/p2/p3
+ALL PASS.

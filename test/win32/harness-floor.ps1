@@ -249,6 +249,35 @@ try {
     Assert 'E3 -Lane all stays the four zig lanes' (
         $laneText -match "\`$lanes = if \(\`$Lane -eq 'all'\) \{ @\('lib', 'none', 'win32', 'agent'\) \}") ''
 
+    # ========================================================================
+    ""
+    "== F: the entry point a script author reads (T732)"
+    # ========================================================================
+
+    # A floor is only half of what T732 asked for. The other half is that the
+    # rules are WRITTEN DOWN somewhere a new script author finds them, instead
+    # of being four paragraphs of CLAUDE.md prose plus twenty script headers -
+    # the state in which they were learned one red run at a time. A README can
+    # rot the day a row is added, so the set and the document are checked
+    # against each other here rather than trusted to agree.
+    $readme = Join-Path $testRoot 'README.md'
+    Assert 'F1 test\win32 has a README' (Test-Path $readme) $readme
+
+    $readmeText = if (Test-Path $readme) { Get-Content -LiteralPath $readme -Raw } else { '' }
+    $undocumented = @($names | Where-Object { $readmeText -notmatch [regex]::Escape($_) })
+    Assert 'F2 every audit in the floor set is documented there' ($undocumented.Count -eq 0) `
+        ($undocumented -join ', ')
+
+    Assert 'F3 and it names the one command that runs them' (
+        $readmeText -match 'floor-lane\.ps1\s+-Lane\s+harness') ''
+    Assert 'F4 and the guard row that makes the floor standing' (
+        $readmeText -match 'harness-floor' -and $readmeText -match 'guard-due') ''
+    # The membership criterion is the property that keeps the lane runnable at
+    # all (section A5's exclusion is the same rule enforced on one case), so the
+    # document has to state it or the next row will be a GUI script.
+    Assert 'F5 and the criterion a new row has to meet' (
+        $readmeText -match 'static sweep') ''
+
     if ($NegativeControl) {
         "  NEGATIVE CONTROL: one assertion is inverted below; this run MUST be red"
         Assert 'N1 (inverted) the floor set is empty' ($audits.Count -eq 0) "count=$($audits.Count)"
