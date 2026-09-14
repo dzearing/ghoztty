@@ -168,6 +168,20 @@ pub fn onResult(app: *App, res: *Result) void {
         },
     );
     if (openChooser(app)) |chooser| chooser.onAccountResult(res);
+
+    // T713: the account's WINDOWS follow the account. This runs after the
+    // chooser has been told, so the row has already relabelled itself and the
+    // hint is already up — and it runs whether or not a chooser is open, because
+    // the store is the state, not the dialog (the rule this file opens with).
+    //
+    // Only a sign-out that actually signed out (`ok`) closes anything: T1421's
+    // `.not_revoked` outcome leaves the user SIGNED IN, and taking their windows
+    // away over a sign-out that did not happen would be the worst of both.
+    if (!res.ok) return;
+    switch (res.kind) {
+        .sign_out => _ = app.suspendRelayWindowsForSignOut(),
+        .sign_in => _ = app.restoreRelayWindowsForSignIn(),
+    }
 }
 
 /// The first open machine chooser across all windows, if any. At most one is

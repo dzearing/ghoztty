@@ -28140,3 +28140,49 @@ easy to hit - the comment claiming modality made it safe is corrected in place.
 T1553: `relay-account.ps1` scored a false red on its first run here because the
 fake relay still held its hits log, and was ALL PASS on the next - an arm that
 could not be measured is being reported as a failed product assertion.
+
+## 2026-09-14 - Signing out now takes the account's windows with it (T713)
+
+Signing out of the relay account used to revoke the session, delete the local
+store - and leave every window that account had opened sitting exactly where it
+was, still attached to another machine, still rendering that machine's shells.
+Nothing NEW could be dialed (that half of Mac's `ed8482d25` was already true
+here: the chooser refuses a dial and a resume with "Not signed in", the IPC verb
+refuses a tokenless relay open before dialing, and a New Window inheriting a
+relay window refuses too). What was missing was the windows themselves.
+
+Sign-out now closes them, sign-in brings them back, and a direct-TCP window is
+untouched either way - nobody signed in to open it, so signing out does not take
+it away. `src/apprt/win32/relay_signout.zig` is the whole rule plus the store
+that remembers what was taken: one row per machine, the session ids those
+windows held, unioned and deduped, and CONSUMED by the restore so one sign-out
+replays exactly once.
+
+The close DETACHES rather than terminates - it reuses T1390's `DetachPin`,
+pinned on every pane of the window before the close marks them, so the work on
+the far machine keeps running. Deliberately wider than the Disconnect offer,
+which only covers panes a confirmation was shown for: sign-out asks nobody, and
+ending somebody's remote build because they had close confirmations switched off
+would be the app punishing a preference.
+
+The sign-in replay rebuilds through the existing `RestoreAllRelay`, with one new
+thing: a session-id filter. Without it a replay would be the chooser's
+whole-machine "Restore All" and would hand back windows the user had closed
+themselves before signing out. An empty filter still means the whole machine,
+which is what that button promises; an entry that remembers no sessions restores
+nothing rather than everything.
+
+Validated: floor all-green, and the win32 lane was proven to SEE the new unit
+tests by inverting one assertion and watching it come back 1-failed rather than
+trusting a filtered run that reported the same count either way.
+`relay-account.ps1` grew section 7b inside its live relay+agent - GUI sign-out,
+the account window gone, a local window still there, a fresh relay dial refused.
+
+Two notes on what this turn did NOT do. The session-survival claim is not
+measured on the box: the agent's shells sit behind a PTY holder that escapes the
+process tree, so a descendant count is always zero, and `--relay` mode takes no
+`--sessions-file`, so there is no roster on disk to read. The oracle was REMOVED
+rather than left as an assertion that could only ever SKIP, and T1554 carries
+it. And `pinDetachAll` lives in the new module rather than on `Window` on
+purpose: a six-line method there put nine unrelated acceptance harnesses due,
+which is the T712 lesson about a stamp that keys on file content.

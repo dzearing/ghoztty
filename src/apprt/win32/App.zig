@@ -49,6 +49,7 @@ const webview2 = @import("webview2.zig");
 const Window = @import("Window.zig");
 const dial_failure = @import("dial_failure.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
+const relay_signout = @import("relay_signout.zig");
 const tcp_dial = @import("../../remote/tcp_dial.zig");
 const LocalAgent = @import("LocalAgent.zig");
 const MachineConnectionPool = @import("MachineConnectionPool.zig");
@@ -510,6 +511,11 @@ ipc_server: ?IpcServer = null,
 /// `+split --name`). See IpcRegistry.zig; the App methods below adapt it
 /// to the live window list and app allocator.
 ipc_registry: IpcRegistry = .{},
+
+/// What a relay SIGN-OUT closed, waiting for the sign-in that replays it
+/// (T713). Empty in every ordinary moment of the app's life — it fills for as
+/// long as somebody is signed out and is consumed by the next sign-in.
+relay_suspended: relay_signout.Store = .{},
 
 /// Find-or-spawn manager for the local session-persistence agent (T89d).
 /// Owns the ONE shared connection every persistent window/tab/split rides
@@ -1912,6 +1918,10 @@ pub fn terminate(self: *App) void {
 
     // Free the IPC target registry (keys are owned).
     self.ipc_registry.deinit(alloc);
+
+    // T713: whatever a sign-out suspended and no sign-in came back for. The
+    // sessions it names outlive us on the far agent, which is the point.
+    self.relay_suspended.deinit(alloc);
 
     // Layout-blob bookkeeping (T334): the agent KEEPS the blobs on purpose —
     // they are what makes this machine restorable after we exit — so this frees
@@ -6084,6 +6094,104 @@ pub fn openSessionIdsOn(
         }
     }
     return out.toOwnedSlice(alloc);
+}
+
+/// Close every window this account opened, remembering what they were holding
+/// (T713). Called on a successful relay SIGN-OUT, from the GUI thread.
+///
+/// Returns how many windows were closed. The sessions are DETACHED, never
+/// ended: they keep running on the machines that host them, which is what makes
+/// `restoreRelayWindowsForSignIn` a restore rather than a fresh start, and what
+/// keeps a sign-out from killing work on somebody else's box.
+///
+/// Direct-TCP remote windows and local windows are untouched — nobody signed in
+/// to open them (`relay_signout.isAccountBacked`).
+pub fn suspendRelayWindowsForSignOut(self: *App) usize {
+    const alloc = self.core_app.alloc;
+
+    // Snapshot first: `Window.close` destroys the HWND, whose WM_DESTROY
+    // handler removes it from `self.windows` (the `close_all_windows` rule).
+    const snapshot = alloc.dupe(*Window, self.windows.items) catch |err| {
+        log.err("relay sign-out: window snapshot failed err={}", .{err});
+        return 0;
+    };
+    defer alloc.free(snapshot);
+
+    var closed: usize = 0;
+    for (snapshot) |window| {
+        const machine = window.remote_machine orelse continue;
+        if (!relay_signout.isAccountBacked(machine)) continue;
+        const relay = machine.relay;
+
+        // Read the sessions BEFORE the close: after it the panes are gone.
+        const sessions = self.openSessionIdsOn(alloc, machine) catch &.{};
+        defer {
+            for (sessions) |s| alloc.free(s);
+            if (sessions.len > 0) alloc.free(sessions);
+        }
+        self.relay_suspended.add(alloc, relay.base, relay.device, sessions) catch |err| {
+            // The close still happens: leaving an authenticated window open
+            // because we could not write a note about it would be the wrong way
+            // to fail. The user's way back is the chooser's Restore All.
+            log.warn("relay sign-out: could not record device={s} err={}", .{ relay.device, err });
+        };
+
+        relay_signout.pinDetachAll(window);
+        window.close();
+        closed += 1;
+    }
+
+    if (closed > 0) log.info(
+        "relay sign-out: closed {d} account window(s); their sessions keep running",
+        .{closed},
+    );
+    return closed;
+}
+
+/// Replay what the last sign-out suspended (T713). Called on a successful relay
+/// SIGN-IN, from the GUI thread. Returns how many machines a restore was
+/// started for; each one rebuilds asynchronously through `RestoreAllRelay` and
+/// reports itself in the log (there is no chooser to report to — `chooser_id`
+/// 0 matches none, which is the same path a restore whose chooser closed takes).
+///
+/// The suspended set is CONSUMED whatever happens. A restore that cannot start
+/// is not retried on the next sign-in: by then the user has had every chance to
+/// decide those windows are gone, and the chooser's Restore All is the button
+/// that says otherwise.
+pub fn restoreRelayWindowsForSignIn(self: *App) usize {
+    const alloc = self.core_app.alloc;
+    if (self.relay_suspended.isEmpty()) return 0;
+
+    const entries = self.relay_suspended.take(alloc) catch |err| {
+        log.warn("relay sign-in: could not take the suspended set err={}", .{err});
+        return 0;
+    };
+    defer relay_signout.Store.freeEntries(alloc, entries);
+
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const token = IpcHandlers.resolveToken(arena_state.allocator()) orelse {
+        log.warn("relay sign-in: no credential after sign-in; {d} machine(s) not restored", .{entries.len});
+        return 0;
+    };
+
+    var started: usize = 0;
+    for (entries) |e| {
+        if (e.sessions.len == 0) continue;
+        const sessions: []const []const u8 = @ptrCast(e.sessions);
+        if (RestoreAllRelay.start(self, 0, .{
+            .base = e.base,
+            .device = e.device,
+            .token = token,
+            .only = sessions,
+        })) {
+            started += 1;
+        } else {
+            log.warn("relay sign-in: restore did not start device={s}", .{e.device});
+        }
+    }
+    log.info("relay sign-in: restoring windows on {d} machine(s)", .{started});
+    return started;
 }
 
 /// Whether any leaf of `win` names a session one of our panes already has open

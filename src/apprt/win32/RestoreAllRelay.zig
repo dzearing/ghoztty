@@ -50,6 +50,7 @@ const Window = @import("Window.zig");
 const layout_blobs = @import("layout_blobs.zig");
 const session_layout = @import("session_layout.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
+const relay_signout = @import("relay_signout.zig");
 const dial_failure = @import("dial_failure.zig");
 const w32 = @import("win32.zig");
 
@@ -66,6 +67,11 @@ pub const Target = struct {
     base: []const u8,
     device: []const u8,
     token: []const u8,
+    /// Restrict the rebuild to the layout windows holding THESE session ids
+    /// (T713's sign-in replay). Empty — the chooser's "Restore All" — means the
+    /// whole machine, which is that button's entire promise. BORROWED like the
+    /// rest of the target; `start` deep-copies.
+    only: []const []const u8 = &.{},
 };
 
 /// One window the worker prepared: its decoded layout plus the transport it
@@ -94,6 +100,9 @@ pub const Job = struct {
     /// on the GUI thread. The worker skips their windows rather than dialing a
     /// transport the double-attach guard is about to throw away.
     open: [][]u8 = &.{},
+    /// T713: the sessions a sign-out suspended on this machine. Empty ⇒ no
+    /// filter at all (the chooser's whole-machine Restore All).
+    only: [][]u8 = &.{},
 
     // --- filled in by the worker ---------------------------------------
     /// Non-null ⇒ the pull never completed, so nothing was dialed and there is
@@ -132,6 +141,22 @@ pub const Job = struct {
         return false;
     }
 
+    /// Whether the sign-in replay wants this layout window (T713). With no
+    /// filter every window is wanted — that is the chooser's Restore All. With
+    /// one, a window is wanted only when it holds a session the sign-out let go
+    /// of, so windows the user closed themselves before signing out stay closed.
+    fn windowIsWanted(self: *const Job, win: session_layout.Window) bool {
+        if (self.only.len == 0) return true;
+        for (win.tabs) |tab| {
+            for (tab.nodes) |node| {
+                const leaf = node.leaf orelse continue;
+                const sid = leaf.session_id orelse continue;
+                if (relay_signout.restoresWindow(&.{sid}, self.only)) return true;
+            }
+        }
+        return false;
+    }
+
     pub fn destroy(self: *Job) void {
         const alloc = self.alloc;
         // Every dial the rebuild did NOT take ownership of. This is the line
@@ -143,6 +168,8 @@ pub const Job = struct {
         if (self.decoded) |d| d.deinit();
         for (self.open) |id| alloc.free(id);
         if (self.open.len > 0) alloc.free(self.open);
+        for (self.only) |id| alloc.free(id);
+        if (self.only.len > 0) alloc.free(self.only);
         alloc.free(self.base);
         alloc.free(self.device);
         alloc.free(self.token);
@@ -222,6 +249,14 @@ pub fn start(app: *App, chooser_id: u64, target: Target) bool {
     // snapshot is an empty one: the guard is re-applied on the GUI thread
     // before anything is built, so the worst case is a wasted dial.
     job.open = app.openSessionIdsOn(alloc, job.machine()) catch &.{};
+    // T713's filter. A copy that fails leaves the filter EMPTY, which would
+    // widen a sign-in replay into a whole-machine Restore All — so the job is
+    // abandoned instead. Restoring nothing is recoverable (the chooser's own
+    // button is right there); handing back windows the user closed is not.
+    job.only = dupeIds(alloc, target.only) catch {
+        job.destroy();
+        return false;
+    };
 
     const thread = std.Thread.spawn(.{}, worker, .{job}) catch |err| {
         log.warn("restore all: worker thread spawn failed err={}", .{err});
@@ -230,6 +265,18 @@ pub fn start(app: *App, chooser_id: u64, target: Target) bool {
     };
     thread.detach();
     return true;
+}
+
+/// Deep-copy a borrowed id list onto `alloc`, all or nothing.
+fn dupeIds(alloc: Allocator, ids: []const []const u8) Allocator.Error![][]u8 {
+    if (ids.len == 0) return &.{};
+    var out: std.ArrayList([]u8) = .empty;
+    errdefer {
+        for (out.items) |s| alloc.free(s);
+        out.deinit(alloc);
+    }
+    for (ids) |id| try out.append(alloc, try alloc.dupe(u8, id));
+    return out.toOwnedSlice(alloc);
 }
 
 fn worker(job: *Job) void {
@@ -277,6 +324,11 @@ fn worker(job: *Job) void {
     defer list.deinit(alloc);
     for (decoded.windows) |win| {
         if (!App.restoreWindowHasAttachableLeaf(win, attach_ptr)) continue;
+        // T713: a sign-in replay rebuilds only what the sign-out took.
+        if (!job.windowIsWanted(win)) {
+            log.debug("restore all: '{s}' was not suspended by a sign-out, skipping", .{win.id});
+            continue;
+        }
         // The double-attach guard, applied against the GUI thread's snapshot so
         // a window that is already on screen costs no dial at all. The agent
         // rebinds a session to the NEWEST attach, so rebuilding a window whose
@@ -384,6 +436,47 @@ fn oneLeafWindow(
     nodes[0] = .{ .leaf = .{ .session_id = sid } };
     tabs[0] = .{ .nodes = nodes[0..1] };
     return .{ .id = "w", .tabs = tabs[0..1] };
+}
+
+/// A job that carries nothing but the T713 filter — `windowIsWanted` reads no
+/// other field, and the rest of a real job is a connection and a window handle.
+fn filterJob(only: [][]u8) Job {
+    return .{
+        .alloc = testing.allocator,
+        .hwnd = undefined,
+        .chooser_id = 0,
+        .base = undefined,
+        .device = undefined,
+        .token = undefined,
+        .only = only,
+    };
+}
+
+test "windowIsWanted: no filter is the chooser's whole-machine Restore All" {
+    var nodes: [1]session_layout.Node = undefined;
+    var tabs: [1]session_layout.Tab = undefined;
+    const win = oneLeafWindow(&nodes, &tabs, "s1");
+
+    const job = filterJob(&.{});
+    try testing.expect(job.windowIsWanted(win));
+    // Even a window whose leaf names no session at all.
+    const anon = oneLeafWindow(&nodes, &tabs, null);
+    try testing.expect(job.windowIsWanted(anon));
+}
+
+test "windowIsWanted: a sign-in replay takes only the suspended windows (T713)" {
+    var nodes: [1]session_layout.Node = undefined;
+    var tabs: [1]session_layout.Tab = undefined;
+
+    var s1 = "s1".*;
+    var only = [_][]u8{&s1};
+    const job = filterJob(&only);
+
+    try testing.expect(job.windowIsWanted(oneLeafWindow(&nodes, &tabs, "s1")));
+    // A window the user had closed BEFORE signing out is not handed back.
+    try testing.expect(!job.windowIsWanted(oneLeafWindow(&nodes, &tabs, "s9")));
+    // Nor is one whose leaves name nothing we can match.
+    try testing.expect(!job.windowIsWanted(oneLeafWindow(&nodes, &tabs, null)));
 }
 
 test "the dial fan-out counts the dialing thread as one of the pool" {

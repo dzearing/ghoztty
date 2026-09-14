@@ -2815,6 +2815,10 @@ $GuardTable = @(
             # from any other harness.
             'src\remote\relay_revoke_pending.zig',
             'src\remote\relay_suspend.zig',
+            # What a sign-out does to the account's WINDOWS (T713). Its rules
+            # are unit tested; only section 7b proves the app actually closes
+            # them, spares the local one and leaves the far session running.
+            'src\apprt\win32\relay_signout.zig',
             'test\win32\relay-account.ps1'
         )
     },

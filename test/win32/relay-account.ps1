@@ -24,6 +24,12 @@
 #      relay (Bearer = old token) and the rotated token is persisted.
 #   7. account tier E2E: with a fresh session, +new-remote-window WITHOUT
 #      --token dials a live relay+agent (needs go + ghoztty-agent).
+#   7b. T713: signing out CLOSES that account-backed window, leaves a local
+#      window untouched, and refuses a fresh relay dial until sign-in. Runs
+#      inside 7's live relay+agent, which is the only environment on this box
+#      where an account-backed window can exist at all. What it deliberately
+#      does NOT assert - that the far session kept running - is explained at
+#      the assertion site (T1554).
 #   8. a build with NO Google client id - which is what SHIPS - offers no
 #      sign-in button at all, says so in the row, and puts the remedy in the
 #      hint (T747). Sections 2-4 all set GHOSTTY_GOOGLE_CLIENT_ID, which is how
@@ -800,6 +806,57 @@ try {
                 Start-Sleep -Seconds 2
                 $code = Run-Cli '+list' 'acctlist.out'
                 Assert "account-tier window registered" ((Get-Out 'acctlist.out') -match '\[target: acctwin\]')
+
+                # --- 7b (T713): sign-out takes the account's windows with it -
+                # The defect this closes: sign-out revoked the relay session and
+                # deleted the local store, and then left this window open and
+                # still attached, rendering another machine's shells. A LOCAL
+                # window is the control - nobody signed in to open it, so it must
+                # survive untouched.
+                $code = Run-Cli '+new-window --target=localctl' 'localctl.out'
+                Assert "local control window opened" ($code -eq 0)
+                Start-Sleep -Seconds 2
+
+                # NOT asserted here: that the far session kept RUNNING. The
+                # obvious oracles do not exist on this box - the agent's shells
+                # sit behind a PTY holder that deliberately escapes the process
+                # tree (so a descendant count is always 0), and `--relay` mode
+                # takes no `--sessions-file`, so there is no roster on disk to
+                # read. What the close actually does is reuse T1390's DetachPin,
+                # which `remote-disconnect.ps1` already proves spares a far
+                # session. T1554 is the standing thread for measuring it here
+                # rather than inheriting it. An assertion that could only ever
+                # SKIP would claim coverage this section does not have.
+                $ch3 = Open-Chooser $g3
+                Assert "chooser opened for the sign-out" ($ch3 -ne [IntPtr]::Zero)
+                if ($ch3 -ne [IntPtr]::Zero) {
+                    $so = Get-ChooserAccountButton -Chooser $ch3
+                    Assert "row offers Sign Out while signed in" (
+                        $null -ne $so -and $so.Text -eq 'Sign Out')
+                    if ($null -ne $so) { Send-TestControlClick -Control $so.Hwnd | Out-Null }
+                    Assert "GUI reports sign_out ok (live relay)" (
+                        Wait-Stderr "$tmp\gui-cli.stderr.log" 'relay account: sign_out ok' 25)
+                    Assert "sign-out closed the account's window (T713)" (
+                        Wait-Stderr "$tmp\gui-cli.stderr.log" 'relay sign-out: closed 1 account window' 15)
+
+                    Start-Sleep -Seconds 2
+                    Run-Cli '+list' 'signoutlist.out' | Out-Null
+                    $afterList = Get-Out 'signoutlist.out'
+                    Assert "the account's remote window is gone" (
+                        -not ($afterList -match '\[target: acctwin\]'))
+                    Assert "the local window survived the sign-out" (
+                        $afterList -match '\[target: localctl\]')
+
+                    # And the other half of the contract: nothing new may be
+                    # dialed on the account once it is signed out.
+                    $code = Run-Cli "+new-remote-window --relay=$RelayBase --device=$($dev.id)" 'signedoutopen.out' 30
+                    Assert "a signed-out relay dial is refused" (
+                        $code -ne 0 -and (Get-Out 'signedoutopen.out') -match 'not signed in')
+
+                    Send-TestControlKey -Control $ch3 -Key Escape | Out-Null
+                    Start-Sleep -Milliseconds 400
+                }
+                Run-Cli '+close --target=localctl' 'localctlclose.out' | Out-Null
 
                 Run-Cli '+close --target=acctwin' 'acctclose.out' | Out-Null
                 if ($agent) { Stop-Process -Id $agent.Id -Force -ErrorAction SilentlyContinue }

@@ -1,12 +1,9 @@
 {
     "guard":  "command-resolve",
     "script":  "test/win32/command-resolve-audit.ps1",
-    "generated":  "2026-09-13T23:05:31-07:00",
-    "commit":  "89f93e381",
+    "generated":  "2026-09-14T00:29:23-07:00",
+    "commit":  "8bf37b334",
     "uncommitted":  [
-                        "test/win32/chooser-close-chord.ps1",
-                        "test/win32/chooser-modeless.ps1",
-                        "test/win32/ipc-machine-chooser.ps1",
                         "test/win32/relay-account.ps1"
                     ],
     "files":  {
@@ -266,7 +263,7 @@
                   "test/win32/rearrange-window-drop.ps1":  "2bcb5775a4356286d3f975a87f5e7733a5d6d0c91d15618f065e3cf514cebe1d",
                   "test/win32/registration-sites.ps1":  "98cd7d949f693dee766dc37e1c8457d5bcdc0dee2144581b3c9a30e35de44146",
                   "test/win32/relaunch-guard.ps1":  "54d167ae5a5574a5def6abbd9264ea37f65aa1376adc05d7981408d190163f06",
-                  "test/win32/relay-account.ps1":  "b0751cb93e4e886d8ea77c50b3199f0e76ec25a26825c076540a5e2b3ee17fdb",
+                  "test/win32/relay-account.ps1":  "49ea7b9524bb8055f0fa3e54a0abc724e14d74a7eda9ed035a67c08efcf712f7",
                   "test/win32/release-artifacts.ps1":  "4d357c76be5a7126f1330e842007438bcab749c7f1d11c51704e62aef0241189",
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",
                   "test/win32/remote-disconnect.ps1":  "4386cea29967d897fd29e5c5aae282daec44f7971138dff2e181887a4dbbe65f",
