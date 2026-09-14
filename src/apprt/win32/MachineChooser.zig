@@ -938,7 +938,21 @@ pub fn open(window: *Window) void {
     // looked at it. Off-thread, so this costs the dialog nothing.
     self.syncRoster();
 
-    _ = w32.EnableWindow(owner, 0);
+    // MODELESS, deliberately (T712). The owner is NOT disabled: Mac made this
+    // same picker modeless in `78a21daa8` because the frozen window behind it
+    // was the point of the feature going missing — you could not close a tab,
+    // type, or watch the session roster react to anything while deciding, so
+    // the list you were choosing from was a snapshot of the moment you opened
+    // it. An `EnableWindow(owner, 0)` here is that bug, so it is named rather
+    // than absent.
+    //
+    // Windows gives the rest of Mac's panel for free through the OWNER
+    // relationship this window was created with: an owned popup always draws
+    // above its owner and never hides when the owner is activated, which is
+    // what `.floating` + `hidesOnDeactivate = false` buy over there. It is
+    // scoped to the owner rather than to the whole app — activate ANOTHER
+    // ghoztty window and the picker stays with the window it belongs to, which
+    // is what every other owned Windows palette does.
     _ = w32.ShowWindow(hwnd, w32.SW_SHOW);
     _ = w32.SetForegroundWindow(hwnd);
     _ = w32.SetFocus(self.filter);
@@ -4250,16 +4264,17 @@ fn releaseOwned(self: *MachineChooser) void {
     self.roster.deinit();
 }
 
-/// Tear down: re-enable the owner, destroy the dialog, free. The owner MUST be
-/// re-enabled before the dialog is destroyed, else Windows may activate another
-/// application's window. `refocus_owner` returns the foreground/focus to the
-/// owner window (cancel / local-open); it is skipped when a freshly opened
-/// remote window has already taken the foreground and should keep it.
+/// Tear down: destroy the dialog and free. `refocus_owner` returns the
+/// foreground/focus to the owner window (cancel / local-open); it is skipped
+/// when a freshly opened remote window has already taken the foreground and
+/// should keep it.
+///
+/// There is no `EnableWindow(owner, 1)` here any more, and there must not be
+/// one: the dialog is modeless (see the note in `open`), so the owner was
+/// never disabled and re-enabling it would be a lie about a state nobody set.
 fn close(self: *MachineChooser, refocus_owner: bool) void {
     const window = self.window;
     window.machine_chooser = null;
-
-    if (window.hwnd) |owner| _ = w32.EnableWindow(owner, 1);
 
     // Stop the poll before the window goes. `DestroyWindow` would take the
     // timer with it, but an explicit kill is what keeps "no poll outlives the

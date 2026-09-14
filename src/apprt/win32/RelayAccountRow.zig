@@ -171,8 +171,14 @@ pub fn onResult(app: *App, res: *Result) void {
 }
 
 /// The first open machine chooser across all windows, if any. At most one is
-/// ever open per window and the chooser is modal to its owner, so "first" is
-/// "the one the user is looking at" in practice.
+/// ever open per window, and in practice only one window has one open — "first"
+/// is then "the one the user is looking at".
+///
+/// It is not a guarantee, and it never was: a chooser was only ever modal to
+/// its OWN window, so a second window could always raise a second one, and
+/// since T712 the chooser is modeless and that is merely easier to do. A sign-in
+/// result would then land on whichever chooser this loop reached first. Tracked
+/// as T1552 rather than papered over here.
 fn openChooser(app: *App) ?*MachineChooser {
     for (app.windows.items) |win| {
         if (win.machine_chooser) |chooser| return chooser;

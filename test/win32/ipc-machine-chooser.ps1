@@ -410,9 +410,12 @@ try {
     Assert ($chooser -ne [IntPtr]::Zero) 'GhozttyMachineChooser window opened'
     if ($chooser -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: no chooser to score'; exit 1 }
     Assert ((Get-TestControlText -Control $chooser) -eq 'New Remote Window') 'chooser caption is "New Remote Window"'
-    # The chooser is modal over its own window - cross-process, a disabled owner
-    # is the only checkable form of that, and nothing here asserted it before.
-    Assert (-not (Test-TestWindowEnabled -Window $g.Top)) 'the owner window is disabled while the chooser is up'
+    # The chooser is MODELESS over its own window since T712 (Mac `78a21daa8`):
+    # the terminal behind it keeps working while you decide. Cross-process, the
+    # owner's enabled state is the only checkable form of that, and the claim
+    # here is now the opposite of the one this line carried until T712.
+    # `chooser-modeless.ps1` owns the property; this is the neighbouring watch.
+    Assert (Test-TestWindowEnabled -Window $g.Top) 'the owner window stays enabled while the chooser is up (T712)'
     Assert (($hits -join "`n") -match '/v1/client/devices') 'chooser fetched the device directory (GET /v1/client/devices)'
     Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'app survived opening the chooser'
 

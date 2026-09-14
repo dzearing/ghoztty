@@ -2836,6 +2836,24 @@ $GuardTable = @(
             'test\win32\machine-chooser.ps1'
         )
     },
+    # The picker's MODALITY (T712). Mac made the New Window picker modeless in
+    # 78a21daa8 so you can keep working - and watch the roster react - while it
+    # is up; the win32 half was one `EnableWindow(owner, 0)` in
+    # `MachineChooser.open`, and nothing but this harness can see that line go
+    # back. It covers MachineChooser.zig despite the caution on the rows above,
+    # because the property lives in that file and nowhere else and the run is
+    # under a minute - the objection there is a FOUR-minute harness, not a gate
+    # on a busy file as such (`chooser-selection` covers it for the same shape
+    # of reason).
+    [pscustomobject]@{
+        Name   = 'chooser-modeless'
+        Script = 'test\win32\chooser-modeless.ps1'
+        Stamp  = 'test\win32\chooser-modeless.stamp.json'
+        Covers = @(
+            'src\apprt\win32\MachineChooser.zig',
+            'test\win32\chooser-modeless.ps1'
+        )
+    },
     # The isolation meta-check (T680): the only thing that fails when a
     # test\win32 script drives the CLI with no private IPC endpoint - the
     # defect class that reads the user's own panes. Covering the whole top

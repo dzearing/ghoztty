@@ -575,11 +575,12 @@ try {
     $chooser = Open-Chooser $g
     if ($chooser -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: ctrl+shift+n opened no chooser'; $script:failures++; exit 1 }
     Assert "chooser opened" ($chooser -ne [IntPtr]::Zero)
-    # A chooser is modal over its own window: the owner is disabled for exactly
-    # as long as it is up. Cross-process, that is the only checkable form of
-    # "modal", and nothing in the old script asserted it.
-    Assert "owner window is disabled while the chooser is up" (
-        -not (Test-TestWindowEnabled -Window $g.Top))
+    # A chooser is MODELESS over its own window since T712 (Mac `78a21daa8`):
+    # the terminal behind it keeps working while you decide. Cross-process, the
+    # owner's enabled state is the only checkable form of that, and the claim
+    # here is the opposite of the one this line carried until T712.
+    Assert "owner window stays enabled while the chooser is up (T712)" (
+        Test-TestWindowEnabled -Window $g.Top)
 
     $btn = Get-ChooserAccountButton -Chooser $chooser
     Assert "account row has a button" ($null -ne $btn)

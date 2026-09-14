@@ -12,8 +12,10 @@
 #   2. Every terminal window and pane behind the chooser is still there
 #      afterwards. This is the half the Mac bug broke, and win32 has never been
 #      able to reach it - the chord arrives as a WM_KEYDOWN at a chooser
-#      control, the owner window is DISABLED while the dialog is up, and only a
-#      Surface's own WndProc turns a key into a binding. Asserted anyway: the
+#      control, and only a Surface's own WndProc turns a key into a binding.
+#      Asserted anyway, and MORE worth asserting since T712 made the picker
+#      modeless: the window behind it is now live rather than disabled, so the
+#      one structural reason a stray chord could not reach a pane is gone. The
 #      failure mode is expensive (a pane full of work, closed by a chord aimed
 #      somewhere else) and cheap to keep watched.
 #
@@ -215,7 +217,12 @@ try {
     # user is in when they change their mind and reach for Ctrl+W.
     $filter = ConvertTo-TestHwnd (Get-ChooserFilterField -Chooser $chooser)
     Assert ($filter -ne [IntPtr]::Zero) 'the chooser has its filter field'
-    Assert (-not (Test-TestWindowEnabled -Window $g.Top)) 'the owner window is disabled while the chooser is up'
+    # ENABLED, since T712 made the picker modeless: the window behind it is
+    # live, which is precisely the state this section's claim is interesting in
+    # - a Ctrl+W aimed at the chooser must still not reach a pane that is now
+    # perfectly capable of receiving one. `chooser-modeless.ps1` owns the
+    # modality claim itself.
+    Assert (Test-TestWindowEnabled -Window $g.Top) 'the owner window stays enabled while the chooser is up (T712)'
 
     [void](Send-TestKeys -Window $chooser -Target $filter -Modifiers ctrl -Key W)
     Start-Sleep -Seconds 1

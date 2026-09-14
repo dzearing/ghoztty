@@ -28085,3 +28085,58 @@ designed. Floor lib/none/win32/agent ALL LANES PASS; P1 (25), P2 (20), P3 (16)
 ALL PASS. The rewrite was held to the chooser's existing harnesses too:
 `chooser-controls` (54) and `chooser-selection` (35) ALL PASS. New guard row
 `chooser-warm-list` registered in `scripts\guard-due.ps1` and stamped.
+
+## 2026-09-13 - The New Window picker no longer freezes the terminal behind it (T712)
+
+Opening "New Window" on Windows disabled the terminal window it came from, so
+for as long as the picker was up you could not type in that window, close a
+tab, or watch the session list react to anything - the list you were choosing
+from was a snapshot of the moment you opened it. Mac hit the same wall and made
+the picker modeless in `78a21daa8`; this is the Windows half of that, and it
+was one line each way: `EnableWindow(owner, 0)` on the way in and its partner on
+the way out, both now gone and both replaced by a note saying why they must not
+come back.
+
+Nothing else had to move. The picker is an OWNED popup, so Windows already
+draws it above the window it belongs to and keeps it there when that window is
+activated - which is what Mac buys with `.floating` plus
+`hidesOnDeactivate = false`. Key routing was already chosen by which window a
+keystroke is FOR, so a key aimed at the terminal behind the picker goes to the
+terminal; a second invocation already focused the open picker instead of
+stacking one; and `Window.deinit` already cancels the chooser, so it cannot
+outlive the window it was opened from. The one deliberate difference from Mac is
+scope: the picker floats above ITS window rather than above the whole app, which
+is what every other owned palette on this platform does.
+
+Validated on box: new harness `test\win32\chooser-modeless.ps1` ALL PASS (22) -
+the owner window is enabled while the picker is up (A), the terminal behind it
+takes activation and a split chord really splits it (B), the picker stays
+visible and directly above its owner with nothing sandwiched between while you
+work behind it (C), and it still filters, restores and closes on Escape
+afterwards (D). Teeth twice: arm A FAILED against the pre-fix build, and
+`-NegativeControl` (A inverted to "the owner is disabled") is red as designed.
+Three neighbouring scripts carried the opposite claim - `chooser-close-chord`,
+`ipc-machine-chooser` and `relay-account` each asserted the owner was DISABLED
+while the chooser was up - so those assertions were corrected rather than left
+lying, and all three are green: 16, 77 and ALL PASS respectively. Floor
+lib/none/win32/agent ALL LANES PASS; P1 (25), P2 (20), P3 (16) ALL PASS. New
+guard row `chooser-modeless` registered in `scripts\guard-due.ps1` and stamped,
+and the fifteen guards the change put due are green too - twelve static audits
+plus `chooser-controls` (54) and `chooser-selection` (35), leaving the sweep
+clear.
+
+One thing the change did NOT keep: two comment-only edits, in `App.zig` and
+`Window.zig`, saying the routing and the teardown are looking at a modeless
+dialog now. Touching those two files put TWENTY-NINE acceptance guards due -
+the stamp keys on file content, so a comment costs exactly what a behavior
+change costs - and hours of GUI runs is the wrong price for a sentence that is
+already in `MachineChooser.zig`, in T712 and here. Reverted deliberately rather
+than silently.
+
+Two threads filed on the way past. T1552: a sign-in or sharing result is
+delivered to the FIRST open chooser across all windows, which was always
+loosely reasoned (a chooser was only ever modal to its own window) and is now
+easy to hit - the comment claiming modality made it safe is corrected in place.
+T1553: `relay-account.ps1` scored a false red on its first run here because the
+fake relay still held its hits log, and was ALL PASS on the next - an arm that
+could not be measured is being reported as a failed product assertion.

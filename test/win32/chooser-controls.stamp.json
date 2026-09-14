@@ -1,13 +1,13 @@
 {
     "guard":  "chooser-controls",
     "script":  "test/win32/chooser-controls.ps1",
-    "generated":  "2026-09-13T21:53:36-07:00",
-    "commit":  "f851efa14",
+    "generated":  "2026-09-13T23:05:50-07:00",
+    "commit":  "89f93e381",
     "uncommitted":  [
                         "src/apprt/win32/MachineChooser.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/MachineChooser.zig":  "09b309228ad0563187a1ee20537403f01488b6a6e1dc1c362420048356721639",
+                  "src/apprt/win32/MachineChooser.zig":  "d3b9fea451c15c4011a181ed25b8dd8503a3a55b24a35229fd418d5f8cdf63cf",
                   "test/win32/chooser-controls.ps1":  "69a8d25a53eba9af41871bfebc202b015c83baebe4df8caa8a33ad7cb991a7d5",
                   "test/win32/lib/ChooserControls.ps1":  "a89ca8550ef8143250eb27df76bfa9e11b5c1af46f086ea23e07defd5d8eaec0"
               }
