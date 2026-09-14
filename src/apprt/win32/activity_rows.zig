@@ -18,20 +18,31 @@ const text_search = @import("text_search.zig");
 pub const Row = struct {
     pid: i64,
     ppid: i64 = 0,
-    /// PER-CORE CPU% exactly as `remote/agent/proc.zig` reports it: a fully busy
-    /// single thread reads ~100 and a multithreaded process may exceed it.
-    /// `normalizedCpu` divides by the core count for display, matching Mac's
-    /// `normalized(_:)` (:1088).
+    /// PER-CORE CPU% exactly as `remote/agent/proc.zig` reports it, and
+    /// DISPLAYED as-is: a fully busy single thread reads ~100 and a
+    /// multithreaded process legitimately exceeds it, the top(1) / Task Manager
+    /// "% CPU" convention (Mac ab79f37c4).
+    ///
+    /// Deliberately NOT divided by the core count. That answers a different
+    /// question — "what share of the whole machine is this?" — which the
+    /// header's host gauge already reports, and on an 18-core box it renders a
+    /// fully-pinned core as `5.6` and everything ordinary as `0.0`.
     cpu_pct: f32 = 0,
     mem_bytes: u64 = 0,
     name: []const u8 = "",
     /// Full executable path (`protocol.Proc.cmd`). May be empty.
     cmd: []const u8 = "",
+    /// The Ghoztty pane this process is running in, or "" when it is not one of
+    /// ours (T709). Filled in after the snapshot is marshaled — attribution
+    /// needs the whole table plus the live pane list, so it cannot be done row
+    /// by row on the sampling thread. Points into the panel's label arena; see
+    /// `activity_panes.zig`.
+    pane_label: []const u8 = "",
 };
 
 /// Which column the table is ordered by. The values line up with
 /// `activity_layout.Column` so a header click maps straight across.
-pub const SortKey = enum { pid, name, cpu, mem, path };
+pub const SortKey = enum { pid, name, cpu, mem, pane, path };
 
 pub const Sort = struct {
     key: SortKey,
@@ -84,22 +95,37 @@ pub const Filter = struct {
     /// source could not report one, and Mac then shows everything regardless of
     /// the toggle (:680-686) rather than implying an empty list.
     root_pid: i64 = 0,
+    /// Whether ANY row attributed to a pane (T709). The other half of Mac's
+    /// `canFilterSpawned` (:751-753): with session-persistence on, every pane's
+    /// shell is a child of `ghoztty-agent` rather than of the app, so the app's
+    /// descendant set is just the app and the root BFS alone finds nothing to
+    /// show. Attribution reaches those subtrees directly, so it can carry the
+    /// restriction on its own.
+    any_attributed: bool = false,
 };
 
 /// Whether the spawned-only restriction is actually in force (Mac's
-/// `spawnedOnlyActive`, :686).
+/// `spawnedOnlyActive` over `canFilterSpawned`, :751-757). Either a known root
+/// or at least one attributed pane is enough; with neither there is no set to
+/// compute and everything is shown.
 pub fn spawnedOnlyActive(f: Filter) bool {
-    return f.root_pid != 0 and !f.show_all;
+    return (f.root_pid != 0 or f.any_attributed) and !f.show_all;
 }
 
-/// Mark `out[i]` for every row that is `root` or a transitive descendant of it
-/// (Mac's `spawnedPIDs` BFS, :692-710). `out.len` must be >= `rows.len`.
+/// Mark `out[i]` for every ghoztty-spawned row: anything attributed to one of
+/// our panes, PLUS `root` and its transitive descendants (Mac's `spawnedPIDs`,
+/// :759-786). `out.len` must be >= `rows.len`.
+///
+/// The two halves are both needed. The BFS catches processes the app spawned
+/// itself — non-persistent panes, helpers with no pane of their own — and the
+/// attribution catches the pane subtrees that hang off the AGENT instead of off
+/// the app, which with session-persistence on is most of them.
 ///
 /// Fixed-point marking rather than a hash map: this module allocates nothing, and
 /// the row count is bounded by the sampler's `default_limit` (512). Cycle-safe —
 /// a row is marked at most once, so a pid whose ppid chain loops cannot spin.
 pub fn markSpawned(rows: []const Row, root: i64, out: []bool) void {
-    for (out[0..rows.len]) |*b| b.* = false;
+    for (rows, 0..) |r, i| out[i] = r.pane_label.len > 0;
     if (root == 0) return;
 
     var changed = true;
@@ -151,6 +177,7 @@ pub fn less(sort: Sort, a: Row, b: Row) bool {
         .cpu => std.math.order(a.cpu_pct, b.cpu_pct),
         .mem => std.math.order(a.mem_bytes, b.mem_bytes),
         .name => orderStr(a.name, b.name),
+        .pane => orderPane(a.pane_label, b.pane_label),
         .path => orderStr(a.cmd, b.cmd),
     };
     return switch (ord) {
@@ -158,6 +185,18 @@ pub fn less(sort: Sort, a: Row, b: Row) bool {
         .gt => !sort.ascending,
         .eq => a.pid < b.pid,
     };
+}
+
+/// Window/Pane order: attributed rows by label, and everything UNATTRIBUTED
+/// after them. Mac sorts on `paneSortKey`, which substitutes U+10FFFF for a
+/// missing pane (:64-67) — the same thing said without a sentinel string, so
+/// ascending puts the rows this column exists for first instead of clumping
+/// every foreign process at the top under an empty string.
+fn orderPane(a: []const u8, b: []const u8) std.math.Order {
+    if (a.len == 0 and b.len == 0) return .eq;
+    if (a.len == 0) return .gt;
+    if (b.len == 0) return .lt;
+    return orderStr(a, b);
 }
 
 /// Case-insensitive ASCII string order, so "Code.exe" and "code.exe" do not
@@ -176,14 +215,6 @@ fn orderStr(a: []const u8, b: []const u8) std.math.Order {
 // Cell + label text
 // ---------------------------------------------------------------------
 
-/// Per-core CPU% normalized to a 0..100 machine total (Mac's `normalized`,
-/// :1088-1093). A zero core count leaves the reading alone rather than dividing
-/// by zero.
-pub fn normalizedCpu(cpu_pct: f32, ncpu: u32) f32 {
-    if (ncpu == 0) return cpu_pct;
-    return cpu_pct / @as(f32, @floatFromInt(ncpu));
-}
-
 /// Mac's `memString` (:1112-1117): GB with one decimal at 1 GiB and up, else
 /// whole MB. The units are binary (GiB/MiB) and labeled "GB"/"MB", which is what
 /// the Mac panel does and what Task Manager shows.
@@ -195,9 +226,16 @@ pub fn formatMemory(buf: []u8, bytes: u64) []const u8 {
     return std.fmt.bufPrint(buf, "{d:.0} MB", .{mb}) catch "";
 }
 
-/// A table cell's CPU reading: one decimal, matching Mac's `"%.1f"` (:1001).
-pub fn formatCpu(buf: []u8, cpu_pct: f32, ncpu: u32) []const u8 {
-    return std.fmt.bufPrint(buf, "{d:.1}", .{normalizedCpu(cpu_pct, ncpu)}) catch "";
+/// A table cell's CPU reading: the PER-CORE figure as reported, one decimal
+/// (Mac's `String(format: "%.1f", row.cpuPctPerCore)`, :1102).
+///
+/// This used to divide by the core count first, and that divide is exactly what
+/// ab79f37c4 deleted: it turned a fully-pinned core on an 18-core box into `5.6`
+/// and every ordinary process into `0.0`, so the column that exists to say
+/// "this one is busy" said nothing at all. The header gauge still reports a
+/// genuine 0-100% of the whole machine — a different quantity, and unchanged.
+pub fn formatCpu(buf: []u8, cpu_pct: f32) []const u8 {
+    return std.fmt.bufPrint(buf, "{d:.1}", .{cpu_pct}) catch "";
 }
 
 /// The gauge's headline CPU number: whole percent, matching Mac's `"%.0f%%"`
@@ -362,6 +400,58 @@ test "less: every key orders, and ties fall back to pid" {
     try testing.expect(less(.{ .key = .name, .ascending = false }, c, d));
 }
 
+test "less: the pane column groups by label and puts unattributed rows LAST" {
+    var a = mkRow(10, 0, "a", 0, 0, "");
+    var b = mkRow(20, 0, "b", 0, 0, "");
+    var none = mkRow(30, 0, "c", 0, 0, "");
+    a.pane_label = "build";
+    b.pane_label = "logs";
+    none.pane_label = "";
+
+    const asc: Sort = .{ .key = .pane, .ascending = true };
+    try testing.expect(less(asc, a, b));
+    // Unattributed is greater than every label, so ascending puts the rows the
+    // column exists for first instead of clumping foreign processes at the top.
+    try testing.expect(less(asc, b, none));
+    try testing.expect(!less(asc, none, b));
+
+    // Two unattributed rows are equal on the key and fall back to pid.
+    var none2 = mkRow(40, 0, "d", 0, 0, "");
+    none2.pane_label = "";
+    try testing.expect(less(asc, none, none2));
+    try testing.expect(less(.{ .key = .pane, .ascending = false }, none, none2));
+}
+
+test "spawnedOnlyActive: an attributed pane carries the restriction with no root" {
+    // The session-persistence case: pane shells are children of ghoztty-agent,
+    // so a local snapshot can attribute rows while `root_pid` finds nothing.
+    try testing.expect(spawnedOnlyActive(.{ .root_pid = 0, .any_attributed = true }));
+    try testing.expect(spawnedOnlyActive(.{ .root_pid = 100, .any_attributed = false }));
+    // Neither ⇒ there is no set to compute, so nothing is hidden.
+    try testing.expect(!spawnedOnlyActive(.{ .root_pid = 0, .any_attributed = false }));
+    // "Show all" still wins over both.
+    try testing.expect(!spawnedOnlyActive(.{ .root_pid = 100, .any_attributed = true, .show_all = true }));
+}
+
+test "markSpawned: an attributed row is spawned even with no path to the root" {
+    var agent_child = mkRow(200, 999, "pwsh", 0, 0, "");
+    agent_child.pane_label = "build";
+    var tool = mkRow(300, 200, "rg", 0, 0, "");
+    tool.pane_label = "build";
+    const rows = [_]Row{
+        mkRow(100, 1, "ghoztty", 0, 0, ""), // the app, the root
+        agent_child, // under the AGENT, not the app
+        tool,
+        mkRow(400, 1, "notepad", 0, 0, ""),
+    };
+    var mark: [rows.len]bool = undefined;
+    markSpawned(&rows, 100, &mark);
+    try testing.expect(mark[0]); // the root itself
+    try testing.expect(mark[1]); // attributed, unreachable from the root
+    try testing.expect(mark[2]);
+    try testing.expect(!mark[3]);
+}
+
 test "less: name order ignores case" {
     const a = mkRow(1, 0, "Code.exe", 0, 0, "");
     const b = mkRow(2, 0, "beta.exe", 0, 0, "");
@@ -392,13 +482,16 @@ test "formatMemory: GB with a decimal from 1 GiB, whole MB below it" {
     try testing.expectEqualStrings("1.0 GB", formatMemory(&buf, 1024 * 1024 * 1024));
 }
 
-test "formatCpu: per-core reading is divided by the core count" {
+test "formatCpu: the per-core reading is printed as reported, never divided" {
     var buf: [32]u8 = undefined;
-    // 800% per-core on 8 cores is 100% of the machine.
-    try testing.expectEqualStrings("100.0", formatCpu(&buf, 800, 8));
-    try testing.expectEqualStrings("12.5", formatCpu(&buf, 100, 8));
-    // An unknown core count leaves the reading alone rather than dividing by 0.
-    try testing.expectEqualStrings("100.0", formatCpu(&buf, 100, 0));
+    // A pinned single thread reads ~100 whatever the core count is — this is
+    // the ab79f37c4 regression test: the old code turned it into 12.5 on an
+    // 8-core box and 5.6 on an 18-core one.
+    try testing.expectEqualStrings("100.0", formatCpu(&buf, 100));
+    // Four busy threads legitimately exceed 100.
+    try testing.expectEqualStrings("400.0", formatCpu(&buf, 400));
+    try testing.expectEqualStrings("0.0", formatCpu(&buf, 0));
+    try testing.expectEqualStrings("2.5", formatCpu(&buf, 2.5));
 }
 
 test "formatHostCpu: whole percent, clamped" {

@@ -19,6 +19,9 @@ const actions = @import("activity_actions.zig");
 const cards_mod = @import("activity_cards.zig");
 const layout_mod = @import("activity_layout.zig");
 const rows_mod = @import("activity_rows.zig");
+const panes_mod = @import("activity_panes.zig");
+const utf16_text = @import("utf16_text.zig");
+const Window = @import("Window.zig");
 const w32 = @import("win32.zig");
 
 const log = ActivityMonitor.log;
@@ -40,7 +43,159 @@ pub fn filterSpec(self: *const ActivityMonitor) rows_mod.Filter {
         .needle = needle(self),
         .show_all = self.show_all,
         .root_pid = if (self.snap) |s| s.root_pid else 0,
+        .any_attributed = self.attributed_rows > 0,
     };
+}
+
+// ---------------------------------------------------------------------
+// Pane attribution (T709)
+// ---------------------------------------------------------------------
+
+/// Re-derive `self.panes` from the live window list: every pane whose SHELL
+/// runs on the machine this panel is sampling, with the label the "Window /
+/// Pane" column shows.
+///
+/// GUI thread only — it reads window titles and surface state, neither of which
+/// the sample worker may touch. That is also why it runs here in `rebuild`
+/// rather than inside `buildSnapshot`.
+///
+/// Scoping to the panel's own source is not optional: a pid is only meaningful
+/// on the machine it lives on, so without the filter a remote pane's pid 8452
+/// would claim whatever local process happens to hold 8452. Mac makes the same
+/// point about tty names (`paneProcessesLive`).
+pub fn collectPanes(self: *ActivityMonitor) void {
+    self.pane_count = 0;
+    self.pane_labels_len = 0;
+
+    const want_local = self.source == .local;
+
+    // Labelled so running out of room leaves the panel with the panes it DID
+    // collect and still names them — a truncated answer, logged. An early
+    // `return` here would skip `logPanes` and leave its fingerprint stale, so
+    // the next poll would not name them either.
+    collect: for (self.app.windows.items) |win| {
+        // A remote panel only ever attributes panes on ITS machine; a local one
+        // only panes whose shell is on this box. Checked once per window rather
+        // than per pane — the machine is a window-level fact.
+        if (!want_local and !sameMachine(self, win)) continue;
+
+        // The window's own name, resolved once — every pane in it hangs off it.
+        const pinned: []const u8 = if (win.title_override) |t| t else "";
+        const ipc_name = win.ipc_name orelse "";
+
+        const tab_count = @min(win.tab_count, win.tab_trees.len);
+        for (0..tab_count) |ti| {
+            var tab_buf: [panes_mod.max_label]u8 = undefined;
+            const tab_len = utf16_text.toUtf8Truncating(
+                &tab_buf,
+                win.tab_titles[ti][0..@min(win.tab_title_lens[ti], win.tab_titles[ti].len)],
+            );
+            const tab_title = tab_buf[0..tab_len];
+
+            // Gather the tab's panes first, then NAME them as a group: whether
+            // a title distinguishes a pane cannot be known one pane at a time
+            // (2964c8859).
+            var pids: [max_tab_panes]i64 = undefined;
+            var titles: [max_tab_panes][]const u8 = undefined;
+            var n: usize = 0;
+
+            var it = win.tab_trees[ti].iterator();
+            while (it.next()) |entry| {
+                if (n == pids.len) break;
+                // A viewer runs no shell, so it can never own a process.
+                const surface = entry.view.surface() orelse continue;
+                const host = surface.shellPidOnHost();
+                if (host.pid == 0) continue;
+                if (host.local != want_local) continue;
+                pids[n] = host.pid;
+                // Borrowed from the surface, and only for this iteration — the
+                // label copied out below is what the rows keep.
+                titles[n] = surface.getTitle() orelse "";
+                n += 1;
+            }
+            if (n == 0) continue;
+
+            const window_label = panes_mod.windowLabel(
+                pinned,
+                ipc_name,
+                tab_title,
+                titles[0],
+                "",
+            );
+            var group_buf: [panes_mod.max_label]u8 = undefined;
+            const group = panes_mod.groupLabel(&group_buf, window_label, tab_title, ti, tab_count);
+
+            for (0..n) |i| {
+                if (self.pane_count == self.panes.len) break :collect;
+                const room = self.pane_labels[self.pane_labels_len..];
+                if (room.len < panes_mod.max_label) break :collect;
+                const label = panes_mod.paneLabel(
+                    room[0..panes_mod.max_label],
+                    group,
+                    titles[i],
+                    i,
+                    n,
+                    panes_mod.titleDistinguishes(titles[0..n], i, group),
+                );
+                self.pane_labels_len += label.len;
+                self.panes[self.pane_count] = .{ .shell_pid = pids[i], .label = label };
+                self.pane_count += 1;
+            }
+        }
+    }
+
+    logPanes(self);
+}
+
+/// Name every attributing pane, but only when the SET has changed.
+///
+/// This is the acceptance oracle for the labels themselves: the column is GDI
+/// text with nothing to read back, and `attributed=<n>` on the state line says
+/// how many rows found a pane without saying what any of them is called — which
+/// is exactly the half 2964c8859 got wrong (every row rendering the same
+/// string counts the same as every row rendering a useful one). Gated on a
+/// change because `rebuild` runs on every 1.5 s poll, and a line per poll for
+/// the hours a panel sits open is the log's own version of that defect.
+fn logPanes(self: *ActivityMonitor) void {
+    var sig: u64 = 0xcbf29ce484222325;
+    for (self.panes[0..self.pane_count]) |p| {
+        const pid_bytes = std.mem.asBytes(&p.shell_pid);
+        for (pid_bytes) |b| sig = (sig ^ b) *% 0x100000001b3;
+        for (p.label) |b| sig = (sig ^ b) *% 0x100000001b3;
+    }
+    if (sig == self.pane_sig) return;
+    self.pane_sig = sig;
+
+    var buf: [1024]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    for (self.panes[0..self.pane_count]) |p| {
+        w.print(" [{d}]=\"{s}\"", .{ p.shell_pid, p.label }) catch break;
+    }
+    log.info("activity monitor: panes source={s} n={d}{s}", .{
+        self.source.label(),
+        self.pane_count,
+        w.buffered(),
+    });
+}
+
+/// The most panes one TAB contributes. A tab with more splits than this
+/// attributes its first `max_tab_panes` and stops, which is a truncated answer
+/// rather than a wrong one.
+const max_tab_panes: usize = 16;
+
+/// Whether `win`'s remote machine is the one this (remote) panel is sampling.
+/// Both sides go through `Window.activityPanelSource`, so the comparison is
+/// against the same id the panel was OPENED with rather than a second
+/// derivation that could disagree with it.
+fn sameMachine(self: *const ActivityMonitor, win: *const Window) bool {
+    const want = switch (self.source) {
+        .local => return false,
+        .remote => |r| r.id,
+    };
+    const machine = win.remote_machine orelse return false;
+    var buf: [ActivityMonitor.max_source_id]u8 = undefined;
+    const src = Window.activityPanelSource(&buf, machine) orelse return false;
+    return std.mem.eql(u8, src.id, want);
 }
 
 /// Re-derive `order` from the current snapshot, filter and sort, then clamp the
@@ -52,6 +207,12 @@ pub fn rebuild(self: *ActivityMonitor) void {
         self.order_len = 0;
         return;
     };
+    // Attribution comes FIRST: the filter reads `any_attributed` and
+    // `markSpawned` reads every row's `pane_label`, so a rebuild that ordered
+    // these the other way would filter against the previous poll's answer.
+    collectPanes(self);
+    self.attributed_rows = panes_mod.attribute(snap.rows, self.panes[0..self.pane_count]);
+
     const f = filterSpec(self);
     rows_mod.markSpawned(snap.rows, if (rows_mod.spawnedOnlyActive(f)) f.root_pid else 0, &self.spawned);
     self.order_len = rows_mod.filterInto(snap.rows, f, &self.spawned, &self.order);
@@ -80,7 +241,11 @@ pub fn rebuild(self: *ActivityMonitor) void {
         // sample, the AGENT's for a remote one. It is the field that tells the
         // two apart from outside, which is what the T295 acceptance needs: a
         // loopback agent enumerates the same box, so a row count cannot.
-        "activity monitor: source={s} total={d} shown={d} needle=\"{s}\" show_all={} sort={s}/{s} selected={d} root={d}",
+        // `panes`/`attributed` are the T709 column's oracle: a GDI-painted cell
+        // has no text to read back, and "how many rows name a pane" is the one
+        // number that says whether attribution actually ran against the live
+        // window list rather than against an empty pane set.
+        "activity monitor: source={s} total={d} shown={d} needle=\"{s}\" show_all={} sort={s}/{s} selected={d} root={d} panes={d} attributed={d}",
         .{
             self.source.label(),
             snap.rows.len,
@@ -91,6 +256,8 @@ pub fn rebuild(self: *ActivityMonitor) void {
             if (self.sort.ascending) "asc" else "desc",
             self.sel_len,
             snap.root_pid,
+            self.pane_count,
+            self.attributed_rows,
         },
     );
 }

@@ -594,10 +594,14 @@ pub const Column = enum(usize) {
     name = 1,
     cpu = 2,
     mem = 3,
-    path = 4,
+    /// T709. Sits before Path for the same reason Mac puts it there: the path is
+    /// the widest, least-scanned cell, and a column that answers "which pane do
+    /// I go and close" belongs next to the numbers that made you ask.
+    pane = 4,
+    path = 5,
 };
 
-pub const column_count = 5;
+pub const column_count = 6;
 
 pub const ColumnSpec = struct {
     title: []const u8,
@@ -608,12 +612,13 @@ pub const ColumnSpec = struct {
     right_align: bool,
 };
 
-/// Mac's `TableColumn` widths, `RemoteActivityMonitorView.swift:986-1024`.
+/// Mac's `TableColumn` widths, `RemoteActivityMonitorView.swift:1077-1143`.
 pub const column_specs = [column_count]ColumnSpec{
     .{ .title = "PID", .min = 50, .ideal = 60, .max = 80, .right_align = false },
     .{ .title = "Name", .min = 120, .ideal = 200, .max = 0, .right_align = false },
-    .{ .title = "% CPU", .min = 60, .ideal = 70, .max = 90, .right_align = true },
+    .{ .title = "% CPU", .min = 60, .ideal = 80, .max = 100, .right_align = true },
     .{ .title = "Memory", .min = 70, .ideal = 90, .max = 110, .right_align = true },
+    .{ .title = "Window / Pane", .min = 100, .ideal = 180, .max = 0, .right_align = false },
     .{ .title = "Path", .min = 120, .ideal = 240, .max = 0, .right_align = false },
 };
 
@@ -675,6 +680,7 @@ pub fn columnWidths(scale: f32, table_w: i32) [column_count]i32 {
     const order = [column_count]usize{
         @intFromEnum(Column.path),
         @intFromEnum(Column.name),
+        @intFromEnum(Column.pane),
         @intFromEnum(Column.mem),
         @intFromEnum(Column.cpu),
         @intFromEnum(Column.pid),
@@ -1137,10 +1143,10 @@ test "columns: a table below the sum of the minimums keeps the minimums" {
 
 test "columns: at the default width every column is between its min and ideal-or-more" {
     const widths = columnWidths(1.0, 700);
-    // 700 exceeds the 660 of ideals, so nothing is squeezed below its ideal.
+    // 700 is now BELOW the 850 of ideals (T709 added Window / Pane), so the
+    // flexible columns shrink — what must still hold is every minimum.
     for (column_specs, 0..) |c, i| {
         try testing.expect(widths[i] >= @as(i32, @intFromFloat(c.min)));
-        if (c.max == 0) try testing.expect(widths[i] >= @as(i32, @intFromFloat(c.ideal)));
     }
 }
 
@@ -1157,7 +1163,7 @@ test "columns: cells are inset so adjacent columns never touch" {
         };
         const pad = px(cell_pad, scale);
         var prev: ?Rect = null;
-        inline for (.{ Column.pid, Column.name, Column.cpu, Column.mem, Column.path }) |col| {
+        inline for (.{ Column.pid, Column.name, Column.cpu, Column.mem, Column.pane, Column.path }) |col| {
             const c = cellRect(row, widths, col, scale);
             try testing.expect(c.left >= l.table.left);
             try testing.expect(c.right <= l.table.right);
@@ -1184,7 +1190,7 @@ test "headerCursorMove: the first press lands on the sorted column, then arrows 
     try testing.expectEqual(Column.path, headerCursorMove(.path, .cpu, true));
     // Every column is reachable by walking from one end to the other.
     var col = headerCursorMove(.pid, .pid, false);
-    inline for (.{ Column.name, Column.cpu, Column.mem, Column.path }) |want| {
+    inline for (.{ Column.name, Column.cpu, Column.mem, Column.pane, Column.path }) |want| {
         col = headerCursorMove(col, .pid, true);
         try testing.expectEqual(want, col);
     }
@@ -1196,7 +1202,7 @@ test "headerCursorRect: the cursor band covers its whole column, and the bands t
         const l = layout(scale, d.w, d.h, .{});
         const widths = columnWidths(scale, l.table.width());
         var prev: ?Rect = null;
-        inline for (.{ Column.pid, Column.name, Column.cpu, Column.mem, Column.path }) |col| {
+        inline for (.{ Column.pid, Column.name, Column.cpu, Column.mem, Column.pane, Column.path }) |col| {
             const band = headerCursorRect(l.table_header, widths, col);
             // The band is the header's own height, and it holds the cell the
             // painter draws the title into.

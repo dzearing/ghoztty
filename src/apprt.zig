@@ -460,6 +460,11 @@ test {
     // text (T285), same no-OS-imports deal.
     _ = @import("apprt/win32/activity_rows.zig");
 
+    // Pure win32 Activity Monitor pane attribution — which Ghoztty pane a
+    // process belongs to, and how a pane is NAMED so the label distinguishes
+    // it from its siblings (T709), same no-OS-imports deal.
+    _ = @import("apprt/win32/activity_panes.zig");
+
     // Pure win32 filter-box text search — the ONE ASCII case-fold substring
     // test behind the machine chooser's and the Activity Monitor's filters
     // (T288), same no-OS-imports deal.

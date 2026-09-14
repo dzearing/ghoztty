@@ -3065,6 +3065,24 @@ $GuardTable = @(
             'test\win32\activity-selection.ps1'
         )
     },
+    # The Activity Monitor's "Window / Pane" column (T709). A THIRD row for the
+    # same panel, and for the reason the two above are separate from each other:
+    # this one asserts what neither can reach - that attribution ran against the
+    # LIVE window list, that the label follows the window the user renamed, and
+    # that two real panes get two different strings. The pure half
+    # (`activity_panes.zig`) carries its own unit tests in the `none` lane and is
+    # deliberately NOT covered here, so a rule edit fires the lane and not this
+    # gate; what IS covered is the impure collector, which lives in
+    # `activity_view.zig`.
+    [pscustomobject]@{
+        Name   = 'activity-pane-column'
+        Script = 'test\win32\activity-pane-column.ps1'
+        Stamp  = 'test\win32\activity-pane-column.stamp.json'
+        Covers = @(
+            'src\apprt\win32\activity_view.zig',
+            'test\win32\activity-pane-column.ps1'
+        )
+    },
     # The Activity Monitor on a REMOTE machine (T1419). The panel a remote
     # window opens is BORROWED - no dial, no relay - and it is the only shape in
     # which the panel's IDENTITY is derived twice: once by the window that opens

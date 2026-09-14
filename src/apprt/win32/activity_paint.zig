@@ -453,7 +453,7 @@ pub fn paintTable(self: *ActivityMonitor, hdc: w32.HDC, l: layout_mod.Layout) vo
             fill(hdc, rect(row_rect), cr(hover_fill));
         }
 
-        paintRow(self, hdc, row_rect, widths, row, snap.host.ncpu, .{
+        paintRow(self, hdc, row_rect, widths, row, .{
             .text = if (selected) sel_text else p.text,
             .secondary = if (selected) sel_secondary else p.secondary,
         });
@@ -586,7 +586,6 @@ pub fn paintRow(
     row_rect: layout_mod.Rect,
     widths: [layout_mod.column_count]i32,
     row: rows_mod.Row,
-    ncpu: u32,
     ink: RowInk,
 ) void {
     var buf: [32]u8 = undefined;
@@ -599,7 +598,7 @@ pub fn paintRow(
     var cbuf: [32]u8 = undefined;
     drawText(
         hdc,
-        rows_mod.formatCpu(&cbuf, row.cpu_pct, ncpu),
+        rows_mod.formatCpu(&cbuf, row.cpu_pct),
         layout_mod.cellRect(row_rect, widths, .cpu, self.scale),
         text_flags | w32.DT_RIGHT,
     );
@@ -616,6 +615,20 @@ pub fn paintRow(
         hdc,
         if (row.name.len == 0) rows_mod.empty_cell else row.name,
         layout_mod.cellRect(row_rect, widths, .name, self.scale),
+        text_flags | w32.DT_LEFT | w32.DT_END_ELLIPSIS,
+    );
+
+    // Window / Pane (T709). An attributed row gets the primary ink — this is
+    // the cell the panel was opened to read — and an unattributed one the em
+    // dash in secondary, which says "not one of ours" without competing with
+    // the rows that are. Ellipsizes at the TAIL: the label reads
+    // "<window> › <pane>", so the leading window name is the half worth keeping
+    // when it does not fit.
+    _ = w32.SetTextColor(hdc, cr(if (row.pane_label.len == 0) ink.secondary else ink.text));
+    drawText(
+        hdc,
+        if (row.pane_label.len == 0) rows_mod.empty_cell else row.pane_label,
+        layout_mod.cellRect(row_rect, widths, .pane, self.scale),
         text_flags | w32.DT_LEFT | w32.DT_END_ELLIPSIS,
     );
 
@@ -783,6 +796,7 @@ pub fn sortKeyColumn(self: *const ActivityMonitor) layout_mod.Column {
         .name => .name,
         .cpu => .cpu,
         .mem => .mem,
+        .pane => .pane,
         .path => .path,
     };
 }
@@ -794,6 +808,7 @@ pub fn columnSortKey(col: layout_mod.Column) rows_mod.SortKey {
         .name => .name,
         .cpu => .cpu,
         .mem => .mem,
+        .pane => .pane,
         .path => .path,
     };
 }
@@ -818,7 +833,7 @@ const testing = std.testing;
 
 test "columnAt: every column hits, and the gutters outside the table miss" {
     const table: layout_mod.Rect = .{ .left = 10, .top = 0, .right = 210, .bottom = 100 };
-    const widths = [layout_mod.column_count]i32{ 20, 40, 30, 50, 60 };
+    const widths = [layout_mod.column_count]i32{ 20, 40, 30, 50, 40, 20 };
 
     try testing.expect(columnAt(table, widths, 5) == null); // left of the table
     try testing.expectEqual(layout_mod.Column.pid, columnAt(table, widths, 10).?);
@@ -826,7 +841,8 @@ test "columnAt: every column hits, and the gutters outside the table miss" {
     try testing.expectEqual(layout_mod.Column.name, columnAt(table, widths, 30).?);
     try testing.expectEqual(layout_mod.Column.cpu, columnAt(table, widths, 70).?);
     try testing.expectEqual(layout_mod.Column.mem, columnAt(table, widths, 100).?);
-    try testing.expectEqual(layout_mod.Column.path, columnAt(table, widths, 150).?);
+    try testing.expectEqual(layout_mod.Column.pane, columnAt(table, widths, 150).?);
+    try testing.expectEqual(layout_mod.Column.path, columnAt(table, widths, 190).?);
     try testing.expectEqual(layout_mod.Column.path, columnAt(table, widths, 209).?);
     try testing.expect(columnAt(table, widths, 210) == null); // past the last column
 }
@@ -843,6 +859,7 @@ test "columnSortKey round-trips every column" {
             .name => .name,
             .cpu => .cpu,
             .mem => .mem,
+            .pane => .pane,
             .path => .path,
         };
         try testing.expectEqual(col, back);

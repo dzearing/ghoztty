@@ -1655,6 +1655,41 @@ pub fn shellPid(self: *Surface) u32 {
     }
 }
 
+/// A pane's shell pid together with the machine it is a pid ON. `local = true`
+/// means this box; `pid = 0` means the pane has no shell to name.
+pub const ShellHost = struct { pid: i64 = 0, local: bool = true };
+
+/// The pane's shell pid ON WHICHEVER MACHINE RUNS IT (T709).
+///
+/// `shellPid` above answers only for panes whose shell is local, because its
+/// caller (`+list --pid`) walks a LOCAL ancestry and a cross-machine pid there
+/// would false-match a local process. The activity monitor asks a different
+/// question — a panel pointed at machine X wants the pids of the panes whose
+/// shells live on X — so it needs the far-side value and a flag saying which
+/// side it is. A pane with no shell (a viewer, or one whose agent has not
+/// reported a pid yet) answers 0, which attributes nothing.
+pub fn shellPidOnHost(self: *Surface) ShellHost {
+    if (!self.core_surface_ready) return .{};
+    switch (self.core_surface.io.backend) {
+        .exec => |*exec| {
+            // The app spawned this ConPTY itself, so it is on this box.
+            const process = exec.subprocess.process orelse return .{};
+            return switch (process) {
+                .fork_exec => |cmd| .{
+                    .pid = if (cmd.pid) |handle| @intCast(w32.GetProcessId(handle)) else 0,
+                    .local = true,
+                },
+                .flatpak => .{},
+            };
+        },
+        .remote => |*r| {
+            const pid = r.child_pid.load(.acquire);
+            if (pid <= 0) return .{ .local = r.local };
+            return .{ .pid = pid, .local = r.local };
+        },
+    }
+}
+
 /// The pane's shell process's REAL current working directory, read from the
 /// OS (T185) — the live answer for shells that never report OSC 7. cmd.exe
 /// (and bash, nu, …) call SetCurrentDirectory/chdir on every `cd`, so the

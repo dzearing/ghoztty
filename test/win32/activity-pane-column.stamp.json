@@ -1,0 +1,14 @@
+{
+    "guard":  "activity-pane-column",
+    "script":  "test/win32/activity-pane-column.ps1",
+    "generated":  "2026-09-13T18:16:33-07:00",
+    "commit":  "21c7ba277",
+    "uncommitted":  [
+                        "src/apprt/win32/activity_view.zig",
+                        "test/win32/activity-pane-column.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/activity_view.zig":  "d78c4a1667a0e730e6e63bbdcdd911d171fdfd23d51ef184aba8f9f2853c4520",
+                  "test/win32/activity-pane-column.ps1":  "eb2316dbe5e8119f75baa81efc98716d43913d32cabe81a30416e5d92ae377dd"
+              }
+}

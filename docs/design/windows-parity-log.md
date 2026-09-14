@@ -9,6 +9,58 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-13: T709 (+T1548, T1549 filed) - **the Activity Monitor now says which
+  pane owns a process, and its %CPU means something again.** Two defects in the
+  same table, both from Mac commits the T684 sweep found already merged and never
+  ported. The %CPU column divided the per-core reading by the core count, which on
+  this 18-core box rendered a fully-pinned core as `5.6` and everything ordinary
+  as `0.0` - the column that exists to say "this one is busy" said nothing at all.
+  And nothing named the pane a process belonged to, so having found the busy one
+  there was no way to tell which terminal to close. Twenty agent sessions render
+  as twenty identical rows: Claude Code reports its version string as its
+  accounting name, so the Name cell is the same on all of them.
+
+  The number now reads as reported (top(1) / Task Manager: a busy thread ~100,
+  four busy threads ~400). The header gauge still shows a genuine 0-100% of the
+  whole machine, which is a different quantity and unchanged.
+
+  The "Window / Pane" column sits between Memory and Path and sorts, unattributed
+  last. Attribution is `src/apprt/win32/activity_panes.zig`, pure: seed from each
+  pane's shell pid, then walk every other process up its ppid chain to the nearest
+  attributed ancestor, which is what catches the tool calls hanging three levels
+  under an agent. **Mac seeds from the controlling terminal because it does not
+  know a pane's shell pid; there is no tty under ConPTY and the app does know the
+  pid, so the Windows seed is the stronger one** - it cannot be lost by a child
+  detaching from its terminal.
+
+  Labels are assigned per GROUP, never one pane at a time - the half 2964c8859 had
+  to go back and fix. Two panes in one tab both titled `~/git` (the common case:
+  the shell reports its cwd) reproduce the exact "twenty identical rows" problem
+  the column exists to solve, so a title earns a place only when it is unique among
+  its siblings and the rest fall back to a position. The group is a **(window, tab)
+  pair** rather than a window, because a win32 window holds several independent
+  split trees and the numbering restarts in each - the Windows-native translation
+  of Mac's one-controller-per-tab model. The spawned-only filter also now rides on
+  attribution as well as the root pid (Mac's `canFilterSpawned`): with
+  session-persistence on, pane shells are children of `ghoztty-agent`, so the app's
+  descendant set is just the app and the filter would hide everything it exists to
+  show.
+
+  Validation: 19 new unit tests in the `none` lane (both attribution passes, a ppid
+  cycle, a clipped parent, a pane with no shell, the group rule, the label
+  fallbacks, the unattributed sort order, and the exact 18-core CPU reading);
+  `test\win32\activity-pane-column.ps1`, 27 assertions, asserting what no pure
+  test can - that attribution ran against the LIVE window list, that the label
+  follows the window `+rename` renamed, that two REAL sibling panes get two
+  different strings, that a `ping` started with `+send-keys` raises the attributed
+  count and `C-c` lowers it, and that the header cursor reaches a column the panel
+  names `pane`. Its `-NegativeControl` asserts the 2964c8859 defect and scores red.
+  Floor all green; the panel's three existing harnesses re-run green. One red worth
+  recording: `activity-monitor.ps1` failed `L6 Tab moved focus off the table` once
+  and passed 205/205 on the re-run - the ring assertion immediately after it passed
+  in the red run too, so focus HAD left the table and only its landing stop was
+  wrong. Harness timing, not the change.
+
 - 2026-09-13: T1525 split -> T1528-T1532; T1528 landed - **the part that decides
   what letting go of a dragged pane would mean.** Mac's `b18ee2d77` is 2500
   lines across a resolver, tree mutations, pane chrome, the drag itself and the

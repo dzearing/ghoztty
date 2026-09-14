@@ -64,6 +64,7 @@ const w32 = @import("win32.zig");
 const class_redraw = @import("class_redraw.zig");
 const layout_mod = @import("activity_layout.zig");
 const rows_mod = @import("activity_rows.zig");
+const panes_mod = @import("activity_panes.zig");
 const cards_mod = @import("activity_cards.zig");
 const borrow_mod = @import("activity_borrow.zig");
 const probe_mod = @import("activity_probe.zig");
@@ -429,6 +430,26 @@ caption_font: ?*anyopaque = null,
 
 /// The adopted snapshot the view renders. Null until the first poll lands.
 snap: ?*Snapshot = null,
+/// The live panes backed by THIS panel's source, re-derived on every `rebuild`
+/// (T709) — the "Window / Pane" column's input. Held here rather than in the
+/// snapshot because panes are GUI-thread state and a snapshot is built on the
+/// worker: the two are joined on the GUI thread, which is also the only thread
+/// that may read a window's title.
+///
+/// `panes[i].label` points into `pane_labels`, so the rows that borrow it stay
+/// valid until the next rebuild overwrites it — and a rebuild is also what
+/// re-derives every row's `pane_label`, so the two can never be out of step.
+panes: [panes_mod.max_panes]panes_mod.Pane = @splat(.{}),
+pane_count: usize = 0,
+pane_labels: [panes_mod.label_arena_bytes]u8 = undefined,
+pane_labels_len: usize = 0,
+/// Fingerprint of the pane set the panel last NAMED in its log, so the naming
+/// line is written on a change rather than on every 1.5 s poll.
+pane_sig: u64 = 0,
+/// How many rows the last rebuild attributed. The count the table's
+/// spawned-only filter turns on (`rows_mod.Filter.any_attributed`), and the
+/// acceptance script's oracle for the column.
+attributed_rows: usize = 0,
 /// True until the first snapshot arrives (Mac's `isLoading`, :125).
 loading: bool = true,
 
