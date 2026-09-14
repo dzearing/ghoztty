@@ -162,6 +162,13 @@ $Registry = @(
     [pscustomobject]@{ Label = 'CI RED'; Kind = 'gate'; Demo = $Self
         Marker = 'CI RED'; Via = 'scripts\ci-status.ps1'
     }
+    # T727. The install-location audit claim runs once a day. Informational BY
+    # DESIGN: what it reports is fixed by a DELIVERY, which needs a release
+    # build, so a claim that refused over it would wedge the loop over a state
+    # no turn can clear. Its teeth are section G of
+    # test\win32\deliver-windows-build.ps1 (the audit itself, and -Strict) and
+    # `deliver=` on go-loop-health.ps1.
+    [pscustomobject]@{ Label = 'DELIVER AUDIT'; Kind = 'status'; Via = 'scripts\deliver-audit.ps1' }
     [pscustomobject]@{ Label = 'CI IN PROGRESS'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
     [pscustomobject]@{ Label = 'CI OK'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
     [pscustomobject]@{ Label = 'CI UNKNOWN'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }

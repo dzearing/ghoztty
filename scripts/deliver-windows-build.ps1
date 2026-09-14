@@ -99,6 +99,11 @@ param(
     [switch]$AllowDebugStaging,
     # Print what would happen and touch nothing.
     [switch]$DryRun,
+    # Audit the install locations as they stand and write nothing (T727).
+    # -DryRun deliberately writes nothing and therefore CHECKS nothing either;
+    # this is the other half - the whole verification pass, run on its own, to
+    # answer "what is sitting in those places right now?". See Invoke-Audit.
+    [switch]$VerifyOnly,
     # Delete all but the newest N backup generations in every location. Absent
     # (the default) only REPORTS what a prune would remove: deleting is a
     # user-gated action, so this script offers it rather than doing it.
@@ -141,6 +146,194 @@ $script:deliveredCount = 0
 $script:locationCount = 0
 
 if (-not $Suffix) { $Suffix = Get-Date -Format 'yyyyMMdd-HHmmss' }
+
+# ---- -VerifyOnly: the audit, which writes nothing (T727) ---------------------
+#
+# Everything this script verifies, it verifies as part of a DELIVERY. So the
+# question "never mind delivering - what is in those locations RIGHT NOW?" had
+# no answer, and on 2026-08-10 the answer was "a Debug ghoztty.exe beside a
+# release ghoztty.com", in both portable locations, for most of a day.
+#
+# What "expected" means when nothing is being delivered is the whole design
+# question, and staging is the WRONG answer: a box that is deliberately a
+# delivery behind would fail an audit every time, which is a check nobody
+# believes within a week. So the default assertion is INTERNAL CONSISTENCY -
+# every location agrees with the newest one, the two front-ends inside a
+# location agree with each other, the agents agree, the sign-in bake agrees, and
+# every binary is a release build. That is exactly the shape 2026-08-10 broke,
+# and it is silent about a location being one delivery old. `-ExpectedCommit`
+# (or `-ExpectedCommit HEAD`) is how you ask the stricter question on purpose.
+function Complete-Audit {
+    $n = $script:problems.Count
+    $tail = if ($script:skipped.Count) { " ($($script:skipped.Count) skipped: $($script:skipped -join '; '))" } else { '' }
+    if ($n -gt 0) {
+        Say ''
+        foreach ($p in $script:problems) { Say "  - $p" }
+        Say "AUDIT FAILED: $n problem(s) across $script:locationCount location(s)$tail"
+        exit 1
+    }
+    if ($script:locationCount -eq 0) {
+        Say "AUDIT SKIPPED: no install location was reachable$tail"
+        exit 0
+    }
+    Say "AUDIT OK: $script:locationCount location(s) agree on +$script:auditExpect$tail"
+    exit 0
+}
+
+function Invoke-Audit {
+    $fileSet = @(Get-DeliveryFileSet -AppOnly:$AppOnly)
+    $places = @(@($Targets) + @($LooseAgentDir) | Where-Object { $_ } | Select-Object -Unique)
+
+    # Pass one: read every reachable location. Nothing is judged yet, because
+    # the yardstick is one of the readings.
+    $found = @()
+    foreach ($dir in $places) {
+        Say ''
+        Say "== $dir"
+        if (-not (Test-Path -LiteralPath $dir -PathType Container)) {
+            Skip "$dir is not present"
+            continue
+        }
+        $loose = ($dir -eq $LooseAgentDir -and @($Targets) -notcontains $dir)
+        $want = if ($loose) { @('ghoztty-agent.exe') } else { $fileSet }
+        $rec = [ordered]@{ Dir = $dir; Loose = $loose; Exe = @{}; SignIn = @{}; Agent = ''; Stamp = [datetime]::MinValue }
+
+        $gone = @($want | Where-Object { -not (Test-Path -LiteralPath (Join-Path $dir $_) -PathType Leaf) })
+        if ($gone.Count -eq $want.Count) {
+            # An empty directory is not a wrong delivery; it is a place nothing
+            # was ever delivered to. Say so and move on.
+            Skip "$dir holds none of the delivered files"
+            continue
+        }
+        $script:locationCount++
+        foreach ($n in $gone) { Bad "$dir is missing $n" }
+
+        foreach ($n in @('ghoztty.exe', 'ghoztty.com')) {
+            $exe = Join-Path $dir $n
+            if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { continue }
+            $w = Get-ExpectedSubsystem $n
+            $sub = Get-PeSubsystem $exe
+            if ($w -ne 0 -and $sub -ne $w) {
+                Bad "$dir\$n has PE subsystem $sub, expected $w (a console-subsystem ghoztty.exe is a Debug build)"
+            }
+            $got = Resolve-GhozttyExeCommit -Exe $exe
+            if (-not $got.Commit) { Bad "$dir\$n could not be asked its version ($($got.Why))"; continue }
+            $rec.Exe[$n] = $got.Commit
+            $rec.SignIn[$n] = $got.SignIn
+            Say "   $n +$($got.Commit) (subsystem $sub, $(Format-SignInBake $got.SignIn))"
+            $t = (Get-Item -LiteralPath $exe).LastWriteTimeUtc
+            if ($t -gt $rec.Stamp) { $rec.Stamp = $t }
+        }
+
+        $agentExe = Join-Path $dir 'ghoztty-agent.exe'
+        if ((-not $AppOnly) -and (Test-Path -LiteralPath $agentExe -PathType Leaf)) {
+            $ga = Resolve-GhozttyAgentStamp -Exe $agentExe
+            if ($ga.Stamp) { $rec.Agent = $ga.Stamp; Say "   ghoztty-agent.exe $($ga.Stamp)" }
+            else { Bad "$dir\ghoztty-agent.exe could not be asked its version ($($ga.Why))" }
+        }
+
+        # The two front-ends in one directory are one build or they are the
+        # 2026-08-10 state, whatever any other location says.
+        if ($rec.Exe.Count -eq 2 -and -not (Test-CommitsMatch $rec.Exe['ghoztty.exe'] $rec.Exe['ghoztty.com'])) {
+            Bad "$dir ships ghoztty.exe +$($rec.Exe['ghoztty.exe']) beside ghoztty.com +$($rec.Exe['ghoztty.com'])"
+        }
+        $found += [pscustomobject]$rec
+    }
+
+    # Pass two: the yardstick, then every location against it.
+    $script:auditExpect = ''
+    if ($ExpectedCommit) {
+        $script:auditExpect = if ($ExpectedCommit.Trim().ToLowerInvariant() -eq 'head') {
+            Get-RepoHeadCommit -Repo (Split-Path $PSScriptRoot -Parent)
+        } else { $ExpectedCommit.Trim().ToLowerInvariant() }
+        if (-not $script:auditExpect) {
+            Say 'ABORT: -ExpectedCommit HEAD was asked for and git could not answer'
+            exit 2
+        }
+        Say ''
+        Say "== against +$script:auditExpect (asked for)"
+    } else {
+        $newest = @($found | Where-Object { $_.Exe.Count } | Sort-Object Stamp -Descending)[0]
+        if ($newest) {
+            $script:auditExpect = $newest.Exe['ghoztty.exe']
+            if (-not $script:auditExpect) { $script:auditExpect = @($newest.Exe.Values)[0] }
+            Say ''
+            Say "== against +$script:auditExpect (the newest location, $($newest.Dir))"
+        }
+    }
+
+    if ($script:auditExpect) {
+        $bakes = @()
+        foreach ($rec in $found) {
+            foreach ($n in @($rec.Exe.Keys)) {
+                if (Test-CommitsMatch $rec.Exe[$n] $script:auditExpect) { Ok "$($rec.Dir)\$n +$($rec.Exe[$n])" }
+                else { Bad "$($rec.Dir)\$n reports +$($rec.Exe[$n]) but +$script:auditExpect is expected" }
+                $bakes += [pscustomobject]@{ Where = "$($rec.Dir)\$n"; Bake = $rec.SignIn[$n] }
+            }
+        }
+        # Sign-in, compared across locations rather than against staging: an
+        # audit has no staging to compare to, and a build that can sign in
+        # standing beside one that cannot is the divergence worth naming.
+        $known = @($bakes | Where-Object { $_.Bake.Known })
+        if ($known.Count -gt 1) {
+            $first = $known[0]
+            foreach ($b in $known) {
+                if (-not (Test-SignInBakesMatch $b.Bake $first.Bake)) {
+                    Bad "$($b.Where) sign-in is $(Format-SignInBake $b.Bake) but $($first.Where) is $(Format-SignInBake $first.Bake)"
+                }
+            }
+        }
+        $stamps = @($found | Where-Object { $_.Agent } )
+        $agentsAgree = $true
+        if ($stamps.Count -gt 1) {
+            $firstAgent = $stamps[0]
+            foreach ($s in $stamps) {
+                if (Test-AgentStampsMatch $s.Agent $firstAgent.Agent) { continue }
+                Bad "$($s.Dir)\ghoztty-agent.exe reports $($s.Agent) but $($firstAgent.Dir) has $($firstAgent.Agent)"
+                $agentsAgree = $false
+            }
+        }
+        if ($stamps.Count -and $agentsAgree) { Ok "ghoztty-agent.exe $($stamps[0].Agent) in $($stamps.Count) location(s)" }
+    }
+
+    # The published archive, against the RULE rather than against a rebuild:
+    # nothing here may assemble 130 MB to find out what the zip should contain.
+    if ($NoZip -or -not $ZipPath) {
+        Skip 'the portable zip (-NoZip)'
+    } else {
+        Say ''
+        Say "== portable zip $ZipPath"
+        if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
+            Skip "$ZipPath is not reachable"
+        } else {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+            $entries = @()
+            try {
+                $z = [IO.Compression.ZipFile]::OpenRead($ZipPath)
+                try { $entries = @($z.Entries | ForEach-Object { $_.FullName }) } finally { $z.Dispose() }
+            } catch { Bad "$ZipPath could not be read ($($_.Exception.Message))" }
+            if ($entries.Count) {
+                $files = @(Get-ComparableZipEntries -Entries $entries)
+                $rooted = @($files | Where-Object { $_ -notlike "$ZipRoot/*" })
+                $barred = @($files | Where-Object { $_ -like "$ZipRoot/*" -and -not (Test-PortableZipIncludes $_.Substring($ZipRoot.Length + 1)) })
+                if ($rooted.Count) { Bad "$ZipPath has $($rooted.Count) entr(ies) outside $ZipRoot/ (e.g. $($rooted[0]))" }
+                if ($barred.Count) { Bad "$ZipPath ships $($barred.Count) file(s) the manifest excludes (e.g. $($barred[0]))" }
+                if (-not $rooted.Count -and -not $barred.Count) {
+                    $mb = [math]::Round((Get-Item -LiteralPath $ZipPath).Length / 1MB, 1)
+                    Ok ("{0} entries, {1:N1} MB, all under $ZipRoot/ and none the manifest excludes" -f $files.Count, $mb)
+                }
+            }
+        }
+    }
+
+    Say ''
+    Complete-Audit
+}
+
+if ($VerifyOnly) {
+    Say "== audit (nothing will be written)"
+    Invoke-Audit
+}
 
 # ---- the staging prefix must be a real release build ------------------------
 if (-not (Test-Path -LiteralPath $Staging -PathType Container)) {

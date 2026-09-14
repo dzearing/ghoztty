@@ -993,6 +993,10 @@ $GuardTable = @(
         Covers = @(
             'scripts\deliver-windows-build.ps1',
             'scripts\delivery-manifest.ps1',
+            # T727: the audit's unattended reader. An edit to it changes what the
+            # claim reports every morning, so it owes the same proof as the
+            # delivery it reads.
+            'scripts\deliver-audit.ps1',
             'test\win32\deliver-windows-build.ps1'
         )
     },

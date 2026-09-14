@@ -65,6 +65,18 @@ Concretely, in order, with no stops in between:
      turn's, and it prints that it was used. Ask directly with
      `scripts\ci-status.ps1 check`; acceptance is section E of
      `test\win32\gate-negatives.ps1`.
+   - **It also AUDITS the install locations** (T727): `DELIVER AUDIT ...` says
+     what is sitting in the Desktop portable, the share and the published zip
+     RIGHT NOW — every check `deliver-windows-build.ps1` makes, run read-only
+     and once a day, because until now all of them only ran as part of a
+     *delivery* and the 2026-08-10 debug-build-in-both-portables state went
+     unnoticed for seventeen hours. It reports and never refuses: what it names
+     is fixed by a delivery, which needs a release build and is therefore a
+     task. Ask it directly with
+     `scripts\deliver-windows-build.ps1 -VerifyOnly` (nothing is written, ever),
+     and `deliver=` on `scripts\go-loop-health.ps1` carries the same verdict for
+     a reader that is not a turn. Acceptance: section G of
+     `test\win32\deliver-windows-build.ps1`.
    - **It also reports a BOOT OUTAGE** (T829): after a restart with nobody at
      the keyboard, no process of ours can run at all — Windows creates no
      session, so both the Run entry and the supervisor's scheduled task are

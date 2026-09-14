@@ -9,6 +9,46 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-14: T727 closed done, T1569 filed - **you can now ask what is sitting
+  in the install locations, instead of only being told what a delivery just put
+  there.** Every check `deliver-windows-build.ps1` makes - the file set, the PE
+  subsystem that separates a release build from a Debug one, the `+version` each
+  binary answers, the agent's build stamp, the sign-in bake, the published zip's
+  entry set - only ever ran as part of a COPY. Between deliveries the question
+  had no answer at all, which is how 2026-08-10's debug `ghoztty.exe` sat in
+  both portable locations for seventeen hours.
+
+  **`-VerifyOnly` is the whole verification pass with the copying taken out**,
+  and it writes nothing - section G asserts that by comparing every file's path,
+  length and mtime across the run, not by reading the code. The design question
+  is what "expected" means when nothing is being delivered, and staging is the
+  wrong answer: a box deliberately a delivery behind would fail every audit, and
+  a check that cries wolf is a check people stop reading. So the default
+  assertion is INTERNAL CONSISTENCY - every location agrees with the newest one,
+  the two front-ends inside a directory agree with each other, the agents and
+  the sign-in bakes agree, every binary is a release build, and the zip carries
+  nothing the manifest excludes. That is exactly the shape 2026-08-10 broke, and
+  it is silent about being one delivery old. `-ExpectedCommit <sha>` (or `HEAD`)
+  asks the stricter question on purpose.
+
+  **A flag nobody invokes is not an improvement over reading file sizes by
+  hand**, so the other half is a reader: `scripts\deliver-audit.ps1` runs the
+  audit at most once a day from step 0's `claim`, out of process with a deadline
+  because a sleeping NAS is the one thing here that can take minutes, and leaves
+  a watermark that `go-loop-health.ps1` reports as `deliver=`. It REPORTS and
+  never refuses - what it names is fixed by a delivery, which needs a release
+  build and is therefore a task, and a claim that could block on it would wedge
+  the loop over a state no turn can clear. For the same reason `wrong` does not
+  degrade the health run: the repo's own argument against `publish=ok+<n>`
+  degrading, a light that stays red is a light people read past.
+
+  **Its first real run scored seven problems and they were all true.** Both
+  portable locations are holding a debug `ghoztty.exe` (+f1d06293e, subsystem 3)
+  beside a `ghoztty.com` from +db68549df, and the share's loose agent is a month
+  behind the ones next to it - the 2026-08-10 state, live, today, weeks old.
+  That is T1569, and it is a delivery rather than an edit. The check earned its
+  keep in the first two seconds it existed.
+
 - 2026-09-14: T1565 closed done, T1566 filed - **a "Check for Updates..." you
   clicked now answers in a window; the tray keeps only the offers nobody asked
   for.** T1563 fixed the case where the app DECIDED to say nothing. This is the

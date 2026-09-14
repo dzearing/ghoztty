@@ -1,10 +1,11 @@
 {
     "guard":  "launch-preflight",
     "script":  "test/win32/launch-preflight-audit.ps1",
-    "generated":  "2026-09-14T10:41:59-07:00",
-    "commit":  "d006146bf",
+    "generated":  "2026-09-14T12:18:10-07:00",
+    "commit":  "07d8d8336",
     "uncommitted":  [
-                        "test/win32/harness-floor.ps1"
+                        "test/win32/deliver-windows-build.ps1",
+                        "test/win32/gate-negatives.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -93,7 +94,7 @@
                   "test/win32/daily-publish.ps1":  "9a9c9c698f7eedc50927536a038397281e4c4471d56c4f2e9fffbf8fe61c7512",
                   "test/win32/dark-menus.ps1":  "ab97be43af44188040463ebf9c6ab7b4a96139a623445aeb145eec3e4c9f906f",
                   "test/win32/dashboard-dom.ps1":  "34e4f9885499690ee161fda2d60842afdd46577fa37393f71cc0cc2e5c818b27",
-                  "test/win32/deliver-windows-build.ps1":  "5865da6281484698089bb8879a2bddc0067afd60c8577ba0946f04304f3e8eb1",
+                  "test/win32/deliver-windows-build.ps1":  "ca15c14d4f26fdb9b2296fda26bb4ab542341137cf7b9097223c076ad399d677",
                   "test/win32/desktop-launch-audit.ps1":  "df0f8241a82fb625a5309378e3d96de7951876f8d2c394564e3f3326d8889a53",
                   "test/win32/divergence-inventory.ps1":  "829edd00d4ed65595adf6d9a837414af1f212b18f4cbfff9f4ce4568e43b7c09",
                   "test/win32/docs-routing.ps1":  "0df33f259fc8eb88f4eb186c8f0fb216bfe5e929d3e8e85e59a9b3cbd4b6d821",
@@ -113,7 +114,7 @@
                   "test/win32/font-inherit.ps1":  "f303affd8f1c72da77f48f09a10b18d0c7c72af845a4602455bf013662d8c257",
                   "test/win32/foreground-audit.ps1":  "d343505dc8ede3b8a22d230eb7621f529f2a106a740301fead22d422b59310e3",
                   "test/win32/fork-identity.ps1":  "9661dc44ad46212f55a3f65601c083cd0f1eebcba2e3a323f6fe4c4f44b62cbe",
-                  "test/win32/gate-negatives.ps1":  "8d4d4ac4d615dcba90ba14153ed6bc802473e7c3554a9c90c1826848b46605c6",
+                  "test/win32/gate-negatives.ps1":  "1be8b6c6ffbf3d9969263a5d227a44d95b890446557ab803d1a6e03e68c075d2",
                   "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76",
                   "test/win32/go-loop-guard.ps1":  "095499f3262659e840b22ee58872b472fcfcda8495f7e2d0a56f5a555eac2d68",
                   "test/win32/go-loop-resume.ps1":  "3d83f2603cd0f5184d2d08087b2d8bc8a8e544c62bbc6ed1786e4e655ebe583a",

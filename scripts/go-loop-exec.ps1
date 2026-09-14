@@ -391,6 +391,22 @@ switch ($Action) {
             foreach ($line in ($upOut -split "`r?`n")) { if ($line.Trim()) { "  $line" } }
         }
 
+        # T727: what is sitting in the install locations RIGHT NOW. Everything
+        # `deliver-windows-build.ps1` checks, it checked as part of a DELIVERY -
+        # so on 2026-08-10 both portable locations held a DEBUG ghoztty.exe
+        # beside a release ghoztty.com for seventeen hours and nothing was ever
+        # going to say so. The read-only audit runs at most once a day, out of
+        # process with a deadline (a sleeping NAS is the one thing here that can
+        # take minutes), and reports rather than refuses: a stale portable copy
+        # is fixed by a delivery, which is a task, not something a claim may
+        # block on. `deliver=` on scripts\go-loop-health.ps1 is the same verdict
+        # for a reader that is not a turn.
+        $auditScript = Join-Path $PSScriptRoot 'deliver-audit.ps1'
+        if (Test-Path -LiteralPath $auditScript) {
+            $auditOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $auditScript -Repo $Repo 2>&1 | Out-String
+            foreach ($line in ($auditOut -split "`r?`n")) { if ($line.Trim()) { "  $line" } }
+        }
+
         # T829: did the box come back from its last reboot by itself, or did the
         # loop sit dead until somebody signed in? Reported HERE for the same
         # reason the guard report above is: this is the one command every turn

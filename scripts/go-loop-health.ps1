@@ -82,6 +82,10 @@ param(
     [datetime]$PublishAsOf = [datetime]::MinValue,
     # A pending "ship this now" request (T1294). Defaults beside the watermark.
     [string]$PublishRequest = '',
+    # The install-location audit's watermark (T727), written by
+    # scripts\deliver-audit.ps1. A seam for the harness; the default is what the
+    # loop actually reads.
+    [string]$DeliverWatermark = '',
     # How long a request may sit unhonoured before the run degrades. A request is
     # filed mid-turn and honoured at that turn's step 6.5, so anything under an
     # hour is in-flight rather than stuck.
@@ -97,6 +101,7 @@ if ($DigestAsOf -eq [datetime]::MinValue) { $DigestAsOf = Get-Date }
 if ($PublishAsOf -eq [datetime]::MinValue) { $PublishAsOf = Get-Date }
 if (-not $PublishWatermark) { $PublishWatermark = Join-Path $env:LOCALAPPDATA 'ghoztty\daily-publish' }
 if (-not $PublishRequest) { $PublishRequest = "$PublishWatermark-request" }
+if (-not $DeliverWatermark) { $DeliverWatermark = Join-Path $env:LOCALAPPDATA 'ghoztty\deliver-audit.json' }
 # Get-LoopStop. loop-session.ps1 is documented as free of load-time side effects.
 . (Join-Path $PSScriptRoot 'loop-session.ps1')
 $IsoFmt = 'yyyy-MM-ddTHH:mm:ssK'
@@ -342,6 +347,42 @@ try {
     }
 } catch { $requestReason = '' }
 
+# --- the install-location audit (T727) --------------------------------------
+#
+# Same shape as the two fields above, and the same reason: on 2026-08-10 both
+# portable install locations held a DEBUG ghoztty.exe beside a release
+# ghoztty.com for most of a day, and the only way to find out was to read file
+# sizes by hand. scripts\deliver-audit.ps1 runs the read-only audit once a day
+# from the claim and leaves its verdict here.
+#
+#   ok         - every reachable location agrees, audited today or yesterday
+#   wrong      - a location was reached and is not what it should be
+#   skipped    - nothing was reachable (a sleeping NAS), or the audit timed out
+#   stale-<n>d - nobody has audited for n days, n >= 2
+#   never      - the audit has never run on this box
+#
+# `wrong` is reported and does NOT degrade the run. The state it names is fixed
+# by a delivery, which needs a release build and is therefore a task rather than
+# a thing this turn can do - and a light that stays red until someone gets round
+# to it is a light people learn to read past (the same argument `publish=ok+<n>`
+# makes about a commit landing after a release). What degrades is the READER
+# stopping, because then nobody is looking at all.
+$deliverState = 'never'
+$deliverSummary = ''
+$deliverProblems = 0
+try {
+    if (Test-Path -LiteralPath $DeliverWatermark) {
+        $dwm = [IO.File]::ReadAllText($DeliverWatermark).Trim() | ConvertFrom-Json
+        if ($dwm -and $dwm.date) {
+            $deliverSummary = [string]$dwm.summary
+            $deliverProblems = [int]$dwm.problems
+            $days = [int]([math]::Floor(((Get-Date).Date - ([datetime]::ParseExact([string]$dwm.date, 'yyyy-MM-dd', $null)).Date).TotalDays))
+            if ($days -ge 2) { $deliverState = "stale-${days}d" }
+            else { $deliverState = [string]$dwm.result }
+        }
+    }
+} catch { $deliverState = 'never' }
+
 # --- verdict ----------------------------------------------------------------
 
 $alive = ($state -eq 'held')
@@ -460,6 +501,13 @@ if ($publishState -eq 'never') {
 } elseif ($publishState -like 'stale-*') {
     $notes += "nothing has shipped since $publishDate ($publishState) - the work that has landed since is not on the user's machine"
 }
+if ($deliverState -eq 'never') {
+    $notes += 'the install locations have never been audited - go.md step 0 runs scripts\deliver-audit.ps1; run it by hand to see what is in them'
+} elseif ($deliverState -like 'stale-*') {
+    $notes += "nobody has audited the install locations for $($deliverState -replace 'stale-') - the audit that would notice a wrong build sitting there is not running"
+}
+# `wrong` deliberately adds no note: it is on the line and in the claim report,
+# and it must not hold the run degraded until somebody delivers.
 if ($requestReason -and ($null -eq $requestAgeHours -or $requestAgeHours -ge $RequestStaleHours)) {
     $notes += ("a publish was requested and has not gone out" +
         $(if ($null -ne $requestAgeHours) { " ($([math]::Round($requestAgeHours))h ago)" } else { '' }) +
@@ -518,13 +566,16 @@ if ($Json) {
         publish_commit = $publishCommit
         publish_behind = $publishBehind
         publish_request = $requestReason
+        deliver          = $deliverState
+        deliver_problems = $deliverProblems
+        deliver_summary  = $deliverSummary
         stopped        = [bool]$stopReq
         notes          = $notes
     } | ConvertTo-Json -Depth 4
 } else {
     $task = if ($inProgress.Count) { $inProgress -join ',' } else { 'none' }
     "$(Now-Iso) $($verdict.ToUpper()) uptime=$uptime turn=$turn turn_age=$(Format-Age $turnAgeMin) state=$state pane=$pane pid=$loopPid " +
-    "task=$task decisions_open=$openDecisions digest=$digestState publish=$publishState blocked=$(if ($blocker.Blocked) { $blocker.Kind } else { 'no' }) windows=$marked watchdog=$watchdog dashboard=$dashboard"
+    "task=$task decisions_open=$openDecisions digest=$digestState publish=$publishState deliver=$(if ($deliverState -eq 'wrong') { "wrong($deliverProblems)" } else { $deliverState }) blocked=$(if ($blocker.Blocked) { $blocker.Kind } else { 'no' }) windows=$marked watchdog=$watchdog dashboard=$dashboard"
     foreach ($n in $notes) { "  - $n" }
 }
 

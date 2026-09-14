@@ -27,6 +27,10 @@
 #      binaries do not answer the expected commit FAILS; a zip whose entry set
 #      moved is NOT published.
 #   E  the second run is a no-op apart from new backups, and still verifies.
+#   G  the AUDIT (T727): the same checks run against the locations as they
+#      stand, writing nothing - the question nobody could ask between
+#      deliveries - plus the unattended reader that runs it and the health
+#      field that reports its verdict.
 #
 # Hermetic: every directory it writes is under the sandbox root, the real
 # install locations are never named, and no build is ever run. It reads two real
@@ -337,6 +341,109 @@ if ($stagedBake.Known -and -not $stagedBake.Configured) {
     Assert "F3 a pre-T795 staging build says it cannot be checked" `
         ($r.Text -match 'sign-in unreported by the staged exe')
 }
+
+# ============================================================================
+""
+"== G: the audit - what is in those locations RIGHT NOW (T727)"
+# ============================================================================
+#
+# Everything above verifies a DELIVERY. On 2026-08-10 both portable locations
+# held a DEBUG ghoztty.exe beside a release ghoztty.com for seventeen hours
+# between deliveries, and the only way to find out was to read file sizes by
+# hand. These arms are about the read-only pass that answers that question, and
+# the first thing they have to prove is that it is genuinely read-only.
+
+function Invoke-Audit {
+    param([hashtable]$Extra = @{})
+    if (-not $Extra.ContainsKey('ZipPath')) { $Extra = $Extra + @{ ZipPath = $zipPath } }
+    $out = & $deliver -VerifyOnly -Targets @($p1, $p2) -LooseAgentDir $shareRoot @Extra *>&1 |
+        ForEach-Object { "$_" }
+    return @{ Code = $LASTEXITCODE; Text = ($out -join "`n"); Last = @($out)[-1] }
+}
+function Get-TreeShape([string]$Dir) {
+    return @(Get-ChildItem -LiteralPath $Dir -Recurse -File -ErrorAction SilentlyContinue |
+        ForEach-Object { "$($_.FullName)|$($_.Length)|$($_.LastWriteTimeUtc.Ticks)" } | Sort-Object)
+}
+
+$before = Get-TreeShape $root
+$r = Invoke-Audit
+$after = Get-TreeShape $root
+AssertEq "G1 an audit of locations that agree exits 0" 0 $r.Code
+Assert "G2 and says so on its last line" ($r.Last -like 'AUDIT OK:*')
+Assert "G3 it wrote NOT ONE BYTE - same files, same lengths, same mtimes" `
+    ((Compare-Object $before $after -SyncWindow 4096).Count -eq 0)
+Assert "G4 it read the published zip against the manifest rule" ($r.Text -match 'none the manifest excludes')
+
+# An unreachable location is a SKIP, exactly as it is for a delivery: a sleeping
+# NAS must not read as a wrong build.
+$out = & $deliver -VerifyOnly -Targets @((Join-Path $root 'no-such-place')) -LooseAgentDir '' -NoZip *>&1 |
+    ForEach-Object { "$_" }
+$code = $LASTEXITCODE
+AssertEq "G5 an unreachable location exits 0" 0 $code
+Assert "G6 and never claims OK" (@($out)[-1] -like 'AUDIT SKIPPED:*')
+
+# D1's state, found BETWEEN deliveries instead of during one.
+$goodExe = Join-Path $p2 'ghoztty.exe'
+$stash = Join-Path $root 'good-ghoztty.exe'
+Copy-Item -LiteralPath $goodExe $stash -Force
+Copy-Item -LiteralPath (Join-Path $DebugBin 'ghoztty.exe') $goodExe -Force
+$r = Invoke-Audit
+AssertEq "G7 a Debug exe sitting in a location FAILS the audit" 1 $r.Code
+Assert "G8 naming the location and what gave it away" `
+    ($r.Text -match [regex]::Escape($p2) -and $r.Text -match 'PE subsystem .*Debug build')
+Assert "G9 and says so on its last line" ($r.Last -like 'AUDIT FAILED:*')
+Copy-Item -LiteralPath $stash $goodExe -Force
+
+# The stricter question, asked on purpose: these bits are not that commit.
+$r = Invoke-Audit -Extra @{ ExpectedCommit = 'deadbee' }
+AssertEq "G10 -ExpectedCommit fails locations that do not carry it" 1 $r.Code
+Assert "G11 naming the commit it found instead" ($r.Text -match 'reports \+[0-9a-f]{7,} but \+deadbee is expected')
+
+# A published archive carrying something the manifest excludes. Built by hand:
+# the point is the audit's reading of an artifact, not a rebuild of one.
+$badZip = Join-Path $root 'bad.zip'
+Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+$z = [IO.Compression.ZipFile]::Open($badZip, 'Create')
+try {
+    $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, $stash, 'Ghoztty/ghoztty.exe')
+    $null = [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($z, $stash, 'Ghoztty/ghoztty.pdb')
+} finally { $z.Dispose() }
+$r = Invoke-Audit -Extra @{ ZipPath = $badZip }
+AssertEq "G12 a published zip shipping an excluded file FAILS" 1 $r.Code
+Assert "G13 naming the file" ($r.Text -match 'ghoztty\.pdb')
+
+# The unattended reader. It is the half that matters: a flag nobody invokes is
+# not an improvement over reading file sizes by hand.
+$auditScript = Join-Path $Repo 'scripts\deliver-audit.ps1'
+$wm = Join-Path $root 'deliver-audit.json'
+$out = & $auditScript -Repo $Repo -Watermark $wm -Targets @($p1, $p2) -LooseAgentDir $shareRoot `
+    -ZipPath $zipPath *>&1 | ForEach-Object { "$_" }
+$code = $LASTEXITCODE
+AssertEq "G14 the unattended reader exits 0 over a clean audit" 0 $code
+Assert "G15 and reports the verdict in one line" (($out -join "`n") -match 'DELIVER AUDIT ok')
+Assert "G16 leaving a verdict a reader that never runs the audit can read" (Test-Path -LiteralPath $wm)
+$wmObj = Get-Content -LiteralPath $wm -Raw | ConvertFrom-Json
+AssertEq "G17 the watermark records the result" 'ok' ([string]$wmObj.result)
+$out2 = & $auditScript -Repo $Repo -Watermark $wm -Targets @($p1, $p2) -LooseAgentDir $shareRoot `
+    -ZipPath $zipPath *>&1 | ForEach-Object { "$_" }
+Assert "G18 a second call the same day is a no-op, so the claim pays once" (($out2 -join "`n") -match 'already run today')
+
+# And the reader's teeth: a wrong location is reported, and -Strict is how a
+# caller that WANTS to fail over it asks.
+Copy-Item -LiteralPath (Join-Path $DebugBin 'ghoztty.exe') $goodExe -Force
+$out = & $auditScript -Repo $Repo -Watermark $wm -Force -Strict -Targets @($p1, $p2) `
+    -LooseAgentDir $shareRoot -ZipPath $zipPath *>&1 | ForEach-Object { "$_" }
+$code = $LASTEXITCODE
+AssertEq "G19 -Strict exits 1 over a wrong location" 1 $code
+Assert "G20 and names what is wrong, not just a count" (($out -join "`n") -match 'PE subsystem')
+$wmObj = Get-Content -LiteralPath $wm -Raw | ConvertFrom-Json
+AssertEq "G21 the watermark says wrong, for the health line to read" 'wrong' ([string]$wmObj.result)
+Copy-Item -LiteralPath $stash $goodExe -Force
+
+# The health line is where a reader who is not a turn sees it (T727).
+$hOut = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\go-loop-health.ps1') `
+    -Repo $Repo -DeliverWatermark $wm -NoPaneProbe *>&1 | ForEach-Object { "$_" }
+Assert "G22 go-loop-health reports deliver=wrong from that watermark" (($hOut -join "`n") -match 'deliver=wrong\(\d+\)')
 
 # ============================================================================
 if (-not $Keep) { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue }
