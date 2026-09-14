@@ -28336,3 +28336,29 @@ CLEAN over 368 commits, 368 mapped — it read 81 unmapped before this change, s
 the gate demonstrably moved rather than having always been quiet.
 `test\win32\parity-sweep.ps1` still ALL PASS, so the citations did not disturb
 the frozen fixtures. All four zig lanes PASS.
+
+## 2026-09-14 - A Ghoztty link that misses now warns in Ghoztty's own dialog (T717)
+
+Clicking a `ghoztty://` link that names a window you already closed put a light
+grey Windows message box on screen - the last prompt in the app still drawn by
+`MessageBoxW`, and the one path a user reaches by clicking a link rather than by
+using the app. It now shows the same dark card every other Ghoztty prompt uses,
+at the display's scale rather than a flat 96 DPI.
+
+The activation process has no `App` and never will: it answers the link and
+exits before the app builds anything. But `ConfirmDialog` has not needed one
+since T1177's `showStandalone`, which resolves the process instance handle and
+runs the same nested message loop - so the fix is that entry point plus a new
+`ConfirmDialog.standaloneScale()` reading the primary monitor's DPI, which is
+the screen an owner-less dialog centers on anyway.
+
+Validated: `test\win32\url-scheme.ps1` ALL PASS (42 assertions). Arm E is now
+measured by dialog CLASS, which is what makes a relapse visible - it waits on
+`GhozttyConfirmDialog` and asserts no `#32770` system box appears alongside it -
+and a new COLD CLICK arm kills every instance first, so the case with no app
+anywhere to borrow a window, a theme or a message loop from is the one that
+proves it. All four zig lanes PASS; ipc-p1/p2/p3 ALL PASS.
+
+Filed T1558: the four other `showStandalone` callers (startup failure, install
+restart, install maintenance, update install) still pass a hard-coded 1.0, so on
+a scaled display their dialog is smaller than every in-app one.

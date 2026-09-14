@@ -1,10 +1,10 @@
 {
     "guard":  "launch-preflight",
     "script":  "test/win32/launch-preflight-audit.ps1",
-    "generated":  "2026-09-14T02:34:23-07:00",
-    "commit":  "f2761be48",
+    "generated":  "2026-09-14T03:51:54-07:00",
+    "commit":  "a3d05bcd3",
     "uncommitted":  [
-                        "test/win32/ipc-p1.ps1"
+                        "test/win32/url-scheme.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -334,7 +334,7 @@
                   "test/win32/upgrade-resume-readiness.ps1":  "8b7e8b9244e5c2241aaff71ad4038ebde680105e8ba8a36b6dea1257ae2d3186",
                   "test/win32/upgrade-staleness.ps1":  "0d4e876d652dfd94b3dbc906ff6d8e33d52354aa99a3c4bc0d5b222117c6d5e9",
                   "test/win32/upstream-remote.ps1":  "483ebecd3ff0e427c13addaa2c1afe0e2229e27778ad080d365e3868e7f6c2c4",
-                  "test/win32/url-scheme.ps1":  "1c9a47f84066fe08329305fe8765556b26d3cd06f663b0a963a0ca2d94d4820d",
+                  "test/win32/url-scheme.ps1":  "33fe6b3246d5e2ca17e5f68af88fac03d4eb50f8b2210c801fc7c2f0303909a6",
                   "test/win32/verdict-exit-audit.ps1":  "1f0f26a08f6e63b6e55ab709536e7f0a720ec6a4c5d9cb3265ef2a57e05a5769",
                   "test/win32/verify-release-clean.ps1":  "756fee5cbd0b8a1ad8d3d01987658087b62efb6dd8327de4cb9aef10d5107dd3",
                   "test/win32/viewer-close.ps1":  "e375513a3f89b5a111e6624a7daa4cadb603050b88181c2ee77631b1a65d4d36",

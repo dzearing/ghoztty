@@ -674,6 +674,13 @@ pub extern "user32" fn GetDpiForWindow(
     hWnd: HWND,
 ) callconv(.winapi) u32;
 
+/// The DPI of the primary monitor, for a process that declared itself DPI
+/// aware (ours does, PerMonitorV2 in `dist/windows/ghostty.manifest`). The
+/// per-WINDOW call above is what every dialog with an owner uses; this is for
+/// the app-less paths, which have no window to ask and center on the primary
+/// screen anyway.
+pub extern "user32" fn GetDpiForSystem() callconv(.winapi) u32;
+
 pub extern "user32" fn MessageBeep(
     uType: u32,
 ) callconv(.winapi) i32;

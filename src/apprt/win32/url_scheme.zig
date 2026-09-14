@@ -38,13 +38,19 @@
 //!
 //! ## Who shows the failure
 //!
-//! Whichever process noticed it, because they have different tools. The
-//! activation process has no `App`, no theme and no window to own a dialog, so
-//! it uses the system `MessageBoxW` and coalesces across processes with a named
-//! mutex (a page can fire a burst of links, and each one is its own process
-//! here — the Mac's single `application(_:open:)` array has no analog). An
-//! in-app click has the app, so it gets the themed `ConfirmDialog` every other
-//! Ghoztty prompt uses, coalesced with a flag.
+//! Whichever process noticed it — but both show the SAME themed
+//! `ConfirmDialog` card every other Ghoztty prompt uses (T717). What differs is
+//! how a burst of links is coalesced into one dialog, because the two paths can
+//! see different things: an in-app click has the app and uses a flag, while
+//! every external click is its OWN process here (the Mac's single
+//! `application(_:open:)` array has no analog) and so coalesces across
+//! processes with a named mutex.
+//!
+//! The activation process has no `App`, and `ConfirmDialog.show` wants one —
+//! but `showStandalone` (T1177) does not: the dialog only ever needed the app
+//! for its window-class instance handle. Its scale comes from the primary
+//! monitor rather than from an owner window, since an app-less dialog has no
+//! owner and centers on that screen.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -421,6 +427,14 @@ fn logFailure(failure: grammar.Failure) void {
 /// Coalesced across PROCESSES: every click is its own activation here, so the
 /// flag the Mac uses cannot see the burst. A named mutex can — whoever holds it
 /// owns the dialog, and everyone else exits quietly with the same code.
+///
+/// The dialog itself is the SAME themed card the in-app path shows (T717).
+/// This process has no `App` — and it never will, since an activation answers
+/// and exits before the app builds anything — but `ConfirmDialog` has not
+/// needed one since T1177: `showStandalone` resolves the process instance
+/// handle and runs the same nested message loop. Before that this was the one
+/// prompt in Ghoztty still drawn by `MessageBoxW`, which put a light system box
+/// on screen in a dark app from a path a user reaches by clicking a link.
 fn present(failure: grammar.Failure) void {
     if (quiet()) {
         logFailure(failure);
@@ -447,7 +461,12 @@ fn present(failure: grammar.Failure) void {
     const title = toWide(failure.title(&title_buf), &title_w) orelse return;
     const body = toWide(failure.body(&body_buf), &body_w) orelse return;
 
-    _ = w32.MessageBoxW(null, body.ptr, title.ptr, w32.MB_OK | w32.MB_ICONWARNING);
+    _ = ConfirmDialog.showStandalone(null, ConfirmDialog.standaloneScale(), .{
+        .title = title.ptr,
+        .text = body,
+        .style = .ok_only,
+        .icon = .warning,
+    });
 }
 
 const ERROR_ALREADY_EXISTS: u32 = 183;

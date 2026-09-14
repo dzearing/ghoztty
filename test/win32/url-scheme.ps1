@@ -21,7 +21,9 @@
 #      user clicking a link in a browser actually does.
 #   E. A FAILED LINK SAYS SO. Run without the quiet seam, a warning dialog
 #      appears naming the one supported form, and a burst of links produces ONE
-#      dialog rather than one each.
+#      dialog rather than one each. It is the app's OWN dialog class
+#      (GhozttyConfirmDialog) and never a system '#32770' box (T717) -- that
+#      holds for the cold click too, with nothing running to borrow from.
 #   F. LOCATION GATE (T1124). A build whose exe lives inside a source checkout
 #      registers nothing at all -- `zig-out-release` is a RELEASE build sitting
 #      in build output, and one launch of it pointed the user's ghoztty:// links
@@ -367,17 +369,27 @@ try {
         }
     }
 
-    # --- E. a failed link says so, once --------------------------------------
+    # --- E. a failed link says so, once, in the app's own dialog -------------
     # Run WITHOUT the quiet seam and on the test desktop, so the modal warning
     # cannot land on the user's screen. Two activations, one dialog: the
     # cross-process coalescing a page firing a burst of links needs.
+    #
+    # The CLASS is the T717 oracle. Until then this path was the last prompt in
+    # Ghoztty drawn by MessageBoxW -- class '#32770', a light system box in a
+    # dark app -- so waiting on 'GhozttyConfirmDialog' is what says the external
+    # link now warns in the same themed card as every in-app one. The '#32770'
+    # check below is its negative half: the system box must be GONE, not merely
+    # joined by a themed one.
     Remove-Item Env:\GHOZTTY_URL_SCHEME_QUIET -ErrorAction SilentlyContinue
     # persistence: n/a - a URL activation, which is answered and exited before
     # the single-instance bind (main_ghostty.zig, T695). It opens no terminal
     # and never reaches the restore path, so there is nothing to declare.
     $a1 = Start-OnTestDesktop -Exe $exe -Arguments @("$debugScheme`://open/urlwin")
-    $dlg = Wait-TestWindow -ProcessId $a1.Pid -Class '#32770' -TimeoutMs 15000
-    Assert ($dlg -ne [IntPtr]::Zero) 'an unsupported link puts a warning on screen'
+    $dlg = Wait-TestWindow -ProcessId $a1.Pid -Class 'GhozttyConfirmDialog' -TimeoutMs 15000
+    Assert ($dlg -ne [IntPtr]::Zero) `
+        'an unsupported link puts a warning on screen, in the themed dialog (T717)'
+    Assert ((Get-TestWindow -ProcessId $a1.Pid -Class '#32770') -eq [IntPtr]::Zero) `
+        '...and no system MessageBox alongside it'
     if ($dlg -ne [IntPtr]::Zero) {
         $text = Get-TestWindowText $dlg
         Assert ($text -like '*Unsupported Ghoztty link*') `
@@ -386,7 +398,7 @@ try {
 
     # persistence: n/a - a URL activation, as above: no terminal, no restore.
     $a2 = Start-OnTestDesktop -Exe $exe -Arguments @("$debugScheme`://open/urlwin")
-    $second = Wait-TestWindow -ProcessId $a2.Pid -Class '#32770' -TimeoutMs 8000
+    $second = Wait-TestWindow -ProcessId $a2.Pid -Class 'GhozttyConfirmDialog' -TimeoutMs 8000
     Assert ($second -eq [IntPtr]::Zero) `
         'a second link while the warning is up adds no second dialog'
 
@@ -400,10 +412,29 @@ try {
     # all, which is how a coalescing test passes while coalescing is broken.
     # persistence: n/a - a URL activation, as above: no terminal, no restore.
     $a3 = Start-OnTestDesktop -Exe $exe -Arguments @("$debugScheme`://open/urlwin")
-    $third = Wait-TestWindow -ProcessId $a3.Pid -Class '#32770' -TimeoutMs 8000
+    $third = Wait-TestWindow -ProcessId $a3.Pid -Class 'GhozttyConfirmDialog' -TimeoutMs 8000
     Assert ($third -ne [IntPtr]::Zero) `
         'control: once the warning is dismissed, the next link shows its own'
     if ($third -ne [IntPtr]::Zero) { Send-TestWindowClose $third | Out-Null }
+
+    # COLD CLICK (T717). With NOTHING running, a link that names a window still
+    # warns in the same themed card. This is the case with no app anywhere to
+    # borrow a window, a theme or a message loop from -- the activation process
+    # draws the dialog itself -- and it is the one a user actually hits, opening
+    # a saved link the morning after they closed the window it points at.
+    Stop-RepoInstances
+    Start-Sleep -Milliseconds 500
+    # persistence: n/a - a URL activation, as above: no terminal, no restore.
+    $cold = Start-OnTestDesktop -Exe $exe -Arguments @("$debugScheme`://focus/nosuchwindow")
+    $coldDlg = Wait-TestWindow -ProcessId $cold.Pid -Class 'GhozttyConfirmDialog' -TimeoutMs 15000
+    Assert ($coldDlg -ne [IntPtr]::Zero) `
+        'a link clicked with nothing running warns in the themed dialog too'
+    if ($coldDlg -ne [IntPtr]::Zero) {
+        $coldText = Get-TestWindowText $coldDlg
+        Assert ($coldText -like '*nosuchwindow*') `
+            "...and names the window it could not find (got '$coldText')"
+        Send-TestWindowClose $coldDlg | Out-Null
+    }
 
     # --- F. a build living in the source tree registers NOTHING (T1124) ------
     # The build-mode split alone let `zig-out-release` -- a RELEASE build, but

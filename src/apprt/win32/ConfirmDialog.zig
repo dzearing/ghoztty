@@ -510,6 +510,21 @@ pub fn showStandalone(owner: ?w32.HWND, scale: f32, opts: Options) Result {
     return run(null, hinstance, owner, scale, null, opts, null);
 }
 
+/// The scale an app-less dialog should be drawn at: the PRIMARY monitor's, in
+/// the units `scale` is everywhere else (1.0 == 96 DPI).
+///
+/// A dialog with an owner takes its scale from that window, which is how every
+/// in-app prompt follows the monitor it is on. An app-less one has no window to
+/// ask and centers on the primary screen (see `run`'s SM_CXSCREEN fallback), so
+/// the primary monitor's DPI is the right — and only — answer. Passing a flat
+/// 1.0 instead draws a 96-DPI dialog in a per-monitor-aware process, which on a
+/// 150% display is a warning two thirds the size of every other prompt.
+pub fn standaloneScale() f32 {
+    const dpi = w32.GetDpiForSystem();
+    if (dpi == 0) return 1.0;
+    return @as(f32, @floatFromInt(dpi)) / 96.0;
+}
+
 /// Show a dialog carrying a text field (`opts.input` MUST be set) and return
 /// what the user left in it, UTF-8 in `buf`, or null when they cancelled —
 /// the win32 counterpart to Mac's NSAlert-with-accessoryView prompts.
