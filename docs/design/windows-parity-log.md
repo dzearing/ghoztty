@@ -28845,3 +28845,56 @@ that replaced it. So the Summary was rewritten to what is LEFT before any code
 was written, per step 1's CHECK FIRST, rather than a script being built against
 a mechanism that had been gone for a month. `window_active.zig`'s module doc
 still named that hover reveal among its callers; it does not any more.
+## 2026-09-14 - The old way of asking "is this window in front" can no longer creep back in (T730)
+
+Every guard in the win32 app that asks whether one of our windows is the one
+the user is working in goes through `window_active` now, and has since T215.
+The old spelling - `GetForegroundWindow() == hwnd` - still compiled, still read
+correctly, and still passed every check a person sitting at the box could run.
+It only stops working on a desktop nobody is looking at: there is no foreground
+window at all on one made with `CreateDesktopW`, which is how the acceptance
+suite runs the GUI, and equally on a locked workstation, a UAC secure desktop or
+a disconnected RDP session. A guard written that way does not fail there; it
+answers "no" forever, with no error and no log line. That is why the original
+four sites survived so long, and why a rule living only in a module doc comment
+was never going to hold.
+
+`test\win32\window-active-audit.ps1` is that rule with teeth. A
+`GetForegroundWindow` or `GetActiveWindow` reference in CODE under
+`src\apprt\win32\` is a finding unless the file is one of the two that own the
+API or the site carries a `// foreground-audit: <reason>` marker - the same
+state-your-intent convention the `# persistence:` and `# body-audit:` markers
+use, reaching ten lines so it names A SITE rather than blanketing a file. Prose
+is not a call: `window_active.zig` names both APIs in every other sentence and
+so does the audit itself, and reading those as violations is the failure mode
+that would make the sweep permanently green from the other direction.
+
+Two sites were still on the old spelling and had to be converted before the
+sweep could ship at zero. `App.updateDialogOwner` picked the window a manual
+update answer hangs off by comparing the foreground handle, so off the input
+desktop every answer would have gone to `windows.items[0]`; it reads
+`w32.activation()` once and asks `window_active.isActive` per window now. The
+focus-follows-mouse guard in `Surface.zig` reached for `GetActiveWindow`
+directly - the right proxy, but around the decision rather than through it - and
+is `w32.windowIsActive(parent_hwnd)` now, which is byte-identical on the
+interactive desktop and actually answers off it. `QuickTerminal.forceForeground`
+is the one marked exemption: it is the `AttachThreadInput` dance that BECOMES
+the foreground window, so it needs the raw foreground owner's thread and is not
+asking window_active's question at all.
+
+The demonstration is section C, and it exercises the SWEEP rather than the
+analyzer: a real `.zig` holding a bare comparison is written into a directory
+the sweep is then pointed at, which must find exactly one finding and name the
+file, and the same site with a marker added must come back clear. Section D
+fails a stale allowlist entry, because an allowlisted file that no longer names
+either API would silently excuse a future regression in a file of that name. The
+guard-due row (`src\apprt\win32\*.zig` plus the script) is what makes it
+standing: touch the win32 sources and the audit is DUE, and `validate` refuses
+the commit until it has been run green.
+
+One thing the turn cost that was not the task: `floor-lane.ps1 -Lane all` builds
+the test binaries and never `zig-out\bin\ghoztty.exe`, so the .zig edits left
+the app binary older than its sources and the next harness lane scored
+build-mode-guard, persistence-flag and caller-anchor red on staleness - ten
+minutes to learn a rebuild was missing, from three verdicts that name
+`GHOZTTY_TEST_ALLOW_STALE` rather than "rebuild". Filed as **T1571**.

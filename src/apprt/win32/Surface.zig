@@ -4474,7 +4474,7 @@ fn focusFollowsMouse(self: *Surface, lparam: isize) void {
     // confirm dialog, machine chooser, all separate active windows —
     // must not have its focus stolen by a stray move over the terminal.
     const parent_hwnd = self.parent_window.hwnd orelse return;
-    if (w32.GetActiveWindow() != parent_hwnd) return;
+    if (!w32.windowIsActive(parent_hwnd)) return;
 
     App.deferSetFocus(hwnd); // T48: never SetFocus inside a WndProc
 }

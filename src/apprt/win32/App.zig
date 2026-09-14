@@ -8762,10 +8762,13 @@ fn showUpdateAnswer(
 /// ours, the first otherwise, null when the app has no windows open.
 fn updateDialogOwner(self: *App) ?*Window {
     if (self.windows.items.len == 0) return null;
-    const fg = w32.GetForegroundWindow();
-    if (fg != null) {
-        for (self.windows.items) |win| {
-            if (win.hwnd) |wh| if (wh == fg) return win;
+    // T215: the active window, not `GetForegroundWindow() == hwnd` - there is
+    // no foreground window at all on a background desktop, so the bare
+    // comparison would send every manual update answer to windows.items[0].
+    const act = w32.activation();
+    for (self.windows.items) |win| {
+        if (win.hwnd) |wh| {
+            if (window_active.isActive(act, @intFromPtr(wh))) return win;
         }
     }
     return self.windows.items[0];

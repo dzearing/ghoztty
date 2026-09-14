@@ -334,6 +334,11 @@ fn getMonitor(self: *QuickTerminal) ?w32.HMONITOR {
 /// SetForegroundWindow restriction.
 fn forceForeground(self: *QuickTerminal) void {
     const hwnd = self.window.hwnd orelse return;
+    // foreground-audit: this is the AttachThreadInput dance that BECOMES the
+    // foreground window, so it needs the raw foreground owner's thread - it is
+    // not asking "is one of our windows active", which is window_active's
+    // question. Off the input desktop there is no foreground window and the
+    // null branch below is the right answer.
     const fg = w32.GetForegroundWindow();
     if (fg) |fg_hwnd| {
         const fg_tid = w32.GetWindowThreadProcessId(fg_hwnd, null);

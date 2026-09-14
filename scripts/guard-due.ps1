@@ -2081,6 +2081,20 @@ $GuardTable = @(
             'test\win32\msg-timer-ids.ps1'
         )
     },
+    # T730: the rule that product code reads activation through `window_active`
+    # rather than by comparing `GetForegroundWindow` itself. The old spelling
+    # compiles, reads correctly and passes every interactive check - it only
+    # stops working on a desktop nobody is looking at - so a new site is caught
+    # by this sweep or not at all.
+    [pscustomobject]@{
+        Name   = 'window-active-audit'
+        Script = 'test\win32\window-active-audit.ps1'
+        Stamp  = 'test\win32\window-active-audit.stamp.json'
+        Covers = @(
+            'src\apprt\win32\*.zig',
+            'test\win32\window-active-audit.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'printclient-audit'
         Script = 'test\win32\printclient-audit.ps1'
