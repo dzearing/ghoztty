@@ -1,10 +1,9 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-09-14T09:15:25-07:00",
-    "commit":  "8fd2e0d38",
+    "generated":  "2026-09-14T09:58:12-07:00",
+    "commit":  "fee8edff6",
     "uncommitted":  [
-                        "test/win32/update-apply.ps1",
                         "test/win32/update-check.ps1"
                     ],
     "files":  {
@@ -327,7 +326,7 @@
                   "test/win32/title-font.ps1":  "946fd12880bb0433a535283fb6146fb7d2a8fd1b2d1f0f74e00fa7ce1720dcb8",
                   "test/win32/title-jitter.ps1":  "305bd304faf09988c8852f7fa69f2c780212b639fb837085b5869ab5457acab7",
                   "test/win32/update-apply.ps1":  "ed99645a2d9b0c9c005079cc3957df31bccc1b043e397f13315d6e4d1b4bb400",
-                  "test/win32/update-check.ps1":  "01e39d7ba5e730eefcb999466edcfaeb87a2677236433e1f9c836ef2f7313f79",
+                  "test/win32/update-check.ps1":  "ed9491f7742c412e75760c1ca8ed2907fb2ff2adf9a29a57fb0ca3ddf6af091d",
                   "test/win32/update-failure-visible.ps1":  "1461a89d59acbfe5b8c66685cf50d786aa51c97e7d5bb64ae683ff6593773647",
                   "test/win32/update-graceful.ps1":  "8dd249a5f108c2f129a2673c857e68808115c8fd963d67ffaef7ab43a3c70944",
                   "test/win32/update-progress.ps1":  "eb5f961ca43ee0a2e75f3d00cc7c0f7d84cd908ef50c7c0cfa98dfb6dee96f42",

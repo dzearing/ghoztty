@@ -9,6 +9,49 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-14: T1565 closed done, T1566 filed - **a "Check for Updates..." you
+  clicked now answers in a window; the tray keeps only the offers nobody asked
+  for.** T1563 fixed the case where the app DECIDED to say nothing. This is the
+  other half: everything a manual check had to say went through
+  `Shell_NotifyIconW`, which Windows is free to fail or ignore - Focus Assist, a
+  full-screen app, a shell that refused the icon (`NIM_SETVERSION failed for tray
+  uid=2` is logged on this very box). From where the user sits, "there is no
+  update" and "the answer was thrown away" look identical.
+
+  **The line drawn is CONSENT, not surface.** An unsolicited offer still
+  interrupts politely, in a balloon. A manual check is not unsolicited: the user
+  asked a direct question with a click, they are looking at the app, and the
+  answer lands where they are already looking - which is also what Mac does
+  (its About panel's update row, not Notification Center). So
+  `WM_APP_UPDATE_AVAILABLE` grew an lparam 3, "a MANUAL check found this", and
+  the manual arm now raises the SAME dialog a balloon click always raised
+  (Install and Restart / Later, `ConfirmDialog`), skipping the balloon in
+  between. "You are up to date" and "the check failed" - both of which only ever
+  reach a user who asked - became windows too, the failure one carrying **Open
+  Releases Page**. `showUpdateNotification` was split so `rememberUpdate` holds
+  the found-update state for both arms and only the automatic one balloons.
+
+  **Demonstrated with the tray made to fail, not argued from the code** (T1133's
+  rule). `GHOZTTY_TRAY_FAIL` is a Debug-only injection - every notification
+  refused - because the shell cannot be asked to swallow one on demand. New
+  scenario 8 of `test\win32\update-check.ps1` runs a manual check with the tray
+  dead and asserts the offer still reaches a window, with the no-injection run
+  as its negative control; scenario 9 covers the up-to-date answer; scenario 7
+  now asserts a WINDOW follows the ask and that the balloon count does NOT move.
+  ALL PASS, 36 assertions (was 32).
+
+  Floor green: all four `floor-lane.ps1` lanes, ipc-p1/p2/p3, and the fifteen
+  guards App.zig's edit made due (isolation-meta, launch-preflight, verdict-exit,
+  job-teardown, cleanslate, persistence-flag, both stderr audits, test-reach,
+  desktop-launch, command-resolve, msg-timer-ids, printclient, both rearrange
+  harnesses) - all re-run green rather than excused.
+
+  **What the work surfaced: T1566.** The automatic arm now has no durable
+  surface at all. It says the thing once, in a balloon, and if that is swallowed
+  there is nothing anywhere in the app that still says an update is waiting -
+  `rememberUpdate` holds the state and nothing renders it. P2, because the
+  manual path is now a reliable way to ask.
+
 - 2026-09-14: T721 closed done - **the find bar and the command palette are the
   END of the z-order-heal list, not the next two entries on it, and the set is
   now closed in writing.** T142 healed the passive overlays; T180 enumerated

@@ -8118,7 +8118,11 @@ fn keyToVk(key: @import("../../input/key.zig").Key) ?u32 {
 const UPDATE_URL = "https://api.github.com/repos/dzearing/ghoztty/releases?per_page=30";
 
 /// Custom message posted from the update thread to the message loop.
-/// wparam = heap ptr to an `UpdateFound` the handler takes ownership of.
+/// wparam = heap ptr to an `UpdateFound` the handler takes ownership of, with
+/// lparam saying WHO is being answered: 1 = an automatic check found it
+/// (balloon), 2 = a download the user consented to finished (install now),
+/// 3 = a MANUAL check found it, so the answer is a window rather than a
+/// balloon (T1565).
 /// wparam == 0 carries manual-check feedback instead: lparam 0 = up to
 /// date, 1 = check failed, 2 = a download failed (only posted for checks the
 /// user asked for, or for a download the user consented to).
@@ -8515,8 +8519,10 @@ fn runUpdateCheck(
 
     // Hand ownership of the heap payload to the message handler. This avoids a
     // static-buffer race between this worker thread writing and the message
-    // thread reading.
-    if (w32.PostMessageW(hwnd, WM_APP_UPDATE_AVAILABLE, @intFromPtr(found), 1) == 0) {
+    // thread reading. lparam carries WHO asked (T1565): a manual check is
+    // answered in a window, an automatic one in a balloon.
+    const audience: isize = if (trigger == .manual) 3 else 1;
+    if (w32.PostMessageW(hwnd, WM_APP_UPDATE_AVAILABLE, @intFromPtr(found), audience) == 0) {
         // PostMessage failed (e.g., HWND already destroyed). Free here since
         // the handler will never run.
         found.destroy(alloc);
@@ -8590,13 +8596,10 @@ fn reportUpdateProgress(ctx: *anyopaque, received: u64, total: u64) void {
     shared.report(received, total);
 }
 
-/// Show a notification balloon that an update is available. Remembers the
-/// version so a balloon click opens that release's GitHub page. The caller
-/// (message handler) still owns and frees `ver`.
-fn showUpdateNotification(self: *App, found: *UpdateFound) void {
-    if (found.version.len == 0) return;
-    log.info("showing update balloon for win-v{s}", .{found.version});
-
+/// Remember what a check found, so the click that follows — a balloon's, or
+/// the manual dialog's button (T1565) — has something to act on. The caller
+/// (message handler) still owns and frees `found`.
+fn rememberUpdate(self: *App, found: *UpdateFound) void {
     const alloc = self.core_app.alloc;
     if (self.update_latest_ver) |old| alloc.free(old);
     self.update_latest_ver = alloc.dupe(u8, found.version) catch null;
@@ -8608,6 +8611,16 @@ fn showUpdateNotification(self: *App, found: *UpdateFound) void {
     self.update_asset_url = if (found.asset_url) |u| (alloc.dupe(u8, u) catch null) else null;
     if (self.update_staged_msi) |old| alloc.free(old);
     self.update_staged_msi = if (found.staged_msi) |p| (alloc.dupe(u8, p) catch null) else null;
+}
+
+/// Show a notification balloon that an update is available — the AUTOMATIC
+/// arm's report (T1565: a manual check answers in a window instead, because
+/// the person who asked is looking at the app). A balloon is the polite way to
+/// interrupt somebody who did not ask, and that is exactly what this is.
+fn showUpdateNotification(self: *App, found: *UpdateFound) void {
+    if (found.version.len == 0) return;
+    log.info("showing update balloon for win-v{s}", .{found.version});
+    self.rememberUpdate(found);
 
     // Three sentences, one per state, because they promise different things:
     // a staged package installs on the spot, an asset still has to be fetched,
@@ -8629,8 +8642,51 @@ fn showUpdateNotification(self: *App, found: *UpdateFound) void {
     self.showUpdateBalloon("Ghoztty Update Available", body);
 }
 
+/// Answer a MANUAL check that found an update — in a window, not a balloon
+/// (T1565).
+///
+/// The distinction is consent. An unsolicited offer belongs in a balloon,
+/// because a balloon is the polite way to interrupt somebody who did not ask.
+/// A manual check is not unsolicited: the user asked a direct question with a
+/// click, they are looking at the app, and the answer has to land where they
+/// are already looking. It also has to land AT ALL — `Shell_NotifyIconW` is
+/// allowed to fail or be ignored (Focus Assist, a shell that refused the icon,
+/// a full-screen app), and when it is, "no update" and "the answer was thrown
+/// away" look identical from where the user sits.
+fn showManualUpdateOffer(self: *App, found: *UpdateFound) void {
+    if (found.version.len == 0) return;
+    log.info("showing update dialog for win-v{s} (manual)", .{found.version});
+    self.rememberUpdate(found);
+
+    // Exactly the dialog a balloon click raises: "Install and Restart" /
+    // "Later", with the download and the restart behind it. A manual check
+    // that finds something installable simply skips the balloon in between.
+    if (self.offerUpdate()) return;
+
+    // Nothing installable — the release published no package. Say what was
+    // found and offer the page, which is what the balloon's click did.
+    var text_buf: [512]u8 = undefined;
+    const text = std.fmt.bufPrint(
+        &text_buf,
+        "Ghoztty {s} is available. You have {s}.\n\n" ++
+            "This release has no installer to download automatically.",
+        .{ found.version, build_config.version_string },
+    ) catch return;
+    if (self.showUpdateAnswer(
+        std.unicode.utf8ToUtf16LeStringLiteral("Ghoztty Update Available"),
+        text,
+        .info,
+        std.unicode.utf8ToUtf16LeStringLiteral("Open Download Page"),
+        std.unicode.utf8ToUtf16LeStringLiteral("Later"),
+    ) == .ok) self.openUpdateReleasePage();
+}
+
 /// Show manual-check feedback: code 0 = up to date, 2 = a download the user
 /// consented to failed, anything else = the check itself failed.
+///
+/// Every code here is an answer to something the user DID — they clicked
+/// "Check for Updates…", or they consented to a download — so all three land
+/// in a window (T1565). The automatic arm never reaches this function.
 fn showUpdateFeedback(self: *App, code: isize) void {
     if (code == 0) {
         var body_utf8: [256]u8 = undefined;
@@ -8639,13 +8695,91 @@ fn showUpdateFeedback(self: *App, code: isize) void {
             "Ghoztty is up to date (version {s}).",
             .{build_config.version_string},
         ) catch return;
-        self.showUpdateBalloon("Ghoztty", body);
-    } else if (code == 2) {
-        self.update_download_inflight = false;
-        self.showUpdateBalloon("Ghoztty", "The update could not be downloaded.\nClick to open the releases page.");
-    } else {
-        self.showUpdateBalloon("Ghoztty", "Could not check for updates.\nClick to open the releases page.");
+        _ = self.showUpdateAnswer(
+            std.unicode.utf8ToUtf16LeStringLiteral("Ghoztty"),
+            body,
+            .info,
+            std.unicode.utf8ToUtf16LeStringLiteral("OK"),
+            null,
+        );
+        return;
     }
+
+    const text = if (code == 2) blk: {
+        self.update_download_inflight = false;
+        break :blk "The update could not be downloaded.";
+    } else "Ghoztty could not check for updates.";
+    if (self.showUpdateAnswer(
+        std.unicode.utf8ToUtf16LeStringLiteral("Ghoztty"),
+        text,
+        .warning,
+        std.unicode.utf8ToUtf16LeStringLiteral("Open Releases Page"),
+        std.unicode.utf8ToUtf16LeStringLiteral("Close"),
+    ) == .ok) self.openUpdateReleasePage();
+}
+
+/// The one place a manual update answer becomes a window. `cancel_label` null
+/// makes it a single-button acknowledgement.
+///
+/// Anchored on the focused window (the first one otherwise), which is brought
+/// forward first: an answer the user asked for behind three other windows is
+/// the balloon problem again in a different shape.
+fn showUpdateAnswer(
+    self: *App,
+    title: [*:0]const u16,
+    text_utf8: []const u8,
+    icon: ConfirmDialog.Icon,
+    ok_label: [:0]const u16,
+    cancel_label: ?[:0]const u16,
+) ConfirmDialog.Result {
+    const alloc = self.core_app.alloc;
+    const text_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, text_utf8) catch return .cancel;
+    defer alloc.free(text_w);
+
+    const owner: ?*Window = self.updateDialogOwner();
+    if (owner) |win| {
+        if (win.hwnd) |wh| _ = w32.SetForegroundWindow(wh);
+    }
+    log.info("update answer dialog: {s}", .{text_utf8});
+    return ConfirmDialog.show(
+        self,
+        if (owner) |win| win.hwnd else null,
+        if (owner) |win| win.scale else 1.0,
+        if (owner) |win| (if (win.getActiveSurface()) |s| s.hwnd else null) else null,
+        .{
+            .title = title,
+            .text = text_w,
+            .icon = icon,
+            .style = if (cancel_label == null) .ok_only else .ok_cancel,
+            .default_cancel = false,
+            .ok_label = ok_label,
+            .cancel_label = cancel_label orelse std.unicode.utf8ToUtf16LeStringLiteral("Cancel"),
+        },
+    );
+}
+
+/// The window a manual update answer hangs off: the foreground one when it is
+/// ours, the first otherwise, null when the app has no windows open.
+fn updateDialogOwner(self: *App) ?*Window {
+    if (self.windows.items.len == 0) return null;
+    const fg = w32.GetForegroundWindow();
+    if (fg != null) {
+        for (self.windows.items) |win| {
+            if (win.hwnd) |wh| if (wh == fg) return win;
+        }
+    }
+    return self.windows.items[0];
+}
+
+/// Open the release page for the version a check found, or the releases list
+/// when there is no version to name (an up-to-date or failed check).
+fn openUpdateReleasePage(self: *App) void {
+    var url_buf: [256]u8 = undefined;
+    const url: []const u8 = if (self.update_latest_ver) |v|
+        std.fmt.bufPrint(&url_buf, RELEASE_TAG_URL_PREFIX ++ "{s}", .{v}) catch RELEASES_URL
+    else
+        RELEASES_URL;
+    self.openUrl(url);
 }
 
 /// Act on a click of the update balloon (T1178). Returns true when the click
@@ -8885,6 +9019,16 @@ fn showTrayBalloon(
     title_utf8: []const u8,
     body_utf8: []const u8,
 ) bool {
+    // Debug-only fault injection (T1565). The shell is allowed to swallow a
+    // balloon and there is no way to ask it to on demand, so this stands in
+    // for that: with GHOZTTY_TRAY_FAIL set, no notification is ever delivered.
+    // It is what makes "a manual check still answers when the tray is dead" a
+    // demonstration rather than an argument about the code.
+    if (orphanEnvMs(self.core_app.alloc, "GHOZTTY_TRAY_FAIL", 0) > 0) {
+        log.warn("tray balloon suppressed by GHOZTTY_TRAY_FAIL (uid={d})", .{uid});
+        return false;
+    }
+
     const hwnd = self.msg_hwnd orelse return false;
 
     var nid: w32.NOTIFYICONDATAW = std.mem.zeroes(w32.NOTIFYICONDATAW);
@@ -10297,14 +10441,19 @@ fn msgWndProc(
     }
 
     if (msg == WM_APP_UPDATE_AVAILABLE) {
-        // wparam = heap pointer to an UpdateFound we now own. lparam 1 = a
-        // check found this; lparam 2 = a download the user already consented
-        // to finished, so it installs without asking twice. wparam == 0 is
-        // feedback (lparam 0 = up to date, 1 = check failed, 2 = download
-        // failed).
+        // wparam = heap pointer to an UpdateFound we now own. lparam 1 = an
+        // automatic check found this; lparam 2 = a download the user already
+        // consented to finished, so it installs without asking twice;
+        // lparam 3 = a manual check found it, answered in a window (T1565).
+        // wparam == 0 is feedback (lparam 0 = up to date, 1 = check failed,
+        // 2 = download failed).
         if (wparam != 0) {
             const found: *UpdateFound = @ptrFromInt(wparam);
             defer found.destroy(app.core_app.alloc);
+            if (lparam == 3) {
+                app.showManualUpdateOffer(found);
+                return 0;
+            }
             app.showUpdateNotification(found);
             if (lparam == 2) {
                 app.update_download_inflight = false;
@@ -10381,22 +10530,7 @@ fn msgWndProc(
                 // Open the specific win-v release page when a version is
                 // known (update balloon); the releases list otherwise
                 // (up-to-date / check-failed feedback balloons).
-                var url_utf8_buf: [256]u8 = undefined;
-                const url_utf8: []const u8 = if (app.update_latest_ver) |v|
-                    std.fmt.bufPrint(&url_utf8_buf, RELEASE_TAG_URL_PREFIX ++ "{s}", .{v}) catch RELEASES_URL
-                else
-                    RELEASES_URL;
-                var url_buf: [512]u16 = undefined;
-                const url_len = std.unicode.utf8ToUtf16Le(&url_buf, url_utf8) catch return 0;
-                url_buf[url_len] = 0;
-                _ = w32.ShellExecuteW(
-                    null,
-                    std.unicode.utf8ToUtf16LeStringLiteral("open"),
-                    @ptrCast(&url_buf),
-                    null,
-                    null,
-                    w32.SW_SHOW,
-                );
+                app.openUpdateReleasePage();
             },
         }
         return 0;

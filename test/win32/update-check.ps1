@@ -27,6 +27,11 @@
 #   7. a MANUAL check ALWAYS answers (T1563): over a release the automatic
 #      check has already offered and is actively suppressing, asking again
 #      offers it rather than saying nothing
+#   8. the manual answer survives a DEAD TRAY (T1565): with every
+#      notification made to fail, a manual check still puts its answer on
+#      screen - in a window, which is where the person who clicked is looking
+#   9. a manual check that finds NOTHING says so in that same window - "up
+#      to date" is an answer, and silence is what T1563 was
 param([string]$ExePath)
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
@@ -289,14 +294,79 @@ Assert ($log7 -match 'scripted manual update check') 'manual: the scripted manua
 $manualOffer = 'update available \(manual\): current=\S+ latest=win-v9\.9\.9'
 Assert ($log7 -match $manualOffer) 'manual: the manual check reached the release the automatic one is suppressing'
 $afterAsk = ($log7 -split 'scripted manual update check')[-1]
-Assert ($afterAsk -match 'showing update balloon for win-v9\.9\.9') 'manual: asking over an already-offered release OFFERS it - the balloon follows the ask'
-Assert (([regex]::Matches($log7, 'showing update balloon for win-v9\.9\.9')).Count -ge 2) 'manual: the offer is raised again for the user who asked'
+# T1565: the answer to a question the user ASKED lands in a window, not in a
+# balloon Windows is free to swallow. So what must follow the ask is the
+# dialog, and the balloon count must NOT move - the automatic arm is the only
+# thing that still uses the tray.
+Assert ($afterAsk -match 'showing update dialog for win-v9\.9\.9 \(manual\)') 'manual: asking over an already-offered release OFFERS it - a window follows the ask'
+Assert ($afterAsk -match 'update answer dialog:') 'manual: the offer is a dialog the user can act on'
+Assert (([regex]::Matches($log7, 'showing update balloon for win-v9\.9\.9')).Count -eq 1) 'manual: the manual answer did not go to the tray (the launch balloon is the only one)'
 Assert ($log7 -notmatch 'with nothing to show') 'manual: no manual check ended without an answer'
 # Negative control for that assertion (T1133): the same regex, over the run
 # above that never asked. It must find nothing there - otherwise the assert
 # would be passing on text any run emits, and could not have caught T1563.
 Assert ($log6 -notmatch $manualOffer) 'manual (negative control): the manual-offer assertion is red when nobody asked'
 Assert (([regex]::Matches($log6, 'showing update balloon for win-v9\.9\.9')).Count -eq 1) 'manual (negative control): an unasked deferred version is still offered exactly once'
+
+
+# -- 8. the answer survives a tray that refuses it (T1565) ------------------
+# The half T1563 left open: everything a manual check had to say went through
+# Shell_NotifyIconW, which is allowed to fail or be ignored - Focus Assist, a
+# full-screen app, a shell that refused the icon ("NIM_SETVERSION failed for
+# tray uid=2" is logged on this very box). "No update" and "the answer was
+# thrown away" then look identical from where the user sits.
+#
+# GHOZTTY_TRAY_FAIL (Debug only) makes every notification fail, which is the
+# demonstration: with the tray dead, a manual check must still put its answer
+# on screen.
+Kill-RepoInstances
+$errFile8 = Join-Path $env:TEMP 'ghoztty-t24-traydead.err.txt'
+Remove-Item $errFile8 -ErrorAction SilentlyContinue
+$env:GHOZTTY_UPDATE_URL = $manualUrl
+$env:GHOZTTY_UPDATE_MANUAL_MS = '4000'
+$env:GHOZTTY_TRAY_FAIL = '1'
+$log8 = ''
+try {
+    $app8 = Start-OnTestDesktop -Exe $exe -Arguments @('--session-persistence=false') -StdErr $errFile8
+    $proc8 = $app8.Process
+    Start-Sleep -Seconds 12
+    if ($proc8.HasExited) {
+        Write-Host "SETUP FAIL (traydead): GUI exited early (code $($proc8.ExitCode))"; exit 1
+    }
+    Stop-Process -Id $proc8.Id -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+} finally {
+    Remove-Item Env:GHOZTTY_UPDATE_URL -ErrorAction SilentlyContinue
+    Remove-Item Env:GHOZTTY_UPDATE_MANUAL_MS -ErrorAction SilentlyContinue
+    Remove-Item Env:GHOZTTY_TRAY_FAIL -ErrorAction SilentlyContinue
+}
+if (Test-Path $errFile8) { $log8 = [IO.File]::ReadAllText($errFile8) }
+
+Assert ($log8 -match 'tray balloon suppressed by GHOZTTY_TRAY_FAIL') 'traydead: the tray path really is failing for this run'
+Assert ($log8 -match 'scripted manual update check') 'traydead: the scripted manual check fired'
+$afterAsk8 = ($log8 -split 'scripted manual update check')[-1]
+Assert ($afterAsk8 -match 'showing update dialog for win-v9\.9\.9 \(manual\)') 'traydead: the user who asked still gets the offer, in a window'
+Assert ($afterAsk8 -match 'update answer dialog:') 'traydead: the answer reached a surface the shell cannot refuse'
+# Negative control (T1133): the injection is off in scenario 7, so the line
+# this scenario turns on must be absent there - otherwise it proves nothing.
+Assert ($log7 -notmatch 'tray balloon suppressed by GHOZTTY_TRAY_FAIL') 'traydead (negative control): notifications are NOT suppressed without the injection'
+
+
+# -- 9. "you are up to date" is an answer, and it lands in a window too -----
+# The other half of a manual check's answers (T1565). Nothing is found, which
+# is precisely the outcome the T1563 incident made indistinguishable from
+# silence - so it has to be said where the person who clicked is looking.
+$env:GHOZTTY_UPDATE_MANUAL_MS = '4000'
+try {
+    $log9 = Run-Scenario 'uptodate' (New-Feed 'uptodate.json' $feedOlder) 12
+} finally {
+    Remove-Item Env:GHOZTTY_UPDATE_MANUAL_MS -ErrorAction SilentlyContinue
+}
+Assert ($log9 -match 'scripted manual update check') 'uptodate: the scripted manual check fired'
+$afterAsk9 = ($log9 -split 'scripted manual update check')[-1]
+Assert ($afterAsk9 -match 'update check \(manual\): up to date') 'uptodate: the manual check concluded there is nothing newer'
+Assert ($afterAsk9 -match 'update answer dialog: Ghoztty is up to date') 'uptodate: the user who asked is TOLD so, in a window'
+Assert ($log9 -notmatch 'with nothing to show') 'uptodate: the check did not end without an answer'
 
 Kill-RepoInstances
 Remove-TestDesktop | Out-Null
