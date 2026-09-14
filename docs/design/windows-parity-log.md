@@ -28722,3 +28722,41 @@ The first full run: 21 green, 2 PENDING, `LANE harness PASS in 678s`, and
 `harness-floor` stamped over 368 files. Four zig lanes ALL PASS. The two reds
 are filed as T1123 and T1568, which is the point - before today nothing was
 going to notice them at all.
+
+## 2026-09-14 - The persistence sweep's last open card is closed by the commit that actually fixed it (T726)
+
+T726 asked for `test\win32\persistence-flag.ps1` to be green again. It is, and
+has been since 2026-09-13: the run on 7656df223 prints `ALL PASS (28)`,
+including the live C1/C2/C3 arms that relaunch the app on a background test
+desktop. So this turn produced no code, only the verification and the close -
+the fourth card this one sweep has had (T707, T719, T1012, T726), and the second
+to close this way today.
+
+What closed it is b22777b21 (T1012), which is this card's three A1 families
+exactly rather than approximately: it declared the 49 undeclared launch sites,
+it stopped reading a launch of `$env:ComSpec` or of a tool found on PATH as the
+terminal at all - the "launches of something that is not ghoztty" family - and
+it made a marker in a file or function header count, which is how
+`launch-preflight-audit.ps1`, `desktop-launch-audit.ps1` and `suite-run.ps1` now
+declare the violator strings that exist to be found by a sweep. That last one is
+the card's "the enumerator needs a way to say this string is a specimen",
+answered without a new concept.
+
+The other half is recorded as **unreproducible rather than fixed**, which is the
+honest verdict and not the convenient one. The 2026-09-03 sweep saw C2a/C2b red
+- a no-flag relaunch restoring nothing, `got -1 panes` - and called it a second,
+unrelated defect needing its own root cause. No commit between that measurement
+and today claims a restore fix, and b22777b21's own turn re-ran this harness
+green the day before this one, so there is no commit to attribute it to and
+inventing one would be worse than saying so. The follow-on worth checking was
+whether a restore regression could come back unseen: it cannot silently, because
+`session_layout.zig` is covered by the `session-layout-preserve` guard row and
+`restore_retry.zig` / `LocalAgent.zig` by `restore-late-agent`. `App.zig`, where
+the `session-persistence` gates themselves live, is excluded from every such row
+on purpose - it moves daily and would leave a multi-minute GUI run due every
+turn - and that reasoning is already written into `guard-due.ps1`. So no
+coverage change was warranted and none was made.
+
+T1560 gains its second instance: both cards closed today had a definition of
+done that was one runnable read-only command, both were fixed by a sibling task
+that never cited them, and both then sat open while the command was green.
