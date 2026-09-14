@@ -82,6 +82,12 @@
 #      "short-lived" - only its visibility is; the HWND outlives every hover.
 #   H. (T180) the quick terminal, which topmosts ITSELF, keeps both its own
 #      band and the propagated bit on its owned popup across a heal.
+#   I. (T721) the find bar and the command palette - the two ACTIVATABLE
+#      popups - are the end of the list, not the next entries on it: they
+#      dismiss themselves the moment activation leaves them, with or without a
+#      stray topmost bit, so neither T142 case can reach them and the heal
+#      would be dead code. Measured, because "it probably cannot happen" is
+#      what left them unchecked for a month.
 #
 # Only touches ghoztty processes running from this repo's zig-out.
 param(
@@ -109,12 +115,22 @@ $env:GHOZTTY_PIPE_SUFFIX = "-oztest$PID"
 $script:pass = 0
 $script:fail = 0
 $script:negReached = $false
+$script:skipped = 0
 
 # Write-Host, not the pipeline: a helper that asserts must never also return a
 # value, or its return silently becomes an array (T217 batch 5).
 function Assert([bool]$cond, [string]$label) {
     if ($cond) { $script:pass++; Write-Host "PASS  $label" }
     else { $script:fail++; Write-Host "FAIL  $label" -ForegroundColor Red }
+}
+
+# A section that could not be set up. Counted, not just printed (T721): a green
+# run STAMPS the overlay-zorder guard, and a stamp written by a run that skipped
+# half its sections records coverage nobody got. Every SKIP here goes through
+# this, and the stamp at the bottom refuses when the count is not zero.
+function Skip([string]$label) {
+    $script:skipped++
+    Write-Host $label
 }
 
 # The AGENT too (T248): +new-window --target= is idempotent against a
@@ -292,7 +308,7 @@ try {
     $frontRootIsB = ((($front -split ':')[1]) -eq ([int64]$B).ToString())
     Assert (-not (Test-FrontIsOverlay $front ([int64]$ovHwnd))) "A: the banner is not the front-most window over its own band ($front)"
     if (-not $frontRootIsB) {
-        Write-Host "SKIP front-most control: oz2 is not what covers the band ($front) - the front-most asserts are skipped"
+        Skip "SKIP front-most control: oz2 is not what covers the band ($front) - the front-most asserts are skipped"
     }
 
     # -----------------------------------------------------------------------
@@ -340,14 +356,14 @@ try {
     Set-TestWindowTopmost -Window $ovHwnd -On $true | Out-Null
     Start-Sleep -Milliseconds 300
     if (-not (Test-Topmost $ovHwnd)) {
-        Write-Host 'SKIP D: injection did not stick (something repositioned in between)'
+        Skip 'SKIP D: injection did not stick (something repositioned in between)'
     } else {
         $okA = Set-Active $A $paneA
         Start-Sleep -Milliseconds 400
         $okB = Set-Active $B $paneB
         Start-Sleep -Milliseconds 600
         if (-not ($okA -and $okB)) {
-            Write-Host 'SKIP D: activation switching failed - not a T142 verdict'
+            Skip 'SKIP D: activation switching failed - not a T142 verdict'
         } else {
             $healed2 = $false
             for ($t = 0; $t -lt 15 -and -not $healed2; $t++) {
@@ -389,11 +405,11 @@ try {
     # rather than a pointer at a product bug that is not there.
     # -----------------------------------------------------------------------
     if (-not (Set-Active $A $paneA)) {
-        Write-Host 'SKIP E: could not activate oz1 to send it the float keybind'
+        Skip 'SKIP E: could not activate oz1 to send it the float keybind'
     } else {
         $floated = Set-Float $A $paneA $true
         if (-not $floated) {
-            Write-Host 'SKIP E: toggle_window_float_on_top never pinned the window across repeated presses - with no foreground window a band change can be refused outright (T277/T607), so the "legitimate topmost owner" case cannot be set up here'
+            Skip 'SKIP E: toggle_window_float_on_top never pinned the window across repeated presses - with no foreground window a band change can be refused outright (T277/T607), so the "legitimate topmost owner" case cannot be set up here'
         }
         if ($floated) {
             $propagated = Test-Topmost $ovHwnd
@@ -424,7 +440,7 @@ try {
     Start-Sleep -Milliseconds 1200
     $dim = @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyDimOverlay')
     if ($dim.Count -lt 1) {
-        Write-Host 'SKIP F/dim: no visible dim overlay (unfocused-split-opacity?)'
+        Skip 'SKIP F/dim: no visible dim overlay (unfocused-split-opacity?)'
     } else {
         $dimHwnd = [IntPtr]$dim[0].Hwnd
         Set-TestWindowTopmost -Window $dimHwnd -On $true | Out-Null
@@ -442,7 +458,7 @@ try {
 
     $sb = @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyScrollbar' -AllowHidden)
     if ($sb.Count -lt 1) {
-        Write-Host 'SKIP F/scrollbar: no scrollbar popup found'
+        Skip 'SKIP F/scrollbar: no scrollbar popup found'
     } else {
         $sbHwnd = [IntPtr]$sb[0].Hwnd
         Set-TestWindowTopmost -Window $sbHwnd -On $true | Out-Null
@@ -482,7 +498,7 @@ try {
     $C = if ($winC) { [IntPtr]([int64]$winC.id) } else { [IntPtr]::Zero }
     $paneC = if ($C -ne [IntPtr]::Zero) { Get-TestChildWindow -Window $C -Class 'GhozttyTerminal' } else { [IntPtr]::Zero }
     if ($paneC -eq [IntPtr]::Zero) {
-        Write-Host 'SKIP G: could not open oz3 for the hovered-URL bubble'
+        Skip 'SKIP G: could not open oz3 for the hovered-URL bubble'
     } else {
     Set-TestWindowPos -Window $C -X 140 -Y 140 -Width 900 -Height 600 | Out-Null
     Start-Sleep -Milliseconds 600
@@ -503,12 +519,16 @@ try {
     :hover for ($y = $paneRect.Top + 8; $y -lt $paneRect.Top + 300 -and -not $bubble; $y += 14) {
         for ($x = $paneRect.Left + 8; $x -lt $paneRect.Left + 420; $x += 24) {
             Send-TestMouse -Window $C -Target $paneC -X $x -Y $y -Action move -Modifiers ctrl | Out-Null
-            $b = Get-UrlBubble
-            if ($b) { $bubble = $b; $hitX = $x; $hitY = $y; break hover }
+            # Not `$b`: PowerShell variables are case-INSENSITIVE, so that name
+            # is the section-setup window `$B`, and writing it here silently
+            # replaced a window handle with a bubble record for every later
+            # section (T721 lost two arms to exactly that).
+            $found = Get-UrlBubble
+            if ($found) { $bubble = $found; $hitX = $x; $hitY = $y; break hover }
         }
     }
     if (-not $bubble) {
-        Write-Host 'SKIP G: the ctrl-hover never raised the hovered-URL bubble - no T180 verdict'
+        Skip 'SKIP G: the ctrl-hover never raised the hovered-URL bubble - no T180 verdict'
     } else {
         $bubbleHwnd = [IntPtr]$bubble.Hwnd
         Assert ((Get-TestWindowOwner -Window $bubbleHwnd) -eq [int64]$C) 'G: the hovered-URL bubble is OWNED by oz3'
@@ -517,7 +537,7 @@ try {
         Set-TestWindowTopmost -Window $bubbleHwnd -On $true | Out-Null
         Start-Sleep -Milliseconds 300
         if (-not (Test-Topmost $bubbleHwnd)) {
-            Write-Host 'SKIP G: injection did not stick on the bubble'
+            Skip 'SKIP G: injection did not stick on the bubble'
         } else {
             Assert $true 'G: injection took (bubble now carries WS_EX_TOPMOST)'
             # Off the link and back on: the core dedupes a hover that stays in
@@ -554,7 +574,7 @@ try {
     # -----------------------------------------------------------------------
     $before = @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyWindow' -AllowHidden | ForEach-Object { $_.Hwnd })
     if (-not (Set-Active $A $paneA)) {
-        Write-Host 'SKIP H: could not activate oz1 to send it the quick-terminal keybind'
+        Skip 'SKIP H: could not activate oz1 to send it the quick-terminal keybind'
     } else {
         Send-TestKeys -Window $A -Target $paneA -Key F10 -Modifiers ctrl, shift | Out-Null
         $qt = [IntPtr]::Zero
@@ -565,9 +585,9 @@ try {
             }
         }
         if ($qt -eq [IntPtr]::Zero) {
-            Write-Host 'SKIP H: the quick terminal never appeared'
+            Skip 'SKIP H: the quick terminal never appeared'
         } elseif (-not (Test-Topmost $qt)) {
-            Write-Host 'SKIP H: the quick terminal came up NON-topmost, so the "legitimate topmost owner" case cannot be set up here'
+            Skip 'SKIP H: the quick terminal came up NON-topmost, so the "legitimate topmost owner" case cannot be set up here'
         } else {
             Assert $true 'H: the quick terminal is topmost (positive control)'
             $qtSb = $null
@@ -578,7 +598,7 @@ try {
                 if (-not $qtSb) { Start-Sleep -Milliseconds 200 }
             }
             if (-not $qtSb) {
-                Write-Host 'SKIP H: the quick terminal has no owned scrollbar popup to heal'
+                Skip 'SKIP H: the quick terminal has no owned scrollbar popup to heal'
             } else {
                 $qtSbHwnd = [IntPtr]$qtSb.Hwnd
                 $propagated = Test-Topmost $qtSbHwnd
@@ -596,6 +616,160 @@ try {
             }
             Send-TestKeys -Window $A -Target $paneA -Key F10 -Modifiers ctrl, shift | Out-Null
             Start-Sleep -Milliseconds 800
+        }
+    }
+
+    # -----------------------------------------------------------------------
+    # I (T721). The two ACTIVATABLE popups - the find bar and the command
+    # palette - and why they close the list rather than being the next two
+    # entries on it.
+    #
+    # T180 enumerated every WS_POPUP under src/apprt/win32 and left these two
+    # alone because they differ in KIND, not because anyone had checked them.
+    # They are not overlays: they carry no WS_EX_NOACTIVATE, ShowWindow(SW_SHOW)
+    # ACTIVATES them, and they put keyboard focus into their own EDIT child.
+    # The claim measured here is that this makes both T142 cases unreachable on
+    # them, so the heal would be dead code:
+    #
+    #   both popups DISMISS THEMSELVES the instant they stop being the active
+    #   window - the palette on WM_ACTIVATE/WA_INACTIVE, the find bar on
+    #   EN_KILLFOCUS of its edit (App.zig) - so neither can ever be a
+    #   BACKGROUND window's popup, which is the whole shape of the report T142
+    #   came from ("windows in the background have banners that overlap windows
+    #   in the foreground").
+    #
+    # I2 is the teeth: the popup is asserted VISIBLE first (positive control),
+    # activation is then moved to another window of the same app, and it is
+    # asserted GONE. The day that dismiss regresses this pair goes red - and
+    # that is exactly the day these two would start needing the heal.
+    #
+    # I3 asks the harder half with section B's stray WS_EX_TOPMOST injected on
+    # an OPEN popup. A healed overlay clears the bit; these never do, and do not
+    # have to, because the dismiss fires regardless - so the bit only ever sits
+    # on a window nobody can see. The probe un-pins its own injection, since the
+    # product is not going to, and a pin left for the harness restore is scored
+    # as a leak.
+    # -----------------------------------------------------------------------
+    # The popups are the only TOP-LEVEL GhozttyTerminal windows (panes are
+    # child windows, which the top-down enumeration never sees). The find bar
+    # carries the match-count STATIC; the palette has only its EDIT.
+    function Get-SurfacePopup([int]$ownerPid, [IntPtr]$owner, [string]$kind) {
+        foreach ($w in @(Get-TestWindows -ProcessId $ownerPid -Class 'GhozttyTerminal' -AllowHidden)) {
+            $h = [IntPtr]$w.Hwnd
+            if ((Get-TestWindowOwner -Window $h) -ne [int64]$owner) { continue }
+            $hasLabel = (Find-TestWindowEx -Parent $h -Class 'STATIC') -ne [IntPtr]::Zero
+            if ($kind -eq 'search' -and -not $hasLabel) { continue }
+            if ($kind -eq 'palette' -and $hasLabel) { continue }
+            return $h
+        }
+        return [IntPtr]::Zero
+    }
+    function Open-SurfacePopup([IntPtr]$top, [IntPtr]$pane, [string]$key, [string]$kind) {
+        foreach ($try in 1..3) {
+            if (-not (Set-Active $top $pane)) { continue }
+            Send-TestKeys -Window $top -Target $pane -Modifiers ctrl, shift -Key $key | Out-Null
+            for ($t = 0; $t -lt 25; $t++) {
+                Start-Sleep -Milliseconds 200
+                $h = Get-SurfacePopup $appPid $top $kind
+                if ($h -ne [IntPtr]::Zero -and (Test-TestWindowVisible -Window $h)) { return $h }
+            }
+        }
+        return [IntPtr]::Zero
+    }
+
+    & $exe +new-window --target=oz4 | Out-Null
+    $winD = Wait-Win 'oz4'
+    $D = if ($winD) { [IntPtr]([int64]$winD.id) } else { [IntPtr]::Zero }
+    $paneD = if ($D -ne [IntPtr]::Zero) { Get-TestChildWindow -Window $D -Class 'GhozttyTerminal' } else { [IntPtr]::Zero }
+    # The window activation is moved TO, re-derived from +list rather than
+    # reusing the setup's $B: the sections in between split and re-focus panes,
+    # and a stale pane handle here would activate nothing.
+    $winOther = Get-Win 'oz2'
+    $other = if ($winOther) { [IntPtr]([int64]$winOther.id) } else { [IntPtr]::Zero }
+    $paneOther = if ($other -ne [IntPtr]::Zero) { Get-TestChildWindow -Window $other -Class 'GhozttyTerminal' } else { [IntPtr]::Zero }
+    if ($paneD -eq [IntPtr]::Zero -or $paneOther -eq [IntPtr]::Zero) {
+        Skip 'SKIP I: could not set up oz4 + a second window for the activatable-popup verdict'
+    } else {
+        Set-TestWindowPos -Window $D -X 180 -Y 180 -Width 900 -Height 600 | Out-Null
+        Start-Sleep -Milliseconds 600
+        foreach ($p in @(
+                @{ Name = 'find bar'; Key = 'F'; Kind = 'search' },
+                @{ Name = 'command palette'; Key = 'P'; Kind = 'palette' }
+            )) {
+            # A throw in here is a FAIL, never a quiet skip. $ErrorActionPreference
+            # is Continue for this whole script, so an unguarded binding error
+            # inside the loop body prints to stderr, abandons every remaining arm
+            # and still reports ALL PASS - which is what the first run of this
+            # section did: it scored the find bar and never reached the palette.
+            try {
+                $popup = Open-SurfacePopup $D $paneD $p.Key $p.Kind
+                if ($popup -eq [IntPtr]::Zero) {
+                    Skip "SKIP I: the $($p.Name) never opened - no T721 verdict for it"
+                } else {
+                    # I1: the healthy baseline, the same three facts sections A
+                    # and G assert about a real overlay.
+                    Assert ((Get-TestWindowOwner -Window $popup) -eq [int64]$D) "I1: the $($p.Name) is OWNED by oz4"
+                    Assert (-not (Test-Topmost $popup)) "I1: the $($p.Name) is not topmost when it opens"
+                    $zPop = Get-TestZIndex -Window $popup
+                    $zOwn = Get-TestZIndex -Window $D
+                    Assert ($zPop -ge 0 -and $zPop -lt $zOwn) "I1: the $($p.Name) sits above its own window (popup=$zPop < oz4=$zOwn)"
+
+                    # I2: visible while active, gone the moment another window
+                    # takes activation. This is the property that makes the
+                    # heal moot, and the pair is the teeth - the positive
+                    # control first, so "gone" cannot pass by never appearing.
+                    Assert (Test-TestWindowVisible -Window $popup) "I2: the $($p.Name) is visible while its window is active (positive control)"
+                    Set-Active $other $paneOther | Out-Null
+                    $gone = $false
+                    for ($t = 0; $t -lt 25 -and -not $gone; $t++) {
+                        Start-Sleep -Milliseconds 200
+                        $gone = -not (Test-TestWindowVisible -Window $popup)
+                    }
+                    Assert $gone "I2: the $($p.Name) dismissed itself when activation moved to another window - it can never be a background window's popup, which is why it needs no heal"
+
+                    # I3: the same question with section B's stray topmost bit
+                    # on the popup.
+                    #
+                    # Injected while it is HIDDEN, which is where I2 just left
+                    # it, and not while it is open: MEASURED here, four attempts
+                    # apiece, SetWindowPos(HWND_TOPMOST) will not change the
+                    # band of either popup while it is the ACTIVE window on this
+                    # desktop - it reports success and the ex-style stays clear,
+                    # the T277 shape. Hidden it takes first time. That is the
+                    # truer version of the case anyway: the HWND outlives every
+                    # open/close, so a bit set once persists into the next
+                    # opening, which is exactly what made the hovered-URL bubble
+                    # (section G) worth healing.
+                    for ($i = 0; $i -lt 4 -and -not (Test-Topmost $popup); $i++) {
+                        Set-TestWindowTopmost -Window $popup -On $true | Out-Null
+                        Start-Sleep -Milliseconds 300
+                    }
+                    if (-not (Test-Topmost $popup)) {
+                        Skip "SKIP I3: injection did not stick on the hidden $($p.Name)"
+                    } else {
+                        Assert $true "I3: injection took (the $($p.Name) now carries WS_EX_TOPMOST)"
+                        $strayPopup = Open-SurfacePopup $D $paneD $p.Key $p.Kind
+                        if ($strayPopup -ne $popup) {
+                            Skip "SKIP I3: the $($p.Name) would not reopen carrying the injected bit"
+                        } else {
+                            Assert (Test-Topmost $popup) "I3: the $($p.Name) reopened still carrying the stray bit - nothing on the open path heals it (positive control)"
+                            Set-Active $other $paneOther | Out-Null
+                            $goneStray = $false
+                            for ($t = 0; $t -lt 25 -and -not $goneStray; $t++) {
+                                Start-Sleep -Milliseconds 200
+                                $goneStray = -not (Test-TestWindowVisible -Window $popup)
+                            }
+                            Assert $goneStray "I3: a stray WS_EX_TOPMOST does not keep the $($p.Name) on screen - it dismissed anyway, so the bit only ever sits on a window nobody can see"
+                        }
+                    }
+                    # The product does not heal these, by the verdict this
+                    # section measures, so the probe puts its own pin back - a
+                    # pin left to the harness restore is scored as a leak.
+                    Set-TestWindowTopmost -Window $popup -On $false | Out-Null
+                }
+            } catch {
+                Assert $false "I: the $($p.Name) arms threw instead of scoring: $_"
+            }
         }
     }
 
@@ -628,6 +802,24 @@ if ($NegativeControl -and -not $script:negReached) {
     Assert $false 'NEGATIVE CONTROL never reached its inverted assertion'
 }
 
+# A clean green run stamps the covered files (T783/T721), so guard-due can
+# answer "has this harness been run against the code as it now stands?" for
+# `overlay_zorder.zig` - the module that decides what a stray topmost is, what
+# counts as seated, and (T721) which popups are in the set at all. Nothing tied
+# the policy to its only on-box demonstration before, which is how the two
+# activatable popups sat unchecked for a month.
+#
+# Red leaves the stamp alone, and so does a run that SKIPPED a section: half the
+# oracles here need a setup that can fail on a background desktop (an injection
+# that will not stick, a quick terminal that will not pin), and a stamp written
+# over a run that never reached section G records coverage nobody got.
 Write-Host ''
-if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
+if ($script:fail -eq 0 -and $script:skipped -eq 0 -and -not $NegativeControl) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard overlay-zorder -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+} elseif ($script:fail -eq 0 -and $script:skipped -gt 0) {
+    Write-Host "  guard NOT stamped: $script:skipped section(s) skipped, so this run did not cover everything the guard claims"
+}
+
+if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))" }
 else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)"; exit 1 }

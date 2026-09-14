@@ -2385,6 +2385,15 @@ pub fn setSearchActive(self: *Surface, active: bool, needle: [:0]const u8) void 
 /// A child Edit control inside it handles the actual text input.
 /// We can't use a child window of the main HWND because OpenGL covers
 /// the entire client area and paints over child controls.
+///
+/// NOT an overlay, and deliberately not healed (T721). This popup is
+/// ACTIVATABLE — no `WS_EX_NOACTIVATE`, `SW_SHOW` activates it, focus goes
+/// into its EDIT — and it dismisses itself on `EN_KILLFOCUS` of that edit
+/// (`App.zig`), so it can never be visible while its window is in the
+/// background. That is the only way a popup reaches the T142 defect, so
+/// `healOverlayZOrder` here would be dead code. The full verdict for every
+/// `WS_POPUP` in this frontend is in `overlay_zorder.zig`'s module doc;
+/// section I of `test\win32\overlay-zorder.ps1` is the measurement.
 fn ensureSearchBar(self: *Surface) void {
     if (self.search_hwnd != null) return;
 
@@ -2759,6 +2768,10 @@ pub fn setCommandPaletteActive(self: *Surface, active: bool) void {
 }
 
 /// Create the command palette popup if it doesn't exist.
+///
+/// NOT an overlay, and deliberately not healed (T721) — same reasoning as
+/// `ensureSearchBar` above, with `WM_ACTIVATE`/`WA_INACTIVE` doing the
+/// dismissing instead of `EN_KILLFOCUS`. See `overlay_zorder.zig`.
 fn ensureCommandPalette(self: *Surface) void {
     if (self.palette_hwnd != null) return;
 

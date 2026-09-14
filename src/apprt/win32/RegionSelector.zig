@@ -278,6 +278,11 @@ pub fn begin(
     // WS_EX_TOOLWINDOW keeps it out of the taskbar and Alt-Tab; it is a modal
     // gesture, not a window anybody navigates to. NOT WS_EX_NOACTIVATE — this
     // one has to take the keyboard, because Escape is how it is cancelled.
+    //
+    // The WS_EX_TOPMOST here is asked for, not a stray: this popup is meant to
+    // be above everything for the length of the drag, so it is deliberately
+    // outside `healOverlayZOrder`'s set (T721) — a heal would demote the one
+    // window whose whole job is to cover the desktop. See `overlay_zorder.zig`.
     const hwnd = w32.CreateWindowExW(
         w32.WS_EX_TOPMOST | w32.WS_EX_TOOLWINDOW,
         CLASS_NAME,

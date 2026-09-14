@@ -34,6 +34,46 @@
 //! topmost band and hide it behind its own window. Only an overlay that is
 //! topmost while its owner is NOT is a stray.
 //!
+//! THE SET IS CLOSED (T721). Every `WS_POPUP` under `src/apprt/win32` has a
+//! verdict now, so the next reader does not have to re-derive one:
+//!
+//!   - HEALED, the list at the top of this doc: banner strip, dim overlay,
+//!     themed scrollbar, read-only badge, key-state indicator, hovered-URL
+//!     bubble, resize overlay, drop highlight. All passive
+//!     (`WS_EX_NOACTIVATE`), all decorations of a pane or window, all able to
+//!     be visible while their owner is in the background — which is the whole
+//!     defect.
+//!   - NOT HEALED, and must not be: the find bar (`Surface.ensureSearchBar`)
+//!     and the command palette (`Surface.ensureCommandPalette`). These are
+//!     ACTIVATABLE popups — no `WS_EX_NOACTIVATE`, `SW_SHOW` activates them,
+//!     focus goes into their own EDIT — and both DISMISS THEMSELVES the
+//!     instant activation leaves them (the palette on `WM_ACTIVATE`/
+//!     `WA_INACTIVE`, the find bar on `EN_KILLFOCUS` of its edit, both in
+//!     `App.zig`). A popup that cannot be visible while its owner is in the
+//!     background cannot reach either case above, so the heal would be dead
+//!     code rather than a fix. Measured, not assumed: section I of
+//!     `test\win32\overlay-zorder.ps1` drives both, and its I3 arm shows a
+//!     stray topmost surviving a close/reopen and the popup dismissing anyway.
+//!   - NOT HEALED, and topmost ON PURPOSE: the screenshot region selector
+//!     (`RegionSelector`). It is a full-desktop modal gesture that asks for
+//!     `WS_EX_TOPMOST` itself and takes the keyboard (Escape cancels), and it
+//!     lives only as long as the drag. Healing it would demote the one popup
+//!     whose whole job is to be above everything.
+//!   - NOT OURS: the tooltips (`ViewerNavBar`, `ViewerFeedbackBar`,
+//!     `KeyStateIndicator`, `Window`) are system `TOOLTIPS_CLASS` windows the
+//!     OS places and tears down itself, and the modal dialogs
+//!     (`ConfirmDialog`, `RenameDialog`, `MachineChooser`, `HostSettingsDialog`,
+//!     `NewProcessDialog`, `BannerDialog`, `AgentIntegrationsDialog`,
+//!     `UpdateProgress`) are activated top-levels with a caption. Nor are the
+//!     app's own top-levels (`Window.zig`), one of which — the quick terminal —
+//!     is a frameless `WS_POPUP` in its own right. None of these decorates
+//!     anything, so there is no owner to be seated above.
+//!   - NOT PRODUCT: the `WS_POPUP` fixtures inside `BannerOverlay`'s own tests
+//!     and `class_redraw.measureResize`, which exist for the length of a test.
+//!
+//! A `grep WS_POPUP src\apprt\win32` is the sweep that produced that list; run
+//! it again and every hit should land in one of the buckets above.
+//!
 //! No OS imports, so this unit-tests in every app-runtime lane (the
 //! `split_geometry.zig` pattern); the windowing half is `healOverlayZOrder`
 //! in `win32.zig`.

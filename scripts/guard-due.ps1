@@ -2213,6 +2213,27 @@ $GuardTable = @(
             'test\win32\pane-banner.ps1'
         )
     },
+    # The z-order POLICY and the harness that proves it reaches the screen.
+    # `overlay_zorder.zig` is where the rules live - what counts as a stray
+    # topmost, when a popup is already seated, and (T721) which popups are in
+    # the set at all - and `overlay-zorder.ps1` is the only thing on this box
+    # that drives them against real windows. Nothing joined the two until T721,
+    # which is how the two activatable popups sat unchecked for a month.
+    #
+    # The row covers the policy module and its harness, NOT `win32.zig`, which
+    # holds `healOverlayZOrder` itself: that file is edited most turns for
+    # reasons that have nothing to do with z-order, and a guard that is due
+    # every turn teaches people to reach for the hatch. The policy file is the
+    # narrow thing an intentional change to this behavior has to touch.
+    [pscustomobject]@{
+        Name   = 'overlay-zorder'
+        Script = 'test\win32\overlay-zorder.ps1'
+        Stamp  = 'test\win32\overlay-zorder.stamp.json'
+        Covers = @(
+            'src\apprt\win32\overlay_zorder.zig',
+            'test\win32\overlay-zorder.ps1'
+        )
+    },
     # The divider's painted color is decided by two files and proven by one
     # harness, and until T581 nothing joined them. That task changed the
     # fallback from a fixed gray to a color DERIVED from the terminal

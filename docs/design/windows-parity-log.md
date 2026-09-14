@@ -9,6 +9,64 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-14: T721 closed done - **the find bar and the command palette are the
+  END of the z-order-heal list, not the next two entries on it, and the set is
+  now closed in writing.** T142 healed the passive overlays; T180 enumerated
+  every `WS_POPUP` in `src/apprt/win32` and left these two alone because they
+  differ in KIND, not because anyone had checked them. This turn checked them.
+
+  **Verdict: neither is healed, and neither should be.** Both are ACTIVATABLE
+  popups - no `WS_EX_NOACTIVATE`, `SW_SHOW` activates them, focus goes into
+  their own EDIT child - and both DISMISS THEMSELVES the instant activation
+  leaves them (the palette on `WM_ACTIVATE`/`WA_INACTIVE`, the find bar on
+  `EN_KILLFOCUS` of its edit, both in `App.zig`). A popup that cannot be visible
+  while its owner is in the background cannot reach either T142 case, so
+  `healOverlayZOrder` on these would be dead code rather than a fix.
+
+  Measured, not reasoned: **section I of `test\win32\overlay-zorder.ps1`** (ALL
+  PASS, 55 assertions), three arms per popup. I1 is the healthy baseline the
+  real overlays get. I2 is the teeth - the popup is asserted VISIBLE while its
+  window is active, then activation moves to another window of the same app and
+  it is asserted GONE, so the day that dismiss regresses is the day this pair
+  goes red. I3 is the harder half: section B's stray `WS_EX_TOPMOST`, which
+  SURVIVES a close and reopen (asserted, as a positive control - nothing on the
+  open path heals it) and the popup dismisses anyway, so even the case-1 bit
+  only ever sits on a window nobody can see.
+
+  Two measurements worth keeping beside the verdict. `SetWindowPos(HWND_TOPMOST)`
+  will not change the band of either popup while it is the ACTIVE window on the
+  test desktop - four attempts each, the T277 shape - but takes first time while
+  the popup is hidden, which is the truer version of the case anyway since the
+  HWND outlives every open and close. And the first run of the new section
+  scored the find bar, then silently abandoned the palette: PowerShell variable
+  names are case-INSENSITIVE, so section G's `$b` IS the setup window `$B`, and
+  a window handle had been replaced by a bubble record several sections earlier.
+  `$ErrorActionPreference` is `Continue` here, so that printed to stderr and the
+  run still said ALL PASS. Both halves are fixed - the variable is renamed with
+  the trap named in a comment, and section I's arms run inside a `try` whose
+  `catch` scores a FAIL.
+
+  The sweep also came back wider than the card assumed, so
+  `overlay_zorder.zig`'s module doc now carries **THE SET IS CLOSED (T721)** -
+  every `WS_POPUP` hit in `src/apprt/win32` in one of five buckets, with the
+  grep that produced it named so the next sweep is repeatable: healed (the eight
+  passive overlays), not-healed-by-verdict (these two), topmost-on-purpose
+  (`RegionSelector`, whose whole job is to cover the desktop), not-ours (four
+  system tooltips; EIGHT modal dialogs, not the six the card named -
+  `AgentIntegrationsDialog` and `UpdateProgress` too; and the app's own
+  top-levels), and in-file test fixtures.
+
+  And the reason a month could pass unnoticed got closed rather than described:
+  **`overlay-zorder.ps1` had no guard row**, so nothing tied an edit of the
+  z-order policy to the only thing on this box that drives it against real
+  windows. It has one now, covering `overlay_zorder.zig` and the harness itself
+  - deliberately NOT `win32.zig`, which holds `healOverlayZOrder` but is edited
+  most turns for unrelated reasons, and a guard that is due every turn teaches
+  people to reach for the hatch. Half the oracles in that script need a setup
+  that can fail on a background desktop, so its 18 SKIP prints are counted now
+  and a run with any of them REFUSES to stamp: a stamp over a run that never
+  reached section G would record coverage nobody got.
+
 - 2026-09-14: T719 closed already-fixed (+T1560 filed) - **every acceptance
   launch already declares whether it wants the last run's windows back, and the
   sweep that says so is a hard gate rather than a lint.** T719 was filed on

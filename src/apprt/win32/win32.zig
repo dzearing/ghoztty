@@ -2043,6 +2043,11 @@ pub extern "user32" fn TrackMouseEvent(
 // mode (TTF_TRACK): the app decides when and where the tip shows, which
 // matches the strip's existing hover tracking; the control itself stays
 // native-drawn so it inherits the system's own tooltip styling.
+//
+// A tooltip is NOT one of the overlays `healOverlayZOrder` defends (T721):
+// the OS owns its placement and its z-order, and it is torn down on its own
+// timer rather than living as long as the pane it decorates. Nothing to heal
+// — see `overlay_zorder.zig`'s module doc for the whole popup verdict.
 // -----------------------------------------------------------------------
 
 pub const TOOLTIPS_CLASS = std.unicode.utf8ToUtf16LeStringLiteral("tooltips_class32");

@@ -1,10 +1,10 @@
 {
     "guard":  "launch-preflight",
     "script":  "test/win32/launch-preflight-audit.ps1",
-    "generated":  "2026-09-14T05:57:26-07:00",
-    "commit":  "2db55acec",
+    "generated":  "2026-09-14T07:01:27-07:00",
+    "commit":  "2782b679f",
     "uncommitted":  [
-                        "test/win32/float-on-top.ps1"
+                        "test/win32/overlay-zorder.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -232,7 +232,7 @@
                   "test/win32/notification-click-real.ps1":  "42e80ecc6e950401685a371ae9f966f77091ab14aa7a58b13ad49ddbf7e98556",
                   "test/win32/one-installer.ps1":  "e8f2855cab4c267362f75fe7d78b810375ebc6fd253a31ab70c43579b3cea76e",
                   "test/win32/orphan-notify.ps1":  "d0a83000af274f7624da536bf4ff585d037a4c6768d10a365a71f57a03505e62",
-                  "test/win32/overlay-zorder.ps1":  "0aecea140f4df82d4e0c6a52bdd358ba99b67bb2f656f8432a55e9ea5809a209",
+                  "test/win32/overlay-zorder.ps1":  "86fcf7f8319643cf8623b8a8c206177433cfef3f8722bd1b7330150b2f02ca9e",
                   "test/win32/palette-close-crash.ps1":  "e6046113e0de2c089224b358bac4ef12ed298e86983c3bf68bd48588a34c964d",
                   "test/win32/palette-jump.ps1":  "150268d189630d6d7118cec0d7f2a6149a8a2b7c41a0db14942533c58fddd013",
                   "test/win32/pane-banner.ps1":  "7b5b643d7fc7652dd79a24a9bb3d760ae1160d794beed64fc048b88e72f0561f",
