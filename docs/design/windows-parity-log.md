@@ -28284,3 +28284,55 @@ negative-controlled - fed a window entry that does carry a connection object it
 scores False - so it is a check that can fail rather than one that cannot speak.
 Eleven audit harnesses that cover test scripts went guard-due on the ipc-p1 edit
 and were re-run green.
+
+## 2026-09-14 — Every shared-core change main made since June is now accounted for (T716)
+
+The parity sweep is the thing that stops a Mac feature from silently never
+arriving on Windows: it enumerates the commits main landed and refuses to call a
+range swept while any of them is uncited. Until T685 it watched only `macos/`,
+which meant a change to the shared core underneath both apps was invisible to it
+— the `src/cli/send_keys.zig` rewrite behind T604 is what that costs. T685
+widened the watch. This is the first full run of the widened sweep over the
+already-merged history, and the 81 commits it turned up are now dispositioned
+one by one in `docs/design/windows-parity-sweeps.md`.
+
+The fact that decided most of them was worth establishing before writing a word
+of judgement: **all 81 are already ancestors of this branch**, checked commit by
+commit rather than assumed. So none of them is code the Windows build is
+missing — it all compiles into `ghoztty.exe` and `ghoztty-agent.exe` today. The
+question the citations answer is therefore "does this seat owe follow-up work",
+not "is this ported", and the answer everywhere turned out to be no. Had one
+been an unported Mac feature it would have produced a task instead; the
+distinction is the whole value of enumerating rather than narrating.
+
+Eight dispositions carry the 81. The bulk is the WP1–WP4 remote/agent
+build-out (27) and the session-persistence series (15), both of which Windows
+runs as the *same source* — one codebase, two targets — plus the relay
+enrollment and lifecycle work (16). Thirteen are not Mac work at all but the
+Windows arms themselves, landed from the Mac seat: the ConPTY arm, detached
+spawn, the PEB cwd read, the kill-on-close job object, the agent tray, the agent
+MSI. The rest are the activity-monitor metrics (2, whose Windows presentation is
+its own frontend), macOS code signing (2, no counterpart here), and shared build
+fixes already in our agent build (2).
+
+The four that mattered are the shared non-`src/remote/` commits with a
+user-visible surface — the class that produced T604 — and each was read
+against this branch's code rather than reasoned about: the default rename
+shortcut went into the *shared* keybind block via `ctrlOrSuper`, so Windows has
+`ctrl+shift+r` (`Config.zig:7343`); `+list --tty` and `+send-keys --when-idle`
+are carried with the documented `--tty` → `--pid` translation; the Cmd-Shift-D
+remote-pwd panic cannot arise the same way here because the win32 remote path
+keeps a remote cwd inside `Surface.Overrides.remote` and never seeds the local
+`working_directory`; and `CommandCore` is a pure refactor the Windows build
+compiles as-is.
+
+T684's coverage claim is amended in place rather than left standing: "every Mac
+change merged since June is accounted for" was true of the definition it swept
+under and false of the wider one, and the note that used to say the shared core
+was ungated now points at the section that closed it.
+
+Validated: `parity-sweep.ps1 -Range 680a07ed3..origin/main` exits 0 with SWEEP
+CLEAN over 368 commits, 368 mapped — it read 81 unmapped before this change, so
+the gate demonstrably moved rather than having always been quiet.
+`test\win32\parity-sweep.ps1` still ALL PASS, so the citations did not disturb
+the frozen fixtures. All four zig lanes PASS.
