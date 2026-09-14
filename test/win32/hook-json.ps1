@@ -135,6 +135,26 @@ foreach ($needle in @('--keys-file=', '--busy-marker=', 'unchanged across ~1s', 
 }
 Assert ($fork4Text.IndexOf('esc to interrupt', [StringComparison]::Ordinal) -lt 0) `
     "ghoztty skill fork does not describe --when-idle as watching for a baked-in busy marker"
+
+# The focus-link teaching (T718). `ghoztty://focus/<target>` exists so a
+# GENERATED document - a worktree dashboard, a build report, a status page - can
+# say "jump to that terminal", and the thing that writes those documents is an
+# agent reading this skill. A feature nothing tells the writer about is a
+# feature nobody emits: the scheme shipped on 2026-08-10 (T695 here,
+# c36456863 on main) and the skill said nothing about it for five days. So the
+# four things an agent needs are asserted individually rather than by looking
+# for the heading: the ONE form, that <target> is anything --target accepts (so
+# a pane id works), that focus is the only verb, and where such a link is
+# usefully placed - a rendered markdown link and a pane banner.
+foreach ($needle in @(
+        'ghoztty://focus/<target>',
+        '`focus` is the **only** verb',
+        'everything a `--target` accepts',
+        '`$GHOZTTY_PANE_ID`, case-insensitive',
+        '[the build pane](ghoztty://focus/build)')) {
+    Assert ($fork4Text.IndexOf($needle, [StringComparison]::Ordinal) -ge 0) `
+        "ghoztty skill fork teaches focus links: '$needle'"
+}
 $fork4Mac = (& git -C $repo hash-object (Join-Path $repo 'macos\Resources\Ghoztty\skills\ghoztty\SKILL.md') 2>$null | Out-String).Trim()
 $fork4Win = (& git -C $repo hash-object $fork4 2>$null | Out-String).Trim()
 Assert ($fork4Win -and ($fork4Win -eq $fork4Mac)) `

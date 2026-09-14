@@ -28362,3 +28362,39 @@ proves it. All four zig lanes PASS; ipc-p1/p2/p3 ALL PASS.
 Filed T1558: the four other `showStandalone` callers (startup failure, install
 restart, install maintenance, update install) still pass a hard-coded 1.0, so on
 a scaled display their dialog is smaller than every in-app one.
+
+## 2026-09-14 - The skill that teaches agents to write focus links is now checked, not just written (T718)
+
+The `ghoztty://focus/<target>` scheme exists so a generated document - a
+worktree dashboard, a build report, a status page - can say "jump to that
+terminal". The thing that writes those documents is an agent reading the
+`ghoztty` skill, and when T718 was filed that skill had never heard of the
+scheme.
+
+Re-verified before building, per the check-first rule, and the teaching had
+already arrived: T866 (59388143f) moved the skill into this repo, and both the
+Mac bundle resource and the Windows asset carry the full "Focus links" section -
+the one form, `<target>` taking anything `--target` takes, `focus` as the only
+verb and why widening it would be remote code execution behind an `<a href>`,
+and where such a link is usefully placed. What was still missing is that nothing
+CHECKED any of it: the vendored skill is re-synced from main, and a re-vendor
+could drop the section with no run going red.
+
+So section A of `test\win32\hook-json.ps1` - which already pins the deliberate
+divergences in that document - now asserts the five phrases that carry the
+teaching, alongside the `--keys-file=` and `--busy-marker=` needles it was
+already holding. Deleting the "`focus` is the **only** verb" sentence flips the
+assertion false, which was run by hand as the negative control.
+
+The other half was on the box rather than in the repo: the `ghoztty:ghoztty`
+skill offered to every session comes from a plugin cache snapshotted on
+2026-08-21, and its copy was a 711-line pre-scheme document. It is now
+byte-identical to the repo asset.
+
+Validated: `test\win32\hook-json.ps1` ALL PASS (53 assertions, up from 48) and
+it re-stamped the hook-json guard; all four zig lanes PASS; ipc-p1/p2/p3 ALL
+PASS.
+
+Filed T1559: the rest of that plugin-cache snapshot is stale too - its
+process-feedback skill and both hook scripts predate a month of repo changes,
+and nothing refreshes them.
