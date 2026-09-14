@@ -28531,3 +28531,40 @@ window in front, which is how this shape survived T277 and T607.
 Filed T1561: the same script reads a pane id out of `+list --json` from a
 `panes` array that does not exist - a tab's layout is a `splits` tree - so it has
 silently fallen back to a guessed window name every run.
+
+## 2026-09-14 - Every Windows install of a binary now clears its own way, not just the four the app ships (T722)
+
+On Windows an executable's image file is held open for the life of the process,
+so an install cannot land on top of one that is running. T192 answered that for
+the artifacts a plain `zig build` installs - the app, its `.com` twin, the
+fallback GL, the agent and its CA dll - by moving a locked destination aside so
+the install's atomic rename hits an empty path. It left out every artifact built
+by name: `remote-test-client`, which acceptance scripts deliberately leave
+running with `--hold=<n>`, and `wp4-e2e`, `remote-backend-e2e`, `conpty-smoke`,
+the `-Demit-test-exe` binary, the bench tools and the libghostty dll. Building
+one of those while a copy was still up failed with the same AccessDenied T192
+existed to remove - which is the exact shape of the bug it was fixing, a guard
+that covers some artifacts and not the one that mattered.
+
+There is now ONE guard for the build and every install step that emits an
+executable or a loadable module routes through it, so the default for anything
+added later is "guarded" rather than "remembered". It disables itself off
+Windows, where nothing can hold a destination open, so no call site has to ask
+what platform it is on. Installed DATA is deliberately left alone: a running
+process holds its image open, not the terminfo beside it.
+
+The first cut made that one guard a single tool RUN, and that was wrong in a way
+worth recording. A run takes every guarded artifact's source as an input and its
+dependents wait for all of it, so wiring the on-demand harnesses into it made a
+plain `zig build` compile every one of them - including `wp4-e2e`, which does
+not build for this target, so the ordinary build went red. Each guarded pair
+gets its own run instead. A guard must never decide what gets built.
+
+`test\win32\build-locked-artifact.ps1` grows arms 5-8, the named-step half of
+what arms 1-4 prove for the default ones: a held `remote-test-client` fails the
+build with the guard off, the same state builds clean with it on, the old binary
+is the one that moved aside, the running client survives it, and the leftover is
+swept once that process exits. The client has no `-Dagent-version` to re-link
+against, so the copy is forced by backdating the installed file - and that
+timestamp is then the oracle for which binary is where, the way the baked stamp
+is for the agent. ALL PASS.

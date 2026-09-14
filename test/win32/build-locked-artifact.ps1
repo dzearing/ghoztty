@@ -35,6 +35,7 @@
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
+    [string]$ClientExe = 'D:\git\ghoztty\zig-out\bin\remote-test-client.exe',
     [string]$Repo = 'D:\git\ghoztty'
 )
 
@@ -70,6 +71,11 @@ $tmp = Join-Path $env:TEMP "ghoztty-t192-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 $asideGlob = (Split-Path -Leaf $AgentExe) + '.old-*'
 $binDir = Split-Path -Parent $AgentExe
+
+function Get-AsideFilesFor($exe) {
+    $glob = (Split-Path -Leaf $exe) + '.old-*'
+    @(Get-ChildItem (Split-Path -Parent $exe) -Filter $glob -ErrorAction SilentlyContinue)
+}
 
 function Get-AsideFiles {
     @(Get-ChildItem $binDir -Filter $asideGlob -ErrorAction SilentlyContinue)
@@ -111,9 +117,11 @@ function Start-HeldAgent {
 }
 
 function Invoke-ZigBuild {
-    param([string]$Stamp, [string]$Unlock, [string]$LogName)
+    param([string]$Stamp, [string]$Unlock, [string]$LogName, [string]$Step)
     $log = Join-Path $tmp $LogName
-    $zargs = @('build', '-Dapp-runtime=win32', '-Doptimize=Debug')
+    $zargs = @('build')
+    if ($Step) { $zargs += $Step }
+    $zargs += @('-Dapp-runtime=win32', '-Doptimize=Debug')
     if ($Stamp) { $zargs += "-Dagent-version=$Stamp" }
     if ($Unlock) { $env:GHOZTTY_INSTALL_UNLOCK = $Unlock }
     Push-Location $Repo
@@ -181,6 +189,80 @@ Assert "sweep build exits 0" ($r.Code -eq 0)
 Assert "no moved-aside files remain" ((Get-AsideFiles).Count -eq 0)
 Assert "zig-out is back on the tree's own agent build" (-not (Test-StampIn $AgentExe $stamp3))
 
+# ---------------------------------------------------------------------------
+# T722: the SAME guard, on an artifact nobody builds by default.
+#
+# `remote-test-client.exe` is built by name (`zig build remote-test-client`) and
+# acceptance scripts run it with `--hold=<n>`, so a lingering one is a state the
+# suite already expects - and until T722 its install step was outside the guard,
+# so that lingerer failed the next build of it with the same AccessDenied the
+# agent used to. Arms 1-4 above prove the guard for the DEFAULT install steps;
+# these prove it for a named one, which is the whole difference T722 closed.
+#
+# The forcing function differs. There is no `-Dagent-version` for the client, so
+# the install cannot be made to copy by re-linking it. It does not have to be:
+# `std.fs.Dir.updateFile` copies when size OR mtime differ, so backdating the
+# INSTALLED file (while nothing holds it) is enough to guarantee the copy - and
+# that same timestamp is then the oracle for which binary is where, exactly as
+# the baked stamp is above.
+$clientAged = [datetime]'2001-02-03 04:05:06'
+$clientHeld = $null
+
+function Start-HeldClient {
+    $p = Start-Process -FilePath $ClientExe -PassThru -WindowStyle Hidden -ArgumentList `
+        "--pipe=\\.\pipe\ghoztty-agent-t192-$PID", "--hold=600"
+    Start-Sleep -Seconds 2
+    return $p
+}
+
+function Stop-HeldClient {
+    if ($clientHeld) {
+        Stop-Process -Id $clientHeld.Id -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 600
+    }
+}
+
+"== 5: control - the named remote-test-client step installs clean"
+Get-AsideFilesFor $ClientExe | ForEach-Object { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue }
+$r = Invoke-ZigBuild -Step 'remote-test-client' -Stamp '' -Unlock '' -LogName 'client-base.log'
+Assert "remote-test-client build exits 0" ($r.Code -eq 0)
+Assert "remote-test-client installed" (Test-Path $ClientExe)
+Assert "nothing was moved aside" ((Get-AsideFilesFor $ClientExe).Count -eq 0)
+
+"== 6: teeth - with the guard off, a RUNNING remote-test-client fails its install"
+(Get-Item $ClientExe).LastWriteTime = $clientAged
+$held = Start-HeldAgent
+$clientHeld = Start-HeldClient
+Assert "held remote-test-client is running" `
+    ($null -ne $clientHeld -and -not $clientHeld.HasExited)
+$r = Invoke-ZigBuild -Step 'remote-test-client' -Stamp '' -Unlock '0' -LogName 'client-negative.log'
+Assert "guard-off build fails" ($r.Code -ne 0)
+Assert "and it fails with AccessDenied on remote-test-client" `
+    ($r.Text -match 'AccessDenied' -and $r.Text -match 'remote-test-client\.exe')
+Assert "the old binary is still the one on disk" `
+    ((Get-Item $ClientExe).LastWriteTime -eq $clientAged)
+Assert "nothing was moved aside with the guard off" ((Get-AsideFilesFor $ClientExe).Count -eq 0)
+
+"== 7: the fix - the same build succeeds with the guard on"
+$r = Invoke-ZigBuild -Step 'remote-test-client' -Stamp '' -Unlock '' -LogName 'client-fix.log'
+Assert "build exits 0 with the client still running" ($r.Code -eq 0)
+Assert "a NEW binary landed at the install path" `
+    ((Get-Item $ClientExe).LastWriteTime -ne $clientAged)
+$clientAsides = Get-AsideFilesFor $ClientExe
+Assert "exactly one file was moved aside" ($clientAsides.Count -eq 1)
+Assert "the moved-aside file is the OLD binary" `
+    ($clientAsides.Count -eq 1 -and $clientAsides[0].LastWriteTime -eq $clientAged)
+Assert "the running client survived the move" `
+    ($null -ne $clientHeld -and $null -ne (Get-Process -Id $clientHeld.Id -ErrorAction SilentlyContinue))
+
+"== 8: the client leftover is swept once the process holding it exits"
+Stop-HeldClient
+Stop-RepoAgents
+$r = Invoke-ZigBuild -Step 'remote-test-client' -Stamp '' -Unlock '' -LogName 'client-sweep.log'
+Assert "sweep build exits 0" ($r.Code -eq 0)
+Assert "no moved-aside client files remain" ((Get-AsideFilesFor $ClientExe).Count -eq 0)
+
+Stop-HeldClient
 Stop-RepoAgents
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 

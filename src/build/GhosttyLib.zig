@@ -4,6 +4,7 @@ const std = @import("std");
 const RunStep = std.Build.Step.Run;
 const CombineArchivesStep = @import("CombineArchivesStep.zig");
 const Config = @import("Config.zig");
+const InstallUnlock = @import("InstallUnlock.zig");
 const SharedDeps = @import("SharedDeps.zig");
 const LipoStep = @import("LipoStep.zig");
 
@@ -190,10 +191,18 @@ pub fn initMacOSUniversal(
     };
 }
 
-pub fn install(self: *const GhosttyLib, name: []const u8) void {
+pub fn install(
+    self: *const GhosttyLib,
+    name: []const u8,
+    unlock: *InstallUnlock,
+) void {
     const b = self.step.owner;
     const step = b.getInstallStep();
     const lib_install = b.addInstallLibFile(self.output, name);
+    // T722: a dll is a loadable module, so its destination is lockable the
+    // same way an exe's is. The guard no-ops off Windows and for the `.a`/
+    // `.lib` archives nothing ever holds open.
+    unlock.guardInstallFile(lib_install);
     step.dependOn(&lib_install.step);
 
     if (self.pkg_config) |pc| {

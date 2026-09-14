@@ -2,6 +2,7 @@
 const GhosttyBench = @This();
 
 const std = @import("std");
+const InstallUnlock = @import("InstallUnlock.zig");
 const SharedDeps = @import("SharedDeps.zig");
 
 steps: []*std.Build.Step.Compile,
@@ -49,7 +50,13 @@ pub fn init(
     return .{ .steps = steps.items };
 }
 
-pub fn install(self: *const GhosttyBench) void {
+pub fn install(self: *const GhosttyBench, unlock: *InstallUnlock) void {
     const b = self.steps[0].step.owner;
-    for (self.steps) |step| b.installArtifact(step);
+    for (self.steps) |step| {
+        // T722: guarded like every other installed exe — a bench run left
+        // holding its own image must not fail the next `zig build`.
+        const install_step = b.addInstallArtifact(step, .{});
+        b.getInstallStep().dependOn(&install_step.step);
+        unlock.guardArtifact(install_step);
+    }
 }

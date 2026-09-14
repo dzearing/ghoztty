@@ -120,6 +120,20 @@ pub fn build(b: *std.Build) !void {
         "Update translation files",
     );
 
+    // T192/T722: the ONE install-unlock guard for this build. An artifact whose
+    // destination is currently RUNNING cannot be replaced in place on Windows —
+    // the image file is held open for the life of the process, and the agent
+    // outliving the app is the point of session persistence — so every install
+    // step below that emits an executable or a loadable module routes through
+    // it, and a locked destination is moved aside before the install runs.
+    //
+    // It is created unconditionally and disables itself on a non-Windows host
+    // (nothing can hold a destination open there), so no call site has to ask.
+    // What is deliberately NOT guarded is the installed DATA — terminfo, shell
+    // integration, themes, docs, headers: a running process holds its image
+    // open, not the files beside it.
+    const install_unlock = buildpkg.InstallUnlock.create(b);
+
     // Ghostty resources like terminfo, shell integration, themes, etc.
     const resources = try buildpkg.GhosttyResources.init(b, &config, &deps);
     const i18n = if (config.i18n) try buildpkg.GhosttyI18n.init(b, &config) else null;
@@ -188,6 +202,7 @@ pub fn build(b: *std.Build) !void {
     // via `zig build remote-test-client`.
     {
         const client = try buildpkg.GhosttyRemoteTestClient.init(b, &config, &deps);
+        install_unlock.guardArtifact(client.install_step);
         remote_test_client_step.dependOn(&client.install_step.step);
     }
 
@@ -198,6 +213,7 @@ pub fn build(b: *std.Build) !void {
     // channel-authoritative agent. Built on demand via `zig build wp4-e2e`.
     {
         const harness = try buildpkg.GhosttyWp4E2e.init(b, &config);
+        install_unlock.guardArtifact(harness.install_step);
         wp4_e2e_step.dependOn(&harness.install_step.step);
     }
 
@@ -208,6 +224,7 @@ pub fn build(b: *std.Build) !void {
     // headlessly. Built on demand via `zig build remote-backend-e2e`.
     {
         const harness = try buildpkg.GhosttyRemoteBackendE2e.init(b, &config, &deps);
+        install_unlock.guardArtifact(harness.install_step);
         remote_backend_e2e_step.dependOn(&harness.install_step.step);
     }
 
@@ -217,6 +234,7 @@ pub fn build(b: *std.Build) !void {
     // named per-arch (ghoztty-conpty-smoke-<arch>.exe) so both arches coexist.
     {
         const smoke = try buildpkg.GhosttyConptySmoke.init(b, &config, &deps);
+        install_unlock.guardArtifact(smoke.install_step);
         conpty_smoke_step.dependOn(&smoke.install_step.step);
     }
 
@@ -237,7 +255,7 @@ pub fn build(b: *std.Build) !void {
 
     // Ghostty bench tools
     const bench = try buildpkg.GhosttyBench.init(b, &deps);
-    if (config.emit_bench) bench.install();
+    if (config.emit_bench) bench.install(install_unlock);
 
     // Ghostty dist tarball
     const dist = try buildpkg.GhosttyDist.init(b, &config);
@@ -324,22 +342,18 @@ pub fn build(b: *std.Build) !void {
             if (config.target.result.os.tag == .windows) {
                 agent.install();
 
-                // T192: an artifact whose destination is currently RUNNING
-                // cannot be replaced in place on Windows — the image file is
-                // held open for the life of the process, and the agent
-                // outliving the app is the point of session persistence. Move
-                // a locked destination aside before the install steps run so
-                // a leftover agent from an earlier test run cannot fail the
-                // build (and, worse, fail it AFTER ghoztty.exe installed).
-                const unlock = buildpkg.InstallUnlock.create(b);
-                unlock.guardArtifact(exe.install_step);
-                if (exe.com_install_step) |com| unlock.guardInstallFile(com);
+                // T192: move a locked destination aside before the install
+                // steps run, so a leftover agent from an earlier test run
+                // cannot fail the build (and, worse, fail it AFTER
+                // ghoztty.exe installed). One shared guard, created above.
+                install_unlock.guardArtifact(exe.install_step);
+                if (exe.com_install_step) |com| install_unlock.guardInstallFile(com);
                 // The fallback GL (T1252) is a loaded module for as long as an
                 // instance that took it is alive, so it is exactly as
                 // unreplaceable as the exe when a test run left one behind.
-                for (exe.gl_install_steps) |gl| unlock.guardInstallFile(gl);
-                unlock.guardArtifact(agent.install_step);
-                if (agent.ca_dll_install_step) |ca| unlock.guardArtifact(ca);
+                for (exe.gl_install_steps) |gl| install_unlock.guardInstallFile(gl);
+                install_unlock.guardArtifact(agent.install_step);
+                if (agent.ca_dll_install_step) |ca| install_unlock.guardArtifact(ca);
             }
         }
     } else if (!config.emit_lib_vt) {
@@ -356,11 +370,11 @@ pub fn build(b: *std.Build) !void {
         if (!config.target.result.os.tag.isDarwin()) {
             lib_shared.installHeader(); // Only need one header
             if (config.target.result.os.tag == .windows) {
-                lib_shared.install("ghostty-internal.dll");
-                lib_static.install("ghostty-internal-static.lib");
+                lib_shared.install("ghostty-internal.dll", install_unlock);
+                lib_static.install("ghostty-internal-static.lib", install_unlock);
             } else {
-                lib_shared.install("ghostty-internal.so");
-                lib_static.install("ghostty-internal.a");
+                lib_shared.install("ghostty-internal.so", install_unlock);
+                lib_static.install("ghostty-internal.a", install_unlock);
             }
         }
     }
@@ -538,7 +552,13 @@ pub fn build(b: *std.Build) !void {
             // Crash on x86_64 without this
             .use_llvm = test_llvm,
         });
-        if (config.emit_test_exe) b.installArtifact(test_exe);
+        if (config.emit_test_exe) {
+            // `-Demit-test-exe` puts ghostty-test.exe in zig-out/bin, and a
+            // hung or held test binary locks it exactly like the agent does.
+            const test_exe_install = b.addInstallArtifact(test_exe, .{});
+            b.getInstallStep().dependOn(&test_exe_install.step);
+            install_unlock.guardArtifact(test_exe_install);
+        }
         _ = try deps.add(test_exe);
 
         // Verify our internal libghostty header.
