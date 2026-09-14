@@ -28568,3 +28568,64 @@ swept once that process exits. The client has no `-Dagent-version` to re-link
 against, so the copy is forced by backdating the installed file - and that
 timestamp is then the oracle for which binary is where, the way the baked stamp
 is for the agent. ALL PASS.
+
+## 2026-09-14 — Asking for an update now always gets an answer (T1563)
+
+The user was eleven releases behind, clicked "Check for Updates", and came away
+believing there was nothing to take. The report pointed at the T1171 dedupe: the
+hourly check had found `win-v1.36.23`, judged it newer, and logged
+`already offered; not re-notifying` once an hour for hours.
+
+That line-level diagnosis did not survive the code. One frame above it,
+`startUpdateCheck` already passed `already_offered = null` whenever the trigger
+was manual — in the reported build, since 4d858f157 — so the suppression branch
+was unreachable from a manual check and the offer would have been made. What the
+report did expose, and what is fixed here, is the SHAPE: a correct behavior
+resting on a convention in the caller, two functions away from the rule it
+enforced, with nothing asserting it and no test anywhere exercising the manual
+arm at all. One edit in either place would have armed exactly the defect
+described, and nothing would have caught it.
+
+So the policy moved to where the policy lives. `update_check.decideNotify` takes
+the trigger and answers `.offer` for a manual check unconditionally; the caller
+now passes the FACT of what was offered and no longer implements the rule by
+choosing what to pass. The check itself is `runUpdateCheck`, which returns an
+`UpdateCheckOutcome` on every path, and `updateCheckThread` has one exit that
+hands that outcome to an exhaustive switch. A manual caller is answered on every
+branch, including the two that used to return in silence — a suppressed manual
+check and one whose offer could not be delivered — and a future outcome nobody
+answers is a compile error rather than a user staring at an app that looks
+current.
+
+The dedupe also grew the floor it never had: an automatic offer suppresses
+itself for `offer_expiry_ms` (24h) from the moment the balloon was actually
+shown, rather than forever. Expiry rather than a how-far-behind bound because
+the release distance is not a number this code has — the feed gives the newest
+tag, not the count between — and a day is this project's publishing cadence, so
+it reads the same from either end: at most one reminder a day, never indefinite
+silence. And the log now names the trigger, because an automatic tick and a
+user's click logged identically, which is the reason the original incident
+cannot be pinned down from the log the user still has.
+
+`test\win32\update-check.ps1` gains scenario 7, and with it the manual arm's
+first coverage. "Check for Updates…" sits behind `TrackPopupMenuEx`, which wants
+real input the background test desktop cannot give, so a Debug-only
+`GHOZTTY_UPDATE_MANUAL_MS` fires exactly one manual check on a timer — the same
+`startUpdateCheck(.manual)` the menu item runs. One launch stages the whole
+state: the launch check offers `win-v9.9.9`, two automatic re-checks suppress it
+(T1171 intact), and the manual check that follows must raise the balloon again.
+The assertion is deliberately about the balloon FOLLOWING the ask rather than
+about the "update available" line, which is logged before the notify decision
+and stays true even when the answer is then swallowed. Demonstrated red the way
+T1133 asks: `decideNotify` was made to suppress manual again, rebuilt, and the
+run went `2 FAILURE(S)` on precisely those two assertions.
+
+Filed T1565 on the half this does not fix: everything a manual check has to say
+is delivered by a tray balloon, and the shell is free to drop it —
+`NIM_SETVERSION failed for tray uid=2 (NIM_ADD failed too)` is in this very run's
+log. A user who asked is looking at the app and should be answered there. That
+fits the original report as well as any other theory.
+
+Four lanes ALL PASS, update-check ALL PASS (26), update-apply ALL PASS (52)
+after its two log regexes moved with the format, P1/P2/P3 ALL PASS, every
+non-advisory guard row re-stamped.

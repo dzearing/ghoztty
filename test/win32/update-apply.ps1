@@ -204,7 +204,7 @@ function Run-Scenario([string]$label, [string]$updateUrl, [string[]]$extraArgs =
 Clear-Staging
 $releaseBefore = (Test-Path $releaseStaging)
 $log1 = Run-Scenario 'msi' $feedMsi
-Assert ($log1 -match 'update available: current=\S+ latest=win-v9\.9\.9 msi=file:') 'msi: the release''s .msi asset was found'
+Assert ($log1 -match 'update available \(automatic\): current=\S+ latest=win-v9\.9\.9 msi=file:') 'msi: the release''s .msi asset was found'
 Assert ($log1 -match 'update staged for win-v9\.9\.9') 'msi: the package was pre-downloaded (auto-update default)'
 Assert ($log1 -match 'showing update balloon for win-v9\.9\.9') 'msi: balloon shown'
 $staged = Join-Path $staging 'Ghoztty-9.9.9-x64.msi'
@@ -239,7 +239,7 @@ Assert ($log3 -match 'showing update balloon for win-v9\.9\.9') 'zip: notify-onl
 # -- 4. auto-update = check notifies but does not download ---------------
 Clear-Staging
 $log4 = Run-Scenario 'check' $feedMsi @('--auto-update=check')
-Assert ($log4 -match 'update available: current=\S+ latest=win-v9\.9\.9') 'check: the check still runs'
+Assert ($log4 -match 'update available \(automatic\): current=\S+ latest=win-v9\.9\.9') 'check: the check still runs'
 Assert ($log4 -notmatch 'update staged for') 'check: no background download'
 Assert ((-not (Test-Path $staging)) -or (@(Get-ChildItem $staging -Filter *.msi -ErrorAction SilentlyContinue).Count -eq 0)) 'check: nothing staged'
 

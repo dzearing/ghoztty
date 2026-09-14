@@ -1,15 +1,16 @@
 {
     "guard":  "update-check",
     "script":  "test/win32/update-check.ps1",
-    "generated":  "2026-09-13T00:53:56-07:00",
-    "commit":  "bb557fba2",
+    "generated":  "2026-09-14T08:37:10-07:00",
+    "commit":  "8fd2e0d38",
     "uncommitted":  [
+                        "src/apprt/win32/update_check.zig",
                         "test/win32/update-check.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/install_location.zig":  "9a6320f5bd3191c1381dc7514d03c2ae1a6bd43176dd1019d2007bf6dc372eaf",
-                  "src/apprt/win32/update_check.zig":  "ea85c66bcb9959c90d3a0446453fbb28dee9ca60727926947617319e985b3d59",
+                  "src/apprt/win32/update_check.zig":  "e8c76a63e80081788c5f082f1f2b9282ac78e19ff132a590c87767a658500489",
                   "src/cli/version.zig":  "99ca489e05d7c94001f89e13d8f82cb52254f119aed15d9325eb63e6c82720e5",
-                  "test/win32/update-check.ps1":  "9aa821f45954e470f4f9b2f9f03ac9fb128f6920c4544fe5a4dbe72e1ad1689d"
+                  "test/win32/update-check.ps1":  "01e39d7ba5e730eefcb999466edcfaeb87a2677236433e1f9c836ef2f7313f79"
               }
 }

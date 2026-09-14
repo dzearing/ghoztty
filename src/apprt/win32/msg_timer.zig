@@ -71,6 +71,11 @@ pub const notif_update: usize = 15;
 /// Icon cleanup for the "this app is older than its agent" balloon (T626).
 pub const notif_app_outdated: usize = 16;
 
+/// One-shot Debug-only manual update check, armed by GHOZTTY_UPDATE_MANUAL_MS
+/// so the update-check acceptance script can drive the arm a user reaches
+/// through the Help menu (T1563).
+pub const update_manual: usize = 17;
+
 // Fail the build if two ids above are equal. Every `pub const … : usize` in
 // this file is a timer id and is compared against every other one, so a new
 // entry is covered by adding it — there is no second list to keep in step.

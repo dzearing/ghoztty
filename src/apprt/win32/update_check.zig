@@ -103,33 +103,105 @@ test "isNewer: dev pre-release is older than its release" {
     try testing.expect(!isNewer(current, "1.8.9"));
 }
 
-/// Whether a check that found `latest` should raise a notification, given
-/// `already_offered` — the version this app already told the user about.
+/// What triggered a check. The manual arm is a user who asked; the automatic
+/// arm is the launch check and the timer behind it.
+pub const Trigger = enum { automatic, manual };
+
+/// What a check that has already established `latest` is newer should do.
+pub const Notify = enum {
+    /// Raise the offer: balloon, and the pre-download behind it.
+    offer,
+    /// Stay quiet. Only ever the answer for an AUTOMATIC check that has
+    /// already offered this exact version recently (see `decideNotify`).
+    suppress,
+};
+
+/// How long an automatic offer suppresses itself for (T1563). The dedupe used
+/// to be permanent per version, which is right for the hour after the user
+/// clicks "Later" and wrong by the next day: nothing bounded how far behind a
+/// still-open terminal could drift while the app said nothing. A day is the
+/// floor because a day is this project's publishing cadence — a user who
+/// defers an offer hears about it again tomorrow at the latest, and never more
+/// than once a day.
+pub const offer_expiry_ms: i64 = 24 * 60 * 60 * 1000;
+
+/// Whether a check that found `latest` should raise a notification.
+///
+/// `already_offered` is the version this app has already told the user about
+/// (null: nothing offered yet in this process), and `offered_at_ms` is when it
+/// said so, on the same clock as `now_ms`.
 ///
 /// T1171 made the automatic check REPEAT while the app runs (a terminal that
 /// stays open for days used to ask exactly once, at launch, so a release
 /// published at 08:00 was invisible until the next restart). Repeating a
 /// question repeats its answer, and an hourly balloon for a version the user
 /// has already seen — and possibly already declined with "Later" — is nagging,
-/// not delivery. So the offer is made once per VERSION: the same version stays
-/// quiet, and a newer one speaks up again.
+/// not delivery. So an automatic offer is made once per VERSION per
+/// `offer_expiry_ms`: the same version stays quiet for a day, a newer one
+/// speaks up immediately.
 ///
-/// `null` means nothing has been offered yet in this process, so anything
-/// newer is news. Manual checks never pass an offered version: an explicit
-/// "check for updates" deserves an answer even when it is the same answer.
-pub fn shouldNotify(already_offered: ?[]const u8, latest: []const u8) bool {
-    const offered = already_offered orelse return true;
-    return !std.mem.eql(u8, offered, latest);
+/// **A manual check is never suppressed** (T1563). It is the user asking a
+/// direct question, and the answer to a direct question is what was found,
+/// every time — including a version they have already been offered and
+/// deferred. Before this the manual arm relied on its CALLER passing null for
+/// `already_offered`: a convention living two functions away from the rule it
+/// enforced, asserted by nothing, and a one-line edit in either place from
+/// answering a user who asked with silence.
+pub fn decideNotify(
+    trigger: Trigger,
+    already_offered: ?[]const u8,
+    offered_at_ms: i64,
+    latest: []const u8,
+    now_ms: i64,
+) Notify {
+    if (trigger == .manual) return .offer;
+    const offered = already_offered orelse return .offer;
+    if (!std.mem.eql(u8, offered, latest)) return .offer;
+    if (now_ms -| offered_at_ms >= offer_expiry_ms) return .offer;
+    return .suppress;
 }
 
-test "shouldNotify: first offer of a version speaks, a repeat stays quiet" {
+test "decideNotify: an automatic check offers a version once, then stays quiet" {
     const testing = std.testing;
-    try testing.expect(shouldNotify(null, "1.5.0"));
-    try testing.expect(!shouldNotify("1.5.0", "1.5.0"));
+    const t0: i64 = 1_000_000;
+    try testing.expectEqual(Notify.offer, decideNotify(.automatic, null, 0, "1.5.0", t0));
+    try testing.expectEqual(Notify.suppress, decideNotify(.automatic, "1.5.0", t0, "1.5.0", t0));
     // A newer release after the user deferred the last one is news again.
-    try testing.expect(shouldNotify("1.5.0", "1.6.0"));
-    // Text comparison, not semver: the check only ever passes a version it
-    // has already established is newer than the running build.
-    try testing.expect(shouldNotify("1.5.0", "1.4.0"));
-    try testing.expect(!shouldNotify("", ""));
+    try testing.expectEqual(Notify.offer, decideNotify(.automatic, "1.5.0", t0, "1.6.0", t0));
+    // Text comparison, not semver: the check only ever passes a version it has
+    // already established is newer than the running build.
+    try testing.expectEqual(Notify.offer, decideNotify(.automatic, "1.5.0", t0, "1.4.0", t0));
+    try testing.expectEqual(Notify.suppress, decideNotify(.automatic, "", t0, "", t0));
+}
+
+test "decideNotify: the automatic suppression expires after a day" {
+    const testing = std.testing;
+    const t0: i64 = 1_000_000;
+    // Still inside the day: quiet, which is T1171's whole point.
+    try testing.expectEqual(
+        Notify.suppress,
+        decideNotify(.automatic, "1.5.0", t0, "1.5.0", t0 + offer_expiry_ms - 1),
+    );
+    // A day later the offer is made again rather than the user drifting
+    // silently further behind (T1563).
+    try testing.expectEqual(
+        Notify.offer,
+        decideNotify(.automatic, "1.5.0", t0, "1.5.0", t0 + offer_expiry_ms),
+    );
+    // A clock that went backwards (a system time change) must not turn the
+    // suppression permanent OR make it speak on every tick; saturating
+    // subtraction keeps it quiet until an honest `now` expires it.
+    try testing.expectEqual(
+        Notify.suppress,
+        decideNotify(.automatic, "1.5.0", t0, "1.5.0", t0 - 5_000),
+    );
+}
+
+test "decideNotify: a manual check is never suppressed" {
+    const testing = std.testing;
+    const t0: i64 = 1_000_000;
+    // T1563: the exact state the user hit - this version already offered,
+    // seconds ago, and the user asks anyway. Asking always answers.
+    try testing.expectEqual(Notify.offer, decideNotify(.manual, "1.36.23", t0, "1.36.23", t0 + 1_000));
+    try testing.expectEqual(Notify.offer, decideNotify(.manual, null, 0, "1.36.23", t0));
 }

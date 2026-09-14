@@ -285,6 +285,10 @@ const STALE_BUILD_CHECK_MS: u32 = 60_000;
 /// a file.
 const UPDATE_RECHECK_TIMER_ID: usize = msg_timer.update_recheck;
 
+/// One-shot manual check armed by GHOZTTY_UPDATE_MANUAL_MS (Debug only,
+/// T1563). See where it is armed for why the acceptance script needs it.
+const UPDATE_MANUAL_TIMER_ID: usize = msg_timer.update_manual;
+
 /// How often the running app re-asks the release channel. Ten minutes is a
 /// tick, not a fetch: `shouldRunUpdateCheck` still throttles the network to
 /// one request per `UPDATE_CHECK_INTERVAL_SECS`, so this only bounds how long
@@ -474,6 +478,15 @@ orphan_check_inflight: bool = false,
 /// release, and opens its GitHub page when there is nothing installable.
 /// Null until an update notification has been shown.
 update_latest_ver: ?[]u8 = null,
+
+/// When `update_latest_ver` was last offered, in ms since the epoch — the
+/// clock behind `update_check.offer_expiry_ms` (T1563). Atomic because the
+/// GUI thread writes it (showing the balloon) and a check worker reads it,
+/// and unlike the version text it is a plain integer, so a torn read is the
+/// only hazard and an atomic load closes it. Zero until something has been
+/// offered, which the expiry reads as "long ago" and therefore never
+/// suppresses.
+update_offered_at_ms: std.atomic.Value(i64) = .init(0),
 
 /// The `.msi` asset URL for `update_latest_ver` (heap, app allocator), or
 /// null when that release published no installable package. This is what
@@ -895,6 +908,23 @@ pub fn init(
     // there was anything to take.
     if (self.msg_hwnd) |mh| {
         _ = w32.SetTimer(mh, UPDATE_RECHECK_TIMER_ID, self.updateRecheckIntervalMs(), null);
+    }
+
+    // A MANUAL check, fired once on a timer, for the acceptance script that
+    // could not otherwise reach the user's own path (T1563): "Check for
+    // Updates…" lives behind `TrackPopupMenuEx`, which needs real input, and
+    // the background test desktop has none. Debug builds only and disarmed
+    // unless GHOZTTY_UPDATE_MANUAL_MS is set, exactly like the recheck
+    // cadence beside it. The manual arm had no coverage at all before this,
+    // which is how its correctness came to rest on a caller-side convention.
+    if (self.msg_hwnd) |mh| {
+        const delay = orphanEnvMs(self.core_app.alloc, "GHOZTTY_UPDATE_MANUAL_MS", 0);
+        if (delay > 0) _ = w32.SetTimer(
+            mh,
+            UPDATE_MANUAL_TIMER_ID,
+            @intCast(std.math.clamp(delay, 100, std.math.maxInt(u32))),
+            null,
+        );
     }
 
     // Keep each pane's persisted SCREEN current (T922). Repeating, so it needs
@@ -8237,10 +8267,17 @@ fn startUpdateCheck(self: *App, trigger: UpdateTrigger) void {
     // and the worker cannot read `update_latest_ver` itself: that field is the
     // GUI thread's, written by `showUpdateNotification`, and a worker reading
     // it while a later notification replaced it is a use-after-free rather
-    // than a stale answer. A manual check passes null on purpose - the user
-    // asked, so they get an answer even if it is one they have seen.
-    const already_offered: ?[]u8 = if (trigger == .automatic and self.update_latest_ver != null)
-        (self.core_app.alloc.dupe(u8, self.update_latest_ver.?) catch null)
+    // than a stale answer.
+    //
+    // It is copied for a MANUAL check too, as of T1563. It used to pass null
+    // there — "the user asked, so answer them" implemented in the CALLER —
+    // which made a correct behavior depend on a convention living two
+    // functions away from the rule it enforced, with nothing asserting it.
+    // `update_check.decideNotify` takes the trigger now and never suppresses a
+    // manual check, so this argument is only ever the FACT of what was
+    // offered, and the policy is in exactly one place.
+    const already_offered: ?[]u8 = if (self.update_latest_ver) |v|
+        (self.core_app.alloc.dupe(u8, v) catch null)
     else
         null;
 
@@ -8313,27 +8350,93 @@ fn shouldRunUpdateCheck(self: *App) bool {
     return true;
 }
 
+/// What a completed update check concluded. Every exit of `runUpdateCheck`
+/// returns one of these, and `reportManualOutcome` answers every one of them
+/// — which is what makes "a manual check always gets an answer" a property of
+/// the code rather than a thing each new branch has to remember (T1563).
+///
+/// Adding a variant here without answering it below is a compile error, and
+/// that is the whole point: the defect this shape prevents is a future early
+/// `return` that happens to be silent.
+const UpdateCheckOutcome = enum {
+    /// A newer release was found and the offer went out (balloon, plus the
+    /// pre-downloaded package behind it when there was one).
+    offered,
+    /// The running build is the newest published one.
+    up_to_date,
+    /// The feed carries no win-v release at all.
+    no_release,
+    /// The fetch or the parse failed.
+    failed,
+    /// An automatic check found a newer release it had already offered
+    /// recently, and stayed quiet (T1171). Unreachable for a manual check:
+    /// `update_check.decideNotify` never suppresses one.
+    suppressed,
+    /// The check worked but the offer could not be delivered — an allocation
+    /// failed, or the message window was already gone. Rare, and it used to
+    /// be silent even for a user who had asked.
+    undeliverable,
+};
+
 /// Background thread: fetch the releases list from GitHub, find the newest
-/// win-v release, compare with the current version, post a message if
-/// newer. Manual checks also post their up-to-date/failed outcome.
+/// win-v release, compare with the current version, post a message if newer.
+///
+/// A MANUAL check always reports back (T1563): the user asked a direct
+/// question, so every way this can end — including one that found nothing to
+/// say — turns into something on screen. The single exit below is how that is
+/// guaranteed; `runUpdateCheck` has no side channel to return through.
 fn updateCheckThread(app: *App, trigger: UpdateTrigger, already_offered: ?[]u8) void {
     const alloc = app.core_app.alloc;
-    const manual = trigger == .manual;
     defer if (already_offered) |o| alloc.free(o);
+
+    const outcome = runUpdateCheck(app, trigger, already_offered);
+    if (trigger == .manual) reportManualOutcome(app, outcome);
+}
+
+/// Turn a finished check into what the user who ASKED for it sees. Exhaustive
+/// on purpose: there is no `else` branch, so a new outcome cannot be added
+/// without deciding what a manual caller is told about it.
+fn reportManualOutcome(app: *App, outcome: UpdateCheckOutcome) void {
+    switch (outcome) {
+        // The balloon offering the update IS the answer; a second "up to
+        // date" balloon behind it would contradict it.
+        .offered => {},
+        .up_to_date, .no_release => postUpdateFeedback(app, 0),
+        .failed => postUpdateFeedback(app, 1),
+        // Both of these are "I could not answer you", and saying so is the
+        // requirement — the T1563 incident is what silence here looks like
+        // from outside: an app that appears current while it is eleven
+        // releases behind.
+        .suppressed, .undeliverable => {
+            log.warn("manual update check ended {t} with nothing to show; reporting a failed check", .{outcome});
+            postUpdateFeedback(app, 1);
+        },
+    }
+}
+
+/// The check itself. Returns what it concluded; posts the offer but never the
+/// manual feedback, which is `updateCheckThread`'s single exit.
+fn runUpdateCheck(
+    app: *App,
+    trigger: UpdateTrigger,
+    already_offered: ?[]u8,
+) UpdateCheckOutcome {
+    const alloc = app.core_app.alloc;
+    // T1563: the log could not tell an hourly tick from a user who asked,
+    // which is precisely the distinction the incident turned on. It can now.
+    const how = @tagName(trigger);
 
     var release = fetchLatestWinRelease(alloc) catch |err| switch (err) {
         error.NoWinRelease => {
             // No Windows release published (or a fake feed without win-v
             // tags): nothing to offer, which for a manual check reads as
             // "you're up to date".
-            log.info("update check: no win-v release found", .{});
-            if (manual) postUpdateFeedback(app, 0);
-            return;
+            log.info("update check ({s}): no win-v release found", .{how});
+            return .no_release;
         },
         else => {
-            log.warn("update check failed: {}", .{err});
-            if (manual) postUpdateFeedback(app, 1);
-            return;
+            log.warn("update check ({s}) failed: {}", .{ how, err });
+            return .failed;
         },
     };
 
@@ -8341,26 +8444,38 @@ fn updateCheckThread(app: *App, trigger: UpdateTrigger, already_offered: ?[]u8) 
     // which the MSI release pipeline stamps with the win-v tag's semver).
     const current_sv = build_config.version;
     if (!update_check.isNewer(current_sv, release.version)) {
-        log.info("update check: up to date (current={s} latest=win-v{s})", .{
-            build_config.version_string, release.version,
+        log.info("update check ({s}): up to date (current={s} latest=win-v{s})", .{
+            how, build_config.version_string, release.version,
         });
         release.deinit(alloc);
-        if (manual) postUpdateFeedback(app, 0);
-        return;
+        return .up_to_date;
     }
-    log.info("update available: current={s} latest=win-v{s} msi={s}", .{
+    log.info("update available ({s}): current={s} latest=win-v{s} msi={s}", .{
+        how,
         build_config.version_string,
         release.version,
         release.asset_url orelse "(none published)",
     });
 
-    // Already offered this exact version, so say nothing (T1171). Returning
-    // before the pre-download matters as much as before the balloon: a
-    // deferred update would otherwise re-fetch its package every tick.
-    if (!update_check.shouldNotify(already_offered, release.version)) {
+    // Already offered this exact version today, so an AUTOMATIC check says
+    // nothing (T1171). Returning before the pre-download matters as much as
+    // before the balloon: a deferred update would otherwise re-fetch its
+    // package every tick. A manual check never lands here — `decideNotify`
+    // answers `.offer` for one unconditionally (T1563).
+    const decision = update_check.decideNotify(
+        switch (trigger) {
+            .automatic => .automatic,
+            .manual => .manual,
+        },
+        already_offered,
+        app.update_offered_at_ms.load(.acquire),
+        release.version,
+        std.time.milliTimestamp(),
+    );
+    if (decision == .suppress) {
         log.info("update check: win-v{s} already offered; not re-notifying", .{release.version});
         release.deinit(alloc);
-        return;
+        return .suppressed;
     }
 
     // `auto-update = download` (the default) fetches the package here, on the
@@ -8385,7 +8500,7 @@ fn updateCheckThread(app: *App, trigger: UpdateTrigger, already_offered: ?[]u8) 
     const found = alloc.create(UpdateFound) catch {
         if (staged) |p| alloc.free(p);
         release.deinit(alloc);
-        return;
+        return .undeliverable;
     };
     found.* = .{
         .version = release.version,
@@ -8395,7 +8510,7 @@ fn updateCheckThread(app: *App, trigger: UpdateTrigger, already_offered: ?[]u8) 
 
     const hwnd = app.msg_hwnd orelse {
         found.destroy(alloc);
-        return;
+        return .undeliverable;
     };
 
     // Hand ownership of the heap payload to the message handler. This avoids a
@@ -8405,7 +8520,9 @@ fn updateCheckThread(app: *App, trigger: UpdateTrigger, already_offered: ?[]u8) 
         // PostMessage failed (e.g., HWND already destroyed). Free here since
         // the handler will never run.
         found.destroy(alloc);
+        return .undeliverable;
     }
+    return .offered;
 }
 
 /// Post manual-check feedback to the GUI thread: code 0 = up to date,
@@ -8483,6 +8600,10 @@ fn showUpdateNotification(self: *App, found: *UpdateFound) void {
     const alloc = self.core_app.alloc;
     if (self.update_latest_ver) |old| alloc.free(old);
     self.update_latest_ver = alloc.dupe(u8, found.version) catch null;
+    // When, so the automatic dedupe can expire rather than hold forever
+    // (T1563). Written here because this is the moment the user was actually
+    // told, which is the thing the expiry measures from.
+    self.update_offered_at_ms.store(std.time.milliTimestamp(), .release);
     if (self.update_asset_url) |old| alloc.free(old);
     self.update_asset_url = if (found.asset_url) |u| (alloc.dupe(u8, u) catch null) else null;
     if (self.update_staged_msi) |old| alloc.free(old);
@@ -10355,6 +10476,16 @@ fn msgWndProc(
     // is usually a file read and nothing else.
     if (msg == w32.WM_TIMER and wparam == UPDATE_RECHECK_TIMER_ID) {
         app.startUpdateCheck(.automatic);
+        return 0;
+    }
+
+    // Timer ID 17: the Debug-only scripted manual check (T1563). One-shot -
+    // it kills itself first, so a harness gets exactly the one "the user
+    // clicked Check for Updates" event it asked for.
+    if (msg == w32.WM_TIMER and wparam == UPDATE_MANUAL_TIMER_ID) {
+        _ = w32.KillTimer(hwnd, UPDATE_MANUAL_TIMER_ID);
+        log.info("scripted manual update check (GHOZTTY_UPDATE_MANUAL_MS)", .{});
+        app.startUpdateCheck(.manual);
         return 0;
     }
 

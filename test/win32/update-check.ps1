@@ -24,6 +24,9 @@
 #   6. the check REPEATS on a timer (T1171): a release published while the
 #      app is running is found without a restart, and the version already
 #      offered is not re-announced on every tick
+#   7. a MANUAL check ALWAYS answers (T1563): over a release the automatic
+#      check has already offered and is actively suppressing, asking again
+#      offers it rather than saying nothing
 param([string]$ExePath)
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
@@ -132,7 +135,7 @@ function New-Feed([string]$name, [string]$json) {
 
 # -- 1. newer win-v release -> update available + balloon ----------------
 $log1 = Run-Scenario 'newer' (New-Feed 'newer.json' $feedNewer)
-Assert ($log1 -match 'update available: current=\S+ latest=win-v9\.9\.9') 'newer: "update available" logged with win-v9.9.9'
+Assert ($log1 -match 'update available \(automatic\): current=\S+ latest=win-v9\.9\.9') 'newer: "update available" logged with win-v9.9.9'
 Assert ($log1 -match 'showing update balloon for win-v9\.9\.9') 'newer: balloon shown on GUI thread'
 Assert ($log1 -notmatch 'update check failed') 'newer: no fetch failure'
 
@@ -144,7 +147,7 @@ Assert ($log2 -notmatch 'showing update balloon') 'mac-only: no balloon'
 
 # -- 3. older win-v release -> up to date --------------------------------
 $log3 = Run-Scenario 'older' (New-Feed 'older.json' $feedOlder)
-Assert ($log3 -match 'update check: up to date \(current=\S+ latest=win-v0\.0\.1\)') 'older: up-to-date logged'
+Assert ($log3 -match 'update check \(automatic\): up to date \(current=\S+ latest=win-v0\.0\.1\)') 'older: up-to-date logged'
 Assert ($log3 -notmatch 'showing update balloon') 'older: no balloon'
 
 # -- 4. no env override: dev builds gated, channel builds check ----------
@@ -171,7 +174,7 @@ if (-not $isChannel -and $verText -notmatch 'update check: off \(') {
 Remove-Item (Join-Path $env:LOCALAPPDATA 'ghoztty\update_check_at') -ErrorAction SilentlyContinue
 $log4 = Run-Scenario 'gated' ''
 if ($isChannel) {
-    Assert ($log4 -match 'update available|update check: up to date') 'no-override: channel build checks the real channel'
+    Assert ($log4 -match 'update available \(|update check \(\w+\): up to date') 'no-override: channel build checks the real channel'
     Assert ($log4 -notmatch 'update check failed') 'no-override: channel check succeeded'
 } else {
     Assert ($log4 -notmatch 'update available|up to date|no win-v release|update check failed') 'no-override: dev build never checks'
@@ -179,8 +182,8 @@ if ($isChannel) {
 
 # -- 5. real channel smoke ------------------------------------------------
 $log5 = Run-Scenario 'live' 'https://api.github.com/repos/dzearing/ghoztty/releases?per_page=30' 12
-$liveOk = ($log5 -match 'update available: current=\S+ latest=win-v') -or
-          ($log5 -match 'update check: up to date \(current=\S+ latest=win-v') -or
+$liveOk = ($log5 -match 'update available \(\w+\): current=\S+ latest=win-v') -or
+          ($log5 -match 'update check \(\w+\): up to date \(current=\S+ latest=win-v') -or
           ($log5 -match 'no win-v release found')
 Assert $liveOk 'live: check completes against the real GitHub channel'
 Assert ($log5 -notmatch 'update check failed') 'live: fetch + parse succeeded'
@@ -227,8 +230,73 @@ if (Test-Path $errFile6) { $log6 = [IO.File]::ReadAllText($errFile6) }
 Assert ($log6 -match 'showing update balloon for win-v9\.9\.9') 'recheck: launch check offers win-v9.9.9'
 Assert ($log6 -match 'win-v9\.9\.9 already offered; not re-notifying') 'recheck: the check ran again and stayed quiet about the same version'
 Assert (([regex]::Matches($log6, 'showing update balloon for win-v9\.9\.9')).Count -eq 1) 'recheck: the deferred version is offered exactly once'
-Assert ($log6 -match 'update available: current=\S+ latest=win-v9\.9\.10') 'recheck: a release published mid-session is found without a restart'
+Assert ($log6 -match 'update available \(automatic\): current=\S+ latest=win-v9\.9\.10') 'recheck: a release published mid-session is found without a restart'
 Assert ($log6 -match 'showing update balloon for win-v9\.9\.10') 'recheck: the newer release raises a fresh notification'
+
+
+# -- 7. a MANUAL check always answers, even about a deferred version (T1563)
+# The user was eleven releases behind, asked "Check for Updates", and was told
+# there was nothing. The hourly check had found the release, judged it newer,
+# and stayed quiet because it had already offered it once - and the manual arm
+# went down the same branch and returned with nothing on screen.
+#
+# The arm a user reaches (Help > Check for Updates...) is behind
+# TrackPopupMenuEx, which needs real input the background test desktop cannot
+# give, so GHOZTTY_UPDATE_MANUAL_MS (Debug builds only) fires exactly one
+# manual check on a timer. Everything after that point is the user's path.
+#
+# One launch stages the whole state: the launch check offers win-v9.9.9 (so
+# that version is now "already offered"), two automatic re-checks must stay
+# quiet about it (T1171 preserved), and the manual check that follows must
+# offer it again.
+$manualFeed = Join-Path $feedDir 'manual.json'
+[IO.File]::WriteAllText($manualFeed, $feedNewer)
+$manualUrl = 'file:///' + ($manualFeed -replace '\\', '/')
+Kill-RepoInstances
+$errFile7 = Join-Path $env:TEMP 'ghoztty-t24-manual.err.txt'
+Remove-Item $errFile7 -ErrorAction SilentlyContinue
+$env:GHOZTTY_UPDATE_URL = $manualUrl
+$env:GHOZTTY_UPDATE_RECHECK_MS = '3000'
+$env:GHOZTTY_UPDATE_MANUAL_MS = '9000'
+$log7 = ''
+try {
+    $app7 = Start-OnTestDesktop -Exe $exe -Arguments @('--session-persistence=false') -StdErr $errFile7
+    $proc7 = $app7.Process
+    # 9s of automatic ticks, then the scripted manual check, then room for it
+    # to fetch a file:// feed and post its balloon.
+    Start-Sleep -Seconds 15
+    if ($proc7.HasExited) {
+        Write-Host "SETUP FAIL (manual): GUI exited early (code $($proc7.ExitCode))"; exit 1
+    }
+    Stop-Process -Id $proc7.Id -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+} finally {
+    Remove-Item Env:GHOZTTY_UPDATE_URL -ErrorAction SilentlyContinue
+    Remove-Item Env:GHOZTTY_UPDATE_RECHECK_MS -ErrorAction SilentlyContinue
+    Remove-Item Env:GHOZTTY_UPDATE_MANUAL_MS -ErrorAction SilentlyContinue
+}
+if (Test-Path $errFile7) { $log7 = [IO.File]::ReadAllText($errFile7) }
+
+# The state the incident needed: offered once, then re-checked and suppressed.
+Assert ($log7 -match 'showing update balloon for win-v9\.9\.9') 'manual: the launch check offered win-v9.9.9 first'
+Assert ($log7 -match 'win-v9\.9\.9 already offered; not re-notifying') 'manual: the automatic re-check then suppressed it (T1171 preserved)'
+Assert ($log7 -match 'scripted manual update check') 'manual: the scripted manual check fired'
+# The assertion this whole scenario exists for, and it is deliberately about
+# what the USER gets rather than what the check found: "update available
+# (manual)" is logged BEFORE the notify decision, so it stays true even when
+# the answer is then swallowed - which is exactly the confusion the incident
+# turned on. What must be true is that a balloon follows the ask.
+$manualOffer = 'update available \(manual\): current=\S+ latest=win-v9\.9\.9'
+Assert ($log7 -match $manualOffer) 'manual: the manual check reached the release the automatic one is suppressing'
+$afterAsk = ($log7 -split 'scripted manual update check')[-1]
+Assert ($afterAsk -match 'showing update balloon for win-v9\.9\.9') 'manual: asking over an already-offered release OFFERS it - the balloon follows the ask'
+Assert (([regex]::Matches($log7, 'showing update balloon for win-v9\.9\.9')).Count -ge 2) 'manual: the offer is raised again for the user who asked'
+Assert ($log7 -notmatch 'with nothing to show') 'manual: no manual check ended without an answer'
+# Negative control for that assertion (T1133): the same regex, over the run
+# above that never asked. It must find nothing there - otherwise the assert
+# would be passing on text any run emits, and could not have caught T1563.
+Assert ($log6 -notmatch $manualOffer) 'manual (negative control): the manual-offer assertion is red when nobody asked'
+Assert (([regex]::Matches($log6, 'showing update balloon for win-v9\.9\.9')).Count -eq 1) 'manual (negative control): an unasked deferred version is still offered exactly once'
 
 Kill-RepoInstances
 Remove-TestDesktop | Out-Null
