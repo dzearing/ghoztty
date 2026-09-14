@@ -66,9 +66,26 @@ for the fork actions `swap_split`, `toggle_hero_mode`, `activity_state`.
   machine chooser, creds storage, and window plumbing — that's what the
   win32 apprt must replicate for P6.
 - Mac-only, explicitly **out of scope**: AX accessibility attributes
-  (`AXWindowActivityState`, `AXGhosttyMachine` — ztabby is a Mac consumer),
-  titlebar machine pill visual parity (a text suffix is acceptable on
-  Windows), Sparkle updates.
+  (`AXWindowActivityState`, `AXGhosttyMachine`, `AXGhosttyLinkState` — ztabby
+  is a Mac consumer), titlebar machine pill visual parity (a text suffix is
+  acceptable on Windows), Sparkle updates.
+
+  **Out of scope is the MECHANISM, not the capability** (T715). Each of those
+  attributes exists so an external tool can read a window fact without parsing
+  the title or screenshotting the chrome, and on Windows that contract lives in
+  `+list --json`, which is the channel automation here already uses. So the
+  parity question for one of them is never "does win32 publish to UI
+  Automation" — it is "can a script read this fact":
+
+  | Mac attribute | Windows counterpart |
+  |---|---|
+  | `AXGhosttyLinkState` | the window's `connection` object (T609) — `state` / `attempt` / `self_healable` / `reason`, and **absent for a local window**, which is what Mac spells as the literal `"local"` |
+  | `AXWindowActivityState` | the ` (busy)` / ` (question)` title suffix only; no machine-readable field yet |
+  | `AXGhosttyMachine` | nothing yet (T1557) |
+
+  A symbol sweep that greps for the Mac attribute name will keep re-finding
+  these; check the row before filing, and file against the missing *capability*
+  rather than the missing attribute.
 
 ## Architecture decisions (pinned)
 

@@ -28249,3 +28249,38 @@ by declining the key when focus is on a link rather than by a box assertion.
 The accent repaint is likewise code rather than a measured pixel; a SysLink
 that never got the custom-draw callback would still be a visible, clickable
 link in the system blue, which is why this one is not gated on a probe.
+
+## 2026-09-14 - A script can read a window's link state here, and a local window is pinned quiet (T715)
+
+T715 asked for the Windows counterpart of the Mac's `AXGhosttyLinkState`
+accessibility attribute, which exists so an external tool can read whether a
+remote window is connected, retrying or given up without parsing the title or
+screenshotting the pill. Re-verifying it against the code before building (the
+CHECK FIRST step) found the capability already delivered: T609 (`777af5f23`) put
+a per-window `connection` object into `+list --json` - `state`, `attempt`,
+`self_healable`, `reason`, straight off the reconnect ladder the pill paints -
+and absent entirely for a local window, which is this platform's spelling of the
+literal `"local"` Mac publishes. The card came out of the T684 sweep, which
+greps for Mac symbol names and therefore matched on the mechanism rather than on
+the capability. The spec had already declared that whole attribute family
+Mac-only and out of scope.
+
+So the deliverable was the validation the card was owed, not a second
+implementation. The serializer half was already unit-tested; the PRODUCER half -
+`if (window.hasRemotePill())` in `handleList` - had no end-to-end coverage at
+all, and a regression there would tell every automation tool that the user's
+ordinary local windows are disconnected remote ones. `ipc-p1.ps1` now asserts
+against a live window that no window in the listing carries a connection object.
+
+`windows-parity-spec.md` gained the attribute -> Windows-counterpart table, so
+the next symbol sweep maps these instead of re-filing them; out of scope is the
+MECHANISM, not the capability. The one row with nothing behind it is the machine
+NAME (`AXGhosttyMachine`), filed as T1557 - the value is already derived once in
+`Window.machineDisplayName()`, so it is a field away.
+
+Validated: all four zig lanes PASS; ipc-p1 ALL PASS (26) with the new assertion,
+ipc-p2 ALL PASS (20), ipc-p3 ALL PASS (16). The new assertion was
+negative-controlled - fed a window entry that does carry a connection object it
+scores False - so it is a check that can fail rather than one that cannot speak.
+Eleven audit harnesses that cover test scripts went guard-due on the ipc-p1 edit
+and were re-run green.

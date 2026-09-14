@@ -150,6 +150,18 @@ Assert "split node shape" ($p1ide.tabs[0].splits.type -eq 'split' -and
 $p1leaf = $p1ide.tabs[0].splits.left.terminal
 Assert "leaf reports working_directory" (
     $null -ne $p1leaf -and $p1leaf.working_directory -match 'Windows')
+# T715: `connection` is how an external tool reads a window's link state here -
+# the Windows counterpart of Mac's AXGhosttyLinkState attribute, which answers
+# the literal "local" for a local window. Absence is what says "local" on this
+# side, so it is a contract and not an omission: a producer that emitted a
+# connection object for every window would tell every automation tool that the
+# user's ordinary local windows are dead remote ones. The serializer's half is
+# unit-tested (list.zig, "connection is additive and absent for a local
+# window"); this asserts the PRODUCER branch, which is a live window's
+# `hasRemotePill()` and has no other coverage.
+Assert "local window publishes no connection object" (
+    $null -eq $p1ide.connection -and
+    -not ($json.data.windows | Where-Object { $null -ne $_.connection }))
 
 "== 6: +close named pane"
 $r = Ghoz @('+close', '--target=p1term')
