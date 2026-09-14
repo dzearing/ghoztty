@@ -95,9 +95,9 @@ fn isSep(c: u8) bool {
 /// A human label for a session row, most-current first — the exact ladder Mac
 /// documents at `SessionBrowserProbe.swift:68-75`:
 ///
-/// 1. `live_title` — the title of an OPEN pane bound to this session, read
-///    from the app, so a pane rename shows immediately (the agent does not
-///    track renames).
+/// 1. `Live` — the name an OPEN pane of ours gives this session, read from the
+///    app, so a rename shows immediately (the agent does not track renames). A
+///    pinned WINDOW title wins over the pane's own; see `liveTitle`.
 /// 2. the agent-reported `title` (captured at session creation / relaunch).
 /// 3. `persisted_title` — the saved session-layout title, so a relaunched but
 ///    not-yet-retitled session still has a name across app restarts.
@@ -106,21 +106,89 @@ fn isSep(c: u8) bool {
 ///    like a number and means nothing, so the pid — a number that can actually
 ///    be looked up — is shown instead.
 ///
-/// The first four rungs borrow their storage; only the pid rung writes into
-/// `buf` (which needs ~24 bytes). An unformattable pid degrades to the literal
-/// `"session"` rather than failing the row.
+/// Most rungs borrow their storage; the pid rung and the composed live rung
+/// write into `buf`, which therefore needs `max_live_title` bytes. An
+/// unformattable pid degrades to the literal `"session"` rather than failing the
+/// row.
 pub fn label(
     buf: []u8,
     s: Session,
-    live_title: ?[]const u8,
+    live: Live,
     persisted_title: ?[]const u8,
 ) []const u8 {
-    if (nonEmpty(live_title)) |t| return t;
+    if (nonEmpty(live.name(buf))) |t| return t;
     if (nonEmpty(s.title)) |t| return t;
     if (nonEmpty(persisted_title)) |t| return t;
     if (nonEmpty(s.cwd)) |c| return baseName(c);
     if (nonEmpty(s.argv)) |a| return a;
     return std.fmt.bufPrint(buf, "pid {d}", .{s.pid}) catch "session";
+}
+
+/// What one of OUR OPEN PANES says this session is called — rung 1 of the
+/// ladder, and the answer to "is this session open in one of our windows".
+///
+/// The three fields are the raw materials rather than a finished string because
+/// the finished string may have to be COMPOSED (see `liveTitle`), and composing
+/// needs storage with a lifetime the roster's row structs — which are copied and
+/// sorted — cannot give. Resolving at the point of use, into the buffer the
+/// label already owns, keeps every slice here a plain borrow.
+pub const Live = struct {
+    /// The window's pinned title (`+rename`, "Change Window Title"), if any.
+    window_title: ?[]const u8 = null,
+    /// The pane's own (usually shell-derived) title.
+    pane_title: ?[]const u8 = null,
+    /// How many panes the pane's tab holds — 1 means no disambiguator is needed.
+    pane_count: usize = 0,
+    /// Whether a pane of ours holds this session at all. False leaves the rung
+    /// empty no matter what the titles say.
+    open: bool = false,
+
+    /// This session's live name, or "" when there is no open pane / no name.
+    pub fn name(self: Live, buf: []u8) []const u8 {
+        if (!self.open) return "";
+        return liveTitle(buf, self.window_title, self.pane_title, self.pane_count);
+    }
+};
+
+/// The live name of an OPEN pane, Mac's `liveSessionInfo` rule (bf318f55b).
+///
+/// A PINNED WINDOW TITLE WINS. It is the most intentional name a window has —
+/// the user typed it — and it already wins in the titlebar (window pin → tab
+/// title → pane title, T92). The roster used to read the pane title alone, so
+/// renaming a window left its session row showing the old shell-derived name and
+/// the rename appeared to do nothing here.
+///
+/// The pane title stays as a DISAMBIGUATOR when the window holds several panes:
+/// without it every pane of a renamed window collapses to the same identical
+/// row, which trades one wrong name for four indistinguishable ones.
+///
+/// Returns a slice of `buf` only for the composed form (which needs
+/// `max_live_title` bytes); every other answer borrows its caller's storage. An
+/// open pane with NO name at all answers `""` rather than null, because "" is how
+/// the ladder spells an absent rung while the caller still reads non-null as
+/// "this session is open in one of our windows".
+pub fn liveTitle(
+    buf: []u8,
+    window_title: ?[]const u8,
+    pane_title: ?[]const u8,
+    pane_count: usize,
+) []const u8 {
+    const win = trimmed(window_title);
+    const pane = trimmed(pane_title);
+    if (win.len == 0) return pane;
+    if (pane_count > 1 and pane.len > 0 and !std.mem.eql(u8, pane, win)) {
+        return std.fmt.bufPrint(buf, "{s} › {s}", .{ win, pane }) catch win;
+    }
+    return win;
+}
+
+/// Room for a composed `window › pane` label. Past it the window title alone is
+/// shown, which is the half that carries the intent.
+pub const max_live_title = 128;
+
+fn trimmed(v: ?[]const u8) []const u8 {
+    const s = v orelse return "";
+    return std.mem.trim(u8, s, " \t\r\n");
 }
 
 fn nonEmpty(v: ?[]const u8) ?[]const u8 {
@@ -803,7 +871,7 @@ test "baseName handles both separators, trailing separators and roots" {
 }
 
 test "label ladder: every rung, in order" {
-    var buf: [32]u8 = undefined;
+    var buf: [max_live_title]u8 = undefined;
     const full: Session = .{
         .pid = 4242,
         .title = "agent title",
@@ -811,28 +879,75 @@ test "label ladder: every rung, in order" {
         .argv = "claude --continue",
     };
 
+    const open: Live = .{ .pane_title = "live", .pane_count = 1, .open = true };
+
     // 1. a live pane's title wins over everything.
-    try testing.expectEqualStrings("live", label(&buf, full, "live", "persisted"));
+    try testing.expectEqualStrings("live", label(&buf, full, open, "persisted"));
     // 2. then the agent's title.
-    try testing.expectEqualStrings("agent title", label(&buf, full, null, "persisted"));
+    try testing.expectEqualStrings("agent title", label(&buf, full, .{}, "persisted"));
     // 3. then the persisted layout title.
     var s = full;
     s.title = null;
-    try testing.expectEqualStrings("persisted", label(&buf, s, null, "persisted"));
+    try testing.expectEqualStrings("persisted", label(&buf, s, .{}, "persisted"));
     // 4. then the cwd's last component.
-    try testing.expectEqualStrings("ghoztty", label(&buf, s, null, null));
+    try testing.expectEqualStrings("ghoztty", label(&buf, s, .{}, null));
     // 5. then the command.
     s.cwd = null;
-    try testing.expectEqualStrings("claude --continue", label(&buf, s, null, null));
+    try testing.expectEqualStrings("claude --continue", label(&buf, s, .{}, null));
     // 6. and finally the REAL pid — never the opaque session id.
     s.argv = null;
-    try testing.expectEqualStrings("pid 4242", label(&buf, s, null, null));
+    try testing.expectEqualStrings("pid 4242", label(&buf, s, .{}, null));
 }
 
 test "label treats empty strings as absent rungs" {
-    var buf: [32]u8 = undefined;
+    var buf: [max_live_title]u8 = undefined;
     const s: Session = .{ .pid = 7, .title = "", .cwd = "", .argv = "" };
-    try testing.expectEqualStrings("pid 7", label(&buf, s, "", ""));
+    const empty: Live = .{ .window_title = "", .pane_title = "", .open = true };
+    try testing.expectEqualStrings("pid 7", label(&buf, s, empty, ""));
+}
+
+test "T710: a pinned WINDOW title wins over the pane's, and the pane disambiguates" {
+    var buf: [max_live_title]u8 = undefined;
+
+    // The defect this exists for: the row read the pane title alone, so renaming
+    // the window changed nothing here.
+    try testing.expectEqualStrings("Release work", liveTitle(&buf, "Release work", "pwsh", 1));
+    // Several panes: the pane title comes back as a disambiguator, because
+    // otherwise every pane of the window collapses to the same row.
+    try testing.expectEqualStrings(
+        "Release work › pwsh",
+        liveTitle(&buf, "Release work", "pwsh", 3),
+    );
+    // ... but never a disambiguator that says the same thing twice.
+    try testing.expectEqualStrings(
+        "Release work",
+        liveTitle(&buf, "Release work", "Release work", 3),
+    );
+    // No window pin: the pane title, exactly as before T710.
+    try testing.expectEqualStrings("pwsh", liveTitle(&buf, null, "pwsh", 2));
+    // Whitespace is not a name.
+    try testing.expectEqualStrings("pwsh", liveTitle(&buf, "  ", "pwsh", 1));
+    // Nothing at all is "", which the ladder reads as an absent rung.
+    try testing.expectEqualStrings("", liveTitle(&buf, null, null, 1));
+}
+
+test "T710: a composed title too long for the buffer degrades to the window's name" {
+    // The window title is the half that carries the user's intent, so it is the
+    // half that survives. A truncated compose would cut the pane name mid-byte.
+    var small: [16]u8 = undefined;
+    try testing.expectEqualStrings(
+        "a window name",
+        liveTitle(&small, "a window name", "a pane name", 2),
+    );
+}
+
+test "T710: a session no pane of ours holds has no live rung at all" {
+    var buf: [max_live_title]u8 = undefined;
+    const s: Session = .{ .pid = 9, .title = "agent title" };
+    // Titles without `open` say nothing: they belong to no pane of ours.
+    const closed: Live = .{ .window_title = "Release work", .pane_title = "pwsh" };
+    try testing.expectEqualStrings("agent title", label(&buf, s, closed, null));
+    try testing.expectEqualStrings("", closed.name(&buf));
 }
 
 test "exitedLabel names the code when there is one" {

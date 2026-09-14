@@ -1,17 +1,19 @@
 {
     "guard":  "chooser-selection",
     "script":  "test/win32/chooser-selection.ps1",
-    "generated":  "2026-09-13T04:26:15-07:00",
-    "commit":  "bae602238",
+    "generated":  "2026-09-13T20:20:58-07:00",
+    "commit":  "549c58d4b",
     "uncommitted":  [
-                        "test/win32/chooser-selection.ps1"
+                        "src/apprt/win32/chooser_sessions.zig",
+                        "src/apprt/win32/MachineChooser.zig",
+                        "src/apprt/win32/SessionRoster.zig"
                     ],
     "files":  {
                   "src/apprt/win32/chooser_rows.zig":  "22429346bc431d82a1c5091e240962f613f385c829b257ed80d2532192971fff",
-                  "src/apprt/win32/chooser_sessions.zig":  "0720f8645b02a76fe60e0ad478fd1ca34cfb8ef340c05bc2ce448610f759b4d2",
+                  "src/apprt/win32/chooser_sessions.zig":  "b87f315d18c221ccb7a809668cf450ccf16213d89735b4087d236d66eb22f5a1",
                   "src/apprt/win32/list_selection.zig":  "b7f5720b1a405deacf48309f6b34439b7148e73a19a876ef9c7f38faf5308913",
-                  "src/apprt/win32/MachineChooser.zig":  "b8732884bd3828a0ceae0e90fa7b3586778a5e92f7778150b10f84d64d042d1b",
-                  "src/apprt/win32/SessionRoster.zig":  "89de3a16e90d0f5cc0282d6e61377364d29d3d003d86b17371aeb2f704eeb2c3",
+                  "src/apprt/win32/MachineChooser.zig":  "a6f172bc7ef7d9b6292437b867b4e30fd9f8e9dedd42cd4e8d8fc91b6c4ae999",
+                  "src/apprt/win32/SessionRoster.zig":  "955b92658331e56357c52027f516bac3f3cab602284eeb2a6c587c0c6694eebe",
                   "test/win32/chooser-selection.ps1":  "f5749642a82e6ccd66fdd846de7eaea9d32b02968f0c8499fb15738d57d7a829"
               }
 }

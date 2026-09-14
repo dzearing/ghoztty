@@ -833,6 +833,78 @@ pub const OwnedSessions = struct {
     }
 };
 
+/// Decode a `SESSIONS` payload into a caller-owned deep copy.
+///
+/// THE one decode path for a roster, shared by the `LIST_SESSIONS` reply and the
+/// pushed stream (`SessionsHandler`) on purpose: the agent sends the same frame
+/// for both, so a pushed roster and a polled one can never drift apart in what
+/// they mean. A caller that only ever sees pushes gets exactly the rows a poll
+/// would have given it.
+///
+/// Every row and every string is duped into `alloc`, so the result outlives the
+/// transient parsed-JSON arena (freed before this returns) and, for a push, the
+/// borrowed payload the reader thread lends for the length of the callback.
+/// Free with `OwnedSessions.deinit`.
+pub fn decodeSessions(alloc: Allocator, payload: []const u8) !OwnedSessions {
+    var parsed = protocol.parseJson(protocol.Sessions, alloc, payload) catch
+        return error.MalformedReply;
+    defer parsed.deinit();
+
+    const src = parsed.value.sessions;
+    var out = try alloc.alloc(OwnedSession, src.len);
+    // On a mid-copy failure, free everything duped so far (no leak).
+    var filled: usize = 0;
+    errdefer {
+        for (out[0..filled]) |s| {
+            alloc.free(@constCast(s.id));
+            alloc.free(@constCast(s.activity));
+            if (s.title) |t| alloc.free(@constCast(t));
+            if (s.cwd) |c| alloc.free(@constCast(c));
+            if (s.argv) |a| alloc.free(@constCast(a));
+            if (s.fg_cmd) |f| alloc.free(@constCast(f));
+            if (s.pane_id) |p| alloc.free(@constCast(p));
+        }
+        alloc.free(out);
+    }
+    for (src, 0..) |s, i| {
+        const id = try alloc.dupe(u8, s.id);
+        errdefer alloc.free(id);
+        const activity = try alloc.dupe(u8, s.activity);
+        errdefer alloc.free(activity);
+        const title: ?[]const u8 = if (s.title) |t| try alloc.dupe(u8, t) else null;
+        errdefer if (title) |t| alloc.free(t);
+        const cwd: ?[]const u8 = if (s.cwd) |c| try alloc.dupe(u8, c) else null;
+        errdefer if (cwd) |c| alloc.free(c);
+        const argv: ?[]const u8 = if (s.argv) |a| try alloc.dupe(u8, a) else null;
+        errdefer if (argv) |a| alloc.free(a);
+        const fg_cmd: ?[]const u8 = if (s.fg_cmd) |f| try alloc.dupe(u8, f) else null;
+        errdefer if (fg_cmd) |f| alloc.free(f);
+        const pane_id: ?[]const u8 = if (s.pane_id) |p| try alloc.dupe(u8, p) else null;
+        out[i] = .{
+            .id = id,
+            .alive = s.alive,
+            .exit_code = s.exit_code,
+            .attached = s.attached,
+            .activity = activity,
+            .pid = s.pid,
+            .title = title,
+            .cwd = cwd,
+            .argv = argv,
+            .created_at = s.created_at,
+            .last_activity = s.last_activity,
+            .pinned = s.pinned,
+            .relaunchable = s.relaunchable,
+            .unattached_since = s.unattached_since,
+            .holder_backed = s.holder_backed,
+            .fg_cmd = fg_cmd,
+            .pane_id = pane_id,
+        };
+        filled = i + 1;
+    }
+
+    return .{ .sessions = out, .alloc = alloc };
+}
+
 /// A caller-owned result of a `PROC_KILL` RPC (§9.3 process control, inc 4). The
 /// optional `error_msg` is duped into `alloc` (the parsed JSON arena is freed
 /// before `killProc` returns), so free with `deinit`.
@@ -1969,63 +2041,7 @@ pub const Connection = struct {
         const rpc = try self.rpcCall(req_channel, .list_sessions, .sessions, json, timeout_ns, null);
         defer self.alloc.free(rpc.payload);
 
-        var parsed = protocol.parseJson(protocol.Sessions, self.alloc, rpc.payload) catch
-            return error.MalformedReply;
-        defer parsed.deinit();
-
-        const src = parsed.value.sessions;
-        var out = try self.alloc.alloc(OwnedSession, src.len);
-        // On a mid-copy failure, free everything duped so far (no leak).
-        var filled: usize = 0;
-        errdefer {
-            for (out[0..filled]) |s| {
-                self.alloc.free(@constCast(s.id));
-                self.alloc.free(@constCast(s.activity));
-                if (s.title) |t| self.alloc.free(@constCast(t));
-                if (s.cwd) |c| self.alloc.free(@constCast(c));
-                if (s.argv) |a| self.alloc.free(@constCast(a));
-                if (s.fg_cmd) |f| self.alloc.free(@constCast(f));
-                if (s.pane_id) |p| self.alloc.free(@constCast(p));
-            }
-            self.alloc.free(out);
-        }
-        for (src, 0..) |s, i| {
-            const id = try self.alloc.dupe(u8, s.id);
-            errdefer self.alloc.free(id);
-            const activity = try self.alloc.dupe(u8, s.activity);
-            errdefer self.alloc.free(activity);
-            const title: ?[]const u8 = if (s.title) |t| try self.alloc.dupe(u8, t) else null;
-            errdefer if (title) |t| self.alloc.free(t);
-            const cwd: ?[]const u8 = if (s.cwd) |c| try self.alloc.dupe(u8, c) else null;
-            errdefer if (cwd) |c| self.alloc.free(c);
-            const argv: ?[]const u8 = if (s.argv) |a| try self.alloc.dupe(u8, a) else null;
-            errdefer if (argv) |a| self.alloc.free(a);
-            const fg_cmd: ?[]const u8 = if (s.fg_cmd) |f| try self.alloc.dupe(u8, f) else null;
-            errdefer if (fg_cmd) |f| self.alloc.free(f);
-            const pane_id: ?[]const u8 = if (s.pane_id) |p| try self.alloc.dupe(u8, p) else null;
-            out[i] = .{
-                .id = id,
-                .alive = s.alive,
-                .exit_code = s.exit_code,
-                .attached = s.attached,
-                .activity = activity,
-                .pid = s.pid,
-                .title = title,
-                .cwd = cwd,
-                .argv = argv,
-                .created_at = s.created_at,
-                .last_activity = s.last_activity,
-                .pinned = s.pinned,
-                .relaunchable = s.relaunchable,
-                .unattached_since = s.unattached_since,
-                .holder_backed = s.holder_backed,
-                .fg_cmd = fg_cmd,
-                .pane_id = pane_id,
-            };
-            filled = i + 1;
-        }
-
-        return .{ .sessions = out, .alloc = self.alloc };
+        return decodeSessions(self.alloc, rpc.payload);
     }
 
     /// Push (or, with `delete`, remove) an OPAQUE per-window layout blob to the
@@ -6077,6 +6093,50 @@ test "subscribeMetrics: handler receives decodable HostMetrics pushes" {
 
     h.conn.unsubscribeMetrics();
     try testing.expect(a.err == null);
+}
+
+test "T710: decodeSessions owns every string, so a PUSHED roster outlives its frame" {
+    // The pushed roster and the LIST_SESSIONS reply are the same `SESSIONS`
+    // frame, and since T710 they go through this one function — which is what
+    // stops the two from ever meaning different things. The property that makes
+    // it usable from the push side is ownership: the reader thread lends the
+    // payload only for the length of the callback, so a decode that borrowed it
+    // would hand the GUI thread freed bytes.
+    const alloc = testing.allocator;
+    var payload = std.ArrayList(u8).empty;
+    defer payload.deinit(alloc);
+    try payload.appendSlice(alloc,
+        \\{"sessions":[
+        \\{"id":"abc","alive":true,"activity":"busy","pid":42,
+        \\ "title":"Release work","cwd":"D:/git/ghoztty","argv":"pwsh"},
+        \\{"id":"def","alive":false,"activity":"idle","pid":7,"exit_code":137}
+        \\]}
+    );
+
+    var owned = try decodeSessions(alloc, payload.items);
+    defer owned.deinit();
+
+    // Scribble over the frame the way the transport reuses its read buffer.
+    @memset(payload.items, '#');
+
+    try testing.expectEqual(@as(usize, 2), owned.sessions.len);
+    try testing.expectEqualStrings("abc", owned.sessions[0].id);
+    try testing.expectEqualStrings("busy", owned.sessions[0].activity);
+    try testing.expectEqualStrings("Release work", owned.sessions[0].title.?);
+    try testing.expectEqualStrings("D:/git/ghoztty", owned.sessions[0].cwd.?);
+    try testing.expectEqualStrings("pwsh", owned.sessions[0].argv.?);
+    try testing.expect(owned.sessions[0].alive);
+    try testing.expectEqual(@as(i64, 42), owned.sessions[0].pid);
+
+    try testing.expectEqualStrings("def", owned.sessions[1].id);
+    try testing.expect(!owned.sessions[1].alive);
+    try testing.expectEqual(@as(?i64, 137), owned.sessions[1].exit_code);
+}
+
+test "T710: a malformed pushed roster is an error, never a half-decoded list" {
+    const alloc = testing.allocator;
+    try testing.expectError(error.MalformedReply, decodeSessions(alloc, "not json"));
+    try testing.expectError(error.MalformedReply, decodeSessions(alloc, "{"));
 }
 
 test "unsubscribeMetrics: clears the handler slot (no callback after)" {

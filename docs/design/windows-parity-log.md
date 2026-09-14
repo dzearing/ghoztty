@@ -9,6 +9,63 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-13: T710 (+T1550 filed) - **the chooser's session list is live now, and
+  a window you renamed says so.** Two defects with one cause: the list was a
+  photograph. It was fetched when a machine was selected and never again, so a
+  session started, finished or closed anywhere else stayed wrong on screen until
+  the user clicked away and back - and the row's name came from the pane's
+  shell-derived title alone, so renaming a WINDOW changed nothing here and the
+  rename looked like it had done nothing at all.
+
+  The agent has pushed the roster on every change since Mac's bf318f55b (a
+  session created, a child exited, one closed, attached, detached), gated on the
+  `sessions_push` capability, and the shared core has carried both ends of it for
+  weeks: Windows simply never subscribed. It does now, on the same warm connection
+  everything else about that machine rides - the local agent's, or the pool's for
+  a remote one (T461) - and it comes off when the selection moves and BEFORE the
+  lease is released, which is the ordering the CPU meter (T462) already had to
+  get right and for the same reason: releasing the last lease frees the socket.
+  Mac's poll stood down against an older agent; here there was no poll to stand
+  down, so an agent without the capability leaves the chooser exactly as it was.
+
+  **One decode path, on purpose.** A push carries the same `SESSIONS` frame a
+  `LIST_SESSIONS` reply does - it is told apart by arriving on the control channel
+  - so the dup-out-of-the-arena half of `requestSessions` moved to
+  `remote_connection.decodeSessions` and both sides call it. Pushed and fetched
+  rosters cannot come to mean different things, and the ownership that makes the
+  push side work (the reader thread lends the payload only for the length of the
+  callback) is now one function's problem rather than two.
+
+  **The rename.** A pinned window title is the most intentional name a window has
+  and already wins in the titlebar; it now wins on the row too, with the pane
+  title kept as a disambiguator (`window > pane`) when the tab holds several panes
+  - without which every pane of a renamed window collapses into identical rows.
+  Nothing is pushed for a rename, because the agent never learns of one: the name
+  is resolved where it is drawn, out of borrowed titles, which is why the row
+  model carries the raw materials (`chooser_sessions.Live`) rather than a finished
+  string it could not keep alive across a sort.
+
+
+  **One defect found in the first cut, by a harness that covers a different
+  feature.** Adopting a push bumped the fetch serial, on the reasoning that an
+  in-flight fetch was answering an older question - and on a REMOTE machine that
+  reply is also what carries the layout blobs (T1296), so the resumed window came
+  back called `Ghoztty [DEBUG]` instead of the name the user gave it.
+  `chooser-resume-remote.ps1` said so in one line. A push now leaves `serial` and
+  `inflight` alone: both rosters are the same rows from the same agent, so a fetch
+  reply landing a few hundred milliseconds behind a push costs nothing, and any
+  real change since produces another push that arrives after it.
+
+  Validated by `test/win32/chooser-sessions-push.ps1` (19 assertions, all pass): a
+  session created while the chooser sits OPEN AND UNTOUCHED is pushed, adopted and
+  listed, the count agreeing with `+sessions --json`; a session ending shrinks the
+  list by itself; the renamed window's row reads `T710renamed > D:\git\ghoztty`;
+  and the control - the same agent made to advertise like an older one with
+  `GHOSTTY_AGENT_SUPPRESS_CAPS=sessions_push` - takes zero pushes while the list
+  still loads. Filed T1550 on the way past: a green run's teardown prints
+  `GUI POSTMORTEM ... CRASHED - 0xFFFFFFFF` for the apps the script killed itself,
+  so a real crash and a deliberate kill read identically at the end of a PASS.
+
 - 2026-09-13: T709 (+T1548, T1549 filed) - **the Activity Monitor now says which
   pane owns a process, and its %CPU means something again.** Two defects in the
   same table, both from Mac commits the T684 sweep found already merged and never

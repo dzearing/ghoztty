@@ -2625,8 +2625,10 @@ pub fn tabIndexOfPane(self: *Window, pane: *PaneView) ?usize {
     return null;
 }
 
-/// Number of leaves in a tab's tree.
-fn leafCount(self: *Window, tab: usize) usize {
+/// Number of leaves in a tab's tree. Public since T710: the chooser's roster
+/// asks it, because a pane title only disambiguates a row when the tab holds
+/// more than one pane.
+pub fn leafCount(self: *Window, tab: usize) usize {
     var n: usize = 0;
     var it = self.tab_trees[tab].leafIterator();
     while (it.next()) |_| n += 1;

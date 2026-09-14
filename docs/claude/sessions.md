@@ -330,6 +330,36 @@ number pure in `chooser_cpu.zig`, asserted at 1.0/1.25/1.5/2.0). Acceptance:
 like an older one (`GHOSTTY_AGENT_SUPPRESS_CAPS=session_cpu`) and requires the
 meter to vanish rather than freeze, wedge, or invent a number.
 
+**The roster is PUSHED, never polled** (T710 — `SessionRosterProbe.zig`, the
+win32 half of Mac's `bf318f55b`). The agent sends the roster whenever it CHANGES
+— a session created, a child exited, a session closed, attached or detached — and
+one immediately on subscribe, so a subscriber starts from truth rather than
+waiting for the first change. Mac replaced a 2s `LIST_SESSIONS` poll with it; the
+win32 chooser had no re-poll at all, so its list was a photograph of the moment a
+machine was selected and only a re-selection could correct it.
+
+- **One decode path.** A push carries the same `SESSIONS` frame a `LIST_SESSIONS`
+  reply does (it is told apart by arriving on the CONTROL channel), so both go
+  through `remote_connection.decodeSessions` and are adopted by the same
+  bookkeeping. A pushed roster and a fetched one cannot mean different things.
+- **Same connection, same teardown as the meter.** It rides the local agent's
+  warm connection, or the pool's for a remote machine, and comes off when the
+  selection moves and BEFORE the lease is released.
+- **Gated on `capability.sessions_push`**, for the reason every stream here is: an
+  unknown opcode is a fatal framing error to an older agent. Unsupported means the
+  list is simply not live — the fetch-on-selection behaviour it always had.
+- **A renamed WINDOW reaches the row.** The row's live name read the pane's
+  (shell-derived) title alone, so renaming a window looked like it did nothing
+  here. A pinned window title is the most intentional name a window has and wins
+  in the titlebar; it now wins on the row too, with the pane title kept as a
+  disambiguator (`window › pane`) when the tab holds several panes. Nothing is
+  pushed for a rename — the agent never learns of one — so the name is resolved
+  where it is drawn, out of borrowed titles (`chooser_sessions.Live`).
+
+Acceptance: `test/win32/chooser-sessions-push.ps1`, whose control makes the same
+agent advertise like an older one (`GHOSTTY_AGENT_SUPPRESS_CAPS=sessions_push`)
+and requires the list to keep working without the stream.
+
 **Selecting a machine dials it ONCE, and everything about that machine rides the
 same connection** (T461 — the win32 half of Mac's
 `MachineConnectionPool.swift`). Every roster refetch of a remote row used to dial

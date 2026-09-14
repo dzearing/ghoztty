@@ -534,6 +534,50 @@ pub fn adopt(self: *SessionRoster, res: *Result) bool {
     return true;
 }
 
+/// GUI thread: take ownership of a PUSHED roster (T710). Returns true when it
+/// was adopted, so the caller knows whether to repaint.
+///
+/// The same bookkeeping `adopt` does for a fetched roster, deliberately — a
+/// pushed roster and a polled one are the same frame decoded by the same path,
+/// so they must land the same way. What differs is only what a push MEANS:
+///
+///   * It carries no serial, because nothing asked for it — and it deliberately
+///     does NOT bump one. Invalidating the in-flight fetch was the obvious move
+///     and it was wrong: a REMOTE fetch carries the machine's LAYOUT BLOBS
+///     alongside the rows (T1296), and dropping that reply loses the only record
+///     of what the user named those windows. `chooser-resume-remote.ps1` caught
+///     it as a resumed window coming back called "Ghoztty" instead. The rows the
+///     two carry are the same rows from the same agent, so letting a fetch reply
+///     land a few hundred milliseconds behind a push costs nothing: any real
+///     change since produces another push, which arrives after it.
+///   * It is never a failure. There is no "the push failed" state to fall back
+///     to, so the `failed` / `unauthorized` handling `adopt` carries has nothing
+///     to say here.
+///   * The scroll offset and the keyboard cursor stay put, for the T333 reason:
+///     this is the machine the user is already looking at, and sending the
+///     region back to the top under a parked cursor loses their place — now on
+///     somebody ELSE's change, which they did not even ask for.
+pub fn adoptPushed(self: *SessionRoster, roster: remote_connection.OwnedSessions) bool {
+    if (self.target == .none) {
+        var tmp = roster;
+        tmp.deinit();
+        return false;
+    }
+    if (self.owned) |*old| old.deinit();
+    self.owned = roster;
+    self.state = .loaded;
+    self.pruneKilled();
+    // `serial` and `inflight` belong to the FETCH and are left exactly as they
+    // were: the reply that is still coming is this machine's, it brings the
+    // layout view with it, and it clears `inflight` itself when it lands.
+    log.info("chooser roster: loaded {d} session(s) target={s} device={s} pushed=1", .{
+        self.owned.?.sessions.len,
+        @tagName(self.target),
+        self.targetDevice(),
+    });
+    return true;
+}
+
 /// This roster's pool endpoint, or null when there is nothing poolable to name:
 /// the local agent (`LocalAgent` owns that connection), no selection, or a remote
 /// machine with no credential — which is the signed-out case and gets the
@@ -659,9 +703,12 @@ pub const VisibleRow = struct {
     /// SAYS, and the stream is a different subscription with a different
     /// lifetime.
     cpu: ?f32 = null,
-    /// The live pane title bound to this session, when one of our panes has it
-    /// open. Borrows the surface's own title.
-    live_title: ?[]const u8 = null,
+    /// What one of OUR OPEN PANES calls this session (T710): the window's
+    /// pinned title, the pane's own, and how many panes that pane's tab holds.
+    /// All borrowed; the finished name is composed at the point of use, into the
+    /// label buffer, because these row structs are copied and sorted and a
+    /// composed slice into one of them could not survive the move.
+    live: chooser_sessions.Live = .{},
     /// The saved layout title. Borrows the manifest.
     persisted_title: ?[]const u8 = null,
     open_locally: bool = false,
@@ -702,13 +749,13 @@ pub fn visible(self: *const SessionRoster, app: *App, out: []VisibleRow) []const
         // coincidence — but since T1296 a remote roster carries the FAR
         // machine's own layout view, so the rung is answered from the right
         // record on both and a remote row is no longer nameless.
-        const live = liveTitleFor(app, s.id);
+        const live = liveFor(app, s.id);
         out[n] = .{
             .session = row,
-            .live_title = live,
+            .live = live,
             .persisted_title = self.persistedTitleFor(s.id),
-            .open_locally = live != null,
-            .orphan = chooser_sessions.orphaned(row, live != null, self.target == .local),
+            .open_locally = live.open,
+            .orphan = chooser_sessions.orphaned(row, live.open, self.target == .local),
         };
         n += 1;
     }
@@ -733,13 +780,13 @@ fn entryLess(order: chooser_session_sort.Order, a: SortEntry, b: SortEntry) bool
 /// than O(n log n) times in the comparator. Call after the CPU readings are
 /// filled in: a CPU sort over unfilled rows would order every row as 0%.
 pub fn sortRows(self: *const SessionRoster, rows: []VisibleRow) void {
-    var bufs: [max_rows][32]u8 = undefined;
+    var bufs: [max_rows][chooser_sessions.max_live_title]u8 = undefined;
     var keyed: [max_rows]SortEntry = undefined;
     const n = @min(rows.len, max_rows);
     for (rows[0..n], 0..) |r, i| keyed[i] = .{
         .row = r,
         .keys = .{
-            .name = chooser_sessions.label(&bufs[i], r.session, r.live_title, r.persisted_title),
+            .name = chooser_sessions.label(&bufs[i], r.session, r.live, r.persisted_title),
             .cpu = chooser_session_sort.displayedCpu(r.cpu),
             .id = r.session.id,
         },
@@ -795,7 +842,8 @@ pub fn logOrphans(self: *const SessionRoster, app: *App) void {
 /// fixture happened to be empty.
 pub fn logListed(self: *const SessionRoster, app: *App) void {
     var rows: [max_rows]VisibleRow = undefined;
-    const listed = self.visible(app, &rows).len;
+    const shown = self.visible(app, &rows);
+    const listed = shown.len;
     var hidden: usize = 0;
     if (self.owned) |roster| {
         for (roster.sessions) |s| {
@@ -804,12 +852,35 @@ pub fn logListed(self: *const SessionRoster, app: *App) void {
         }
     }
     log.info("chooser roster: listing {d} session(s), {d} exited hidden", .{ listed, hidden });
+
+    // The rows one of OUR OWN PANES holds, by the NAME they show (T710). The
+    // label ladder resolves at paint time out of borrowed titles, so there is
+    // nothing to read back afterwards and no HWND to read it from — and the
+    // rename this task exists for is invisible in every other line here: the
+    // agent never learns a window was renamed, so a roster that is byte-identical
+    // still renders a different name. Bounded to the rows we hold open, which is
+    // the only set the question is about.
+    for (shown) |r| {
+        if (!r.live.open) continue;
+        var lbuf: [chooser_sessions.max_live_title]u8 = undefined;
+        log.info("chooser roster: open row id={s} name={s}", .{
+            r.session.id,
+            chooser_sessions.label(&lbuf, r.session, r.live, r.persisted_title),
+        });
+    }
 }
 
-/// The title of an OPEN pane bound to `id`, or null. Also the answer to "is
-/// this session open in one of our windows", which is what turns the badge from
-/// `attached` (someone else holds it) into `open` (you do).
-fn liveTitleFor(app: *App, id: []const u8) ?[]const u8 {
+/// What an OPEN pane bound to `id` calls it, with `open` false when no pane of
+/// ours holds it. `open` is also the answer to "is this session open in one of
+/// our windows", which is what turns the badge from `attached` (someone else
+/// holds it) into `open` (you do).
+///
+/// The WINDOW's pinned title comes back alongside the pane's (T710) because a
+/// rename is a statement about the window: reading the pane title alone left a
+/// renamed window's row showing the old shell-derived name. `liveTitle` decides
+/// which one a row actually says; this only finds them, plus the pane count its
+/// tab holds, which is what makes the disambiguator rule answerable.
+fn liveFor(app: *App, id: []const u8) chooser_sessions.Live {
     for (app.windows.items) |win| {
         for (0..win.tab_count) |t| {
             var it = win.tab_trees[t].iterator();
@@ -824,15 +895,19 @@ fn liveTitleFor(app: *App, id: []const u8) ?[]const u8 {
                 if (!s2.core_surface_ready) continue;
                 const sid = s2.core_surface.remoteSessionId() orelse continue;
                 if (!std.mem.eql(u8, sid, id)) continue;
-                // An open pane with no title yet still means OPEN, so report an
-                // empty string rather than null — the ladder treats empty as an
-                // absent rung and falls through, and the caller reads non-null
-                // as "ours".
-                return if (s2.title) |t2| t2 else "";
+                // An open pane with no title yet still means OPEN: `open` says
+                // so on its own, and the ladder treats the empty name as an
+                // absent rung and falls through to the next one.
+                return .{
+                    .window_title = win.title_override,
+                    .pane_title = s2.title,
+                    .pane_count = win.leafCount(t),
+                    .open = true,
+                };
             }
         }
     }
-    return null;
+    return .{};
 }
 
 /// The layout view for the machine this roster is pointed at (T1296): the
@@ -1203,8 +1278,8 @@ fn paintRow(
 
     // The label, then the badge run packed after its MEASURED width (a width
     // that comes from text metrics is measured, never re-derived).
-    var lbuf: [32]u8 = undefined;
-    const text = chooser_sessions.label(&lbuf, row.session, row.live_title, row.persisted_title);
+    var lbuf: [chooser_sessions.max_live_title]u8 = undefined;
+    const text = chooser_sessions.label(&lbuf, row.session, row.live, row.persisted_title);
 
     const old_label = if (ctx.label_font) |f| w32.SelectObject(hdc, f) else null;
     _ = w32.SetTextColor(hdc, rgb(chrome_theme.textOn(card_bg)));

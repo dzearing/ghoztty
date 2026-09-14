@@ -2669,6 +2669,21 @@ $GuardTable = @(
             'test\win32\chooser-controls.ps1'
         )
     },
+    # The chooser's PUSHED roster and the window rename that reaches its rows
+    # (T710). Nothing else on the box drives a live roster: the P1-P3 floor
+    # opens no chooser, and every other chooser harness asserts a list that was
+    # FETCHED - the whole question here is what happens to a list nobody
+    # re-fetched. The subscription is also the only win32 consumer of
+    # `decodeSessions`' push side, so an edit there has no other witness.
+    [pscustomobject]@{
+        Name   = 'chooser-roster-push'
+        Script = 'test\win32\chooser-sessions-push.ps1'
+        Stamp  = 'test\win32\chooser-sessions-push.stamp.json'
+        Covers = @(
+            'src\apprt\win32\SessionRosterProbe.zig',
+            'test\win32\chooser-sessions-push.ps1'
+        )
+    },
     # The chooser's session-list sort (T602): the headers are owner-drawn and
     # the order is asserted through log oracles only this harness reads - the
     # P1-P3 floor opens no chooser, so a sort/cursor regression is invisible to

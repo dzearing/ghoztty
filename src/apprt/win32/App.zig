@@ -25,6 +25,7 @@ const IpcServer = @import("IpcServer.zig");
 const MachineChooser = @import("MachineChooser.zig");
 const SessionRoster = @import("SessionRoster.zig");
 const SessionCpuProbe = @import("SessionCpuProbe.zig");
+const SessionRosterProbe = @import("SessionRosterProbe.zig");
 const RestoreAllLocal = @import("RestoreAllLocal.zig");
 const RestoreAllRelay = @import("RestoreAllRelay.zig");
 const ActivityMonitor = @import("ActivityMonitor.zig");
@@ -9905,6 +9906,14 @@ fn msgWndProc(
         // the same reason the roster's reply is: a chooser that closed first
         // must not be written through, and a dialog HWND can be recycled.
         MachineChooser.onSessionCpu(app, @intCast(wparam));
+        return 0;
+    }
+
+    if (msg == SessionRosterProbe.WM_APP_CHOOSER_ROSTER_PUSH) {
+        // wparam = the chooser id a pushed session ROSTER belongs to (T710). The
+        // roster itself is parked in the probe, so this message carries nothing
+        // to free and a burst of pushes coalesces into one take.
+        MachineChooser.onRosterPush(app, @intCast(wparam));
         return 0;
     }
 
