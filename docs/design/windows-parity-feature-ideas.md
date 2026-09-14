@@ -294,3 +294,14 @@ as the digest that showed them.
 - A taskbar badge when a background window wants you
 - A config reload that says what changed, and refuses a broken file without dropping you
 - Copy with the colours intact (HTML/RTF clipboard flavours)
+
+## 2026-09-14
+
+- Throw a pane at a monitor (fling a dragged pane to an edge or display to place it)
+- A layout you can draw (sketch a grid and have the window rearrange to match)
+- Reopen the window I closed, not just the tab (whole-window undo with splits and cwds)
+- A pane that starts where the last one finished (inherit env/ssh/sudo state into a split)
+- Tell me which panes are actually doing something (cross-window running/idle/waiting board)
+- A pane that names the machine in its own chrome (tinted header for remote and WSL panes)
+- Open the same layout every morning (startup layouts with per-pane commands)
+- Let a viewer pane follow the pane beside it (auto-re-render the file the shell last touched)
