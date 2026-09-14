@@ -120,6 +120,7 @@ $HTCLIENT = 1
 
 $script:pass = 0
 $script:fail = 0
+$script:skipped = 0
 function Assert([bool]$cond, [string]$label) {
     if ($cond) { $script:pass++; Write-Host "PASS  $label" }
     else { $script:fail++; Write-Host "FAIL  $label" -ForegroundColor Red }
@@ -571,7 +572,7 @@ Start-Sleep -Milliseconds 300
 $restIsRest = Gap-Has $top $REST_G
 $restIsHot = Gap-Has $top $HOT_G
 if ($null -eq $restIsRest -or $null -eq $restIsHot) {
-    Write-Host 'SKIP T233 (rest): empty capture - pixel probe would be meaningless'
+    Write-Host 'SKIP T233 (rest): empty capture - pixel probe would be meaningless'; $script:skipped++
 } else {
     Assert ($restIsRest -eq $true) 'T233 rest: the un-hovered band is the configured gray'
     Assert ($restIsHot -eq $false) 'T233 rest: the un-hovered band is NOT the hover gray'
@@ -595,7 +596,7 @@ if (Test-Path $errlog) {
     }
 }
 if (-not $hoverLogged) {
-    Write-Host 'SKIP T233 hover trigger: no debug log (release build) - the drag pixels below still cover the color'
+    Write-Host 'SKIP T233 hover trigger: no debug log (release build) - the drag pixels below still cover the color'; $script:skipped++
 }
 
 # THE HOVER COLOR ITSELF, in pixels (T282). The drag below proves the same
@@ -609,7 +610,7 @@ $hoverIsHot = Gap-Has $top $HOT_G $hoverShot
 $hoverIsRest = Gap-Has $top $REST_G $hoverShot
 Close-TestHoverCapture $hoverShot
 if ($null -eq $hoverIsHot -or $null -eq $hoverIsRest) {
-    Write-Host "SKIP T233 (hover color): no usable hovered capture ($(Get-LastHoverCaptureError))"
+    Write-Host "SKIP T233 (hover color): no usable hovered capture ($(Get-LastHoverCaptureError))"; $script:skipped++
 } else {
     Assert ($hoverIsHot -eq $true) 'T233 hover: the hovered band is painted the HOVER gray'
     Assert ($hoverIsRest -eq $false) 'T233 hover: ...and no longer the rest gray'
@@ -624,7 +625,7 @@ Start-Sleep -Milliseconds 250
 $dragIsHot = Gap-Has $top $HOT_G
 [void](Send-TestMouse -Window $top -Target $top -X $d.X -Y ($d.Y + 20) -Action up)
 Start-Sleep -Milliseconds 250
-if ($null -eq $dragIsHot) { Write-Host 'SKIP T233 (drag): empty capture' }
+if ($null -eq $dragIsHot) { Write-Host 'SKIP T233 (drag): empty capture'; $script:skipped++ }
 else { Assert ($dragIsHot -eq $true) 'T233 drag: the band stays lit while being dragged' }
 
 # And back to rest once the pointer leaves it again.
@@ -633,7 +634,7 @@ Start-Sleep -Milliseconds 300
 $backIsRest = Gap-Has $top $REST_G
 $backIsHot = Gap-Has $top $HOT_G
 if ($null -eq $backIsRest -or $null -eq $backIsHot) {
-    Write-Host 'SKIP T233 (un-hover): empty capture'
+    Write-Host 'SKIP T233 (un-hover): empty capture'; $script:skipped++
 } else {
     Assert ($backIsRest -eq $true) 'T233 un-hover: the band returns to the rest gray'
     Assert ($backIsHot -eq $false) 'T233 un-hover: the hover shade is gone'
@@ -695,7 +696,7 @@ $app251 = $g251.App; $top251 = $g251.Top
 
 $rest251 = Get-BandContrast $top251
 if ($null -eq $rest251) {
-    Write-Host 'SKIP T251 (rest): empty capture - pixel probe would be meaningless'
+    Write-Host 'SKIP T251 (rest): empty capture - pixel probe would be meaningless'; $script:skipped++
 } else {
     Assert ($rest251.Ratio -ge 3.0) `
         "T251 rest: a #0a0a0a divider on a black terminal still clears 3:1 (got $([math]::Round($rest251.Ratio,2)):1 at pixel $($rest251.Pixel))"
@@ -717,7 +718,7 @@ $hot251 = Get-BandContrast $top251
 [void](Send-TestMouse -Window $top251 -Target $top251 -X $d251.X -Y ($d251.Y + 20) -Action up)
 Start-Sleep -Milliseconds 250
 if ($null -eq $hot251 -or $null -eq $rest251) {
-    Write-Host 'SKIP T251 (drag): empty capture'
+    Write-Host 'SKIP T251 (drag): empty capture'; $script:skipped++
 } else {
     Assert ($hot251.Ratio -ge 3.0) `
         "T251 drag: the hovered band clears 3:1 too (got $([math]::Round($hot251.Ratio,2)):1 at pixel $($hot251.Pixel))"
@@ -856,7 +857,7 @@ function Start-T155Gui([string]$direction) {
 
 foreach ($axis in @('down', 'right')) {
     $g = Start-T155Gui $axis
-    if ($null -eq $g) { Write-Host "SKIP T155/$axis : GUI did not come up"; continue }
+    if ($null -eq $g) { Write-Host "SKIP T155/$axis : GUI did not come up"; $script:skipped++; continue }
     $launched += $script:GhozttyTestDesktopPids
     $top = $g.Top
     $bandPx = Get-ExpectedBandPx (Get-TestWindowDpi -Window $top)
@@ -890,7 +891,7 @@ foreach ($axis in @('down', 'right')) {
     Start-Sleep -Milliseconds 400
     $gap = Get-GapStrip $top $axis
     if ($null -eq $gap -or $null -eq $gap.Strip) {
-        Write-Host "SKIP T155/$axis (after drags): empty capture - pixel probe would be meaningless"
+        Write-Host "SKIP T155/$axis (after drags): empty capture - pixel probe would be meaningless"; $script:skipped++
         Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
         continue
     }
@@ -928,7 +929,7 @@ foreach ($axis in @('down', 'right')) {
     Start-Sleep -Milliseconds 400
     $gap = Get-GapStrip $top $axis
     if ($null -eq $gap -or $null -eq $gap.Strip) {
-        Write-Host "SKIP T155/$axis (after resizes): empty capture"
+        Write-Host "SKIP T155/$axis (after resizes): empty capture"; $script:skipped++
         Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
         continue
     }
@@ -978,12 +979,12 @@ $kb = @('--keybind=ctrl+shift+alt+right=resize_split:right,10',
 $a495 = Start-OnTestDesktop -Exe $exe -Arguments ($common + $kb)
 Start-Sleep -Seconds 3
 if ($a495.Process -and $a495.Process.HasExited) {
-    Write-Host 'SKIP T495: GUI did not come up'
+    Write-Host 'SKIP T495: GUI did not come up'; $script:skipped++
 } else {
     $launched += $script:GhozttyTestDesktopPids
     $t495 = Wait-TestWindow -ProcessId $a495.Pid -Class 'GhozttyWindow'
     if ($t495 -eq [IntPtr]::Zero) {
-        Write-Host 'SKIP T495: top window not found'
+        Write-Host 'SKIP T495: top window not found'; $script:skipped++
         Stop-Process -Id $a495.Pid -Force -ErrorAction SilentlyContinue
     } else {
         # Two right-splits: +split splits the FOCUSED pane, and each split
@@ -1187,4 +1188,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'SPLIT DIVIDER ACCEPTANCE'
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skipped -Label 'SPLIT DIVIDER ACCEPTANCE'

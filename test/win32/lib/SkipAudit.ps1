@@ -126,6 +126,58 @@ function Test-SkipEmitLiteral([string]$Literal) {
     return (-not (Test-SkipReportLiteral $Literal))
 }
 
+# A script with a dozen skip sites may route every one of them through a HELPER
+# that does the counting - `function Skip($label) { $script:skipped++;
+# Write-Host $label }`, then `Skip 'SKIP D: injection did not stick'` at each
+# site. That is the canonical shape with the increment factored out, not a
+# missing counter: overlay-zorder.ps1 has counted its 18 sites that way since
+# T721, and reading each call as "records nothing" reported eighteen violations
+# against a script that had none (T731). So find the helpers first - a function
+# DEFINED IN THIS FILE whose body increments a skip counter - and treat a call
+# to one as the site counting itself.
+#
+# Narrow on purpose: the name has to be defined here (a `Skip` imported from
+# somewhere else says nothing about whether it counts) and the body has to carry
+# the increment, so a helper that merely prints is still an uncounted site.
+function Get-SkipCountingHelpers($Logical) {
+    $names = New-Object System.Collections.ArrayList
+    for ($i = 0; $i -lt $Logical.Count; $i++) {
+        $t = $Logical[$i].Text
+        if ($t -match '^\s*#') { continue }
+        if ($t -notmatch '^\s*function\s+([A-Za-z_][A-Za-z0-9_\-]*)') { continue }
+        $name = $Matches[1]
+        $depth = 0
+        $opened = $false
+        $counts = $false
+        for ($j = $i; $j -lt $Logical.Count; $j++) {
+            $b = $Logical[$j].Text
+            if ($b -match '^\s*#') { continue }
+            if ($j -gt $i -and $b -match '\$[A-Za-z_:]*skip[A-Za-z]*\s*(\+\+|\+=)') { $counts = $true }
+            $open = ([regex]::Matches($b, '\{')).Count
+            $close = ([regex]::Matches($b, '\}')).Count
+            if ($open -gt 0) { $opened = $true }
+            $depth += $open - $close
+            if ($opened -and $depth -le 0) { break }
+        }
+        if ($counts) { [void]$names.Add($name) }
+    }
+    # Plain array, deliberately NOT `, @(...)`-wrapped: every call site reads it
+    # as `@(Get-SkipCountingHelpers ...)`, and a wrapper there survives as a
+    # one-element array holding an empty one - whose name escapes to '' and
+    # matches every line in the file (measured while writing this).
+    return $names.ToArray()
+}
+
+# Does this line CALL one of those helpers? A definition line carries the name
+# too and is not a call.
+function Test-SkipHelperCall([string]$Line, $Helpers) {
+    if ($Line -match '^\s*function\s') { return $false }
+    foreach ($h in $Helpers) {
+        if ($Line -match ('(^|[^\w\-\$])' + [regex]::Escape($h) + '(\s|$)')) { return $true }
+    }
+    return $false
+}
+
 # The analyzer. Returns one object per VIOLATION; an empty result is a clean
 # file. `-Text` may be passed instead of `-Path` so the self-test can drive it
 # from fixtures without writing them to disk.
@@ -141,6 +193,7 @@ function Get-SkipAuditFindings {
     $sites = New-Object System.Collections.ArrayList
     $verdictLines = New-Object System.Collections.ArrayList
     $verdictReports = $false
+    $helpers = @(Get-SkipCountingHelpers $logical)
 
     for ($i = 0; $i -lt $logical.Count; $i++) {
         $line = $logical[$i].Text
@@ -211,6 +264,7 @@ function Get-SkipAuditFindings {
             $t = $logical[$j].Text
             if ($t -match '^\s*#') { continue }
             if ($t -match '\$[A-Za-z_:]*skip[A-Za-z]*\s*(\+\+|\+=)') { $counted = $true }
+            if ($helpers.Count -gt 0 -and (Test-SkipHelperCall $t $helpers)) { $counted = $true }
             # T271: the shared scorer reports the count for the script, so
             # `-Skipped <n>` on a `Write-TestVerdict`/`Write-TestAssertedNothing`
             # call IS this site being counted - and that call is also the verdict
@@ -264,8 +318,6 @@ function Get-SkipAuditFindings {
 # is not listed (so nothing new joins). It is here rather than in a data file
 # because it is a statement about work, and it belongs where the rule is.
 $script:SkipAuditPending = @{
-    'overlay-zorder.ps1' = 'T731'
-    'split-divider.ps1'  = 'T731'
 }
 
 function Get-SkipAuditPending { return $script:SkipAuditPending }

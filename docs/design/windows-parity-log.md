@@ -28898,3 +28898,39 @@ the app binary older than its sources and the next harness lane scored
 build-mode-guard, persistence-flag and caller-anchor red on staleness - ten
 minutes to learn a rebuild was missing, from three verdicts that name
 `GHOZTTY_TEST_ALLOW_STALE` rather than "rebuild". Filed as **T1571**.
+
+## 2026-09-14 - Two more acceptance scripts say out loud when they skipped a section (T731)
+
+A skip that the summary line does not mention is an un-run assertion wearing a
+green hat (T219), and two scripts were the last holdouts on the shrink-only
+`$SkipAuditPending` list. `split-divider.ps1` was the real conversion: twelve
+skip sites - empty pixel captures, a hover the harness lost, a GUI that did not
+come up - printed their SKIP and recorded nothing, and the run ended on the
+shared scorer without a count. Each site now increments `$script:skipped` and
+the verdict passes `-Skipped`, so a run that skips two sections ends on
+`SPLIT DIVIDER ACCEPTANCE: ALL PASS (73 assertions, 2 SKIPPED)` instead of a
+clean-looking pass.
+
+`overlay-zorder.ps1` turned out not to be a holdout at all. It has routed every
+one of its eighteen sites through a counting `Skip()` helper since T721; what
+was reporting eighteen violations was the ANALYZER, which looked for a literal
+`$script:skipped++` within two lines of the site and read a factored-out
+increment as no increment. So `lib\SkipAudit.ps1` now finds the counting helpers
+first - a function DEFINED IN THIS FILE whose body increments a skip counter -
+and treats a call to one as the site counting itself. Narrow on purpose: a
+helper that only prints still leaves its sites uncounted, which is fixture A14,
+and A13 is the counting shape. Both fixtures keep the verdict line three lines
+away from the site, because a verdict within the two-line window counts a site
+on its own and would have made either fixture pass for the wrong reason.
+
+The list is now EMPTY, which is what it was for. Section B1 of
+`skip-visibility.ps1` is still red, and not for this task: ten OTHER scripts
+sweep as unlisted violators, which is T1123's scope and why the script is a
+tracked PENDING member of the harness floor. Neither of these two is among them.
+
+Evidence: `skip-visibility.ps1` section A is ALL PASS (A1-A14) with B2 clean on
+an empty list; `-TeethCheck` still turns B1 and B2 red against its synthesized
+violator, so the mode kept its teeth past the list emptying - which is the
+moment it would otherwise have stopped proving anything. `split-divider.ps1`
+runs green on the box (73 assertions, guard stamped), all four zig lanes PASS,
+and the harness floor lane PASS and re-stamped over 370 files.

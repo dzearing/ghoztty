@@ -145,6 +145,38 @@ $writeHost = @(
 Assert "A12 Write-Host's own hyphen does not read as a comparison operator" (
     (Findings $writeHost).Count -eq 2)
 
+# T731: the increment factored into a helper. overlay-zorder.ps1 routes all
+# eighteen of its sites through `Skip`, which counts; reading each call as
+# "records nothing" reported eighteen violations against a converted script.
+$helperCounts = @(
+    'function Skip([string]$label) {',
+    '    $script:skipped++',
+    '    Write-Host $label',
+    '}',
+    'if (-not $frontIsB) { Skip "SKIP front-most control: oz2 is not what covers the band" }',
+    'Assert ($ok) ''the band is repainted''',
+    'Assert ($ok2) ''and stays repainted''',
+    'Assert ($ok3) ''through the next activation''',
+    'if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))" }'
+)
+Assert "A13 a skip routed through a counting helper is counted" (
+    (Findings $helperCounts).Count -eq 0)
+
+# ...and the narrowness that makes that safe: a helper that only PRINTS leaves
+# the site uncounted, so factoring the print out is not a way to launder one.
+$helperPrintsOnly = @(
+    'function Skip([string]$label) {',
+    '    Write-Host $label',
+    '}',
+    'if (-not $frontIsB) { Skip "SKIP front-most control: oz2 is not what covers the band" }',
+    'Assert ($ok) ''the band is repainted''',
+    'Assert ($ok2) ''and stays repainted''',
+    'Assert ($ok3) ''through the next activation''',
+    'if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))" }'
+)
+Assert "A14 a helper that only prints does not count the site" (
+    (KindsOf $helperPrintsOnly) -eq 'uncounted')
+
 # ============================================================================
 ""
 "== B: the sweep - violators are named exceptions, and the list only shrinks"
