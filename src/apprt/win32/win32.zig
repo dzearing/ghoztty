@@ -1193,6 +1193,7 @@ pub extern "kernel32" fn Sleep(
 // -----------------------------------------------------------------------
 
 pub const WM_COMMAND: u32 = 0x0111;
+pub const WM_NOTIFY: u32 = 0x004E;
 pub const WM_CTLCOLOREDIT: u32 = 0x0133;
 pub const WM_CTLCOLORSTATIC: u32 = 0x0138;
 pub const WM_CTLCOLORBTN: u32 = 0x0135;
@@ -1490,6 +1491,10 @@ pub const ES_WANTRETURN: u32 = 0x1000;
 pub const WS_CHILD: u32 = 0x40000000;
 pub const WS_VISIBLE_STYLE: u32 = 0x10000000;
 pub const WS_BORDER: u32 = 0x00800000;
+/// A control the Tab key stops on. This dialog drives its own focus cycle, so
+/// it matters for the SysLink alone, which reads the bit to decide whether its
+/// anchors take keyboard focus at all.
+pub const WS_TABSTOP: u32 = 0x00010000;
 /// Excludes the areas occupied by child windows when painting the parent.
 /// A viewer pane needs it: WebView2 parents its own Chromium windows inside
 /// the pane's host window, and painting the pane background over them is a
@@ -2085,6 +2090,64 @@ pub const INITCOMMONCONTROLSEX = extern struct {
 
 /// Tab AND tooltip control classes (they share one ICC bit).
 pub const ICC_TAB_CLASSES: u32 = 0x00000008;
+
+/// The `SysLink` hyperlink control class (T714) — the About box's links.
+pub const ICC_LINK_CLASS: u32 = 0x00008000;
+
+/// The `SysLink` window class: static text with `<a>…</a>` runs that draw as
+/// links, take the hand cursor, and are reachable by Tab and Enter. The
+/// Windows-native counterpart to Mac's SwiftUI `Link`.
+pub const WC_LINK = std.unicode.utf8ToUtf16LeStringLiteral("SysLink");
+
+// -----------------------------------------------------------------------
+// WM_NOTIFY plumbing (common controls)
+// -----------------------------------------------------------------------
+
+pub const NMHDR = extern struct {
+    hwndFrom: ?HWND,
+    idFrom: usize,
+    code: u32,
+};
+
+/// The leading fields of `NMLINK` — `NMHDR` followed by the `LITEM` that
+/// names which anchor was hit. Deliberately PARTIAL: the real `LITEM` trails
+/// a 48-character id and a 2084-character URL, and this app addresses its
+/// links by `iLink` (an index into the slice it built the markup from) rather
+/// than by reading a URL back out of the control. Read-only, and never
+/// allocated by us, so the missing tail cannot be touched.
+pub const NMLINK_HEAD = extern struct {
+    hdr: NMHDR,
+    mask: u32,
+    iLink: i32,
+    state: u32,
+    stateMask: u32,
+};
+
+/// `NM_CLICK` / `NM_RETURN` — a SysLink anchor activated by mouse or keyboard.
+/// Both are negative `NM_FIRST` offsets, which arrive as large unsigned values
+/// in `NMHDR.code`.
+pub const NM_CLICK: u32 = @bitCast(@as(i32, -2));
+pub const NM_RETURN: u32 = @bitCast(@as(i32, -4));
+pub const NM_CUSTOMDRAW: u32 = @bitCast(@as(i32, -12));
+
+/// The leading fields of `NMCUSTOMDRAW`. Enough to answer "which draw stage
+/// is this?" and to reach the DC whose text color we override.
+pub const NMCUSTOMDRAW_HEAD = extern struct {
+    hdr: NMHDR,
+    dwDrawStage: u32,
+    hdc: HDC,
+    rc: RECT,
+    dwItemSpec: usize,
+    uItemState: u32,
+    lItemlParam: isize,
+};
+
+pub const CDDS_PREPAINT: u32 = 0x00000001;
+pub const CDDS_ITEM: u32 = 0x00010000;
+pub const CDDS_ITEMPREPAINT: u32 = CDDS_ITEM | CDDS_PREPAINT;
+pub const CDRF_DODEFAULT: isize = 0x00000000;
+pub const CDRF_NEWFONT: isize = 0x00000002;
+pub const CDRF_NOTIFYITEMDRAW: isize = 0x00000020;
 
 pub extern "comctl32" fn InitCommonControlsEx(
     picce: *const INITCOMMONCONTROLSEX,

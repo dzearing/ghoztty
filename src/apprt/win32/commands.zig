@@ -144,7 +144,15 @@ pub const Id = enum {
 
 /// Where "Ghoztty Help" goes. The docs are the same for every platform, so
 /// this is the one string both the menu and the palette open.
-pub const help_url = "https://ghostty.org/docs";
+///
+/// It points at THIS fork (T714). Mac moved its Help item and its About
+/// buttons off `ghostty.org/docs` in 6ea66423f — the string-rename pass had
+/// renamed the user-visible text and left the URLs upstream, so the fork's own
+/// Help menu sent people to a different project's documentation. Windows kept
+/// that defect for another six weeks. The constant lives in `about_links.zig`
+/// with every other destination in this app, so the Help item and the About
+/// box's Docs link cannot drift apart.
+pub const help_url = @import("about_links.zig").docs_url;
 
 pub const Command = struct {
     id: Id,
@@ -347,4 +355,16 @@ test "quit is the only quit_keep command" {
     for (registry) |c| {
         try std.testing.expectEqual(c.id == .quit, c.quit_keep);
     }
+}
+
+test "help_url points at this fork, never at upstream (T714)" {
+    // The string-rename pass renamed the user-visible text and left the URLs
+    // upstream; Mac caught that in 6ea66423f and Windows carried it for
+    // another six weeks. A Help item that opens another project's docs is the
+    // kind of defect that reads as correct in every screenshot.
+    try std.testing.expect(std.mem.indexOf(u8, help_url, "ghostty.org") == null);
+    try std.testing.expect(std.mem.indexOf(u8, help_url, "ghostty-org") == null);
+    try std.testing.expect(std.mem.indexOf(u8, help_url, "ghoztty") != null);
+    // The Help item and the About box's Docs link are the SAME destination.
+    try std.testing.expectEqualStrings(@import("about_links.zig").docs_url, help_url);
 }

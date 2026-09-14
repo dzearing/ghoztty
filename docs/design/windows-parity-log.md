@@ -28186,3 +28186,66 @@ rather than left as an assertion that could only ever SKIP, and T1554 carries
 it. And `pinDetachAll` lives in the new module rather than on `Window` on
 purpose: a six-line method there put nine unrelated acceptance harnesses due,
 which is the T712 lesson about a stamp that keys on file content.
+
+## 2026-09-14 - The About box now links out, and Help goes to this project (T714)
+
+Open About Ghoztty on Windows and you got a block of facts - a version, a
+commit, a path - with nothing clickable on it. There was no way from the app to
+the release notes for the build you are running, and no way to the project at
+all. Worse, the Help item next to it opened `ghostty.org/docs`: a different
+project's documentation, which is what the fork's string-rename pass left
+behind. Mac fixed its half six weeks ago (6ea66423f) and Windows kept the
+defect, which is the shape this branch exists to close.
+
+The box now carries a row of real hyperlinks - **Release notes**, **Commit**,
+**Docs**, **GitHub** - and Help opens this fork's docs site.
+
+Two of those four are EARNED, not printed. A development build's version
+carries its branch and its commit (`1.4.0-users-dzearing-windows-amd64-+...`)
+and no release page exists for it, so the release link is simply absent rather
+than a 404 dressed up as an answer; the same is true of the commit link when a
+build stamped no sha. That decision, and every URL this app points at, now
+lives in one place (`about_links.zig`) - the same "one place the repo lives"
+rule Mac's About view follows, and the reason a rename cannot leave half the
+app on the old project. `App.zig`'s two release-URL literals and
+`commands.help_url` all derive from it now.
+
+The release link points at the WINDOWS tag (`win-vX.Y.Z`), not Mac's
+`vX.Y.Z`. That is the one place the platforms legitimately differ, and it is
+the difference between a link to the bytes you are running and a link to
+somebody else's build of the same version number.
+
+Mechanically the links are SysLink controls in a new `ConfirmDialog` band -
+ONE control per link rather than one control carrying four anchors, because a
+control is a Tab stop and a single multi-anchor control would have put the
+first link in the keyboard cycle and left the other three mouse-only. Enter on
+a focused link follows it instead of dismissing the dialog, and the dialog
+stays open when it does: About is where you look things up, and closing it to
+answer "what is this build?" would take away the answer you were reading.
+`NM_CUSTOMDRAW` paints the anchors in the panel accent - a SysLink's default
+`COLOR_HOTLIGHT` is a fixed system blue that does not follow the app theme, and
+on this dialog's dark surface it is a link you have to hunt for.
+
+The row never wraps: the dialog widens to hold it. A "GitHub" broken across two
+lines is a defect, not a narrower dialog, and `layoutFor` and `packLinks` walk
+the same arithmetic so the band and the row cannot disagree about the width.
+
+Validated: floor all-green; new unit tests cover the URL shapes, the tip-build
+and unstamped-build cases, the anchor markup's refusal to carry a label with
+`<`, `>` or `&`, the row packing, the layout band and its DPI scaling, and that
+the link control ids collide with no other control's. `ipc-version.ps1` opens
+the real About box from the command palette and reads the SysLink controls back
+out of it - Docs, GitHub and Commit present, sized, visible and inside the
+dialog, and NO release link on this dev build, which is the conditional half
+proven on the box rather than only in a unit test.
+
+What is NOT proven on the box, deliberately: following a link. Both the click
+and the Enter paths end in `App.openUrl` -> `ShellExecuteW`, the same path the
+banner and viewer links already take, and an acceptance script that exercised
+it would launch a browser on the test desktop on every run. The destinations
+themselves are unit-tested, and the keyboard path's one real hazard - Enter
+dismissing the dialog instead of following the link - is closed in `handleKey`
+by declining the key when focus is on a link rather than by a box assertion.
+The accent repaint is likewise code rather than a measured pixel; a SysLink
+that never got the custom-draw callback would still be a visible, clickable
+link in the system blue, which is why this one is not gated on a probe.

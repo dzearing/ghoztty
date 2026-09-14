@@ -89,6 +89,7 @@ const job_spawn = @import("job_spawn.zig");
 const restart_manager = @import("restart_manager.zig");
 const url_scheme = @import("url_scheme.zig");
 const provenance = @import("provenance.zig");
+const about_links = @import("about_links.zig");
 const host_defaults = @import("host_defaults.zig");
 const gui_pump = @import("gui_pump.zig");
 const startup_error = @import("startup_error.zig");
@@ -8121,11 +8122,16 @@ const WM_APP_TRAY: u32 = w32.WM_APP + 3;
 
 /// User-facing GitHub releases page — the update-balloon click fallback
 /// when no specific version is known.
-const RELEASES_URL = "https://github.com/dzearing/ghoztty/releases";
+///
+/// Both of these derive from `about_links.zig` since T714: it is the one place
+/// this fork's URLs live, the way Mac's About view derives every destination
+/// from a single `githubURL`. Two literals spelling the same repo is how a
+/// rename leaves one of them pointing at the old project.
+const RELEASES_URL = about_links.releases_url;
 
 /// Release page for a specific Windows build; the version text (e.g.
 /// "1.4.1") is appended to form .../releases/tag/win-v1.4.1.
-const RELEASE_TAG_URL_PREFIX = "https://github.com/dzearing/ghoztty/releases/tag/win-v";
+const RELEASE_TAG_URL_PREFIX = about_links.release_tag_url_prefix;
 
 /// Tray icon and timer IDs for notifications. Distinct IDs mean the
 /// desktop and update balloons can coexist without one's auto-cleanup

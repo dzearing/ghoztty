@@ -201,6 +201,38 @@ if (-not $sent) {
         Assert "About box appeared" ($dlg -ne [IntPtr]::Zero)
         if ($dlg -ne [IntPtr]::Zero) {
             Assert "About box is titled 'About Ghoztty'" ((Get-TestWindowText -Window $dlg) -eq 'About Ghoztty')
+
+            # T714: the box carries a row of real hyperlink controls. Before
+            # this it was a block of provenance text with no clickable
+            # anything, so there was no way from the app to the release it is
+            # running or to the project at all. The links are SysLink
+            # controls, one per destination (one per control is what makes
+            # each a Tab stop), and their text is the anchor markup.
+            $links = @(Get-TestChildWindows -Window $dlg -Class 'SysLink')
+            Assert "About box carries a link row" ($links.Count -ge 1)
+            $labels = @($links | ForEach-Object { Get-TestControlText -Control ([IntPtr]$_.Hwnd) })
+            "  link row: $($labels -join ' | ')"
+            # Docs and GitHub are unconditional: every build, however it was
+            # stamped, can reach the fork's documentation and its repository.
+            Assert "About box links to the Docs" ($labels -contains '<a>Docs</a>')
+            Assert "About box links to GitHub" ($labels -contains '<a>GitHub</a>')
+            # This is a zig-out dev build: its version carries a branch and a
+            # commit, so there is no release page for it and the row must NOT
+            # offer one. The commit link is earned, because the build stamped
+            # a sha (asserted above as build.commit).
+            Assert "About box links to this build's commit" ($labels -contains '<a>Commit</a>')
+            Assert "a tip build offers no release link" (-not ($labels -contains '<a>Release notes</a>'))
+            foreach ($l in $links) {
+                Assert "link '$(Get-TestControlText -Control ([IntPtr]$l.Hwnd))' is visible" ($l.Visible)
+                Assert "link '$(Get-TestControlText -Control ([IntPtr]$l.Hwnd))' has a clickable size" ($l.Width -gt 0 -and $l.Height -gt 0)
+            }
+            # The row never wraps: layoutFor widens the dialog to hold it, so
+            # every link has to sit inside the dialog's own client area.
+            $dr = Get-TestWindowRect -Window $dlg
+            foreach ($l in $links) {
+                Assert "link stays inside the dialog" ($l.Left -ge $dr.Left -and $l.Right -le $dr.Right)
+            }
+
             Send-TestWindowClose -Window $dlg | Out-Null
             Start-Sleep -Milliseconds 500
         }

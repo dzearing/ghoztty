@@ -55,6 +55,7 @@ const IpcHandlers = @import("IpcHandlers.zig");
 const ProcessTree = @import("ProcessTree.zig");
 const session_disconnect = @import("session_disconnect.zig");
 const provenance = @import("provenance.zig");
+const about_links = @import("about_links.zig");
 const color_math = @import("color_math.zig");
 
 const log = std.log.scoped(.win32);
@@ -3159,6 +3160,26 @@ pub fn showAboutDialog(self: *Surface) void {
     ) catch return;
     const text_w = std.unicode.utf8ToUtf16LeAllocZ(arena, text) catch return;
 
+    // The links this build earns (T714). Mac's About panel links its version
+    // row at the release that carries it and its commit row at the fork's
+    // history, and offers Docs and GitHub buttons; this box had none of that,
+    // so there was no way from the app to the release it is running. A tip
+    // build has no release page and an unstamped build has no commit page, so
+    // the row is what `about_links` says it is, never a dead link.
+    var link_store: [about_links.max_links]ConfirmDialog.Link = undefined;
+    const links: []const ConfirmDialog.Link = links: {
+        var built: [about_links.max_links]about_links.Link = undefined;
+        const model = about_links.build(arena, prov.version, prov.commit, &built) catch
+            break :links &.{};
+        var n: usize = 0;
+        for (model) |m| {
+            const label = std.unicode.utf8ToUtf16LeAlloc(arena, m.label) catch continue;
+            link_store[n] = .{ .label = label, .url = m.url };
+            n += 1;
+        }
+        break :links link_store[0..n];
+    };
+
     // Stale: the box stops being an FYI and becomes the offer. Nothing about
     // "restart to pick it up" is discoverable otherwise, and this is the
     // surface the user opened precisely to ask the question.
@@ -3175,6 +3196,7 @@ pub fn showAboutDialog(self: *Surface) void {
                 .icon = .warning,
                 .ok_label = std.unicode.utf8ToUtf16LeStringLiteral("Restart Now"),
                 .cancel_label = std.unicode.utf8ToUtf16LeStringLiteral("Later"),
+                .links = links,
             },
         );
         if (r == .ok) self.app.restartIntoInstalledBuild();
@@ -3191,6 +3213,7 @@ pub fn showAboutDialog(self: *Surface) void {
             .text = text_w,
             .style = .ok_only,
             .icon = .info,
+            .links = links,
         },
     );
 }

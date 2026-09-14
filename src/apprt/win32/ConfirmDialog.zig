@@ -94,6 +94,17 @@ pub const Options = struct {
     /// (`showStandalone`), which have no theme, no allocator and no update
     /// story.
     notes: ?Notes = null,
+    /// Optional row of HYPERLINKS under the message (T714) — Mac's About
+    /// panel hangs a linked version row, a linked commit row and its Docs /
+    /// GitHub buttons off the same alert-shaped surface, and the win32 About
+    /// box had no clickable anything: a block of provenance text with no way
+    /// from the app to the release it is running.
+    ///
+    /// BORROWED, like `notes`: `show` does not return until the dialog is
+    /// gone, so the caller's arena is exactly right. At most `max_links`.
+    /// Ignored on the app-less paths (`showStandalone`) — opening a URL needs
+    /// an `App`, and a link that does nothing is worse than no link.
+    links: []const Link = &.{},
     /// Optional caption-sized secondary note under the check rows — Mac's
     /// wrapping caption label in the first-launch accessory (T600, the
     /// agent-config-write disclosure). Rendered in the caption ramp role and
@@ -114,8 +125,25 @@ pub const Check = struct {
     checked: bool = true,
 };
 
+/// One hyperlink in the optional link row (T714). `url` is handed to
+/// `App.openUrl` verbatim when the anchor is activated.
+pub const Link = struct {
+    label: []const u16,
+    url: []const u8,
+};
+
 /// Checkbox row capacity (two agent runtimes today; room to grow).
 pub const max_checks = 4;
+
+/// Link row capacity — About's four (release, commit, docs, repo).
+pub const max_links = 4;
+
+/// Control ids for the link row. One SysLink control PER link, rather than one
+/// control carrying four anchors: a control is a Tab stop, so one-per-link is
+/// what makes every link reachable from the keyboard through this dialog's own
+/// focus cycle. A single multi-anchor control would put its first anchor in
+/// the cycle and leave the rest reachable only by mouse.
+const ID_LINK_BASE: u16 = 300;
 
 /// Control id for the optional third button (T1390). A private value: the
 /// checkbox rows own 100.., and IDOK/IDCANCEL are already spoken for.
@@ -162,6 +190,12 @@ notes_view: ?*WhatsNewNotesView = null,
 /// The optional checkbox rows (`Options.checks`), read back on OK.
 check_btns: [max_checks]?w32.HWND = @splat(null),
 n_checks: usize = 0,
+/// The optional link row (`Options.links`), T714 — one SysLink per link,
+/// indexed like `links`.
+link_ctls: [max_links]?w32.HWND = @splat(null),
+/// What those controls point at. Borrowed from the caller's `Options` for the
+/// life of the modal loop (which is the life of this struct).
+links: []const Link = &.{},
 icon_handle: ?w32.HICON,
 icon_rect: w32.RECT,
 default_cancel: bool,
@@ -191,6 +225,10 @@ pub const Layout = struct {
     /// The optional secondary note under the check rows (empty rect when the
     /// dialog has none).
     note: w32.RECT,
+    /// The optional link row (empty rect when the dialog has none). Below the
+    /// fine print and above the buttons: links are where a reader goes NEXT,
+    /// so they sit between what the dialog says and how it is dismissed.
+    links: w32.RECT,
     ok: w32.RECT,
     cancel: w32.RECT,
     /// The optional third button (empty rect when the dialog has none).
@@ -205,7 +243,10 @@ pub const Layout = struct {
 /// field/buttons (T870); `note_h` (measured caption-text height, 0 for
 /// none) adds the secondary note band under the checks (T600).
 /// `notes_h` (0 for none) adds the fixed release-notes band under the message
-/// (T625).
+/// (T625). `links_w`/`links_h` (both 0 for none) add the hyperlink row under
+/// the fine print (T714) — measured by the caller, because the row must fit on
+/// ONE line: a wrapped link row would report a height the layout never
+/// reserved, and the dialog widens to hold it instead.
 pub fn layoutFor(
     scale: f32,
     text_w: i32,
@@ -214,6 +255,8 @@ pub fn layoutFor(
     notes_h: i32,
     n_checks: usize,
     note_h: i32,
+    links_w: i32,
+    links_h: i32,
     has_input: bool,
     has_cancel: bool,
     has_alt: bool,
@@ -232,6 +275,7 @@ pub fn layoutFor(
     const check_row_gap = px(4, scale);
     const note_gap = px(12, scale);
     const notes_gap = px(12, scale);
+    const links_gap = px(12, scale);
 
     const icon_span: i32 = if (has_icon) icon_px + icon_gap else 0;
     // `alt` only ever accompanies a Cancel: it is a second AFFIRMATIVE, and a
@@ -248,6 +292,9 @@ pub fn layoutFor(
     // prose in bulleted blocks, and prose wrapped to a two-word message's
     // width is a column of single words.
     client_w = @max(client_w, px(if (notes_h > 0) 460 else if (has_input) 380 else 280, scale));
+    // The link row never wraps: it is a row of destinations, and a "GitHub"
+    // that breaks across two lines is a defect, not a smaller dialog.
+    if (links_h > 0) client_w = @max(client_w, margin + icon_span + links_w + margin);
 
     const content_h = @max(text_h, if (has_icon) icon_px else 0);
     const nc: i32 = @intCast(@min(n_checks, max_checks));
@@ -256,10 +303,11 @@ pub fn layoutFor(
     else
         0;
     const note_span: i32 = if (note_h > 0) note_gap + note_h else 0;
+    const links_span: i32 = if (links_h > 0) links_gap + links_h else 0;
     const input_span: i32 = if (has_input) input_gap + input_h else 0;
     const notes_span: i32 = if (notes_h > 0) notes_gap + notes_h else 0;
     const client_h = margin + content_h + notes_span + checks_span + note_span +
-        input_span + btn_gap_v + btn_h + margin;
+        links_span + input_span + btn_gap_v + btn_h + margin;
 
     // Vertically center the shorter of icon/text within the content band.
     const icon_top = margin + @divTrunc(content_h - icon_px, 2);
@@ -279,9 +327,11 @@ pub fn layoutFor(
 
     const notes_top = margin + content_h + notes_gap;
     const note_top = margin + content_h + notes_span + checks_span + note_gap;
-    const input_top = margin + content_h + notes_span + checks_span + note_span + input_gap;
+    const links_top = margin + content_h + notes_span + checks_span + note_span + links_gap;
+    const input_top = margin + content_h + notes_span + checks_span + note_span +
+        links_span + input_gap;
     const btn_top = margin + content_h + notes_span + checks_span + note_span +
-        input_span + btn_gap_v;
+        links_span + input_span + btn_gap_v;
     const right_left = client_w - margin - btn_w;
     const left_left = right_left - btn_gap_h - btn_w;
     const far_left = left_left - btn_gap_h - btn_w;
@@ -333,6 +383,12 @@ pub fn layoutFor(
             .right = client_w - margin,
             .bottom = note_top + note_h,
         } else .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+        .links = if (links_h > 0) .{
+            .left = margin + icon_span,
+            .top = links_top,
+            .right = client_w - margin,
+            .bottom = links_top + links_h,
+        } else .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
         .ok = .{ .left = ok_left, .top = btn_top, .right = ok_left + btn_w, .bottom = btn_top + btn_h },
         .alt = if (with_alt) .{
             .left = alt_left,
@@ -353,6 +409,72 @@ pub fn layoutFor(
 fn px(v: f32, scale: f32) i32 {
     return @intFromFloat(@round(v * scale));
 }
+
+/// Wrap one label in the SysLink anchor markup (`<a>Docs</a>`) inside a
+/// caller buffer. Pure — unit tested below.
+///
+/// Returns null rather than something approximate when the label carries a
+/// markup character the control would reinterpret, or when the buffer is too
+/// small. That link is then simply not shown: a dialog missing a link still
+/// says what it says, while a label whose `&` silently ate the next character
+/// is a defect nobody would think to look for.
+pub fn linkAnchor(label: []const u16, out: []u16) ?[:0]const u16 {
+    const open = "<a>";
+    const close = "</a>";
+    for (label) |c| if (c == '<' or c == '>' or c == '&') return null;
+    if (open.len + label.len + close.len >= out.len) return null;
+    var n: usize = 0;
+    for (open) |c| {
+        out[n] = c;
+        n += 1;
+    }
+    for (label) |c| {
+        out[n] = c;
+        n += 1;
+    }
+    for (close) |c| {
+        out[n] = c;
+        n += 1;
+    }
+    out[n] = 0;
+    return out[0..n :0];
+}
+
+/// Pack the link row left to right inside `band`, one rect per measured label
+/// width with `gap` between neighbours. Pure — unit tested below.
+///
+/// The row is laid out from the band's LEFT edge, aligned with the message
+/// above it, and never wraps: `layoutFor` has already widened the dialog to
+/// hold the whole row (`links_w`), so a rect that ran past the band would mean
+/// the two disagreed about the measurement.
+pub fn packLinks(
+    band: w32.RECT,
+    widths: []const i32,
+    gap: i32,
+    out: *[max_links]w32.RECT,
+) []w32.RECT {
+    const n = @min(widths.len, max_links);
+    var x = band.left;
+    for (widths[0..n], 0..) |w, i| {
+        out[i] = .{ .left = x, .top = band.top, .right = x + w, .bottom = band.bottom };
+        x += w + gap;
+    }
+    return out[0..n];
+}
+
+/// Total width of a link row with these label widths — what `layoutFor` is
+/// given as `links_w`, and the same arithmetic `packLinks` walks.
+pub fn linkRowWidth(widths: []const i32, gap: i32) i32 {
+    const n = @min(widths.len, max_links);
+    if (n == 0) return 0;
+    var total: i32 = 0;
+    for (widths[0..n]) |w| total += w;
+    return total + gap * @as(i32, @intCast(n - 1));
+}
+
+/// Gap between two links in the row, in DIPs. Wide enough that "Docs" and
+/// "GitHub" read as two destinations rather than one phrase.
+pub const link_gap_dip: f32 = 16;
 
 /// Button width for the given widest caption extent (physical pixels):
 /// the standard 88-DIP button, widened with 12 DIP of padding per side
@@ -443,6 +565,10 @@ fn run(
         whats_new_layout.accessoryHeight(scale)
     else
         0;
+    // Opening a URL goes through `App.openUrl`, so the app-less paths get no
+    // link row rather than a row of dead text.
+    const n_links: usize = if (app != null) @min(opts.links.len, max_links) else 0;
+    const link_gap = px(link_gap_dip, scale);
 
     // DPI-scaled dialog font, needed up front to measure the text. It is the
     // ramp's body — the same source `layoutFor` reports as `font_h`, so the
@@ -501,6 +627,9 @@ fn run(
     };
     var label_w: i32 = 0;
     var note_h: i32 = 0;
+    var links_w: i32 = 0;
+    var links_h: i32 = 0;
+    var link_widths: [max_links]i32 = @splat(0);
     {
         const hdc = w32.GetDC(null) orelse return fallback(owner, opts);
         defer _ = w32.ReleaseDC(null, hdc);
@@ -576,6 +705,25 @@ fn run(
             text_rect.right = @max(text_rect.right, text_rect.left + (r.right - r.left));
             note_h = r.bottom - r.top;
         }
+
+        // Each link is measured as the LABEL it renders as — the `<a>` runs
+        // are markup, not glyphs, so measuring the markup would reserve a slot
+        // half again too wide. A few pixels of slack per link: SysLink insets
+        // its text slightly and a hairline of clipping on "GitHub" would be
+        // the kind of defect that only shows up at one DPI.
+        for (opts.links[0..n_links], 0..) |link, i| {
+            var r: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+            _ = w32.DrawTextW(
+                hdc,
+                link.label.ptr,
+                @intCast(link.label.len),
+                &r,
+                w32.DT_CALCRECT | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
+            );
+            link_widths[i] = (r.right - r.left) + px(4, scale);
+            links_h = @max(links_h, r.bottom - r.top);
+        }
+        if (n_links > 0) links_w = linkRowWidth(link_widths[0..n_links], link_gap);
     }
     const l = layoutFor(
         scale,
@@ -585,6 +733,8 @@ fn run(
         notes_h,
         n_checks,
         note_h,
+        links_w,
+        links_h,
         has_input,
         has_cancel,
         has_alt,
@@ -711,6 +861,47 @@ fn run(
         );
     }
 
+    // Optional link row (T714). The SysLink class is not registered until
+    // something asks for it, and a create against an unregistered class fails
+    // silently — so the ICC bit is claimed here rather than at startup, beside
+    // the only control in this app that needs it.
+    if (n_links > 0) {
+        const icc = w32.INITCOMMONCONTROLSEX{
+            .dwSize = @sizeOf(w32.INITCOMMONCONTROLSEX),
+            .dwICC = w32.ICC_LINK_CLASS,
+        };
+        _ = w32.InitCommonControlsEx(&icc);
+        var rects: [max_links]w32.RECT = undefined;
+        const slots = packLinks(l.links, link_widths[0..n_links], link_gap, &rects);
+        self.links = opts.links[0..n_links];
+        for (opts.links[0..n_links], slots, 0..) |link, r, i| {
+            var markup_buf: [128]u16 = undefined;
+            const markup = linkAnchor(link.label, &markup_buf) orelse {
+                log.warn("confirm dialog: link {d} has a label the control cannot carry", .{i});
+                continue;
+            };
+            // A failed create is NOT fatal: the dialog still says what it
+            // says, which is what it did before it had links at all.
+            self.link_ctls[i] = w32.CreateWindowExW(
+                0,
+                w32.WC_LINK,
+                markup.ptr,
+                w32.WS_CHILD | w32.WS_VISIBLE_STYLE | w32.WS_TABSTOP,
+                r.left,
+                r.top,
+                r.right - r.left,
+                r.bottom - r.top,
+                hwnd,
+                @ptrFromInt(@as(usize, ID_LINK_BASE) + i),
+                hinstance,
+                null,
+            ) orelse {
+                log.warn("confirm dialog: link {d} could not be created", .{i});
+                continue;
+            };
+        }
+    }
+
     // Optional release-notes accessory (T625). A failed create is not fatal:
     // the confirmation still asks its question, which is the part that must
     // never be lost.
@@ -830,6 +1021,9 @@ fn run(
     }
     if (font) |f| {
         if (self.static) |s| _ = w32.SendMessageW(s, w32.WM_SETFONT, @intFromPtr(f), 1);
+        for (self.link_ctls[0..self.links.len]) |maybe| if (maybe) |lc| {
+            _ = w32.SendMessageW(lc, w32.WM_SETFONT, @intFromPtr(f), 1);
+        };
         if (self.edit) |e| _ = w32.SendMessageW(e, w32.WM_SETFONT, @intFromPtr(f), 1);
         for (self.check_btns[0..self.n_checks]) |maybe| if (maybe) |b| {
             _ = w32.SendMessageW(b, w32.WM_SETFONT, @intFromPtr(f), 1);
@@ -1049,6 +1243,9 @@ fn ownsHwnd(self: *const ConfirmDialog, hwnd: w32.HWND) bool {
     if (hwnd == self.hwnd or hwnd == self.ok_btn) return true;
     if (self.static) |s| if (hwnd == s) return true;
     if (self.note_static) |s| if (hwnd == s) return true;
+    for (self.link_ctls[0..self.links.len]) |maybe| if (maybe) |lc| {
+        if (hwnd == lc) return true;
+    };
     if (self.cancel_btn) |c| if (hwnd == c) return true;
     if (self.alt_btn) |a| if (hwnd == a) return true;
     if (self.edit) |e| if (hwnd == e) return true;
@@ -1064,6 +1261,25 @@ pub fn nextFocusIndex(cur: usize, stops: usize, backwards: bool) usize {
     if (stops == 0) return 0;
     if (backwards) return (cur + stops - 1) % stops;
     return (cur + 1) % stops;
+}
+
+/// Which link a control id names, or null when it names something else. Pure —
+/// the id space is `ID_LINK_BASE ..< ID_LINK_BASE + max_links`, chosen to miss
+/// IDOK/IDCANCEL, the checkbox rows at 100.. and `ID_ALT` at 200.
+pub fn linkIndexFor(id: usize, n_links: usize) ?usize {
+    if (id < ID_LINK_BASE) return null;
+    const i = id - ID_LINK_BASE;
+    if (i >= n_links) return null;
+    return i;
+}
+
+/// Follow an activated link. The dialog stays open: About is where the user
+/// looks things up, and closing it to answer "what is this build?" would take
+/// away the answer they were reading.
+fn openLink(self: *ConfirmDialog, id: usize) void {
+    const i = linkIndexFor(id, self.links.len) orelse return;
+    const app = self.app orelse return;
+    app.openUrl(self.links[i].url);
 }
 
 fn finish(self: *ConfirmDialog, result: Result) void {
@@ -1084,6 +1300,15 @@ fn handleKey(self: *ConfirmDialog, vk: u16) bool {
             // standard dialog convention (MB_DEFBUTTON2 preserved). Enter in
             // the text field commits, like any prompt.
             const focus = w32.GetFocus();
+            // ...but Enter on a focused LINK follows the link (T714). The
+            // control turns it into NM_RETURN, so this must not consume it —
+            // otherwise the one key a keyboard user would reach for to open
+            // the link dismisses the dialog instead.
+            if (focus) |f| {
+                for (self.link_ctls[0..self.links.len]) |maybe| if (maybe) |lc| {
+                    if (f == lc) return false;
+                };
+            }
             if (self.cancel_btn != null and focus == self.cancel_btn) {
                 self.finish(.cancel);
             } else if (self.alt_btn != null and focus == self.alt_btn) {
@@ -1096,13 +1321,18 @@ fn handleKey(self: *ConfirmDialog, vk: u16) bool {
             return true;
         },
         w32.VK_TAB => {
-            // Focus stops in order: checkboxes (top-down), field (when
-            // present), then the button row LEFT TO RIGHT as it is painted —
-            // the third button, OK, Cancel (T1390).
-            var stops: [4 + max_checks]w32.HWND = undefined;
+            // Focus stops in order: checkboxes (top-down), the link row
+            // (left to right, T714), field (when present), then the button row
+            // LEFT TO RIGHT as it is painted — the third button, OK, Cancel
+            // (T1390).
+            var stops: [4 + max_checks + max_links]w32.HWND = undefined;
             var n: usize = 0;
             for (self.check_btns[0..self.n_checks]) |maybe| if (maybe) |b| {
                 stops[n] = b;
+                n += 1;
+            };
+            for (self.link_ctls[0..self.links.len]) |maybe| if (maybe) |lc| {
+                stops[n] = lc;
                 n += 1;
             };
             if (self.edit) |e| {
@@ -1187,6 +1417,34 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
                 }
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+        // The link row (T714). SysLink reports an activated anchor here for
+        // BOTH mouse and keyboard, and asks for its text color here too.
+        w32.WM_NOTIFY => {
+            const nm: *const w32.NMHDR = @ptrFromInt(@as(usize, @bitCast(lparam)));
+            switch (nm.code) {
+                w32.NM_CLICK, w32.NM_RETURN => {
+                    self.openLink(nm.idFrom);
+                    return 0;
+                },
+                w32.NM_CUSTOMDRAW => {
+                    const cd: *const w32.NMCUSTOMDRAW_HEAD =
+                        @ptrFromInt(@as(usize, @bitCast(lparam)));
+                    // A SysLink draws its anchors in COLOR_HOTLIGHT, a fixed
+                    // system blue that does not follow the app theme — on this
+                    // dialog's dark surface it is a link you have to hunt for.
+                    // The panel's accent is the color every other link in this
+                    // app uses (see `whats_new_notes.zig`) and it carries a
+                    // 3:1 floor against the surface it is drawn on.
+                    if (cd.dwDrawStage == w32.CDDS_PREPAINT) return w32.CDRF_NOTIFYITEMDRAW;
+                    if (cd.dwDrawStage == w32.CDDS_ITEMPREPAINT) {
+                        _ = w32.SetTextColor(cd.hdc, system_colors.cr(self.pal().accent));
+                        return w32.CDRF_NEWFONT;
+                    }
+                    return w32.CDRF_DODEFAULT;
+                },
+                else => return w32.DefWindowProcW(hwnd, msg, wparam, lparam),
+            }
         },
         w32.WM_CLOSE => {
             // ✕ dismisses: cancel for confirms, ok for OK-only boxes.
@@ -1277,7 +1535,7 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
 const testing = std.testing;
 
 test "layoutFor: controls nest inside the client area at 1.0 scale" {
-    const l = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, false, 88);
+    const l = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
     try testing.expect(l.client_w > 0 and l.client_h > 0);
     for ([_]w32.RECT{ l.icon, l.text, l.ok, l.cancel }) |r| {
         try testing.expect(r.left >= 0 and r.top >= 0);
@@ -1286,47 +1544,47 @@ test "layoutFor: controls nest inside the client area at 1.0 scale" {
 }
 
 test "layoutFor: buttons right-aligned, OK left of Cancel, no overlap" {
-    const l = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, false, 88);
+    const l = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
     try testing.expect(l.ok.right < l.cancel.left);
     try testing.expectEqual(l.ok.top, l.cancel.top);
     try testing.expectEqual(l.cancel.right, l.client_w - 16);
 }
 
 test "layoutFor: ok-only puts OK in the rightmost slot, no cancel rect" {
-    const l = layoutFor(1.0, 300, 40, false, 0, 0, 0, false, false, false, 88);
+    const l = layoutFor(1.0, 300, 40, false, 0, 0, 0, 0, 0, false, false, false, 88);
     try testing.expectEqual(l.ok.right, l.client_w - 16);
     try testing.expectEqual(@as(i32, 0), l.cancel.right - l.cancel.left);
     try testing.expectEqual(@as(i32, 0), l.icon.right - l.icon.left);
 }
 
 test "layoutFor: text starts right of the icon with a gap" {
-    const l = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, false, 88);
+    const l = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
     try testing.expect(l.text.left >= l.icon.right + 12);
     // Without an icon the text hugs the margin.
-    const l2 = layoutFor(1.0, 300, 40, false, 0, 0, 0, false, true, false, 88);
+    const l2 = layoutFor(1.0, 300, 40, false, 0, 0, 0, 0, 0, false, true, false, 88);
     try testing.expectEqual(@as(i32, 16), l2.text.left);
 }
 
 test "layoutFor: short text is vertically centered against the icon" {
-    const l = layoutFor(1.0, 300, 16, true, 0, 0, 0, false, true, false, 88);
+    const l = layoutFor(1.0, 300, 16, true, 0, 0, 0, 0, 0, false, true, false, 88);
     // Icon (32px) taller than text (16px): text drops to center.
     try testing.expect(l.text.top > l.icon.top);
     try testing.expectEqual(l.icon.top, 16);
     // Text (60px) taller than icon: icon centers instead.
-    const l2 = layoutFor(1.0, 300, 60, true, 0, 0, 0, false, true, false, 88);
+    const l2 = layoutFor(1.0, 300, 60, true, 0, 0, 0, 0, 0, false, true, false, 88);
     try testing.expect(l2.icon.top > l2.text.top);
 }
 
 test "layoutFor: narrow text still fits the button row" {
-    const l = layoutFor(1.0, 40, 20, false, 0, 0, 0, false, true, false, 88);
+    const l = layoutFor(1.0, 40, 20, false, 0, 0, 0, 0, 0, false, true, false, 88);
     // Two 88px buttons + 8px gap + 2*16 margins = 216, floored at 280.
     try testing.expect(l.client_w >= 280);
     try testing.expect(l.ok.left >= 16);
 }
 
 test "layoutFor: scales with DPI" {
-    const l1 = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, false, 88);
-    const l2 = layoutFor(2.0, 600, 80, true, 0, 0, 0, false, true, false, 176);
+    const l1 = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
+    const l2 = layoutFor(2.0, 600, 80, true, 0, 0, 0, 0, 0, false, true, false, 176);
     try testing.expectEqual(l1.client_w * 2, l2.client_w);
     try testing.expectEqual(l1.client_h * 2, l2.client_h);
     try testing.expectEqual(l1.ok.left * 2, l2.ok.left);
@@ -1345,7 +1603,7 @@ test "layoutFor: a third button sits LEFT of OK, Cancel stays last" {
     // The remote-close confirmation's row (T1390): [Disconnect] [Close]
     // [Cancel], right-aligned, with the dismissive answer in the trailing slot
     // this dialog has always put it in.
-    const l = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, true, 88);
+    const l = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, true, 88);
     try testing.expect(l.alt.right <= l.ok.left);
     try testing.expect(l.ok.right <= l.cancel.left);
     // All three share the row and the width.
@@ -1357,8 +1615,8 @@ test "layoutFor: a third button sits LEFT of OK, Cancel stays last" {
 test "layoutFor: a third button does not move OK or Cancel" {
     // A two-button caller's layout must be byte-identical, so adding the
     // button cannot regress every other confirmation in the app.
-    const two = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, false, 88);
-    const three = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, true, 88);
+    const two = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
+    const three = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, true, 88);
     try testing.expectEqual(two.ok.left, three.ok.left);
     try testing.expectEqual(two.cancel.left, three.cancel.left);
     try testing.expectEqual(two.client_h, three.client_h);
@@ -1366,7 +1624,7 @@ test "layoutFor: a third button does not move OK or Cancel" {
 
 test "layoutFor: a narrow dialog widens to fit three buttons" {
     // Three 88px buttons + two 8px gaps + 2*16 margins = 312 > the 280 floor.
-    const l = layoutFor(1.0, 40, 20, false, 0, 0, 0, false, true, true, 88);
+    const l = layoutFor(1.0, 40, 20, false, 0, 0, 0, 0, 0, false, true, true, 88);
     try testing.expect(l.alt.left >= 16);
     try testing.expectEqual(@as(i32, 312), l.client_w);
 }
@@ -1374,7 +1632,7 @@ test "layoutFor: a narrow dialog widens to fit three buttons" {
 test "layoutFor: a third button without a Cancel is ignored" {
     // Two ways to say yes and no way to say no is not a choice, so the third
     // button is only ever offered alongside a Cancel.
-    const l = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, false, true, 88);
+    const l = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, false, true, 88);
     try testing.expectEqual(@as(i32, 0), l.alt.right - l.alt.left);
 }
 
@@ -1388,7 +1646,7 @@ test "defaultResultFor: the third button outranks OK and Cancel" {
 }
 
 test "layoutFor: wide buttons widen the row and never overlap" {
-    const l = layoutFor(1.0, 40, 20, false, 0, 0, 0, false, true, false, 124);
+    const l = layoutFor(1.0, 40, 20, false, 0, 0, 0, 0, 0, false, true, false, 124);
     try testing.expectEqual(@as(i32, 124), l.ok.right - l.ok.left);
     try testing.expectEqual(@as(i32, 124), l.cancel.right - l.cancel.left);
     try testing.expect(l.ok.right < l.cancel.left);
@@ -1400,13 +1658,13 @@ test "layoutFor: wide buttons widen the row and never overlap" {
 // --- Prompt field (T176) -----------------------------------------------
 
 test "layoutFor: no input means no input rect and no extra height" {
-    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, false, 88);
+    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
     try testing.expectEqual(@as(i32, 0), plain.input.right - plain.input.left);
     try testing.expectEqual(@as(i32, 0), plain.input.bottom - plain.input.top);
 }
 
 test "layoutFor: the field sits between the message and the buttons" {
-    const l = layoutFor(1.0, 300, 40, true, 0, 0, 0, true, true, false, 88);
+    const l = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, true, true, false, 88);
     try testing.expect(l.input.top >= l.text.bottom);
     try testing.expect(l.input.top >= l.icon.bottom - 1);
     try testing.expect(l.ok.top >= l.input.bottom);
@@ -1422,8 +1680,8 @@ test "layoutFor: the field sits between the message and the buttons" {
 }
 
 test "layoutFor: the field's row is what makes a prompt taller" {
-    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, false, 88);
-    const with = layoutFor(1.0, 300, 40, true, 0, 0, 0, true, true, false, 88);
+    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
+    const with = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, true, true, false, 88);
     // 12 gap + 26 field.
     try testing.expectEqual(plain.client_h + 38, with.client_h);
     // The message band above it does not move.
@@ -1434,14 +1692,14 @@ test "layoutFor: the field's row is what makes a prompt taller" {
 test "layoutFor: a prompt is never too narrow to type in" {
     // A two-word message would otherwise leave a 280-wide dialog whose field
     // is barely wider than the button row.
-    const l = layoutFor(1.0, 40, 20, false, 0, 0, 0, true, true, false, 88);
+    const l = layoutFor(1.0, 40, 20, false, 0, 0, 0, 0, 0, true, true, false, 88);
     try testing.expect(l.client_w >= 380);
     try testing.expect(l.input.right - l.input.left >= 340);
 }
 
 test "layoutFor: the field scales with DPI like everything else" {
-    const a = layoutFor(1.0, 300, 40, true, 0, 0, 0, true, true, false, 88);
-    const b = layoutFor(2.0, 600, 80, true, 0, 0, 0, true, true, false, 176);
+    const a = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, true, true, false, 88);
+    const b = layoutFor(2.0, 600, 80, true, 0, 0, 0, 0, 0, true, true, false, 176);
     try testing.expectEqual(a.client_h * 2, b.client_h);
     try testing.expectEqual(a.input.top * 2, b.input.top);
     try testing.expectEqual((a.input.bottom - a.input.top) * 2, b.input.bottom - b.input.top);
@@ -1450,7 +1708,7 @@ test "layoutFor: the field scales with DPI like everything else" {
 // --- Checkbox rows (T870) ----------------------------------------------
 
 test "layoutFor: no checks means no check rects and no extra height" {
-    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, false, 88);
+    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
     for (plain.checks) |r| {
         try testing.expectEqual(@as(i32, 0), r.right - r.left);
         try testing.expectEqual(@as(i32, 0), r.bottom - r.top);
@@ -1458,7 +1716,7 @@ test "layoutFor: no checks means no check rects and no extra height" {
 }
 
 test "layoutFor: check rows sit between the message and the buttons" {
-    const l = layoutFor(1.0, 300, 40, true, 0, 2, 0, false, true, false, 88);
+    const l = layoutFor(1.0, 300, 40, true, 0, 2, 0, 0, 0, false, true, false, 88);
     try testing.expect(l.checks[0].top >= l.text.bottom);
     try testing.expect(l.checks[1].top >= l.checks[0].bottom);
     try testing.expect(l.ok.top >= l.checks[1].bottom);
@@ -1475,9 +1733,9 @@ test "layoutFor: check rows sit between the message and the buttons" {
 }
 
 test "layoutFor: each check row adds its height, the block adds one gap" {
-    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, false, 88);
-    const one = layoutFor(1.0, 300, 40, true, 0, 1, 0, false, true, false, 88);
-    const two = layoutFor(1.0, 300, 40, true, 0, 2, 0, false, true, false, 88);
+    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
+    const one = layoutFor(1.0, 300, 40, true, 0, 1, 0, 0, 0, false, true, false, 88);
+    const two = layoutFor(1.0, 300, 40, true, 0, 2, 0, 0, 0, false, true, false, 88);
     // 12 gap + 20 row.
     try testing.expectEqual(plain.client_h + 32, one.client_h);
     // +4 row gap + 20 row.
@@ -1487,14 +1745,14 @@ test "layoutFor: each check row adds its height, the block adds one gap" {
 }
 
 test "layoutFor: checks stack above the input field when both are present" {
-    const l = layoutFor(1.0, 300, 40, true, 0, 2, 0, true, true, false, 88);
+    const l = layoutFor(1.0, 300, 40, true, 0, 2, 0, 0, 0, true, true, false, 88);
     try testing.expect(l.input.top >= l.checks[1].bottom);
     try testing.expect(l.ok.top >= l.input.bottom);
 }
 
 test "layoutFor: check rows scale with DPI" {
-    const a = layoutFor(1.0, 300, 40, true, 0, 2, 0, false, true, false, 88);
-    const b = layoutFor(2.0, 600, 80, true, 0, 2, 0, false, true, false, 176);
+    const a = layoutFor(1.0, 300, 40, true, 0, 2, 0, 0, 0, false, true, false, 88);
+    const b = layoutFor(2.0, 600, 80, true, 0, 2, 0, 0, 0, false, true, false, 176);
     try testing.expectEqual(a.client_h * 2, b.client_h);
     try testing.expectEqual(a.checks[0].top * 2, b.checks[0].top);
     try testing.expectEqual((a.checks[1].bottom - a.checks[1].top) * 2, b.checks[1].bottom - b.checks[1].top);
@@ -1503,13 +1761,13 @@ test "layoutFor: check rows scale with DPI" {
 // --- Secondary note (T600) ---------------------------------------------
 
 test "layoutFor: no note means no note rect and no extra height" {
-    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, false, 88);
+    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
     try testing.expectEqual(@as(i32, 0), plain.note.right - plain.note.left);
     try testing.expectEqual(@as(i32, 0), plain.note.bottom - plain.note.top);
 }
 
 test "layoutFor: the note sits between the checks and the buttons" {
-    const l = layoutFor(1.0, 300, 40, true, 0, 2, 32, false, true, false, 88);
+    const l = layoutFor(1.0, 300, 40, true, 0, 2, 32, 0, 0, false, true, false, 88);
     try testing.expect(l.note.top >= l.checks[1].bottom);
     try testing.expect(l.ok.top >= l.note.bottom);
     // Aligned with the message column, running to the trailing margin like
@@ -1521,8 +1779,8 @@ test "layoutFor: the note sits between the checks and the buttons" {
 }
 
 test "layoutFor: the note band is what makes a disclosing dialog taller" {
-    const plain = layoutFor(1.0, 300, 40, true, 0, 2, 0, false, true, false, 88);
-    const with = layoutFor(1.0, 300, 40, true, 0, 2, 32, false, true, false, 88);
+    const plain = layoutFor(1.0, 300, 40, true, 0, 2, 0, 0, 0, false, true, false, 88);
+    const with = layoutFor(1.0, 300, 40, true, 0, 2, 32, 0, 0, false, true, false, 88);
     // 12 gap + the measured 32.
     try testing.expectEqual(plain.client_h + 44, with.client_h);
     // Nothing above it moves.
@@ -1531,15 +1789,15 @@ test "layoutFor: the note band is what makes a disclosing dialog taller" {
 }
 
 test "layoutFor: the note stacks above the input field when both are present" {
-    const l = layoutFor(1.0, 300, 40, true, 0, 1, 28, true, true, false, 88);
+    const l = layoutFor(1.0, 300, 40, true, 0, 1, 28, 0, 0, true, true, false, 88);
     try testing.expect(l.note.top >= l.checks[0].bottom);
     try testing.expect(l.input.top >= l.note.bottom);
     try testing.expect(l.ok.top >= l.input.bottom);
 }
 
 test "layoutFor: the note scales with DPI" {
-    const a = layoutFor(1.0, 300, 40, true, 0, 2, 30, false, true, false, 88);
-    const b = layoutFor(2.0, 600, 80, true, 0, 2, 60, false, true, false, 176);
+    const a = layoutFor(1.0, 300, 40, true, 0, 2, 30, 0, 0, false, true, false, 88);
+    const b = layoutFor(2.0, 600, 80, true, 0, 2, 60, 0, 0, false, true, false, 176);
     try testing.expectEqual(a.client_h * 2, b.client_h);
     try testing.expectEqual(a.note.top * 2, b.note.top);
     try testing.expectEqual((a.note.bottom - a.note.top) * 2, b.note.bottom - b.note.top);
@@ -1548,7 +1806,7 @@ test "layoutFor: the note scales with DPI" {
 test "layoutFor: no notes means no notes rect and a byte-identical layout (T625)" {
     // The accessory is opt-in, and every dialog that never asks for one must
     // lay out exactly as it did before the band existed.
-    const plain = layoutFor(1.0, 300, 40, true, 0, 2, 32, true, true, false, 88);
+    const plain = layoutFor(1.0, 300, 40, true, 0, 2, 32, 0, 0, true, true, false, 88);
     try testing.expectEqual(@as(i32, 0), plain.notes.right - plain.notes.left);
     try testing.expectEqual(@as(i32, 0), plain.notes.bottom - plain.notes.top);
     try testing.expectEqual(@as(i32, 0), plain.notes.top);
@@ -1556,7 +1814,7 @@ test "layoutFor: no notes means no notes rect and a byte-identical layout (T625)
 
 test "layoutFor: the notes band sits between the message and the buttons (T625)" {
     const h = whats_new_layout.accessoryHeight(1.0);
-    const l = layoutFor(1.0, 300, 40, true, h, 0, 0, false, true, false, 88);
+    const l = layoutFor(1.0, 300, 40, true, h, 0, 0, 0, 0, false, true, false, 88);
     try testing.expect(l.notes.top >= l.text.bottom);
     try testing.expect(l.ok.top >= l.notes.bottom);
     // It spans the text column to the trailing margin, like the check rows
@@ -1569,8 +1827,8 @@ test "layoutFor: the notes band sits between the message and the buttons (T625)"
 
 test "layoutFor: the notes band is what makes the update dialog taller (T625)" {
     const h = whats_new_layout.accessoryHeight(1.0);
-    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, false, 88);
-    const with = layoutFor(1.0, 300, 40, true, h, 0, 0, false, true, false, 88);
+    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
+    const with = layoutFor(1.0, 300, 40, true, h, 0, 0, 0, 0, false, true, false, 88);
     // 12 gap + the fixed band.
     try testing.expectEqual(plain.client_h + 12 + h, with.client_h);
     // Nothing above it moves.
@@ -1580,7 +1838,7 @@ test "layoutFor: the notes band is what makes the update dialog taller (T625)" {
 
 test "layoutFor: the notes band pushes the checks, note and field down (T625)" {
     const h = whats_new_layout.accessoryHeight(1.0);
-    const l = layoutFor(1.0, 300, 40, true, h, 2, 28, true, true, false, 88);
+    const l = layoutFor(1.0, 300, 40, true, h, 2, 28, 0, 0, true, true, false, 88);
     try testing.expect(l.checks[0].top >= l.notes.bottom);
     try testing.expect(l.note.top >= l.checks[1].bottom);
     try testing.expect(l.input.top >= l.note.bottom);
@@ -1591,7 +1849,7 @@ test "layoutFor: notes get a width floor wide enough for prose (T625)" {
     const h = whats_new_layout.accessoryHeight(1.0);
     // A two-word message would otherwise leave the notes a column of single
     // words: the accessory takes the widest of the three floors.
-    const l = layoutFor(1.0, 60, 20, true, h, 0, 0, false, true, false, 88);
+    const l = layoutFor(1.0, 60, 20, true, h, 0, 0, 0, 0, false, true, false, 88);
     try testing.expectEqual(@as(i32, 460), l.client_w);
     // 460 client, less the margins and the warning icon's column: prose
     // width, not a two-word gutter.
@@ -1601,7 +1859,7 @@ test "layoutFor: notes get a width floor wide enough for prose (T625)" {
 test "layoutFor: the notes band scales with DPI (T625)" {
     for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |scale| {
         const h = whats_new_layout.accessoryHeight(scale);
-        const l = layoutFor(scale, @intFromFloat(300 * scale), @intFromFloat(40 * scale), true, h, 0, 0, false, true, false, @intFromFloat(88 * scale));
+        const l = layoutFor(scale, @intFromFloat(300 * scale), @intFromFloat(40 * scale), true, h, 0, 0, 0, 0, false, true, false, @intFromFloat(88 * scale));
         // The band is the DPI-scaled height, seated below the message and
         // clear of the buttons at every scale the app runs at.
         try testing.expectEqual(h, l.notes.bottom - l.notes.top);
@@ -1610,7 +1868,7 @@ test "layoutFor: the notes band scales with DPI (T625)" {
         try testing.expect(l.notes.bottom <= l.client_h);
         try testing.expect(l.notes.right <= l.client_w);
         // And the whole dialog grew by the band plus its gap, never by less.
-        const plain = layoutFor(scale, @intFromFloat(300 * scale), @intFromFloat(40 * scale), true, 0, 0, 0, false, true, false, @intFromFloat(88 * scale));
+        const plain = layoutFor(scale, @intFromFloat(300 * scale), @intFromFloat(40 * scale), true, 0, 0, 0, 0, 0, false, true, false, @intFromFloat(88 * scale));
         // And the dialog grew by exactly the band plus the gap above it —
         // the message is the taller half of the content band here, so that
         // gap is readable straight off the two rects.
@@ -1622,8 +1880,8 @@ test "layoutFor: the notes band scales with DPI (T625)" {
 }
 
 test "layoutFor: a check count beyond capacity is clamped, not overflowed" {
-    const l = layoutFor(1.0, 300, 40, true, 0, max_checks + 3, 0, false, true, false, 88);
-    const capped = layoutFor(1.0, 300, 40, true, 0, max_checks, 0, false, true, false, 88);
+    const l = layoutFor(1.0, 300, 40, true, 0, max_checks + 3, 0, 0, 0, false, true, false, 88);
+    const capped = layoutFor(1.0, 300, 40, true, 0, max_checks, 0, 0, 0, false, true, false, 88);
     try testing.expectEqual(capped.client_h, l.client_h);
 }
 
@@ -1645,7 +1903,7 @@ test "nextFocusIndex: cycles both ways and wraps" {
 
 test "layoutFor: the font comes from the ramp (T313)" {
     inline for (.{ @as(f32, 1.0), @as(f32, 1.25), @as(f32, 1.5), @as(f32, 2.0) }) |scale| {
-        const l = layoutFor(scale, 300, 40, true, 0, 0, 0, false, true, false, 88);
+        const l = layoutFor(scale, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
         try testing.expectEqual(type_ramp.body(scale).height, l.font_h);
         // A confirm's message is body text, never a subtitle and never a
         // caption — one role, so it reads at the same size as the chooser it
@@ -1653,5 +1911,137 @@ test "layoutFor: the font comes from the ramp (T313)" {
         try testing.expect(l.font_h > type_ramp.caption(scale).height);
         try testing.expect(l.font_h < type_ramp.subtitle(scale).height);
     }
-    try testing.expectEqual(@as(i32, 14), layoutFor(1.0, 300, 40, true, 0, 0, 0, false, true, false, 88).font_h);
+    try testing.expectEqual(@as(i32, 14), layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88).font_h);
+}
+
+// ---------------------------------------------------------------------
+// The link row (T714)
+// ---------------------------------------------------------------------
+
+fn wstr(comptime s: []const u8) []const u16 {
+    return std.unicode.utf8ToUtf16LeStringLiteral(s);
+}
+
+test "linkAnchor: wraps a label in the SysLink markup" {
+    var buf: [64]u16 = undefined;
+    const m = linkAnchor(wstr("Docs"), &buf).?;
+    try testing.expectEqualSlices(u16, wstr("<a>Docs</a>"), m);
+    // Null-terminated: it is handed straight to CreateWindowExW.
+    try testing.expectEqual(@as(u16, 0), m.ptr[m.len]);
+}
+
+test "linkAnchor: refuses a label the control would reinterpret" {
+    var buf: [64]u16 = undefined;
+    // A `&`, `<` or `>` in a label would be swallowed or reopen the markup.
+    // No link beats a mangled one.
+    try testing.expect(linkAnchor(wstr("Docs & FAQ"), &buf) == null);
+    try testing.expect(linkAnchor(wstr("a<b"), &buf) == null);
+    try testing.expect(linkAnchor(wstr("a>b"), &buf) == null);
+}
+
+test "linkAnchor: refuses a buffer that cannot hold the markup" {
+    var small: [8]u16 = undefined;
+    try testing.expect(linkAnchor(wstr("Release notes"), &small) == null);
+}
+
+test "linkRowWidth: labels plus the gaps between them" {
+    try testing.expectEqual(@as(i32, 0), linkRowWidth(&.{}, 16));
+    try testing.expectEqual(@as(i32, 40), linkRowWidth(&.{40}, 16));
+    try testing.expectEqual(@as(i32, 96), linkRowWidth(&.{ 40, 40 }, 16));
+    try testing.expectEqual(@as(i32, 152), linkRowWidth(&.{ 40, 40, 40 }, 16));
+}
+
+test "packLinks: left to right from the band, gapped, never overlapping" {
+    const band: w32.RECT = .{ .left = 16, .top = 100, .right = 300, .bottom = 118 };
+    var out: [max_links]w32.RECT = undefined;
+    const rects = packLinks(band, &.{ 60, 40, 30 }, 16, &out);
+    try testing.expectEqual(@as(usize, 3), rects.len);
+    try testing.expectEqual(@as(i32, 16), rects[0].left);
+    try testing.expectEqual(@as(i32, 76), rects[0].right);
+    try testing.expectEqual(@as(i32, 92), rects[1].left);
+    try testing.expectEqual(@as(i32, 132), rects[1].right);
+    try testing.expectEqual(@as(i32, 148), rects[2].left);
+    for (rects) |r| {
+        try testing.expectEqual(band.top, r.top);
+        try testing.expectEqual(band.bottom, r.bottom);
+    }
+}
+
+test "packLinks: the row fits the width layoutFor was given" {
+    // The two halves of the same arithmetic must agree, or the dialog reserves
+    // a band the row runs out of.
+    const widths = [_]i32{ 84, 48, 36, 52 };
+    const row_w = linkRowWidth(&widths, 16);
+    const band: w32.RECT = .{ .left = 16, .top = 0, .right = 16 + row_w, .bottom = 18 };
+    var out: [max_links]w32.RECT = undefined;
+    const rects = packLinks(band, &widths, 16, &out);
+    try testing.expectEqual(band.right, rects[rects.len - 1].right);
+}
+
+test "packLinks: caps at max_links" {
+    const band: w32.RECT = .{ .left = 0, .top = 0, .right = 500, .bottom = 18 };
+    var out: [max_links]w32.RECT = undefined;
+    const rects = packLinks(band, &.{ 10, 10, 10, 10, 10, 10 }, 8, &out);
+    try testing.expectEqual(@as(usize, max_links), rects.len);
+}
+
+test "layoutFor: no links is byte-identical to before the row existed" {
+    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
+    try testing.expectEqual(@as(i32, 0), plain.links.right - plain.links.left);
+    try testing.expectEqual(@as(i32, 0), plain.links.bottom - plain.links.top);
+}
+
+test "layoutFor: the link row sits between the message and the buttons" {
+    const l = layoutFor(1.0, 300, 40, true, 0, 0, 0, 180, 18, false, true, false, 88);
+    try testing.expect(l.links.top > l.text.bottom);
+    try testing.expect(l.links.bottom < l.ok.top);
+    try testing.expectEqual(@as(i32, 18), l.links.bottom - l.links.top);
+    // Aligned with the message column, not with the icon.
+    try testing.expectEqual(l.text.left, l.links.left);
+    try testing.expect(l.links.bottom <= l.client_h);
+}
+
+test "layoutFor: the link row grows the dialog rather than wrapping" {
+    const plain = layoutFor(1.0, 300, 40, true, 0, 0, 0, 0, 0, false, true, false, 88);
+    const with = layoutFor(1.0, 300, 40, true, 0, 0, 0, 180, 18, false, true, false, 88);
+    try testing.expect(with.client_h > plain.client_h);
+    try testing.expectEqual(plain.client_h + 12 + 18, with.client_h);
+    // A row wider than the message widens the dialog: a "GitHub" broken over
+    // two lines is a defect, not a narrower dialog.
+    const wide = layoutFor(1.0, 100, 20, false, 0, 0, 0, 600, 18, false, true, false, 88);
+    try testing.expect(wide.client_w >= 16 + 600 + 16);
+    try testing.expect(wide.links.right - wide.links.left >= 600);
+}
+
+test "layoutFor: links coexist with every other accessory" {
+    const l = layoutFor(1.0, 300, 40, true, 120, 2, 28, 180, 18, true, true, false, 88);
+    // Reading order down the dialog: message, notes, checks, fine print,
+    // links, field, buttons — each strictly below the one before it.
+    try testing.expect(l.notes.bottom <= l.checks[0].top);
+    try testing.expect(l.checks[1].bottom <= l.note.top);
+    try testing.expect(l.note.bottom <= l.links.top);
+    try testing.expect(l.links.bottom <= l.input.top);
+    try testing.expect(l.input.bottom <= l.ok.top);
+    try testing.expect(l.ok.bottom <= l.client_h);
+}
+
+test "layoutFor: the link band scales with DPI" {
+    const a = layoutFor(1.0, 300, 40, true, 0, 0, 0, 180, 18, false, true, false, 88);
+    const b = layoutFor(2.0, 600, 80, true, 0, 0, 0, 360, 36, false, true, false, 176);
+    try testing.expectEqual(a.links.top * 2, b.links.top);
+    try testing.expectEqual((a.links.bottom - a.links.top) * 2, b.links.bottom - b.links.top);
+}
+
+test "linkIndexFor: the link id space misses every other control's" {
+    try testing.expectEqual(@as(?usize, 0), linkIndexFor(ID_LINK_BASE, 4));
+    try testing.expectEqual(@as(?usize, 3), linkIndexFor(ID_LINK_BASE + 3, 4));
+    // Out of the row: a build with two links must not answer for a fourth id.
+    try testing.expectEqual(@as(?usize, null), linkIndexFor(ID_LINK_BASE + 2, 2));
+    try testing.expectEqual(@as(?usize, null), linkIndexFor(ID_LINK_BASE + max_links, max_links));
+    // The ids every other control in this dialog owns.
+    try testing.expectEqual(@as(?usize, null), linkIndexFor(@intCast(w32.IDOK), 4));
+    try testing.expectEqual(@as(?usize, null), linkIndexFor(@intCast(w32.IDCANCEL), 4));
+    try testing.expectEqual(@as(?usize, null), linkIndexFor(ID_ALT, 4));
+    try testing.expectEqual(@as(?usize, null), linkIndexFor(100, 4));
+    try testing.expectEqual(@as(?usize, null), linkIndexFor(100 + max_checks - 1, 4));
 }

@@ -167,6 +167,12 @@ test {
     // no-OS-imports deal.
     _ = @import("apprt/win32/image_freshness.zig");
 
+    // Pure win32 About-box link model (T714): the one place this fork's URLs
+    // live, and which of them a given build earns — a tip build has no release
+    // page, an unstamped build has no commit page. Every lane, same
+    // no-OS-imports deal.
+    _ = @import("apprt/win32/about_links.zig");
+
     // Pure win32 window-placement memory parse/format/clamp (T85), same
     // no-OS-imports deal.
     _ = @import("apprt/win32/window_memory.zig");
