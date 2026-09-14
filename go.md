@@ -466,6 +466,22 @@ Concretely, in order, with no stops in between:
    `scripts\guard-due.ps1` is the whole cost of closing the same gap for the
    next harness that grows one.
 
+   **One of those rows is a whole family: `harness-floor`** (T725). The audits
+   that sweep `test\win32\` for harness defects - exit codes, skips, verdicts,
+   isolation, capture - are a single command now:
+
+   ```
+   powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness
+   ```
+
+   It is not part of `-Lane all` (about fifteen minutes of source scanning whose
+   answer can only change when the test sources change), so the guard row is
+   what makes it standing: touch any script under `test\win32\` and the floor is
+   DUE, and step 6's `validate` refuses the commit until it has been run green.
+   A member that is red against a filed task is reported as PENDING and does not
+   fail it; anything else red does. The set, and why each audit is in it, is
+   `scripts\lib\HarnessFloor.ps1`; the story is in `docs/claude/testing.md`.
+
    **Two lines you may see there mean something different** (T1189).
    `GUARD DUE (advisory) ...` is a row whose question this box cannot answer at
    all - today that is `release-artifacts-packaging`, which needs wixl and

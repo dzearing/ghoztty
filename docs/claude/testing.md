@@ -622,6 +622,48 @@ been asked. Acceptance: `test\win32\guard-due.ps1`, whose sections D and E
 measure the two forces against each other (the same staleness must fail
 `validate` and must not fail `claim`).
 
+**The audits above are one command, and one guard row** (T725). Every sweep in
+this section — exit-code, skip, verdict, asserted-nothing, body-complete,
+capture, resolve, reach, isolation, foreground — is a static read of the suite's
+own source, and each one used to run only when the turn that wrote it remembered
+to. That is not a hypothetical cost: on 2026-09-14 `skip-visibility.ps1` was red
+against **13** unlisted violators with a pending list naming two (T1123), and
+`asserted-nothing.ps1` was two over its unarmed-stamp ratchet (T1568). Both had
+been red for weeks with every floor run green.
+
+```powershell
+powershell -NoProfile -File scripts\harness-floor.ps1 -List   # the set, and why each is in it
+powershell -NoProfile -File scripts\harness-floor.ps1         # run it (~15 min)
+powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness   # the same, under the lane watchdog
+```
+
+- **The set lives in `scripts\lib\HarnessFloor.ps1`**, one row per audit with
+  the property it holds. Membership is a line: a static sweep over source or a
+  pure-logic check of a shared gate — no GUI, no app launch, no `zig build`
+  (which is why `test-filter-guard.ps1` is excluded and why the acceptance
+  asserts that it stays excluded). That line is what keeps the whole set to
+  fifteen minutes.
+- **It runs them through `suite-run.ps1`**, not a scorer of its own: per-script
+  timeouts, the verdict contract, the leak sweep and the re-run-red-alone pass
+  are already there, and a second implementation of any of them is a second
+  thing free to disagree about what green means.
+- **A red audit somebody has already filed is PENDING**, listed against its task
+  in `$HARNESS_FLOOR_PENDING`: reported on every run, not a floor failure.
+  Anything else red IS. The list may only shrink — an entry whose audit has gone
+  green fails as STALE, which is what stops a baseline outliving the work it was
+  a baseline for.
+- **What makes it STANDING is the guard row, not the lane.** `harness-floor`
+  covers `test\win32\*.ps1` and `test\win32\lib\*.ps1`, so touching any script
+  here puts the floor DUE and `parity-tasks.ps1 validate` refuses the commit
+  until it has been run green. `-Lane harness` is therefore deliberately NOT in
+  `-Lane all`: the answer can only change when the sources change, guard-due
+  already detects exactly that, and paying fifteen minutes on every floor run
+  would buy nothing.
+- Acceptance: `test\win32\harness-floor.ps1` (guard `harness-floor-teeth`),
+  which plants summary rows to prove each verdict — unexcused red, excused red,
+  stale exception, an audit that never ran, an exception for an audit not in the
+  set — and then runs one cheap audit all the way through for real.
+
 **And the SUITE itself is one command now** (T361). The stamp above is per
 harness; nothing could ever run the whole of `test\win32\` — 241 top-level
 scripts, 136 of which drive a GUI — so a change to a shared harness library

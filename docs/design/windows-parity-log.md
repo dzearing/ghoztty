@@ -28672,3 +28672,53 @@ fits the original report as well as any other theory.
 Four lanes ALL PASS, update-check ALL PASS (26), update-apply ALL PASS (52)
 after its two log regexes moved with the format, P1/P2/P3 ALL PASS, every
 non-advisory guard row re-stamped.
+
+## 2026-09-14 - The audits that watch the test suite are a floor now, and two of them were red (T725)
+
+`test\win32\` holds a family of scripts whose subject is the harness rather than
+the product: does every acceptance script score itself, exit the code its
+verdict implies, say out loud when it skipped something, isolate its endpoints,
+keep what the app said on its way out. Each was written by the turn that had
+just been burned by the trap it checks, and each then ran only when somebody
+remembered it. There was no harness floor, so a new acceptance script met those
+rules one red run at a time - and an audit that went red simply stayed red.
+
+Two were, and nobody knew. `skip-visibility.ps1` was `1 FAILURE(S)` against
+**13** unlisted violators with a pending list naming two (folded into T1123,
+open since 2026-08-22). `asserted-nothing.ps1` was two over its unarmed-stamp
+ratchet - eight scripts tell guard-due their covered files are proven from a
+body that may have unwound early, against a ceiling of six (T1568, filed here).
+Both had been red for weeks with every floor run green.
+
+So the family is one command: `scripts\harness-floor.ps1`, or
+`floor-lane.ps1 -Lane harness` for the same under the lane watchdog. The set of
+23 lives in `scripts\lib\HarnessFloor.ps1`, one row per audit with the property
+it holds, and membership is a line - a static sweep over source or a pure-logic
+check of a shared gate, no GUI, no app launch, no `zig build`. That is what
+keeps the whole thing to about fifteen minutes, and `test-filter-guard.ps1` is
+excluded by it (its subject IS `zig build`) with an assertion that it stays
+excluded. It runs them through `suite-run.ps1` rather than a scorer of its own:
+timeouts, the verdict contract, the leak sweep and the re-run-red-alone pass are
+already there, and a second copy of any of them is a second thing free to
+disagree about what green means.
+
+An audit red against a filed task is PENDING - reported every run, not a floor
+failure - and the list may only shrink, so an entry whose audit has gone green
+fails as STALE. That is the `$SkipAuditPending` ratchet, applied one level up.
+
+**What makes it standing is the guard row, not the lane.** `harness-floor`
+covers `test\win32\*.ps1` and `test\win32\lib\*.ps1`, so touching any script
+here puts the floor DUE and `parity-tasks.ps1 validate` refuses the commit until
+it has been run green; the runner stamps it, and only on a full run. `-Lane
+harness` is therefore deliberately NOT in `-Lane all`: the answer can only
+change when the sources change, guard-due already detects exactly that, and
+paying fifteen minutes on every floor run would buy nothing. The gate ships with
+its demonstration (T1133): `test\win32\harness-floor.ps1` plants summary rows
+for each verdict - unexcused red, excused red, stale exception, an audit that
+never ran, an exception for an audit not in the set - and `-NegativeControl`
+scores it red.
+
+The first full run: 21 green, 2 PENDING, `LANE harness PASS in 678s`, and
+`harness-floor` stamped over 368 files. Four zig lanes ALL PASS. The two reds
+are filed as T1123 and T1568, which is the point - before today nothing was
+going to notice them at all.

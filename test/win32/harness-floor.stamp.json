@@ -1,12 +1,16 @@
 {
-    "guard":  "launch-preflight",
-    "script":  "test/win32/launch-preflight-audit.ps1",
-    "generated":  "2026-09-14T10:41:59-07:00",
+    "guard":  "harness-floor",
+    "script":  "scripts/harness-floor.ps1",
+    "generated":  "2026-09-14T11:01:37-07:00",
     "commit":  "d006146bf",
     "uncommitted":  [
+                        "scripts/harness-floor.ps1",
+                        "scripts/lib/HarnessFloor.ps1",
                         "test/win32/harness-floor.ps1"
                     ],
     "files":  {
+                  "scripts/harness-floor.ps1":  "cc4dd72fb07ebc34de67ce688e0eab7f091a7228e4baeba4f9f50d01212a0f0e",
+                  "scripts/lib/HarnessFloor.ps1":  "a5e1ef72616bc09baf7515c9b727811ba6d6ba212759b1fdd9147c7cc49e2d0a",
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",
                   "test/win32/activity-monitor-probe-fail.ps1":  "b8fb9258c879d5ec87aa62adffeb868423168684d2e880de1a1343985fd70bb6",

@@ -1,10 +1,10 @@
 {
     "guard":  "verdict-exit",
     "script":  "test/win32/verdict-exit-audit.ps1",
-    "generated":  "2026-09-14T09:57:34-07:00",
-    "commit":  "fee8edff6",
+    "generated":  "2026-09-14T10:48:26-07:00",
+    "commit":  "d006146bf",
     "uncommitted":  [
-                        "test/win32/update-check.ps1"
+                        "test/win32/harness-floor.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -122,6 +122,7 @@
                   "test/win32/gui-launch-command.ps1":  "d8f12df0d3397be451bc64c41f910162d4adccc932b7028c21db1cfe8d09e60a",
                   "test/win32/gui-postmortem.ps1":  "eccbf9b6143b63c336ab0a12db4b13dbe318f2974c2fe7098588d1da1fcb0387",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
+                  "test/win32/harness-floor.ps1":  "bdd06c22f8bf5f91912b2ab3a72b628b277501e6765598e46d695f393104b42f",
                   "test/win32/harness-process-leak.ps1":  "b46c6e53003f25b41da789d1b52d215d9864b2ce6020edf9cac7e6ada45f6b53",
                   "test/win32/hero-mode.ps1":  "bc202bf5cc920c3949969f8dc8576092bc6ac692ea10718257827b3e04fd7a83",
                   "test/win32/hero-nav.ps1":  "98d4e384d4a7472af20bddbe1ce244c7ec7e34f90178288c475a1f68a398776a",

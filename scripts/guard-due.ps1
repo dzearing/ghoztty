@@ -3552,6 +3552,47 @@ $GuardTable = @(
             'test\win32\*.ps1',
             'test\win32\lib\*.ps1'
         )
+    },
+
+    # T725 - the harness FLOOR: the whole family of audits above, run as one
+    # command (`scripts\harness-floor.ps1`, or `floor-lane.ps1 -Lane harness`).
+    # Several of its members had no row of their own and therefore no trigger at
+    # all - `skip-visibility.ps1` was red against 13 unlisted violators and
+    # `asserted-nothing.ps1` two over its ratchet, both for weeks, because the
+    # only thing that ran them was a turn remembering to. One row over the same
+    # wide net makes every member standing at once: a test script edited today
+    # puts the floor DUE, and `parity-tasks.ps1 validate` refuses the commit
+    # until it has been run green.
+    #
+    # A green floor may carry PENDING members - audits red against a filed task,
+    # listed in $HARNESS_FLOOR_PENDING - and it still stamps. That is deliberate
+    # and it is not the "only a clean run stamps" rule being bent: those reds are
+    # named, tracked and re-reported on every run, and the alternative is a row
+    # that is due forever, which wedges the gate it is supposed to arm.
+    [pscustomobject]@{
+        Name   = 'harness-floor'
+        Script = 'scripts\harness-floor.ps1'
+        Stamp  = 'test\win32\harness-floor.stamp.json'
+        Covers = @(
+            'test\win32\*.ps1',
+            'test\win32\lib\*.ps1',
+            'scripts\harness-floor.ps1',
+            'scripts\lib\HarnessFloor.ps1'
+        )
+    },
+
+    # ...and the acceptance harness for the floor's own scoring, which is a
+    # narrow row on purpose: it proves the ratchet has teeth (T1133) and needs
+    # re-running when the ratchet moves, not when somebody edits an audit.
+    [pscustomobject]@{
+        Name   = 'harness-floor-teeth'
+        Script = 'test\win32\harness-floor.ps1'
+        Stamp  = 'test\win32\harness-floor-teeth.stamp.json'
+        Covers = @(
+            'scripts\harness-floor.ps1',
+            'scripts\lib\HarnessFloor.ps1',
+            'test\win32\harness-floor.ps1'
+        )
     }
 )
 

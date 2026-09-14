@@ -61,8 +61,22 @@
         See scripts\lib\CompilerCrash.ps1.
 
 .PARAMETER Lane
-    none | win32 | agent | lib | all. Default `all` runs the four zig lanes in
-    sequence.
+    none | win32 | agent | lib | harness | all. Default `all` runs the four zig
+    lanes in sequence.
+
+    `harness` is the odd one out in the other direction: it compiles nothing and
+    tests no product code. It runs the standing HARNESS audits - the sweeps that
+    ask whether every acceptance script scores itself, exits the code its verdict
+    implies, says out loud when it skipped something, isolates its endpoints
+    (T725; the set and the reason for each member live in
+    scripts\lib\HarnessFloor.ps1, the runner is scripts\harness-floor.ps1).
+
+    It is deliberately NOT part of `all`. The set is ~15 minutes of pure source
+    scanning whose answer can only change when the test sources change, and
+    `scripts\guard-due.ps1` already detects exactly that and FAILS
+    `parity-tasks.ps1 validate` when an audit is due - so paying it on every
+    floor run would buy nothing and cost every turn. Run it when guard-due says
+    an audit is due, and when you have touched the harness.
 
     `lib` is the odd one out: it BUILDS rather than tests, and it is here
     because nothing else on this box compiles the shared core for the
@@ -93,7 +107,7 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('none', 'win32', 'agent', 'lib', 'all')]
+    [ValidateSet('none', 'win32', 'agent', 'lib', 'harness', 'all')]
     [string]$Lane = 'all',
     [int]$TimeoutSeconds = 1800,
     # 420s, not 180: the agent lane was measured (2026-08-03) sitting in a
@@ -980,6 +994,26 @@ $worst = $EXIT_PASS
 $summary = @()
 
 foreach ($l in $lanes) {
+    # The harness lane runs no compiler, so none of the zig-specific recovery
+    # below applies to it: a cache heal, a compiler-crash retry and a solo
+    # confirm all read a zig build log. It gets the watchdog (which is what a
+    # lane IS here) and nothing else.
+    if ($l -eq 'harness') {
+        $floorScript = Join-Path $Repo 'scripts\harness-floor.ps1'
+        $harnessCmd = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$floorScript`" -Repo `"$Repo`""
+        for ($i = 1; $i -le $Repeat; $i++) {
+            $r = Invoke-Lane -Name $l -Iteration $i -RawCommand $harnessCmd
+            $summary += "$l#${i}=$r"
+            switch ($r) {
+                'FAIL' { if ($worst -lt $EXIT_FAIL) { $worst = $EXIT_FAIL } }
+                'STALL' { if ($worst -lt $EXIT_STALL) { $worst = $EXIT_STALL } }
+                'TIMEOUT' { if ($worst -lt $EXIT_TIMEOUT) { $worst = $EXIT_TIMEOUT } }
+            }
+            if ($r -ne 'PASS') { break }
+        }
+        continue
+    }
+
     # At most ONE cache heal per lane per invocation (T494): a FAIL whose
     # compile errors point INTO a zig cache is a torn cache entry, not red
     # code, so delete that entry and re-run once. The re-run's verdict is
