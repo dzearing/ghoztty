@@ -9,6 +9,38 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-14: T719 closed already-fixed (+T1560 filed) - **every acceptance
+  launch already declares whether it wants the last run's windows back, and the
+  sweep that says so is a hard gate rather than a lint.** T719 was filed on
+  2026-08-10 naming four launch sites that stated nothing about session
+  persistence; T744 declared all four on 2026-08-12 and nobody closed the card,
+  so it sat todo for 34 days and was handed out this turn.
+
+  Re-verified rather than assumed: `Get-GhozttyLaunchSites` over `test\win32`
+  finds 293 launch sites and **zero** undeclared (128 by literal flag, 117 by
+  marker, 38 by variable, 10 by every caller of a helper), and each of the four
+  named sites carries the form the card asked for - a `# persistence: n/a - a
+  URL activation ...` marker on the three `url-scheme.ps1` section-E
+  activations, an explicit `persistence: on (default)` statement on
+  `agent-attach-refused.ps1`'s restore control. `test\win32\persistence-flag.ps1`
+  ran ALL PASS (28) on the box against the Debug `zig-out`.
+
+  The card's own open question - should the sweep be enforced or merely
+  available - is answered YES and already implemented: section A of
+  `persistence-flag.ps1` asserts the undeclared list is empty over the whole
+  suite, and `scripts\guard-due.ps1` carries the `persistence-flag` row (319
+  covered files), so editing any acceptance script makes that harness DUE and
+  step 6's `validate` fails until it has been run green. The drift this card
+  described cannot recur quietly.
+
+  What the turn actually produced, beyond the receipt: **T1560**, for the shape
+  that cost the 34 days. `stale-scan` ranks by a later commit having NAMED a
+  task, which can never see a sibling task fixing the same defect without citing
+  it - and T719's entire definition of done was one runnable read-only command.
+  T1560 proposes an optional `verify:` line in a task's frontmatter holding that
+  command, and a stale-scan pass that runs them and reports the cards that now
+  pass on their own.
+
 - 2026-09-13: T710 (+T1550 filed) - **the chooser's session list is live now, and
   a window you renamed says so.** Two defects with one cause: the list was a
   photograph. It was fetched when a machine was selected and never again, so a
