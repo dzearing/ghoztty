@@ -1,10 +1,10 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-13T16:11:32-07:00",
-    "commit":  "e3a66ba80",
+    "generated":  "2026-09-13T17:01:07-07:00",
+    "commit":  "fc45277a0",
     "uncommitted":  [
-                        "test/win32/rearrange-window-drop.ps1"
+                        "test/win32/rearrange-desktop-drop.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "5a2be2d5d80e580bc08a266c5007b1656573ffaddd93ded8b7019442a23dbbe5",
@@ -205,6 +205,7 @@
                   "test/win32/pty-host.ps1":  "0f55c91a5950ac27a78bf29b90e3ea613948a586da2ca66dba17a5d8aa220333",
                   "test/win32/rdp-session.ps1":  "b1fdd6d61b7163a275ed0145df904c5ded06f0e800ae30c2140c7c16ebe61b54",
                   "test/win32/readonly-badge.ps1":  "be8e9c5793795ff3502b077f674c531a510b2755819fbe989237897e6076ae61",
+                  "test/win32/rearrange-desktop-drop.ps1":  "28050df206eef9bcd4c121958224e0c29d05e6b8b4c34cea17b1955ede2b93d8",
                   "test/win32/rearrange-drag.ps1":  "c022be12eda57b72286ea7b924652663ee18f666118d2c7b07067f824f195752",
                   "test/win32/rearrange-header.ps1":  "463b8aed8b2dcaea69f45bd6b58ea133334e2c03351a4421bc21cccbba9c65d2",
                   "test/win32/rearrange-mode-action.ps1":  "43028d8cb33fa4d29e5520c6e62b31469ebaa9469129d04d9d406f47d3a50cfc",

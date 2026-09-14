@@ -393,6 +393,24 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T1539's half of the same machinery: the drop that lands on NO window at
+    # all. It shares `pane_relocate` / `pane_drop` / `Window.zig` with the row
+    # above and is a separate guard because it covers a separate GESTURE - the
+    # drag released over the desktop, where that row drives the header's
+    # pop-out button - so an edit to either can be answered by running the one
+    # that actually exercises it.
+    [pscustomobject]@{
+        Name   = 'rearrange-desktop-drop'
+        Script = 'test\win32\rearrange-desktop-drop.ps1'
+        Stamp  = 'test\win32\rearrange-desktop-drop.stamp.json'
+        Covers = @(
+            'test\win32\rearrange-desktop-drop.ps1',
+            'src\apprt\win32\pane_relocate.zig',
+            'src\apprt\win32\drop_highlight.zig',
+            'src\apprt\win32\pane_drop.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # The viewer suite carries the browser-leak tripwire (T594): the only
     # thing that scores whether a test run handed a page to the user's real
     # browser, and it is not in the P1-P3 floor. The zig-side guard

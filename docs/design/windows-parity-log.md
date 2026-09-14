@@ -27892,3 +27892,52 @@ that tab mid-drag - the dwell is deliberately still scoped to one window), T1544
 manifest is re-pushed but nothing measures the round trip) and T1545 (the
 six-window cap on drop targets, which exists because the candidate geometry is
 built on the stack every mouse-move).
+
+## 2026-09-13 - Letting go of a dragged pane over the desktop is now proven to make it a window (T1539)
+
+T1539 was the last of T1532's four drops, and the re-verification step found the
+behavior already shipped: T1538's commit landed the whole `.new_window` path in
+one piece - the resolver answers it for a point over no Ghoztty window,
+`newWindowFrameAt` places the frame against the release point,
+`drop_highlight.forTarget` previews it, and `commitPopOutDrop` creates an empty
+window at that rect and moves the live pane in. What had never been checked was
+the GESTURE. T1538's acceptance drives the pane header's pop-out BUTTON, which
+reaches the same commit by a different route and says nothing about a drag
+carried off the window, so the path a user actually takes had no test at all.
+On that shape the test is the deliverable, so that is what this turn built.
+
+`test\win32\rearrange-desktop-drop.ps1` posts the drag the way its sibling does -
+down on the pane header, one move out to a point on open desktop, up - against
+the source window with `-Client`, because a captured pointer delivers every
+message to the capture owner as a client point no matter where the pointer is,
+and a point over open desktop is simply far out of range. That out-of-range
+point IS the mechanism under test.
+
+The oracle is membership plus HWND identity plus the frame. A window that was
+not there appears, the dragged pane's terminal HWND is a child of it - the same
+handle, so the shell, the scrollback and the agent session came with it - it is
+gone from the window it left, and the new window stands at the rect the preview
+promised while the button was still down. That last comparison is what makes
+"the preview tells the truth" a measured claim rather than a nicety. The preview
+is held to two more things: it is the size of the WINDOW being dragged from
+(which tells it apart from the half-pane wash an in-window drop draws) and the
+pointer is inside it, so the window arrives under the hand.
+
+And a claim for the drop the product refuses: a window's LAST pane released over
+nothing previews nothing and does nothing, because that trade would close one
+window and open another around the very same pane (`pane_relocate.popOutAllowed`).
+A test that only covered the happy path would pass over a build that had lost
+that guard.
+
+Validated on box: `rearrange-desktop-drop.ps1` ALL PASS (31), first run.
+`-NegativeControl` - claim F inverted to "no window opened" - red as designed
+(1 FAILURE). Floor lib/none/win32/agent ALL LANES PASS; P1 (25), P2 (20), P3
+(16) ALL PASS. New guard row `rearrange-desktop-drop` registered in
+`scripts\guard-due.ps1` and stamped by the green run.
+
+Follow-ups filed: T1546 (a pop-out from a MAXIMIZED window copies its
+screen-filling rect, so the pane lands in a restored-state window that covers
+the whole screen and has nothing smaller to go back to) and T1547 (the
+second-monitor case is right by construction - `MonitorFromPoint` plus the
+work-area clamp - and has never been measured, because this box has one
+monitor).
