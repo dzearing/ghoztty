@@ -1,10 +1,10 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-09-14T04:42:47-07:00",
-    "commit":  "9d5910689",
+    "generated":  "2026-09-14T06:00:34-07:00",
+    "commit":  "2db55acec",
     "uncommitted":  [
-                        "test/win32/hook-json.ps1"
+                        "test/win32/float-on-top.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -101,7 +101,7 @@
                   "test/win32/false-positive-report.ps1":  "3e4c34e6b40b6b99969d38afbd1c055899802cfa119529c06f84c6ad24a4e981",
                   "test/win32/feedback-user-report.ps1":  "cfda91deffac1fe7971ef8c37c1cb1d4d275ee34ea7c83c87460d740508917fd",
                   "test/win32/fixed-ports.ps1":  "fcc484417429118fdba46e3e3c66023ddde55c80dee258c689fc0a1213a8d03e",
-                  "test/win32/float-on-top.ps1":  "da3cb0f45c2e3a8e48609bc4bf1b047a9fe67405c406b471d65d79e48cce68a8",
+                  "test/win32/float-on-top.ps1":  "03c7aafe319c3ec47235e96cdca61fe8e213693886392b22f4999f711ca67b19",
                   "test/win32/floor-lane-cache-heal.ps1":  "814c599c4306d278e54ea6d1e6fda19ace7e327a18774f79737bf0804e63896a",
                   "test/win32/floor-lane-commit-headroom.ps1":  "63aed36ba60ecbd7af05f2349f050a390eccfa1f6768b52b416d9d27b60837ec",
                   "test/win32/floor-lane-compiler-crash.ps1":  "34827f1ed2d63df665d72275f13211f6a3f8273c44561b09396ffdc3f7505470",

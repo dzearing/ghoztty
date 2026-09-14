@@ -28430,3 +28430,46 @@ PASS.
 Filed T1559: the rest of that plugin-cache snapshot is stale too - its
 process-feedback skill and both hook scripts predate a month of repo changes,
 and nothing refreshes them.
+
+## 2026-09-14 - Float on Top pins the window you are on, and the case where it does not is Windows' call (T720)
+
+T720 said "Float on Top" still would not stick, and pointed at the quick
+terminal's identical `setTopmost` call as proof that the mechanism works. The
+check-first rule caught the card before it caught the code: re-measured against
+today's build, the action WORKS. `float-on-top.ps1` pins on a single press and
+unpins on the next, and `overlay-zorder.ps1` section E - the skip this card was
+largely filed on - has been asserting since T607 and passes all 39 of its
+assertions.
+
+What remained was worth the measurement, because the card's premise was that
+the difference between our action and the quick terminal's is in our code. It
+is not. With a second window up, a press on a window sitting BEHIND another is
+refused - silently, `SetWindowPos` returning TRUE with `GetLastError() == 0` and
+`WS_EX_TOPMOST` still clear on all three attempts, 10 of 10 cycles. The
+distinguishing condition is not activation and not our code: an injection of the
+same bit from THIS HARNESS PROCESS is refused on the same window in the same
+state, and both are accepted the instant the window is raised. So the quick
+terminal "works" for one reason only - it is always the front-most window when
+it animates in. The chord genuinely arrives at the background window (read back
+from the app's own log), so "refused" is not "never asked".
+
+That case is also unreachable by a person: the keybind, the palette entry and
+the menu all belong to the focused window. A raise-and-retry was built into
+`setTopmost` for it and then REVERTED, because `SetWindowPos(HWND_TOP,
+SWP_NOACTIVATE)` is refused on that desktop too - it fixed nothing, and shipping
+it would have been unmeasured code wearing a task id.
+
+So the deliverable is the test, which is the right deliverable for an
+already-fixed card. `test\win32\float-on-top.ps1` grows section C: with two
+windows open, ONE press pins the window the user is on and one more unpins it;
+and the app's float and an external injection get the SAME answer for a
+background window. That assertion is an EQUALITY rather than a verdict about
+either outcome - if a future Windows allows it, both sides move together and the
+line stays green; if the app ever starts differing from an outside caller, our
+code has started deciding it and the line goes red. The press is single on
+purpose: a press loop passes the moment one press happens to land with the
+window in front, which is how this shape survived T277 and T607.
+
+Filed T1561: the same script reads a pane id out of `+list --json` from a
+`panes` array that does not exist - a tab's layout is a `splits` tree - so it has
+silently fallen back to a guessed window name every run.

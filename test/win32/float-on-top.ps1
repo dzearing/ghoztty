@@ -174,12 +174,109 @@ try {
         }
     }
 
+    # -----------------------------------------------------------------------
+    # C. With a SECOND window up, the float still works for the window the
+    # user is on - and where it does not work, the refusal is the window
+    # manager's and not ours (T720).
+    #
+    # T720 was filed on the reading that float-on-top is still broken. It is
+    # not, and the measurement that says so is this section. With two windows
+    # open there are two different cases and they must not be confused:
+    #
+    #   1. The window the user is ON - active, in front. ONE press pins it and
+    #      one more unpins it. This is every path a person can actually take:
+    #      the keybind and the palette go to the focused window, and the menu
+    #      belongs to it. This is the assertion that protects the feature.
+    #   2. A window BEHIND another one, which only an injected keystroke can
+    #      reach. Here the band change is refused - silently, `SetWindowPos`
+    #      returning TRUE with `GetLastError() == 0` and `WS_EX_TOPMOST` still
+    #      clear, on all three of `setTopmost`'s attempts.
+    #
+    # Case 2 is NOT a product defect, and the control below is what proves it:
+    # an injection of the same bit from THIS PROCESS - which shares none of
+    # the app's code - is refused on the same window in the same state. So the
+    # assertion is an EQUALITY, not a verdict about either outcome: whatever
+    # the window manager decides for a background window, the app gets the
+    # same answer as anybody else asking. If a future Windows starts allowing
+    # it, both sides move together and this still passes; if the app ever
+    # starts differing from an external caller, something in our code is
+    # deciding it, and that is worth a red line.
+    #
+    # The presses are SINGLE on purpose. A press loop would pass the moment
+    # one of its presses happened to land with the window in front, which is
+    # how the shape of this defect survived T277 and T607.
+    # -----------------------------------------------------------------------
+    & $exe +new-window --target=fot2 | Out-Null
+    $B = [IntPtr]::Zero
+    for ($t = 0; $t -lt 25 -and $B -eq [IntPtr]::Zero; $t++) {
+        Start-Sleep -Milliseconds 200
+        foreach ($w in @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyWindow')) {
+            if ([int64]$w.Hwnd -ne [int64]$A) { $B = [IntPtr]$w.Hwnd; break }
+        }
+    }
+    if ($B -eq [IntPtr]::Zero) {
+        Write-Host 'SKIP C: the second window never appeared'
+        $script:skipped++
+    } else {
+        # fot2 is put in front and given the keyboard; the chord is then sent
+        # to fot1 where it stands, BEHIND it. Activating fot1 first would
+        # raise it and dissolve the very condition under test - which is how
+        # this defect survived T277 and T607, both of which activated first.
+        $paneB = Get-TestChildWindow -Window $B -Class 'GhozttyTerminal'
+        Set-Active $B $paneB | Out-Null
+        Start-Sleep -Milliseconds 600
+        $zA = Get-TestZIndex -Window $A
+        $zB = Get-TestZIndex -Window $B
+        Assert ($zA -gt $zB) "C: the subject window really is behind the new one (fot1=$zA > fot2=$zB)"
+        Assert (-not (Test-Topmost $A)) 'C: and is not pinned going in'
+
+        # The control: the app's own log says whether the chord ARRIVED, so a
+        # press that never reached the window cannot read here as a broken
+        # feature (and a pass cannot be scored by a dead harness).
+        $errPath = (@(Get-TestLaunchRecords) | Where-Object { $_.Pid -eq $appPid } | Select-Object -First 1).StdErr
+        $seenBefore = ([regex]::Matches(
+            ((Get-Content $errPath -Raw -ErrorAction SilentlyContinue) + ''),
+            'toggle_window_float_on_top')).Count
+
+        Send-TestKeys -Window $A -Target $pane -Key F7 -Modifiers ctrl, shift | Out-Null
+        $pinnedBehind = Wait-Topmost $A $true
+        $seenAfter = ([regex]::Matches(
+            ((Get-Content $errPath -Raw -ErrorAction SilentlyContinue) + ''),
+            'toggle_window_float_on_top')).Count
+        Assert ($seenAfter -gt $seenBefore) "C: the chord reached the background window (positive control, $seenBefore -> $seenAfter)"
+
+        # The same request, from a process that shares none of the app's code.
+        # Ledgered, so it cannot leak a pinned window even if this dies here.
+        [void](Set-TestWindowTopmost -Window $A -On $true)
+        Start-Sleep -Milliseconds 600
+        $injectedBehind = Test-Topmost $A
+        [void](Set-TestWindowTopmost -Window $A -On $false)
+        Start-Sleep -Milliseconds 300
+        Assert ($pinnedBehind -eq $injectedBehind) "C: the app's float and an EXTERNAL injection get the same answer for a background window (app=$pinnedBehind external=$injectedBehind) - the refusal is the window manager's, not ours"
+
+        # And the path a person actually takes: the window they are ON.
+        Set-Active $A $pane | Out-Null
+        Start-Sleep -Milliseconds 400
+        Assert (-not (Test-Topmost $A)) 'C: still unpinned before the real-user press'
+        Send-TestKeys -Window $A -Target $pane -Key F7 -Modifiers ctrl, shift | Out-Null
+        Assert (Wait-Topmost $A $true) 'C: with two windows open, ONE press pins the window the user is on'
+
+        Send-TestKeys -Window $A -Target $pane -Key F7 -Modifiers ctrl, shift | Out-Null
+        Assert (Wait-Topmost $A $false) 'C: and one more press unpins it again'
+    }
+
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash'
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
 } finally {
     Remove-TestDesktop
     Stop-RepoInstances
 }
+
+# Section C pins a window from OUTSIDE the app. The ledger puts any such pin
+# back (Remove-TestDesktop did it above); this is the oracle that says it had
+# nothing left to put back.
+$stray = @(Get-TestTopmostRestored)
+Assert ($stray.Count -eq 0) "no probe left a window topmost (harness had to un-pin: $($stray -join ','))"
 
 if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))" }
 else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" }
