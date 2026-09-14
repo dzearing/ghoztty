@@ -29,7 +29,9 @@
 //!
 //!   - `isActive` — the *reporting* reading: is this window the one the user
 //!     is working in? Used by `+list --json`'s `focused` field, by the IPC
-//!     default target, by the viewer's TOC emphasis and by its hover reveal.
+//!     default target, and by the viewer's TOC emphasis. (It also gated the
+//!     viewer's nav-bar hover reveal until T1185 removed the peek; the bar is
+//!     part of the pane's frame now and consults nothing.)
 //!     Unknown ⇒ **false**: never claim focus we cannot prove.
 //!   - `shouldForwardFocus` — the *deferred-assert* reading (T211/T223): may
 //!     this queued `WM_APP_SETFOCUS` still fire? Unknown ⇒ **true**, because

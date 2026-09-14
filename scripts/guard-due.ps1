@@ -602,6 +602,24 @@ $GuardTable = @(
             'src\apprt\win32\ViewerNavBar.zig'
         )
     },
+    # The contents card's SELECTION EMPHASIS (T729): accent pill while the
+    # viewer window is active, neutral wash the moment activation moves to
+    # another window. chrome-theme.ps1 asserts the accent half only, and as an
+    # accent-cache oracle; this script is the only thing that measures the
+    # PAIR, which is what a build painting accent unconditionally would defeat.
+    # Covers the panel that paints both treatments and the module whose
+    # `isActive` decides which one - the gate T215 rewrote, and the one place a
+    # change to it stops being visible anywhere else.
+    [pscustomobject]@{
+        Name   = 'viewer-toc-emphasis'
+        Script = 'test\win32\viewer-toc-emphasis.ps1'
+        Stamp  = 'test\win32\viewer-toc-emphasis.stamp.json'
+        Covers = @(
+            'test\win32\viewer-toc-emphasis.ps1',
+            'src\apprt\win32\ViewerTOCPanel.zig',
+            'src\apprt\win32\window_active.zig'
+        )
+    },
     # The feedback composer (T644): its undo behaviour, quote formatting and
     # send path live in ViewerFeedbackBar and are proved only by this harness
     # - the unit lanes see the pure modules but never a RichEdit. T644 itself

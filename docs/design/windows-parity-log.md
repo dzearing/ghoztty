@@ -28800,3 +28800,48 @@ coverage change was warranted and none was made.
 T1560 gains its second instance: both cards closed today had a definition of
 done that was one runnable read-only command, both were fixed by a sibling task
 that never cited them, and both then sat open while the command was green.
+
+## 2026-09-14 - The contents card's highlight is now proved to go quiet when you click away (T729)
+
+Open a document in a viewer pane and the contents card beside it highlights the
+section you are on. That highlight is supposed to be a coloured pill only while
+you are working in that window: click over to another window and it drops to a
+quiet grey, the same way the Mac marks a selection in whichever window is key.
+Half of that was measured and half of it was not. `chrome-theme.ps1` pins the
+viewer window active on purpose and asserts the accent is on the card - its
+subject is the accent cache, so it has to - and nothing anywhere asserted the
+other half. A build that painted the pill accent from every background window
+would have scored green on every assertion that existed this morning, which is
+exactly the shape the T211 audit warned would be "fixed" by weakening a test.
+
+`test\win32\viewer-toc-emphasis.ps1` measures the PAIR. It opens a viewer on a
+real document, opens a second ghoztty window to move activation ONTO - the real
+gesture, rather than deactivating everything, because the contract is about
+which of our windows is key - and reads the card three times: accent present
+while the viewer is active, accent gone and the derived unemphasized wash
+present once activation moves, accent back when it returns. The oracle is an
+exact colour match over a `-Sync` capture, never a chroma scan: the card's row
+labels are drawn with subpixel antialiasing whose fringes are as saturated as
+any accent, so "are there colourful pixels on it" would be scoring the font
+renderer. The accent is SET for the run and restored afterwards, because a box
+whose accent happened to sit near the grey would make every assertion vacuous,
+and that is not a thing to discover from a green run. The wash is DERIVED from
+the card fill sampled out of the capture (`color_math.wash` at 0.14, which
+ColorMath spells `Get-Wash`), so moving the weight in the Zig moves the script
+with it rather than leaving a pasted number behind.
+
+Two of the four inverted assertions are the ones worth naming: that the pill is
+still DRAWN when it is not accent, which a "paint nothing when inactive" build
+fails, and that the accent comes back, which a build that painted once at open
+fails. `-NegativeControl` inverts exactly those four and a correct build scores
+four failures, which is the demonstration T1133 asks for.
+
+The card also arrived half-obsolete, and that is the more useful half of the
+day. T729 was filed on 2026-08-10 to cover TWO things T215 had just made
+reachable on the background desktop, and the first of them - the nav bar's
+hover reveal - no longer exists: T1185 deleted the peek, the bar is part of
+every viewer pane's frame now, and `viewer-nav-pin.ps1` asserts the contract
+that replaced it. So the Summary was rewritten to what is LEFT before any code
+was written, per step 1's CHECK FIRST, rather than a script being built against
+a mechanism that had been gone for a month. `window_active.zig`'s module doc
+still named that hover reveal among its callers; it does not any more.
