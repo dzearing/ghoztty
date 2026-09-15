@@ -1263,6 +1263,42 @@ answered per glyph. Same shape as the bug T209 found in `glyphCentered()`: a
 negative control that answers a question no paint site asks is decoration.
 
 
+**A PIXEL PROBE CANNOT TELL YOU WHO ASKED FOR THE REPAINT** (T765). This is the
+one that quietly weakens assertions all over the suite, so it is worth stating
+flatly: `Get-TestWindowPixels` is a `PrintWindow`, and a `PrintWindow` **paints
+the whole client from current state** before it hands back a bitmap. The probe
+repaints the thing it is about to photograph. So an assertion of the shape
+"change some state, then capture, and check the pixels changed" proves only
+that *the product would paint the new state if it were asked* — never that the
+product asked. Delete the `InvalidateRect` and the assertion still passes,
+because the capture invalidates for you.
+
+This was measured the long way round. T252 saw the divider's live re-color
+assertion survive the deletion of its own subject and concluded that "something
+else in the reload path invalidates the client area" — plausible, written into
+three files, and wrong. T765 instrumented every step of `Window.onConfigChange`
+on the test desktop: the update region is empty at entry and after every step,
+the only invalidation the reload makes is the divider band (`UpdateWindow`ed
+away in the same call), and the one full-client `WM_PAINT` in the whole run
+arrives seconds later, at the capture. Nothing in the product was doing it.
+
+What to do about it:
+
+- **Pair every "it repainted live" pixel assertion with a log oracle** that
+  names the code that asked — the `hero-mode.ps1` idiom, and what
+  `refreshAllDividerBands`' `divider bands invalidated count=` line exists for.
+  The pixel proves the color; the line proves the caller. Neither alone is the
+  assertion you meant to write.
+- **Or assert the update region directly.** `Window.logReloadUpdateRegion` is
+  the other half in `split-divider.ps1`: what a config reload left dirty, scored
+  against the band count from the same reload as its in-band control. A future
+  step that starts dirtying the whole client on every reload turns it red and
+  names itself.
+- **Suspect it whenever a live-update assertion has never been teeth-checked.**
+  The tell is an assertion whose subject is an invalidation: "X reloads live",
+  "the strip re-fonts", "the banner follows the theme". Compile the invalidate
+  out and re-run; if it still passes, the capture is doing the work.
+
 **A CHILD CONTROL's pixels are not reliably part of a synchronous capture**
 (T1400). `Get-TestWindowPixels -Sync` photographs a window through
 `PrintWindow`, and what the window paints ITSELF — its `WM_PRINTCLIENT` — is

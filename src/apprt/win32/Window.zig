@@ -941,6 +941,44 @@ fn applyBackgroundBlur(hwnd: w32.HWND, enabled: bool) void {
     _ = w32.SetWindowCompositionAttribute(hwnd, &data);
 }
 
+/// What a config reload left dirty in this window's client area (T765).
+///
+/// The answer, measured step by step on 2026-09-15, is **nothing**: the update
+/// region is empty before `onConfigChange` and after every step of it, and the
+/// one invalidation the reload makes - `refreshAllDividerBands`, a band three
+/// pixels tall - is `UpdateWindow`ed away inside the same call. A reload does
+/// not repaint the client area.
+///
+/// That corrects what T252 recorded. It inferred, from the divider's re-color
+/// pixel assertion surviving the deletion of its own subject, that "something
+/// else in the reload path invalidates the client area". Nothing in the reload
+/// path does. The full-client repaint it saw belongs to the ACCEPTANCE HARNESS:
+/// `Get-TestWindowPixels -Sync` is a `PrintWindow`, and a `PrintWindow` paints
+/// the whole client from current state before it hands the caller a bitmap. So
+/// the probe repaints the thing it is about to photograph, and a pixel
+/// assertion taken after ANY state change cannot tell "the product asked for
+/// this repaint" from "the product would paint this if it were asked". The
+/// remedy is T252's own second oracle, and the rule is in
+/// `docs/claude/testing.md`.
+///
+/// Logged rather than asserted in-process because what is worth watching is a
+/// REGRESSION: a reload step that starts invalidating the whole client would
+/// cost a full-window repaint per reload and nothing else would notice.
+/// `test\win32\split-divider.ps1` scores this line, with the divider-band
+/// line from the same reload as its in-band control - a reload that
+/// invalidated nothing at all would be a broken measurement, not a pass.
+pub fn logReloadUpdateRegion(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    var r: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+    const any = w32.GetUpdateRect(hwnd, &r, 0);
+    var client: w32.RECT = undefined;
+    _ = w32.GetClientRect(hwnd, &client);
+    log.debug(
+        "config reload left update region any={} l={} t={} r={} b={} client={}x{}",
+        .{ any, r.left, r.top, r.right, r.bottom, client.right - client.left, client.bottom - client.top },
+    );
+}
+
 pub fn onConfigChange(self: *Window) void {
     if (self.hwnd) |hwnd| {
         applyChromeTheme(hwnd, self.app.config.@"window-theme", self.app.config.background);
@@ -5750,9 +5788,11 @@ fn refreshAllDividerBands(self: *Window) void {
     // Debug-build oracle for split-divider.ps1: the pixel probe proves the new
     // color reached the capture, and this proves THIS code is what asked for
     // it. Without it the re-color assertion passes on a build with the repaint
-    // deleted, because something else in the reload path invalidates the
-    // client area too (measured T252: not the DWM chrome calls, not the dim
-    // overlays, not `DarkMode.apply`, and not a relayout).
+    // deleted - not because anything else in the reload path invalidates the
+    // client area (T765 measured every step of `onConfigChange`; none of them
+    // dirty a pixel), but because the probe itself is a `PrintWindow`, which
+    // repaints the whole client from current state before it photographs it.
+    // See `logReloadUpdateRegion`.
     log.debug("divider bands invalidated count={d}", .{bands});
     if (bands > 0) _ = w32.UpdateWindow(hwnd);
 }

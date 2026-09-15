@@ -1,10 +1,10 @@
 {
     "guard":  "isolation-meta",
     "script":  "test/win32/isolation-meta.ps1",
-    "generated":  "2026-09-15T07:30:05-07:00",
-    "commit":  "ce7b2a3d0",
+    "generated":  "2026-09-15T08:37:52-07:00",
+    "commit":  "b30a1badb",
     "uncommitted":  [
-                        "test/win32/agent-recovery.ps1"
+                        "test/win32/split-divider.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -255,7 +255,7 @@
                   "test/win32/soak.ps1":  "cc3d8774680af5795741d2cb4ab6521e3161a102c8c45c64f36e8d76d047e639",
                   "test/win32/split-dim.ps1":  "a0d3d7e7816fc6a89ab6c2f285c2d19f2e2a550333765c2a3fabdb377c9e8b8b",
                   "test/win32/split-dim-viewer.ps1":  "454a52890b54b98bd41361b823291d51d54b6986180613e921fd0d185324dea9",
-                  "test/win32/split-divider.ps1":  "0e5b6e1fb40579ecfae78099584ac3ec4f546230a3fb41a27e60650998ef72eb",
+                  "test/win32/split-divider.ps1":  "641f514cd8adf962026d07250232d86a19c1e29dcc0191bf334607c134981b65",
                   "test/win32/split-inherit-cwd.ps1":  "f26f4a4f33220e2a2b13418a71da0a6e1feb2644eebce5ae09d8751e06a3b443",
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",
                   "test/win32/startup-failure.ps1":  "29b3227309b6e317524108fab200b9aecb27cc9f5d94cd82a32a0357dfec0aad",

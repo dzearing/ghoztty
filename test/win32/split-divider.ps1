@@ -20,10 +20,28 @@
 # the second one is why the section changed. The pixel proves the new color
 # reached the capture; it does not prove OUR code asked for it - measured
 # 2026-08-11, deleting onConfigChange's repaint outright left the pixel
-# assertion passing, because something else in the reload path invalidates the
-# client area. The debug-log oracle names `refreshAllDividerBands` and the
-# number of bands it invalidated, so the assertion fails on a build with its
-# subject removed.
+# assertion passing. The debug-log oracle names `refreshAllDividerBands` and
+# the number of bands it invalidated, so the assertion fails on a build with
+# its subject removed.
+#
+# T765 acceptance (run 1): WHY that pixel assertion survived, measured
+# 2026-09-15 - and it is not what T252 wrote down. T252 inferred "something
+# else in the reload path invalidates the client area". Nothing in the reload
+# path does: instrumenting every step of `onConfigChange` leaves the update
+# region EMPTY at entry and after each step, and the one invalidation the
+# reload makes is the divider band, consumed by `UpdateWindow` in the same
+# call. The full-client repaint belongs to THIS SCRIPT: `Get-TestWindowPixels
+# -Sync` is a `PrintWindow`, and a `PrintWindow` paints the whole client from
+# current state before handing over the bitmap. Every pixel probe here
+# repaints the thing it is about to photograph, which is why a probe taken
+# after a state change cannot tell "the product asked for this repaint" from
+# "the product would paint this if asked" - the general rule, and what to do
+# instead, is in `docs/claude/testing.md`.
+#
+# So the third oracle below pins the corrected claim rather than the old one:
+# the reload leaves NO update region behind. Its control is the divider-band
+# line from the same reload - a reload that invalidated nothing at all would
+# be a broken measurement, not a pass.
 #
 # paintDividerNode previously hardcoded a 0x808080 pen; it now uses the
 # config color (COLORREF from Config.Color RGB), falling back to a color
@@ -415,19 +433,43 @@ if (-not $cyan) { Dump-Strip $top $A $B 'red->cyan' }
 
 # THE PIXEL ABOVE PROVES THE COLOR, NOT THE CALLER (T252). Measured
 # 2026-08-11 across three builds: with onConfigChange's divider repaint
-# deleted outright, the cyan assertion still passed - something else in the
-# reload path invalidates the client area, so the band got repainted by
-# `paintWindow` anyway. An assertion that passes on a build with its subject
-# removed is not testing its subject, so the second half is the debug-log
-# oracle (the hero-mode.ps1 idiom): `refreshAllDividerBands` names itself and
-# how many bands it asked to repaint. Degrades to a note on a release build,
-# where log.debug is compiled out - the pixel half still stands there.
+# deleted outright, the cyan assertion still passed, so the band was being
+# repainted by something that was not the reload. (T765 named it: this
+# script's own `PrintWindow` capture - see the header.) An assertion that
+# passes on a build with its subject removed is not testing its subject, so
+# the second half is the debug-log oracle (the hero-mode.ps1 idiom):
+# `refreshAllDividerBands` names itself and how many bands it asked to
+# repaint. Degrades to a note on a release build, where log.debug is compiled
+# out - the pixel half still stands there.
 if ($debugLogging) {
     $bandLog = @(Select-String -Path $errlog -Pattern 'divider bands invalidated count=(\d+)' `
             -ErrorAction SilentlyContinue)
     $bands = if ($bandLog.Count -gt 0) { [int]$bandLog[-1].Matches[0].Groups[1].Value } else { -1 }
     Assert ($bands -gt 0) `
         "red->cyan: the reload itself asked for the repaint (refreshAllDividerBands invalidated $bands band(s))"
+
+    # T765: and the reload asked for THAT and nothing more. The band is
+    # invalidated and painted inside `refreshAllDividerBands`, so by the end of
+    # the reload the window owes no repaint at all. A future step that starts
+    # dirtying the whole client - a full-window repaint on every reload - turns
+    # this red and names itself; nothing else in the suite would notice, because
+    # every pixel probe here repaints the client itself.
+    #
+    # The band count above is this assertion's in-band control: it is the same
+    # reload proving it DID invalidate something, so an empty region here cannot
+    # be read as "the reload never ran" or "the log line went missing".
+    $updLog = @(Select-String -Path $errlog `
+            -Pattern 'config reload left update region any=(\d+) l=(-?\d+) t=(-?\d+) r=(-?\d+) b=(-?\d+)' `
+            -ErrorAction SilentlyContinue)
+    if ($updLog.Count -eq 0) {
+        Assert $false 'red->cyan: the reload reported what it left dirty (T765 log line missing)'
+    } else {
+        $m = $updLog[-1].Matches[0].Groups
+        $any = [int]$m[1].Value
+        $rect = "$($m[2].Value),$($m[3].Value),$($m[4].Value),$($m[5].Value)"
+        Assert ($any -eq 0) `
+            "red->cyan: the reload left NO client area dirty behind it (any=$any rect=$rect)"
+    }
 } else {
     Write-Host 'OK    log oracle degraded: no debug log (release build), pixel half only'
 }

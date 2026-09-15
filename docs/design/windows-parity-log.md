@@ -9,6 +9,49 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-15: T765 closed done, T1590 + T1591 filed - **a config reload does not
+  repaint the window; our own test camera does.**
+
+  T252 left behind a claim nobody could account for: deleting
+  `onConfigChange`'s divider repaint outright left the re-color assertion still
+  passing, so "something else in the reload path invalidates the client area".
+  Four candidates were ruled out by measurement and the leftover was filed here.
+  The leftover was the wrong question. Instrumenting every step of
+  `Window.onConfigChange` with `GetUpdateRect` on the test desktop says the
+  update region is EMPTY at entry and after each step; the one invalidation a
+  reload makes is `refreshAllDividerBands`, a three-pixel band that
+  `UpdateWindow` consumes inside the same call. Nothing in the reload path
+  dirties the client area, and the only full-client `WM_PAINT` in the whole run
+  arrives seconds later - at the capture.
+
+  That is the finding, and it is not about config reload. `Get-TestWindowPixels
+  -Sync` is a `PrintWindow`, and a `PrintWindow` paints the whole client from
+  current state before handing back a bitmap: **every pixel probe in the suite
+  repaints the thing it is about to photograph.** So an assertion of the shape
+  "change state, capture, check the pixels changed" proves that the product
+  WOULD paint the new state if asked - never that it asked. Delete the
+  `InvalidateRect` and it still passes. The rule, and the two ways out of it,
+  are now in `docs/claude/testing.md`; the wrong reason is corrected in
+  `refreshAllDividerBands` and in `split-divider.ps1`'s header rather than left
+  to mis-teach the next reader, the way T252 itself corrected T233.
+
+  The measurement is permanent instead of a thing somebody did once:
+  `Window.logReloadUpdateRegion` reports what a reload left dirty and
+  `split-divider.ps1` scores it (80 assertions, was 79), with the divider-band
+  count from the same reload as its in-band control - a reload that invalidated
+  nothing at all is a broken measurement, not a pass. Teeth-checked: a
+  deliberate `InvalidateRect(hwnd, null)` at the end of `onConfigChange` makes
+  the line read `any=1 l=0 t=0 r=782 b=591` and the assertion fail.
+
+  Two things the measurement turned up, filed rather than swept in. **T1590**:
+  one reload chord runs the whole per-window rebuild THREE times - two HFONTs
+  deleted and recreated each pass - because the fan-out is one app-level
+  `config_change` plus one per surface, so it scales with pane count.
+  **T1591**: `title-font.ps1` leans on the capture's repaint exactly the way
+  T252 did, so it cannot catch a tab bar that never asks to be repainted.
+
+  Floor: all four lanes, `split-divider.ps1` (80).
+
 - 2026-09-15: T764 closed done, T1589 filed - **a window opened while the
   session helper is FROZEN now opens as an ordinary working terminal instead of
   a dead one.**

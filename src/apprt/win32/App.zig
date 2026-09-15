@@ -6996,6 +6996,11 @@ pub fn performAction(
                 if (self.quick_terminal) |qt| {
                     qt.onConfigChange(&self.config);
                 }
+
+                // What the whole reload left dirty (T765). Empty is the
+                // measured, wanted answer; see `Window.logReloadUpdateRegion`
+                // for why it is logged rather than asserted here.
+                for (self.windows.items) |w| w.logReloadUpdateRegion();
             } else |err| {
                 log.err("error updating app config err={}", .{err});
             }
