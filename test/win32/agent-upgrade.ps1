@@ -104,10 +104,57 @@
 # pipe suffix, and it only ever kills ghoztty / ghoztty-agent processes launched
 # from the repo zig-out.
 #
+# -Release (T772): run the policy arms against the ReleaseFast staging build in
+# zig-out-release, i.e. the lineage the user's own Ghoztty is in. Everything
+# above is measured in the DEBUG lineage, and the decision the user actually
+# meets is the release one - so "only in release" is precisely the class of
+# defect this script could not see. What changes, and why each change is forced:
+#
+#   * THE STALENESS INPUT IS REAL. `GHOZTTY_AGENT_BUNDLED_VERSION` is debug-only
+#     on purpose (a stray env var must never be able to kill a user's agent), so
+#     a release run cannot fake an old agent. It builds one instead: a second
+#     ReleaseFast agent stamped `-Dagent-version=<old>` is started as the
+#     RUNNING agent while the app's bundled path points at the current binary.
+#     Running != bundled with no test hook anywhere - the shape a real upgrade
+#     produces. `-StaleAgentExe` names it; without one this script builds it
+#     into zig-out-release-stale (about two minutes cold, seconds warm).
+#   * ARMS I/J/K/N SKIP. All four are driven by `GHOZTTY_AGENT_PROTO_VERSION`,
+#     the agent-side hook that is debug-only for the same reason, and a protocol
+#     skew cannot be produced from one tree without it. They are counted as
+#     SKIPPED in the verdict rather than quietly not run.
+#   * ARM M NEEDS NO `GHOZTTY_AGENT_HANDOFF_FORCE` (also debug-only). A release
+#     run has the thing force exists to fake: the old agent runs from
+#     `ghoztty-agent.exe.bak` beside a genuinely NEWER `ghoztty-agent.exe`, which
+#     is the real trigger, exactly as a delivery leaves it.
+#   * ISOLATION IS THREE KNOBS, NOT TWO. A release build shares the user's
+#     lineage - their agent's guard mutex, pipe and state dir - so
+#     GHOZTTY_AGENT_INSTANCE joins the LOCALAPPDATA redirect and the pipe suffix
+#     this script already sets, and `Assert-GhozttyIsolatedBuild -Allow` verifies
+#     all three before a window opens. URL-scheme registration and path
+#     self-heal are turned off (a release build would otherwise repoint the
+#     user's `ghoztty://` handler at a temp exe). The compensating control is the
+#     bystander pair at the end: the user's own agents and their `GhozttyAgent`
+#     autostart value are enumerated before and asserted untouched after.
+#   * THE CLI GOES THROUGH THE `.com` TWIN (T245) - a release `ghoztty.exe` is
+#     GUI-subsystem, so a redirected stdout from it is empty and every `+list`
+#     oracle would read as "no panes".
+#   * THE APP LOG IS TWO SOURCES. A release build appends to
+#     `%LOCALAPPDATA%\ghoztty\ghoztty.log` as well as writing stderr, and one
+#     appended file serves the whole run - so each arm records the file's length
+#     at launch and reads only the tail past it, on top of its own stderr
+#     capture.
+#
 #   powershell -NoProfile -File test\win32\agent-upgrade.ps1
+#   powershell -NoProfile -File test\win32\agent-upgrade.ps1 -Release
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
+    # Measure the release lineage (see the block above). Implies a genuinely
+    # stale agent binary rather than the debug staleness hook.
+    [switch]$Release,
+    # The genuinely-older agent for -Release. Defaults to
+    # zig-out-release-stale\bin\ghoztty-agent.exe, built on demand when absent.
+    [string]$StaleAgentExe = '',
     [switch]$NegativeControl,
     [switch]$Interactive
 )
@@ -115,10 +162,42 @@ param(
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
 $script:passes = 0
+$script:skipped = 0
 $root = Join-Path $env:TEMP "ghoztty-agent-upgrade-$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
+. (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+
+# -Release retargets the two DEFAULT paths only; an explicit -Exe/-AgentExe is
+# always obeyed. The staging tree is not built here - the delivery scripts own
+# that build, and building an app here would make one acceptance run ten minutes
+# long. The STALE agent is different: nothing else in the tree owns it, and
+# without it a -Release run would measure no staleness at all, so this script
+# does build that one (agent-only, cached after the first).
+$DefaultDebugExe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe'
+$DefaultDebugAgent = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe'
+$RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$StaleStamp = '20200101-t772old'
+if ($Release) {
+    if ($Exe -eq $DefaultDebugExe) { $Exe = Join-Path $RepoRoot 'zig-out-release\bin\ghoztty.exe' }
+    if ($AgentExe -eq $DefaultDebugAgent) { $AgentExe = Join-Path $RepoRoot 'zig-out-release\bin\ghoztty-agent.exe' }
+    if (-not (Test-Path $Exe) -or -not (Test-Path $AgentExe)) {
+        $script:skipped++
+        Write-Host "SKIP  -Release: no staging build at $(Split-Path $Exe). Build it with:"
+        Write-Host '        zig build -Dapp-runtime=win32 -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu -Dstrip=false --prefix zig-out-release'
+        Write-Host ''
+        # Never a green verdict over a run that measured nothing (T271).
+        Write-TestVerdict -Pass 0 -Fail 0 -Skipped $script:skipped -Unit 'checks'
+    }
+}
+
+# A release ghoztty.exe is GUI-subsystem: its stdout goes nowhere unless the
+# `.com` twin runs it (T245). In the debug tree the .exe is already
+# console-subsystem, so this resolves back to $Exe and nothing changes.
+$CliExe = [System.IO.Path]::ChangeExtension($Exe, '.com')
+if (-not (Test-Path $CliExe)) { $CliExe = $Exe }
 # Write-Host, never the pipeline: a helper that asserts AND returns a value
 # would otherwise hand its caller an array of @('  PASS ...', $realValue), and
 # the caller's `.Pid` / `-eq` silently reads the wrong element. Start-App below
@@ -128,6 +207,13 @@ function Assert($name, $cond) {
     else { Write-Host "  FAIL $name" -ForegroundColor Red; $script:failures++ }
 }
 function Say($m) { Write-Host $m }
+# A named absence, counted in the verdict. An arm whose INPUT cannot exist in
+# this lineage says so here rather than quietly not running - the whole point of
+# -Release is that what was never measured is visible.
+function Skip($name, $why) {
+    Write-Host "  SKIP $name - $why" -ForegroundColor Yellow
+    $script:skipped++
+}
 
 # Arm I runs its agent from a COPY under this script's temp root, so its command
 # line never mentions zig-out and the `*zig-out*` filter alone left it running
@@ -195,7 +281,9 @@ function Wait-AgentPid($tmp, $timeoutSec = 25, $notPid = 0) {
 
 function Run-CliArgs($argv, $out, $timeoutSec = 15) {
     # persistence: on (default) unless a caller passes its own - section F launches with =false as its negative control.
-    $p = Start-Process -FilePath $Exe -WindowStyle Hidden -PassThru `
+    # $CliExe, not $Exe: in the release lineage the answer only comes back
+    # through the `.com` twin (T245).
+    $p = Start-Process -FilePath $CliExe -WindowStyle Hidden -PassThru `
         -ArgumentList $argv -RedirectStandardOutput $out -RedirectStandardError "$out.err"
     # Cache the handle BEFORE the process can exit. Touching `.Handle` after
     # exit is too late: PowerShell then reads back an EMPTY ExitCode, and every
@@ -293,22 +381,41 @@ function Wait-NoDialog($appPid, $timeoutSec = 12) {
     return $false
 }
 
-# The app's decision log (T201). The exe under test is a DEBUG build, i.e. the
-# Console subsystem, so std.log goes to STDERR -- the
-# %LOCALAPPDATA%\ghoztty\ghoztty.log sink is release-only. Each arm therefore
-# captures its own stderr file, which also means no offset bookkeeping across
-# arms. Opened with FileShare.ReadWrite because the app still holds it.
-function Read-AppLog($path) {
+# The app's decision log (T201). A DEBUG build is Console-subsystem, so std.log
+# goes to STDERR and each arm's own capture file is the whole story - no offset
+# bookkeeping across arms. A RELEASE build is GUI-subsystem and ALSO appends to
+# %LOCALAPPDATA%\ghoztty\ghoztty.log, one file for the whole run; the stderr
+# handle this harness hands it still receives the same lines, but the file is the
+# sink the shipping build is designed around, so a release run reads BOTH and an
+# arm sees only the tail past the length recorded at its launch. Opened with
+# FileShare.ReadWrite because the app still holds it.
+function Read-FileFrom($path, $offset = 0) {
     if (-not $path -or -not (Test-Path $path)) { return '' }
     try {
         $fs = [System.IO.File]::Open($path, 'Open', 'Read', 'ReadWrite')
         try {
-            if ($fs.Length -le 0) { return '' }
-            $buf = New-Object byte[] $fs.Length
-            $n = $fs.Read($buf, 0, $buf.Length)
+            if ($fs.Length -le $offset) { return '' }
+            $fs.Position = $offset
+            $len = [int]($fs.Length - $offset)
+            $buf = New-Object byte[] $len
+            $n = $fs.Read($buf, 0, $len)
             return [System.Text.Encoding]::UTF8.GetString($buf, 0, $n)
         } finally { $fs.Dispose() }
     } catch { return '' }
+}
+# Release only: the shared log file, and the length each arm's launch saw.
+$script:SharedLog = $null
+$script:SharedLogOffsets = @{}
+function Get-SharedLogLength {
+    if (-not $script:SharedLog -or -not (Test-Path $script:SharedLog)) { return 0 }
+    try { return [int64](Get-Item $script:SharedLog).Length } catch { return 0 }
+}
+function Read-AppLog($path) {
+    $text = Read-FileFrom $path 0
+    if ($script:SharedLog -and $path -and $script:SharedLogOffsets.ContainsKey($path)) {
+        $text += Read-FileFrom $script:SharedLog $script:SharedLogOffsets[$path]
+    }
+    return $text
 }
 # Poll rather than read once: the line we want may not be flushed yet, and a
 # bare read would turn a timing gap into a false failure.
@@ -329,8 +436,15 @@ function Start-App($tmp, $title, $extraArgs = @()) {
     $argv = @("--title=$title") + $extraArgs
     $script:AppLog = Join-Path $tmp "applog-$title.err.txt"
     $script:AppTop = [IntPtr]::Zero
+    # Release: everything already in the shared log belongs to an EARLIER arm.
+    if ($script:SharedLog) { $script:SharedLogOffsets[$script:AppLog] = (Get-SharedLogLength) }
     # persistence: on (default) - the agent under test only owns sessions when persistence is on.
-    $app = Start-OnTestDesktop -Exe $Exe -Arguments $argv -StdErr $script:AppLog
+    # -AllowReleaseBuild in the release lineage: the helper runs the same T1033
+    # pre-flight on every launch, and this script's SUBJECT is that build. The
+    # opt-in is checked, not trusted - the three isolating knobs are in place
+    # above, and the bystander pair at the end is the proof they held.
+    $app = Start-OnTestDesktop -Exe $Exe -Arguments $argv -StdErr $script:AppLog `
+        -AllowReleaseBuild:$Release
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 40000
     $script:AppTop = $top
     if ($top -eq [IntPtr]::Zero) { return 0 }
@@ -365,12 +479,14 @@ $notesCurrent = if ($agentNoteVersions.Count -gt 0) { $agentNoteVersions[-1].ToS
 $notesAnchor = if ($agentNoteVersions.Count -gt 1) { $agentNoteVersions[-2].ToString() } else { $null }
 $savedNotesVersion = $env:GHOZTTY_WHATS_NEW_VERSION
 
-# The debug build's own seen-version store, under this run's redirected
-# LOCALAPPDATA (set below) - never the release app's.
+# The build's own seen-version store, under this run's redirected LOCALAPPDATA
+# (set below) - never the user's. The file name splits by lineage the same way
+# the agent state dir does (`whats-new-seen[-debug]`).
 function Set-SeenNotesVersion([string]$version) {
     $dir = Join-Path $env:LOCALAPPDATA 'ghoztty'
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    [System.IO.File]::WriteAllText((Join-Path $dir 'whats-new-seen-debug'), $version)
+    $name = if ($Release) { 'whats-new-seen' } else { 'whats-new-seen-debug' }
+    [System.IO.File]::WriteAllText((Join-Path $dir $name), $version)
 }
 
 Stop-TestProcs
@@ -387,9 +503,37 @@ $savedSuppress = $env:GHOSTTY_AGENT_SUPPRESS_CAPS
 $savedHolder = $env:GHOZTTY_AGENT_PTY_HOLDER
 $savedForce = $env:GHOZTTY_AGENT_HANDOFF_FORCE
 $savedInterval = $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS
+$savedInstance = $env:GHOZTTY_AGENT_INSTANCE
+$savedScheme = $env:GHOZTTY_URL_SCHEME
+$savedSelfheal = $env:GHOZTTY_PATH_SELFHEAL
+
+# BYSTANDERS (T269/T772). What a -Release run must leave exactly as it found it:
+# the agents it did not start - in the release lineage that is the USER'S own,
+# holding their live panes - and the autostart Run values it did not write.
+# Enumerated before the first launch and asserted at the end.
+$RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+function Get-BystanderAgentPids {
+    return , @(Get-CimInstance Win32_Process -Filter "Name LIKE 'ghoztty-agent%'" |
+        ForEach-Object { [int]$_.ProcessId })
+}
+function Get-GhozttyRunValues {
+    $props = (Get-ItemProperty $RunKey -ErrorAction SilentlyContinue)
+    $map = @{}
+    if ($props) {
+        foreach ($p in $props.PSObject.Properties) {
+            if ($p.Name -like 'GhozttyAgent*') { $map[$p.Name] = [string]$p.Value }
+        }
+    }
+    return $map
+}
+$bystandersBefore = Get-BystanderAgentPids
+$runValuesBefore = Get-GhozttyRunValues
+if ($Release) { Say "bystander agents before: $($bystandersBefore -join ' ')" }
 
 $tmp = Join-Path $root 'run'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+# `local-agent` in the release lineage, `local-agent-debug` in the debug one -
+# the same `build_config.is_debug` split the pipe name and the guard key use,
+# plus the T167 instance suffix a release run sets below.
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 $env:GHOZTTY_AGENT_BUNDLED_VERSION = $null
@@ -405,12 +549,175 @@ $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS = $null
 # would answer them about somebody else's windows.
 $env:GHOZTTY_PIPE_SUFFIX = "-agentupg$PID"
 
+if ($Release) {
+    # The other two thirds of the sandbox (T1158). A release build shares the
+    # USER'S lineage - their agent's guard mutex, its pipe and its state dir - so
+    # without GHOZTTY_AGENT_INSTANCE every session an arm opens would land in the
+    # agent that owns their live panes, PINNED, where nothing reaps it. The
+    # shared helper is what sets it (and arms the removal of the autostart Run
+    # value the release app is then free to write), with this run's own root as
+    # the LOCALAPPDATA sandbox, i.e. exactly where it already points.
+    Set-GhozttyTestIsolation -Tag 'agentupg' -ReleaseSandbox -SandboxRoot $tmp |
+        Out-Null
+    # A release build registers HKCU\Software\Classes\ghoztty at launch, pointed
+    # at its own exe - it would hand the user's `ghoztty://` links to a binary
+    # under zig-out-release. A debug build registers `ghoztty-debug://` and never
+    # collides, which is why the debug run has never needed either of these.
+    $env:GHOZTTY_URL_SCHEME = '0'
+    $env:GHOZTTY_PATH_SELFHEAL = '0'
+    # The release log sink. Every arm reads only the tail past its own launch.
+    $script:SharedLog = Join-Path $tmp 'ghoztty\ghoztty.log'
+}
+
+# `local-agent` in the release lineage, `local-agent-debug` in the debug one -
+# the same `build_config.is_debug` split the pipe name and the guard key use -
+# plus the T167 instance suffix, which is why this is derived AFTER the sandbox
+# is set rather than spelled out. Arm C's pre-started agent publishes its
+# port.json here, so a name read wrong shows up as an app that never finds it.
+$stateDirName = if ($Release) { "local-agent-$($env:GHOZTTY_AGENT_INSTANCE)" } else { 'local-agent-debug' }
+New-Item -ItemType Directory -Force (Join-Path $tmp "ghoztty\$stateDirName") | Out-Null
+
 # T1033: this script launches the app itself (Start-Process, not the test
 # desktop's helper), so it asks the pre-flight question the helper asks: are
 # these bytes ours to drive, or the ones the user's installed Ghoztty owns?
 # Here rather than at the top of the file so the `+version` it runs is itself
-# inside the hermetic env above.
-Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
+# inside the hermetic env above. -Allow in release mode is an opt-in that is
+# CHECKED: it refuses unless all three isolating knobs above are set.
+$buildMode = if ($Release) {
+    Assert-GhozttyIsolatedBuild -Exe $Exe -Allow | Out-Null
+    # Asked of the `.com` twin: a GUI-subsystem exe answers `+version` into a
+    # console that is not there, so the mode would read as UNKNOWN - and an
+    # unknown mode passes the release check below vacuously, which is the one
+    # reading that must not be possible here.
+    Get-GhozttyBuildMode -Exe $CliExe
+} else {
+    Assert-GhozttyIsolatedBuild -Exe $Exe
+}
+Say "build mode under test: $buildMode"
+
+# --- staleness, for real (T772) ----------------------------------------------
+# In the debug lineage a stale agent is one env var. In the release lineage
+# there is no hook at all, so an OLDER AGENT BINARY has to exist: same tree, same
+# ReleaseFast configuration, a different `-Dagent-version` stamp. It is built
+# here rather than by a delivery script because nothing else in the tree wants
+# one; the build is agent-only (about two minutes cold, seconds warm).
+$script:StaleAgent = $null
+if ($Release) {
+    $script:StaleAgent = if ($StaleAgentExe) { $StaleAgentExe } else {
+        Join-Path $RepoRoot 'zig-out-release-stale\bin\ghoztty-agent.exe'
+    }
+    if (-not (Test-Path $script:StaleAgent)) {
+        if ($StaleAgentExe) {
+            Say "  -StaleAgentExe does not exist: $StaleAgentExe"
+            $script:StaleAgent = $null
+        } else {
+            Say "  building the stale agent twin (stamp $StaleStamp) - first run only ..."
+            $cacheSaved = $env:ZIG_GLOBAL_CACHE_DIR
+            if (-not $cacheSaved) { $env:ZIG_GLOBAL_CACHE_DIR = 'D:\zig-global-cache' }
+            # The same configuration the staging tree is built with (the SKIP
+            # text above prints it), so the twin differs from the bundled agent
+            # in its STAMP and nothing else.
+            & zig build agent -Dapp-runtime=win32 -Doptimize=ReleaseFast `
+                -Dtarget=x86_64-windows-gnu -Dstrip=false `
+                "-Dagent-version=$StaleStamp" --prefix (Join-Path $RepoRoot 'zig-out-release-stale') 2>&1 |
+                ForEach-Object { "    $_" }
+            $env:ZIG_GLOBAL_CACHE_DIR = $cacheSaved
+            if (-not (Test-Path $script:StaleAgent)) { $script:StaleAgent = $null }
+        }
+    }
+    if ($script:StaleAgent) { Say "  stale agent twin: $script:StaleAgent" }
+}
+
+# The agent pipe the app derives for THIS run's lineage - the name a spawn would
+# have used, so a pre-started agent is indistinguishable from one the app
+# started. (`\\.\pipe\ghoztty-agent[-debug][-<instance>]-<user>`.)
+$script:RunAgentPipe = "\\.\pipe\ghoztty-agent-$($env:GHOZTTY_AGENT_INSTANCE)-$($env:USERNAME -replace '[\\/]', '_')"
+
+# Release only: start the agent this arm wants ALREADY RUNNING, from the binary
+# named, and wait until it actually answers. It publishes `port.json` in the
+# app's own state dir, which is the app's find path (dial the recorded pipe), so
+# nothing here is a test seam - it is the same file, with the same contents, that
+# the app's own spawn would have written. Returns the pid, or 0.
+#
+# Why the arms pre-start an agent at all rather than letting the app spawn one:
+# a RELEASE agent on this box does not answer its pipe for **15-30 seconds**
+# after it starts (measured 2026-09-15; a debug agent answers in about one), and
+# the app gives up after `spawn_deadline_ms` = 2000ms and comes up with no agent
+# at all - "session-restore: no local agent". Every arm of this script needs a
+# connection to exist before there is any decision to judge, so in the release
+# lineage the agent is started here and given the time it actually takes. That
+# stall is a defect in its own right and is filed as one (T1593); working around
+# it here is deliberate, and named, so that nobody reads these arms as evidence
+# that a cold release launch keeps its sessions.
+function Start-LineageAgent($tag, $bin) {
+    if (-not $bin) { return 0 }
+    $dir = Join-Path $tmp "ghoztty\$stateDirName"
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    $port = Join-Path $dir 'port.json'
+    Remove-Item $port -Force -ErrorAction SilentlyContinue
+    $sess = Join-Path $dir 'sessions.json'
+    # The redirections are load-bearing twice over: they capture the agent's own
+    # banner next to the arm that started it, and they force Start-Process onto
+    # CreateProcess rather than ShellExecute - arm M's agent runs from
+    # `ghoztty-agent.exe.bak`, and ShellExecute refuses an extension it has no
+    # association for ("the system cannot find all the information required").
+    # persistence: this is the AGENT, not the app - it opens no window and
+    # restores nothing; what it restores sessions FOR is the app the arm launches
+    # next, which declares its own intent.
+    $p = Start-Process -FilePath $bin -PassThru -WindowStyle Hidden `
+        -ArgumentList "--listen-pipe=$script:RunAgentPipe", "--port-file=$port", `
+        "--sessions-file=$sess", '--headless' `
+        -RedirectStandardOutput "$tmp\agent-$tag.out.txt" -RedirectStandardError "$tmp\agent-$tag.err.txt"
+    # Cache the handle BEFORE the child can exit, or a refused agent reads back
+    # as a running one (the T351 ExitCode trap).
+    $null = $p.Handle
+    $deadline = (Get-Date).AddSeconds(120)
+    $published = $false
+    while ((Get-Date) -lt $deadline) {
+        if ($p.HasExited) { return 0 }
+        if (-not $published) {
+            if (Test-Path $port) { $published = $true } else { Start-Sleep -Milliseconds 300; continue }
+        }
+        # Published is not ready: ASK it. `+sessions` dials the agent recorded in
+        # port.json through the same client the app uses, so "it answered me" is
+        # the same fact the app's own dial is about to establish.
+        Run-CliArgs @('+sessions') "$tmp\agentprobe-$tag.txt" 30 | Out-Null
+        $probe = (Out-Text "$tmp\agentprobe-$tag.txt") + (Out-Text "$tmp\agentprobe-$tag.txt.err")
+        if ($probe -notmatch 'could not connect to the local agent') { return [int]$p.Id }
+        Start-Sleep -Milliseconds 500
+    }
+    return 0
+}
+
+# What every arm below says instead of touching GHOZTTY_AGENT_BUNDLED_VERSION.
+# Debug: flip the hook. Release: arrange the world - an older agent already
+# running and answering, with the app's bundled path left pointing at the
+# current binary.
+function Set-StaleWorld($tag, $runningBin = $null) {
+    if (-not $Release) {
+        $env:GHOZTTY_AGENT_BUNDLED_VERSION = $FAKE_NEW
+        return -1
+    }
+    if (-not $runningBin) { $runningBin = $script:StaleAgent }
+    return (Start-LineageAgent $tag $runningBin)
+}
+# The other half: an agent that is CURRENT (arm B's negative control, and arm H's
+# layout-building phase). In debug the app spawns it and the hook stays off.
+function Set-CurrentWorld($tag = $null, $runningBin = $null) {
+    if (-not $Release) {
+        $env:GHOZTTY_AGENT_BUNDLED_VERSION = $null
+        return -1
+    }
+    if (-not $tag) { return -1 }
+    if (-not $runningBin) { $runningBin = $AgentExe }
+    return (Start-LineageAgent $tag $runningBin)
+}
+# "This arm's world was actually arranged." In debug the hook cannot fail, so it
+# is trivially true; in release it is the pre-started agent's pid, and a zero
+# there means every assert after it would be measuring an app with no agent.
+function Assert-StaleWorld($name, $agentPid) {
+    Assert $name ($agentPid -ne 0)
+}
 
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
@@ -418,6 +725,14 @@ $td = New-TestDesktop -Interactive:$Interactive
 try {
 
 Assert "setup: ghoztty exe exists in zig-out" (Test-Path $Exe)
+if ($Release) {
+    # Positive control for the switch itself: a -Release run against a Debug
+    # staging tree would exercise the -debug lineage and prove nothing about the
+    # one the user is in. An unreadable mode fails this too - it is the same
+    # claim either way, "this is measuring the release lineage".
+    Assert "setup: -Release is measuring a release-lineage build (got '$buildMode')" `
+        ($buildMode -and -not (Test-GhozttyIsolatedBuildMode -Mode $buildMode))
+}
 Assert "setup: agent exe exists in zig-out" (Test-Path $AgentExe)
 
 # ============================================================================
@@ -438,9 +753,39 @@ Assert "A3 the stamp is non-empty" ($stamp.Length -gt 0)
 # date ('dev') still works, but say so out loud rather than silently.
 if ($stamp -notmatch '^\d{8}-') { Say "    NOTE: stamp '$stamp' has no YYYYMMDD prefix (dev build)" }
 
+if ($Release) {
+    # A4-A6 are the release run's OWN premise, and it is a stronger one: every
+    # stale arm below rests on two real binaries disagreeing, so the
+    # disagreement is measured here rather than assumed. Without this, a stale
+    # twin accidentally built from the same stamp would make arms C/E/H/L/M pass
+    # as "current" arms while claiming to be stale ones.
+    Assert "A4 a stale agent twin exists to be older than the bundled one" ($null -ne $script:StaleAgent)
+    if ($script:StaleAgent) {
+        $sverOut = Join-Path $tmp 'version-stale.txt'
+        # persistence: a `--version` probe - it prints a line and exits, opening
+        # no window and touching no session.
+        $svp = Start-Process -FilePath $script:StaleAgent -ArgumentList @('--version') -WindowStyle Hidden `
+            -PassThru -RedirectStandardOutput $sverOut -RedirectStandardError "$sverOut.err"
+        $null = $svp.Handle
+        $svp.WaitForExit()
+        $staleText = (Out-Text $sverOut).Trim()
+        $staleStampRead = ($staleText -split '\s+')[-1]
+        Say "    stale twin --version => '$staleText'"
+        Assert "A5 the stale twin prints its own stamp" ($staleText -match '^ghoztty-agent\s+\S+$')
+        # The never-downgrade rule orders on the date prefix, so "older" has to
+        # be true in exactly that sense.
+        Assert "A6 the stale twin really is OLDER than the bundled build ($staleStampRead < $stamp)" `
+            ($staleStampRead -ne $stamp -and ($staleStampRead -split '-')[0] -lt ($stamp -split '-')[0])
+    }
+}
+
 # ============================================================================
 Say "== B: negative control - a CURRENT agent is never touched"
 # ============================================================================
+# Release: the CURRENT agent is started here and given time to answer, for the
+# reason Start-LineageAgent's header gives. Debug: the app spawns its own.
+$currentB = Set-CurrentWorld 'b'
+Assert-StaleWorld "B0 a current agent is already running for the app to find" $currentB
 $appPidB = Start-App $tmp 't147-current'
 $logB = $script:AppLog
 Assert "B1 the GUI came up" ($appPidB -ne 0)
@@ -483,7 +828,11 @@ Say "== C: stale LEGACY agent + a live session => the app leaves it strictly alo
 # end clear it. The agent reads it once at startup, so it must be in place BEFORE
 # the app spawns one - which is why Stop-TestProcs at the end of B matters.
 $env:GHOSTTY_AGENT_SUPPRESS_CAPS = 'agent_handoff'
-$env:GHOZTTY_AGENT_BUNDLED_VERSION = $FAKE_NEW
+# In release the stale agent is started HERE, from the older binary, and the app
+# below finds it through the port.json it publishes - running != bundled with no
+# hook in sight. In debug this is the one env var.
+$staleC = Set-StaleWorld 'c'
+Assert-StaleWorld "C0 a genuinely older agent is already running for the app to find" $staleC
 $appPidC = Start-App $tmp 't147-stale-decline'
 $logC = $script:AppLog
 $topC = $script:AppTop
@@ -535,6 +884,10 @@ Say "== E: the adoption promise - the agent refreshes SILENTLY once it goes idle
 # leaving a stale agent alone is only acceptable if it is genuinely adopted at
 # the next quiet moment. Here that moment is made to arrive - the last window
 # closes, the agent goes idle, and the refresh happens with no UI at all.
+# Arm C's stale world died with its processes; this arm needs its own. (In
+# debug the hook set in C is still in force and this is a no-op.)
+$staleE = Set-StaleWorld 'e'
+Assert-StaleWorld "E0 a genuinely older agent is already running for the app to find" $staleE
 $appPidE = Start-App $tmp 't147-idle'
 $logE = $script:AppLog
 Assert "E1 the GUI came up" ($appPidE -ne 0)
@@ -600,7 +953,19 @@ Say "== H: T1056 - the user's shape: RESTORED windows, several BUSY sessions, a 
 # the user to end all three for a binary refresh, and the accepted path is what
 # T229 was filed for - so the destructive machinery those asserts covered now
 # lives in arm J, which still reaches it through the skew.
-$env:GHOZTTY_AGENT_BUNDLED_VERSION = $null
+if ($Release -and $script:StaleAgent) {
+    # The release shape of this arm is the most faithful one in the script: the
+    # BUILDING app ships the old agent (bundled == running, so it decides
+    # "current" and does nothing), and the RESTORING app below ships the new one.
+    # That is an app update landing on a box whose agent is still the previous
+    # build, with every session already on it - the state the user is in, and the
+    # one that cost 95 sessions on Mac.
+    $env:GHOSTTY_LOCAL_AGENT_BIN = $script:StaleAgent
+    $staleH = Set-StaleWorld 'h' $script:StaleAgent
+    Assert-StaleWorld "H0 the old agent is running and answering before the layout is built" $staleH
+} else {
+    Set-CurrentWorld | Out-Null
+}
 $appPidH1 = Start-App $tmp 't229-build'
 Assert "H1 the layout GUI came up" ($appPidH1 -ne 0)
 Wait-Panes $tmp 'h0' 1 | Out-Null
@@ -624,7 +989,17 @@ Stop-Process -Id $appPidH1 -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 Assert "H4 killing the app left the agent (and its sessions) alive" ((Agent-Pid $tmp) -eq $agentH)
 
-$env:GHOZTTY_AGENT_BUNDLED_VERSION = $FAKE_NEW
+if ($Release) {
+    # The app update: same agent still running, a NEWER binary beside the app.
+    $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
+    # The premise of the release shape, stated: the agent still running was
+    # spawned from the OLD binary and the app is now pointed at the new one.
+    # (That the app AGREES it is stale is H7, which is the arm's own oracle.)
+    Assert "H4b the app now ships a different agent binary than the one running" `
+        (($null -ne $script:StaleAgent) -and ($script:StaleAgent -ne $AgentExe) -and ((Agent-Pid $tmp) -ne 0))
+} else {
+    $env:GHOZTTY_AGENT_BUNDLED_VERSION = $FAKE_NEW
+}
 $appPidH2 = Start-App $tmp 't229-restore'
 $logH = $script:AppLog
 Assert "H5 the restoring GUI came up" ($appPidH2 -ne 0)
@@ -658,6 +1033,23 @@ foreach ($lf in (All-Leaves (Get-List $tmp 'h4' 15))) {
 }
 Assert "H13 all three busy sessions survived (they were never at risk)" ($aliveH -ge 3)
 Stop-TestProcs
+
+# =============================== THE SKEW FAMILY ============================
+# Arms I, J, K and N are one family: each one needs the running agent to
+# disagree with this app about the PROTOCOL, and that disagreement cannot be
+# produced from a single tree - both ends compile the same
+# `protocol.proto_version`. The only way in is the agent-side
+# `GHOZTTY_AGENT_PROTO_VERSION` hook, which is debug-only on purpose (a stray env
+# var must not be able to cut a user's app off from its own sessions), so a
+# release-lineage run has no way to reach any of them. They SKIP with that
+# reason and are counted in the verdict rather than silently not running (T772).
+if ($Release) {
+    $skewWhy = 'the protocol-skew input (GHOZTTY_AGENT_PROTO_VERSION) is a debug-only agent hook; a skew cannot be built from one release tree'
+    Skip 'I (a refresh that cannot re-dial)' $skewWhy
+    Skip 'J (the mandatory-update path + the What''s New accessory)' $skewWhy
+    Skip 'K (a newer agent is never downgraded)' $skewWhy
+    Skip 'N (no accessory when there is nothing new)' $skewWhy
+} else {
 
 # ============================================================================
 Say "== I: negative control - a refresh that CANNOT re-dial says so"
@@ -1029,6 +1421,8 @@ $env:GHOZTTY_AGENT_PROTO_VERSION = $null
 $env:GHOZTTY_WHATS_NEW_VERSION = $null
 Stop-TestProcs
 
+}  # ============================ end of the skew family =======================
+
 # ============================================================================
 Say "== L: T907/T1056 - handoff-capable, but a session it owns DIRECTLY holds it back"
 # ============================================================================
@@ -1049,7 +1443,11 @@ Say "== L: T907/T1056 - handoff-capable, but a session it owns DIRECTLY holds it
 # is in.
 $env:GHOSTTY_AGENT_SUPPRESS_CAPS = $null
 $env:GHOZTTY_AGENT_PTY_HOLDER = '0'
-$env:GHOZTTY_AGENT_BUNDLED_VERSION = $FAKE_NEW
+# The holder switch is read by the AGENT at startup, so in release - where the
+# stale agent is started by this script rather than by the app - it has to be in
+# place before Set-StaleWorld, which it now is.
+$staleL = Set-StaleWorld 'l'
+Assert-StaleWorld "L0 a genuinely older agent is already running for the app to find" $staleL
 $appPidL = Start-App $tmp 't907-draining'
 $logL = $script:AppLog
 Assert "L1 the GUI came up" ($appPidL -ne 0)
@@ -1104,16 +1502,33 @@ Say "== M: T907 - handoff-capable + every session holder-backed => the app stand
 #     shape a real delivery leaves behind - a running exe cannot be overwritten
 #     on Windows, so the upgrade renames it and copies the new build into the
 #     original path - which is why the copy beside it is what gets spawned.
+#
+# In RELEASE neither seam is available, and neither is needed: the pair of real
+# binaries this run already has IS the shape force exists to fake. The OLD agent
+# runs from `ghoztty-agent.exe.bak` with the genuinely NEWER one sitting at the
+# canonical name beside it, which is precisely what a delivery leaves behind - so
+# the supervisor's own "is the file on disk newer?" comparison is what fires,
+# with no hook anywhere in the chain.
 $handoffDir = Join-Path $tmp 'handoff'
 New-Item -ItemType Directory -Force $handoffDir | Out-Null
 $runningAgentM = Join-Path $handoffDir 'ghoztty-agent.exe.bak'
-Copy-Item $AgentExe $runningAgentM -Force
-Copy-Item $AgentExe (Join-Path $handoffDir 'ghoztty-agent.exe') -Force
-$env:GHOSTTY_LOCAL_AGENT_BIN = $runningAgentM
+$bundledAgentM = Join-Path $handoffDir 'ghoztty-agent.exe'
+$sourceForRunningM = if ($Release -and $script:StaleAgent) { $script:StaleAgent } else { $AgentExe }
+Copy-Item $sourceForRunningM $runningAgentM -Force
+Copy-Item $AgentExe $bundledAgentM -Force
 $env:GHOZTTY_AGENT_PTY_HOLDER = '1'
-$env:GHOZTTY_AGENT_HANDOFF_FORCE = '1'
 $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS = '2000'
-$env:GHOZTTY_AGENT_BUNDLED_VERSION = $FAKE_NEW
+if ($Release) {
+    # The app's bundled path is the NEW copy; the running agent is the old one
+    # this script starts from the .bak beside it.
+    $env:GHOSTTY_LOCAL_AGENT_BIN = $bundledAgentM
+    $staleM = Set-StaleWorld 'm' $runningAgentM
+    Assert-StaleWorld "M0 the old agent is running from the delivery's .bak, beside a newer binary" $staleM
+} else {
+    $env:GHOSTTY_LOCAL_AGENT_BIN = $runningAgentM
+    $env:GHOZTTY_AGENT_HANDOFF_FORCE = '1'
+    $env:GHOZTTY_AGENT_BUNDLED_VERSION = $FAKE_NEW
+}
 $appPidM = Start-App $tmp 't907-standdown'
 $logM = $script:AppLog
 Assert "M1 the GUI came up" ($appPidM -ne 0)
@@ -1189,6 +1604,9 @@ Stop-TestProcs
     $env:GHOZTTY_AGENT_PTY_HOLDER = $savedHolder
     $env:GHOZTTY_AGENT_HANDOFF_FORCE = $savedForce
     $env:GHOZTTY_AGENT_HANDOFF_INTERVAL_MS = $savedInterval
+    $env:GHOZTTY_AGENT_INSTANCE = $savedInstance
+    $env:GHOZTTY_URL_SCHEME = $savedScheme
+    $env:GHOZTTY_PATH_SELFHEAL = $savedSelfheal
     # The per-run root holds every arm's APP LOG, and a failing Wait-LogMatch
     # assert is answerable only from it - so a failure that needs the log costs a
     # whole second run today, with the evidence deleted again at the end of it.
@@ -1212,17 +1630,52 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert "G2 no test-desktop app ever became foreground on the interactive desktop" ($leaked.Count -eq 0)
 }
 
+# --- BYSTANDERS (T269/T772) --------------------------------------------------
+# What the box looked like before, still looks like now. This is what makes a
+# release-lineage run safe rather than merely intended to be: in that lineage the
+# agents this script did not start are the USER'S, holding their live panes, and
+# the `GhozttyAgent` autostart value is theirs too. A debug run asserts the same
+# pair - it has never been in doubt there, which is exactly what makes it a
+# control for the release run beside it.
+$stillAlive = @(Get-Process -Id $bystandersBefore -ErrorAction SilentlyContinue |
+    ForEach-Object { [int]$_.Id })
+$goneBy = @($bystandersBefore | Where-Object { $stillAlive -notcontains $_ })
+Assert "P1 bystander agents untouched (before: $($bystandersBefore.Count), gone: $($goneBy -join ' '))" `
+    ($goneBy.Count -eq 0)
+# A RELEASE app writes the agent autostart Run value; its name carries the
+# lineage suffix, so it can only ever be a NEW value beside the user's, never an
+# overwrite of theirs. Both halves are measured, then ours is removed - a Run
+# entry pointing into %TEMP% would try to start a deleted agent at every logon.
+$runValuesAfter = Get-GhozttyRunValues
+$clobbered = @($runValuesBefore.Keys | Where-Object {
+    -not $runValuesAfter.ContainsKey($_) -or $runValuesAfter[$_] -ne $runValuesBefore[$_]
+})
+Assert "P2 the user's autostart Run values are untouched (changed: $($clobbered -join ' '))" `
+    ($clobbered.Count -eq 0)
+foreach ($name in @($runValuesAfter.Keys | Where-Object { -not $runValuesBefore.ContainsKey($_) })) {
+    Say "  this run added Run value '$name' -> removing it"
+    Assert "P3 added Run value '$name' names a lineage of ours, not the user's" `
+        ($name -like '*agentupg*')
+    Remove-ItemProperty -Path $RunKey -Name $name -ErrorAction SilentlyContinue
+}
+
 # --- stamp (T783/T1037) ------------------------------------------------------
 # This harness went 12 days red at HEAD because nothing tied an edit of the
 # upgrade DECISION to a run of the only thing that measures it end to end.
 # A clean green run stamps the code it covers; a red one leaves the stamp alone,
 # so red stays due.
+#
+# Only the DEBUG run stamps. A -Release run skips the whole skew family by
+# construction, and the standing harness rule is that a run with skipped sections
+# is not the evidence a stamp stands for - it is additional evidence, in a
+# lineage the debug run cannot reach.
 Complete-TestBody
-if ($script:failures -eq 0 -and -not $NegativeControl) {
+if ($script:failures -eq 0 -and -not $NegativeControl -and -not $Release) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard agent-upgrade -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Say ""
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'AGENT-UPGRADE'
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skipped `
+    -Label $(if ($Release) { 'AGENT-UPGRADE (RELEASE LINEAGE)' } else { 'AGENT-UPGRADE' })

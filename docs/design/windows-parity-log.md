@@ -9,6 +9,49 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-15: T772 closed done - **the agent-refresh decision is now measured in the lineage the user actually runs.**
+
+  `test/win32/agent-upgrade.ps1` measured the whole policy - leave a stale agent
+  alone, adopt it silently once idle, stand down when it can replace itself -
+  and measured all of it against a DEBUG build. The build the user meets had
+  never been through any of it, which is exactly where an "only in release"
+  defect lives. `-Release` runs the same arms against `zig-out-release`.
+
+  The staleness input could not come across: `GHOZTTY_AGENT_BUNDLED_VERSION` is
+  debug-only on purpose, so a release run cannot fabricate an old agent. It
+  builds one instead - a second ReleaseFast agent stamped
+  `-Dagent-version=20200101-t772old`, running while the app ships the current
+  binary. Running != bundled, no hook anywhere in the decision. Arm M needs no
+  `GHOZTTY_AGENT_HANDOFF_FORCE` either: the old agent runs from
+  `ghoztty-agent.exe.bak` beside a genuinely newer canonical binary, which is
+  what a delivery leaves behind and what the supervisor's own comparison fires
+  on. The skew family (I/J/K/N) cannot exist in one release tree and SKIPs with
+  that reason, counted in the verdict rather than quietly absent.
+
+  Isolation is the part that makes such a run safe rather than merely intended
+  to be: the release lineage IS the user's, so the run holds all three knobs via
+  `Set-GhozttyTestIsolation -ReleaseSandbox` (which `-Allow` then verifies),
+  turns off URL-scheme registration and path self-heal, drives the CLI through
+  the `.com` twin, and ends by asserting the user's own agents and their
+  `GhozttyAgent` autostart value are exactly as it found them.
+
+  THE FIND, and it is a real one: a RELEASE agent does not answer its pipe for
+  **15-30 seconds** after it starts (5s HandshakeTimeout, 15s ConnectionRefused,
+  30s answers), while `port.json` is published in under a second and the app
+  gives up after 2000ms. A debug agent answers in about one second. So a release
+  launch that has to spawn its own agent logs `local agent did not become
+  dialable within 2000ms` and then `session-restore: no local agent` - the
+  user's panes come back as fresh shells. Filed as **T1593** (P1) with the
+  measurement table; the harness works around it by starting each arm's agent
+  and waiting for it to actually answer, and says so where it does it.
+
+  Validation: `agent-upgrade.ps1 -Release` ALL PASS (88 assertions, 4 SKIPPED)
+  against a zig-out-release rebuilt at HEAD; the debug run unchanged at ALL PASS
+  (147); floor ALL LANES PASS (lib/none/win32/agent); `-Lane harness` PASS after
+  fixing the two new launch sites the persistence-flag audit caught undeclared.
+  One flake seen and not reproduced: arm L (L5/L6) went red once on a loaded box
+  and was green on the next two debug runs.
+
 - 2026-09-15: T771 - the line the app writes just before it kills the agent now measures the relation that PREDICTS its death, not the one that merely sounds like it. `SHARED_JOB` asked whether the agent is a MEMBER of our job; a process is never a member of a job it only holds a handle to, so it answered a truthful `no` through every one of the four disappearances it was added to explain (T268 established that the agent OWNS the job's last handle, and kill-on-close takes the app down when that handle closes). Handle holders are not enumerable without a driver, but the fatal relation has an answerable proxy: the agent assigns every PTY child to its one process-global job, so a process the agent PARENTED sitting in our job means our job IS that job. `job_object.zig` gains `Facts.job_is_agents` and the term `AGENT_OWNS_JOB=<yes|no|?>` on the log line, computed from a Toolhelp32 child enumeration crossed with our job's member list - and the verdict is split out as the pure `jobIsAgentsFrom(members, members_complete, children, children_complete)` so the shape no live box will reproduce on demand is asserted instead of argued: the field's own pids, ownership yes and membership no in the same test. The tri-state discipline is kept where it is easy to lose: a match is conclusive from partial lists, a NEGATIVE needs both lists whole, and no children seen at all is `?` rather than `no` (an agent with no live sessions still owns the job it created). `ownJobContains` was rewritten onto the same `ownJobMembers` reader rather than keeping a second copy of the truncation rule. `LocalAgent.terminateAgent` now REFUSES the kill when the term reads yes, naming T268/T771 - a backstop under T675's startup escape, not a substitute for it. Deliberately NOT claimed: nobody has watched that refusal fire, because triggering it needs a pane-launched app with the escape suppressed - filed as T1592 with the negative control it is owed. Validation: `zig test job_object.zig` 7/7; `agent-upgrade.ps1` J22b/J22c assert the term on the REAL line in a real destructive refresh and that it is not `yes` in an arm whose app escaped its job (ALL PASS, 141); floor ALL LANES PASS (lib/none/win32/agent), P1-P3 ALL PASS (26/20/16), `-Lane harness` PASS, and six guard rows re-stamped green (job-escape-startup, agent-upgrade, registration-sites, agent-autostart, window-active-audit, restore-late-agent).
 - 2026-09-15: T767 closed done - **a caption test that was aiming at the old
   title bar, and calling a correct build broken.**
