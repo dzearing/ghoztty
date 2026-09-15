@@ -480,5 +480,27 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.35.0/Ghoztty-1.35.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="Owzm+2LVe+F6Excj0Gt6nwf/W5N3cTj+QIJZbjGKCejtexLLfOqznY1MZ8Lx0Km9nk5JprX1W8c3PYLWETR3CA==" length="25917697" />
         </item>
+        <item>
+            <title>Version 1.36.0</title>
+            <sparkle:version>1.36.0</sparkle:version>
+            <sparkle:shortVersionString>1.36.0</sparkle:shortVersionString>
+            <pubDate>Tue, 15 Sep 2026 02:17:58 +0000</pubDate>
+            <description>{
+  "version": "1.36.0",
+  "sections": [
+    {
+      "title": "Splits and panes",
+      "items": [
+        { "title": "Rearrange mode — drag panes between splits, tabs, and windows", "text": "Cmd+Shift+. turns on a per-window mode where every pane grows a header with a drag grip, its title, and a button to pop it out into its own window. The tab bar stays visible while the mode is on, because you can drop onto it. Escape or the shortcut again leaves." },
+        { "title": "A drop now means five different things", "text": "Drop on a quadrant of a pane to split it, on the center to swap the two panes in place, near the window's edge to insert a full-height or full-width pane at the top level, on the tab bar to make a new tab at that position, or anywhere else to make a new window. Hovering a tab button for half a second switches to that tab so you can keep dragging into its layout." },
+        { "title": "Pop a pane out, change your mind, drag it back", "text": "A window holding a single pane could be popped out but not dragged back into another window; the drop was resolved and then silently discarded. It now works. The only thing still refused is a lone pane being asked to create a new window or tab just to hold itself." },
+        { "title": "Your panes keep their processes", "text": "Terminals keep their process, scrollback, and persistent session across every move, including a swap between two windows, and viewer panes rearrange like any other pane. A drag can't empty a window behind your back either, so nothing slips past close confirmation or the remote Disconnect prompt." }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.36.0/Ghoztty-1.36.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="KAhVaU1iAMBbSqC0ZW/Dji+5SGt3j7US6zuUB+0qfuZnhhLqigTO2fU06F6OgjmbKYS1DSzy7QC1n1JMWBzbBg==" length="25952748" />
+        </item>
     </channel>
 </rss>
