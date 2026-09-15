@@ -73,6 +73,14 @@ const T202_NEUTERED = false;
 /// grow controls beside them must NOT.
 const T249_NEUTERED = false;
 
+/// Negative control for section 9 of `test/win32/tab-strip.ps1`, same contract
+/// as the two above. Flip to `true`, rebuild `-Dapp-runtime=win32`, and re-run:
+/// `applySticky`'s `freeze` argument becomes a no-op, restoring the pre-T737
+/// rule where a tab widens under a resting pointer — so the section's
+/// frozen-grow assertions (and the unit tests below that pin the freeze) must
+/// fail, while the T249 grow/shrink controls beside them must NOT.
+const T737_NEUTERED = false;
+
 /// The strip speaks the same rectangle the rest of the chrome does — one
 /// definition, in `icon_button.zig`, re-exported here so existing
 /// `tab_strip.Rect` call sites are unchanged.
@@ -354,13 +362,48 @@ pub fn slotWidth(m: Metrics, tabs_avail: i32, preferred_paint: i32) i32 {
 /// must never be the reason the strip goes under pressure — otherwise a tab
 /// that once ran a long command would keep the whole strip squeezed for a
 /// string nobody can see any more.
-pub fn applySticky(m: Metrics, tabs_avail: i32, prefer: []const i32, sticky: []i32) []const i32 {
+///
+/// `freeze` is T737, the residual T249 left behind: the grow half still moves
+/// click targets. A *background* tab whose command starts widens that tab and
+/// slides every tab right of it, so a click can still land on the wrong tab —
+/// rarely, and only at the instant something starts, but structurally. The
+/// caller passes `true` while the pointer is anywhere inside the strip, and the
+/// ratchet then stops raising: widths cannot change under a pointer that is
+/// pointing at them, which makes the wrong-tab hit impossible rather than
+/// merely rare. The cost is that a tab needing more room stays ellipsized while
+/// you hover it — a small, self-correcting, user-attributable state that ends
+/// the moment the pointer leaves the strip and the caller repaints.
+///
+/// Freezing suppresses the RAISE only. The release below still runs (a strip
+/// that no longer fits must never stay squeezed for a pointer), and a
+/// structural relayout still re-fits, because the caller drops `sticky` back to
+/// the measured preferences before calling — a resize or a tab being opened is
+/// the user moving the strip themselves, which is exactly the motion this rule
+/// has no quarrel with. A tab with no mark yet (`<= 0`) always takes its
+/// preferred width: a frozen ZERO would paint a tab at the floor width.
+/// Whether a `freeze` argument actually holds the strip still in this build —
+/// `freeze` itself, unless the T737 negative control is armed. The caller's
+/// debug oracle reports THIS rather than the pointer state it passed in, so
+/// flipping `T737_NEUTERED` turns section 9 of `tab-strip.ps1` red instead of
+/// leaving it green over a strip that no longer freezes.
+pub fn freezeActive(freeze: bool) bool {
+    return freeze and !T737_NEUTERED;
+}
+
+pub fn applySticky(
+    m: Metrics,
+    tabs_avail: i32,
+    prefer: []const i32,
+    sticky: []i32,
+    freeze: bool,
+) []const i32 {
     std.debug.assert(sticky.len >= prefer.len);
     const n = @min(prefer.len, MAX_TABS);
     if (T249_NEUTERED) return prefer[0..n];
+    const frozen = freeze and !T737_NEUTERED;
     var sticky_total: i32 = 0;
     for (prefer[0..n], sticky[0..n]) |p, *s| {
-        s.* = @max(s.*, p);
+        if (!frozen or s.* <= 0) s.* = @max(s.*, p);
         sticky_total += slotWidth(m, tabs_avail, s.*);
     }
     if (sticky_total > tabs_avail) {
@@ -758,7 +801,7 @@ test "T249: a tab grows with its title and never narrows on its own" {
 
         // Idle: both tabs at their own width, tab 2 immediately after tab 1.
         {
-            const eff = applySticky(m, avail, &[_]i32{ short, short }, &sticky);
+            const eff = applySticky(m, avail, &[_]i32{ short, short }, &sticky, false);
             const s = layout(m, WIDE, true, eff, &buf);
             try testing.expectEqual(@as(usize, 2), s.visible);
             try testing.expectEqual(short, buf[0].width());
@@ -768,7 +811,7 @@ test "T249: a tab grows with its title and never narrows on its own" {
 
         // A command starts: tab 1's title needs more room, so it takes it.
         {
-            const eff = applySticky(m, avail, &[_]i32{ long, short }, &sticky);
+            const eff = applySticky(m, avail, &[_]i32{ long, short }, &sticky, false);
             const s = layout(m, WIDE, true, eff, &buf);
             try testing.expectEqual(long, buf[0].width());
             try testing.expect(buf[1].left > idle_t2);
@@ -779,7 +822,7 @@ test "T249: a tab grows with its title and never narrows on its own" {
 
         // The command finishes and the title goes back. NOTHING moves.
         {
-            const eff = applySticky(m, avail, &[_]i32{ short, short }, &sticky);
+            const eff = applySticky(m, avail, &[_]i32{ short, short }, &sticky, false);
             const s = layout(m, WIDE, true, eff, &buf);
             try testing.expectEqual(long, buf[0].width());
             try testing.expectEqual(busy_t2, buf[1].left);
@@ -788,7 +831,7 @@ test "T249: a tab grows with its title and never narrows on its own" {
         // ...and a shorter title still than the original moves nothing either.
         {
             const tiny = m.preferredWidth(px(scale, 10));
-            const eff = applySticky(m, avail, &[_]i32{ tiny, short }, &sticky);
+            const eff = applySticky(m, avail, &[_]i32{ tiny, short }, &sticky, false);
             const s = layout(m, WIDE, true, eff, &buf);
             try testing.expectEqual(busy_t2, buf[1].left);
             try testing.expectEqual(busy_plus, s.new_tab.left);
@@ -814,7 +857,7 @@ test "T249: the ratchet is released rather than allowed to truncate" {
         // Two tabs ratcheted to half the run each: as wide as a tab may get.
         var sticky = [_]i32{ cap, cap };
         const wide_pref = [_]i32{ cap, cap };
-        _ = applySticky(m, avail, &wide_pref, &sticky);
+        _ = applySticky(m, avail, &wide_pref, &sticky, false);
         try testing.expectEqual(cap, sticky[0]);
 
         // Their titles then collapse to something small AND a third tab's
@@ -824,7 +867,7 @@ test "T249: the ratchet is released rather than allowed to truncate" {
         var sticky3 = [_]i32{ cap, cap, 0 };
         var pref3: [MAX_TABS]i32 = undefined;
         for (pref3[0..3]) |*e| e.* = modest;
-        const eff = applySticky(m, avail, pref3[0..3], sticky3[0..3]);
+        const eff = applySticky(m, avail, pref3[0..3], sticky3[0..3], false);
         for (eff) |e| try testing.expectEqual(modest, e);
         const s = layout(m, WIDE, true, eff, &buf);
         // No pressure: everyone got their own width, nothing ellipsizes.
@@ -837,11 +880,99 @@ test "T249: the ratchet is released rather than allowed to truncate" {
         for (stickyN[0 .. fits + 2]) |*e| e.* = 0;
         var prefN: [MAX_TABS]i32 = undefined;
         for (prefN[0 .. fits + 2]) |*e| e.* = m.preferredWidth(@intFromFloat(@round(TITLE_DIP * scale)));
-        const effN = applySticky(m, avail, prefN[0 .. fits + 2], stickyN[0 .. fits + 2]);
+        const effN = applySticky(m, avail, prefN[0 .. fits + 2], stickyN[0 .. fits + 2], false);
         const sN = layout(m, WIDE, true, effN, &buf);
         _, const plain = layoutN(scale, WIDE, fits + 2, &buf);
         try testing.expectEqual(plain.tab_w, sN.tab_w);
         try testing.expectEqual(plain.visible, sN.visible);
+    }
+}
+
+test "T737: nothing moves while the pointer is inside the strip" {
+    // The T249 residual: the GROW half can still slide a tab out from under a
+    // resting pointer, because a background tab's command starting widens that
+    // tab and pushes every tab right of it. Frozen, the strip cannot move at
+    // all while anyone is pointing at it, and the deferred growth lands on the
+    // first paint after the pointer leaves.
+    var buf: [MAX_TABS]Rect = undefined;
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |scale| {
+        const m = Metrics.init(scale);
+        const avail = runWidth(m, WIDE, true);
+        const px = struct {
+            fn f(s: f32, dip: f32) i32 {
+                return @intFromFloat(@round(dip * s));
+            }
+        }.f;
+        const short = m.preferredWidth(px(scale, 90));
+        const long = m.preferredWidth(px(scale, 260));
+
+        var sticky = [_]i32{ short, short };
+        const idle = layout(m, WIDE, true, applySticky(
+            m,
+            avail,
+            &[_]i32{ short, short },
+            &sticky,
+            false,
+        ), &buf);
+        const idle_t2 = buf[1].left;
+        const idle_plus = idle.new_tab.left;
+
+        // The pointer is in the strip and tab 1 (a BACKGROUND tab — this is
+        // not a tab the user is interacting with) starts a command. Nothing
+        // moves: not its own right edge, not tab 2, not the "+".
+        {
+            const eff = applySticky(m, avail, &[_]i32{ long, short }, &sticky, true);
+            const s = layout(m, WIDE, true, eff, &buf);
+            try testing.expectEqual(short, buf[0].width());
+            try testing.expectEqual(idle_t2, buf[1].left);
+            try testing.expectEqual(idle_plus, s.new_tab.left);
+            // The mark itself is untouched, so nothing is owed a second grow.
+            try testing.expectEqual(short, sticky[0]);
+        }
+        // Repeated frozen paints are stable, however long the title gets.
+        {
+            const eff = applySticky(m, avail, &[_]i32{ capWidth(m, avail), short }, &sticky, true);
+            const s = layout(m, WIDE, true, eff, &buf);
+            try testing.expectEqual(idle_t2, buf[1].left);
+            try testing.expectEqual(idle_plus, s.new_tab.left);
+        }
+        // The pointer leaves: the growth the freeze deferred lands now.
+        {
+            const eff = applySticky(m, avail, &[_]i32{ long, short }, &sticky, false);
+            const s = layout(m, WIDE, true, eff, &buf);
+            try testing.expectEqual(long, buf[0].width());
+            try testing.expect(buf[1].left > idle_t2);
+            try testing.expect(s.new_tab.left > idle_plus);
+        }
+        // ...and the T249 rule is unchanged underneath: a shorter title still
+        // narrows nothing, frozen or not.
+        {
+            const eff = applySticky(m, avail, &[_]i32{ short, short }, &sticky, true);
+            try testing.expectEqual(long, eff[0]);
+        }
+
+        // A tab with no mark yet takes its preferred width even frozen — a tab
+        // opened while the pointer rests in the strip must not paint at the
+        // floor width and then jump when the pointer leaves.
+        {
+            var fresh = [_]i32{ 0, 0 };
+            const eff = applySticky(m, avail, &[_]i32{ long, short }, &fresh, true);
+            try testing.expectEqual(long, eff[0]);
+            try testing.expectEqual(short, eff[1]);
+        }
+
+        // And the release still fires while frozen: marks that no longer fit
+        // drop to the true preferences rather than keeping the strip squeezed
+        // for as long as a pointer happens to rest there.
+        {
+            const cap = capWidth(m, avail);
+            const modest = m.preferredWidth(px(scale, 120));
+            var wide = [_]i32{ cap, cap, 0 };
+            var pref3: [MAX_TABS]i32 = undefined;
+            for (pref3[0..3]) |*e| e.* = modest;
+            const eff = applySticky(m, avail, pref3[0..3], wide[0..3], true);
+            for (eff) |e| try testing.expectEqual(modest, e);
+        }
     }
 }
 

@@ -1107,7 +1107,11 @@ try {
     # -----------------------------------------------------------------------
     Kill-RepoInstances
     $longTitle = 'TabTitleLongEnoughToHaveBeenTruncatedByTheOldTwoHundredDipCap'
-    $app2 = Start-OnTestDesktop -Exe $exe -Arguments @(
+    # stderr again, for section 9's `tab strip freeze=...` oracle - the same
+    # arrangement (and the same reason) as the first instance above.
+    $errlog2 = Join-Path $env:TEMP 'ghoztty-tabstrip-stderr2.log'
+    Remove-Item $errlog2 -ErrorAction SilentlyContinue
+    $app2 = Start-OnTestDesktop -Exe $exe -StdErr $errlog2 -Arguments @(
         '--config-default-files=false',
         '--background=#000000',
         '--window-show-tab-bar=always',
@@ -1280,6 +1284,116 @@ try {
         Write-Host "INFO  T249 re-fit: t1w $($r2.Tabs[0].Width) -> $($r3.Tabs[0].Width) after a resize"
         Assert ($r3.Tabs[0].Width -lt $r2.Tabs[0].Width) `
             "T249: a structural relayout re-fits the ratcheted tab ($($r2.Tabs[0].Width) -> $($r3.Tabs[0].Width))"
+    }
+
+    # -----------------------------------------------------------------------
+    # 9. T737: the strip cannot change width while the pointer is inside it.
+    #
+    # The residual T249 left behind. T249 deleted the SHRINK half of the
+    # motion; the GROW half is still there by design (a title must never
+    # ellipsize with strip to spare, which is T235), and it can still be
+    # unattributable: a BACKGROUND tab whose command starts widens that tab and
+    # slides every tab right of it. If a hand is already resting on one of
+    # those, the click lands on the wrong tab.
+    #
+    # The rule: while the pointer is anywhere in the strip - over a tab, over
+    # the empty run, over the buttons - the ratchet stops raising, so no width
+    # can change under it. The deferred grow lands on the first paint after the
+    # pointer leaves.
+    #
+    # WHAT IS ASSERTED WHERE, and why it is split. The RULE (a frozen grow
+    # changes nothing, an unfrozen one still does, a fresh tab still gets its
+    # width, the release still fires) is four unit tests at 1.0/1.25/1.5/2.0 in
+    # tab_strip_layout.zig - pure geometry, no window. What cannot be asserted
+    # from out here is the pair "a growth arrives WHILE the pointer is inside":
+    # a posted WM_MOUSEMOVE is chased by WM_MOUSELEAVE within a frame on this
+    # desktop (T233), so the freeze cannot be HELD across a title change
+    # arriving from a pane. What this section proves instead is the WIRING -
+    # that a real paint taken with the pointer in the strip runs the frozen
+    # path, and one taken with the pointer in a pane does not - using
+    # `capture-hover` (T282), which sends the move and paints on ONE GUI-thread
+    # stack, so the leave cannot land in between.
+    # -----------------------------------------------------------------------
+    $r9 = Get-TestStripRegions -Window $top -Exe $exe
+    if (-not $pane8 -or -not $r9 -or -not $r9.NewTab -or @($r9.Tabs).Count -lt 2) {
+        Write-Host 'SKIP  T737 freeze: no strip regions / fewer than two tabs / no tab 1 pane to retitle'
+        $script:skipped++
+    } else {
+        # --- 9a. the residual is REAL, measured rather than assumed ---------
+        # A BACKGROUND tab (tab 1; section 7 left tab 2 selected) starts a
+        # command, and every click target right of it moves. This is the hazard
+        # the freeze exists to remove, and it is worth a number: if this moved
+        # nothing, T737 would have been closable as observed-and-fine.
+        $before = Get-TestStripRegions -Window $top -Exe $exe
+        Set-Tab1Title 'a-background-command-that-makes-this-tab-much-wider-than-it-was'
+        $after = Get-TestStripRegions -Window $top -Exe $exe
+        $dT2   = $after.Tabs[1].Left - $before.Tabs[1].Left
+        $dPlus = $after.NewTab.Left - $before.NewTab.Left
+        Write-Host ("INFO  T737 residual: a BACKGROUND tab's title growing moved tab 2 by $dT2 px " +
+                    "and the '+' by $dPlus px (unattributable motion under a resting pointer)")
+        Assert ($dT2 -gt 0 -and $dPlus -gt 0) `
+            "T737: the residual is real - a background tab's grow still slides its neighbours (t2 +$dT2, + +$dPlus)"
+
+        # --- 9b. a paint with the pointer IN the strip is frozen ------------
+        # The point is the empty run between the last tab and the "+": not a
+        # tab, which is exactly the case `hover_tab` could not cover - the tab
+        # you are ABOUT to click is not the one you are over.
+        $lastTab = $after.Tabs[$after.Tabs.Count - 1]
+        $gapMid  = [int][Math]::Truncate(($lastTab.Right + $after.NewTab.Left) / 2)
+        if ($gapMid -le $lastTab.Right) { $gapMid = $after.NewTab.Left + 2 }
+        $stripY  = $clientY + $m.StripTopClient + [int]($barH / 2)
+        $freezeLogged = $false
+        if (Test-Path $errlog2) {
+            Clear-Content $errlog2 -ErrorAction SilentlyContinue
+            $hov = Get-TestHoverCapture -Hwnd $top -X ($clientX + $gapMid) -Y $stripY
+            Start-Sleep -Milliseconds 300
+            $lines = @(Select-String -Path $errlog2 -Pattern 'tab strip freeze=' -ErrorAction SilentlyContinue)
+            $freezeLogged = ($lines.Count -gt 0)
+            if (-not $hov) {
+                Assert $false "T737: capture-hover over the strip run failed ($(Get-LastHoverCaptureError))"
+            } elseif (-not $freezeLogged) {
+                Write-Host 'SKIP  T737 freeze oracle: no `tab strip freeze=` line in the log (release build?)'
+                $script:skipped++
+            } else {
+                $hot = @($lines | Where-Object { $_.Line -match 'freeze=1' })
+                Assert ($hot.Count -gt 0) `
+                    "T737: a paint taken with the pointer in the strip run runs the FROZEN path ($($lines.Count) strip paints, $($hot.Count) frozen)"
+            }
+            if ($hov) { Close-TestHoverCapture $hov }
+
+            # --- 9c. the control: a pointer in a PANE freezes nothing -------
+            # Teeth on 9b both ways: the same probe, one strip-height lower,
+            # must log paints (so "no freeze=1" cannot pass against a build
+            # that painted nothing) and none of them frozen.
+            Clear-Content $errlog2 -ErrorAction SilentlyContinue
+            $paneY = $clientY + $m.StripTopClient + $barH + 40
+            $ctl = Get-TestHoverCapture -Hwnd $top -X ($clientX + $gapMid) -Y $paneY
+            Start-Sleep -Milliseconds 300
+            $ctlLines = @(Select-String -Path $errlog2 -Pattern 'tab strip freeze=' -ErrorAction SilentlyContinue)
+            if (-not $ctl) {
+                Assert $false "T737 control: capture-hover over the pane failed ($(Get-LastHoverCaptureError))"
+            } else {
+                Assert ($ctlLines.Count -gt 0) `
+                    'T737 control: the strip still repaints when the pointer is in a pane (negative control has teeth)'
+                $ctlHot = @($ctlLines | Where-Object { $_.Line -match 'freeze=1' })
+                Assert ($ctlHot.Count -eq 0) `
+                    "T737 control: a pointer in a pane does NOT freeze the strip ($($ctlHot.Count) frozen paints)"
+                Close-TestHoverCapture $ctl
+            }
+        } else {
+            Write-Host 'SKIP  T737 freeze oracle: stderr was not captured for this instance'
+            $script:skipped++
+        }
+
+        # --- 9d. nothing stays latched -------------------------------------
+        # The freeze is a live pointer state, not a mode: once the pointer is
+        # gone the strip is free again, and a further grow takes its room.
+        $r9a = Get-TestStripRegions -Window $top -Exe $exe
+        Set-Tab1Title 'a-background-command-that-makes-this-tab-much-wider-than-it-was-and-then-some-more'
+        $r9b = Get-TestStripRegions -Window $top -Exe $exe
+        Write-Host ("INFO  T737 unlatch: t1w $($r9a.Tabs[0].Width) -> $($r9b.Tabs[0].Width) after the probes")
+        Assert ($r9b.Tabs[0].Width -ge $r9a.Tabs[0].Width) `
+            "T737: the strip is not left frozen once the pointer is gone ($($r9a.Tabs[0].Width) -> $($r9b.Tabs[0].Width))"
     }
 
     Assert (-not ($app2.Process -and $app2.Process.HasExited)) 'no crash (long-title instance)'

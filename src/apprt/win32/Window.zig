@@ -417,6 +417,20 @@ tab_sticky_w: [MAX_TABS]i32 = [_]i32{0} ** MAX_TABS,
 /// a shell rewrites behind your back, not for one you typed.
 tab_sticky_key: ?StickyKey = null,
 
+/// True while the pointer is anywhere inside the tab strip — over a tab, over
+/// the empty run, over the "+" or the menu button (T737). While it is set the
+/// grow-only ratchet above stops raising, so no tab can widen and slide its
+/// neighbours out from under a hand that is already resting on them.
+///
+/// It is deliberately wider than `hover_tab`, which only says the pointer is
+/// over a TAB: the click that lands on the wrong tab is aimed at a tab the
+/// pointer has not reached yet, so the empty run and the button band have to
+/// count as "pointing at the strip" too.
+///
+/// Cleared by `WM_MOUSELEAVE` and by any move below the strip; the transition
+/// back to false repaints, which is when the deferred growth lands.
+pointer_in_strip: bool = false,
+
 /// User-assigned accent color per tab (T72, Mac TerminalTabColor parity).
 /// Set from the tab context menu; painted as a stripe in the tab bar.
 tab_colors: [MAX_TABS]tab_color.TabColor = [_]tab_color.TabColor{.none} ** MAX_TABS,
@@ -7917,12 +7931,36 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
         self.tab_sticky_key = sticky_key;
         @memcpy(self.tab_sticky_w[0..self.tab_count], prefer[0..self.tab_count]);
     }
+    // T737: and while the pointer is inside the strip the ratchet stops
+    // raising as well, so no tab can widen under a hand that is already
+    // resting there. The deferred grow lands on the repaint `setPointerInStrip`
+    // fires when the pointer leaves.
     const effective = tab_strip.applySticky(
         m,
         tab_strip.runWidth(m, strip_client_w, has_menu),
         prefer[0..self.tab_count],
         self.tab_sticky_w[0..self.tab_count],
+        self.pointer_in_strip,
     );
+    // Debug-build oracle for tab-strip.ps1's T737 section. The freeze cannot be
+    // seen in pixels off the test desktop — a posted WM_MOUSEMOVE is chased by
+    // WM_MOUSELEAVE within a frame (T233) — so the script pairs this line with
+    // `capture-hover`, which sends the move and paints on ONE stack. `deferred`
+    // counts the tabs whose title wants more room than the freeze is handing
+    // them, which is the residual actually being refused.
+    // Logged on EVERY strip paint, including the unfrozen ones: a control that
+    // only asserts "no freeze=1 line appeared" would score a pass against a
+    // build that painted nothing at all.
+    {
+        var deferred: usize = 0;
+        for (prefer[0..self.tab_count], effective) |p, e| {
+            if (p > e) deferred += 1;
+        }
+        log.debug("tab strip freeze={d} deferred={d}", .{
+            @intFromBool(tab_strip.freezeActive(self.pointer_in_strip)),
+            deferred,
+        });
+    }
     const strip = tab_strip.layout(m, strip_client_w, has_menu, effective, &tabs);
 
     // Publish hit-test rects. Tabs past `strip.visible` did not fit and get a
@@ -8561,6 +8599,20 @@ fn moveTabTo(self: *Window, from: usize, to: usize) void {
     self.app.markLayoutDirty(); // T89f: tab reordered → re-persist the layout
 }
 
+/// Latch whether the pointer is inside the tab strip (T737), repainting on the
+/// way OUT so the growth the freeze deferred lands immediately.
+///
+/// Every move the window sees goes through here — the strip band and the pane
+/// area both — because a pointer that walks down into a pane leaves the strip
+/// without ever raising `WM_MOUSELEAVE` (it has not left the window). The
+/// leave message covers the other half: stepping onto a pane's child window,
+/// or off the window entirely.
+pub fn setPointerInStrip(self: *Window, inside: bool) void {
+    if (self.pointer_in_strip == inside) return;
+    self.pointer_in_strip = inside;
+    if (!inside) self.invalidateTabBar();
+}
+
 /// Handle mouse movement over the tab bar for hover effects.
 /// Registers TrackMouseEvent on first move so we get WM_MOUSELEAVE.
 fn handleTabBarMouseMove(self: *Window, x: i16, y: i16) void {
@@ -8995,6 +9047,10 @@ fn makeSwatchBitmap(self: *Window, c: tab_color.TabColor) ?w32.HANDLE {
 fn handleTabBarMouseLeave(self: *Window) void {
     self.tracking_mouse = false;
     self.tabTipHide();
+    // T737: the pointer is off the window (or on a pane's child window), so
+    // the strip is free to take any width its titles grew to want. This
+    // repaints on the transition, which is where a deferred grow lands.
+    self.setPointerInStrip(false);
     if (self.hover_tab != -1 or self.hover_new_tab or self.hover_menu_btn) {
         self.hover_tab = -1;
         self.hover_close = false;
@@ -10341,6 +10397,10 @@ pub fn windowWndProc(
                 }
                 return 0;
             }
+            // T737: every move answers "is the pointer in the strip", not just
+            // the ones that land in it — walking down into a pane leaves the
+            // strip without ever raising WM_MOUSELEAVE.
+            window.setPointerInStrip(window.inTabBar(y));
             if (window.inTabBar(y)) {
                 window.handleTabBarMouseMove(@truncate(x), @truncate(window.toStripY(y)));
                 // Leaving the content area upward is a divider un-hover: the

@@ -9,6 +9,43 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-14: T737 closed done - **a tab can no longer change width while your
+  hand is on the strip.** T249 killed the half of the motion that fired minutes
+  later; what it left behind was the GROW half, which is by design (a title must
+  never ellipsize with empty strip beside it) but can still be caused by nobody:
+  a BACKGROUND tab whose command starts widens that tab and pushes every tab
+  right of it out from under a resting pointer. Measured on the box before
+  building anything, which is what the card asked for: **476 px** of slide for
+  one ordinary retitle at 1400x800 / 125% - not a few pixels of aim error, half
+  the strip.
+
+  The rule is now "nothing moves while anyone is pointing at it": while the
+  pointer is anywhere in the strip - over a tab, over the empty run, over the
+  "+" or the menu - the grow-only ratchet stops raising, and the growth it
+  deferred lands on the first paint after the pointer leaves. Wider than
+  `hover_tab` on purpose: the tab you are about to click is the one you are NOT
+  over yet. The cost is a tab that stays ellipsized while you hover it, which
+  ends the moment you move away and is attributable to you.
+
+  Two things the freeze deliberately does not touch: a structural relayout (a
+  resize, a tab opened or closed) still re-fits, because that is the user moving
+  the strip themselves; and the release still fires, so marks that no longer fit
+  can never keep the strip squeezed for as long as a pointer happens to rest
+  there. A tab with no mark yet still takes its own width, or a tab opened under
+  the pointer would paint at the floor and jump later.
+
+  **What is asserted where, because the desktop imposes a limit worth stating.**
+  The RULE is four unit tests at 1.0/1.25/1.5/2.0 in `tab_strip_layout.zig`. What
+  cannot be asserted from the test desktop is the pair "a growth ARRIVES while
+  the pointer is inside": a posted `WM_MOUSEMOVE` is chased by `WM_MOUSELEAVE`
+  within a frame (T233), so the freeze cannot be HELD across a title change
+  coming from a pane. So section 9 of `tab-strip.ps1` proves the WIRING instead -
+  a real paint taken with the pointer in the strip runs the frozen path, one
+  taken with the pointer in a pane does not - using `capture-hover` (T282), the
+  one probe whose move and paint are on a single GUI-thread stack. `T737_NEUTERED`
+  is the control: armed, the unit test fails and 9b reads `4 strip paints, 0
+  frozen` while the measurement and the controls beside it still pass.
+
 - 2026-09-14: T727 closed done, T1569 filed - **you can now ask what is sitting
   in the install locations, instead of only being told what a delivery just put
   there.** Every check `deliver-windows-build.ps1` makes - the file set, the PE
