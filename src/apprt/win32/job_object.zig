@@ -40,9 +40,19 @@ pub const Facts = struct {
     self_flags: ?u32 = null,
     /// Is the other process in any job?
     other_in_job: ?bool = null,
-    /// Is the other process a member of OUR job? This is the one that matters:
-    /// true means terminating it can tear our job down on top of us.
+    /// Is the other process a member of OUR job? Note what this does NOT
+    /// answer: a process is not a member of a job it merely holds a handle to,
+    /// so `false` here is compatible with that process owning the job we are
+    /// standing in (T268).
     shared: ?bool = null,
+    /// Is OUR job the AGENT'S job? The fatal relation is handle OWNERSHIP, and
+    /// handle holders are not enumerable without a driver — but the agent
+    /// assigns every PTY child to its process-global job, so a child of the
+    /// agent sitting in our job means our job IS that job, the agent owns its
+    /// last handle by construction, and killing the agent kills us. This is
+    /// the field that predicts death; `shared` is the one that reads like it
+    /// does (T771).
+    job_is_agents: ?bool = null,
 };
 
 /// Human-readable `LimitFlags`, e.g. `0x2800 kill_on_close|breakaway_ok`.
@@ -73,12 +83,16 @@ pub fn describe(buf: []u8, facts: Facts) []const u8 {
     var flag_buf: [64]u8 = undefined;
     var fbs = std.io.fixedBufferStream(buf);
     const w = fbs.writer();
-    w.print("self_in_job={s} self_job_flags={s} agent_in_job={s} SHARED_JOB={s}", .{
-        tri(facts.self_in_job),
-        if (facts.self_flags) |f| describeFlags(&flag_buf, f) else "?",
-        tri(facts.other_in_job),
-        tri(facts.shared),
-    }) catch {};
+    w.print(
+        "self_in_job={s} self_job_flags={s} agent_in_job={s} SHARED_JOB={s} AGENT_OWNS_JOB={s}",
+        .{
+            tri(facts.self_in_job),
+            if (facts.self_flags) |f| describeFlags(&flag_buf, f) else "?",
+            tri(facts.other_in_job),
+            tri(facts.shared),
+            tri(facts.job_is_agents),
+        },
+    ) catch {};
     return buf[0..fbs.pos];
 }
 
@@ -141,28 +155,105 @@ pub fn probe(other_pid: u32, other_handle: ?windows.HANDLE) Facts {
     }
 
     facts.shared = ownJobContains(other_pid);
+    facts.job_is_agents = ownJobIsAgents(other_pid);
     return facts;
 }
 
-/// Is `pid` a member of the job WE are in? Null when it cannot be answered —
+/// Is `pid` a member of the job WE are in? Null when it cannot be answered -
 /// including the case where the list came back truncated and the pid was not in
 /// the part we got, since the tail could still hold it.
 pub fn ownJobContains(pid: u32) ?bool {
     if (comptime builtin.os.tag != .windows) return null;
 
-    // 4 KiB holds ~500 pids on x64. A job with more members than that is not
-    // one we can answer about honestly, and says so.
-    //
-    // ZEROED, not `undefined`: a failed query leaves the buffer exactly as it
-    // found it, and reading a count out of uninitialised stack could scan
-    // garbage and report a shared job that does not exist. A diagnostic that
-    // can lie is worse than one that says `?`.
-    var buf: [4096]u8 align(@alignOf(JOBOBJECT_BASIC_PROCESS_ID_LIST)) = @splat(0);
+    var buf: MemberBuf align(member_buf_align) = @splat(0);
+    const members = ownJobMembers(&buf) orelse return null;
+    for (members.ids) |id| {
+        if (id == pid) return true;
+    }
+    // Not in what we were given. Only conclusive if we were given all of it.
+    if (!members.complete) return null;
+    return false;
+}
+
+/// Is OUR job the AGENT'S job - the relation that actually predicts the app
+/// dying inside `TerminateProcess(agent)` (T268/T771)?
+///
+/// What kills us is the agent holding the last HANDLE to a kill-on-close job we
+/// are a member of, and handle holders cannot be enumerated without a driver.
+/// The proxy: the agent assigns every PTY child to its one process-global job
+/// and holds that job's handle for its whole life, so if a process the agent
+/// PARENTED is in our job, our job is that job and the ownership follows by
+/// construction.
+///
+/// Same degradation rule as everything else here: `null` when the answer cannot
+/// be established - no snapshot, no children seen, a truncated member list -
+/// never a confident `no`.
+pub fn ownJobIsAgents(agent_pid: u32) ?bool {
+    if (comptime builtin.os.tag != .windows) return null;
+    if (agent_pid == 0) return null;
+
+    var kid_buf: [max_children]u32 = undefined;
+    const kids = childrenOf(agent_pid, &kid_buf);
+
+    var buf: MemberBuf align(member_buf_align) = @splat(0);
+    const members = ownJobMembers(&buf) orelse return null;
+
+    return jobIsAgentsFrom(members.ids, members.complete, kids.pids, kids.complete);
+}
+
+/// The verdict itself, separated from the two enumerations so it can be
+/// asserted - the shape T268 met (agent not a member, and yet the job is the
+/// agent's) is exactly the one no live box will reproduce on demand.
+///
+/// A match is conclusive even from partial lists: an id present is an id
+/// present. Only a NEGATIVE needs both lists whole.
+pub fn jobIsAgentsFrom(
+    members: []const usize,
+    members_complete: bool,
+    children: []const u32,
+    children_complete: bool,
+) ?bool {
+    for (children) |child| {
+        for (members) |m| {
+            if (m == child) return true;
+        }
+    }
+    // No children observed at all says nothing about whose job this is: an
+    // agent with no live PTY sessions still owns the job it created.
+    if (children.len == 0) return null;
+    if (!members_complete or !children_complete) return null;
+    return false;
+}
+
+/// 4 KiB holds ~500 pids on x64. A job with more members than that is not one
+/// we can answer about honestly, and says so.
+pub const MemberBuf = [4096]u8;
+const member_buf_align = @alignOf(JOBOBJECT_BASIC_PROCESS_ID_LIST);
+
+/// Our job's member pids, as a view into the caller's buffer.
+pub const JobMembers = struct {
+    ids: []const usize,
+    /// Whether `ids` is the WHOLE membership. A truncated list can prove a
+    /// positive and never a negative.
+    complete: bool,
+};
+
+/// Read our own job's process-id list into `buf`. Null when the question cannot
+/// be answered (jobless, denied).
+///
+/// `buf` is ZEROED, not `undefined`: a failed query leaves it exactly as it
+/// found it, and reading a count out of uninitialised stack could scan garbage
+/// and report a shared job that does not exist. A diagnostic that can lie is
+/// worse than one that says `?`.
+pub fn ownJobMembers(buf: *align(member_buf_align) MemberBuf) ?JobMembers {
+    if (comptime builtin.os.tag != .windows) return null;
+
+    @memset(buf, 0);
     var ret: windows.DWORD = 0;
     if (QueryInformationJobObject(
         null,
         JobObjectBasicProcessIdList,
-        &buf,
+        buf,
         buf.len,
         &ret,
     ) == 0) {
@@ -172,7 +263,7 @@ pub fn ownJobContains(pid: u32) ?bool {
         if (windows.kernel32.GetLastError() != .MORE_DATA) return null;
     }
 
-    const list: *const JOBOBJECT_BASIC_PROCESS_ID_LIST = @ptrCast(&buf);
+    const list: *const JOBOBJECT_BASIC_PROCESS_ID_LIST = @ptrCast(buf);
     const returned = list.NumberOfProcessIdsInList;
     // Guard against a bogus count before indexing: the buffer is written by the
     // kernel, but the arithmetic is ours.
@@ -181,12 +272,53 @@ pub fn ownJobContains(pid: u32) ?bool {
     const n = @min(returned, max_ids);
 
     const ids: [*]const usize = @ptrCast(&list.ProcessIdList);
-    for (ids[0..n]) |id| {
-        if (id == pid) return true;
+    return .{
+        .ids = ids[0..n],
+        .complete = returned >= list.NumberOfAssignedProcesses,
+    };
+}
+
+/// The most direct children we will look at. The agent parents one ConPTY shell
+/// per live session, so a handful is the shape; filling the buffer costs us the
+/// ability to say a conclusive `no`, not correctness.
+pub const max_children = 64;
+
+pub const Children = struct {
+    pids: []const u32,
+    /// False when the snapshot failed or the buffer filled - either way a
+    /// negative verdict cannot be drawn from this list.
+    complete: bool,
+};
+
+/// Direct children of `parent_pid`, from a Toolhelp32 snapshot, into `out`.
+/// Direct rather than the whole subtree on purpose: `pty_child.zig` assigns the
+/// shell the agent itself spawned, and a deeper descendant may have broken away
+/// into a job of its own.
+fn childrenOf(parent_pid: u32, out: *[max_children]u32) Children {
+    if (comptime builtin.os.tag != .windows) return .{ .pids = &.{}, .complete = false };
+
+    const snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == windows.INVALID_HANDLE_VALUE) return .{ .pids = &.{}, .complete = false };
+    defer windows.CloseHandle(snap);
+
+    var entry: PROCESSENTRY32W = undefined;
+    entry.dwSize = @sizeOf(PROCESSENTRY32W);
+    if (Process32FirstW(snap, &entry) == 0) return .{ .pids = &.{}, .complete = false };
+
+    var n: usize = 0;
+    var complete = true;
+    while (true) {
+        if (entry.th32ParentProcessID == parent_pid and entry.th32ProcessID != parent_pid) {
+            if (n == out.len) {
+                complete = false;
+                break;
+            }
+            out[n] = entry.th32ProcessID;
+            n += 1;
+        }
+        if (Process32NextW(snap, &entry) == 0) break;
     }
-    // Not in what we were given. Only conclusive if we were given all of it.
-    if (returned < list.NumberOfAssignedProcesses) return null;
-    return false;
+    return .{ .pids = out[0..n], .complete = complete };
 }
 
 // =============================================================================
@@ -235,6 +367,36 @@ extern "kernel32" fn IsProcessInJob(
     Result: *windows.BOOL,
 ) callconv(.winapi) windows.BOOL;
 
+const TH32CS_SNAPPROCESS: windows.DWORD = 0x00000002;
+
+const PROCESSENTRY32W = extern struct {
+    dwSize: windows.DWORD,
+    cntUsage: windows.DWORD,
+    th32ProcessID: windows.DWORD,
+    th32DefaultHeapID: usize,
+    th32ModuleID: windows.DWORD,
+    cntThreads: windows.DWORD,
+    th32ParentProcessID: windows.DWORD,
+    pcPriClassBase: i32,
+    dwFlags: windows.DWORD,
+    szExeFile: [260]u16,
+};
+
+extern "kernel32" fn CreateToolhelp32Snapshot(
+    dwFlags: windows.DWORD,
+    th32ProcessID: windows.DWORD,
+) callconv(.winapi) windows.HANDLE;
+
+extern "kernel32" fn Process32FirstW(
+    hSnapshot: windows.HANDLE,
+    lppe: *PROCESSENTRY32W,
+) callconv(.winapi) windows.BOOL;
+
+extern "kernel32" fn Process32NextW(
+    hSnapshot: windows.HANDLE,
+    lppe: *PROCESSENTRY32W,
+) callconv(.winapi) windows.BOOL;
+
 extern "kernel32" fn QueryInformationJobObject(
     hJob: ?windows.HANDLE,
     JobObjectInformationClass: c_int,
@@ -276,26 +438,100 @@ test "describe says ? rather than no for what it could not measure" {
     // as a negative answer, which is what would send the next investigation
     // back down the wrong path.
     try testing.expectEqualStrings(
-        "self_in_job=? self_job_flags=? agent_in_job=? SHARED_JOB=?",
+        "self_in_job=? self_job_flags=? agent_in_job=? SHARED_JOB=? AGENT_OWNS_JOB=?",
         describe(&buf, .{}),
     );
     try testing.expectEqualStrings(
-        "self_in_job=yes self_job_flags=0x2000 kill_on_close agent_in_job=yes SHARED_JOB=yes",
+        "self_in_job=yes self_job_flags=0x2000 kill_on_close agent_in_job=yes " ++
+            "SHARED_JOB=yes AGENT_OWNS_JOB=yes",
         describe(&buf, .{
             .self_in_job = true,
             .self_flags = limit_kill_on_job_close,
             .other_in_job = true,
             .shared = true,
+            .job_is_agents = true,
         }),
     );
     try testing.expectEqualStrings(
-        "self_in_job=yes self_job_flags=0x0 agent_in_job=no SHARED_JOB=no",
+        "self_in_job=yes self_job_flags=0x0 agent_in_job=no SHARED_JOB=no AGENT_OWNS_JOB=no",
         describe(&buf, .{
             .self_in_job = true,
             .self_flags = 0,
             .other_in_job = false,
             .shared = false,
+            .job_is_agents = false,
         }),
+    );
+}
+
+test "describe carries the T268 field shape: membership no, ownership yes" {
+    var buf: [256]u8 = undefined;
+    // The exact line the app wrote on 2026-08-11 while it was being destroyed,
+    // plus the term this task adds. `SHARED_JOB=no` is still correct and still
+    // not an exoneration; `AGENT_OWNS_JOB=yes` is the half that predicts death.
+    try testing.expectEqualStrings(
+        "self_in_job=yes self_job_flags=0x2000 kill_on_close agent_in_job=yes " ++
+            "SHARED_JOB=no AGENT_OWNS_JOB=yes",
+        describe(&buf, .{
+            .self_in_job = true,
+            .self_flags = limit_kill_on_job_close,
+            .other_in_job = true,
+            .shared = false,
+            .job_is_agents = true,
+        }),
+    );
+}
+
+test "jobIsAgentsFrom reproduces the shape T268 met" {
+    // The app (pid 43076) is a member of a job whose other members are the
+    // agent's three pane shells. The AGENT (24620) is not a member of it at
+    // all - it only holds the handle - so `ownJobContains(agent)` is false and
+    // always would be. The child that IS in the list is what gives it away.
+    const members = [_]usize{ 43076, 51120, 60204, 12888 };
+    const children = [_]u32{ 51120, 60204 };
+    try testing.expectEqual(
+        @as(?bool, true),
+        jobIsAgentsFrom(&members, true, &children, true),
+    );
+    // And the membership question over the same whole list, asked about the
+    // agent itself, answers a truthful `no` to a job that is about to kill us -
+    // which is precisely why the old diagnostic read as an exoneration.
+    try testing.expectEqual(
+        @as(?bool, false),
+        jobIsAgentsFrom(&members, true, &[_]u32{24620}, true),
+    );
+}
+
+test "jobIsAgentsFrom says ? rather than no whenever a list could be hiding it" {
+    const members = [_]usize{ 1, 2, 3 };
+    const children = [_]u32{ 9 };
+
+    // Both lists whole and no overlap: the only shape that earns a `no`.
+    try testing.expectEqual(
+        @as(?bool, false),
+        jobIsAgentsFrom(&members, true, &children, true),
+    );
+    // A truncated member list could hold the child further down.
+    try testing.expectEqual(
+        @as(?bool, null),
+        jobIsAgentsFrom(&members, false, &children, true),
+    );
+    // A truncated child list could hold one that IS a member.
+    try testing.expectEqual(
+        @as(?bool, null),
+        jobIsAgentsFrom(&members, true, &children, false),
+    );
+    // No children seen at all is not evidence: an agent with no live sessions
+    // still owns the job it created.
+    try testing.expectEqual(
+        @as(?bool, null),
+        jobIsAgentsFrom(&members, true, &.{}, true),
+    );
+    // ...and a positive is conclusive even from partial lists, because an id
+    // that is present is present.
+    try testing.expectEqual(
+        @as(?bool, true),
+        jobIsAgentsFrom(&[_]usize{7}, false, &[_]u32{7}, false),
     );
 }
 
@@ -305,4 +541,8 @@ test "probe never traps on a pid that does not exist" {
     // never be the thing that fails a refresh.
     _ = probe(0xFFFF_FFFF, null);
     _ = ownJobContains(0);
+    _ = ownJobIsAgents(0xFFFF_FFFF);
+    // pid 0 is the System Idle Process and is nobody's parent; asking about it
+    // must be a `?`, never a snapshot walk that decides something.
+    try testing.expectEqual(@as(?bool, null), ownJobIsAgents(0));
 }

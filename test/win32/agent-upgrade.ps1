@@ -871,6 +871,18 @@ Assert "J21 T426: the restart records the job facts before the kill" `
 # satisfy the line above while measuring nothing.
 Assert "J22 T426: ... including whether the agent shares OUR job" `
     (Wait-LogMatch $logJ 'SHARED_JOB=(yes|no)' 30)
+# T771. SHARED_JOB asks MEMBERSHIP, and a process is never a member of a job it
+# merely holds a handle to - so it read `no` through every one of the deaths it
+# was added to explain. AGENT_OWNS_JOB is the term that predicts them, and it
+# has to be on the line or the next investigation reads the old one again.
+Assert "J22b T771: ... and whether OUR job is the agent's (the fatal relation)" `
+    (Wait-LogMatch $logJ 'AGENT_OWNS_JOB=(yes|no|\?)' 30)
+# ... and in THIS arm it must never be `yes`: J23 below asserts the agent spawn
+# escaped the app's job, so an app standing in the agent's job here would mean
+# that escape did not happen. A `?` is allowed (a jobless app cannot enumerate a
+# membership it has none of); a `yes` is a real failure, not a flaky probe.
+Assert "J22c T771: ... and it is NOT the agent's job here, because the spawn escaped" `
+    (-not (Wait-LogMatch $logJ 'AGENT_OWNS_JOB=yes' 2))
 # The structural half: the agent this build spawns is not in the app's job in
 # the first place, so there is no shared job left to tear down. Direct
 # membership probe: test\win32\agent-job-escape.ps1.

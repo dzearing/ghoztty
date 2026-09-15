@@ -777,11 +777,31 @@ fn terminateAgent(self: *LocalAgent, pid: i64) bool {
     // gone. So write it down BEFORE the call, every time: the next occurrence
     // then either names the cause or rules it out, instead of funding another
     // round of hypotheses.
+    const facts = job_object.probe(@intCast(pid), h);
     {
         var line_buf: [256]u8 = undefined;
         log.info("agent restart: job facts before the kill — {s}", .{
-            job_object.describe(&line_buf, job_object.probe(@intCast(pid), h)),
+            job_object.describe(&line_buf, facts),
         });
+    }
+
+    // THE BACKSTOP (T771). `SHARED_JOB` answers membership, and the agent is
+    // never a member of the job it merely owns - so the line above read `no`
+    // through every one of those deaths. `AGENT_OWNS_JOB` is the term that
+    // predicts them: our job holds a process the agent parented, which means
+    // our job IS the agent's kill-on-close job and this call would close its
+    // last handle on top of us. Refusing out loud leaves the caller a live app
+    // to pick another path with; the real repair is the startup escape (T675),
+    // so this is a net under it and not a substitute for it.
+    if (facts.job_is_agents orelse false) {
+        log.err(
+            "agent restart: REFUSING to terminate pid {d} — this app is in a job that " ++
+                "holds processes that agent parented, so the job is the agent's and " ++
+                "killing it would take this app down with it (T268/T771). Relaunch " ++
+                "outside the job first (T675).",
+            .{pid},
+        );
+        return false;
     }
 
     if (windows.kernel32.TerminateProcess(h, 0) == 0) {

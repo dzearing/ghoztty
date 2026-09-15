@@ -1,11 +1,10 @@
 {
     "guard":  "verdict-exit",
     "script":  "test/win32/verdict-exit-audit.ps1",
-    "generated":  "2026-09-15T10:28:18-07:00",
-    "commit":  "1b8021c9b",
+    "generated":  "2026-09-15T11:17:38-07:00",
+    "commit":  "8cbb0a8ae",
     "uncommitted":  [
-                        "test/win32/close-glyph-white.ps1",
-                        "test/win32/mouse-nc-routing.ps1"
+                        "test/win32/agent-upgrade.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -31,7 +30,7 @@
                   "test/win32/agent-session-cap.ps1":  "1c90f39debadea2b3312dd9c887d8eafaadfc8caf2ac5892ba5aaffaaf5fee66",
                   "test/win32/agent-sharing-uplink.ps1":  "2bf17d913b72fbf1ca94cf9bae729e0c6cf1e95e683485d78ac5b44affd2e3b4",
                   "test/win32/agent-shell-integration.ps1":  "f770ac1643037ffc9b28cc9fe73e27440e684005af3e389d2f78c66ce306fbb1",
-                  "test/win32/agent-upgrade.ps1":  "ac3f8d54d574e3a6fa1ff7b18def3c4bb5c98ee503ce4bd7fa9f9f242f17400f",
+                  "test/win32/agent-upgrade.ps1":  "fd0d583d83401cc4f73835b008a5729947a60f290f4f06e467589e41233d501c",
                   "test/win32/agent-user-env.ps1":  "7ea19bc9332a520cec15cf4ff3c2b40a2c1daa7968c5a6bf9951d4c3151e9df3",
                   "test/win32/asserted-nothing.ps1":  "ed8cac803f38ab92262a65069986d4036936f9fb109fc183aa5b180f431e352b",
                   "test/win32/auto-launch-cwd.ps1":  "eec10c5396d125e017edde1280851d1fce687337742a64ca5f34da9eee36bec3",
