@@ -100,7 +100,15 @@ try {
     $borderX = [int](($win.Width - $cli.Width) / 2)
     $capW = $m.CapBtnW
     $capH = $m.CaptionH
-    $closeL = $cli.Width - $capW
+    # Read the close slab's left edge off the module rather than restating
+    # `$cli.Width - $capW` here (T770). `caption-bar.ps1` section 2b is where
+    # the hand derivation lives and is cross-checked against these published
+    # x's AND against painted pixels (T264); a second unchecked copy over here
+    # is not a second oracle, it is the latent divergence T257 deleted.
+    $closeL = $m.CaptionCloseLeft
+    if ($null -eq $closeL) {
+        throw 'SETUP FAIL: ChromeGeometry published no CaptionCloseLeft for this window'
+    }
     $cx = $win.Left + $borderX + $closeL + [int]($capW / 2)
     $cy = $win.Top + [int]($capH / 2)
     Write-Host "  dpi=$($m.Dpi) scale=$($m.Scale) capBtnW=$capW captionH=$capH"

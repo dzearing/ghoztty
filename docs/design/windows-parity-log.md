@@ -29657,3 +29657,27 @@ Evidence: `floor-lane.ps1 -Lane all` ALL LANES PASS (lib/none/win32/agent),
 negative control `T758_NEUTERED` was measured rather than asserted: flipped on,
 the harness fails exactly the two 6k assertions that are about the move — 2
 FAILED / 146 passed — and nothing else.
+
+## 2026-09-15 - Two more caption tests ask where the buttons are instead of guessing (T770)
+
+`close-glyph-white.ps1` worked out the close slab's left edge as
+`$cli.Width - $capW`, and `mouse-nc-routing.ps1` walked back two slabs from its
+own copy of that same expression, to find minimize. Both were right today, which
+is exactly what made them worth deleting: three private restatements of one
+datum, and only one of the three - `caption-bar.ps1` section 2b - has ever been
+compared against anything. The other two would keep testing the old place on the
+day the chrome moves, and a real button defect would pass.
+
+Both now read `CaptionCloseLeft` / `CaptionMinLeft` off `Get-TestChromeMetrics`,
+with a SETUP FAIL rather than arithmetic on `$null` when the window has no
+caption - the shape T767 landed for `tab-strip-autohide.ps1`. The arithmetic
+they dropped is byte for byte what `ChromeGeometry.ps1:229-230` computes, so
+this changes no verdict; it changes where the number comes from. A sweep of
+`test\win32\` for the expression confirms `caption-bar.ps1:145` is now the only
+hand derivation left, and that one is the oracle: section 2b asserts it against
+these published x's AND against painted pixels.
+
+Evidence: `close-glyph-white.ps1` ALL PASS (5 assertions), `mouse-nc-routing.ps1`
+ALL PASS (14 assertions), both exit 0 against the debug build.
+`floor-lane.ps1 -Lane all` ALL LANES PASS (lib/none/win32/agent), and
+`floor-lane.ps1 -Lane harness` PASS and re-stamped over the edited scripts.

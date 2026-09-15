@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-09-15T09:47:41-07:00",
-    "commit":  "4a82dbc6f",
+    "generated":  "2026-09-15T10:29:14-07:00",
+    "commit":  "1b8021c9b",
     "uncommitted":  [
-                        "test/win32/tab-strip-autohide.ps1"
+                        "test/win32/close-glyph-white.ps1",
+                        "test/win32/mouse-nc-routing.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cc4dd72fb07ebc34de67ce688e0eab7f091a7228e4baeba4f9f50d01212a0f0e",
@@ -78,7 +79,7 @@
                   "test/win32/cli-shim-redirect.ps1":  "d9270707fa5daba04008292352c21cfb3aa71a688528a10a3db2319484e5f3bb",
                   "test/win32/cli-unknown-flag.ps1":  "07ea51f386b5d1f59c1ad1a1ae7ff93c4b14ab35b7d4468a7ae9313e208427f2",
                   "test/win32/close-confirm-idle.ps1":  "208c3276ba5db71b667cefebfe3fe4a2177843344001f6825a4def3bb9f3da4c",
-                  "test/win32/close-glyph-white.ps1":  "cb2a97f2286e4fefff7a07ed5933ecbacbc49b32a28f594f5af44130e731e553",
+                  "test/win32/close-glyph-white.ps1":  "6d6b3cc1c05e01ad16553375b1b4fbaa06ced25c674d0138108c41f692652238",
                   "test/win32/color-contrast.ps1":  "464aa2aa9a4e6cf6470fbcd1ec523b705a9f3260a04f6af57f406ff36e00cb4e",
                   "test/win32/command-registry.ps1":  "4b451ab5f58c9456cee43a4127d2b26db4d0285accb0d1c8592fff49ac57fd01",
                   "test/win32/command-resolve-audit.ps1":  "eaa0de0d68487f7f7f160478be85c600066d9960208237a763b4f6fcf35a8c99",
@@ -230,7 +231,7 @@
                   "test/win32/menu-bar.ps1":  "b8e8f1a38a3579f3df4b742b48d3df2dcc62a3d816b42d0af26db5664f77377e",
                   "test/win32/menu-f10-binding.ps1":  "2a0f0edd446c99a0ed1ffb5d1b0ce8e3e1a8ae8df140fd70fa5f6b5df37b8e22",
                   "test/win32/merge-terminology.ps1":  "7d155ca2da0de4866e7afab82df19ab046be33aa3c34655481192c1e158b5d25",
-                  "test/win32/mouse-nc-routing.ps1":  "0e9c09958e46b3444898c47fdcadfbd1c509854b6c07e5bb8c5086abd2f80969",
+                  "test/win32/mouse-nc-routing.ps1":  "4f982fe22519310d39a3d910edbd2596e9929fdfc3db7462799a1f625cb677cc",
                   "test/win32/msg-timer-ids.ps1":  "ec583de0fee83ffd3e9df2e2562483fa534a132cce4dc4cabecfceebb9578ef1",
                   "test/win32/msi-upgrade.ps1":  "b32e7da7020dbad39ea0691b79bb013ae2037da7a2f6a7fbcf7a0ae17e1168b0",
                   "test/win32/new-window-cwd.ps1":  "0c35d0adaf39cdd7fa733c5e2912f1cb4dce1f7c12f05ed63b90a851acd5c440",

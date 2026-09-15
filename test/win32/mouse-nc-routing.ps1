@@ -92,8 +92,14 @@ try {
     $cli = Get-TestWindowRect -Window $h -Client
     $borderX = [int](($win.Width - $cli.Width) / 2)
     $capW = $m.CapBtnW
-    $closeL = $cli.Width - $capW
-    $minL = $closeL - $capW - $capW
+    # Read the minimize slab's left edge off the module rather than walking
+    # back from `$cli.Width - $capW` by two slabs here (T770) - same reason as
+    # the comment above: one published datum, cross-checked once in
+    # `caption-bar.ps1` section 2b, not three private restatements of it.
+    $minL = $m.CaptionMinLeft
+    if ($null -eq $minL) {
+        throw 'SETUP FAIL: ChromeGeometry published no CaptionMinLeft for this window'
+    }
     $bandY = $win.Top + [int]($m.CaptionH / 2)
     $xMin = $win.Left + $borderX + $minL + [int]($capW / 2)
     $xBand = $win.Left + $borderX + 40
