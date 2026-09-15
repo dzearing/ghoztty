@@ -193,12 +193,24 @@ fn reapOrphans(alloc: Allocator, store: *session.SessionStore) usize {
     }
 
     var reaped: usize = 0;
+    var timer = std.time.Timer.start() catch null;
     for (names.items) |full| {
         var is_claimed = false;
         for (claimed) |p| {
             if (samePipe(p, full)) is_claimed = true;
         }
         if (is_claimed) continue;
+        // The sweep is janitorial and the accept loop is not: a pipe that
+        // connects and then never greets costs `greeting_timeout_ms`, and
+        // enough of them would push the agent past the app's spawn deadline
+        // one probe at a time. Leave the rest for the next start (T1593).
+        if (timer) |*t| if (t.read() / std.time.ns_per_ms >= sweep_budget_ms) {
+            log.warn(
+                "orphan sweep: out of budget after {d}ms; leaving the rest for the next start",
+                .{sweep_budget_ms},
+            );
+            break;
+        };
         if (shutdownOrphan(alloc, full)) {
             log.warn("reaped orphaned holder '{s}': no session record names it", .{full});
             reaped += 1;
@@ -223,9 +235,20 @@ fn reapOrphans(alloc: Allocator, store: *session.SessionStore) usize {
 /// The wait for it is bounded by polling rather than a blocking read, because
 /// this runs on the startup path — an unserved connection must cost the agent
 /// two seconds and a skipped reap, never a wedge before it listens.
+///
+/// The DIAL is bounded for the same reason and was not, which is T1593: only
+/// the greeting wait above was capped, while `dialHandle` underneath it spent
+/// ten seconds per BUSY pipe inside `WaitNamedPipeW` — on this thread, before
+/// the accept loop existed. A busy pipe is an owned pipe, so waiting for it
+/// re-establishes the one thing that already disqualifies it from being an
+/// orphan; `orphan_busy_budget_ms` is therefore zero.
 fn shutdownOrphan(alloc: Allocator, pipe_name: []const u8) bool {
     if (!is_windows) return false;
-    const handle = pipe_stream.dialHandle(alloc, pipe_name) catch return false;
+    const handle = pipe_stream.dialHandleWithin(
+        alloc,
+        pipe_name,
+        orphan_busy_budget_ms,
+    ) catch return false;
     var s = pipe_stream.PipeStream.init(handle);
     const stream = s.serverStream();
     defer stream.close();
@@ -249,6 +272,24 @@ fn shutdownOrphan(alloc: Allocator, pipe_name: []const u8) bool {
 /// How long an orphan probe waits for the holder's HELLO before giving up and
 /// leaving it alone.
 const greeting_timeout_ms: u64 = 2_000;
+
+/// How long an orphan probe waits for a BUSY holder pipe to free up: not at all.
+///
+/// `dialHandle`'s default is ten seconds, which is right for a dial that is
+/// trying to reach a peer and wrong for one that is asking whether a peer is
+/// unattended. A holder pipe that is busy has an owner on it, so it is by
+/// definition not an orphan, and the only thing the wait buys is a startup that
+/// stalls for ten seconds per busy pipe before the agent binds an accept loop.
+/// That is the whole of T1593: a release agent beside the box's live holders sat
+/// in `WaitNamedPipeW` for 15-30s while the app's 2s spawn deadline expired and
+/// the user's panes came back as fresh shells.
+const orphan_busy_budget_ms: u32 = 0;
+
+/// The whole orphan sweep's ceiling, since it runs before the accept loop. One
+/// silent-but-connectable pipe costs `greeting_timeout_ms`; this is what stops
+/// a handful of them from adding up to a wedge (T1593). Reaping is idempotent,
+/// so whatever is left over is swept by the next start.
+const sweep_budget_ms: u64 = 2_000;
 
 extern "kernel32" fn PeekNamedPipe(
     hNamedPipe: std.os.windows.HANDLE,

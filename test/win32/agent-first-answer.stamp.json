@@ -1,0 +1,16 @@
+{
+    "guard":  "agent-first-answer",
+    "script":  "test/win32/agent-first-answer.ps1",
+    "generated":  "2026-09-15T15:51:47-07:00",
+    "commit":  "936592384",
+    "uncommitted":  [
+                        "src/remote/agent/holder_adopt.zig",
+                        "src/remote/pipe_stream.zig",
+                        "test/win32/agent-first-answer.ps1"
+                    ],
+    "files":  {
+                  "src/remote/agent/holder_adopt.zig":  "2ecdbb696449c95759d8ff329a24d3a269a769af54a6fe7da1e4da3084717a2b",
+                  "src/remote/pipe_stream.zig":  "6e75c5df447ba72acc87d0ae4110b86b9a1a782e382e10afb93ef44bb6c196f0",
+                  "test/win32/agent-first-answer.ps1":  "71579be7cba1b5c6c5f1db2a1f85376beb906fcab05e5dd5ec6133bf71b654b3"
+              }
+}

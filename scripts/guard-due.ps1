@@ -783,6 +783,22 @@ $GuardTable = @(
             'src\remote\agent\session_meta.zig'
         )
     },
+    # TIME TO FIRST ANSWER (T1593): the only harness that measures how long the
+    # session manager takes to say its first word, which the app turns into an
+    # all-or-nothing verdict at `spawn_deadline_ms` - an agent a second too slow
+    # is an agent the user's sessions do not come back from. It is a startup-path
+    # guard: anything that adds work between binding the pipe and the accept loop
+    # (the holder sweep is the one that already cost 27s) must be run past it.
+    [pscustomobject]@{
+        Name   = 'agent-first-answer'
+        Script = 'test\win32\agent-first-answer.ps1'
+        Stamp  = 'test\win32\agent-first-answer.stamp.json'
+        Covers = @(
+            'test\win32\agent-first-answer.ps1',
+            'src\remote\agent\holder_adopt.zig',
+            'src\remote\pipe_stream.zig'
+        )
+    },
     # Holder DURABILITY (T911): the only harness that measures the ring snapshot
     # FILE rather than the pane, which is the difference between "the app still
     # has the pixels" and "a fresh viewer can replay it". It owns the meaning of

@@ -65,6 +65,24 @@ pub const dialHandle = if (builtin.os.tag == .windows)
 else
     stub.dialHandle;
 
+/// `dialHandle` with the PIPE_BUSY wait bounded to `busy_budget_ms` instead of
+/// the default ten seconds.
+///
+/// A dial that is a PROBE — "is anyone home, and is this pipe free?" — must not
+/// spend the default budget: a busy pipe answers that question already (someone
+/// is attached to it), and on a startup path the ten seconds are paid serially,
+/// once per pipe, before the agent can serve anybody (T1593). Callers that are
+/// genuinely trying to *reach* a peer keep `dialHandle`; callers deciding
+/// whether a peer is reachable at all use this.
+pub const dialHandleWithin = if (builtin.os.tag == .windows)
+    win.dialHandleWithin
+else
+    stub.dialHandleWithin;
+
+/// The PIPE_BUSY budget `dialHandle` spends: the listener replaces its instance
+/// right after each accept, and a dial that lands in that gap must not fail.
+pub const default_busy_budget_ms: u32 = 10_000;
+
 // -----------------------------------------------------------------------------
 // POSIX stubs — never executed; they exist so the types/fns resolve on all
 // targets (callers are comptime-gated on .windows).
@@ -105,6 +123,13 @@ const stub = struct {
     fn dialHandle(alloc: Allocator, name: []const u8) !*anyopaque {
         _ = alloc;
         _ = name;
+        return error.PipeUnsupported;
+    }
+
+    fn dialHandleWithin(alloc: Allocator, name: []const u8, budget_ms: u32) !*anyopaque {
+        _ = alloc;
+        _ = name;
+        _ = budget_ms;
         return error.PipeUnsupported;
     }
 };
@@ -467,13 +492,19 @@ const win = struct {
     };
 
     fn dialHandle(alloc: Allocator, name: []const u8) !W.HANDLE {
+        return win.dialHandleWithin(alloc, name, default_busy_budget_ms);
+    }
+
+    fn dialHandleWithin(alloc: Allocator, name: []const u8, budget_ms: u32) !W.HANDLE {
         const name_w = try std.unicode.wtf8ToWtf16LeAllocZ(alloc, name);
         defer alloc.free(name_w);
 
         // The listener replaces its instance right after each accept; the gap
         // shows up as PIPE_BUSY, so wait for a free instance with a bounded
-        // retry (the `os/ipc_client.zig` connect pattern).
-        var attempts: u8 = 0;
+        // retry (the `os/ipc_client.zig` connect pattern). The budget is spent
+        // in one `WaitNamedPipeW` slice per attempt, capped at a second each so
+        // a caller with a large budget still notices a pipe that frees up early.
+        var spent: u32 = 0;
         while (true) {
             const h = k32.CreateFileW(
                 name_w.ptr,
@@ -487,9 +518,10 @@ const win = struct {
             if (h != W.INVALID_HANDLE_VALUE) return h;
             switch (W.GetLastError()) {
                 .PIPE_BUSY => {
-                    attempts += 1;
-                    if (attempts >= 10) return error.ConnectionRefused;
-                    _ = WaitNamedPipeW(name_w.ptr, 1000);
+                    if (spent >= budget_ms) return error.ConnectionRefused;
+                    const slice = @min(budget_ms - spent, 1000);
+                    _ = WaitNamedPipeW(name_w.ptr, slice);
+                    spent += slice;
                 },
                 // Nothing is listening: a dead pipe name stops existing.
                 .FILE_NOT_FOUND, .PATH_NOT_FOUND => return error.FileNotFound,
@@ -722,6 +754,76 @@ test "dialHandle: connecting to a nonexistent pipe fails with FileNotFound" {
     var nbuf: [128]u8 = undefined;
     const name = try testPipeName(&nbuf, "nope");
     try testing.expectError(error.FileNotFound, dialHandle(testing.allocator, name));
+}
+
+/// A single-instance pipe server, so its one instance can be OCCUPIED and every
+/// further dial gets PIPE_BUSY. `PipeListener` cannot produce that state (it
+/// pre-creates its replacement instance), but the pty holder's listener can —
+/// which is the shape `shutdownOrphan` probes (T1593).
+fn busyPipeServer(name: []const u8) !std.os.windows.HANDLE {
+    var wbuf: [256]u16 = undefined;
+    const n = try std.unicode.wtf8ToWtf16Le(&wbuf, name);
+    wbuf[n] = 0;
+    const W = std.os.windows;
+    const h = W.kernel32.CreateNamedPipeW(
+        @ptrCast(&wbuf),
+        W.PIPE_ACCESS_DUPLEX,
+        W.PIPE_TYPE_BYTE | W.PIPE_READMODE_BYTE | W.PIPE_WAIT,
+        1, // nMaxInstances: exactly one, so a second dialer sees PIPE_BUSY
+        4096,
+        4096,
+        0,
+        null,
+    );
+    if (h == W.INVALID_HANDLE_VALUE) return error.BindFailed;
+    return h;
+}
+
+test "dialHandleWithin: a busy pipe refuses immediately at a zero budget" {
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    const alloc = testing.allocator;
+
+    var nbuf: [128]u8 = undefined;
+    const name = try testPipeName(&nbuf, "busy0");
+
+    const srv = try busyPipeServer(name);
+    defer std.os.windows.CloseHandle(srv);
+
+    // Occupy the single instance.
+    const occupant = try dialHandle(alloc, name);
+    defer std.os.windows.CloseHandle(occupant);
+
+    var timer = try std.time.Timer.start();
+    try testing.expectError(
+        error.ConnectionRefused,
+        dialHandleWithin(alloc, name, 0),
+    );
+    // The point of the budget is the WALL CLOCK, not the error: the default
+    // path spends ten seconds here, serially, before the agent can listen.
+    try testing.expect(timer.read() / std.time.ns_per_ms < 500);
+}
+
+test "dialHandleWithin: a busy pipe is waited for up to the budget" {
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    const alloc = testing.allocator;
+
+    var nbuf: [128]u8 = undefined;
+    const name = try testPipeName(&nbuf, "busyN");
+
+    const srv = try busyPipeServer(name);
+    defer std.os.windows.CloseHandle(srv);
+
+    const occupant = try dialHandle(alloc, name);
+    defer std.os.windows.CloseHandle(occupant);
+
+    var timer = try std.time.Timer.start();
+    try testing.expectError(
+        error.ConnectionRefused,
+        dialHandleWithin(alloc, name, 300),
+    );
+    const ms = timer.read() / std.time.ns_per_ms;
+    try testing.expect(ms >= 250); // it really waited
+    try testing.expect(ms < 2_000); // and it really stopped
 }
 
 test "PipeListener: serves multiple concurrent client connections" {

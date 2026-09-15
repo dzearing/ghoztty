@@ -640,15 +640,20 @@ $script:RunAgentPipe = "\\.\pipe\ghoztty-agent-$($env:GHOZTTY_AGENT_INSTANCE)-$(
 # the app's own spawn would have written. Returns the pid, or 0.
 #
 # Why the arms pre-start an agent at all rather than letting the app spawn one:
-# a RELEASE agent on this box does not answer its pipe for **15-30 seconds**
-# after it starts (measured 2026-09-15; a debug agent answers in about one), and
-# the app gives up after `spawn_deadline_ms` = 2000ms and comes up with no agent
-# at all - "session-restore: no local agent". Every arm of this script needs a
-# connection to exist before there is any decision to judge, so in the release
-# lineage the agent is started here and given the time it actually takes. That
-# stall is a defect in its own right and is filed as one (T1593); working around
-# it here is deliberate, and named, so that nobody reads these arms as evidence
-# that a cold release launch keeps its sessions.
+# an upgrade arm needs a SPECIFIC build already serving before the app is
+# launched - that is the whole premise it judges - and only the release lineage
+# can arrange that by starting a binary, since the debug lineage flips a hook
+# instead. So the pre-start stays.
+#
+# What used to ALSO make it necessary was a stall, and that stall is now fixed:
+# a ReleaseFast agent did not answer its pipe for 15-30 seconds (measured
+# 2026-09-15), against the app's `spawn_deadline_ms` of 2000ms, so a cold launch
+# came up with "session-restore: no local agent". T1593 found it - the orphan
+# holder sweep spent ten seconds per BUSY holder pipe inside `WaitNamedPipeW`,
+# on the startup path, before the accept loop existed - and bounded the probe;
+# the same binary now answers in tens of milliseconds. The wait below is
+# therefore ordinary patience for a process start, not cover for a defect, and
+# `test\win32\agent-first-answer.ps1` is what keeps it that way.
 function Start-LineageAgent($tag, $bin) {
     if (-not $bin) { return 0 }
     $dir = Join-Path $tmp "ghoztty\$stateDirName"
