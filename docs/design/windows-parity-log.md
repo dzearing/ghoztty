@@ -9,6 +9,70 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-15: T760 closed done, T777 + T781 closed by the daily triage's
+  already-fixed sweep - **a split opens where its parent is, whether or not
+  session persistence is on.**
+
+  With `session-persistence = off` there is no agent, so
+  `Window.buildRemoteInherit` declines and - until now - nothing on the local
+  path supplied a working directory for the new pane at all. The answer then
+  came from the shared core: `apprt/surface.zig` `newConfig` reads
+  `app.focusedSurface()`, which is app-GLOBAL. So a `+split` aimed at a pane in
+  a window that did NOT hold focus opened in whatever window DID - a pane that
+  walked away from the directory the user was working in, for a reason nothing
+  on screen could explain. Both legs had it: the IPC baton for a plain local
+  split carries a null `working_directory`, and `newSplitAt` only filled a null
+  one when the split parent was a VIEWER (T538); the keybind leg armed nothing
+  at all.
+
+  The fix is one site. `newSplitAt` now resolves the split PARENT's own
+  directory for the local path with the same `livePwd`-then-cached-`pwd`
+  composition `+list`, the tab tooltip and the viewer fallback already use -
+  extracted as `Window.paneCwd` so there is one reading of "where is this pane"
+  rather than four copies - and arms it through the same config seam an IPC
+  `--working-directory` rides. It honours `split-inherit-working-directory`,
+  and it stays out of the REMOTE legs on purpose: a local process read is a
+  path on this machine, which is not a directory a remote agent could open in.
+  Those keep asking the agent (`inheritedCwd`, T68/T515).
+
+  What makes this more than a bug fix is that the two backends DISAGREED. The
+  agent path has always asked the parent; the exec path asked whatever was
+  focused. A user toggling session persistence changed where their splits
+  opened, which is a setting about survival deciding a question about
+  directories.
+
+  Validation: `test\win32\split-inherit-cwd.ps1`, new, ALL PASS (22
+  assertions). It opens two windows in two marker directories with the FAR one
+  holding focus - the arrangement without which the assertion passes for the
+  wrong reason - splits the near one over IPC, drives the real ctrl+d keybind
+  for the in-window case, and then re-runs the whole fixture with persistence
+  ON so "the two backends agree" is measured rather than asserted in a comment.
+  `-NegativeControl` inverts the one assertion to the pre-fix expectation and
+  the run goes red with exactly one failure. A `split-inherit-cwd` guard row
+  names `Window.zig`, `IpcHandlers.zig` and `apprt/surface.zig`, so an edit to
+  the app-global fallback itself puts the script DUE.
+
+  One thing the work turned up, and it is a trap worth naming: the script's
+  section D went red once on a second run and green on the first. The cause was
+  the documented one - `+new-window --target=X` is idempotent, the agent
+  outlives the app, and both the restore manifest and the agent's layout-blob
+  store bring a named window back - so the second launch FOCUSED the previous
+  run's `t760near` instead of creating one in the marker directory, and the
+  control read the home directory. `Reset-GhozttyTestState` plus run-unique
+  target names is the whole fix, and it is exactly what `lib\CleanSlate.ps1`'s
+  own header says to do. A private `Stop-RepoGhoztty` is not a clean slate.
+
+  Also closed today, by the daily triage rather than by new code: **T777**
+  (nothing ran the six static harness audits) against `bdf71d1bb` - T725's
+  harness floor runs all six under one command and its guard row keeps them
+  standing - and **T781** (four undeclared launch sites) against `87c762ec1`,
+  which converted them on 2026-08-12 and which nobody had read the card
+  against since. Both are the shape the already-fixed sweep exists for: a
+  34-day-old todo whose defect a later commit had closed in passing, where the
+  deliverable is the re-verification, not a new commit. Re-verified here:
+  `persistence-flag.ps1` ALL PASS (28), `url-scheme.ps1` ALL PASS (42),
+  `agent-attach-refused.ps1` ALL PASS (24).
+
 - 2026-09-15: T752 closed done, T1583 + T1584 filed - **a pane that has to start
   its shell over comes back in the folder you were working in.** When a pane's
   shell cannot be re-attached to - the machine rebooted, the agent restarted,

@@ -411,6 +411,24 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # Where a split starts (T760). The answer is assembled in `newSplitAt`
+    # from three sources - a viewer parent's file directory, the agent's
+    # GET_CWD, and the local process read - and the defect this guards was
+    # none of them applying, which handed the question to the shared core's
+    # app-GLOBAL `focusedSurface()`. `apprt\surface.zig` is named because that
+    # fallback is the thing being kept out of the answer: an edit there can
+    # make the hole reappear without touching a win32 file.
+    [pscustomobject]@{
+        Name   = 'split-inherit-cwd'
+        Script = 'test\win32\split-inherit-cwd.ps1'
+        Stamp  = 'test\win32\split-inherit-cwd.stamp.json'
+        Covers = @(
+            'test\win32\split-inherit-cwd.ps1',
+            'src\apprt\win32\Window.zig',
+            'src\apprt\win32\IpcHandlers.zig',
+            'src\apprt\surface.zig'
+        )
+    },
     # The viewer suite carries the browser-leak tripwire (T594): the only
     # thing that scores whether a test run handed a page to the user's real
     # browser, and it is not in the P1-P3 floor. The zig-side guard

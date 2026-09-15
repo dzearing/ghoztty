@@ -6012,6 +6012,33 @@ pub fn newSplitAt(
         break :cwd owned_cwd;
     } else null;
 
+    // T760: the same question for a TERMINAL parent on the plain-ConPTY path.
+    // With no agent in play (`session-persistence = off`, or any build where
+    // the local agent is not running) nothing below supplies a cwd, and the
+    // core's `newConfig` answers it from `app.focusedSurface()` — an
+    // app-GLOBAL value, so a split in a window that does NOT hold focus opens
+    // in whatever window does. The agent path never had that hole
+    // (`buildRemoteInherit` asks the split PARENT), and the two backends
+    // disagreeing about what a split inherits was the real defect: the parent
+    // pane is the right answer for both.
+    //
+    // Mutually exclusive with `viewer_cwd` by construction — a pane is a
+    // viewer or a terminal — so the two compose into one local answer below.
+    var owned_parent_cwd: ?[]const u8 = null;
+    defer if (owned_parent_cwd) |c| alloc.free(c);
+    const parent_cwd: ?[]const u8 = cwd: {
+        if (viewer_cwd != null) break :cwd null;
+        if (!self.app.config.@"split-inherit-working-directory") break :cwd null;
+        const parent = at.surface() orelse break :cwd null;
+        owned_parent_cwd = paneCwd(parent, alloc);
+        break :cwd owned_parent_cwd;
+    };
+
+    // What a LOCAL (non-agent) new pane inherits. The remote legs below keep
+    // using `viewer_cwd` alone: a local process read is a path on THIS
+    // machine, which is not a directory a remote agent could open in.
+    const local_cwd: ?[]const u8 = viewer_cwd orelse parent_cwd;
+
     // T68: a plain split in a remote window opens a fresh session on the
     // SAME machine/connection, inheriting the split-parent pane's command +
     // cwd (Mac parity). IPC-provided overrides (the pending baton) win.
@@ -6029,9 +6056,15 @@ pub fn newSplitAt(
         // `--working-directory` wins; a null one is the same "nothing said"
         // the no-baton path below treats as inheritable, so a viewer parent
         // still gets to answer it.
-        if (viewer_cwd) |dir| fill: {
+        //
+        // T760: a terminal parent answers the same way, but only for the
+        // LOCAL leg — a `.remote` baton already carries the cwd its own
+        // machine resolved (`inheritedCwd`, T515), and a local path would be
+        // meaningless there.
+        if (local_cwd) |dir| fill: {
             viewer_overrides = existing.*;
             if (viewer_overrides.remote) |*r| {
+                if (viewer_cwd == null) break :fill;
                 if (r.working_directory != null) break :fill;
                 r.working_directory = dir;
             } else {
@@ -6052,9 +6085,11 @@ pub fn newSplitAt(
             }
             self.pending_surface_overrides = &i.overrides;
             baton_ours = true;
-        } else if (viewer_cwd) |dir| {
+        } else if (local_cwd) |dir| {
             // Plain local ConPTY pane: the same value, through the config seam
             // `Surface.init` already applies for an IPC `--working-directory`.
+            // This is the keybind/no-baton half of T760 as well as the viewer
+            // case — both arrive here once the agent has declined the split.
             viewer_overrides.working_directory = dir;
             self.pending_surface_overrides = &viewer_overrides;
             baton_ours = true;
@@ -6719,6 +6754,19 @@ fn viewerSplitFallbackCwd(
             return null;
         break :source pane.surface() orelse return null;
     };
+    return paneCwd(source, alloc);
+}
+
+/// The working directory a new pane should start in when it inherits from
+/// `source` — T185's rule, at one site: the shell process's REAL cwd when the
+/// shell reports no OSC 7 (cmd.exe has no prompt hook, so the terminal's own
+/// pwd stays frozen at its starting directory forever), else the reported one.
+/// Null when neither is available.
+///
+/// Owned by `alloc`. This is the LOCAL answer; a pane whose shell lives behind
+/// an agent has its cwd resolved by `inheritedCwd` instead, which asks the
+/// machine the new session will actually open on.
+fn paneCwd(source: *Surface, alloc: Allocator) ?[]const u8 {
     if (source.livePwd(alloc)) |live| return live;
     return source.core_surface.pwd(alloc) catch null;
 }
