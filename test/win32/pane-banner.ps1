@@ -40,6 +40,10 @@
 #     Mac-parity action menu with the left-click default as its first row;
 #     and Ctrl+click really opens a viewer side pane, read back from
 #     `+list --json` rather than from a pixel.
+#   - T758 (the cwd follows the pane): ONE banner carrying a dot-relative
+#     path, clicked from two different directories, opens the file in the
+#     directory the pane is in NOW — and an absolute one is byte-identical
+#     across the same `cd`, without even re-parsing.
 #   - OSC 7778 emitted from inside the pane round-trips into +list.
 #   - The editor dialog (GhozttyBannerDialog) opens on ctrl+shift+b, is modal
 #     over its window, arrives prefilled and selected, commits on ctrl+enter,
@@ -1495,6 +1499,155 @@ try {
     }
     Remove-Item -LiteralPath $t539Path -ErrorAction SilentlyContinue
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'T539 section: GUI alive'
+    & $exe +set-banner --target=bw --clear | Out-Null
+    $null = Wait-Banner 'bw' 0 'NONE'
+
+    # --- 6k. T758: a dot-relative autolink follows the pane's `cd` -------------
+    # T539 resolved `.\…` at the moment the banner text was SET and froze that
+    # answer into the link. Mac's banner parser takes the pane's cwd on every
+    # render pass, so the same text means the new directory the moment the
+    # pane `cd`s. This section is that difference, end to end: ONE banner, set
+    # once, clicked twice, from two different directories.
+    #
+    # The oracle is 6j's — the Ctrl+click viewer url, read back from
+    # `+list --json` — because it is the only one that reports the TARGET
+    # rather than the ink, and the ink never changes here: the link's text is
+    # what the user typed both times.
+    #
+    # The pane's shell is cmd.exe, which reports no OSC 7 at all, so this also
+    # exercises the harder half (the OS-level cwd read) rather than the
+    # shell-integration path that a pwsh pane would take.
+    $t758A = Join-Path $env:TEMP 'ghoztty-t758-a'
+    $t758B = Join-Path $env:TEMP 'ghoztty-t758-b'
+    New-Item -ItemType Directory -Force -Path $t758A | Out-Null
+    New-Item -ItemType Directory -Force -Path $t758B | Out-Null
+    Set-Content -LiteralPath (Join-Path $t758A 't758.md') -Value '# T758 in A' -Encoding ascii
+    Set-Content -LiteralPath (Join-Path $t758B 't758.md') -Value '# T758 in B' -Encoding ascii
+
+    # Poll `+list` until the pane reports the directory we just cd'd it into.
+    function Wait-PaneCwd([string]$target, [int]$i, [string]$want) {
+        for ($t = 0; $t -lt 30; $t++) {
+            $w = Get-Win $target
+            if ($w) {
+                $leaves = @(Get-Leaves $w.tabs[0].splits)
+                if ($leaves.Count -gt $i) {
+                    $p = $leaves[$i].working_directory
+                    if ($p -and ((($p -replace '/', '\').TrimEnd('\')) -ieq $want)) { return $true }
+                }
+            }
+            Start-Sleep -Milliseconds 300
+        }
+        return $false
+    }
+    # Ctrl+click the banner's first line and return the viewer pane's url,
+    # then close the viewer so the next click starts from one pane again.
+    function Invoke-BannerCtrlClick($ov) {
+        $ovH = [IntPtr]$ov.Hwnd
+        $sc = (Get-TestWindowDpi -Window $ovH) / 96.0
+        $pad = (Get-TestChromeDip -Dip 12.0 -Scale $sc) * 2
+        $ln = Get-TestChromeDip -Dip 20.0 -Scale $sc
+        Send-TestMouse -Window $top -Target $ovH -X ($ov.Left + $pad + 2) `
+            -Y ($ov.Top + $pad + [int][Math]::Truncate($ln / 2)) -Action up -Modifiers ctrl | Out-Null
+        $url = $null
+        for ($t = 0; $t -lt 25; $t++) {
+            Start-Sleep -Milliseconds 200
+            $w = Get-Win 'bw'
+            if (-not $w) { continue }
+            $v = @(Get-Leaves $w.tabs[0].splits | Where-Object { $_.type -eq 'viewer' })
+            if ($v.Count -ge 1) { $url = $v[0].url; break }
+        }
+        $w = Get-Win 'bw'
+        if ($w) {
+            foreach ($leaf in @(Get-Leaves $w.tabs[0].splits)) {
+                if ($leaf.type -eq 'viewer') { & $exe +close --target=$($leaf.id) | Out-Null }
+            }
+        }
+        Start-Sleep -Milliseconds 800
+        return $url
+    }
+
+    # Address the pane by its own id, not by the window: 6j left a viewer pane
+    # open and closed again, and "the window's focused pane" is not reliably
+    # pane 0 after that.
+    # `pushd`, not `cd`: the pane starts on the repo's drive and the scratch
+    # directories are on the system one, and bare `cd` in cmd.exe changes the
+    # directory WITHOUT changing the drive — it prints nothing and moves
+    # nowhere. `pushd` crosses drives in cmd and in PowerShell alike.
+    $t758Pane = @(Get-Leaves (Get-Win 'bw').tabs[0].splits)[0].id
+    & $exe +send-keys --target=$t758Pane "pushd $t758A" Enter 2>&1 | Out-Null
+    $inA = Wait-PaneCwd 'bw' 0 $t758A
+    Write-Host "INFO  T758 pane $t758Pane cwd: $(@(Get-Leaves (Get-Win 'bw').tabs[0].splits)[0].working_directory) (wanted $t758A)"
+    if (-not $inA) {
+        # What the shell actually did with the line, which is the difference
+        # between "the feature is broken" and "the pane never moved".
+        foreach ($ln in @(& $exe +read --name=$t758Pane --lines=6 2>&1)) { Write-Host "INFO  T758 pane text | $ln" }
+    }
+    Assert $inA 'T758: the pane reports directory A after a cd'
+    if (-not $inA) {
+        Note-Skip 'T758: the pane never moved, so the re-resolve cannot be measured'
+    } else {
+        & $exe +set-banner --target=bw '.\t758.md' | Out-Null
+        $null = Wait-Banner 'bw' 0 '.\t758.md'
+        Start-Sleep -Milliseconds 700
+        $ovR = $null
+        for ($t = 0; $t -lt 20 -and -not $ovR; $t++) { $ovR = Get-Overlay $appPid $top; if (-not $ovR) { Start-Sleep -Milliseconds 200 } }
+        if (-not $ovR) {
+            $script:fail += 1
+            Write-Host 'FAIL  T758: no banner overlay for the relative-path banner' -ForegroundColor Red
+        } else {
+            $urlA = Invoke-BannerCtrlClick $ovR
+            Write-Host "INFO  T758 ctrl+click in A: $urlA"
+            Assert ($urlA -and (($urlA -replace '/', '\') -ieq (Join-Path $t758A 't758.md'))) `
+                "T758: the relative link resolves against the directory the pane is in (got '$urlA')"
+
+            # The move. Same banner, untouched: only the pane's directory
+            # changes, and the link has to change with it.
+            Clear-Content $errlog -ErrorAction SilentlyContinue
+            & $exe +send-keys --target=$t758Pane "pushd $t758B" Enter 2>&1 | Out-Null
+            $inB = Wait-PaneCwd 'bw' 0 $t758B
+            Assert $inB 'T758: the pane reports directory B after the second cd'
+            $bannerStill = Wait-Banner 'bw' 0 '.\t758.md'
+            Assert ($bannerStill -ceq '.\t758.md') "T758: ...and the banner TEXT is untouched by the cd (got '$bannerStill')"
+            $urlB = Invoke-BannerCtrlClick $ovR
+            Write-Host "INFO  T758 ctrl+click in B: $urlB"
+            Assert ($urlB -and (($urlB -replace '/', '\') -ieq (Join-Path $t758B 't758.md'))) `
+                "T758: the SAME banner text now points into the new directory (got '$urlB')"
+            # The re-parse itself, from the log. `banner paint` is the probe
+            # for whether the debug oracle exists at all — log.debug is
+            # compiled out of a release build, and an absent line must read as
+            # "not measured" rather than as "it did not happen".
+            $t758Oracle = @(Select-String -Path $errlog -Pattern 'banner paint ' -ErrorAction SilentlyContinue).Count -gt 0
+            if ($t758Oracle) {
+                $reLines = @(Select-String -Path $errlog -Pattern 'banner cwd re-resolve' -ErrorAction SilentlyContinue).Count
+                Assert ($reLines -gt 0) 'T758: ...because the banner re-parsed against the new cwd'
+            }
+
+            # The other direction: a banner with nothing relative in it cannot
+            # mean anywhere else, so a cd must neither move its link nor make
+            # it re-parse.
+            $absPath = Join-Path $t758A 't758.md'
+            & $exe +set-banner --target=bw $absPath | Out-Null
+            $null = Wait-Banner 'bw' 0 $absPath
+            Start-Sleep -Milliseconds 700
+            Clear-Content $errlog -ErrorAction SilentlyContinue
+            & $exe +send-keys --target=$t758Pane "pushd $t758A" Enter 2>&1 | Out-Null
+            $null = Wait-PaneCwd 'bw' 0 $t758A
+            $urlAbs = Invoke-BannerCtrlClick $ovR
+            Write-Host "INFO  T758 ctrl+click on the absolute path after a cd: $urlAbs"
+            Assert ($urlAbs -and (($urlAbs -replace '/', '\') -ieq $absPath)) `
+                "T758: an absolute link is byte-identical after a cd (got '$urlAbs')"
+            if ($t758Oracle) {
+                $reAbs = @(Select-String -Path $errlog -Pattern 'banner cwd re-resolve' -ErrorAction SilentlyContinue).Count
+                Assert ($reAbs -eq 0) `
+                    'T758: ...and a banner with no relative link never re-parses on a cd'
+            } else {
+                Note-Skip 'T758 re-parse trigger: no debug oracle in the log (release build?)'
+            }
+        }
+    }
+    Remove-Item -LiteralPath $t758A -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $t758B -Recurse -Force -ErrorAction SilentlyContinue
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'T758 section: GUI alive'
     & $exe +set-banner --target=bw --clear | Out-Null
     $null = Wait-Banner 'bw' 0 'NONE'
 

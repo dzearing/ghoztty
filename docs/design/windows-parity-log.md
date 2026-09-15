@@ -29428,3 +29428,54 @@ Filed: T1585 (the rest of the script still measures after a fixed sleep, and
 Evidence: `floor-lane.ps1 -Lane all` ALL LANES PASS (lib/none/win32/agent),
 `floor-lane.ps1 -Lane harness` PASS and re-stamped, `tab-strip.ps1` 10/10
 ALL PASS, and both env hatches demonstrated in both directions.
+
+## 2026-09-15 - A banner's relative path now means the folder the pane is in (T758)
+
+Put `.\out\build.log` in a pane banner and Ghoztty makes it clickable. Until
+today it worked out which file that was at the moment the banner was SET, and
+then never looked again: `cd` somewhere else and the link still opened the old
+folder's file, even though the text on screen — unchanged, still `.\out\
+build.log` — plainly meant the new one. The Mac has never had this, because its
+banner parser is handed the pane's folder on every render pass; ours caches
+parsed blocks and repaints far more often than a folder moves, so re-parsing on
+the paint path is exactly what that cache exists to avoid.
+
+So it re-parses on the MOVE instead, and only for the banners that can care.
+`banner_markdown.dependsOnCwd` answers "does this text carry a `.\…`/`..\…`
+link?" — deliberately a conservative superset of the autolink rule itself, since
+a false yes costs one re-parse of text nobody can see change while a false no
+leaves a stale link on screen. `BannerOverlay` remembers the answer and
+`Surface.setPwd` re-parses when the reported directory actually CHANGED: shell
+integration reports a cwd on every prompt, so "was it reported?" is the wrong
+question and would have re-parsed every banner on every prompt.
+
+That covers every shell that reports its directory. The other family is
+`cmd.exe`, which reports nothing at all — its pane's cached directory sits
+frozen at wherever the shell started, and T185 already answers that by reading
+the shell process's real cwd on demand. The banner now takes that reading at the
+one moment it matters: the instant before a link is acted on, on the click
+itself. Two bounded process reads, on a click, on a banner that carries a
+relative link. Absolute paths, UNC shares, `~\…` and URLs need no context at
+all, so a `cd` neither moves them nor makes them re-parse.
+
+Section 6k of `test\win32\pane-banner.ps1` is one banner, set once, clicked
+twice from two different directories — the oracle is the Ctrl+click viewer's
+`url`, because it reports the TARGET and the ink never changes here. The pane
+it uses runs `cmd.exe`, so the harder half is what gets exercised. A gotcha
+worth keeping: the pane starts on the repo's drive and the scratch folders are
+on the system one, and a bare `cd` across drives in cmd prints nothing and moves
+nowhere — the section uses `pushd`, which crosses drives in cmd and PowerShell
+alike, and the first draft of it failed for that reason and not for the
+feature's.
+
+Filed: T1586 (a pane whose cached directory is the EMPTY string is not the same
+as one with no directory — `.\a.txt` currently resolves to `\a.txt`, a link to
+the drive root, where T539's rule says it should stay plain text).
+
+Evidence: `floor-lane.ps1 -Lane all` ALL LANES PASS (lib/none/win32/agent),
+`floor-lane.ps1 -Lane harness` PASS and re-stamped, `pane-banner.ps1` ALL PASS
+(148 assertions) and re-stamped, plus `docs-routing.ps1`, `window-active-audit.ps1`,
+`close-confirm-idle.ps1` and `remote-disconnect.ps1` green and re-stamped. The
+negative control `T758_NEUTERED` was measured rather than asserted: flipped on,
+the harness fails exactly the two 6k assertions that are about the move — 2
+FAILED / 146 passed — and nothing else.

@@ -1708,6 +1708,22 @@ pub fn livePwd(self: *Surface, alloc: Allocator) ?[]u8 {
     return internal_os.process_cwd.fromPid(pid, alloc);
 }
 
+/// Fold the shell's REAL working directory into the cache (T758).
+///
+/// A no-op for a shell that reports OSC 7 — `livePwd` stands down for those,
+/// because their reports are already live — and for a directory that has not
+/// moved. It exists for the other family: `cmd.exe` reports nothing, so the
+/// cache would sit frozen at the pane's starting directory and a banner's
+/// `.\…` link would keep pointing there long after the prompt moved on. Two
+/// bounded process reads, taken at the moment a link is about to be acted
+/// on rather than on a timer.
+pub fn syncPwdFromOs(self: *Surface) void {
+    const alloc = self.app.core_app.alloc;
+    const live = self.livePwd(alloc) orelse return;
+    defer alloc.free(live);
+    self.setPwd(live);
+}
+
 /// True when this pane's shell is sitting idle — nothing is running under it,
 /// so closing the pane destroys no work (T41). `map` is a Toolhelp32 snapshot
 /// (`ProcessTree.snapshot`); callers closing a whole window take one for every
@@ -2147,9 +2163,21 @@ pub fn setTitle(self: *Surface, title: [:0]const u8) void {
 /// seed from the terminal on the first `+list`). GUI thread only.
 pub fn setPwd(self: *Surface, pwd_str: []const u8) void {
     const alloc = self.app.core_app.alloc;
+    // Shell integration reports the cwd on EVERY prompt, so "did it move?"
+    // is the question, not "was it reported?" (T758).
+    const moved = self.pwd == null or !std.mem.eql(u8, self.pwd.?, pwd_str);
     const copy = alloc.dupeZ(u8, pwd_str) catch return;
     if (self.pwd) |old| alloc.free(old);
     self.pwd = copy;
+
+    // A banner carrying `.\…`/`..\…` links means something different in the
+    // new directory, so re-resolve it against the cwd it is read in — Mac's
+    // banner parser takes the cwd on every render pass (T758).
+    if (moved) {
+        if (self.banner_overlay) |b| {
+            if (self.banner_text) |t| _ = b.refreshForCwd(t);
+        }
+    }
 }
 
 /// Set (or clear, with null) the user's manual pane title ("Change Pane

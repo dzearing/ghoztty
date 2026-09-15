@@ -151,6 +151,17 @@ const T833_NEUTERED = false;
 /// Re-running the script must fail exactly the T1344 assertions (every
 /// `banner paint` line reports `buffered=0`) and nothing else.
 const T1344_NEUTERED = false;
+
+/// Negative control for `pane-banner.ps1`'s T758 assertions. Flipping it
+/// restores the pre-T758 world — a banner's dot-relative links keep the
+/// directory they were PARSED in, so a `cd` in the pane leaves them pointing
+/// at wherever the text was set. Re-running the script must fail exactly the
+/// two 6k assertions that are about the MOVE (the same banner text pointing
+/// into the new directory, and the re-parse that puts it there) and nothing
+/// else — the resolve-at-set-time assertion and the absolute-path control
+/// describe behavior this flag does not touch, so they must survive.
+/// (Measured 2026-09-15, T758: 2 FAILED / 146 passed, exactly those two.)
+const T758_NEUTERED = false;
 /// Chevron toggle glyph half-width / height.
 const CHEV_W: f32 = 5.0;
 const CHEV_H: f32 = 3.5;
@@ -191,6 +202,13 @@ pub const BannerOverlay = struct {
     /// Arena holding the parsed blocks and their text (reset per setText).
     arena: std.heap.ArenaAllocator,
     blocks: []const markdown.Block = &.{},
+
+    /// Does this banner's text carry a dot-relative autolink, i.e. does a
+    /// `cd` in the pane change where one of its links points (T758)? Mac
+    /// re-resolves on every render pass; the overlay caches parsed blocks
+    /// and repaints far more often than the cwd moves, so it re-parses on
+    /// the cwd change instead — and only for the banners that can care.
+    cwd_dependent: bool = false,
 
     /// Multi-line banners collapse/expand on click (Mac chevron parity).
     collapsible: bool = false,
@@ -390,10 +408,28 @@ pub const BannerOverlay = struct {
             },
             text,
         ) catch &.{};
+        self.cwd_dependent = markdown.dependsOnCwd(text);
         self.collapsible = std.mem.indexOfScalar(u8, text, '\n') != null;
         if (!self.collapsible) self.collapsed = false;
         self.content_h = -1;
         _ = w32.InvalidateRect(self.hwnd, null, 1);
+    }
+
+    /// The pane's working directory moved (T758). Re-parse the SAME source
+    /// text so `.\…`/`..\…` links point where that text means NOW, which is
+    /// what Mac gets for free by taking `cwd` on every render pass.
+    ///
+    /// Returns whether it re-parsed. A banner with no dot-relative link
+    /// cannot have changed, so it is left alone — a shell reports its cwd on
+    /// every prompt, and re-parsing every banner on every prompt is work
+    /// nobody asked for.
+    pub fn refreshForCwd(self: *BannerOverlay, text: []const u8) bool {
+        if (T758_NEUTERED or !self.cwd_dependent) return false;
+        // Same text, so the collapsed/expanded state and the strip height
+        // survive; only the link targets move.
+        self.setText(text);
+        log.debug("banner cwd re-resolve len={d}", .{text.len});
+        return true;
     }
 
     /// Refresh card colors from the pane's effective background (per-pane
@@ -2015,6 +2051,25 @@ pub const BannerOverlay = struct {
         if (dirty) _ = w32.UpdateWindow(self.hwnd);
     }
 
+    /// Bring the link targets up to date with the pane's CURRENT directory,
+    /// immediately before one of them is acted on (T758).
+    ///
+    /// The reported-cwd path (`Surface.setPwd`) already covers every shell
+    /// with integration; this covers the ones that report nothing, where the
+    /// only way to know the prompt has moved is to ask the OS. Free for the
+    /// banners that carry no dot-relative link, which is nearly all of them.
+    ///
+    /// A re-parse throws away the hit rects this click is about to be tested
+    /// against — they are rebuilt by the paint — so the paint is forced here
+    /// rather than left to arrive after the click has been resolved against
+    /// an empty list.
+    fn syncLinksToCwd(self: *BannerOverlay) void {
+        if (T758_NEUTERED or !self.cwd_dependent) return;
+        const surface = self.surface orelse return;
+        surface.syncPwdFromOs();
+        _ = w32.UpdateWindow(self.hwnd);
+    }
+
     fn linkAt(self: *const BannerOverlay, x: i32, y: i32) ?[]const u8 {
         for (self.links.items) |l| {
             if (x >= l.rect.left and x < l.rect.right and
@@ -2367,6 +2422,7 @@ fn bannerWndProc(
         w32.WM_RBUTTONUP => {
             const x: i32 = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam))))));
             const y: i32 = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam)) >> 16))));
+            self.syncLinksToCwd();
             if (self.linkAt(x, y)) |url| {
                 self.openLinkMenu(url, x, y);
                 return 0;
@@ -2377,6 +2433,7 @@ fn bannerWndProc(
         w32.WM_LBUTTONUP => {
             const x: i32 = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam))))));
             const y: i32 = @as(i16, @bitCast(@as(u16, @truncate(@as(usize, @bitCast(lparam)) >> 16))));
+            self.syncLinksToCwd();
             if (self.linkAt(x, y)) |url| {
                 // MK_CONTROL / MK_SHIFT ride in wparam, which is the state at
                 // the time of the click — GetKeyState would answer for now
@@ -2424,6 +2481,7 @@ test "T283: the banner's negative controls are clear and non-empty" {
     try std.testing.expect(!T123_NEUTERED);
     try std.testing.expect(!T377_NEUTERED);
     try std.testing.expect(!T149_NEUTERED);
+    try std.testing.expect(!T758_NEUTERED);
 
     const CellWrap = BannerOverlay.CellWrap;
     try std.testing.expectEqual(CellWrap.shipped, CellWrap.forCell());

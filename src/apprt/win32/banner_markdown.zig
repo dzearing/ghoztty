@@ -829,6 +829,34 @@ fn autolink(
     };
 }
 
+/// Does `source` contain a bare autolink whose target depends on the pane's
+/// working directory (T758)? `.\…` and `..\…` are the only forms that do —
+/// URLs, drive paths, UNC shares and `~\…` resolve against something that
+/// does not move — so this is what tells a banner whose text is unchanged
+/// that a `cd` in its pane has nevertheless changed where its links point.
+///
+/// Deliberately a CONSERVATIVE superset of what `autolink` would linkify: it
+/// applies the same word-boundary and prefix rules but does not know about
+/// code spans or explicit-link labels, which suppress a link. A false `true`
+/// costs one re-parse of text nobody can see change; a false `false` would
+/// leave a stale link on screen, which is the defect itself.
+pub fn dependsOnCwd(source: []const u8) bool {
+    var i: usize = 0;
+    while (i < source.len) : (i += 1) {
+        if (!canStartAutolink(source, i)) continue;
+        if (i > 0) {
+            const prev = source[i - 1];
+            if (!std.ascii.isWhitespace(prev) and !isAutolinkOpener(prev)) continue;
+        }
+        const prefix = autolinkPrefix(source[i..]) orelse continue;
+        if (prefix.kind != .relative) continue;
+        // A bare sigil with nothing after it is not a link.
+        if (autolinkEnd(source, i) - i <= prefix.len) continue;
+        return true;
+    }
+    return false;
+}
+
 /// Where the bare link starting at `from` ends: up to whitespace (or a
 /// backtick or pipe, neither of which can sit inside banner link text),
 /// minus any trailing sentence punctuation.
@@ -1344,6 +1372,28 @@ test "autolink: home and cwd resolve, and stay text without them" {
     // nowhere (Mac's rule for a pane with no cwd).
     try testing.expect((try onlyLink(a, .{}, "./zig-out/bin/ghoztty.exe")) == null);
     try testing.expect((try onlyLink(a, .{}, "~/notes.md")) == null);
+}
+
+test "dependsOnCwd: only the dot-relative forms move with a cd (T758)" {
+    // The forms that re-resolve.
+    try testing.expect(dependsOnCwd(".\\out\\build.log"));
+    try testing.expect(dependsOnCwd("..\\other\\x.md"));
+    try testing.expect(dependsOnCwd("build failed: ./out/build.log (see it)"));
+    try testing.expect(dependsOnCwd("[see](https://x.io/1) and ./a.txt"));
+
+    // The forms that do not: nothing to re-resolve against a moving cwd.
+    try testing.expect(!dependsOnCwd("**Build status**\nall green"));
+    try testing.expect(!dependsOnCwd("D:\\git\\ghoztty\\a.txt"));
+    try testing.expect(!dependsOnCwd("\\\\server\\share\\a.txt"));
+    try testing.expect(!dependsOnCwd("~\\Desktop\\a.txt"));
+    try testing.expect(!dependsOnCwd("/usr/local/bin/x"));
+    try testing.expect(!dependsOnCwd("https://example.com/a/b"));
+    // Not a whole token, so not a link.
+    try testing.expect(!dependsOnCwd("version1.0./x"));
+    // A bare sigil with no body.
+    try testing.expect(!dependsOnCwd("cd .\\ then wait"));
+    // Prose that merely ends a sentence.
+    try testing.expect(!dependsOnCwd("it built. and then it ran."));
 }
 
 test "autolink: never inside a code span or an explicit link's label" {
