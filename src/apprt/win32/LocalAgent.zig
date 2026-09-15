@@ -43,6 +43,7 @@ const connection = @import("../../remote/connection.zig");
 const agent_lineage = @import("../../remote/agent_lineage.zig");
 const build_config = @import("../../build_config.zig");
 const protocol = @import("../../remote/protocol.zig");
+const agent_recovery = @import("agent_recovery.zig");
 const agent_upgrade = @import("agent_upgrade.zig");
 const gui_pump = @import("gui_pump.zig");
 const job_object = @import("job_object.zig");
@@ -385,7 +386,34 @@ pub fn sharedConnection(self: *LocalAgent) ?*connection.Connection {
 
     // Fast path: a warm, healthy cached connection — no dial, no wait.
     if (self.shared) |d| {
-        if (d.conn.state() != .dead) return d.conn;
+        const state = d.conn.state();
+        if (agent_recovery.handsToNewSurface(state)) return d.conn;
+
+        // T764: down, but not necessarily dead. A WEDGED agent (alive, not
+        // answering) parks the link in `reconnecting` indefinitely — `dead` is
+        // reached only via a server-sent DETACHED frame it never sends — and
+        // the old `!= .dead` gate handed that stuck connection to every window
+        // and split opened meanwhile, so each one opened frozen and the wedge
+        // spread to panes that were never part of it. Answer NONE instead: the
+        // caller opens a plain exec pane, which is exactly the documented
+        // fallback for an unreachable agent.
+        //
+        // And answer it HERE rather than falling through to a re-resolve. The
+        // wedged agent is alive, so its single-instance guard refuses a
+        // replacement and its pipe accepts a connection whose handshake never
+        // completes — a dial that would burn the whole spawn deadline before
+        // failing, with window creation blocked behind it. That is the hang
+        // this bounded path exists to prevent. The link is not abandoned: the
+        // T723 retry is already working it, and the next pane opened after it
+        // heals gets persistence again.
+        if (state != .dead) {
+            log.info(
+                "shared local-agent connection is {s}; opening this surface without the agent",
+                .{@tagName(state)},
+            );
+            return null;
+        }
+
         // The cached connection went dead (agent crashed): stop handing it to
         // new surfaces and RETIRE it. It must not be freed here — the surfaces
         // already riding it hold the raw pointer and nothing refcounts it

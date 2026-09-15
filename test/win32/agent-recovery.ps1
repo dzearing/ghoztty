@@ -45,6 +45,10 @@
 #   J: the same abort, ended by a RESUME instead of a kill - the softer half,
 #      where a healed link is also an acceptable cure. The panes must be
 #      responsive either way.
+#   K: T764 - the OTHER pane, the one opened while the agent is wedged. It must
+#      fall back to a plain exec pane and WORK, instead of inheriting the stuck
+#      shared connection and opening frozen, and the window must still open
+#      promptly rather than blocking on a handshake that never completes.
 #
 # The oracle for "did a rebuild run" is the set of GhozttyTerminal child windows,
 # not the child pids. Recovery keeps the window HWND and replaces the SURFACES
@@ -904,6 +908,92 @@ $treeJ = Get-List $tmp 'j' 12
 Assert "J7 the topology survived: one window, 2 terminals, the viewer intact" (
     (Windows-Of $treeJ).Count -eq 1 -and (Terminal-Leaves $treeJ).Count -eq 2 -and
     @(Viewer-Leaves $treeJ).Count -eq 1)
+
+# ============================================================================
+"== K: T764 - a pane opened DURING a wedge falls back to exec, it does not inherit the stuck link"
+# ============================================================================
+# Sections I and J are about the panes that already existed when the agent
+# wedged. This one is about the pane the user opens WHILE it is wedged, which
+# had no defence at all: `LocalAgent.sharedConnection`'s fast path handed back
+# the cached connection whenever its state was not `dead`, and a wedged agent
+# parks the link in `reconnecting` forever (`dead` needs a server-sent DETACHED
+# frame it never sends). So every new window and split was wired to a link that
+# answers nothing and opened FROZEN - the wedge spreading to panes that were
+# never part of it, and the exact outcome the plain-exec fallback exists to
+# prevent.
+#
+# The oracle is the user's question, not a log line: does the window I just
+# opened work. A new window is opened with the agent suspended and the link
+# confirmed down, and its pane must round-trip a typed marker. Without the fix
+# that pane is agent-backed over a stalled connection and never echoes
+# anything.
+$logMarkK = Get-AppLogLength
+$agentsK = Get-RunAgents $tmp
+if ($agentsK.Count -ne 1) { Show-Agents $tmp 'K' }
+Assert "K1 one agent belongs to this run before the wedge" ($agentsK.Count -eq 1)
+$agentPidK = if ($agentsK.Count -ge 1) { [int]$agentsK[0].ProcessId } else { 0 }
+Assert "K2 the agent was suspended" (
+    $agentPidK -gt 0 -and (Set-AgentSuspended $agentPidK $true) -eq 0)
+
+# Wait for the APP to have noticed - three missed heartbeats, ~9s - rather than
+# a clock of our own. Opening the window before the FSM has walked to
+# `reconnecting` would test the healthy path and pass either way.
+$downSeen = $false
+$deadline = (Get-Date).AddSeconds(60)
+while ((Get-Date) -lt $deadline) {
+    if ((Read-AppLog $logMarkK) -match 'shared local-agent link went down') { $downSeen = $true; break }
+    Start-Sleep -Milliseconds 200
+}
+if (-not $downSeen) { Dump-AppLog $logMarkK 'K3' }
+Assert "K3 the app sees the shared link as down" $downSeen
+
+# Window creation must also stay BOUNDED here: the wedged agent still holds its
+# single-instance guard and still accepts a connection whose handshake never
+# completes, so a fall-through to a fresh find-or-spawn would burn the whole
+# spawn deadline on the GUI thread with the new window blocked behind it. A
+# timed-out CLI call returns $null from Run-CliArgs.
+$swK = [System.Diagnostics.Stopwatch]::StartNew()
+$rcK = Run-CliArgs @('+new-window', '--target=t764w', '--no-activate') "$tmp\newwin-k.txt" 30
+$swK.Stop()
+"    [K4] +new-window during the wedge: rc=$rcK in $([int]$swK.Elapsed.TotalSeconds)s"
+Assert "K4 a new window can still be opened while the agent is wedged" ($rcK -eq 0)
+
+$treeK = $null
+$deadline = (Get-Date).AddSeconds(30)
+while ((Get-Date) -lt $deadline) {
+    $treeK = Get-List $tmp 'k' 12
+    if ((Windows-Of $treeK).Count -eq 2) { break }
+    Start-Sleep -Milliseconds 500
+}
+Assert "K5 the new window really exists" ((Windows-Of $treeK).Count -eq 2)
+
+# THE assertion. An exec pane works with no agent at all; a pane handed the
+# wedged connection is a picture of a terminal.
+Assert "K6 the pane opened during the wedge is a WORKING pane" (
+    Test-PaneResponsive $tmp 't764w' 'k' 60)
+
+# And the app says WHY it fell back, so the same event is diagnosable from a
+# log the user can send. Secondary to K6 on purpose: the log line is evidence,
+# the round-trip is the verdict.
+Assert "K7 the app said it opened the surface without the agent" (
+    (Read-AppLog $logMarkK) -match 'opening this surface without the agent')
+
+# Unwedge and leave the box the way J did: the original panes must still be
+# fine, so the fallback cost nothing to the panes that were already there.
+#
+# "or already gone" is not slack: on a run where K6 FAILS, its 60s liveness
+# timeout holds the wedge past the agent's own single-instance staleness window
+# (45s), the app's challenger kills the frozen holder, and there is no longer a
+# process to resume. What this assertion is for is that this script never leaves
+# a SUSPENDED agent behind, and a corpse satisfies that as fully as a resume
+# does. Measured: the teeth run scored exactly that, a third failure that said
+# nothing about the defect.
+$resumeRcK = Set-AgentSuspended $agentPidK $false
+$agentGoneK = $null -eq (Get-Process -Id $agentPidK -ErrorAction SilentlyContinue)
+Assert "K8 the wedged agent is resumed (or already gone)" (
+    $resumeRcK -eq 0 -or $agentGoneK)
+Assert "K9 the pre-existing panes are responsive again after the wedge ended" (
+    Test-PaneResponsive $tmp 't145b' 'k2' 60)
 
 # ============================================================================
 Stop-TestProcs

@@ -109,6 +109,36 @@ pub fn isDown(state: connection.LinkState.State) bool {
     };
 }
 
+/// Whether the shared connection may be handed to a NEW surface in this state
+/// (T764).
+///
+/// Separate from `isDown` on purpose, even though the two agree today: this
+/// answers "would a pane opened right now WORK on this link", which is a
+/// different question from "has the link dropped". A pane that already exists
+/// rides a down link through the reconnect because its session is on the other
+/// side of it and there is nothing better to point it at; a pane that does not
+/// exist yet has a strictly better option — the plain exec fallback — and
+/// wiring it to a stalled link instead spreads the wedge to panes that were
+/// never affected by it.
+///
+/// The case that forced it: a WEDGED agent (alive, not answering) leaves the
+/// shared link in `reconnecting` indefinitely, since `dead` is only ever
+/// reached via a server-sent DETACHED frame a wedged agent never sends. The
+/// pre-T764 fast path gated on `!= .dead`, so every window and split opened
+/// during a wedge was handed the stuck connection and opened frozen — the exact
+/// outcome the exec fallback exists to prevent.
+pub fn handsToNewSurface(state: connection.LinkState.State) bool {
+    return switch (state) {
+        // Live. `degraded` is missed heartbeats on a link that is still
+        // carrying traffic, so an ATTACH on it goes through.
+        .connected, .degraded => true,
+        // Not carrying traffic right now: an ATTACH would sit unanswered. The
+        // caller opens a plain exec pane instead, and the next pane after the
+        // link heals gets persistence again.
+        .reconnecting, .reattaching, .dead => false,
+    };
+}
+
 /// What a down shared link means once re-checked.
 pub const Verdict = union(enum) {
     /// The link came back on its own. Do nothing at all.
@@ -266,6 +296,27 @@ test "isDown: only a live link is up" {
     try testing.expect(isDown(.reconnecting));
     try testing.expect(isDown(.reattaching));
     try testing.expect(isDown(.dead));
+}
+
+test "T764 handsToNewSurface: a wedged link is not handed to a pane that does not exist yet" {
+    // Live links are handed over exactly as before — this must not cost the
+    // common case its persistence.
+    try testing.expect(handsToNewSurface(.connected));
+    try testing.expect(handsToNewSurface(.degraded));
+
+    // The wedge, which is the whole defect: a wedged agent parks the link in
+    // `reconnecting` forever (no DETACHED frame is ever sent, so `dead` is
+    // unreachable), and the pre-T764 `!= .dead` gate handed it to every new
+    // pane.
+    try testing.expect(!handsToNewSurface(.reconnecting));
+    try testing.expect(!handsToNewSurface(.reattaching));
+    try testing.expect(!handsToNewSurface(.dead));
+
+    // Being stricter than `isDown` is allowed; being looser is the bug. Any
+    // state that counts as down must never be handed to a new surface.
+    for ([_]S{ .connected, .degraded, .reconnecting, .reattaching, .dead }) |s| {
+        if (isDown(s)) try testing.expect(!handsToNewSurface(s));
+    }
 }
 
 test "a link that heals inside the settle window never triggers recovery" {

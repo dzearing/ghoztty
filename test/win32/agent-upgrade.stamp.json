@@ -1,15 +1,15 @@
 {
     "guard":  "agent-upgrade",
     "script":  "test/win32/agent-upgrade.ps1",
-    "generated":  "2026-09-14T04:08:46-07:00",
-    "commit":  "a3d05bcd3",
+    "generated":  "2026-09-15T07:47:31-07:00",
+    "commit":  "ce7b2a3d0",
     "uncommitted":  [
-                        "src/apprt/win32/ConfirmDialog.zig"
+                        "src/apprt/win32/LocalAgent.zig"
                     ],
     "files":  {
                   "src/apprt/win32/agent_upgrade.zig":  "32238c442c66a6ee5885c31c751f9fbf23f174c36bf852905eda7cd1ad3ea603",
                   "src/apprt/win32/ConfirmDialog.zig":  "be38073cf51268c2e5c719d698e3223d35a3a6db57ba4adedd3d633b5c29b983",
-                  "src/apprt/win32/LocalAgent.zig":  "c9d7453d2bc8ba5123f44b65487d0dbf3fef3cd4c91f9ee9befdb9bd7f8c7580",
+                  "src/apprt/win32/LocalAgent.zig":  "61807b9a8f54458b8f3ed60adf2852c6049bf032893089149ce889ce651568c7",
                   "src/apprt/win32/tray_notify.zig":  "bbb2a6d5ea26af08b3e0454a76ba6b25b953ba6a56860d630f5c499deb5fd38c",
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "test/win32/agent-upgrade.ps1":  "ac3f8d54d574e3a6fa1ff7b18def3c4bb5c98ee503ce4bd7fa9f9f242f17400f"

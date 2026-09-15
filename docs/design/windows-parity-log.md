@@ -9,6 +9,45 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-15: T764 closed done, T1589 filed - **a window opened while the
+  session helper is FROZEN now opens as an ordinary working terminal instead of
+  a dead one.**
+
+  The app already knew how to cope with a helper it cannot reach: it opens the
+  new pane as a plain exec shell. But `LocalAgent.sharedConnection`'s fast path
+  asked the wrong question - it handed back the cached connection whenever its
+  state was not `dead`, and a WEDGED agent (alive, answering nothing) parks the
+  shared link in `reconnecting` indefinitely, because `dead` is only ever
+  reached through a server-sent DETACHED frame such an agent never sends. So
+  every window and split opened during a wedge was wired to a link that answers
+  nothing and came up frozen: the wedge spreading to panes that had nothing to
+  do with it, which is exactly what the exec fallback exists to prevent.
+
+  The fix is a different question, asked in a pure policy:
+  `agent_recovery.handsToNewSurface` - would a pane opened RIGHT NOW work on
+  this link - which is deliberately not the same as `isDown`. An existing pane
+  rides a down link through the reconnect because its session is on the far side
+  of it; a pane that does not exist yet has a strictly better option. And the
+  answer is given immediately rather than falling through to a fresh
+  find-or-spawn: the wedged agent still holds its single-instance guard and its
+  pipe still accepts a handshake that never completes, so a re-resolve would
+  burn the whole spawn deadline on the GUI thread with window creation blocked
+  behind it. Measured: `+new-window` returns in 0s mid-wedge.
+
+  Section K of `test\win32\agent-recovery.ps1` is the arm, and it is the pane's
+  own answer rather than a log line - suspend the agent, wait for the app to say
+  the link went down, open a window, and type a marker into it. Teeth-checked:
+  with the old `!= .dead` gate restored the section scores K6 and K7 red. That
+  teeth run also improved K8, which had turned a failing K6 into a second,
+  meaningless failure - a 60s liveness timeout holds the wedge past the agent's
+  45s staleness window, the app's challenger kills the frozen holder, and there
+  is no longer a process to resume.
+
+  T1589 carries the other half: `sharedConnectionIfWarm` still gates on "not
+  dead", so the session roster, the machine chooser and the upgrade check all
+  still send requests over a wedged link and each pays its own timeout before it
+  can tell the user anything.
+
 - 2026-09-15: T760 closed done, T777 + T781 closed by the daily triage's
   already-fixed sweep - **a split opens where its parent is, whether or not
   session persistence is on.**
