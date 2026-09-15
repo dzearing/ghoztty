@@ -305,3 +305,14 @@ as the digest that showed them.
 - A pane that names the machine in its own chrome (tinted header for remote and WSL panes)
 - Open the same layout every morning (startup layouts with per-pane commands)
 - Let a viewer pane follow the pane beside it (auto-re-render the file the shell last touched)
+
+## 2026-09-15
+
+- A release that cuts itself when enough has piled up (publish on a stranded-commit threshold, not only the clock)
+- Show me what is in this update before I take it (update prompt names the headline fixes from the tasks it carries)
+- Undo the last thing the terminal did to my layout (one chord reversing the last structural change)
+- A pane that refuses to run the wrong command (production/remote panes hold a destructive command for one confirmation)
+- Pin a line so it stays on screen (sticky pinned row in the pane, click to jump back)
+- Diff two runs of the same command (viewer pane showing what changed between runs)
+- Tell me which pane made that noise (mark the pane that fired a bell or notification until it is looked at)
+- A window that remembers its font size (per-window zoom persisted across restarts)
