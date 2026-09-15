@@ -64,6 +64,9 @@ $script:passes = 0
 $root = Join-Path $env:TEMP "ghoztty-snap-reattach-$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T740: Remove-VtSequences / Get-VtReadableText / ConvertFrom-VtSnapshotBase64,
+# built on [char]27 rather than a `` `e `` that PowerShell 5.1 reads as a letter.
+. (Join-Path $PSScriptRoot 'lib\VtText.ps1')
 
 function Assert($name, $cond) {
     if ($cond) { Write-Host "  PASS $name"; $script:passes++ }
@@ -199,22 +202,18 @@ function Wait-FirstPaneId($tmp, $timeoutSec = 25) {
     return $null
 }
 
-function Decode-Snapshot($b64) {
-    try { return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)) }
-    catch { return $null }
-}
+function Decode-Snapshot($b64) { return (ConvertFrom-VtSnapshotBase64 $b64) }
 
 # The snapshot is a per-CELL VT repaint, so a run of plain text is shot through
 # with SGR sequences (`SNAP` ESC[0m `MARKER`) and wrapped at the pane width.
 # Strip CSI/OSC and then all whitespace to get the readable text back - the same
 # "match with separators removed" technique the other scripts use for wrapping.
-function Snapshot-Text($decoded) {
-    if ($null -eq $decoded) { return '' }
-    $t = [regex]::Replace($decoded, "`e\][^`a`e]*(`a|`e\\)", '')   # OSC
-    $t = [regex]::Replace($t, "`e\[[0-9;:?]*[ -/]*[@-~]", '')      # CSI
-    $t = [regex]::Replace($t, "`e[@-Z\\-_]", '')                    # 2-byte ESC
-    return ($t -replace '\s', '')
-}
+#
+# T740: this used to be three regexes written here with `` `e `` for ESC, which
+# under PowerShell 5.1 is the LETTER e - so it deleted every `e` from the text
+# and left every escape sequence in it. lib\VtText.ps1 holds the [char]27
+# version, once, for both callers.
+function Snapshot-Text($decoded) { return (Get-VtReadableText $decoded) }
 
 # ---- app-log helpers (the RESTORE oracle) ----------------------------------
 

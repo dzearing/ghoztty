@@ -60,6 +60,7 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'control-char-scan.ps1'; Why = 'no script carries a control character that breaks it on another box' }
     [pscustomobject]@{ Name = 'build-fresh-guard.ps1'; Why = 'a run measures the build it thinks it measures, not a stale one' }
     [pscustomobject]@{ Name = 'job-teardown.ps1'; Why = 'a job object a test creates is torn down with its processes (T1517)' }
+    [pscustomobject]@{ Name = 'vt-escape-scan.ps1'; Why = 'no script writes ``e for ESC, which under 5.1 is the letter e (T740)' }
 )
 
 # name -> the task id that converts it. RED TODAY AND TRACKED, never a permanent

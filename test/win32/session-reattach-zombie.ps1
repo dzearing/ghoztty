@@ -79,6 +79,9 @@ $root = Join-Path $env:TEMP "ghoztty-alt-reattach-$PID"
 # T655: Manifest-Path / Read-Manifest / Wait-Manifest / Manifest-Leaves /
 # First-Snapshot-Leaf, shared rather than copied a fourth time.
 . (Join-Path $PSScriptRoot 'lib\SessionManifest.ps1')
+# T740: Remove-VtSequences / Get-VtReadableText / ConvertFrom-VtSnapshotBase64,
+# built on [char]27 rather than a `` `e `` that PowerShell 5.1 reads as a letter.
+. (Join-Path $PSScriptRoot 'lib\VtText.ps1')
 
 function Assert($name, $cond) {
     if ($cond) { Write-Host "  PASS $name"; $script:passes++ }
@@ -135,19 +138,14 @@ function Wait-AliveCount($tmp, $tag, $target, $timeoutSec = 25) {
     return $rows
 }
 
-function Decode-Snapshot($b64) {
-    try { return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)) }
-    catch { return $null }
-}
+function Decode-Snapshot($b64) { return (ConvertFrom-VtSnapshotBase64 $b64) }
 # Strip CSI/OSC/2-byte-ESC and all whitespace: a per-cell VT repaint shoots SGR
 # runs through the text and wraps it at the pane width.
-function Snapshot-Text($decoded) {
-    if ($null -eq $decoded) { return '' }
-    $t = [regex]::Replace($decoded, "`e\][^`a`e]*(`a|`e\\)", '')
-    $t = [regex]::Replace($t, "`e\[[0-9;:?]*[ -/]*[@-~]", '')
-    $t = [regex]::Replace($t, "`e[@-Z\\-_]", '')
-    return ($t -replace '\s', '')
-}
+#
+# T740: these three regexes used to live here with `` `e `` standing in for ESC,
+# which under PowerShell 5.1 is the LETTER e - so the helper deleted every `e`
+# and left the sequences alone. lib\VtText.ps1 holds the [char]27 version.
+function Snapshot-Text($decoded) { return (Get-VtReadableText $decoded) }
 
 function Find-Leaf($node) {
     if ($null -eq $node) { return $null }

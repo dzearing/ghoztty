@@ -1,10 +1,13 @@
 {
     "guard":  "command-resolve",
     "script":  "test/win32/command-resolve-audit.ps1",
-    "generated":  "2026-09-14T20:57:49-07:00",
-    "commit":  "791f9ce30",
+    "generated":  "2026-09-14T22:38:44-07:00",
+    "commit":  "fc70653aa",
     "uncommitted":  [
-                        "test/win32/tab-strip.ps1"
+                        "test/win32/lib/VtText.ps1",
+                        "test/win32/session-reattach-zombie.ps1",
+                        "test/win32/session-snapshot-reattach.ps1",
+                        "test/win32/vt-escape-scan.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -219,6 +222,7 @@
                   "test/win32/lib/ThreadJoinAudit.ps1":  "5a25a369563fc6904e8155828c1850b403062b7d955ae7a4cdc4ca340232f034",
                   "test/win32/lib/ThrowawayProduct.ps1":  "d0754fbb3791ee3d5fec2369a523df0c23ccb6d4738bad21dd37c25cf86c82fd",
                   "test/win32/lib/VerdictExitAudit.ps1":  "8a22b157dc4e93add59e9b3da93a0620c667644cefb1b3641dc2f6cd370f226e",
+                  "test/win32/lib/VtText.ps1":  "e9a099093c681d1bbef2c78055e1ed4b29daf9b0d020a3e4c454509c9ee28f9a",
                   "test/win32/lib/WindowComposite.ps1":  "8c1c285b7e39db8521944efcb7cc9b277173c99362afa2265bb6365e449d683e",
                   "test/win32/local-split-no-command-rerun.ps1":  "ee277b6308cdb172e153fe92d0624732f8b64743418134ce466da5534138fae2",
                   "test/win32/log-append.ps1":  "76f73c234de0498279a1678b94cd297fa0bdc5d83363e8e43e06999bfaa4b457",
@@ -287,13 +291,13 @@
                   "test/win32/session-open.ps1":  "722f0d9f8823fe8664c2f7853dfb0bccffcb12345e4f1a560f0dd91e0377ae54",
                   "test/win32/session-persistence.ps1":  "f3c1e45d764a320f9f5a97979350697c1556fcc26a1b9ea71c1824abbd080a9c",
                   "test/win32/session-reattach.ps1":  "cb73635c3f3503ffc470a75e9a65ef39a5adb30496149ed22c92bfd360a4a1ea",
-                  "test/win32/session-reattach-zombie.ps1":  "c485c51ae3333ce5c130dbf8c7b698a8bcdce5648b97ed6461763bcafc5b2afa",
+                  "test/win32/session-reattach-zombie.ps1":  "5dc30cdebcaf21553c17c3e13c3b08b3d4fc120fb487972407acb7377d51cf4a",
                   "test/win32/session-relaunch.ps1":  "e314225e771031b4a342da253e10e0f2556f91281f9ace8551b526c325ff37a7",
                   "test/win32/session-relaunch-notify.ps1":  "4d99a3f10608f068460092ca36ad8fb2086708dd7516dbb838c6c900058133a5",
                   "test/win32/session-restore-maximized.ps1":  "5af0d5334fc5974b4bf643c69addfb503c6f35b8f161691c729ad704ffafddf7",
                   "test/win32/session-resume-offset.ps1":  "afda54cfd0df1b0163c489618689744e41ac6ad2b24a2e1a506607ad0d5ccb87",
                   "test/win32/sessions-agent-build.ps1":  "4ddcd1913f07dfb9c177312382493b5a0e6f69d126ebec1ce3522c6908299eea",
-                  "test/win32/session-snapshot-reattach.ps1":  "6c3c6d9030d67c11058cabac8960d7c3226bc8e6562eddbe10061ebdd8604c99",
+                  "test/win32/session-snapshot-reattach.ps1":  "c7e335d7b8e77831bb94f7bbe30060a51008319defd354e567b830cc91f2297c",
                   "test/win32/sessions-running-cmd.ps1":  "0b2c67aa7bebd9981abd9b159546885aaf8856c249cd8df26ceb2bf5f6e59ec6",
                   "test/win32/session-vanished.ps1":  "61b7542f3a5d3d1f1fea94e55df07bf7a373b1f72cb4d60a5d5d03f514a7e777",
                   "test/win32/share-machine.ps1":  "eb76c746586476e1a85c09c1d1ce78b22f9ecf0221df24e1e43f5f8cad3d20c6",
@@ -362,6 +366,7 @@
                   "test/win32/viewer-window-chords.ps1":  "6fb60550287b70944041d11dbf47d52e2085ae450fee5f2cb9bb50f2da1d739c",
                   "test/win32/viewer-worktree.ps1":  "1d8091bad18fee1a104e7629267bd4599975812e5d222f0f15428c9d8742f3c7",
                   "test/win32/viewer-worktree-port.ps1":  "b991f340cf0f1f4a34fa3edab4305aad56e131ad7115a9e01417343306fe31e2",
+                  "test/win32/vt-escape-scan.ps1":  "52f5f59c717c2d090c6d78f7594839a28011843fe58c08df59e4b1bf8fcff4ea",
                   "test/win32/website-windows-download.ps1":  "32701ddb1259d19533c96c283b936da56ef165175577a34188b8b022e291a941",
                   "test/win32/whats-new.ps1":  "2dd7e75d9014532aa4be67f64269147a6245630877a8b1ff3b4e54660a7609d2",
                   "test/win32/whea-report.ps1":  "e4cbc0522661b29c95d827023f4f40b0168935dd852021435e2a930c4c00ad90",

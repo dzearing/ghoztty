@@ -3632,7 +3632,12 @@ $GuardTable = @(
             'test\win32\*.ps1',
             'test\win32\lib\*.ps1',
             'scripts\harness-floor.ps1',
-            'scripts\lib\HarnessFloor.ps1'
+            'scripts\lib\HarnessFloor.ps1',
+            # T740: the floor's members mostly live under test\win32\ and are
+            # covered by the wildcards above; this one's subject is a scanner
+            # in scripts\, so name it or editing the scanner leaves the floor
+            # green over code it has never run.
+            'scripts\vt-escape-scan.ps1'
         )
     },
 

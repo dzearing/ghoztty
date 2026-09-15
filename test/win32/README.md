@@ -99,6 +99,7 @@ marker with no reason waives nothing.
 | A run measures the build it thinks it measures, not a stale one | `build-fresh-guard.ps1` | — |
 | No script carries a control character that breaks it on another box | `control-char-scan.ps1` | — |
 | A shared helper is anchored to the caller that is actually under test (T1079) | `caller-anchor.ps1` | — |
+| No script writes `` `e `` for ESC — under 5.1 it is the letter e (T740) | `vt-escape-scan.ps1` | — use `[char]27`, or `lib\VtText.ps1` |
 
 Each audit is also its own acceptance script: it self-tests its analyzer
 against fixtures and proves its own teeth, so running one by hand answers a

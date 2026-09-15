@@ -9,6 +9,49 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-14: T740 closed done - **two acceptance scripts were reading terminal
+  output through a filter that deleted letters and kept the control codes.**
+  Windows PowerShell 5.1 has no `` `e `` escape - PowerShell 7 added it - so the
+  backtick is dropped and the string is the plain letter **e**. Both copies of
+  `Snapshot-Text` built their VT-stripping regexes on it, which meant "delete
+  every e" and "leave every escape sequence alone". Dumping a captured snapshot
+  through one produced `C:\Us<e gone>rs\David>`.
+
+  The reason it is worth more than a one-line fix is that it was invisible from
+  above: the assertions on top kept passing, because the markers they matched
+  happened to contain no `e` and were never confronted with the sequences the
+  helper was supposed to remove. A marker with an `e` in it would have failed
+  for a reason nobody could have found by reading the script.
+
+  What landed: `test\win32\lib\VtText.ps1` - one `[char]27`-based stripper, with
+  `Remove-VtSequences` / `Get-VtReadableText` / `ConvertFrom-VtSnapshotBase64`,
+  shared by both callers instead of a regex block copied twice; and
+  `scripts\vt-escape-scan.ps1`, a standing sweep that is now the 24th member of
+  the harness floor, so a new script cannot write `` `e `` again without the
+  commit gate noticing.
+
+  The sweep walks each file with a small state machine rather than a regex,
+  because the SCOPING is the whole accuracy of it. A backtick-e counts only
+  inside an expanding string; a single-quoted string does no escape processing
+  at all (`'the claim`s own line'` is correct as written), a comment is prose
+  where `` `echo` `` is markdown, and a doubled backtick is a literal. A sweep
+  that reported those would be switched off inside a week. Two bugs in it were
+  caught by its own harness rather than by reading: `-Include` is silently
+  ignored by `Get-ChildItem -LiteralPath -Recurse` (it enumerated .js/.md/.py and
+  reported markdown backticks), and the end-of-line "an unterminated string does
+  not survive the newline" reset was also resetting here-strings, so every
+  here-string body was out of scope.
+
+  Evidence: `test\win32\vt-escape-scan.ps1` ALL PASS (34 assertions), with the
+  pre-fix regexes run over the same fixture as an oracle - they leave all four
+  escapes in and eat `cache[0]` out of ordinary text, which is what makes
+  section A evidence rather than a tautology. `-NegativeControl` scores exactly
+  1 FAILURE. The live sweep is `CLEAN: 438 file(s)`. `scripts\harness-floor.ps1`
+  ALL PASS (24 audits, 2 PENDING - the pre-existing T1123/T1568 entries). And
+  the point of the card: both callers still pass end to end -
+  `session-snapshot-reattach.ps1` ALL PASS (33) and `session-reattach-zombie.ps1`
+  ALL PASS (27), now asserting what they always claimed to.
+
 - 2026-09-14: T737 closed done - **a tab can no longer change width while your
   hand is on the strip.** T249 killed the half of the motion that fired minutes
   later; what it left behind was the GROW half, which is by design (a title must
