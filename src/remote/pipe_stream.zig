@@ -556,6 +556,7 @@ const win = struct {
 // =============================================================================
 
 const testing = std.testing;
+const test_util = @import("test_util.zig");
 
 /// A unique-per-process pipe name for one test.
 fn testPipeName(buf: []u8, tag: []const u8) ![]const u8 {
@@ -801,7 +802,14 @@ test "PipeListener: a client that vanishes before accept() does not wedge the li
         listener: *PipeListener,
         served: bool = false,
         fn run(self: *@This()) void {
-            for (0..40) |_| {
+            // Bounded on the WALL CLOCK, not on an attempt count (T738). An
+            // attempt budget measures how many times this thread got to try,
+            // which is a different amount of time on every box and under every
+            // load — the shape that made `connection.zig`'s drain flake (T472).
+            // The shared liveness bound is an upper bound on a hang, not a
+            // performance assertion, so a slow box cannot spend it.
+            var timer = std.time.Timer.start() catch return;
+            while (timer.read() < test_util.liveness_ns) {
                 const h = self.listener.accept() catch {
                     std.Thread.sleep(50 * std.time.ns_per_ms);
                     continue;

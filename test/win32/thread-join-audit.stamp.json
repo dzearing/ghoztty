@@ -1,10 +1,11 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-09-13T20:00:20-07:00",
-    "commit":  "549c58d4b",
+    "generated":  "2026-09-14T22:02:54-07:00",
+    "commit":  "bf68fe421",
     "uncommitted":  [
-                        "src/remote/connection.zig"
+                        "src/remote/agent/pty_host_smoke.zig",
+                        "src/remote/pipe_stream.zig"
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -41,7 +42,7 @@
                   "src/remote/agent/pty_holder_child.zig":  "93419f9613d5f5569f37999523375359f32ae76e5a858c8f788bbf5da8507477",
                   "src/remote/agent/pty_host.zig":  "c8f01e4dc55574cc21d7508453fef160c330a66cd28bfc30460b68d769d8faea",
                   "src/remote/agent/pty_host_proto.zig":  "5ac87489e712361e3dce7b83695385130be5c9fa258ccf94f10e86ac762bbbb2",
-                  "src/remote/agent/pty_host_smoke.zig":  "cfbd2273a5a7ef6684feb142097dc000f523648fb436879805b2fc91eef36ad6",
+                  "src/remote/agent/pty_host_smoke.zig":  "daaed0c30fc9224f48488e2fd4af9e753a2ae2efaf55f29a6d255112071b14b3",
                   "src/remote/agent/pty_host_spec.zig":  "8f7154a95aeb18b04a70a979080c4fa37deaf304b0156ff86c746206cda10c67",
                   "src/remote/agent/relay_creds.zig":  "906cf1f4bd95c0c1e28f73298abbea8a657c4860e7a215cced15245a13db230d",
                   "src/remote/agent/relay_perf.zig":  "b74d79c5fa170240818c28504aeac97e85b194fc24042d225a073a23573a2ca7",
@@ -62,7 +63,7 @@
                   "src/remote/google_oauth.zig":  "40138a3e0293322de8ee722b7aa0e5688eb4ac68332971c5d624f1d8471c5510",
                   "src/remote/http_client.zig":  "aa3dc49d2baa17240a59b1b51c1fc7d08b81fe8652ab7650bbdbcd59c3dff225",
                   "src/remote/inbound_ring.zig":  "7cdc4d17070ea22458dfe96552220960bc0dbff98303505ceab02eb12a89ff9c",
-                  "src/remote/pipe_stream.zig":  "8bf06afaceb396761e2702549efeb75fa46a4a5274f4cb3217e12cd54fd41d8c",
+                  "src/remote/pipe_stream.zig":  "778ca291c05d1bc1c6c63765852df30f7499c0aa7d97e466c749fcc286bd1722",
                   "src/remote/protocol.zig":  "0af21c5b7f59443031a45a3fb2ea74ee26567d70b6081915043e27c5a9549a5a",
                   "src/remote/relay_account.zig":  "6869fbe6a84bc751f8eb8982d3387790cd626d332ae8a5b322703a3afe5cb62d",
                   "src/remote/relay_dial.zig":  "f7d24bc69e8063100a4dc5a1b72f417e22265410bd9fb915efb704e7d5c6f137",

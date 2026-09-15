@@ -20,6 +20,7 @@ const proto = @import("pty_host_proto.zig");
 const pty_host = @import("pty_host.zig");
 const pty_holder_child = @import("pty_holder_child.zig");
 const pipe_stream = @import("../pipe_stream.zig");
+const test_util = @import("../test_util.zig");
 const server = @import("server.zig");
 
 const is_windows = builtin.os.tag == .windows;
@@ -98,10 +99,14 @@ const win = struct {
         /// Dial the holder pipe (retrying while the holder starts up), read
         /// HELLO, send ATTACH with `ack`.
         fn connect(alloc: Allocator, pipe_name: []const u8, ack: u64) !Owner {
-            var attempt: usize = 0;
-            const pipe_handle = while (true) : (attempt += 1) {
+            // Bounded on the WALL CLOCK, not on an attempt count (T738): what
+            // this waits out is a holder still starting up, which is a
+            // duration, and an attempt budget measures scheduling instead —
+            // the shape that made `connection.zig`'s drain flake (T472).
+            var dial_timer = try std.time.Timer.start();
+            const pipe_handle = while (true) {
                 if (pipe_stream.dialHandle(alloc, pipe_name)) |h| break h else |err| {
-                    if (attempt > 100) return err;
+                    if (dial_timer.read() >= test_util.liveness_ns) return err;
                     std.Thread.sleep(100 * std.time.ns_per_ms);
                 }
             };

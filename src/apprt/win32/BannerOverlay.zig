@@ -2628,8 +2628,15 @@ test "banner overlay: an expanding card repaints while the window keeps its size
     };
 
     var saw_intermediate = false;
-    var guard: usize = 0;
-    while (overlay.collapse_anim != null and guard < 200) : (guard += 1) {
+    // Bounded on the WALL CLOCK, not on a tick count (T738): the animation
+    // itself is timed off `Instant` (COLLAPSE_MS), so what this guard has to
+    // out-wait is a duration, and a count of 10ms sleeps only approximates one
+    // — the shape that made `connection.zig`'s drain flake (T472). Generous on
+    // purpose: an upper bound on a stuck animation, never a frame-rate
+    // assertion.
+    var guard = try std.time.Timer.start();
+    const anim_budget_ns: u64 = 20 * @as(u64, @intFromFloat(banner_layout.COLLAPSE_MS)) * std.time.ns_per_ms;
+    while (overlay.collapse_anim != null and guard.read() < anim_budget_ns) {
         std.Thread.sleep(10 * std.time.ns_per_ms);
         overlay.onCollapseTick();
         if (overlay.painted_h > collapsed_h and overlay.painted_h < target) {
@@ -2724,8 +2731,10 @@ test "banner overlay: the body fades while the card travels, and the links hold 
     var saw_partial = false;
     var prev: u8 = 0;
     var monotonic = true;
-    var guard: usize = 0;
-    while (overlay.collapse_anim != null and guard < 200) : (guard += 1) {
+    // Wall clock, not a tick count, for the reason in the T149 test above (T738).
+    var guard = try std.time.Timer.start();
+    const anim_budget_ns: u64 = 20 * @as(u64, @intFromFloat(banner_layout.COLLAPSE_MS)) * std.time.ns_per_ms;
+    while (overlay.collapse_anim != null and guard.read() < anim_budget_ns) {
         std.Thread.sleep(10 * std.time.ns_per_ms);
         overlay.onCollapseTick();
         const a = overlay.last_body_alpha;

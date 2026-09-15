@@ -29149,3 +29149,30 @@ sweeps. All four zig lanes PASS.
 
 Filed: T1575 (the same dead-coverage shape may exist outside `src/build/`,
 anywhere a file is unreachable from a test root - measure before building).
+
+## 2026-09-14 - Three test waits stopped counting tries and started watching the clock (T738)
+
+T738 was filed against `connection.zig`'s `drainChannel`, which gave up after
+100 000 spins and therefore turned a loaded box into a red lane. Re-checked
+before building, per the CHECK FIRST rule: that half was already fixed by T472
+(f2bb58d8a) - `drainChannel` is on `TestDeadline`, a wall-clock budget, and
+carries a unit test proving 200 000 yields cannot spend a live one. What the
+card was still owed was its second criterion, the sweep.
+
+Swept `src/remote/` and `src/apprt/win32/` for any cross-thread wait whose bound
+is an iteration count rather than a duration. Three were left, and all three are
+now on the clock: the accept thread in `pipe_stream.zig`'s vanishing-client test
+(40 attempts, now the shared 60s liveness bound), the two collapse-animation
+guards in `BannerOverlay.zig` (200 ticks, now 20x `COLLAPSE_MS` measured with a
+`Timer` - the animation it out-waits is itself timed off `Instant`, so the thing
+to bound was always a duration), and the holder dial retry in `pty_host_smoke.zig`
+(100 attempts, now the liveness bound). Everything else that waits already bounds
+on `Instant`/`Timer`/`milliTimestamp`, or on a stall timer that resets on
+progress, which is the stronger form.
+
+Evidence: `floor-lane.ps1 -Lane all` PASS (lib/none/win32/agent), then the
+criterion the flake actually demands - `-Lane win32 -Repeat 3`, win32#1/2/3 all
+PASS. P1-P3 ALL PASS. The eight harness guards the edits made due were run
+green and re-stamped: pane-banner (139), pty-host (21), pane-ingest-ab (13),
+session-relaunch-notify (131), plus the window-active, printclient, thread-join
+and test-reach audits.
