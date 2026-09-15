@@ -1,10 +1,10 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-09-15T02:22:36-07:00",
-    "commit":  "4b9e0279a",
+    "generated":  "2026-09-15T03:57:14-07:00",
+    "commit":  "6aa640384",
     "uncommitted":  [
-                        "test/win32/remote-reconnect-fresh.ps1"
+                        "test/win32/tab-strip.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "acfc119b6a0fc7f82097f295e153e6b0cb7428c6dff07338606c58bbb09501e5",
@@ -314,7 +314,7 @@
                   "test/win32/suite-run.ps1":  "e5937c1bc5b01432e73f7c22a3ebe2ecfba2fad903dc367fa42890e1ddf88bf8",
                   "test/win32/tab-color.ps1":  "af75bcd47eeb68cf93ee056b7aa4e14e147314ab8b4adc3a9c0eb27dfb43f967",
                   "test/win32/tab-overview-action.ps1":  "1e9d4753c755d9846699c726a1521ef343531e4c4887e0602488bd8cf5212382",
-                  "test/win32/tab-strip.ps1":  "26ee348a2757754c86f44b8da1473c28230d1f281acc76857f2ee70d599f85d1",
+                  "test/win32/tab-strip.ps1":  "147348f2c7d565d99be5a9d07e0ee2b3d54935d51856971ae062efab6bdb8344",
                   "test/win32/tab-strip-autohide.ps1":  "53655e95850098c972752b1deee1a16488c6c1abd4b46b6734c7500b896bae50",
                   "test/win32/tab-tooltip.ps1":  "2c16b672ae68453765b7c6b86419b4e93d783c063e67985a7789e41eead227a7",
                   "test/win32/target-staleness.ps1":  "25c28c99d39716155584ecda6f7a826dae310b3adaad3ae6dbb962c38f7f7d80",

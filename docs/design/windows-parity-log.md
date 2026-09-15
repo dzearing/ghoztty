@@ -29377,3 +29377,54 @@ video cannot be scrubbed), T1581 (nothing checks the two MIME tables still agree
 Evidence: `floor-lane.ps1 -Lane all` ALL LANES PASS (lib/none/win32/agent),
 `viewer-html.ps1` ALL PASS (53), and the guards the edits made due run green and
 re-stamped.
+
+## 2026-09-15 — tab-strip.ps1 stops crying wolf about the tab close button (T756)
+
+`test\win32\tab-strip.ps1` scored red on 2026-08-11 with
+`T204: a click at the close button's PAINTED center closes that tab (3 -> 3)`,
+and the very next run over the same binary was ALL PASS. An arm that does that
+is worse than no arm: the next turn spends a context ruling out a defect that
+was never there, which is exactly what happened the day it landed, alongside a
+chrome colour change it had nothing to do with.
+
+The arm clicked a point it had worked out about two seconds and half a dozen
+round trips earlier — before the hover trigger moves and both hover captures —
+while the app hit-tests `tab_rects`, which the strip re-fits on its own
+schedule. A re-fit inside that gap puts the click on the tab's title (select,
+not close) or past the end of the run (nothing at all), and the count comes back
+unchanged. The point is now re-derived from the last tab's right edge read
+immediately before the click, and only once the run has been observed to stop
+moving; a run that never falls still scores red rather than being clicked at
+anyway.
+
+The oracle got stricter in the same breath, because the weaker one hid a second
+failure while being fixed: a bare tab count says "a tab closed", which a click
+that missed its own button and hit the neighbour's satisfies just as well —
+measured, not feared. The arm now names the terminal ids under the tab it aimed
+at and claims those are the ids that left.
+
+A race nobody can trigger on purpose cannot be shown to be fixed, so the gap is
+reproducible on demand: `GHOZTTY_T756_PERTURB=1` adds a tab between the pixel
+read and the click, and `GHOZTTY_T756_STALE=1` clicks the carried point, i.e.
+the pre-T756 arm. Perturb alone is ALL PASS; perturb plus stale FAILS. The teeth
+against the product were demonstrated separately, by shifting `close_left` in
+`Window.zig`'s strip click handler 40px and rebuilding: `3 -> 3 tabs`, exit 1,
+the exact shape of the original red. That patch was reverted and the tree
+rebuilt clean.
+
+Ten consecutive runs then found the same defect class in an arm this task had
+not touched: `two tabs: each is still its own content's width (319 vs 171)`,
+red 2 of 10 on a correct build, once cascading into a `1 -> 1 tabs` close-click
+red three sections later. A tab's width follows its title, and a shell publishes
+its title twice — the launch command, then the prompt's own — with both steps
+holding still longer than a pixel settle's interval, so "two captures agree"
+settled on the transient and the run re-fitted afterwards. Widths are now gated
+on the app's own answer first (`Wait-TabTitles`, over `+list --json`) and a
+settled capture second. Ten consecutive runs are ALL PASS (78 assertions).
+
+Filed: T1585 (the rest of the script still measures after a fixed sleep, and
+`test\win32\` has not been swept for the same two-captures-agree idiom).
+
+Evidence: `floor-lane.ps1 -Lane all` ALL LANES PASS (lib/none/win32/agent),
+`floor-lane.ps1 -Lane harness` PASS and re-stamped, `tab-strip.ps1` 10/10
+ALL PASS, and both env hatches demonstrated in both directions.

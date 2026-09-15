@@ -313,6 +313,75 @@ try {
         return @($left, $right)
     }
 
+    # A capture taken once the strip has STOPPED MOVING (T756).
+    #
+    # The run re-fits on its own schedule - the ratchet re-measures it
+    # (T249/T737) and a tab widens to hold whatever title its shell just set
+    # (T1396) - and a tab's shell sets its title in two steps: the launch
+    # command first, the prompt's own title a beat later. So a capture taken a
+    # FIXED sleep after a click can land on a transient width. That is what
+    # `two tabs: each is still its own content's width (319 vs 171)` is: 2 of 10
+    # runs, on a build with nothing wrong with it, and the "+" duly measured at
+    # 531 rather than 383 - the strip really was that wide for a moment.
+    #
+    # Settling is an OBSERVABLE state, not a longer sleep: two consecutive
+    # captures agreeing on the selected tab's extent. `$script:settleNote`
+    # records how it went so an assertion built on the capture can say whether
+    # the run ever fell still.
+    # ...and the thing the pixels are waiting FOR, asked of the app rather than
+    # guessed at (T756).
+    #
+    # A tab's width is a function of its TITLE, and a shell publishes its title
+    # in two steps: the launch command, then the prompt's own, hundreds of ms
+    # later. Both steps hold still for longer than a pixel settle's interval, so
+    # "two captures agree" can and does settle on the transient - measured: the
+    # `319 vs 171` red settled at 184..503 after two captures and the run still
+    # re-fitted to 171 afterwards. The width assertions below are about tabs
+    # whose titles MATCH, so the honest precondition is the app's own answer
+    # about titles, not a longer sleep on the pixels.
+    function Wait-TabTitles([int]$Count, [int]$TimeoutMs = 10000) {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        $seen = '(never read)'
+        while ($sw.ElapsedMilliseconds -lt $TimeoutMs) {
+            $j = & $exe +list --json 2>$null | ConvertFrom-Json -ErrorAction SilentlyContinue
+            if ($null -ne $j) {
+                $w = @($j.data.windows | Where-Object { [int64]$_.id -eq [int64]$top })
+                if ($w.Count -eq 1) {
+                    $t = @(@($w[0].tabs) | ForEach-Object { [string]$_.title })
+                    $seen = ($t -join ' | ')
+                    if ($t.Count -eq $Count -and $t[0] -ne '' -and
+                        @($t | Where-Object { $_ -ne $t[0] }).Count -eq 0) {
+                        $script:titleNote = "$Count titles agree after $($sw.ElapsedMilliseconds)ms"
+                        return $true
+                    }
+                }
+            }
+            Start-Sleep -Milliseconds 200
+        }
+        $script:titleNote = "TITLES NEVER AGREED in ${TimeoutMs}ms (last: $seen)"
+        return $false
+    }
+
+    function Settle-Shot([int]$Tries = 20, [int]$Ms = 150) {
+        $prev = $null
+        $last = $null
+        for ($i = 0; $i -lt $Tries; $i++) {
+            $s = Get-Shot
+            $e = Selected-Extent $s
+            if ($null -ne $prev -and $e[0] -eq $prev[0] -and $e[1] -eq $prev[1]) {
+                if ($null -ne $last) { Close-TestWindowPixels $last }
+                $script:settleNote = "settled at $($e[0])..$($e[1]) after $($i + 1) capture(s)"
+                return $s
+            }
+            if ($null -ne $last) { Close-TestWindowPixels $last }
+            $last = $s
+            $prev = $e
+            Start-Sleep -Milliseconds $Ms
+        }
+        $script:settleNote = "NEVER SETTLED after $Tries capture(s)"
+        return $last
+    }
+
     # Tab index of the selected tab, read back out of its chiclet's left edge:
     # left = padL + index * tabW. The count oracle for every click below.
     function Selected-Index([int]$left, [int]$tabW) {
@@ -597,16 +666,21 @@ try {
     # so half a painted square further right is its centre.
     $plusX = $tabRight + $gap + [int]($btnPaint / 2)
     Strip-Click $plusX
-    Start-Sleep -Milliseconds 300
-    Close-TestWindowPixels $shot; $shot = Get-Shot
+    # The new tab's shell sets its title twice (the launch command, then the
+    # prompt's own), and the second one re-fits the run - so the width is read
+    # once the APP says both titles agree, then from a settled capture, not
+    # from a fixed sleep (T756).
+    $titlesOk = Wait-TabTitles 2
+    Assert $titlesOk "+ : the new tab's shell publishes the same title as the first ($script:titleNote)"
+    Close-TestWindowPixels $shot; $shot = Settle-Shot
     $ext = Selected-Extent $shot
     $idx = Selected-Index $ext[0] $slotW
-    Write-Host "INFO  after + click #1: left=$($ext[0]) right=$($ext[1]) index=$idx"
+    Write-Host "INFO  after + click #1: left=$($ext[0]) right=$($ext[1]) index=$idx ($script:settleNote)"
     Assert ($idx -eq 1) "+ : clicking one gap past the last tab creates tab 2 (selected index=$idx)"
     # Two tabs of the same title still fit their preferred width, so neither
     # shrank: content sizing, not an equal share of whatever is left.
     Assert ([math]::Abs(($ext[1] - $ext[0]) - $tabW) -le 3) `
-        "two tabs: each is still its own content's width ($($ext[1] - $ext[0]) vs $tabW)"
+        "two tabs: each is still its own content's width ($($ext[1] - $ext[0]) vs $tabW; $script:settleNote; $script:titleNote)"
 
     # The second "+" is one tab width further right. If it had stayed pinned
     # where it was, this click would land on tab 2 and create nothing.
@@ -614,11 +688,11 @@ try {
     $plusX2 = $tabRight2 + $gap + [int]($btnPaint / 2)
     Assert ($plusX2 -gt $plusX) "+ : moved right with the new tab ($plusX -> $plusX2)"
     Strip-Click $plusX2
-    Start-Sleep -Milliseconds 300
-    Close-TestWindowPixels $shot; $shot = Get-Shot
+    [void](Wait-TabTitles 3)
+    Close-TestWindowPixels $shot; $shot = Settle-Shot
     $ext = Selected-Extent $shot
     $idx = Selected-Index $ext[0] $slotW
-    Assert ($idx -eq 2) "+ : clicking at its NEW position creates tab 3 (selected index=$idx)"
+    Assert ($idx -eq 2) "+ : clicking at its NEW position creates tab 3 (selected index=$idx; $script:settleNote; $script:titleNote)"
 
     # -----------------------------------------------------------------------
     # 4b. T209 / T206: the tab SHAPE, in pixels.
@@ -973,23 +1047,113 @@ try {
         # tab paints nothing so the count is 1 before AND after. `+list --json`
         # is neither - it reports the tab array, which is what closing a tab
         # changes.
-        function Tab-Count {
+        #
+        # And it reports WHICH tabs (T756). A bare count says "a tab closed",
+        # which a click that missed its button and hit the NEIGHBOUR's satisfies
+        # exactly as well as the one this arm is about - measured, not feared:
+        # with the run re-fitted under it the carried point closed a different
+        # tab and the count arm passed. So the target is identified by the
+        # terminal ids under the tab the click is aimed at, and the claim is
+        # that THOSE are the ids that left.
+        function Tab-Window {
             $j = & $exe +list --json 2>$null | ConvertFrom-Json -ErrorAction SilentlyContinue
-            if ($null -eq $j) { return -1 }
+            if ($null -eq $j) { return $null }
             $w = @($j.data.windows | Where-Object { [int64]$_.id -eq [int64]$top })
-            if ($w.Count -eq 0) { return -1 }
-            return @($w[0].tabs).Count
+            if ($w.Count -eq 0) { return $null }
+            return $w[0]
         }
-        $beforeN = Tab-Count
-        [void](Send-TestMouse -Window $top -Target $top -X ($clientX + $cCx) -Y ($clientY + $m.StripTopClient + $cCy) -Button left -Action click)
+        function Leaf-Ids($node) {
+            if ($null -eq $node) { return @() }
+            if ($node.type -eq 'leaf') { return @([string]$node.terminal.id) }
+            return @(@(Leaf-Ids $node.left) + @(Leaf-Ids $node.right))
+        }
+        function Tab-Ids($w) {
+            if ($null -eq $w) { return @() }
+            return @(@($w.tabs) | ForEach-Object { Leaf-Ids $_.splits })
+        }
+        # THE POINT IS RE-READ AT CLICK TIME, NOT CARRIED (T756). `$cCx` above
+        # was computed from a capture taken before the trigger moves and the
+        # two hover captures - about two seconds and half a dozen round trips
+        # earlier - and the app's hit test reads `tab_rects`, which the strip
+        # re-fits on its own schedule (a title arriving from a tab's shell
+        # widens it, T1396; the ratchet re-fits the run, T249/T737). When that
+        # happens in the gap, the carried point lands in the tab's TITLE area
+        # (select, not close) or past the run's end (nothing at all), and the
+        # arm reports `3 -> 3` against a build with nothing wrong with it. That
+        # is the 2026-08-11 red whose re-run was ALL PASS.
+        #
+        # So: re-measure, and wait for the run to STOP MOVING first - two
+        # consecutive captures agreeing on the last tab's right edge, which is
+        # an observable settled state rather than a longer sleep. Never falling
+        # still is itself a failure, not a reason to click anyway.
+        #
+        # Two env hatches make the gap reproducible, because a race nobody can
+        # trigger on purpose cannot be shown to be fixed:
+        #   GHOZTTY_T756_PERTURB=1  adds a tab here, so the run re-fits between
+        #                           the pixel read and the click - the shape of
+        #                           the flake, on demand.
+        #   GHOZTTY_T756_STALE=1    clicks the CARRIED point anyway, i.e. the
+        #                           pre-T756 arm. PERTURB alone must pass;
+        #                           PERTURB+STALE must fail, which is what says
+        #                           this de-flaking did not just weaken the arm.
+        if ($env:GHOZTTY_T756_PERTURB -eq '1') {
+            Write-Host 'INFO  T756 perturb: adding a tab so the strip re-fits before the click'
+            New-Tab
+            Start-Sleep -Milliseconds 200
+        }
+        # Titles first, then pixels: the run cannot be measured while a shell is
+        # still publishing what its tab should say (T756).
+        $wNow = Tab-Window
+        if ($null -ne $wNow) { [void](Wait-TabTitles @($wNow.tabs).Count) }
+        $clickCx = -1
+        $clickSettle = 'never settled'
+        $prevRight = -2147483647
+        for ($s = 0; $s -lt 20; $s++) {
+            $sSh = Get-Shot
+            $sExt = @(Get-TestTabExtents -Window $top -Shot $sSh -Metrics $m)
+            Close-TestWindowPixels $sSh
+            if ($sExt.Count -lt 1) { $prevRight = -2147483647; Start-Sleep -Milliseconds 150; continue }
+            $right = $sExt[$sExt.Count - 1].Right
+            if ($right -eq $prevRight) {
+                $hitL = $right - $sm - $btnPaint - $btnPad
+                $hitR = $right - $sm + $btnPad
+                $clickCx = [int][Math]::Truncate(($hitL + $hitR) / 2)
+                $clickSettle = "settled at right=$right after $($s + 1) capture(s)"
+                break
+            }
+            $prevRight = $right
+            Start-Sleep -Milliseconds 150
+        }
+        Write-Host "INFO  close-click target: cx=$clickCx (carried cx=$cCx) - $clickSettle"
+        Assert ($clickCx -ge 0) `
+            "T204: the tab run falls still so the close button can be aimed at it ($clickSettle)"
+        # A run that never fell still has already scored red above; fall back to
+        # the carried point so the click below lands in THIS window rather than
+        # at a negative x on somebody else's.
+        if ($clickCx -lt 0) { $clickCx = $cCx }
+        if ($env:GHOZTTY_T756_STALE -eq '1') {
+            Write-Host "INFO  T756 stale: clicking the CARRIED point ($cCx), i.e. the pre-T756 arm"
+            $clickCx = $cCx
+        }
+        $wBefore = Tab-Window
+        $beforeN = if ($null -eq $wBefore) { -1 } else { @($wBefore.tabs).Count }
+        $targetIds = @()
+        if ($beforeN -gt 0) { $targetIds = @(Leaf-Ids @($wBefore.tabs)[$beforeN - 1].splits) }
+        [void](Send-TestMouse -Window $top -Target $top -X ($clientX + $clickCx) -Y ($clientY + $m.StripTopClient + $cCy) -Button left -Action click)
         $afterN = $beforeN
+        $afterIds = $targetIds
         for ($i = 0; $i -lt 12; $i++) {
             Start-Sleep -Milliseconds 250
-            $afterN = Tab-Count
-            if ($afterN -ge 0 -and $beforeN -gt 0 -and $afterN -lt $beforeN) { break }
+            $wAfter = Tab-Window
+            if ($null -eq $wAfter) { continue }
+            $afterN = @($wAfter.tabs).Count
+            $afterIds = @(Tab-Ids $wAfter)
+            if ($beforeN -gt 0 -and $afterN -lt $beforeN) { break }
         }
-        Assert ($beforeN -gt 0 -and $afterN -ge 0 -and $afterN -lt $beforeN) `
-            "T204: a click at the close button's PAINTED center closes that tab ($beforeN -> $afterN tabs)"
+        $survivors = @($targetIds | Where-Object { $afterIds -contains $_ })
+        Assert ($beforeN -gt 0 -and $afterN -ge 0 -and $afterN -lt $beforeN -and $targetIds.Count -gt 0 -and $survivors.Count -eq 0) `
+            ("T204: a click at the close button's PAINTED center closes THAT tab " +
+             "($beforeN -> $afterN tabs; target=$($targetIds -join ',') still-open=$($survivors -join ','))")
     }
 
     # -----------------------------------------------------------------------
