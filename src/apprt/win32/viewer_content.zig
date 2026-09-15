@@ -595,6 +595,25 @@ pub fn mimeType(ext: []const u8) []const u8 {
         .{ "heic", "image/heic" },     .{ "heif", "image/heif" },
         .{ "tif", "image/tiff" },      .{ "tiff", "image/tiff" },
         .{ "bmp", "image/bmp" },       .{ "icns", "image/x-icns" },
+        // What a real page brings with it (T750). T601 made a user's own
+        // `.html` a served page, and a page ships fonts, media, source maps
+        // and a manifest. `application/octet-stream` is not merely vague for
+        // some of these: Chromium's streaming WebAssembly compile REFUSES
+        // anything that is not `application/wasm`, and a `<video>` handed an
+        // unknown type will not play.
+        .{ "ttf", "font/ttf" },        .{ "otf", "font/otf" },
+        .{ "eot", "application/vnd.ms-fontobject" },
+        .{ "wasm", "application/wasm" },
+        .{ "mp4", "video/mp4" },       .{ "m4v", "video/mp4" },
+        .{ "webm", "video/webm" },     .{ "ogv", "video/ogg" },
+        .{ "mov", "video/quicktime" }, .{ "mp3", "audio/mpeg" },
+        .{ "m4a", "audio/mp4" },       .{ "wav", "audio/wav" },
+        .{ "oga", "audio/ogg" },       .{ "ogg", "audio/ogg" },
+        .{ "flac", "audio/flac" },     .{ "aac", "audio/aac" },
+        .{ "map", "application/json" },
+        .{ "xml", "application/xml" }, .{ "csv", "text/csv" },
+        .{ "webmanifest", "application/manifest+json" },
+        .{ "pdf", "application/pdf" }, .{ "vtt", "text/vtt" },
     };
     inline for (table) |row| {
         if (std.ascii.eqlIgnoreCase(ext, row[0])) return row[1];
@@ -1807,6 +1826,48 @@ test "mimeType and highlightLanguage carry the Mac tables" {
     try testing.expectEqualStrings("xml", highlightLanguage("plist").?);
     try testing.expect(highlightLanguage("zig") == null);
     try testing.expect(highlightLanguage("") == null);
+}
+
+test "mimeType answers for what a real page brings with it" {
+    // Fonts. A `@font-face` src served as octet-stream is a font the page
+    // never gets to use.
+    try testing.expectEqualStrings("font/ttf", mimeType("ttf"));
+    try testing.expectEqualStrings("font/otf", mimeType("OTF"));
+    try testing.expectEqualStrings("application/vnd.ms-fontobject", mimeType("eot"));
+
+    // WebAssembly. `instantiateStreaming` refuses any other type outright,
+    // so this row is the difference between a module and a TypeError.
+    try testing.expectEqualStrings("application/wasm", mimeType("wasm"));
+
+    // Media.
+    try testing.expectEqualStrings("video/mp4", mimeType("mp4"));
+    try testing.expectEqualStrings("video/mp4", mimeType("m4v"));
+    try testing.expectEqualStrings("video/webm", mimeType("webm"));
+    try testing.expectEqualStrings("video/ogg", mimeType("ogv"));
+    try testing.expectEqualStrings("video/quicktime", mimeType("mov"));
+    try testing.expectEqualStrings("audio/mpeg", mimeType("mp3"));
+    try testing.expectEqualStrings("audio/mp4", mimeType("m4a"));
+    try testing.expectEqualStrings("audio/wav", mimeType("wav"));
+    try testing.expectEqualStrings("audio/ogg", mimeType("ogg"));
+    try testing.expectEqualStrings("audio/ogg", mimeType("oga"));
+    try testing.expectEqualStrings("audio/flac", mimeType("flac"));
+    try testing.expectEqualStrings("audio/aac", mimeType("aac"));
+    try testing.expectEqualStrings("text/vtt", mimeType("vtt"));
+
+    // Page furniture.
+    try testing.expectEqualStrings("application/json", mimeType("map"));
+    try testing.expectEqualStrings("application/xml", mimeType("xml"));
+    try testing.expectEqualStrings("text/csv", mimeType("CSV"));
+    try testing.expectEqualStrings("application/manifest+json", mimeType("webmanifest"));
+    try testing.expectEqualStrings("application/pdf", mimeType("pdf"));
+
+    // The rest of the image table stays where T1183 put it.
+    try testing.expectEqualStrings("image/avif", mimeType("avif"));
+    try testing.expectEqualStrings("image/bmp", mimeType("bmp"));
+
+    // And the fallback is still a fallback: an archive is a download.
+    try testing.expectEqualStrings("application/octet-stream", mimeType("zip"));
+    try testing.expectEqualStrings("application/octet-stream", mimeType("exe"));
 }
 
 test "the __viewer calls are the shape the page exposes" {

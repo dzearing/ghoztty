@@ -12,6 +12,11 @@
 #     the engine loaded it from).
 #   - a missing .html file gets the pane's own error card, naming the file,
 #     rather than the engine's can't-be-reached page.
+#   - a page's own assets arrive as what they ARE (T750): a font, a wasm
+#     module, a source map, a csv and a webmanifest each get their real type,
+#     with the wasm arm proved by the engine actually compiling the module -
+#     and a negative control serving the same bytes under an untabled
+#     extension, which must be refused.
 #   - the read grant is the file's own directory and nothing above it: a page
 #     in `docs/` asking for `../app.css` is refused. That is the documented
 #     cost of narrow-by-default, and it is asserted so it cannot widen by
@@ -128,8 +133,8 @@ function Get-Served($errlog, $paneId) {
     if (-not (Test-Path $errlog) -or -not $paneId) { return @() }
     $out = @()
     foreach ($line in (Get-Content $errlog -ErrorAction SilentlyContinue)) {
-        if ($line -match "viewer page pane=$([regex]::Escape($paneId)) served=(\S+) bytes=(\d+)") {
-            $out += [pscustomobject]@{ Rel = $Matches[1]; Bytes = [int]$Matches[2] }
+        if ($line -match "viewer page pane=$([regex]::Escape($paneId)) served=(\S+) bytes=(\d+)(?: mime=(\S+))?") {
+            $out += [pscustomobject]@{ Rel = $Matches[1]; Bytes = [int]$Matches[2]; Mime = $Matches[3] }
         }
     }
     return $out
@@ -218,6 +223,57 @@ $htmPath = Join-Path $site 'short.htm'
 Set-Content -LiteralPath $htmPath -Value '<!doctype html><html><body><h1>T601 htm</h1></body></html>' -Encoding UTF8
 
 $missingPath = Join-Path $site 'gone.html'
+
+# --- T750: the assets a REAL page brings with it ---------------------------
+# Its own folder, so section C's re-saves of index.html cannot perturb it.
+$mimeDir = Join-Path $site 'mime'
+New-Item -ItemType Directory -Path $mimeDir | Out-Null
+$mimePath = Join-Path $mimeDir 'page.html'
+Set-Content -LiteralPath $mimePath -Encoding UTF8 -Value @'
+<!doctype html>
+<html><head><meta charset="utf-8"><title>T750</title>
+<style>
+@font-face { font-family: T750Face; src: url(t750.ttf) format("truetype"); }
+h1 { font-family: T750Face, serif; }
+</style>
+</head><body>
+<h1>T750 wants its font</h1>
+<script>
+// The oracle is a FETCH: this desktop cannot read a rendered page, but every
+// page-host request lands in the log. A module that compiled asks for ok.txt;
+// one that did not asks for bad.txt, so silence is never mistaken for success.
+WebAssembly.instantiateStreaming(fetch("tiny.wasm"))
+  .then(function () { fetch("wasm-ok.txt"); },
+        function () { fetch("wasm-bad.txt"); });
+// NEGATIVE CONTROL: byte-identical module under an extension the table does
+// not carry, so it is served application/octet-stream. Chromium refuses to
+// compile that, which is precisely what the wasm row above buys.
+WebAssembly.instantiateStreaming(fetch("tiny.wasmx"))
+  .then(function () { fetch("ctrl-ok.txt"); },
+        function () { fetch("ctrl-bad.txt"); });
+fetch("data.csv");
+fetch("bundle.js.map");
+fetch("site.webmanifest");
+</script>
+</body></html>
+'@
+# A valid empty WebAssembly module: the 4-byte magic and version 1. Small, and
+# `instantiateStreaming` accepts it - so the only thing that can fail the arm
+# is the MIME type.
+$wasmBytes = [byte[]](0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00)
+[IO.File]::WriteAllBytes((Join-Path $mimeDir 'tiny.wasm'), $wasmBytes)
+[IO.File]::WriteAllBytes((Join-Path $mimeDir 'tiny.wasmx'), $wasmBytes)
+# The font's BYTES are not asserted on - browsers sniff fonts and ignore the
+# declared type - so a placeholder is honest here. What is asserted is the type
+# the table answers with, which is the part this task moved.
+[IO.File]::WriteAllBytes((Join-Path $mimeDir 't750.ttf'), [byte[]](0x00, 0x01, 0x00, 0x00))
+Set-Content -LiteralPath (Join-Path $mimeDir 'data.csv') -Value "a,b`n1,2" -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $mimeDir 'bundle.js.map') -Value '{"version":3}' -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $mimeDir 'site.webmanifest') -Value '{"name":"T750"}' -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $mimeDir 'wasm-ok.txt') -Value 'ok' -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $mimeDir 'wasm-bad.txt') -Value 'bad' -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $mimeDir 'ctrl-ok.txt') -Value 'ok' -Encoding UTF8
+Set-Content -LiteralPath (Join-Path $mimeDir 'ctrl-bad.txt') -Value 'bad' -Encoding UTF8
 
 Stop-RepoInstances
 Start-TestForegroundWatch
@@ -354,6 +410,59 @@ try {
     Assert $carded 'the error card names the file that could not be read'
     Assert (@(Get-Served $errlog $gonePane).Count -eq 0) `
         '...and no page was served for it'
+
+    # --- J. a real page's assets arrive as what they ARE (T750) --------------
+    $r = Invoke-Verb @('+new-window', '--target=t601mime', "--view=$mimePath")
+    Assert ($r.Code -eq 0) "+new-window --view=<page with fonts, wasm, a map>.html exits 0 (got $($r.Code))"
+    Assert ($null -ne (Wait-Win 't601mime')) 'the mime-table page window exists'
+    $mimeLeaf = Get-OnlyPane 't601mime'
+    $mimePane = if ($mimeLeaf) { $mimeLeaf.id } else { $null }
+    Assert ($null -ne $mimePane) 'the mime-table page window has exactly one pane'
+
+    function Get-ServedMime([string]$Rel) {
+        $hit = @(Get-Served $errlog $mimePane | Where-Object { $_.Rel -eq $Rel })
+        if ($hit.Count -eq 0) { return $null }
+        return $hit[-1].Mime
+    }
+
+    [void](Wait-Served $errlog $mimePane 't750.ttf')
+    Assert ((Get-ServedMime 't750.ttf') -eq 'font/ttf') `
+        "a @font-face .ttf is served font/ttf (got '$(Get-ServedMime 't750.ttf')')"
+
+    [void](Wait-Served $errlog $mimePane 'tiny.wasm')
+    Assert ((Get-ServedMime 'tiny.wasm') -eq 'application/wasm') `
+        "a .wasm module is served application/wasm (got '$(Get-ServedMime 'tiny.wasm')')"
+
+    [void](Wait-Served $errlog $mimePane 'data.csv')
+    Assert ((Get-ServedMime 'data.csv') -eq 'text/csv') `
+        "a .csv is served text/csv (got '$(Get-ServedMime 'data.csv')')"
+    [void](Wait-Served $errlog $mimePane 'bundle.js.map')
+    Assert ((Get-ServedMime 'bundle.js.map') -eq 'application/json') `
+        "a source map is served application/json (got '$(Get-ServedMime 'bundle.js.map')')"
+    [void](Wait-Served $errlog $mimePane 'site.webmanifest')
+    Assert ((Get-ServedMime 'site.webmanifest') -eq 'application/manifest+json') `
+        "a .webmanifest is served application/manifest+json (got '$(Get-ServedMime 'site.webmanifest')')"
+
+    # The type is not decoration on the wasm row: the engine's streaming
+    # compile REFUSES anything else, so the module either instantiated or it
+    # did not, and the page says which by asking for a file.
+    [void](Wait-Served $errlog $mimePane 'wasm-ok.txt')
+    Assert ((Get-ServedMime 'wasm-ok.txt') -ne $null) `
+        'the streaming WebAssembly compile succeeded, which only application/wasm allows'
+    Assert (@(Get-Served $errlog $mimePane | Where-Object { $_.Rel -eq 'wasm-bad.txt' }).Count -eq 0) `
+        '...and the failure path was never taken'
+
+    # NEGATIVE CONTROL: the same bytes under an extension the table does not
+    # carry are served application/octet-stream and MUST fail to compile. A run
+    # where both arms pass would mean the type is not being honoured at all,
+    # and the arm above would prove nothing.
+    [void](Wait-Served $errlog $mimePane 'ctrl-bad.txt')
+    Assert (@(Get-Served $errlog $mimePane | Where-Object { $_.Rel -eq 'ctrl-bad.txt' }).Count -ge 1) `
+        'the same module under an untabled extension was REFUSED (negative control)'
+    Assert ((Get-ServedMime 'tiny.wasmx') -eq 'application/octet-stream') `
+        "...because it was served the fallback type (got '$(Get-ServedMime 'tiny.wasmx')')"
+    Assert (@(Get-Served $errlog $mimePane | Where-Object { $_.Rel -eq 'ctrl-ok.txt' }).Count -eq 0) `
+        '...and the control never reported success'
 
     # --- I. the app survived all of it ---------------------------------------
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'

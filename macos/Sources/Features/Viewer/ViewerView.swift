@@ -3609,6 +3609,44 @@ final class ViewerSchemeHandler: NSObject, WKURLSchemeHandler {
         case "txt", "md", "markdown": return "text/plain"
         case "woff": return "font/woff"
         case "woff2": return "font/woff2"
+        // The rest of the image table (T1183). An image pane is served through
+        // this same function, and `application/octet-stream` is a download
+        // rather than a picture - an `<img>` handed one renders nothing and
+        // says nothing.
+        case "apng": return "image/apng"
+        case "jpe", "jfif": return "image/jpeg"
+        case "avif": return "image/avif"
+        case "heic": return "image/heic"
+        case "heif": return "image/heif"
+        case "tif", "tiff": return "image/tiff"
+        case "bmp": return "image/bmp"
+        case "icns": return "image/x-icns"
+        // What a real page brings with it (T750). A viewer pane serves a
+        // user's own `.html`, and a page ships fonts, media, source maps and a
+        // manifest. `application/octet-stream` is not merely vague for some of
+        // these: a streaming WebAssembly compile REFUSES anything that is not
+        // `application/wasm`, and a `<video>` handed an unknown type will not
+        // play.
+        case "ttf": return "font/ttf"
+        case "otf": return "font/otf"
+        case "eot": return "application/vnd.ms-fontobject"
+        case "wasm": return "application/wasm"
+        case "mp4", "m4v": return "video/mp4"
+        case "webm": return "video/webm"
+        case "ogv": return "video/ogg"
+        case "mov": return "video/quicktime"
+        case "mp3": return "audio/mpeg"
+        case "m4a": return "audio/mp4"
+        case "wav": return "audio/wav"
+        case "ogg", "oga": return "audio/ogg"
+        case "flac": return "audio/flac"
+        case "aac": return "audio/aac"
+        case "map": return "application/json"
+        case "xml": return "application/xml"
+        case "csv": return "text/csv"
+        case "webmanifest": return "application/manifest+json"
+        case "pdf": return "application/pdf"
+        case "vtt": return "text/vtt"
         default: return "application/octet-stream"
         }
     }

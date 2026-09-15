@@ -29280,3 +29280,47 @@ PASS. P1-P3 ALL PASS. The eight harness guards the edits made due were run
 green and re-stamped: pane-banner (139), pty-host (21), pane-ingest-ab (13),
 session-relaunch-notify (131), plus the window-active, printclient, thread-join
 and test-reach audits.
+
+## 2026-09-15 - A page opened in a viewer pane gets its fonts, video and wasm as what they are (T750, T743)
+
+`viewer_content.mimeType` answered for exactly what the bundled markdown
+template asks for. That was fine while the only pages served were ours; T601
+made a user's own `.html` a rendered page, and a page brings whatever it likes.
+Everything else arrived as `application/octet-stream`, which is not merely vague:
+Chromium's streaming WebAssembly compile REFUSES any other type outright, and a
+`<video>` handed an unknown type will not play.
+
+The table now carries fonts (`ttf`, `otf`, `eot`), `wasm`, the video and audio
+set (`mp4`/`m4v`/`webm`/`ogv`/`mov`, `mp3`/`m4a`/`wav`/`ogg`/`oga`/`flac`/`aac`,
+`vtt`), and the page furniture a build tool emits - source maps, `xml`, `csv`,
+`webmanifest`, `pdf`. `zip` and `exe` still fall through to the download type,
+asserted, so the fallback is still a fallback.
+
+The Mac half landed in the same commit, and it needed more than this task's rows:
+`ViewerView.mimeType(forExtension:)` had never received the ten image rows T1183
+added to the Zig table on 2026-09-05, so the two tables billed as byte-identical
+had quietly disagreed for ten days. Both halves now carry the same set. What
+found that was a human reading two files side by side, which is not a mechanism -
+T1581 is filed for the audit that would have found it on the day.
+
+`servePageResource` now logs `mime=` alongside `served=`, the way the image path
+has since T1183, because that is the only thing outside the engine that can see
+which type a resource was handed. Section J of `viewer-html.ps1` reads it: a
+`@font-face` .ttf, a .wasm, a .csv, a source map and a .webmanifest, each asserted
+against its real type. The wasm arm goes further than the log line, because the
+type is load-bearing there - the page reports back by fetching `wasm-ok.txt` only
+if the module actually compiled - and its negative control serves the same eight
+bytes under `tiny.wasmx`, an extension the table does not carry, which must be
+refused. A run where both arms pass would mean the type is not being honoured at
+all.
+
+Also closed T743, which was a duplicate of T744 filed a day after it and fixed by
+`87c762ec1` on 2026-08-12; `persistence-flag.ps1` re-run at HEAD is ALL PASS with
+`undeclared: 0 of 298`.
+
+Filed: T1580 (the page host answers whole files with no `Accept-Ranges`, so a
+video cannot be scrubbed), T1581 (nothing checks the two MIME tables still agree).
+
+Evidence: `floor-lane.ps1 -Lane all` ALL LANES PASS (lib/none/win32/agent),
+`viewer-html.ps1` ALL PASS (53), and the guards the edits made due run green and
+re-stamped.

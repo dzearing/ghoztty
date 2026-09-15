@@ -4333,17 +4333,16 @@ fn servePageResource(
     // A subresource request is proof the page was PARSED as HTML: a document
     // rendered as source never asks for its own stylesheet. That is what the
     // acceptance harness reads, so it is logged at info rather than debug.
-    log.info("viewer page pane={s} served={s} bytes={d}", .{ self.paneId(), rel, bytes.len });
-    self.respond(
-        env,
-        a,
-        alloc,
-        bytes,
-        content.mimeType(content.extension(rel)),
-        200,
-        ok_reason,
-        .no_store,
+    // The MIME rides along for the same reason it does on the image path
+    // (T750): a page brings its own fonts, media and wasm, and the failure a
+    // missing table row produces is a correct-looking 200 carrying
+    // `application/octet-stream`, which the engine then refuses to use.
+    const mime = content.mimeType(content.extension(rel));
+    log.info(
+        "viewer page pane={s} served={s} bytes={d} mime={s}",
+        .{ self.paneId(), rel, bytes.len, mime },
     );
+    self.respond(env, a, alloc, bytes, mime, 200, ok_reason, .no_store);
 }
 
 /// The 3-tier resolution (design §6, Mac's `ViewerSchemeHandler.resolve`):
