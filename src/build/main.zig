@@ -4,6 +4,7 @@
 
 pub const gtk = @import("gtk.zig");
 pub const drive_check = @import("drive_check.zig");
+pub const BuildTestSweep = @import("BuildTestSweep.zig");
 pub const Config = @import("Config.zig");
 pub const GitVersion = @import("GitVersion.zig");
 

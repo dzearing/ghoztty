@@ -533,6 +533,12 @@ pub fn build(b: *std.Build) !void {
         const build_helpers_test_run = b.addRunArtifact(build_helpers_test);
         test_filter_guard.add(build_helpers_test_run);
         test_step.dependOn(&build_helpers_test_run.step);
+
+        // T736 — and the aggregator is enforced, not remembered. A `test`
+        // block under src/build/ that nothing imports runs in no step, reads
+        // as coverage in review, and cannot fail; the sweep names any such
+        // file and this step turns the lane red on it.
+        buildTestSweep(b, test_step);
     }
 
     // Tests (skip when building libghostty-vt)
@@ -643,4 +649,21 @@ fn absoluteRootPath(b: *std.Build, dir: std.Build.Cache.Directory) ?[]const u8 {
         if (buildpkg.drive_check.driveLetter(p) != null) return p;
     }
     return dir.handle.realpathAlloc(b.allocator, ".") catch null;
+}
+
+/// T736 — hang a failing step off `test_step` for every file under
+/// `src/build/` whose `test` blocks no build step runs. The sweep is a
+/// configure-time read of the source tree, so the answer is fresh on every
+/// invocation; a file that genuinely cannot live under the aggregator says so
+/// in its own doc comment and is left alone. A sweep that cannot run at all
+/// (an unreadable tree) is silent rather than fatal: this guards against
+/// forgetting, and must never be the thing that stops a build.
+fn buildTestSweep(b: *std.Build, test_step: *std.Build.Step) void {
+    const Sweep = buildpkg.BuildTestSweep;
+    var dir = b.build_root.handle.openDir("src/build", .{ .iterate = true }) catch return;
+    defer dir.close();
+    const orphans = Sweep.sweep(b.allocator, dir) catch return;
+    if (orphans.len == 0) return;
+    const msg = Sweep.failureMessage(b.allocator, orphans) catch return;
+    test_step.dependOn(&b.addFail(msg).step);
 }

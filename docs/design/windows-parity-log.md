@@ -29068,3 +29068,47 @@ lanes PASS. The route is documented as 0c in the CAPTURE LIMIT header and in
 the seam cannot drift from the harness that reads it.
 
 Filed: T1574 (a fixture killed by its own teardown is reported as a CRASH).
+
+## 2026-09-14 - The build helpers' orphaned tests run now, and the aggregator is checked rather than remembered (T736)
+
+Seven assertions in `src/build/wasm_patch_growable_table.zig` had never been
+executed by anything. The main test binary roots at `src/main.zig` and reaches
+none of `src/build/`, so a `test` block written next to a build helper runs in
+no step at all - it reads as coverage in review and cannot fail. T243 built the
+aggregator (`src/build/build_test.zig`) for exactly this and put `drive_check`
+behind it; this file was left out and stayed out for a month. It compiles under
+the aggregator's module root unchanged - it imports nothing but `std` - so
+wiring it in was one line, and `zig build test`'s `ghoztty-build-helpers-test`
+binary went from `14 passed` to `21 passed`.
+
+The half worth more than the one line is that the aggregator no longer depends
+on somebody remembering it. `src/build/BuildTestSweep.zig` walks `src/build/` at
+configure time, finds every file carrying a top-level `test` block, and checks
+it is reachable from `build_test.zig` through sibling `@import`s;
+`build.zig` hangs a `b.addFail()` step off `test_step` for anything that is not,
+naming the file and printing both ways out. A helper whose tests genuinely
+cannot run under the aggregator's module root declares it in its own doc comment
+- `//! build-test-exempt: <reason>` - which satisfies the sweep and leaves the
+reason where the next reader will be. "Wired in, or the gap is named with a
+reason" was the card's third criterion; this is what makes it an invariant
+rather than a one-day sweep.
+
+The argument for enforcing it was already on the record twice. This file was
+forgotten once, and `TestFilterGuard.zig` - which landed after T736 was filed -
+was wired in correctly only because that turn happened to think of it. The sweep
+is the version that cannot be forgotten, and its parsing half is pure, so it is
+asserted by the aggregator it polices.
+
+Evidence: both sets of teeth demonstrated rather than assumed. Flipping the
+`readLeb128 single byte` expectation to 6 turned the none lane red
+(`20/21 passed, 1 failed ... expected 6, found 5`) and reverting turned it
+green; `GHOZTTY_TEST_FILTER_DUMP=1` with
+`-Dtest-filter=wasm_patch_growable_table` lists all seven tests by name in the
+binary. For the sweep: dropping an unimported `test "x" {}` file into
+`src/build/` turned the lane red with the file named and both remedies printed,
+and adding `//! build-test-exempt:` to that same file turned it green - probe
+deleted. Eight new unit tests cover the parser and two end-to-end `tmpDir`
+sweeps. All four zig lanes PASS.
+
+Filed: T1575 (the same dead-coverage shape may exist outside `src/build/`,
+anywhere a file is unreachable from a test root - measure before building).

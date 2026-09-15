@@ -9,6 +9,8 @@
 //! ones whose host could never reproduce the condition being guarded against.
 
 test {
+    _ = @import("BuildTestSweep.zig");
     _ = @import("drive_check.zig");
     _ = @import("TestFilterGuard.zig");
+    _ = @import("wasm_patch_growable_table.zig");
 }

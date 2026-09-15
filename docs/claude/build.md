@@ -57,6 +57,20 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
   roots at `src/main.zig` and reaches no build logic at all); "cannot tell" is
   always answered as "no mismatch", so a POSIX seat, a UNC checkout, or a
   same-drive CI box is untouched.
+- **A `test` block under `src/build/` runs only if the aggregator imports it,
+  and that is now checked rather than remembered** (T736). The main test binary
+  roots at `src/main.zig`, so a test written next to a build helper runs in no
+  step at all: `wasm_patch_growable_table.zig`'s seven assertions sat orphaned
+  for a month reading as coverage, and `TestFilterGuard.zig` was wired in
+  correctly only because that turn happened to think of it. At configure time
+  `src/build/BuildTestSweep.zig` walks the tree, finds every file with a
+  top-level `test` block, and checks it is reachable from
+  `src/build/build_test.zig` through sibling `@import`s; `build.zig` hangs a
+  failing step off `test_step` for anything that is not, naming the file. A
+  helper whose tests genuinely cannot run under the aggregator's module root
+  says so in its own doc comment — `//! build-test-exempt: <reason>` — which
+  satisfies the sweep and leaves the reason where the next reader is. The
+  parsing half is pure and is asserted by the aggregator it polices.
 - **A bare `error: Unexpected` from zig means the drive is full, not that the
   code is red** (T1054). Zig never evicts its build cache: every distinct build
   hash keeps its whole output under `.zig-cache\o\<hash>\`, and a debug
