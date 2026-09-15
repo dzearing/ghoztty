@@ -9,6 +9,67 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-15: T742 closed done, T1579 filed - **the palette and the find bar
+  can no longer reach into the terminal underneath them.** One window procedure
+  serves three windows - the terminal child HWND, the search-bar popup and the
+  command-palette popup - because all three carry the same `*Surface` in their
+  `GWLP_USERDATA`. T613 fixed the arm that crashed (`WM_DESTROY`); every other
+  arm went on treating whatever arrived as the terminal's own. The card was
+  filed for `WM_SIZE`, and the work found three more.
+
+  What landed: `drivesTerminal(role)` in `surface_window_role.zig` - the rule,
+  asserted in the `none` lane - and every arm of `App.surfaceWndProc` that
+  reads or writes terminal state now asks it: `WM_SIZE`, `WM_MOVE`,
+  `WM_SHOWWINDOW`, the two live-resize arms, all the key / char / IME arms, the
+  mouse buttons, move, wheels, `WM_SETCURSOR`, `WM_CONTEXTMENU`,
+  `WM_DROPFILES`, `WM_SETFOCUS`/`WM_KILLFOCUS`. `WM_PAINT` stops waking the
+  terminal's renderer for the search popup. `WM_SETTINGCHANGE` posts its
+  scrollbar re-flow to `surface.hwnd` BY NAME instead of to the window that
+  asked, because the broadcast only ever reaches the popups - the terminal is a
+  `WS_CHILD` and receives no broadcast at all. The remaining arms
+  (`WM_CLOSE`, `WM_DPICHANGED`, `WM_GETOBJECT`, `WM_COMMAND`, the two
+  `WM_CTLCOLOR*`, `WM_ACTIVATE`) each carry a comment saying why they are right
+  for all three windows, which is the other half of what the card asked for.
+
+  Three things the work turned up. **The keyboard arms were reachable after
+  all** - not by typing, since a popup's focus lives in its child EDIT, but an
+  injected `WM_CHAR` at the palette popup typed straight into the terminal.
+  **`WM_SHOWWINDOW` was a second visible half**: showing or hiding a popup ran
+  `setOwnerVisible` for the TERMINAL's scrollbar, so closing the find bar took
+  the pane's scrollbar down with it. And **`MoveWindow` to the size a window
+  already has sends no `WM_SIZE`** - measured on the box - so the palette
+  reflow fires on the opens where `Surface.scale` moved between creation and
+  positioning rather than on every one.
+
+  That last measurement is why the new script injects. A harness that only
+  opened the palette PASSED against the broken build, which is the one thing an
+  acceptance arm may not do; so each popup is sent the exact `WM_SIZE`
+  `DefWindowProc` delivers for its own client rect, at its own HWND, while it
+  is up. The oracle is the pane's own shell (`$Host.UI.RawUI.WindowSize` via a
+  generated `.cmd`, read back with `+read`), because the claim is that the PTY
+  was told a wrong size.
+
+  Evidence: new `test\win32\palette-grid-size.ps1` ALL PASS (13 assertions),
+  guard row `palette-grid-size` registered and stamped. The negative control is
+  the point of the card - the same script against a build of the PRE-FIX
+  `App.zig` scores **4 FAILURE(S)**: the grid goes 51x16 -> 51x21 on the
+  palette's own `WM_SIZE`, -> 31x1 on the search bar's, the scrollbar overlay
+  goes dark, and the injected `WM_CHAR` lands in the terminal. Arm A is a real
+  window resize that MUST move the number, so the probe is known to track the
+  grid before anything is asserted not to move it. Floor `-Lane all`
+  lib/none/win32/agent ALL LANES PASS; IPC floor P1/P2/P3 ALL PASS (26/20/16);
+  `palette-close-crash.ps1` (T613's own harness, same procedure) ALL PASS (15);
+  `harness-floor.ps1` ALL PASS (24 audits, 2 PENDING - the pre-existing
+  T1123/T1568 rows); the guards App.zig made due re-run green and re-stamped
+  (`msg-timer-ids`, `job-teardown`, `window-active-audit`, `printclient-audit`,
+  `rearrange-mode-action` 18, `rearrange-window-drop` 39, `test-reach` 14, and
+  the nine static meta-audits my new script made due).
+
+  T1579 filed for the gap the `WM_DPICHANGED` arm exposed: the terminal child
+  receives neither that message nor the `WM_SETTINGCHANGE` broadcast, and
+  `Window.windowWndProc` has no DPI arm at all - so today a monitor move
+  refreshes a pane's scale only if a popup happened to be open at the time.
+
 - 2026-09-14: T740 closed done - **two acceptance scripts were reading terminal
   output through a filter that deleted letters and kept the control codes.**
   Windows PowerShell 5.1 has no `` `e `` escape - PowerShell 7 added it - so the

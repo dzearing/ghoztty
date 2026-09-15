@@ -2643,6 +2643,23 @@ $GuardTable = @(
             'test\win32\palette-jump.ps1'
         )
     },
+    # The three-windows-one-wndproc routing rule (T613 for WM_DESTROY, T742 for
+    # everything else). The rule itself is `drivesTerminal` in
+    # surface_window_role.zig and rides the none lane; this harness scores it
+    # end-to-end - the grid the PTY was told about, the scrollbar overlay, an
+    # injected WM_CHAR. Tied to the role module and the script, NOT to App.zig:
+    # that file moves for a hundred unrelated reasons and gating a five-minute
+    # GUI run on every one of them is noise, which is the same call palette-jump
+    # makes about Surface.zig.
+    [pscustomobject]@{
+        Name   = 'palette-grid-size'
+        Script = 'test\win32\palette-grid-size.ps1'
+        Stamp  = 'test\win32\palette-grid-size.stamp.json'
+        Covers = @(
+            'src\apprt\win32\surface_window_role.zig',
+            'test\win32\palette-grid-size.ps1'
+        )
+    },
     # The tab cwd tooltip (T447/T556/T557). Same shape as palette-jump: the
     # text derivation lives in tab_tooltip.zig (none-lane unit tested; this
     # harness scores it end-to-end at hover time), and the row ties the

@@ -84,6 +84,29 @@ pub fn destroyClears(role: Role) DestroyClears {
     };
 }
 
+/// Does a message arriving on this window describe the TERMINAL?
+///
+/// T742: the second half of the same confusion. `WM_DESTROY` was the arm that
+/// crashed; the rest of `App.surfaceWndProc` went on treating every message as
+/// the terminal's, whichever of the three windows delivered it. The visible one
+/// was `WM_SIZE`: `positionCommandPalette`/`positionSearchBar` call
+/// `MoveWindow(popup, …, 1)`, `DefWindowProc`'s `WM_WINDOWPOSCHANGED` turns
+/// that into a `WM_SIZE` on the popup, and the handler reflowed the grid and
+/// SIGWINCH'd the PTY to 500x450 — the palette's size — every time the palette
+/// opened. The next real resize put it back, so what the user saw was the text
+/// they were reading jumping for no reason.
+///
+/// The same answer governs every arm that reads or writes terminal state:
+/// geometry (`WM_SIZE`, `WM_MOVE`, `WM_SHOWWINDOW`, `WM_ENTERSIZEMOVE`,
+/// `WM_EXITSIZEMOVE`), keyboard and IME, mouse input, and focus. A popup that
+/// answers `true` to any of them is this defect.
+///
+/// It is deliberately NOT "not foreign": a popup is a window we own, and owning
+/// it is exactly why its messages must not be mistaken for the terminal's.
+pub fn drivesTerminal(role: Role) bool {
+    return role == .surface;
+}
+
 const H_SURFACE: usize = 0x1000;
 const H_SEARCH: usize = 0x2000;
 const H_PALETTE: usize = 0x3000;
@@ -137,4 +160,23 @@ test "destroyClears: a foreign window clears nothing" {
     try std.testing.expect(!c.surface_window);
     try std.testing.expect(!c.search_popup);
     try std.testing.expect(!c.palette_popup);
+}
+
+test "drivesTerminal: only the terminal window does" {
+    // The T742 regression, stated as the rule it broke: a palette or search
+    // popup must never be able to resize, type into, click on or focus the
+    // terminal grid on the strength of a message it received itself.
+    try std.testing.expect(drivesTerminal(.surface));
+    try std.testing.expect(!drivesTerminal(.search_popup));
+    try std.testing.expect(!drivesTerminal(.palette_popup));
+    try std.testing.expect(!drivesTerminal(.foreign));
+}
+
+test "drivesTerminal: a popup handle answers no even when it is the only window left" {
+    // `Surface.deinit` order: the popups outlive `Surface.hwnd` for a few
+    // lines. A popup message arriving in that window must not be promoted to
+    // the terminal's just because there is no terminal window to compare with.
+    const w: Windows = .{ .surface = null, .search = H_SEARCH, .palette = H_PALETTE };
+    try std.testing.expect(!drivesTerminal(roleOf(w, H_SEARCH)));
+    try std.testing.expect(!drivesTerminal(roleOf(w, H_PALETTE)));
 }

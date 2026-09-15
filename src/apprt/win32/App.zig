@@ -9695,18 +9695,34 @@ fn surfaceWndProc(
     if (role == .foreign)
         return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
 
+    // T742: every arm below that reads or writes TERMINAL state — geometry,
+    // keyboard, mouse, focus — asks this instead of assuming the message came
+    // from the terminal window. A popup answering `true` is the defect: the
+    // palette's own `MoveWindow` was reflowing the grid to the palette's size.
+    const drives_terminal = surface_window_role.drivesTerminal(role);
+
     switch (msg) {
         w32.WM_ENTERSIZEMOVE => {
+            // Nothing resizes a popup, but an owned top-level window can be
+            // sent this; it says nothing about the terminal's live resize.
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.in_live_resize = true;
             return 0;
         },
 
         w32.WM_EXITSIZEMOVE => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.in_live_resize = false;
             return 0;
         },
 
         w32.WM_SIZE => {
+            // T742, the visible half: `positionCommandPalette` and
+            // `positionSearchBar` both `MoveWindow(popup, …, 1)`, and
+            // DefWindowProc turns the resulting WM_WINDOWPOSCHANGED into a
+            // WM_SIZE on the POPUP. Reflowing the grid and SIGWINCHing the PTY
+            // to 500x450 on every palette open is what moved the user's text.
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             const width: u32 = @intCast(lparam & 0xFFFF);
             const height: u32 = @intCast((lparam >> 16) & 0xFFFF);
             surface.handleResize(width, height);
@@ -9714,12 +9730,22 @@ fn surfaceWndProc(
         },
 
         w32.WM_MOVE => {
-            if (surface.scrollbar) |sb| _ = sb.repositionAndResize();
+            // The scrollbar is an overlay of the TERMINAL window; a popup
+            // moving next to it (which is every `positionSearchBar`) is not a
+            // reason to re-place it.
+            if (drives_terminal) {
+                if (surface.scrollbar) |sb| _ = sb.repositionAndResize();
+            }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
 
         w32.WM_SHOWWINDOW => {
-            if (surface.scrollbar) |sb| sb.setOwnerVisible(wparam != 0);
+            // Same overlay, and this one was visible: showing the search bar
+            // or the palette is a WM_SHOWWINDOW on the POPUP, so hiding one
+            // hid the terminal's scrollbar with it.
+            if (drives_terminal) {
+                if (surface.scrollbar) |sb| sb.setOwnerVisible(wparam != 0);
+            }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
 
@@ -9727,10 +9753,18 @@ fn surfaceWndProc(
             if (surface.scrollbar) |sb| {
                 if (sb.onSettingsChange()) {
                     // Re-flow the grid to accommodate a mode change.
-                    const width: u32 = surface.width;
-                    const height: u32 = surface.height;
-                    const lp_size: isize = @intCast((@as(usize, height) << 16) | @as(usize, width));
-                    _ = w32.PostMessageW(hwnd, w32.WM_SIZE, 0, lp_size);
+                    //
+                    // Correct for all three windows, but only because the
+                    // re-flow is posted to the TERMINAL window by name (T742):
+                    // a broadcast reaches top-level windows, which here means
+                    // the two POPUPS and never the child terminal, so posting
+                    // to `hwnd` sized the grid to whichever popup was open.
+                    if (surface.hwnd) |surface_hwnd| {
+                        const width: u32 = surface.width;
+                        const height: u32 = surface.height;
+                        const lp_size: isize = @intCast((@as(usize, height) << 16) | @as(usize, width));
+                        _ = w32.PostMessageW(surface_hwnd, w32.WM_SIZE, 0, lp_size);
+                    }
                 }
             }
 
@@ -9744,6 +9778,11 @@ fn surfaceWndProc(
             // Posted by Surface.close() to defer destruction to the
             // message loop. This is the safe place to call closeSplitPane
             // (outside of core_surface callbacks).
+            //
+            // Correct for all three windows: `Surface.close` posts this to the
+            // terminal window, and nothing closes a popup this way — they have
+            // no frame, no close box and no menu, and `Surface.deinit`
+            // `DestroyWindow`s them directly (T742).
             if (surface.pane_view) |pane| surface.parent_window.closeSplitPane(pane);
             return 0;
         },
@@ -9845,24 +9884,44 @@ fn surfaceWndProc(
             // Validate the paint region to stop Windows from
             // sending more WM_PAINT messages, then wake the
             // renderer thread to redraw.
+            //
+            // The search popup lands here too and still needs its region
+            // validated — its pixels come from WM_ERASEBKGND and its EDIT
+            // children — but waking the terminal's renderer for it says the
+            // grid needs a frame, which it does not (T742).
             _ = w32.ValidateRect(hwnd, null);
-            if (surface.core_surface_ready) {
+            if (drives_terminal and surface.core_surface_ready) {
                 surface.core_surface.renderer_thread.wakeup.notify() catch {};
             }
             return 0;
         },
 
         w32.WM_DPICHANGED => {
+            // Correct for all three windows, and in practice it is the POPUPS
+            // that deliver it: the terminal is a WS_CHILD and a child is never
+            // sent WM_DPICHANGED (the same reason `adoptPane` re-reads the
+            // scale by hand). `handleDpiChange` -> `updateDpiScale` reads the
+            // DPI of `Surface.hwnd`, never of the window the message arrived
+            // on, so whichever of the three is asking, the answer describes
+            // the terminal and the rebuilt popup fonts follow it (T742).
             surface.handleDpiChange();
             return 0;
         },
 
+        // Keyboard, character and IME traffic below belongs to the terminal
+        // grid. The popups keep focus in their child EDIT — which has its own
+        // window procedure, and whose Enter/Escape/arrow handling is
+        // intercepted against `palette_edit`/`search_edit` in `App.run` — so a
+        // key message arriving on a POPUP window is an injected one, and
+        // typing it into the terminal underneath is not what it means (T742).
         w32.WM_KEYDOWN, w32.WM_SYSKEYDOWN => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.handleKeyEvent(wparam, lparam, .press);
             return 0;
         },
 
         w32.WM_KEYUP, w32.WM_SYSKEYUP => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.handleKeyEvent(wparam, lparam, .release);
             return 0;
         },
@@ -9874,6 +9933,7 @@ fn surfaceWndProc(
             // SendInput, PostMessage, or other injection paths: forwarding
             // it to DefWindowProc would treat it as an unmatched menu
             // accelerator and ring MessageBeep. Consume it unconditionally.
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             return 0;
         },
 
@@ -9882,10 +9942,12 @@ fn surfaceWndProc(
             // so WM_DEADCHAR is normally never posted for them. If one
             // arrives via another path (e.g. SendInput), drop it — dead
             // keys are composed via ToUnicode in handleKeyEvent.
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             return 0;
         },
 
         w32.WM_CHAR => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             // In Win32 Input Mode a WM_CHAR can only be INJECTED text
             // (T64): the run loop skips TranslateMessage for ordinary
             // surface keydowns (their Unicode goes in the WM_KEYDOWN's Uc
@@ -9933,6 +9995,11 @@ fn surfaceWndProc(
             // terminal-cell-level accessibility today anyway, so the only
             // thing this disables is the generic window-frame proxy that
             // screen readers would otherwise see.
+            //
+            // Correct for all three windows: the popups share this window
+            // class and this procedure, and the re-entrant AccWrap teardown
+            // the opt-out breaks is a property of the class, not of which
+            // window it is (T742).
             if (lparam == w32.OBJID_CLIENT) return 0;
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
@@ -9942,11 +10009,16 @@ fn surfaceWndProc(
             // by the core, so tell the system not to show the default
             // floating composition window. The IME candidate list is
             // unaffected and still anchors to ImmSetCompositionWindow.
+            //
+            // A popup's EDIT wants the DEFAULT composition window — it draws
+            // no preedit of its own — so only the terminal suppresses it.
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             const cleared = lparam & ~w32.ISC_SHOWUICOMPOSITIONWINDOW;
             return w32.DefWindowProcW(hwnd, msg, wparam, cleared);
         },
 
         w32.WM_IME_STARTCOMPOSITION => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.handleImeStartComposition();
             // Consume: we draw the composition inline; no default window.
             return 0;
@@ -9957,11 +10029,13 @@ fn surfaceWndProc(
             // inline) and the final result string (GCS_RESULTSTR, committed
             // to the terminal). Always consume so DefWindowProc doesn't
             // generate WM_IME_CHAR or draw a default composition window.
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             _ = surface.handleImeComposition(lparam);
             return 0;
         },
 
         w32.WM_IME_ENDCOMPOSITION => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.handleImeEndComposition();
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
@@ -9981,6 +10055,11 @@ fn surfaceWndProc(
                 }
                 return 0;
             }
+            // Mouse input below is in the TERMINAL's client coordinates and
+            // drives its selection and mouse reporting, so a click on the
+            // search bar must not be replayed into the grid (T742). The
+            // palette's own hit-testing is the branch above.
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             // Take keyboard focus on click. WS_CHILD windows don't
             // auto-focus the way top-level windows do, so without this
             // an active sibling popup edit (tab rename, search, palette)
@@ -9990,28 +10069,34 @@ fn surfaceWndProc(
             return 0;
         },
         w32.WM_LBUTTONUP => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.handleMouseButton(.left, .release, wparam, lparam);
             return 0;
         },
         w32.WM_RBUTTONDOWN => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             deferSetFocus(hwnd);
             surface.handleMouseButton(.right, .press, wparam, lparam);
             return 0;
         },
         w32.WM_RBUTTONUP => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.handleMouseButton(.right, .release, wparam, lparam);
             return 0;
         },
         w32.WM_MBUTTONDOWN => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             deferSetFocus(hwnd);
             surface.handleMouseButton(.middle, .press, wparam, lparam);
             return 0;
         },
         w32.WM_MBUTTONUP => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.handleMouseButton(.middle, .release, wparam, lparam);
             return 0;
         },
         w32.WM_XBUTTONDOWN => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             // X1 = back (button four), X2 = forward (button five). Deliver to
             // the terminal for mouse reporting instead of the shell nav.
             deferSetFocus(hwnd);
@@ -10021,6 +10106,7 @@ fn surfaceWndProc(
             return 1; // TRUE: handled; suppresses the default WM_APPCOMMAND.
         },
         w32.WM_XBUTTONUP => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             const btn: input.MouseButton =
                 if ((wparam >> 16) & 0xFFFF == w32.XBUTTON2) .five else .four;
             surface.handleMouseButton(btn, .release, wparam, lparam);
@@ -10030,6 +10116,10 @@ fn surfaceWndProc(
             // Keyboard-invoked (VK_APPS / Shift+F10 via DefWindowProc, or
             // automation). Mouse right-clicks never get here — the RBUTTON
             // handlers above consume them.
+            //
+            // The terminal's menu, so the terminal's window: a popup's EDIT
+            // shows its own (it has focus, and it handles VK_APPS itself).
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.showContextMenuKeyboard();
             return 0;
         },
@@ -10055,21 +10145,27 @@ fn surfaceWndProc(
         },
 
         w32.WM_MOUSEMOVE => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.handleMouseMove(lparam);
             return 0;
         },
 
         w32.WM_MOUSEWHEEL => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.handleMouseWheel(wparam, .vertical);
             return 0;
         },
 
         w32.WM_MOUSEHWHEEL => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.handleMouseWheel(wparam, .horizontal);
             return 0;
         },
 
         w32.WM_DROPFILES => {
+            // Only the terminal window calls `DragAcceptFiles`, so a popup
+            // cannot receive this; the guard says so rather than relying on it.
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.handleDropFiles(wparam);
             return 0;
         },
@@ -10077,6 +10173,11 @@ fn surfaceWndProc(
         w32.WM_SETCURSOR => {
             // Only override the cursor in the client area. For non-client
             // areas (resize borders, title bar), let DefWindowProc handle it.
+            //
+            // `handleSetCursor` answers for the terminal (I-beam over text,
+            // hand over a link); over a popup the arrow is right, so leave it
+            // to DefWindowProc.
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             const hit_test: u16 = @intCast(lparam & 0xFFFF);
             if (hit_test == w32.HTCLIENT and surface.handleSetCursor()) {
                 return 1; // TRUE = we set the cursor
@@ -10085,6 +10186,10 @@ fn surfaceWndProc(
         },
 
         w32.WM_COMMAND => {
+            // Correct for all three windows, and only the POPUPS ever send it:
+            // an EDIT notifies its parent, and both EDITs are children of a
+            // popup. Routed by control id, which is the popup's identity
+            // stated more precisely than its HWND (T742).
             const notification: u16 = @intCast((wparam >> 16) & 0xFFFF);
             const control_id: u16 = @intCast(wparam & 0xFFFF);
             if (control_id == Surface.SEARCH_EDIT_ID and notification == w32.EN_CHANGE) {
@@ -10113,7 +10218,9 @@ fn surfaceWndProc(
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
 
-        // The palette's and the search bar's edit fields. Both were hardcoded
+        // The palette's and the search bar's edit fields, so the message only
+        // ever arrives on a POPUP - an EDIT asks its own parent for the colors
+        // (T742). Both were hardcoded
         // dark (`RGB(30,30,30)` / `RGB(45,45,45)` under a fixed light text);
         // they take the panel palette's field now, so they follow the theme
         // the window does (T563).
@@ -10128,7 +10235,8 @@ fn surfaceWndProc(
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
 
-        // The search bar's match-count label ("3/17"), on the bar's surface.
+        // The search bar's match-count label ("3/17"), on the bar's surface -
+        // a STATIC asking its own parent, so the search popup by construction.
         w32.WM_CTLCOLORSTATIC => {
             const hdc_static: w32.HDC = @ptrFromInt(wparam);
             const p = surface.panelPalette();
@@ -10141,6 +10249,10 @@ fn surfaceWndProc(
         },
 
         w32.WM_ACTIVATE => {
+            // Already routed by role, and only the popups are activatable at
+            // all (the terminal is a WS_CHILD). The search bar dismisses on
+            // its EDIT's EN_KILLFOCUS instead, so it falls through.
+            //
             // Dismiss command palette when it loses focus
             if (is_palette_popup) {
                 const activate = @as(u16, @intCast(wparam & 0xFFFF));
@@ -10154,6 +10266,11 @@ fn surfaceWndProc(
 
         w32.WM_SETFOCUS => {
             // Update the active surface for this tab when a split pane gains focus.
+            //
+            // The pane's focus, so the pane's window (T742): a popup hands
+            // keyboard focus straight to its child EDIT, and a popup window
+            // taking focus is not this pane becoming the active one.
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             //
             // T1396: the pane's OWN tab, never the window's active one. A pane
             // can take focus while a DIFFERENT tab is active — creating a tab
@@ -10181,6 +10298,7 @@ fn surfaceWndProc(
             return 0;
         },
         w32.WM_KILLFOCUS => {
+            if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             surface.handleFocus(false);
             return 0;
         },
