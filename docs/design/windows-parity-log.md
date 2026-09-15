@@ -29017,3 +29017,54 @@ over the same broken tree does not, and fails as matched-nothing instead. All fo
 zig lanes PASS.
 
 Filed: T1573 (pin down zig's real filter rule, or record it as zig's).
+
+## 2026-09-14 - The tests can photograph the strip between two panes again (T778, T734)
+
+The divider between two panes is painted by the WINDOW, not by either pane, and
+that is why the suite could not photograph it. A `PrintWindow` of the window
+comes back with every intermediate line a drag ever painted still in it - the
+window never erases, it only repaints the band region, and the OpenGL panes do
+not overpaint its backing store in that render. Measured again today on a
+healthy build: twelve divider runs on a single scanline after three drags. On
+screen a user sees one, because each pane covers the leftovers under it. So
+scoring that capture failed a working product over pixels nobody can see, and
+in July the cross-pane stale-line scan was retired over it (T228) in favour of
+an argument from geometry - the band is solid at three points, the panes tile
+the split, therefore a line under a pane is unreachable. A real argument, but
+not a measurement.
+
+The missing piece was a composite, and the app turned out to already hold the
+only part of it the harness could not work out. `capture-pane` (T275) hands out
+one pane's rendered glass; it now also says WHERE that glass is -
+`x`/`y`/`client_width`/`client_height`, screen coordinates, on the response it
+already sent. With that, `Get-TestWindowComposite` draws the window's capture
+and then each pane's capture over its own rect, and the result is what the
+screen shows: a stale line under a pane is covered by that pane exactly as it
+is in real life, and one left in the gap survives to be counted.
+
+The composition is done in the harness rather than in the app, deliberately.
+Panes TILE, so "each pane's glass over its own rect" is the whole of the
+composition - there is no z-order to get right and no layout to restate. The one
+fact PowerShell could not know is where each pane sits, and that now comes from
+the app, which knows it. A second image-composition path in the product would
+have bought nothing and would have had to be kept true to the layout forever.
+
+What comes back with it is the scan itself (T734): a full scanline across BOTH
+panes, in both axes, after three drags and after three small window resizes,
+crossing the divider color exactly once. The same scanline un-composited is
+printed beside it and asserted to be MORE than one, so the counter demonstrates
+on every run that it can say what it is supposed to be able to say - a counter
+wedged at 1 cannot quietly pass this.
+
+Evidence: new `window-composite.ps1` ALL PASS (15 assertions), its load-bearing
+oracle a known image - `#204080` at pane A's centre, `#802040` at pane B's,
+`00ff00` in the gap, and the same pixel on the raw capture proving the composite
+added the glass. `-NegativeControl` asks for pane A's tint at pane B's centre
+and scores exactly 1 failure. `split-divider.ps1` ALL PASS (79 assertions, was
+75), with `runs 1` against `12` un-composited in all four restored cases.
+`pane-capture.ps1` ALL PASS (21) over the changed response shape. All four zig
+lanes PASS. The route is documented as 0c in the CAPTURE LIMIT header and in
+`docs/claude/testing.md`, and `guard-due.ps1` gains a `window-composite` row so
+the seam cannot drift from the harness that reads it.
+
+Filed: T1574 (a fixture killed by its own teardown is reported as a CRASH).

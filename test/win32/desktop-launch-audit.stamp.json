@@ -1,10 +1,12 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-09-14T17:49:26-07:00",
-    "commit":  "443bcce68",
+    "generated":  "2026-09-14T19:04:01-07:00",
+    "commit":  "c0d9482ab",
     "uncommitted":  [
-                        "test/win32/test-filter-guard.ps1"
+                        "test/win32/lib/TestDesktop.ps1",
+                        "test/win32/split-divider.ps1",
+                        "test/win32/window-composite.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "ef54b501298cfda9306cfb958c1094db24ee30f355b25865656b3e2bc713bcd7",
@@ -173,7 +175,7 @@
                   "test/win32/layout-blobs.ps1":  "d91f5b4afad56f13d8fba4d6f00abf44539b9a5e93afadd26acaec53c5413b75",
                   "test/win32/layout-capture-cost.ps1":  "60a2c830f6bac395be0ea78847d0f07466cefca0c8bb9d86385ea27618628e8e",
                   "test/win32/lib/DesktopLaunchAudit.ps1":  "6a520668a22c54f4c5163d5efe9fb3a01bdb8568d60f6cfa5366a1fb2edad86f",
-                  "test/win32/lib/TestDesktop.ps1":  "6771ca8cb4fb453343a8f1112e882fbd891b5b19f075f83ea3a633346092b780",
+                  "test/win32/lib/TestDesktop.ps1":  "86cd5a5020b60062966c22e649170d899a93a66f0ade50e6d8c94f9556db7095",
                   "test/win32/local-split-no-command-rerun.ps1":  "ee277b6308cdb172e153fe92d0624732f8b64743418134ce466da5534138fae2",
                   "test/win32/log-append.ps1":  "76f73c234de0498279a1678b94cd297fa0bdc5d83363e8e43e06999bfaa4b457",
                   "test/win32/machine-chooser.ps1":  "c69e331b19e83e300b5f0c22860220ea1d2de144d587db1ee4ae4e797ce6b79e",
@@ -257,7 +259,7 @@
                   "test/win32/soak.ps1":  "cc3d8774680af5795741d2cb4ab6521e3161a102c8c45c64f36e8d76d047e639",
                   "test/win32/split-dim.ps1":  "a0d3d7e7816fc6a89ab6c2f285c2d19f2e2a550333765c2a3fabdb377c9e8b8b",
                   "test/win32/split-dim-viewer.ps1":  "454a52890b54b98bd41361b823291d51d54b6986180613e921fd0d185324dea9",
-                  "test/win32/split-divider.ps1":  "575a72e3ad212a9071dcd1496f49ab0f99263e9631b59aa2050d7ff52dd7dc90",
+                  "test/win32/split-divider.ps1":  "0e5b6e1fb40579ecfae78099584ac3ec4f546230a3fb41a27e60650998ef72eb",
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",
                   "test/win32/startup-failure.ps1":  "29b3227309b6e317524108fab200b9aecb27cc9f5d94cd82a32a0357dfec0aad",
                   "test/win32/stderr-capture-audit.ps1":  "04424b778285df67f2eeed9c8ee354d1446c62a920ab8de56bf8b4475569cf9b",
@@ -323,6 +325,7 @@
                   "test/win32/window-active.ps1":  "9151aa942d89c9db56f8fe9531b66c67285d311d17d50d8c43b8bec7b1b778df",
                   "test/win32/window-active-audit.ps1":  "713214a5212d2f50713ae9eaff05d788293b6f8ada9b6daa78d1dcf081406879",
                   "test/win32/window-color.ps1":  "3b8c5d85c60fad07747da53240ffaf56f75d255d993461163774c30644010fac",
+                  "test/win32/window-composite.ps1":  "eb52231989e973191136a7a6f06ab633803983c171fdc09b037f9f11e8ae37e3",
                   "test/win32/window-modal-block.ps1":  "5a2962e9dd1d3c9a39d35c3aa82bae16be5f62d4067e2b68145cb954ae45dfd5",
                   "test/win32/window-name-env.ps1":  "c7c104c6015b4d434126f10943fbd0bac1b194dad564f8f1a4571ffbee5be27a",
                   "test/win32/window-name-restore.ps1":  "056f50b36cb6a75b5a96f286fb7041b805a5031216cb83c44a267bbff5077f0e",

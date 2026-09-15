@@ -100,7 +100,20 @@
 #      clear color, a pane that is rendering content at all.
 #      Its own trap, and why it is route 0 rather than the only route: it
 #      captures ONE PANE, not a composite, so it can say nothing about z-order,
-#      chrome over glass, or a divider between two panes. For those, keep going.
+#      chrome over glass, or a divider between two panes. For the divider, take
+#      route 0c; for chrome over glass, keep going.
+#   0c. COMPOSE THE WINDOW OUT OF ROUTE 0 - `lib\WindowComposite.ps1`'s
+#      Get-TestWindowComposite (T778). The parent's PrintWindow with each
+#      pane's own capture drawn over its own rect, using the placement the
+#      capture response reports (`x`/`y`/`client_width`/`client_height`). This
+#      is the route for a claim about the PARENT between or around panes: the
+#      divider band, a gap, a strip of background. A stale line under a pane is
+#      covered by that pane's glass exactly as it is on screen, which is the
+#      thing neither half could say alone - measured 2026-09-14 on the same
+#      scanline after three drags: 12 runs raw, 1 composited.
+#      Its limit: only the parent and its panes are in it. A banner, a pill or
+#      a modal is its own top-level window and is in neither capture, so
+#      chrome-over-glass still belongs to the routes below.
 #   1. ASK WHICH THREAD PAINTED THE PIXELS, not which technology produced
 #      them. GL content that the app itself moves onto the GDI side is
 #      capturable: the hero carousel's thumbnails are renderer output, but the

@@ -2286,6 +2286,25 @@ $GuardTable = @(
             'test\win32\split-divider.ps1'
         )
     },
+    # The composited capture (T778) is a SEAM, not a feature: `split-divider`'s
+    # cross-pane scan and anything that follows it read the product through it,
+    # and a composite that placed a pane a few pixels off - or stopped placing
+    # one at all - would not fail obviously anywhere. It would just quietly
+    # agree with whatever it was asked. Same argument as the hover-capture row
+    # below, and the same answer: tie the seam's own harness to the seam, which
+    # here is the placement the app reports as well as the harness that reads
+    # it.
+    [pscustomobject]@{
+        Name   = 'window-composite'
+        Script = 'test\win32\window-composite.ps1'
+        Stamp  = 'test\win32\window-composite.stamp.json'
+        Covers = @(
+            'src\apprt\win32\ipc_capture.zig',
+            'test\win32\lib\WindowComposite.ps1',
+            'test\win32\lib\PaneCapture.ps1',
+            'test\win32\window-composite.ps1'
+        )
+    },
     # The hovered-frame capture is the ONLY way any script can photograph a
     # hover fill off the background desktop (T282), and it is a seam nothing
     # else exercises: four scripts consume it, none of them would fail

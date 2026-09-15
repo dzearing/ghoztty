@@ -1200,11 +1200,32 @@ consumer, so it is gated on `build_config.is_debug` and the harness frames the
 request itself; a shipped ReleaseFast build answers `unknown action`, which
 costs the suite nothing because T350 already requires every acceptance script to
 run against a Debug build. It captures ONE PANE and therefore says nothing about
-z-order or the strip of parent between two panes — a composited capture is
-**T778**. Acceptance: `test\win32\pane-capture.ps1`, whose load-bearing oracle
+z-order or the strip of parent between two panes — for that, compose (below).
+Acceptance: `test\win32\pane-capture.ps1`, whose load-bearing oracle
 is two panes with different tints each reporting its OWN tint (a flat fill
 cannot answer both), plus section 4 of `test-desktop-harness.ps1`, which reads
 the same pane at the same moment through both paths (94 distinct colors vs 1).
+
+**A claim about the PARENT between two panes needs a COMPOSITE** (T778). The
+divider band is painted by the parent window, and a `PrintWindow` of the parent
+keeps every intermediate line a drag ever painted — the parent never erases and
+only repaints the band region, so a HEALTHY build measures 12 divider runs on a
+scanline after three drags. Scored that way the test fails over pixels no user
+can see, which is why `split-divider.ps1` retired its cross-pane stale-line scan
+(T228). `Get-TestWindowComposite` in `test\win32\lib\WindowComposite.ps1` draws
+the parent capture and then each pane's own `capture-pane` over its own rect, so
+a stale line under a pane is covered exactly as the pane covers it on screen:
+the same scanline measures **1**. The placement comes from the app —
+`capture-pane` reports `x`/`y`/`client_width`/`client_height` — so the harness
+never restates the split layout. The composition lives in the harness because
+panes TILE, which makes "each pane's glass over its own rect" the whole of it;
+the only thing the product had to supply was where each pane is. Its limit: only
+the parent and its panes are in it, so a banner, a pill or a modal (each its own
+top-level window) is in neither capture. Acceptance:
+`test\win32\window-composite.ps1`, whose load-bearing oracle is a known image —
+two differently tinted panes either side of a green band, each color asserted at
+its own place, with the same pixel on the RAW capture proving the composite
+added it.
 
 **A HOVERED frame needs the same treatment, for a different reason** (T282).
 The pixels of the chrome were always capturable; the hovered *frame* was never

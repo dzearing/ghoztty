@@ -5,6 +5,9 @@
 # starting 4 DIP off the line still resizes.
 # T155 acceptance (tail): exactly ONE divider band, a solid fill, after drags
 # and after repeated small window resizes.
+# T734 acceptance (T155 section): the CROSS-PANE scan T228 had to retire - a
+# full scanline across both panes crosses the divider color once - restored on
+# the composited capture T778 built.
 # T233 acceptance (run 2 tail): the band is 2 DIP (never one physical pixel),
 # and hover/drag is a COLOR change - asserted as a pair of probes that must
 # read differently in the two states, not as a cursor shape.
@@ -109,6 +112,9 @@ $errlog = Join-Path $env:TEMP 'ghoztty-split-divider-stderr.log'
 $conf = Join-Path $env:TEMP 'ghoztty-split-divider-test.conf'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T778/T734: the composited window capture that gives the cross-pane scan back.
+. (Join-Path $PSScriptRoot 'lib\PaneCapture.ps1')
+. (Join-Path $PSScriptRoot 'lib\WindowComposite.ps1')
 
 # T1511: the shared scorer, which is also what ARMS the run - a body that
 # unwinds before `Complete-TestBody` may not print a pass and may not stamp.
@@ -780,11 +786,21 @@ Stop-Process -Id $app251.Pid -Force -ErrorAction SilentlyContinue
 #     instead of assumed - `split_geometry`'s `axis()` tests assert the same
 #     tiling in pure arithmetic, and this asserts the layout code that uses it.
 #
-# The pixel-perfect version still wants a COMPOSITED capture, and T275 does not
-# supply one: route 0 (`capture-pane`) has one pane's renderer read back its own
+# The pixel-perfect version wanted a COMPOSITED capture, and T275 did not supply
+# one: route 0 (`capture-pane`) has one pane's renderer read back its own
 # offscreen target, so it answers "what is this pane showing" exactly and can
-# say nothing about the strip of PARENT between two panes. That remains open as
-# T778.
+# say nothing about the strip of PARENT between two panes.
+#
+# T778 SUPPLIES IT, and the wide scan is back (`Measure-CrossPaneRuns` below).
+# `lib\WindowComposite.ps1` draws the parent capture and then each pane's own
+# capture over its own rect - the placement comes from the capture response
+# (`x`/`y`/`client_width`/`client_height`), so nothing here restates the split
+# layout. In that image a stale line UNDER a pane is covered by that pane's
+# glass exactly as it is on screen, and one in the parent-visible gap survives.
+# Measured on box 2026-09-14, the same scanline after three drags: 12 runs on
+# the raw parent capture (T228's number, against a HEALTHY build), 1 on the
+# composite. Both halves of the old oracle are therefore expressible again -
+# the geometry half stayed, and this is the pixel half.
 #
 # Green is used so no earlier run's red/blue can be mistaken for a band.
 # ---------------------------------------------------------------------------
@@ -832,6 +848,63 @@ function Measure-GapSolid($gap) {
 # UNDER a pane looks like, but it can say there is nowhere else for one to be
 # visible. Together with `gap == bandPx` that IS split_geometry's tiling
 # invariant, measured on the live layout rather than in pure arithmetic.
+# THE CROSS-PANE SCAN, restored (T228 retired it, T778 made it expressible,
+# T734 is the card for exactly this): a full scanline ACROSS both panes and the
+# gap between them, on a COMPOSITED capture, must cross the divider color once.
+# A stale line left under a pane is covered by that pane's glass in the
+# composite exactly as the pane covers it on screen, so a second run is a line
+# the user would actually see.
+#
+# Returns { Ok, Runs, Raw, Detail }; $null when no composite could be taken,
+# which is a SKIP rather than a verdict - a missing capture must never read as
+# "the product drew no divider" (the same rule Get-TestStrips follows).
+# `Raw` is the same scan on the un-composited parent capture, carried for the
+# assertion label: it is the number T228 measured, and printing it beside the
+# scored one is what keeps the difference between them honest.
+function Measure-CrossPaneRuns([IntPtr]$top, [string]$axis) {
+    $shot = Get-TestWindowComposite -Window $top -Exe $exe
+    if ($null -eq $shot) { return $null }
+    try {
+        if ($shot.Panes.Count -ne 2) { return $null }
+        if ($axis -eq 'down') {
+            $pa = $shot.Panes | Sort-Object Top | Select-Object -First 1
+            $pb = $shot.Panes | Sort-Object Top | Select-Object -Last 1
+            $fixed = [int]($pa.Left + $pa.Width / 2)
+            $lo = $pa.Top + 2; $hi = $pb.Top + $pb.Height - 2
+            $horiz = $false
+        } else {
+            $pa = $shot.Panes | Sort-Object Left | Select-Object -First 1
+            $pb = $shot.Panes | Sort-Object Left | Select-Object -Last 1
+            $fixed = [int]($pa.Top + $pa.Height / 2)
+            $lo = $pa.Left + 2; $hi = $pb.Left + $pb.Width - 2
+            $horiz = $true
+        }
+        $strip = Read-ShotLine $shot $fixed $lo $hi $horiz
+        $runs = Count-ColorRuns $strip 0 255 0
+        $raw = $null
+        $rawShot = Get-TestWindowPixels -Window $top -Sync -AllowUniform
+        try { $raw = Count-ColorRuns (Read-ShotLine $rawShot $fixed $lo $hi $horiz) 0 255 0 }
+        finally { Close-TestWindowPixels $rawShot }
+        return [pscustomobject]@{
+            Ok = ($runs -eq 1); Runs = $runs; Raw = $raw
+            Detail = "runs $runs across $lo..$hi; the same scan un-composited: $raw"
+        }
+    } finally { Close-TestWindowComposite $shot }
+}
+
+# One line of "r,g,b" out of an already-taken shot, in SCREEN coordinates. The
+# strip helpers above take their own capture; this reads one the caller owns,
+# which is what a composite is.
+function Read-ShotLine($shot, [int]$fixed, [int]$a, [int]$b, [bool]$horizontal) {
+    $out = New-Object System.Collections.Generic.List[string]
+    for ($i = $a; $i -le $b; $i++) {
+        $c = if ($horizontal) { Get-TestPixel -Shot $shot -X $i -Y $fixed }
+             else { Get-TestPixel -Shot $shot -X $fixed -Y $i }
+        if ($null -eq $c) { $out.Add('-1,-1,-1') } else { $out.Add("$($c.R),$($c.G),$($c.B)") }
+    }
+    return $out.ToArray()
+}
+
 function Test-PanesTile($gap, [string]$axis) {
     if ($axis -eq 'down') {
         return ($gap.A.Left -eq $gap.B.Left) -and ($gap.A.Right -eq $gap.B.Right)
@@ -908,6 +981,28 @@ foreach ($axis in @('down', 'right')) {
     # that stops short at a nested split, reads as solid at the middle.
     $solid = Measure-GapSolid $gap
     Assert $solid.Ok "T155/$axis : the band is solid ALONG its length after 3 drags ($($solid.Detail))"
+
+    # T734: the wide scan, back on a composited capture (T778). This is the
+    # half a background desktop could not express between 2026-07-31 and now -
+    # a stale line UNDER a pane, scored where the pane covers it exactly as it
+    # does on screen.
+    $wide = Measure-CrossPaneRuns $top $axis
+    if ($null -eq $wide) {
+        Write-Host "SKIP T734/$axis (after drags): no composite ($(Get-LastCompositeError))"; $script:skipped++
+    } else {
+        Assert $wide.Ok `
+            "T734/$axis : ONE divider band on a scanline across BOTH panes after 3 drags ($($wide.Detail))"
+        # POSITIVE CONTROL for the counter itself: the identical scan on the
+        # UN-composited parent capture must count MORE than one, because the
+        # parent never erases and keeps every line the three drags painted
+        # (T228 measured 13; this box measures 11-12). Without it, a counter
+        # wedged at 1 - or a composite that is somehow only the divider - would
+        # score the assertion above green forever. If this ever fails, the
+        # parent's paint model changed and the composite may no longer be
+        # earning its keep; that is worth a look, not a silent pass.
+        Assert ($wide.Raw -gt 1) `
+            "T734/$axis : the same scan un-composited counts the stale lines ($($wide.Raw) runs) - the counter can say more than one"
+    }
     Assert (Test-PanesTile $gap $axis) `
         ("T155/$axis : the panes tile the split across the other axis, so the gap is the only " +
          "parent-visible strip (A $($gap.A.Left),$($gap.A.Top),$($gap.A.Right),$($gap.A.Bottom) " +
@@ -943,6 +1038,18 @@ foreach ($axis in @('down', 'right')) {
     $solid2 = Measure-GapSolid $gap
     Assert $solid2.Ok `
         "T155/$axis : the band is STILL solid along its length after resizes ($($solid2.Detail))"
+
+    # The resize case is the one that actually reproduced the user's report -
+    # each resize drifts the split by ~2px, so the previous line survives
+    # INSIDE the old gap - which makes it the case the wide scan was worth
+    # recovering for (T734).
+    $wide2 = Measure-CrossPaneRuns $top $axis
+    if ($null -eq $wide2) {
+        Write-Host "SKIP T734/$axis (after resizes): no composite ($(Get-LastCompositeError))"; $script:skipped++
+    } else {
+        Assert $wide2.Ok `
+            "T734/$axis : STILL one band across BOTH panes after 3 small window resizes ($($wide2.Detail))"
+    }
 
     Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) "T155/$axis : no crash"
     Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue

@@ -31,7 +31,14 @@
 //!    "--width=<px>","--height=<px>"]}
 //! ```
 //!
-//! → `{"success":true,"data":{"path":…,"width":N,"height":N,"bytes":N}}`
+//! → `{"success":true,"data":{"path":…,"width":N,"height":N,"bytes":N,
+//!     "x":N,"y":N,"client_width":N,"client_height":N}}`
+//!
+//! `x`/`y` are the captured content area's top-left in SCREEN pixels and
+//! `client_width`/`client_height` its unscaled size (T778). One capture does
+//! not need them; a harness composing a WINDOW out of several does, because
+//! that is the one thing route 0 cannot answer on its own — where this glass
+//! sits relative to the parent chrome and the other panes.
 //!
 //! `--target` goes through the same resolver every other verb uses, so a
 //! registered pane name, a window name (its focused pane), or a `$GHOZTTY_PANE_ID`
@@ -96,7 +103,7 @@ pub fn handle(
     if (!surface.core_surface_ready)
         return errorResponse(alloc, "pane '{s}' is not capturable: its terminal never finished starting up", .{req.target});
 
-    const client = clientSize(surface);
+    const client = clientArea(surface);
     const size = pane_capture.resolveSize(client.w, client.h, req) orelse
         return errorResponse(alloc, "pane '{s}' has no content area to capture", .{req.target});
 
@@ -159,6 +166,19 @@ pub fn handle(
         jws.write(size.h) catch break :write;
         jws.objectField("bytes") catch break :write;
         jws.write(png.len) catch break :write;
+        // WHERE this glass sits, so a harness can compose a window out of
+        // several of these (T778). `x`/`y` are the content area's top-left in
+        // SCREEN pixels; `client_width`/`client_height` are its real size,
+        // which differs from `width`/`height` whenever the caller named an
+        // explicit capture size — a composite blit needs both.
+        jws.objectField("x") catch break :write;
+        jws.write(client.x) catch break :write;
+        jws.objectField("y") catch break :write;
+        jws.write(client.y) catch break :write;
+        jws.objectField("client_width") catch break :write;
+        jws.write(client.w) catch break :write;
+        jws.objectField("client_height") catch break :write;
+        jws.write(client.h) catch break :write;
         jws.endObject() catch break :write;
         jws.endObject() catch break :write;
         return try out.toOwnedSlice();
@@ -166,15 +186,40 @@ pub fn handle(
     return error.OutOfMemory;
 }
 
-const ClientSize = struct { w: i32, h: i32 };
+const ClientArea = struct { x: i32, y: i32, w: i32, h: i32 };
 
-/// The pane's terminal window in PIXELS. Zero when the pane has no window yet,
-/// which `resolveSize` turns into an explicit refusal.
-fn clientSize(surface: *Surface) ClientSize {
-    const hwnd = surface.hwnd orelse return .{ .w = 0, .h = 0 };
+/// WHERE the pane's terminal window is, and how big, in PIXELS — the size in
+/// its own client space, the position in SCREEN space. Zero when the pane has
+/// no window yet, which `resolveSize` turns into an explicit refusal.
+///
+/// The position is what T778 added, and it is the whole reason a harness can
+/// COMPOSE a window out of these captures. Route 0 hands out one pane's glass
+/// and says nothing about anything outside it, so a probe of the strip of
+/// PARENT between two panes had no oracle at all (`split-divider.ps1`'s
+/// retired cross-pane scan). Told where each capture belongs, the harness
+/// blits them onto a `PrintWindow` of the parent and gets the composite the
+/// background desktop never made — and it learns the placement from the app,
+/// which knows it, rather than restating the split layout in PowerShell.
+///
+/// A screen origin rather than a parent-relative one because the shots the
+/// harness reads are addressed in screen coordinates (`Get-TestPixel`), so
+/// this is the coordinate space the two captures already share.
+fn clientArea(surface: *Surface) ClientArea {
+    const hwnd = surface.hwnd orelse return .{ .x = 0, .y = 0, .w = 0, .h = 0 };
     var rect: w32.RECT = undefined;
-    if (w32.GetClientRect(hwnd, &rect) == 0) return .{ .w = 0, .h = 0 };
-    return .{ .w = rect.right - rect.left, .h = rect.bottom - rect.top };
+    if (w32.GetClientRect(hwnd, &rect) == 0) return .{ .x = 0, .y = 0, .w = 0, .h = 0 };
+    var origin: w32.POINT = .{ .x = rect.left, .y = rect.top };
+    // A failed map leaves the point in client space, which for a client rect
+    // is (0,0) — indistinguishable from a window at the top-left of the
+    // screen. Report it as "no placement" instead, so the harness can say the
+    // composite is unavailable rather than blit a pane over the titlebar.
+    const mapped = w32.ClientToScreen(hwnd, &origin) != 0;
+    return .{
+        .x = if (mapped) origin.x else 0,
+        .y = if (mapped) origin.y else 0,
+        .w = rect.right - rect.left,
+        .h = rect.bottom - rect.top,
+    };
 }
 
 /// Write the PNG, creating/truncating. Deliberately NOT atomic-renamed the way

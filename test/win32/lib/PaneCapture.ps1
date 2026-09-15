@@ -199,6 +199,17 @@ function Get-TestPaneCapture {
         Top    = $top
         Path   = $Path
         Bytes  = [int]$resp.data.bytes
+        # WHERE the app says this glass is (T778): the content area's top-left
+        # in SCREEN pixels and its unscaled size. Reported beside Left/Top
+        # rather than instead of them, because Left/Top are the caller's
+        # coordinate space for Get-TestPixel and a probe that asked for
+        # capture-local coordinates must keep getting them. A build that
+        # predates T778 leaves these $null, which Get-TestWindowComposite
+        # reports as "no placement" instead of composing at the origin.
+        ScreenX      = $(if ($null -ne $resp.data.x) { [int]$resp.data.x } else { $null })
+        ScreenY      = $(if ($null -ne $resp.data.y) { [int]$resp.data.y } else { $null })
+        ClientWidth  = $(if ($null -ne $resp.data.client_width) { [int]$resp.data.client_width } else { $null })
+        ClientHeight = $(if ($null -ne $resp.data.client_height) { [int]$resp.data.client_height } else { $null })
     }
 }
 
