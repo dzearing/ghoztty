@@ -135,7 +135,6 @@ try {
     $merged = Get-TestChromeMetrics -Window $h -StripVisible $true
     $dpi = $m.Dpi
     $scale = $m.Scale
-    $padSm = $m.PadSm
     $padMd = $m.PadMd
     $btn = $m.BtnPaint
     $capH = $m.CaptionH
@@ -152,23 +151,39 @@ try {
     }
 
     # --- 4/5. the caption's "..." and its neighbours -------------------------
-    # Right-anchored, same arithmetic as caption_layout.layout: close, maximize,
-    # minimize one (square + gap) apart, then "..." one GROUP step (pad_md)
-    # further left because it is ours, not the OS's.
+    # The four x's come off `lib\ChromeGeometry.ps1` (T767). This block used to
+    # derive them here, from the pre-T496 arithmetic - three 28 DIP squares a
+    # pad_sm apart - and T496 made the system trio three NATIVE 46 DIP slabs
+    # flush to the client's right edge with no gaps. The '...' probe therefore
+    # landed one slab right, inside MINIMIZE, and the assertion below failed
+    # against a build whose caption was correct; the other three passed by luck,
+    # their centers happening to fall in the right slabs.
+    #
+    # Why read rather than restate: `caption-bar.ps1` is where the hand
+    # derivation lives, and section 2b there asserts it against these same
+    # published x's AND against painted pixels (T264). That cross-check is the
+    # oracle for the module; a SECOND unchecked restatement over here is not a
+    # second oracle, it is the latent divergence T257 spent a task deleting.
+    #
+    # Widths differ per control: the system trio are one native slab (CapBtnW,
+    # 46 DIP) each, the '...' is ours and is a 28 DIP square (BtnPaint).
     $win = Get-TestWindowRect -Window $h
     $cli = Get-TestWindowRect -Window $h -Client
     $borderX = [int](($win.Width - $cli.Width) / 2)
-    $step = $btn + $padSm
-    $closeL = $cli.Width - $padSm - $btn
-    $maxL = $closeL - $step
-    $minL = $maxL - $step
-    $overL = $minL - $padMd - $btn
+    $capW = $m.CapBtnW
+    $closeL = $m.CaptionCloseLeft
+    $maxL = $m.CaptionMaxLeft
+    $minL = $m.CaptionMinLeft
+    $overL = $m.CaptionOverflowLeft
+    if ($null -eq $overL -or $null -eq $minL) {
+        throw 'SETUP FAIL: ChromeGeometry published no caption button x for this window'
+    }
     $bandY = $win.Top + $capH - 2
     function ClientX([int]$cx) { return $win.Left + $borderX + $cx }
 
     $hitOver = HitAt $h (ClientX ($overL + [int]($btn / 2))) $bandY
-    $hitMax = HitAt $h (ClientX ($maxL + [int]($btn / 2))) $bandY
-    $hitClose = HitAt $h (ClientX ($closeL + [int]($btn / 2))) $bandY
+    $hitMax = HitAt $h (ClientX ($maxL + [int]($capW / 2))) $bandY
+    $hitClose = HitAt $h (ClientX ($closeL + [int]($capW / 2))) $bandY
     $hitDrag = HitAt $h (ClientX ($overL - $padMd)) $bandY
     Check ($hitOver -eq $HTSYSMENU) `
         "the '...' button hit-tests as HTSYSMENU, Windows' own code for the window menu (got $hitOver)"

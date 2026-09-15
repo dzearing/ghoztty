@@ -9,6 +9,38 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-15: T767 closed done - **a caption test that was aiming at the old
+  title bar, and calling a correct build broken.**
+
+  `test/win32/tab-strip-autohide.ps1` checks that the "..." in the title bar
+  really is the window menu. It worked out where that button sits from the
+  pre-T496 layout - three 28 DIP squares a `pad_sm` apart, right-anchored with a
+  gap - and T496 rebuilt the system trio as three NATIVE 46 DIP slabs flush to
+  the client's right edge. Its probe therefore landed one slab right, inside
+  MINIMIZE, and the run went red with `HTMINBUTTON (8)` against a caption
+  `caption-bar.ps1` was passing on the same build. Measured here before touching
+  it: `1 FAILURE(S) (14 passed)`.
+
+  The three probes that were passing were passing BY LUCK - their centers
+  happened to fall in the right slabs - so fixing only the red one would have
+  left three assertions still aimed by stale arithmetic. Section 4/5 now reads
+  `CaptionCloseLeft`/`CaptionMaxLeft`/`CaptionMinLeft`/`CaptionOverflowLeft` off
+  `Get-TestChromeMetrics`, which the script already called sixteen lines earlier
+  for other metrics, and centers the system trio on `CapBtnW` rather than on the
+  28 DIP `BtnPaint`.
+
+  Read, not restated, on purpose. `caption-bar.ps1`'s `CaptionGeom` is the
+  deliberate hand derivation and its section 2b asserts it against both the
+  module and painted pixels (T264) - that is the oracle. A SECOND uncompared
+  copy over here is not a second oracle, it is the latent divergence T257 spent
+  a task deleting, and this card is what that divergence costs: a healthy
+  product reported as broken for a month. T770 still covers the two other
+  scripts holding private copies; they are correct today.
+
+  Green on this box: the script 15/15 (was 14/15), `-NegativeControl` still
+  exits 1, `floor-lane -Lane all` lib/none/win32/agent PASS, `-Lane harness`
+  ALL PASS (24 audits, 2 PENDING against T1568/T1123), IPC P1/P2/P3 PASS.
+
 - 2026-09-15: T765 closed done, T1590 + T1591 filed - **a config reload does not
   repaint the window; our own test camera does.**
 
