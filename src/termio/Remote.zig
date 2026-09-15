@@ -1090,6 +1090,16 @@ pub fn threadEnter(
             .px_w = @intCast(@min(self.screen_size.width, std.math.maxInt(u16))),
             .px_h = @intCast(@min(self.screen_size.height, std.math.maxInt(u16))),
         };
+        // T752: an OPEN that asked for a directory gets the same two-step the
+        // agent-reported ATTACH cwd below gets — terminal pwd AND the apprt's
+        // cached copy, the one `+list --json` reports and the one a session
+        // layout capture records. `initTerminal` already seeded the terminal
+        // half, but nothing told the surface, so the pane's directory was
+        // knowable only to whoever asked `core_surface.pwd()` and paid a
+        // terminal lock for it. That hole is what made the recorded directory
+        // survive exactly ONE restore: the restored pane opened in the right
+        // place and then recorded nothing, so the next restore lost it again.
+        if (self.working_directory) |cwd| attach_cwd = cwd;
         var refusal: protocol.RefusalCopy = .{};
         break :pane self.conn.openChannelRefusable(open, &self.canceller, &refusal) catch |err| {
             // The agent told us WHY it will not open this pane (T469). Keep the
@@ -1144,7 +1154,9 @@ pub fn threadEnter(
     // auto-relaunch (RELAUNCHED) — each filled `pane.pid`/`pane.tty`.
     self.publishProcessInfo(pane);
 
-    // Apply the agent-reported working directory (T166): set the terminal's
+    // Apply the working directory this bring-up resolved (T166): the one the
+    // agent reported for an ATTACH / relaunch, or the one our own OPEN asked
+    // for (T752). Set the terminal's
     // pwd (what `core_surface.pwd()` answers) and tell the surface (what keeps
     // the apprt's cached copy — the one `+list --json` actually reports —
     // from staying frozen on the initTerminal seed). Same two-step shape as

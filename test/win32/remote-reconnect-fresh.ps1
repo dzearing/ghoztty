@@ -27,6 +27,10 @@
 #      LIVE on the new transport. Liveness is the load-bearing half - a pane
 #      rebuilt as a frozen picture is byte-identical to a working one for every
 #      assertion that reads the screen (T532/T652).
+#   D  DIRECTORY (T752). The fresh shells come up in the directory the panes
+#      were in, asked of the shells themselves (a bare `cd`) rather than of
+#      ghoztty's own cache. Everything else about a pane already came back;
+#      until the manifest recorded a working directory, this did not.
 #
 # TEETH-CHECK: re-run with
 #     $env:GHOZTTY_TEST_LIVENESS_BREAK = '1'
@@ -152,6 +156,41 @@ function Window-Shape($w) {
     return "split:$($s.direction):$([math]::Round([double]$s.ratio, 2))"
 }
 
+# Where a pane's shell ACTUALLY is, asked of the shell rather than of ghoztty
+# (T752). A bare `cd` makes cmd.exe print its current directory, so this is
+# ground truth about the child process, not a read of the cache the app keeps -
+# which matters here because the cache is exactly what the fix writes into the
+# manifest, and a test that read it back would be checking our own bookkeeping
+# against itself.
+#
+# Returns the raw pane text; the caller matches the directory it expects. A
+# read that never shows a prompt-shaped answer returns '' and the assertion
+# fails, the same way the liveness probe treats silence.
+function Pane-Cwd([string]$target, [string]$tag, [int]$timeoutSec = 20) {
+    $out = Join-Path $tmp "cwd-$tag.txt"
+    Run-Cli "+send-keys --target=$target cd Enter" "$tmp\cwdsend-$tag.txt" 15 | Out-Null
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $rc = Run-Cli "+read --name=$target --lines=200" $out 12
+        if ($rc -eq 0) {
+            $text = Out-Text $out
+            # A drive-letter path ALONE on its line is `cd`'s answer. The prompt
+            # carries the same path (`C:\dir>cd`), so the `>` is what tells the
+            # answer from the question - without excluding it every read would
+            # "pass" by matching the prompt the shell was already showing. The
+            # LAST such line is this probe's answer rather than an earlier one.
+            $found = ''
+            foreach ($line in ($text -split "`r?`n")) {
+                $t = $line.Trim()
+                if ($t -match '^[A-Za-z]:\\[^>]*$') { $found = $t }
+            }
+            if ($found) { return $found }
+        }
+        Start-Sleep -Milliseconds 400
+    }
+    return ''
+}
+
 function Log-Has([string]$pattern) {
     if (-not (Test-Path $applog)) { return $false }
     return (@(Get-Content $applog -ErrorAction SilentlyContinue | Select-String -Pattern $pattern).Count -gt 0)
@@ -195,7 +234,14 @@ try {
 
     $before = @(Get-TestWindows -ProcessId $proc.Pid -Class 'GhozttyWindow' | ForEach-Object { $_.Hwnd })
 
-    $rc = Run-Cli "+new-remote-window --name=rw --host=127.0.0.1 --port=$Port" "$tmp\open.txt"
+    # T752: the window opens in a directory of OUR choosing, so "where did the
+    # fresh pane come up?" has an answer that is not the agent's own. The agent
+    # this script starts inherits the caller's directory, so a swap that carried
+    # no directory would land the panes there - a different path, which is what
+    # makes the D arms below able to fail.
+    $workdir = Join-Path $tmp 'workdir'
+    New-Item -ItemType Directory -Force $workdir | Out-Null
+    $rc = Run-Cli "+new-remote-window --name=rw --host=127.0.0.1 --port=$Port --working-directory=`"$workdir`"" "$tmp\open.txt"
     if ($rc -ne 0) { throw "SETUP FAIL: +new-remote-window exit $rc - $(Out-Text "$tmp\open.txt")" }
     Start-Sleep -Seconds 3
 
@@ -224,6 +270,19 @@ try {
             "C4 the second remote pane is LIVE before the drop"
     } else {
         Check $false "C3/C4 skipped: the two-pane control never came up"
+    }
+
+    # T752 control: both panes really are in the directory the window was
+    # opened with, BEFORE anything is dropped. Without this the D arms below
+    # could pass on a build that never carried a directory anywhere, simply
+    # because the agent happened to sit in the same place.
+    $cwd0 = ''
+    if ($ids0.Count -eq 2) {
+        $cwd0 = Pane-Cwd $ids0[0] 'c1'
+        Check ($cwd0 -ieq $workdir) `
+            "C5 the pane's shell is in the directory the window was opened with (got '$cwd0')"
+    } else {
+        Check $false "C5 skipped: the two-pane control never came up"
     }
 
     # --- A. automatic: the ladder's own retry must NOT open fresh shells ----
@@ -276,6 +335,24 @@ try {
             "B6 the second pane is LIVE on the new transport"
     } else {
         Check $false "B5/B6 skipped: the window did not come back with two panes"
+    }
+
+    # --- D. T752: the fresh shells come up WHERE THE PANES WERE --------------
+    # The whole pane came back before this - its place in the layout, its id,
+    # a live shell - and the one thing that decides whether it is immediately
+    # useful did not: the manifest recorded no working directory, so every
+    # OPEN took the agent's own. These panes are brand-new shells on a brand-new
+    # transport, so this is the recorded directory being spent, not a session
+    # that remembered anything for us.
+    if ($ids1.Count -eq 2) {
+        $d1 = Pane-Cwd $ids1[0] 'd1'
+        $d2 = Pane-Cwd $ids1[1] 'd2'
+        Check ($d1 -ieq $workdir) `
+            "D1 the first fresh pane opened where the pane was, not in the agent's directory (got '$d1')"
+        Check ($d2 -ieq $workdir) `
+            "D2 the second fresh pane opened where the pane was (got '$d2')"
+    } else {
+        Check $false "D1/D2 skipped: the window did not come back with two panes"
     }
 
     Write-Host ""

@@ -23,7 +23,8 @@
 //!      "tabs":[{"nodes":[{"split":{"layout":"horizontal","ratio":0.5,
 //!                                  "left":1,"right":2}},
 //!                        {"leaf":{"session_id":"<32hex>","pane_id":"<uuid>",
-//!                                 "title":..?,"banner":..?}},
+//!                                 "title":..?,"banner":..?,
+//!                                 "working_directory":..?}},
 //!                        {"leaf":{"session_id":"<32hex>"}}],
 //!               "color":"blue"?,"hero_ratio":..?,"title":..?,"active":true}]}]}
 //!
@@ -157,9 +158,30 @@ pub const Frame = struct {
 /// notice then filled the vacant slot — N distinct banners replaced by N copies
 /// of one sentence, which is what the user reported. Always null for a viewer
 /// leaf (`+set-banner` rejects viewers). Additive and optional in the usual way.
+///
+/// `working_directory` is the directory the pane's shell was sitting in when it
+/// was captured (T752) — the one piece of a pane that decides whether it comes
+/// back USEFUL. It matters only on the paths that OPEN a fresh shell rather than
+/// re-ATTACH to a living one: the launch-time restore of a leaf whose recorded
+/// session is gone, the local-agent in-place recovery of the same, and T611's
+/// fresh-session reconnect swap. Without it all three came up in the agent's own
+/// default directory while everything else about the pane — its place in the
+/// layout, its title, its banner, its name — came back exactly.
+///
+/// The value is native to the machine that RUNS the pane: for a cross-machine
+/// leaf it is a path on the other box (a POSIX path from a Mac or Linux agent),
+/// captured from the pane's own OSC 7 reporting, which is precisely what the
+/// agent OPEN wants. It must therefore never be reused as a local path. A
+/// recorded directory that no longer exists needs no rule here — the agent's
+/// spawn already falls back to the user's home (`pty_child.resolveSpawnCwd`,
+/// T230) and the local exec path already ignores an unreachable cwd and
+/// inherits, so a stale value costs the pane nothing. Always null for a viewer
+/// leaf (`viewer_origin_directory` is the viewer's own answer to this
+/// question). Additive and optional in the usual way.
 pub const Leaf = struct {
     session_id: ?[]const u8 = null,
     title: ?[]const u8 = null,
+    working_directory: ?[]const u8 = null,
     ipc_name: ?[]const u8 = null,
     pane_id: ?[]const u8 = null,
     banner: ?[]const u8 = null,
@@ -887,6 +909,53 @@ test "T422: a pre-banner manifest still loads, with a null banner" {
     const leaf = parsed.value.windows[0].tabs[0].nodes[0].leaf.?;
     try testing.expectEqualStrings("zsh", leaf.title.?);
     try testing.expect(leaf.banner == null);
+}
+
+test "T752: a pane's working directory round-trips, remote-native path intact" {
+    const alloc = testing.allocator;
+
+    // Two leaves on purpose: a windows-native path with backslashes (which the
+    // JSON has to escape and give back byte for byte) and a POSIX one, because
+    // a cross-machine leaf records the path as the machine that RUNS it spells
+    // it — that is the value the agent OPEN wants.
+    const nodes = [_]Node{
+        .{ .leaf = .{
+            .session_id = "0123456789abcdef0123456789abcdef",
+            .working_directory = "D:\\git\\ghoztty",
+        } },
+        .{ .leaf = .{
+            .session_id = "fedcba9876543210fedcba9876543210",
+            .working_directory = "/home/dave/src/ghoztty",
+        } },
+        .{ .leaf = .{ .session_id = "11111111111111111111111111111111" } },
+    };
+    const tabs = [_]Tab{.{ .nodes = &nodes, .active = true }};
+    const windows = [_]Window{.{ .id = "win-0", .tabs = &tabs }};
+
+    const body = try serialize(alloc, .{ .windows = &windows });
+    defer alloc.free(body);
+
+    var parsed = try parse(alloc, body);
+    defer parsed.deinit();
+    const leaves = parsed.value.windows[0].tabs[0].nodes;
+    try testing.expectEqualStrings("D:\\git\\ghoztty", leaves[0].leaf.?.working_directory.?);
+    try testing.expectEqualStrings("/home/dave/src/ghoztty", leaves[1].leaf.?.working_directory.?);
+    // A pane with no directory to record writes none rather than an empty
+    // string, so a restore asks for the agent's default the way it always did.
+    try testing.expect(leaves[2].leaf.?.working_directory == null);
+}
+
+test "T752: a pre-working-directory manifest still loads, with a null directory" {
+    const alloc = testing.allocator;
+    const body =
+        \\{"version":1,"windows":[{"id":"win-0","active_tab":0,
+        \\"tabs":[{"nodes":[{"leaf":{"session_id":"aaaa","title":"pwsh"}}],"active":true}]}]}
+    ;
+    var parsed = try parse(alloc, body);
+    defer parsed.deinit();
+    const leaf = parsed.value.windows[0].tabs[0].nodes[0].leaf.?;
+    try testing.expectEqualStrings("pwsh", leaf.title.?);
+    try testing.expect(leaf.working_directory == null);
 }
 
 test "T109: snapshot budget rejects an oversized pane and stops at the file ceiling" {

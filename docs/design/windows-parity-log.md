@@ -9,6 +9,59 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-15: T752 closed done, T1583 + T1584 filed - **a pane that has to start
+  its shell over comes back in the folder you were working in.** When a pane's
+  shell cannot be re-attached to - the machine rebooted, the agent restarted,
+  you clicked Reconnect - everything about the pane came back except the one
+  thing that decides whether it is immediately useful: its place in the layout,
+  its title, its banner, its name, and then a shell sitting in the agent's own
+  directory (`C:\WINDOWS\system32` for the agent the Run entry starts).
+
+  The manifest simply never recorded a working directory, so
+  `restoreAttachOverride` had nothing to put in `Overrides.remote
+  .working_directory` on any of the three paths that OPEN rather than ATTACH.
+  What landed: an additive `working_directory` on `session_layout.Leaf`;
+  `captureLeaf` fills it from the same two readers `+list` uses in the same
+  order (the shell process's real cwd, then the OSC-7 cache) so a capture still
+  takes no terminal mutex - it runs on the UI thread on every topology change,
+  which is where T412 measured what a lock there costs.
+
+  **Restore spends it only on the OPEN path**, the rule the T109 snapshot
+  already follows. On a live re-attach the value would instead seed the pane's
+  reported pwd with a capture-time path the surviving shell may have left hours
+  ago, and a dead-but-relaunchable tombstone gets a fresher answer from the
+  agent itself. A stale directory needed no new rule at all: the agent's
+  `resolveSpawnCwd` (T230) already falls back to the user's home and the local
+  exec spawn already ignores an unreachable cwd and inherits.
+
+  One thing the work turned up: the recorded directory would have survived
+  exactly ONE restore. `termio.Remote` seeded the TERMINAL's pwd from an OPEN's
+  cwd and told the apprt nothing, so a restored pane opened in the right place
+  and then recorded nothing for the next restore. The OPEN path now does the
+  same two-step T166 does for the agent-reported ATTACH cwd, which also means
+  `+list --json` reports a freshly-opened remote pane's directory immediately
+  instead of after somebody pays for a cache miss.
+
+  Validation: `test\win32\remote-reconnect-fresh.ps1` grew arm D, which asks
+  the SHELL where it is (a bare `cd`) rather than reading our own cache back -
+  15/15 green. Its teeth were demonstrated, not assumed: with the capture
+  stubbed to record nothing, the two D arms and only the two D arms went red,
+  with the fresh panes in `D:\git\ghoztty` (the agent's inherited directory) -
+  the reported defect, reproduced on demand. Plus unit tests for the
+  open-vs-attach rule, the JSON round-trip of a windows and a POSIX path, and a
+  pre-T752 manifest; all four floor lanes green.
+
+  Two follow-ups. **T1583**: a cross-machine pane's recorded directory goes
+  stale, because ghoztty injects no shell integration over a dialed connection -
+  a remote `cmd.exe` never reports OSC 7 and there is no local pid to read, so a
+  `cd` tells the app nothing. The agent already knows (it reads the child's OS
+  cwd for `GET_CWD` and every `SESSIONS` row), so the fix is a `META{cwd}` push
+  sampled the way `foreground_pid` is - not a capture-time RPC. **T1584** is the
+  Mac half: `SessionLayoutManifest.Leaf` records no working directory either.
+  The Windows reader is already waiting for it - `mac_layout_blob.zig` maps
+  `workingDirectory` today, so a Mac window restored on Windows starts honouring
+  it the moment the Mac seat writes one.
+
 - 2026-09-15: T742 closed done, T1579 filed - **the palette and the find bar
   can no longer reach into the terminal underneath them.** One window procedure
   serves three windows - the terminal child HWND, the search-bar popup and the

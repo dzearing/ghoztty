@@ -306,6 +306,13 @@ fn leafFrom(v: std.json.Value) session_layout.Leaf {
         .session_id = str(obj.get("sessionID")),
         .title = str(obj.get("title")),
         .ipc_name = str(obj.get("ipcName")),
+        // T752: where the pane was working, for the leaves that have to OPEN a
+        // fresh shell rather than re-attach. A Mac-lineage blob describes
+        // sessions running on THAT machine, so its POSIX path is native to the
+        // agent this restore opens against — the same rule the win32 side
+        // records under. Absent in every blob written before the Mac seat adds
+        // the field, which is simply today's behavior.
+        .working_directory = str(obj.get("workingDirectory")),
         // Mac's surface uuid IS the pane's stable ghoztty-owned id — the value
         // baked into the still-running shell as `$GHOZTTY_PANE_ID`. It has to
         // round-trip or the re-attached pane cannot address itself.
@@ -569,6 +576,30 @@ test "T337: a viewer leaf keeps every field its restore re-opens from" {
     try testing.expectEqualStrings("/Users/x/repo", leaf.viewer_origin_directory.?);
     try testing.expectEqualStrings("pane-v", leaf.pane_id.?);
     try testing.expect(leaf.session_id == null);
+}
+
+test "T752: a Mac leaf's working directory crosses as the remote-native path it is" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // The sessions this blob describes run on the MAC, so its POSIX path is
+    // native to the agent a restore of these leaves opens against.
+    const entry = try translate(arena,
+        \\{"id":"e","tree":{"leaf":{"_0":{"sessionID":"s1",
+        \\ "workingDirectory":"/Users/x/src/ghoztty"}}}}
+    );
+    try testing.expectEqualStrings(
+        "/Users/x/src/ghoztty",
+        entry.nodes[0].leaf.?.working_directory.?,
+    );
+
+    // Every blob written before the Mac seat records one: absent, which is the
+    // agent's own default and exactly today's behavior.
+    const older = try translate(arena,
+        \\{"id":"e","tree":{"leaf":{"_0":{"sessionID":"s1"}}}}
+    );
+    try testing.expect(older.nodes[0].leaf.?.working_directory == null);
 }
 
 test "T337: the WP-D3 snapshot pair is dropped, and a banner is not" {

@@ -2511,6 +2511,9 @@ fn captureLeaf(
     return .{
         .session_id = if (sid) |s| try arena.dupe(u8, s) else null,
         .title = if (surface.getTitle()) |t| try arena.dupe(u8, t) else null,
+        // T752: where this pane's shell is sitting, so a leaf that has to OPEN
+        // a fresh shell comes back in the folder the user was working in.
+        .working_directory = try captureLeafWorkingDirectory(arena, surface),
         .ipc_name = if (ipc_name) |n| try arena.dupe(u8, n) else null,
         // T422: the banner's raw markdown source. App-side overlay state that
         // no PTY replay carries, so the manifest is its only way back.
@@ -2524,6 +2527,31 @@ fn captureLeaf(
         .screen_snapshot = snap.data,
         .screen_snapshot_offset = snap.offset,
     };
+}
+
+/// Where one terminal leaf's shell is sitting, for the manifest (T752), or null
+/// when the pane has no directory to record.
+///
+/// Same two readers `+list` uses, in the same order and for the same reasons
+/// (T111b/T185): the OS-level cwd of the shell process first — the live answer
+/// for a shell that never reports OSC 7, `cmd.exe` above all, whose cached pwd
+/// is frozen at its STARTING directory and would record a `cd`-away pane in the
+/// wrong place — then the pushed OSC-7 cache. Neither takes a terminal mutex, so
+/// a capture costs the same on a flooded pane as on an idle one: this runs on
+/// the UI thread on every topology change, which is the one place T412 measured
+/// a capture freezing the window.
+///
+/// `livePwd` answers only for a pane whose shell is on THIS box (a local exec
+/// pane, or one riding the local persistence agent), which is exactly right: the
+/// recorded value must be native to the machine that runs the pane, and for a
+/// cross-machine pane that is the remote's own OSC-7 report.
+fn captureLeafWorkingDirectory(arena: Allocator, surface: *Surface) !?[]const u8 {
+    if (surface.livePwd(arena)) |live| {
+        if (live.len > 0) return live;
+    }
+    const cached = surface.pwd orelse return null;
+    if (cached.len == 0) return null;
+    return try arena.dupe(u8, cached);
 }
 
 /// One leaf's captured WP-D3 pair, base64'd and ready for the manifest. Both
@@ -3083,6 +3111,33 @@ test "leafAttachSessionId applies the one attach rule (T411 counts what restore 
         leafAttachSessionId(.{ .kind = "viewer", .session_id = "alive-1" }, &set) == null,
     );
     try std.testing.expect(leafAttachSessionId(.{}, &set) == null);
+}
+
+test "T752 a restored leaf that OPENs a fresh shell opens where the pane was" {
+    const leaf: session_layout.Leaf = .{
+        .session_id = "gone-1",
+        .working_directory = "D:\\git\\ghoztty",
+    };
+
+    // The reported defect: the recorded session is gone, so this leaf OPENs —
+    // and before this it opened in the agent's default directory (the HKCU Run
+    // entry's `C:\WINDOWS\system32`) while the rest of the pane came back.
+    try std.testing.expectEqualStrings(
+        "D:\\git\\ghoztty",
+        restoreOpenWorkingDirectory(leaf, null).?,
+    );
+
+    // Re-ATTACHing to a LIVING session: the shell has been running without us
+    // and knows where it is. Seeding it with a capture-time path would report a
+    // directory it may have left hours ago.
+    try std.testing.expect(restoreOpenWorkingDirectory(leaf, "alive-1") == null);
+
+    // A manifest written before this field existed restores exactly as it did.
+    try std.testing.expect(restoreOpenWorkingDirectory(.{ .session_id = null }, null) == null);
+    // And an empty recorded value is not a directory.
+    try std.testing.expect(
+        restoreOpenWorkingDirectory(.{ .working_directory = "" }, null) == null,
+    );
 }
 
 test "restoreViewerOpen carries the recorded pane id across the restore (T591)" {
@@ -4025,8 +4080,14 @@ fn restoreAttachOverride(
     // No connection (T398): there is nothing to ATTACH over, so this leaf opens
     // as a plain local ConPTY pane. It still ADOPTs its recorded pane id — the
     // id is ghoztty's own, not the agent's, and dropping it would break every
-    // `--target=$GHOZTTY_PANE_ID` the pane's own processes were baked with.
-    const conn = tr.conn orelse return .{ .pane_id = leaf.pane_id };
+    // `--target=$GHOZTTY_PANE_ID` the pane's own processes were baked with —
+    // and it still opens where the pane was (T752). A recorded directory that
+    // has since been deleted costs nothing here: the exec spawn already logs it
+    // and inherits instead of failing the pane.
+    const conn = tr.conn orelse return .{
+        .pane_id = leaf.pane_id,
+        .working_directory = leaf.working_directory,
+    };
 
     const sid: ?[]const u8 = leafAttachSessionId(leaf, attach);
     // T109: the recorded screen goes with the SESSION we are re-attaching to.
@@ -4044,6 +4105,7 @@ fn restoreAttachOverride(
             .connection = conn,
             .local_agent = tr.local_agent,
             .session_id = sid,
+            .working_directory = restoreOpenWorkingDirectory(leaf, sid),
             .restore_snapshot = if (snap) |s| s.data else null,
             .restore_offset = if (snap) |s| s.offset else 0,
             // T422: `restoreLeafPresentation` puts this banner back on the GUI
@@ -4054,6 +4116,29 @@ fn restoreAttachOverride(
             .pane_banner_restored = if (leaf.banner) |b| b.len > 0 else false,
         },
     };
+}
+
+/// The cwd a restored leaf's remote OPEN should carry (T752): the directory the
+/// pane was recorded in, and only on the path that actually OPENs a shell.
+///
+/// The same rule `decodeLeafSnapshot` is applied under, for a related reason.
+/// This value is the OPEN's cwd; on an ATTACH it would instead seed the pane's
+/// reported pwd (`termio.Remote.threadEnter`) with a capture-time path the
+/// still-living shell may have `cd`'d away from hours ago — a restore has no
+/// business telling a session that outlived it where it is. A
+/// dead-but-relaunchable tombstone (`sid` set, the agent respawns) needs nothing
+/// from us either: the agent reports that session's OWN last cwd and the
+/// relaunch opens there, which is a fresher answer than the manifest's.
+///
+/// A leaf from a pre-T752 manifest records none and this is null — the agent's
+/// default, i.e. exactly today's behavior.
+fn restoreOpenWorkingDirectory(
+    leaf: session_layout.Leaf,
+    sid: ?[]const u8,
+) ?[]const u8 {
+    if (sid != null) return null;
+    const wd = leaf.working_directory orelse return null;
+    return if (wd.len > 0) wd else null;
 }
 
 /// A decoded WP-D3 pair, pointing into the App's single decode scratch.
