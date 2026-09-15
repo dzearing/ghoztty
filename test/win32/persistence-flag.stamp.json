@@ -1,10 +1,10 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-09-14T15:58:20-07:00",
-    "commit":  "63ee109f5",
+    "generated":  "2026-09-14T17:55:22-07:00",
+    "commit":  "443bcce68",
     "uncommitted":  [
-                        "test/win32/harness-floor.ps1"
+                        "test/win32/test-filter-guard.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -274,7 +274,7 @@
                   "test/win32/test-client-build.ps1":  "4151eff034e0de3acacf2e176c97702fd757f2c83f863476a115da9dc34e7b2b",
                   "test/win32/test-desktop-harness.ps1":  "0a85fed78368138ff6c9672ca12b46fb57f7110de9e191cdbd52353e0698e1f9",
                   "test/win32/test-desktop-spike.ps1":  "fe210e65c149640f7641882b23be4f13d9ec43be05d0b1347de88576950d7b54",
-                  "test/win32/test-filter-guard.ps1":  "96f23e57b5d856f7b3879ef4d675eea53f6152ca7c49fa51b210661f461e66a7",
+                  "test/win32/test-filter-guard.ps1":  "8804ee177e925a2cdfbc14a75f80ec01b217378a80025b55c80d7831c2beec00",
                   "test/win32/test-reach-audit.ps1":  "9987988dde78037ac8545dd70de97e50d2d9312bca3e9c0ee89d0be955eb638e",
                   "test/win32/thread-join-audit.ps1":  "636191df9344abe883a41479504bef2f67fae58e0fff5e609c3050ca793ce219",
                   "test/win32/title-font.ps1":  "946fd12880bb0433a535283fb6146fb7d2a8fd1b2d1f0f74e00fa7ce1720dcb8",

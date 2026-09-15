@@ -4,11 +4,14 @@
 #   powershell -NoProfile -File test\win32\test-filter-guard.ps1
 #   powershell -NoProfile -File test\win32\test-filter-guard.ps1 -NegativeControl
 #
-# Non-interactive and launches no GUI: the subject is `zig build` itself. Every
-# section runs the real `test` step of THIS repo, on the `none` runtime because
-# it is the cheapest of the four and the guard is runtime-independent (the
-# wiring in build.zig is one collector per top-level step, not per runtime).
-# Builds are cached, so a repeat run is seconds.
+# Non-interactive and launches no GUI: the subject is `zig build` itself.
+# Sections A-E run the real `test` step of THIS repo on the `none` runtime,
+# because it is the cheapest of the four and the guard is runtime-independent
+# (the wiring in build.zig is one collector per top-level step, not per
+# runtime). Section F is the exception and uses `win32`: T733's subject is a
+# win32-only module, and the whole value of that section is that it is the
+# measurement that was actually made. Builds are cached, so a repeat run is
+# seconds.
 #
 # Section D is the part that makes the rest evidence rather than ceremony: the
 # same nonsense filter that must FAIL here is shown to have exited 0 with an
@@ -44,7 +47,7 @@ function Assert($name, $cond) {
 # is what every assertion below reads -- never the exit code alone, because the
 # whole defect being guarded against is an exit code that lies.
 function Invoke-ZigBuild {
-    param([string[]]$BuildArgs, [string]$Tag)
+    param([string[]]$BuildArgs, [string]$Tag, [switch]$DumpNames)
 
     $log = Join-Path $tmp "$Tag.log"
     # The cache MUST be on the repo's drive (T243) or the build runner panics
@@ -52,7 +55,10 @@ function Invoke-ZigBuild {
     # on the same drive the sweeper measures (T1431).
     $cacheDir = (Split-Path $Repo -Qualifier) + '\zig-global-cache'
     $argLine = ($BuildArgs -join ' ')
-    $cmd = "set `"ZIG_GLOBAL_CACHE_DIR=$cacheDir`" && cd /d `"$Repo`" && zig build $argLine > `"$log`" 2>&1"
+    # T733: the name dump is an env var on the guard step, so it has to be set
+    # for the build runner rather than passed on the command line.
+    $dump = if ($DumpNames) { 'set "GHOZTTY_TEST_FILTER_DUMP=1" && ' } else { '' }
+    $cmd = "set `"ZIG_GLOBAL_CACHE_DIR=$cacheDir`" && ${dump}cd /d `"$Repo`" && zig build $argLine > `"$log`" 2>&1"
     & cmd.exe /c $cmd | Out-Null
     $code = $LASTEXITCODE
     $text = if (Test-Path -LiteralPath $log) { (Get-Content -LiteralPath $log -Raw) } else { '' }
@@ -146,6 +152,46 @@ $testingDoc = Get-Content -LiteralPath (Join-Path $Repo 'docs\claude\testing.md'
 Assert "E4 docs/claude/testing.md states the filtered-lane rule" `
     ($testingDoc -match 'matches NOTHING now fails')
 Assert "E5 and points at this script" ($testingDoc -match 'test-filter-guard\.ps1')
+Assert "E6 and warns that a filter written from a printed name may select nothing" `
+    ($testingDoc -match 'GHOZTTY_TEST_FILTER_DUMP')
+
+# ============================================================================
+"== F: a filter written from a REAL test's printed name is honoured or refused"
+# ============================================================================
+# T733's own measurement, kept as a standing check. On 2026-08-11
+# `zig build test -Dapp-runtime=win32 -Dtest-filter=T64` exited 0 in silence
+# over a tree whose T64 predicate was deliberately broken, and the unfiltered
+# lane caught it at once. The cause is that zig's compile-time matching is NOT
+# a plain substring of the name the runner prints: measured on 0.15.2,
+# `VK_PACKET` compiles in none of the tests of
+# src\apprt\win32\translate_policy.zig, though one of them is printed as
+# `apprt.win32.translate_policy.test.T64: VK_PACKET is translated even on a
+# terminal surface`.
+#
+# What is asserted is therefore the INVARIANT, not zig's rule: such a filter
+# either runs those tests or fails loudly. A zig release that starts matching
+# the printed name keeps this section green rather than breaking it, which is
+# the point - the caller never has to know which world they are in.
+$namedFilter = 'VK_PACKET'
+$f = Invoke-ZigBuild -Tag 'f-printed-name' -BuildArgs @(
+    'test', '-Dapp-runtime=win32', "-Dtest-filter=$namedFilter", '--summary', 'all'
+)
+$fRefused = ($f.Exit -ne 0) -and ($f.Log -match 'matched no tests')
+$fHonoured = ($f.Exit -eq 0) -and ($f.Log -match 'test-filter guard \(test\)\s+success')
+Assert "F1 the run is never a silent green: it either matched or it said so" `
+    ($fRefused -or $fHonoured)
+"  (observed: $(if ($fRefused) { 'REFUSED - zig matched none of them' } else { 'honoured' }))"
+
+# The module segment is the filter shape that works today, and it is the one
+# the diagnostic recommends - so prove the recommendation is not folklore.
+$g = Invoke-ZigBuild -Tag 'g-module-name' -DumpNames -BuildArgs @(
+    'test', '-Dapp-runtime=win32', '-Dtest-filter=translate_policy', '--summary', 'all'
+)
+Assert "F2 filtering by the module segment does select its tests" ($g.Exit -eq 0)
+Assert "F3 and GHOZTTY_TEST_FILTER_DUMP names them" `
+    ($g.Log -match 'test-filter: apprt\.win32\.translate_policy\.test\.')
+Assert "F4 the dump is off without the env var" `
+    (-not ($b.Log -match 'test-filter: '))
 
 ""
 if ($NegativeControl -and -not $script:negReached) {

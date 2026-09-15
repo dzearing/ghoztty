@@ -28970,3 +28970,50 @@ one way that matters - with the README moved aside it scores 5 FAILURE(S) with F
 naming all 23 undocumented audits; `-NegativeControl` still scores exactly 1.
 The harness floor lane PASS over 23 audits, all four zig lanes PASS, ipc-p1/p2/p3
 ALL PASS.
+
+## 2026-09-14 - The shortcut for running one test now says what it actually ran (T733)
+
+`zig build test -Dtest-filter=<x>` is the cheap way to check one test instead of
+waiting six minutes for the lane. On 2026-08-11 it exited 0 with no output at all
+over a tree whose T64 keyboard predicate had been deliberately broken - the
+unfiltered lane failed on it immediately - and that is what T733 was filed for.
+
+The cause is named now, from evidence rather than theory. This change adds
+`GHOZTTY_TEST_FILTER_DUMP=1`, which prints every test name the built binaries
+actually contain; those names exist only in the run's test metadata, so until now
+there was no way to ask. Under `-Dtest-filter=VK_PACKET` the win32 binary contains
+ZERO named tests - only the 83 unnamed `_ = @import(...)` aggregators, which are
+compiled in whatever the filter says and all pass. That is the whole of the
+"exit 0, zero output".
+
+Why none were selected is the surprise: zig 0.15.2's compile-time matching is not
+a plain substring of the name the runner prints. `translate_policy` selects all
+nine tests of that module; `T64:`, `VK_PACKET`, `win32.translate_policy` and even
+the entire printed name `apprt.win32.translate_policy.test.T64: VK_PACKET is
+translated even on a terminal surface` each select none. For `viewer_bridge.zig`
+in the same directory the documented rule holds exactly. That difference is not
+explained, and is filed as T1573 with the measurement table and the first
+hypothesis to test.
+
+Nothing is silently green in the meantime, which is the part that matters: T631's
+build-side guard already fails a filter that matched nothing, and it was verified
+here against T733's own command - `-Dtest-filter=VK_PACKET` exits 1 saying so,
+where in August it exited 0 in silence. So the caller never has to know zig's rule,
+only to be told when they missed it. The diagnostic now says what to type instead
+(a module or file segment) and names the dump.
+
+One limit is recorded rather than papered over: the guard answers "did anything
+match", not "did what you meant match". `-Dtest-filter=T64` - T733's own command -
+is green today because `apprt.win32.viewer_bridge.test.T641: ...` happens to match
+it, which is a different test from the four the caller had in mind. Nothing can
+close that from the build side; the dump is how you check.
+
+Evidence: `test-filter-guard.ps1` ALL PASS (26 assertions, was 21) with section F
+observing `REFUSED - zig matched none of them`; `-NegativeControl` scores exactly
+1. Negative control on the product side: with the `VK_PACKET` arm dropped from
+`translate_policy.skipTranslate`, `-Dtest-filter=translate_policy` fails naming
+the two tests, so a filtered run does catch it - while `-Dtest-filter=VK_PACKET`
+over the same broken tree does not, and fails as matched-nothing instead. All four
+zig lanes PASS.
+
+Filed: T1573 (pin down zig's real filter rule, or record it as zig's).

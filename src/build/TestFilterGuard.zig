@@ -39,6 +39,29 @@
 //!
 //! The unfiltered lane is untouched: no filters, no guard step, no change to
 //! run caching.
+//!
+//! **What a filtered run does NOT prove** (T733). The guard reports what the
+//! binary CONTAINS, which is the only honest signal available here — it is not
+//! a model of zig's own matching, and measured on 0.15.2 the two disagree. The
+//! compile-time filter does not behave as a plain substring of the name the
+//! runner prints: `-Dtest-filter=translate_policy` compiles all nine tests of
+//! `src/apprt/win32/translate_policy.zig` in, while `VK_PACKET`, `T64:`,
+//! `win32.translate_policy` and even the whole printed name
+//! `apprt.win32.translate_policy.test.T64: VK_PACKET is translated even on a
+//! terminal surface` each compile in NONE of them. That is exactly the shape
+//! T733 recorded on 2026-08-11 — a `-Dtest-filter=T64` run that exited 0 in
+//! silence over a deliberately broken predicate the unfiltered lane caught at
+//! once. `-Dtest-filter=VK_PACKET` over that same broken tree fails here today
+//! instead of lying, which is the whole point: the caller does not have to know
+//! zig's rule, only to be told when they missed it. Filter by a module or file
+//! segment, and dump the binary's real test names with
+//! `GHOZTTY_TEST_FILTER_DUMP=1` when a filter surprises you.
+//!
+//! The limit to hold on to: this guard answers "did anything match", not "did
+//! what you MEANT match". `-Dtest-filter=T64` is green today because
+//! `apprt.win32.viewer_bridge.test.T641: …` matches it — a different test
+//! entirely from the four the caller had in mind. Nothing can close that gap
+//! from here; the dump is how you check.
 
 const TestFilterGuard = @This();
 
@@ -170,10 +193,27 @@ pub const Collector = struct {
     }
 };
 
+/// `GHOZTTY_TEST_FILTER_DUMP=1` prints every test name the guarded binaries
+/// actually contain, one per line, before the verdict (T733).
+///
+/// This is the tool that answers the only question a matched-nothing failure
+/// leaves open — *what would have matched?* — and it is here rather than in a
+/// script because the names live in the run's test metadata and nowhere on
+/// disk. It was worth building: it is what established that under
+/// `-Dtest-filter=VK_PACKET` the win32 binary contains ZERO named tests, even
+/// though `apprt.win32.translate_policy.test.T64: VK_PACKET is translated even
+/// on a terminal surface` is a test the unfiltered lane runs and prints under
+/// exactly that name. Read `docs/claude/testing.md` before concluding anything
+/// from a filter you wrote out of a failure message.
+fn dumpNames() bool {
+    return std.process.hasEnvVarConstant("GHOZTTY_TEST_FILTER_DUMP");
+}
+
 fn make(step: *Step, options: Step.MakeOptions) anyerror!void {
     _ = options;
     const self: *TestFilterGuard = @fieldParentPtr("step", step);
     const b = step.owner;
+    const dump_names = dumpNames();
 
     var observations: [max_runs]Observation = undefined;
     for (self.runs, 0..) |run, i| {
@@ -183,6 +223,9 @@ fn make(step: *Step, options: Step.MakeOptions) anyerror!void {
         };
         var matched: u32 = 0;
         for (0..meta.names.len) |n| {
+            if (dump_names) {
+                std.debug.print("test-filter: {s}\n", .{meta.testName(@intCast(n))});
+            }
             if (nameMatches(meta.testName(@intCast(n)), self.filters)) matched += 1;
         }
         observations[i] = .{ .matched = matched };
@@ -205,9 +248,12 @@ fn make(step: *Step, options: Step.MakeOptions) anyerror!void {
         \\  {d} test binar{s} ran, and not one named test in them matched.
         \\A filtered run that matches nothing still exits 0 — the unnamed
         \\`test {{}}` aggregators are compiled in whatever the filter says — so
-        \\it is indistinguishable from "matched and passed". Check the filter
-        \\against the test's fully-qualified name (`<module>.test.<name>`), or
-        \\drop the filter and run the whole lane.
+        \\it is indistinguishable from "matched and passed".
+        \\The name a failure PRINTS is not reliably the string the compiler
+        \\filtered on (T733): filter by the module or file segment
+        \\(`-Dtest-filter=translate_policy`) rather than by the words of the
+        \\test's own title. `GHOZTTY_TEST_FILTER_DUMP=1` lists the test names
+        \\the binaries really contain. Or drop the filter and run the lane.
     , .{
         self.label,
         joined.items,

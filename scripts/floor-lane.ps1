@@ -100,6 +100,18 @@
     Run each lane this many times (T430's validation asks for 10 consecutive
     clean runs). A failing or wedged run stops the repeat.
 
+.PARAMETER Filter
+    Narrow the zig lanes to the tests matching this `-Dtest-filter` pattern.
+
+    Write it as a MODULE or FILE segment (`translate_policy`, `viewer_bridge`),
+    not as words out of the test's title: zig's compile-time matching is not the
+    plain substring of the name a failure prints, and a title-shaped filter
+    routinely selects nothing (T733). Nothing is silently proved when it does --
+    the T631 guard fails such a run instead of exiting 0 -- and
+    `GHOZTTY_TEST_FILTER_DUMP=1` lists the names the binaries really contain.
+    A filtered run only ever proves something about the tests it compiled in;
+    the floor is the unfiltered lane. See docs\claude\testing.md.
+
 .OUTPUTS
     One `LANE <name> <RESULT> ...` line per run and a final summary line.
     Exit code: 0 all passed, 1 a lane failed, 2 a lane wedged, 3 a lane hit the

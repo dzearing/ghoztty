@@ -62,6 +62,37 @@ routinely matches in one of a step's binaries and not the others. The
 unfiltered lane grows no step and is unchanged. `src\build\TestFilterGuard.zig`
 carries the rule; acceptance: `test\win32\test-filter-guard.ps1`.
 
+**So write the filter as a MODULE name, not as the words of the test** (T733).
+A filtered run proves only that the tests the compiler chose to compile in
+passed — and zig's choice is not the plain substring of the name the runner
+prints, whatever the failure output suggests. Measured on 0.15.2:
+`-Dtest-filter=translate_policy` compiles in all nine tests of
+`src\apprt\win32\translate_policy.zig`, while `T64:`, `VK_PACKET`,
+`win32.translate_policy` and even the entire printed name
+`apprt.win32.translate_policy.test.T64: VK_PACKET is translated even on a
+terminal surface` each compile in **none** of them. That is the 2026-08-11
+observation T733 was filed for: `-Dtest-filter=T64` exited 0 with no output
+over a deliberately broken predicate that the unfiltered lane failed on
+immediately. Two things follow, and neither asks you to know zig's rule:
+
+- Reach for the **module or file segment** (`translate_policy`, `viewer_bridge`)
+  when a title-shaped filter comes back suspiciously quiet.
+- **`GHOZTTY_TEST_FILTER_DUMP=1`** on any filtered build prints
+  `test-filter: <name>` for every test the binaries really contain, which is
+  the only place those names exist — they are in the run's metadata, not on
+  disk. It is what established the paragraph above.
+
+The guard is what makes this survivable rather than something to remember: a
+filter that selects nothing now fails the build instead of exiting 0, so the
+worst case is a wasted minute, not a green run over code nobody executed. Its
+limit is worth knowing — it answers *did anything match*, not *did what you
+meant match*. `-Dtest-filter=T64`, T733's own command, is green today because
+`apprt.win32.viewer_bridge.test.T641: …` matches it, which is a different test
+from the four the caller had in mind. The dump is how you check that.
+Section F of `test-filter-guard.ps1` holds the invariant — such a filter is
+honoured or refused, never silently green — so a zig release that starts
+matching the printed name keeps the section green rather than breaking it.
+
 **And a red lane says whether it is the code or the box** (T1170). A lane that
 fails is re-run immediately, narrowed to the tests it blamed, and the summary
 carries the answer: `agent#1=FAIL [alone: PASS alone - NOT reproduced ->
