@@ -9,6 +9,47 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-16: T1609 closed done; T1612 filed - **the test that proves a `--command=` pane is a persistent one was failing by asking a fraction of a second too early.**
+
+  Control arm G of `test\win32\ipc-command-keepalive.ps1` - "the `--command=`
+  pane carries a `session_id`" - had been red on and off, and the card read that
+  the way anyone would: those panes had dropped off session persistence onto the
+  plain-ConPTY fallback, so they would not survive a restart AND the whole
+  keepalive suite was covering the one path T468 never broke. Measured on box
+  over fifteen cold starts (agent killed first) rather than reasoned from the
+  diff, none of that is true. The pane is agent-backed every run - `shared
+  local-agent connection ready` in the app log, every time. The arm was reading
+  the `+list` snapshot taken the instant `+new-window` returned, and the pane's
+  session id is published **250-774 ms after** it: the immediate read came back
+  empty 11 times in 15, and a retried read found the id 15 times in 15.
+
+  So the arm polls now (`Wait-SessionId`, a 15s bound against a sub-second
+  reality), which is what makes it a control again rather than a coin flip - a
+  plain-ConPTY pane never publishes an id, so the wait times out and the arm goes
+  red for exactly the reason it exists.
+
+  And it has now been WATCHED doing that, which is the half the old shape never
+  had (T1133). New arm G2 is the negative twin: a second app instance, on its own
+  pipe so it is addressable apart from the one under test, launched
+  `--session-persistence=false`. Its `--command=` pane runs the command and stays
+  alive - so "no session_id" cannot be read as "no pane" - and carries no session
+  id after the same wait arm G gets. That is the future arm G exists to notice,
+  constructed instead of trusted.
+
+  Filed **T1612** for the product half, which is real and not a test artifact:
+  `+new-window` answers before the agent OPEN that binds the pane to a session
+  completes, so a script that opens a window and then asks `+list --json` for its
+  session id gets nothing most of the time, and nothing in `docs/claude/cli.md`
+  says it has to poll. The `Wait-SessionId` helper is the workaround, not the fix.
+
+  Evidence: 15 cold starts on a scratch probe (agent killed, app relaunched,
+  `+new-window --command=` then `+list --json`) - the immediate read empty 11/15,
+  the polled read present 15/15, latencies 247/253/256/256/259/259/774/523 ms and
+  four warm 0s. `ipc-command-keepalive.ps1` ALL PASS (2 SKIPPED: pwsh/nu not on
+  this box), with all four G2 assertions green. `floor-lane.ps1 -Lane all` ALL
+  LANES PASS (lib/none/win32/agent); `-Lane harness` PASS, 384 files re-stamped;
+  P1 26 / P2 20 / P3 16 ALL PASS.
+
 - 2026-09-16: T1601 closed done - **a `--command=` can carry a quoted path again, so a script in a folder with a space in it will actually run.**
 
   The contract, now written down beside `--command=` for both platforms:

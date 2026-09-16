@@ -1,11 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-16T08:21:14-07:00",
-    "commit":  "dd9ec8e6b",
+    "generated":  "2026-09-16T09:21:56-07:00",
+    "commit":  "ea61a48c1",
     "uncommitted":  [
-                        "test/win32/ipc-command-keepalive.ps1",
-                        "test/win32/soak.ps1"
+                        "test/win32/ipc-command-keepalive.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -215,7 +214,7 @@
                   "test/win32/install-restart.ps1":  "de177617c75601d68cbaad12d1a10f9275802bbbec07a4f23515d5306d302895",
                   "test/win32/install-walkthrough.ps1":  "9f14cee383dc602cdd9d4888f5b3895160e623e7baed2f5cee8f14749a275a3e",
                   "test/win32/ipc-child-exited.ps1":  "d976a5172b4773f582972eedc3fa1b00bb1c03f5c33eeb5efc06e5d52542112b",
-                  "test/win32/ipc-command-keepalive.ps1":  "6411a7b8de783eb5c6e932aa26cb4ed789833b33f71fe605a7d7bfc24d112b26",
+                  "test/win32/ipc-command-keepalive.ps1":  "ba23f0c0d0ed404ef6999e9588e75002efa1bbec8b3756659920acbd5db3bd7a",
                   "test/win32/ipc-fake-server.ps1":  "d8a18c722615e1ca8582e804d794886cb7734a9eb084f87add9d411b285a689b",
                   "test/win32/ipc-floor-setup.ps1":  "2e61ec25a39e23d5be37f5deb7d6014f441dd4bc1f31924ad8b885e605aa673c",
                   "test/win32/ipc-instance-addressability.ps1":  "c79c3315cb528318e4ba8532854be31dbba60b2bcef48e5995b3063970a57c30",

@@ -52,6 +52,21 @@
 #      `+list --json`). Without this the whole file goes vacuous the day
 #      persistence is off by default - it would then exercise the path that
 #      was never broken and still report ALL PASS.
+#
+#      T1609: this arm used to read the `+list` snapshot taken the instant
+#      `+new-window` returned, and the pane's session id is published 250-800ms
+#      AFTER that (measured on box over nine cold-start runs) - so the control
+#      scored red four runs in five while the pane was agent-backed the whole
+#      time. It POLLS now, which is also what makes it a control rather than a
+#      coin flip: a plain-ConPTY pane never publishes one, so the wait times
+#      out and the arm goes red.
+#   G2 the control-of-the-control (T1133: a check that has never been observed
+#      failing is indistinguishable from one that cannot fail). A SECOND app
+#      instance on its own pipe, launched `--session-persistence=false`, opens
+#      the same `--command=` pane: it runs the command and stays alive, and it
+#      carries NO session_id after the same wait arm G gets. That is arm G
+#      being watched score red for the reason it exists - "persistence is off"
+#      - rather than being trusted to.
 #   H  `-e` is NOT keep-alived. `-e` means "exec exactly this"; widening the
 #      wrap to it would be a different defect, so the tombstone line is the
 #      CORRECT outcome there.
@@ -105,6 +120,23 @@ function Get-WindowLeaves($target) {
     $win = $j.data.windows | Where-Object { $_.target -eq $target }
     if ($null -eq $win) { return @() }
     @(Get-Leaves $win.tabs[0].splits)
+}
+
+# The session id of a window's FIRST pane, polled (T1609). `+new-window`
+# answers as soon as the window exists; the agent OPEN that binds the pane to a
+# session completes afterwards, so the id appears a few hundred ms later. An
+# empty return means it never appeared within $TimeoutSec - which for a
+# plain-ConPTY pane is never, and is how arm G scores red.
+function Wait-SessionId($Target, $TimeoutSec = 15) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $l = @(Get-WindowLeaves $Target)
+        if ($l.Count -ge 1 -and -not [string]::IsNullOrEmpty($l[0].session_id)) {
+            return $l[0].session_id
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return ''
 }
 
 # Poll a pane until `$Pattern` shows up, then return the whole tail. Polling
@@ -168,7 +200,7 @@ try {
         "== G: control - that pane is agent-backed (the path the defect lived on)"
         # --------------------------------------------------------------
         AssertAlways "G the --command pane carries a session_id" (
-            -not [string]::IsNullOrEmpty($leaves[0].session_id))
+            -not [string]::IsNullOrEmpty((Wait-SessionId 'kacmd')))
     }
 
     # ------------------------------------------------------------------
@@ -306,6 +338,41 @@ try {
         AssertAlways "H the -e command ran" ($tail -match 'KAMARKEREXEC')
         AssertAlways "H the -e pane exits with its command (no wrap imposed)" (
             $tail -match 'Process exited')
+    }
+
+    # ------------------------------------------------------------------
+    "== G2: control-of-the-control - persistence OFF, same pane, NO session_id"
+    # ------------------------------------------------------------------
+    # Arm G is the thing keeping this whole file honest, so it does not get to
+    # be trusted: a second app instance, on its OWN pipe so it is addressable
+    # apart from the one under test, runs with `session-persistence` off - the
+    # exact future arm G exists to notice. Its `--command=` pane must still run
+    # the command and stay alive (so "no session_id" cannot be read as "no
+    # pane"), and must still be carrying no session id after the same wait arm
+    # G gets.
+    $mainSuffix = $env:GHOZTTY_PIPE_SUFFIX
+    $env:GHOZTTY_PIPE_SUFFIX = "$mainSuffix-noagent"
+    try {
+        $app2 = Start-OnTestDesktop -Exe $Exe `
+            -Arguments @('--session-persistence=false') `
+            -StdErr (Join-Path $tmp 'app2.err')
+        $hwnd2 = Wait-TestWindow -ProcessId $app2.Pid
+        AssertAlways "G2 the persistence-off app started" ($hwnd2 -ne [IntPtr]::Zero)
+        if ($hwnd2 -ne [IntPtr]::Zero) {
+            Invoke-Ghoztty ("+new-window --target=kanoagent " +
+                "`"--command=echo KAMARKERNOAGENT`"") "$tmp\new-noagent.txt" | Out-Null
+            $leaves2 = @(Get-WindowLeaves 'kanoagent')
+            AssertAlways "G2 +list reports the persistence-off pane" ($leaves2.Count -eq 1)
+            if ($leaves2.Count -eq 1) {
+                $tail2 = Wait-Read $leaves2[0].id 'KAMARKERNOAGENT'
+                AssertAlways "G2 the persistence-off pane ran its command" (
+                    $tail2 -match 'KAMARKERNOAGENT')
+                AssertAlways "G2 ... and carries NO session_id, so arm G can score red" (
+                    [string]::IsNullOrEmpty((Wait-SessionId 'kanoagent')))
+            }
+        }
+    } finally {
+        $env:GHOZTTY_PIPE_SUFFIX = $mainSuffix
     }
 
     "== foreground"
