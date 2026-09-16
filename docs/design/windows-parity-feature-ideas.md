@@ -316,3 +316,14 @@ as the digest that showed them.
 - Diff two runs of the same command (viewer pane showing what changed between runs)
 - Tell me which pane made that noise (mark the pane that fired a bell or notification until it is looked at)
 - A window that remembers its font size (per-window zoom persisted across restarts)
+
+## 2026-09-16
+
+- Jump to the last command that failed (chord walks non-zero exits, marked in the scrollbar)
+- Copy the output of the last command without selecting it (one chord, exact, no prompt lines)
+- Type once, into every pane you chose (broadcast input to a marked set of panes)
+- Drop a file onto a pane and get its path, quoted properly (per-shell quoting on drag-and-drop)
+- Rename a tab by clicking its name (inline double-click rename)
+- Follow the system when it goes dark (live light/dark theme switch with Windows)
+- Scrollback that survives a restart (restored sessions bring back what they had printed)
+- Tell me how long that took, after the fact (per-command duration recorded and queryable)
