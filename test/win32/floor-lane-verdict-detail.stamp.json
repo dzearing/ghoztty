@@ -1,0 +1,14 @@
+{
+    "guard":  "lane-verdict-detail",
+    "script":  "test/win32/floor-lane-verdict-detail.ps1",
+    "generated":  "2026-09-15T18:56:07-07:00",
+    "commit":  "cb9c0b2ee",
+    "uncommitted":  [
+                        "scripts/lib/LaneVerdict.ps1",
+                        "test/win32/floor-lane-verdict-detail.ps1"
+                    ],
+    "files":  {
+                  "scripts/lib/LaneVerdict.ps1":  "1441a016bd9096fe51df247d89cd9ec82e354c35ba23401b26deea209d7f7391",
+                  "test/win32/floor-lane-verdict-detail.ps1":  "b18af35c9549b9129bcac1de2f8bfc0347cca133ed13fcdb5b3da68d4e01f79d"
+              }
+}

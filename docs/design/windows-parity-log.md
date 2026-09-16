@@ -9,6 +9,50 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-15: T776 closed done - **a red test floor now carries its own evidence down to the verdict, and a passing test stopped planting a scary line in a green log.**
+
+  On 2026-08-11 `floor-lane.ps1 -Lane all` reported `agent#1=FAIL`, then passed
+  twice on unchanged code, and the reason was gone. Not because nothing was
+  printed - the log path and the errors WERE printed, under the lane, hundreds
+  of lines above `FLOOR SUMMARY`. The turn had kept the tail, which is what the
+  context rule tells every turn to keep, so what survived was the word FAIL and
+  nothing to distinguish it from a flake. A floor whose failures cannot be read
+  teaches the next reader to shrug at red.
+
+  So the verdict carries its own evidence now. A red lane's summary token names
+  its log (`agent#1=FAIL [alone: ...] [log: ...\floor-lane-agent-....log]`), so
+  the POINTER survives even `Select-Object -Last 2` - the exact pipeline that
+  lost it. Immediately above the summary, a `-- FLOOR FAILURE DETAIL --` block
+  prints the first `error:` lines from THAT lane's log, with a count of how many
+  it dropped. A green lane's token is untouched: four log paths on a clean run
+  would be noise, and nobody needs the log of a lane that passed.
+
+  The report's second question was whether the console had interleaved lanes -
+  it showed core-looking test names while the summary scored win32 PASS. It had
+  not: T860 closed on `benchmark.OscParser` failing in the AGENT lane, so those
+  names really were the red lane's. What was missing was attribution, and that
+  is now structural rather than argued - every line of both blocks is prefixed
+  `lane <name>:`, and the block is built from that lane's own log file, so it
+  cannot disagree with that lane's verdict.
+
+  The third was the `ghoztty-agent: --relay url must start with https://` line
+  in the tail, which read like a real relay fault. It was never a failure at
+  all. `wssBase` printed it on its way out of the refusal path, and the refusal
+  has a unit test - so the line landed in EVERY agent-lane log, green or red,
+  and a turn chasing a one-off red spent its evidence on the normal stderr of a
+  PASSING test. The message belongs to the two CLI call sites now; what a real
+  user sees when they mistype `--relay` is unchanged. Measured: the three
+  agent-lane logs before the change carry the line once each, the green run
+  after it carries zero.
+
+  Evidence: `test\win32\floor-lane-verdict-detail.ps1` ALL PASS (15), whose last
+  three arms drive a REAL red run through `-Command` and then read only its last
+  twelve lines - the T776 pipeline, asserting the pointer and the error text are
+  both still in them. `floor-lane.ps1 -Lane all` ALL LANES PASS (lib/none/win32/
+  agent), harness floor green, plus every harness `guard-due` named for the
+  touched files: docs-routing (20), build-cache (76), agent-sharing-uplink (25),
+  agent-relay-session-e2e (18), one-installer (25).
+
 - 2026-09-15: T1594 closed done, T1595 filed - **a test copy of the session manager can no longer shut down the shells belonging to the real one.**
 
   Ghoztty keeps each persistent session's shell in its own holder process, and a

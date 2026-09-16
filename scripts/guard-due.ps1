@@ -2026,6 +2026,22 @@ $GuardTable = @(
     # no compiler crash in it -- and the failure mode is the expensive one, a
     # toolchain fault read as broken code. Same coverage rule as the rows around
     # it: the library and this harness gate, scripts\floor-lane.ps1 does not.
+    # The failure detail that rides the verdict (T776) is the one part of a red
+    # run a caller keeping only the tail gets to keep, and its failure mode is
+    # silent by construction: a formatter that stopped emitting the log pointer
+    # prints exactly what it printed before the task - the bare word FAIL - and
+    # nothing goes red over it. Same coverage rule as the rows around it: the
+    # library and this harness gate, scripts\floor-lane.ps1 does not; the wiring
+    # arms prove the wiring.
+    [pscustomobject]@{
+        Name   = 'lane-verdict-detail'
+        Script = 'test\win32\floor-lane-verdict-detail.ps1'
+        Stamp  = 'test\win32\floor-lane-verdict-detail.stamp.json'
+        Covers = @(
+            'scripts\lib\LaneVerdict.ps1',
+            'test\win32\floor-lane-verdict-detail.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'lane-compiler-crash'
         Script = 'test\win32\floor-lane-compiler-crash.ps1'

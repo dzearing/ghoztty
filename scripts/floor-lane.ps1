@@ -225,6 +225,10 @@ $ErrorActionPreference = 'Stop'
 # exit, so the next lane does not ask for an environment through the previous
 # one's teardown and get hr=0x80004005 for it (T592).
 . "$PSScriptRoot\lib\WebViewLane.ps1"
+# Carries a red lane's log path and first errors DOWN to the verdict (T776), so
+# a caller keeping only the tail - which is every caller under the context rule
+# - still has the pointer and the reason, instead of the bare word FAIL.
+. "$PSScriptRoot\lib\LaneVerdict.ps1"
 
 # Exit codes, named so a caller does not have to guess.
 $EXIT_PASS = 0
@@ -606,9 +610,13 @@ function Invoke-Lane {
 
     Write-Host "LANE $Name $result in ${elapsed}s (leaked webview hosts swept: $leaked; leaked test binaries: $leakedTests) | $tail"
     if ($result -eq 'FAIL' -and (Test-Path $log)) {
-        Write-Host "-- errors --"
+        # Every line says which lane wrote it (T776). The T776 report spent its
+        # evidence arguing about whether the visible errors belonged to the lane
+        # the summary had scored red; an unattributed console line cannot answer
+        # that, and these come from THIS lane's log by construction.
+        Write-Host "-- errors (lane $Name, log $log) --"
         Select-String -Path $log -Pattern 'error:' -ErrorAction SilentlyContinue |
-            Select-Object -First 15 | ForEach-Object { Write-Host "  $($_.Line)" }
+            Select-Object -First 15 | ForEach-Object { Write-Host "  lane ${Name}: $($_.Line)" }
         # A lane can fail with nothing but "exited with error code 5" -- which is
         # a CRASHED child, not a silent compiler (T444). Decode the code and name
         # the process that died, so a red lane is never a bare number.
@@ -918,8 +926,20 @@ if ($Command) {
         -LogPath $script:LastLaneLog -RepoPath $Repo -GlobalCacheDir $cacheDir `
         -Rerun { Invoke-Lane -Name 'command' -Iteration 1 -RawCommand $Command }
     $r = $heal.Result
+    # Same rule as the lane loop (T776): the verdict carries the pointer and the
+    # reason, because a caller keeping only the tail keeps nothing else.
+    if ($r -ne 'PASS') {
+        foreach ($line in (Format-FloorFailureDetail -Details @(
+                    Get-LaneFailureDetail -LaneName 'command' -LogPath $script:LastLaneLog))) {
+            Write-Host $line
+        }
+    }
     Write-Host ""
-    Write-Host "FLOOR SUMMARY: command=$r$($policy.Note)"
+    # The `command=` spelling (no `#<iteration>`) is what this mode has always
+    # printed and what its acceptance harnesses match on; only the log pointer
+    # is new.
+    $cmdPointer = if ($r -ne 'PASS' -and $script:LastLaneLog) { " [log: $($script:LastLaneLog)]" } else { '' }
+    Write-Host "FLOOR SUMMARY: command=$r$($policy.Note)$cmdPointer"
     switch ($r) {
         'PASS' { exit $EXIT_PASS }
         'STALL' { exit $EXIT_STALL }
@@ -1004,6 +1024,9 @@ if ($MinCommitFreeGB -gt 0 -or $WarnCommitFreeGB -gt 0) {
 $lanes = if ($Lane -eq 'all') { @('lib', 'none', 'win32', 'agent') } else { @($Lane) }
 $worst = $EXIT_PASS
 $summary = @()
+# One entry per lane that did not pass, collected so the verdict can carry the
+# pointer and the reason (T776) rather than leaving them in the scrollback.
+$failureDetails = @()
 
 foreach ($l in $lanes) {
     # The harness lane runs no compiler, so none of the zig-specific recovery
@@ -1015,7 +1038,10 @@ foreach ($l in $lanes) {
         $harnessCmd = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$floorScript`" -Repo `"$Repo`""
         for ($i = 1; $i -le $Repeat; $i++) {
             $r = Invoke-Lane -Name $l -Iteration $i -RawCommand $harnessCmd
-            $summary += "$l#${i}=$r"
+            $summary += (Format-LaneSummaryToken -LaneName $l -Iteration $i -Result $r -LogPath $script:LastLaneLog)
+            if ($r -ne 'PASS') {
+                $failureDetails += (Get-LaneFailureDetail -LaneName $l -LogPath $script:LastLaneLog)
+            }
             switch ($r) {
                 'FAIL' { if ($worst -lt $EXIT_FAIL) { $worst = $EXIT_FAIL } }
                 'STALL' { if ($worst -lt $EXIT_STALL) { $worst = $EXIT_STALL } }
@@ -1053,10 +1079,15 @@ foreach ($l in $lanes) {
         # applied to lanes). The verdict is NOT changed by the answer.
         if ($r -eq 'FAIL' -and -not $NoSoloConfirm -and -not $Filter -and $l -ne 'lib') {
             $alone = Invoke-SoloConfirm -Name $l -LogPath $script:LastLaneLog
-            $summary += "$l#${i}=$r$note [alone: $alone]"
+            $summary += (Format-LaneSummaryToken -LaneName $l -Iteration $i -Result $r `
+                    -Note "$note [alone: $alone]" -LogPath $script:LastLaneLog)
         }
         else {
-            $summary += "$l#${i}=$r$note"
+            $summary += (Format-LaneSummaryToken -LaneName $l -Iteration $i -Result $r `
+                    -Note $note -LogPath $script:LastLaneLog)
+        }
+        if ($r -ne 'PASS') {
+            $failureDetails += (Get-LaneFailureDetail -LaneName $l -LogPath $script:LastLaneLog)
         }
         switch ($r) {
             'FAIL' { if ($worst -lt $EXIT_FAIL) { $worst = $EXIT_FAIL } }
@@ -1066,6 +1097,12 @@ foreach ($l in $lanes) {
         if ($r -ne 'PASS') { break }
     }
 }
+
+# The verdict carries its own evidence (T776). Everything below this point is
+# what a caller keeping only the tail gets to keep, so the failing lane's log
+# path and first errors go HERE rather than staying hundreds of lines up where
+# the lane ran.
+foreach ($line in (Format-FloorFailureDetail -Details $failureDetails)) { Write-Host $line }
 
 Write-Host ""
 Write-Host "FLOOR SUMMARY: $($summary -join ' ')"

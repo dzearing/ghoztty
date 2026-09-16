@@ -107,6 +107,28 @@ three tests failed (a lane-wide break, not one slow wait), when `-Filter` is
 already narrowing the run, and under `-NoSoloConfirm`. Acceptance:
 `test\win32\floor-lane-solo-confirm.ps1`.
 
+**And a red lane carries its own evidence down to the verdict** (T776). The
+log path and the first `error:` lines used to be printed where the lane RAN,
+hundreds of lines above `FLOOR SUMMARY` — so a caller keeping only the tail,
+which is every caller under the context rule, kept the word FAIL and lost both
+the reason and the pointer to it. That is how the 2026-08-11 `agent#1=FAIL`
+became unrecoverable and indistinguishable from a flake. Now a red lane's
+summary token carries its log (`agent#1=FAIL [alone: …] [log: …\agent.log]`),
+and a `-- FLOOR FAILURE DETAIL --` block prints immediately above the summary
+with the first errors from THAT lane's log. Every line in it is prefixed
+`lane <name>:`, which settles the other half of the same report: a console
+line can no longer be un-attributable, so the summary and the visible errors
+cannot appear to disagree. Acceptance:
+`test\win32\floor-lane-verdict-detail.ps1`, whose last arm drives a real red
+run and then reads only its last twelve lines — the T776 pipeline exactly.
+
+A related trap the same task cleared: the agent lane's log carried
+`ghoztty-agent: --relay url must start with https:// …` on **every** run, green
+or red. It was never a failure — it was stderr from the deliberately-refusing
+case of a PASSING unit test, printed by `wssBase` on its way out. The message
+now belongs to the CLI call sites, so a negative test no longer plants an
+argument-validation error in a green lane's log for the next reader to chase.
+
 **And two lanes never share a browser teardown** (T592). The `win32` and
 `agent` lanes each stand up a real WebView2, and `-Lane all` used to start the
 next one the instant the previous exited - into a browser tree that was still

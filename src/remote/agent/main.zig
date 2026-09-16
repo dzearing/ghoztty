@@ -2362,7 +2362,10 @@ fn runRelay(
     // Convert the https/wss base to a clean `wss://host` prefix (no trailing
     // slash); the per-endpoint paths are appended by the loop/worker. Owned for
     // the life of the daemon.
-    const ws_base = try wssBase(alloc, base_url);
+    const ws_base = wssBase(alloc, base_url) catch |err| {
+        sayRelayUrlRefused();
+        return err;
+    };
     defer alloc.free(ws_base);
     // Host part (scheme stripped): what the link status reports as the host we
     // are connected to. wssBase guarantees a scheme prefix.
@@ -2480,8 +2483,18 @@ fn wssBase(alloc: Allocator, base: []const u8) ![]u8 {
             return std.fmt.allocPrint(alloc, "{s}://{s}", .{ s.out, trimmed });
         }
     }
-    std.debug.print("ghoztty-agent: --relay url must start with https:// or wss:// (http:// / ws:// are loopback-test only)\n", .{});
     return error.InvalidArgs;
+}
+
+/// What a human is told when `--relay <url>` carries a scheme we cannot dial.
+/// This lives OUT of `wssBase` on purpose (T776): the refusal has a unit test,
+/// and a validator that printed on its way out planted
+/// `ghoztty-agent: --relay url must start with https://...` in every agent-lane
+/// log, green or red. A turn chasing a one-off red then spent its evidence on
+/// what turned out to be the normal stderr of a PASSING negative test. The
+/// message a real user sees is unchanged; only the caller says it now.
+fn sayRelayUrlRefused() void {
+    std.debug.print("ghoztty-agent: --relay url must start with https:// or wss:// (http:// / ws:// are loopback-test only)\n", .{});
 }
 
 /// Bundles the relay-loop parameters so they can ride a single `std.Thread.spawn`
@@ -2654,7 +2667,10 @@ const SharingUplink = struct {
             return;
         };
 
-        const ws_base = wssBase(alloc, relay_base) catch return; // wssBase already printed why
+        const ws_base = wssBase(alloc, relay_base) catch {
+            sayRelayUrlRefused();
+            return;
+        };
 
         // Owner-only DACL on the credential we are about to serve with (same
         // in-place hardening `--relay` mode does).
@@ -3347,5 +3363,8 @@ test "wssBase: https/wss normalize to wss; http/ws stay plaintext; others refuse
         defer alloc.free(got);
         try std.testing.expectEqualStrings(c.want, got);
     }
+    // Refusal is silent here (T776): the message belongs to the CLI callers,
+    // so this negative case no longer writes an argument-validation error into
+    // the agent lane's log on every green run.
     try std.testing.expectError(error.InvalidArgs, wssBase(alloc, "relay.example.com"));
 }
