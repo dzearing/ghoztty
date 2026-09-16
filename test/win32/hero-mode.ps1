@@ -292,8 +292,14 @@ function Get-ExpectedGrabPx([int]$dpi) {
 # drifted off the band still shows up rather than being cropped out of the
 # probe. Returns $null when the capture held no real content, so an empty
 # capture reads as "this probe is meaningless" and never as "no divider".
-function Get-HeroDividerStrip([IntPtr]$top, $hero, [int]$grab, [int]$pad = 4) {
-    $shot = Get-TestWindowPixels -Window $top -Sync
+# -Shot takes an ALREADY-CAPTURED frame (T786), which is how the hovered
+# capture gets read with the same math: Get-TestHoverCapture returns the same
+# { Bitmap, Width, Height, Left, Top } shape Get-TestWindowPixels does, so only
+# the ownership of the bitmap differs - a caller-supplied shot is NOT disposed
+# here, because the caller still wants to read Hit/Changed off it.
+function Get-HeroDividerStrip([IntPtr]$top, $hero, [int]$grab, [int]$pad = 4, $Shot = $null) {
+    $shot = if ($null -ne $Shot) { $Shot } else { Get-TestWindowPixels -Window $top -Sync }
+    if ($null -eq $shot) { return $null }
     try {
         if ((Get-TestDistinctColors -Shot $shot) -lt 8) { return $null }
         $midY = [int](($hero.Top + $hero.Bottom) / 2)
@@ -309,7 +315,7 @@ function Get-HeroDividerStrip([IntPtr]$top, $hero, [int]$grab, [int]$pad = 4) {
             $out.Add("$($c.R),$($c.G),$($c.B)")
         }
         return , $out.ToArray()
-    } finally { Close-TestWindowPixels $shot }
+    } finally { if ($null -eq $Shot) { Close-TestWindowPixels $shot } }
 }
 
 function Pixel-Matches([string]$px, [int]$tr, [int]$tg, [int]$tb, [int]$tol = 12) {
@@ -686,12 +692,72 @@ if ($null -ne $big4) {
         $script:skipped++
     }
 
-    # (b) Hover chrome: a posted WM_MOUSEMOVE over the carousel sets the
-    # hovered tile (debug-log oracle; hover repaint is visual-only).
+    # (b) Hover chrome. TWO claims, and they are different questions: the
+    # debug line says the STATE changed (which is all a background desktop
+    # could ever observe before T282), and the hovered capture says the state
+    # reached the PAINT.
     [void](Send-TestMouse -Window $top -Target $top -X $ccs[0] -Y $ccs[1] -Action move)
     Start-Sleep -Milliseconds 250
     if ($haveLog) {
         Assert ((Select-String -Path $errlog -Pattern 'hero hover tile=' -Quiet)) 'hover: carousel tile hover tracked (log)'
+    }
+
+    # The painted half (T786). `Get-TestHoverCapture` has the app hit-test,
+    # SEND the move, repaint and PrintWindow on one GUI-thread stack, so the
+    # WM_MOUSELEAVE that TrackMouseEvent makes the OS post - the real cursor is
+    # not here - cannot be drained between the move and the paint.
+    #
+    # Probed at a NEIGHBOUR of the centered tile, never at the centered one:
+    # `paintTile` keys the hover treatment (snapshot alpha 153 instead of 89, a
+    # softer-accent border instead of the band boundary) on `hovered and not
+    # selected`, and the selected tile is the one `stripTop` centers. Hovering
+    # it is supposed to paint nothing, so it is the wrong probe for "does hover
+    # paint" and would read as a broken build.
+    #
+    # WHICH neighbour exists depends on where (a)'s click-swap left the
+    # selection, so both are probed and the claim is that a neighbouring tile
+    # lights - with the carousel's own side padding as the dead-space control.
+    # That control is the point: a capture that silently came back un-hovered
+    # (T845) looks exactly like a tile that never lit, and `Changed` is the
+    # app's own before/after answer rather than a difference inferred from two
+    # separately-taken frames.
+    #
+    # And `Changed` is the ONLY honest oracle here, which is why this arm reads
+    # no pixels. The two frames it compares are taken microseconds apart on one
+    # GUI-thread stack with no pump between them, so nothing else in the window
+    # can move; a tile's own thumbnail cannot, either. Comparing two
+    # SEPARATELY-taken captures would not have that property - these tiles are
+    # live pane snapshots and a blinking cursor refreshes them on its own
+    # schedule, so "these pixels differ" would be true of a build whose hover
+    # paints nothing, and "these pixels match" true of one whose hover works.
+    # The divider strip below can be read as pixels for the opposite reason: it
+    # is chrome with a known rest color, so the claim is what the mark IS, not
+    # that it differs from another frame.
+    if (-not (Test-HoverCaptureAvailable)) {
+        Write-Host 'SKIP  tile hover paint: this build has no capture-hover seam (ReleaseFast)'
+        $script:skipped++
+    } else {
+        # x inside the carousel column but left of every tile: tiles are 88% of
+        # the column, centered, so the outer 6% is band and nothing hit-tests
+        # there.
+        $deadS = To-Screen $top ($carouselLeft + 3) $ccy
+        $deadShot = Get-TestHoverCapture -Hwnd $top -X $deadS[0] -Y $deadS[1]
+        $lit = @()
+        foreach ($step in 1, -1) {
+            $ns = To-Screen $top $ccx ($ccy + $step * ($thumbH + 8))
+            $nShot = Get-TestHoverCapture -Hwnd $top -X $ns[0] -Y $ns[1]
+            if ($null -ne $nShot) {
+                if ($nShot.Changed) { $lit += $step }
+                Close-TestHoverCapture $nShot
+            }
+        }
+        Write-Host ("INFO  tile hover: neighbours that lit = $(if($lit.Count){$lit -join ','}else{'none'}); " +
+                    "deadspace changed=$(if($deadShot){$deadShot.Changed})")
+        Assert ($lit.Count -gt 0) `
+            "hover: a neighbouring carousel tile PAINTS its hover treatment (lit: $(if($lit.Count){$lit -join ','}else{'none'}); $(Get-LastHoverCaptureError))"
+        Assert ($null -ne $deadShot -and -not $deadShot.Changed) `
+            "...and the carousel's side padding paints nothing, so that change is a tile's (changed=$(if($deadShot){$deadShot.Changed}))"
+        Close-TestHoverCapture $deadShot
     }
 
     # (c) Wheel over the carousel is consumed by the strip (3 tiles fit ->
@@ -750,22 +816,62 @@ if ($null -ne $big4) {
             Assert ($run.Length -eq $markPx) `
                 "divider mark: ${markPx}px wide at ${dpi} dpi (got $($run.Length))"
 
-            # HOT: the same strip while the band is GRABBED. Hero mode paints
-            # the accent here (Mac parity, HeroModeView.swift:117), and a drag
-            # is a held hover so the two states paint identically.
+            # HOT: the same strip while the band is under the pointer. Hero
+            # mode paints the accent here (Mac parity, HeroModeView.swift:117)
+            # while hovered OR dragged, and both are asserted below.
             #
-            # Probed mid-DRAG rather than mid-hover on purpose: a POSTED
-            # WM_MOUSEMOVE cannot hold a hover on the background test desktop -
-            # TrackMouseEvent watches the real cursor, so WM_MOUSELEAVE wipes
-            # the state within a frame (T233's lesson). A posted button-down
-            # holds. The divider has not moved yet (no move event between the
-            # down and the capture), so the mark is still at $run.Start.
+            # The HOVER used to be unprobeable and the drag stood in for it: a
+            # posted WM_MOUSEMOVE cannot hold a hover on the background test
+            # desktop - TrackMouseEvent watches the real cursor, so
+            # WM_MOUSELEAVE wipes the state within a frame (T233's lesson) and
+            # WM_PAINT, the queue's lowest-priority message, is drained after
+            # it - while a posted button-down holds. So the script asserted the
+            # drag and inferred the hover from "the two states paint
+            # identically", which is a claim about the source, not a
+            # measurement: `hero_divider_hover` could stop reaching the paint
+            # entirely and `hero_divider_drag` would keep this green.
+            #
+            # T282's `Get-TestHoverCapture` closes that: the app hit-tests,
+            # SENDS the move, repaints and captures on ONE GUI-thread stack the
+            # message loop is never reached in the middle of, so the leave
+            # cannot interleave (T786 migrated this site).
             $sOn = To-Screen $top ([int]($big5.Right + $grabPx / 2)) $midY0
             [void](Send-TestMouse -Window $top -Target $top -X $sOn[0] -Y $sOn[1] -Action move)
             Start-Sleep -Milliseconds 150
             if ($haveLog) {
                 $hv = @(Select-String -Path $errlog -Pattern 'hero divider hover=true')
                 Assert ($hv.Count -gt 0) 'divider hover: the pointer lit the divider (log)'
+            }
+            if (-not (Test-HoverCaptureAvailable)) {
+                Write-Host 'SKIP  divider hover paint: this build has no capture-hover seam (ReleaseFast)'
+                $script:skipped++
+            } else {
+                $hovShot = Get-TestHoverCapture -Hwnd $top -X $sOn[0] -Y $sOn[1]
+                # Dead-space control: the middle of the hero pane, which lights
+                # nothing. T845's failure - a capture that came back
+                # un-hovered - is indistinguishable from a divider that never
+                # lit, so the app's own before/after answer is asserted on both
+                # sides instead of being inferred from two pixel readings.
+                $coldShot = Get-TestHoverCapture -Hwnd $top -X $sAway[0] -Y $sAway[1]
+                $hovStrip = Get-HeroDividerStrip $top $big5 $grabPx -Shot $hovShot
+                Write-Host ("INFO  divider hover: changed=$(if($hovShot){$hovShot.Changed})/$(if($coldShot){$coldShot.Changed}) " +
+                            "strip=$(if($hovStrip){$hovStrip -join ' '})")
+                Assert ($null -ne $hovShot -and $hovShot.Changed) `
+                    "T845: hovering the divider paints a DIFFERENT frame from the un-hovered one (changed=$(if($hovShot){$hovShot.Changed}); $(Get-LastHoverCaptureError))"
+                Assert ($null -ne $coldShot -and -not $coldShot.Changed) `
+                    "...and hovering the middle of the hero pane paints nothing, so that change is the divider's (changed=$(if($coldShot){$coldShot.Changed}))"
+                if ($null -eq $hovStrip) {
+                    Assert $false 'divider hovered: capture held real content'
+                } else {
+                    $stillRestH = $false
+                    for ($i = $run.Start; $i -lt ($run.Start + $run.Length); $i++) {
+                        if (Pixel-Matches $hovStrip[$i] 200 100 0) { $stillRestH = $true }
+                    }
+                    Assert (-not $stillRestH) `
+                        "divider hovered: the mark left split-divider-color for the accent (hover strip: $($hovStrip -join ' '))"
+                }
+                Close-TestHoverCapture $hovShot
+                Close-TestHoverCapture $coldShot
             }
             [void](Send-TestMouse -Window $top -Target $top -X $sOn[0] -Y $sOn[1] -Action down)
             Start-Sleep -Milliseconds 300

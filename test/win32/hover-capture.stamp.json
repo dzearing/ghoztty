@@ -1,12 +1,15 @@
 {
     "guard":  "hover-capture",
     "script":  "test/win32/hover-capture.ps1",
-    "generated":  "2026-08-21T22:15:51-07:00",
-    "commit":  "56e310ef0",
+    "generated":  "2026-09-16T03:15:30-07:00",
+    "commit":  "b9d0971eb",
+    "uncommitted":  [
+                        "test/win32/lib/HoverCapture.ps1"
+                    ],
     "files":  {
                   "src/apprt/win32/hover_capture.zig":  "81bb10df4764a185dc70726f520650052e43742937dfec0d10275ceb7caf31cf",
                   "src/apprt/win32/ipc_hover.zig":  "07bbf74a9a035867d9843abcdf41c7c968b561c5868d6821ea149e613eced8be",
                   "test/win32/hover-capture.ps1":  "0a8055d036ef8aa5ef83d91851c418f52dfdc09ea29d63f5eae9af87a9ee92a1",
-                  "test/win32/lib/HoverCapture.ps1":  "ce62c60da9068be953b9c4bece7b10afda478af42ebc0942ab90e7a634b285a0"
+                  "test/win32/lib/HoverCapture.ps1":  "eea4a1faf0b6014f5d40ab71709d6f90406d17804177178668140a127a38d313"
               }
 }

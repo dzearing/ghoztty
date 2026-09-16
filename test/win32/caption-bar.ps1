@@ -375,15 +375,74 @@ try {
     # the centered 10 DIP mark stays well below them. Probing the glyph row
     # instead would read the mark and fail against a build that is behaving
     # correctly.
-    function FillShade($h, $win, $borderX, $left, $w, $padSm) {
-        $shot2 = Get-TestWindowPixels -Window $h -Sync
+    function FillShadeIn($shot, $win, $borderX, $left, $w, $padSm) {
+        if ($null -eq $shot) { return $null }
         $x = $win.Left + $borderX + $left + [int]($w / 2)
         $y = $win.Top + $padSm + 4
-        $c = Get-TestPixel -Shot $shot2 -X $x -Y $y
+        return (Get-TestPixel -Shot $shot -X $x -Y $y)
+    }
+    function FillShade($h, $win, $borderX, $left, $w, $padSm) {
+        $shot2 = Get-TestWindowPixels -Window $h -Sync
+        $c = FillShadeIn $shot2 $win $borderX $left $w $padSm
         Close-TestWindowPixels $shot2
         return $c
     }
     $restC = FillShade $h $win $borderX $minL $capW $padSm
+
+    # --- 4h. and a HOVER lights it too, read off a hovered frame (T786) ------
+    # The press below is a fine oracle for the press, and it was standing in
+    # for the hover only because a hover could not be photographed: a posted
+    # WM_MOUSEMOVE cannot survive to the paint it dirties on a background
+    # desktop - TrackMouseEvent watches the REAL cursor, so WM_NCMOUSELEAVE is
+    # posted within a frame and WM_PAINT is the lowest-priority message in the
+    # queue, so the leave is always drained first (T209/T233). `caption_pressed`
+    # was the state that happened to survive that leave, which is why section 4
+    # reached for it. It is not the same claim: `handleNcMouseLeave` clears the
+    # HOVER and deliberately keeps the PRESS, so a build whose hover state or
+    # hover fill stopped working entirely would sail through the press arm.
+    #
+    # T282's `Get-TestHoverCapture` has the APP hit-test, SEND the move, repaint
+    # and PrintWindow on ONE GUI-thread stack that the message loop is never
+    # reached in the middle of, so the leave cannot interleave. It routes the
+    # NON-client twin of the move when the point hit-tests non-client - which
+    # these slabs do (section 3 just proved HTMINBUTTON) - so this exercises
+    # WM_NCMOUSEMOVE -> `handleNcMouseMove` -> `caption_hover`, the chain the
+    # real pointer walks.
+    #
+    # The numbers are the paint rule, not a measured constant:
+    # `icon_button.fillDelta` shades a dark chrome by +15 for `hover` and +25
+    # for `pressed`, so the band's 20 becomes 35 hovered and 45 pressed. The
+    # assertion is therefore a BAND - lit, but not as firm as a press - which
+    # is what catches a hover that silently paints the pressed treatment.
+    if (-not (Test-HoverCaptureAvailable)) {
+        Write-Host '  SKIP  hover fill: this build has no capture-hover seam (ReleaseFast)'
+    } else {
+        $hovMin  = Get-TestHoverCapture -Hwnd $h -X $geo.PtMin[0] -Y $geo.PtMin[1]
+        # The DRAG band, as the dead-space control: a caption point that is not
+        # a button. T845's failure mode - a capture that came back un-hovered -
+        # looks exactly like a button that did not light, so the app's own
+        # before/after answer is asserted on both sides rather than inferred.
+        $hovDrag = Get-TestHoverCapture -Hwnd $h -X $geo.PtDrag[0] -Y $geo.PtDrag[1]
+        $hovC    = FillShadeIn $hovMin  $win $borderX $minL $capW $padSm
+        $coldC   = FillShadeIn $hovDrag $win $borderX $minL $capW $padSm
+        Write-Host ("  INFO  caption hover fill: rest=$($restC.R) hot=$(if($hovC){$hovC.R}) " +
+                    "othercaption=$(if($coldC){$coldC.R}) hit=$(if($hovMin){$hovMin.Hit}) " +
+                    "nc=$(if($hovMin){$hovMin.NonClient}) changed=$(if($hovMin){$hovMin.Changed})/$(if($hovDrag){$hovDrag.Changed})")
+        Check ($null -ne $hovMin -and $hovMin.Hit -eq $HTMINBUTTON -and $hovMin.NonClient) `
+            "the hovered capture routed the NON-client move the caption receives (hit=$(if($hovMin){$hovMin.Hit}) nc=$(if($hovMin){$hovMin.NonClient}); $(Get-LastHoverCaptureError))"
+        Check ($null -ne $hovMin -and $hovMin.Changed) `
+            "T845: hovering minimize paints a DIFFERENT frame from the un-hovered one (changed=$(if($hovMin){$hovMin.Changed}))"
+        Check ($null -ne $hovDrag -and -not $hovDrag.Changed) `
+            "...and hovering the drag band paints nothing, so that fill is the button's (changed=$(if($hovDrag){$hovDrag.Changed}))"
+        Check ($null -ne $hovC -and $hovC.R -ge ($restC.R + 10)) `
+            "a hover on minimize lights its fill (rest $($restC.R) -> hover $(if($hovC){$hovC.R}))"
+        Check ($null -ne $hovC -and $hovC.R -le ($restC.R + 20)) `
+            "...and it is the HOVER shade, not the firmer pressed one (hover $(if($hovC){$hovC.R}), rest $($restC.R))"
+        Check ($null -ne $coldC -and $coldC.R -le ($restC.R + 6)) `
+            "...and minimize is dark while the drag band is hovered (got $(if($coldC){$coldC.R}))"
+        Close-TestHoverCapture $hovMin
+        Close-TestHoverCapture $hovDrag
+    }
     [void](Send-TestMouse -Window $h -Target $h -X $geo.PtMin[0] -Y $geo.PtMin[1] -Action down)
     Start-Sleep -Milliseconds 400
     $pressC = FillShade $h $win $borderX $minL $capW $padSm

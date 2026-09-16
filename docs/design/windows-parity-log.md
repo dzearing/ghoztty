@@ -30105,3 +30105,64 @@ demonstrated to bite rather than assumed to. Standing from here: the new
 `agent-stamp-inputs` guard row covers the recipe, both stamp readers, the
 scanner and the harness, so an edit to any of them makes it DUE and `validate`
 refuses the commit. `floor-lane.ps1 -Lane all` and `-Lane harness` green.
+
+## 2026-09-16 - Three hover claims that were proved through stand-ins now read a real hovered frame (T786)
+
+A control lighting up under the pointer is one of the most ordinary things in
+this chrome, and until T282 it was the one thing a background test desktop
+could not photograph: TrackMouseEvent watches the real cursor, so the OS posts
+WM_MOUSELEAVE within a frame of a posted move, and WM_PAINT is the queue's
+lowest-priority message - the leave is always drained first and the frame that
+gets painted is the un-hovered one. Every site worked around it in its own way.
+`caption-bar.ps1` asserted the PRESS, because `caption_pressed` is the state
+that deliberately survives a leave; `hero-mode.ps1` asserted the divider while
+GRABBED and inferred the hover from "a drag is a held hover, so the two paint
+identically"; its carousel-tile hover was a debug log line and nothing else.
+All three are now hovered captures, where the app hit-tests, SENDS the move,
+repaints and PrintWindows on one GUI-thread stack the message loop is never
+reached in the middle of.
+
+What that buys is not a tidier script but a claim that can fail. The press arm
+would have stayed green through a build whose hover state never reached the
+paint at all - `handleNcMouseLeave` clears the hover and keeps the press on
+purpose - and the same is true of `hero_divider_hover` behind
+`hero_divider_drag`. Each new arm carries a dead-space control that reports
+`changed=$false` (the caption's drag band, the carousel's side padding, the
+middle of the hero pane), because T845's failure mode - a capture that came
+back un-hovered - is otherwise indistinguishable from a control that did not
+light.
+
+One deliberate asymmetry, and it is the interesting part: the tile arm reads no
+pixels. Its oracle is the app's own before/after `Changed`, whose two frames are
+taken microseconds apart on one stack with no pump between them, so nothing else
+in the window can move. Comparing two SEPARATELY-taken captures would not have
+that property - the tiles are live pane snapshots that a blinking cursor
+refreshes on its own schedule, so "these pixels differ" would be true of a build
+whose hover paints nothing. The divider strip can be read as pixels for the
+opposite reason: it is chrome with a known rest color, so the claim is what the
+mark IS rather than that it differs from another frame.
+
+`tab-tooltip.ps1` keeps its stand-in, and the header now says why in terms that
+survive: what is missing there is not a frame but TIME. The tooltip is a
+delayed comctl32 track-mode popup, so it needs the loop PUMPED with the hover
+standing, which a one-stack probe cannot do and the absent cursor forbids
+anyway - and the tip is a window of its own, so there would be nothing in a
+capture of ours to look at. Different limit, not the one T282 removed.
+
+Evidence: `caption-bar.ps1` ALL PASS (38 assertions, was 32) with the new arm
+reading `hit=8` / `nc=True` / `changed=True` and a fill of rest 20 -> hover 35
+-> pressed 45, which is `icon_button.fillDelta`'s +15/+25 measured rather than
+assumed - so a hover that painted the PRESSED treatment now fails.
+`hero-mode.ps1` ALL PASS (77, was 72), the hovered divider strip reading
+`156,64,179` where rest reads the configured `200,100,0`. `hover-capture.ps1`
+26/26, `floor-lane.ps1 -Lane all` and `-Lane harness` green (the harness floor
+re-stamped over 382 files).
+
+Two things this turn found and did NOT fix. `tab-tooltip.ps1` is 2-red for a
+reason that is not this change (the edit to it is a comment block): its tip now
+carries a title line for a tab whose title the test assumes fits, and the guard
+read CURRENT off a 2026-08-21 stamp the whole time because whatever sets the tab
+title is outside its Covers list - T1606, and the commit takes `-NoGuardDue`
+naming it. And `caption-bar.ps1` ends every green run on a `CRASHED -
+0xFFFFFFFF` postmortem, reproduced without this turn's edit: that is the
+teardown's own kill, i.e. T1550, so T1605 was filed and closed as its duplicate.

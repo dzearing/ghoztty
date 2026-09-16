@@ -12,7 +12,12 @@
 # It is an ORDERING problem, not a timing one, so no faster capture wins it,
 # and every hover FILL in the win32 chrome was therefore a SKIP (tab-strip's
 # 4c, pane-banner's 6g) or a per-site workaround through a state that happens
-# to survive a leave (split-divider's DRAG, caption-bar's caption_pressed).
+# to survive a leave (split-divider's DRAG, caption-bar's caption_pressed,
+# hero-mode's grabbed divider). T786 finished retiring those: every one of
+# them now reads a hovered frame, and the one remaining stand-in -
+# tab-tooltip.ps1's log oracle - stays for a limit this action does not
+# remove, since a delayed SHOW needs the loop PUMPED with the hover standing
+# and this holds one stack rather than pumping.
 #
 # WHAT THIS DOES INSTEAD. The app runs the whole probe itself, inside one
 # handler on its GUI thread: hit-test the point, SEND the move (a sent message

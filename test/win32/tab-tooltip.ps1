@@ -10,15 +10,25 @@
 #
 # What is scored here is the TEXT DERIVATION AT HOVER TIME, via the debug
 # oracle `tab tooltip tab=N text=...` that Window.tabTipOnHoverChange logs
-# when the pointer lands on a tab. The tooltip's SHOW cannot be scored on
-# this desktop: the show delay needs the hover HELD, and TrackMouseEvent
-# watches the real cursor - a posted WM_MOUSEMOVE's hover is cleared by
-# WM_MOUSELEAVE within a frame here (T233, same as tab-strip.ps1 section
-# 4c). The oracle line is emitted on the same hover transition that arms
-# the show timer, so it is the hit test + text pipeline agreeing, which is
-# the product half a background desktop can observe. Empty on a release
-# build, where log.debug is compiled out - the probe then SKIPs rather than
-# lying.
+# when the pointer lands on a tab. The oracle line is emitted on the same
+# hover transition that arms the show timer, so it is the hit test + text
+# pipeline agreeing, which is the product half a background desktop can
+# observe. Empty on a release build, where log.debug is compiled out - the
+# probe then SKIPs rather than lying.
+#
+# WHY NOT THE HOVERED CAPTURE (T786). Three suites proved a hover through a
+# stand-in because a posted WM_MOUSEMOVE's hover is cleared by WM_MOUSELEAVE
+# within a frame here (T233), and T282's `Get-TestHoverCapture` retired two of
+# them: it holds the whole probe - hit test, sent move, repaint, PrintWindow -
+# on ONE GUI-thread stack that the message loop is never reached in the middle
+# of. THIS one is not the same shape, and the difference is the word "held".
+# What is missing for the tooltip is not a frame, it is TIME: the show is a
+# comctl32 track-mode popup armed on a delay, so it needs the message loop to
+# be PUMPED with the hover still standing - which is exactly what a one-stack
+# probe cannot do, and what the absent real cursor makes impossible anyway (the
+# leave lands on the first pump). The tooltip is also a window of its own, so
+# there would be nothing in a capture of ours to look at. So the stand-in here
+# stays, and it is a stand-in for a different limit than the one T282 removed.
 #
 #   A: the tooltip text names the pane's STARTING directory, ~-abbreviated.
 #   B: it FOLLOWS a `cd` (cmd.exe reports no OSC 7, so this is the T185
