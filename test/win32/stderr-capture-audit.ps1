@@ -147,13 +147,13 @@ Assert 'B2 the star-merge spelling is named too' `
     ((Get-Kinds @('$out = & $exe +list *>&1 | Out-String -Width 4096')) -contains 'merged-formatted')
 
 AssertEq 'B3 a ToString stringify clears it' 0 `
-    (Get-Kinds @('$out = & $exe +list 2>&1 | ForEach-Object { $_.ToString() } | Out-String')).Count
+    @(Get-Kinds @('$out = & $exe +list 2>&1 | ForEach-Object { $_.ToString() } | Out-String')).Count
 
 AssertEq 'B4 the "$_" stringify clears it as well' 0 `
-    (Get-Kinds @('$out = & $exe +list 2>&1 | ForEach-Object { "$_" } | Out-String')).Count
+    @(Get-Kinds @('$out = & $exe +list 2>&1 | ForEach-Object { "$_" } | Out-String')).Count
 
 AssertEq 'B5 a merge with no formatter downstream is not a capture' 0 `
-    (Get-Kinds @('& $exe +list 2>&1 | Select-String ok')).Count
+    @(Get-Kinds @('& $exe +list 2>&1 | Select-String ok')).Count
 
 Assert 'B6 a Format-* formatter counts, not just Out-String' `
     ((Get-Kinds @('$out = & $exe +list 2>&1 | Format-Table | Out-String')) -contains 'merged-formatted')
@@ -161,16 +161,16 @@ Assert 'B6 a Format-* formatter counts, not just Out-String' `
 # A `2>&1` inside a comment or a string is not a redirection - the whole reason
 # this reads the AST instead of the text.
 AssertEq 'B7 a mention in a comment is not a finding' 0 `
-    (Get-Kinds @('# never write 2>&1 | Out-String here', '$x = 1')).Count
+    @(Get-Kinds @('# never write 2>&1 | Out-String here', '$x = 1')).Count
 
 AssertEq 'B8 a redirect to $null is a discard, not a capture' 0 `
-    (Get-Kinds @('& $exe +list *> $null')).Count
+    @(Get-Kinds @('& $exe +list *> $null')).Count
 
 Assert 'B9 a merged stream redirected to a real file is reported' `
     ((Get-Kinds @('& $exe +list *> $log')) -contains 'merged-to-file')
 
 AssertEq 'B10 the stated-intent marker exempts a file' 0 `
-    (Get-Kinds @('# capture-audit: this one measures the formatter itself',
+    @(Get-Kinds @('# capture-audit: this one measures the formatter itself',
                  '$out = & $exe +list 2>&1 | Out-String')).Count
 
 Assert 'B11 a file that does not parse is named rather than skipped' `

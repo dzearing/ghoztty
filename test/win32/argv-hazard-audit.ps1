@@ -123,7 +123,7 @@ $pane = '3FCBD5B5-C4E6-44BC-8971-274CB20C8917'
 & $exe %V%list --json
 '@
 Assert 'A3 a pane id on --target=/--name= is not a finding' (
-    (Fixture-Findings $a3).Count -eq 0) (
+    @(Fixture-Findings $a3).Count -eq 0) (
     ((Fixture-Findings $a3) | ForEach-Object { $_.Carrier }) -join ',')
 
 # A4: a literal that was given a NAME is still a literal. Without this fold the
@@ -137,7 +137,7 @@ $tail = "$banner and then some"
 & $exe %V%set-banner --target=w1 $tail
 '@
 Assert 'A4 a variable whose every assignment is a literal folds to one' (
-    (Fixture-Findings $a4).Count -eq 0) (
+    @(Fixture-Findings $a4).Count -eq 0) (
     ((Fixture-Findings $a4) | ForEach-Object { "$($_.Text)@$($_.Line)" }) -join ',')
 
 # A5: a PARAMETER is free text - it is exactly what a caller composed - and it
@@ -180,7 +180,7 @@ $file = Join-Path $env:TEMP 'prompt.txt'
 & $exe %V%send-keys --target=p1 "--keys-file=$file"
 '@
 Assert 'A7 the --keys-file= transport is not a finding' (
-    (Fixture-Findings $a7).Count -eq 0) (
+    @(Fixture-Findings $a7).Count -eq 0) (
     ((Fixture-Findings $a7) | ForEach-Object { $_.Carrier }) -join ',')
 
 # A8: a .ps1 invoked with & binds its parameters IN PROCESS. No command line is
@@ -192,7 +192,7 @@ $label = 'a title with a " quote'
 & "$PSScriptRoot\helper.ps1" %V%set-banner "$label"
 '@
 Assert 'A8 a & .\script.ps1 call is not a native argv at all' (
-    (Fixture-Findings $a8).Count -eq 0) (
+    @(Fixture-Findings $a8).Count -eq 0) (
     ((Fixture-Findings $a8) | ForEach-Object { $_.Carrier }) -join ',')
 
 # A9: another program's command line is not this audit's question, even when it
@@ -203,7 +203,7 @@ $msg = 'anything at all'
 & powershell.exe -NoProfile -File $script_ "--title=$msg"
 '@
 Assert 'A9 a non-ghoztty native call is out of scope' (
-    (Fixture-Findings $a9).Count -eq 0) (
+    @(Fixture-Findings $a9).Count -eq 0) (
     ((Fixture-Findings $a9) | ForEach-Object { $_.Carrier }) -join ',')
 
 # A10: Start-Process does not quote its -ArgumentList elements either (T200),
@@ -272,8 +272,8 @@ $a16ast = Get-ArgvHazardAst -Path $a1
 Assert 'A16 the analyzer parses the FILE when no text is passed' (
     $a16ast.Extent.Text.Length -gt 0) "len $($a16ast.Extent.Text.Length)"
 Assert 'A17 the carrier and verb sets are non-empty' (
-    ((Get-ArgvHazardFlags).Count -ge 5) -and ((Get-ArgvHazardVerbs).Count -ge 10)) (
-    "$((Get-ArgvHazardFlags).Count) flags, $((Get-ArgvHazardVerbs).Count) verbs")
+    (@(Get-ArgvHazardFlags).Count -ge 5) -and (@(Get-ArgvHazardVerbs).Count -ge 10)) (
+    "$(@(Get-ArgvHazardFlags).Count) flags, $(@(Get-ArgvHazardVerbs).Count) verbs")
 
 # ============================================================================
 Write-Host ''
@@ -297,8 +297,8 @@ $roots = Get-SweepRoots
 $sweep = @(Get-ArgvHazardFindings -Repo $Repo -Paths $roots)
 $all = @(Get-ArgvHazardFindings -Repo $Repo -Paths $roots -IncludeExempt)
 
-Assert 'B1 the sweep actually looked at the tree' ($roots.Count -ge 300) `
-    "$($roots.Count) scripts"
+Assert 'B1 the sweep actually looked at the tree' (@($roots).Count -ge 300) `
+    "$(@($roots).Count) scripts"
 Assert 'B2 no ghoztty call puts unexplained free text on a native argv' (
     $sweep.Count -eq 0)
 foreach ($f in $sweep) {

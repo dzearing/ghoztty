@@ -171,7 +171,7 @@ if ($top -eq [IntPtr]::Zero) {
 
 # --- 1. The mechanism: a composite comes back, with both panes in it -------
 $targets = Get-TestWindowPaneTargets -Window $top -Exe $exe
-Assert ($targets.Count -eq 2) "the window's two terminal panes are enumerable ($($targets -join ', '))"
+Assert (@($targets).Count -eq 2) "the window's two terminal panes are enumerable ($($targets -join ', '))"
 
 $shot = $null
 for ($t = 0; $t -lt 25; $t++) {

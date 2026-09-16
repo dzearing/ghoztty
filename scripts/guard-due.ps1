@@ -3798,6 +3798,26 @@ $GuardTable = @(
             'scripts\lib\HarnessFloor.ps1',
             'test\win32\harness-floor.ps1'
         )
+    },
+
+    # T794 - the vacuous-count sweep. It covers BOTH trees rather than just the
+    # analyzer, because the case the rule exists for is a script arriving with
+    # `(Get-Thing ...).Count` in it: the harness-floor row above watches
+    # `test\win32`, and `scripts\` has the same helpers and the same trap with
+    # nothing else watching it. The sweep is about a minute.
+    [pscustomobject]@{
+        Name   = 'unroll-count'
+        Script = 'test\win32\unroll-count-audit.ps1'
+        Stamp  = 'test\win32\unroll-count-audit.stamp.json'
+        Covers = @(
+            'test\win32\unroll-count-audit.ps1',
+            'test\win32\lib\UnrollCountAudit.ps1',
+            'test\win32\unroll-count-audit.baseline.json',
+            'test\win32\*.ps1',
+            'test\win32\lib\*.ps1',
+            'scripts\*.ps1',
+            'scripts\lib\*.ps1'
+        )
     }
 )
 

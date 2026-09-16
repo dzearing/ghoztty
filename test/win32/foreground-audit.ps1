@@ -344,7 +344,7 @@ Set-Content -LiteralPath $libHelper -Encoding ascii -Value @(
     'function Get-Probe { $hdc = [Drv]::GetDC([IntPtr]::Zero); return [Drv]::GetPixel($hdc, 4, 4) }'
 )
 $byPath = @([pscustomobject]@{ Script = 'lib\Probe.ps1'; Reason = 'needs the composited screen'; Line = 7; Malformed = $false })
-AssertEq 'E6 declaring it by path clears the finding' 0 (LibFindings $byPath).Count
+AssertEq 'E6 declaring it by path clears the finding' 0 @(LibFindings $byPath).Count
 
 $byLeaf = @([pscustomobject]@{ Script = 'Probe.ps1'; Reason = 'the bare leaf'; Line = 7; Malformed = $false })
 $f = LibFindings $byLeaf

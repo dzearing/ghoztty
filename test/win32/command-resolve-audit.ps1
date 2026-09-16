@@ -82,7 +82,7 @@ Test-Thing 1
 Get-ChildItem -Path .
 '@
 Assert 'A1 a script that defines what it calls yields nothing' (
-    (Fixture-Findings @($a1)).Count -eq 0) (
+    @(Fixture-Findings @($a1)).Count -eq 0) (
     ((Fixture-Findings @($a1)) | ForEach-Object { $_.Name }) -join ',')
 
 $a2 = Write-Fixture 'a2.ps1' @'
@@ -106,7 +106,7 @@ $a4 = Write-Fixture 'a4.ps1' @'
 Get-FixtureHelper
 '@
 Assert 'A4 a Join-Path $PSScriptRoot dot-source resolves its functions' (
-    (Fixture-Findings @($a4)).Count -eq 0) (
+    @(Fixture-Findings @($a4)).Count -eq 0) (
     ((Fixture-Findings @($a4)) | ForEach-Object { $_.Name }) -join ',')
 
 $a5 = Write-Fixture 'a5.ps1' @'
@@ -115,7 +115,7 @@ $Repo = 'ignored - the analyzer binds this to the repository root'
 Get-FixtureHelper
 '@
 Assert 'A5 an expandable "$Repo\..." dot-source resolves its functions' (
-    (Fixture-Findings @($a5)).Count -eq 0) (
+    @(Fixture-Findings @($a5)).Count -eq 0) (
     ((Fixture-Findings @($a5)) | ForEach-Object { $_.Name }) -join ',')
 
 # The widening: `go-loop-uptime.ps1` pulls `Format-Uptime` out of
@@ -129,7 +129,7 @@ Invoke-Expression $m.Value
 Get-FixtureHelper
 '@
 Assert 'A6 a function pulled out of another script by regex resolves' (
-    (Fixture-Findings @($a6)).Count -eq 0) (
+    @(Fixture-Findings @($a6)).Count -eq 0) (
     ((Fixture-Findings @($a6)) | ForEach-Object { $_.Name }) -join ',')
 
 # A7: names that are not static command names at all. (The fixture deliberately
@@ -144,7 +144,7 @@ $exe = 'C:\x\ghoztty.exe'
 Get-Command Test-NotACall -ErrorAction SilentlyContinue
 '@
 Assert 'A7 an invoked variable, a path, and a NAME PASSED AS DATA are not calls' (
-    (Fixture-Findings @($a7)).Count -eq 0) (
+    @(Fixture-Findings @($a7)).Count -eq 0) (
     ((Fixture-Findings @($a7)) | ForEach-Object { $_.Name }) -join ',')
 
 # A8: the second live shape - a pasted-twice if/elseif chain, where the second
@@ -176,10 +176,10 @@ zig build
 gh release list
 '@
 Assert 'A9 a known external program resolves' (
-    (Fixture-Findings @($a9)).Count -eq 0) (
+    @(Fixture-Findings @($a9)).Count -eq 0) (
     ((Fixture-Findings @($a9)) | ForEach-Object { $_.Name }) -join ',')
 Assert 'A10 the externals list is fixed rather than read off PATH' (
-    (Get-CommandResolveExternals).Count -ge 20 -and
+    @(Get-CommandResolveExternals).Count -ge 20 -and
     ((Get-CommandResolveExternals) -contains 'git'))
 
 # A11: the stated-intent exemption.
@@ -188,7 +188,7 @@ $a11 = Write-Fixture 'a11.ps1' @'
 Test-ExeIsDebugBuild
 '@
 Assert 'A11 a # resolve-audit: marker drops the file from the sweep' (
-    (Fixture-Findings @($a11)).Count -eq 0) (
+    @(Fixture-Findings @($a11)).Count -eq 0) (
     ((Fixture-Findings @($a11)) | ForEach-Object { $_.Name }) -join ',')
 
 # A12: an empty analyzer input must not read as a clean file. The first cut of

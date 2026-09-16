@@ -9,6 +9,45 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-16: T794 closed done, T1617 filed - **a count that cannot fail is now
+  a reported defect instead of a line that reads like arithmetic.**
+
+  PowerShell 5.1 unrolls a collection on the way out of a function. A helper
+  that returns ONE element hands the caller the element itself, and `.Count` on
+  a `PSCustomObject` is `$null` - so `$before = (Get-TopWindows $pid).Count`
+  compares nothing with nothing and passes whatever the product did. That is
+  what `chooser-open-chord.ps1` printed on its first run (T746): `( -> )`, on
+  both of its "and no plain terminal window was opened instead" assertions. It
+  is the same family as T271 and T791 - an assertion that cannot fail is
+  indistinguishable from one that passed - with the extra property that it is
+  invisible on the page, and only misbehaves for the one-element case, which is
+  the common case for "how many windows does this app have".
+
+  The deliverable is the rule, machine-checked: `lib\UnrollCountAudit.ps1` is an
+  AST sweep over `test\win32` and `scripts` for two shapes - `(Get-Thing ...).Count`
+  where `Get-Thing` is a repo helper whose output can be an array, and
+  `$v = Get-Thing ...` followed by `$v.Count`. It is STANDING rather than
+  remembered: a `unroll-count` guard row covering both trees, plus membership in
+  the harness floor, so touching any script here puts it due and `validate`
+  refuses the commit until it is green.
+
+  **The first mechanical pass was wrong, and the floor is what said so.** It
+  wrapped 84 sites and turned four green audits red: this suite's existing
+  defence is `return , @(...)`, in 49 files, and the comma keeps the array whole
+  - measured, `(CommaTwo).Count` is 2 while `@(CommaTwo).Count` is 1 - so an
+  `@()` around such a call is a NEW defect, not a fix. The analyzer now drops
+  comma-protected helpers, and a local definition shadows the repo-wide index in
+  both directions (`Findings` is defined in four audits, one of them protected;
+  without the shadow that file inherited the others' verdict). The population
+  fell from 579 to 197 with that understanding in it.
+
+  46 sites are fixed - the harness-floor audits and their libs, every one of
+  which was then re-run - and the remaining 151 across 35 files are a per-file
+  ratchet that T1617 works down. A file above its baseline fails; a file below
+  it fails too, so the record cannot drift from the tree. Section B of the
+  acceptance measures the trap on this interpreter before it scores anybody, so
+  the rule cannot quietly become a rule about nothing.
+
 - 2026-09-16: T793 closed done - **the test that proves you can take over a
   still-running session from the machine chooser was already fixed a month ago;
   what it was still owed was a wait that cannot flake.**

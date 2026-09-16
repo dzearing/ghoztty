@@ -197,8 +197,8 @@ $files = if ($Paths) { @($Paths) } else { Get-VtScanFiles $Repo }
 $all = @()
 foreach ($f in $files) { $all += Get-VtEscapeFindings $f }
 
-if ($all.Count -gt 0) {
-    "BACKTICK-E ESCAPE: $($all.Count) use(s) of ``e, which is the letter e under PowerShell 5.1"
+if (@($all).Count -gt 0) {
+    "BACKTICK-E ESCAPE: $(@($all).Count) use(s) of ``e, which is the letter e under PowerShell 5.1"
     if (-not $Quiet) {
         foreach ($f in $all) {
             $rel = $f.Path

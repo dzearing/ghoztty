@@ -602,6 +602,45 @@ the same stated-intent `# capture-audit: <reason>` marker. Acceptance:
 scores anybody, and whose `-TeethCheck` synthesizes a violator so the sweep keeps
 its teeth once the suite is clean.
 
+**And a COUNT has to be able to come out wrong** (T794). The audits above ask
+whether a run happened and whether what it measured was real. This one asks
+whether an assertion that reads like arithmetic can fail at all. PowerShell 5.1
+unrolls a collection on the way out of a function, so a helper that returns ONE
+element hands the caller the element itself — and `.Count` on a `PSCustomObject`
+is `$null`, because the scalar Count/Length property PS 3.0 added does not cover
+PSObject-wrapped custom objects (a string or a hashtable does answer 1, which is
+why the trap survives a REPL experiment). `$before = (Get-TopWindows $pid).Count`
+then compares `$null` with `$null` and passes whatever the product did: that is
+what `chooser-open-chord.ps1` printed on its first run, `( -> )`, on both of its
+"and no plain terminal window was opened instead" assertions. Measured here:
+
+```powershell
+(Get-One).Count     # -> $null     one element, unrolled
+(Get-Two).Count     # -> 2         which is why review sees nothing wrong
+@(Get-One).Count    # -> 1         the wrap at the POINT OF USE is the fix
+```
+
+The `@()` INSIDE the helper does not survive the return. What DOES is the comma:
+`return , @(...)` wraps the array in a one-element outer array, this suite's
+existing defence in 49 files, and a count off such a helper is already right —
+so `@()` around THAT call is a new defect (`@(CommaTwo).Count` answers 1). A
+mechanical pass that did not know the difference turned four green audits red on
+2026-09-16 before the floor caught it, which is the whole argument for the sweep
+knowing it instead of the author remembering it.
+
+The sweep is `test\win32\lib\UnrollCountAudit.ps1` — AST-based, over
+`test\win32` **and** `scripts` — with two kinds: `unwrapped-call`
+(`(Get-Thing ...).Count` where `Get-Thing` is a repo helper whose output can be
+an array) and `unwrapped-var` (`$v = Get-Thing ...` then `$v.Count`, bound to the
+NEAREST preceding assignment). A local definition shadows the repo-wide index in
+both directions, since `Findings` is defined in four audits and only one of them
+is comma-protected. Exemption: the stated-intent `# count-audit: <reason>`
+marker. The existing population is a per-file ratchet
+(`unroll-count-audit.baseline.json`, 151 sites over 35 files, worked down by
+T1617); a file above its baseline fails, and so does one below it. Acceptance:
+`test\win32\unroll-count-audit.ps1`, whose section B measures the trap on this
+interpreter before it scores anybody and whose `-TeethCheck` re-plants it.
+
 **And a harness nobody RAN proves nothing either** (T783). The five audits above
 all ask what a run said; this one asks whether the run happened at all. Outside
 the P1–P3 floor an acceptance script is run when somebody remembers it, so a

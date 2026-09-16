@@ -229,8 +229,8 @@ try {
     $tree = Wait-LeafCount 'a0' 1 40
     $leaves = @()
     foreach ($w in Get-ListWindows $tree) { $leaves += Get-WindowLeaves $w }
-    Assert ($leaves.Count -eq 1) "A1 the GUI came up with one pane and answers +list (got $($leaves.Count))"
-    if ($leaves.Count -lt 1) { throw 'setup: no first pane' }
+    Assert (@($leaves).Count -eq 1) "A1 the GUI came up with one pane and answers +list (got $(@($leaves).Count))"
+    if (@($leaves).Count -lt 1) { throw 'setup: no first pane' }
     Assert-GhozttyIsolated -Exe $Exe
     $paneA = $leaves[0].id
     Assert ($paneA -match '^[0-9A-Fa-f]{8}-') "A2 window A's pane has a pane id ($paneA)"
@@ -238,7 +238,7 @@ try {
     $r = Run-Cli '+new-window --title=t1079-B' 'newwin.txt' '' 25
     Assert ($r.exit -eq 0) "A3 +new-window made a second window (exit $($r.exit))"
     $tree = Wait-LeafCount 'a1' 2 30
-    Assert ((Get-ListWindows $tree).Count -eq 2) "A4 two windows exist (got $((Get-ListWindows $tree).Count))"
+    Assert (@(Get-ListWindows $tree).Count -eq 2) "A4 two windows exist (got $(@(Get-ListWindows $tree).Count))"
     $paneB = ''
     foreach ($w in Get-ListWindows $tree) {
         foreach ($leaf in @(Get-WindowLeaves $w)) { if ($leaf.id -ne $paneA) { $paneB = $leaf.id } }

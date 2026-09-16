@@ -166,11 +166,11 @@ Assert "D8 a Debug exe under -Allow passes with no knobs at all" `
 # --- Get-GhozttyReleaseSandboxGaps, asked directly ---------------------------
 Remove-Item Env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue
 Assert "D9 gaps names all three when nothing is set" `
-    ((Get-GhozttyReleaseSandboxGaps).Count -eq 3)
+    (@(Get-GhozttyReleaseSandboxGaps).Count -eq 3)
 $env:GHOZTTY_PIPE_SUFFIX = "-bmguard$PID"
 $env:GHOZTTY_AGENT_INSTANCE = "bmguard$PID"
 $env:LOCALAPPDATA = Join-Path $tmp 'sandbox-lad'
-Assert "D9b and none when all three are" ((Get-GhozttyReleaseSandboxGaps).Count -eq 0)
+Assert "D9b and none when all three are" (@(Get-GhozttyReleaseSandboxGaps).Count -eq 0)
 $env:LOCALAPPDATA = $realLad + '\'
 Assert "D9c a trailing separator does not read as a different directory" `
     (((Get-GhozttyReleaseSandboxGaps) -join '|') -match 'LOCALAPPDATA is still the user')
@@ -180,7 +180,7 @@ Remove-Item Env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue
 Remove-Item Env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
 $env:LOCALAPPDATA = $realLad
 [void](Set-GhozttyTestIsolation -Tag 'bmguard' -ReleaseSandbox -Quiet -SandboxRoot (Join-Path $tmp 'iso-sandbox'))
-Assert "D10 -ReleaseSandbox closes every gap in one call" ((Get-GhozttyReleaseSandboxGaps).Count -eq 0)
+Assert "D10 -ReleaseSandbox closes every gap in one call" (@(Get-GhozttyReleaseSandboxGaps).Count -eq 0)
 Assert "D10b the agent lineage stays inside agent_lineage.max_len (24)" `
     ($env:GHOZTTY_AGENT_INSTANCE.Length -le 24)
 Assert "D10c and it is run-unique, so two runs never share a lineage" `

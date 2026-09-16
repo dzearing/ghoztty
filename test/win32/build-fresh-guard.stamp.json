@@ -1,14 +1,14 @@
 {
     "guard":  "build-fresh",
     "script":  "test/win32/build-fresh-guard.ps1",
-    "generated":  "2026-09-12T20:25:28-07:00",
-    "commit":  "aa615ffbf",
+    "generated":  "2026-09-16T14:31:22-07:00",
+    "commit":  "15be8d5b3",
     "uncommitted":  [
-                        "test/win32/build-fresh-guard.ps1"
+                        "test/win32/lib/BuildMode.ps1"
                     ],
     "files":  {
                   "test/win32/build-fresh-guard.ps1":  "e36978f198eeb153e1b4739e06c9b31619d699d3335c596c8e27bc858e41b2df",
                   "test/win32/lib/BuildFresh.ps1":  "c9235d5bb7e93e2bd7bafbbdf01c4db8e52fe5e43a5d715f68aae39b9e2e43c8",
-                  "test/win32/lib/BuildMode.ps1":  "063d3e59680f1dbf49e9d93e795c460ddf7cffc8d8cc1b3ec3bf078b773b911a"
+                  "test/win32/lib/BuildMode.ps1":  "446bbe306f736cb3e522e4c3a327a9ca98659fa51740a1978690d83901771cd7"
               }
 }

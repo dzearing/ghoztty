@@ -250,7 +250,7 @@ function Assert-GhozttyIsolatedBuild {
         }
 
         $gaps = Get-GhozttyReleaseSandboxGaps
-        if ($gaps.Count -eq 0) { return $mode }
+        if (@($gaps).Count -eq 0) { return $mode }
 
         $list = ($gaps | ForEach-Object { "    - $_" }) -join "`n"
         throw @"

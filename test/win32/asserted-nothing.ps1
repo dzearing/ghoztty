@@ -146,7 +146,7 @@ $clean = @(
     'Write-Host "$script:fail FAILURE(S)"'
     'exit 1'
 )
-AssertEq 'B1 a counted final verdict is clean' 0 (Get-EnforcedKinds $clean).Count
+AssertEq 'B1 a counted final verdict is clean' 0 @(Get-EnforcedKinds $clean).Count
 
 $zero = @(
     'if ($noBuild) {'
@@ -175,7 +175,7 @@ $earlyRed = @(
     '}'
     'Write-Host "ALL PASS ($script:pass assertions)"'
 )
-AssertEq 'B4 the same branch exiting nonzero is clean' 0 (Get-EnforcedKinds $earlyRed).Count
+AssertEq 'B4 the same branch exiting nonzero is clean' 0 @(Get-EnforcedKinds $earlyRed).Count
 
 $uncounted = @(
     'if ($script:failures -eq 0) { "ALL PASS"; exit 0 } else { "$($script:failures) FAILURE(S)"; exit 1 }'
@@ -186,7 +186,7 @@ $scored = @(
     '. (Join-Path $PSScriptRoot "lib\TestScore.ps1")'
     'Write-TestVerdict -Pass $script:passes -Fail $script:failures'
 )
-AssertEq 'B6 a script on the shared scorer has nothing to report' 0 (Get-Kinds $scored).Count
+AssertEq 'B6 a script on the shared scorer has nothing to report' 0 @(Get-Kinds $scored).Count
 
 # Somebody else's verdict being SCORED is not this script emitting one - three
 # scripts in the suite compare against a `ALL PASS` line they captured.
@@ -196,13 +196,13 @@ $operand = @(
     'if ($fail -eq 0) { "ALL PASS ($pass assertions)"; exit 0 }'
     'exit 1'
 )
-AssertEq 'B7 a compared ALL PASS is not read as a verdict' 0 (Get-EnforcedKinds $operand).Count
+AssertEq 'B7 a compared ALL PASS is not read as a verdict' 0 @(Get-EnforcedKinds $operand).Count
 
 $exempt = @(
     '# asserted-nothing-audit: a helper process with nothing to score'
     'if ($x) { "ALL PASS (0 checks)"; exit 0 }'
 )
-AssertEq 'B8 the stated-intent marker exempts a file' 0 (Get-Kinds $exempt).Count
+AssertEq 'B8 the stated-intent marker exempts a file' 0 @(Get-Kinds $exempt).Count
 
 # --- T1510: the two kinds that say whether T1039's rule reaches a file -------
 # A COUNTED hand-rolled verdict is still a hand-rolled verdict: the count is of
@@ -239,7 +239,7 @@ $armedStamp = @(
     '}'
     'Write-TestVerdict -Pass $script:pass -Fail $script:fail'
 )
-AssertEq 'B12 an armed script that stamps has nothing to report' 0 (Get-Kinds $armedStamp).Count
+AssertEq 'B12 an armed script that stamps has nothing to report' 0 @(Get-Kinds $armedStamp).Count
 
 # The comment that most often names the scorer is the one explaining why a
 # script does NOT use it, so a mention in a comment must not count as arming.

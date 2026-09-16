@@ -137,7 +137,7 @@ function Get-TestWindowComposite {
         }
         $Targets = Get-TestWindowPaneTargets -Window $Window -Exe $Exe
     }
-    if (-not $Targets -or $Targets.Count -eq 0) {
+    if (-not $Targets -or @($Targets).Count -eq 0) {
         $script:LastCompositeError = 'the window listed no terminal panes'
         return $null
     }

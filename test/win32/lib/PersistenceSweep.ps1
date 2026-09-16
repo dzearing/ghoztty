@@ -432,7 +432,7 @@ function Test-GhozttyImage {
     if ($var -imatch 'agent|relay|fixture|crash') { return $false }
 
     $defs = Get-VarAssignmentText -Text $Text -Name $var
-    if ($defs.Count -eq 0) { return $true }
+    if (@($defs).Count -eq 0) { return $true }
     # A tool looked up on PATH names itself: `$node = Get-Command node` launched
     # as `$node.Source` is node.exe serving the dashboard, not the terminal, and
     # it carries no `.exe` literal for the check below to read.

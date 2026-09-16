@@ -1,14 +1,14 @@
 {
     "guard":  "harness-floor-teeth",
     "script":  "test/win32/harness-floor.ps1",
-    "generated":  "2026-09-16T06:17:33-07:00",
-    "commit":  "cf5185b6d",
+    "generated":  "2026-09-16T15:40:31-07:00",
+    "commit":  "15be8d5b3",
     "uncommitted":  [
                         "scripts/lib/HarnessFloor.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cc4dd72fb07ebc34de67ce688e0eab7f091a7228e4baeba4f9f50d01212a0f0e",
-                  "scripts/lib/HarnessFloor.ps1":  "b62bae00cb6e411a744e06f699dc3aae24c068644ac535bb937444ce7b208f51",
+                  "scripts/lib/HarnessFloor.ps1":  "42d23c67fc607e23238577e14f0b67e6bee35d5d7cb86d7ca7dd3ec353ce9101",
                   "test/win32/harness-floor.ps1":  "b27139f3ac9523ad01fd2c0aed38f4a8512df5e847ab235d936eeba46ed5d7d8"
               }
 }
