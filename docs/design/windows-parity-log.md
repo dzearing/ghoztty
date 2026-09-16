@@ -29971,3 +29971,48 @@ Re-stamped green on box: `argv-hazard-audit.ps1` (23; teeth 27),
 `upgrade-no-fork.ps1` (131), `harness-floor.ps1` (46), `isolation-meta.ps1` (13),
 `launch-preflight-audit.ps1` (19), `stderr-launch-capture.ps1` (20), and a
 2-minute `soak.ps1` (13).
+
+## 2026-09-16 - ctrl+k was clearing the screen all along; the test was looking at the one line it keeps (T1599)
+
+`test\win32\kb-actions.ps1` had been failing `T47 primary screen cleared`, and
+the filing was careful not to guess which side was wrong: the keybind reached
+the io thread, the alternate-screen fall-through passed, but the `+read` after
+the chord still found `KBFILL_MARKER`. It was the test.
+
+`+read` dumps SCROLLBACK + ACTIVE, and a clear at a prompt deliberately keeps
+the final screenful: `termio.clearScreen` erases the scrollback, then
+`Terminal.eraseDisplay(.complete)` sees a prompt row at the bottom of the active
+area and SCROLLS that screenful into the now-empty scrollback before clearing
+the rows - upstream's "^L at a prompt scrolls the screen contents prior to
+clearing" heuristic, shared core, identical on the Mac. The old fill printed the
+marker on the LAST line before the prompt, which is exactly the line that
+survives. Measured on the box: the pane went from 502 lines to 22, and the
+shell's `^L` echo landed at the top of a blank screen - a clear that had worked
+perfectly, called a failure for two weeks.
+
+The fill now echoes the marker FIRST and floods after it, so the marker sits
+deep in the scrollback. That makes both halves of "clear screen AND history"
+observable: the marker must be gone (the scrollback was erased) and the pane
+must collapse to about one screenful (the active area was cleared). Both
+assertions have teeth - with ctrl+k deliberately not sent, the same fill reads
+502 -> 502 lines with the marker present.
+
+The other half of the red is why nobody saw it: the script had no guard row, so
+no code change ever made it DUE. It has one now (`kb-actions`, covering
+`src\apprt\win32\Surface.zig`, `RenameDialog.zig`, `src\termio\Termio.zig` and
+the script), and a clean green run stamps it. `src\apprt\win32\App.zig` is
+deliberately left out: it is edited most turns for reasons unrelated to key
+delivery, and a row that is due every day is a row nobody runs.
+
+Evidence: `kb-actions.ps1` ALL PASS (44 assertions), with T47 reading `fill
+pushed the marker into the scrollback (504 lines)`, `scrollback cleared (marker
+gone)` and `primary screen cleared (504 -> 22 lines)`; `STAMPED kb-actions
+(4 files)`. `floor-lane.ps1 -Lane all` lib/none/win32/agent PASS;
+`floor-lane.ps1 -Lane harness` PASS (stamped 381 files).
+
+Two things filed rather than folded in. T1600 (guard rows for the input/keybind
+scripts) keeps its other half: `keybinds-t01.ps1`, `window-title.ps1` and
+`tab-strip.ps1` still have no row at all. And `test\win32\guard-due.ps1` - the
+acceptance for the guard table itself - is 4-red on this box for reasons that
+predate this change, including a row whose harness never stamps and therefore
+can never be cleared; that is T1602.

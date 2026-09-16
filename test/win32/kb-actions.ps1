@@ -192,16 +192,39 @@ if ($dlg -eq [IntPtr]::Zero) {
 }
 
 # --- T47: ctrl+k clears primary screen ---------------------------------------
-& $Exe +send-keys --target=$win "dir C:\Windows\System32\drivers& echo KBFILL_MARKER" Enter | Out-Null
+# T1599 - WHERE THE MARKER GOES, and why the old oracle could not see it.
+#
+# `+read` dumps SCROLLBACK + ACTIVE, and clear_screen at a prompt deliberately
+# keeps the final screenful: termio.clearScreen erases the scrollback, then
+# Terminal.eraseDisplay(.complete) sees a prompt row at the bottom of the
+# active area and SCROLLS that screenful into the (now empty) scrollback before
+# clearing the active rows - upstream's "^L at a prompt scrolls the screen
+# contents prior to clearing" heuristic, shared core, identical on the Mac.
+#
+# So the old fill put KBFILL_MARKER on the LAST line before the prompt, which
+# is exactly the line that survives, and `-notmatch KBFILL_MARKER` failed on a
+# clear that had worked perfectly (measured: the pane went from 502 lines to
+# 22, and the shell's ^L echo landed at the top of a blank screen).
+#
+# The fill below echoes the marker FIRST and floods after it, so the marker
+# sits deep in the scrollback, far above the visible screen. Then both halves
+# of "clear screen AND history" are observable: the marker must be gone (the
+# scrollback was erased) and the pane must collapse to about one screenful (the
+# active area was cleared, and nothing but that last screen is kept).
+& $Exe +send-keys --target=$win "echo KBFILL_MARKER& dir C:\Windows\System32\drivers" Enter | Out-Null
 Start-Sleep -Seconds 2
-$before = & $Exe +read --name=$pane --lines=40 | Out-String
+$before = & $Exe +read --name=$pane --lines=5000 | Out-String
+$beforeLines = ($before -split "`n").Count
 Assert ($before -match 'KBFILL_MARKER') 'T47 fill landed in the pane'
+Assert ($beforeLines -gt 200) "T47 fill pushed the marker into the scrollback ($beforeLines lines)"
 if ($before -match 'KBFILL_MARKER') {
     Assert (Send-TestKeys -Window $script:top -Target $script:surface -Modifiers ctrl -Key K) 'T47 ctrl+k injected'
     Start-Sleep -Milliseconds 800
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'T47 no crash after ctrl+k'
-    $after = & $Exe +read --name=$pane --lines=40 | Out-String
-    Assert ($after -notmatch 'KBFILL_MARKER') 'T47 primary screen cleared'
+    $after = & $Exe +read --name=$pane --lines=5000 | Out-String
+    $afterLines = ($after -split "`n").Count
+    Assert ($after -notmatch 'KBFILL_MARKER') 'T47 scrollback cleared (marker gone)'
+    Assert ($afterLines -lt 100 -and $afterLines -lt ($beforeLines / 4)) "T47 primary screen cleared ($beforeLines -> $afterLines lines)"
     Assert (Select-String -Path $errlog -Pattern 'mailbox message=clear_screen' -Quiet) 'T47 clear_screen io message logged'
 
     # Alternate screen: the performable binding must be unconsumed.
@@ -292,6 +315,17 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($fgSeen.Count -gt 0) 'the foreground watcher actually sampled (negative control)'
     $leaked = @($script:launched | Where-Object { $fgSeen -contains $_ })
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
+}
+
+# A green run stamps the covered files (T783/T1599) so guard-due can answer
+# "has this harness been run against the key-delivery code as it now stands?".
+# Red leaves the stamp alone: red stays due. The pass floor is the stand-in for
+# Complete-TestBody, which this script predates - an unwind that skipped the
+# body would otherwise reach here with fail=0 and stamp a run that asserted
+# nothing.
+if ($script:fail -eq 0 -and $script:pass -ge 35) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard kb-actions -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Write-Host ''

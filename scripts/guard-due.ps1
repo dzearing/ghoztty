@@ -1940,6 +1940,27 @@ $GuardTable = @(
             'test\win32\menu-f10-binding.ps1'
         )
     },
+    # Real chords into a real surface (T1599): the rename dialog, ctrl+k's
+    # clear, and injected character input. It had no row at all, which is how
+    # its T47 section sat red over a clear that was working - nobody had run it
+    # since the fill's marker started landing on the one line the at-prompt
+    # scroll heuristic keeps. Covers the surface that receives the keys, the
+    # dialog the chord opens, and the core clear the chord asks for.
+    # src\apprt\win32\App.zig is deliberately NOT covered: it is edited most
+    # turns for reasons that have nothing to do with key delivery, and a row
+    # that is due every day costs a 3-minute GUI run every day and gets
+    # ignored - the same call made for floor-lane.ps1 below.
+    [pscustomobject]@{
+        Name   = 'kb-actions'
+        Script = 'test\win32\kb-actions.ps1'
+        Stamp  = 'test\win32\kb-actions.stamp.json'
+        Covers = @(
+            'src\apprt\win32\Surface.zig',
+            'src\apprt\win32\RenameDialog.zig',
+            'src\termio\Termio.zig',
+            'test\win32\kb-actions.ps1'
+        )
+    },
     # Crash evidence is the other thing whose failure nothing else catches: a
     # capture path that has quietly stopped working looks exactly like a lane
     # that did not crash, and is only ever exercised on a day already going
