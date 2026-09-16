@@ -25,13 +25,20 @@
          declaration must never trip the rule - only a call site naming the
          screen does.
 
-      C. The sweep over `test\win32\*.ps1`: every site is declared, and every
-         declaration still names a script that needs the input desktop.
+      E. The scope (T780) - `lib\` is swept too, because a harness helper that
+         reads the composited screen would make every script calling it
+         input-desktop-only while the sweep read none of them. A helper states
+         its intent on one `# input-desktop-helper:` line with a reason, which
+         is the exemption; outside `lib\` that marker means nothing.
 
-    `-TeethCheck` proves the section-C assertion can fail: it writes two real
-    violators into the swept directory - one with a live `SendInput`, one with a
-    live screen-DC read, both on no list - and requires the sweep to find each.
-    Run it after any change to the analyzer.
+      C. The sweep over `test\win32\*.ps1` and `test\win32\lib\*.ps1`: every
+         site is declared or marked, and every declaration still names a script
+         that needs the input desktop.
+
+    `-TeethCheck` proves the section-C assertion can fail: it writes three real
+    violators into the swept tree - a live `SendInput`, a live screen-DC read,
+    and an unmarked `lib\` helper, all on no list - and requires the sweep to
+    find each. Run it after any change to the analyzer.
 
 .NOTES
     # persistence: launches no GUI - this scores scripts, it does not run them.
@@ -281,6 +288,111 @@ Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 
 # ===========================================================================
 Write-Host ''
+Write-Host '== E: lib\ is swept too, and a helper states its intent (T780)'
+# ===========================================================================
+# The hole this closes: the sweep was top-level only, so a new lib\ helper that
+# read the composited screen would make EVERY script calling it
+# input-desktop-only and not one of them would be flagged - the site would not
+# be in a swept file. Scope is not a detail of the rule, it IS the rule.
+
+$lt = Join-Path $env:TEMP "ghoztty-t780-$PID"
+if (Test-Path $lt) { Remove-Item -Recurse -Force $lt -ErrorAction SilentlyContinue }
+New-Item -ItemType Directory -Force (Join-Path $lt 'lib') | Out-Null
+$libHelper = Join-Path $lt 'lib\Probe.ps1'
+$declNone = @([pscustomobject]@{ Script = 'nothing.ps1'; Reason = 'placeholder'; Line = 1; Malformed = $false })
+
+function LibFindings([object[]]$Declared) {
+    return @(Get-ForegroundAuditFindings -Root $lt -Declared $Declared)
+}
+
+Set-Content -LiteralPath $libHelper -Encoding ascii -Value @(
+    'function Get-Probe { $hdc = [Drv]::GetDC([IntPtr]::Zero); return [Drv]::GetPixel($hdc, 4, 4) }'
+)
+$f = LibFindings $declNone
+AssertEq 'E1 an unmarked lib helper that reads the screen is a finding' 1 @($f | Where-Object { $_.Kind -eq 'undeclared' }).Count
+Assert 'E2 and it is the helper that is named, not its callers' (
+    @($f | Where-Object { $_.Kind -eq 'undeclared' })[0].Path -match 'Probe\.ps1')
+
+# The exemption is one findable line with a why on it - not a directory that
+# was quietly out of scope.
+Set-Content -LiteralPath $libHelper -Encoding ascii -Value @(
+    '# input-desktop-helper: the screen read IS the measurement here.'
+    'function Get-Probe { $hdc = [Drv]::GetDC([IntPtr]::Zero); return [Drv]::GetPixel($hdc, 4, 4) }'
+)
+AssertEq 'E3 the helper marker clears it' 0 @(LibFindings $declNone | Where-Object { $_.Kind -eq 'undeclared' }).Count
+
+Set-Content -LiteralPath $libHelper -Encoding ascii -Value @(
+    '# input-desktop-helper:'
+    'function Get-Probe { $hdc = [Drv]::GetDC([IntPtr]::Zero); return [Drv]::GetPixel($hdc, 4, 4) }'
+)
+AssertEq 'E4 a marker with no reason states no intent and does not exempt' 1 @(LibFindings $declNone | Where-Object { $_.Kind -eq 'undeclared' }).Count
+
+# A marker that outlives the site it excused is the same rot as a stale
+# declaration: a list naming files that need no naming.
+Set-Content -LiteralPath $libHelper -Encoding ascii -Value @(
+    '# input-desktop-helper: the screen read IS the measurement here.'
+    'function Get-Probe { return Get-TestPaneCapture -Target $t }'
+)
+$f = LibFindings $declNone
+Assert 'E5 a marked helper that no longer grabs is a stale marker' (
+    @($f | Where-Object { $_.Kind -eq 'stale-declaration' -and $_.Path -match 'Probe\.ps1' }).Count -eq 1)
+
+# A lib helper that genuinely IS input-desktop-only can still be declared, and
+# it is declared BY PATH - keys are relative to test\win32, so a helper and a
+# top-level script of the same name cannot be confused with each other.
+Set-Content -LiteralPath $libHelper -Encoding ascii -Value @(
+    'function Get-Probe { $hdc = [Drv]::GetDC([IntPtr]::Zero); return [Drv]::GetPixel($hdc, 4, 4) }'
+)
+$byPath = @([pscustomobject]@{ Script = 'lib\Probe.ps1'; Reason = 'needs the composited screen'; Line = 7; Malformed = $false })
+AssertEq 'E6 declaring it by path clears the finding' 0 (LibFindings $byPath).Count
+
+$byLeaf = @([pscustomobject]@{ Script = 'Probe.ps1'; Reason = 'the bare leaf'; Line = 7; Malformed = $false })
+$f = LibFindings $byLeaf
+Assert 'E7 the bare leaf does NOT exempt a lib file' (
+    @($f | Where-Object { $_.Kind -eq 'undeclared' -and $_.Path -match 'Probe\.ps1' }).Count -eq 1)
+Assert 'E8 and that declaration reads as stale rather than silently matching' (
+    @($f | Where-Object { $_.Kind -eq 'stale-declaration' }).Count -eq 1)
+
+# The marker is for helpers only. An acceptance script is declared in
+# lib\TestDesktop.ps1 or it is a finding; a helper marker is not a second door.
+Remove-Item -LiteralPath $libHelper -Force
+$topLevel = Join-Path $lt 'pretender.ps1'
+Set-Content -LiteralPath $topLevel -Encoding ascii -Value @(
+    '# input-desktop-helper: I am not a helper.'
+    '$null = [Drv]::SendInput(1, $i, 40)'
+)
+$f = LibFindings $declNone
+AssertEq 'E9 the helper marker does not exempt a top-level script' 1 @($f | Where-Object { $_.Kind -eq 'undeclared' }).Count
+Assert 'E10 and the finding says the marker is only honoured under lib\' (
+    @($f | Where-Object { $_.Kind -eq 'undeclared' })[0].Detail -match 'only honoured under lib')
+
+$parsed = @(Get-ForegroundAuditDeclarations -Text @(
+    '# @input-desktop-exception: lib\Probe.ps1 -- (T780) needs the composited screen.'))
+AssertEq 'E11 the declaration grammar accepts a lib\ path' 'lib\Probe.ps1' $parsed[0].Script
+
+Remove-Item -Recurse -Force $lt -ErrorAction SilentlyContinue
+
+# The three real lib\ files that hold these APIs each carry their exemption
+# line. If one ever stops, the sweep in C says so - this says WHICH mechanism
+# is carrying it, so a silent drift to "nothing in lib matches any more" is
+# visible here rather than as an unexplained green.
+$libExempt = @{
+    'TestDesktop.ps1'       = 'helper'
+    'DesktopCapability.ps1' = 'helper'
+    'ForegroundAudit.ps1'   = 'named-not-called'
+}
+foreach ($n in $libExempt.Keys) {
+    $p = Join-Path $Suite "lib\$n"
+    $ok = if ($libExempt[$n] -eq 'helper') {
+        (Test-ForegroundAuditHelperMarker -Path $p) -and -not (Test-ForegroundAuditExempt -Path $p)
+    } else {
+        Test-ForegroundAuditExempt -Path $p
+    }
+    Assert "E12 lib\$n states its exemption ($($libExempt[$n]))" $ok
+}
+
+# ===========================================================================
+Write-Host ''
 Write-Host '== C: the sweep over the acceptance suite'
 # ===========================================================================
 
@@ -295,6 +407,9 @@ if ($TeethCheck) {
            Body = '$null = [Drv]::SendInput(1, $inputs, 40)' }
         @{ Name = 'zz-foreground-audit-teeth-screendc.ps1'
            Body = '$hdc = [Drv]::GetDC([IntPtr]::Zero)' }
+        # T780: in lib\, which the sweep did not read at all until it did.
+        @{ Name = 'lib\zz-foreground-audit-teeth-helper.ps1'
+           Body = '$hdc = [Drv]::GetDC([IntPtr]::Zero)' }
     ) | ForEach-Object {
         $p = Join-Path $Suite $_.Name
         Set-Content -LiteralPath $p -Encoding ascii -Value @(
@@ -303,7 +418,7 @@ if ($TeethCheck) {
         )
         $p
     }
-    Write-Host '  TEETH CHECK: two real undeclared violators are in the swept directory'
+    Write-Host '  TEETH CHECK: three real undeclared violators are in the swept tree (one in lib\)'
 }
 
 try {
@@ -320,6 +435,8 @@ if ($TeethCheck) {
         @($hard | Where-Object { $_.Path -match 'zz-foreground-audit-teeth\.ps1' }).Count -eq 1)
     Assert 'C1b and when an undeclared screen-DC probe is added' (
         @($hard | Where-Object { $_.Path -match 'zz-foreground-audit-teeth-screendc' }).Count -eq 1)
+    Assert 'C1c and when the unmarked helper is in lib\ (T780)' (
+        @($hard | Where-Object { $_.Path -match 'zz-foreground-audit-teeth-helper' }).Count -eq 1)
 } else {
     Assert 'C1 every input-desktop site in the suite is declared, and every declaration is live' ($hard.Count -eq 0)
     foreach ($h in $hard) {
@@ -331,6 +448,13 @@ if ($TeethCheck) {
 # a clean one - the exact shape T271 exists for.
 $scanned = @(Get-ChildItem -LiteralPath $Suite -Filter *.ps1 -File).Count
 Assert 'C2 the sweep read the whole suite' ($scanned -gt 100)
+
+# And the harness with it (T780). A scope regression is silent by construction:
+# the findings stay at zero and nothing says fewer files were read.
+$libCount = @(Get-ChildItem -LiteralPath (Join-Path $Suite 'lib') -Filter *.ps1 -File).Count
+Assert "C2b the sweep reads lib\ too ($libCount helper(s))" ($libCount -ge 5)
+Assert 'C2c and keys a helper by its lib\ path' (
+    (Get-ForegroundAuditKey -Path (Join-Path $Suite 'lib\TestDesktop.ps1') -Root $Suite) -eq 'lib\TestDesktop.ps1')
 
 # And it must still be finding the declared exceptions, or the detector has
 # gone blind and C1 is green for the wrong reason.
@@ -361,4 +485,4 @@ Write-Host "  (screen-DC readers, all declared: $($screenDc -join ', '))"
 
 Write-Host ''
 Complete-TestBody  # T1039: the run reached the end of its body
-Write-TestVerdict -Label 'T272/T276 ACCEPTANCE' -Pass $script:pass -Fail $script:fail -MinPass 30
+Write-TestVerdict -Label 'T272/T276/T780 ACCEPTANCE' -Pass $script:pass -Fail $script:fail -MinPass 50

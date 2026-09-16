@@ -1,10 +1,10 @@
 {
     "guard":  "isolation-meta",
     "script":  "test/win32/isolation-meta.ps1",
-    "generated":  "2026-09-15T19:26:40-07:00",
-    "commit":  "cb9c0b2ee",
+    "generated":  "2026-09-15T20:09:08-07:00",
+    "commit":  "ec76364e9",
     "uncommitted":  [
-                        "test/win32/floor-lane-verdict-detail.ps1"
+                        "test/win32/foreground-audit.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -113,7 +113,7 @@
                   "test/win32/focus-defer.ps1":  "0781efdaa91cf1730f88acaec0143573697a9d4d305e4becdd08eab8774efafd",
                   "test/win32/focus-follows-mouse.ps1":  "09c5f9884b9c51bdb0d91321a12c0e8b8c554552434fd78f7b6267826caaa4e1",
                   "test/win32/font-inherit.ps1":  "f303affd8f1c72da77f48f09a10b18d0c7c72af845a4602455bf013662d8c257",
-                  "test/win32/foreground-audit.ps1":  "d343505dc8ede3b8a22d230eb7621f529f2a106a740301fead22d422b59310e3",
+                  "test/win32/foreground-audit.ps1":  "1965318c1c2b9d1fe2d5c7cfe37e2523e057a4821c28ac5200826a7a060a9433",
                   "test/win32/fork-identity.ps1":  "9661dc44ad46212f55a3f65601c083cd0f1eebcba2e3a323f6fe4c4f44b62cbe",
                   "test/win32/gate-negatives.ps1":  "1be8b6c6ffbf3d9969263a5d227a44d95b890446557ab803d1a6e03e68c075d2",
                   "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76",

@@ -29856,3 +29856,48 @@ Evidence: `log-append.ps1` ALL PASS (30 assertions) and re-stamped `log-sink`,
 the debug exe predated the `log_rotate.zig` edit by 56 minutes, which is the
 BuildFresh gate doing its job - a green there would have stamped guards over code
 it never saw. Rebuilt and re-ran.
+
+## 2026-09-15 - The focus-theft audit now reads the harness it trusted (T780)
+
+The suite's input-desktop rule says a script that can only run on the live screen
+must be declared, on a findable line, in `lib\TestDesktop.ps1`'s header. The sweep
+enforcing it read `test\win32\*.ps1` and stopped there: `lib\` was excluded by a
+comment reasoning about ONE file - `TestDesktop.ps1` owns the `-Interactive`
+hatch, so it owns a legitimate `SendInput`. That is true, and it is not a policy;
+it is the same miss shape T272 and T276 each closed, one level up. A new helper in
+`lib\` that read the composited screen would have made EVERY script calling it
+input-desktop-only, and not one of them would have been flagged, because the site
+would not be in a file the sweep read. Measured then and again now: no such helper
+exists, so this closes the door before somebody walks through it.
+
+`lib\` is swept. A helper is not exempted the way a script is, because it is not
+making the same claim: the declaration list answers "this SCRIPT can only run on
+the input desktop", while a helper that holds these APIs by design - the desktop
+harness's hatch, the capability probe whose whole job is to ask whether SendInput
+is accepted here - answers something else. It states that on its own line,
+`# input-desktop-helper: <reason>`, honoured only under `lib\` and only with a
+reason after it. Both real helpers now carry one; `ForegroundAudit.ps1` carries
+the existing named-not-called marker instead, which it had been matching by
+accident off the line that documents the grammar.
+
+The marker is not a second door. A top-level acceptance script that carries it is
+still a finding, and the finding says the marker is only honoured under `lib\`. A
+marker that outlives the site it excused is stale, exactly as a stale declaration
+is. And a helper that genuinely IS input-desktop-only can still be declared, by
+path - files are keyed relative to `test\win32` now, so `lib\Probe.ps1` and a
+top-level `Probe.ps1` cannot be confused, and the bare leaf does not exempt the
+helper.
+
+One latent defect fell out of the fixtures: the declaration parser took
+`[string[]]$Text` through an `if`, which unrolls a ONE-ELEMENT array to a bare
+string, and then indexed it - so a header holding a single declaration parsed as
+zero declarations, which reads as "the list is empty" and would have turned every
+violation into a pass. The live header has five, so it never fired; `@()` around
+the assignment is the fix.
+
+Evidence: `foreground-audit.ps1` ALL PASS (56 assertions), and `-TeethCheck` ALL
+PASS (58) with a third planted violator - an unmarked helper in `lib\` - which the
+pre-T780 sweep could not have seen. Re-stamped green on box:
+`test-desktop-harness.ps1` (77), `desktop-launch-audit.ps1` (29),
+`command-resolve-audit.ps1` (15), `floor-lane.ps1 -Lane harness`, plus
+`floor-lane.ps1 -Lane all`.

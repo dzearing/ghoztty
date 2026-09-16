@@ -1,11 +1,11 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-15T19:29:06-07:00",
-    "commit":  "cb9c0b2ee",
+    "generated":  "2026-09-15T20:11:35-07:00",
+    "commit":  "ec76364e9",
     "uncommitted":  [
-                        "docs/claude/testing.md",
-                        "test/win32/floor-lane-verdict-detail.ps1"
+                        "test/win32/foreground-audit.ps1",
+                        "test/win32/lib/TestDesktop.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "153b2be6dc8272d18f75a46998ea23f746f33285f41011b79fae49cf18716070",
@@ -115,7 +115,7 @@
                   "test/win32/focus-defer.ps1":  "0781efdaa91cf1730f88acaec0143573697a9d4d305e4becdd08eab8774efafd",
                   "test/win32/focus-follows-mouse.ps1":  "09c5f9884b9c51bdb0d91321a12c0e8b8c554552434fd78f7b6267826caaa4e1",
                   "test/win32/font-inherit.ps1":  "f303affd8f1c72da77f48f09a10b18d0c7c72af845a4602455bf013662d8c257",
-                  "test/win32/foreground-audit.ps1":  "d343505dc8ede3b8a22d230eb7621f529f2a106a740301fead22d422b59310e3",
+                  "test/win32/foreground-audit.ps1":  "1965318c1c2b9d1fe2d5c7cfe37e2523e057a4821c28ac5200826a7a060a9433",
                   "test/win32/fork-identity.ps1":  "9661dc44ad46212f55a3f65601c083cd0f1eebcba2e3a323f6fe4c4f44b62cbe",
                   "test/win32/gate-negatives.ps1":  "1be8b6c6ffbf3d9969263a5d227a44d95b890446557ab803d1a6e03e68c075d2",
                   "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76",
@@ -176,7 +176,7 @@
                   "test/win32/layout-blobs.ps1":  "d91f5b4afad56f13d8fba4d6f00abf44539b9a5e93afadd26acaec53c5413b75",
                   "test/win32/layout-capture-cost.ps1":  "60a2c830f6bac395be0ea78847d0f07466cefca0c8bb9d86385ea27618628e8e",
                   "test/win32/lib/PersistenceSweep.ps1":  "f887c6445618eaf5102e8a2e0a4019aea9de53126291df8e9a19662d3b401a49",
-                  "test/win32/lib/TestDesktop.ps1":  "86cd5a5020b60062966c22e649170d899a93a66f0ade50e6d8c94f9556db7095",
+                  "test/win32/lib/TestDesktop.ps1":  "db142dbdcb7d183e7a894a11011453289a318da3a1f31f46adf44a4b3faf14b3",
                   "test/win32/local-split-no-command-rerun.ps1":  "ee277b6308cdb172e153fe92d0624732f8b64743418134ce466da5534138fae2",
                   "test/win32/log-append.ps1":  "61e904625bdcce9ad697d8d8ea6065dcd15673388768a1b306cf72902d255b11",
                   "test/win32/machine-chooser.ps1":  "c69e331b19e83e300b5f0c22860220ea1d2de144d587db1ee4ae4e797ce6b79e",

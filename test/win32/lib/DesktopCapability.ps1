@@ -1,6 +1,12 @@
 # DesktopCapability (T1100) - what the desktop a run happens on CAN DO, asked
 # before the run instead of discovered as a red.
 #
+# input-desktop-helper: (T780) the `SendInput` below IS the measurement - a
+# zero-delta mouse move whose only purpose is to learn whether this desktop
+# accepts injected input, which is how `real-input` is answered. It moves
+# nothing, clicks nothing, and a caller that asks the question is doing the
+# opposite of becoming input-desktop-only: it is finding out before it assumes.
+#
 # THE DEFECT THIS EXISTS FOR. The GUI acceptance scripts moved onto a
 # background desktop (T211) so they stop stealing the user's foreground. A
 # background desktop cannot capture composited pixels and cannot accept

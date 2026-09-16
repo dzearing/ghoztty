@@ -114,10 +114,38 @@
 #      `-Interactive:$Interactive` is the normal forwarding of a debug switch
 #      and is not a finding.
 #
-# Sweep is NOT recursive, for the reason the sibling audits are not: an
-# acceptance script is a top-level file in `test\win32`, while `lib\` holds the
-# harness itself - `TestDesktop.ps1` owns the interactive hatch and therefore
-# owns a legitimate `SendInput`.
+# SCOPE: `test\win32\*.ps1` AND `test\win32\lib\*.ps1` (T780). It used to be the
+# top level alone, on the grounds that `lib\` holds the harness itself and
+# `TestDesktop.ps1` owns the interactive hatch and therefore a legitimate
+# `SendInput`. That reasoning covers ONE file and was written as a directory
+# exclusion, which is the same miss shape T272 and T276 each closed, one level
+# up: a new `lib\` helper that read the composited screen would make EVERY
+# script calling it input-desktop-only, and not one of them would be flagged,
+# because the site would not be in a swept file. Measured 2026-08-11 and again
+# when this widened: zero such helpers exist, so this closes the hole before it
+# is used rather than after.
+#
+# A helper is not an acceptance script, so it is not exempted the same way. The
+# declaration list answers "this SCRIPT can only run on the input desktop"; a
+# helper that holds these APIs by design - the desktop harness's own hatch, the
+# capability probe whose whole job is to ask whether `SendInput` is accepted
+# here - is a different claim, and it carries its own one-line marker instead:
+#
+#     # input-desktop-helper: <reason>
+#
+# honoured only for a file under `lib\`, and only with a reason after it. The
+# point is that the exemption is a line a reader can find, with a why on it,
+# rather than a directory that was silently out of scope. A top-level
+# acceptance script that carries the marker is still a finding - a helper
+# marker is not a second way to declare a script - and a `lib\` file that
+# carries one while grabbing nothing is a stale marker, for the same reason a
+# stale declaration is: a list naming files that do not need naming is how a
+# real miss gets waved through.
+#
+# A `lib\` helper that genuinely IS input-desktop-only can still be DECLARED,
+# by its path: `@input-desktop-exception: lib\<name>.ps1 -- <reason>`. Files are
+# keyed by their path relative to `test\win32`, so the two directories cannot
+# be confused with each other.
 #
 # `scripts\` is out of scope on purpose, and the scope was measured rather than
 # assumed: run over `scripts\*.ps1` + `scripts\lib\*.ps1` on 2026-08-11 this
@@ -130,6 +158,12 @@
 # Acceptance: `test\win32\foreground-audit.ps1` (analyzer both directions, the
 # live sweep, and a `-TeethCheck` that plants a real violator in the swept
 # directory and requires the sweep to find it).
+
+# foreground-audit: this file IS the watch list - every API it names lives in a
+# string literal in `Get-ForegroundAuditApis` / `Get-ForegroundAuditScreenDcApis`
+# and none of them is ever called. It launches nothing and takes no foreground.
+# (It matched the marker already, off the grammar line above; stating it here
+# makes the exemption deliberate rather than a side effect of documenting it.)
 
 # Deliberately sets no StrictMode: this file is dot-sourced INTO suite scripts,
 # and a mode set here would silently change how every one of them evaluates.
@@ -234,15 +268,21 @@ function Get-ForegroundAuditDeclarations {
         [string]$Path,
         [string[]]$Text
     )
-    $lines = if ($null -ne $Text) { $Text } else { @(Get-Content -LiteralPath $Path) }
+    # `@()` is load-bearing: a one-element [string[]] unrolls to a bare string
+    # through an `if`, and indexing THAT walks characters - so a header holding a
+    # single declaration parsed as zero declarations (found by T780's fixtures).
+    $lines = @(if ($null -ne $Text) { $Text } else { Get-Content -LiteralPath $Path })
     $out = New-Object System.Collections.ArrayList
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $l = $lines[$i]
         if ($l -notmatch '@input-desktop-exception:') { continue }
         $rest = ($l -split '@input-desktop-exception:', 2)[1]
-        if ($rest -match '^\s*(?<s>[A-Za-z0-9._\-]+\.ps1)\s+--\s+(?<r>\S.*)$') {
+        # An optional `lib\` prefix (T780): a helper that genuinely needs the
+        # input desktop is declared by path, so it cannot be confused with a
+        # top-level script of the same name.
+        if ($rest -match '^\s*(?<s>(?:lib[\\/])?[A-Za-z0-9._\-]+\.ps1)\s+--\s+(?<r>\S.*)$') {
             [void]$out.Add([pscustomobject]@{
-                Script    = $Matches['s'].Trim()
+                Script    = ($Matches['s'].Trim() -replace '/', '\')
                 Reason    = $Matches['r'].Trim()
                 Line      = $i + 1
                 Malformed = $false
@@ -267,9 +307,44 @@ function Test-ForegroundAuditExempt {
         [string]$Path,
         [string[]]$Text
     )
-    $lines = if ($null -ne $Text) { $Text } else { @(Get-Content -LiteralPath $Path) }
+    $lines = @(if ($null -ne $Text) { $Text } else { Get-Content -LiteralPath $Path })
     foreach ($l in $lines) { if ($l -match '#\s*foreground-audit:') { return $true } }
     return $false
+}
+
+# A harness helper under `lib\` that holds these APIs BY DESIGN - see the header.
+# The reason is required: a bare marker states no intent, so it is not honoured
+# and the file reads as an undeclared site, which is loud rather than silent.
+function Test-ForegroundAuditHelperMarker {
+    param(
+        [string]$Path,
+        [string[]]$Text
+    )
+    $lines = @(if ($null -ne $Text) { $Text } else { Get-Content -LiteralPath $Path })
+    foreach ($l in $lines) { if ($l -match '#\s*input-desktop-helper:\s*\S') { return $true } }
+    return $false
+}
+
+# The key a declaration names and a swept file answers to: the path relative to
+# the acceptance root (`split-dim.ps1`, `lib\TestDesktop.ps1`). Falls back to the
+# leaf when there is no root to measure against, which is how the self-test
+# drives the analyzer over a scratch directory.
+function Get-ForegroundAuditKey {
+    param(
+        [string]$Path,
+        [string]$Root
+    )
+    $leaf = Split-Path $Path -Leaf
+    if ([string]::IsNullOrWhiteSpace($Root)) { return $leaf }
+    try {
+        $full = [System.IO.Path]::GetFullPath($Path)
+        $base = [System.IO.Path]::GetFullPath($Root)
+    } catch { return $leaf }
+    if (-not $base.EndsWith('\')) { $base += '\' }
+    if ($full.StartsWith($base, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $full.Substring($base.Length)
+    }
+    return $leaf
 }
 
 # ---------------------------------------------------------------------------
@@ -390,19 +465,43 @@ function Get-ForegroundAuditFindings {
     }
 
     if ($null -eq $Files) {
-        $Files = @(Get-ChildItem -LiteralPath $Root -Filter *.ps1 -File |
-            ForEach-Object { $_.FullName })
+        # Top level AND lib\ (T780) - a harness helper can make every one of its
+        # consumers input-desktop-only, so the site has to be in a swept file.
+        $Files = @(foreach ($d in @($Root, (Join-Path $Root 'lib'))) {
+            if (Test-Path -LiteralPath $d) {
+                Get-ChildItem -LiteralPath $d -Filter *.ps1 -File |
+                    ForEach-Object { $_.FullName }
+            }
+        })
     }
 
     $grabbers = @{}
     foreach ($f in $Files) {
-        $name = Split-Path $f -Leaf
+        $name = Get-ForegroundAuditKey -Path $f -Root $Root
+        $inLib = $name -match '^lib[\\/]'
         if (Test-ForegroundAuditExempt -Path $f) { continue }
+        $helper = Test-ForegroundAuditHelperMarker -Path $f
         $sites = @(Get-ForegroundAuditSites -Path $f)
-        if ($sites.Count -eq 0) { continue }
+        if ($sites.Count -eq 0) {
+            if ($helper -and $inLib) {
+                [void]$findings.Add([pscustomobject]@{
+                    Path = $f; Line = 0; Kind = 'stale-declaration'
+                    Detail = "$name is marked '# input-desktop-helper:' but holds no input-desktop site; drop the marker" })
+            }
+            continue
+        }
+        # A marked helper states its intent on one findable line, and that IS
+        # the exemption. Outside lib\ the marker means nothing: an acceptance
+        # script is declared in lib\TestDesktop.ps1 or it is a finding.
+        if ($helper -and $inLib) { continue }
         $grabbers[$name] = $sites
         $decl = @($good | Where-Object { $_.Script -eq $name })
-        if ($decl.Count -eq 0) {
+        if ($decl.Count -eq 0 -and $helper) {
+            $first = @($sites | Sort-Object Line)[0]
+            [void]$findings.Add([pscustomobject]@{
+                Path = $f; Line = $first.Line; Kind = 'undeclared'
+                Detail = "takes the input desktop ($($first.What)) and carries '# input-desktop-helper:', which is only honoured under lib\; declare it in lib\TestDesktop.ps1 instead" })
+        } elseif ($decl.Count -eq 0) {
             # Two patterns run over each token, so appended order is not line
             # order; point the finding at the earliest site so it is something
             # you can go and read.
@@ -420,7 +519,8 @@ function Get-ForegroundAuditFindings {
 
     foreach ($d in $good) {
         if ($grabbers.ContainsKey($d.Script)) { continue }
-        $exists = $null -ne ($Files | Where-Object { (Split-Path $_ -Leaf) -eq $d.Script })
+        $exists = $null -ne ($Files | Where-Object {
+            (Get-ForegroundAuditKey -Path $_ -Root $Root) -eq $d.Script })
         $why = if ($exists) { 'no longer needs the input desktop' } else { 'no longer exists' }
         [void]$findings.Add([pscustomobject]@{
             Path = 'lib\TestDesktop.ps1'; Line = $d.Line; Kind = 'stale-declaration'

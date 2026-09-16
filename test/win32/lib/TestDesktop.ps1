@@ -200,6 +200,11 @@
 # desktop they cannot see. It is for debugging by hand only - it steals focus,
 # so it is never how an acceptance run is scored.
 #
+# input-desktop-helper: (T780) this file OWNS the hatch above - the SendInput /
+# SetForegroundWindow / SetCursorPos calls below are the interactive path, taken
+# only when -Interactive is passed, and every other entry point posts messages
+# instead. Dot-sourcing it does not make a script input-desktop-only.
+#
 # INTERACTIVE BY DESIGN - the scripts that can only run on the INPUT DESKTOP
 # (T272, widened by T276). Two ways to end up here, one list: taking the
 # foreground / injecting input, and reading the COMPOSITED SCREEN (a screen DC,
@@ -223,6 +228,16 @@
 # @input-desktop-exception: test-desktop-spike.ps1 -- (T207) the spike that measured what does and does not work off the input desktop; it has to reach both.
 # @input-desktop-exception: notification-click-real.ps1 -- (T572) the subject IS a real click on a shell-drawn toast: balloons render on the input desktop and nowhere else, and a posted WM_APP_TRAY cannot validate delivery.
 # @input-desktop-exception: rdp-session.ps1 -- (T1253/T1316) its subject is the desktop being shipped over the wire, and arm G reads the COMPOSITE of a viewer surface with the dim overlay blended onto it; DWM composes only the input desktop.
+#
+# `lib\` IS SWEPT TOO as of T780, and a HELPER is not declared here - it states
+# its own intent on a `# input-desktop-helper: <reason>` line in its header (this
+# file carries one, above). The list here answers "which SCRIPTS can only run on
+# the input desktop"; a helper holding these APIs by design is a different
+# claim, and putting it on this list would make the list mean two things. A
+# helper that genuinely is input-desktop-only can still be declared here, by
+# path - a marker line whose script name carries the `lib\` prefix. (Spelled out
+# rather than shown, because the parser reads every marker line in this file,
+# example ones included.)
 #
 # LAUNCHES ON THE USER'S DESKTOP - the second list, and a different question
 # (T1193). The one above asks which scripts CALL an API that only works on the
