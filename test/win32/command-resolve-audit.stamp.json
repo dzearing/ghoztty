@@ -1,13 +1,10 @@
 {
     "guard":  "command-resolve",
     "script":  "test/win32/command-resolve-audit.ps1",
-    "generated":  "2026-09-16T03:03:08-07:00",
-    "commit":  "b9d0971eb",
+    "generated":  "2026-09-16T04:25:41-07:00",
+    "commit":  "79dff565c",
     "uncommitted":  [
-                        "test/win32/caption-bar.ps1",
-                        "test/win32/hero-mode.ps1",
-                        "test/win32/lib/HoverCapture.ps1",
-                        "test/win32/tab-tooltip.ps1"
+                        "test/win32/pane-banner.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -247,7 +244,7 @@
                   "test/win32/palette-close-crash.ps1":  "e6046113e0de2c089224b358bac4ef12ed298e86983c3bf68bd48588a34c964d",
                   "test/win32/palette-grid-size.ps1":  "f443de90fd39d1ae25a8aa707b064029ced866c3716b331cb8e5aa0f5b57c381",
                   "test/win32/palette-jump.ps1":  "150268d189630d6d7118cec0d7f2a6149a8a2b7c41a0db14942533c58fddd013",
-                  "test/win32/pane-banner.ps1":  "16136383deff5dee054b2b4bf30d7e954557c6bc3f88117eedde8ecb8a9fd7c5",
+                  "test/win32/pane-banner.ps1":  "19e5cf3da199d1b92267f2ef57b8ee502e3eacc3fc400066ee7a0663be79407f",
                   "test/win32/pane-capture.ps1":  "bafa49ecb514b76f8cafb16cb2a6172c04188e0081f28c759d939f1c378b8a4c",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "0c722d4f0cb52d3567b2d070362fa2cf825aafc952a81b1bcf01768203181161",

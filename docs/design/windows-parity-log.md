@@ -30166,3 +30166,47 @@ title is outside its Covers list - T1606, and the commit takes `-NoGuardDue`
 naming it. And `caption-bar.ps1` ends every green run on a `CRASHED -
 0xFFFFFFFF` postmortem, reproduced without this turn's edit: that is the
 teardown's own kill, i.e. T1550, so T1605 was filed and closed as its duplicate.
+
+## 2026-09-16 - The banner's content-column probe now measures a settled frame, and says so when it cannot get one (T787)
+
+On 2026-08-12 a negative-control run of `pane-banner.ps1` - the one with
+`icon_button.T204_NEUTERED = true` - reported `the wrapped line really fills the
+content column (rightmost ink 196, column ends 687)` as a FAILURE, where every
+other run of the same probe reads ~640. The open question was whether the neuter
+reaches further than it claims (it is documented as moving glyphs to the leading
+edge of their button box and changing which buttons light a fill, nothing more)
+or whether the probe had photographed a card that was not finished.
+
+It was the photograph. Reproduced on the box: with the flag flipped and the app
+rebuilt `-Dapp-runtime=win32 -Doptimize=Debug`, the probe read `rightmostInk=640`
+- exactly the shipped build's number - and the run's only failures were the five
+chevron-hover assertions the control exists to break. The code says the same
+thing: `BannerOverlay.contentWidthFor` reserves the chevron's column from
+`icon_button.Metrics.init(scale).target`, which the neuter never touches; it
+moves `glyphTarget` and answers `lightsFill`, and neither is on the path that
+wraps banner text. 196 is a first line broken at ~180px, which is a card caught
+before its content had been laid out at the pane's width.
+
+So the probe's `Start-Sleep -Milliseconds 800` is the defect: a fixed wait cannot
+tell a finished frame from an unfinished one, and whichever it gets becomes the
+verdict. It now measures a SETTLED frame instead - it captures the card the
+PREVIOUS banner left on screen first, then keeps capturing after the new one is
+set until the reading is both different from that frame and identical across two
+consecutive captures. A probe that never settles is a FAILURE naming every
+reading it took and why it gave up ("every frame was still the PREVIOUS banner"
+/ "the reading never stopped changing"), rather than an assertion against an
+arbitrary frame. The geometry and the band measurement moved into
+`Get-T377Geometry` / `Measure-T377Band`, because the pre-frame and the settled
+frame have to be read with one ruler.
+
+The retry settles the FRAME, never the verdict, and that is the part worth
+demonstrating: with `T377_NEUTERED = true` - the neuter that puts the content
+column back under the chevron - the probe settles on the first stable frame
+(`685/21 685/21`) and the reserved-column assertion still fails on `21 ink px`.
+A defect that is really there reads the same on every capture, so it settles at
+once and fails.
+
+Evidence: `pane-banner.ps1` ALL PASS (148 assertions) on the shipped build with
+`[settled after 2: 640/0 640/0]` in its INFO line; the same `640/0 640/0` under
+`T204_NEUTERED = true`, with the five expected control failures; `21 ink px`
+under `T377_NEUTERED = true`.

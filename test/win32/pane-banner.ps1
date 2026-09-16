@@ -183,6 +183,75 @@ function Get-Overlay([int]$procId, [IntPtr]$top, [int]$i = 0) {
     return $null
 }
 
+# The T377 chevron-column probe's geometry, derived from the overlay window
+# itself: where the chevron's box starts, the clear gap it reserves, and the
+# first content row's band. One definition, because the pre-frame and the
+# settled frame (section 6h) have to be measured with the same ruler.
+function Get-T377Geometry($Overlay) {
+    $hwnd = [IntPtr]$Overlay.Hwnd
+    $scale = (Get-TestWindowDpi -Window $hwnd) / 96.0
+    $side = Get-TestChromeDip -Dip 28.0 -Scale $scale
+    $margin = Get-TestChromeDip -Dip 12.0 -Scale $scale
+    $pad = Get-TestChromeDip -Dip 12.0 -Scale $scale
+    $line = Get-TestChromeDip -Dip 20.0 -Scale $scale
+    $gap = Get-TestChromeDip -Dip 4.0 -Scale $scale
+    $rowTop = $margin + $pad
+    return [pscustomobject]@{
+        Line       = $line
+        Gap        = $gap
+        RowTop     = $rowTop
+        ChevronL   = $Overlay.Width - $margin - $side
+        # The reference column sits in the card's own padding, so it reads the
+        # empty card rather than any content.
+        RefX       = $margin + [int][Math]::Truncate($pad / 2)
+        ContentL   = $margin + $pad
+        # The row band, minus a few rows of antialias slack at each end.
+        YLo        = $rowTop + 3
+        YHi        = $rowTop + $line - 3
+    }
+}
+
+# What the first content row of the card holds: how far right the text got,
+# how much ink crossed into the chevron's reserved gap, and a signature of
+# WHICH pixels were inked - which is how the caller tells a repainted frame
+# from the one the previous banner left behind (T787).
+#
+# "Ink" = a pixel that differs from its OWN row's empty-card color. Reading the
+# reference per row is what makes this immune to the card's vertical sheen ramp.
+function Measure-T377Band($Shot, $Geometry) {
+    $g = $Geometry
+    $gapInk = 0
+    $firstGapPx = ''
+    $rightMost = -1
+    $sig = 0
+    for ($py = $g.YLo; $py -le $g.YHi; $py++) {
+        $ref = $Shot.Bitmap.GetPixel($g.RefX, $py)
+        # The clear gap, minus one column of antialias slack at each end.
+        for ($px = ($g.ChevronL - $g.Gap + 1); $px -lt $g.ChevronL; $px++) {
+            $c = $Shot.Bitmap.GetPixel($px, $py)
+            if ([Math]::Abs([int]$c.R - [int]$ref.R) -gt 12) {
+                $gapInk++
+                if ($firstGapPx -eq '') { $firstGapPx = "($px,$py)=$($c.R),$($c.G),$($c.B) vs $($ref.R),$($ref.G),$($ref.B)" }
+            }
+        }
+        # ...and how far right the text actually got, so this cannot pass just
+        # because the line came up empty.
+        for ($px = $g.ContentL; $px -lt ($g.ChevronL - $g.Gap); $px++) {
+            $c = $Shot.Bitmap.GetPixel($px, $py)
+            if ([Math]::Abs([int]$c.R - [int]$ref.R) -gt 12) {
+                if ($px -gt $rightMost) { $rightMost = $px }
+                $sig = ($sig * 31 + $px * 7 + $py) % 2147483647
+            }
+        }
+    }
+    return [pscustomobject]@{
+        GapInk     = $gapInk
+        FirstGapPx = $firstGapPx
+        RightMost  = $rightMost
+        Signature  = $sig
+    }
+}
+
 # Capture the overlay and hand back the shot plus its own distinct-color count,
 # so every probe below can score the guard as its own assertion.
 function Get-OverlayShot($overlay) {
@@ -1120,66 +1189,86 @@ try {
     # gap left of its box. Pre-fix the content column ran to one card PADDING
     # (12 DIP) from the band edge, which is 20 DIP inside the chevron's own
     # column - so text crossed this gap on every long line.
+    # It measures a SETTLED frame, not merely a frame (T787). On 2026-08-12 a
+    # neutered run read `rightmost ink 196` here where every other run reads
+    # ~640 - a first line broken at ~180px, which is the shape of a card
+    # photographed before the new banner's content had been laid out at the
+    # pane's width, not of a content column that stops short. A fixed sleep
+    # cannot tell those two frames apart, so the probe now keeps capturing
+    # until the reading is BOTH different from the frame the PREVIOUS banner
+    # left on screen and identical across two consecutive captures, and fails
+    # with the whole sequence of readings when it never settles. The retry
+    # settles the FRAME, never the verdict: a genuinely short column or a
+    # genuinely inked gap reads the same on every capture, so it settles
+    # immediately and still fails.
+    $ovPre = Get-Overlay $appPid $top
+    $preBand = $null
+    if ($ovPre) {
+        $g0 = Get-T377Geometry -Overlay $ovPre
+        $shot0 = Get-TestWindowPixels -Window ([IntPtr]$ovPre.Hwnd) -Sync
+        try {
+            if ((Get-TestDistinctColors -Shot $shot0) -ge 8) {
+                $preBand = Measure-T377Band -Shot $shot0 -Geometry $g0
+            }
+        } finally { Close-TestWindowPixels -Shot $shot0 }
+    }
+
     # argv-audit: $para2 is the literal $sentence repeated twice.
     & $exe +set-banner --target=bw "$para2\ntail" | Out-Null
     $null = Wait-Banner 'bw' 0 "$para2`ntail"
-    Start-Sleep -Milliseconds 800
+    Start-Sleep -Milliseconds 300
     $ovW = Get-Overlay $appPid $top
     if (-not $ovW) {
         $script:fail += 2
         Write-Host 'FAIL  T377 chevron-column probe: no overlay' -ForegroundColor Red
     } else {
-        $wHwnd = [IntPtr]$ovW.Hwnd
-        $wScale = (Get-TestWindowDpi -Window $wHwnd) / 96.0
-        $wSide = Get-TestChromeDip -Dip 28.0 -Scale $wScale
-        $wMargin = Get-TestChromeDip -Dip 12.0 -Scale $wScale
-        $wPad = Get-TestChromeDip -Dip 12.0 -Scale $wScale
-        $wLine = Get-TestChromeDip -Dip 20.0 -Scale $wScale
-        $wGap = Get-TestChromeDip -Dip 4.0 -Scale $wScale
-        $chL = $ovW.Width - $wMargin - $wSide
-        $rowTop = $wMargin + $wPad
-        $refX = $wMargin + [int][Math]::Truncate($wPad / 2)
-        Write-Host "INFO  T377 probe: chevronL=$chL gap=$wGap row=$rowTop..$($rowTop + $wLine) ref=$refX (overlay $($ovW.Width)x$($ovW.Height))"
+        $g = Get-T377Geometry -Overlay $ovW
+        # A recreated or resized overlay makes the pre-frame's pixels a
+        # different picture, so the freshness half of the settle is dropped
+        # rather than compared against the wrong bitmap.
+        if ($preBand -and ($ovPre.Hwnd -ne $ovW.Hwnd -or $ovPre.Width -ne $ovW.Width)) { $preBand = $null }
+        Write-Host ("INFO  T377 probe: chevronL=$($g.ChevronL) gap=$($g.Gap) " +
+            "row=$($g.RowTop)..$($g.RowTop + $g.Line) ref=$($g.RefX) " +
+            "(overlay $($ovW.Width)x$($ovW.Height))")
 
-        $shotW = Get-TestWindowPixels -Window $wHwnd -Sync
-        try {
-            if ((Get-TestDistinctColors -Shot $shotW) -lt 8) {
-                $script:fail += 2
-                Write-Host 'FAIL  T377 chevron-column probe: capture holds no content' -ForegroundColor Red
-            } else {
-                # "Ink" = a pixel that differs from its OWN row's empty-card
-                # color. Reading the reference per row is what makes this
-                # immune to the card's vertical sheen ramp.
-                $yLo = $rowTop + 3
-                $yHi = $rowTop + $wLine - 3
-                $gapInk = 0
-                $gapPx = ''
-                $rightMost = -1
-                for ($py = $yLo; $py -le $yHi; $py++) {
-                    $ref = $shotW.Bitmap.GetPixel($refX, $py)
-                    # The clear gap, minus one column of antialias slack at
-                    # each end.
-                    for ($px = ($chL - $wGap + 1); $px -lt $chL; $px++) {
-                        $c = $shotW.Bitmap.GetPixel($px, $py)
-                        if ([Math]::Abs([int]$c.R - [int]$ref.R) -gt 12) {
-                            $gapInk++
-                            if ($gapPx -eq '') { $gapPx = "($px,$py)=$($c.R),$($c.G),$($c.B) vs $($ref.R),$($ref.G),$($ref.B)" }
-                        }
+        $band = $null
+        $prev = $null
+        $seq = @()
+        $stall = 'the reading never stopped changing'
+        for ($att = 1; $att -le 8; $att++) {
+            $shotW = Get-TestWindowPixels -Window ([IntPtr]$ovW.Hwnd) -Sync
+            try {
+                if ((Get-TestDistinctColors -Shot $shotW) -lt 8) {
+                    $seq += 'blank'
+                    $prev = $null
+                    $stall = 'the capture held no content'
+                } else {
+                    $m = Measure-T377Band -Shot $shotW -Geometry $g
+                    $seq += "$($m.RightMost)/$($m.GapInk)"
+                    $fresh = (-not $preBand) -or ($m.Signature -ne $preBand.Signature)
+                    if (-not $fresh) {
+                        $stall = 'every frame was still the PREVIOUS banner'
+                    } elseif ($prev -and $prev.Signature -eq $m.Signature) {
+                        $band = $m
+                        break
                     }
-                    # ...and how far right the text actually got, so this
-                    # cannot pass just because the line came up empty.
-                    for ($px = ($wMargin + $wPad); $px -lt ($chL - $wGap); $px++) {
-                        $c = $shotW.Bitmap.GetPixel($px, $py)
-                        if ([Math]::Abs([int]$c.R - [int]$ref.R) -gt 12 -and $px -gt $rightMost) { $rightMost = $px }
-                    }
+                    $prev = $m
                 }
-                Write-Host "INFO  T377 probe: gapInk=$gapInk rightmostInk=$rightMost $gapPx"
-                Assert ($rightMost -ge ($chL - $wGap - 5 * $wLine)) `
-                    "T377: the wrapped line really fills the content column (rightmost ink $rightMost, column ends $($chL - $wGap))"
-                Assert ($gapInk -eq 0) `
-                    "T377: nothing paints into the chevron's reserved column ($gapInk ink px$(if($gapPx){" first $gapPx"}))"
-            }
-        } finally { Close-TestWindowPixels -Shot $shotW }
+            } finally { Close-TestWindowPixels -Shot $shotW }
+            Start-Sleep -Milliseconds 250
+        }
+        if (-not $band) {
+            $script:fail += 2
+            Write-Host ("FAIL  T377 chevron-column probe: no settled frame in $($seq.Count) captures " +
+                "- $stall (rightmost/gapInk: $($seq -join ' '))") -ForegroundColor Red
+        } else {
+            Write-Host ("INFO  T377 probe: gapInk=$($band.GapInk) rightmostInk=$($band.RightMost) " +
+                "$($band.FirstGapPx) [settled after $($seq.Count): $($seq -join ' ')]")
+            Assert ($band.RightMost -ge ($g.ChevronL - $g.Gap - 5 * $g.Line)) `
+                "T377: the wrapped line really fills the content column (rightmost ink $($band.RightMost), column ends $($g.ChevronL - $g.Gap))"
+            Assert ($band.GapInk -eq 0) `
+                "T377: nothing paints into the chevron's reserved column ($($band.GapInk) ink px$(if($band.FirstGapPx){" first $($band.FirstGapPx)"}))"
+        }
     }
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'T377 section: GUI alive'
 
