@@ -4,8 +4,8 @@
 > writing or running ANY test — unit lanes, `test/win32/` acceptance scripts,
 > or scripts that drive the GUI. The audit rules in here (exit-code, skip,
 > verdict, asserted-nothing, body-completion, one-shared-kill,
-> foreground/desktop, persistence declaration, liveness, PS 5.1 argv fidelity)
-> are enforced by sweeps that fail the suite.
+> foreground/desktop, persistence declaration, liveness, PS 5.1 argv fidelity,
+> env-seam classification) are enforced by sweeps that fail the suite.
 
 ### Test lanes and acceptance scripts
 
@@ -640,6 +640,37 @@ marker. The existing population is a per-file ratchet
 T1617); a file above its baseline fails, and so does one below it. Acceptance:
 `test\win32\unroll-count-audit.ps1`, whose section B measures the trap on this
 interpreter before it scores anybody and whose `-TeethCheck` re-plants it.
+
+**A seam you SET is a statement that the unset case is untested** (T796). Every
+GUI section of `test\win32\relay-account.ps1` set `GHOSTTY_GOOGLE_CLIENT_ID` —
+legitimately, because a fake relay needs a fake id — and so the configuration
+every real user runs, no id at all, was never once launched. A Sign in button
+that could not work read as a fully tested feature for months (T747). Any
+env/registry/file seam that makes a flow reachable also makes its absence
+invisible, and the absent case is usually the one that ships.
+
+What cannot be automated is the judgment: `GHOZTTY_PIPE_SUFFIX` unset is the
+user's live endpoints, which the harness is forbidden to touch, while
+`GHOSTTY_GOOGLE_CLIENT_ID` unset is a dialog the user meets every day. So the
+ENUMERATION is mechanical and the CLASSIFICATION is a reviewed file. Every env
+var that `test\win32` sets and `src\` reads (78 at the 2026-09-16 sweep) has one
+entry in `test\win32\seam-audit.registry.json` giving what the seam does
+(`isolation` / `tuning` / `fault` / `non-default` / `enable`) and — the part the
+rule is actually about — what happens to the state it hides:
+
+- `shipped-elsewhere` — the unset state is what every OTHER run already uses.
+- `armed` — reached only if somebody aims at it, and `unsetArm`
+  (`<script>::<marker>`) names the arm that does; the marker must still be in
+  that script, so an arm renamed away fails instead of quietly meaning nothing.
+- `gap` — nothing exercises it; `gap` names the OPEN task (T1619, T1620).
+- `unreachable` — cannot be exercised here by design (live endpoints, a real
+  network service), with the reason in `note`.
+
+**Adding a seam means adding its entry**: a new script that sets a
+product-read variable fails the audit as `unregistered` until somebody says
+which of those four it is. The gap count is a ceiling that may only fall.
+Acceptance: `test\win32\seam-audit.ps1` (`-TeethCheck` re-plants each defect,
+`-UpdateCeiling` in the commit that closes a gap).
 
 **And a harness nobody RAN proves nothing either** (T783). The five audits above
 all ask what a run said; this one asks whether the run happened at all. Outside

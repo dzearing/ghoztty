@@ -3818,6 +3818,31 @@ $GuardTable = @(
             'scripts\*.ps1',
             'scripts\lib\*.ps1'
         )
+    },
+
+    # T796 - the seam sweep. It watches `test\win32\*.ps1` because a NEW script
+    # is exactly how an unclassified seam arrives, and `src\**` because the
+    # other half of a seam is the product learning to read the variable. Both
+    # sides have to be in the covers list or the audit only ever fires on
+    # edits to itself, which is the shape of a rule about nothing.
+    [pscustomobject]@{
+        Name   = 'seam-audit'
+        Script = 'test\win32\seam-audit.ps1'
+        Stamp  = 'test\win32\seam-audit.stamp.json'
+        Covers = @(
+            'test\win32\seam-audit.ps1',
+            'test\win32\lib\SeamAudit.ps1',
+            'test\win32\seam-audit.registry.json',
+            'test\win32\*.ps1',
+            'test\win32\lib\*.ps1',
+            'src\apprt\win32\*.zig',
+            'src\remote\*.zig',
+            'src\remote\agent\*.zig',
+            'src\os\*.zig',
+            'src\cli\*.zig',
+            'src\renderer\*.zig',
+            'src\termio\*.zig'
+        )
     }
 )
 

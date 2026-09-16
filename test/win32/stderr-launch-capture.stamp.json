@@ -1,23 +1,14 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-16T15:01:47-07:00",
-    "commit":  "15be8d5b3",
+    "generated":  "2026-09-16T16:10:54-07:00",
+    "commit":  "b2d67fe03",
     "uncommitted":  [
                         "docs/claude/testing.md",
-                        "test/win32/argv-hazard-audit.ps1",
-                        "test/win32/asserted-nothing.ps1",
-                        "test/win32/build-mode-guard.ps1",
-                        "test/win32/caller-anchor.ps1",
-                        "test/win32/command-resolve-audit.ps1",
-                        "test/win32/foreground-audit.ps1",
-                        "test/win32/lib/PersistenceSweep.ps1",
-                        "test/win32/stderr-capture-audit.ps1",
-                        "test/win32/unroll-count-audit.ps1",
-                        "test/win32/window-composite.ps1"
+                        "test/win32/seam-audit.ps1"
                     ],
     "files":  {
-                  "docs/claude/testing.md":  "c8bf13ec1b182eac3793d3096c4d3d5c606552c4bf3e41c0153e1c570ee3ed2c",
+                  "docs/claude/testing.md":  "01a2f7e237b59a853953c50a6d8eaa0e36b35a7aa0142d2c9bdb9f823d39725c",
                   "test/win32/activity-monitor.ps1":  "a736047ae58130876460e390abc9e0e5cceef937f237386f180b44e5ab1f30e2",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",
                   "test/win32/activity-monitor-probe-fail.ps1":  "b8fb9258c879d5ec87aa62adffeb868423168684d2e880de1a1343985fd70bb6",
@@ -248,6 +239,7 @@
                   "test/win32/resize-flicker.ps1":  "1d26095577e205443d15d2ba97385f887cf09c6b28a016cd520d9056ad8f2772",
                   "test/win32/restore-late-agent.ps1":  "3829f0995438fd0aec0866dd1f76cd34cb4cd5127bab8ae39ac4657d52e50630",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
+                  "test/win32/seam-audit.ps1":  "b6df80f87a37af263b728e4ae4c0dcfcdeb93f9a87bd48df2340244cac110dad",
                   "test/win32/send-keys-bracketed.ps1":  "3f04c907b40d40409069ee8fe9369820cd96c2c6644567ddfd70d8fdb41bec10",
                   "test/win32/send-keys-soak.ps1":  "2070fe3aa9921b15dcfb5164c655d5b4559fc68a27e4c9b6efae6055d20a6632",
                   "test/win32/session-close.ps1":  "bc90db94c85a72b761db89dbde0baf409845d5df67f23997b425b6d922455ed1",

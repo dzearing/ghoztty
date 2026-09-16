@@ -1,22 +1,11 @@
 {
     "guard":  "cleanslate",
     "script":  "test/win32/cleanslate-audit.ps1",
-    "generated":  "2026-09-16T14:54:42-07:00",
-    "commit":  "15be8d5b3",
+    "generated":  "2026-09-16T16:22:15-07:00",
+    "commit":  "b2d67fe03",
     "uncommitted":  [
-                        "test/win32/argv-hazard-audit.ps1",
-                        "test/win32/asserted-nothing.ps1",
-                        "test/win32/build-mode-guard.ps1",
-                        "test/win32/caller-anchor.ps1",
-                        "test/win32/command-resolve-audit.ps1",
-                        "test/win32/foreground-audit.ps1",
-                        "test/win32/lib/BuildMode.ps1",
-                        "test/win32/lib/PersistenceSweep.ps1",
-                        "test/win32/lib/UnrollCountAudit.ps1",
-                        "test/win32/lib/WindowComposite.ps1",
-                        "test/win32/stderr-capture-audit.ps1",
-                        "test/win32/unroll-count-audit.ps1",
-                        "test/win32/window-composite.ps1"
+                        "test/win32/lib/SeamAudit.ps1",
+                        "test/win32/seam-audit.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "a736047ae58130876460e390abc9e0e5cceef937f237386f180b44e5ab1f30e2",
@@ -226,6 +215,7 @@
                   "test/win32/lib/PaneLiveness.ps1":  "d6e189f9d6336ccf01f67a4c971f82c2ef65833f99250200e7f7655ac54f52fd",
                   "test/win32/lib/PersistenceSweep.ps1":  "ffb1e4fe255bf7987957cd61460e03ee446e20ee6724b7f82d95fd0b9465d34b",
                   "test/win32/lib/PipeBridge.ps1":  "5ae297c7cf5206a4533f905501158607d360fe6e87308048a6838e3f3b35a4b1",
+                  "test/win32/lib/SeamAudit.ps1":  "19f0e3f9a8997e0e0be583d86bd22958e149e08a570a303f306eddbd187458d5",
                   "test/win32/lib/SessionManifest.ps1":  "036a06be7a96044c6a5185dfa8e18f68ad0fdd22db8b8ee79db64a0d3cba635b",
                   "test/win32/lib/ShowText.ps1":  "1e9192fd782ebc9c5634c7a70a355a2c23a8b139e8629f7e345e312a14b32232",
                   "test/win32/lib/SkipAudit.ps1":  "f87905357caf4807e91388db9386eade1a28914ddfb58fce7f38ccd07d9e7f72",
@@ -300,6 +290,7 @@
                   "test/win32/resize-flicker.ps1":  "1d26095577e205443d15d2ba97385f887cf09c6b28a016cd520d9056ad8f2772",
                   "test/win32/restore-late-agent.ps1":  "3829f0995438fd0aec0866dd1f76cd34cb4cd5127bab8ae39ac4657d52e50630",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
+                  "test/win32/seam-audit.ps1":  "b6df80f87a37af263b728e4ae4c0dcfcdeb93f9a87bd48df2340244cac110dad",
                   "test/win32/send-keys-bracketed.ps1":  "3f04c907b40d40409069ee8fe9369820cd96c2c6644567ddfd70d8fdb41bec10",
                   "test/win32/send-keys-soak.ps1":  "2070fe3aa9921b15dcfb5164c655d5b4559fc68a27e4c9b6efae6055d20a6632",
                   "test/win32/session-close.ps1":  "bc90db94c85a72b761db89dbde0baf409845d5df67f23997b425b6d922455ed1",

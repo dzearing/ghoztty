@@ -83,6 +83,7 @@ marker with no reason waives nothing.
 | A skipped section is named in the verdict, never hidden by `ALL PASS` (T219) | `skip-visibility.ps1` | `# skip-audit: <reason>` |
 | An assertion count is a real count, not a zero dressed as one (T617) | `count-or-zero.ps1` | — use `Get-CountOrZero` |
 | A count is wrapped at the point of use, so a one-element return cannot make it vacuous (T794) | `unroll-count-audit.ps1` | `# count-audit: <reason>` |
+| An env seam a script sets is classified, so the shipped unset state is armed, a named gap, or knowingly out of reach (T796) | `seam-audit.ps1` | — add the seam to `seam-audit.registry.json` |
 | A script drives its own endpoints, never the user terminal's (T680) | `isolation-meta.ps1` | `# isolation: none\|shared - <reason>` |
 | A run refuses a release-lineage build before it launches anything (T350) | `build-mode-guard.ps1` | — call `Assert-GhozttyIsolatedBuild` |
 | No script launches the app without asking what build it is (T1033) | `launch-preflight-audit.ps1` | `# preflight: none - <reason>` |

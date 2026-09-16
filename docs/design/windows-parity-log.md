@@ -9,6 +9,53 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-16: T796 closed done, T1619/T1620/T1621 filed - **a test that has to
+  switch a feature on before it can reach it is now saying, on the record, what
+  happens when it is off.**
+
+  T747's dead "Sign in with Google" button shipped past a green suite because
+  every GUI section of `relay-account.ps1` set `GHOSTTY_GOOGLE_CLIENT_ID`. The
+  seam was legitimate - a fake relay needs a fake id - but it meant the
+  configuration every real user runs, no id at all, was never once launched.
+  The shape generalises to every seam in the suite, and it has no symptom: the
+  run is green, the feature is tested, and the thing that ships is the one
+  nobody looked at.
+
+  **What could NOT be automated is the judgment**, which is why a plain
+  analyzer was the wrong answer. `GHOZTTY_PIPE_SUFFIX` unset is the user's live
+  endpoints, which the harness is forbidden to touch; `GHOSTTY_GOOGLE_CLIENT_ID`
+  unset is a dialog the user meets daily. A rule that flagged both would report
+  78 findings of which two matter and be muted within a week. So the
+  ENUMERATION is mechanical (`lib\SeamAudit.ps1`: every env var a `test\win32`
+  script SETS and `src\` READS - 78 of them, out of 101 set and 135 read) and
+  the CLASSIFICATION is a reviewed file (`seam-audit.registry.json`), and what
+  `seam-audit.ps1` enforces is that the two agree. Each entry says what the
+  seam does and - the part the rule is about - what happens to the state it
+  hides: `shipped-elsewhere` (every other run uses it), `armed` (a named arm
+  aims at it), `gap` (an open task), `unreachable` (the user's live endpoints,
+  a real network service).
+
+  An `armed` entry is CHECKED, not claimed: `<script>::<marker>` must exist and
+  the marker must still be in that file, so an arm renamed away fails the audit
+  instead of quietly becoming a sentence about nothing. Three seams are armed
+  today - T747's own section 8, the autostart debug-gate refusal, and the
+  WebView2 composer surface the RichEdit fallback would otherwise hide.
+
+  **Two real gaps came out of the sweep.** Nothing ever launches the app
+  without `GHOSTTY_LOCAL_AGENT_BIN`, so the agent-beside-the-exe branch that
+  every DELIVERED build takes has never run under test (T1619); and both
+  scripts that touch the Claude migration stub `GHOZTTY_CLAUDE_EXE`, so
+  `findClaude`'s PATH walk has no coverage of any kind (T1620). The gap count
+  is a ceiling that may only fall. T1621 records the scope limit: env seams
+  only, not seeded stores or staged config.
+
+  Standing rather than remembered: a `seam-audit` guard row over
+  `test\win32\*.ps1` and the `src\` trees where seams are read, plus membership
+  in the harness floor, so a new script that flips a new switch fails until
+  somebody writes its line. The acceptance's negative control is a fixture tree
+  with a CORRECT registry producing zero findings, so section A cannot be
+  passing on an analyzer that reports everything.
+
 - 2026-09-16: T794 closed done, T1617 filed - **a count that cannot fail is now
   a reported defect instead of a line that reads like arithmetic.**
 

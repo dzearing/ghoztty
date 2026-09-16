@@ -1,0 +1,402 @@
+{
+    "note": "T796. One entry per env seam that test\\win32 SETS and src\\ READS. `class` says what the seam does; `unset` says what happens to the state the seam hides - shipped-elsewhere (every other run uses it), armed (`unsetArm` names the arm that aims at it), gap (`gap` names the open task), unreachable (`note` says why this box cannot exercise it). See test\\win32\\lib\\SeamAudit.ps1 for the rule and test\\win32\\seam-audit.ps1 for the enforcement.",
+    "generated": "2026-09-16",
+    "gapCeiling": 2,
+    "seams": {
+        "GHOSTTY_ACCOUNT_STORE": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the user's real account.json under %LOCALAPPDATA%\\ghoztty; a test must never read or write it."
+        },
+        "GHOSTTY_ADOPT_DISABLE": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = adoption runs, which is what every other agent run does."
+        },
+        "GHOSTTY_ADOPT_INSTALL_DIR": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the real install dir; adopting it would take over the user's installed agent."
+        },
+        "GHOSTTY_ADOPT_INTERVAL_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped sweep interval, which every non-adopt run uses."
+        },
+        "GHOSTTY_ADOPT_RUNKEY_NAME": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the real HKCU Run value that starts the user's agent at sign-in."
+        },
+        "GHOSTTY_ADOPT_UNINSTALL_CMD": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset runs the real uninstall command for the installed product."
+        },
+        "GHOSTTY_AGENT_HEARTBEAT": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the live agent's heartbeat file; writing it would perturb the user's sessions."
+        },
+        "GHOSTTY_AGENT_LOCK": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the live agent's single-instance lock - taking it evicts the user's agent."
+        },
+        "GHOSTTY_AGENT_MAX_SESSIONS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped session cap; every other agent run is under it."
+        },
+        "GHOSTTY_AGENT_RING_BYTES": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped scrollback ring size, used by every other agent run."
+        },
+        "GHOSTTY_AGENT_SUPPRESS_CAPS": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the agent advertises its real capabilities, as in every other run."
+        },
+        "GHOSTTY_DEVICE_TOKEN": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the enrolled device's real relay token."
+        },
+        "GHOSTTY_GOOGLE_CLIENT_ID": {
+            "class": "enable",
+            "unset": "armed",
+            "unsetArm": "test\\win32\\relay-account.ps1::Remove-Item env:GHOSTTY_GOOGLE_CLIENT_ID",
+            "note": "T747, the defect this whole audit exists for: with no id the chooser must draw no sign-in button at all. Section 8 launches without the id; sections 1-7 are its control."
+        },
+        "GHOSTTY_HOST_DEFAULTS": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the user's real per-host defaults store."
+        },
+        "GHOSTTY_LOCAL_AGENT_BIN": {
+            "class": "isolation",
+            "unset": "gap",
+            "gap": "T1619",
+            "note": "All 49 agent scripts override it, so agentBinary's default branch - ghoztty-agent.exe beside our own exe, the branch every delivered build takes - has never run under test."
+        },
+        "GHOSTTY_OAUTH_AUTH_ENDPOINT": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is Google's real authorization endpoint."
+        },
+        "GHOSTTY_RELAY_BASE": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the production relay service."
+        },
+        "GHOSTTY_RELAY_ENV": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the enrolled device's real relay env file."
+        },
+        "GHOSTTY_RELAY_TOKEN": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the user's real relay credential."
+        },
+        "GHOSTTY_SHARING_CONFIG": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the real sharing config beside the user's sessions.json."
+        },
+        "GHOZTTY_AGENT_AUTOSTART": {
+            "class": "enable",
+            "unset": "armed",
+            "unsetArm": "test\\win32\\agent-autostart.ps1::C3 no Run value written by a debug build",
+            "note": "force/gate reach a Run-key write a debug build refuses; section C launches with the seam removed and proves the refusal, with section A as its positive control."
+        },
+        "GHOZTTY_AGENT_BUNDLED_VERSION": {
+            "class": "isolation",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the real bundled agent stamp, read by every other agent run."
+        },
+        "GHOZTTY_AGENT_DURABLE_ACK": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = durable acks on, the default every other session runs with."
+        },
+        "GHOZTTY_AGENT_HANDOFF_FORCE": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = handoff happens only when the agent decides to, as in every other run."
+        },
+        "GHOZTTY_AGENT_HANDOFF_INTERVAL_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped handoff interval."
+        },
+        "GHOZTTY_AGENT_HOLDER_REPLAY_BYTES": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = session.default_holder_replay_bytes, which every other holder uses."
+        },
+        "GHOZTTY_AGENT_HOME": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the user's real agent state directory."
+        },
+        "GHOZTTY_AGENT_INSTANCE": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the default lineage - the endpoints the user's live agent owns. A dev build must never join them."
+        },
+        "GHOZTTY_AGENT_PROTO_VERSION": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the build's real protocol version; the skew cases are the exception."
+        },
+        "GHOZTTY_AGENT_PTY_FLAVOR": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = .local, the flavor every other agent run spawns."
+        },
+        "GHOZTTY_AGENT_PTY_HOLDER": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "Holder-backed is the default since T909; the seam is the OFF switch, so unset is what every other session takes."
+        },
+        "GHOZTTY_AGENT_SNAPSHOT_VOLUME_BYTES": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped snapshot volume threshold."
+        },
+        "GHOZTTY_AGENT_VANISH_SWEEP": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the vanish sweep runs, the default for every other agent."
+        },
+        "GHOZTTY_CHROME_FANOUT_LEGACY": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the post-T1345 fan-out, which every other window paints with."
+        },
+        "GHOZTTY_CLAUDE_EXE": {
+            "class": "isolation",
+            "unset": "gap",
+            "gap": "T1620",
+            "note": "Both scripts point it at a stub, so findClaude only ever returns from its override branch; the PATH walk and install-location fallback have no coverage of any kind."
+        },
+        "GHOZTTY_CLAUDE_SETUP": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped setup gating, taken by every other launch."
+        },
+        "GHOZTTY_CLAUDE_STATE_DIR": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the user's real Claude state directory."
+        },
+        "GHOZTTY_COMPOSER_SURFACE": {
+            "class": "non-default",
+            "unset": "armed",
+            "unsetArm": "test\\win32\\viewer-composer.ps1::the composer chose the WEB surface",
+            "note": "viewer-feedback.ps1 pins the RichEdit fallback because window messages cannot reach a Chromium window off-desktop, so without an arm the shipped WebView2 composer would be the untested one."
+        },
+        "GHOZTTY_DEBUG_MARKER": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the marker's default state, which every other window draws."
+        },
+        "GHOZTTY_DRAG_SERIAL_WAIT": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped frame pacing during a drag."
+        },
+        "GHOZTTY_ENROLL_NO_OPEN": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = enrollment opens a browser, which is what a real enrollment does; suppressed here only so a test does not launch one."
+        },
+        "GHOZTTY_GL_FALLBACK_DLL": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the real GL loader path, used by every other launch."
+        },
+        "GHOZTTY_GL_FORCE_VERSION": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the driver's real GL version, as in every other launch."
+        },
+        "GHOZTTY_HANDOFF_COMMIT": {
+            "class": "isolation",
+            "unset": "shipped-elsewhere",
+            "note": "unset = this build's real commit stamp."
+        },
+        "GHOZTTY_HANDOFF_PROMPT": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped prompt gating for a handoff."
+        },
+        "GHOZTTY_HANDOFF_VERSION": {
+            "class": "isolation",
+            "unset": "shipped-elsewhere",
+            "note": "unset = this build's real version stamp."
+        },
+        "GHOZTTY_INSTALL_UNLOCK": {
+            "class": "isolation",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the installer's real unlock arguments."
+        },
+        "GHOZTTY_IPC_SOCKET": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the per-user endpoint the installed release owns; a dev build must never drive it."
+        },
+        "GHOZTTY_IPC_TIMEOUT_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped IPC timeout, used by every other CLI call."
+        },
+        "GHOZTTY_NO_STARTUP_ESCAPE": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the startup job escape runs, as in every other launch."
+        },
+        "GHOZTTY_ORPHAN_CHECK_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped orphan poll interval."
+        },
+        "GHOZTTY_ORPHAN_NOTIFY_AFTER_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped notify delay."
+        },
+        "GHOZTTY_ORPHAN_RENOTIFY_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped renotify interval."
+        },
+        "GHOZTTY_PAINT_PROBE": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = no probe instrumentation, which is what every other launch paints with."
+        },
+        "GHOZTTY_PANE_ID": {
+            "class": "isolation",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the app stamps the real pane id into the child environment, as in every other pane."
+        },
+        "GHOZTTY_PATH_SELFHEAL": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the PATH self-heal runs under its own gates, as in every other launch."
+        },
+        "GHOZTTY_PERF": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = no perf logging, the state every other launch is in."
+        },
+        "GHOZTTY_PIPE_SUFFIX": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the user's live named pipe. Isolating is a standing safety rule (docs\\claude\\build.md), not a convenience."
+        },
+        "GHOZTTY_RELAUNCH_GUARD": {
+            "class": "isolation",
+            "unset": "shipped-elsewhere",
+            "note": "unset = no relaunch in flight, which is the state of every ordinary launch."
+        },
+        "GHOZTTY_RELAY_NO_CLIENT_ID": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "The forcing seam for T747's unconfigured state; unset = whatever the build really carries."
+        },
+        "GHOZTTY_RELAY_PERF_DIR": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = no relay perf sampling, the state every other run is in."
+        },
+        "GHOZTTY_RESTORE_PROBE_UNKNOWN": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the real probe verdict, as in every other restore."
+        },
+        "GHOZTTY_RESTORE_PULL_DELAY_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = no injected delay, the shipped restore timing."
+        },
+        "GHOZTTY_RESTORE_SKIP": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = restore runs, which is what every restore test and every real launch does."
+        },
+        "GHOZTTY_RESUME_COUNT_BYTES": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped resume accounting."
+        },
+        "GHOZTTY_STARTUP_FAIL": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = startup succeeds, as in every other launch."
+        },
+        "GHOZTTY_TRAY_FAIL": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the tray icon is created normally."
+        },
+        "GHOZTTY_UPDATE_APPLY": {
+            "class": "isolation",
+            "unset": "shipped-elsewhere",
+            "note": "unset = an ordinary launch rather than the staged-apply child; every other GUI start proves it."
+        },
+        "GHOZTTY_UPDATE_MANUAL_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped manual-check delay."
+        },
+        "GHOZTTY_UPDATE_MSI_CODE": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = msiexec's real exit code."
+        },
+        "GHOZTTY_UPDATE_RECHECK_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped recheck interval."
+        },
+        "GHOZTTY_UPDATE_URL": {
+            "class": "isolation",
+            "unset": "unreachable",
+            "note": "unset is the real GitHub releases feed for dzearing/ghoztty; an acceptance run must not depend on the network or on what is actually published."
+        },
+        "GHOZTTY_URL_SCHEME": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the ghoztty:// registration self-heal under its own gates, as in every other launch."
+        },
+        "GHOZTTY_URL_SCHEME_QUIET": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the registration logs normally."
+        },
+        "GHOZTTY_USER_ENV": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the user-env overlay is on, which is what every other pane spawns with."
+        },
+        "GHOZTTY_WEBVIEW2_BROWSER_DIR": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the installed WebView2 runtime, used by every viewer pane in every other run."
+        },
+        "GHOZTTY_WHATS_NEW_VERSION": {
+            "class": "isolation",
+            "unset": "shipped-elsewhere",
+            "note": "unset = this build's real version, which decides the What's New window everywhere else."
+        },
+        "GHOZTTY_WINDOW_NAME": {
+            "class": "isolation",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the app stamps the real window name into the child environment, as in every other window."
+        }
+    }
+}

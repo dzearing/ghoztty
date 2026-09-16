@@ -44,6 +44,7 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'skip-visibility.ps1'; Why = 'a skipped section is named in the verdict, never hidden by ALL PASS' }
     [pscustomobject]@{ Name = 'count-or-zero.ps1'; Why = 'an assertion count is a real count, not a zero dressed as one (T617)' }
     [pscustomobject]@{ Name = 'unroll-count-audit.ps1'; Why = 'a count is wrapped at the point of use, so a one-element return cannot make it vacuous (T794)' }
+    [pscustomobject]@{ Name = 'seam-audit.ps1'; Why = 'an env seam a script sets is classified, so the state it hides is armed, a named gap, or knowingly out of reach (T796)' }
     [pscustomobject]@{ Name = 'isolation-meta.ps1'; Why = 'a script drives its own endpoints, never the user terminal''s' }
     [pscustomobject]@{ Name = 'build-mode-guard.ps1'; Why = 'a run refuses a release-lineage build before it launches anything (T350)' }
     [pscustomobject]@{ Name = 'launch-preflight-audit.ps1'; Why = 'no script launches the app without asking what build it is (T1033)' }
