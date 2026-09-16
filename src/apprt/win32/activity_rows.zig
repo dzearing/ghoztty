@@ -63,10 +63,11 @@ pub fn toggleSort(cur: Sort, key: SortKey) Sort {
     return .{ .key = key, .ascending = true };
 }
 
-/// Case-insensitive ASCII substring test — one implementation for every win32
+/// Case-insensitive substring test — one implementation for every win32
 /// filter box, in `text_search.zig` (T288). The machine chooser's filter folds
-/// with the same function, and the ASCII limit is documented and revisited
-/// there rather than in each caller.
+/// with the same function, and the ALPHABET the fold covers (ASCII fast path,
+/// Windows linguistic fold for everything else, T790/D71) is documented and
+/// revisited there rather than in each caller.
 pub const containsIgnoreCase = text_search.containsIgnoreCase;
 
 /// Trim the ASCII whitespace Mac trims before testing an empty query (:721).

@@ -317,7 +317,17 @@ function Launch-Gui($errlog) {
 # --- Fake relay device directory (loopback HTTP; records each request) -------
 $hitFile = Join-Path $env:TEMP "ghoztty-mc-hits-$PID.txt"
 Remove-Item $hitFile -ErrorAction SilentlyContinue
-$devicesJson = '{"devices":[{"id":"dev-e2e","name":"E2E-Box","hostname":"e2e.local","online":true}]}'
+# The second device is named with an UMLAUT on purpose (T790): the chooser's
+# filter folded ASCII only until then, so typing the other case of that letter
+# emptied a list the row was sitting in. Built from a code point rather than
+# written as a literal, because PS 5.1 reads this file as ANSI and a literal
+# non-ASCII byte would mojibake on the way to the fake directory.
+$U_UMLAUT_UPPER = [string][char]0x00DC
+$U_UMLAUT_LOWER = [string][char]0x00FC
+$O_UMLAUT_UPPER = [string][char]0x00D6
+$UMLAUT_MACHINE = "Z" + $U_UMLAUT_LOWER + "rich-Box"
+$devicesJson = '{"devices":[{"id":"dev-e2e","name":"E2E-Box","hostname":"e2e.local","online":true},' +
+    '{"id":"dev-uml","name":"' + $UMLAUT_MACHINE + '","hostname":"zuerich.local","online":true}]}'
 $dirJob = Start-Job -ScriptBlock {
     param($port, $body, $hitFile)
     $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $port)
@@ -446,7 +456,7 @@ try {
         Assert ($rowH -ge 40) "row height fits a name + subline (got $rowH, want >= 40)"
 
         $count = [int](Invoke-TestMessage -Window $list -Message $LB_GETCOUNT)
-        Assert ($count -eq 2) "list shows Local + the fetched device (got $count rows)"
+        Assert ($count -eq 3) "list shows Local + both fetched devices (got $count rows)"
 
         # Pixel oracle: the selected row is an INSET rounded pill. Probe the
         # gutter beside it (must stay list background) and the pill itself,
@@ -721,6 +731,38 @@ try {
         Assert (-not $follows) "NEGATIVE CONTROL: the detail pane did NOT follow the selection (signature $sigLocal -> $sigDevice)"
     } else {
         Assert $follows "the detail pane follows the selection (signature $sigLocal -> $sigDevice)"
+    }
+
+    # --- T790: the filter folds UNICODE case, the way Mac's does -------------
+    # Mac narrows both mirrored filter boxes with `localizedCaseInsensitiveContains`;
+    # this one folded `A`-`Z` alone, so a machine named with an umlaut could not
+    # be filtered for by typing the other case of that letter - the list just
+    # went empty with the row right there. D71 settled the mechanism
+    # (`FindNLSStringEx` with LINGUISTIC_IGNORECASE); this arm is the end-to-end
+    # proof, driving REAL WM_CHARs into the REAL filter EDIT and reading the row
+    # count back off the REAL listbox rather than asserting the unit again.
+    if ($edit -ne [IntPtr]::Zero -and $list -ne [IntPtr]::Zero) {
+        foreach ($needle in ("Z" + $U_UMLAUT_UPPER + "RICH"), ("z" + $U_UMLAUT_LOWER + "r")) {
+            Set-TestControlText -Control $edit -Text '' | Out-Null
+            Send-TestControlText -Control $edit -Text $needle | Out-Null
+            Start-Sleep -Milliseconds 400
+            $nrows = [int](Invoke-TestMessage -Window $list -Message $LB_GETCOUNT)
+            Assert ($nrows -eq 1) "T790 typing a needle whose case differs from the machine's finds it (1 expected, got $nrows)"
+        }
+
+        # And it is still a FILTER, not a widener: a non-ASCII needle no row
+        # carries empties the list.
+        Set-TestControlText -Control $edit -Text '' | Out-Null
+        Send-TestControlText -Control $edit -Text ($O_UMLAUT_UPPER + "sterreich") | Out-Null
+        Start-Sleep -Milliseconds 400
+        $nrows = [int](Invoke-TestMessage -Window $list -Message $LB_GETCOUNT)
+        Assert ($nrows -eq 0) "T790 a non-ASCII needle nothing matches still empties the list (got $nrows rows)"
+
+        # Leave the list as the arms after this one expect to find it.
+        Set-TestControlText -Control $edit -Text '' | Out-Null
+        Start-Sleep -Milliseconds 400
+        $nrows = [int](Invoke-TestMessage -Window $list -Message $LB_GETCOUNT)
+        Assert ($nrows -eq 3) "T790 clearing the filter restores every row (got $nrows)"
     }
 
     # Escape closes the chooser (routed via handleKey).

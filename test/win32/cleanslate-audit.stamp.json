@@ -1,15 +1,14 @@
 {
     "guard":  "cleanslate",
     "script":  "test/win32/cleanslate-audit.ps1",
-    "generated":  "2026-09-16T10:15:46-07:00",
-    "commit":  "7ec03f2a9",
+    "generated":  "2026-09-16T11:39:47-07:00",
+    "commit":  "d72f4bd58",
     "uncommitted":  [
-                        "test/win32/hover-capture.ps1",
-                        "test/win32/lib/HoverCapture.ps1",
-                        "test/win32/pane-banner.ps1"
+                        "test/win32/activity-monitor.ps1",
+                        "test/win32/ipc-machine-chooser.ps1"
                     ],
     "files":  {
-                  "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
+                  "test/win32/activity-monitor.ps1":  "73a8819ab70f99342cd33a7f997de39166136f5566cfa0b550d37bc9e634b4c6",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",
                   "test/win32/activity-monitor-probe-fail.ps1":  "b8fb9258c879d5ec87aa62adffeb868423168684d2e880de1a1343985fd70bb6",
                   "test/win32/activity-monitor-remote.ps1":  "6ff70172c8fa3db75f9aff5b2ef6462bb3d80af309933a7e986862604db8293e",
@@ -153,7 +152,7 @@
                   "test/win32/ipc-floor-setup.ps1":  "2e61ec25a39e23d5be37f5deb7d6014f441dd4bc1f31924ad8b885e605aa673c",
                   "test/win32/ipc-instance-addressability.ps1":  "c79c3315cb528318e4ba8532854be31dbba60b2bcef48e5995b3063970a57c30",
                   "test/win32/ipc-list-session-id.ps1":  "ab09f23145a7d4a5eb23a9199c272c0853c06ccd69f8497ebeb97487f94eb209",
-                  "test/win32/ipc-machine-chooser.ps1":  "2143ecf85366eac1654b431ca2ed78c7dda4c6b1fd21d80e11a01ca38fd2a872",
+                  "test/win32/ipc-machine-chooser.ps1":  "bbd575343ac0aa7e971f79bab1d59aed296ff72af2c400abcc93cbf335973d9f",
                   "test/win32/ipc-p1.ps1":  "133a9b95f6cffa1467dbc047766aae6e53f7e6e731270626510501e40c990708",
                   "test/win32/ipc-p2.ps1":  "1f20cfe50e0517943b8629cf65236c69b68d1c893925cea4920179278e6359b3",
                   "test/win32/ipc-p3.ps1":  "a5b0e3d15cae250bf7b30de29d28cc62fcbb6ebfd1e0a5562e47392edec17871",

@@ -354,10 +354,11 @@ fn rect(r: chooser_layout.Rect) w32.RECT {
     return .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
 }
 
-/// Case-insensitive ASCII substring test — one implementation for every win32
+/// Case-insensitive substring test — one implementation for every win32
 /// filter box, in `text_search.zig` (T288). The Activity Monitor's process
-/// filter folds with the same function, and the ASCII limit is documented and
-/// revisited there rather than in each caller.
+/// filter folds with the same function, and the ALPHABET the fold covers
+/// (ASCII fast path, Windows linguistic fold for everything else, T790/D71) is
+/// documented and revisited there rather than in each caller.
 const containsIgnoreCase = text_search.containsIgnoreCase;
 
 /// True when a device row (name or hostname) matches the filter needle. Pure.

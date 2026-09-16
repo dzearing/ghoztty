@@ -481,9 +481,12 @@ test {
     // it from its siblings (T709), same no-OS-imports deal.
     _ = @import("apprt/win32/activity_panes.zig");
 
-    // Pure win32 filter-box text search — the ONE ASCII case-fold substring
-    // test behind the machine chooser's and the Activity Monitor's filters
-    // (T288), same no-OS-imports deal.
+    // Win32 filter-box text search — the ONE case-fold substring test behind
+    // the machine chooser's and the Activity Monitor's filters (T288). Pure
+    // ASCII fast path plus a comptime-guarded `FindNLSStringEx` fold for
+    // anything else (T790/D71), so it compiles and its policy tests run in
+    // every lane on both seats (the Windows-only tests skip themselves
+    // elsewhere).
     _ = @import("apprt/win32/text_search.zig");
 
     // Pure win32 Activity Monitor process-control model — kill labels and

@@ -20,6 +20,10 @@
 #      threshold, then pasted, then pasted as three-byte characters - leaves the
 #      app RUNNING, with no panic in its log and the table still filtering;
 #   E. "Show all" widens it from the ghoztty-spawned tree to every process;
+#   F790. (T790) the filter folds UNICODE case the way Mac's does: a REAL
+#      process with an umlauted image name is found by a needle typed in the
+#      other case, and a non-ASCII needle nothing carries still empties the
+#      table;
 #   H. (T286) "New Process..." opens a modal dialog whose Start is disabled
 #      until a command is typed, and starting one puts a REAL process on the box
 #      and a row for it in the table;
@@ -759,6 +763,62 @@ try {
     Assert ($st.ShowAll) 'E clicking "Show all" reaches the panel'
     Assert ($st.Shown -eq $st.Total) "E Show-all shows every process ($($st.Shown) of $($st.Total))"
     Assert ($st.Shown -gt $spawnedOnly) "E the spawned-only view really was narrower ($spawnedOnly -> $($st.Shown))"
+
+    # --- F790. The filter folds UNICODE case, the way Mac's does (T790) ------
+    # Mac narrows this table with `localizedCaseInsensitiveContains`; this one
+    # folded `A`-`Z` alone, so a process whose name is not plain ASCII could not
+    # be filtered for by typing the other case of one of its letters - the table
+    # just emptied with the row right there. D71 settled the mechanism
+    # (`FindNLSStringEx` with LINGUISTIC_IGNORECASE).
+    #
+    # Evidence, not a restatement of the unit test: a REAL process with a
+    # non-ASCII image name is started, a needle in the OTHER case is typed into
+    # the REAL filter EDIT, and the panel's own row count is read back. The
+    # throwaway is a copy of `waitfor.exe` - a console app that blocks on a
+    # signal that never comes, needs no console input, and has no child - under
+    # a name built from a code point, because PS 5.1 reads this file as ANSI and
+    # a literal non-ASCII byte in it would mojibake into a different filename.
+    #
+    # Runs here rather than earlier because the throwaway is a child of THIS
+    # script, not of the app, so it is only in the table while "Show all" is on -
+    # which is exactly the state E just established.
+    $U_UMLAUT_UPPER = [string][char]0x00DC
+    $U_UMLAUT_LOWER = [string][char]0x00FC
+    $umlautExe = Join-Path $env:TEMP ("Z" + $U_UMLAUT_LOWER + "rich-t790-$PID.exe")
+    $umlautProc = $null
+    try {
+        Copy-Item (Join-Path $env:WINDIR 'System32\waitfor.exe') $umlautExe -Force -ErrorAction Stop
+        $umlautProc = Start-Process -FilePath $umlautExe -ArgumentList '/t', '300', 'GhozttyT790' `
+            -WindowStyle Hidden -PassThru -ErrorAction Stop
+    } catch {
+        $umlautProc = $null
+    }
+    Assert ($null -ne $umlautProc) "F790 the non-ASCII-named throwaway started ($umlautExe)"
+    if ($umlautProc) {
+        foreach ($needle in ("Z" + $U_UMLAUT_UPPER + "RICH-T790"), ("z" + $U_UMLAUT_LOWER + "rich-t790")) {
+            Set-TestControlText -Control $filterEdit -Text '' | Out-Null
+            Send-TestControlText -Control $filterEdit -Text $needle | Out-Null
+            $st = Wait-PanelShown 1
+            Assert ($st -and $st.Shown -eq 1) "F790 typing '$needle' finds the umlauted process (1 expected, got $(if ($st) { $st.Shown } else { 'no state line' }))"
+        }
+
+        # Still a filter, not a widener: a non-ASCII needle no row carries
+        # empties the table.
+        Set-TestControlText -Control $filterEdit -Text '' | Out-Null
+        Send-TestControlText -Control $filterEdit -Text ([string][char]0x00D6 + "sterreich-t790") | Out-Null
+        $st = Wait-PanelShown 0
+        Assert ($st -and $st.Shown -eq 0) "F790 a non-ASCII needle nothing matches still empties the table (got $(if ($st) { $st.Shown } else { 'no state line' }))"
+
+        try { Stop-Process -Id $umlautProc.Id -Force -ErrorAction SilentlyContinue } catch {}
+        Start-Sleep -Milliseconds 300
+        Remove-Item $umlautExe -Force -ErrorAction SilentlyContinue
+    }
+
+    # Leave the table the way G expects to find it.
+    $before = Count-PanelLines
+    Set-TestControlText -Control $filterEdit -Text '' | Out-Null
+    $st = Wait-PanelState $before
+    Assert ($st.Needle -eq '') 'F790 the filter cleared again'
 
     # --- G. Clicking a column header re-sorts --------------------------------
     # The header band is FOUND, not derived: scan down the panel's right edge

@@ -9,6 +9,65 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-16: T790 closed done - **the search boxes in the machine chooser and the Activity Monitor now understand letters that are not English.**
+
+  Type into either filter box and it folded `A`-`Z` and nothing else. A machine
+  called `Zürich-Box` was findable by typing `zürich` and NOT by typing
+  `ZÜRICH`; a program with a Russian or Greek name could not be searched for in
+  the other case at all. The list simply went empty with the row sitting right
+  there, which reads as "no such machine" rather than as "your search box does
+  not speak your language". macOS folds both of the same two filters with
+  `localizedCaseInsensitiveContains`, so this was a straight parity gap, filed
+  when T288 hoisted the two private copies of the fold into one function -
+  which is what made closing it a one-function change.
+
+  Decision **D71** settled the mechanism back on 2026-08-14: use Windows' own
+  linguistic search rather than vendoring a case-fold table that would then
+  have to be kept current. `text_search.containsIgnoreCase` now routes anything
+  carrying a byte at or above 0x80 to
+  `FindNLSStringEx(LOCALE_NAME_USER_DEFAULT, FIND_FROMSTART | LINGUISTIC_IGNORECASE)`,
+  so the fold is whatever Windows says casing is for the user's locale - the
+  closest thing this platform has to what the Mac call means on the other one.
+
+  Two things about the shape are deliberate and are written into the module
+  header rather than left to be rediscovered. **ASCII pairs still take the pure
+  ASCII path**, and the second reason for that matters more than the first: the
+  Activity Monitor re-filters a ~500-row table on every keystroke, yes, but a
+  linguistic fold is also locale-dependent, and under a Turkish locale `I` and
+  `i` are deliberately not the same letter - so sending ASCII through it would
+  have stopped `ghoztty` matching `GHOZTTY` for that user. Closing one gap by
+  opening a subtler one is not closing it. And **the linguistic path degrades
+  to the ASCII scan, never to "no match"**, when the text does not fit the
+  conversion buffers or the OS refuses the call; `FindNLSStringEx` answers "not
+  found" and "I could not answer" with the same -1, so the last error is
+  cleared before the call and read back after it rather than reporting an API
+  failure as a row that does not match. The whole Windows side - the `extern`,
+  its flags, `callconv(.winapi)` - sits behind a `builtin.os.tag` comptime
+  branch, because the Mac seat compiles this file too.
+
+  Evidence, and the arms are new: the unit tests now assert exactly the
+  accented, Cyrillic and Greek pairs the retired module header documented as
+  NOT matching, which is also the check that the OS call really runs - a silent
+  fallback to the ASCII scan fails them. `ipc-machine-chooser.ps1` ALL PASS (81
+  assertions, was 77): its fake relay directory serves a second device named
+  with an umlaut, and the new arm types REAL `WM_CHAR`s into the REAL filter
+  EDIT and reads `LB_GETCOUNT` off the REAL listbox - 1 row for each of two
+  needles cased differently from the machine, 0 for a non-ASCII needle nothing
+  carries, 3 when cleared. `activity-monitor.ps1` ALL PASS (210, was 205):
+  section F790 starts a real process whose image name carries an umlaut and
+  finds it by a needle typed in the other case. `floor-lane -Lane all`
+  lib/none/win32/agent all PASS; `-Lane harness` green; P1 26 / P2 20 / P3 16
+  ALL PASS; `chooser-controls` 54, `chooser-modeless` 22, `chooser-selection`
+  35, all ALL PASS.
+
+  Committed with `-NoGuardDue` for ONE row, `tab-tooltip`. That harness was run
+  here and is 2-red for a reason that is not this change - its tip now carries a
+  title line the script's section A and E assume is absent - and both halves are
+  already filed as **T1606**; the same row was excused for the same reason by
+  the T786 turn earlier today. The three advisory rows
+  (`release-artifacts-packaging`, `rdp-session`, `install-walkthrough`) are the
+  standing ones this box cannot answer.
+
 - 2026-09-16: T1609 closed done; T1612 filed - **the test that proves a `--command=` pane is a persistent one was failing by asking a fraction of a second too early.**
 
   Control arm G of `test\win32\ipc-command-keepalive.ps1` - "the `--command=`
