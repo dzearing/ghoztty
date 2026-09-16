@@ -29773,3 +29773,42 @@ Evidence: `close-glyph-white.ps1` ALL PASS (5 assertions), `mouse-nc-routing.ps1
 ALL PASS (14 assertions), both exit 0 against the debug build.
 `floor-lane.ps1 -Lane all` ALL LANES PASS (lib/none/win32/agent), and
 `floor-lane.ps1 -Lane harness` PASS and re-stamped over the edited scripts.
+
+## 2026-09-15 - The log's 4 MiB cap is proven to hold when everything writes at once (T774)
+
+T410 landed the cap on 2026-09-03 and this card asked for the rest of it: a
+rotation arm under CONCURRENCY. Re-verified first that the cap shipped -
+`src/os/log_rotate.zig`, 4 MiB, two generations, rename by handle - so nothing
+was owed in code. What was owed is a measurement. `log-append.ps1` sections
+R1-R10 all cross the threshold with one process at a time, which is the half that
+cannot fail; the claim the bound actually rests on is that N writers crossing in
+the same millisecond neither destroy the archive between them nor lose a line
+across the boundary, and that was argued in the module header and never measured.
+A path-rename build passes R1-R10.
+
+C1-C7 measure it on the release binary: seed the live log exactly ON the
+threshold, launch all 24 writers at once so each one's first line crosses it, then
+assert the archive is still the seeded generation and still 4 MiB (a racer that
+moved a fresh log over it leaves a few hundred bytes and no marker), that no third
+generation appears, and that the union of both generations holds all 9 lines every
+writer emits. `log_rotate.zig` gains the deterministic straggler test beside it:
+first racer rotates, a third writer recreates the live file, and only then does
+the second rename - by handle, so it moves the archive it opened rather than the
+fresh log at the path.
+
+The unit test's teeth were measured, not assumed: `dir.rename` swapped in on a
+scratch copy fails it with `expected 4194304, found 64`, which is 4 MiB of history
+replaced by 64 bytes - precisely the defect the header argues away.
+
+Worth recording because it cost two runs: C6 reported a lost line before the
+oracle was right. The seed padded to the threshold mid-line, so the first line
+written after it was glued onto the pad and stopped matching the line shape -
+indistinguishable from a line the rotation dropped. The seed ends its line now.
+
+Evidence: `log-append.ps1` ALL PASS (30 assertions) and re-stamped `log-sink`,
+`zig test src/os/log_rotate.zig` 7/7, `floor-lane.ps1 -Lane all` ALL LANES PASS,
+`floor-lane.ps1 -Lane harness` PASS and re-stamped, `ipc-p1/p2/p3` ALL PASS
+(26/20/16). The harness lane's first run refused three audits and P1-P3 outright:
+the debug exe predated the `log_rotate.zig` edit by 56 minutes, which is the
+BuildFresh gate doing its job - a green there would have stamped guards over code
+it never saw. Rebuilt and re-ran.
