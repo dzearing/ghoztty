@@ -1,14 +1,10 @@
 {
     "guard":  "window-active-audit",
     "script":  "test/win32/window-active-audit.ps1",
-    "generated":  "2026-09-16T07:04:23-07:00",
-    "commit":  "ee0dcd19b",
+    "generated":  "2026-09-16T10:35:06-07:00",
+    "commit":  "7ec03f2a9",
     "uncommitted":  [
-                        "src/apprt/win32/agent_recovery.zig",
-                        "src/apprt/win32/App.zig",
-                        "src/apprt/win32/LocalAgent.zig",
-                        "src/apprt/win32/MachineChooser.zig",
-                        "src/apprt/win32/SessionRoster.zig"
+                        "src/apprt/win32/BannerOverlay.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -40,7 +36,7 @@
                   "src/apprt/win32/banner_link.zig":  "77bd381ab5cca8cf4a4d12d9e15971303d5d4e83ea600fe4576c9e5bf4a34c95",
                   "src/apprt/win32/banner_markdown.zig":  "d4edeb14288a2cc8912eb7763874d40ea57217cdb24f21a90de61326963b06f1",
                   "src/apprt/win32/BannerDialog.zig":  "3a5e59dba40c6c4df9aab5cf5e87751d137bb81642399deb0adf59d33ec3b47d",
-                  "src/apprt/win32/BannerOverlay.zig":  "71b1a6a926e3604c4adda7a66b9e41ca86a689897c63b75ebde947bd6b0ead3c",
+                  "src/apprt/win32/BannerOverlay.zig":  "cefc3fca6fa45f21f4107662c01642badb4029ca1e2016bfc0052385b2fd56b0",
                   "src/apprt/win32/BannerScriptInstaller.zig":  "e349d9a86275fb68b44211120d5859a92e14dc2ce797f9060a8b5cd701cb923d",
                   "src/apprt/win32/brush_cache.zig":  "6ca6b43b601eb13b29ace632ea449ab7e6c1a5e9133847d29c51f21a69483a78",
                   "src/apprt/win32/caption_layout.zig":  "66d3eded5ac783fe68c1dee896ac28188df4c5d79941371ad81773eb38797aa4",

@@ -11,7 +11,7 @@
 # the close "x", not on the "+" that has lit a fill since long before T204.
 # It is an ORDERING problem, not a timing one, so no faster capture wins it,
 # and every hover FILL in the win32 chrome was therefore a SKIP (tab-strip's
-# 4c, pane-banner's 6g) or a per-site workaround through a state that happens
+# 4c, pane-banner's 6f3) or a per-site workaround through a state that happens
 # to survive a leave (split-divider's DRAG, caption-bar's caption_pressed,
 # hero-mode's grabbed divider). T786 finished retiring those: every one of
 # them now reads a hovered frame, and the one remaining stand-in -

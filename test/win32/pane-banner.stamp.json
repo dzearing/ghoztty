@@ -1,10 +1,11 @@
 {
     "guard":  "pane-banner",
     "script":  "test/win32/pane-banner.ps1",
-    "generated":  "2026-09-16T06:21:57-07:00",
-    "commit":  "cf5185b6d",
+    "generated":  "2026-09-16T10:11:25-07:00",
+    "commit":  "7ec03f2a9",
     "uncommitted":  [
-                        "src/apprt/win32/BannerOverlay.zig"
+                        "src/apprt/win32/BannerOverlay.zig",
+                        "test/win32/pane-banner.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/banner_card.zig":  "8a8ae5c2bc901bfc594b23bb443f6d919bdc4756d9f42d7c9c102f5e05a13b90",
@@ -12,7 +13,7 @@
                   "src/apprt/win32/banner_link.zig":  "77bd381ab5cca8cf4a4d12d9e15971303d5d4e83ea600fe4576c9e5bf4a34c95",
                   "src/apprt/win32/banner_markdown.zig":  "d4edeb14288a2cc8912eb7763874d40ea57217cdb24f21a90de61326963b06f1",
                   "src/apprt/win32/BannerDialog.zig":  "3a5e59dba40c6c4df9aab5cf5e87751d137bb81642399deb0adf59d33ec3b47d",
-                  "src/apprt/win32/BannerOverlay.zig":  "71b1a6a926e3604c4adda7a66b9e41ca86a689897c63b75ebde947bd6b0ead3c",
-                  "test/win32/pane-banner.ps1":  "19e5cf3da199d1b92267f2ef57b8ee502e3eacc3fc400066ee7a0663be79407f"
+                  "src/apprt/win32/BannerOverlay.zig":  "cefc3fca6fa45f21f4107662c01642badb4029ca1e2016bfc0052385b2fd56b0",
+                  "test/win32/pane-banner.ps1":  "0de8812f74e192a1c73178805452cc802621cca73155f3341acc2badaabb7ebe"
               }
 }

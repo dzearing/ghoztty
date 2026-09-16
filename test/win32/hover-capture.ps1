@@ -8,7 +8,7 @@
 # FIRST and the painted frame is the un-hovered one. T209 measured 300 posted
 # moves in bursts of 25, interleaved with captures, and never once caught a lit
 # fill. So every hover FILL in the win32 chrome was a SKIP (tab-strip's 4c,
-# pane-banner's 6g) or a per-site workaround through a state that survives a
+# pane-banner's 6f3) or a per-site workaround through a state that survives a
 # leave (split-divider's DRAG, caption-bar's caption_pressed).
 #
 # The action moves the whole probe into the app's GUI thread, where hit test,

@@ -3143,7 +3143,7 @@ test "banner overlay: a link's underline is dotted at rest and solid on hover" {
 // T571: the chevron's hovered FILL, proved by arithmetic rather than by a
 // photograph of a desktop.
 //
-// `pane-banner.ps1` 6g can photograph the hovered chevron today — T282/T845
+// `pane-banner.ps1` 6f3 can photograph the hovered chevron today — T282/T845
 // moved the capture onto the app's own GUI-thread stack, so the posted
 // WM_MOUSELEAVE can no longer be drained between the move and the paint — but
 // what that section is really checking is a rule about colors and a rounded
@@ -3223,7 +3223,7 @@ test "banner overlay: the chevron's fill lights on hover and is rounded" {
         _ = w32.SelectObject(mem_dc, bmp);
         const pixels = @as([*]u32, @ptrCast(@alignCast(bits orelse return error.SkipZigTest)));
 
-        // The same two probes 6g takes, from the same geometry the paint uses:
+        // The same two probes 6f3 takes, from the same geometry the paint uses:
         // the fill's top edge at its horizontal center (lit), and the corner
         // pixel the rounding cuts away (never lit). Asking `fillRegion` rather
         // than re-deriving the inset is the point — a test that recomputed the

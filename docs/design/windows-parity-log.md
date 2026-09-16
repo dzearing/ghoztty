@@ -30412,3 +30412,28 @@ Filed on the way past: **T1608** - the user-visible half (open the chooser durin
 a wedge, get an answer rather than a spinner) has no on-box oracle.
 `agent-recovery.ps1` already builds the wedge for its section K, so the missing
 piece is a section that drives the chooser inside it.
+
+## 2026-09-16 - T789: one label per section in the banner test, and the file checks it itself
+
+`test/win32/pane-banner.ps1` had two blocks both labelled `6g` - T209/T204's
+chevron icon-button block and T123's table-sizing block - for 35 days, so "the
+6g assertions" named two places and T283 had to disambiguate by naming a task.
+The chevron block is `6f3` now: it belongs with the `6f`/`6f2` collapse family,
+and leaving the table block as `6g` keeps it beside its own `6g2` follow-on
+(T745) instead of splitting that pair. The live citations moved with it - the
+script's three internal cross-references, `BannerOverlay.zig`'s two T571
+chevron-fill comments, `hover-capture.ps1` and `lib/HoverCapture.ps1`. Closed
+task files keep their prose; they record what was true when written.
+
+The rule is scored rather than trusted now. New section 0 reads the script's own
+source, groups its section labels and fails on any duplicate - the cheapest
+possible guard against the next section added here landing on a taken letter.
+
+Evidence: `floor-lane.ps1 -Lane all` ALL LANES PASS; `pane-banner.ps1` ALL PASS
+(149 assertions, restamped), with section 0 green over 27 sections and red over a
+copy with `6h` renamed to `6g`; `floor-lane.ps1 -Lane harness` PASS (384 files
+restamped) and `hover-capture.ps1` ALL PASS (26) for the guards the edits made
+due. `tab-tooltip` stays red and DUE for T1606/T1607, which is not this change's.
+
+Filed and immediately closed: **T1613**, a duplicate of T1606/T1607 filed without
+reading the `SIMILAR:` block that exists to prevent exactly that.

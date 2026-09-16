@@ -1,10 +1,12 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-09-16T09:30:15-07:00",
-    "commit":  "ea61a48c1",
+    "generated":  "2026-09-16T10:22:40-07:00",
+    "commit":  "7ec03f2a9",
     "uncommitted":  [
-                        "test/win32/ipc-command-keepalive.ps1"
+                        "test/win32/hover-capture.ps1",
+                        "test/win32/lib/HoverCapture.ps1",
+                        "test/win32/pane-banner.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "153b2be6dc8272d18f75a46998ea23f746f33285f41011b79fae49cf18716070",
@@ -139,7 +141,7 @@
                   "test/win32/holder-volume.ps1":  "d02ee330dd064bc6a723ee4a27ded93fdd8c6874a0c079ec42531d28cf5e97ac",
                   "test/win32/hook-json.ps1":  "53c55376fe85bb0584e45d23d4276d3a4b4bb22d58b59019bf60e6aa400de135",
                   "test/win32/host-settings.ps1":  "1bc9c64131b1c97a74eb41b461102d69f6ca9a28dfc72b34b42f6bff9337cb6d",
-                  "test/win32/hover-capture.ps1":  "0a8055d036ef8aa5ef83d91851c418f52dfdc09ea29d63f5eae9af87a9ee92a1",
+                  "test/win32/hover-capture.ps1":  "f36af98b0a13a5c6e72c685cd52070af5a74b7ac9af3845f90636fa9fae1a2ff",
                   "test/win32/install-launch.ps1":  "df8a8917d448d735d327ae87bcfde00f09a665dcbe0737ae56c4c0487d8225ca",
                   "test/win32/install-maintenance.ps1":  "aeaf5fe1e6acdfc4083c79cc5279116da4607b68eaaf1d398926191747b15027",
                   "test/win32/install-ownership.ps1":  "0c574d3d71e1b8b86c3ff21fbd54eb8dd8a5341a117ad83ea969480ec9e188ad",
@@ -204,7 +206,7 @@
                   "test/win32/lib/FreePort.ps1":  "1f6d3230171a1f76c1f1327e8ad01ddd9c65aba78cbe70f7b7716b9a1a2109c7",
                   "test/win32/lib/GuiPostmortem.ps1":  "b2aaea0dd2e850ba4958c2a2e1a7179df9a27ec824790b934e2a036c0b0c4c2f",
                   "test/win32/lib/HarnessLeak.ps1":  "98c3df24fc6b37702f3b7c8ac80a8f5fffff94a7ed390f99f5b1146306274438",
-                  "test/win32/lib/HoverCapture.ps1":  "eea4a1faf0b6014f5d40ab71709d6f90406d17804177178668140a127a38d313",
+                  "test/win32/lib/HoverCapture.ps1":  "e2d8d5f91b435061bfb98b18650ae51b429dee7b4cc112c741fee49229fe7ed4",
                   "test/win32/lib/Isolation.ps1":  "93b2efed0772d8debdd7ccbda2ca5b51d63bee517d2a1fd1fe6b33da89024464",
                   "test/win32/lib/JobTeardown.ps1":  "0984c7f89db7d9a81188aaf7571b536948b4c0d6814bf8a6bbc80b6a0a0b75bd",
                   "test/win32/lib/ModalSweep.ps1":  "ad1fde46a8704161d73608cf0ebcf58c1a0251d82fbea3967f79281065f91649",
@@ -247,7 +249,7 @@
                   "test/win32/palette-close-crash.ps1":  "e6046113e0de2c089224b358bac4ef12ed298e86983c3bf68bd48588a34c964d",
                   "test/win32/palette-grid-size.ps1":  "f443de90fd39d1ae25a8aa707b064029ced866c3716b331cb8e5aa0f5b57c381",
                   "test/win32/palette-jump.ps1":  "150268d189630d6d7118cec0d7f2a6149a8a2b7c41a0db14942533c58fddd013",
-                  "test/win32/pane-banner.ps1":  "19e5cf3da199d1b92267f2ef57b8ee502e3eacc3fc400066ee7a0663be79407f",
+                  "test/win32/pane-banner.ps1":  "0de8812f74e192a1c73178805452cc802621cca73155f3341acc2badaabb7ebe",
                   "test/win32/pane-capture.ps1":  "bafa49ecb514b76f8cafb16cb2a6172c04188e0081f28c759d939f1c378b8a4c",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "0c722d4f0cb52d3567b2d070362fa2cf825aafc952a81b1bcf01768203181161",

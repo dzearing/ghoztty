@@ -312,6 +312,20 @@ function Measure-ShotGreen($shot, [int]$x0, [int]$y0, [int]$x1, [int]$y1) {
     return $hits
 }
 
+# --- 0. every section label in this file is unique (T789) -------------------
+#
+# The labels are load-bearing prose: BannerOverlay.zig's negative-control doc
+# comments, this file's own cross-references and half a dozen task files all
+# name a section by its letter. Two blocks were both called `6g` for 35 days,
+# so "the 6g assertions" pointed at two places and T283 had to disambiguate by
+# naming a task instead. This scores the rule rather than trusting it - a
+# duplicate introduced by the next section added here fails the run that
+# introduces it, not the reader who trips over it a month later.
+$labels = @(Select-String -Path $PSCommandPath -Pattern '^\s*#\s*---\s*([0-9]+[a-z0-9]*)\.' |
+    ForEach-Object { $_.Matches[0].Groups[1].Value })
+$dupes = @($labels | Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+Assert ($dupes.Count -eq 0) "section labels are unique ($($labels.Count) sections; duplicates: $(if ($dupes.Count) { $dupes -join ',' } else { 'none' }))"
+
 Stop-RepoInstances
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
@@ -328,10 +342,10 @@ try {
     # is silently rejected and the default `true` stays in force.)
     # Launched onto the test desktop rather than by IPC auto-spawn, which would
     # put the GUI on the user's desktop — the whole thing being fixed.
-    # stderr captured for 6g's `banner chevron hover=` oracle (T209): the
+    # stderr captured for 6f3's `banner chevron hover=` oracle (T209): the
     # chevron's hover cannot survive to a pixel capture on this desktop, so the
     # TRIGGER is read from the debug log. Empty on a release build, where
-    # log.debug is compiled out - 6g then skips rather than lying.
+    # log.debug is compiled out - 6f3 then skips rather than lying.
     $errlog = Join-Path $env:TEMP 'ghoztty-pane-banner-stderr.log'
     Remove-Item $errlog -ErrorAction SilentlyContinue
     $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments @('--background=#101014', '--session-persistence=false')
@@ -604,7 +618,7 @@ try {
     # The frames cannot be captured: 180ms of card heights do not survive to a
     # PrintWindow on the background desktop, and each one re-glues the popup.
     # So the motion is read from the debug oracle the same way the chevron's
-    # TRIGGER is in 6g - `banner collapse from=/to=` once per toggle, `banner
+    # TRIGGER is in 6f3 - `banner collapse from=/to=` once per toggle, `banner
     # collapse h=` once per painted frame - while the SETTLED geometry is
     # asserted from the windows themselves.
     #
@@ -784,7 +798,7 @@ try {
         }
     }
 
-    # --- 6g. T209 / T204: the chevron is an ICON BUTTON, and hot-tracks ------
+    # --- 6f3. T209 / T204: the chevron is an ICON BUTTON, and hot-tracks -----
     #
     # The user's report named it directly: "why doesn't the chevron in the
     # banner have a similar hover?" Pre-T204 it had no hover state at all - no
