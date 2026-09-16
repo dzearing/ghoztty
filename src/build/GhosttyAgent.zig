@@ -161,12 +161,33 @@ pub fn init(b: *std.Build, cfg: *const Config, deps: *const SharedDeps) !Agent {
 /// prompt fires. (This mirrors the Windows publisher's `--if-changed` gate,
 /// which only re-publishes `version.json` when the agent's inputs changed.)
 ///
-/// The path set is the agent's compiled inputs: `src/agent_main.zig` (its root),
-/// `src/remote` (the bulk — transport, protocol, agent), the two shared leaves
-/// it pulls in (`src/pty.zig`, `src/CommandCore.zig`), and this build recipe. It
-/// deliberately excludes `build.zig` (broad app-wide churn) and `relay/deploy`
-/// (packaging/installer/site — not compiled into the binary); either would
-/// reintroduce the spurious-stale churn without changing the agent's bytes.
+/// The path set is the agent's compiled inputs, and it is the set the COMPILER
+/// reads rather than a shortlist of the files anyone remembers it needing:
+/// `src` (its root, the whole `remote` tree, and every leaf those reach —
+/// `os/main.zig`, `terminal/main.zig`, `apprt/win32/job_spawn.zig` …), `pkg`
+/// and `vendor` (the vendored bindings linked into it), and `dist/windows`
+/// (the `.rc` whose VERSIONINFO is compiled into the binary). It deliberately
+/// excludes everything that is NOT compiled in — `build.zig`, `relay/deploy`,
+/// `macos` (Swift, never part of this binary), docs, scripts and tests — since
+/// those re-stamp an unchanged agent without changing its bytes.
+///
+/// It used to name four leaves — `src/agent_main.zig`, `src/remote`,
+/// `src/pty.zig`, `src/CommandCore.zig` — and that was the silent half of the
+/// same coin (T784). The agent reaches `src/os`, `src/terminal` and
+/// `src/apprt/win32/job_spawn.zig` by relative import, so a commit to any of
+/// them changed the agent's bytes and left its stamp alone; `isStale` then read
+/// two DIFFERENT builds as the same one, the upgrade policy did nothing, and the
+/// delivery freshness gate (T281, staged stamp vs delivered stamp) compared two
+/// copies of the same wrong answer and passed. A stamp that lags is the
+/// dangerous direction — the user silently keeps an old agent — where a stamp
+/// that moves early costs at most an idle refresh, which since T1056 never ends
+/// a live session on either platform.
+///
+/// `scripts\agent-stamp-inputs.ps1` is what keeps this list honest: it reads the
+/// input list out of the agent compile's own cache manifest and fails on any
+/// tracked file no path here covers, so the next import that reaches a new tree
+/// is a red check rather than a stamp that quietly stops meaning anything.
+/// Acceptance: `test\win32\agent-stamp-inputs.ps1`.
 fn versionString(b: *std.Build) ![]const u8 {
     if (b.option(
         []const u8,
@@ -186,9 +207,9 @@ fn versionString(b: *std.Build) ![]const u8 {
             b.build_root.path orelse ".", "-c",
             "log.showSignature=false",    "log",
             "-1",                         "--pretty=format:%cs-%h",
-            "--",                         "src/agent_main.zig",
-            "src/remote",                 "src/pty.zig",
-            "src/CommandCore.zig",        "src/build/GhosttyAgent.zig",
+            "--",                         "src",
+            "pkg",                        "vendor",
+            "dist/windows",
         },
         &code,
         .Ignore,

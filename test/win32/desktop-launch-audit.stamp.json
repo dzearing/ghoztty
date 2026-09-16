@@ -1,10 +1,10 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-09-15T23:46:23-07:00",
-    "commit":  "9ae4dd433",
+    "generated":  "2026-09-16T00:45:51-07:00",
+    "commit":  "c8b87873e",
     "uncommitted":  [
-                        "test/win32/kb-actions.ps1"
+                        "test/win32/agent-stamp-inputs.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "ef54b501298cfda9306cfb958c1094db24ee30f355b25865656b3e2bc713bcd7",
@@ -32,6 +32,7 @@
                   "test/win32/agent-session-cap.ps1":  "1c90f39debadea2b3312dd9c887d8eafaadfc8caf2ac5892ba5aaffaaf5fee66",
                   "test/win32/agent-sharing-uplink.ps1":  "2bf17d913b72fbf1ca94cf9bae729e0c6cf1e95e683485d78ac5b44affd2e3b4",
                   "test/win32/agent-shell-integration.ps1":  "f770ac1643037ffc9b28cc9fe73e27440e684005af3e389d2f78c66ce306fbb1",
+                  "test/win32/agent-stamp-inputs.ps1":  "95fbc858cddc1e0fde3e896ec699998298f5cfebbb1b595acd190e21cc913fe3",
                   "test/win32/agent-upgrade.ps1":  "6f9d232d9c276bdc37157aab7b284463472c9637e3ead11f0f3ae5c4aa262143",
                   "test/win32/agent-user-env.ps1":  "7ea19bc9332a520cec15cf4ff3c2b40a2c1daa7968c5a6bf9951d4c3151e9df3",
                   "test/win32/argv-hazard-audit.ps1":  "3b35b33ac7f4600791bcaeb144e9204818c68305fc7f8c4920882624e7742c1c",

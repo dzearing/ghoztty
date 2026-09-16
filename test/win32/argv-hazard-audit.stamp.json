@@ -1,13 +1,15 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-15T23:44:22-07:00",
-    "commit":  "9ae4dd433",
+    "generated":  "2026-09-16T00:44:13-07:00",
+    "commit":  "c8b87873e",
     "uncommitted":  [
+                        "scripts/agent-stamp-inputs.ps1",
                         "scripts/guard-due.ps1",
-                        "test/win32/kb-actions.ps1"
+                        "test/win32/agent-stamp-inputs.ps1"
                     ],
     "files":  {
+                  "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
                   "scripts/build-cache.ps1":  "03c458dfb2f33f3c109ce15f88efe7ec405c34fc347335e8e4737d30e18ea8a2",
                   "scripts/check-release-parity.ps1":  "716c462a0a4d5059fe2b6d922001fa3374d78346ebb3c0b857634503f35b9abb",
                   "scripts/ci-status.ps1":  "c273364f2c71a956e9d63876b8a0b9218388503f0a1ae7853617649403911286",
@@ -32,7 +34,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "fec6376034427796d1f9ad0b65d5fe8a46ce24a1702398844db3ea1483bada45",
-                  "scripts/guard-due.ps1":  "aa812ba8796ecda96f998a1b665af0e4aef941a2873bef20d074f9b51dc2e991",
+                  "scripts/guard-due.ps1":  "5d7d7f351daab192d820e3c3a4626799dd08b3b84af80416327a8865141e843b",
                   "scripts/harness-floor.ps1":  "cc4dd72fb07ebc34de67ce688e0eab7f091a7228e4baeba4f9f50d01212a0f0e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -99,6 +101,7 @@
                   "test/win32/agent-session-cap.ps1":  "1c90f39debadea2b3312dd9c887d8eafaadfc8caf2ac5892ba5aaffaaf5fee66",
                   "test/win32/agent-sharing-uplink.ps1":  "2bf17d913b72fbf1ca94cf9bae729e0c6cf1e95e683485d78ac5b44affd2e3b4",
                   "test/win32/agent-shell-integration.ps1":  "f770ac1643037ffc9b28cc9fe73e27440e684005af3e389d2f78c66ce306fbb1",
+                  "test/win32/agent-stamp-inputs.ps1":  "95fbc858cddc1e0fde3e896ec699998298f5cfebbb1b595acd190e21cc913fe3",
                   "test/win32/agent-upgrade.ps1":  "6f9d232d9c276bdc37157aab7b284463472c9637e3ead11f0f3ae5c4aa262143",
                   "test/win32/agent-user-env.ps1":  "7ea19bc9332a520cec15cf4ff3c2b40a2c1daa7968c5a6bf9951d4c3151e9df3",
                   "test/win32/argv-hazard-audit.ps1":  "3b35b33ac7f4600791bcaeb144e9204818c68305fc7f8c4920882624e7742c1c",

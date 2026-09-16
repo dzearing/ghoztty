@@ -3242,6 +3242,27 @@ $GuardTable = @(
             'test\win32\control-char-scan.ps1'
         )
     },
+    # The agent's BUILD STAMP vs what the agent is actually built from (T784).
+    # The stamp is the binary's self-update identity, so a path list narrower
+    # than the compiler's input set makes two different agents read as the same
+    # build - silently, on the user's box. Coverage is the recipe that derives
+    # the stamp, the two readers that compare stamps, the scanner and the
+    # harness. The 900-file input set itself is NOT in the list: the scanner
+    # recomputes it from the build manifest on every run, so listing it would
+    # make the guard due on every commit to src\ while proving nothing extra.
+    # About a minute (a cached agent build, then a file scan).
+    [pscustomobject]@{
+        Name   = 'agent-stamp-inputs'
+        Script = 'test\win32\agent-stamp-inputs.ps1'
+        Stamp  = 'test\win32\agent-stamp-inputs.stamp.json'
+        Covers = @(
+            'src\build\GhosttyAgent.zig',
+            'src\remote\agent_build.zig',
+            'src\apprt\win32\agent_upgrade.zig',
+            'scripts\agent-stamp-inputs.ps1',
+            'test\win32\agent-stamp-inputs.ps1'
+        )
+    },
     # The chooser's SELECTION TREATMENT (T828): the pixels a user reported as "a
     # loud purple pill with a thick purple outline". Coverage is the row model
     # that resolves the pill, the mark and the rim (chooser_rows.zig), the

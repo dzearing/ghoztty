@@ -30016,3 +30016,51 @@ scripts) keeps its other half: `keybinds-t01.ps1`, `window-title.ps1` and
 acceptance for the guard table itself - is 4-red on this box for reasons that
 predate this change, including a row whose harness never stamps and therefore
 can never be cleared; that is T1602.
+
+## 2026-09-16 - The agent's build stamp now follows everything the agent is built from (T784)
+
+The agent is the background process that owns your terminal sessions, and the
+app decides whether to refresh it by comparing build stamps: the stamp the
+running agent reports in its HELLO against the stamp baked into the binary the
+app ships beside. That stamp was derived from the last commit touching four
+hand-listed paths - `src/agent_main.zig`, `src/remote`, `src/pty.zig`,
+`src/CommandCore.zig` - and the agent is compiled from 925 tracked files. The
+agent's own sources reach `src/os/main.zig`, `src/terminal/main.zig` and
+`src/apprt/win32/job_spawn.zig` by relative import, and those reach the rest.
+
+So a commit to any of them changed the agent's BYTES and left its identity
+alone. `isStale(running, bundled)` then read two genuinely different builds as
+the same one, the upgrade policy stood down, and T281's delivery freshness gate
+- staged stamp against delivered stamp - compared two copies of the same wrong
+answer and passed. The user keeps an old agent, silently, including past a fix
+they just installed.
+
+What the task's title says - an agent stamped OLDER than the app beside it - is
+NOT the defect and is deliberate (d04ecc2bb): keying on HEAD re-stamped an
+unchanged agent on every release. That half stands. The silent half is what was
+fixed, and the two directions are not symmetric: a stamp that moves early costs
+at most an idle refresh, which since T1056 (and `deferUntilIdle` on the Mac)
+never ends a live session, while a stamp that lags costs the user the fix.
+
+The list is no longer a shortlist anyone has to remember to extend. It is what
+the COMPILER reads - `src`, `pkg`, `vendor`, `dist/windows` - and
+`scripts/agent-stamp-inputs.ps1` is what keeps it honest: every `zig build
+agent` writes a cache manifest of its inputs, and the scanner fails on any
+tracked input no stamp path covers. `macos/` is the one declared exclusion,
+with its reason (Swift sources for the Mac apprt, never compiled into this
+binary). Measured churn of the new basis over the last 200 commits: 44 of them
+touch it, against 8 for the old list - about six stamp changes a day in a repo
+that publishes once, so the regression d04ecc2bb fixed does not come back (a
+release commit that touches only docs, scripts or the tracker still does not
+re-stamp).
+
+Evidence: `test\win32\agent-stamp-inputs.ps1` ALL PASS (26 assertions), with
+section B clean over 925 compiled inputs, section C confirming all three of the
+drifted trees are inputs AND covered, and D6 reading the built binary back -
+`ghoztty-agent --version` is `20260915-b8d0770cc`, the git answer for the
+recipe's own path set. `-NegativeControl` runs the live manifest against the
+pre-fix four-leaf list and scores exactly 1 FAILURE, so the check is
+demonstrated to bite rather than assumed to. Standing from here: the new
+`agent-stamp-inputs` guard row covers the recipe, both stamp readers, the
+scanner and the harness, so an edit to any of them makes it DUE and `validate`
+refuses the commit. `floor-lane.ps1 -Lane all` and `-Lane harness` green.
