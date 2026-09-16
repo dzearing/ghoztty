@@ -1,11 +1,10 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-09-15T17:26:14-07:00",
-    "commit":  "250ff8fdb",
+    "generated":  "2026-09-15T18:33:22-07:00",
+    "commit":  "fa15bbc7d",
     "uncommitted":  [
-                        "test/win32/holder-adopt.ps1",
-                        "test/win32/pty-host.ps1"
+                        "test/win32/log-append.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -176,7 +175,7 @@
                   "test/win32/lib/PersistenceSweep.ps1":  "f887c6445618eaf5102e8a2e0a4019aea9de53126291df8e9a19662d3b401a49",
                   "test/win32/lib/TestDesktop.ps1":  "86cd5a5020b60062966c22e649170d899a93a66f0ade50e6d8c94f9556db7095",
                   "test/win32/local-split-no-command-rerun.ps1":  "ee277b6308cdb172e153fe92d0624732f8b64743418134ce466da5534138fae2",
-                  "test/win32/log-append.ps1":  "76f73c234de0498279a1678b94cd297fa0bdc5d83363e8e43e06999bfaa4b457",
+                  "test/win32/log-append.ps1":  "61e904625bdcce9ad697d8d8ea6065dcd15673388768a1b306cf72902d255b11",
                   "test/win32/machine-chooser.ps1":  "c69e331b19e83e300b5f0c22860220ea1d2de144d587db1ee4ae4e797ce6b79e",
                   "test/win32/menu-bar.ps1":  "b8e8f1a38a3579f3df4b742b48d3df2dcc62a3d816b42d0af26db5664f77377e",
                   "test/win32/menu-f10-binding.ps1":  "2a0f0edd446c99a0ed1ffb5d1b0ce8e3e1a8ae8df140fd70fa5f6b5df37b8e22",
