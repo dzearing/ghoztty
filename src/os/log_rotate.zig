@@ -229,6 +229,51 @@ test "rotate: the archive is written while a writer still holds the log open" {
     try testing.expectEqual(max_bytes, archived.size);
 }
 
+test "rotate: a racer that arrives after the rename cannot destroy the archive" {
+    if (comptime builtin.os.tag != .windows) return error.SkipZigTest;
+    const testing = std.testing;
+    const w = std.os.windows;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // This is the hazard the header argues away, played out in order. Two
+    // writers cross the threshold together, so both open a rename handle on
+    // the oversize live log before either has renamed it.
+    try writeSized(tmp.dir, live_name, max_bytes, 'a');
+    const racer = try w.OpenFile(std.unicode.utf8ToUtf16LeStringLiteral(live_name), .{
+        .dir = tmp.dir.fd,
+        .access_mask = w.SYNCHRONIZE | w.DELETE | w.FILE_READ_ATTRIBUTES,
+        .creation = w.FILE_OPEN,
+    });
+    defer w.CloseHandle(racer);
+
+    // The first one wins the race, and a third writer's next log line recreates
+    // the live file while the second is still holding its handle.
+    rotate(tmp.dir);
+    try writeSized(tmp.dir, live_name, 64, 'b');
+
+    // Now the straggler renames. Because the handle names the file OBJECT, it
+    // moves the file it opened — which is already the archive — rather than the
+    // fresh live log that took its place at the path. A path rename here is the
+    // defect: it would move 64 bytes of 'b' over 4 MiB of history.
+    try renameHandle(
+        racer,
+        tmp.dir.fd,
+        std.unicode.utf8ToUtf16LeStringLiteral(rotated_name),
+    );
+
+    const archived = try tmp.dir.statFile(rotated_name);
+    try testing.expectEqual(max_bytes, archived.size);
+    try testing.expectEqual(@as(u8, 'a'), try firstByte(tmp.dir, rotated_name));
+
+    // ...and the live log the third writer created is untouched, so its lines
+    // are not lost to somebody else's rotation either.
+    const live = try tmp.dir.statFile(live_name);
+    try testing.expectEqual(@as(u64, 64), live.size);
+    try testing.expectEqual(@as(u8, 'b'), try firstByte(tmp.dir, live_name));
+}
+
 fn writeSized(dir: std.fs.Dir, name: []const u8, size: u64, fill: u8) !void {
     const file = try dir.createFile(name, .{ .truncate = true });
     defer file.close();

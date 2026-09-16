@@ -33,6 +33,11 @@
 # another process's line and split this one in half - the T229 defect, back
 # again by another route).
 #
+# T410 adds the third half: the sink is BOUNDED, at 4 MiB and two generations.
+# T774 adds the arm that measures the concurrency claim that bound rests on -
+# N writers crossing the threshold in the same millisecond must not destroy the
+# archive between them, and must not lose a line across the boundary.
+#
 # Release build only - the file sink is compiled out of Debug builds (they log
 # to stderr). Hermetic: its own LOCALAPPDATA and IPC pipe suffix, and it only
 # runs `+list`, which touches nothing.
@@ -237,6 +242,12 @@ function Seed($tag) {
         while ($fs.Length + $bytes.Length -le $maxBytes) { $fs.Write($bytes, 0, $bytes.Length) }
         $pad = New-Object byte[] ($maxBytes - $fs.Length)
         for ($i = 0; $i -lt $pad.Length; $i++) { $pad[$i] = 0x2E }
+        # The pad has to END the line. A seed that stops mid-line glues the
+        # first line written after it onto the pad, which then no longer starts
+        # with a timestamp - indistinguishable from a line the rotation lost,
+        # and it cost a false C6 failure while this section was being built.
+        if ($pad.Length -ge 2) { $pad[$pad.Length - 2] = 0x0D; $pad[$pad.Length - 1] = 0x0A }
+        elseif ($pad.Length -eq 1) { $pad[0] = 0x0A }
         if ($pad.Length -gt 0) { $fs.Write($pad, 0, $pad.Length) }
     } finally { $fs.Dispose() }
 }
@@ -291,6 +302,81 @@ $rotationComplete = $true
     Say "    rotation section threw: $_"
 }
 Assert "R10 the rotation section ran to completion" $rotationComplete
+
+# --- T774: the bound holds under CONCURRENT writers ----------------------
+# Everything above crosses the threshold with one process at a time, which is
+# the easy half. The sink's whole reason for renaming by HANDLE rather than by
+# path is the other half: every writer decides to rotate on its own, so N of
+# them can cross in the same millisecond, and a path rename lets the second one
+# move a freshly created (tiny) log over the archive and drop the entire
+# history. That claim was argued in the header of src\os\log_rotate.zig and
+# never measured on the real binary - a path-rename build passes R1-R9.
+$raceComplete = $false
+try {
+
+Remove-Item $rotPath -Force -ErrorAction SilentlyContinue
+Seed 'C'
+$seedBytes = (Get-Item $logPath).Length
+
+# All of them at once, onto a log sitting exactly ON the threshold: each one's
+# first line crosses it, so they are racing for the rename rather than queueing
+# behind it.
+$racers = @()
+for ($i = 0; $i -lt $Writers; $i++) {
+    # persistence: n/a - a CLI invocation, which opens no window.
+    $racers += Start-Process -FilePath $Exe -ArgumentList @('+list') -WindowStyle Hidden -PassThru `
+        -RedirectStandardOutput (Join-Path $root "c$i.out") -RedirectStandardError (Join-Path $root "c$i.err")
+}
+foreach ($q in $racers) { $null = $q.Handle }
+$racerPids = @($racers | ForEach-Object { $_.Id })
+foreach ($q in $racers) { $q.WaitForExit(60000) | Out-Null }
+Start-Sleep -Milliseconds 500
+
+Assert "C1 the race archives the log rather than leaving it oversize" (Test-Path $rotPath)
+if (Test-Path $rotPath) {
+    $raceArch = (Get-Item $rotPath).Length
+    Say "    archive after the race: $([math]::Round($raceArch/1MB,2)) MiB (seeded $([math]::Round($seedBytes/1MB,2)) MiB)"
+    # The destroy-the-archive hazard, stated as an oracle: if a racer renamed a
+    # fresh live log over the archive, the archive is a few hundred bytes of
+    # log lines and its first line is not the seed.
+    Assert "C2 the archive is still the generation that crossed the threshold" (
+        (FirstLine $rotPath) -like 'SEED-C*')
+    Assert "C3 the archive kept its bytes - a fresh log renamed over it would be tiny" (
+        $raceArch -ge $seedBytes)
+}
+Assert "C4 no third generation appears under the race" (-not (Test-Path "$logPath.2"))
+
+# And no line is lost ACROSS the boundary. Each racer contributes exactly
+# $perProc lines (measured on this binary at the top of the run); some land in
+# the file that became the archive and some in the one that replaced it, so the
+# union of the two generations must hold every one of them.
+$across = @()
+foreach ($f in @($logPath, $rotPath)) {
+    if (Test-Path $f) { $across += @(Get-Content $f) }
+}
+$byPid = @{}
+foreach ($ln in $across) {
+    $m = [regex]::Match($ln, $shape)
+    if (-not $m.Success) { continue }
+    $who = [int]$m.Groups['pid'].Value
+    if ($racerPids -notcontains $who) { continue }
+    $byPid[$who] = 1 + $byPid[$who]
+}
+$sawAll = @($racerPids | Where-Object { $byPid.ContainsKey($_) }).Count
+$short = @($racerPids | Where-Object { $byPid[$_] -ne $perProc })
+Say "    $sawAll of $Writers racer(s) found across both generations, $perProc line(s) each expected"
+if ($short.Count -gt 0) {
+    $worst = $short[0]
+    Say "    first short writer: pid $worst wrote $($byPid[$worst]) of $perProc line(s)"
+}
+Assert "C5 every racer's lines survive the rotation boundary" ($sawAll -eq $Writers)
+Assert "C6 no racer lost a line to the rotation" ($short.Count -eq 0)
+
+$raceComplete = $true
+} catch {
+    Say "    race section threw: $_"
+}
+Assert "C7 the concurrent-rotation section ran to completion" $raceComplete
 
 }
 
