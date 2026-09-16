@@ -1,15 +1,14 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-09-16T11:46:44-07:00",
-    "commit":  "d72f4bd58",
+    "generated":  "2026-09-16T12:52:30-07:00",
+    "commit":  "0c902c8c6",
     "uncommitted":  [
-                        "test/win32/activity-monitor.ps1",
-                        "test/win32/ipc-machine-chooser.ps1"
+                        "test/win32/activity-monitor.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "153b2be6dc8272d18f75a46998ea23f746f33285f41011b79fae49cf18716070",
-                  "test/win32/activity-monitor.ps1":  "73a8819ab70f99342cd33a7f997de39166136f5566cfa0b550d37bc9e634b4c6",
+                  "test/win32/activity-monitor.ps1":  "a736047ae58130876460e390abc9e0e5cceef937f237386f180b44e5ab1f30e2",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",
                   "test/win32/activity-monitor-probe-fail.ps1":  "b8fb9258c879d5ec87aa62adffeb868423168684d2e880de1a1343985fd70bb6",
                   "test/win32/activity-monitor-remote.ps1":  "6ff70172c8fa3db75f9aff5b2ef6462bb3d80af309933a7e986862604db8293e",

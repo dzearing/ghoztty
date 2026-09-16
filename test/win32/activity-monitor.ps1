@@ -92,10 +92,20 @@
 #
 # CONTROLS. A positive control (ctrl+shift+p opening the palette) runs first, so
 # a broken injection aborts instead of reading as a T285 regression. The
-# `-NegativeControl` switch inverts three load-bearing claims - D's (a needle
+# `-NegativeControl` switch inverts five load-bearing claims - D's (a needle
 # that matches nothing is asserted to still show every row), L's (the focus ring
-# is asserted to be painted while the FILTER holds focus) and L7's (it is
-# asserted to survive the panel being DEACTIVATED) - and that run MUST fail.
+# is asserted to be painted while the FILTER holds focus), L7's (it is
+# asserted to survive the panel being DEACTIVATED), M's (the needle is asserted
+# to isolate something OTHER than the three victims) and M2's (an already-exited
+# member of a batch of three is asserted to take `killFailureText`'s SINGLE-
+# failure sentence) - and that run MUST fail, on all five.
+#
+# M's two are there because the section's load-bearing claim is a SAFETY one
+# (T791): "every row this clicks is one of my own throwaways" was asserted and
+# never demonstrated to be capable of failing, and a safety assertion that
+# cannot go red is a comment. The INVERSION is of the claim only, never of the
+# guard - `$safeToClick` keeps reading the real row count, so a negative-control
+# run scores red without ever clicking a row it does not own.
 #
 # T211/T217: runs on a BACKGROUND Win32 desktop (test/win32/lib/TestDesktop.ps1)
 # and asserts at the end that it never took the user's foreground. The panel is
@@ -1663,7 +1673,14 @@ try {
     Set-TestControlText -Control $filterEdit -Text 'ping' | Out-Null
     Wait-PanelState $before | Out-Null
     $st = Wait-PanelShown 3
-    Assert ($st.Shown -eq 3) "M the needle isolates exactly the three victims (shown=$($st.Shown))"
+    if ($NegativeControl) {
+        Write-Host 'NEGATIVE CONTROL: asserting the needle isolates something OTHER than the three victims - this run MUST fail'
+        Assert ($st.Shown -ne 3) "M (inverted): the needle shows a row count that is not the three victims (shown=$($st.Shown))"
+    } else {
+        Assert ($st.Shown -eq 3) "M the needle isolates exactly the three victims (shown=$($st.Shown))"
+    }
+    # The GUARD is never inverted, only the claim above it: a run that is trying
+    # to score red must not buy that verdict by clicking rows it does not own.
     $safeToClick = ($victims.Count -eq 3 -and $st.Shown -eq 3 -and -not $st.ShowAll)
 
     $pitch = -1
@@ -1823,11 +1840,21 @@ try {
                 Start-Sleep -Milliseconds 900
             }
             Assert ($null -ne (Wait-LogMatch 'activity monitor: kill result total=3 killed=2 gone=1 failed=0' 8000)) 'M2 the batch reported the two it killed AND the one that was already gone, which is not a failure'
-            $mAgg = Wait-LogMatch 'activity monitor: action error: Killed (\d+) of (\d+); (\d+) had already exited\.' 8000
-            Assert ($null -ne $mAgg) 'M2 the already-exited target became the AGGREGATED banner, not the single-failure sentence'
-            if ($mAgg) {
-                Assert ($mAgg.Groups[1].Value -eq '2' -and $mAgg.Groups[2].Value -eq '3' -and $mAgg.Groups[3].Value -eq '1') "M2 the banner tallies the batch (got '$($mAgg.Groups[0].Value)')"
-                Assert ($mAgg.Groups[0].Value -notmatch 'privileges') "M2 ...and does NOT send the user after an admin prompt for a process that had already exited (got '$($mAgg.Groups[0].Value)')"
+            if ($NegativeControl) {
+                # The far side of `killFailureText`'s `total == 1` fork: the
+                # sentence that NAMES one process. A batch of three can only
+                # reach it if the aggregation is broken, so a correct build
+                # leaves this waiting out its timeout and the assertion red.
+                Write-Host 'NEGATIVE CONTROL: asserting a batch of three takes the SINGLE-failure sentence - this run MUST fail'
+                $mSingle = Wait-LogMatch "activity monitor: action error: [^;]+ \(PID $($victims2[0])\) had already exited\." 8000
+                Assert ($null -ne $mSingle) "M2 (inverted): the batch named PID $($victims2[0]) in a single-failure sentence"
+            } else {
+                $mAgg = Wait-LogMatch 'activity monitor: action error: Killed (\d+) of (\d+); (\d+) had already exited\.' 8000
+                Assert ($null -ne $mAgg) 'M2 the already-exited target became the AGGREGATED banner, not the single-failure sentence'
+                if ($mAgg) {
+                    Assert ($mAgg.Groups[1].Value -eq '2' -and $mAgg.Groups[2].Value -eq '3' -and $mAgg.Groups[3].Value -eq '1') "M2 the banner tallies the batch (got '$($mAgg.Groups[0].Value)')"
+                    Assert ($mAgg.Groups[0].Value -notmatch 'privileges') "M2 ...and does NOT send the user after an admin prompt for a process that had already exited (got '$($mAgg.Groups[0].Value)')"
+                }
             }
         }
 

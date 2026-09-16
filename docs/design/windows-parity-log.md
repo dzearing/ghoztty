@@ -30496,3 +30496,37 @@ due. `tab-tooltip` stays red and DUE for T1606/T1607, which is not this change's
 
 Filed and immediately closed: **T1613**, a duplicate of T1606/T1607 filed without
 reading the `SIMILAR:` block that exists to prevent exactly that.
+
+## 2026-09-16 - T791: the multi-row kill section's safety claims can now be seen to fail
+
+`activity-monitor.ps1`'s `-NegativeControl` inverted D's, L's and L7's claims and
+said so in its header; section M - the one that ctrl-clicks rows and kills what
+it selects - was not in it. Its load-bearing claim is a SAFETY one ("every row
+visible while I click is one of my own throwaway `ping` victims"), and a safety
+assertion nobody has ever watched go red is a comment. Teeth were demonstrated
+twice by accident during T293's development, which is evidence about that day.
+
+Two arms now: M's row-count claim inverts to "the needle isolates something
+other than the three victims", and M2's inverts to the far side of
+`killFailureText`'s `total == 1` fork - a batch of three is asserted to take the
+SINGLE-failure sentence, which a correct build can only leave timing out.
+
+What is inverted is the CLAIM, never the GUARD. `$safeToClick` keeps reading the
+real row count, so a run reaching for red cannot buy it by clicking a row it does
+not own - and the negative run's own `M1 every process in the batch really died`
+and `M2 nothing from the batch is left running` both passed, which is the
+measurement of that.
+
+Evidence: `-NegativeControl` scored `5 FAILURE(S)` - D, L, L7, M, M2, the two new
+ones reading `M (inverted): ... (shown=3)` and `M2 (inverted): the batch named
+PID 56396 in a single-failure sentence` - with 203 assertions passing, so the
+section still ran end to end. An ordinary run is `ALL PASS (210 assertions)` and
+re-stamped the guard. `floor-lane.ps1 -Lane all` ALL LANES PASS;
+`-Lane harness` PASS (384 files restamped) for the guard this edit made due.
+`tab-tooltip` stays red and DUE for T1606/T1607, which is not this change's.
+
+Filed on the way past: **T1615** - an ordinary run started immediately after
+another one saw eight stray `ping` rows in M (and nine in O), tripped the safety
+guard into refusing to click, and scored a red that meant nothing about the app;
+a run started a couple of minutes later was ALL PASS. Eight is exactly the
+previous run's `New-PanelSpawn` count, which is the lead the task records.
