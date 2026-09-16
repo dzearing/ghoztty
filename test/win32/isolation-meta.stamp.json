@@ -1,10 +1,11 @@
 {
     "guard":  "isolation-meta",
     "script":  "test/win32/isolation-meta.ps1",
-    "generated":  "2026-09-16T05:44:36-07:00",
-    "commit":  "cf5185b6d",
+    "generated":  "2026-09-16T08:25:32-07:00",
+    "commit":  "dd9ec8e6b",
     "uncommitted":  [
-                        "test/win32/neuter-audit.ps1"
+                        "test/win32/ipc-command-keepalive.ps1",
+                        "test/win32/soak.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
@@ -146,7 +147,7 @@
                   "test/win32/install-restart.ps1":  "de177617c75601d68cbaad12d1a10f9275802bbbec07a4f23515d5306d302895",
                   "test/win32/install-walkthrough.ps1":  "9f14cee383dc602cdd9d4888f5b3895160e623e7baed2f5cee8f14749a275a3e",
                   "test/win32/ipc-child-exited.ps1":  "d976a5172b4773f582972eedc3fa1b00bb1c03f5c33eeb5efc06e5d52542112b",
-                  "test/win32/ipc-command-keepalive.ps1":  "3e16597ad1d157d43c6581b946f35aada744b80f52ca38d52f678095975c2b14",
+                  "test/win32/ipc-command-keepalive.ps1":  "6411a7b8de783eb5c6e932aa26cb4ed789833b33f71fe605a7d7bfc24d112b26",
                   "test/win32/ipc-fake-server.ps1":  "d8a18c722615e1ca8582e804d794886cb7734a9eb084f87add9d411b285a689b",
                   "test/win32/ipc-floor-setup.ps1":  "2e61ec25a39e23d5be37f5deb7d6014f441dd4bc1f31924ad8b885e605aa673c",
                   "test/win32/ipc-instance-addressability.ps1":  "c79c3315cb528318e4ba8532854be31dbba60b2bcef48e5995b3063970a57c30",
@@ -257,7 +258,7 @@
                   "test/win32/ship-workflow.ps1":  "28634520cb227573a1a9acf8a9cb7006389228c34a56f3776072eca61f5b1b83",
                   "test/win32/single-instance-join.ps1":  "d276a7d97773c26b7cc622fe3ae14c735381f5e15c7ce137cfb44d84aa249039",
                   "test/win32/skip-visibility.ps1":  "db752053d9a2898370cd4123cd7f94828a5c5ec9ae6dacc4a5173c5f8a102ef6",
-                  "test/win32/soak.ps1":  "20fffed480aa96cf7bc591b776a9582278c999551bb262fee01ae5f5cd60cade",
+                  "test/win32/soak.ps1":  "24245788ab729a9a9a2d59c42acd3a407c87f7895c43b0ff2d4daaabe90a7869",
                   "test/win32/split-dim.ps1":  "a0d3d7e7816fc6a89ab6c2f285c2d19f2e2a550333765c2a3fabdb377c9e8b8b",
                   "test/win32/split-dim-viewer.ps1":  "454a52890b54b98bd41361b823291d51d54b6986180613e921fd0d185324dea9",
                   "test/win32/split-divider.ps1":  "641f514cd8adf962026d07250232d86a19c1e29dcc0191bf334607c134981b65",

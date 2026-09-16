@@ -396,6 +396,113 @@ pub fn parseSetBannerArgs(
 /// a distro without `/bin/sh` cannot run anything.
 pub const wsl_inner_shell = "/bin/sh";
 
+/// The characters `cmd.exe` treats as operators outside quotes, and therefore
+/// the ones a QUOTED segment has to have escaped when it reaches cmd without
+/// quotes of its own (see `cmdShellArgs`). `^` is in the set because it is
+/// cmd's own escape character and so must escape itself.
+const cmd_special_chars = "&<>()@^|";
+
+/// `--command=` for the `cmd.exe` flavor, re-split into argv elements (T1601).
+///
+/// THE CONTRACT, both platforms: `--command=<string>` is the command line the
+/// pane's SHELL runs, quoted the way you would quote it at that shell's prompt.
+/// Mac hands the string to `sh -lic` as one argument and interior quotes just
+/// work; on Windows four of the five flavors get the same thing for free,
+/// because `pwsh -Command`, `wsl -e /bin/sh -lic`, `nu -e` and a posix `-lic`
+/// all parse their command line by the same CRT rules
+/// `CommandCore.windowsCreateCommandLine` writes it with, so the round trip is
+/// lossless (all four measured 2026-09-16 against a path with a space in it).
+///
+/// `cmd.exe` is the one that does not, and it is the DEFAULT shell. CRT quoting
+/// renders an interior `"` as `\"`; cmd has no backslash escape, so it strips
+/// the wrapper quotes and hands `\"` onward, and whatever the pane actually
+/// runs then receives a literal quote glued into the path and splits at the
+/// space. Measured the same day: `--shell=cmd --command=powershell -File
+/// "C:\a b\x.ps1"` ran nothing at all, which is why the soak had to give up its
+/// quoting (T782). No pre-escape fixes it — CRT quoting can never emit a bare
+/// `"`, so the bytes cmd needs are unreachable through a single argv element.
+///
+/// So the command is re-split here into the elements
+/// `windowsCreateCommandLine` renders back into the line cmd needs:
+///
+///   - split on whitespace that is OUTSIDE quotes; `"` toggles quoting and is
+///     otherwise dropped. That is cmd's own tokenizer rather than the CRT's — a
+///     backslash is a path separator here, never an escape;
+///   - a segment that CARRIED quotes and holds whitespace is emitted bare, so
+///     CRT puts real quotes back around it: byte-identical to what the caller
+///     wrote, and quotes cmd honours;
+///   - a segment that carried quotes and holds NO whitespace would be emitted
+///     unquoted by CRT, so any cmd operator inside it is caret-escaped — the
+///     caller quoted `a&b` to make it data, and it stays data;
+///   - a segment with no quotes is passed through verbatim, so `&&`, `|` and
+///     `>` go on being the operators the caller typed.
+///
+/// One thing does not survive and cannot: an EMPTY quoted argument (`""`),
+/// which CRT renders as nothing at all. `-e` is the way to pass an argv whose
+/// elements are exact.
+pub fn cmdShellArgs(
+    arena: Allocator,
+    command: []const u8,
+) Allocator.Error![]const [:0]const u8 {
+    var out: std.ArrayList([:0]const u8) = .empty;
+    var seg: std.ArrayList(u8) = .empty;
+    defer seg.deinit(arena);
+
+    var in_quotes = false;
+    var quoted = false; // this segment carried at least one `"`
+    var open = false; // a segment is being accumulated
+
+    var i: usize = 0;
+    while (i <= command.len) : (i += 1) {
+        if (i < command.len) {
+            const ch = command[i];
+            if (ch == '"') {
+                in_quotes = !in_quotes;
+                quoted = true;
+                open = true;
+                continue;
+            }
+            if (in_quotes or (ch != ' ' and ch != '\t')) {
+                try seg.append(arena, ch);
+                open = true;
+                continue;
+            }
+        }
+        // Unquoted whitespace, or the end of the string: flush.
+        if (open) {
+            try out.append(arena, try finishCmdSegment(arena, seg.items, quoted));
+            seg.clearRetainingCapacity();
+            quoted = false;
+            open = false;
+        }
+    }
+    return out.items;
+}
+
+/// One `cmdShellArgs` segment, its quotes already removed: caret-escape cmd's
+/// operators when the caller had quoted the segment AND
+/// `windowsCreateCommandLine` is going to emit it without quotes of its own
+/// (which it does for anything holding no space, tab, newline or `"`).
+fn finishCmdSegment(
+    arena: Allocator,
+    text: []const u8,
+    quoted: bool,
+) Allocator.Error![:0]const u8 {
+    if (!quoted) return try arena.dupeZ(u8, text);
+    if (std.mem.indexOfAny(u8, text, " \t\n\"") != null) return try arena.dupeZ(u8, text);
+    if (std.mem.indexOfAny(u8, text, cmd_special_chars) == null)
+        return try arena.dupeZ(u8, text);
+
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(arena);
+    for (text) |ch| {
+        if (std.mem.indexOfScalar(u8, cmd_special_chars, ch) != null)
+            try buf.append(arena, '^');
+        try buf.append(arena, ch);
+    }
+    return try arena.dupeZ(u8, buf.items);
+}
+
 /// The Windows shell-flavor table (spec, "Architecture decisions"): build
 /// the argv that runs `command` inside `shell`. The config Command
 /// `.direct` argv form is required on Windows — the `.shell` path
@@ -405,7 +512,7 @@ pub const wsl_inner_shell = "/bin/sh";
 /// `shell -lic '<cmd>; exec shell -li'`).
 ///
 ///   pwsh / powershell  -> shell -NoExit -Command <cmd>
-///   cmd                -> shell /K <cmd>
+///   cmd                -> shell /K <cmd, re-split by `cmdShellArgs`>
 ///   wsl                -> shell -e /bin/sh -lic "<cmd>; exec \"$SHELL\" -li"
 ///                         (runs in the default distro — see below)
 ///   nu / nushell       -> shell -e <cmd>
@@ -443,7 +550,7 @@ pub fn wrapShellCommandArgv(
         try argv.append(arena, try arena.dupeZ(u8, command));
     } else if (std.ascii.eqlIgnoreCase(base, "cmd")) {
         try argv.append(arena, "/K");
-        try argv.append(arena, try arena.dupeZ(u8, command));
+        for (try cmdShellArgs(arena, command)) |part| try argv.append(arena, part);
     } else if (std.ascii.eqlIgnoreCase(base, "wsl")) {
         try argv.append(arena, "-e");
         try argv.append(arena, wsl_inner_shell);
@@ -1008,8 +1115,11 @@ test "wrapShellCommandArgv: every flavor branch" {
         .{ .shell = "pwsh.exe", .expect = &.{ "pwsh.exe", "-NoExit", "-Command", "echo hi" } },
         .{ .shell = "C:\\Program Files\\PowerShell\\7\\pwsh.exe", .expect = &.{ "C:\\Program Files\\PowerShell\\7\\pwsh.exe", "-NoExit", "-Command", "echo hi" } },
         .{ .shell = "PowerShell.exe", .expect = &.{ "PowerShell.exe", "-NoExit", "-Command", "echo hi" } },
-        .{ .shell = "cmd.exe", .expect = &.{ "cmd.exe", "/K", "echo hi" } },
-        .{ .shell = "CMD", .expect = &.{ "CMD", "/K", "echo hi" } },
+        // T1601: cmd takes the command re-split rather than as one element —
+        // `echo hi` has no quoting to preserve, so the rendered line is the
+        // same one it always got (`cmd /K echo hi`).
+        .{ .shell = "cmd.exe", .expect = &.{ "cmd.exe", "/K", "echo", "hi" } },
+        .{ .shell = "CMD", .expect = &.{ "CMD", "/K", "echo", "hi" } },
         // T656: an argv, not a command string — `wsl -- <cmd>` lets Windows'
         // own quoting reach the distro's shell as part of the command.
         .{ .shell = "wsl.exe", .expect = &.{ "wsl.exe", "-e", "/bin/sh", "-lic", "echo hi; exec \"${SHELL:-/bin/sh}\" -li" } },
@@ -1024,6 +1134,152 @@ test "wrapShellCommandArgv: every flavor branch" {
         try testing.expectEqual(case.expect.len, argv.len);
         for (case.expect, argv) |want, got| try testing.expectEqualStrings(want, got);
     }
+}
+
+test "cmdShellArgs: a quoted path survives the round trip through CRT quoting" {
+    var arena = testArena();
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const cases = [_]struct {
+        in: []const u8,
+        expect: []const []const u8,
+        why: []const u8,
+    }{
+        .{
+            .in = "claude",
+            .expect = &.{"claude"},
+            .why = "a bare command is one element",
+        },
+        .{
+            .in = "npm run dev",
+            .expect = &.{ "npm", "run", "dev" },
+            .why = "unquoted words split on whitespace",
+        },
+        .{
+            // The T1601 case: CRT re-quotes the spaced element, so cmd gets
+            // `powershell -File "C:\a b\x.ps1"` with real quotes.
+            .in = "powershell -File \"C:\\a b\\x.ps1\"",
+            .expect = &.{ "powershell", "-File", "C:\\a b\\x.ps1" },
+            .why = "a quoted spaced path becomes one element CRT will re-quote",
+        },
+        .{
+            .in = "for /l %i in (1,1,10) do @echo hi",
+            .expect = &.{ "for", "/l", "%i", "in", "(1,1,10)", "do", "@echo", "hi" },
+            .why = "unquoted cmd syntax is passed through verbatim",
+        },
+        .{
+            .in = "dir \"C:\\a b\" & echo done",
+            .expect = &.{ "dir", "C:\\a b", "&", "echo", "done" },
+            .why = "an unquoted operator stays an operator",
+        },
+        .{
+            .in = "echo \"a & b\"",
+            .expect = &.{ "echo", "a & b" },
+            .why = "a quoted operator with spaces is protected by CRT's quotes",
+        },
+        .{
+            .in = "echo \"a&b\"",
+            .expect = &.{ "echo", "a^&b" },
+            .why = "a quoted operator CRT would emit bare is caret-escaped",
+        },
+        .{
+            .in = "echo \"a^b\"",
+            .expect = &.{ "echo", "a^^b" },
+            .why = "cmd's own escape character escapes itself",
+        },
+        .{
+            .in = "echo a&b",
+            .expect = &.{ "echo", "a&b" },
+            .why = "an unquoted operator is NOT escaped",
+        },
+        .{
+            .in = "-File\"C:\\a b\"",
+            .expect = &.{"-FileC:\\a b"},
+            .why = "a partially quoted segment is one element, as cmd would read it",
+        },
+        .{
+            .in = "   spaced   out   ",
+            .expect = &.{ "spaced", "out" },
+            .why = "runs of whitespace collapse",
+        },
+        .{
+            .in = "",
+            .expect = &.{},
+            .why = "an empty command yields no elements",
+        },
+    };
+
+    for (cases) |case| {
+        const got = try cmdShellArgs(alloc, case.in);
+        testing.expectEqual(case.expect.len, got.len) catch |err| {
+            std.debug.print("cmdShellArgs('{s}'): {s}\n", .{ case.in, case.why });
+            return err;
+        };
+        for (case.expect, got) |want, have| {
+            testing.expectEqualStrings(want, have) catch |err| {
+                std.debug.print("cmdShellArgs('{s}'): {s}\n", .{ case.in, case.why });
+                return err;
+            };
+        }
+    }
+}
+
+test "cmdShellArgs: rendering the elements back reproduces the line cmd needs" {
+    // The half the element list cannot show on its own: what
+    // `CommandCore.windowsCreateCommandLine` writes for those elements is the
+    // command line measured to work against cmd.exe on 2026-09-16 — real
+    // quotes around the spaced path, not the `\"` that broke it.
+    var arena = testArena();
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    const argv = try wrapShellCommandArgv(
+        alloc,
+        "cmd.exe",
+        "powershell -nop -File \"C:\\a b\\x.ps1\"",
+    );
+    const line = try renderWindowsCommandLineForTest(alloc, argv);
+    try testing.expectEqualStrings(
+        "cmd.exe /K powershell -nop -File \"C:\\a b\\x.ps1\"",
+        line,
+    );
+}
+
+/// `CommandCore.windowsCreateCommandLine`, duplicated for the test above so
+/// this module keeps compiling in the `none` runtime (CommandCore pulls in the
+/// spawn graph). Kept byte-identical to the original on purpose — if the two
+/// drift, the assertion above stops describing the line cmd actually receives.
+fn renderWindowsCommandLineForTest(
+    alloc: Allocator,
+    argv: []const [:0]const u8,
+) ![]const u8 {
+    var buf: std.ArrayList(u8) = .empty;
+    for (argv, 0..) |arg, arg_i| {
+        if (arg_i != 0) try buf.append(alloc, ' ');
+        if (std.mem.indexOfAny(u8, arg, " \t\n\"") == null) {
+            try buf.appendSlice(alloc, arg);
+            continue;
+        }
+        try buf.append(alloc, '"');
+        var backslashes: usize = 0;
+        for (arg) |byte| switch (byte) {
+            '\\' => backslashes += 1,
+            '"' => {
+                try buf.appendNTimes(alloc, '\\', backslashes * 2 + 1);
+                try buf.append(alloc, '"');
+                backslashes = 0;
+            },
+            else => {
+                try buf.appendNTimes(alloc, '\\', backslashes);
+                try buf.append(alloc, byte);
+                backslashes = 0;
+            },
+        };
+        try buf.appendNTimes(alloc, '\\', backslashes * 2);
+        try buf.append(alloc, '"');
+    }
+    return buf.items;
 }
 
 test "normalizeConptyInput: LF and CRLF become CR, lone CR unchanged" {

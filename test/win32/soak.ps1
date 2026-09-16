@@ -320,16 +320,16 @@ Rep "gui pid: $($proc.Id)"
 & $exe +split --target=soak --name=soak-stream --direction=right --shell=cmd `
     "--command=for /l %i in (1,1,2000000) do @type $streamFile" | Out-Null
 Start-Sleep -Milliseconds 800
-# T782: the transport is Invoke-NativeExact (byte-exact argv), and the inner
-# quotes around the path are GONE on purpose. They never survived: PowerShell
-# 5.1 stripped them on the way out, so what this pane has always run is the
-# unquoted form - and measured 2026-09-15, sending them intact makes the pane
-# run nothing at all and the soak reports "no telemetry from this pane". A
-# path with a space in it is therefore still unhandled here; filed as T1601.
+# T782: the transport is Invoke-NativeExact (byte-exact argv), so the quotes
+# below reach the CLI instead of being stripped by PowerShell 5.1 on the way
+# out. T1601 gave them somewhere to land: sending them intact used to make the
+# pane run nothing at all (the soak reported "no telemetry from this pane"),
+# because the cmd flavor could not express a quoted path. Keep them - this is
+# the quoted form a scripter would write, and the thing worth soaking.
 $null = Invoke-NativeExact -FilePath $exe -Arguments @(
     '+split', '--target=soak', '--name=soak-altscr', '--direction=down',
     '--shell=cmd',
-    "--command=powershell -nop -ExecutionPolicy Bypass -File $altscrScript")
+    "--command=powershell -nop -ExecutionPolicy Bypass -File `"$altscrScript`"")
 Start-Sleep -Milliseconds 800
 & $exe +split --target=soak-stream --name=soak-grow --direction=down --shell=cmd `
     "--command=for /l %i in (1,1,150000) do @echo SOAKGROW %i abcdefghijklmnopqrstuvwxyz0123456789" | Out-Null

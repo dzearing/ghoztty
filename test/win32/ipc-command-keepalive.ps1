@@ -37,6 +37,16 @@
 #      line. It is now `wsl -e /bin/sh -lic "<cmd>; exec \"$SHELL\" -li"`, so
 #      the arm asserts the marker, the ABSENCE of `command not found`, and a
 #      live prompt afterwards like every other flavor.
+#   J  T1601: a `--command=` that QUOTES a path with a space in it. The
+#      contract is that the value is the command line the pane's shell runs,
+#      quoted the way you would quote it at that shell's prompt - and under the
+#      DEFAULT shell (cmd.exe) there was no working form at all: the whole
+#      value went to `CommandCore` as one argv element, CRT quoting rendered
+#      the inner quotes as `\"`, and cmd has no backslash escape, so the pane
+#      ran nothing. Sent with byte-exact argv (`Invoke-NativeExact`), because
+#      PowerShell 5.1 strips those quotes on the way out and the unquoted form
+#      is not the thing under test - which is exactly how the soak (T782)
+#      passed over this for weeks.
 # Controls, which must hold in BOTH builds:
 #   G  the `--command=` pane really is agent-backed (`session_id` in
 #      `+list --json`). Without this the whole file goes vacuous the day
@@ -60,6 +70,8 @@ New-Item -ItemType Directory -Force $tmp | Out-Null
 $env:GHOZTTY_PIPE_SUFFIX = "-cmdkeepalive$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T1601 arm J: byte-exact argv, so the quotes in a `--command=` reach the CLI.
+. (Join-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) 'scripts\lib\NativeArgv.ps1')
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
 function Assert($name, $cond) {
@@ -249,6 +261,39 @@ try {
                 $tail.Text -notmatch 'command not found')
         }
     }
+
+    # ------------------------------------------------------------------
+    "== J: --command= that quotes a path with a space in it (T1601)"
+    # ------------------------------------------------------------------
+    # The acceptance the task names: a split whose `--command=` runs a script
+    # from a path with a space. The script is what proves the quoting survived
+    # - a path that got split at the space cannot run it at all.
+    $spaceDir = Join-Path $tmp 'a space dir'
+    New-Item -ItemType Directory -Force $spaceDir | Out-Null
+    $spaceScript = Join-Path $spaceDir 'marker.ps1'
+    Set-Content -Encoding ascii -Path $spaceScript -Value "Write-Host 'KAMARKERQUOTED'"
+    $null = Invoke-NativeExact -FilePath $Exe -Arguments @(
+        '+split', '--target=kacmd', '--name=kaquoted', '--direction=down',
+        "--command=powershell -nop -ExecutionPolicy Bypass -File `"$spaceScript`"")
+    Test-KeepAlive 'J quoted path' 'kaquoted' 'KAMARKERQUOTED' 40
+    # The broken build's exact signature, asserted apart from the marker: the
+    # child got a literal quote glued into the path and split it at the space.
+    $jTail = Invoke-Ghoztty "+read --name=kaquoted --lines=40" "$tmp\read-quoted.txt"
+    Assert "J the path was not split at its space" (
+        $jTail.Text -notmatch 'Illegal characters in path')
+
+    # The other half of the contract, and the cheaper one to read: quoting
+    # inside the value is the pane shell's to interpret, so cmd must receive
+    # real quotes rather than the `\"` CRT writes. A broken build echoes the
+    # backslashes back.
+    $null = Invoke-NativeExact -FilePath $Exe -Arguments @(
+        '+split', '--target=kacmd', '--name=kaquotecho', '--direction=right',
+        '--command=echo "KAQ & UOTE"')
+    $echoTail = Wait-Read 'kaquotecho' 'KAQ & UOTE'
+    Assert "J a quoted operator reaches the shell as data" (
+        $echoTail -match 'KAQ & UOTE')
+    Assert "J the shell did not see CRT backslash escapes" (
+        $echoTail -notmatch '\\"KAQ')
 
     # ------------------------------------------------------------------
     "== H: control - -e is NOT keep-alived (it means 'exec exactly this')"

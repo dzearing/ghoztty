@@ -9,6 +9,61 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-16: T1601 closed done - **a `--command=` can carry a quoted path again, so a script in a folder with a space in it will actually run.**
+
+  The contract, now written down beside `--command=` for both platforms:
+  the value is the command line the pane's SHELL runs, quoted the way you would
+  quote it at that shell's prompt. macOS gets that by handing the string to
+  `sh -lic` as one argument. On Windows, four of the five flavors get it for
+  free - measured on the box against a real path with a space in it, `pwsh
+  -Command`, `wsl -e /bin/sh -lic`, a posix `-lic` and `nu -e` all round-trip it
+  correctly, because their command line is written and read by the same CRT
+  rules. `powershell -Command` specifically BREAKS if handed a raw tail instead
+  of a CRT-quoted argument, which is worth recording: the obvious "just pass it
+  through verbatim" fix would have broken the row that works.
+
+  `cmd.exe` - the Windows DEFAULT shell - was the one that could not express it
+  at all. The whole value went to `CommandCore` as a single argv element,
+  `windowsCreateCommandLine` rendered the inner quotes as `\"`, and cmd has no
+  backslash escape: it strips the wrapper quotes, passes `\"` onward, and
+  whatever the pane runs receives a literal quote glued into the path and splits
+  it at the space. There is no pre-escape that fixes it, because CRT quoting can
+  never emit a bare `"` - the bytes cmd needs are unreachable through one
+  element. So the cmd row now re-splits the value into the elements that render
+  back into the line cmd needs (`apprt.ipc.args.cmdShellArgs`): split on
+  unquoted whitespace, syntactic quotes dropped so the spawn puts real ones
+  back, and a cmd operator the caller QUOTED (`"a&b"`) caret-escaped so it stays
+  data while unquoted `&&`, `|` and `>` go on being operators. One shape cannot
+  survive and is documented as such: an empty quoted argument (`""`), which the
+  spawn renders as nothing - `-e` is the way to pass exact argv.
+
+  Both spawn paths are fixed by the one change, because the plain-ConPTY pane
+  and the local-agent pane both reach `CommandCore` with this argv.
+
+  New arm J of `test\win32\ipc-command-keepalive.ps1` is the acceptance the task
+  asked for - a split whose `--command=` runs a script from a path with a space
+  - sent with byte-exact argv, because PowerShell 5.1 strips those quotes on the
+  way out and the unquoted form is not the thing under test. That stripping is
+  exactly how `soak.ps1` passed over this for weeks (T782); the soak has its
+  quoting back.
+
+  Two pre-existing reds were measured, not assumed: control arm G ("the
+  `--command=` pane carries a session_id") and a `CRASHED - 0xFFFFFFFF` GUI
+  postmortem verdict both reproduce on an untouched HEAD build, so a baseline
+  worktree was built to prove it rather than reasoning from the diff. Filed
+  T1609 (a `--command=` pane is on the ConPTY fallback, so it loses session
+  persistence AND the keepalive suite is covering the path that was never
+  broken) and T1610 (a harness that prints CRASHED on every green run cannot
+  report a real crash). Filed T1611 for the red `tab-tooltip` guard and closed
+  it the same minute as a duplicate of T1395, which already has it.
+
+  Evidence: `floor-lane.ps1 -Lane all` ALL LANES PASS (lib/none/win32/agent);
+  `-Lane harness` PASS (384 files stamped); `ipc-command-keepalive.ps1` arm J
+  all six assertions PASS with every other arm unchanged; P1 26 / P2 20 / P3 16
+  ALL PASS; `docs-routing` ALL PASS (20), `suite-run` ALL PASS (108). Committed
+  under `-NoGuardDue` for `tab-tooltip`, which was already DUE and red at the
+  top of this turn (T1395).
+
 - 2026-09-16: T785 closed done - **the delivery's "is that the right agent over there?" check has been watched saying no.**
 
   T281 made every delivered location read its `ghoztty-agent.exe` back and
