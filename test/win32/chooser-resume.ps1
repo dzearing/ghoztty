@@ -141,6 +141,22 @@ function Get-RenderedSessions {
     return @(Get-Sessions | Where-Object { $_.alive })
 }
 
+# T793: the fixture's two seeding waits used to be `Start-Sleep -Seconds 2` on a
+# fact the agent publishes - "N sessions are registered and alive". A fixed
+# sleep tuned on this box is a flake waiting for a slower one, and when it fires
+# the failure reads as the product bug this task was filed as. Poll the agent's
+# own reply instead, and return whatever the last sample saw so the assertion
+# that follows still reports the real count on a timeout.
+function Wait-SessionCount([int]$Count, [int]$TimeoutMs = 15000, [switch]$AliveOnly) {
+    $waited = 0
+    while ($true) {
+        $seen = if ($AliveOnly) { @(Get-RenderedSessions) } else { @(Get-Sessions) }
+        if ($seen.Count -ge $Count -or $waited -ge $TimeoutMs) { return $seen }
+        Start-Sleep -Milliseconds 250
+        $waited += 250
+    }
+}
+
 function Launch-Gui($errlog, [string[]]$extra) {
     $args = @('--window-width=100', '--window-height=30') + $extra
     $app = Start-OnTestDesktop -Exe $Exe -Arguments $args -StdErr $errlog
@@ -215,8 +231,7 @@ try {
     $g = Launch-Gui $errlog1 @('--session-persistence=true')
     if (-not $g) { Write-Host 'SETUP FAIL: GUI died at launch'; exit 1 }
     & $Exe +split --direction=right 2>$null | Out-Null
-    Start-Sleep -Seconds 2
-    $seeded = @(Get-Sessions)
+    $seeded = @(Wait-SessionCount -Count 2)
     Assert ($seeded.Count -ge 2) "the agent owns the app's panes (found $($seeded.Count))"
 
     # Kill the APP only. The agent keeps the children alive - that is the whole
@@ -232,7 +247,6 @@ try {
     $env:GHOZTTY_RESTORE_SKIP = '1'
     $g = Launch-Gui $errlog2 @('--session-persistence=true')
     if (-not $g) { Write-Host 'SETUP FAIL: GUI died on relaunch'; exit 1 }
-    Start-Sleep -Seconds 2
 
     # The seam must have ENGAGED, and say so - otherwise a future launch-order
     # change could leave restore running and this fixture would fail three
@@ -240,7 +254,9 @@ try {
     $skipLine = Wait-LogLine $errlog2 'session-restore: skipped entirely by GHOZTTY_RESTORE_SKIP' 4000
     Assert ($null -ne $skipLine) 'the relaunch skipped launch-time restore (T620 seam engaged)'
 
-    $rendered = @(Get-RenderedSessions)
+    # The relaunched app registers its own new pane with the agent a beat after
+    # its window exists, so this is a poll, not a read (T793).
+    $rendered = @(Wait-SessionCount -Count 3 -AliveOnly)
     Assert ($rendered.Count -ge 3) "the roster has the orphans plus the new pane ($($rendered.Count) rows)"
     # The rows to resume are ORPHANS: alive with no viewer. The relaunched app's
     # own pane is alive too and sits somewhere in the same displayed list (which

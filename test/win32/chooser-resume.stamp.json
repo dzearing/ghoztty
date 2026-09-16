@@ -1,15 +1,15 @@
 {
     "guard":  "chooser-resume",
     "script":  "test/win32/chooser-resume.ps1",
-    "generated":  "2026-09-16T07:19:02-07:00",
-    "commit":  "ee0dcd19b",
+    "generated":  "2026-09-16T13:12:36-07:00",
+    "commit":  "b5b5b71b9",
     "uncommitted":  [
-                        "src/apprt/win32/SessionRoster.zig"
+                        "test/win32/chooser-resume.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/chooser_sessions.zig":  "b87f315d18c221ccb7a809668cf450ccf16213d89735b4087d236d66eb22f5a1",
                   "src/apprt/win32/SessionRoster.zig":  "8cd699df8cd90756dfc2232a7610f3df5beeb26ad2b2471d2cedd5fec1f8b4d0",
-                  "test/win32/chooser-resume.ps1":  "e6f87fe40b62646e1623549e66056036e110067e7393d9abe1835b2b0ca64561",
+                  "test/win32/chooser-resume.ps1":  "7446ac6f724be1670193d04c818474cebe33430dd88223290a7b30ca9fa8a7be",
                   "test/win32/lib/ChooserCursor.ps1":  "07632267956e7b2647f6227181d98c0ca50e8d68556c7e987e1817424d583e74"
               }
 }

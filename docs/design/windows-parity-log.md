@@ -9,6 +9,37 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-16: T793 closed done - **the test that proves you can take over a
+  still-running session from the machine chooser was already fixed a month ago;
+  what it was still owed was a wait that cannot flake.**
+
+  T793 was filed on 2026-08-12 against a setup failure: after the app was
+  killed and relaunched, the chooser listed the two sessions that outlived it
+  but not the pane the fresh app had just opened - two rows where the script
+  needed three - so all four of its sections asserted nothing. The card named
+  two candidate causes and said to tell them apart before building anything.
+
+  Neither was right. The step 1 `CHECK FIRST` prompt did its job: the defect no
+  longer reproduces, because `622cdf9e1` (T620, 2026-08-16) fixed it at source
+  four days after the card was filed. The real cause was a third thing - the
+  relaunched app was RE-ATTACHING both orphans through launch-time restore from
+  the agent's own layout store (T194), so it rebuilt the old window instead of
+  opening a new pane and no third session ever existed to be listed. T620 added
+  the `GHOZTTY_RESTORE_SKIP` seam to the relaunch, and asserts the seam engaged,
+  which is exactly that fix. `chooser-resume.ps1` now ends ALL PASS (29
+  assertions), exit 0.
+
+  So the deliverable was the validation the card was owed rather than a fix. Its
+  third criterion is the one worth keeping: *if it was a race, the wait is a
+  POLL with a timeout, not a longer sleep - a fixed sleep tuned on this box is
+  the same defect at a different number.* Both of the fixture's seeding waits
+  were still `Start-Sleep -Seconds 2` over a fact the agent publishes, so they
+  are now `Wait-SessionCount` - 250ms samples against `+sessions --json`, 15s
+  cap. The poll returns its LAST sample rather than an empty one, so a genuine
+  timeout still reports the true row count to the assertion behind it; a
+  flake here would otherwise read as precisely the product bug this card was
+  filed as, which is how a harness defect gets investigated twice.
+
 - 2026-09-16: T790 closed done - **the search boxes in the machine chooser and the Activity Monitor now understand letters that are not English.**
 
   Type into either filter box and it folded `A`-`Z` and nothing else. A machine
