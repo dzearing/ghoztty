@@ -1,10 +1,10 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-09-16T00:49:24-07:00",
-    "commit":  "c8b87873e",
+    "generated":  "2026-09-16T02:13:36-07:00",
+    "commit":  "8b831baa2",
     "uncommitted":  [
-                        "test/win32/agent-stamp-inputs.ps1"
+                        "test/win32/deliver-windows-build.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "153b2be6dc8272d18f75a46998ea23f746f33285f41011b79fae49cf18716070",
@@ -97,7 +97,7 @@
                   "test/win32/daily-publish.ps1":  "9a9c9c698f7eedc50927536a038397281e4c4471d56c4f2e9fffbf8fe61c7512",
                   "test/win32/dark-menus.ps1":  "ab97be43af44188040463ebf9c6ab7b4a96139a623445aeb145eec3e4c9f906f",
                   "test/win32/dashboard-dom.ps1":  "34e4f9885499690ee161fda2d60842afdd46577fa37393f71cc0cc2e5c818b27",
-                  "test/win32/deliver-windows-build.ps1":  "ca15c14d4f26fdb9b2296fda26bb4ab542341137cf7b9097223c076ad399d677",
+                  "test/win32/deliver-windows-build.ps1":  "137ec598dafcdad2b79248b5d5761fa742d92b0965e012f15c1e05c394f52307",
                   "test/win32/desktop-launch-audit.ps1":  "df0f8241a82fb625a5309378e3d96de7951876f8d2c394564e3f3326d8889a53",
                   "test/win32/divergence-inventory.ps1":  "829edd00d4ed65595adf6d9a837414af1f212b18f4cbfff9f4ce4568e43b7c09",
                   "test/win32/docs-routing.ps1":  "0df33f259fc8eb88f4eb186c8f0fb216bfe5e929d3e8e85e59a9b3cbd4b6d821",

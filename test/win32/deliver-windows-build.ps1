@@ -31,6 +31,9 @@
 #      stand, writing nothing - the question nobody could ask between
 #      deliveries - plus the unattended reader that runs it and the health
 #      field that reports its verdict.
+#   H  the per-location AGENT read-back (T785): a live stale agent, pinned in
+#      place so the copy cannot land on it, plus the positive twin that proves
+#      the verdict is the read-back's and not the failed copy's.
 #
 # Hermetic: every directory it writes is under the sandbox root, the real
 # install locations are never named, and no build is ever run. It reads two real
@@ -56,6 +59,10 @@ $ErrorActionPreference = 'Continue'
 
 $script:failures = 0
 $script:passes = 0
+# T785: a section whose subject this box cannot supply (a second agent build) is
+# a SKIP, and a skipped run does not stamp the guard - only a full green sweep
+# may claim the harness measured what it covers.
+$script:skipped = 0
 $root = Join-Path $env:TEMP "ghoztty-deliver-$PID"
 
 function Assert($name, $cond) {
@@ -150,7 +157,7 @@ if ($PureOnly) {
     ""
     # The pure half IS the whole body of a -PureOnly run, so it completes here.
     Complete-TestBody
-    Write-TestVerdict -Pass $script:passes -Fail $script:failures -Label 'PURE ONLY'
+    Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skipped -Label 'PURE ONLY'
 }
 
 # ============================================================================
@@ -446,6 +453,125 @@ $hOut = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo '
 Assert "G22 go-loop-health reports deliver=wrong from that watermark" (($hOut -join "`n") -match 'deliver=wrong\(\d+\)')
 
 # ============================================================================
+""
+"== H: the per-location AGENT read-back, with live teeth (T785)"
+# ============================================================================
+#
+# T281 made a delivery read the agent back in every location it reached, and the
+# branch that matters there - the file is present and it is ANOTHER BUILD - had
+# no live control: every run that exercised it agreed with itself, because the
+# only agent in the sandbox was the one the copy had just put there. The pure
+# comparator (Test-AgentStampsMatch, arm A-level) proves the string compare, and
+# proves nothing about the wiring around it.
+#
+# The state cannot be SEEDED, because the copy overwrites the destination before
+# the verify runs. It can be PINNED, and that is the real shape anyway: on
+# 2026-07-20 an upgrade's agent swap was skipped, a months-old agent stayed on
+# disk, and the run reported OK (upgrade-staleness.ps1 section E). Holding the
+# destination open with FileShare.Read makes both halves of Copy-DeliveredFile
+# fail - the overwrite and the move-aside fallback - which is exactly a copy that
+# did not happen, while leaving the image launchable so the read-back gets a real
+# stamp out of a real, differently-built agent.
+#
+# The pair is what gives the branch teeth: the SAME mechanical copy failure with
+# a stale agent pinned FAILS naming both stamps, and with the staged agent pinned
+# passes the stamp check - so the verdict is the read-back's doing and not a side
+# effect of the failed copy.
+
+$stagedAgent = Join-Path $Staging 'bin\ghoztty-agent.exe'
+$staleAgent = Join-Path $DebugBin 'ghoztty-agent.exe'
+$p2Agent = Join-Path $p2 'ghoztty-agent.exe'
+$stagedStamp = (Resolve-GhozttyAgentStamp -Exe $stagedAgent).Stamp
+$staleStamp = if (Test-Path -LiteralPath $staleAgent) { (Resolve-GhozttyAgentStamp -Exe $staleAgent).Stamp } else { '' }
+Assert "H1 the staged agent reports a stamp ('$stagedStamp')" ($stagedStamp -match '^(dev|\d{8}-[0-9a-f]{7,40})$')
+
+function Lock-ForReading([string]$Path) {
+    return [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+}
+
+if (-not $staleStamp -or (Test-AgentStampsMatch $staleStamp $stagedStamp)) {
+    # The stand-in has to be a REAL agent of another build; there is no way to
+    # fake a stamp, since it is printed by the binary itself. A box whose debug
+    # and release trees were built from the same source has none, and saying so
+    # is the honest answer - a fabricated one would be the defect this section
+    # exists to remove.
+    "  SKIP H2-H13: no second agent build on this box to stand in for a stale one" +
+        " (debug '$staleStamp' vs staged '$stagedStamp')"
+    $script:skipped++
+} else {
+    Assert "H2 a real agent from another build is on hand to stand in for a stale one ('$staleStamp')" `
+        (-not (Test-AgentStampsMatch $staleStamp $stagedStamp))
+
+    # The control: a delivery that lands reads the agent back and names it.
+    $r = Invoke-Deliver -Extra @{ NoZip = $true }
+    AssertEq "H3 a delivery that lands succeeds" 0 $r.Code
+    Assert "H4 and the agent read-back names the staged stamp in every location" `
+        ($r.Text -match "ghoztty-agent\.exe reports $([regex]::Escape($stagedStamp))")
+
+    # NEGATIVE CONTROL: the location keeps another build's agent, exactly as a
+    # box whose swap was skipped does.
+    Copy-Item -LiteralPath $staleAgent $p2Agent -Force
+    $lock = Lock-ForReading $p2Agent
+    try { $r = Invoke-Deliver -Extra @{ NoZip = $true } } finally { $lock.Close(); $lock.Dispose() }
+    # H5 is the weak half on purpose: the refused copy alone would fail the run,
+    # so the exit code says nothing about the read-back. H6/H7 carry the claim,
+    # and the mutation run below is what proved the difference - blanking the
+    # comparator leaves H5 and H10 green and takes H6, H7 and H14 red.
+    AssertEq "H5 the pinned location fails the delivery (the refused copy alone would do that)" 1 $r.Code
+    Assert "H6 THE POINT: the read-back names the stale stamp and the staged one" `
+        ($r.Text -match "reports $([regex]::Escape($staleStamp)) but staging has $([regex]::Escape($stagedStamp))")
+    Assert "H7 naming the location it is sitting in" `
+        ($r.Text -match ([regex]::Escape($p2) + '\\ghoztty-agent\.exe reports'))
+    Assert "H8 the stale bytes really were still there to be caught" `
+        ((Get-FileHash -LiteralPath $p2Agent).Hash -eq (Get-FileHash -LiteralPath $staleAgent).Hash)
+    Assert "H9 and the location that took the copy is not blamed for it" `
+        (-not ($r.Text -match ([regex]::Escape($p1) + '\\ghoztty-agent\.exe reports')))
+    Assert "H10 the verdict is DELIVER FAILED" ($r.Last -like 'DELIVER FAILED:*')
+
+    # POSITIVE TWIN: same pinned file, same failed copy - but these bytes ARE the
+    # staged build, so the stamp check must exonerate them. Without this arm H5
+    # could be the copy failure talking.
+    Copy-Item -LiteralPath $stagedAgent $p2Agent -Force
+    $lock = Lock-ForReading $p2Agent
+    try { $r = Invoke-Deliver -Extra @{ NoZip = $true } } finally { $lock.Close(); $lock.Dispose() }
+    Assert "H11 the copy was refused the same way" ($r.Text -match 'ghoztty-agent\.exe could not be written')
+    Assert "H12 but the stamp check clears a binary that IS the staged build" `
+        (($r.Text -match "ghoztty-agent\.exe reports $([regex]::Escape($stagedStamp))") -and
+         -not ($r.Text -match 'but staging has'))
+
+    # The third outcome of the same read: a file under that name which is not a
+    # program at all - a half-copied agent. It must be caught off its header
+    # rather than by launching it (T1098's loader dialog).
+    Set-Content -LiteralPath $p2Agent -Encoding ascii -Value 'this is not a program'
+    $lock = Lock-ForReading $p2Agent
+    try { $r = Invoke-Deliver -Extra @{ NoZip = $true } } finally { $lock.Close(); $lock.Dispose() }
+    AssertEq "H13 the run fails with a non-program under the agent's name too" 1 $r.Code
+    Assert "H14 saying it could not be asked its version, and why" `
+        ($r.Text -match 'ghoztty-agent\.exe could not be asked its version')
+
+    # And the location recovers the moment the pin is gone: the failures above
+    # are about the bytes on disk, not about a sandbox this section broke.
+    $r = Invoke-Deliver -Extra @{ NoZip = $true }
+    AssertEq "H15 the next delivery repairs the location" 0 $r.Code
+    Assert "H16 and the staged agent really is the one on disk now" `
+        ((Get-FileHash -LiteralPath $p2Agent).Hash -eq (Get-FileHash -LiteralPath $stagedAgent).Hash)
+
+    # The AUDIT half (T727) reads the same binary with a different yardstick -
+    # the locations against each other, with no staging in the picture - and that
+    # comparison had no live control either.
+    Copy-Item -LiteralPath $staleAgent $p2Agent -Force
+    $r = Invoke-Audit
+    AssertEq "H17 an audit of locations whose agents disagree FAILS" 1 $r.Code
+    Assert "H18 naming the stamp it found and the one the others carry" `
+        ($r.Text -match ('ghoztty-agent\.exe reports ' + [regex]::Escape($staleStamp) + ' but .+ has ' + [regex]::Escape($stagedStamp)))
+    Copy-Item -LiteralPath $stagedAgent $p2Agent -Force
+    $r = Invoke-Audit
+    AssertEq "H19 and agrees again once the location is repaired" 0 $r.Code
+    Assert "H20 reporting the one agent stamp every location shares" `
+        ($r.Text -match ("ghoztty-agent\.exe $([regex]::Escape($stagedStamp)) in \d+ location"))
+}
+
+# ============================================================================
 if (-not $Keep) { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue }
 
 # A clean green FULL run stamps the covered files (T783) so scripts\guard-due.ps1
@@ -453,10 +579,10 @@ if (-not $Keep) { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinu
 # against the code as it now stands?". Red leaves the stamp alone, and so does
 # -PureOnly, which exits above without ever having run a delivery.
 Complete-TestBody  # T1039: before the stamp, a child process that reads this run's state
-if ($script:failures -eq 0) {
+if ($script:failures -eq 0 -and $script:skipped -eq 0) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard deliver-verify -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 ""
-Write-TestVerdict -Pass $script:passes -Fail $script:failures
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skipped

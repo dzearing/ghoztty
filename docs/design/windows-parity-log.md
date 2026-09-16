@@ -9,6 +9,47 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-16: T785 closed done - **the delivery's "is that the right agent over there?" check has been watched saying no.**
+
+  T281 made every delivered location read its `ghoztty-agent.exe` back and
+  compare the build stamp against staging's. That check had never once been seen
+  disagreeing: the sandbox copies the staged agent into the location and then
+  asks whether the location has the staged agent, so a green run proved the
+  comparator agreed with itself. The same shape has cost real deliveries before -
+  on 2026-07-20 an upgrade's agent swap was silently SKIPPED, a months-old agent
+  stayed on disk, and the run printed UPGRADE OK.
+
+  The task suggested a `-TestStaleAgent` hook in the delivery script. It does not
+  need one. Pinning the destination agent open with `FileShare.Read` makes BOTH
+  halves of `Copy-DeliveredFile` fail - the overwrite and the move-aside fallback
+  - which is precisely "the copy did not happen", while leaving the image
+  launchable so the read-back still gets a real stamp out of it. The stale agent
+  is real too: the debug tree's `20260915-b8d0770cc` against the staged
+  `20260914-70b16cc2d`, because a stamp is printed by the binary and cannot be
+  faked.
+
+  Section H of `test\win32\deliver-windows-build.ps1` (20 arms) is that control,
+  plus the part that makes it a control rather than a coincidence: a POSITIVE
+  TWIN that pins the *staged* agent's bytes the same way, so the copy fails
+  identically and the stamp check clears them. Without it the red could have been
+  the failed copy talking. The third outcome of the same read - a file under that
+  name which is not a program at all - is covered off the PE header, and the
+  audit's other yardstick (the locations against each other, T727) got the same
+  treatment in H17-H20.
+
+  Proven by mutation rather than by assertion: blanking the comparator to
+  `if ($true) { Ok ... }` takes H6, H7 and H14 red and leaves the other 114 arms
+  green. Two arms were RENAMED after that run, because it showed they passed for
+  the wrong reason - the refused copy fails the delivery on its own, so the exit
+  code says nothing about the read-back and only the message arms carry the
+  claim. A harness that overstates which arm proves what is the same defect this
+  task is about, one level up.
+
+  Two gaps the work turned up, filed rather than folded in: the share's LOOSE
+  agent skips its stamp check entirely when the copy fails (T1603), and `-AppOnly`
+  never looks at the agent already sitting in a location it delivers a new app to
+  (T1604).
+
 - 2026-09-15: T776 closed done - **a red test floor now carries its own evidence down to the verdict, and a passing test stopped planting a scary line in a green log.**
 
   On 2026-08-11 `floor-lane.ps1 -Lane all` reported `agent#1=FAIL`, then passed
