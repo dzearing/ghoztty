@@ -1,14 +1,16 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-09-16T04:35:59-07:00",
-    "commit":  "79dff565c",
+    "generated":  "2026-09-16T06:12:59-07:00",
+    "commit":  "cf5185b6d",
     "uncommitted":  [
-                        "test/win32/pane-banner.ps1"
+                        "scripts/lib/HarnessFloor.ps1",
+                        "test/win32/lib/NeuterAudit.ps1",
+                        "test/win32/neuter-audit.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cc4dd72fb07ebc34de67ce688e0eab7f091a7228e4baeba4f9f50d01212a0f0e",
-                  "scripts/lib/HarnessFloor.ps1":  "e97b3a0c8896ead84247cd6f724aecea145d5919bdac8e062c5ac7ee4d2c1e21",
+                  "scripts/lib/HarnessFloor.ps1":  "b62bae00cb6e411a744e06f699dc3aae24c068644ac535bb937444ce7b208f51",
                   "scripts/vt-escape-scan.ps1":  "dc45b550d891d85f7996c66c3e631203c8bab091238fd9dfa527dc933700ea31",
                   "test/win32/activity-monitor.ps1":  "c6127970050f9912fff4bbf858ff3062c198f0a3118b16504e4aa55ace8fb0a7",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",
@@ -210,6 +212,7 @@
                   "test/win32/lib/Isolation.ps1":  "93b2efed0772d8debdd7ccbda2ca5b51d63bee517d2a1fd1fe6b33da89024464",
                   "test/win32/lib/JobTeardown.ps1":  "0984c7f89db7d9a81188aaf7571b536948b4c0d6814bf8a6bbc80b6a0a0b75bd",
                   "test/win32/lib/ModalSweep.ps1":  "ad1fde46a8704161d73608cf0ebcf58c1a0251d82fbea3967f79281065f91649",
+                  "test/win32/lib/NeuterAudit.ps1":  "c06f3a9c39d1f1a76d9a496844053bb051c8c4ae046da95348963c91faad5f77",
                   "test/win32/lib/paint-blocks.ps1":  "c3b9ec5522cf016fe072c425c05969a0d4fab11cd3fdecb9d67b8b25c7b4702d",
                   "test/win32/lib/PaneCapture.ps1":  "9086543a9bb1c1013d0c5cd987b5f22c55cdd0e918b524fdbcabc746066a61d5",
                   "test/win32/lib/PaneIdle.ps1":  "1011bc73bcc58cda253193e9e8c7843d302ced045ae00771bf1506938e980a9e",
@@ -238,6 +241,7 @@
                   "test/win32/mouse-nc-routing.ps1":  "4f982fe22519310d39a3d910edbd2596e9929fdfc3db7462799a1f625cb677cc",
                   "test/win32/msg-timer-ids.ps1":  "ec583de0fee83ffd3e9df2e2562483fa534a132cce4dc4cabecfceebb9578ef1",
                   "test/win32/msi-upgrade.ps1":  "b32e7da7020dbad39ea0691b79bb013ae2037da7a2f6a7fbcf7a0ae17e1168b0",
+                  "test/win32/neuter-audit.ps1":  "d27ba31d84178dcd60347c7caac8e29fedc438b85e0acf5dc5590d2b555f173b",
                   "test/win32/new-window-cwd.ps1":  "0c35d0adaf39cdd7fa733c5e2912f1cb4dce1f7c12f05ed63b90a851acd5c440",
                   "test/win32/notification-click-focus.ps1":  "fb1af4325da92242dc0c39d06e18a07c948e6f1db8e3a201b5092add343194ca",
                   "test/win32/notification-click-real.ps1":  "e57fda842e05013fca3f4f6813fc22b993dd67b34c3310735ab965d61f9202ff",

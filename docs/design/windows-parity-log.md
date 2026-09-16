@@ -30210,3 +30210,74 @@ Evidence: `pane-banner.ps1` ALL PASS (148 assertions) on the shipped build with
 `[settled after 2: 640/0 640/0]` in its INFO line; the same `640/0 640/0` under
 `T204_NEUTERED = true`, with the five expected control failures; `21 ink px`
 under `T377_NEUTERED = true`.
+
+## 2026-09-16 - A negative control that stopped controlling anything is now caught the day it happens (T788)
+
+Several win32 drawing modules carry a compile-time `const T<id>_NEUTERED =
+false;`. Flipping one restores the world before T<id> landed, so the acceptance
+script that claims to measure T<id> can be run against a tree where T<id> is
+absent. It is the only thing separating an assertion that MEASURES a fix from
+one that would have passed either way.
+
+That guarantee has quietly lapsed twice, and both times a human found it.
+`glyphCentered()` (T209) and `icon_button.universalHover()` (T282, found in
+T283) each read their flag, were documented, were unit-tested, and had no
+consumer on any paint path - flipping the flag changed no pixel. And five of
+the eight flags then in the tree had no shipped-value pin, so a flag left
+`true` by an experiment would have SHIPPED and gone red only in a script
+somebody remembered to run.
+
+Those are properties of the tree, not facts about a moment, so they are an
+analyzer now: `test\win32\lib\NeuterAudit.ps1` plus the acceptance script
+`test\win32\neuter-audit.ps1`, the sixth of the `ExitCodeAudit` / `SkipAudit` /
+`VerdictExitAudit` / `AssertedNothingAudit` / `ForegroundAudit` family and the
+first whose subject is Zig source rather than a test script. Three findings,
+enforced at zero over all of `src\`:
+
+- **`no-consumer`** - the flag is referenced only from `test` blocks, or every
+  production reference sits inside a `fn` that nothing outside a test block
+  calls. That one hop - flag -> predicate -> call site - is the whole reason a
+  grep could not answer this: the flag reference inside `universalHover` looked
+  perfectly live. The hop is resolved across the WHOLE tree, because
+  `applySticky` reads `T249_NEUTERED` in `tab_strip_layout.zig` and is called
+  from `Window.zig`; a single-file analyzer would have scored it a defect.
+- **`unpinned`** - no `testing.expect(!<FLAG>)` in the module, so nothing in
+  the unit lane fails when a neutered build is committed.
+- **`no-claim`** - the declaration's doc comment names no `.ps1` script, so
+  there is nothing to run against a flipped flag and no human can audit it
+  either.
+
+It was worth automating, and that is measured rather than argued: the first run
+against the tree found THREE real defects - `T833_NEUTERED`, `T1344_NEUTERED`
+and `T737_NEUTERED` all shipped unpinned. Every one of them was added AFTER
+T283 finished fixing exactly that class by hand a month earlier, which is the
+case for a standing check in one sentence. The pins are in this commit.
+
+`-TeethCheck` is the proof it can fail. It copies `src\` to a scratch tree and
+plants one real violator of each kind into the copy - T758's pin removed,
+T206's claim stripped, T737's and T249's production consumers rewritten - and
+requires the sweep to name each, then asserts both the copy and the live tree
+are clean again. A copy rather than the live tree on purpose: a wounded
+`*_NEUTERED` module left behind by an interrupted run is precisely the state
+this audit exists to detect, and it would read as a real finding.
+
+The claim list is checked as a contract too: every script a doc comment names
+must exist under `test\win32`. The `Measured <date>` note each control may
+carry is REPORTED with its age rather than enforced - enforcing it would mean a
+rebuild and a GUI acceptance run per flag on every sweep - but it answers for
+free the question T283 had to read five task files to settle. Four of twelve
+controls carry one today.
+
+Standing coverage: guard row `neuter-audit` (covering the analyzer, the script,
+and all of `src\apprt\win32\*.zig`, so a NEW control arriving unpinned makes the
+guard DUE), and a `harness-floor` member so the family's own audits score it.
+
+Evidence: `neuter-audit.ps1` ALL PASS (14) and `-TeethCheck` ALL PASS (23);
+`floor-lane.ps1 -Lane all` lib/none/win32/agent ALL LANES PASS;
+`floor-lane.ps1 -Lane harness` PASS, stamped; ipc-p1/p2/p3 ALL PASS.
+
+Filed on the way past: **T1607** - `tab-tooltip.ps1` sections A and E are red
+for a reason that is not this task's. The T556 two-line tip shows the title AND
+the cwd even when the title fits on its own, so a tab whose title already IS the
+folder reads the same path twice, once raw and once `~`-shortened. That guard
+was already due at claim time.

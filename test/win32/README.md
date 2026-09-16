@@ -94,6 +94,7 @@ marker with no reason waives nothing.
 | A GUI script launches on the test desktop, not the user's (T1193) | `desktop-launch-audit.ps1` | `# desktop-launch-audit: <reason>` |
 | A script states what it does to the foreground window (T272/T276) | `foreground-audit.ps1` | `# foreground-audit: <reason>` |
 | A win32 module's unit tests are actually executed by the lane (T1191) | `test-reach-audit.ps1` | — |
+| A `*_NEUTERED` negative control has a live consumer, a shipped-value pin and a claim (T788) | `neuter-audit.ps1` | `// neuter-audit: <reason>` (Zig side) |
 | Every painting window answers the screenshot path the tests read (T940) | `printclient-audit.ps1` | — listed in that script |
 | A thread a test starts is joined, so a leak is not scored green | `thread-join-audit.ps1` | `// thread-join-audit: <reason>` (Zig side) |
 | A job object a test creates is torn down with its processes (T1517) | `job-teardown.ps1` | — |

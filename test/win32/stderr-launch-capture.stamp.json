@@ -1,10 +1,10 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-16T04:30:45-07:00",
-    "commit":  "79dff565c",
+    "generated":  "2026-09-16T05:47:41-07:00",
+    "commit":  "cf5185b6d",
     "uncommitted":  [
-                        "test/win32/pane-banner.ps1"
+                        "test/win32/neuter-audit.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "153b2be6dc8272d18f75a46998ea23f746f33285f41011b79fae49cf18716070",
@@ -187,6 +187,7 @@
                   "test/win32/mouse-nc-routing.ps1":  "4f982fe22519310d39a3d910edbd2596e9929fdfc3db7462799a1f625cb677cc",
                   "test/win32/msg-timer-ids.ps1":  "ec583de0fee83ffd3e9df2e2562483fa534a132cce4dc4cabecfceebb9578ef1",
                   "test/win32/msi-upgrade.ps1":  "b32e7da7020dbad39ea0691b79bb013ae2037da7a2f6a7fbcf7a0ae17e1168b0",
+                  "test/win32/neuter-audit.ps1":  "d27ba31d84178dcd60347c7caac8e29fedc438b85e0acf5dc5590d2b555f173b",
                   "test/win32/new-window-cwd.ps1":  "0c35d0adaf39cdd7fa733c5e2912f1cb4dce1f7c12f05ed63b90a851acd5c440",
                   "test/win32/notification-click-focus.ps1":  "fb1af4325da92242dc0c39d06e18a07c948e6f1db8e3a201b5092add343194ca",
                   "test/win32/notification-click-real.ps1":  "e57fda842e05013fca3f4f6813fc22b993dd67b34c3310735ab965d61f9202ff",

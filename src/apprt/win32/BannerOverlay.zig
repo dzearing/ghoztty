@@ -2482,6 +2482,12 @@ test "T283: the banner's negative controls are clear and non-empty" {
     try std.testing.expect(!T377_NEUTERED);
     try std.testing.expect(!T149_NEUTERED);
     try std.testing.expect(!T758_NEUTERED);
+    // T788: T833 and T1344 arrived after T283 swept this module by hand and
+    // neither was pinned, which is the whole reason that sweep is an analyzer
+    // now (`test\win32\neuter-audit.ps1`) instead of a thing somebody
+    // remembers to redo.
+    try std.testing.expect(!T833_NEUTERED);
+    try std.testing.expect(!T1344_NEUTERED);
 
     const CellWrap = BannerOverlay.CellWrap;
     try std.testing.expectEqual(CellWrap.shipped, CellWrap.forCell());

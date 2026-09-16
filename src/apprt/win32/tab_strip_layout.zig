@@ -660,6 +660,9 @@ fn painted(scale: f32, hit: Rect) Rect {
 test "T283: the strip's negative controls are clear in the shipped build" {
     try testing.expect(!T202_NEUTERED);
     try testing.expect(!T249_NEUTERED);
+    // T788: T737 landed after T283's hand sweep and shipped unpinned for a
+    // month. The sweep is `test\win32\neuter-audit.ps1` now.
+    try testing.expect(!T737_NEUTERED);
 }
 
 test "one tab is its title's width, not stretched across the window" {

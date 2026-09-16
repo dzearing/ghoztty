@@ -3651,6 +3651,23 @@ $GuardTable = @(
         )
     }
 
+    # T788 - the `*_NEUTERED` sweep. It covers the five modules that declare a
+    # negative control today AND the whole win32 module directory, because the
+    # case the rule exists for is a NEW control arriving unpinned: T833, T1344
+    # and T737 were all added after T283 swept the tree by hand, all three
+    # shipped without a pin, and nothing noticed for a month. A row watching
+    # only the analyzer would have gone green through every one of them.
+    [pscustomobject]@{
+        Name   = 'neuter-audit'
+        Script = 'test\win32\neuter-audit.ps1'
+        Stamp  = 'test\win32\neuter-audit.stamp.json'
+        Covers = @(
+            'test\win32\neuter-audit.ps1',
+            'test\win32\lib\NeuterAudit.ps1',
+            'src\apprt\win32\*.zig'
+        )
+    }
+
     # T1193 - the user-desktop launch sweep. It covers the whole acceptance
     # directory on purpose: the case it exists for is a NEW script that starts
     # the app outside the harness, and a row that watched only the analyzer

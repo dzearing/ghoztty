@@ -53,6 +53,7 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'command-resolve-audit.ps1'; Why = 'a command a script depends on resolves, or the run says so' }
     [pscustomobject]@{ Name = 'argv-hazard-audit.ps1'; Why = 'free text reaches the CLI intact rather than shredded by PS 5.1 argv (T782)' }
     [pscustomobject]@{ Name = 'test-reach-audit.ps1'; Why = 'an assertion reaches the code it claims to measure' }
+    [pscustomobject]@{ Name = 'neuter-audit.ps1'; Why = 'a negative control has a live consumer, a shipped-value pin and a claim (T788)' }
     [pscustomobject]@{ Name = 'desktop-launch-audit.ps1'; Why = 'a GUI script launches on the test desktop, not the user''s' }
     [pscustomobject]@{ Name = 'printclient-audit.ps1'; Why = 'every painting window answers the screenshot path the tests read' }
     [pscustomobject]@{ Name = 'thread-join-audit.ps1'; Why = 'a thread a test starts is joined, so a leak is not scored green' }
