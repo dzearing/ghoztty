@@ -9,6 +9,54 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-15: T1594 closed done, T1595 filed - **a test copy of the session manager can no longer shut down the shells belonging to the real one.**
+
+  Ghoztty keeps each persistent session's shell in its own holder process, and a
+  starting session manager tidies away the holders nothing on its roster claims
+  - killing the shell subtree, which is the point. Its only scoping was the
+  holder pipe name, and that name carried the username and the build mode but
+  NOT the `GHOZTTY_AGENT_INSTANCE` lineage, even though the agent pipe, the
+  guard mutex, the state dir and the holder's own `--spec` path all had since
+  T167/T691. So a sandboxed agent - every acceptance run on this box - enumerated
+  the holders of every lineage, and its empty roster called each one an orphan.
+  Measured under T1593 the day before: a ReleaseFast sandbox probing the user's
+  own live release holders. Nothing had died only because a busy pipe refuses the
+  dial, which is luck, not a boundary: a holder caught momentarily free was
+  killable.
+
+  The lineage now sits in the name, delimited by `~` on BOTH sides -
+  `…-<user>~<lineage>~<session-id>`. The delimiter is chosen, not decorative:
+  `~` appears in neither `validSessionId` nor `agent_lineage.sanitize`, so the
+  name has exactly one reading. With `-` it would have had two - `…-dave-sbx1-<id>`
+  is equally "lineage sbx1" and "session sbx1-<id>" - and `sbx1` would have been
+  a prefix of `sbx10` and of `sbx1-x`, which is the same class of bug one level
+  down. No lineage reproduces the legacy name byte for byte, so a recorded pipe
+  stays dialable across an agent upgrade; only the sweep's prefix and the names
+  NEW holders take have moved. `pipeNamesHolder` accepts the new boundary, and
+  `pty-host.ps1` now captures the separator instead of assuming it.
+
+  Evidence, and the part worth keeping: the new section E of
+  `test\win32\holder-adopt.ps1` stands up a foreign-lineage holder in exactly the
+  shape section D reaps - ownerless, unrecorded, same binary, same build mode -
+  and asserts it survives. Then the demonstration that the check has teeth: with
+  the lineage segment stripped back out of `defaultPipeName` and both binaries
+  rebuilt, E3 goes RED and the sandboxed manager kills the other lineage's live
+  holder. The defect reproduced on the box, then fixed. `holder-adopt.ps1` ALL
+  PASS (27), plus pty-host (21), pty-holder (25), agent-first-answer (6),
+  holder-volume (17), pane-ingest-ab (13), session-relaunch-notify (131) - every
+  harness `guard-due` named, re-stamped. `floor-lane.ps1 -Lane all` ALL LANES
+  PASS; P1/P2/P3 ALL PASS.
+
+  The harness floor earned its place this turn by failing on my own work:
+  section E's launch left its persistence stance undeclared (`persistence-flag`
+  A1, 1 of 304). Declared with the reason - persistence off means no manager, no
+  sweep, and E3 would have passed by doing nothing at all - which is the failure
+  mode that audit exists to catch.
+
+  T1595 carries the gap this left visible: the BUILD-MODE half of the same
+  scoping still has no on-box proof, only a unit test - and that is the boundary
+  standing between a dev agent and the user's own live shells.
+
 - 2026-09-15: T772 closed done - **the agent-refresh decision is now measured in the lineage the user actually runs.**
 
   `test/win32/agent-upgrade.ps1` measured the whole policy - leave a stale agent

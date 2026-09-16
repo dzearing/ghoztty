@@ -235,8 +235,9 @@ pub const AdoptOptions = struct {
 };
 
 /// Whether `pipe_name` is the control pipe a holder calling itself `holder_id`
-/// would have bound — i.e. the id is the name's last `-`-separated component
-/// (`pty_host.defaultPipeName`).
+/// would have bound — i.e. the id is the name's last component, separated from
+/// what precedes it by `-` (no lineage) or `~` (a `GHOZTTY_AGENT_INSTANCE`
+/// lineage, T1594) — see `pty_host.defaultPipeName`.
 ///
 /// This is the identity check adoption makes, and getting it wrong in either
 /// direction is expensive: too strict and no session is ever adopted, too loose
@@ -250,7 +251,8 @@ pub const AdoptOptions = struct {
 pub fn pipeNamesHolder(pipe_name: []const u8, holder_id: []const u8) bool {
     if (holder_id.len == 0 or holder_id.len >= pipe_name.len) return false;
     const start = pipe_name.len - holder_id.len;
-    if (pipe_name[start - 1] != '-') return false;
+    const sep = pipe_name[start - 1];
+    if (sep != '-' and sep != pty_host.lineage_sep) return false;
     return std.mem.eql(u8, pipe_name[start..], holder_id);
 }
 

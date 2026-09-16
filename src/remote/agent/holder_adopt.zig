@@ -40,11 +40,19 @@
 //! Its shell would run until the box rebooted. So after adoption we enumerate
 //! the holder pipe namespace and shut down every holder no live session claims.
 //!
-//! Two properties keep that from being dangerous. The pipe name carries the
-//! username AND the build-mode segment, so a debug agent can only ever see
-//! debug holders (T350 endpoint isolation). And a holder serves ONE owner at a
-//! time — if a connect succeeds, nobody owns it, which is the same fact the
-//! sweep is testing for.
+//! Three properties keep that from being dangerous. The pipe name carries the
+//! username, the build-mode segment AND — since T1594 — the
+//! `GHOZTTY_AGENT_INSTANCE` lineage, so an agent can only ever see the holders
+//! of its own user, its own build mode and its own lineage (T350/T1594 endpoint
+//! isolation). And a holder serves ONE owner at a time — if a connect succeeds,
+//! nobody owns it, which is the same fact the sweep is testing for.
+//!
+//! The lineage segment is the one that was missing, and its absence made the
+//! sweep a cross-lineage session kill: a sandboxed agent with an empty roster
+//! enumerated the box's REAL holders and classified every one of them as an
+//! orphan (measured under T1593, 2026-09-15). Nothing died only because a busy
+//! pipe refuses the dial — a holder caught momentarily free was killable, and
+//! killing a holder takes its whole shell subtree with it.
 
 const std = @import("std");
 const builtin = @import("builtin");
@@ -327,10 +335,17 @@ pub fn samePipe(a: []const u8, b: []const u8) bool {
     return std.ascii.eqlIgnoreCase(a, b);
 }
 
-/// The bare-name prefix every holder pipe of THIS user and THIS build mode
-/// starts with: `ghoztty-pty-host[-debug]-<user>-`. Derived from the same
-/// `pty_host.defaultPipeName` shape, with the `\\.\pipe\` root stripped, which
-/// is the form `FindFirstFileW` enumerates.
+/// The bare-name prefix every holder pipe of THIS user, THIS build mode and
+/// THIS lineage starts with: `ghoztty-pty-host[-debug]-<user>-`, or
+/// `ghoztty-pty-host[-debug]-<user>~<lineage>~` under a
+/// `GHOZTTY_AGENT_INSTANCE` lineage (T1594). Derived from the same
+/// `pty_host.defaultPipeName` shape — an EMPTY session id yields exactly the
+/// part in front of one — with the `\\.\pipe\` root stripped, which is the form
+/// `FindFirstFileW` enumerates.
+///
+/// Deriving it rather than spelling it out is what makes the sweep's scope and
+/// the holder's own name the same fact: this is the string that decides which
+/// shells this agent may end.
 pub fn pipePrefix(alloc: Allocator) ![]u8 {
     const full = try pty_host.defaultPipeName(alloc, "");
     defer alloc.free(full);
@@ -447,6 +462,39 @@ test "isHolderPipe: only OUR family, and only with a real session id" {
     // short ids, and a sweep that only recognized 32-hex would walk straight
     // past those holders and leak them.
     try testing.expect(isHolderPipe(prefix, prefix ++ "smoke-1"));
+}
+
+test "T1594: a lineage's prefix and the legacy prefix exclude each other, both ways" {
+    const id = "0123456789abcdef0123456789abcdef";
+    const plain_prefix = "ghoztty-pty-host-debug-dave-";
+    const sbx_prefix = "ghoztty-pty-host-debug-dave~sbx1~";
+
+    // Each agent still recognises its OWN holders.
+    try testing.expect(isHolderPipe(plain_prefix, plain_prefix ++ id));
+    try testing.expect(isHolderPipe(sbx_prefix, sbx_prefix ++ id));
+
+    // ...and neither can see the other's. This is the whole fix: the sandbox
+    // ran its sweep against the box's live release holders and called them
+    // orphans, and the real agent would have done the same to the sandbox.
+    try testing.expect(!isHolderPipe(plain_prefix, sbx_prefix ++ id));
+    try testing.expect(!isHolderPipe(sbx_prefix, plain_prefix ++ id));
+}
+
+test "T1594: one lineage is never a prefix of another, however the suffixes nest" {
+    const id = "smoke-1";
+    const sbx1 = "ghoztty-pty-host-dave~sbx1~";
+    // `sbx1` against `sbx10` and `sbx1-x`: with `-` as the delimiter both of
+    // these would have matched `…-dave-sbx1-` and handed sbx1's sweep a live
+    // holder belonging to a different sandbox. The closing `~` is what makes
+    // the segment a whole word rather than a prefix.
+    try testing.expect(!isHolderPipe(sbx1, "ghoztty-pty-host-dave~sbx10~" ++ id));
+    try testing.expect(!isHolderPipe(sbx1, "ghoztty-pty-host-dave~sbx1-x~" ++ id));
+    try testing.expect(isHolderPipe(sbx1, sbx1 ++ id));
+
+    // And a `~` cannot hide inside the session-id segment either, because
+    // `validSessionId` has never accepted one — so a lineage name can never be
+    // read as a legacy name with a longer id.
+    try testing.expect(!isHolderPipe("ghoztty-pty-host-dave-", "ghoztty-pty-host-dave-sbx1~" ++ id));
 }
 
 test "pipePrefix: matches the name the holder actually binds" {

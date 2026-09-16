@@ -1,13 +1,13 @@
 {
     "guard":  "holder-volume",
     "script":  "test/win32/holder-volume.ps1",
-    "generated":  "2026-09-13T12:49:16-07:00",
-    "commit":  "ab9cdd351",
+    "generated":  "2026-09-15T17:02:19-07:00",
+    "commit":  "250ff8fdb",
     "uncommitted":  [
-
+                        "src/remote/agent/pty_holder_child.zig"
                     ],
     "files":  {
-                  "src/remote/agent/pty_holder_child.zig":  "93419f9613d5f5569f37999523375359f32ae76e5a858c8f788bbf5da8507477",
+                  "src/remote/agent/pty_holder_child.zig":  "caa89217d1a85ce1a710fc40153df12eaa3a4df08b75af5575120e68f9907e84",
                   "src/remote/agent/session.zig":  "f5bde9e073975c5ab5378f07a80df4de67387d74e35f7f9d1b373a2e7c14b7ef",
                   "test/win32/holder-volume.ps1":  "d02ee330dd064bc6a723ee4a27ded93fdd8c6874a0c079ec42531d28cf5e97ac"
               }

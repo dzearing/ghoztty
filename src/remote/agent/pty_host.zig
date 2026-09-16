@@ -42,6 +42,7 @@ const proto = @import("pty_host_proto.zig");
 const pty_child = @import("pty_child.zig");
 const pipe_stream = @import("../pipe_stream.zig");
 const internal_os = @import("../../os/main.zig");
+const agent_lineage = @import("../agent_lineage.zig");
 const relay_perf = @import("relay_perf.zig");
 const server = @import("server.zig");
 const session = @import("session.zig");
@@ -79,15 +80,49 @@ pub const Options = struct {
     open: ?protocol.Open = null,
 };
 
+/// The character that delimits the LINEAGE segment of a holder pipe name, and
+/// the whole reason the segment can be trusted (T1594).
+///
+/// It has to be a byte that can appear in neither a session id
+/// (`proto.validSessionId`) nor a lineage suffix (`agent_lineage.sanitize`) —
+/// both of which are `[A-Za-z0-9._-]` — or the segment boundary would be
+/// guessable rather than readable. With `-` as the separator,
+/// `…-<user>-sbx1-<id>` is simultaneously "lineage sbx1, session <id>" and
+/// "no lineage, session sbx1-<id>", so a sandbox's holders and the real
+/// agent's holders sit in the same namespace and each sweep sees the other's
+/// as orphans. `~` is legal in a pipe name, outside both charsets, and so
+/// makes the two readings impossible.
+pub const lineage_sep = '~';
+
 /// Derive the default holder pipe name for `session_id`:
-/// `\\.\pipe\ghoztty-pty-host[-debug]-<user>-<session-id>`. The `-debug`
-/// segment keeps a dev holder off the endpoints a release agent derives —
-/// the same build-mode isolation as every other endpoint on this box (T350).
+/// `\\.\pipe\ghoztty-pty-host[-debug]-<user>-<session-id>`, or
+/// `\\.\pipe\ghoztty-pty-host[-debug]-<user>~<lineage>~<session-id>` when this
+/// process runs under a `GHOZTTY_AGENT_INSTANCE` lineage.
+///
+/// The `-debug` segment keeps a dev holder off the endpoints a release agent
+/// derives — the same build-mode isolation as every other endpoint on this box
+/// (T350). The lineage segment is the other half of that isolation (T1594): the
+/// agent pipe, the guard mutex, the state dir and the holder's own `--spec`
+/// path all carry it already, and until this the holder CONTROL pipe did not —
+/// so `holder_adopt.reapOrphans`, whose only scoping is this name's prefix,
+/// enumerated every lineage's holders and shut down the ones its own roster did
+/// not claim. Two lineages of one build mode reaped each other's live shells.
+///
+/// No lineage — every production run — reproduces the legacy name byte for
+/// byte, so an agent upgrade keeps binding and dialing exactly what it did.
 pub fn defaultPipeName(alloc: Allocator, session_id: []const u8) ![]u8 {
     const user: []const u8 = std.process.getEnvVarOwned(alloc, "USERNAME") catch
         try alloc.dupe(u8, "unknown");
     defer alloc.free(user);
     const debug_seg = if (builtin.mode == .Debug) "-debug" else "";
+    var lineage_buf: [agent_lineage.max_len]u8 = undefined;
+    if (agent_lineage.fromEnv(&lineage_buf)) |lineage| {
+        return std.fmt.allocPrint(
+            alloc,
+            "\\\\.\\pipe\\ghoztty-pty-host{s}-{s}{c}{s}{c}{s}",
+            .{ debug_seg, user, lineage_sep, lineage, lineage_sep, session_id },
+        );
+    }
     return std.fmt.allocPrint(
         alloc,
         "\\\\.\\pipe\\ghoztty-pty-host{s}-{s}-{s}",
@@ -481,3 +516,78 @@ const win = struct {
         }
     }
 };
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+const testing = std.testing;
+
+extern "kernel32" fn SetEnvironmentVariableW(
+    lpName: [*:0]const u16,
+    lpValue: ?[*:0]const u16,
+) callconv(.winapi) std.os.windows.BOOL;
+
+/// Set/clear a process env var for a test. `std.process` has no portable
+/// setter, and the lineage is read out of the environment by design (it has to
+/// cross a spawn nobody on the test side controls).
+fn setEnvForTest(name: []const u8, value: ?[]const u8) !void {
+    if (comptime builtin.os.tag != .windows) return;
+    var name_buf: [128]u16 = undefined;
+    var value_buf: [128]u16 = undefined;
+    const nl = try std.unicode.utf8ToUtf16Le(&name_buf, name);
+    name_buf[nl] = 0;
+    var val_ptr: ?[*:0]const u16 = null;
+    if (value) |v| {
+        const vl = try std.unicode.utf8ToUtf16Le(&value_buf, v);
+        value_buf[vl] = 0;
+        val_ptr = value_buf[0..vl :0].ptr;
+    }
+    if (SetEnvironmentVariableW(name_buf[0..nl :0].ptr, val_ptr) == 0) return error.SetEnvFailed;
+}
+
+test "T1594: the holder pipe carries the lineage, and carries nothing extra without one" {
+    // The holder control pipe was the LAST endpoint with no lineage in it, and
+    // the orphan sweep is scoped by this name alone — so what this test is
+    // really asserting is which shells an agent is allowed to kill.
+    if (builtin.os.tag != .windows) return error.SkipZigTest;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const id = "0123456789abcdef0123456789abcdef";
+
+    // Baseline: no lineage reproduces the legacy name byte for byte, because
+    // an agent upgrade has to keep binding and dialing exactly what it did.
+    try setEnvForTest(agent_lineage.env_var, null);
+    const base = try defaultPipeName(a, id);
+    try testing.expect(std.mem.endsWith(u8, base, "-" ++ id));
+    try testing.expectEqual(@as(?usize, null), std.mem.indexOfScalar(u8, base, lineage_sep));
+
+    // With a lineage: exactly one delimited segment appears, in front of the
+    // session id, and the name is no longer the one production binds.
+    try setEnvForTest(agent_lineage.env_var, "sbx1");
+    defer setEnvForTest(agent_lineage.env_var, null) catch {};
+    const sbx1 = try defaultPipeName(a, id);
+    try testing.expect(std.mem.endsWith(u8, sbx1, "~sbx1~" ++ id));
+    try testing.expect(!std.mem.eql(u8, base, sbx1));
+
+    // A second sandbox shares nothing with the first — the coexistence claim
+    // the agent pipe, the guard and the state dir have made since T167.
+    try setEnvForTest(agent_lineage.env_var, "sbx2");
+    try testing.expect(!std.mem.eql(u8, sbx1, try defaultPipeName(a, id)));
+
+    // An unusable value is NOT a lineage: it falls back to the shared name
+    // rather than inventing a nameless segment nothing else would derive.
+    try setEnvForTest(agent_lineage.env_var, "");
+    try testing.expectEqualStrings(base, try defaultPipeName(a, id));
+}
+
+test "T1594: the delimiter is outside every charset that could contain it" {
+    // The segment is only readable because `~` can appear in neither a session
+    // id nor a lineage suffix. If either charset ever grows it, the two
+    // readings of `…-<user>~a~b` come back and the sweep loses its scoping.
+    try testing.expect(!proto.validSessionId(&[_]u8{lineage_sep}));
+    var buf: [agent_lineage.max_len]u8 = undefined;
+    const sanitized = agent_lineage.sanitize(&buf, "a~b").?;
+    try testing.expectEqual(@as(?usize, null), std.mem.indexOfScalar(u8, sanitized, lineage_sep));
+}

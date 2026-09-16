@@ -447,6 +447,65 @@ try {
         Start-Sleep -Milliseconds 500
     }
     Assert 'D5 its shell went with it (the holder owns the kill-on-close job)' $shellGone
+
+    # ========================================================================
+    Say "== E: the sweep stops at the lineage boundary (T1594)"
+    # ========================================================================
+    # D proved the sweep KILLS. This proves the other half - what it may not
+    # touch - because the two are the same code path and only the pipe name
+    # tells them apart. Until T1594 the holder control pipe carried the
+    # username and the build mode but NOT the GHOZTTY_AGENT_INSTANCE lineage,
+    # so this run's sandboxed manager enumerated holders belonging to every
+    # other lineage on the box - including the user's real ones - and its
+    # empty roster classified each of them as an orphan. Measured under T1593.
+    #
+    # The foreign holder here is deliberately in exactly the shape D reaps:
+    # ownerless (so its pipe accepts the dial), unrecorded (so no roster
+    # claims it), same binary, same build mode. The ONLY thing between it and
+    # the kill is the lineage segment.
+    Stop-AppAndAgent
+    $foreignId = "t1594-$PID"
+    $ourLineage = $env:GHOZTTY_AGENT_INSTANCE
+    $env:GHOZTTY_AGENT_INSTANCE = 't1594other'
+    $foreign = Start-Process -FilePath $AgentExe `
+        -ArgumentList @('--pty-host', '--session-id', $foreignId, '--exit-linger-ms', '120000') `
+        -WindowStyle Hidden -PassThru
+    # exitcode-audit: the foreign holder is killed in the finally block below;
+    # nothing scores its exit code, only whether it is still alive.
+    $null = $foreign.Handle
+    $env:GHOZTTY_AGENT_INSTANCE = $ourLineage
+    $foreignPid = [int]$foreign.Id
+
+    # It has to actually be SERVING before the sweep runs, or "it survived"
+    # would just mean "it had not bound its pipe yet".
+    $foreignUp = $false
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline) {
+        if ((Test-Alive $foreignPid) -and
+            @((Get-TestHolders) | Where-Object { $_.CommandLine -match [regex]::Escape($foreignId) }).Count -eq 1) {
+            $foreignUp = $true; break
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert 'E1 premise: a holder of ANOTHER lineage is up and serving' $foreignUp
+
+    $beforeE = @((Get-TestAgents) | ForEach-Object { [int]$_.ProcessId })
+    # persistence: on (default) - the subject is the sweep a NORMAL startup
+    # runs, so the launch has to be the ordinary one. With persistence off
+    # there is no session manager, no sweep, and E3 would pass by doing
+    # nothing at all.
+    [void](Start-OnTestDesktop -Exe $Exe -Arguments @(
+        '--title=t1594-lineage', '--window-width=100', '--window-height=30'))
+    $sweepAgent = Wait-NewAgent $beforeE 60
+    Assert 'E2 premise: this lineage started a session manager, which sweeps' ($sweepAgent -ne 0)
+
+    # Give the sweep the same room section D gave it to do its killing. A pass
+    # here has to mean "it ran and left this alone", not "we asked too early".
+    Start-Sleep -Seconds 8
+    $survived = Test-Alive $foreignPid
+    if ($NegativeControl) { $survived = -not $survived }
+    Assert 'E3 the other lineage''s holder is UNTOUCHED (its shells are not ours to end)' $survived
+
     Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     Stop-Everything

@@ -94,9 +94,15 @@ Assert 'A17 production owner: terminate leaves no shell and no holder' (($joined
 # DACL off its live pipe.
 
 $pipePrefix = $null
+$pipeSep = '-'
 foreach ($line in $smokeErr) {
-    if ($line -match '\\\\\.\\pipe\\(ghoztty-pty-host\S*?)-smoke-\d+-[ab]') {
+    # The separator in front of the session id is `-` normally and `~` when
+    # this process runs under a GHOZTTY_AGENT_INSTANCE lineage (T1594), so it
+    # is CAPTURED rather than assumed - the same reason the `[-debug]` segment
+    # is read back out of the log instead of being spelled out here.
+    if ($line -match '\\\\\.\\pipe\\(ghoztty-pty-host\S*?)([-~])smoke-\d+-[ab]') {
         $pipePrefix = $Matches[1]
+        $pipeSep = $Matches[2]
         break
     }
 }
@@ -109,7 +115,7 @@ if ($null -ne $pipePrefix) {
         -WindowStyle Hidden -PassThru
     $null = $holder.Handle  # exitcode-audit: holder is killed below; nothing scores its exit code
     try {
-        $pipeName = "$pipePrefix-$sid"
+        $pipeName = "$pipePrefix$pipeSep$sid"
         $npc = New-Object System.IO.Pipes.NamedPipeClientStream('.', $pipeName, ([System.IO.Pipes.PipeDirection]::InOut))
         $connected = $false
         for ($i = 0; $i -lt 50 -and -not $connected; $i++) {

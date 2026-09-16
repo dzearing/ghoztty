@@ -512,9 +512,23 @@ The non-destructive agent upgrade (T705, design:
 Windows: each persistent session's ConPTY + shell + kill-on-close job lives in
 a tiny **holder process** (`ghoztty-agent.exe --pty-host`, one per session),
 and the agent talks to it over an owner-only-DACL named pipe
-(`\\.\pipe\ghoztty-pty-host[-debug]-<user>-<session-id>`). An agent restart
-then carries nothing, because nothing moves — holders keep every shell alive
-and the next agent re-adopts them.
+(`\\.\pipe\ghoztty-pty-host[-debug]-<user>-<session-id>`, or
+`…-<user>~<lineage>~<session-id>` under a `GHOZTTY_AGENT_INSTANCE` lineage).
+An agent restart then carries nothing, because nothing moves — holders keep
+every shell alive and the next agent re-adopts them.
+
+**That name is the whole scope of the orphan sweep, so it carries every
+isolation segment** (T1594). A starting agent enumerates the holder pipe
+namespace and shuts down whatever its roster does not claim — taking the shell
+subtree with it — and its only scoping is this prefix. Until T1594 the name
+carried the username and the build mode but not the lineage, so a sandboxed
+agent with an empty roster saw the box's REAL holders as orphans. The lineage
+segment is delimited by `~` on both sides precisely because `~` appears in
+neither a session id nor a lineage suffix: with `-` the name
+`…-<user>-sbx1-<id>` reads equally as "lineage sbx1" and "session sbx1-<id>",
+and `sbx1` would be a prefix of `sbx10`. No lineage reproduces the legacy name
+byte for byte, which is what keeps a recorded pipe dialable across an agent
+upgrade.
 
 The holder⇄owner protocol (`src/remote/agent/pty_host_proto.zig`: versioned
 HELLO, DATA both ways, RESIZE/SIGNAL/EXIT, offset-acknowledged bounded replay)
