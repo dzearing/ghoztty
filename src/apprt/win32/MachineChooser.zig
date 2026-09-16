@@ -2100,7 +2100,13 @@ fn syncRoster(self: *MachineChooser) void {
     // the pool's dial answers through `onPoolChange` and that is where the
     // subscription lands.
     const conn: ?*remote_connection.Connection = switch (target) {
-        .local => self.window.app.local_agent.sharedConnectionIfWarm(),
+        // T1589: LIVE, not merely warm. A wedged agent keeps the shared link in
+        // `reconnecting` forever, and pointing the meter and the pushed roster
+        // at it makes the chooser sit on a spinner that never resolves. Null
+        // instead: the roster's own fetch probe-dials the running agent, and if
+        // that cannot answer either the chooser says the machine is
+        // unreachable, which is the truth and arrives in one timeout.
+        .local => self.window.app.local_agent.sharedConnectionIfLive(),
         .none => null,
         // A machine the pool has warm already (a re-selection) never produces a
         // second dial and therefore never notifies, so ask the pool directly

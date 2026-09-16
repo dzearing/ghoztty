@@ -2295,6 +2295,16 @@ fn reportLayoutCost(self: *App, cost: layout_cost.Sample) void {
 ///   * **Non-spawning.** `sharedConnectionIfWarm` never dials and never starts
 ///     an agent (Mac's `warmSharedOwner` rule). Mirroring a layout is
 ///     housekeeping; it must not be the thing that launches a daemon.
+///
+///     WARM is the right gate here, and this is the one caller T1589 left on
+///     it. Every other user of `sharedConnectionIfWarm` was about to spend a
+///     timeout on a round trip and now asks for a LIVE link instead; this one
+///     sends nothing and waits for nothing (`setLayoutNoWait` enqueues), so a
+///     wedged link costs it no time. Skipping the push would cost something
+///     real: the convergence below is keyed on connection IDENTITY, so a link
+///     that wedges and then heals is the SAME connection, the re-push never
+///     fires, and the layout written during the wedge is silently the one the
+///     agent never got.
 ///   * **Non-blocking.** `setLayoutNoWait` only enqueues the frame for the
 ///     writer thread, so this runs on the UI thread between a split drag and
 ///     its repaint without waiting on any ack.
@@ -4471,7 +4481,11 @@ const AgentSessionMix = struct {
 /// grounds for destroying it, and it is also never grounds for standing down
 /// and waiting for a handoff that may not be coming.
 fn agentSessionMix(self: *App) ?AgentSessionMix {
-    const conn = self.local_agent.sharedConnectionIfWarm() orelse return null;
+    // T1589: LIVE, not warm. The line below is a real round trip, and on a
+    // wedged link it spends `restore_probe_timeout_ns` to learn nothing. Null
+    // lands on the same "unknown" answer this function already documents, only
+    // immediately.
+    const conn = self.local_agent.sharedConnectionIfLive() orelse return null;
     const capable = conn.peerHandsOffItself();
     var roster = conn.requestSessions(restore_probe_timeout_ns) catch |err| {
         log.warn("agent upgrade check: session probe failed err={} (treating as unknown)", .{err});
@@ -9582,7 +9596,11 @@ fn startOrphanCheck(self: *App) void {
     const res = alloc.create(OrphanRosterResult) catch return;
     res.* = .{ .alloc = alloc, .roster = null };
     self.orphan_check_inflight = true;
-    const warm = self.local_agent.sharedConnectionIfWarm();
+    // T1589: LIVE, not warm — the worker's fallback (a probe dial of the
+    // running agent) is strictly better than a link that answers nothing, and
+    // handing it the wedged one means every check interval costs a full timeout
+    // on a background thread for a roster it never gets.
+    const warm = self.local_agent.sharedConnectionIfLive();
     const thread = std.Thread.spawn(.{}, orphanCheckWorker, .{ res, hwnd, warm }) catch {
         self.orphan_check_inflight = false;
         res.destroy();

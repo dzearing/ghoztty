@@ -1,14 +1,13 @@
 {
     "guard":  "chooser-modeless",
     "script":  "test/win32/chooser-modeless.ps1",
-    "generated":  "2026-09-13T22:13:46-07:00",
-    "commit":  "89f93e381",
+    "generated":  "2026-09-16T07:17:14-07:00",
+    "commit":  "ee0dcd19b",
     "uncommitted":  [
-                        "src/apprt/win32/MachineChooser.zig",
-                        "test/win32/chooser-modeless.ps1"
+                        "src/apprt/win32/MachineChooser.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/MachineChooser.zig":  "d3b9fea451c15c4011a181ed25b8dd8503a3a55b24a35229fd418d5f8cdf63cf",
+                  "src/apprt/win32/MachineChooser.zig":  "06d58ad61d196636de29007de0913a1b86dcbc7a0186f26bb8c51a91d45ca1bc",
                   "test/win32/chooser-modeless.ps1":  "663f862c81b149ae25e40cea0a05aff318dd82219924f9e8540d7ea9f9cbd2cf"
               }
 }

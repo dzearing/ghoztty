@@ -30281,3 +30281,38 @@ for a reason that is not this task's. The T556 two-line tip shows the title AND
 the cwd even when the title fits on its own, so a tab whose title already IS the
 folder reads the same path twice, once raw and once `~`-shortened. That guard
 was already due at claim time.
+
+## 2026-09-16 - T1589: a wedged agent link no longer carries the requests that keep the user waiting
+
+T764 stopped a wedged shared link from being handed to a NEW pane, but only for
+new panes. Everything that puts a REQUEST on that link still gated on
+`sharedConnectionIfWarm`, which asks "is it not dead" - and a wedged agent never
+reaches `dead` (that state needs a server-sent DETACHED frame it does not send),
+so it parks in `reconnecting` indefinitely. The machine chooser retargeted its
+meter and pushed roster onto it, `SessionRoster` fetched the local machine over
+it, the agent upgrade check probed sessions on it, and the orphan check handed it
+to a background thread. Each paid its own full timeout to learn nothing; the
+chooser paid it visibly, as a spinner instead of a machine reported unreachable.
+
+The decision is now one named predicate with its own test -
+`agent_recovery.carriesRequests` - reached through
+`LocalAgent.sharedConnectionIfLive`. Null means "ask somebody else", and every
+one of those callers has a strictly better somebody: a probe dial of the agent
+that is already running, which answers outright when it was the TRANSPORT that
+failed rather than the agent. `pushLayoutBlobs` deliberately stays on the warm
+gate and says why in the code: it enqueues without waiting, so a wedged link
+costs it nothing, while skipping the push would silently lose it - convergence
+there is keyed on connection identity, and a link that wedges and heals is the
+same connection.
+
+Evidence: `floor-lane.ps1 -Lane all` ALL LANES PASS; the 17 guard rows the change
+made due re-run green, including `agent-upgrade` ALL PASS (147) which covers the
+upgrade probe directly, all six chooser rows, `restore-late-agent`,
+`agent-autostart`, both rearrange rows and the five static source audits.
+`tab-tooltip` stays red and DUE for T1606/T1607, which were filed yesterday and
+are not this change's.
+
+Filed on the way past: **T1608** - the user-visible half (open the chooser during
+a wedge, get an answer rather than a spinner) has no on-box oracle.
+`agent-recovery.ps1` already builds the wedge for its section K, so the missing
+piece is a section that drives the chooser inside it.

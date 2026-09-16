@@ -337,7 +337,13 @@ pub fn fetch(
         .serial = self.serial,
         // A remote target never borrows the local agent's connection — that
         // would silently list THIS box's sessions under another machine's name.
-        .warm = if (self.target == .local) app.local_agent.sharedConnectionIfWarm() else null,
+        // T1589: a WEDGED shared link is worse than no link here. `warm` null
+        // sends the worker down the probe-dial path below, which talks to the
+        // agent that is already running — and when it was the transport that
+        // failed rather than the agent, that probe answers immediately where
+        // the wedged link would have burned `rpc_timeout_ns` and reported
+        // nothing.
+        .warm = if (self.target == .local) app.local_agent.sharedConnectionIfLive() else null,
         .kill_id = null,
         // T1296: a remote machine's layout view has to be asked for; the local
         // one is already on this box's disk.

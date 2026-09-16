@@ -139,6 +139,43 @@ pub fn handsToNewSurface(state: connection.LinkState.State) bool {
     };
 }
 
+/// Whether a REQUEST issued on the shared link right now would be answered
+/// (T1589).
+///
+/// The third question in this family, and separate from the other two for the
+/// same reason they are separate from each other. `isDown` asks whether the
+/// link has dropped; `handsToNewSurface` asks whether a pane opened now would
+/// work on it. This one asks whether a round trip sent now comes back — the
+/// question every caller that is about to spend a timeout on the wire is
+/// actually asking.
+///
+/// The case that forced it: `sharedConnectionIfWarm` gated on `!= .dead`, and
+/// a WEDGED agent never reaches `dead` (that state is only ever entered via a
+/// server-sent DETACHED frame a wedged agent does not send). So the machine
+/// chooser, the session roster's local probe and the upgrade check were each
+/// handed a link that answers nothing, and each paid its own full timeout
+/// before it could tell the user anything — the chooser visibly, as a spinner
+/// that eventually gives up rather than a machine reported unreachable. Every
+/// one of those callers has a strictly better option when the answer is no: a
+/// fresh probe dial of the agent that is already running, which succeeds
+/// outright when it was the TRANSPORT that failed rather than the agent.
+///
+/// It agrees with `handsToNewSurface` state for state today, and the test below
+/// pins that. It is still its own function: these are two different questions
+/// about the same link, and the day one of them wants `degraded` to mean
+/// something different from the other, the shared predicate would answer the
+/// wrong one silently.
+pub fn carriesRequests(state: connection.LinkState.State) bool {
+    return switch (state) {
+        // Live. `degraded` is missed heartbeats on a link that is still
+        // carrying traffic, so a request on it is answered.
+        .connected, .degraded => true,
+        // Not carrying traffic: the request sits unanswered until its timeout
+        // expires. The caller probes or reports unreachable instead.
+        .reconnecting, .reattaching, .dead => false,
+    };
+}
+
 /// What a down shared link means once re-checked.
 pub const Verdict = union(enum) {
     /// The link came back on its own. Do nothing at all.
@@ -316,6 +353,29 @@ test "T764 handsToNewSurface: a wedged link is not handed to a pane that does no
     // state that counts as down must never be handed to a new surface.
     for ([_]S{ .connected, .degraded, .reconnecting, .reattaching, .dead }) |s| {
         if (isDown(s)) try testing.expect(!handsToNewSurface(s));
+    }
+}
+
+test "T1589 carriesRequests: a wedged link answers no request, so nobody spends a timeout on it" {
+    // Live links carry requests exactly as before — the common case must not
+    // lose its warm connection and start probe-dialing on every roster fetch.
+    try testing.expect(carriesRequests(.connected));
+    try testing.expect(carriesRequests(.degraded));
+
+    // The wedge. `reconnecting` is where a wedged agent parks forever, and the
+    // pre-T1589 `!= .dead` gate is exactly what handed it to the chooser.
+    try testing.expect(!carriesRequests(.reconnecting));
+    try testing.expect(!carriesRequests(.reattaching));
+    try testing.expect(!carriesRequests(.dead));
+
+    // Two invariants, both of which are the bug if they break. A down link
+    // must never be asked to carry a request...
+    for ([_]S{ .connected, .degraded, .reconnecting, .reattaching, .dead }) |s| {
+        if (isDown(s)) try testing.expect(!carriesRequests(s));
+        // ...and the two surface/request questions must not silently disagree
+        // while they are answering the same thing. A deliberate divergence
+        // rewrites this assertion; a drive-by edit to one of them trips it.
+        try testing.expectEqual(handsToNewSurface(s), carriesRequests(s));
     }
 }
 

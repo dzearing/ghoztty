@@ -555,6 +555,29 @@ pub fn sharedConnectionIfWarm(self: *LocalAgent) ?*connection.Connection {
     return null;
 }
 
+/// The cached shared connection if there is one AND a request sent on it would
+/// be answered — never dialing, never spawning (T1589).
+///
+/// This is `sharedConnectionIfWarm` with the right question. "Warm" means the
+/// link exists and has not been declared dead, which is what a caller wants
+/// when it is going to READ something the connection already knows (the peer's
+/// build stamp, the layout store's identity). A caller that is about to put a
+/// request ON the wire wants to know whether the wire carries it, and those two
+/// answers part company exactly where it hurts: a wedged agent parks the link
+/// in `reconnecting` indefinitely, so "warm" stays true while every round trip
+/// runs out its timeout.
+///
+/// Null means "ask somebody else": each caller of this either probe-dials the
+/// running agent (the roster, the orphan check) or reports the machine
+/// unreachable (the chooser), both of which beat waiting on a link that is not
+/// going to answer.
+pub fn sharedConnectionIfLive(self: *LocalAgent) ?*connection.Connection {
+    if (self.shared) |d| {
+        if (agent_recovery.carriesRequests(d.conn.state())) return d.conn;
+    }
+    return null;
+}
+
 /// Adopt an agent that came up AFTER a failed resolve (T976): dial the pipe it
 /// has since recorded, and install the result as the shared connection.
 ///
