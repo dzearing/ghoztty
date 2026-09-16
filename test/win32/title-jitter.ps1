@@ -202,6 +202,7 @@ try {
     if (-not $target) { Write-Host 'SETUP FAIL: no window target from +list'; exit 1 }
 
     function Set-WindowTitle([string]$Text) {
+        # argv-audit: $Text is this helper's parameter and every caller passes a spinner glyph plus the literal $suffix.
         [void](& $exe +rename "--target=$target" "--title=$Text")
         Start-Sleep -Milliseconds 350
     }

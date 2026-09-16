@@ -429,6 +429,7 @@ try {
     # read-back HERE is the positive control: without it, a miss after the
     # rebuild is equally consistent with the marker never having been typed.
     Start-Sleep -Seconds 2
+    # argv-audit: the marker is "T413RINGREPLAY$($PID)Z" - letters, digits and this process's pid.
     & $Exe +send-keys --target=t336-multi "echo $T413MARK" Enter 2>$null | Out-Null
     $fixturePanes = @(Get-WindowPaneIds 't336-multi')
     Assert (Wait-PaneText $fixturePanes $T413MARK) `
@@ -440,6 +441,7 @@ try {
     # is taken away. `+rename` pins the display title (`Window.setTitleOverride`,
     # the same path as the rename dialog) and marks the layout dirty, so the pin
     # rides the very next blob push.
+    # argv-audit: the name is "T1296Pinned$($PID)" - letters, digits and this process's pid.
     & $Exe +rename --target=t336-multi --title=$T1296NAME 2>$null | Out-Null
     Start-Sleep -Seconds 1
     $namedBefore = @(Get-WindowShapes | Where-Object { $_.Name -eq 't336-multi' }) | Select-Object -First 1

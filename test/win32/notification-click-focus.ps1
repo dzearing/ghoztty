@@ -68,6 +68,8 @@ if (-not (Test-Path $Exe)) { $Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe' }
 # CreateProcessW and by every `& $Exe +...` below.
 $env:GHOZTTY_PIPE_SUFFIX = "-notifclicktest$PID"
 
+# T782: byte-exact argv for the OSC 777 command below (its text carries a quote).
+. (Join-Path $repo 'scripts\lib\NativeArgv.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 
@@ -101,8 +103,14 @@ function Send-BalloonEvent([int]$Uid, [int]$Event) {
 # notifications for 5s and rate-limits all of them to one per second.
 function Invoke-Notification([string]$Pane, [string]$Body) {
     $cmd = "powershell -NoProfile -Command `"[console]::Write([char]27+']777;notify;Ghoztty;$Body'+[char]7)`""
-    & $Exe +send-keys --target=$Pane $cmd Enter 2>&1 | Out-Null
-    $ok = ($LASTEXITCODE -eq 0)
+    # T782: NOT `& $Exe ... $cmd ...`. This text carries two `"` characters, and
+    # PowerShell 5.1 copies an embedded quote through unescaped - measured, the
+    # pane received the command with both quotes GONE, and a $Body with a space
+    # in it split into two arguments as well. Invoke-NativeExact composes the
+    # command line to the CRT's own rules instead.
+    $r = Invoke-NativeExact -FilePath $Exe -Arguments @(
+        '+send-keys', "--target=$Pane", $cmd, 'Enter')
+    $ok = ($r.Code -eq 0)
     Start-Sleep -Seconds 3   # shell start + the OSC actually reaching the app
     return $ok
 }

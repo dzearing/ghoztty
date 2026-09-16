@@ -75,6 +75,8 @@ if ($ExePath) { $exe = $ExePath }
 # reaches the instance launched by this script, never the pane the caller is
 # sitting in.
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+# T782: byte-exact argv for the OSC 777 command below (its text carries a quote).
+. (Join-Path $repo 'scripts\lib\NativeArgv.ps1')
 [void](Set-GhozttyTestIsolation -Tag 'notifreal')
 # T1033: a private pipe suffix moves the APP endpoint only, so the exe about to
 # be launched is checked for the -debug lineage before the first launch.
@@ -195,8 +197,14 @@ function Kill-RepoInstances {
 # notifications for 5s and rate-limits all of them to one per second.
 function Invoke-Notification([string]$Pane, [string]$Body) {
     $cmd = "powershell -NoProfile -Command `"[console]::Write([char]27+']777;notify;Ghoztty;$Body'+[char]7)`""
-    & $exe +send-keys --target=$Pane $cmd Enter 2>&1 | Out-Null
-    return ($LASTEXITCODE -eq 0)
+    # T782: NOT `& $exe ... $cmd ...`. This text carries two `"` characters, and
+    # PowerShell 5.1 copies an embedded quote through unescaped - measured, the
+    # pane received the command with both quotes GONE, and a $Body with a space
+    # in it split into two arguments as well. Invoke-NativeExact composes the
+    # command line to the CRT's own rules instead.
+    $r = Invoke-NativeExact -FilePath $exe -Arguments @(
+        '+send-keys', "--target=$Pane", $cmd, 'Enter')
+    return ($r.Code -eq 0)
 }
 
 # The window the shell drew for our balloon: the one visible top-level window

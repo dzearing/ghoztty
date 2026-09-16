@@ -3676,6 +3676,25 @@ $GuardTable = @(
         )
     },
 
+    # T782 - the ARGV hazard: a script that hands the ghoztty CLI text which can
+    # carry a `"` or end in `\` on a native argv. PowerShell 5.1 destroys it
+    # silently, at exit 0 (T279 measured the rule), and the fix is
+    # Invoke-NativeExact or an `# argv-audit:` marker saying why the text is
+    # safe. It covers `scripts\` as well as the suite, because the live defect
+    # T279 found was the LOOP's own relaunch and not a test at all. It launches
+    # nothing and takes a few seconds.
+    [pscustomobject]@{
+        Name   = 'argv-hazard'
+        Script = 'test\win32\argv-hazard-audit.ps1'
+        Stamp  = 'test\win32\argv-hazard-audit.stamp.json'
+        Covers = @(
+            'scripts\*.ps1',
+            'scripts\lib\*.ps1',
+            'test\win32\*.ps1',
+            'test\win32\lib\*.ps1'
+        )
+    },
+
     # T725 - the harness FLOOR: the whole family of audits above, run as one
     # command (`scripts\harness-floor.ps1`, or `floor-lane.ps1 -Lane harness`).
     # Several of its members had no row of their own and therefore no trigger at

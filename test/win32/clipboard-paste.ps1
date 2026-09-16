@@ -152,6 +152,7 @@ function Wait-Text([string]$pattern, [int]$timeoutSec = 12) {
 function Start-Probe([string]$tag) {
     & $Exe +send-keys --target=$script:pane 'cls' Enter | Out-Null
     Start-Sleep -Milliseconds 600
+    # argv-audit: $probe is a TEMP path built with Join-Path; $tag is a one-letter literal at every caller.
     & $Exe +send-keys --target=$script:pane "powershell -NoProfile -File $probe -Tag $tag" Enter | Out-Null
     $seen = Wait-Text "PROBE_READY_$tag"
     if ($null -eq $seen) { return $false }

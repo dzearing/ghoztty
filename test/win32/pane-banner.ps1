@@ -90,6 +90,8 @@ $env:GHOZTTY_PIPE_SUFFIX = "-bntest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+# T782: byte-exact argv - the OSC 7778 one-liners below carry embedded quotes.
+. (Join-Path $repo 'scripts\lib\NativeArgv.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -896,6 +898,7 @@ try {
     $tblLong = "| Goal | Value |\n|---|---|\n| ship | $longVal |"
     $tblShort = "| Goal | Value |\n|---|---|\n| ship | ok |"
     function Get-BandH([string]$text) {
+        # argv-audit: $text is this helper's parameter and every caller passes literal markdown (the tables and repeated sentences above).
         & $exe +set-banner --target=bw $text | Out-Null
         $null = Wait-Banner 'bw' 0 ($text -replace '\\n', "`n")
         Start-Sleep -Milliseconds 700
@@ -1017,6 +1020,7 @@ try {
         & $exe +set-banner --target=bw "filler one\nfiller two" | Out-Null
         $null = Wait-Banner 'bw' 0 "filler one`nfiller two"
         Start-Sleep -Milliseconds 400
+        # argv-audit: $t745Tbl is a markdown table built from the literal $sentence.
         & $exe +set-banner --target=bw $t745Tbl | Out-Null
         $null = Wait-Banner 'bw' 0 $t745Exp
         Start-Sleep -Milliseconds 600
@@ -1116,6 +1120,7 @@ try {
     # gap left of its box. Pre-fix the content column ran to one card PADDING
     # (12 DIP) from the band edge, which is 20 DIP inside the chevron's own
     # column - so text crossed this gap on every long line.
+    # argv-audit: $para2 is the literal $sentence repeated twice.
     & $exe +set-banner --target=bw "$para2\ntail" | Out-Null
     $null = Wait-Banner 'bw' 0 "$para2`ntail"
     Start-Sleep -Milliseconds 800
@@ -1481,6 +1486,7 @@ try {
         # not a link, so the same right-click lands on prose and no menu
         # opens. Same text, same pixel, one sigil of difference.
         $t539Plain = $t539Path.Substring(3)
+        # argv-audit: $t539Plain is the TEMP path above with its drive prefix removed.
         & $exe +set-banner --target=bw $t539Plain | Out-Null
         $null = Wait-Banner 'bw' 0 $t539Plain
         Start-Sleep -Milliseconds 700
@@ -1685,11 +1691,17 @@ try {
     # quotes when spawning natives, splitting spaced args, and +send-keys
     # concatenates positionals without separators.
     $oscSet = "powershell -NoProfile -Command `"[console]::Write([char]27+']7778;osc'+[char]32+'banner'+[char]32+'works'+[char]7)`""
-    & $exe +send-keys --target=bp1 $oscSet Enter 2>&1 | Out-Null
+    # T782: NOT `& $exe ... $oscSet ...` - this payload carries two `"`,
+    # which PowerShell 5.1 copies through unescaped.
+    $null = Invoke-NativeExact -FilePath $exe -Arguments @(
+        '+send-keys', '--target=bp1', $oscSet, 'Enter')
     $b = Wait-Banner 'bw' 1 'osc banner works'
     Assert ($b -ceq 'osc banner works') "OSC 7778 sets the banner (got $b)"
     $oscClear = "powershell -NoProfile -Command `"[console]::Write([char]27+']7778;'+[char]7)`""
-    & $exe +send-keys --target=bp1 $oscClear Enter 2>&1 | Out-Null
+    # T782: NOT `& $exe ... $oscClear ...` - this payload carries two `"`,
+    # which PowerShell 5.1 copies through unescaped.
+    $null = Invoke-NativeExact -FilePath $exe -Arguments @(
+        '+send-keys', '--target=bp1', $oscClear, 'Enter')
     $b = Wait-Banner 'bw' 1 'NONE'
     Assert ($b -eq '(absent)') 'OSC 7778 empty text clears'
 

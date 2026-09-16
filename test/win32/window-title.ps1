@@ -78,6 +78,7 @@ function TitlebarIs([string]$base) {
     (Get-State).Win -match ('^' + [regex]::Escape($base) + '( \[DEBUG\])?$')
 }
 function Send-Title([string]$t) {
+    # argv-audit: $t is this helper's parameter and every caller passes a literal title.
     & $exe +send-keys --target=$script:win "title $t" Enter | Out-Null
 }
 function Find-Dialog {

@@ -29901,3 +29901,73 @@ pre-T780 sweep could not have seen. Re-stamped green on box:
 `test-desktop-harness.ps1` (77), `desktop-launch-audit.ps1` (29),
 `command-resolve-audit.ps1` (15), `floor-lane.ps1 -Lane harness`, plus
 `floor-lane.ps1 -Lane all`.
+
+## 2026-09-15 - Text handed to the CLI from PowerShell now has to arrive intact (T782)
+
+T279 measured how PowerShell 5.1 destroys a native command line - an argument is
+wrapped in `"` only when whitespace sits at EVEN quote parity, and an embedded
+`"` is copied through unescaped - and repaired the call sites it could enumerate
+by hand. A hand enumeration is a snapshot. This is the check that keeps the
+property: `test\win32\argv-hazard-audit.ps1`, over `scripts\` and `test\win32\`,
+with `lib\ArgvHazardAudit.ps1` as the analyzer and a guard row so a new call site
+makes it DUE on its own.
+
+The card proposed flagging INTERPOLATION into a free-text flag. That turned out
+to be the wrong question, and the difference was not academic: what corrupts a
+command line is a `"` inside the value or a `\` at its end, and a hard-coded
+string has both just as easily as a computed one. So each argument is judged on
+two facts - can it carry a quote, can it end in a backslash - folded bottom-up
+through literals, expandable strings, `+`, `Join-Path` and the file's own
+variables. A literal that was given a name stays readable (a test that hoists its
+banner to `$banner` is not a finding); a `Join-Path $env:TEMP 'leaf'` is safe
+without a marker, because a Windows path cannot hold a `"` and a literal leaf
+settles the tail, while a bare `$env:TEMP` is NOT - a drive root ends in the
+backslash that makes the closing quote read as escaped. A parameter is free text
+inside the function that declares it and nowhere else.
+
+Ten live defects, measured with an argv oracle rather than reasoned about: a
+`powershell -Command "..."` payload sent through `+send-keys` or `+split` in
+`clipboard-retry.ps1`, both notification-click scripts, `kb-actions.ps1` (x4),
+`pane-banner.ps1` (x2) and `soak.ps1` - every one of them reaching the pane with
+both quotes gone, and the OSC 777 one splitting into two arguments as soon as a
+notification body contained a space. They survived only because nothing after the
+first quote held whitespace; one of them had already been worked around in place,
+building its spaces with `[char]32` under a comment describing the mangling. All
+ten now go through `Invoke-NativeExact`. Four of the ten are literal strings, so
+the rule the card proposed would have passed them.
+
+The remaining twenty sites are explained rather than converted, with
+`# argv-audit: <reason>` naming why the text cannot carry a quote or end in a
+backslash - a pid-derived marker, a TEMP path, base64, a helper's parameter whose
+callers all pass literals. The marker is LINE-scoped, not file-scoped: the hazard
+is per call site, and a file-wide marker would silently cover every site written
+after it, which is the snapshot problem this audit exists to end.
+
+Evidence: `argv-hazard-audit.ps1` ALL PASS (23 assertions) and `-TeethCheck` ALL
+PASS (27), where C1/C2 plant the exact 2026-08-11 defect into the suite directory
+and require the sweep to name it, and C3 proves a marker clears it again.
+Section A measures the analyzer against the real corruption - three payloads
+through a live child's argv - so its opinion is anchored to the box rather than to
+itself.
+
+Two more things the re-runs turned up, both filed rather than folded in.
+`kb-actions.ps1` is RED on this box - `T47 primary screen cleared` - and the
+pristine HEAD copy fails identically, so it is a live red nobody was running
+(T1599); the script has no guard row, which is exactly why (T1600). And
+`soak.ps1`'s converted split proved that a `--command=` carrying a QUOTED path
+runs nothing at all: the quotes never used to arrive, so the pane had always run
+the unquoted form, and delivering them intact made the altscr pane produce no
+telemetry. The quotes came back out with a comment saying why, and the contract
+question - how a `--command=` value may quote a path for the pane's shell, which
+today has no working form - is T1601.
+
+Re-stamped green on box: `argv-hazard-audit.ps1` (23; teeth 27),
+`floor-lane.ps1 -Lane all` (lib/none/win32/agent), `floor-lane.ps1 -Lane harness`
+(25 audits, 0 failures, 2 pending), `ipc-p1/p2/p3` (26/20/16),
+`cli-argv-fidelity.ps1` (35), `clipboard-retry.ps1` (16),
+`notification-click-focus.ps1` (38), `pane-banner.ps1` (148), `menu-bar.ps1` (81),
+`chooser-restore-all-remote.ps1` (47), `chooser-resume-remote.ps1` (40),
+`suite-run.ps1` (108), `upgrade-staleness.ps1` (156), `install-ownership.ps1` (42),
+`upgrade-no-fork.ps1` (131), `harness-floor.ps1` (46), `isolation-meta.ps1` (13),
+`launch-preflight-audit.ps1` (19), `stderr-launch-capture.ps1` (20), and a
+2-minute `soak.ps1` (13).

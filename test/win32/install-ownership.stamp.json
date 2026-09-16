@@ -1,15 +1,15 @@
 {
     "guard":  "install-ownership",
     "script":  "test/win32/install-ownership.ps1",
-    "generated":  "2026-09-12T11:31:13-07:00",
-    "commit":  "a415d6685",
+    "generated":  "2026-09-15T22:21:55-07:00",
+    "commit":  "25b33bc12",
     "uncommitted":  [
                         "scripts/upgrade-ghoztty-windows.ps1"
                     ],
     "files":  {
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
                   "scripts/launch-upgrade.ps1":  "10b62ac357edaf9aac67ab761f844a97ca92c8c3adab1a29f24c4f560f31ac72",
-                  "scripts/upgrade-ghoztty-windows.ps1":  "c096faef710da65248b87c75e418c684c8597f94c2ee4ee48d55344e5e378ebb",
+                  "scripts/upgrade-ghoztty-windows.ps1":  "ab38adaaf6c2eb15e421e90e7b287ae7f98749ae3f62b2ea923185c084d66edc",
                   "test/win32/install-ownership.ps1":  "0c574d3d71e1b8b86c3ff21fbd54eb8dd8a5341a117ad83ea969480ec9e188ad"
               }
 }

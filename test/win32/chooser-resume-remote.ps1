@@ -388,6 +388,7 @@ try {
     # shell. The read-back here is the positive control for the marker itself:
     # without it, a miss after the resume is equally consistent with the marker
     # never having been typed.
+    # argv-audit: the marker is "T331ATTACH$($PID)Z" - letters, digits and this process's pid.
     & $Exe +send-keys --target=t331-w2 "echo $MARK" Enter 2>$null | Out-Null
     $markedPanes = @(Get-WindowPaneIds 't331-w2')
     Assert (Wait-PaneText $markedPanes $MARK 'fixture') `
@@ -397,6 +398,7 @@ try {
     # title (the same path as the rename dialog), and the pin rides the layout
     # blob the machine's agent keeps - which is the only place app B can learn
     # it from, since section 2 deletes this box's own manifest.
+    # argv-audit: the name is "T1296Resumed$($PID)" - letters, digits and this process's pid.
     & $Exe +rename --target=t331-w2 --title=$T1296NAME 2>$null | Out-Null
     Start-Sleep -Seconds 2
     $namedBefore = if ($markedPanes.Count -ge 1) { Get-WindowTitleForPane $markedPanes[0] } else { '' }

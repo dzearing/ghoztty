@@ -1002,6 +1002,7 @@ $marker = 'MENUBAR_PRIMARY_OK_41'
 $inner = '[Console]::Write((-join @([char]27,"[?1049h"))); Start-Sleep 12; ' +
          '[Console]::Write((-join @([char]27,"[?1049l"))); Write-Host "' + $marker + '"'
 $b64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($inner))
+# argv-audit: $b64 is base64 - A-Z a-z 0-9 + / = and nothing else.
 & $exe +send-keys --target=$paneName "powershell -NoProfile -EncodedCommand $b64" Enter 2>&1 | Out-Null
 # T193 (2026-08-06) changed what this measurement looks like: +read on an
 # alternate-screen pane now SUCCEEDS and returns the visible screen, so "the

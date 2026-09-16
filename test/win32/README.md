@@ -90,6 +90,7 @@ marker with no reason waives nothing.
 | A capture's text does not depend on the host it ran under (T883) | `stderr-capture-audit.ps1` | `# capture-audit: <reason>` |
 | Every launch keeps what the app said on its way out (T689) | `stderr-launch-capture.ps1` | `# stderr: <reason>` |
 | A command a script depends on resolves, or the run says so (T586) | `command-resolve-audit.ps1` | `# resolve-audit: <reason>` |
+| Free text reaches the CLI intact rather than shredded by PS 5.1 argv (T782) | `argv-hazard-audit.ps1` | `# argv-audit: <reason>` (line-scoped) |
 | A GUI script launches on the test desktop, not the user's (T1193) | `desktop-launch-audit.ps1` | `# desktop-launch-audit: <reason>` |
 | A script states what it does to the foreground window (T272/T276) | `foreground-audit.ps1` | `# foreground-audit: <reason>` |
 | A win32 module's unit tests are actually executed by the lane (T1191) | `test-reach-audit.ps1` | — |

@@ -444,6 +444,7 @@ if ($PureOnly) {
         $fKeys = New-LoopSendKeysText -Exe $fCli -Text $fPrompt -Tag 't663'
         $fVerified = Send-LoopPromptVerified -Text $fPrompt `
             -SendText {
+                # argv-audit: New-LoopSendKeysText returns `--keys-file=<temp path>`, the transport that exists so a prompt never rides argv.
                 & $fCli +send-keys "--target=$fPane" @($fKeys.Args) 2>&1 | Out-Null
                 return ($LASTEXITCODE -eq 0)
             } `

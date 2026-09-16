@@ -581,6 +581,7 @@ try {
             # entirely - the cd silently would not happen and the split
             # assertion below would blame the product.
             $sendPath = $otherDir -replace '\\', '\\'
+            # argv-audit: $sendPath is a TEMP path with its backslashes doubled for the shell - no quote, and it ends in a path leaf.
             & $Exe +send-keys --target=remD "cd $sendPath" Enter 2>&1 | Out-Null
             Start-Sleep -Seconds 2
             # Prove the parent actually moved before asking where its split lands.

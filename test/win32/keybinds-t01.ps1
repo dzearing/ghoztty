@@ -320,6 +320,7 @@ Start-Sleep -Milliseconds 800
 Start-Sleep -Milliseconds 800
 $xline = 'X' * 120
 for ($i = 0; $i -lt 10; $i++) {
+    # argv-audit: $xline is 'X' * 120.
     & $Exe +send-keys --target=$pane "echo $xline" Enter | Out-Null
 }
 Start-Sleep -Seconds 2

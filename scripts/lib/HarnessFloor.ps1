@@ -51,6 +51,7 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'stderr-capture-audit.ps1'; Why = 'stderr is captured rather than thrown away (T883)' }
     [pscustomobject]@{ Name = 'stderr-launch-capture.ps1'; Why = 'every launch keeps what the app said on its way out (T689)' }
     [pscustomobject]@{ Name = 'command-resolve-audit.ps1'; Why = 'a command a script depends on resolves, or the run says so' }
+    [pscustomobject]@{ Name = 'argv-hazard-audit.ps1'; Why = 'free text reaches the CLI intact rather than shredded by PS 5.1 argv (T782)' }
     [pscustomobject]@{ Name = 'test-reach-audit.ps1'; Why = 'an assertion reaches the code it claims to measure' }
     [pscustomobject]@{ Name = 'desktop-launch-audit.ps1'; Why = 'a GUI script launches on the test desktop, not the user''s' }
     [pscustomobject]@{ Name = 'printclient-audit.ps1'; Why = 'every painting window answers the screenshot path the tests read' }

@@ -48,6 +48,8 @@ Remove-Item $errlog -ErrorAction SilentlyContinue
 $env:GHOZTTY_PIPE_SUFFIX = "-kbactionstest$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T782: byte-exact argv - the alternate-screen one-liners below carry embedded quotes.
+. (Join-Path $repo 'scripts\lib\NativeArgv.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -203,7 +205,12 @@ if ($before -match 'KBFILL_MARKER') {
     Assert (Select-String -Path $errlog -Pattern 'mailbox message=clear_screen' -Quiet) 'T47 clear_screen io message logged'
 
     # Alternate screen: the performable binding must be unconsumed.
-    & $Exe +send-keys --target=$win "powershell -nop -c `"[console]::Write([char]27+'[?1049h')`"" Enter | Out-Null
+    # T782: NOT `& $Exe ... "$text" ...` - this payload carries two `"`,
+    # and PowerShell 5.1 copies an embedded quote through unescaped, so the
+    # pane used to receive it with both quotes gone.
+    $null = Invoke-NativeExact -FilePath $Exe -Arguments @(
+        '+send-keys', "--target=$win",
+        "powershell -nop -c `"[console]::Write([char]27+'[?1049h')`"", 'Enter')
     Start-Sleep -Seconds 3
     $clearsBefore = (Select-String -Path $errlog -Pattern 'mailbox message=clear_screen' -AllMatches | Measure-Object).Count
     Assert (Send-TestKeys -Window $script:top -Target $script:surface -Modifiers ctrl -Key K) 'T47 alt-screen ctrl+k injected'
@@ -227,9 +234,19 @@ if ($before -match 'KBFILL_MARKER') {
 # lib/TestDesktop.ps1), so the packet half of the path is NOT covered here.
 # Tracked as T222; the assertions below are named for what they actually
 # prove rather than inheriting the old labels.
-& $Exe +send-keys --target=$win "powershell -nop -c `"[console]::Write([char]27+'[?1049l')`"" Enter | Out-Null
+# T782: NOT `& $Exe ... "$text" ...` - this payload carries two `"`,
+# and PowerShell 5.1 copies an embedded quote through unescaped, so the
+# pane used to receive it with both quotes gone.
+$null = Invoke-NativeExact -FilePath $Exe -Arguments @(
+    '+send-keys', "--target=$win",
+    "powershell -nop -c `"[console]::Write([char]27+'[?1049l')`"", 'Enter')
 Start-Sleep -Seconds 2
-& $Exe +send-keys --target=$win "powershell -nop -c `"[console]::Write([char]27+'[?9001l')`"" Enter | Out-Null
+# T782: NOT `& $Exe ... "$text" ...` - this payload carries two `"`,
+# and PowerShell 5.1 copies an embedded quote through unescaped, so the
+# pane used to receive it with both quotes gone.
+$null = Invoke-NativeExact -FilePath $Exe -Arguments @(
+    '+send-keys', "--target=$win",
+    "powershell -nop -c `"[console]::Write([char]27+'[?9001l')`"", 'Enter')
 Start-Sleep -Seconds 2
 
 # 'a' goes in as a plain VK key: it proves the surface is live and taking real
@@ -246,7 +263,12 @@ Start-Sleep -Milliseconds 300
 # Force win32-input mode (9001) ON and inject again. This is the half T64
 # actually fixed: in 9001 mode an injected WM_CHAR must be re-encoded as a
 # synthetic win32-input sequence rather than dropped.
-& $Exe +send-keys --target=$win "powershell -nop -c `"[console]::Write([char]27+'[?9001h')`"" Enter | Out-Null
+# T782: NOT `& $Exe ... "$text" ...` - this payload carries two `"`,
+# and PowerShell 5.1 copies an embedded quote through unescaped, so the
+# pane used to receive it with both quotes gone.
+$null = Invoke-NativeExact -FilePath $Exe -Arguments @(
+    '+send-keys', "--target=$win",
+    "powershell -nop -c `"[console]::Write([char]27+'[?9001h')`"", 'Enter')
 Start-Sleep -Seconds 2
 Assert (Send-TestText -Window $script:top -Target $script:surface -Text 'b') 'T64 prefix VK key injected (9001)'
 Assert (Send-TestInjectedChar -Window $script:top -Target $script:surface -Text 'uni2ok') 'T64 injected chars posted (9001)'

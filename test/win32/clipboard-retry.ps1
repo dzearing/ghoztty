@@ -85,6 +85,8 @@ $holderPs1 = Join-Path $root 'holder.ps1'
 $holderReady = Join-Path $root 'holder-ready'
 $holderStop = Join-Path $root 'holder-stop'
 
+# T782: byte-exact argv for the OSC 52 command below (its text carries a quote).
+. (Join-Path $repo 'scripts\lib\NativeArgv.ps1')
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 # T1241: the app launches on the background test desktop, not the user's.
@@ -211,8 +213,14 @@ function Copy-Command([string]$token) {
     return 'powershell -NoProfile -Command "[Console]::Out.Write([char]27+' + $sq + ']52;c;' + $b64 + $sq + '+[char]7)"'
 }
 function Send-Copy($pane, [string]$token) {
-    $null = (& $Exe +send-keys "--target=$pane" --enter -- (Copy-Command $token) 2>&1 |
-        ForEach-Object { $_.ToString() } | Out-String)
+    # T782: NOT `& $Exe ... (Copy-Command $token)`. That text carries two `"`
+    # characters, and PowerShell 5.1 copies an embedded quote through
+    # unescaped - measured, the pane received this command line with BOTH
+    # quotes gone. It happened to keep working only because nothing after the
+    # first quote holds a space; a longer payload would have split into
+    # positionals. Invoke-NativeExact composes the line to the CRT's own rules.
+    $null = Invoke-NativeExact -FilePath $Exe -Arguments @(
+        '+send-keys', "--target=$pane", '--enter', '--', (Copy-Command $token))
 }
 function Wait-Clip([string]$token, [int]$timeoutMs) {
     $deadline = (Get-Date).AddMilliseconds($timeoutMs)

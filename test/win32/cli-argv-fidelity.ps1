@@ -240,11 +240,13 @@ if (-not $paneId) {
         @{ Name = 'trailing slash'; Text = $P_SLASH }
     )) {
         $t = $case.Text
+        # argv-audit: DELIBERATE. Section D sends the hazardous payloads the naive way and REQUIRES them to arrive corrupted - it is this suite's negative control, and the analyzer naming it is the point.
         & $Exe +rename "--target=$target" "--title=$t" 2>&1 | Out-Null
         Start-Sleep -Milliseconds 600
         $got = Get-WindowTitle
         Assert "D [$($case.Name)] naive +rename corrupts the title (got <$got>)" ($got -cne $t)
 
+        # argv-audit: DELIBERATE, the same negative control - see the note on the +rename call above.
         & $Exe +set-banner "--target=$paneId" "$t" 2>&1 | Out-Null
         Start-Sleep -Milliseconds 600
         $gotB = Get-PaneBanner $paneId

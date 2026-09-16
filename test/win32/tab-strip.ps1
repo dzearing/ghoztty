@@ -1394,6 +1394,7 @@ try {
     $w8 = $t8.data.windows | Where-Object { [int64]$_.id -eq [int64]$top }
     $pane8 = $w8.tabs[0].splits.terminal.id
     function Set-Tab1Title([string]$t) {
+        # argv-audit: $t is this helper's parameter and every caller passes a literal tab title.
         [void](& $exe +send-keys --target=$pane8 "title $t" Enter 2>$null)
         Start-Sleep -Milliseconds 900
     }

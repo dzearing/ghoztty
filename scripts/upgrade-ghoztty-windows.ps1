@@ -1061,6 +1061,7 @@ if ($action -eq 'reuse') {
     # attempt N's fragment.
     $verified = Send-LoopPromptVerified -Text $prompt `
         -SendText {
+            # argv-audit: New-LoopSendKeysText returns `--keys-file=<temp path>` (a path, and the transport that exists so a prompt never rides argv); its degraded fallback escapes the text and says so in the log.
             & $cliExe +send-keys "--target=$LoopPaneId" --when-idle "--idle-timeout=60" @($keys.Args) 2>&1 |
                 ForEach-Object { Log "reuse send-keys: $_" }
             return ($LASTEXITCODE -eq 0)
@@ -1093,6 +1094,7 @@ if ($action -eq 'reuse') {
     # single space is the payload that cannot turn a verified prompt into a
     # fragment.
     $submit = Get-LoopSubmitArgs
+    # argv-audit: Get-LoopSubmitArgs is the constant @(' ', 'Enter').
     & $cliExe +send-keys "--target=$LoopPaneId" @($submit) 2>&1 | ForEach-Object { Log "reuse submit: $_" }
     if ($LASTEXITCODE -ne 0) {
         Log "RESUME-REUSE FAIL: the prompt arrived intact in pane $LoopPaneId but the submit exited $LASTEXITCODE, so it was never submitted."
