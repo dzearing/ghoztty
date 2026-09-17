@@ -30693,3 +30693,45 @@ passed`), guard re-stamped; arm A reads `~\AppData\Local\Temp\...\tipA112` where
 it read the two-line form before. 5 new `tipTextTitled` tests in the none lane
 (27/27 standalone). `floor-lane.ps1 -Lane all` ALL LANES PASS; `-Lane harness`
 PASS for the guards this script edit made due.
+
+## 2026-09-16 - T800: the banner hook was vendored a month ago; this turn proved it and closed the card
+
+T800 asked for the loop's own status-banner hook - which lived only in
+`~/.claude/scripts/ghoztty-banner.sh`, unreviewable and lost on a box rebuild -
+to be vendored into the repo. The T404 re-check at pickup says it already was,
+twice over, and by a route better than the card asked for: `f935538a7`
+(2026-08-01) put it in the Mac bundle at
+`macos/Resources/Ghoztty/hooks/ghoztty-banner.sh`, and `59388143f` (2026-08-15,
+T866) vendored the Windows copy at
+`src/apprt/win32/assets/ghoztty/hooks/ghoztty-banner.sh` with the pristine
+upstream mirror beside it. The card wanted "at minimum a checked-in copy the
+hook is diffed against"; what exists is the app WRITING the script -
+`BannerScriptInstaller.zig` installs the asset to
+`~/.config/ghoztty/hooks/ghoztty-banner.sh`, and on this box those two are
+byte-identical (24,197 bytes, `diff` clean).
+
+So no code was written. On that shape the deliverable is the validation, and it
+too was already landed - so the turn's job was to run it rather than to write
+it: `test\win32\hook-json.ps1` ALL PASS, 53 assertions, exit 0, including
+section A's VENDOR DRIFT check, which byte-compares the upstream mirror against
+tip-of-main's git blob and asserts each deliberate fork still carries its
+divergence. That is precisely the "a change to it is a commit like any other"
+property T800 was after. Install, upgrade-restores-pristine-bytes, shared-banner
+refcount and the leave-a-user-script-alone rule are covered alongside it by
+`test\win32\agent-integrations.ps1`, and the script's own behavior by
+`test/ghoztty-banner.sh`. All five of T800's validation criteria are ticked with
+what verified them.
+
+What the turn did turn up is a live defect, filed as **T1624**: this session's
+prompt context carried the banner instruction TWICE, one copy naming the retired
+`~/.claude/scripts/ghoztty-banner.sh` path. The cause is that
+`ghoztty@dzearing-claude-marketplace` 0.10.0 is registered again in
+`~/.claude/plugins/installed_plugins.json` - installed 2026-08-21 with
+`"auto": true`, six days after T870's migration shipped - and its own hooks
+still fire, its SessionStart still re-creating that dead script. T870's
+migration is correct when it runs; it just runs once, and nothing re-asks the
+question when a marketplace sync puts the plugin back.
+
+Evidence: `hook-json.ps1` ALL PASS (53 assertions); installed hook vs repo asset
+`diff` clean; `installed_plugins.json` and the plugin's `hooks.json` read on the
+box. No source files changed this turn.
