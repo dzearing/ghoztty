@@ -56,6 +56,13 @@ fn codepoint(which: icon_button.Glyph) u16 {
         .send => 0xE74A, // Up — the composer's submit arrow
         .search => 0xE721, // Search - Windows' own magnifier
         .new_window => 0xE8A7, // OpenInNewWindow
+        // The diff layout toggle (T817), showing the layout the pane is IN.
+        // Windows' own docking marks: a pane split off to the side, and one
+        // split off below — the nearest thing either face has to "two columns"
+        // and "one column", and a pair by construction rather than two marks
+        // that happen to sit together.
+        .diff_split => 0xE90D, // DockRight
+        .diff_unified => 0xE90E, // DockBottom
     };
 }
 
@@ -84,6 +91,9 @@ fn fontDip(which: icon_button.Glyph) f32 {
         // title, the same relationship the nav cluster has to its address
         // field, so it renders at the toolbar size.
         .new_window => 12.0,
+        // The diff controls sit in the nav bar's own 28 DIP squares, so they
+        // render at the toolbar size like the cluster they join.
+        .diff_split, .diff_unified => 12.0,
     };
 }
 

@@ -9,6 +9,69 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-17: T817 closed done, T1641 filed — **a Windows diff pane is now
+  walkable: next and previous change, and a side-by-side layout it remembers.**
+
+  A diff pane rendered its changes and then left you to scroll. Mac's pane has
+  three controls in the same bar that this one did not: step to the next
+  change, step back, and flip between the stacked view and the side-by-side
+  one. Both halves of the work already existed — the page has known how to
+  step hunks and re-lay itself since the assets were shared — and nothing on
+  Windows was calling either.
+
+  The controls sit where Mac puts them, after Home and before the address
+  field, and they exist only in a diff pane. That made the bar's shedding rule
+  say something it had never had to: which control a narrowing pane gives up
+  first. Until now the shed order was the strip order read backwards, and the
+  two were the same list, so nothing had to choose. They are separate lists
+  now: in a diff pane the change controls outlive back and forward — the
+  buttons a reader walking a diff touches least — even though they are
+  painted after them, and the contents toggle still sheds last because it is
+  what opens the file list. Nothing that sheds is lost; it is in the "…"
+  menu, which was already the rule.
+
+  Stepping a change is the page's work inside the open file. The press that
+  runs out of hunks is the interesting one: the page says so, and this side
+  rolls the pane into the adjacent FILE, which is what "next change" means
+  across a many-file diff. The walk is over the side panel's VISIBLE rows, so a
+  folder the reader clicked shut is not somewhere the button lands them, and
+  either end of the diff is a no-op rather than a wrap. The layout choice is a
+  preference rather than pane state — one small file under
+  `%LOCALAPPDATA%\ghoztty`, the pattern the side panel's width already uses —
+  so every diff pane opened afterwards, in this session or the next, opens the
+  way you last read one.
+
+  The third goal on the card turned out to be already met: it asked that the
+  nav bar stay pinned open in a diff pane, and T1185 made the bar part of every
+  viewer pane's frame, so there is no state it is hidden in. Re-verified rather
+  than re-implemented, and the card says so.
+
+  Two new glyphs, because the toggle shows the layout the pane is IN and win32
+  paints no latched tint to say it any other way: one frame with the divider
+  down the middle, one with it across. They are a pair by construction — same
+  frame, same weight, the divider transposed — and a test asserts exactly
+  that, because two marks that merely sit together read as two icons swapping
+  places rather than as one control with two states.
+
+  The acceptance arm is where the turn spent its second half. Presence and
+  geometry come from the bar's own tooltip log line, which is the only way
+  owner-painted chrome is readable on the background test desktop, and it
+  carries a negative control: a pane showing no diff has none of the three.
+  Behavior needed real clicks, and the first version of them failed against a
+  feature that worked — it aimed at the window that appeared after its
+  `+new-window`, which is a guess, because nothing maps a pane id to a window
+  handle. The arm now closes the other viewer windows and asserts exactly one
+  is left, and re-reads the strip before every press (the contents toggle comes
+  and goes, and one button arriving at the head shifts every square after it by
+  a slot — a stale snapshot aims one control to the left, silently). The gap
+  underneath is **T1641**: a harness that cannot say which window a pane is in
+  will keep making tests tear down their own world to aim a click.
+
+  Validation: four floor lanes green, the new `none`-lane geometry and glyph
+  tests, `viewer-diff.ps1` all-pass at 65 assertions (25 of them T817's), and
+  every guard `guard-due.ps1` named for the touched code — the other viewer
+  suites, the harness floor, and the static audits.
+
 - 2026-09-17: T815 closed done — **a wedged test lane now says WEDGED where
   anyone reads it, and brings the evidence down with it.**
 

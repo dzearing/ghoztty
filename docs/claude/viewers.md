@@ -347,11 +347,24 @@ unified⇄side-by-side controls in the nav bar.
 untouched, mirroring `ViewerDiffSpec.parse` — and so are the page assets
 (`src/viewer/diff.js`, `diff.css`); what T463 added on Windows is the third
 thing the bundled template can render (`content.Mode.diff`), the git plumbing
-behind it, and the two payloads the page reads. What the win32 pane still lacks
-is CHROME, filed rather than left undocumented: **T464** (the file-tree side
-panel, which is also how a many-file diff is navigated) and **T817**
-(next/previous-change and the unified⇄side-by-side toggle). Until T464 lands a
-win32 diff pane opens its FIRST file and stays there.
+behind it, and the two payloads the page reads. Its chrome followed: **T464**
+gave it the file-tree side panel, and **T817** the three nav-bar controls a
+diff pane carries and no other viewer pane does — previous change, next
+change, and the unified⇄side-by-side toggle.
+
+Those three are worth knowing the shape of. Stepping a change is PAGE work
+inside the open file (only the page knows where the hunks landed); the press
+that runs out of hunks comes back as a `diffNavOverflow` message and this side
+rolls the pane into the adjacent FILE, which is what "next change" means across
+a many-file diff. The walk is over the side panel's VISIBLE rows
+(`viewer_file_tree.adjacentFile`), so a folder the reader clicked shut is not
+somewhere the button lands them, and either end of the diff is a no-op rather
+than a wrap. The layout choice is a PREFERENCE, not pane state: it is written
+to `%LOCALAPPDATA%\ghoztty\viewer_diff_style` (`viewer_prefs.saveDiffStyle`,
+a `-debug` file for dev builds) and every diff pane opened afterwards — in
+this session or the next — opens in it, the way Mac's `diffViewStyle`
+default behaves. The nav bar needs no pinning rule for any of this: since T1185
+it is part of every viewer pane's frame and is always on screen.
 
 The win32 split mirrors the Mac's: `src/apprt/win32/viewer_diff.zig` is pure —
 the spec parse, the table of git invocations, the `-z` output parsing and the

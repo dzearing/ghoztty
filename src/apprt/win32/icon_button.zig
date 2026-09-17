@@ -412,6 +412,23 @@ pub const Glyph = enum {
     /// and a fallback's bar is "readable", not "identical" (see the header of
     /// `icon_button_paint`).
     new_window,
+    /// "▯│▯" — a diff pane is rendering SIDE BY SIDE, and pressing the button
+    /// switches it to unified (T817; Mac uses `rectangle.split.2x1`). A pane
+    /// outline with one divider down its middle.
+    ///
+    /// The pair below is the one place in the set where two glyphs differ only
+    /// in the AXIS of an interior member, and that is deliberate: the control
+    /// shows the layout the pane is in, so the two states have to read as two
+    /// arrangements of the same thing rather than as two unrelated marks.
+    diff_split,
+    /// "▭/▭" — a diff pane is rendering UNIFIED, and pressing the button
+    /// switches it to side-by-side (Mac uses `list.bullet.rectangle`). The
+    /// same outline with the divider laid across instead of down.
+    ///
+    /// Not three rules like the hamburger, even though a unified diff is a
+    /// single column of lines: `contents` already owns that mark and sits four
+    /// buttons away in the same bar.
+    diff_unified,
 };
 
 /// The maximum quads any glyph needs, so callers can size a stack buffer.
@@ -830,6 +847,35 @@ pub fn glyphQuads(m: Metrics, target: Rect, glyph: Glyph, out: []Quad) []const Q
             } };
             return out[0 .. ring.len + 1];
         },
+        .diff_split, .diff_unified => {
+            // A pane outline with ONE interior divider: down the middle for
+            // the side-by-side layout, across it for the unified one.
+            //
+            // Outlined at `stroke_outline` for the reason the maximize box and
+            // the feedback bubble are — in a closed mark the eye reads the
+            // enclosed area, and a 2 DIP stroke on an 11 DIP box reads as a
+            // filled slab. The divider carries the same weight as the frame it
+            // sits in: a heavier one would read as a gap between two marks
+            // rather than as a split inside one.
+            //
+            // The divider spans the INTERIOR only, never the frame bars, so no
+            // two quads overlap (`squareOutline`'s rule, and the reason it
+            // splits its own corners).
+            const b = centered(target, m.mark_close, m.mark_close);
+            const so = m.stroke_outline;
+            const used = squareOutline(b, so, out);
+            const inner: Rect = .{
+                .left = b.left + so,
+                .top = b.top + so,
+                .right = b.right - so,
+                .bottom = b.bottom - so,
+            };
+            out[used.len] = bar(if (glyph == .diff_split)
+                centeredExact(inner, so, inner.height())
+            else
+                centeredExact(inner, inner.width(), so));
+            return out[0 .. used.len + 1];
+        },
         .overflow => {
             // Three square dots on the mark box's center line, spanning the
             // same `mark_caption` extent as the three system glyphs beside it
@@ -1178,6 +1224,8 @@ const all_glyphs = [_]Glyph{
     .contents,
     .feedback,
     .send,
+    .diff_split,
+    .diff_unified,
 };
 
 /// The painted square a strip button gets at `scale`, i.e. what the glyph
@@ -1300,6 +1348,46 @@ test "the two chevrons mirror each other" {
             try testing.expectEqual(pa.x, pb.x);
             try testing.expectEqual(my, pa.y + pb.y);
         };
+    }
+}
+
+test "the two diff-layout marks are one frame with the divider transposed (T817)" {
+    // The control shows the layout the pane is IN, so the two states have to
+    // read as two arrangements of ONE mark: the same frame, the same weight,
+    // and a divider that only changed axis. Anything else and the toggle reads
+    // as two unrelated icons swapping places.
+    var split_buf: [max_quads]Quad = undefined;
+    var unified_buf: [max_quads]Quad = undefined;
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0, 3.0 }) |scale| {
+        const m = Metrics.init(scale);
+        const t = squareAt(m);
+        const split = glyphQuads(m, t, .diff_split, &split_buf);
+        const unified = glyphQuads(m, t, .diff_unified, &unified_buf);
+
+        // Same frame: four bars plus one divider, over the same footprint.
+        try testing.expectEqual(@as(usize, 5), split.len);
+        try testing.expectEqual(@as(usize, 5), unified.len);
+        try testing.expectEqual(paintedBounds(split), paintedBounds(unified));
+        for (split[0..4], unified[0..4]) |a, b| try testing.expectEqual(a, b);
+
+        // The divider is interior — it never touches the frame, so the mark
+        // reads as a split pane rather than as two boxes sharing an edge.
+        const b = paintedBounds(split);
+        for ([_][]const Quad{ split[4..5], unified[4..5] }) |d| {
+            const db = paintedBounds(d);
+            try testing.expect(db.left > b.left);
+            try testing.expect(db.right < b.right);
+            try testing.expect(db.top > b.top);
+            try testing.expect(db.bottom < b.bottom);
+        }
+
+        // ...and it only changed axis: one spans the interior's height, the
+        // other its width, both at the frame's own weight.
+        const sd = paintedBounds(split[4..5]);
+        const ud = paintedBounds(unified[4..5]);
+        try testing.expectEqual(m.stroke_outline, sd.width());
+        try testing.expectEqual(m.stroke_outline, ud.height());
+        try testing.expectEqual(sd.height(), ud.width());
     }
 }
 

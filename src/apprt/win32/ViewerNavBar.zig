@@ -65,16 +65,20 @@ pub const WM_APP_OVERFLOW_MENU: u32 = w32.WM_APP + 2;
 
 const edit_id: usize = 1;
 
-/// Bytes the tooltip log line may hold: seven buttons, each a name and two
-/// rects.
-const tip_log_cap: usize = 512;
+/// Bytes the tooltip log line may hold: every button in the strip, each a name
+/// and two rects at roughly 70 bytes. Sized with headroom because the writer
+/// that fills it drops what does not fit WITHOUT saying so — and this line is
+/// the acceptance script's only oracle, so a silent truncation would read as a
+/// missing tooltip rather than as a short buffer (T817 took the strip from
+/// seven buttons to ten).
+const tip_log_cap: usize = 1024;
 
 /// A button's tooltip tool id, in this bar's own tool space. Keyed on the
 /// button so the strip's shape can change without renumbering anything: the
 /// contents toggle and the feedback button both come and go.
 fn tipId(b: layout_mod.Button) usize {
-    // Widened BEFORE the offset: the enum's tag is a u3, and `+ 2` on the last
-    // button overflows it rather than producing 8.
+    // Widened BEFORE the offset: the enum's tag is a small unsigned int, and
+    // `+ 2` on the last button overflows it rather than producing the next id.
     return @as(usize, @intFromEnum(b)) + 2;
 }
 
@@ -119,6 +123,12 @@ home_len: usize = 0,
 /// the action it would perform, and a diff pane's card lists files.
 contents_open: bool = false,
 diff_mode: bool = false,
+
+/// Whether the diff pane is rendering side by side (T817), pushed by the pane
+/// with `diff_mode` through `setDiffControls`. The layout toggle paints the
+/// arrangement the pane is IN and its tooltip names the one it would go to, so
+/// this is both the glyph and half the wording.
+diff_split: bool = false,
 
 /// The bar's tooltips, and the one control that shows them all. ONE TOOL PER
 /// PRESENT BUTTON (T639): a strip where one of six buttons explains itself and
@@ -353,7 +363,11 @@ pub fn applyTheme(self: *ViewerNavBar) void {
 /// the two flags become the layout's input, so the paint, the hit test and the
 /// placement cannot disagree about the strip they are describing.
 pub fn shown(self: *const ViewerNavBar) layout_mod.Shown {
-    return .{ .contents = self.show_contents, .feedback = self.worktree_len > 0 };
+    return .{
+        .contents = self.show_contents,
+        .feedback = self.worktree_len > 0,
+        .diff = self.diff_mode,
+    };
 }
 
 /// Position the bar across the top of the pane and its EDIT inside it.
@@ -434,6 +448,21 @@ pub fn setContentsButton(self: *ViewerNavBar, show: bool, open: bool, diff: bool
     self.diff_mode = diff;
     self.syncTip(self.currentLayout());
     _ = w32.InvalidateRect(self.hwnd, null, 1);
+}
+
+/// Whether this pane is a diff, and which layout it is rendering in (T817).
+/// The first decides whether the three diff controls exist at all, so a change
+/// to it changes the STRIP's shape — which is why this returns whether the
+/// presence moved, exactly like `setWorktree`: the pane then pays for one
+/// re-layout, and a style flip (the common case) costs a repaint.
+pub fn setDiffControls(self: *ViewerNavBar, diff: bool, split: bool) bool {
+    if (self.diff_mode == diff and self.diff_split == split) return false;
+    const was = self.diff_mode;
+    self.diff_mode = diff;
+    self.diff_split = split;
+    self.syncTip(self.currentLayout());
+    _ = w32.InvalidateRect(self.hwnd, null, 1);
+    return was != diff;
 }
 
 /// Point the Home button's tooltip at where Home would go (T639), or take the
@@ -554,6 +583,7 @@ fn labelState(self: *const ViewerNavBar) layout_mod.Labels {
     return .{
         .contents_open = self.contents_open,
         .diff = self.diff_mode,
+        .diff_split = self.diff_split,
         .home = self.home[0..self.home_len],
         .worktree = self.worktree[0..self.worktree_len],
     };
@@ -767,11 +797,16 @@ fn buttonEnabled(self: *const ViewerNavBar, b: layout_mod.Button) bool {
         // Never disabled: a feedback button with nowhere to file is ABSENT,
         // which the layout expresses as an empty rect. The overflow control is
         // only ever placed when it has something in it.
+        // The three diff controls are never disabled: the page answers a
+        // step with nowhere to go by rolling into the adjacent file, and
+        // running out of files is a no-op rather than a state the bar can see
+        // from here (Mac does not disable them either).
         .reload, .home, .feedback, .overflow => true,
+        .prev_change, .next_change, .diff_style => true,
     };
 }
 
-fn buttonGlyph(b: layout_mod.Button) icon_button.Glyph {
+fn buttonGlyph(b: layout_mod.Button, split: bool) icon_button.Glyph {
     return switch (b) {
         .contents => .contents,
         .back => .back,
@@ -780,6 +815,13 @@ fn buttonGlyph(b: layout_mod.Button) icon_button.Glyph {
         .home => .home,
         .overflow => .overflow,
         .feedback => .feedback,
+        .prev_change => .chevron_up,
+        .next_change => .chevron_down,
+        // The mark shows the arrangement the pane is IN — Mac swaps the same
+        // two symbols on the same condition. On win32 it is the only state
+        // this button has: the bar paints no latched tint, so a single glyph
+        // would leave the control saying nothing about the pane.
+        .diff_style => if (split) .diff_split else .diff_unified,
     };
 }
 
@@ -795,6 +837,11 @@ fn overflowTitle(b: layout_mod.Button) [:0]const u16 {
         .reload => L("Reload"),
         .home => L("Home"),
         .feedback => L("Send feedback…"),
+        .prev_change => L("Previous change"),
+        .next_change => L("Next change"),
+        // Wordier than the tooltip on purpose: a menu item is read cold,
+        // without the pane's layout in front of the reader to explain it.
+        .diff_style => L("Switch diff layout"),
         // Never in its own menu.
         .overflow => L("More"),
     };
@@ -891,7 +938,7 @@ fn paint(self: *ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) void {
         // State is never color alone — but disabled MAY be, per the design
         // system's own state table: the dimmed glyph plus the dead hover is
         // the standard Windows treatment.
-        const glyph = buttonGlyph(b);
+        const glyph = buttonGlyph(b, self.diff_split);
         const color = if (enabled) self.text_ref else self.secondary_ref;
         icon_paint.glyph(hdc, m, icon_button.glyphTarget(m, box, glyph), glyph, color);
     }
@@ -1051,6 +1098,9 @@ fn activate(self: *ViewerNavBar, b: layout_mod.Button) void {
         .reload => self.pane.reloadFromChrome(),
         .home => self.pane.goHome(),
         .feedback => self.pane.toggleFeedback(),
+        .prev_change => self.pane.diffNav(false),
+        .next_change => self.pane.diffNav(true),
+        .diff_style => self.pane.toggleDiffStyle(),
         // Posted, never tracked inline — see WM_APP_OVERFLOW_MENU.
         .overflow => _ = w32.PostMessageW(self.hwnd, WM_APP_OVERFLOW_MENU, 0, 0),
     }

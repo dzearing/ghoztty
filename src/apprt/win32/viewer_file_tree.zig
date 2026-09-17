@@ -293,6 +293,33 @@ fn contains(set: []const []const u8, key: []const u8) bool {
     return false;
 }
 
+/// The file that comes next (or previous) after `current` in the tree the
+/// reader is looking at — the answer "next change" needs once the open file
+/// has no further hunk in that direction (T817). Returns the row's `file`
+/// index, or null when there is nowhere to go.
+///
+/// The walk is over the tree's VISIBLE rows rather than the diff's whole file
+/// list, so it follows what is on screen: a folder the reader clicked shut is
+/// not somewhere the next-change button should land them (Mac walks
+/// `visibleFiles` for the same reason). A `current` the tree is not showing —
+/// its folder was collapsed while it was open — also answers null: moving on
+/// from a file that is not in view would be a jump out of nowhere.
+pub fn adjacentFile(rows: []const Row, current: []const u8, forward: bool) ?usize {
+    var prev: ?usize = null;
+    var at_current = false;
+    for (rows) |row| {
+        if (row.kind != .file) continue;
+        if (at_current) return if (forward) row.file else null;
+        if (std.mem.eql(u8, row.id, current)) {
+            if (!forward) return prev; // null at the first file: nowhere back
+            at_current = true;
+            continue;
+        }
+        prev = row.file;
+    }
+    return null;
+}
+
 /// The last path component. `git` speaks forward slashes on every platform, so
 /// this reads the same for a Windows repository as for a POSIX one.
 pub fn baseName(path: []const u8) []const u8 {
@@ -617,4 +644,55 @@ test "a file row copies the facts the card draws, rather than pointing at them" 
     try testing.expectEqual(@as(u32, 3), tree.rows[0].deletions);
     try testing.expect(!tree.rows[0].binary);
     try testing.expect(tree.rows[1].binary);
+}
+
+test "T817: next/previous change walks to the adjacent VISIBLE file" {
+    const alloc = testing.allocator;
+    const files = [_]diff.File{
+        file("README.md", .committed),
+        file("src/main.zig", .committed),
+        file("src/apprt.zig", .committed),
+    };
+    var tree = try build(alloc, &files, &.{});
+    defer tree.deinit();
+
+    // Reading order down the card: src/apprt.zig, src/main.zig, README.md.
+    const first = tree.rows[1].id;
+    const middle = tree.rows[2].id;
+    const last = tree.rows[3].id;
+
+    try testing.expectEqual(tree.rows[2].file, adjacentFile(tree.rows, first, true).?);
+    try testing.expectEqual(tree.rows[3].file, adjacentFile(tree.rows, middle, true).?);
+    try testing.expectEqual(tree.rows[1].file, adjacentFile(tree.rows, middle, false).?);
+    try testing.expectEqual(tree.rows[2].file, adjacentFile(tree.rows, last, false).?);
+
+    // Off either end is a no-op, never a wrap: the reader asked for the next
+    // change and there is not one.
+    try testing.expectEqual(@as(?usize, null), adjacentFile(tree.rows, last, true));
+    try testing.expectEqual(@as(?usize, null), adjacentFile(tree.rows, first, false));
+
+    // A file nothing in the tree names answers nothing rather than the head of
+    // the list — a jump out of nowhere is worse than standing still.
+    try testing.expectEqual(@as(?usize, null), adjacentFile(tree.rows, "nope.md", true));
+}
+
+test "T817: a shut folder's files are not somewhere next-change lands" {
+    const alloc = testing.allocator;
+    const files = [_]diff.File{
+        file("README.md", .committed),
+        file("src/main.zig", .committed),
+    };
+    // `src` collapsed: the card shows the folder row and README.md only, so
+    // stepping off README.md backwards has nowhere to go — walking into a file
+    // the reader cannot see in the card would be the jump this rule prevents.
+    var tree = try build(alloc, &files, &.{"committed:src"});
+    defer tree.deinit();
+
+    var visible: usize = 0;
+    for (tree.rows) |r| {
+        if (r.kind == .file) visible += 1;
+    }
+    try testing.expectEqual(@as(usize, 1), visible);
+    try testing.expectEqual(@as(?usize, null), adjacentFile(tree.rows, "README.md", false));
+    try testing.expectEqual(@as(?usize, null), adjacentFile(tree.rows, "README.md", true));
 }

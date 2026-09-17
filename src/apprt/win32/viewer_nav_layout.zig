@@ -46,13 +46,58 @@ pub const field_min_dip: f32 = 72.0;
 /// ones it dropped in a popup menu. It is a CONSEQUENCE of the layout rather
 /// than an input to it — nothing asks for it, the arithmetic decides — which is
 /// why it has no flag in `Shown`.
-pub const Button = enum { contents, back, forward, reload, home, overflow, feedback };
+/// `prev_change` / `next_change` / `diff_style` exist only in a DIFF pane
+/// (T817), and sit after Home exactly where Mac's chrome bar puts them
+/// (`ViewerSplitLeaf.chrome`). They are three more buttons in the same strip
+/// rather than a second row: a diff pane keeps this bar open anyway, so a
+/// separate control strip would be a second permanent band of chrome buying
+/// nothing.
+pub const Button = enum {
+    contents,
+    back,
+    forward,
+    reload,
+    home,
+    prev_change,
+    next_change,
+    diff_style,
+    overflow,
+    feedback,
+};
 pub const button_count = std.enums.values(Button).len;
 
-/// The leading cluster, in strip order, before the overflow control. The
-/// order is also the SHED order read backwards: what goes into the menu first
-/// is what is reached for least.
-const leading_order = [_]Button{ .contents, .back, .forward, .reload, .home };
+/// The leading cluster, in strip order, before the overflow control.
+const leading_order = [_]Button{
+    .contents,
+    .back,
+    .forward,
+    .reload,
+    .home,
+    .prev_change,
+    .next_change,
+    .diff_style,
+};
+
+/// The order commands are given up to the overflow menu as the pane narrows:
+/// what goes into the menu FIRST is what is reached for least.
+///
+/// Until T817 this was `leading_order` read backwards, which is the same list
+/// while the strip ends at Home. It cannot stay implicit now that it does not:
+/// in a diff pane the whole point of the bar is stepping changes, so the diff
+/// controls outlive back/forward — the buttons a reader walking a diff touches
+/// least — even though they are painted after them. The contents toggle still
+/// sheds last, in a diff pane because it opens the file list and elsewhere
+/// because it is the compact TOC's only opener.
+const shed_order = [_]Button{
+    .home,
+    .reload,
+    .forward,
+    .back,
+    .diff_style,
+    .prev_change,
+    .next_change,
+    .contents,
+};
 
 /// Which of the two conditional buttons this bar is showing. A struct rather
 /// than positional bools so a third condition cannot silently swap with a
@@ -60,7 +105,26 @@ const leading_order = [_]Button{ .contents, .back, .forward, .reload, .home };
 pub const Shown = struct {
     contents: bool = false,
     feedback: bool = false,
+    /// Whether this pane is showing a diff, which is the whole condition on
+    /// the three diff controls — Mac gates them on `isDiffMode` and nothing
+    /// else, because a diff pane always has changes to step and a layout to
+    /// choose, even when the diff turns out to be empty.
+    diff: bool = false,
 };
+
+/// Whether this bar asks for `b` at all. The one place a button's PRESENCE
+/// condition lives, so the strip order, the shed order and the reachability
+/// assertion cannot disagree about which commands exist on a given bar.
+pub fn asks(shown: Shown, b: Button) bool {
+    return switch (b) {
+        .contents => shown.contents,
+        .feedback => shown.feedback,
+        .prev_change, .next_change, .diff_style => shown.diff,
+        // The "…" is a consequence of the layout, never something asked for.
+        .overflow => false,
+        .back, .forward, .reload, .home => true,
+    };
+}
 
 /// Everything the bar paints, in physical pixels, for one scale and width.
 pub const Layout = struct {
@@ -119,16 +183,15 @@ pub const Layout = struct {
         var order: [leading_order.len]Button = undefined;
         var wanted: usize = 0;
         for (leading_order) |b| {
-            if (b == .contents and !shown.contents) continue;
+            if (!asks(shown, b)) continue;
             order[wanted] = b;
             wanted += 1;
         }
 
         // Pick the widest arrangement this pane can actually pay for: the most
         // leading buttons — then the trailing feedback button — that still
-        // leaves a LEGIBLE address field. Shedding is one direction only, from
-        // the trailing end of the leading cluster inward, so widening can never
-        // take a control away.
+        // leaves a LEGIBLE address field. Shedding walks `shed_order` and only
+        // ever forwards, so widening can never take a control away.
         //
         // Since T1159 what is shed does not vanish: the moment anything is,
         // the cluster ends in a "…" control carrying the dropped commands, so
@@ -136,17 +199,21 @@ pub const Layout = struct {
         // control costs a slot, which is why it is inside the search instead of
         // bolted on after it.
         const Fit = struct {
-            leading: usize,
+            /// How many of `shed_order`'s entries have been given up. The
+            /// SHAPE of the fit, not a count of what is painted: the strip
+            /// order and the shed order are two different lists since T817, so
+            /// "the first k of the strip" no longer describes a bar.
+            shed: usize,
             feedback: bool,
             overflow: bool,
             field: bool,
         };
-        var fit: Fit = .{ .leading = 0, .feedback = false, .overflow = false, .field = false };
-        var k: usize = wanted;
+        var fit: Fit = .{ .shed = wanted, .feedback = false, .overflow = false, .field = false };
+        var shed: usize = 0;
         var want_fb = shown.feedback;
         while (true) {
-            const ovf = (k < wanted) or (shown.feedback and !want_fb);
-            const slots: i32 = @intCast(k + @intFromBool(ovf));
+            const ovf = (shed > 0) or (shown.feedback and !want_fb);
+            const slots: i32 = @intCast(wanted - shed + @intFromBool(ovf));
             const cluster: i32 = slots * slot;
             const fb_left = width - pad - m.target;
             const f_left = if (slots > 0) cluster + field_gap else pad;
@@ -155,11 +222,11 @@ pub const Layout = struct {
                 (!want_fb or (fb_left >= cluster + pad and fb_left >= pad)) and
                 (f_right - f_left >= field_min);
             if (room) {
-                fit = .{ .leading = k, .feedback = want_fb, .overflow = ovf, .field = true };
+                fit = .{ .shed = shed, .feedback = want_fb, .overflow = ovf, .field = true };
                 break;
             }
-            if (k > 0) {
-                k -= 1;
+            if (shed < wanted) {
+                shed += 1;
                 continue;
             }
             if (want_fb) {
@@ -170,8 +237,21 @@ pub const Layout = struct {
             // the "…" — one whole control the user can still reach every
             // command through — and even that goes if the band cannot hold it.
             const ovf_only = (wanted > 0 or shown.feedback) and pad + m.target <= width - pad;
-            fit = .{ .leading = 0, .feedback = false, .overflow = ovf_only, .field = false };
+            fit = .{ .shed = wanted, .feedback = false, .overflow = ovf_only, .field = false };
             break;
+        }
+
+        // Which commands this fit gave up, resolved from the shed order onto
+        // the buttons the strip actually asked for.
+        var is_shed = [_]bool{false} ** button_count;
+        {
+            var n: usize = 0;
+            for (shed_order) |b| {
+                if (n >= fit.shed) break;
+                if (!asks(shown, b)) continue;
+                is_shed[@intFromEnum(b)] = true;
+                n += 1;
+            }
         }
 
         var buttons: [button_count]Rect = undefined;
@@ -182,8 +262,8 @@ pub const Layout = struct {
         }
 
         var x = pad;
-        for (order[0..wanted], 0..) |b, i| {
-            if (i < fit.leading) {
+        for (order[0..wanted]) |b| {
+            if (!is_shed[@intFromEnum(b)]) {
                 buttons[@intFromEnum(b)] = .{
                     .left = x,
                     .top = top,
@@ -299,6 +379,11 @@ pub const Labels = struct {
     /// The working tree a report would file into. Empty => the feedback button
     /// is ABSENT rather than disabled, so it has no tooltip at all.
     worktree: []const u8 = "",
+    /// Whether the diff pane is rendering side by side (T817). The layout
+    /// toggle names the state it is IN and the one it would go to, which is
+    /// Mac's wording exactly — a toggle that named only the destination reads
+    /// as a claim about what is on screen.
+    diff_split: bool = false,
 };
 
 /// The tooltip for one button, into `buf`. Mac's `.help(...)` on the chrome
@@ -327,6 +412,14 @@ pub fn label(buf: []u8, which: Button, state: Labels) []const u8 {
             "Home"
         else
             std.fmt.bufPrint(buf, "Home \u{2014} back to {s}", .{state.home}) catch "Home",
+        // Mac's `.help` / `.accessibilityLabel` on the same three controls,
+        // word for word (T817).
+        .prev_change => "Previous change",
+        .next_change => "Next change",
+        .diff_style => if (state.diff_split)
+            "Side-by-side \u{2014} switch to unified"
+        else
+            "Unified \u{2014} switch to side-by-side",
         // Mac has no overflow control; this is the strip's own, and its menu
         // already words itself the same way (`ViewerNavBar.overflowTitle`).
         .overflow => "More",
@@ -531,12 +624,7 @@ test "T1159: nothing the bar drops becomes unreachable" {
                 const l = Layout.init(scale, width, shown);
                 var folded: usize = 0;
                 for (std.enums.values(Button)) |b| {
-                    const asked = switch (b) {
-                        .contents => shown.contents,
-                        .feedback => shown.feedback,
-                        .overflow => false,
-                        else => true,
-                    };
+                    const asked = asks(shown, b);
                     const painted = l.button(b).width() > 0;
                     const in_menu = l.overflowed[@intFromEnum(b)];
                     try testing.expect(!(painted and in_menu));
@@ -585,26 +673,52 @@ test "T1159: the overflow menu lists the dropped commands in strip order" {
     try testing.expect(!wide.hasOverflow());
     try testing.expectEqual(@as(usize, 0), wide.overflowItems(&buf).len);
 
-    // In between, the strip sheds from the TRAILING end of the leading
-    // cluster, so what lands in the menu first is what is reached for least.
+    // In between, the strip sheds along `shed_order`, so what lands in the
+    // menu first is what is reached for least. Stated as a PREFIX of that
+    // order rather than as a suffix of the strip (T817): the two lists were
+    // the same one until the diff controls arrived, and only one of them is
+    // the rule.
+    const shown: Shown = .{ .contents = true, .feedback = true };
+    var asked_leading: usize = 0;
+    for (leading_order) |b| {
+        if (asks(shown, b)) asked_leading += 1;
+    }
     var seen_partial = false;
     var width: i32 = 0;
     while (width <= px(600.0, scale)) : (width += 1) {
-        const l = Layout.init(scale, width, .{ .contents = true, .feedback = true });
+        const l = Layout.init(scale, width, shown);
         const items = l.overflowItems(&buf);
-        if (items.len == 0 or items.len == 6) continue;
+        if (items.len == 0 or items.len == asked_leading + 1) continue;
         seen_partial = true;
-        // Whatever is folded is a SUFFIX of the leading cluster — no hole in
-        // the middle of the painted strip — and the trailing feedback button
-        // only ever joins them once the whole cluster has already gone.
+        // The trailing feedback button only ever joins them once the whole
+        // leading cluster has already gone.
         const fb_in = items[items.len - 1] == .feedback;
         const lead = if (fb_in) items[0 .. items.len - 1] else items;
-        if (fb_in) try testing.expectEqual(leading_order.len, lead.len);
-        try testing.expectEqualSlices(
-            Button,
-            leading_order[leading_order.len - lead.len ..],
-            lead,
-        );
+        if (fb_in) try testing.expectEqual(asked_leading, lead.len);
+
+        // What is folded is exactly the first `lead.len` commands of the shed
+        // order...
+        var want = [_]bool{false} ** button_count;
+        var n: usize = 0;
+        for (shed_order) |b| {
+            if (n >= lead.len) break;
+            if (!asks(shown, b)) continue;
+            want[@intFromEnum(b)] = true;
+            n += 1;
+        }
+        try testing.expectEqual(lead.len, n);
+        for (lead) |b| try testing.expect(want[@intFromEnum(b)]);
+
+        // ...listed in STRIP order, which is what makes the menu read like the
+        // bar it stands in for.
+        var prev: usize = 0;
+        for (lead) |b| {
+            const at = for (leading_order, 0..) |c, i| {
+                if (c == b) break i;
+            } else unreachable;
+            try testing.expect(at >= prev);
+            prev = at;
+        }
     }
     try testing.expect(seen_partial);
 }
@@ -753,6 +867,150 @@ test "the feedback button's tooltip names its worktree, or does not exist (T639)
     // Outside a working tree the button is ABSENT, so it is asked for no
     // label at all; an empty answer is how the bar hears that.
     try testing.expectEqualStrings("", label(&buf, .feedback, .{}));
+}
+
+test "T817: the diff controls follow Home, and exist only in a diff pane" {
+    for (scales) |scale| {
+        const m = icon_button.Metrics.init(scale);
+        const gap = px(4.0, scale);
+        const width = px(600.0, scale);
+        const plain = Layout.init(scale, width, .{});
+        const diff = Layout.init(scale, width, .{ .diff = true });
+
+        for ([_]Button{ .prev_change, .next_change, .diff_style }) |b| {
+            // Absent outside a diff: no room taken, and no hit answered even
+            // dead on the square the diff bar puts it in.
+            try testing.expectEqual(@as(i32, 0), plain.button(b).width());
+            const at = diff.button(b);
+            try testing.expect(plain.hitButton(scale, at.left + 1, at.top + 1) != b);
+
+            // Present in one: the shared square, on the buttons' own band.
+            try testing.expectEqual(m.target, at.width());
+            try testing.expectEqual(m.target, at.height());
+            try testing.expectEqual(diff.button(.home).top, at.top);
+        }
+
+        // In Mac's order, after Home and before the field, each clearing the
+        // last by the design system's 4 DIP.
+        try testing.expectEqual(diff.button(.home).right + gap, diff.button(.prev_change).left);
+        try testing.expectEqual(
+            diff.button(.prev_change).right + gap,
+            diff.button(.next_change).left,
+        );
+        try testing.expectEqual(
+            diff.button(.next_change).right + gap,
+            diff.button(.diff_style).left,
+        );
+        try testing.expect(diff.address.left - diff.button(.diff_style).right >= px(8.0, scale));
+
+        // Three more buttons cost the field three slots and nothing else.
+        try testing.expect(diff.address.right == plain.address.right);
+        try testing.expect(diff.address.left > plain.address.left);
+    }
+}
+
+test "T817: a narrowing diff pane gives up browsing before change-stepping" {
+    // The shed order, as the property it exists for rather than as a list: in
+    // a diff pane the controls this task added are what the bar is FOR, so
+    // they outlive back/forward even though they are painted after them. Walked
+    // one pixel at a time — the crossover width is not a number anybody should
+    // have to name.
+    for (scales) |scale| {
+        const m = icon_button.Metrics.init(scale);
+        var width: i32 = 0;
+        while (width <= m.target * 14) : (width += 1) {
+            const l = Layout.init(scale, width, .{ .diff = true, .contents = true });
+            const painted = struct {
+                fn f(lay: Layout, b: Button) bool {
+                    return lay.button(b).width() > 0;
+                }
+            }.f;
+            // Back/forward/reload/home are painted only while every diff
+            // control still is.
+            for ([_]Button{ .back, .forward, .reload, .home }) |b| {
+                if (!painted(l, b)) continue;
+                for ([_]Button{ .prev_change, .next_change, .diff_style }) |d| {
+                    try testing.expect(painted(l, d));
+                }
+            }
+            // ...and the contents toggle outlives the lot, in a diff pane
+            // because it is what opens the file list.
+            for ([_]Button{ .prev_change, .next_change, .diff_style }) |d| {
+                if (painted(l, d)) try testing.expect(painted(l, .contents));
+            }
+        }
+    }
+}
+
+test "T817: nothing a diff bar drops becomes unreachable" {
+    // The T1159 invariant, re-asserted over the bar's new shape: at every
+    // width, a command a DIFF bar asked for is either painted or in the menu —
+    // never both, never neither while the "…" is up.
+    for (scales) |scale| {
+        const m = icon_button.Metrics.init(scale);
+        for ([_]Shown{
+            .{ .diff = true },
+            .{ .diff = true, .contents = true },
+            .{ .diff = true, .feedback = true },
+            .{ .diff = true, .contents = true, .feedback = true },
+        }) |shown| {
+            var width: i32 = 0;
+            while (width <= m.target * 16) : (width += 1) {
+                const l = Layout.init(scale, width, shown);
+                var folded: usize = 0;
+                for (std.enums.values(Button)) |b| {
+                    const painted = l.button(b).width() > 0;
+                    const in_menu = l.overflowed[@intFromEnum(b)];
+                    try testing.expect(!(painted and in_menu));
+                    if (!asks(shown, b)) try testing.expect(!in_menu);
+                    if (asks(shown, b) and l.hasOverflow()) {
+                        try testing.expect(painted or in_menu);
+                    }
+                    if (painted) try testing.expect(b == .overflow or asks(shown, b));
+                    if (in_menu) folded += 1;
+                }
+                try testing.expectEqual(l.hasOverflow(), folded > 0);
+                // Containment holds with eight leading buttons in the strip.
+                for (l.buttons) |b| {
+                    if (b.width() <= 0) continue;
+                    try testing.expect(b.left >= 0);
+                    try testing.expect(b.right <= width);
+                }
+                const fw = l.address.width();
+                try testing.expect(fw == 0 or fw >= px(field_min_dip, scale));
+            }
+        }
+    }
+}
+
+test "T817: widening a diff bar never takes a control away" {
+    const scale: f32 = 1.25;
+    const m = icon_button.Metrics.init(scale);
+    var painted_prev: usize = 0;
+    var width: i32 = 0;
+    while (width <= m.target * 16) : (width += 1) {
+        const l = Layout.init(scale, width, .{ .diff = true, .contents = true, .feedback = true });
+        var painted: usize = 0;
+        for (l.buttons) |b| {
+            if (b.width() > 0) painted += 1;
+        }
+        try testing.expect(painted >= painted_prev);
+        painted_prev = painted;
+    }
+}
+
+test "T817: the layout toggle names the state it is in, and the one it offers" {
+    var buf: [512]u8 = undefined;
+    try testing.expectEqualStrings("Previous change", label(&buf, .prev_change, .{}));
+    try testing.expectEqualStrings("Next change", label(&buf, .next_change, .{}));
+    try testing.expectEqualStrings(
+        "Unified \u{2014} switch to side-by-side",
+        label(&buf, .diff_style, .{}),
+    );
+    try testing.expectEqualStrings(
+        "Side-by-side \u{2014} switch to unified",
+        label(&buf, .diff_style, .{ .diff_split = true }),
+    );
 }
 
 test "no button is left unlabelled (T639)" {

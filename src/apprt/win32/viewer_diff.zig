@@ -541,6 +541,54 @@ pub fn numstat(out: []const u8) NumstatIterator {
 // The `window.__viewer` calls
 // -------------------------------------------------------------------------
 
+/// The two layouts the diff page renders in (T817). The tag names ARE the
+/// page's spelling, so the wire value cannot drift from the enum: `diff.js`
+/// rejects anything but these two strings, silently, which is the shape of bug
+/// that survives a release.
+pub const Style = enum {
+    unified,
+    split,
+
+    /// What the page is told, and what the preference file holds.
+    pub fn wire(self: Style) []const u8 {
+        return @tagName(self);
+    }
+
+    /// The other one. A two-state toggle has no third case to get wrong, which
+    /// is why the button is a flip rather than a menu on both platforms
+    /// (Mac's `DiffViewStyle.next`).
+    pub fn next(self: Style) Style {
+        return switch (self) {
+            .unified => .split,
+            .split => .unified,
+        };
+    }
+
+    /// Read a persisted style. Null for anything else — a hand-edited or
+    /// truncated file reads as "no preference", exactly as if it were absent.
+    pub fn parse(text: []const u8) ?Style {
+        const trimmed = std.mem.trim(u8, text, " \t\r\n");
+        return std.meta.stringToEnum(Style, trimmed);
+    }
+};
+
+/// `window.__viewer.setDiffStyle("split")`. Caller owns the result.
+pub fn setDiffStyleCall(alloc: Allocator, style: Style) Allocator.Error![]u8 {
+    return std.fmt.allocPrint(alloc, "window.__viewer.setDiffStyle(\"{s}\")", .{style.wire()});
+}
+
+/// `window.__viewer.diffNav(1)` / `(-1)`: step one change forward or back
+/// inside the open file. The page answers a step past its last hunk with a
+/// `diffNavOverflow` message, which is what rolls the pane over to the
+/// adjacent FILE — see `ViewerPane.diffNav`.
+pub fn diffNavCall(alloc: Allocator, forward: bool) Allocator.Error![]u8 {
+    return std.fmt.allocPrint(
+        alloc,
+        "window.__viewer.diffNav({s})",
+        .{if (forward) "1" else "-1"},
+    );
+}
+
 /// What the page's diff header shows.
 pub const Listing = struct {
     title: []const u8,
@@ -548,8 +596,7 @@ pub const Listing = struct {
     file_count: usize = 0,
     additions: u64 = 0,
     deletions: u64 = 0,
-    /// `unified` or `split`, the page's own spelling.
-    style: []const u8 = "unified",
+    style: Style = .unified,
     /// Set when the listing is empty for a reason worth explaining — an error,
     /// or a clean working tree. The page renders it as a notice card.
     message: ?[]const u8 = null,
@@ -566,7 +613,7 @@ pub fn setDiffListingCall(alloc: Allocator, l: Listing) Allocator.Error![]u8 {
     try appendNumber(alloc, &out, "fileCount", l.file_count);
     try appendNumber(alloc, &out, "additions", l.additions);
     try appendNumber(alloc, &out, "deletions", l.deletions);
-    try appendString(alloc, &out, "style", l.style, false);
+    try appendString(alloc, &out, "style", l.style.wire(), false);
     if (l.message) |m| try appendString(alloc, &out, "message", m, false);
     if (l.detail) |d| try appendString(alloc, &out, "detail", d, false);
     try out.appendSlice(alloc, "})");

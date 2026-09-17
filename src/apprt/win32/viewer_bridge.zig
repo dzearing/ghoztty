@@ -276,6 +276,11 @@ pub const Message = union(enum) {
     /// DOM's absolute resolution of the attribute, so a relative link arrives
     /// resolved against the page's base.
     link_menu: []const u8,
+    /// The diff page ran out of changes in this direction and the next one is
+    /// in the adjacent FILE (T817). True steps forward, false back — the page
+    /// speaks in `1`/`-1`, and the sign is the only thing in the payload that
+    /// means anything, so it arrives as the question it answers.
+    diff_nav_overflow: bool,
     /// `find.js` counted the matches for a query (T1184). Sent on every search,
     /// every step, and every re-scan after the page changed underneath an open
     /// search — so the card's "3/17" is live without the pane polling anything.
@@ -359,6 +364,18 @@ fn parseMessage(aa: Allocator, json_text: []const u8) ?Message {
             },
             .note = nonEmpty(stringField(obj, "note")),
         } };
+    }
+    if (std.mem.eql(u8, kind, "diffNavOverflow")) {
+        // A direction of zero — or of the wrong type, or missing — is not a
+        // step, and rolling the pane into an arbitrary neighbour on it would
+        // move the reader somewhere nobody asked for. `diff.js` always sends
+        // ±1; any page may post anything.
+        const dir = switch (obj.get("direction") orelse return null) {
+            .integer => |n| n,
+            else => return null,
+        };
+        if (dir == 0) return null;
+        return .{ .diff_nav_overflow = dir > 0 };
     }
     if (std.mem.eql(u8, kind, "linkMenu")) {
         // No href is no link: the page suppressed its own menu for nothing, and
@@ -811,6 +828,36 @@ test "parse: a linkMenu with no href is dropped" {
         "{\"type\":\"linkMenu\"}",
         "{\"type\":\"linkMenu\",\"href\":\"\"}",
         "{\"type\":\"linkMenu\",\"href\":42}",
+    }) |case| {
+        if (parse(testing.allocator, case)) |p| {
+            p.deinit();
+            return error.MessageShouldHaveBeenIgnored;
+        }
+    }
+}
+
+test "T817: parse: the diff page reports which way it ran out of changes" {
+    for ([_]struct { json: []const u8, forward: bool }{
+        .{ .json = "{\"type\":\"diffNavOverflow\",\"direction\":1}", .forward = true },
+        .{ .json = "{\"type\":\"diffNavOverflow\",\"direction\":-1}", .forward = false },
+        // The page speaks in ±1, but the sign is all that is read: a bigger
+        // step is still a step in that direction.
+        .{ .json = "{\"type\":\"diffNavOverflow\",\"direction\":4}", .forward = true },
+    }) |case| {
+        const parsed = parse(testing.allocator, case.json).?;
+        defer parsed.deinit();
+        try testing.expectEqual(case.forward, parsed.message.diff_nav_overflow);
+    }
+}
+
+test "T817: parse: a directionless overflow moves nobody" {
+    // Rolling the pane into an adjacent file on a payload that never said
+    // which way would take the reader somewhere nobody asked for.
+    for ([_][]const u8{
+        "{\"type\":\"diffNavOverflow\"}",
+        "{\"type\":\"diffNavOverflow\",\"direction\":0}",
+        "{\"type\":\"diffNavOverflow\",\"direction\":\"next\"}",
+        "{\"type\":\"diffNavOverflow\",\"direction\":null}",
     }) |case| {
         if (parse(testing.allocator, case)) |p| {
             p.deinit();

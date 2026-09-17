@@ -571,10 +571,14 @@ diff_collapsed: std.ArrayList([]u8) = .empty,
 /// `force` flag, for the same case.
 diff_pushed: bool = false,
 
-/// The layout the diff page renders in — `unified` or `split`. In-session for
-/// now; the controls that change it live in the nav bar, which the win32 diff
-/// pane does not have yet (filed separately).
-diff_style: []const u8 = "unified",
+/// The layout the diff page renders in. Seeded from the persisted preference
+/// the first time a diff opens and written back whenever the bar's toggle
+/// flips it (T817), so the choice follows the reader across panes and sessions
+/// the way Mac's `diffViewStyle` default does.
+///
+/// `null` until that first read: the preference needs an allocator, and a pane
+/// that never shows a diff must not pay for a file open.
+diff_style: ?viewer_diff.Style = null,
 
 /// The feedback composer (T634). Created hidden alongside the nav bar, in
 /// `ensureNav`, because that is the one place with both halves it needs (a
@@ -1076,6 +1080,10 @@ fn ensureNav(self: *ViewerPane, alloc: Allocator, hinstance: ?w32.HINSTANCE, hwn
     // home it recorded then is replayed here -- the same rule `pushAddress`
     // above already follows.
     self.pushHome();
+    // ...and so is the pane's mode, for the same reason and with the same
+    // rule: a diff pane is told what it is showing long before it has a bar
+    // to put the change controls on (T817).
+    self.pushDiffControls();
     // The worktree probe needs the same two halves and lands with the bar it
     // puts a button on. Its first resolution runs for wherever `navigate`
     // already put the pane, which is normally before either half exists.
@@ -1760,6 +1768,9 @@ pub fn navigate(self: *ViewerPane, alloc: Allocator, requested: []const u8) Allo
     const was_template = self.mode.usesTemplate();
     const was_diff = self.mode == .diff;
     self.mode = content.modeFor(url);
+    // The three diff controls exist only in a diff pane, so the strip's shape
+    // moves with the mode (T817).
+    self.pushDiffControls();
     // Leaving a diff: the card stops listing files. Symmetrical with the
     // headings rule below, and for the same reason — nothing will arrive to
     // retract a file tree whose diff is gone, so a markdown document opened
@@ -1984,7 +1995,7 @@ fn applyDiffListing(self: *ViewerPane, alloc: Allocator) void {
         .file_count = files,
         .additions = additions,
         .deletions = deletions,
-        .style = self.diff_style,
+        .style = self.diffStyle(alloc),
     };
     if (probe.failure) |*f| {
         const view = f.view();
@@ -1997,13 +2008,17 @@ fn applyDiffListing(self: *ViewerPane, alloc: Allocator) void {
     // The acceptance oracle. `+list` cannot see inside a WebView2 and the suite
     // runs on a background desktop, so the GUI's own stderr is where "this pane
     // really rendered this diff" has to be readable (the T633 rule, same shape).
-    log.info("viewer diff pane={s} spec={s} repo={s} files={d} +{d} -{d} status={s}", .{
+    // `style=` sits BEFORE `status=` because the status text has spaces in it
+    // ("Not a git repository") and the acceptance script's match runs to the
+    // end of the line — a field after it would be swallowed into the status.
+    log.info("viewer diff pane={s} spec={s} repo={s} files={d} +{d} -{d} style={s} status={s}", .{
         self.paneId(),
         self.location orelse "",
         probe.repo orelse "<none>",
         files,
         additions,
         deletions,
+        listing.style.wire(),
         listing.message orelse "ok",
     });
 
@@ -2634,6 +2649,7 @@ fn applyMessage(self: *ViewerPane, alloc: Allocator, message: bridge.Message) vo
         .link_menu => |href| self.armLinkMenu(alloc, href),
         .image => |img| self.applyImageMessage(alloc, img),
         .find => |f| self.applyFindMessage(f),
+        .diff_nav_overflow => |forward| self.diffNavOverflow(alloc, forward),
     }
 }
 
@@ -5459,6 +5475,113 @@ fn pushHome(self: *ViewerPane) void {
     nav.setHome(self.home_location);
 }
 
+// -------------------------------------------------------------------------
+// The nav bar's diff controls (T817)
+// -------------------------------------------------------------------------
+
+/// The layout this pane's diff renders in: the pane's own choice once it has
+/// one, else the persisted preference. Read through here rather than off the
+/// field so the seeding happens exactly once, at the first place that asks.
+fn diffStyle(self: *ViewerPane, alloc: Allocator) viewer_diff.Style {
+    if (self.diff_style) |s| return s;
+    const s = viewer_prefs.loadDiffStyle(alloc);
+    self.diff_style = s;
+    return s;
+}
+
+/// Whether the bar shows the three diff controls, and which layout the toggle
+/// paints. A change of PRESENCE re-lays the strip (three buttons arrive or
+/// leave), which is why this drives a bounds sync on exactly that — the same
+/// contract `pushWorktree` has with `setWorktree`.
+fn pushDiffControls(self: *ViewerPane) void {
+    const nav = self.nav orelse return;
+    const diff = self.mode == .diff;
+    // Reading the preference needs an allocator, and taking the controls AWAY
+    // must not depend on having one: a pane torn down far enough to have lost
+    // its `pending` still has to stop showing three buttons that do nothing.
+    const split = split: {
+        if (!diff) break :split false;
+        if (self.pending) |p| break :split self.diffStyle(p.alloc) == .split;
+        break :split (self.diff_style orelse .unified) == .split;
+    };
+    if (nav.setDiffControls(diff, split)) self.syncBounds();
+}
+
+/// The layout toggle: flip the pane's diff between unified and side by side,
+/// remember the choice for every future diff pane, and tell the page.
+///
+/// The preference is written even when the page cannot be told (a diff still
+/// loading): the reader pressed the button, so the answer to "what layout do
+/// you read diffs in" has changed whether or not this pane could act on it,
+/// and the load that follows renders in the new one.
+pub fn toggleDiffStyle(self: *ViewerPane) void {
+    if (self.mode != .diff) return;
+    const p = self.pending orelse return;
+    const next = self.diffStyle(p.alloc).next();
+    self.diff_style = next;
+    viewer_prefs.saveDiffStyle(p.alloc, next);
+    log.info("viewer diff pane={s} style={s}", .{ self.paneId(), next.wire() });
+    self.pushDiffControls();
+    if (!self.page_loaded) return;
+    const js = viewer_diff.setDiffStyleCall(p.alloc, next) catch return;
+    defer p.alloc.free(js);
+    self.executeScript(p.alloc, js);
+}
+
+/// Step to the next / previous change (Mac's `goToNextChange`).
+///
+/// Inside the open file this is a hunk jump, done page-side because only the
+/// page knows where the hunks landed. A step past the last one comes back as
+/// `diffNavOverflow`, which rolls the pane into the adjacent FILE — that is
+/// what "next change" means across a diff of many files.
+pub fn diffNav(self: *ViewerPane, forward: bool) void {
+    if (self.mode != .diff) return;
+    const p = self.pending orelse return;
+    // Nothing open yet: the first change is the first file's, so the button
+    // opens it rather than doing nothing at all.
+    if (self.diff_file == null) {
+        self.openDiffFile(p.alloc, 0, if (forward) "first" else "last");
+        return;
+    }
+    if (!self.page_loaded) return;
+    const js = viewer_diff.diffNavCall(p.alloc, forward) catch return;
+    defer p.alloc.free(js);
+    self.executeScript(p.alloc, js);
+}
+
+/// The page ran out of changes in `forward`: move to the adjacent file and
+/// enter it at the end the reader is arriving from, so walking a diff backwards
+/// reads in reverse instead of skipping to each file's top.
+///
+/// The walk is over the SIDE PANEL's file rows, not the probe's list, so it
+/// follows what the reader can see: a folder they clicked shut is not somewhere
+/// "next change" should land them (Mac walks `visibleFiles` for the same
+/// reason). A pane with no tree yet falls back to the probe's own order.
+fn diffNavOverflow(self: *ViewerPane, alloc: Allocator, forward: bool) void {
+    if (self.mode != .diff) return;
+    const probe = if (self.diff_probe) |*p| p else return;
+    const current = self.diff_file orelse return;
+
+    const scroll_to: []const u8 = if (forward) "first" else "last";
+    if (self.diff_tree) |tree| {
+        // Off the end of the diff is a no-op, not a wrap: the reader asked for
+        // the next change, and there is not one.
+        const at = file_tree.adjacentFile(tree.rows, current, forward) orelse return;
+        self.openDiffFile(alloc, at, scroll_to);
+        return;
+    }
+
+    for (probe.files.items, 0..) |f, i| {
+        if (!std.mem.eql(u8, f.path, current)) continue;
+        if (forward) {
+            if (i + 1 < probe.files.items.len) self.openDiffFile(alloc, i + 1, scroll_to);
+        } else if (i > 0) {
+            self.openDiffFile(alloc, i - 1, scroll_to);
+        }
+        return;
+    }
+}
+
 /// The bar's back button: one entry back in the view's own history. The
 /// runtime treats a back with nowhere to go as a no-op, same as Mac's
 /// `webView.goBack()`.
@@ -5618,6 +5741,7 @@ fn syncCommitted(self: *ViewerPane, alloc: Allocator, src: []const u8) void {
         if (self.mode.usesTemplate()) return;
         const floc = self.file_location orelse return;
         self.mode = content.modeFor(floc);
+        self.pushDiffControls();
         self.page_loaded = false;
         if (alloc.dupeZ(u8, floc)) |dup| {
             if (self.location) |l| alloc.free(l);
@@ -5636,6 +5760,7 @@ fn syncCommitted(self: *ViewerPane, alloc: Allocator, src: []const u8) void {
     } else if (viewMode(src) == .web) {
         const was_file = self.mode.isFile();
         self.mode = .web;
+        self.pushDiffControls();
         if (alloc.dupeZ(u8, src)) |dup| {
             if (self.location) |l| alloc.free(l);
             self.location = dup;
@@ -5700,6 +5825,7 @@ fn syncCommittedPage(self: *ViewerPane, alloc: Allocator, src: []const u8) void 
     if (self.file_path) |cur| if (content.samePath(cur, path)) return;
 
     self.mode = .html;
+    self.pushDiffControls();
     if (alloc.dupe(u8, path)) |dup| {
         if (self.file_path) |old| alloc.free(old);
         self.file_path = dup;
