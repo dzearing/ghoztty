@@ -93,7 +93,7 @@ pub const Entry = struct {
 
 /// Why a listing produced nothing, with its one string owned.
 pub const Failure = struct {
-    kind: enum { no_directory, not_a_repository, no_default_base, git_failed },
+    kind: enum { no_directory, not_a_repository, no_default_base, git_failed, git_timed_out },
     /// The directory or the revspec the message names. Owned; null for the
     /// two cases whose sentence needs no argument.
     arg: ?[]u8 = null,
@@ -105,6 +105,7 @@ pub const Failure = struct {
             .not_a_repository => .{ .not_a_repository = self.arg orelse "" },
             .no_default_base => .no_default_base,
             .git_failed => .{ .git_failed = self.arg orelse "" },
+            .git_timed_out => .{ .git_timed_out = self.arg orelse "" },
         };
     }
 
@@ -486,6 +487,7 @@ fn workListing(job: *Job) void {
     }
 
     var any_succeeded = false;
+    var timed_out = false;
     for (diff.origins(resolved)) |origin| {
         const name_status = diff.nameStatusArgv(resolved, origin, git_binary, repo) orelse continue;
         const listed = git_run.captureAlloc(alloc, name_status.slice(), listing_cap) orelse continue;
@@ -493,6 +495,7 @@ fn workListing(job: *Job) void {
         // A non-zero exit is git REFUSING, not an empty diff — a bad revspec
         // prints nothing and fails, and rendering that as "no changes" is the
         // swallowed error this whole path exists to report.
+        if (listed.timed_out) timed_out = true;
         if (!listed.ok) continue;
         any_succeeded = true;
 
@@ -537,7 +540,13 @@ fn workListing(job: *Job) void {
     if (!any_succeeded) {
         var loc_buf: [256]u8 = undefined;
         const named = resolved.canonicalLocation(&loc_buf) orelse job.location;
-        job.out_failure = .{ .kind = .git_failed, .arg = alloc.dupe(u8, named) catch null };
+        job.out_failure = .{
+            // A git we gave up on is not a git that refused, and the card says
+            // so — "check the revision names" is useless advice for a machine
+            // that stopped answering (T818).
+            .kind = if (timed_out) .git_timed_out else .git_failed,
+            .arg = alloc.dupe(u8, named) catch null,
+        };
         if (job.out_repo) |r| {
             alloc.free(r);
             job.out_repo = null;

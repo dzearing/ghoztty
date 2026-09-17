@@ -725,6 +725,11 @@ pub const Failure = union(enum) {
     no_default_base,
     /// git ran and refused — almost always a revspec that names nothing.
     git_failed: []const u8,
+    /// git was still running at the deadline and was given up on (T818). Kept
+    /// apart from `git_failed` because the two want different words: one is a
+    /// name the user can correct, the other is a machine that stopped
+    /// answering and nothing about the revspec is wrong.
+    git_timed_out: []const u8,
 
     pub fn title(self: Failure) []const u8 {
         return switch (self) {
@@ -732,6 +737,7 @@ pub const Failure = union(enum) {
             .not_a_repository => "Not a git repository",
             .no_default_base => "No default branch",
             .git_failed => "git could not produce this diff",
+            .git_timed_out => "git did not answer",
         };
     }
 
@@ -758,6 +764,12 @@ pub const Failure = union(enum) {
                 "git rejected {s}. Check the revision names.",
                 .{s},
             ) catch "git rejected that revision. Check the revision names.",
+            .git_timed_out => |s| std.fmt.bufPrint(
+                buf,
+                "git was still working on {s} after 15 seconds and was stopped. " ++
+                    "Reload to try again.",
+                .{s},
+            ) catch "git did not answer within 15 seconds. Reload to try again.",
         };
     }
 };
@@ -1047,4 +1059,13 @@ test "every failure says what to do about it" {
         (Failure{ .no_default_base = {} }).detail(&buf),
         "git-diff:develop...HEAD",
     ) != null);
+
+    // A git we gave up on (T818) must not borrow the sentence above: there is
+    // nothing wrong with the revspec, so "check the revision names" would send
+    // the user looking in the wrong place.
+    const wedged: Failure = .{ .git_timed_out = "git-diff:main...HEAD" };
+    try testing.expectEqualStrings("git did not answer", wedged.title());
+    const said = wedged.detail(&buf);
+    try testing.expect(std.mem.indexOf(u8, said, "15 seconds") != null);
+    try testing.expect(std.mem.indexOf(u8, said, "Check the revision names") == null);
 }

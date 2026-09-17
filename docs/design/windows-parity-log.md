@@ -31329,3 +31329,49 @@ session on a box over the cap.
 T1640 files the half this does not do: the `truncated` flag exists end to end -
 sampler, wire, connection, and the win32 snapshot struct - and nothing renders
 it, so a partial list still looks like a complete one.
+
+## 2026-09-17 - T818: a wedged git can no longer hold a diff pane open
+
+A diff pane asks `git` what changed, and until now it waited for the answer
+with no limit. If git never answered - a filesystem that stopped responding, a
+hook, a credential helper nobody anticipated - the pane waited forever, and so
+did closing it: the teardown has to collect the worker before it can free what
+the worker is writing into. Nothing recovered; the app had to be killed.
+
+Every `git` the viewer runs is now bounded. `git_run.zig` grew a `Deadline` - a
+watchdog thread per spawn that terminates the child after 15 seconds, which is
+Mac's number for the same belt on `ViewerProcess.run`. Terminating closes the
+child's end of the pipe, so the reader that is stuck sees EOF and unwinds
+through the ordinary path; nothing reaches into its state. The watchdog is
+joined BEFORE `child.wait()`, because the wait closes the handle the watchdog
+holds - that ordering is the one invariant, and it is written where the struct
+is defined rather than left to be rediscovered.
+
+Both entry points are covered, not just the diff one: `capture` and
+`captureAlloc` each delegate to a `...Deadline` variant, so no caller had to
+change and none can be missed.
+
+The user gets a sentence of its own rather than a borrowed one. `timed_out`
+rides back on the output with `ok = false`, and the card now reads "git did not
+answer ... Reload to try again" instead of `git_failed`'s "check the revision
+names" - advice about a revspec that is not wrong, sending someone to look in
+the wrong place.
+
+Evidence: three unit tests in `git_run.zig`, which is now listed in
+`win32.zig`'s test block - it was imported and compiled before, and its tests
+ran nowhere, which is exactly what that list exists to catch. A child that
+never exits is given up on and reports `timed_out`; the fixed-buffer form
+returns at all; and a negative control, a child that exits on its own under a
+10 s deadline, must come back not-timed-out. Inverting the timeout assertion
+turned the win32 lane red naming that test, so the gate has teeth.
+`floor-lane.ps1 -Lane all`: lib/none/win32 PASS, agent FAILED UNDER LOAD on the
+known T678 WebView2 host-floor test and PASSED ALONE, which the wrapper scores
+as harness/timing. `viewer-diff.ps1` ALL PASS (65). Guards re-stamped green:
+window-active-audit, printclient-audit, neuter-audit, test-reach-audit,
+seam-audit. ipc-p1/p2/p3 ALL PASS (26/20/16).
+
+T1642 files what the run turned up on the way: T817's `next-change` assertion
+in `viewer-diff.ps1` failed once and passed on an immediate re-run over the
+same bytes - a fixed sleep where the harness elsewhere waits for the
+observable. Nothing a user sees, but an unnamed flake is how a real regression
+gets waved through as "that one is always red".
