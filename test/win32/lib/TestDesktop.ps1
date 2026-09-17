@@ -2351,6 +2351,13 @@ $script:GhozttyTestDesktopAllPids = @()
 # teardown report does not present a deliberate Stop-Process as a mystery.
 $script:GhozttyTestDesktopLaunches = @()
 
+# T809: the moment this run started, and the dumps a per-pid postmortem has
+# already printed. Both are deliberately NOT reset by New-TestDesktop: a script
+# that builds a second desktop is still the same run, and a crash it caused
+# before the swap is still its crash.
+$script:GhozttyTestDesktopRunStart = (Get-Date)
+$script:GhozttyTestDesktopReportedDumps = @()
+
 # T689: where a launch that named no -StdErr gets its log.
 #
 # A debug build writes std.log to stderr and NOTHING else - no event-log record,
@@ -2635,9 +2642,10 @@ function Write-TestGuiPostmortem {
     if ($rec.Count -eq 0) { return $null }
     $r = $rec[-1]
     $report = Get-GuiPostmortem -ProcessId $r.Pid -Name $r.Name -Process $r.Process `
-        -StdErr $r.StdErr -Since $r.StartedAt -WaitSeconds $WaitSeconds
+        -StdErr $r.StdErr -Since $r.StartedAt -WaitSeconds $WaitSeconds -Exe $r.Exe
     Write-GuiPostmortem -Report $report
     $r.Reported = $true
+    if ($report.DumpPath) { $script:GhozttyTestDesktopReportedDumps += $report.DumpPath }
     return $report
 }
 
@@ -2660,13 +2668,41 @@ function Write-TestDesktopPostmortems {
         try { $gone = -not (Get-Process -Id $r.Pid -ErrorAction Stop) } catch { $gone = $true }
         if (-not $gone) { continue }
         $report = Get-GuiPostmortem -ProcessId $r.Pid -Name $r.Name -Process $r.Process `
-            -StdErr $r.StdErr -Since $r.StartedAt -WaitSeconds $WaitSeconds
+            -StdErr $r.StdErr -Since $r.StartedAt -WaitSeconds $WaitSeconds -Exe $r.Exe
         $r.Reported = $true
+        if ($report.DumpPath) { $script:GhozttyTestDesktopReportedDumps += $report.DumpPath }
         if ($null -ne $report.ExitCode -and $report.ExitCode -eq 0) { continue }
         Write-GuiPostmortem -Report $report
         $n++
     }
     return $n
+}
+
+<#
+Report a crash of one of OUR binaries that this run left behind and that no
+launched pid accounts for (T809).
+
+The population is the one `Write-TestDesktopPostmortems` structurally cannot
+reach: the app a CLI verb auto-spawned, and anything it spawned in turn. See
+`Write-GuiUnclaimedCrashDump` for why that is the normal case rather than an
+edge one.
+#>
+function Write-TestDesktopUnclaimedCrashes {
+    $paths = @{}
+    foreach ($r in $script:GhozttyTestDesktopLaunches) {
+        if ($r.Exe -and -not $paths.ContainsKey($r.Name)) { $paths[$r.Name] = $r.Exe }
+    }
+    # The app is normally never launched by name here, so give the reader the
+    # debug build's own directory for symbols rather than no symbols at all.
+    foreach ($n in @('ghoztty.exe', 'ghoztty-agent.exe')) {
+        if (-not $paths.ContainsKey($n)) {
+            $cand = Join-Path $script:GhozttyRepoRoot ('zig-out/bin/' + $n)
+            if (Test-Path -LiteralPath $cand) { $paths[$n] = $cand }
+        }
+    }
+    return (Write-GuiUnclaimedCrashDump -ExeNames @('ghoztty.exe', 'ghoztty-agent.exe') `
+            -Since $script:GhozttyTestDesktopRunStart `
+            -ExcludePaths $script:GhozttyTestDesktopReportedDumps -ExePaths $paths)
 }
 
 <#
@@ -4378,6 +4414,10 @@ function Remove-TestDesktop {
     # at this point died on its own, which is the event that used to leave
     # nothing behind but a wall of asserts failing for the wrong reason.
     try { Write-TestDesktopPostmortems | Out-Null } catch { }
+    # T809: and the crashes no launch record can account for - the app
+    # `+new-window` auto-spawned, above all. Without this the ONLY trace of it
+    # in the log is whatever verb failed next, which reads as a dead pipe.
+    try { Write-TestDesktopUnclaimedCrashes | Out-Null } catch { }
     if (-not $KeepProcesses) {
         foreach ($procId in $script:GhozttyTestDesktopPids) {
             foreach ($r in $script:GhozttyTestDesktopLaunches) {

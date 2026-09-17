@@ -30970,3 +30970,46 @@ the rest of it.
 Evidence: `crash-first-chance.ps1` ALL PASS at 69 assertions and re-stamped,
 `crash-stacks.ps1` ALL PASS at 91, `floor-lane.ps1 -Lane all` all four lanes
 PASS, `-Lane harness` PASS over 28 audits and re-stamped, ipc-p1/p2/p3 ALL PASS.
+
+## 2026-09-17 - T809: a GUI script whose app crashed now prints the stack, not a dead pipe
+
+When ghoztty.exe falls over in the middle of an acceptance script, the log used
+to carry almost nothing about it. The process that owns the window is normally
+not one the harness launched - `+new-window` auto-spawns the app from inside the
+CLI process (`performIpc` in `src\apprt\win32\App.zig`), so there is no handle,
+no exit code and no launch record - and the only trace of the crash was whatever
+verb failed next, reporting a closed pipe. Windows had written a dump at the
+moment of the fault the whole time. Nothing opened it.
+
+The lane half of the harness has read that dump since T460: `Find-WerCrashDump`
+-> `Invoke-CrashDumpAnalysis` -> `Write-CrashDumpStack`, about a second, every
+thread, source lines, no re-run. The GUI half carried its own `Get-GuiCrashDump`
+instead, which globbed `%LOCALAPPDATA%\CrashDumps` and printed a PATH. Two
+things were wrong with that beyond not reading it: the folder is only WER's
+DEFAULT (a box with a redirected `DumpFolder` would never have found the file at
+all), and WER finishes writing a beat AFTER the process disappears, so the read
+raced its own evidence.
+
+So `GuiPostmortem.ps1` uses the library now. `Get-GuiCrashDump` is
+`Find-WerCrashDump`; `Get-GuiDumpAnalysis` reads the dump with symbols taken
+from the launched exe's own directory, and never throws, because every caller of
+this file is a `finally` or a SETUP FAIL branch where an exception would land on
+top of the failure the script was already reporting; `Write-GuiPostmortem` puts
+the `-- crash stack --` in the same block as the verdict, so where it fell over
+is in the same place as the fact that it fell over.
+
+The other half is the population a per-pid diagnosis structurally cannot reach.
+`Write-GuiUnclaimedCrashDump` asks a different question - did one of OUR
+binaries leave a dump during this run that no launch record accounts for - and
+`Remove-TestDesktop` asks it after the per-pid sweep, excluding what that sweep
+already printed. Every GUI script gets both without changing a line of its own.
+The sweep deliberately does not wait for WER (T1631 is the follow-up: pay a wait
+only when something suggests a crash, so the clean teardown stays free).
+
+Evidence: `gui-postmortem.ps1` ALL PASS at 41 assertions and re-stamped, with
+the new arms proving the stack is read for a launched crash (C9-C12), that an
+unlaunched one is reported with its frames (I2-I3), and that the same dump is
+never printed twice (I4). `floor-lane.ps1 -Lane all` all four lanes PASS,
+`-Lane harness` PASS over 28 audits and re-stamped (skip-visibility is red
+against the filed T1258 and reports as PENDING), ipc-p1/p2/p3 ALL PASS - the
+three of them GUI scripts that now run the new teardown sweep on every section.

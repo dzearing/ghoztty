@@ -34,7 +34,12 @@
     ASCII only, PowerShell 5.1 compatible.
 #>
 
-. (Join-Path (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))) 'scripts\lib\CrashDiag.ps1')
+$script:GUIPM_REPO = (Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)))
+. (Join-Path $script:GUIPM_REPO 'scripts\lib\CrashDiag.ps1')
+# T809: the reader. floor-lane.ps1 has post-mortemed a crashed LANE binary out
+# of the dump Windows already wrote since T460; the GUI half of the harness
+# named the same file and never opened it. Same library, same three calls.
+. (Join-Path $script:GUIPM_REPO 'scripts\lib\CrashDump.ps1')
 
 # Full NTSTATUS -> name, for the codes a Windows GUI process actually dies
 # from. CrashDiag's table is keyed by LOW BYTE because that is all `zig build`
@@ -74,6 +79,11 @@ $script:GUIPM_HIGH_BIT = 2147483648L
 # acceptance script above all - can assert on what a teardown reported without
 # having to capture Write-Host output from its own process.
 $script:GUIPM_LAST = @()
+
+# Scratch the dump-stack writer appends into. A scriptblock passed to another
+# module's -Writer runs in ITS scope, so a local `$stack += $s` inside one is
+# thrown away; a script-scoped sink is the version that survives (PS 5.1).
+$script:GUIPM_SINK = @()
 
 <#
 Turn a raw Win32 exit code into { IsCrash, Hex, Name }.
@@ -126,18 +136,65 @@ Any crash dump Windows kept for this process, if the box happens to have WER
 LocalDumps armed. Absence is normal and is reported as such rather than as a
 failure - arming LocalDumps writes under HKLM and needs elevation, which this
 loop does not have.
+
+Since T809 this is `Find-WerCrashDump` rather than a private glob of
+`%LOCALAPPDATA%\CrashDumps`: that hard-coded folder is only the DEFAULT, a
+box that has moved `DumpFolder` writes somewhere else entirely, and WER
+finishes the file a beat AFTER the process disappears - so the old read raced
+its own evidence and, on a box with a redirected folder, could never have found
+it at all.
 #>
 function Get-GuiCrashDump {
-    param([Parameter(Mandatory = $true)][string]$Name, [datetime]$Since = [datetime]::MinValue)
+    param(
+        [Parameter(Mandatory = $true)][string]$Name,
+        [datetime]$Since = [datetime]::MinValue,
+        [int]$WaitSeconds = 10
+    )
 
-    $dir = Join-Path $env:LOCALAPPDATA 'CrashDumps'
-    if (-not (Test-Path -LiteralPath $dir)) { return $null }
-    $stem = [System.IO.Path]::GetFileNameWithoutExtension($Name)
-    $hits = @(Get-ChildItem -LiteralPath $dir -Filter "$stem*.dmp" -ErrorAction SilentlyContinue |
-        Where-Object { $_.LastWriteTime -ge $Since } |
-        Sort-Object LastWriteTime -Descending)
-    if ($hits.Count -eq 0) { return $null }
-    return $hits[0].FullName
+    $since = $Since
+    if ($since -eq [datetime]::MinValue) { $since = (Get-Date).AddMinutes(-30) }
+    $hit = $null
+    try { $hit = Find-WerCrashDump -ExeNames @($Name) -Since $since -WaitSeconds $WaitSeconds } catch { $hit = $null }
+    if (-not $hit) { return $null }
+    return $hit.FullName
+}
+
+<#
+Read a dump into the same stack answer `floor-lane.ps1` prints for a crashed
+lane binary (T809).
+
+`-Exe` is the binary that died, and all it is used for is its DIRECTORY: the
+pdb sits beside the exe, and without it every frame degrades to module+offset.
+The harness records the exe it launched, so the caller always has it.
+
+Never throws. This is called from teardown and from SETUP FAIL branches, where
+the one thing worse than no stack is an exception thrown over the top of the
+failure the script was already reporting.
+#>
+function Get-GuiDumpAnalysis {
+    param(
+        [Parameter(Mandatory = $true)][string]$DumpPath,
+        [string]$Exe = '',
+        [int]$MaxFrames = 40,
+        [int]$TimeoutSeconds = 180
+    )
+
+    $out = [pscustomobject]@{ Ran = $false; Why = ''; Result = $null }
+    if (-not (Get-CdbPath)) {
+        $out.Why = 'no cdb.exe found, so the dump was not read (scripts\crash-catch.ps1 explains where it is looked for)'
+        return $out
+    }
+    $sym = ''
+    if ($Exe -and (Test-Path -LiteralPath $Exe)) { $sym = Split-Path -Parent $Exe }
+    try {
+        $out.Result = Invoke-CrashDumpAnalysis -DumpPath $DumpPath -SymbolPath $sym `
+            -MaxFrames $MaxFrames -TimeoutSeconds $TimeoutSeconds -Repo $script:GUIPM_REPO
+        $out.Ran = $true
+    }
+    catch {
+        $out.Why = "reading the dump failed: $($_.Exception.Message)"
+    }
+    return $out
 }
 
 <#
@@ -160,7 +217,9 @@ function Get-GuiPostmortem {
         $Process = $null,
         [string]$StdErr = '',
         [datetime]$Since = [datetime]::MinValue,
-        [int]$WaitSeconds = 20
+        [int]$WaitSeconds = 20,
+        [string]$Exe = '',
+        [switch]$NoDumpRead
     )
 
     $alive = $false
@@ -195,6 +254,7 @@ function Get-GuiPostmortem {
 
     $evt = $null
     $dump = $null
+    $analysis = $null
     if ($crashed) {
         $since = $Since
         if ($since -eq [datetime]::MinValue) { $since = (Get-Date).AddMinutes(-30) }
@@ -211,7 +271,12 @@ function Get-GuiPostmortem {
             if ((Get-Date) -ge $deadline) { break }
             Start-Sleep -Seconds 2
         }
-        if ($Name) { $dump = Get-GuiCrashDump -Name $Name -Since $since }
+        if ($Name) { $dump = Get-GuiCrashDump -Name $Name -Since $since -WaitSeconds 10 }
+        # T809: and READ it. This is the only evidence of the crash that
+        # actually happened - a GUI app cannot be re-run into the same fault the
+        # way a lane binary can - and until now the block named the file and
+        # stopped there, leaving a reader with a path and a dead pipe.
+        if ($dump -and -not $NoDumpRead) { $analysis = Get-GuiDumpAnalysis -DumpPath $dump -Exe $Exe }
     }
 
     $tail = Get-GuiStdErrTail -Path $StdErr
@@ -227,6 +292,9 @@ function Get-GuiPostmortem {
         Verdict       = $verdictLine
         CrashEvent    = $evt
         DumpPath      = $dump
+        DumpRead      = $(if ($analysis) { $analysis.Ran } else { $false })
+        DumpWhy       = $(if ($analysis) { $analysis.Why } else { '' })
+        DumpAnalysis  = $(if ($analysis) { $analysis.Result } else { $null })
         StdErrFound   = $tail.Found
         StdErrTail    = $tail.Tail
         StdErrMidLine = $tail.EndsMidLine
@@ -256,6 +324,18 @@ function Write-GuiPostmortem {
     }
     if ($Report.DumpPath) {
         $lines += "  dump    : $($Report.DumpPath)"
+        # T809: the stack out of that dump, indented into this block so the one
+        # thing a reader wants - where it fell over - is in the same place as
+        # the verdict rather than behind a command they have to think to run.
+        if ($Report.DumpAnalysis) {
+            $stack = @()
+            $null = Write-CrashDumpStack -Result $Report.DumpAnalysis -MaxFrames 14 -Writer { param($s) $script:GUIPM_SINK += $s }
+            $stack = @($script:GUIPM_SINK)
+            $script:GUIPM_SINK = @()
+            foreach ($l in $stack) { $lines += ('  ' + $l) }
+        } elseif ($Report.DumpWhy) {
+            $lines += "  stack   : $($Report.DumpWhy)"
+        }
     } elseif ($Report.Crashed) {
         $lines += '  dump    : none (WER LocalDumps is not armed on this box - see docs/claude/build.md)'
     }
@@ -268,6 +348,66 @@ function Write-GuiPostmortem {
     $script:GUIPM_LAST = $lines
     foreach ($l in $lines) { Write-Host ($Indent + $l) }
     return
+}
+
+<#
+A crash of one of OUR binaries that no launch record can account for (T809).
+
+WHY THIS EXISTS. `Write-TestDesktopPostmortems` can only diagnose a pid the
+harness launched, and the app is routinely NOT one: `+new-window` auto-spawns
+ghoztty.exe from inside the CLI process (`performIpc` in
+`src/apprt/win32/App.zig`), so the process that owns the window - the one that
+dies and leaves every later `+read` reporting a closed pipe - was never
+launched through `Start-OnTestDesktop` and has no handle, no exit code and no
+record. The dump Windows wrote does not care: it is on disk, named after the
+exe, stamped with the moment it died. This finds the ones this run made and
+reads them.
+
+`-ExcludePaths` is the dumps a per-pid postmortem already reported, so the same
+crash is never printed twice.
+
+Returns the number of blocks printed; prints nothing when there are none, which
+is what every healthy run looks like.
+#>
+function Write-GuiUnclaimedCrashDump {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$ExeNames,
+        [Parameter(Mandatory = $true)][datetime]$Since,
+        [string[]]$ExcludePaths = @(),
+        [hashtable]$ExePaths = @{},
+        [string]$Indent = '  '
+    )
+
+    $n = 0
+    foreach ($name in $ExeNames) {
+        $dump = $null
+        # WaitSeconds 0: this runs in teardown behind a per-pid sweep that has
+        # already paid the wait, and a sweep that idles for 20s per exe on every
+        # clean run would be a tax on the 99% case.
+        try { $dump = Find-WerCrashDump -ExeNames @($name) -Since $Since -WaitSeconds 0 } catch { $dump = $null }
+        if (-not $dump) { continue }
+        if ($ExcludePaths -contains $dump.FullName) { continue }
+
+        $lines = @()
+        $lines += "GUI POSTMORTEM $name - a crash this run left behind that no launched pid accounts for"
+        $lines += "  why     : it was not started through this harness (an auto-spawned app, or a child of one), so there is no exit code - but Windows kept the dump"
+        $lines += "  dump    : $($dump.FullName)"
+        $exe = ''
+        if ($ExePaths.ContainsKey($name)) { $exe = [string]$ExePaths[$name] }
+        $a = Get-GuiDumpAnalysis -DumpPath $dump.FullName -Exe $exe
+        if ($a.Result) {
+            $null = Write-CrashDumpStack -Result $a.Result -MaxFrames 14 -Writer { param($s) $script:GUIPM_SINK += $s }
+            foreach ($l in @($script:GUIPM_SINK)) { $lines += ('  ' + $l) }
+            $script:GUIPM_SINK = @()
+        } elseif ($a.Why) {
+            $lines += "  stack   : $($a.Why)"
+        }
+
+        $script:GUIPM_LAST = $lines
+        foreach ($l in $lines) { Write-Host ($Indent + $l) }
+        $n++
+    }
+    return $n
 }
 
 # The lines Write-GuiPostmortem printed last. Empty when nothing has been

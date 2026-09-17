@@ -163,8 +163,24 @@ if (Test-Path $avExe) {
         $block = @(Get-LastGuiPostmortem)
         Assert 'C8 the printed block names the pid and the status' `
             (($block -join "`n") -like "*pid $($av.Pid)*" -and ($block -join "`n") -like '*ACCESS_VIOLATION*')
+
+        # T809: the dump is the evidence of the crash that ACTUALLY happened -
+        # a GUI app cannot be re-run into the same fault the way a lane binary
+        # can - and the block used to stop at naming the file.
+        if (-not $r.DumpPath) {
+            Skip 'C9-C12 (no dump was written - WER LocalDumps is not armed on this box)'; $script:skipped += 3
+        } elseif (-not (Get-CdbPath)) {
+            Skip 'C9-C12 (no cdb.exe on this box)'; $script:skipped += 3
+        } else {
+            Assert 'C9 the dump Windows wrote was READ, not merely named' $r.DumpRead
+            Assert 'C10 it parsed as a crash' ($null -ne $r.DumpAnalysis -and $r.DumpAnalysis.Crashed)
+            $joined = ($block -join "`n")
+            Assert 'C11 the stack is inside the same block as the verdict' `
+                ($joined -like '*-- crash stack --*' -and $joined -like '*no re-run, no reproduction*')
+            Assert 'C12 the frames name the binary that fell over' ($joined -match '(?im)^\s*\|.*\bav')
+        }
     } else {
-        Skip 'C4-C8 (no report)'; $script:skipped += 4
+        Skip 'C4-C12 (no report)'; $script:skipped += 8
     }
 } else {
     Write-Host "     build output: $buildOut"
@@ -238,6 +254,49 @@ $recs = @(Get-TestLaunchRecords)
 Assert 'H1 every launch is still on the record after the desktop is gone' ($recs.Count -ge 1)
 Assert 'H2 a record carries what a postmortem needs' `
     ($null -ne $recs[-1].Name -and $null -ne $recs[-1].StartedAt)
+
+# ------------------- I. a crash of OURS that no launched pid accounts for
+
+# WHY. `+new-window` auto-spawns the app from inside the CLI process, so the
+# process that owns the window is not one this harness launched: no handle, no
+# exit code, no record. Every per-pid diagnosis above is structurally blind to
+# it, and what the log shows instead is the next verb failing on a closed pipe.
+# The dump does not care who started it.
+Write-Host 'I a crash nothing launched through the harness still gets read'
+if (-not (Test-Path $avExe)) {
+    Skip 'I1-I4 (crasher did not build)'; $script:skipped += 3
+} else {
+    $iStart = Get-Date
+    # Deliberately NOT Start-OnTestDesktop: this is the unlaunched population.
+    $unclaimed = Join-Path $tmp 'unclaimed.exe'
+    Copy-Item -LiteralPath $avExe -Destination $unclaimed -Force
+    $pdb = Join-Path $tmp 'av.pdb'
+    if (Test-Path $pdb) { Copy-Item -LiteralPath $pdb -Destination (Join-Path $tmp 'unclaimed.pdb') -Force }
+    $ip = Start-Process -FilePath $unclaimed -PassThru -WindowStyle Hidden
+    $iGone = Wait-Gone -ProcessId $ip.Id -TimeoutSec 60
+    Assert 'I1 the unlaunched crasher died' $iGone
+    # WER writes the file a beat after the process is gone; the sweep itself
+    # deliberately does not wait, so the test pays the wait once here.
+    $iDump = Find-WerCrashDump -ExeNames @('unclaimed.exe') -Since $iStart -WaitSeconds 40
+    if (-not $iDump) {
+        Skip 'I2-I4 (no dump was written - WER LocalDumps is not armed on this box)'; $script:skipped += 2
+    } elseif (-not (Get-CdbPath)) {
+        Skip 'I2-I4 (no cdb.exe on this box)'; $script:skipped += 2
+    } else {
+        Clear-LastGuiPostmortem
+        $n = Write-GuiUnclaimedCrashDump -ExeNames @('unclaimed.exe') -Since $iStart `
+            -ExePaths @{ 'unclaimed.exe' = $unclaimed }
+        $iBlock = (@(Get-LastGuiPostmortem) -join "`n")
+        Assert 'I2 the unclaimed crash was reported' (($n -eq 1) -and $iBlock -like '*no launched pid accounts for*')
+        Assert 'I3 with the stack read out of the dump' `
+            ($iBlock -like '*-- crash stack --*' -and $iBlock -like '*unclaimed*')
+        Clear-LastGuiPostmortem
+        $n2 = Write-GuiUnclaimedCrashDump -ExeNames @('unclaimed.exe') -Since $iStart `
+            -ExcludePaths @($iDump.FullName)
+        Assert 'I4 a dump a per-pid postmortem already printed is not printed twice' `
+            (($n2 -eq 0) -and (@(Get-LastGuiPostmortem)).Count -eq 0)
+    }
+}
 
 Complete-TestBody
 
