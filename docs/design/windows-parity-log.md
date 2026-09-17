@@ -9,6 +9,62 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-17: T810 closed done; T1632 filed - **"Restore All" on a remote
+  machine stopped dialing a second connection to ask the question, and an
+  expired session stopped being reported as an empty machine.**
+
+  T810 was filed as "two more surfaces should borrow the pool" - the Activity
+  Monitor and Restore All. The first thing this turn did was re-check that
+  against Mac, which is where the pool came from, and half the premise did not
+  survive. Mac's `MachineConnectionPool` has exactly two consumers,
+  `SessionBrowserProbe` (the roster) and `SessionCPUProbe` (the meter), both
+  chooser surfaces. `RemoteActivityMonitor.presentDialing` dials and OWNS its
+  handle on purpose, and `SessionLayoutRestore.resumeAllRemoteSessions` dials
+  its own pull too. So neither surface is a parity gap; what is real is the
+  duplicate work.
+
+  For Restore All that duplicate is one whole dial. The button lives on the
+  chooser, and the chooser is holding a lease on exactly the machine the button
+  names - its warm pooled connection is right there - and the restore worker
+  opened a second TCP + TLS + WebSocket upgrade + relay auth to that same agent
+  just to run `GET_LAYOUTS` and the attach probe, before the first window could
+  appear. `start` now BORROWS the pool's entry on the GUI thread (where `borrow`
+  may be called at all) and carries the retain across to the worker, which is
+  precisely what the entry's atomic refcount exists for. The LOCAL arm has
+  always worked this way - `RestoreAllLocal` takes the agent's shared
+  connection - so this is that same shape for a remote machine. The per-window
+  dials are untouched: a win32 window owns its transport and frees it on close
+  (T336), so sharing one there would mean the first window the user closes takes
+  the others' agent down with it.
+
+  The borrow made an old hole visible, and it is the more interesting half. A
+  borrowed connection was authorized minutes ago and keeps working, so a relay
+  session that expires between opening the chooser and pressing the button is no
+  longer met by the pull - it is met by the per-window dials. Every one of them
+  401s, nothing is rebuilt, and `job.err` was null because the pull had
+  succeeded: the chooser then said *"Nothing to restore - these sessions are
+  already open, or no layout was saved."* to somebody whose session had simply
+  expired. That path was reachable before this change too (a token rotating
+  between the pull and the dials), just rarer. A restore where NOT ONE window
+  could be dialed now reports the dials' own failure, so the sentence names the
+  credential; a restore where even one window got through stays silent, because
+  saying "failed" over windows that are on screen is a lie.
+
+  The oracle is the relay's own request log, counted on the far side of the wire
+  by something with no idea the pool exists: `chooser-restore-all-remote.ps1`
+  section F asserted `>= N + 1` connects and now asserts exactly `N` - the run
+  reads *2 connects for 2 windows*, where it was 3. F2 loses its `-Skip 1` (there
+  is no leading pull dial to skip past) and still proves the window dials open
+  together; a new D2 pins the expired-session sentence by asserting the
+  `nothing to rebuild` path was never taken. ALL PASS, 49 assertions.
+
+  T1632 carries what was deliberately NOT done. A `Connection` has ONE
+  `metrics_handler` slot, so two Activity Monitor panels sharing a link clobber
+  each other's host-CPU stream and the first to close unsubscribes the other.
+  That is reachable today through the borrowed arm (two windows on one machine),
+  and it is the actual blocker for ever pooling the panel's connection - the
+  fix is a multiplexed metrics subscription, not a lease.
+
 - 2026-09-16: T807 closed done - **the skip-visibility audit was not reading
   most scripts' verdict line at all.**
 

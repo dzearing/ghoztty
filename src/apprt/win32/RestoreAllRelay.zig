@@ -46,6 +46,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const App = @import("App.zig");
+const MachineConnectionPool = @import("MachineConnectionPool.zig");
 const Window = @import("Window.zig");
 const layout_blobs = @import("layout_blobs.zig");
 const session_layout = @import("session_layout.zig");
@@ -80,6 +81,19 @@ pub const Target = struct {
 pub const Prepared = struct {
     win: session_layout.Window,
     dialed: ?Window.RemoteDialed,
+    /// Why this window's dial failed, when it did. Written by the one fan-out
+    /// thread that owns this slot and read on the worker once they have all
+    /// joined, so it needs no synchronisation of its own.
+    ///
+    /// It exists because a restore where EVERY window failed to dial used to be
+    /// indistinguishable from one where the machine had nothing to give back:
+    /// the pull had succeeded, so `job.err` was null, and the chooser said
+    /// "Nothing to restore - these sessions are already open, or no layout was
+    /// saved." to a user whose session had simply expired between the pull and
+    /// the dials. A credential that rotates in that window is the ordinary way
+    /// in, and since T810 — where the pull may ride a connection that was
+    /// authenticated minutes ago — it is the ONLY thing that would notice.
+    err: ?App.RestoreAllError = null,
 };
 
 /// The whole job, allocated on the GUI thread and freed there: the worker only
@@ -103,6 +117,14 @@ pub const Job = struct {
     /// T713: the sessions a sign-out suspended on this machine. Empty ⇒ no
     /// filter at all (the chooser's whole-machine Restore All).
     only: [][]u8 = &.{},
+    /// The machine's POOLED connection, borrowed on the GUI thread by `start`
+    /// when the pool already holds one warm (T810) — the worker then runs the
+    /// pull over it instead of dialing a second socket to the same agent. Null
+    /// when the pool has nothing for this endpoint, and the worker dials its own
+    /// exactly as before. Carries a retain for the whole job, which is what lets
+    /// a blocking RPC on the worker thread outlive the chooser's own lease;
+    /// `destroy` gives it back.
+    pull_entry: ?*MachineConnectionPool.Entry = null,
 
     // --- filled in by the worker ---------------------------------------
     /// Non-null ⇒ the pull never completed, so nothing was dialed and there is
@@ -159,6 +181,15 @@ pub const Job = struct {
 
     pub fn destroy(self: *Job) void {
         const alloc = self.alloc;
+        // The borrowed pull, if there was one. Giving the reference back HERE
+        // rather than in the worker keeps the job's one-free-path rule: the
+        // reference is held for exactly as long as the job exists, whichever way
+        // the job ends. Releasing it may free the transport (when the chooser's
+        // lease went away mid-restore), which is the refcount doing its job.
+        if (self.pull_entry) |e| {
+            self.pull_entry = null;
+            e.release();
+        }
         // Every dial the rebuild did NOT take ownership of. This is the line
         // that makes a reply landing on a closed chooser (or a quitting app)
         // safe rather than a leaked connection per window.
@@ -206,7 +237,10 @@ const Fanout = struct {
             p.dialed = dialRelay(job.alloc, job.base, job.device, job.token) catch |err| {
                 // A dial that fails costs exactly its own window: the slot stays
                 // null, `adoptRestoreAll` skips it, and its siblings rebuild.
+                // The reason is kept so a restore where they ALL failed can say
+                // which failure it was (see `Prepared.err`).
                 log.warn("restore all: window '{s}' dial failed err={}", .{ p.win.id, err });
+                p.err = err;
                 continue;
             };
         }
@@ -257,6 +291,15 @@ pub fn start(app: *App, chooser_id: u64, target: Target) bool {
         job.destroy();
         return false;
     };
+    // The machine's warm connection, if the pool has one — which it does for
+    // the entry that presses this button, because the chooser holds a lease on
+    // exactly the selected machine (T461). `borrow` is GUI-thread only, so it
+    // happens HERE and the retain it returns is what carries the connection
+    // across to the worker (T810). Null is the ordinary answer for the sign-in
+    // replay, which runs with no chooser open; the worker then dials.
+    job.pull_entry = app.machine_pool.borrow(.{
+        .relay = .{ .base = job.base, .device = job.device },
+    });
 
     const thread = std.Thread.spawn(.{}, worker, .{job}) catch |err| {
         log.warn("restore all: worker thread spawn failed err={}", .{err});
@@ -282,19 +325,58 @@ fn dupeIds(alloc: Allocator, ids: []const []const u8) Allocator.Error![][]u8 {
 fn worker(job: *Job) void {
     const alloc = job.alloc;
 
-    // The PULL's own connection: short-lived by design, exactly like the
-    // roster's browse dial. Freed below whatever happens — the windows never
-    // ride it, they each take their own.
-    var pull = dialRelay(alloc, job.base, job.device, job.token) catch |err| {
-        job.err = err;
-        return finish(job);
-    };
-    defer pull.deinitDestroy(alloc);
+    // The PULL's connection. The pool's warm one when `start` could borrow it
+    // (T810) — the chooser that pressed the button is already holding that
+    // machine's socket open, so dialing a second one here paid a whole TCP +
+    // TLS + WebSocket upgrade + HELLO before the first window could appear, for
+    // a link that was sitting right there. The LOCAL arm has always worked this
+    // way (`RestoreAllLocal` takes the agent's shared connection), and this is
+    // the same borrow for a remote machine.
+    //
+    // Otherwise a fresh one, short-lived by design, exactly like the roster's
+    // browse dial and freed below whatever happens. Either way the windows never
+    // ride it — each takes its own, because a win32 window OWNS its transport
+    // and frees it on close (T336), which is why only the pull is poolable.
+    var dialed_pull: ?Window.RemoteDialed = null;
+    defer if (dialed_pull) |d| d.deinitDestroy(alloc);
 
-    const payload = pull.conn().requestLayouts(App.restore_probe_timeout_ns) catch |err| {
-        log.warn("restore all: GET_LAYOUTS failed err={}", .{err});
-        job.err = error.PullFailed;
-        return finish(job);
+    var pull_conn = if (job.pull_entry) |e| e.conn() else blk: {
+        const d = dialRelay(alloc, job.base, job.device, job.token) catch |err| {
+            job.err = err;
+            return finish(job);
+        };
+        dialed_pull = d;
+        break :blk d.conn();
+    };
+
+    const payload = pull_conn.requestLayouts(App.restore_probe_timeout_ns) catch |err| retry: {
+        // A borrowed link can die between the GUI thread borrowing it and this
+        // RPC reaching the agent — the pool drops a dead entry, but only once
+        // the notification has been dispatched. Falling back to our own dial
+        // costs one wasted timeout in a race that was already rare; NOT falling
+        // back would tell the user their machine is unreachable while a fresh
+        // dial would have reached it, which is the one outcome this borrow must
+        // not be able to produce. A fresh pull that fails is reported as before.
+        const e = job.pull_entry orelse {
+            log.warn("restore all: GET_LAYOUTS failed err={}", .{err});
+            job.err = error.PullFailed;
+            return finish(job);
+        };
+        log.warn("restore all: GET_LAYOUTS over the pooled link failed err={}; dialing our own", .{err});
+        job.pull_entry = null;
+        e.release();
+
+        const d = dialRelay(alloc, job.base, job.device, job.token) catch |derr| {
+            job.err = derr;
+            return finish(job);
+        };
+        dialed_pull = d;
+        pull_conn = d.conn();
+        break :retry pull_conn.requestLayouts(App.restore_probe_timeout_ns) catch |rerr| {
+            log.warn("restore all: GET_LAYOUTS failed err={}", .{rerr});
+            job.err = error.PullFailed;
+            return finish(job);
+        };
     };
     defer alloc.free(payload);
 
@@ -317,7 +399,7 @@ fn worker(job: *Job) void {
     // own sessions. A genuine second holder is NOT adjudicated on the wire —
     // the agent takes the newest attach and says nothing (T703) — so this arm
     // accepts the steal deliberately; T1506 tracks telling the loser.
-    job.probe = App.AttachProbe.take(alloc, pull.conn(), .attachable);
+    job.probe = App.AttachProbe.take(alloc, pull_conn, .attachable);
     const attach_ptr = job.probe.attachSet();
 
     var list: std.ArrayList(Prepared) = .empty;
@@ -351,7 +433,25 @@ fn worker(job: *Job) void {
     job.prepared = list.toOwnedSlice(alloc) catch &.{};
 
     dialAll(job);
+    job.err = allDialsFailed(job.prepared);
     finish(job);
+}
+
+/// The failure to report when NOT ONE window could be dialed, or null whenever
+/// at least one could (a partial restore is a restore — its siblings are on
+/// screen and saying "failed" over them would be a lie).
+///
+/// The first recorded reason wins: they are all the same machine and the same
+/// credential, so the dials fail for one reason, and picking a later one would
+/// only change which of N identical errors the sentence came from.
+fn allDialsFailed(prepared: []const Prepared) ?App.RestoreAllError {
+    if (prepared.len == 0) return null;
+    var first: ?App.RestoreAllError = null;
+    for (prepared) |p| {
+        if (p.dialed != null) return null;
+        if (first == null) first = p.err;
+    }
+    return first;
 }
 
 /// Dial every prepared window's transport, at most `max_parallel_dials` at a
@@ -530,4 +630,41 @@ test "windowIsOpen with an empty snapshot never matches" {
         .token = @constCast("tok"[0..]),
     };
     try testing.expect(!job.windowIsOpen(oneLeafWindow(&nodes, &tabs, "sess-a")));
+}
+
+test "a restore reports the dial failure only when NOT ONE window got through" {
+    var nodes: [1]session_layout.Node = undefined;
+    var tabs: [1]session_layout.Tab = undefined;
+    const win = oneLeafWindow(&nodes, &tabs, "s1");
+
+    // Nothing prepared is "nothing to restore", not a failure: the pull worked
+    // and every window it held was filtered out.
+    try testing.expectEqual(@as(?App.RestoreAllError, null), allDialsFailed(&.{}));
+
+    // Every dial failed — the sentence the user is owed is the dials', because
+    // it is the only thing that went wrong.
+    const all_bad = [_]Prepared{
+        .{ .win = win, .dialed = null, .err = error.Unauthorized },
+        .{ .win = win, .dialed = null, .err = error.Unauthorized },
+    };
+    try testing.expectEqual(@as(?App.RestoreAllError, error.Unauthorized), allDialsFailed(&all_bad));
+
+    // The first recorded reason wins, and a slot that failed before it could
+    // classify anything does not erase one that did.
+    const first_blank = [_]Prepared{
+        .{ .win = win, .dialed = null, .err = null },
+        .{ .win = win, .dialed = null, .err = error.IncompatibleVersion },
+    };
+    try testing.expectEqual(
+        @as(?App.RestoreAllError, error.IncompatibleVersion),
+        allDialsFailed(&first_blank),
+    );
+
+    // One window through is a RESTORE. Saying "failed" over windows that are on
+    // screen would be a lie, so a partial restore reports nothing.
+    const partial = [_]Prepared{
+        .{ .win = win, .dialed = null, .err = error.DialFailed },
+        .{ .win = win, .dialed = .{ .relay = undefined }, .err = null },
+    };
+    try testing.expectEqual(@as(?App.RestoreAllError, null), allDialsFailed(&partial));
 }

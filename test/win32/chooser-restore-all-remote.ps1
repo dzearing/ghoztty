@@ -40,9 +40,17 @@
 #   D  an EXPIRED bearer (401 injected after the roster loaded) leaves the
 #      chooser open with a sign-in message and builds NO window - the failure
 #      mode that must not half-build a topology
+#   D2 and the message names the CREDENTIAL. Since the pull borrows a connection
+#      that was authorized minutes ago (T810) the 401 is met by the per-window
+#      dials, and a restore whose every dial failed used to read exactly like a
+#      machine with nothing saved
 #   E  the rebuild: one window, its recorded 3-pane split shape, over the relay
-#   F  per-window transport ownership: the restore spends >= 2 dials (the pull's
-#      own, plus one per window), counted in the relay's request log
+#   F  per-window transport ownership: the restore spends exactly one dial PER
+#      REBUILT WINDOW, counted in the relay's request log. Two claims in one
+#      number - no window shares a transport (fewer would mean the first window
+#      the user closes takes the others' agent down), and the PULL costs no dial
+#      at all, because the chooser that pressed the button is already holding
+#      that machine's pooled connection open and the pull borrows it (T810)
 #   F2 those per-window dials are opened TOGETHER (T616). The relay answers every
 #      connect 1.5 s late, so a serial restore can only open window k's dial once
 #      window k-1's was answered - its CONNECT lines land a whole delay apart.
@@ -552,6 +560,18 @@ try {
         'the chooser stayed OPEN to say so rather than dismissing onto nothing'
     Assert ((Count-LogLines $errlogB 'restore all: rebuilt \d+ window') -eq 0) `
         'and NO window was built on a dial that never succeeded'
+    # D2 (T810): it is reported AS an expired session, not as an empty machine.
+    # The pull now rides the chooser's pooled connection, which was authorized
+    # minutes ago and keeps working - so the 401 is met by the per-window dials
+    # instead, and a restore where every one of them failed used to come back
+    # indistinguishable from a machine with nothing saved: "Nothing to restore -
+    # these sessions are already open, or no layout was saved." to a user whose
+    # session had simply expired. `nothing to rebuild` is that wrong path's own
+    # line, so its absence is the assertion.
+    Assert ((Count-LogLines $errlogB 'restore all: nothing to rebuild') -eq 0) `
+        'D2 and it is reported as an expired session, not as a machine with nothing saved'
+    Assert ($null -ne (Wait-LogLine $errlogB 'restore all failed err=error.Unauthorized' 5000)) `
+        'D2 the chooser got the sentence that names the credential'
     Remove-Item $tripAuth -ErrorAction SilentlyContinue
 
     # --- 6. the rebuild -----------------------------------------------------
@@ -627,13 +647,17 @@ try {
     Assert ($null -ne $restored -and $restored.Title -like "$T1296NAME*") `
         "E2 the rebuilt window came back with its user-set name ($(if ($restored) { $restored.Title } else { '<no window>' }))"
 
-    # F: per-window transport ownership. The pull dials once for itself and each
-    # rebuilt window dials its own, so the restore spends 1 + N connects. Fewer
-    # would mean windows are sharing a connection - which `Window.deinit` then
-    # frees out from under the others the first time one is closed.
+    # F: per-window transport ownership, and the pull's borrowed connection. Each
+    # rebuilt window dials its own - fewer would mean windows are sharing a
+    # connection, which `Window.deinit` then frees out from under the others the
+    # first time one is closed. The pull dials NOTHING (T810): this chooser is
+    # holding a lease on exactly this machine, so its warm pooled connection is
+    # what GET_LAYOUTS and the attach probe ride. Before T810 that was one more
+    # full TCP + TLS + WebSocket upgrade + relay auth, paid before the first
+    # window could appear, against a link that was already open.
     $connectsAfter = Count-RelayConnects $relaylog $DEV
-    Assert (($connectsAfter - $connectsBefore) -ge ($rebuiltN + 1)) `
-        "F the restore spent its own dial plus one per window ($($connectsAfter - $connectsBefore) connects for $rebuiltN windows)"
+    Assert (($connectsAfter - $connectsBefore) -eq $rebuiltN) `
+        "F the restore spent one dial per window and none for the pull ($($connectsAfter - $connectsBefore) connects for $rebuiltN windows)"
 
     # F2 (T616): and it opened them TOGETHER. Every connect is answered $SlowMs
     # late, so a serial dialer cannot start window k until window k-1 has been
@@ -641,13 +665,15 @@ try {
     # them within milliseconds. The relay's log is the witness - our own clock
     # never enters into it - and F above still pins the COUNT, so concurrency
     # cannot be bought by sharing a connection.
-    $windowConnects = @(@(Get-RelayConnectTimes $relaylog $DEV $relayLinesBefore) | Select-Object -Skip 1)
+    # Every connect in this press is a WINDOW's now - the pull borrowed (F), so
+    # there is no leading dial to skip past.
+    $windowConnects = @(Get-RelayConnectTimes $relaylog $DEV $relayLinesBefore)
     $spanMs = 0
     if ($windowConnects.Count -ge 2) {
         $spanMs = ($windowConnects[$windowConnects.Count - 1] - $windowConnects[0]).TotalMilliseconds
     }
     Assert ($windowConnects.Count -ge 2) `
-        "F2 the relay logged a dial per window for this press ($($windowConnects.Count) after the pull's own)"
+        "F2 the relay logged a dial per window for this press ($($windowConnects.Count))"
     Assert ($windowConnects.Count -ge 2 -and $spanMs -lt ($SlowMs / 2)) `
         "F2 and they were opened together, not one after the other ($([int]$spanMs) ms apart; serial dialing puts them >= ${SlowMs}ms apart)"
 

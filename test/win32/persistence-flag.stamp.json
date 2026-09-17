@@ -1,11 +1,10 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-09-17T00:57:41-07:00",
-    "commit":  "507ec7319",
+    "generated":  "2026-09-17T02:27:02-07:00",
+    "commit":  "0edab36a7",
     "uncommitted":  [
-                        "test/win32/gui-postmortem.ps1",
-                        "test/win32/lib/TestDesktop.ps1"
+                        "test/win32/chooser-restore-all-remote.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "a736047ae58130876460e390abc9e0e5cceef937f237386f180b44e5ab1f30e2",
@@ -57,7 +56,7 @@
                   "test/win32/chooser-orphan-badge.ps1":  "d07e967638da5c78a96489d0120173f14243069c56853790edec836fe88ae3dd",
                   "test/win32/chooser-restore-all.ps1":  "ced0ad850d422bf42cd4040a41863b5a1a1158d57a2937e485ff60468d716ceb",
                   "test/win32/chooser-restore-all-adopt.ps1":  "885956785590d375d3e1afa999d71c107991b7bfdef4bb4d3b87bba1eb13919a",
-                  "test/win32/chooser-restore-all-remote.ps1":  "d0cd4bf214fbd30db5122db5d4fd0eb25bcee2df0c4f8e9ad3f9f852ea8c422f",
+                  "test/win32/chooser-restore-all-remote.ps1":  "5d3dfbc4827d0bfebd7d1d96bb3ad45ec318dd8956503e1b62e67db3d0d33407",
                   "test/win32/chooser-resume.ps1":  "7446ac6f724be1670193d04c818474cebe33430dd88223290a7b30ca9fa8a7be",
                   "test/win32/chooser-resume-remote.ps1":  "988b7bb06f9134659189909da12c14a0eb314f29ce3273b6c20375699b7120e8",
                   "test/win32/chooser-roster-refetch.ps1":  "bad4f2ce9924598420d0cff81430db6fb7afc9a220bbaa1f53f8abd98f4faa14",
