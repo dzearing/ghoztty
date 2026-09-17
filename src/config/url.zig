@@ -156,8 +156,7 @@ const win_any_path_space_segments =
 // branch 2 — a first segment carrying a dot is file-like and its space
 // continuation has to end on a separator or a dot, while an undotted one
 // stays broad so `C:\Program Files\app.exe` still matches whole.
-const windows_path_branch =
-    windows_path_prefix ++
+const windows_path_body =
     "(?:" ++
     win_dotted_path_lookahead ++
     win_path_chars ++ "+" ++
@@ -171,6 +170,41 @@ const windows_path_branch =
     no_trailing_colon ++
     trailing_spaces_at_eol ++
     ")";
+
+const windows_path_branch =
+    windows_path_prefix ++
+    windows_path_body;
+
+// Branch 5: Windows environment-variable paths, `%USERPROFILE%\src\app`
+// (T801). The POSIX side has had `$HOME/src/app` since the rooted branch
+// was written; this is the same idea in the spelling a Windows tool
+// actually prints, and it shares branch 4's body so the two cannot drift.
+//
+// The sigil is the WHOLE signal, exactly as it is for `$VAR/` and for a
+// drive letter: the name has to be a plausible variable (a letter or
+// underscore, then word characters — plus parentheses, for the real
+// `%ProgramFiles(x86)%`), it has to close with a second percent, and a
+// separator has to follow. That is what keeps `50% done` and `a%b` out. The
+// lookbehind is the `foo$BAR/baz` rule in Windows dress: a percent glued to
+// the end of a word is prose, not the start of a path.
+//
+// Like UNC, this shape is deliberately not probed by
+// `test\win32\terminal-link-paths.ps1`: neither `%` nor `\` is a selection
+// word boundary, so word-select and link-select return the same string and
+// the assertion would pass on a build with no branch at all. The cases
+// below are the coverage.
+//
+// Like the POSIX branch, the variable is NOT expanded to form the match —
+// the link text is what the pane shows. Expansion happens at the point of
+// opening (`App.openUrl`), because ShellExecuteW would otherwise be handed
+// a literal percent path that resolves to nothing.
+const windows_env_path_prefix =
+    \\(?<![\w%])%[A-Za-z_][\w()]*%[\\\/]
+;
+
+const windows_env_path_branch =
+    windows_env_path_prefix ++
+    windows_path_body;
 
 // Branch 3: Bare relative paths such as src/config/url.zig.
 const bare_relative_path_prefix =
@@ -191,7 +225,9 @@ pub const regex =
     "|" ++
     bare_relative_path_branch ++
     "|" ++
-    windows_path_branch;
+    windows_path_branch ++
+    "|" ++
+    windows_env_path_branch;
 
 test "url regex" {
     const testing = std.testing;
@@ -623,6 +659,46 @@ test "url regex" {
             .input = "path=\"C:\\\\Users\\\\David\\\\a.txt\"",
             .expect = "C:\\\\Users\\\\David\\\\a.txt",
         },
+        // Windows environment-variable paths (T801), the Windows spelling
+        // of the `$HOME/src/app` case above.
+        .{
+            .input = "%USERPROFILE%\\src\\app",
+            .expect = "%USERPROFILE%\\src\\app",
+        },
+        .{
+            .input = "log at %LOCALAPPDATA%\\ghoztty\\ghoztty.log today",
+            .expect = "%LOCALAPPDATA%\\ghoztty\\ghoztty.log",
+        },
+        // Forward slashes after the variable are separators too, and the
+        // real `%ProgramFiles(x86)%` carries parentheses in its name.
+        .{
+            .input = "%APPDATA%/npm/bin",
+            .expect = "%APPDATA%/npm/bin",
+        },
+        .{
+            .input = "%ProgramFiles(x86)%\\app\\run.exe",
+            .expect = "%ProgramFiles(x86)%\\app\\run.exe",
+        },
+        // Spaces inside the path behave the way the drive branch's do.
+        .{
+            .input = "%ProgramData%\\My Tool\\run.exe",
+            .expect = "%ProgramData%\\My Tool\\run.exe",
+        },
+        // A second variable further along the path is body text, not a new
+        // match: the whole path is one link.
+        .{
+            .input = "%LOCALAPPDATA%\\%USERNAME%\\cache",
+            .expect = "%LOCALAPPDATA%\\%USERNAME%\\cache",
+        },
+        // Line references and trailing punctuation behave as elsewhere.
+        .{
+            .input = "at %USERPROFILE%\\a\\b.txt:12:5",
+            .expect = "%USERPROFILE%\\a\\b.txt:12:5",
+        },
+        .{
+            .input = "see (%USERPROFILE%\\a\\b.txt)",
+            .expect = "%USERPROFILE%\\a\\b.txt",
+        },
     };
 
     for (cases) |case| {
@@ -667,8 +743,17 @@ test "url regex" {
         // drive root has no body to link.
         "\\\\ escaped prose",
         "D:\\",
-        // Windows environment-variable paths have no branch yet (T801).
-        "%USERPROFILE%\\foo",
+        // Windows environment-variable paths (T801): the percent pair is
+        // the signal, so prose percentages and a percent glued to a word
+        // stay text.
+        "50% done",
+        "a%b",
+        "100%\\foo",
+        "done%\\foo",
+        "foo%BAR%\\baz.txt",
+        // A closed name with no separator after it is a variable, not a path.
+        "%USERPROFILE%",
+        "%USERPROFILE% and more",
     };
     for (no_match_cases) |input| {
         var result = re.search(input, .{});

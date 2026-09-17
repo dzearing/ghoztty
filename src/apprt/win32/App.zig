@@ -6867,14 +6867,77 @@ pub fn openUrl(self: *App, url: []const u8) void {
     const wlen = std.unicode.utf8ToUtf16Le(&wbuf, url) catch return;
     if (wlen >= wbuf.len) return;
     wbuf[wlen] = 0;
+
+    // T801: a linkified `%USERPROFILE%\src\app` is the text the pane shows,
+    // literal percents and all — the matcher does not expand it, the same
+    // way the POSIX side hands `$HOME/...` over untouched. ShellExecuteW
+    // does not substitute either, so a click would open nothing unless we
+    // resolve it here. Only a path that STARTS with a `%NAME%` separator
+    // pair is expanded, so percent-encoding inside a real URL
+    // (`https://example.com/a%20b`) is never touched.
+    var ebuf: [2048]u16 = undefined;
+    const target: [*:0]const u16 = if (envPathNeedsExpansion(url)) expanded: {
+        const n = w32.ExpandEnvironmentStringsW(@ptrCast(&wbuf), &ebuf, ebuf.len);
+        // 0 is failure; n counts the terminating NUL, so n > len means it
+        // was truncated. Either way the literal is the safer thing to pass.
+        if (n == 0 or n > ebuf.len) break :expanded @ptrCast(&wbuf);
+        break :expanded @ptrCast(&ebuf);
+    } else @ptrCast(&wbuf);
+
     _ = w32.ShellExecuteW(
         null,
         std.unicode.utf8ToUtf16LeStringLiteral("open"),
-        @ptrCast(&wbuf),
+        target,
         null,
         null,
         w32.SW_SHOW,
     );
+}
+
+/// True when `url` is a Windows environment-variable path — `%NAME%\rest`
+/// or `%NAME%/rest` — the shape `config.url`'s T801 branch linkifies.
+///
+/// This is the same question that branch's prefix asks, kept deliberately
+/// narrow: the string must OPEN with the sigil, the name must be a
+/// plausible variable, and a separator must follow the closing percent.
+/// Anything else (a scheme URL carrying `%20`, a drive path, prose) is
+/// handed to the shell exactly as the pane showed it.
+fn envPathNeedsExpansion(url: []const u8) bool {
+    if (url.len < 4 or url[0] != '%') return false;
+    switch (url[1]) {
+        'A'...'Z', 'a'...'z', '_' => {},
+        else => return false,
+    }
+    var i: usize = 2;
+    while (i < url.len) : (i += 1) switch (url[i]) {
+        'A'...'Z', 'a'...'z', '0'...'9', '_', '(', ')' => {},
+        '%' => {
+            if (i + 1 >= url.len) return false;
+            return url[i + 1] == '\\' or url[i + 1] == '/';
+        },
+        else => return false,
+    };
+    return false;
+}
+
+test "envPathNeedsExpansion recognises the T801 link shape" {
+    const testing = std.testing;
+
+    try testing.expect(envPathNeedsExpansion("%USERPROFILE%\\src\\app"));
+    try testing.expect(envPathNeedsExpansion("%LOCALAPPDATA%/ghoztty/ghoztty.log"));
+    try testing.expect(envPathNeedsExpansion("%ProgramFiles(x86)%\\app\\run.exe"));
+
+    // A bare variable with nothing after it is not a path.
+    try testing.expect(!envPathNeedsExpansion("%USERPROFILE%"));
+    try testing.expect(!envPathNeedsExpansion("%USERPROFILE% and more"));
+    // Percent-encoding in a real URL must survive untouched.
+    try testing.expect(!envPathNeedsExpansion("https://example.com/a%20b"));
+    try testing.expect(!envPathNeedsExpansion("file:///C:/a%25b"));
+    // Ordinary paths and prose.
+    try testing.expect(!envPathNeedsExpansion("D:\\Users\\David\\clip.mp4"));
+    try testing.expect(!envPathNeedsExpansion("50% done"));
+    try testing.expect(!envPathNeedsExpansion("%"));
+    try testing.expect(!envPathNeedsExpansion("%1%\\foo"));
 }
 
 pub fn performAction(

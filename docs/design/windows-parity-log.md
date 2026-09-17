@@ -30735,3 +30735,40 @@ question when a marketplace sync puts the plugin back.
 Evidence: `hook-json.ps1` ALL PASS (53 assertions); installed hook vs repo asset
 `diff` clean; `installed_plugins.json` and the plugin's `hooks.json` read on the
 box. No source files changed this turn.
+
+## 2026-09-16 - T801: a path written with %USERPROFILE% in it is a link now, and clicking it goes somewhere
+
+A tool printing `%LOCALAPPDATA%\ghoztty\ghoztty.log` into a pane was printing
+dead text. The POSIX spelling of the same thing, `$HOME/src/app`, has been
+clickable since the rooted branch was written, and T757 taught the matcher
+`D:\...` and `\server\share\...` - but nothing knew the percent form, which is
+how a Windows tool actually writes a path it does not want to hard-code.
+
+`src/config/url.zig` gets a fifth branch. Its prefix is the sigil and nothing
+else - `%NAME%` followed by a separator, with the name a plausible variable
+(letter or underscore, then word characters, plus parentheses for the real
+`%ProgramFiles(x86)%`) - and its body is branch 4's, extracted as
+`windows_path_body` so the drive branch and this one cannot drift apart. That
+prefix is what keeps `50% done`, `a%b` and `100%\foo` out, and the lookbehind
+is T757's `foo$BAR/baz` rule in Windows dress: a percent glued to the end of a
+word is prose.
+
+Two questions the card left open, both settled here. The matcher does NOT
+expand the variable - the link text is what the pane shows, exactly as the
+POSIX side hands `$HOME/...` over literally. But `ShellExecuteW` does not
+substitute either, so the link would have opened nothing: expansion moved to
+the point of clicking, in `App.openUrl`, gated on `envPathNeedsExpansion` so it
+fires only for text that OPENS with the `%NAME%` + separator pair and never
+touches percent-encoding inside a real URL. And the sigil has to LEAD: a
+`%VAR%` further along is body text, so `%LOCALAPPDATA%\%USERNAME%\cache`
+matches whole while `foo\%BAR%\baz` stays dead, which is the same call T757
+made about bare backslash-relative paths.
+
+Evidence: eight new match cases and seven no-match cases in `test "url regex"`
+(the old `%USERPROFILE%\foo` no-match case is now the positive it was filed to
+become), a unit test for `envPathNeedsExpansion` in the win32 lane, all four
+floor lanes PASS, and `terminal-link-paths.ps1` ALL PASS. That script
+deliberately does not probe this shape, for the reason it already does not
+probe UNC: neither `%` nor `\` is a selection word boundary, so word-select and
+link-select would return the same string and the assertion would pass on a
+build with no branch at all.
