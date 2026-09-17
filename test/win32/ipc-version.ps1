@@ -83,6 +83,24 @@ Assert "exit 0" ($LASTEXITCODE -eq 0)
 $vtxt = Get-Content "$tmp\version.txt" -Raw
 Assert "Running Instance section" ($vtxt -match 'Running Instance')
 Assert "commit matches HEAD ($expectCommit)" ($vtxt -match "commit\s*:\s*$([regex]::Escape($expectCommit))")
+# T805: this document answers for TWO binaries, and until T805 only the RUNNING
+# one had a line labelled `commit` - so a reader grepping for the commit got the
+# other binary's, which was filed as a P1 about a bake that was correct (T773).
+# Both blocks are populated here (an instance really is running), so this is the
+# live form of that oracle rather than a fixture's.
+Assert "T805 the probed binary's own commit line is labelled" `
+    ($vtxt -match "(?m)^\s*-\s*commit:\s*$([regex]::Escape($expectCommit))\s*\(this binary\)\s*$")
+Assert "T805 the running app's commit line names the running app" `
+    ($vtxt -match '(?m)^\s*-\s*commit\s+:\s*[0-9a-f]{7,40}\s*\(the running app\)\s*$')
+Assert "T805 both headings say which binary they describe" `
+    (($vtxt -match '(?m)^Version \(this binary\)\s*$') -and
+     ($vtxt -match '(?m)^Running Instance \(the app running now, not this binary\)\s*$'))
+# The reader's question, asked of the real output: grep it for `commit` and
+# every line that answers has to name its binary.
+$t805Lines = @($vtxt -split "`r?`n" | Where-Object { $_ -match '(?m)^\s*-\s*commit' })
+Assert "T805 both binaries answer a grep for 'commit' (got $($t805Lines.Count))" ($t805Lines.Count -eq 2)
+Assert "T805 and no commit line is unlabelled" `
+    (-not ($t805Lines | Where-Object { $_ -notmatch '\((this binary|the running app)\)\s*$' }))
 Assert "mode is Debug" ($vtxt -match 'mode\s*:\s*Debug')
 Assert "runtime is win32" ($vtxt -match 'runtime\s*:\s*win32')
 Assert "exe is the zig-out exe" ($vtxt -match [regex]::Escape($Exe))

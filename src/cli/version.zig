@@ -67,8 +67,20 @@ pub fn run(alloc: Allocator) !u8 {
     try stdout.print("Ghostty {s}\n\n", .{build_config.version_string});
     if (tty) try stdout.print("\x1b]8;;\x1b\\", .{});
 
-    try stdout.print("Version\n", .{});
+    // T805: this document answers for TWO binaries - this exe, and whatever
+    // app happens to be running (the `Running Instance` section below). Both
+    // headings and both commit lines say which binary they describe, because
+    // until they did, the only line labelled `commit` belonged to the OTHER
+    // binary and a reader's eye landed on it: that misreading was filed as a
+    // P1 stale-stamp bug (T773) against a bake that was correct throughout.
+    try stdout.print("Version (this binary)\n", .{});
     try stdout.print("  - version: {s}\n", .{build_config.version_string});
+    // The sha is already inside `version:` as semver build metadata, where it
+    // is unreadable at a glance. Spelling it out is what makes a grep for
+    // `commit` find this binary's answer at all.
+    if (build_config.version.build) |commit_hash| {
+        try stdout.print("  - commit: {s} (this binary)\n", .{commit_hash});
+    }
     try stdout.print("  - channel: {t}\n", .{build_config.release_channel});
     if (comptime build_config.app_runtime == .win32) {
         // Whether THIS exe checks the win-v update channel: on for MSI
@@ -168,7 +180,7 @@ pub fn run(alloc: Allocator) !u8 {
 /// or a server without the `version` verb (e.g. the Mac Swift server
 /// today) — prints a one-line note instead of failing `+version`.
 fn printRunningInstance(alloc: Allocator, stdout: *std.Io.Writer) !void {
-    try stdout.print("Running Instance\n", .{});
+    try stdout.print("Running Instance (the app running now, not this binary)\n", .{});
 
     const conn = ipc_client.connect(alloc) catch |err| switch (err) {
         error.OutOfMemory => return error.OutOfMemory,
@@ -227,7 +239,7 @@ fn printRunningInstance(alloc: Allocator, stdout: *std.Io.Writer) !void {
     const data = parsed.value.data.?;
 
     try stdout.print("  - version : {s}\n", .{data.version});
-    try stdout.print("  - commit  : {s}\n", .{data.commit});
+    try stdout.print("  - commit  : {s} (the running app)\n", .{data.commit});
     try stdout.print("  - mode    : {s}\n", .{data.mode});
     try stdout.print("  - runtime : {s}\n", .{data.runtime});
     if (data.update_check) |uc| {

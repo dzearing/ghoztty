@@ -43,7 +43,9 @@ function New-StubExe($name, $Mode) {
     if ($Mode) { $lines += "echo   - build mode    : .$Mode" }
     # The Running Instance section carries its own '- mode' line; every stub
     # prints one, so a match that is not anchored on 'build mode' fails here.
-    $lines += @('echo   - app runtime   : .win32', 'echo Running Instance', 'echo   - mode    : Debug')
+    $lines += @('echo   - app runtime   : .win32',
+        'echo Running Instance (the app running now, not this binary)',
+        'echo   - mode    : Debug')
     Set-Content -LiteralPath $path -Value $lines -Encoding ascii
     return $path
 }

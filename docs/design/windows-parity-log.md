@@ -9,6 +9,44 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-16: T805 closed done, T1628 filed - **`+version` answers for two
+  binaries, and now both of them say so.**
+
+  One command, two provenances: the `Version` block describes the exe you
+  asked, the `Running Instance` block describes whatever app is running,
+  fetched over IPC (T52). They routinely disagree - that is the whole reason
+  the second block exists - and until today only the running app's block had a
+  line literally labelled `commit`, while this binary's sha sat unlabelled
+  inside semver build metadata. A reader greps for `commit`, finds exactly one
+  line, and walks away with the other binary's identity. On 2026-08-11 that
+  misreading was filed as a P1 stale-stamp bug (T773) against a bake that was
+  correct the entire time.
+
+  The document is self-disambiguating now. Both headings name their subject
+  (`Version (this binary)`, `Running Instance (the app running now, not this
+  binary)`), the probed binary gets its own `- commit: <sha> (this binary)`
+  line, and the running app's carries `(the running app)`. Every line a grep
+  for `commit` returns therefore answers "whose?" from the line alone, which is
+  the oracle rather than the mechanism - `ipc-version.ps1` asks it that way,
+  against a real run with the fixture instance up so both blocks are populated,
+  and it would have scored red before this change (one commit line, unlabelled).
+
+  The parsers are deliberately untouched: `Get-CommitFromVersionText` still
+  anchors on `- version:` and `Get-GhozttyBuildMode` on `- build mode`, so the
+  delivery gates read the same numbers as yesterday. What did have to grow is
+  the fixture set - a delivery probes exes built BEFORE this change, so the
+  pre-T805 shape is now its own fixture (upgrade-staleness A1b, A31b) beside
+  the current one, instead of the old shape quietly standing in for both.
+
+  `src/cli/version.zig` is shared core, so this lands on macOS too - which is
+  the point, not a hazard. Reading the rendered Mac output is a Mac-seat act
+  (there the Running Instance block is a one-line note, T169), filed as T1628
+  rather than assumed from a green compile.
+
+  Floor: lib / none / win32 / agent ALL LANES PASS; P1 (26), P2 (20), P3 (16),
+  ipc-version (54), upgrade-staleness (161), build-mode-guard (55),
+  update-check (36) all ALL PASS.
+
 - 2026-09-16: T796 closed done, T1619/T1620/T1621 filed - **a test that has to
   switch a feature on before it can reach it is now saying, on the record, what
   happens when it is off.**

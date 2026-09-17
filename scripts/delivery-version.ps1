@@ -45,6 +45,14 @@
 # exactly the kind of thing a formatting tidy erases: arms A31-A35 of
 # `test\win32\upgrade-staleness.ps1` hold it with a payload whose two sections
 # name DIFFERENT commits.
+#
+# Since T805 the document itself also says which binary each block describes -
+# `Version (this binary)` / `Running Instance (the app running now, ...)`, and
+# both commit lines carry the same parenthetical - so a HUMAN reading the output
+# is no longer relying on that space either. This parser is unchanged by it: it
+# still anchors on `- version:`, and a pre-T805 binary (which a delivery does
+# find on disk) prints the older shape and parses identically. A1b and A31b of
+# upgrade-staleness hold that back-compatibility.
 function Get-CommitFromVersionText {
     param([AllowEmptyString()][AllowNull()][string]$Text)
     if (-not $Text) { return '' }

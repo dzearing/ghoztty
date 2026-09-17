@@ -85,22 +85,43 @@ Register-HarnessGhozttyRoot -Root $root | Out-Null
 # Verbatim shape of what `ghoztty +version` prints (captured on the box
 # 2026-08-01). Note the pre-release field is the branch and carries hyphens and
 # digits of its own, so the commit is the SEMVER BUILD field after the last '+'.
+#
+# T805 reshaped both headings and gave the probed binary its own `commit` line,
+# so this is the CURRENT shape; the legacy shape a pre-T805 binary still prints
+# is held separately by A1b, because delivery gates probe installed exes that
+# were built before this change.
 $realPayload = @'
 Ghostty 1.4.0-users-dzearing-windows-amd64-+f71f724d0
 
-Version
+Version (this binary)
   - version: 1.4.0-users-dzearing-windows-amd64-+f71f724d0
+  - commit: f71f724d0 (this binary)
   - channel: tip
   - update check: off (dev build)
 Build Config
   - Zig version   : 0.15.2
   - build mode    : .Debug
   - app runtime   : .win32
+Running Instance (the app running now, not this binary)
+  - none detected
+'@
+
+# The pre-T805 shape, byte for byte as it was captured on 2026-08-01.
+$legacyPayload = @'
+Ghostty 1.4.0-users-dzearing-windows-amd64-+f71f724d0
+
+Version
+  - version: 1.4.0-users-dzearing-windows-amd64-+f71f724d0
+  - channel: tip
+Build Config
+  - build mode    : .Debug
 Running Instance
   - none detected
 '@
 
 AssertEq "A1 the commit comes out of a real payload" 'f71f724d0' (Get-CommitFromVersionText $realPayload)
+AssertEq "A1b a pre-T805 binary's payload still reads (delivery probes old exes)" 'f71f724d0' `
+    (Get-CommitFromVersionText $legacyPayload)
 AssertEq "A2 the banner line alone is enough" 'f71f724d0' `
     (Get-CommitFromVersionText 'Ghostty 1.4.0-users-dzearing-windows-amd64-+f71f724d0')
 AssertEq "A3 empty output yields no commit, never a false match" '' (Get-CommitFromVersionText '')
@@ -197,23 +218,45 @@ Assert "A30 stamps are exact, not prefix-matched the way abbreviated commits are
 # both had dialed the same installed release; the bake was correct throughout.
 # The fixture below is that day's shape, with the two blocks deliberately naming
 # DIFFERENT commits so a reader that confuses them cannot pass.
+#
+# T805 is what the document now does about that: both headings name their
+# binary, and BOTH commit lines say whose commit they are - so the fixture
+# below carries two `commit` lines, and a reader that grabs "the commit" out of
+# this payload has to have chosen one deliberately.
 $twoBinaries = @'
 Ghostty 1.4.0-users-dzearing-windows-amd64-+2699f0dd5
 
-Version
+Version (this binary)
   - version: 1.4.0-users-dzearing-windows-amd64-+2699f0dd5
+  - commit: 2699f0dd5 (this binary)
   - channel: tip
   - update check: off (dev build)
 Build Config
   - Zig version   : 0.15.2
   - build mode    : .Debug
   - app runtime   : .win32
-Running Instance
+Running Instance (the app running now, not this binary)
   - version : 1.4.0-users-dzearing-windows-amd64-+2929e42c0
-  - commit  : 2929e42c0
+  - commit  : 2929e42c0 (the running app)
   - mode    : ReleaseFast
   - runtime : win32
   - exe     : C:\Users\David\AppData\Local\Programs\Ghoztty\ghoztty.exe
+  - pid     : 50828
+'@
+
+# The pre-T805 shape of the same day, kept so the parser is pinned against the
+# binaries a delivery still finds on disk: one `commit` line, and it is the
+# OTHER binary's.
+$twoBinariesLegacy = @'
+Ghostty 1.4.0-users-dzearing-windows-amd64-+2699f0dd5
+
+Version
+  - version: 1.4.0-users-dzearing-windows-amd64-+2699f0dd5
+Build Config
+  - build mode    : .Debug
+Running Instance
+  - version : 1.4.0-users-dzearing-windows-amd64-+2929e42c0
+  - commit  : 2929e42c0
   - pid     : 50828
 '@
 
@@ -221,20 +264,33 @@ AssertEq "A31 THE 2026-08-11 ORACLE: the probed binary's commit wins, not the ru
     '2699f0dd5' (Get-CommitFromVersionText $twoBinaries)
 Assert "A32 and the running app's commit is never mistaken for it" `
     ((Get-CommitFromVersionText $twoBinaries) -ne '2929e42c0')
+AssertEq "A31b the same holds for a pre-T805 binary's payload" `
+    '2699f0dd5' (Get-CommitFromVersionText $twoBinariesLegacy)
+# T805's own oracle, stated as the reader's question rather than the parser's:
+# grep the document for `commit` and every line that comes back has to say
+# which of the two binaries it is talking about. Before T805 exactly one line
+# matched and it was the running app's, unlabelled - which is how it was read
+# as the probed binary's and filed as a P1.
+$commitLines = @($twoBinaries -split "`r?`n" | Where-Object { $_ -match '(?i)\bcommit\b' })
+AssertEq "A31c both binaries answer a grep for 'commit'" 2 $commitLines.Count
+Assert "A31d and every such line names the binary it describes" `
+    (-not ($commitLines | Where-Object { $_ -notmatch '\((this binary|the running app)\)' }))
+Assert "A31e the probed binary's commit line carries the same sha as its version line" `
+    ($twoBinaries -match '(?m)^\s*-\s*commit:\s*2699f0dd5 \(this binary\)\s*$')
 # The whole separation is one space (`version:` vs `version :`). Pin it from the
 # other side too, so a formatting tidy that closes that gap fails HERE rather
 # than by shipping the wrong binary under a green delivery log.
 AssertEq "A33 a Running Instance line ALONE reads as no version at all" '' `
-    (Get-CommitFromVersionText "Running Instance`r`n  - version : 1.4.0-branch-+2929e42c0`r`n  - commit  : 2929e42c0`r`n")
+    (Get-CommitFromVersionText "Running Instance (the app running now, not this binary)`r`n  - version : 1.4.0-branch-+2929e42c0`r`n  - commit  : 2929e42c0 (the running app)`r`n")
 # The banner fallback describes the probed binary too, so a payload whose own
 # `Version` block is missing must still never fall through to the running app.
 AssertEq "A34 the banner fallback also names the probed binary" '2699f0dd5' `
-    (Get-CommitFromVersionText "Ghostty 1.4.0-b-+2699f0dd5`r`nRunning Instance`r`n  - version : 1.4.0-b-+2929e42c0`r`n  - commit  : 2929e42c0`r`n")
+    (Get-CommitFromVersionText "Ghostty 1.4.0-b-+2699f0dd5`r`nRunning Instance (the app running now, not this binary)`r`n  - version : 1.4.0-b-+2929e42c0`r`n  - commit  : 2929e42c0 (the running app)`r`n")
 # `+version` when nothing is running: the same document minus the decoy, which
 # is the shape the pre-T773 fixture (A1) already covered - restated here so the
 # pair reads as one comparison rather than two unrelated arms.
 AssertEq "A35 no running instance changes nothing about the answer" '2699f0dd5' `
-    (Get-CommitFromVersionText "Version`r`n  - version: 1.4.0-b-+2699f0dd5`r`nRunning Instance`r`n  - none detected`r`n")
+    (Get-CommitFromVersionText "Version (this binary)`r`n  - version: 1.4.0-b-+2699f0dd5`r`n  - commit: 2699f0dd5 (this binary)`r`nRunning Instance (the app running now, not this binary)`r`n  - none detected`r`n")
 
 # --- A36-A45: the relay sign-in bake (T795) -----------------------------------
 # The third thing a delivery reads out of a `+version` payload: whether THESE

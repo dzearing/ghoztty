@@ -1,16 +1,17 @@
 {
     "guard":  "build-identity",
     "script":  "test/win32/ipc-version.ps1",
-    "generated":  "2026-09-14T01:15:51-07:00",
-    "commit":  "1249a2845",
+    "generated":  "2026-09-16T21:30:23-07:00",
+    "commit":  "73ac4c238",
     "uncommitted":  [
+                        "src/cli/version.zig",
                         "test/win32/ipc-version.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/image_freshness.zig":  "8edb6d86781716200a50df3157f8a1a396da5f2f265db20f470aa72f0f177f1c",
                   "src/apprt/win32/provenance.zig":  "3d097ede4b454d4813d00a9ec1935d6ed11718627a2b017435edac7167d1b50a",
                   "src/apprt/win32/tray_notify.zig":  "bbb2a6d5ea26af08b3e0454a76ba6b25b953ba6a56860d630f5c499deb5fd38c",
-                  "src/cli/version.zig":  "99ca489e05d7c94001f89e13d8f82cb52254f119aed15d9325eb63e6c82720e5",
-                  "test/win32/ipc-version.ps1":  "6349aed1633143e90a9f969dedfdc44386e6e5d91c9b97214770bcbcc77f2e0d"
+                  "src/cli/version.zig":  "6b2bc632a3f4096373189da3b0ca71103dac63ceaeb15d24cb3b9eafe2693303",
+                  "test/win32/ipc-version.ps1":  "f759b7967a0874679034a9df5ef46a6e33559f3404e3e571ff04a6a944657c1d"
               }
 }
