@@ -31144,3 +31144,44 @@ never printed twice (I4). `floor-lane.ps1 -Lane all` all four lanes PASS,
 `-Lane harness` PASS over 28 audits and re-stamped (skip-visibility is red
 against the filed T1258 and reports as PENDING), ipc-p1/p2/p3 ALL PASS - the
 three of them GUI scripts that now run the new teardown sweep on every section.
+
+## 2026-09-17 - T814: "stop sending me readings" now waits for the reading already arriving
+
+The activity panel and the machine chooser watch a remote machine through a
+pushed stream, and when they stop watching they free the memory those readings
+were being written into. `unsubscribeMetrics` returning was the permission slip
+for that free - `ActivityMonitor.close`, `dropProbeLink` and
+`SessionCpuProbe.stop` all say so in as many words - and it was not one. The
+control reader takes `write_mutex`, READS the handler and its ctx, RELEASES the
+lock, and only then calls; a handler already past that unlock ran while
+unsubscribe cleared the slot and returned, into memory the caller was entitled
+to free the next instruction. Never observed, a few instructions wide, and a
+use-after-free by construction.
+
+Clearing the slot stops the NEXT dispatch, which is half the guarantee. The
+other half is now a drain: dispatch marks itself in flight in the same critical
+section that reads the slot - so "the slot was non-null" and "a dispatch is
+running" are one indivisible fact and an unsubscribe cannot slip between them -
+and `unsubscribeMetrics` / `unsubscribeSessionCpu` / `unsubscribeSessions` wait
+for that count to reach zero after nulling the slot. It is per push kind, so a
+metrics unsubscribe does not block on a roster push, and it lives in
+`connection.zig` so all three streams got it in one edit. Two things it
+deliberately does not do: give up on a timeout (a bounded wait hands back the
+guarantee minus the guarantee; it logs instead after a second) and wait on
+itself - a handler that unsubscribes its own stream runs on the control-reader
+thread, whose id is latched when that loop starts and which is exempt.
+
+The handler ctx is also published under the lock now rather than beside it,
+which closes the smaller window where a re-subscribe's new handler could be
+paired with the old ctx.
+
+Evidence: three unit tests in the `none` lane, with a negative control - with
+`drainPush(.metrics)` commented out, `T814: unsubscribeMetrics waits for a
+handler that is already running` fails at `rec.finished`, so the assertion has
+teeth. `floor-lane.ps1 -Lane all` all four lanes PASS over the final code.
+Every guard the edit made due is green again: `thread-join-audit.ps1` (24),
+`seam-audit.ps1` (27), `sessions-running-cmd.ps1` (16) and
+`session-resume-offset.ps1` (115) - that last one red on its first cycle once
+and clean on re-run, filed as T1637 rather than explained away. ipc-p1/p2/p3
+ALL PASS. T1638 files the fourth slot, `ctrl_handler`, which is read with no
+lock at all and has no draining clear.

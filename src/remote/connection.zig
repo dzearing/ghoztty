@@ -146,6 +146,12 @@ pub const SessionCpuHandler = *const fn (
 /// never diverge. Fires on the control-reader thread.
 pub const SessionsHandler = *const fn (ctx: *anyopaque, json: []const u8) void;
 
+/// The pushed-stream handler slots that `unsubscribeX` must DRAIN before it
+/// returns (T814). One counter per kind so a drain waits for its own stream
+/// only — a metrics unsubscribe has no business blocking on a roster push.
+const PushKind = enum(usize) { metrics, session_cpu, sessions };
+const push_kind_count = @typeInfo(PushKind).@"enum".fields.len;
+
 /// One queued outbound frame, owned by the writer queue until the writer emits it.
 /// `payload` is a private heap copy the queue owns and frees; the caller's slice is
 /// not retained past `enqueue`.
@@ -1088,6 +1094,31 @@ pub const Connection = struct {
     sessions_handler: ?SessionsHandler = null,
     sessions_handler_ctx: *anyopaque = undefined,
 
+    /// In-flight accounting for the pushed-stream handler slots above (T814).
+    ///
+    /// Clearing a slot is NOT by itself the guarantee its callers rely on:
+    /// dispatch reads the handler + ctx under `write_mutex`, RELEASES the lock
+    /// and only then calls, so a handler already past the unlock runs while
+    /// `unsubscribeX` returns and the ctx it captures is freed. Every caller in
+    /// the app treats that return as "no callback can touch me any more"
+    /// (ActivityMonitor.close, dropProbeLink, SessionCpuProbe.stop), so the
+    /// unsubscribe has to DRAIN rather than merely clear.
+    ///
+    /// `push_inflight[kind]` counts dispatches currently inside a handler;
+    /// `pushLeave` broadcasts `push_cond` when the last one leaves, and
+    /// `drainPush` (called with `write_mutex` held, after the slot is nulled)
+    /// waits for zero. All of it is guarded by `write_mutex` — the same lock
+    /// the slots' publish/observe is already ordered by, so no new lock order
+    /// is introduced.
+    push_cond: std.Thread.Condition = .{},
+    push_inflight: [push_kind_count]u32 = @splat(0),
+    /// The control-reader thread's id, latched when that loop starts. A handler
+    /// that unsubscribes ITSELF runs on this thread, and waiting for its own
+    /// return would hang forever — so `drainPush` returns immediately for it
+    /// (its ctx is alive by construction for the rest of that call). 0 = the
+    /// reader has not started.
+    reader_tid: std.atomic.Value(std.Thread.Id) = .{ .raw = 0 },
+
     // --- Health & link state (increment 2) ------------------------------------
     /// Injected millisecond clock (real by default, fake in tests).
     clock: Clock = Clock.real(),
@@ -1416,6 +1447,53 @@ pub const Connection = struct {
         self.ctrl_handler = handler;
     }
 
+    // --- Pushed-stream dispatch accounting (T814) ----------------------------
+
+    /// Record that a dispatch of `kind` is about to run. MUST be called with
+    /// `write_mutex` held, in the same critical section that read the handler
+    /// slot — that is what makes "the slot was non-null" and "a dispatch is in
+    /// flight" one indivisible fact, so an unsubscribe can never slip between
+    /// them and conclude there is nothing to wait for.
+    fn pushEnter(self: *Connection, comptime kind: PushKind) void {
+        self.push_inflight[@intFromEnum(kind)] += 1;
+    }
+
+    /// Record that the dispatch returned, waking any parked `drainPush`.
+    fn pushLeave(self: *Connection, comptime kind: PushKind) void {
+        self.write_mutex.lock();
+        defer self.write_mutex.unlock();
+        const i = @intFromEnum(kind);
+        self.push_inflight[i] -= 1;
+        if (self.push_inflight[i] == 0) self.push_cond.broadcast();
+    }
+
+    /// Wait until no handler of `kind` is executing. MUST be called with
+    /// `write_mutex` held and AFTER the slot has been nulled — the null is what
+    /// stops new dispatches, this is what sees off the one already running.
+    ///
+    /// Two things it deliberately does not do: give up (a bounded wait would
+    /// hand the caller back the exact guarantee it came here for, minus the
+    /// guarantee), and wait on itself (a handler that unsubscribes its own
+    /// stream runs on the control-reader thread, whose frame is on this stack).
+    fn drainPush(self: *Connection, comptime kind: PushKind) void {
+        const i = @intFromEnum(kind);
+        if (self.push_inflight[i] == 0) return;
+        if (self.reader_tid.load(.monotonic) == std.Thread.getCurrentId()) return;
+
+        var warned = false;
+        while (self.push_inflight[i] > 0) {
+            self.push_cond.timedWait(&self.write_mutex, std.time.ns_per_s) catch {
+                if (!warned) {
+                    warned = true;
+                    std.log.scoped(.remote_conn).warn(
+                        "unsubscribe is waiting on a push handler that has not returned kind={s}",
+                        .{@tagName(kind)},
+                    );
+                }
+            };
+        }
+    }
+
     // --- Host-metrics subscription (§9.3, activity monitor) ------------------
 
     /// Subscribe to the agent's pushed host-metrics stream. Publishes the
@@ -1435,9 +1513,13 @@ pub const Connection = struct {
         // Publish the handler slot BEFORE sending the subscription so the first
         // pushed frame is never dropped for lack of a handler.
         {
-            self.metrics_handler_ctx = ctx;
             self.write_mutex.lock();
             defer self.write_mutex.unlock();
+            // Both fields under the lock the reader observes them through: the
+            // reader reads ctx AND handler in one critical section, so storing
+            // ctx outside it left a window where a re-subscribe's new handler
+            // could be paired with the old ctx.
+            self.metrics_handler_ctx = ctx;
             self.metrics_handler = handler;
         }
 
@@ -1448,10 +1530,14 @@ pub const Connection = struct {
     }
 
     /// Unsubscribe from the pushed host-metrics stream. Sends `METRICS_UNSUB{}`
-    /// (best-effort — a send failure on a closing connection is ignored) and then
-    /// clears the `metrics_handler` slot under `write_mutex`, so no further
-    /// callback fires after this returns. Safe to call when not subscribed (the
-    /// unsub send is harmless and the slot is already null).
+    /// (best-effort — a send failure on a closing connection is ignored), clears
+    /// the `metrics_handler` slot under `write_mutex` and then DRAINS: if a
+    /// dispatch is already inside the handler, this waits for it to return
+    /// (T814). Both halves are needed for the guarantee callers rely on — the
+    /// null stops new dispatches, the drain sees off the one already running —
+    /// so on return `ctx` may be freed. Safe to call when not subscribed (the
+    /// unsub send is harmless and the slot is already null), and safe to call
+    /// FROM the handler (a self-unsubscribe does not wait for itself).
     pub fn unsubscribeMetrics(self: *Connection) void {
         const json = protocol.encodeJson(self.alloc, protocol.MetricsUnsub{}) catch null;
         if (json) |j| {
@@ -1466,6 +1552,7 @@ pub const Connection = struct {
         self.write_mutex.lock();
         defer self.write_mutex.unlock();
         self.metrics_handler = null;
+        self.drainPush(.metrics);
     }
 
     /// Subscribe to the pushed session ROSTER. The agent sends a `sessions`
@@ -1486,16 +1573,21 @@ pub const Connection = struct {
         } else |_| return error.Unsupported;
 
         {
-            self.sessions_handler_ctx = ctx;
             self.write_mutex.lock();
             defer self.write_mutex.unlock();
+            // Both fields under the lock the reader observes them through: the
+            // reader reads ctx AND handler in one critical section, so storing
+            // ctx outside it left a window where a re-subscribe's new handler
+            // could be paired with the old ctx.
+            self.sessions_handler_ctx = ctx;
             self.sessions_handler = handler;
         }
         try self.writeControl(.sessions_sub, protocol.control_channel, "{}");
     }
 
-    /// Stop the pushed roster and clear the handler; no callback fires after
-    /// this returns. Safe when not subscribed and against an older agent.
+    /// Stop the pushed roster, clear the handler and DRAIN any dispatch already
+    /// inside it (T814): no callback fires, or is still running, after this
+    /// returns. Safe when not subscribed and against an older agent.
     pub fn unsubscribeSessions(self: *Connection) void {
         const supported = if (self.negotiated) |n| n.sessions_push else |_| false;
         if (supported) {
@@ -1504,6 +1596,7 @@ pub const Connection = struct {
         self.write_mutex.lock();
         defer self.write_mutex.unlock();
         self.sessions_handler = null;
+        self.drainPush(.sessions);
     }
 
     /// Subscribe to the pushed per-session CPU stream. `interval_ms` is a HINT —
@@ -1531,9 +1624,13 @@ pub const Connection = struct {
         // Publish the handler slot BEFORE subscribing so the first pushed frame
         // is never dropped for lack of a handler.
         {
-            self.session_cpu_handler_ctx = ctx;
             self.write_mutex.lock();
             defer self.write_mutex.unlock();
+            // Both fields under the lock the reader observes them through: the
+            // reader reads ctx AND handler in one critical section, so storing
+            // ctx outside it left a window where a re-subscribe's new handler
+            // could be paired with the old ctx.
+            self.session_cpu_handler_ctx = ctx;
             self.session_cpu_handler = handler;
         }
 
@@ -1543,9 +1640,10 @@ pub const Connection = struct {
         try self.writeControl(.session_cpu_sub, protocol.control_channel, json);
     }
 
-    /// Stop the pushed per-session CPU stream and clear the handler slot, so no
-    /// further callback fires after this returns. Safe when not subscribed, and
-    /// safe against an older agent (we simply never send the gated opcode).
+    /// Stop the pushed per-session CPU stream, clear the handler slot and DRAIN
+    /// any dispatch already inside it (T814), so no callback fires — or is still
+    /// running — after this returns. Safe when not subscribed, and safe against
+    /// an older agent (we simply never send the gated opcode).
     pub fn unsubscribeSessionCpu(self: *Connection) void {
         const supported = if (self.negotiated) |n| n.session_cpu else |_| false;
         if (supported) {
@@ -1559,6 +1657,7 @@ pub const Connection = struct {
         self.write_mutex.lock();
         defer self.write_mutex.unlock();
         self.session_cpu_handler = null;
+        self.drainPush(.session_cpu);
     }
 
     // --- Observability (increment 2, §6.4) -----------------------------------
@@ -3245,6 +3344,11 @@ pub const Connection = struct {
         // with the same call in `shutdown`.
         defer self.failPendingRpcs();
 
+        // Latch this thread's id: it is the ONLY thread that dispatches pushed
+        // handlers, so it is the one `drainPush` must never park on (a handler
+        // that unsubscribes its own stream would otherwise wait for itself).
+        self.reader_tid.store(std.Thread.getCurrentId(), .monotonic);
+
         var reader = protocol.Reader.init(self.alloc, self.encoding);
         defer reader.deinit();
         var scratch: [read_buf_size]u8 = undefined;
@@ -3337,8 +3441,12 @@ pub const Connection = struct {
                     self.write_mutex.lock();
                     const handler = self.sessions_handler;
                     const ctx = self.sessions_handler_ctx;
+                    if (handler != null) self.pushEnter(.sessions);
                     self.write_mutex.unlock();
-                    if (handler) |h| h(ctx, frame.payload);
+                    if (handler) |h| {
+                        defer self.pushLeave(.sessions);
+                        h(ctx, frame.payload);
+                    }
                     return;
                 }
                 _ = self.deliverRpcReply(frame);
@@ -3440,8 +3548,15 @@ pub const Connection = struct {
                 self.write_mutex.lock();
                 const handler = self.metrics_handler;
                 const ctx = self.metrics_handler_ctx;
+                if (handler != null) self.pushEnter(.metrics);
                 self.write_mutex.unlock();
-                if (handler) |h| h(ctx, parsed.value.host);
+                if (handler) |h| {
+                    // The in-flight mark is what makes `unsubscribeMetrics`
+                    // WAIT for this call instead of returning over the top of
+                    // it (T814) — `ctx` is freed the instant it returns.
+                    defer self.pushLeave(.metrics);
+                    h(ctx, parsed.value.host);
+                }
             },
             .session_cpu => {
                 // Pushed per-session CPU roll-up. Same discipline as `.metrics`:
@@ -3454,8 +3569,12 @@ pub const Connection = struct {
                 self.write_mutex.lock();
                 const handler = self.session_cpu_handler;
                 const ctx = self.session_cpu_handler_ctx;
+                if (handler != null) self.pushEnter(.session_cpu);
                 self.write_mutex.unlock();
-                if (handler) |h| h(ctx, parsed.value.sessions, parsed.value.interval_ms);
+                if (handler) |h| {
+                    defer self.pushLeave(.session_cpu);
+                    h(ctx, parsed.value.sessions, parsed.value.interval_ms);
+                }
             },
             else => {
                 // Every OTHER reply is dispatched FROM the declared reply set
@@ -6409,6 +6528,138 @@ test "unsubscribeMetrics: clears the handler slot (no callback after)" {
     h.conn.unsubscribeMetrics();
     try testing.expect(h.conn.metrics_handler == null);
     try testing.expect(a.err == null);
+}
+
+/// A metrics handler that is still executing when the test unsubscribes —
+/// the state the old code had no way to wait for.
+const SlowMetricsRec = struct {
+    entered: std.Thread.ResetEvent = .{},
+    finished: std.atomic.Value(bool) = .{ .raw = false },
+    hold_ns: u64 = 250 * std.time.ns_per_ms,
+
+    fn handler(ctx: *anyopaque, host: protocol.HostMetrics) void {
+        _ = host;
+        const self: *SlowMetricsRec = @ptrCast(@alignCast(ctx));
+        self.entered.set();
+        std.Thread.sleep(self.hold_ns);
+        self.finished.store(true, .release);
+    }
+};
+
+test "T814: unsubscribeMetrics waits for a handler that is already running" {
+    // The whole contract every caller leans on: ActivityMonitor.close and
+    // dropProbeLink free the context the handler captures the instant this
+    // returns. Clearing the slot alone did not buy that — dispatch reads the
+    // slot under the lock, releases it, and only then calls — so a handler past
+    // the unlock ran into freed memory. Before the drain this test sees
+    // `finished == false`.
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    const a = h.configure();
+    a.metrics_push_count = 1;
+    try h.start();
+
+    var rec: SlowMetricsRec = .{};
+    try h.conn.subscribeMetrics(500, &rec, SlowMetricsRec.handler);
+    try rec.entered.timedWait(5 * std.time.ns_per_s);
+
+    h.conn.unsubscribeMetrics();
+    try testing.expect(rec.finished.load(.acquire));
+    try testing.expect(h.conn.metrics_handler == null);
+    try testing.expect(a.err == null);
+}
+
+/// A handler that unsubscribes its OWN stream — the one case a drain must not
+/// wait for, because it would be waiting on the stack frame it is standing on.
+const SelfUnsubRec = struct {
+    conn: *Connection = undefined,
+    returned: std.Thread.ResetEvent = .{},
+
+    fn handler(ctx: *anyopaque, host: protocol.HostMetrics) void {
+        _ = host;
+        const self: *SelfUnsubRec = @ptrCast(@alignCast(ctx));
+        self.conn.unsubscribeMetrics();
+        self.returned.set();
+    }
+};
+
+test "T814: a handler may unsubscribe itself without deadlocking" {
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    const a = h.configure();
+    a.metrics_push_count = 2;
+    try h.start();
+
+    var rec: SelfUnsubRec = .{ .conn = h.conn };
+    try h.conn.subscribeMetrics(500, &rec, SelfUnsubRec.handler);
+    try rec.returned.timedWait(5 * std.time.ns_per_s);
+
+    h.conn.unsubscribeMetrics();
+    try testing.expect(h.conn.metrics_handler == null);
+    try testing.expect(a.err == null);
+}
+
+/// Stands in for the control reader for the two push kinds the fake agent
+/// cannot push: it enters a dispatch, parks until released, then leaves.
+const FakeDispatch = struct {
+    conn: *Connection = undefined,
+    kind: PushKind = .session_cpu,
+    entered: std.Thread.ResetEvent = .{},
+    release: std.Thread.ResetEvent = .{},
+    finished: std.atomic.Value(bool) = .{ .raw = false },
+
+    fn run(self: *FakeDispatch) void {
+        self.conn.write_mutex.lock();
+        switch (self.kind) {
+            .session_cpu => self.conn.pushEnter(.session_cpu),
+            .sessions => self.conn.pushEnter(.sessions),
+            .metrics => self.conn.pushEnter(.metrics),
+        }
+        self.conn.write_mutex.unlock();
+        self.entered.set();
+
+        self.release.wait();
+        self.finished.store(true, .release);
+        switch (self.kind) {
+            .session_cpu => self.conn.pushLeave(.session_cpu),
+            .sessions => self.conn.pushLeave(.sessions),
+            .metrics => self.conn.pushLeave(.metrics),
+        }
+    }
+};
+
+test "T814: every push kind drains, and each waits only on its own" {
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    _ = h.configure();
+    try h.start();
+
+    inline for (.{ PushKind.session_cpu, PushKind.sessions }) |kind| {
+        var fake: FakeDispatch = .{ .conn = h.conn, .kind = kind };
+        const t = try std.Thread.spawn(.{}, FakeDispatch.run, .{&fake});
+        // Join LAST (defers unwind in reverse) and release FIRST, so an
+        // assertion that fails below still lets the fake dispatch finish
+        // instead of leaving it parked on `release` with `fake` going away.
+        defer t.join();
+        defer fake.release.set();
+        try fake.entered.timedWait(5 * std.time.ns_per_s);
+
+        // A DIFFERENT kind's unsubscribe must not be held up by this dispatch:
+        // a metrics unsubscribe has no business waiting on a roster push.
+        h.conn.unsubscribeMetrics();
+        try testing.expect(!fake.finished.load(.acquire));
+
+        fake.release.set();
+        switch (kind) {
+            .session_cpu => h.conn.unsubscribeSessionCpu(),
+            .sessions => h.conn.unsubscribeSessions(),
+            .metrics => unreachable,
+        }
+        try testing.expect(fake.finished.load(.acquire));
+    }
 }
 
 test "requestProcSnapshot: owned deep copy round-trips and frees clean" {
