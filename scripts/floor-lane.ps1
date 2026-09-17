@@ -234,6 +234,11 @@ $ErrorActionPreference = 'Stop'
 $EXIT_PASS = 0
 $EXIT_FAIL = 1
 $EXIT_STALL = 2
+# How much of a watchdog diagnostic the verdict replays (T815). 60 lines carries
+# the header, the process tree and the first thread wait reasons - the part that
+# answers "wedged or slow" - without turning the tail a caller keeps into the
+# scrollback it was supposed to replace.
+$DIAG_REPLAY_MAX = 60
 $EXIT_TIMEOUT = 3
 
 # ---------------------------------------------------------------- lane table
@@ -331,15 +336,28 @@ function Write-Diagnostic {
         wedged", written before anything is killed. The thread wait reasons are
         the part that survives having no debugger installed: a wedged thread
         names what it is waiting on.
+
+        It is also CAPTURED, into $script:LastLaneDiagnostic, so the verdict can
+        replay it (T815). Printing it here is not enough on its own: in a
+        `-Lane all` run the wedge is detected thousands of lines above
+        `FLOOR SUMMARY`, and a caller keeping only the tail - which is every
+        caller under the context rule - keeps the word STALL and none of this.
+        The header names the LANE for the same reason: three lanes run in one
+        invocation and an unattributed diagnostic block cannot say which of them
+        it describes, which is the whole of T815's title.
     #>
-    param([string]$Reason, $Tree, [string]$LogPath, [int]$ElapsedSeconds)
+    param([string]$Reason, $Tree, [string]$LogPath, [int]$ElapsedSeconds, [string]$LaneName)
+
+    $emit = { param([string]$t) $script:__diagLines += $t; Write-Host $t }
+    $script:__diagLines = @()
 
     Write-Host ""
-    Write-Host "=============================================================="
-    Write-Host "FLOOR LANE DIAGNOSTIC: $Reason after ${ElapsedSeconds}s"
-    Write-Host "=============================================================="
+    $who = if ($LaneName) { "lane $LaneName" } else { 'lane' }
+    & $emit "=============================================================="
+    & $emit "FLOOR LANE DIAGNOSTIC ($who): $Reason after ${ElapsedSeconds}s"
+    & $emit "=============================================================="
 
-    Write-Host "-- process tree --"
+    & $emit "-- process tree --"
     # `foreach ($p in $null)` iterates ONCE with $p = $null in PS 5.1, so every
     # loop over a tree skips nulls explicitly (T982) -- otherwise a diagnostic
     # taken from an empty sample prints a row for a process that never existed.
@@ -349,38 +367,49 @@ function Write-Diagnostic {
         if ($null -ne $p.UserModeTime) {
             $cpuSec = [math]::Round(([double]$p.UserModeTime + [double]$p.KernelModeTime) / 10000000.0, 1)
         }
-        Write-Host ("  pid={0,-7} {1,-32} cpu={2,8}s" -f $p.ProcessId, $p.Name, $cpuSec)
+        & $emit ("  pid={0,-7} {1,-32} cpu={2,8}s" -f $p.ProcessId, $p.Name, $cpuSec)
     }
 
-    Write-Host "-- threads of the test binaries (state / wait reason) --"
+    & $emit "-- threads of the test binaries (state / wait reason) --"
     $anyThreads = $false
     foreach ($p in @($Tree)) {
         if ($null -eq $p) { continue }
         if ($TEST_EXE_NAMES -notcontains $p.Name) { continue }
         $anyThreads = $true
-        Write-Host ("  [{0}] pid={1}" -f $p.Name, $p.ProcessId)
+        & $emit ("  [{0}] pid={1}" -f $p.Name, $p.ProcessId)
         $threads = Get-CimInstance Win32_Thread -Filter "ProcessHandle='$($p.ProcessId)'" -ErrorAction SilentlyContinue
         foreach ($t in $threads) {
-            Write-Host ("    tid={0,-7} state={1,-3} waitReason={2,-3} userMs={3}" -f `
+            & $emit ("    tid={0,-7} state={1,-3} waitReason={2,-3} userMs={3}" -f `
                     $t.Handle, $t.ThreadState, $t.ThreadWaitReason, $t.UserModeTime)
         }
     }
-    if (-not $anyThreads) { Write-Host "  (no test binary alive in the tree)" }
+    if (-not $anyThreads) { & $emit "  (no test binary alive in the tree)" }
 
     $wv = @(Get-WebViewLaneHost -ExeNames $TEST_EXE_NAMES)
-    Write-Host "-- WebView2 processes owned by test binaries: $($wv.Count) --"
+    & $emit "-- WebView2 processes owned by test binaries: $($wv.Count) --"
     foreach ($h in $wv) {
         $udd = ''
         if ($h.CommandLine -match '--user-data-dir="([^"]+)"') { $udd = $matches[1] }
-        Write-Host ("  pid={0,-7} user-data-dir={1}" -f $h.ProcessId, $udd)
+        & $emit ("  pid={0,-7} user-data-dir={1}" -f $h.ProcessId, $udd)
     }
 
     if (Test-Path $LogPath) {
-        Write-Host "-- log tail (40) --"
-        Get-Content $LogPath -Tail 40 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "  $_" }
+        & $emit "-- log tail (40) --"
+        Get-Content $LogPath -Tail 40 -ErrorAction SilentlyContinue | ForEach-Object { & $emit "  $_" }
     }
-    Write-Host "=============================================================="
+    & $emit "=============================================================="
     Write-Host ""
+
+    # Capped, because this is replayed under the verdict and a real lane's tree
+    # can run to dozens of processes and hundreds of threads. The head of the
+    # block is the part that answers "wedged or slow"; a reader who needs the
+    # rest has the log path two lines above it.
+    $lines = @($script:__diagLines)
+    if ($lines.Count -gt $DIAG_REPLAY_MAX) {
+        $dropped = $lines.Count - $DIAG_REPLAY_MAX
+        $lines = @($lines[0..($DIAG_REPLAY_MAX - 1)]) + @("... $dropped more diagnostic line(s); the full block is in the scrollback above")
+    }
+    $script:LastLaneDiagnostic = $lines
 }
 
 function Stop-Tree {
@@ -432,6 +461,9 @@ function Invoke-Lane {
     # is the caller's. Cleared per run so a previous lane's crash cannot be read
     # as this one's.
     $script:LastLaneCompilerCrash = $null
+    # Cleared per run for the same reason (T815): a previous lane's wedge
+    # replayed under THIS lane's verdict is worse than no diagnostic at all.
+    $script:LastLaneDiagnostic = @()
 
     if ($RawCommand) {
         # Self-test: the same watchdog loop over a synthetic command, so the
@@ -549,7 +581,7 @@ function Invoke-Lane {
             $stalledFor = [int]((Get-Date) - $lastProgress).TotalSeconds
 
             if ($elapsed -ge $TimeoutSeconds) {
-                Write-Diagnostic -Reason 'WALL-CLOCK CAP' -Tree $tree -LogPath $log -ElapsedSeconds $elapsed
+                Write-Diagnostic -Reason 'WALL-CLOCK CAP' -Tree $tree -LogPath $log -ElapsedSeconds $elapsed -LaneName $Name
                 Stop-Tree -Tree $tree
                 $result = 'TIMEOUT'
                 break
@@ -557,7 +589,7 @@ function Invoke-Lane {
 
             if ($stalledFor -ge $StallSeconds) {
                 Write-Diagnostic -Reason "WEDGED (no CPU and no output for ${stalledFor}s)" `
-                    -Tree $tree -LogPath $log -ElapsedSeconds $elapsed
+                    -Tree $tree -LogPath $log -ElapsedSeconds $elapsed -LaneName $Name
                 Stop-Tree -Tree $tree
                 $result = 'STALL'
                 break
@@ -930,7 +962,8 @@ if ($Command) {
     # reason, because a caller keeping only the tail keeps nothing else.
     if ($r -ne 'PASS') {
         foreach ($line in (Format-FloorFailureDetail -Details @(
-                    Get-LaneFailureDetail -LaneName 'command' -LogPath $script:LastLaneLog))) {
+                    Get-LaneFailureDetail -LaneName 'command' -LogPath $script:LastLaneLog `
+                        -Result $r -Diagnostic $script:LastLaneDiagnostic))) {
             Write-Host $line
         }
     }
@@ -1040,7 +1073,8 @@ foreach ($l in $lanes) {
             $r = Invoke-Lane -Name $l -Iteration $i -RawCommand $harnessCmd
             $summary += (Format-LaneSummaryToken -LaneName $l -Iteration $i -Result $r -LogPath $script:LastLaneLog)
             if ($r -ne 'PASS') {
-                $failureDetails += (Get-LaneFailureDetail -LaneName $l -LogPath $script:LastLaneLog)
+                $failureDetails += (Get-LaneFailureDetail -LaneName $l -LogPath $script:LastLaneLog `
+                        -Result $r -Diagnostic $script:LastLaneDiagnostic)
             }
             switch ($r) {
                 'FAIL' { if ($worst -lt $EXIT_FAIL) { $worst = $EXIT_FAIL } }
@@ -1087,7 +1121,8 @@ foreach ($l in $lanes) {
                     -Note $note -LogPath $script:LastLaneLog)
         }
         if ($r -ne 'PASS') {
-            $failureDetails += (Get-LaneFailureDetail -LaneName $l -LogPath $script:LastLaneLog)
+            $failureDetails += (Get-LaneFailureDetail -LaneName $l -LogPath $script:LastLaneLog `
+                    -Result $r -Diagnostic $script:LastLaneDiagnostic)
         }
         switch ($r) {
             'FAIL' { if ($worst -lt $EXIT_FAIL) { $worst = $EXIT_FAIL } }

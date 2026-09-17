@@ -9,6 +9,51 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-17: T815 closed done — **a wedged test lane now says WEDGED where
+  anyone reads it, and brings the evidence down with it.**
+
+  The floor's watchdog exists so that a hang comes WITH a diagnostic: which
+  lane, which processes, what each thread is waiting on, sampled before
+  anything is killed. It printed all of that — at the moment of the wedge,
+  which in a `-Lane all` run is thousands of lines above `FLOOR SUMMARY`. What
+  a caller keeping the tail actually got was `agent#1=STALL` and one sentence
+  offering three answers at once: `no 'error:' line in that log - the lane died
+  without one (crash, stall, or a kill)`. The verdict already knew which of the
+  three it was, and said so nowhere. That is why the 2026-08-12 stall (T815's
+  own report: agent STALLed as the third lane after 763s, passed alone in 326s)
+  could never be told from a slow lane.
+
+  Three small changes, one shape. `Write-Diagnostic` names the LANE in its
+  header — three lanes run in one invocation and an unattributed block cannot
+  say which it describes — and captures its own lines into
+  `$script:LastLaneDiagnostic`, capped at 60 so the replay does not become the
+  scrollback it replaces. `Get-LaneFailureDetail` carries the verdict and that
+  diagnostic. `Format-FloorFailureDetail` leads each group with the verdict,
+  spells out what it MEANS (`WEDGED: no CPU and no output for the whole stall
+  window - this is a hang, not a slow test` vs `WALL-CLOCK CAP: ... may really
+  be slow`), and replays the diagnostic with every line prefixed by its lane.
+  A wedge that captured no diagnostic at all is reported as a floor-lane defect
+  rather than as silence — the one state the old wording hid best.
+
+  The report's other half — is a third-lane stall real, or is it contention the
+  two earlier lanes arm? — is settled from the history rather than by staging a
+  763-second wedge five weeks later. Every mechanism that could produce it has
+  been removed since the report: T933 (2026-08-19) stopped counting a test
+  binary's self-spawned children as progress, T592 (09-06) made a lane wait for
+  the previous lane's WebView2 teardown, T678 (09-09) extended that wait to an
+  acceptance run's browser panes. It is not reproducible today, and the durable
+  answer is the first half: the next one says which on its own.
+
+  Acceptance grew the STALL half it never had —
+  `test\win32\floor-lane-verdict-detail.ps1` is 27 assertions now, arms 12-19
+  covering the verdict wording, the per-lane attribution of every replayed
+  line, the no-diagnostic case, TIMEOUT's different wording, the unchanged FAIL
+  wording, and a REAL wedge staged with `waitfor` on a signal that never
+  arrives. All seven new library assertions were run against the
+  PRE-change library first and every one of them scored red there, so they are
+  gates rather than decoration; the pre-change `-Command` wedge run, kept as the
+  before shape, prints no `WEDGED:` line anywhere.
+
 - 2026-09-17: T813 closed done — **the chooser's CPU meter stops pretending: a
   column that has gone quiet takes itself away instead of leaving the last
   readings on screen looking live.**

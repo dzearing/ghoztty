@@ -11,10 +11,13 @@
   failures cannot be read teaches the next reader to shrug at red.
 
   The rule this harness holds: WHATEVER a caller keeps of the tail, a red run
-  names the lane, its log path, and its first errors. Arms 1-6 drive the pure
-  library against planted logs; arms 7-11 are the wiring, including a REAL red
-  run driven through `-Command`, whose last few lines are then checked the way
-  a context-rule caller would keep them.
+  names the lane, its VERDICT, its log path, and its first errors - and a
+  WEDGED lane also carries the watchdog diagnostic that says wedged rather than
+  slow (T815). Arms 1-6 drive the pure library against planted logs; arms 7-11
+  are the wiring, including a REAL red run driven through `-Command`, whose last
+  few lines are then checked the way a context-rule caller would keep them;
+  arms 12-19 do both halves again for a STALL, ending on a REAL wedge staged
+  with `waitfor` on a signal that never arrives.
 
   Prints a single ALL PASS / N FAILURE(S) line, like every other script here.
 
@@ -122,6 +125,75 @@ try {
     Check 'the tail still carries the error text itself' `
         ($tail -match 'staged red for T776') $tail
     Check 'and the run is still red' (($out -join "`n") -match 'FLOOR SUMMARY: command=FAIL') ($out -join "`n")
+
+    # ---- arms 12-16: the STALL half, on the pure library (T815) -------------
+
+    # A wedged lane writes no `error:` line, so before T815 its whole detail
+    # block was one sentence offering three answers at once: "crash, stall, or
+    # a kill". The verdict already knew which.
+    $stallLog = Join-Path $Sandbox 'agent-stall.log'
+    'install zig build' | Set-Content -LiteralPath $stallLog -Encoding ascii
+    $diag = @(
+        '==============================================================',
+        'FLOOR LANE DIAGNOSTIC (lane agent): WEDGED (no CPU and no output for 421s) after 763s',
+        '==============================================================',
+        '-- process tree --',
+        '  pid=1234    ghoztty-agent-test.exe           cpu=    12.5s',
+        '-- threads of the test binaries (state / wait reason) --',
+        '    tid=99     state=5   waitReason=13  userMs=0'
+    )
+    $dStall = Get-LaneFailureDetail -LaneName 'agent' -LogPath $stallLog -Result 'STALL' -Diagnostic $diag
+    Check 'the detail carries the verdict that made the lane red' ($dStall.Result -eq 'STALL') $dStall.Result
+    Check 'the detail carries the watchdog diagnostic' ($dStall.Diagnostic.Count -eq $diag.Count) $dStall.Diagnostic.Count
+
+    $sb = @(Format-FloorFailureDetail -Details @($dStall)) -join "`n"
+    Check 'the STALL block says WEDGED, so a hang is not read as a slow test' `
+        ($sb -match 'WEDGED: no CPU and no output') $sb
+    Check 'the STALL block no longer offers crash-stall-or-kill as one answer' `
+        ($sb -notmatch 'crash, stall, or a kill') $sb
+    Check 'the STALL block replays the thread wait reason the watchdog sampled' `
+        ($sb -match 'waitReason=13') $sb
+    $stallBody = @(Format-FloorFailureDetail -Details @($dStall) | Where-Object { $_ -match '^\s{4}' })
+    $stallUnattributed = @($stallBody | Where-Object { $_ -notmatch 'lane agent:' })
+    Check 'every replayed diagnostic line says which lane it describes' `
+        ($stallUnattributed.Count -eq 0) ($stallUnattributed -join ' | ')
+
+    # A wedge with NO diagnostic is itself a finding - the watchdog is supposed
+    # to take one before it kills anything - and must not be printed as if the
+    # lane had simply been quiet.
+    $dNoDiag = Get-LaneFailureDetail -LaneName 'win32' -LogPath $stallLog -Result 'STALL'
+    Check 'a wedge with no diagnostic is reported as a floor-lane defect' `
+        ((@(Format-FloorFailureDetail -Details @($dNoDiag)) -join "`n") -match 'no watchdog diagnostic was captured')
+
+    # A TIMEOUT is the one verdict that may genuinely BE a slow test, and it
+    # says so rather than borrowing the wedge's wording.
+    $dCap = Get-LaneFailureDetail -LaneName 'none' -LogPath $stallLog -Result 'TIMEOUT' -Diagnostic $diag
+    Check 'a wall-clock cap is described as a cap, not as a wedge' `
+        ((@(Format-FloorFailureDetail -Details @($dCap)) -join "`n") -match 'WALL-CLOCK CAP') 
+
+    # And the FAIL wording is untouched: T776's block is what a red lane still
+    # gets, with the verdict added in front of it.
+    $failBlock = @(Format-FloorFailureDetail -Details @($d1)) -join "`n"
+    Check 'a FAIL block still leads with its log path and errors' `
+        ($failBlock -match 'lane agent: FAIL - ' -and $failBlock -match 'WaitForTimeout') $failBlock
+
+    # ---- arms 17-19: the wiring, on a REAL wedge ----------------------------
+
+    # `waitfor` blocks on a named signal that never arrives: a genuinely blocked
+    # wait burning no CPU, which is the shape the watchdog exists to name. Short
+    # -StallSeconds so the harness stages it in seconds rather than in the seven
+    # minutes a real lane is given.
+    $wedge = & powershell -NoProfile -ExecutionPolicy Bypass -File $floor `
+        -Command 'waitfor /t 200 GhozttyVerdictDetailNeverSignalled' `
+        -StallSeconds 12 -SampleSeconds 4 -MinFreeGB 0 -MinCommitFreeGB 0 -NoCatch 2>&1 |
+        ForEach-Object { $_.ToString() }
+    $wedgeTail = ($wedge | Select-Object -Last 14) -join "`n"
+    Check 'a real wedge is still scored STALL' `
+        (($wedge -join "`n") -match 'FLOOR SUMMARY: command=STALL') $wedgeTail
+    Check 'the tail a context-rule caller keeps says WEDGED rather than just STALL' `
+        ($wedgeTail -match 'WEDGED: no CPU and no output') $wedgeTail
+    Check 'and it carries the process tree the watchdog sampled before the kill' `
+        ($wedgeTail -match 'lane command: -- process tree --') $wedgeTail
 
     Complete-TestBody  # T1039: the run reached the end of its body
 }
