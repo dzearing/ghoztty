@@ -33,6 +33,20 @@ const descendants = @import("descendants.zig");
 /// bounded so a pathological host (thousands of procs) can't balloon a snapshot.
 pub const default_limit: u32 = 512;
 
+/// How many processes the OS walk will enumerate before it stops, independent of
+/// the caller's `limit` (T1639). The walk collects the WHOLE table and the cut to
+/// `limit` is made afterwards, by interest — because the order the OS hands the
+/// table back in is meaningless, so cutting during the walk drops an arbitrary
+/// tail. On 2026-09-17 this box crossed 512 live processes and the snapshot
+/// stopped before it reached the sampler's own pid: the agent's own sessions were
+/// missing from the table that exists to show them.
+///
+/// This ceiling is only the runaway guard the old in-walk cap doubled as. A host
+/// with more processes than this is truncated arbitrarily again, but at a bar no
+/// real machine reaches, and an explicit `limit` above it raises it (so a caller
+/// that asks for the whole table still gets the whole table).
+pub const max_enumerate: usize = 8192;
+
 /// Per-pid CPU baseline: cumulative busy time (in whatever unit the OS reports —
 /// ns on macOS, 100ns FILETIME ticks on Windows) and the wall-clock nanoseconds at
 /// the moment that busy reading was taken. The next sample diffs both to derive a
@@ -78,6 +92,10 @@ pub const ProcSampler = struct {
     /// owned by the caller. `cpu_pct` is 0 for a pid not seen on the previous call.
     /// Returns `true` if more processes existed than were returned (truncated).
     ///
+    /// The OS walk enumerates the whole table (up to `max_enumerate`); the cut to
+    /// `limit` is made afterwards by `selectMostInteresting`, which keeps this
+    /// process's own lineage unconditionally and then ranks by CPU, then memory.
+    ///
     /// On a partial OS failure the sampler is robust: a process that denies access
     /// (a system pid on Windows, a vanished pid on macOS) is included with
     /// name/pid/ppid and cpu/mem 0 rather than aborting the whole enumeration.
@@ -88,12 +106,98 @@ pub const ProcSampler = struct {
         limit: u32,
     ) !bool {
         const cap: u32 = if (limit == 0) default_limit else limit;
-        return switch (builtin.os.tag) {
-            .macos => self.sampleMacos(alloc, out, cap),
-            .windows => self.sampleWindows(alloc, out, cap),
-            .linux => self.sampleLinux(alloc, out, cap),
+        // The walk's own bound is the runaway guard, never the caller's cap: cutting
+        // the OS table at `cap` drops whichever rows the OS happened to list last,
+        // which on a busy box is where our own processes sit.
+        const start = out.items.len;
+        // Absolute, so the OS paths can compare it against `out.items.len` directly
+        // even when the caller handed us a list that already had rows in it.
+        const ceiling: usize = start +| @max(max_enumerate, @as(usize, cap));
+        const hit_ceiling = switch (builtin.os.tag) {
+            .macos => try self.sampleMacos(alloc, out, ceiling),
+            .windows => try self.sampleWindows(alloc, out, ceiling),
+            .linux => try self.sampleLinux(alloc, out, ceiling),
             else => false,
         };
+        const dropped = self.selectMostInteresting(alloc, out, start, cap);
+        return hit_ceiling or dropped;
+    }
+
+    /// Cut `out.items[start..]` down to `cap` rows, keeping the most interesting
+    /// ones, and free the rows that go (T1639). Returns whether anything was
+    /// dropped.
+    ///
+    /// "Most interesting", in order:
+    ///
+    /// 1. **This process itself**, ahead of everything including the rest of its
+    ///    own lineage — so "the sampler finds its own pid" holds at any cap down
+    ///    to 1, which is the rule the unit test pins.
+    /// 2. **The rest of our lineage** — our ancestors, and everything descended
+    ///    from us. These are the agent, its sessions and the programs running in
+    ///    them: the rows the activity panel exists to show. They are kept before
+    ///    any ranking, so a machine over the cap can never answer "that session
+    ///    isn't running" about a session it is running.
+    /// 3. **CPU**, descending — the busy rows are what a "what is this machine
+    ///    doing" view is asking about. (Zero for every row on the first sample,
+    ///    which is what the memory tiebreak below is for.)
+    /// 4. **Memory**, descending, then pid ascending so the cut is deterministic
+    ///    rather than dependent on the OS's enumeration order.
+    fn selectMostInteresting(
+        self: *ProcSampler,
+        alloc: Allocator,
+        out: *std.ArrayListUnmanaged(protocol.Proc),
+        start: usize,
+        cap: u32,
+    ) bool {
+        const rows = out.items[start..];
+        if (rows.len <= cap) return false;
+
+        // Lineage is computed from the rows we just collected rather than from the
+        // OS: the parent links are right there, and a second enumeration could
+        // disagree with the first.
+        var parents: descendants.ParentMap = .empty;
+        defer parents.deinit(self.alloc);
+        for (rows) |p| parents.put(self.alloc, p.pid, p.ppid) catch {};
+
+        const my_pid: i64 = @intCast(switch (builtin.os.tag) {
+            .windows => std.os.windows.GetCurrentProcessId(),
+            .macos, .linux => std.c.getpid(),
+            else => 0,
+        });
+
+        var mine: std.AutoHashMapUnmanaged(i64, void) = .empty;
+        defer mine.deinit(self.alloc);
+        for (rows) |p| {
+            // Either direction counts: a row we descend from (the agent's parent
+            // chain) and a row that descends from us (a session's shell and its
+            // children). `isAncestor` is inclusive, so our own pid matches too.
+            if (descendants.isAncestor(&parents, my_pid, p.pid) or
+                descendants.isAncestor(&parents, p.pid, my_pid))
+            {
+                mine.put(self.alloc, p.pid, {}) catch {};
+            }
+        }
+
+        const Ctx = struct {
+            mine: *const std.AutoHashMapUnmanaged(i64, void),
+            self_pid: i64,
+            fn lessThan(ctx: @This(), a: protocol.Proc, b: protocol.Proc) bool {
+                if ((a.pid == ctx.self_pid) != (b.pid == ctx.self_pid)) {
+                    return a.pid == ctx.self_pid;
+                }
+                const a_mine = ctx.mine.contains(a.pid);
+                const b_mine = ctx.mine.contains(b.pid);
+                if (a_mine != b_mine) return a_mine;
+                if (a.cpu_pct != b.cpu_pct) return a.cpu_pct > b.cpu_pct;
+                if (a.mem_bytes != b.mem_bytes) return a.mem_bytes > b.mem_bytes;
+                return a.pid < b.pid;
+            }
+        };
+        std.sort.pdq(protocol.Proc, rows, Ctx{ .mine = &mine, .self_pid = my_pid }, Ctx.lessThan);
+
+        for (rows[cap..]) |p| freeProc(alloc, p);
+        out.shrinkRetainingCapacity(start + cap);
+        return true;
     }
 
     /// Fold a fresh cumulative `busy` reading for `pid` (taken at wall-clock `now`,
@@ -125,7 +229,7 @@ pub const ProcSampler = struct {
         self: *ProcSampler,
         alloc: Allocator,
         out: *std.ArrayListUnmanaged(protocol.Proc),
-        cap: u32,
+        ceiling: usize,
     ) !bool {
         if (builtin.os.tag != .macos) return false;
         const c = macos;
@@ -156,7 +260,7 @@ pub const ProcSampler = struct {
             const pid32 = pids[i];
             if (pid32 <= 0) continue;
             const pid: i64 = pid32;
-            if (out.items.len >= cap) {
+            if (out.items.len >= ceiling) {
                 truncated = true;
                 break;
             }
@@ -241,7 +345,7 @@ pub const ProcSampler = struct {
         self: *ProcSampler,
         alloc: Allocator,
         out: *std.ArrayListUnmanaged(protocol.Proc),
-        cap: u32,
+        ceiling: usize,
     ) !bool {
         if (builtin.os.tag != .windows) return false;
         const w = windows;
@@ -260,7 +364,7 @@ pub const ProcSampler = struct {
         while (ok) : (ok = w.Process32NextW(snap, &entry) != 0) {
             const pid: i64 = @intCast(entry.th32ProcessID);
             if (pid < 0) continue;
-            if (out.items.len >= cap) {
+            if (out.items.len >= ceiling) {
                 truncated = true;
                 break;
             }
@@ -339,7 +443,7 @@ pub const ProcSampler = struct {
         self: *ProcSampler,
         alloc: Allocator,
         out: *std.ArrayListUnmanaged(protocol.Proc),
-        cap: u32,
+        ceiling: usize,
     ) !bool {
         if (builtin.os.tag != .linux) return false;
 
@@ -357,7 +461,7 @@ pub const ProcSampler = struct {
         while (it.next() catch null) |ent| {
             if (ent.kind != .directory) continue;
             const pid = std.fmt.parseInt(i64, ent.name, 10) catch continue;
-            if (out.items.len >= cap) {
+            if (out.items.len >= ceiling) {
                 truncated = true;
                 break;
             }
@@ -1022,6 +1126,47 @@ test "ProcSampler: a genuinely busy thread reports a plausible per-core cpu_pct"
     const ceiling: f32 = @as(f32, @floatFromInt(burned_ns)) /
         @as(f32, @floatFromInt(inner_wall_ns)) * 100.0;
     try testing.expect(mine.? <= ceiling * 2.0);
+}
+
+test "ProcSampler: a cap smaller than the live table still returns our own pid (T1639)" {
+    if (builtin.os.tag != .macos and builtin.os.tag != .linux and builtin.os.tag != .windows) return error.SkipZigTest;
+    const alloc = testing.allocator;
+
+    var s = ProcSampler.init(alloc);
+    defer s.deinit();
+
+    // How many processes this box is actually running. `max_enumerate` is the
+    // walk's own ceiling, so asking for it gets the whole table on any real host.
+    var all: std.ArrayListUnmanaged(protocol.Proc) = .empty;
+    defer {
+        for (all.items) |p| freeProc(alloc, p);
+        all.deinit(alloc);
+    }
+    _ = try s.sample(alloc, &all, @intCast(max_enumerate));
+    // Two live processes is the floor for "the cap has to cut something".
+    if (all.items.len < 2) return error.SkipZigTest;
+
+    const my_pid: i64 = @intCast(switch (builtin.os.tag) {
+        .windows => std.os.windows.GetCurrentProcessId(),
+        else => std.c.getpid(),
+    });
+
+    // The rule, at the tightest cap there is: whatever else the snapshot drops,
+    // it does not drop the process that took it. Before T1639 the walk stopped at
+    // the cap in the OS's own enumeration order, so on a box with more processes
+    // than the cap our own rows were simply past the cut — which is how this box
+    // crossing 512 processes turned the agent's sessions invisible to the panel
+    // that exists to show them.
+    var one: std.ArrayListUnmanaged(protocol.Proc) = .empty;
+    defer {
+        for (one.items) |p| freeProc(alloc, p);
+        one.deinit(alloc);
+    }
+    const truncated = try s.sample(alloc, &one, 1);
+    try testing.expect(truncated);
+    try testing.expectEqual(@as(usize, 1), one.items.len);
+    try testing.expectEqual(my_pid, one.items[0].pid);
+    try testing.expect(one.items[0].name.len > 0);
 }
 
 test "parseLinuxStat: extracts ppid/comm/utime/stime/tty_nr, comm with spaces+parens" {

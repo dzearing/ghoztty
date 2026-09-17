@@ -1,10 +1,10 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-09-17T06:32:01-07:00",
-    "commit":  "26ed370e9",
+    "generated":  "2026-09-17T09:09:31-07:00",
+    "commit":  "65fadb5c6",
     "uncommitted":  [
-                        "src/remote/connection.zig"
+                        "src/remote/agent/proc.zig"
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -34,7 +34,7 @@
                   "src/remote/agent/metrics.zig":  "c4f0863d8706b9b7d24057cff5b388f72cc606a30df05105b19a19f97a68a4d6",
                   "src/remote/agent/msi_ca.zig":  "fa0ef30b29983b3edf5995afbe9ac5d4c5909361ac76b33e0c43651787eb17fb",
                   "src/remote/agent/mux.zig":  "bb91f11b8e95720f71e322fe788d2b7fbeba605e99132ec0ce0f317003f49867",
-                  "src/remote/agent/proc.zig":  "d6b5a2bd5bc2bd7da3e53505986b787b46c62accca7855847cad133cb819e48c",
+                  "src/remote/agent/proc.zig":  "9b9661ba3efb488afc6db8b459f8be45de76f5679be914433e8c8814c47d1261",
                   "src/remote/agent/proc_control.zig":  "2d4d6f313adf91a24201f8d66441aa8dede7208c0d0f5d63d6cf3dd2af14d20e",
                   "src/remote/agent/proc_spawn.zig":  "b1a9eb9d9cef3e01b75813837285b80b0d3bfb4795aeb74f69f66458bfb8c8cd",
                   "src/remote/agent/pty_child.zig":  "1b24a847a1da3926be96afaacf6ff670212d62d2b42e9ef9766a9e9cada0e2e1",

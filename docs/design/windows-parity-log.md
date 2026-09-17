@@ -31230,3 +31230,39 @@ Every guard the edit made due is green again: `thread-join-audit.ps1` (24),
 and clean on re-run, filed as T1637 rather than explained away. ipc-p1/p2/p3
 ALL PASS. T1638 files the fourth slot, `ctrl_handler`, which is read with no
 lock at all and has no draining clear.
+
+## 2026-09-17 - T1639: a busy machine no longer drops its own sessions out of the process snapshot
+
+The activity panel's process table is capped - 512 rows by default, so a
+snapshot of a pathological host can't balloon. The cap was applied DURING the
+OS walk, in whatever order the OS handed the table back, and this box crossed
+512 live processes on 2026-09-17: the walk stopped before it reached the
+sampler's own pid, so the agent, its sessions and everything running in them
+were simply past the cut. The two `ProcSampler` tests that assert "the sampler
+finds its own pid" went red on a file nobody had touched since 2026-08-15,
+which is what surfaced it.
+
+The walk now enumerates the WHOLE table and the cut is made afterwards, by
+interest: this process first, then our lineage (our ancestors and everything
+descended from us, walked over a `descendants.ParentMap` built from the rows
+just collected), then CPU descending, then memory, then pid so the cut is
+deterministic. The runaway guard the old in-walk cap doubled as is now its own
+number, `max_enumerate` (8192), which an explicit larger `limit` raises - so a
+caller asking for the whole table still gets it. All three OS paths share the
+selection, so macOS and Linux gain the same guarantee rather than a Windows
+special case.
+
+Evidence: a new unit test asks for cap=1 on a 500+ process box and asserts the
+single row that survives is our own pid. Negative control: restore the
+arbitrary-tail cut and that test fails, alone, out of 6047 (5968 passed, 1
+failed) - so the assertion has teeth and is not merely true. `floor-lane.ps1
+-Lane all` all four lanes PASS; `(Get-Process).Count` read 521 on the same box,
+which is the state that produced the original red. Guards the edit made due are
+green and re-stamped: `session-vanished.ps1` (18), `thread-join-audit.ps1` (24),
+`seam-audit.ps1` (27). ipc-p1/p2/p3 ALL PASS (26/20/16), and
+`activity-monitor.ps1` ALL PASS (210) - the chooser's CPU column still shows a
+session on a box over the cap.
+
+T1640 files the half this does not do: the `truncated` flag exists end to end -
+sampler, wire, connection, and the win32 snapshot struct - and nothing renders
+it, so a partial list still looks like a complete one.
