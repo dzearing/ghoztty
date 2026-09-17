@@ -235,7 +235,7 @@ function Invoke-PaletteAgentSetup($g) {
     $popup = [IntPtr]::Zero
     for ($t = 0; $t -lt 50 -and $popup -eq [IntPtr]::Zero; $t++) {
         Start-Sleep -Milliseconds 40
-        $popup = Get-TestWindow -ProcessId $g.Pid -Class 'GhozttyTerminal' -Exclude $g.Top
+        $popup = Get-TestWindow -ProcessId $g.Pid -Class 'GhozttyCommandPalette' -Exclude $g.Top
     }
     if ($popup -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: palette popup did not open'; return $false }
     $edit = Find-TestWindowEx -Parent $popup -Class 'EDIT'

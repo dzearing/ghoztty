@@ -156,18 +156,18 @@ function New-NamedWindow([string]$name) {
 function Open-Palette([IntPtr]$top, [IntPtr]$pane) {
     foreach ($try in 1..3) {
         if (-not (Send-TestKeys -Window $top -Target $pane -Modifiers ctrl, shift -Key P)) { continue }
-        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyTerminal' -TimeoutMs 5000
+        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyCommandPalette' -TimeoutMs 5000
         if ($popup -ne [IntPtr]::Zero) { return $popup }
     }
     return [IntPtr]::Zero
 }
 
-# ctrl+shift+f opens the search bar. Its popup is a TERMINAL-class window too,
-# and the count label is what tells it from the palette.
+# ctrl+shift+f opens the search bar. Since T1375 it has a class of its own, so
+# the class identifies it; the count label is kept as a second check.
 function Open-Search([IntPtr]$top, [IntPtr]$pane) {
     foreach ($try in 1..3) {
         if (-not (Send-TestKeys -Window $top -Target $pane -Modifiers ctrl, shift -Key F)) { continue }
-        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyTerminal' -TimeoutMs 5000
+        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttySearchBar' -TimeoutMs 5000
         if ($popup -eq [IntPtr]::Zero) { continue }
         if ((Find-TestWindowEx -Parent $popup -Class 'STATIC') -eq [IntPtr]::Zero) { continue }
         return $popup

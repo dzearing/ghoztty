@@ -164,7 +164,16 @@ if ($script:failures -eq 0) {
         update -Guard test-reach -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
-Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+# A red run KEEPS its temp dir. B1's failure message names `lane.log` as the
+# place to look, and this line used to delete it a few milliseconds later - so
+# the one artifact that explains the failure was destroyed by the script
+# pointing at it, and four consecutive reds were diagnosed by racing a copier
+# against this `Remove-Item`. A green run still cleans up.
+if ($script:failures -eq 0) {
+    Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+} else {
+    "  kept for diagnosis: $tmp"
+}
 
 ''
 Write-TestVerdict -Pass $script:passes -Fail $script:failures

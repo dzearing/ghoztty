@@ -236,7 +236,7 @@ try {
     $popup = [IntPtr]::Zero
     foreach ($try in 1..3) {
         if (-not (Send-TestKeys -Window $top -Target $pane -Modifiers ctrl, shift -Key P)) { continue }
-        $popup = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyTerminal' -TimeoutMs 5000
+        $popup = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyCommandPalette' -TimeoutMs 5000
         if ($popup -ne [IntPtr]::Zero) { break }
     }
     if ($popup -eq [IntPtr]::Zero) {

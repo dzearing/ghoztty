@@ -799,16 +799,22 @@ The audit of every registered class, so this is not re-derived a third time:
 | `Scrollbar`, `KeyStateIndicator`, `ReadonlyBadge` | `0` | no | **Push-model**: painted by `UpdateLayeredWindow`, never `WM_PAINT`. The style would be inert; what matters is that every resize path calls their `repaint()`, and each does |
 | Top-level `Window` | `CS_DBLCLKS` | no | `handleResize` invalidates the caption band and the tab strip by hand and deliberately, so a resize does not repaint the child-covered pane area |
 | Terminal surface | `CS_OWNDC` | no | The OpenGL renderer redraws the whole client every frame; `WM_PAINT` only wakes it |
+| `GhozttyCommandPalette`, `GhozttySearchBar` | `CS_HREDRAW\|CS_VREDRAW` | **yes** (T819) | Sized `<constant> * scale`, so a DPI change resizes them and invalidates everything they painted |
 | Message-only window, agent tray window | `0` | no | Never painted |
 | `RegionSelector` | `0` | no | Created at virtual-screen size and never resized; manages its own invalidation |
 | `BannerDialog`, `ConfirmDialog`, `RenameDialog`, `NewProcessDialog`, `HostSettingsDialog`, `MachineChooser` | `0` / `CS_DBLCLKS` | no | Fixed-size `WS_POPUP\|WS_CAPTION` dialogs: no `WS_THICKFRAME`, no `WM_SIZE`, no self-resize. Only their child controls move |
 
-One latent case is deliberately left alone and named here so it is not
-rediscovered as a mystery: the **command palette and search popups ride the
-terminal's own class** (`TERMINAL_CLASS_NAME`), so they cannot be given the
-style without giving it to every terminal surface, where it would force a
-full-client erase on every drag frame. They are sized `<constant> * scale`, so
-they only ever resize on a DPI change while open. Filed as its own task.
+**That last latent case is closed** (T819). The command palette and the search
+bar used to ride the terminal's own class (`TERMINAL_CLASS_NAME`), so they could
+not be given the style without giving it to every terminal surface, where it
+would force a full-client erase on every drag frame. They have classes of their
+own now — `GhozttyCommandPalette` and `GhozttySearchBar`, both
+`CS_HREDRAW|CS_VREDRAW`, both registered against the same `surfaceWndProc`
+(`App.registerSurfacePopupClass`), since `surfaceWndProc` has always told the
+three windows apart by HWND identity rather than by class. They are sized
+`<constant> * scale`, so a DPI change is the one thing that resizes them and it
+makes every pixel wrong at once. The same split gave probes a way to name each
+popup (T1375).
 
 **How this is asserted:** `src/apprt/win32/class_redraw.zig` creates a real
 window of the class (on-screen, layered at alpha 0 — parked off-monitor it has

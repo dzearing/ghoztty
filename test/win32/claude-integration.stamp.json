@@ -1,8 +1,8 @@
 {
     "guard":  "claude-integration",
     "script":  "test/win32/claude-integration.ps1",
-    "generated":  "2026-09-13T00:55:21-07:00",
-    "commit":  "bb557fba2",
+    "generated":  "2026-09-17T14:00:22-07:00",
+    "commit":  "c6c145908",
     "uncommitted":  [
                         "test/win32/claude-integration.ps1"
                     ],
@@ -12,6 +12,6 @@
                   "src/apprt/win32/AgentIntegrationsDialog.zig":  "bae8123be8ee78f13e7c5008ef66f2589e26eaf047e42163a3be94879952d92d",
                   "src/apprt/win32/claude_plugin_migration.zig":  "09ae22a00d446fce29cf1b98c2bb30b97a90395bdb2f0869af8172ca9ee6e28d",
                   "src/apprt/win32/claude_setup.zig":  "7800892ae8d8afadd52d0574aaa86fb7e0d945b2824030c79661e3e5761fb47f",
-                  "test/win32/claude-integration.ps1":  "b16a48c68de39133b6dfaa6bbbcf4112bbbf00e557b104a3c07025fdfbb8bb6d"
+                  "test/win32/claude-integration.ps1":  "90f3400b4f6ca02101973f7fa776faf0eceea3bfdf4cacde587acffec31fba25"
               }
 }

@@ -1,14 +1,13 @@
 {
     "guard":  "palette-grid-size",
     "script":  "test/win32/palette-grid-size.ps1",
-    "generated":  "2026-09-15T00:27:46-07:00",
-    "commit":  "9d427e4bf",
+    "generated":  "2026-09-17T13:51:26-07:00",
+    "commit":  "c6c145908",
     "uncommitted":  [
-                        "src/apprt/win32/surface_window_role.zig",
                         "test/win32/palette-grid-size.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/surface_window_role.zig":  "5af08d4834c92f03c30c4a642d598f21e7961c8bf976b63c55d91f90bf652528",
-                  "test/win32/palette-grid-size.ps1":  "f443de90fd39d1ae25a8aa707b064029ced866c3716b331cb8e5aa0f5b57c381"
+                  "test/win32/palette-grid-size.ps1":  "503b63cbcb1bc6763c2d2800245923385ce4a4b5bb5a8e1649e5ddfe48f265b1"
               }
 }

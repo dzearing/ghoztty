@@ -9,6 +9,97 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-17: T819 and T1375 closed done — **the command palette and the find
+  bar are their own windows now, so a monitor change redraws them whole.**
+
+  Drag a Ghoztty window to a monitor with different scaling while the command
+  palette or the find bar is open, and the popup would resize to suit the new
+  monitor but repaint only the sliver the resize uncovered. The rest kept the
+  picture it had at the old scale — text at the old size, a border in the old
+  place. Everything else in the frontend stopped doing this after T467; these
+  two were the last pair, and only because of where they were born.
+
+  Both popups were created on `GhozttyTerminal`, the terminal surface's own
+  window class. They share the surface's window procedure, so that was the
+  class they were registered under, and the terminal class deliberately does
+  not ask Windows to invalidate the whole client on a size change: the OpenGL
+  renderer repaints the surface whole every frame anyway, so the style would
+  buy nothing and cost an erase plus a paint on every frame of a divider drag.
+  The popups are the opposite — plain GDI, drawn entirely from their own
+  bounds, and sized as a constant times the scale factor, so the one thing
+  that ever resizes them is a DPI change and it makes every pixel wrong at
+  once. They could not be given the style without giving it to the terminal.
+
+  So they were given classes of their own: `GhozttyCommandPalette` and
+  `GhozttySearchBar`, both carrying the redraw style, both registered against
+  the same `surfaceWndProc`. Nothing about message routing moved, because
+  `surfaceWndProc` has always told the three windows apart by HWND identity
+  (`surface_window_role.roleOf`) and never by class — the split was safe for
+  exactly the reason the popups were on the wrong class to begin with.
+
+  **Two classes rather than one shared popup class, because T1375 was waiting
+  for the same change.** That task had been sitting open asking for precisely
+  this split, for a different reason: by class the popups WERE a terminal
+  surface, so `Get-TestWindowPixels` refused to photograph either one under
+  T214's flat-fill rule, and every probe that waited for a popup did
+  `Wait-TestWindow -Class GhozttyTerminal`, which cannot tell the palette from
+  the find bar from a second terminal window. Its filed cost was the
+  acceptance-script fallout of a class rename — and that fallout is incurred by
+  ANY class change, so doing T819 with one shared class would have paid it
+  once and then owed it again at the split. Both closed on this commit.
+
+  The fallout paid: twenty acceptance scripts repointed at the class that names
+  what they are actually waiting for; `overlay-zorder.ps1` now selects a popup
+  by class instead of sniffing for the find bar's match-count STATIC to tell
+  the two apart; and `chrome-theme.ps1` dropped the `-AllowTerminalSurface`
+  hatch it needed to measure the palette at all. That last one is T1375's real
+  point: the capture guard is the rule that a probe cannot silently score
+  itself against a flat fill, and it now keeps its teeth for the GL surface it
+  was written about instead of being waved past for a window that was never
+  the problem.
+
+  One trap on the way: `surfaceParentOf` — the function that routes Enter,
+  Escape and the arrows from a popup's EDIT back to the surface that owns it —
+  identified the parent by the terminal class. The palette's and the find
+  bar's edits are children of the POPUP, so matching only the terminal class
+  would have made it return null for exactly the two controls it exists to
+  serve, and both popups would have stopped taking keys. It matches all three
+  classes now.
+
+  Measured in the win32 lane in both directions, which is what `class_redraw`
+  was built for: the two popup classes invalidate the whole client on a width
+  change AND on a height change, and the terminal class still does not — so
+  this fix cannot be quietly re-made by widening the shared class and putting
+  the per-drag-frame erase back.
+
+  **The script fallout was then actually run, and it was not free.** Twenty-five
+  acceptance suites went through the box one at a time; twenty-three were green
+  first time and two were not, both because the first pass had repointed a
+  script's *main* lookup and missed a helper beside it. `command-registry.ps1`
+  kept a `Find-Palette` that still asked for a top-level `GhozttyTerminal`, so
+  "the palette stays open when the filter matches nothing" went red — and its
+  neighbour, "Escape closes the palette", had been passing on nothing at all,
+  because a lookup that can only return null satisfies an is-closed assertion
+  however broken it is. That suite now scores 22 where the red run scored 21:
+  the extra point is an assertion that had been asleep. `viewer-panes.ps1` had
+  the same shape in `Test-PaletteOpen`. This is the entire argument for T1375
+  having been a task rather than a footnote — the class rename's cost is paid in
+  places a compiler cannot see, and the only way to find them is to run them.
+
+  One suite, `close-confirm-idle.ps1`, failed its read-only section on a
+  `+list` that returned no shell pid, and passed alone immediately after with
+  the pid in hand; its four other sections were green throughout. The "CRASHED"
+  postmortems in that log are the harness force-killing its own apps at
+  teardown — they are printed for the passing sections too.
+
+  Filed on the way past: **T1643**, because the harness floor's
+  `test-reach-audit` failed four times running and then passed, on an unchanged
+  tree, while the exact command it runs exits 0 by hand — and because it named a
+  log file and deleted it microseconds later, so four reds had to be
+  investigated by racing a file copier against its own cleanup. That second half
+  is fixed here: a red run now keeps its temp dir and says where it is. A gate
+  that destroys the evidence it points at cannot be debugged, only guessed at.
+
 - 2026-09-17: T817 closed done, T1641 filed — **a Windows diff pane is now
   walkable: next and previous change, and a side-by-side layout it remembers.**
 

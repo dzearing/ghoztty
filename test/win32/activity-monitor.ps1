@@ -233,7 +233,7 @@ function Invoke-Palette([IntPtr]$top, [IntPtr]$pane, [string]$filter, [string]$l
     $popup = [IntPtr]::Zero
     foreach ($try in 1..3) {
         if (-not (Send-TestKeys -Window $top -Target $pane -Modifiers ctrl, shift -Key P)) { continue }
-        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyTerminal' -TimeoutMs 5000
+        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyCommandPalette' -TimeoutMs 5000
         if ($popup -ne [IntPtr]::Zero) { break }
     }
     Assert ($popup -ne [IntPtr]::Zero) "$label palette opened"
@@ -569,7 +569,7 @@ try {
     $ctlPopup = [IntPtr]::Zero
     foreach ($try in 1..3) {
         if (-not (Send-TestKeys -Window $top -Target $pane -Modifiers ctrl, shift -Key P)) { continue }
-        $ctlPopup = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyTerminal' -TimeoutMs 5000
+        $ctlPopup = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyCommandPalette' -TimeoutMs 5000
         if ($ctlPopup -ne [IntPtr]::Zero) { break }
     }
     if ($ctlPopup -eq [IntPtr]::Zero) {

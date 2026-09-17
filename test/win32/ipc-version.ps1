@@ -179,14 +179,14 @@ $top = Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -Exclude $first
 if ($top -eq [IntPtr]::Zero) { $top = $first }
 $surface = Get-TestChildWindow -Window $top -Class 'GhozttyTerminal'
 Assert "terminal surface found" ($surface -ne [IntPtr]::Zero)
-# The palette popup is a top-level GhozttyTerminal; retry the open in case
+# The palette popup is a top-level GhozttyCommandPalette; retry the open in case
 # the chord lands while the window is still settling.
 $popup = [IntPtr]::Zero
 $sent = $false
 foreach ($try in 1..3) {
     $sent = Send-TestKeys -Window $top -Target $surface -Modifiers ctrl,shift -Key P
     if (-not $sent) { continue }
-    $popup = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyTerminal' -TimeoutMs 5000
+    $popup = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyCommandPalette' -TimeoutMs 5000
     if ($popup -ne [IntPtr]::Zero) { break }
 }
 if (-not $sent) {

@@ -57,13 +57,14 @@ function Stop-DebugGhoztty {
     Reset-GhozttyTestState -Exe $Exe -SettleMs 500 | Out-Null
 }
 
-# The palette popup is a top-level GhozttyTerminal-class window (it shares
-# the surface wndproc). Every surface that has EVER opened one keeps a
-# HIDDEN popup around, so "the palette is open" must mean the VISIBLE one -
+# The palette popup is a top-level GhozttyCommandPalette-class window (it
+# shares the surface wndproc but not its class, T1375). Every surface that has
+# EVER opened one keeps a HIDDEN popup around, so "the palette is open" must
+# mean the VISIBLE one -
 # Wait-TestWindow would happily return a hidden popup from a previous arm.
 function Wait-VisiblePalette([int]$TimeoutMs = 5000) {
     for ($t = 0; $t -lt $TimeoutMs; $t += 200) {
-        $vis = @(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyTerminal' |
+        $vis = @(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyCommandPalette' |
             Where-Object { $_.Visible })
         if ($vis.Count -ge 1) { return [IntPtr]$vis[0].Hwnd }
         Start-Sleep -Milliseconds 200
@@ -72,7 +73,7 @@ function Wait-VisiblePalette([int]$TimeoutMs = 5000) {
 }
 
 function Test-PaletteVisible {
-    $vis = @(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyTerminal' |
+    $vis = @(Get-TestWindows -ProcessId $script:appPid -Class 'GhozttyCommandPalette' |
         Where-Object { $_.Visible })
     return ($vis.Count -ge 1)
 }

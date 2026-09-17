@@ -331,7 +331,7 @@ function Invoke-Palette([IntPtr]$top, [IntPtr]$pane, [string]$filter) {
     $popup = [IntPtr]::Zero
     foreach ($try in 1..3) {
         if (-not (Send-TestKeys -Window $top -Target $pane -Modifiers ctrl, shift -Key P)) { continue }
-        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyTerminal' -TimeoutMs 5000
+        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyCommandPalette' -TimeoutMs 5000
         if ($popup -ne [IntPtr]::Zero) { break }
     }
     if ($popup -eq [IntPtr]::Zero) { return $false }
@@ -357,7 +357,7 @@ function Open-Panel([IntPtr]$top, [IntPtr]$pane) {
 function Open-Palette([IntPtr]$top, [IntPtr]$pane) {
     foreach ($try in 1..3) {
         if (-not (Send-TestKeys -Window $top -Target $pane -Modifiers ctrl, shift -Key P)) { continue }
-        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyTerminal' -TimeoutMs 5000
+        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyCommandPalette' -TimeoutMs 5000
         if ($popup -ne [IntPtr]::Zero) {
             Start-Sleep -Milliseconds 500
             return $popup
@@ -698,9 +698,9 @@ try {
             # writing a second harness (the T257 rule).
             #
             # `Palette = $true` is the one case that is not opened FROM the
-            # palette: it IS the palette. It is a WS_POPUP of the terminal
-            # class, so it is found as the popup `Invoke-Palette` already
-            # waited for rather than by a class of its own.
+            # palette: it IS the palette. Since T1375 it has a class of its
+            # own, but it is still found through `Open-Palette` because the
+            # chord is what opens it.
             foreach ($panel in @(
                     @{ Label = 'activity'; Filter = 'ACTIVITY MONITOR'; Class = 'GhozttyActivityMonitor' },
                     @{ Label = 'chooser'; Filter = 'NEW REMOTE WINDOW'; Class = 'GhozttyMachineChooser' },
@@ -724,16 +724,16 @@ try {
                 Assert ($h -ne [IntPtr]::Zero) "D/$($case.Name)/$($panel.Label) the panel opened"
                 if ($h -eq [IntPtr]::Zero) { continue }
 
-                # The palette popup shares the terminal's window CLASS, which
-                # is what `Get-TestWindowPixels` keys its refusal on (T214).
-                # That refusal is about the GL surface: `PrintWindow` returns a
-                # flat fill for it off the input desktop. The palette is
-                # ordinary GDI and answers `WM_PRINTCLIENT` as of T563, so
-                # `-Sync` here is a real synchronous paint rather than the
-                # capture that passes against nothing - and the assertions
-                # below would catch it if it were not (a flat fill has one
-                # distinct color and no text ramp in it).
-                $shot = Get-TestWindowPixels -Window $h -Sync -AllowTerminalSurface:([bool]$panel.Palette)
+                # No `-AllowTerminalSurface` hatch here any more (T1375). The
+                # palette used to share the terminal's window CLASS, which is
+                # what `Get-TestWindowPixels` keys its T214 refusal on, so
+                # measuring it needed the switch reserved for measuring that
+                # limit itself. It has its own class now, so the guard keeps
+                # its teeth for the GL surface it was written about and the
+                # palette is captured like any other panel. `-Sync` is a real
+                # synchronous paint because the palette answers
+                # `WM_PRINTCLIENT` (T563).
+                $shot = Get-TestWindowPixels -Window $h -Sync
                 try {
                     # The panel BODY: below the caption the frame draws (which
                     # is DWM's, not ours) and inside the border, so neither can

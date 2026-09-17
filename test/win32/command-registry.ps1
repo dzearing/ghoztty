@@ -72,10 +72,10 @@ function Tab-Count {
     return @($wins[0].tabs).Count
 }
 
-# The palette popup: a top-level GhozttyTerminal (the window itself is a
+# The palette popup: a top-level GhozttyCommandPalette (the window itself is a
 # GhozttyWindow, so there is nothing to exclude).
 function Find-Palette {
-    Get-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyTerminal'
+    Get-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyCommandPalette'
 }
 
 # Open the palette, type a filter, press Enter. Returns $true when the whole
@@ -84,7 +84,7 @@ function Invoke-Palette([IntPtr]$top, [IntPtr]$pane, [string]$filter, [string]$l
     $popup = [IntPtr]::Zero
     foreach ($try in 1..3) {
         if (-not (Send-TestKeys -Window $top -Target $pane -Modifiers ctrl, shift -Key P)) { continue }
-        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyTerminal' -TimeoutMs 5000
+        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyCommandPalette' -TimeoutMs 5000
         if ($popup -ne [IntPtr]::Zero) { break }
     }
     Assert ($popup -ne [IntPtr]::Zero) "$label palette opened"

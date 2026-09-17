@@ -617,7 +617,7 @@ Assert $r 'palette chord delivered'
 $popup = [IntPtr]::Zero
 for ($t = 0; $t -lt 50 -and $popup -eq [IntPtr]::Zero; $t++) {
     Start-Sleep -Milliseconds 100
-    $popup = Get-TestWindow -ProcessId $gpid -Class 'GhozttyTerminal'
+    $popup = Get-TestWindow -ProcessId $gpid -Class 'GhozttyCommandPalette'
 }
 Assert ($popup -ne [IntPtr]::Zero) 'palette popup opened via ctrl+shift+p'
 if ($popup -ne [IntPtr]::Zero) {

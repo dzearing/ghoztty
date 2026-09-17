@@ -650,16 +650,15 @@ try {
     # product is not going to, and a pin left for the harness restore is scored
     # as a leak.
     # -----------------------------------------------------------------------
-    # The popups are the only TOP-LEVEL GhozttyTerminal windows (panes are
-    # child windows, which the top-down enumeration never sees). The find bar
-    # carries the match-count STATIC; the palette has only its EDIT.
+    # Each popup has a window class of its own (T1375), so the kind IS the
+    # class. This used to enumerate top-level GhozttyTerminal windows and tell
+    # the two apart by the find bar's match-count STATIC, which was the only
+    # handle available while both rode the terminal's class.
     function Get-SurfacePopup([int]$ownerPid, [IntPtr]$owner, [string]$kind) {
-        foreach ($w in @(Get-TestWindows -ProcessId $ownerPid -Class 'GhozttyTerminal' -AllowHidden)) {
+        $cls = if ($kind -eq 'search') { 'GhozttySearchBar' } else { 'GhozttyCommandPalette' }
+        foreach ($w in @(Get-TestWindows -ProcessId $ownerPid -Class $cls -AllowHidden)) {
             $h = [IntPtr]$w.Hwnd
             if ((Get-TestWindowOwner -Window $h) -ne [int64]$owner) { continue }
-            $hasLabel = (Find-TestWindowEx -Parent $h -Class 'STATIC') -ne [IntPtr]::Zero
-            if ($kind -eq 'search' -and -not $hasLabel) { continue }
-            if ($kind -eq 'palette' -and $hasLabel) { continue }
             return $h
         }
         return [IntPtr]::Zero

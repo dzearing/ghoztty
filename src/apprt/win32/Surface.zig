@@ -2435,7 +2435,7 @@ fn ensureSearchBar(self: *Surface) void {
     // HWND so it floats above the terminal surface.
     const popup = w32.CreateWindowExW(
         w32.WS_EX_TOOLWINDOW,
-        App.TERMINAL_CLASS_NAME,
+        App.SEARCH_BAR_CLASS_NAME,
         std.unicode.utf8ToUtf16LeStringLiteral(""),
         w32.WS_POPUP | w32.WS_BORDER,
         0,
@@ -2811,7 +2811,7 @@ fn ensureCommandPalette(self: *Surface) void {
 
     const popup = w32.CreateWindowExW(
         w32.WS_EX_TOOLWINDOW,
-        App.TERMINAL_CLASS_NAME,
+        App.PALETTE_CLASS_NAME,
         std.unicode.utf8ToUtf16LeStringLiteral(""),
         w32.WS_POPUP | w32.WS_BORDER,
         0,

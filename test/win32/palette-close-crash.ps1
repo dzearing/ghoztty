@@ -77,14 +77,14 @@ function New-NamedWindow([string]$name) {
     return [IntPtr]::Zero
 }
 
-# ctrl+shift+p, wait for the palette popup, Escape it back out. The popup uses
-# the TERMINAL window class (it shares the surface wndproc - which is the whole
-# point of this script), so that is what identifies it.
+# ctrl+shift+p, wait for the palette popup, Escape it back out. The popup still
+# shares the surface wndproc - which is the whole point of this script - but
+# since T1375 it has a window class of its own, which is what identifies it.
 function Open-AndClosePalette([IntPtr]$top, [IntPtr]$pane) {
     $popup = [IntPtr]::Zero
     foreach ($try in 1..3) {
         if (-not (Send-TestKeys -Window $top -Target $pane -Modifiers ctrl, shift -Key P)) { continue }
-        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyTerminal' -TimeoutMs 5000
+        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyCommandPalette' -TimeoutMs 5000
         if ($popup -ne [IntPtr]::Zero) { break }
     }
     if ($popup -eq [IntPtr]::Zero) { return $false }
@@ -94,14 +94,14 @@ function Open-AndClosePalette([IntPtr]$top, [IntPtr]$pane) {
     return $true
 }
 
-# ctrl+shift+f opens the search bar; Escape closes it. Its popup is a
-# TERMINAL-class window too, and the count label is what tells it from the
-# palette (which has only an EDIT).
+# ctrl+shift+f opens the search bar; Escape closes it. Its own class finds it
+# since T1375; the count label is kept as a second check (the palette has only
+# an EDIT).
 function Open-AndCloseSearch([IntPtr]$top, [IntPtr]$pane) {
     $popup = [IntPtr]::Zero
     foreach ($try in 1..3) {
         if (-not (Send-TestKeys -Window $top -Target $pane -Modifiers ctrl, shift -Key F)) { continue }
-        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttyTerminal' -TimeoutMs 5000
+        $popup = Wait-TestWindow -ProcessId $script:app.Pid -Class 'GhozttySearchBar' -TimeoutMs 5000
         if ($popup -ne [IntPtr]::Zero) { break }
     }
     if ($popup -eq [IntPtr]::Zero) { return $false }

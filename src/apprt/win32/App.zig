@@ -95,6 +95,7 @@ const gui_pump = @import("gui_pump.zig");
 const startup_error = @import("startup_error.zig");
 const surface_reap = @import("surface_reap.zig");
 const surface_window_role = @import("surface_window_role.zig");
+const class_redraw = @import("class_redraw.zig");
 const resize_paint = @import("resize_paint.zig");
 const window_active = @import("window_active.zig");
 const translate_policy = @import("translate_policy.zig");
@@ -310,6 +311,32 @@ pub const WINDOW_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyWin
 /// Window class for terminal surfaces (OpenGL via WGL, needs CS_OWNDC).
 pub const TERMINAL_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyTerminal");
 
+/// Window classes for the two popups a surface owns (T819, T1375).
+///
+/// Both used to ride `TERMINAL_CLASS_NAME`, because they share
+/// `surfaceWndProc` and that was the class it was registered under. Two things
+/// were wrong with that, and one class each fixes both:
+///
+/// 1. **Redraw policy** (T819). The terminal class deliberately carries
+///    `CS_OWNDC` and deliberately NOT `CS_HREDRAW | CS_VREDRAW`: the OpenGL
+///    renderer redraws the surface whole every frame, so a full-client
+///    invalidate on every drag frame would be an erase+paint for nothing. The
+///    popups are the opposite — GDI-painted from their own bounds, and sized
+///    as `<constant> * scale`, so their bounds only ever move on a DPI change
+///    and every pixel is wrong when they do. Borrowing the terminal's class
+///    meant Windows invalidated only the strip the resize uncovered.
+/// 2. **Identity** (T1375). By class these popups WERE a terminal surface, so
+///    `Get-TestWindowPixels` refused to capture them under T214's flat-fill
+///    rule, and every probe that waited for one did `Wait-TestWindow -Class
+///    GhozttyTerminal`, which cannot tell the palette from the search bar from
+///    a second terminal window.
+///
+/// Same `lpfnWndProc` as the terminal class, so nothing about message routing
+/// moves: `surfaceWndProc` already tells the three windows apart by HWND
+/// identity (`surface_window_role.roleOf`), never by class.
+pub const PALETTE_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyCommandPalette");
+pub const SEARCH_BAR_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttySearchBar");
+
 /// The search bar's and the command palette's surface and field fills, keyed
 /// on the color they were made for so a theme flip replaces the GDI object
 /// instead of painting through a stale one (T563). Process lifetime, GUI
@@ -417,6 +444,8 @@ hinstance: w32.HINSTANCE,
 /// Window class atoms from RegisterClassExW.
 class_atom: u16 = 0,
 terminal_class_atom: u16 = 0,
+palette_class_atom: u16 = 0,
+search_bar_class_atom: u16 = 0,
 msg_class_atom: u16 = 0,
 viewer_class_atom: u16 = 0,
 
@@ -719,25 +748,24 @@ pub fn init(
     };
 
     // Register the terminal surface class (OpenGL via WGL, needs CS_OWNDC).
-    const tc = w32.WNDCLASSEXW{
-        .cbSize = @sizeOf(w32.WNDCLASSEXW),
-        .style = w32.CS_OWNDC,
-        .lpfnWndProc = &surfaceWndProc,
-        .cbClsExtra = 0,
-        .cbWndExtra = 0,
-        .hInstance = hinstance,
-        .hIcon = app_icon,
-        .hCursor = w32.LoadCursorW(null, w32.IDC_ARROW),
-        .hbrBackground = null,
-        .lpszMenuName = null,
-        .lpszClassName = TERMINAL_CLASS_NAME,
-        .hIconSm = app_icon,
-    };
-
-    self.terminal_class_atom = w32.RegisterClassExW(&tc);
+    self.terminal_class_atom = registerTerminalClass(hinstance);
     if (self.terminal_class_atom == 0) return error.Win32Error;
     errdefer if (self.terminal_class_atom != 0) {
         _ = w32.UnregisterClassW(TERMINAL_CLASS_NAME, self.hinstance);
+    };
+
+    // Register the two surface-popup classes (T819/T1375). Same wndproc as
+    // the terminal class, opposite redraw policy — see PALETTE_CLASS_NAME.
+    self.palette_class_atom = registerSurfacePopupClass(hinstance, PALETTE_CLASS_NAME);
+    if (self.palette_class_atom == 0) return error.Win32Error;
+    errdefer if (self.palette_class_atom != 0) {
+        _ = w32.UnregisterClassW(PALETTE_CLASS_NAME, self.hinstance);
+    };
+
+    self.search_bar_class_atom = registerSurfacePopupClass(hinstance, SEARCH_BAR_CLASS_NAME);
+    if (self.search_bar_class_atom == 0) return error.Win32Error;
+    errdefer if (self.search_bar_class_atom != 0) {
+        _ = w32.UnregisterClassW(SEARCH_BAR_CLASS_NAME, self.hinstance);
     };
 
     // Register the message-only window class (WM_APP_WAKEUP, WM_TIMER).
@@ -1988,6 +2016,14 @@ pub fn terminate(self: *App) void {
     if (self.msg_class_atom != 0) {
         _ = w32.UnregisterClassW(MSG_CLASS_NAME, self.hinstance);
         self.msg_class_atom = 0;
+    }
+    if (self.search_bar_class_atom != 0) {
+        _ = w32.UnregisterClassW(SEARCH_BAR_CLASS_NAME, self.hinstance);
+        self.search_bar_class_atom = 0;
+    }
+    if (self.palette_class_atom != 0) {
+        _ = w32.UnregisterClassW(PALETTE_CLASS_NAME, self.hinstance);
+        self.palette_class_atom = 0;
     }
     if (self.terminal_class_atom != 0) {
         _ = w32.UnregisterClassW(TERMINAL_CLASS_NAME, self.hinstance);
@@ -3417,6 +3453,39 @@ test "translate_policy never drifts from the win32 constants (T222)" {
     for ([_]u32{ w32.WM_KEYDOWN, w32.WM_KEYUP, w32.WM_SYSKEYDOWN, w32.WM_SYSKEYUP }) |m| {
         try std.testing.expect(translate_policy.isKeyMessage(m));
     }
+}
+
+// T819: the command palette and the search bar are sized as `<constant> *
+// scale`, so a DPI change is the one thing that resizes them — and it makes
+// every pixel they have painted wrong at once. Their classes must invalidate
+// the whole client on a size change; the terminal class they used to borrow
+// must NOT, because the GL renderer repaints it whole every frame anyway and
+// the style would cost an erase+paint per drag frame.
+//
+// Measured with the same instrument in both directions, so "the popup class
+// passes" is not satisfiable by a probe that cannot fail.
+test "surface popup classes invalidate the whole client on a resize (T819)" {
+    const hinst = w32.GetModuleHandleW(null) orelse return error.SkipZigTest;
+    for ([_][*:0]const u16{ PALETTE_CLASS_NAME, SEARCH_BAR_CLASS_NAME }) |name| {
+        // A second registration in the same test binary answers
+        // ERROR_CLASS_ALREADY_EXISTS, which is not a failure of anything.
+        _ = registerSurfacePopupClass(hinst, name);
+        try class_redraw.expectResizeInvalidatesWholeClient(name);
+    }
+}
+
+test "the terminal surface class still does NOT carry the redraw style (T819)" {
+    const hinst = w32.GetModuleHandleW(null) orelse return error.SkipZigTest;
+    _ = registerTerminalClass(hinst);
+
+    // Widening moves the right edge, so an unstyled class invalidates the
+    // uncovered column and nothing else. Asserted so T819's fix cannot be made
+    // by widening the shared class instead of splitting it, which would put the
+    // per-frame erase+paint back on every divider drag.
+    const wide = try class_redraw.measureResize(TERMINAL_CLASS_NAME, .width);
+    try std.testing.expect(!wide.coversWholeClient());
+    const tall = try class_redraw.measureResize(TERMINAL_CLASS_NAME, .height);
+    try std.testing.expect(!tall.coversWholeClient());
 }
 
 /// Which transport a rebuild's panes ride, and what the rebuilt window owns of
@@ -8090,19 +8159,31 @@ fn machineChooserOwning(self: *App, hwnd: w32.HWND) ?*MachineChooser {
     return null;
 }
 
-/// If `child`'s parent is a terminal surface HWND (TERMINAL_CLASS_NAME),
-/// return that surface. The popup-edit keystroke intercepts in run() MUST
-/// use this rather than casting the parent's GWLP_USERDATA directly: a
-/// keystroke on the surface itself has the top-level GhozttyWindow as
-/// parent, whose GWLP_USERDATA is a *Window — casting that to *Surface
-/// read out-of-bounds garbage on every keypress (randomly eating keys or
-/// crashing; found by the T65 close-on-keypress validation).
+/// If `child`'s parent is a window whose GWLP_USERDATA is a *Surface — a
+/// terminal surface (TERMINAL_CLASS_NAME) or one of the two popups a surface
+/// owns (SURFACE_POPUP_CLASS_NAME) — return that surface. The popup-edit
+/// keystroke intercepts in run() MUST use this rather than casting the
+/// parent's GWLP_USERDATA directly: a keystroke on the surface itself has the
+/// top-level GhozttyWindow as parent, whose GWLP_USERDATA is a *Window —
+/// casting that to *Surface read out-of-bounds garbage on every keypress
+/// (randomly eating keys or crashing; found by the T65 close-on-keypress
+/// validation).
+///
+/// ALL THREE classes, not just the terminal one (T819). The palette and search
+/// edits are children of the POPUP, which shared the terminal's class until
+/// the popups were given classes of their own; matching only the terminal
+/// class here would have made this return null for exactly the two edits the
+/// function exists to serve, and Enter/Escape/arrows in the palette would have
+/// stopped working.
 fn surfaceParentOf(child: w32.HWND) ?*Surface {
     const parent = w32.GetParent(child) orelse return null;
     var cls: [40]u16 = undefined;
     const n = w32.GetClassNameW(parent, &cls, cls.len);
     if (n <= 0) return null;
-    if (!std.mem.eql(u16, cls[0..@intCast(n)], TERMINAL_CLASS_NAME)) return null;
+    const name = cls[0..@intCast(n)];
+    if (!std.mem.eql(u16, name, TERMINAL_CLASS_NAME) and
+        !std.mem.eql(u16, name, PALETTE_CLASS_NAME) and
+        !std.mem.eql(u16, name, SEARCH_BAR_CLASS_NAME)) return null;
     const userdata = w32.GetWindowLongPtrW(parent, w32.GWLP_USERDATA);
     if (userdata == 0) return null;
     return @ptrFromInt(@as(usize, @bitCast(userdata)));
@@ -9839,7 +9920,67 @@ fn tick(self: *App) void {
     };
 }
 
-/// Window procedure for terminal surface child HWNDs (GhosttyTerminal class).
+/// Register the terminal surface class. Separate from `init` for the same
+/// reason `registerSurfacePopupClass` is: the T819 test measures this class's
+/// redraw policy as the NEGATIVE half of the popup measurement, and it must
+/// measure the real class rather than a probe shaped like it.
+///
+/// `CS_OWNDC` and deliberately no `CS_HREDRAW | CS_VREDRAW`: the WGL renderer
+/// redraws the whole surface every frame, so a size-triggered full-client
+/// invalidate would be an erase+paint per drag frame for nothing.
+pub fn registerTerminalClass(hinstance: w32.HINSTANCE) u16 {
+    const app_icon = w32.LoadIconW(hinstance, w32.IDI_GHOSTTY) orelse
+        w32.LoadIconW(null, w32.IDI_APPLICATION);
+    const tc = w32.WNDCLASSEXW{
+        .cbSize = @sizeOf(w32.WNDCLASSEXW),
+        .style = w32.CS_OWNDC,
+        .lpfnWndProc = &surfaceWndProc,
+        .cbClsExtra = 0,
+        .cbWndExtra = 0,
+        .hInstance = hinstance,
+        .hIcon = app_icon,
+        .hCursor = w32.LoadCursorW(null, w32.IDC_ARROW),
+        .hbrBackground = null,
+        .lpszMenuName = null,
+        .lpszClassName = TERMINAL_CLASS_NAME,
+        .hIconSm = app_icon,
+    };
+    return w32.RegisterClassExW(&tc);
+}
+
+/// Register the surface-popup class (T819). Separate from `init` so the
+/// class-redraw test can register it without standing an App up; a second
+/// registration fails with ERROR_CLASS_ALREADY_EXISTS, which is why the test
+/// path tolerates a 0 return rather than treating it as an error.
+///
+/// `CS_HREDRAW | CS_VREDRAW` is the whole point: both popups are sized as
+/// `<constant> * scale`, so their bounds only ever move on a DPI change, and
+/// every pixel they paint is derived from those bounds. Without the style
+/// Windows invalidates only the strip the resize uncovered.
+///
+/// No `CS_OWNDC`: nothing here draws through WGL, and an owned DC per popup
+/// would be a private DC kept alive for a window that is destroyed and rebuilt
+/// with the surface.
+pub fn registerSurfacePopupClass(hinstance: w32.HINSTANCE, name: [*:0]const u16) u16 {
+    const wc = w32.WNDCLASSEXW{
+        .cbSize = @sizeOf(w32.WNDCLASSEXW),
+        .style = w32.CS_HREDRAW | w32.CS_VREDRAW,
+        .lpfnWndProc = &surfaceWndProc,
+        .cbClsExtra = 0,
+        .cbWndExtra = 0,
+        .hInstance = hinstance,
+        .hIcon = null,
+        .hCursor = w32.LoadCursorW(null, w32.IDC_ARROW),
+        .hbrBackground = null,
+        .lpszMenuName = null,
+        .lpszClassName = name,
+        .hIconSm = null,
+    };
+    return w32.RegisterClassExW(&wc);
+}
+
+/// Window procedure for terminal surface child HWNDs (GhosttyTerminal class)
+/// and for the two popups a surface owns (GhozttySurfacePopup class, T819).
 /// GWLP_USERDATA stores a *Surface pointer.
 fn surfaceWndProc(
     hwnd: w32.HWND,

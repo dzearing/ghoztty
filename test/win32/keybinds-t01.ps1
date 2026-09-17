@@ -255,7 +255,7 @@ Send-Chord P ctrl,shift | Out-Null
 $popup = [IntPtr]::Zero
 for ($t = 0; $t -lt 20; $t++) {
     Start-Sleep -Milliseconds 100
-    $popup = Get-TestWindow -ProcessId $script:appPid -Class 'GhozttyTerminal' -Exclude $script:top
+    $popup = Get-TestWindow -ProcessId $script:appPid -Class 'GhozttyCommandPalette' -Exclude $script:top
     if ($popup -ne [IntPtr]::Zero) { break }
 }
 Assert ($popup -ne [IntPtr]::Zero) 'ctrl+shift+p opens the command palette popup'
@@ -278,7 +278,7 @@ if ($popup -ne [IntPtr]::Zero) {
     Assert ($palEdit -ne [IntPtr]::Zero) 'palette has a focused search edit to receive keys'
     [void](Send-TestControlKey -Control $palEdit -Key Escape)
     Start-Sleep -Milliseconds 500
-    Assert ((Get-TestWindow -ProcessId $script:appPid -Class 'GhozttyTerminal' -Exclude $script:top) -eq [IntPtr]::Zero) 'Escape closes the palette'
+    Assert ((Get-TestWindow -ProcessId $script:appPid -Class 'GhozttyCommandPalette' -Exclude $script:top) -eq [IntPtr]::Zero) 'Escape closes the palette'
 }
 
 # Re-resolve the focused pane name for the read/write tests below.

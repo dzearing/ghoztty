@@ -773,10 +773,11 @@ try {
         }
         return $false
     }
-    # The command palette is a WS_POPUP of the terminal class with an EDIT
-    # child (Surface.ensureCommandPalette); "open" = such a window is visible.
+    # The command palette is a WS_POPUP of its own class (T819/T1375) with an
+    # EDIT child (Surface.ensureCommandPalette); "open" = such a window is
+    # visible.
     function Test-PaletteOpen {
-        foreach ($w in @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyTerminal')) {
+        foreach ($w in @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyCommandPalette')) {
             if (-not $w.Visible) { continue }
             if (@(Get-TestChildWindows -Window ([IntPtr]$w.Hwnd) -Class 'Edit').Count -ge 1) { return $true }
         }
@@ -838,7 +839,7 @@ try {
             Assert $palette 'T394 ctrl+shift+p from a viewer opened the command palette'
             if ($palette) {
                 # Escape closes it again (palette keys are app-side).
-                foreach ($w in @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyTerminal')) {
+                foreach ($w in @(Get-TestWindows -ProcessId $appPid -Class 'GhozttyCommandPalette')) {
                     if ($w.Visible) {
                         foreach ($e in @(Get-TestChildWindows -Window ([IntPtr][int64]$w.Hwnd) -Class 'Edit')) {
                             Send-TestControlKey -Control ([IntPtr][int64]$e.Hwnd) -Key Escape | Out-Null
@@ -984,7 +985,7 @@ try {
         $popup = [IntPtr]::Zero
         foreach ($try in 1..3) {
             if (-not (Send-TestKeys -Window $top -Target $pane -Modifiers ctrl, shift -Key P)) { continue }
-            $popup = Wait-TestWindow -ProcessId $appPid -Class 'GhozttyTerminal' -TimeoutMs 5000
+            $popup = Wait-TestWindow -ProcessId $appPid -Class 'GhozttyCommandPalette' -TimeoutMs 5000
             if ($popup -ne [IntPtr]::Zero) { break }
         }
         if ($popup -eq [IntPtr]::Zero) { Write-Host "  (${label}: palette popup not found)"; return $false }

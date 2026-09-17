@@ -237,12 +237,12 @@ try {
     # About box via the command palette (OK-only + info icon), same GUI.
     $r = Send-TestKeys -Window $g.Top -Target $g.Surface -Modifiers ctrl, shift -Key P
     if (-not $r) { Write-Host 'SETUP FAIL: ctrl+shift+p not injected'; exit 1 }
-    # The palette is a top-level GhozttyTerminal popup, so exclude the window's
-    # own class match by naming the main window.
+    # The palette is a top-level GhozttyCommandPalette popup (T1375); the
+    # -Exclude is kept so a second palette can never be mistaken for this one.
     $popup = [IntPtr]::Zero
     for ($t = 0; $t -lt 30 -and $popup -eq [IntPtr]::Zero; $t++) {
         Start-Sleep -Milliseconds 100
-        $popup = Get-TestWindow -ProcessId $gpid -Class 'GhozttyTerminal' -Exclude $g.Top
+        $popup = Get-TestWindow -ProcessId $gpid -Class 'GhozttyCommandPalette' -Exclude $g.Top
     }
     Assert ($popup -ne [IntPtr]::Zero) 'command palette opens via ctrl+shift+p'
     if ($popup -ne [IntPtr]::Zero) {
