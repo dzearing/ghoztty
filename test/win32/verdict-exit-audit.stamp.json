@@ -1,8 +1,8 @@
 {
     "guard":  "verdict-exit",
     "script":  "test/win32/verdict-exit-audit.ps1",
-    "generated":  "2026-09-17T03:47:57-07:00",
-    "commit":  "0a926d70f",
+    "generated":  "2026-09-17T05:23:37-07:00",
+    "commit":  "b93681a9a",
     "uncommitted":  [
                         "test/win32/chooser-session-cpu.ps1"
                     ],
@@ -61,7 +61,7 @@
                   "test/win32/chooser-resume-remote.ps1":  "988b7bb06f9134659189909da12c14a0eb314f29ce3273b6c20375699b7120e8",
                   "test/win32/chooser-roster-refetch.ps1":  "bad4f2ce9924598420d0cff81430db6fb7afc9a220bbaa1f53f8abd98f4faa14",
                   "test/win32/chooser-selection.ps1":  "f5749642a82e6ccd66fdd846de7eaea9d32b02968f0c8499fb15738d57d7a829",
-                  "test/win32/chooser-session-cpu.ps1":  "faef21041be8dfc9ce170c8d86b55e21f850efa3b2bf4377a969fd4a80df0e6c",
+                  "test/win32/chooser-session-cpu.ps1":  "67360796401c0381e4a9f09603a7149d1db077b8cb6c6f04124f463ef168e194",
                   "test/win32/chooser-sessions.ps1":  "7f21f3537696c70144241327120c7099004f2d1f66947be3d4ed7d296cb3bbd8",
                   "test/win32/chooser-session-sort.ps1":  "0c056f4bea3e52e371f633afb02a08c33075053c3964a7a4d5434e4df0613b6a",
                   "test/win32/chooser-sessions-push.ps1":  "620396f231ee9ced118b5be197eb43cd9b2bd6fbeb705167ccbb7db96c119fa8",

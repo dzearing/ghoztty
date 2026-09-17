@@ -2901,6 +2901,26 @@ $GuardTable = @(
             'test\win32\chooser-session-sort.ps1'
         )
     },
+    # The chooser's per-session CPU METER (T462/T812/T813): the subscription, the
+    # pure meter model, and the staleness rule that decides whether the column is
+    # honest. Nothing else on the box observes any of it - the floor lanes open no
+    # chooser, and no other chooser harness subscribes to `session_cpu` at all. The
+    # row is here because the failure this feature can have is SILENT by
+    # construction: a meter that has stopped updating looks exactly like one that
+    # is updating, so a regression shows up as a number nobody questions rather
+    # than as a red run. Coverage is the two modules and the harness;
+    # MachineChooser.zig is deliberately not here (see the `chooser-resume` row
+    # for that call - it hosts sixteen features and moves daily).
+    [pscustomobject]@{
+        Name   = 'chooser-session-cpu'
+        Script = 'test\win32\chooser-session-cpu.ps1'
+        Stamp  = 'test\win32\chooser-session-cpu.stamp.json'
+        Covers = @(
+            'src\apprt\win32\SessionCpuProbe.zig',
+            'src\apprt\win32\chooser_cpu.zig',
+            'test\win32\chooser-session-cpu.ps1'
+        )
+    },
     # The chooser's session RESUME (T320/T620/T816): taking over a live session
     # that has no window is the machine chooser's reason to list sessions at
     # all, and no other harness drives it - the P1-P3 floor never opens the

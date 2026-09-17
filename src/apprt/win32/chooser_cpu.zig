@@ -255,6 +255,52 @@ pub fn meterLayout(m: Metrics, col: Rect, cpu_pct: f32) MeterLayout {
 }
 
 // ---------------------------------------------------------------------
+// Staleness (T813)
+// ---------------------------------------------------------------------
+
+/// The cadence the chooser ASKS for. The agent floors it and may stretch it,
+/// and what it actually chose rides in every frame — so this is only ever the
+/// opening bid and the fallback the staleness rule uses before the first frame
+/// has said otherwise. (`SessionCpuProbe.requested_interval_ms` is this.)
+pub const default_interval_ms: u32 = 2000;
+
+/// How many cadences may pass with no frame before the meter is STALE.
+///
+/// Three rather than one: a pushed stream is allowed to drop a frame, and the
+/// agent's own throttling already moves the cadence rather than skipping ticks,
+/// so anything under three is a rule that fires on a healthy stream.
+pub const stale_misses: u64 = 3;
+
+/// The floor under that window. A fast stream would otherwise put the whole
+/// judgement inside a few hundred milliseconds, where a GC pause or a busy box
+/// is enough to blank a working column.
+pub const stale_floor_ms: u64 = 6_000;
+
+/// How long a stream may go silent before its readings stop being reported as
+/// live, given the cadence the agent last said it was using.
+pub fn staleAfterMs(interval_ms: u32) u64 {
+    const cadence: u64 = if (interval_ms == 0) default_interval_ms else interval_ms;
+    return @max(stale_floor_ms, cadence * stale_misses);
+}
+
+/// Whether readings this old are stale, i.e. the meter must stop claiming to be
+/// live (T813).
+///
+/// The subscription can die without the connection saying anything: the local
+/// agent's shared link is REPLACED by recovery (the new socket carries no
+/// subscription), or it reconnects in place (same `Connection`, new socket,
+/// same silence), or the agent wedges with the link still nominally up. All
+/// three look identical on screen — the last numbers sitting there forever —
+/// which is worse than an empty column, because a frozen meter is still read as
+/// a measurement.
+///
+/// The rule is stated on the AGE of the newest frame rather than on any of
+/// those causes, so it covers the ones nobody has thought of yet.
+pub fn isStale(interval_ms: u32, age_ms: u64) bool {
+    return age_ms > staleAfterMs(interval_ms);
+}
+
+// ---------------------------------------------------------------------
 // The store
 // ---------------------------------------------------------------------
 
@@ -289,10 +335,27 @@ pub const Store = struct {
     /// "has a reading arrived" is not the same question as "is this number
     /// meaningful", and why the acceptance harness waits for two.
     frames: u64 = 0,
+    /// When the newest frame landed (`std.time.milliTimestamp`), or 0 before the
+    /// first one. The staleness rule (T813) is stated on this, and it is stamped
+    /// here — on the reader thread, as the frame arrives — rather than by the
+    /// GUI, so a GUI that is busy elsewhere cannot make a live stream look dead.
+    last_ms: i64 = 0,
 
     /// Take one pushed frame. `rows` borrows the decoder's arena; everything
     /// kept is copied here.
     pub fn ingest(self: *Store, ids: []const []const u8, pcts: []const f32, interval_ms: u32) void {
+        self.ingestAt(ids, pcts, interval_ms, std.time.milliTimestamp());
+    }
+
+    /// `ingest` with the clock supplied, so the staleness rule is testable
+    /// without one.
+    pub fn ingestAt(
+        self: *Store,
+        ids: []const []const u8,
+        pcts: []const f32,
+        interval_ms: u32,
+        now_ms: i64,
+    ) void {
         self.mutex.lock();
         defer self.mutex.unlock();
         var n: usize = 0;
@@ -307,6 +370,22 @@ pub const Store = struct {
         self.count = n;
         self.interval_ms = interval_ms;
         self.frames +%= 1;
+        self.last_ms = now_ms;
+    }
+
+    /// Whether the newest readings are too old to be reported as live (T813),
+    /// judged against the cadence the agent itself reported.
+    ///
+    /// False before the first frame: a stream that has not spoken yet is
+    /// STARTING, not stalled, and blanking the column during the opening
+    /// round-trip would make every chooser flicker on the way in.
+    pub fn stale(self: *Store, now_ms: i64) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        if (self.frames == 0) return false;
+        const age = now_ms - self.last_ms;
+        if (age <= 0) return false; // a clock that moved backwards is not evidence
+        return isStale(self.interval_ms, @intCast(age));
     }
 
     /// This session's newest reading, or null when the frame did not name it —
@@ -343,6 +422,7 @@ pub const Store = struct {
         self.count = 0;
         self.interval_ms = 0;
         self.frames = 0;
+        self.last_ms = 0;
     }
 };
 
@@ -558,4 +638,54 @@ test "Store: a short pct list leaves the extra rows at zero, not garbage" {
     s.ingest(&.{ "a", "b" }, &.{7}, 1000);
     try testing.expectEqual(@as(?f32, 7), s.get("a"));
     try testing.expectEqual(@as(?f32, 0), s.get("b"));
+}
+
+test "staleAfterMs: three cadences, with a floor under a fast stream" {
+    // A fast stream is judged by the floor, not by 3x a few hundred ms.
+    try testing.expectEqual(stale_floor_ms, staleAfterMs(200));
+    try testing.expectEqual(stale_floor_ms, staleAfterMs(default_interval_ms));
+    // A THROTTLED agent reports a slower cadence, and the window stretches with
+    // it — otherwise self-throttling under load would blank its own meter.
+    try testing.expectEqual(@as(u64, 30_000), staleAfterMs(10_000));
+    // No frame yet: the default cadence, so the floor.
+    try testing.expectEqual(stale_floor_ms, staleAfterMs(0));
+}
+
+test "isStale: a dropped frame is not a dead stream, a silent minute is" {
+    // One missed tick on the default cadence.
+    try testing.expect(!isStale(default_interval_ms, 2_100));
+    // Right at the boundary is still live; past it is not.
+    try testing.expect(!isStale(default_interval_ms, stale_floor_ms));
+    try testing.expect(isStale(default_interval_ms, stale_floor_ms + 1));
+    try testing.expect(isStale(default_interval_ms, 60_000));
+    // A throttled stream is given its own cadence's worth of room.
+    try testing.expect(!isStale(10_000, 25_000));
+    try testing.expect(isStale(10_000, 31_000));
+}
+
+test "Store.stale: silence blanks the meter, and a frame brings it back (T813)" {
+    var s: Store = .{};
+    // Before the first frame the stream is STARTING, not stalled — blanking the
+    // column through the opening round-trip would flicker every chooser open.
+    try testing.expect(!s.stale(1_000_000));
+
+    s.ingestAt(&.{"a"}, &.{42}, default_interval_ms, 1_000_000);
+    try testing.expect(!s.stale(1_000_000));
+    try testing.expect(!s.stale(1_004_000));
+    // The subscription died with a replaced socket: no frame, and the readings
+    // are still sitting in the store.
+    try testing.expect(s.stale(1_010_000));
+    try testing.expectEqual(@as(?f32, 42), s.get("a"));
+
+    // A frame lands on the new subscription: live again, no separate recovery
+    // path.
+    s.ingestAt(&.{"a"}, &.{7}, default_interval_ms, 1_010_100);
+    try testing.expect(!s.stale(1_010_100));
+
+    // A clock that moved backwards is not evidence of anything.
+    try testing.expect(!s.stale(900_000));
+
+    // And a reset forgets the stamp with the readings.
+    s.reset();
+    try testing.expect(!s.stale(2_000_000));
 }

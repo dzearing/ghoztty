@@ -24,6 +24,22 @@
 //! `MachineConnectionPool` holds for the chooser's lease (T461). Dialing a
 //! second socket just to draw a meter is exactly what the pool exists to stop.
 //!
+//! ## A subscription can die without the connection saying so (T813)
+//! Retargeting follows the SELECTION, and the selection is the only edge the
+//! local agent has — there is no pool notification behind it. So a recovery
+//! that replaces the shared connection while the chooser is open, an in-place
+//! reconnect on the same `Connection` (new socket, no subscription on it), or
+//! an agent that wedges with the link nominally up all end the stream with
+//! nothing to observe: the last readings sit on screen forever, presented as
+//! measurements. Two things answer that, and both are needed because each
+//! misses what the other catches: the chooser re-checks the local agent's
+//! connection every poll tick and retargets when the POINTER moved, and this
+//! probe stops reporting `supported()` once the newest frame is older than the
+//! agent's own cadence allows (`chooser_cpu.isStale`). The staleness rule is
+//! stated on silence rather than on any particular cause, so it also covers the
+//! causes nobody has thought of yet — and it un-stales itself the moment a
+//! frame lands, so recovery needs no separate path.
+//!
 //! ## Degrading against an older agent
 //! `Connection.subscribeSessionCpu` returns `error.Unsupported` when the peer
 //! never advertised `capability.session_cpu` — an unknown opcode is a FATAL
@@ -61,7 +77,7 @@ pub const WM_APP_CHOOSER_SESSION_CPU: u32 = w32.WM_APP + 29;
 /// The cadence we ASK for. Modest on purpose, and Mac's number: this is a
 /// glanceable indicator on a transient page, and the agent stretches it anyway
 /// under load.
-pub const requested_interval_ms: u32 = 2000;
+pub const requested_interval_ms: u32 = chooser_cpu.default_interval_ms;
 
 /// The newest readings. Written from the control-reader thread, read from the
 /// GUI thread; every access is behind its own mutex (`chooser_cpu.Store`).
@@ -91,10 +107,14 @@ hwnd: ?w32.HWND = null,
 chooser_id: u64 = 0,
 
 /// Whether the meter column should be reserved and drawn at all: a peer that can
-/// serve the stream AND a live subscription on it. A dropped connection takes
-/// the column away rather than freezing the last numbers on screen.
-pub fn supported(self: *const SessionCpuProbe) bool {
-    return self.peer_supports and self.conn != null;
+/// serve the stream, a live subscription on it, AND frames still arriving. A
+/// dropped connection takes the column away rather than freezing the last
+/// numbers on screen, and since T813 so does a connection that is still there
+/// but has gone quiet — the local agent's shared link can be replaced or
+/// reconnected under a live subscription, and the pointer alone cannot see it.
+pub fn supported(self: *SessionCpuProbe) bool {
+    if (!self.peer_supports or self.conn == null) return false;
+    return !self.store.stale(std.time.milliTimestamp());
 }
 
 /// This session's newest reading, or null when the last frame did not name it.

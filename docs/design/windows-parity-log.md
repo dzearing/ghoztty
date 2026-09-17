@@ -9,6 +9,46 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-17: T813 closed done — **the chooser's CPU meter stops pretending: a
+  column that has gone quiet takes itself away instead of leaving the last
+  readings on screen looking live.**
+
+  The meter follows the SELECTED machine, and retargeting happens on a selection
+  change or — for a remote machine — a pool notification. The local agent has
+  neither. So recovery could retire its shared connection and dial a new one with
+  the chooser open, the subscription died with the old socket, and the probe went
+  on reporting a supported stream: the column stayed, holding numbers that were
+  now minutes old and indistinguishable from live ones. A frozen meter is read as
+  a measurement, which is worse than an empty column.
+
+  Two halves, because neither covers the other. The chooser now re-reads
+  `LocalAgent.sharedConnectionIfLive()` on every 5s poll tick and retargets when
+  the POINTER moved — that is the replacement case, and null (a link that has
+  stopped carrying requests) is a legitimate answer that takes the column away.
+  And the probe stops reporting `supported()` once the newest frame is older than
+  the agent's own cadence allows (`max(6s, 3x the interval the agent reported)`):
+  the pointer can stay put across an in-place reconnect — same `Connection`, new
+  socket, nothing re-subscribes — and across a wedged agent, and only the AGE of
+  the readings sees those. The rule is stated on silence rather than on any
+  particular cause, so it covers the causes nobody has thought of yet, and it
+  un-stales itself the moment a frame lands, so recovery needs no second path.
+
+  Worth keeping from the acceptance run: the first version of section H asserted
+  that no frame arrives after the agent is killed, and it went red — because the
+  app RECOVERED, spawned a fresh agent under the open dialog, re-subscribed and
+  brought the column back. That is the behavior we want, so the assertion was
+  wrong, not the code. What it asserts now is the invariant that holds either
+  way: a reading may only arrive behind a subscription NEWER than the death.
+
+  The harness also earned a guard row of its own. This feature's regressions are
+  silent by construction — a meter that has stopped updating looks exactly like
+  one that has not — so nothing else on the box would ever go red over it.
+
+  Validation: 3 new none-lane unit tests over the staleness rule,
+  `test\win32\chooser-session-cpu.ps1` ALL PASS (30 assertions, 0 skipped)
+  including the new section H, `chooser-controls.ps1` ALL PASS (54), the harness
+  floor, and the standing four lanes.
+
 - 2026-09-17: T812 closed done — **the chooser's CPU meter explains itself on
   hover: the units a bare number lacks, and the agent's own throttling when the
   stream has slowed down.**

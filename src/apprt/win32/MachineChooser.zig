@@ -1070,10 +1070,47 @@ fn startFetch(self: *MachineChooser, quiet: bool) void {
 
 /// A poll tick on an OPEN chooser (T711). Mac's 5s task, as a WM_TIMER.
 fn pollTick(self: *MachineChooser) void {
+    // First, and unconditionally — this half is about the LOCAL agent, which is
+    // there whether or not anybody is signed in to the relay.
+    self.syncLiveStreams();
     switch (chooser_refresh.tick(self.token != null, self.fetch_inflight)) {
         .skip_signed_out, .skip_inflight => {},
         .fetch => self.startFetch(true),
     }
+}
+
+/// Keep the meter honest while the dialog just SITS there (T813).
+///
+/// A remote machine's connection announces itself through `onPoolChange`, so
+/// the streams follow it. The local agent has no such channel and no selection
+/// edge to ride: recovery can retire its shared connection and dial a new one
+/// with the chooser open, and the subscription dies with the old socket while
+/// the probe still reports a live meter — the CPU column then shows the last
+/// readings, frozen, indefinitely. That is worse than showing nothing, because
+/// a number on screen is read as a measurement.
+///
+/// Two checks, because neither covers the other. The POINTER moved: the shared
+/// connection was replaced (or has stopped carrying requests at all, which is
+/// `sharedConnectionIfLive` answering null), so re-subscribe on whatever is
+/// there now. And the readings went QUIET: the pointer can stay put across an
+/// in-place reconnect or a wedged agent, and only the age of the newest frame
+/// sees that. The second is checked for every machine, local or remote.
+fn syncLiveStreams(self: *MachineChooser) void {
+    var changed = false;
+    if (self.selectedRow()) |row| switch (row) {
+        .local => {
+            const conn = self.window.app.local_agent.sharedConnectionIfLive();
+            // Only when it MOVED: `retarget` on the same pointer is a no-op, but
+            // retargeting null onto null would reset the store on every tick.
+            if (self.cpu.conn != conn) {
+                log.info("chooser cpu: local agent connection moved; retargeting the meter", .{});
+                if (self.retargetStreams(conn)) changed = true;
+            }
+        },
+        .device => {},
+    };
+    if (self.syncCpuColumn()) changed = true;
+    if (changed) self.refreshSessions();
 }
 
 /// GUI thread: a `DirectoryProbe` fetch landed. Routed by chooser id, so a
@@ -2171,6 +2208,11 @@ fn syncCpuColumn(self: *MachineChooser) bool {
     const want = self.cpu.supported();
     if (self.roster.cpu_column == want) return false;
     self.roster.cpu_column = want;
+    // The transition, not the state: an owner-drawn column has no HWND to read
+    // back, so the one moment it appears or goes away is said out loud. This is
+    // T813's acceptance oracle — "the frozen numbers went away" is otherwise
+    // indistinguishable from "the numbers are still there" in a log.
+    log.info("chooser cpu: meter column {s}", .{if (want) "shown" else "hidden"});
     return true;
 }
 

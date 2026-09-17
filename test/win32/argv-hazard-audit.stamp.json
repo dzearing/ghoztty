@@ -1,9 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-17T03:33:44-07:00",
-    "commit":  "0a926d70f",
+    "generated":  "2026-09-17T05:09:03-07:00",
+    "commit":  "b93681a9a",
     "uncommitted":  [
+                        "scripts/guard-due.ps1",
                         "test/win32/chooser-session-cpu.ps1"
                     ],
     "files":  {
@@ -32,7 +33,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "fec6376034427796d1f9ad0b65d5fe8a46ce24a1702398844db3ea1483bada45",
-                  "scripts/guard-due.ps1":  "131678fea58690b7f8ca65f35c07701d1eb2a003aee4ae2aad93a9be20dc4110",
+                  "scripts/guard-due.ps1":  "740492bca1d06f0044fd42038acb6a77364364691798403263dc20b24705740f",
                   "scripts/harness-floor.ps1":  "cc4dd72fb07ebc34de67ce688e0eab7f091a7228e4baeba4f9f50d01212a0f0e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -129,7 +130,7 @@
                   "test/win32/chooser-resume-remote.ps1":  "988b7bb06f9134659189909da12c14a0eb314f29ce3273b6c20375699b7120e8",
                   "test/win32/chooser-roster-refetch.ps1":  "bad4f2ce9924598420d0cff81430db6fb7afc9a220bbaa1f53f8abd98f4faa14",
                   "test/win32/chooser-selection.ps1":  "f5749642a82e6ccd66fdd846de7eaea9d32b02968f0c8499fb15738d57d7a829",
-                  "test/win32/chooser-session-cpu.ps1":  "faef21041be8dfc9ce170c8d86b55e21f850efa3b2bf4377a969fd4a80df0e6c",
+                  "test/win32/chooser-session-cpu.ps1":  "67360796401c0381e4a9f09603a7149d1db077b8cb6c6f04124f463ef168e194",
                   "test/win32/chooser-sessions.ps1":  "7f21f3537696c70144241327120c7099004f2d1f66947be3d4ed7d296cb3bbd8",
                   "test/win32/chooser-session-sort.ps1":  "0c056f4bea3e52e371f633afb02a08c33075053c3964a7a4d5434e4df0613b6a",
                   "test/win32/chooser-sessions-push.ps1":  "620396f231ee9ced118b5be197eb43cd9b2bd6fbeb705167ccbb7db96c119fa8",

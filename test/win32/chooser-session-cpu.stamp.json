@@ -1,0 +1,16 @@
+{
+    "guard":  "chooser-session-cpu",
+    "script":  "test/win32/chooser-session-cpu.ps1",
+    "generated":  "2026-09-17T05:06:03-07:00",
+    "commit":  "b93681a9a",
+    "uncommitted":  [
+                        "src/apprt/win32/chooser_cpu.zig",
+                        "src/apprt/win32/SessionCpuProbe.zig",
+                        "test/win32/chooser-session-cpu.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/chooser_cpu.zig":  "8aecf1253b878bcb951b7928f7244718e59f9ac10ae626dfb9ffddee6e7d06bd",
+                  "src/apprt/win32/SessionCpuProbe.zig":  "7df0891891508e68f8d022e8fa0245f3ac4e147a1db8f8f395b8e7e9f13e919f",
+                  "test/win32/chooser-session-cpu.ps1":  "67360796401c0381e4a9f09603a7149d1db077b8cb6c6f04124f463ef168e194"
+              }
+}

@@ -37,6 +37,14 @@
 #      Its own negative control rides F's suppressed-capability agent - no
 #      column, no reading, and so no tooltip at all rather than one describing
 #      a meter that is not on screen.
+#   H  a stream that DIES takes the column with it (T813): with the chooser
+#      open and nobody touching it, the agent is killed - the subscription dies
+#      with its socket, and the app must notice unprompted and hide the meter
+#      column instead of leaving the last readings on screen looking live. A
+#      frozen number is read as a measurement, which is worse than nothing. What
+#      may come BACK is then held to the same rule: a reading is only allowed to
+#      arrive behind a subscription newer than the death, and when recovery does
+#      dial a fresh agent the column returns with it.
 #
 # WHY A LOG LINE IS AN ORACLE. The roster is owner-drawn on the dialog's own
 # surface: there is no HWND to read a meter back from, so what ARRIVED is said
@@ -372,6 +380,60 @@ try {
     Assert (Test-TestWindowResponsive -Window $g.Chooser) `
         'G the chooser still answers after the hover'
 
+    # --- H: a dead stream takes the column away (T813) ---------------------
+    #
+    # The meter follows the SELECTION, and the local machine has no selection
+    # edge and no pool notification behind it: retire the agent's connection
+    # under a live subscription and the frames simply stop while the column
+    # stays, holding the last readings forever. A frozen number is read as a
+    # measurement, which is worse than an empty column.
+    #
+    # Killing the agent is the cheapest way to produce exactly that state on a
+    # real box. What is asserted is that the app NOTICES with nobody touching
+    # the dialog: the column goes away on its own, and no frame lands after it.
+    Write-Host ''
+    Write-Host '4c. a stream that dies takes the meter away rather than freezing it'
+    $framesBeforeKill = Count-LogLines $errlog 'chooser cpu: frame rows='
+    $shownAt = Get-LastLineNo $errlog 'chooser cpu: meter column shown'
+    $hiddenAt = Get-LastLineNo $errlog 'chooser cpu: meter column hidden'
+    Assert ($framesBeforeKill -ge 3 -and $shownAt -gt $hiddenAt) `
+        "H the meter is live before the kill ($framesBeforeKill frames, column shown)"
+
+    [void](Stop-RepoGhoztty -Exe $Exe -AgentOnly -SettleMs 500)
+    # The poll tick is 5s and the link takes its own moment to admit it is gone,
+    # so this is generous on purpose - it is measuring that the app gets there
+    # unprompted, not how fast.
+    $hid = $false
+    $waited = 0
+    while ($waited -lt 30000) {
+        $hiddenAt = Get-LastLineNo $errlog 'chooser cpu: meter column hidden'
+        $shownAt = Get-LastLineNo $errlog 'chooser cpu: meter column shown'
+        if ($hiddenAt -gt $shownAt) { $hid = $true; break }
+        Start-Sleep -Milliseconds 500
+        $waited += 500
+    }
+    Assert $hid `
+        "H the column takes itself away when the stream dies (hidden at line $hiddenAt, last shown at $shownAt)"
+
+    # And what comes back, if anything does, comes back HONESTLY. Recovery may
+    # spawn a fresh agent under the open dialog, which is the behavior we want -
+    # so this is not "no more frames ever". The invariant is that a reading may
+    # only arrive behind a subscription that is NEWER than the death: a frame on
+    # the dead one would be the frozen-meter bug wearing a timestamp.
+    Start-Sleep -Seconds 12
+    $subAt = Get-LastLineNo $errlog 'chooser cpu: subscribed'
+    $frameAt = Get-LastLineNo $errlog 'chooser cpu: frame rows='
+    $hiddenAt = Get-LastLineNo $errlog 'chooser cpu: meter column hidden'
+    Assert ($frameAt -lt $hiddenAt -or $subAt -gt $hiddenAt) `
+        "H a reading only ever arrives behind a live subscription (last frame line $frameAt, hidden $hiddenAt, last subscribe $subAt)"
+    # And when it did recover, the column came back with it rather than staying
+    # blank - the staleness rule un-stales itself, with no separate path.
+    $shownAt = Get-LastLineNo $errlog 'chooser cpu: meter column shown'
+    Assert ($subAt -lt $hiddenAt -or $shownAt -gt $hiddenAt) `
+        "H a recovered stream brings the column back (subscribe $subAt, shown $shownAt, hidden $hiddenAt)"
+    Assert (Test-TestWindowResponsive -Window $g.Chooser) `
+        'H the chooser still answers with its agent gone'
+
     # --- F: the capability gate (negative control) -------------------------
     Write-Host ''
     Write-Host '5. an agent that cannot serve the stream gets no meter'
@@ -435,6 +497,18 @@ try {
         Remove-Item 'env:GHOSTTY_AGENT_SUPPRESS_CAPS' -ErrorAction SilentlyContinue
     }
     else { $env:GHOSTTY_AGENT_SUPPRESS_CAPS = $savedSuppress }
+}
+
+# --- stamp (T783/T813) ------------------------------------------------------
+# A clean green run records the covered files so scripts\guard-due.ps1 can
+# answer "has anyone run this harness against the code as it now stands?". The
+# row exists because this feature's regressions are SILENT: a meter that has
+# stopped updating looks exactly like one that has not, so nothing else on the
+# box would go red over it. A skipped section does not stamp, and every path
+# that proves nothing exits before here.
+if ($script:fail -eq 0 -and $script:skipped -eq 0) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard chooser-session-cpu -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
 }
 
 Write-Host ''
