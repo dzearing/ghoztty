@@ -199,7 +199,6 @@ function Get-SkipAuditFindings {
         $line = $logical[$i].Text
         if ($line -match '^\s*#') { continue }
         $literals = @(Get-SkipStringLiterals $line)
-        if ($literals.Count -eq 0) { continue }
 
         # An assertion is already counted in the pass tally, and a comparison
         # against ANOTHER script's output is not this script's verdict:
@@ -207,6 +206,28 @@ function Get-SkipAuditFindings {
         # tool they invoke, which is not their own summary line.
         $isAssert = ($line -match '^\s*(Assert|AssertEq|Check)\b')
         $isOperand = ($line -match "-(c|i)?(match|like|eq|ne|contains|notmatch|notlike)\s*['`"][^'`"]*ALL PASS")
+
+        # T271: a script on the shared scorer has no ALL PASS literal - the
+        # scorer prints it - so the CALL is the verdict line, and `-Skipped`
+        # is what makes it report the count.
+        #
+        # T807: and it has no string literal EITHER, because the canonical call
+        # is `Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped
+        # $script:skipped` - every argument a variable. So this test has to run
+        # BEFORE the no-literals bail below, or the verdict line of most
+        # scorer-based scripts in the suite is never examined at all. Two
+        # symmetric wrongs came of it: a correct `-Skipped` call could not
+        # credit the count (the script then read as `unreported` on the
+        # strength of some other ALL PASS literal it happened to print), and a
+        # call MISSING `-Skipped` registered no verdict line at all, so the
+        # `unreported` finding - the whole defect this file exists for - could
+        # not be raised against it.
+        if (-not ($isAssert -or $isOperand) -and $line -match '\bWrite-Test(Verdict|AssertedNothing)\b') {
+            [void]$verdictLines.Add($i)
+            if ($line -match '-Skipped\b') { $verdictReports = $true }
+        }
+
+        if ($literals.Count -eq 0) { continue }
 
         # The verdict line(s): whatever announces this script's own ALL PASS.
         if (-not ($isAssert -or $isOperand)) {
@@ -216,13 +237,6 @@ function Get-SkipAuditFindings {
                     if (Test-SkipVerdictReports $line) { $verdictReports = $true }
                     break
                 }
-            }
-            # T271: a script on the shared scorer has no ALL PASS literal - the
-            # scorer prints it - so the CALL is the verdict line, and `-Skipped`
-            # is what makes it report the count.
-            if ($line -match '\bWrite-Test(Verdict|AssertedNothing)\b') {
-                [void]$verdictLines.Add($i)
-                if ($line -match '-Skipped\b') { $verdictReports = $true }
             }
         }
 

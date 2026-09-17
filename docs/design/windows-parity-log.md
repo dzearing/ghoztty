@@ -9,6 +9,51 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-16: T807 closed done - **the skip-visibility audit was not reading
+  most scripts' verdict line at all.**
+
+  The suite's rule is that a script which skipped part of its work says so on
+  the one line anybody reads, and `test\win32\lib\SkipAudit.ps1` is what
+  enforces it across every script. It turns out it could not see the shape most
+  of the suite actually uses. The analyzer walked each line, pulled its quoted
+  strings, and bailed immediately if there were none - and only below that bail
+  did it check the line for a `Write-TestVerdict` call, the T271 rule that a
+  script on the shared scorer has no `ALL PASS` text of its own so the CALL is
+  its verdict. But the canonical call has no quoted text either; every argument
+  is a variable: `Write-TestVerdict -Pass $script:pass -Fail $script:fail
+  -Skipped $script:skipped`. The check sat below a bail that the very shape it
+  was written for always took.
+
+  Two symmetric wrongs came of that, and both were reproduced against the real
+  suite before anything was changed. `build-fresh-guard.ps1` counts both its
+  skip sites and passes `-Skipped`, and the sweep still called it `unreported`
+  - the only `ALL PASS` string in the file is fixture text inside an array, and
+  with the real verdict line invisible that fixture was the verdict as far as
+  the analyzer could tell. A correct script read as a violation. The other half
+  is worse: a scorer call MISSING `-Skipped` registered no verdict line at all,
+  and `unreported` is only raised when a verdict line exists - so the finding
+  this file exists to raise could not be raised against the commonest shape in
+  the suite. `update-apply.ps1` was sitting in that hole.
+
+  The fix is one hoist: the scorer-call test now runs before the no-literals
+  bail, with the `ALL PASS` literal scan left where it was. Three fixtures in
+  `skip-visibility.ps1` pin it - a literal-free `-Skipped` call is clean (A15),
+  one without `-Skipped` is `unreported` (A16), and the finding points at the
+  call rather than line 1 (A17).
+
+  What moved: the sweep over `test\win32\` reports the same 24 findings, but
+  across 13 scripts instead of 14 - `build-fresh-guard.ps1` out, and
+  `update-apply.ps1` picking up the `unreported` finding it was owed. Section B
+  stays red for those 13, which is T1123's ground and is already carried as
+  PENDING in `HARNESS_FLOOR_PENDING`; T1123 has a note recording the corrected
+  membership, since its 2026-09-14 list named `build-fresh-guard` and missed
+  `caption-bar`. Nothing new was filed: every violator the fix reveals is
+  inside T1123 already.
+
+  Validation: `floor-lane -Lane all` (lib/none/win32/agent) ALL LANES PASS;
+  `floor-lane -Lane harness` PASS in 1022s, stamped harness-floor over 388
+  files.
+
 - 2026-09-16: T805 closed done, T1628 filed - **`+version` answers for two
   binaries, and now both of them say so.**
 

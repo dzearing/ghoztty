@@ -177,6 +177,40 @@ $helperPrintsOnly = @(
 Assert "A14 a helper that only prints does not count the site" (
     (KindsOf $helperPrintsOnly) -eq 'uncounted')
 
+# T807: the canonical scorer call carries no string literal - every argument is
+# a variable - and the analyzer used to bail on a literal-free line before it
+# ever looked for one. Most of the suite scores itself that way, so the verdict
+# line of most scripts was never examined at all, with two symmetric wrongs.
+#
+# (a) A CORRECT `-Skipped` call could not credit the count. build-fresh-guard
+# counts both its sites and passes `-Skipped $script:skipped`, and the sweep
+# still called it `unreported` - on the strength of an `"ALL PASS"` string in
+# an unrelated fixture array, which was the only line carrying a literal.
+$scorerReportsNoLiteral = @(
+    'if (-not $ok) { Write-Host "SKIP F: $Exe not built"; $script:skipped++ }',
+    '$harnessFixture = @(''"ALL PASS"'')',
+    'Assert ''E7 and never printed a verdict either'' ($harnessOut -notmatch ''ALL PASS'')',
+    'Write-TestVerdict -Pass $script:passes -Fail $script:failures -Skipped $script:skipped'
+)
+Assert "A15 a literal-free scorer call with -Skipped reports the count" (
+    (Findings $scorerReportsNoLiteral).Count -eq 0)
+
+# (b) And the mirror, which is the defect itself going unseen: a scorer call
+# MISSING `-Skipped` registered no verdict line at all, so `unreported` - the
+# finding this whole file exists to raise - could not be raised against it.
+$scorerSilentNoLiteral = @(
+    'if (-not $ok) { Write-Host "SKIP F: $Exe not built"; $script:skipped++ }',
+    'Assert ''x'' ($true)',
+    'Assert ''y'' ($true)',
+    'Assert ''z'' ($true)',
+    'Write-TestVerdict -Pass $script:passes -Fail $script:failures'
+)
+$f = Findings $scorerSilentNoLiteral
+Assert "A16 a literal-free scorer call without -Skipped is unreported" (
+    (KindsOf $scorerSilentNoLiteral) -eq 'unreported')
+Assert "A17 and the finding points at the scorer call, not at line 1" (
+    $f.Count -eq 1 -and $f[0].Line -eq 5)
+
 # ============================================================================
 ""
 "== B: the sweep - violators are named exceptions, and the list only shrinks"

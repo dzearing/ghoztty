@@ -1,12 +1,10 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-09-16T21:42:01-07:00",
-    "commit":  "73ac4c238",
+    "generated":  "2026-09-16T22:37:24-07:00",
+    "commit":  "f191dfae0",
     "uncommitted":  [
-                        "test/win32/build-mode-guard.ps1",
-                        "test/win32/ipc-version.ps1",
-                        "test/win32/upgrade-staleness.ps1"
+                        "test/win32/skip-visibility.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "ef54b501298cfda9306cfb958c1094db24ee30f355b25865656b3e2bc713bcd7",
@@ -262,7 +260,7 @@
                   "test/win32/share-machine.ps1":  "eb76c746586476e1a85c09c1d1ce78b22f9ecf0221df24e1e43f5f8cad3d20c6",
                   "test/win32/ship-workflow.ps1":  "28634520cb227573a1a9acf8a9cb7006389228c34a56f3776072eca61f5b1b83",
                   "test/win32/single-instance-join.ps1":  "d276a7d97773c26b7cc622fe3ae14c735381f5e15c7ce137cfb44d84aa249039",
-                  "test/win32/skip-visibility.ps1":  "db752053d9a2898370cd4123cd7f94828a5c5ec9ae6dacc4a5173c5f8a102ef6",
+                  "test/win32/skip-visibility.ps1":  "8e38cf9572e9d999a0bd9286eebbcfb343a878af5af8fce816038f5e57938167",
                   "test/win32/soak.ps1":  "24245788ab729a9a9a2d59c42acd3a407c87f7895c43b0ff2d4daaabe90a7869",
                   "test/win32/split-dim.ps1":  "a0d3d7e7816fc6a89ab6c2f285c2d19f2e2a550333765c2a3fabdb377c9e8b8b",
                   "test/win32/split-dim-viewer.ps1":  "454a52890b54b98bd41361b823291d51d54b6986180613e921fd0d185324dea9",
