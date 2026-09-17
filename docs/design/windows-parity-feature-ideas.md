@@ -327,3 +327,14 @@ as the digest that showed them.
 - Follow the system when it goes dark (live light/dark theme switch with Windows)
 - Scrollback that survives a restart (restored sessions bring back what they had printed)
 - Tell me how long that took, after the fact (per-command duration recorded and queryable)
+
+## 2026-09-17
+
+- Name a session, not a folder (a chosen name shown in the chooser, the tab and +sessions)
+- Go to a session by typing its name (fuzzy jump box across every reachable machine)
+- A chooser that opens on what you used last (preselect the last machine and session)
+- Copy a link to this session (a ghoztty:// link from the chooser's context menu)
+- Say what a pane is waiting ON (idle at a prompt vs blocked on input, surfaced everywhere)
+- Jump to the session eating the box (the CPU meter's number becomes a target)
+- Tell me when the long one finishes (toast on completion past a threshold, with the exit code)
+- A re-attach that catches you up (foldable notice listing what completed while you were gone)
