@@ -1001,6 +1001,29 @@ pub const Connection = struct {
     /// there is no lock-ordering inversion with the §3.4 push path.
     panes_mutex: std.Thread.Mutex = .{},
     panes: std.AutoHashMapUnmanaged(u128, *Pane) = .empty,
+    /// Stream position for bytes that arrived on a channel BEFORE its pane was
+    /// tracked — the same race `ChannelTable.pending` exists for, on the
+    /// accounting side (T804). The agent frames ATTACHED on the control lane and
+    /// the gap-fill replay + the injected repaint on the data lane, so those
+    /// frames routinely land before `trackPane` runs; `register` flushes their
+    /// bytes into the ring, the terminal applies them, and until this map existed
+    /// the position they imply was simply dropped and then overwritten by
+    /// `.stream_pos = .init(resume_at)`.
+    ///
+    /// Measured (T804, a peer that does not repaint after an attach): the
+    /// injected repaint's 263 bytes never advanced `stream_pos` whether they were
+    /// LABELLED or not, so the 0x15 framing made no difference on that path at
+    /// all — the right answer arrived for the wrong reason, and the wrong one
+    /// would have too. The same drop applies to the gap-fill replay, which IS
+    /// real stream data: its position lost, the next attach asks to resume from
+    /// before it and the agent replays it again.
+    ///
+    /// Only written for a `.buffered` push, so it is bounded by the channel
+    /// table's own pre-registration caps rather than by whatever channel ids
+    /// arrive. Guarded by `panes_mutex`; folded into the pane and removed by
+    /// `trackPane`, dropped for an attach that never completes by `teardownPane`
+    /// / `deregisterChannel`.
+    early_stream_pos: std.AutoHashMapUnmanaged(u128, u64) = .empty,
 
     /// Pending control-channel RPCs awaiting their reply (OPEN→OPENED,
     /// ATTACH→ATTACHED), keyed by request `Frame.channel`. Guarded by `rpc_mutex`.
@@ -1344,6 +1367,10 @@ pub const Connection = struct {
     /// free its `ring.Channel` storage.
     pub fn deregisterChannel(self: *Connection, id: u128) void {
         self.channels.deregister(id);
+        // The channel's pre-registration buffer is dropped above; the position
+        // those bytes implied goes with it (T804), or an attach that failed
+        // after data raced in would leave an entry nothing ever claims.
+        self.dropEarlyStreamPos(id);
     }
 
     // --- Outbound -------------------------------------------------------------
@@ -1746,6 +1773,7 @@ pub const Connection = struct {
         var it = self.panes.iterator();
         while (it.next()) |entry| self.freePaneOwned(entry.value_ptr.*);
         self.panes.deinit(alloc);
+        self.early_stream_pos.deinit(alloc);
         // The pending map must be empty after `shutdown` (it fails+removes all).
         assert(self.pending.count() == 0);
         self.pending.deinit(alloc);
@@ -2834,11 +2862,33 @@ pub const Connection = struct {
         try self.writeControl(.resize, pane.id, json);
     }
 
-    /// Insert `pane` into the `panes` map under `panes_mutex`.
+    /// Insert `pane` into the `panes` map under `panes_mutex`, adopting any
+    /// stream position accumulated for its channel before it existed (T804).
+    ///
+    /// The fold happens under the SAME lock the data reader takes, which is what
+    /// makes it airtight: a frame that lands between the pane's construction and
+    /// this call is either recorded in `early_stream_pos` before we read it, or
+    /// finds the pane already tracked. Doing it at the construction site instead
+    /// would leave exactly that window open.
     fn trackPane(self: *Connection, pane: *Pane) !void {
         self.panes_mutex.lock();
         defer self.panes_mutex.unlock();
         try self.panes.put(self.alloc, pane.id, pane);
+        if (self.early_stream_pos.fetchRemove(pane.id)) |kv| {
+            // `@max`, never a plain store: `resume_at` is the position this
+            // attach was HONORED at, and a raced-in frame from a stream the
+            // clamp rejected must not pull the pane backwards into it.
+            const seeded = pane.stream_pos.load(.monotonic);
+            if (kv.value > seeded) pane.stream_pos.store(kv.value, .release);
+        }
+    }
+
+    /// Drop a channel's pre-pane stream position (an attach that never produced
+    /// a tracked pane). Caller must NOT hold `panes_mutex`.
+    fn dropEarlyStreamPos(self: *Connection, id: u128) void {
+        self.panes_mutex.lock();
+        defer self.panes_mutex.unlock();
+        _ = self.early_stream_pos.remove(id);
     }
 
     /// Common local teardown for `closeChannel`/`detachChannel`: remove the pane
@@ -3614,7 +3664,10 @@ pub const Connection = struct {
             .buffered => to_push.len,
             .routed => |push| push.written,
         };
-        self.advanceStreamPos(channel, push_at, accepted, kind);
+        // `.buffered` says the bytes are real and the pane simply does not exist
+        // yet, so their position is remembered for it (T804); `.unknown` went
+        // nowhere and is remembered for nobody.
+        self.advanceStreamPos(channel, push_at, accepted, kind, res == .buffered);
         switch (res) {
             // `.unknown` (dropped) can no longer occur for a live-but-unregistered
             // channel: `pushTo` buffers those in the pre-registration buffer
@@ -3642,6 +3695,7 @@ pub const Connection = struct {
         push_at: u64,
         accepted: usize,
         kind: InboundKind,
+        buffered: bool,
     ) void {
         // One line per injected repaint — which is at most one per ATTACH, and
         // the only place the size of the agent's injection is visible at all.
@@ -3651,13 +3705,27 @@ pub const Connection = struct {
         );
         self.panes_mutex.lock();
         defer self.panes_mutex.unlock();
-        const pane = self.panes.get(channel) orelse return;
-        pane.stream_pos.store(streamPosAfter(
-            pane.stream_pos.load(.monotonic),
+        if (self.panes.get(channel)) |pane| {
+            pane.stream_pos.store(streamPosAfter(
+                pane.stream_pos.load(.monotonic),
+                push_at,
+                accepted,
+                kind == .repaint,
+            ), .release);
+            return;
+        }
+        // No pane yet, but the bytes are held for one (T804). Keep the position
+        // they imply so `trackPane` can adopt it; a failed `getOrPut` simply
+        // degrades to the pre-T804 behavior of forgetting it.
+        if (!buffered) return;
+        const gop = self.early_stream_pos.getOrPut(self.alloc, channel) catch return;
+        if (!gop.found_existing) gop.value_ptr.* = 0;
+        gop.value_ptr.* = streamPosAfter(
+            gop.value_ptr.*,
             push_at,
             accepted,
             kind == .repaint,
-        ), .release);
+        );
     }
 
     /// The data reader. Loops read → push → drain. For each DATA frame, decode the
@@ -4437,6 +4505,181 @@ test "T739: an injected repaint is rendered like DATA but advances no offset" {
     // heap ring this test does not have. The pane itself is untracked and
     // freed by the paired defer above, on success and failure alike.
     conn.deregisterChannel(ch_id);
+}
+
+test "T804: data that lands before the pane is tracked still carries its position" {
+    // The ATTACH race, on the accounting side. ATTACHED arrives on the control
+    // lane and the gap-fill replay + injected repaint on the data lane, so those
+    // frames routinely reach the connection before `trackPane` runs. Their bytes
+    // were never lost — `ChannelTable.pending` holds them and `register` flushes
+    // them — but the POSITION they imply was, and `.stream_pos = .init(resume_at)`
+    // then wrote the pre-attach number over it.
+    //
+    // Measured on the box (T804) against a peer that does not repaint after an
+    // attach: the injected repaint's bytes advanced nothing whether they were
+    // LABELLED as a repaint or not, so the whole point of the 0x15 opcode was
+    // inert on that path — the right answer for the wrong reason. The same drop
+    // applied to the replay, which IS stream data: its position forgotten, the
+    // next attach resumes below it and the agent sends it again.
+    const alloc = testing.allocator;
+    var ctrl_lb = Loopback.init(alloc);
+    defer ctrl_lb.deinit();
+    var data_lb = Loopback.init(alloc);
+    defer data_lb.deinit();
+
+    const ch_id: u128 = 0x804;
+    var ch = try ring.Channel.init(alloc, ch_id, .{ .capacity = 4096 });
+    defer ch.deinit(alloc);
+
+    const conn = try Connection.create(
+        alloc,
+        ctrl_lb.clientStream(),
+        data_lb.clientStream(),
+        .{ .transfer_encoding = .raw },
+    );
+    defer conn.destroy(alloc);
+
+    var ctrl_agent = MockAgent.init(alloc, ctrl_lb.agentStream(), .raw);
+    defer ctrl_agent.deinit();
+    var ictx: InboundAgentCtx = .{ .agent = &ctrl_agent, .channel = ch_id };
+    const ath = try std.Thread.spawn(.{}, InboundAgentCtx.run, .{&ictx});
+    var ath_joined = false;
+    errdefer if (!ath_joined) {
+        conn.shutdown();
+        ath.join();
+    };
+
+    try conn.start();
+    _ = try conn.waitHandshake();
+    ath.join();
+    ath_joined = true;
+
+    var data_agent = MockAgent.init(alloc, data_lb.agentStream(), .raw);
+    defer data_agent.deinit();
+
+    // Deliberately BEFORE `registerChannel`: these are `.buffered` pushes, which
+    // is the whole race. Gap-fill of 3 bytes from 100, then the agent's repaint
+    // anchored at the head those bytes produced.
+    try agentSendData(&data_agent, ch_id, 100, "gap");
+    try agentSendRepaint(&data_agent, ch_id, 103, "REPAINT");
+
+    // The connection has to have SEEN them before the pane exists, or this test
+    // would be asserting the ordinary tracked path by accident.
+    var deadline = try TestDeadline.start();
+    while (earlyPosFor(conn, ch_id) != 103) deadline.yield() catch break;
+    try testing.expectEqual(@as(u64, 103), earlyPosFor(conn, ch_id));
+
+    try conn.registerChannel(&ch);
+
+    // The pane an ATTACH at 100 builds: its own position is the offset the agent
+    // honored, which knows nothing about the three bytes already in the buffer.
+    const sid = try alloc.dupe(u8, "s804");
+    const pane = try alloc.create(Pane);
+    pane.* = .{
+        .id = ch_id,
+        .session_id = sid,
+        .pid = 0,
+        .ring = &ch,
+        .stream_pos = .init(100),
+    };
+    try conn.trackPane(pane);
+    defer {
+        conn.panes_mutex.lock();
+        _ = conn.panes.remove(ch_id);
+        conn.panes_mutex.unlock();
+        alloc.free(sid);
+        alloc.destroy(pane);
+    }
+
+    // Adopted: the replay's bytes counted, the repaint's did not.
+    try testing.expectEqual(@as(u64, 103), pane.streamPos());
+    // ...and the entry is consumed, so nothing can adopt it twice.
+    try testing.expectEqual(@as(u64, 0), earlyPosFor(conn, ch_id));
+
+    // The bytes themselves still arrive, in order, exactly as before.
+    var got: std.ArrayList(u8) = .empty;
+    defer got.deinit(alloc);
+    try drainChannel(&ch, &got, alloc, "gapREPAINT".len);
+    try testing.expectEqualStrings("gapREPAINT", got.items);
+
+    conn.shutdown();
+    conn.deregisterChannel(ch_id);
+}
+
+test "T804: an adopted early position never pulls a pane backwards" {
+    // The clamp's direction (T532) has to survive the adoption: a raced-in frame
+    // from a stream the attach REJECTED must not drag the pane's position down
+    // into it. `trackPane` folds with `@max`, so a pane that resumed above the
+    // buffered bytes keeps its own number.
+    const alloc = testing.allocator;
+    var ctrl_lb = Loopback.init(alloc);
+    defer ctrl_lb.deinit();
+    var data_lb = Loopback.init(alloc);
+    defer data_lb.deinit();
+
+    const ch_id: u128 = 0x8041;
+    var ch = try ring.Channel.init(alloc, ch_id, .{ .capacity = 4096 });
+    defer ch.deinit(alloc);
+
+    const conn = try Connection.create(
+        alloc,
+        ctrl_lb.clientStream(),
+        data_lb.clientStream(),
+        .{ .transfer_encoding = .raw },
+    );
+    defer conn.destroy(alloc);
+
+    var ctrl_agent = MockAgent.init(alloc, ctrl_lb.agentStream(), .raw);
+    defer ctrl_agent.deinit();
+    var ictx: InboundAgentCtx = .{ .agent = &ctrl_agent, .channel = ch_id };
+    const ath = try std.Thread.spawn(.{}, InboundAgentCtx.run, .{&ictx});
+    var ath_joined = false;
+    errdefer if (!ath_joined) {
+        conn.shutdown();
+        ath.join();
+    };
+    try conn.start();
+    _ = try conn.waitHandshake();
+    ath.join();
+    ath_joined = true;
+
+    var data_agent = MockAgent.init(alloc, data_lb.agentStream(), .raw);
+    defer data_agent.deinit();
+    try agentSendData(&data_agent, ch_id, 10, "old");
+
+    var deadline = try TestDeadline.start();
+    while (earlyPosFor(conn, ch_id) != 13) deadline.yield() catch break;
+    try testing.expectEqual(@as(u64, 13), earlyPosFor(conn, ch_id));
+
+    try conn.registerChannel(&ch);
+    const sid = try alloc.dupe(u8, "s8041");
+    const pane = try alloc.create(Pane);
+    pane.* = .{
+        .id = ch_id,
+        .session_id = sid,
+        .pid = 0,
+        .ring = &ch,
+        .stream_pos = .init(900),
+    };
+    try conn.trackPane(pane);
+    defer {
+        conn.panes_mutex.lock();
+        _ = conn.panes.remove(ch_id);
+        conn.panes_mutex.unlock();
+        alloc.free(sid);
+        alloc.destroy(pane);
+    }
+    try testing.expectEqual(@as(u64, 900), pane.streamPos());
+
+    conn.shutdown();
+    conn.deregisterChannel(ch_id);
+}
+
+/// Test helper: the pre-pane stream position recorded for `id`, or 0 if none.
+fn earlyPosFor(conn: *Connection, id: u128) u64 {
+    conn.panes_mutex.lock();
+    defer conn.panes_mutex.unlock();
+    return conn.early_stream_pos.get(id) orelse 0;
 }
 
 test "T811: destroy frees a still-tracked pane's tty too, not just its ring and id" {

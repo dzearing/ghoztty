@@ -48,6 +48,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the shipped session cap; every other agent run is under it."
         },
+        "GHOSTTY_AGENT_QUIET_ATTACH": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the agent applies an attaching client's geometry to the child, which on this seat makes ConPTY repaint - what every other agent run does."
+        },
         "GHOSTTY_AGENT_RING_BYTES": {
             "class": "tuning",
             "unset": "shipped-elsewhere",

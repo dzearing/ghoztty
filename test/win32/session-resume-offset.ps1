@@ -31,6 +31,14 @@
 #   C. Skew: the same cycles with GHOSTTY_AGENT_SUPPRESS_CAPS=repaint_data, an
 #      agent advertising the HELLO of a build that predates 0x15. The pane must
 #      still restore, still be live, and still not overshoot.
+#   D. The case the framing actually exists for (T804): the same cycles against
+#      a peer that does NOT repaint on attach (GHOSTTY_AGENT_QUIET_ATTACH=1),
+#      with the capability on. requested == head, with nothing behind the
+#      injection to correct it.
+#   E. The teeth for D, and the measurement T804 was filed for: the same
+#      non-repainting peer with the LABEL taken away
+#      (+ GHOSTTY_AGENT_SUPPRESS_CAPS=repaint_data). The overshoot MUST return
+#      and the clamp MUST fire.
 #
 # Arm C passing is worth reading carefully, because it says where the fix
 # actually lives. The accounting is client-side and anchor-authoritative, so on
@@ -39,8 +47,18 @@
 # the true position over the miscounted one. What the 0x15 framing buys is that
 # the position is right BY CONSTRUCTION rather than because something arrived
 # afterwards to correct it - which is the only thing that holds for a peer that
-# does not repaint on attach. That half is asserted in the unit lanes
-# (`src/remote/agent/server.zig`, `src/remote/connection.zig`), not here.
+# does not repaint on attach.
+#
+# That last sentence is what arms D and E measure, and until T804 nothing did:
+# C is green either way, so the labelling could have been wrong end to end and
+# this harness would still have said ALL PASS. The peer it needs is one whose
+# child answers a geometry change with silence - a POSIX agent, which this seat
+# does not have - so the agent grows a second test seam beside the capability
+# suppression it already has: GHOSTTY_AGENT_QUIET_ATTACH records an attaching
+# client's geometry and leaves the child alone, which is a ConPTY that does not
+# repaint, which is the POSIX shape. D and E then differ in exactly one bit -
+# whether the injected repaint is LABELLED - and they come out opposite, which
+# is the claim.
 #
 # Hermetic: a per-run LOCALAPPDATA, GHOSTTY_LOCAL_AGENT_BIN and IPC pipe suffix,
 # run on a BACKGROUND Win32 desktop, and it only ever kills ghoztty /
@@ -51,6 +69,10 @@ param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
     [int]$Cycles = 3,
+    # Debugging only: run a subset of the arms. A partial run cannot stamp the
+    # guard (a skipped section never does), so this is for iterating on one arm,
+    # never for reporting a verdict.
+    [string[]]$Arms = @('A', 'B', 'C', 'D', 'E'),
     [switch]$KeepRoot,
     [switch]$Interactive
 )
@@ -155,7 +177,10 @@ function Read-AppLog($path) {
 # Poll: the line may not be flushed yet, and a single read would turn a timing
 # gap into a false failure.
 function Wait-AttachLine($path, $timeoutSec = 40) {
-    $rx = 'attach: requested=(\d+) head=(\d+) resumed_at=(\d+)'
+    # `labeled=` is the negotiated `repaint_data` bit as the CLIENT saw it, and
+    # arms D/E turn on it being opposite in the two runs - so it is read from the
+    # same line rather than inferred from the env var the arm set (T804).
+    $rx = 'attach: requested=(\d+) head=(\d+) resumed_at=(\d+) repaints=(\w+) labeled=(\w+)'
     $deadline = (Get-Date).AddSeconds($timeoutSec)
     while ((Get-Date) -lt $deadline) {
         $m = [regex]::Match((Read-AppLog $path), $rx)
@@ -164,6 +189,8 @@ function Wait-AttachLine($path, $timeoutSec = 40) {
                 requested = [uint64]$m.Groups[1].Value
                 head      = [uint64]$m.Groups[2].Value
                 resumed   = [uint64]$m.Groups[3].Value
+                repaints  = ($m.Groups[4].Value -eq 'true')
+                labeled   = ($m.Groups[5].Value -eq 'true')
             }
         }
         Start-Sleep -Milliseconds 400
@@ -181,8 +208,27 @@ function Log-HasClampWarning($path) {
 # tree, and prints nothing into the pane (which matters here - the pane must
 # stay QUIET after the capture, or `requested == head` is not the claim).
 function Provoke-ManifestWrite($pane, $tag) {
-    Run-CliArgs @('+rename', "--target=$pane", '--title=t739-quiet') "$tmp\ren-$tag.txt" 12 | Out-Null
-    Start-Sleep -Milliseconds 1200
+    # Provoke until the recorded offset SETTLES, not once (T804). A single
+    # capture races the pane: bytes still on their way from the agent are applied
+    # after the snapshot is taken, and the manifest then holds a position BELOW
+    # the head - which reads here as `requested != head` and is a property of the
+    # sleep, not of the accounting. It was a rare flake in arms A and C, where
+    # the next cycle's live output hides it; in the quiet arms the head never
+    # moves again, so an early capture is wrong for the rest of the run (seen:
+    # `D.1 requested offset == agent head (16 vs 409)`).
+    #
+    # Two consecutive reads agreeing is the settle condition, and the title
+    # changes each round so every round is a genuine layout mutation rather than
+    # a no-op the debounce can coalesce.
+    $prev = [uint64]::MaxValue
+    for ($k = 1; $k -le 8; $k++) {
+        Run-CliArgs @('+rename', "--target=$pane", "--title=t739-quiet-$k") "$tmp\ren-$tag-$k.txt" 12 | Out-Null
+        Start-Sleep -Milliseconds 900
+        $offsets = @(Manifest-Offsets)
+        $cur = if ($offsets.Count -gt 0) { ($offsets | Measure-Object -Maximum).Maximum } else { [uint64]0 }
+        if ($cur -gt 0 -and $cur -eq $prev) { return }
+        $prev = $cur
+    }
 }
 function Manifest-Path { return (Join-Path $tmp 'ghoztty\session-layout-debug.json') }
 function Manifest-Offsets {
@@ -213,6 +259,7 @@ $saved = @{
     pipe = $env:GHOZTTY_PIPE_SUFFIX
     supp = $env:GHOSTTY_AGENT_SUPPRESS_CAPS
     seam = $env:GHOZTTY_RESUME_COUNT_BYTES
+    qa   = $env:GHOSTTY_AGENT_QUIET_ATTACH
 }
 $env:GHOZTTY_PIPE_SUFFIX = "-resumeoffset$PID"
 
@@ -230,10 +277,11 @@ New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug')
 $env:LOCALAPPDATA = $tmp
 $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 
-foreach ($arm in @('A', 'B', 'C')) {
+foreach ($arm in $Arms) {
     # Removed, not emptied: an empty value is still a value the agent reads.
     [Environment]::SetEnvironmentVariable('GHOSTTY_AGENT_SUPPRESS_CAPS', $null)
     [Environment]::SetEnvironmentVariable('GHOZTTY_RESUME_COUNT_BYTES', $null)
+    [Environment]::SetEnvironmentVariable('GHOSTTY_AGENT_QUIET_ATTACH', $null)
     switch ($arm) {
         'A' { Say "== A: $Cycles kill/restore cycles of a quiet pane - the recorded offset IS the head" }
         'B' {
@@ -244,6 +292,19 @@ foreach ($arm in @('A', 'B', 'C')) {
             Say "== C: skew - an agent that predates DATA_REPAINT still restores, live and unclamped"
             # The running agent already negotiated WITH the capability; a fresh
             # one has to come up under the suppression for the HELLO to change.
+            $env:GHOSTTY_AGENT_SUPPRESS_CAPS = 'repaint_data'
+        }
+        'D' {
+            Say "== D: a peer that does NOT repaint on attach - the label alone has to hold the position"
+            # The POSIX shape on a ConPTY seat: the agent records the attaching
+            # client's geometry and leaves the child alone, so the repaint it
+            # injects is the LAST thing on the wire and nothing arrives behind it
+            # to re-state the true position (T804).
+            $env:GHOSTTY_AGENT_QUIET_ATTACH = '1'
+        }
+        'E' {
+            Say "== E: teeth for D - the same silent peer with the label taken away MUST overshoot"
+            $env:GHOSTTY_AGENT_QUIET_ATTACH = '1'
             $env:GHOSTTY_AGENT_SUPPRESS_CAPS = 'repaint_data'
         }
     }
@@ -283,11 +344,21 @@ foreach ($arm in @('A', 'B', 'C')) {
         Assert "$arm.$i the restored pane re-ATTACHED (its numbers are in the log)" ($null -ne $att)
         if ($null -eq $att) { break }
         $cyclesRun++
-        Say "     requested=$($att.requested) head=$($att.head) resumed_at=$($att.resumed)"
+        Say "     requested=$($att.requested) head=$($att.head) resumed_at=$($att.resumed) labeled=$($att.labeled)"
         if ($att.requested -gt $att.head) { $overshoots++ }
         if (Log-HasClampWarning $r.log) { $warned++ }
 
-        if ($arm -ne 'B') {
+        # The bit D and E differ in, read from the client's own attach line
+        # rather than assumed from the env var this arm exported (T804). Without
+        # it a suppression that silently failed to reach the agent would make E
+        # look like a green D and take the measurement with it.
+        if ($arm -eq 'D') {
+            Assert "$arm.$i the injected repaint is LABELLED on the wire" ($att.labeled)
+        } elseif ($arm -eq 'C' -or $arm -eq 'E') {
+            Assert "$arm.$i the agent really did drop the label (pre-0x15 HELLO)" (-not $att.labeled)
+        }
+
+        if ($arm -ne 'B' -and $arm -ne 'E') {
             # The claim, exactly: for a pane that has produced nothing since the
             # manifest was written, the position we recorded is the position the
             # session reached - not that plus our own repaint.
@@ -307,12 +378,44 @@ foreach ($arm in @('A', 'B', 'C')) {
         $pane = Wait-PaneId "$arm-$i" 45
         Assert "$arm.$i the restored pane is addressable" ($null -ne $pane)
         if (-not $pane) { break }
-        Assert "$arm.$i the restored pane is LIVE, not a picture" `
-            (Test-PaneLive -Exe $Exe -Target $pane -Tmp $tmp -Tag "$arm-live$i")
+        # D/E are the arms about what happens when NOTHING follows the injected
+        # repaint, so nothing may follow it here either: the liveness probe types
+        # into the pane, and those bytes are real stream data anchored at the true
+        # head - the same backstop the ConPTY repaint is, arriving from the test
+        # instead of from conhost. Measured: with the probe inside the loop arm E
+        # overshot on some cycles and not others, which is that race. So D/E
+        # probe ONCE, after the last cycle's numbers have been read and its
+        # manifest written, and rely on "addressable" in between.
+        $quietArm = ($arm -eq 'D' -or $arm -eq 'E')
+        if (-not $quietArm) {
+            Assert "$arm.$i the restored pane is LIVE, not a picture" `
+                (Test-PaneLive -Exe $Exe -Target $pane -Tmp $tmp -Tag "$arm-live$i")
+        }
         Provoke-ManifestWrite $pane "$arm-$i"
+        if ($quietArm -and $i -eq $Cycles) {
+            # Last of all: the seam must not have frozen the pane. A quiet ATTACH
+            # skips the child-side geometry call, and a pane that stopped
+            # accepting input would satisfy every number above while being dead.
+            Assert "$arm the pane is still LIVE after $Cycles quiet re-attaches" `
+                (Test-PaneLive -Exe $Exe -Target $pane -Tmp $tmp -Tag "$arm-livefinal")
+        }
     }
 
-    if ($arm -eq 'B') {
+    if ($arm -eq 'E') {
+        # The measurement T804 exists for. Against a peer that repaints on
+        # attach the label can be taken away and the position still comes out
+        # right (arm C) - so C alone can never tell a correct labelling from a
+        # broken one. Take the repaint behind the injection away too and the
+        # miscount has nothing to correct it: the overshoot is back, on every
+        # cycle after the first, and the clamp fires on it. That D is green
+        # under exactly these conditions is therefore the label doing the work,
+        # and not something else arriving afterwards.
+        $want = $cyclesRun - 1
+        Assert "E an unlabelled repaint with nothing behind it overshoots the head ($overshoots of $cyclesRun cycles, want $want)" `
+            ($cyclesRun -gt 1 -and $overshoots -eq $want)
+        Assert "E ...and the clamp fires on it, which is where output would be lost ($warned of $cyclesRun)" `
+            ($cyclesRun -gt 1 -and $warned -eq $want)
+    } elseif ($arm -eq 'B') {
         # Teeth: with the old accounting nothing else about the run changes, so
         # arm A's green is only evidence because this arm goes red. The
         # overshoot is the injected repaint's size, on every cycle, and the
@@ -344,10 +447,26 @@ Complete-TestBody  # T1039: the run reached the end of its body
     $env:GHOZTTY_PIPE_SUFFIX = $saved.pipe
     $env:GHOSTTY_AGENT_SUPPRESS_CAPS = $saved.supp
     $env:GHOZTTY_RESUME_COUNT_BYTES = $saved.seam
+    $env:GHOSTTY_AGENT_QUIET_ATTACH = $saved.qa
     # -KeepRoot leaves the per-launch app logs behind: they are the only record
     # of what each attach decided, and a failing arm is unreadable without them.
     if ($KeepRoot) { Write-Host "  (kept: $root)" }
     else { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue }
+}
+
+# --- stamp (T783) -----------------------------------------------------------
+# Only a run that scored EVERY arm may stamp: `-Arms` exists for iterating on
+# one of them, and a stamp written from a subset would record that this harness
+# has been run against the code as it stands when most of it never executed -
+# the same lie the freshness gate at the top refuses.
+$allArms = @('A', 'B', 'C', 'D', 'E')
+$ranEveryArm = (@(Compare-Object $allArms @($Arms)).Count -eq 0)
+if ($script:failures -eq 0 -and $ranEveryArm) {
+    $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts\guard-due.ps1') `
+        update -Guard resume-offset -Repo $repoRoot 2>&1 | ForEach-Object { "  $_" }
+} elseif (-not $ranEveryArm) {
+    Write-Host "  (partial run: -Arms $($Arms -join ',') - the guard is NOT stamped)"
 }
 
 Write-Host ''

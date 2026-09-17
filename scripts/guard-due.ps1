@@ -847,6 +847,25 @@ $GuardTable = @(
             'src\remote\agent\descendants.zig'
         )
     },
+    # The RESUME-OFFSET accounting (T739/T804): how far through its session's
+    # stream a reconnecting pane says it has read. The two files here are busy
+    # and move for many reasons, and covering them anyway is the point - this
+    # harness is the ONLY thing that can see either number, and T739 shipped a
+    # week of green unit tests while the frame carrying them was being swallowed
+    # on the real transport. T804 then found the labelling those tests assert
+    # was inert end to end, which the harness could not see either until its
+    # non-repainting arms existed. A wrong number here is silently skipped or
+    # silently duplicated output on a restored pane.
+    [pscustomobject]@{
+        Name   = 'resume-offset'
+        Script = 'test\win32\session-resume-offset.ps1'
+        Stamp  = 'test\win32\session-resume-offset.stamp.json'
+        Covers = @(
+            'test\win32\session-resume-offset.ps1',
+            'src\remote\connection.zig',
+            'src\termio\Remote.zig'
+        )
+    },
     # Pane INGEST LAG (T1142): the only harness that measures how far behind its
     # own child a pane's SCREEN runs. Every other test asks whether output
     # ARRIVES; this one asks how fast, on both the agent-backed path and the

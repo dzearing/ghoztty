@@ -216,6 +216,17 @@ pub fn main() !void {
         std.log.warn("advertising a REDUCED capability set (suppressed: {s})", .{v});
     } else |_| {}
 
+    // Quiet attach (T804 test seam): record an attaching client's geometry but
+    // do not touch the child, so nothing repaints behind the repaint the agent
+    // injects — the POSIX shape, on a seat where ConPTY always repaints. Read
+    // here, before any session exists, and read-only after.
+    if (std.process.getEnvVarOwned(alloc, "GHOSTTY_AGENT_QUIET_ATTACH")) |v| {
+        defer alloc.free(v);
+        const on = !(v.len == 0 or std.mem.eql(u8, v, "0"));
+        server.Server.setQuietAttach(on);
+        if (on) std.log.warn("QUIET ATTACH: applying geometry without repainting the child", .{});
+    } else |_| {}
+
     switch (mode) {
         .version => {
             var buf: [128]u8 = undefined;

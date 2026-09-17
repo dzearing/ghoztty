@@ -99,6 +99,14 @@ times, in turn, for panes that were never coming.
   older agent's HELLO so the fallback can be watched happening. The app spawns
   the agent with an inherited environment block, so both reach the agent an
   acceptance script never launches itself. Empty/default in every real agent.
+  A third joined them for the same reason (T804):
+  `GHOSTTY_AGENT_QUIET_ATTACH=1` records an attaching client's geometry and
+  leaves the child alone, so nothing repaints behind the repaint the agent
+  injects. On this seat `child.resize` is `ResizePseudoConsole` and ConPTY
+  re-emits the whole screen even at identical geometry, which silently
+  backstopped the `repaint_data` accounting and hid a defect in it end to end;
+  the seam is that backstop removed, which is the POSIX shape on a box with no
+  POSIX seat. Arms D and E of `test\win32\session-resume-offset.ps1`.
 - Acceptance: `test/win32/agent-open-refused.ps1` (control / fast refusal /
   skew).
 

@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-16T17:20:17-07:00",
-    "commit":  "f58a74025",
+    "generated":  "2026-09-16T20:04:28-07:00",
+    "commit":  "c861914a3",
     "uncommitted":  [
-                        "test/win32/tab-tooltip.ps1"
+                        "scripts/guard-due.ps1",
+                        "test/win32/session-resume-offset.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -32,7 +33,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "fec6376034427796d1f9ad0b65d5fe8a46ce24a1702398844db3ea1483bada45",
-                  "scripts/guard-due.ps1":  "80950000d69225d7ba915385eb5878956152732874401de2897fefaec6ff074f",
+                  "scripts/guard-due.ps1":  "131678fea58690b7f8ca65f35c07701d1eb2a003aee4ae2aad93a9be20dc4110",
                   "scripts/harness-floor.ps1":  "cc4dd72fb07ebc34de67ce688e0eab7f091a7228e4baeba4f9f50d01212a0f0e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -371,7 +372,7 @@
                   "test/win32/session-relaunch.ps1":  "e314225e771031b4a342da253e10e0f2556f91281f9ace8551b526c325ff37a7",
                   "test/win32/session-relaunch-notify.ps1":  "4d99a3f10608f068460092ca36ad8fb2086708dd7516dbb838c6c900058133a5",
                   "test/win32/session-restore-maximized.ps1":  "5af0d5334fc5974b4bf643c69addfb503c6f35b8f161691c729ad704ffafddf7",
-                  "test/win32/session-resume-offset.ps1":  "afda54cfd0df1b0163c489618689744e41ac6ad2b24a2e1a506607ad0d5ccb87",
+                  "test/win32/session-resume-offset.ps1":  "846615b46537a08a777b2806b52e0b695a60d17958753d9e70597573a91fbc3d",
                   "test/win32/sessions-agent-build.ps1":  "4ddcd1913f07dfb9c177312382493b5a0e6f69d126ebec1ce3522c6908299eea",
                   "test/win32/session-snapshot-reattach.ps1":  "c7e335d7b8e77831bb94f7bbe30060a51008319defd354e567b830cc91f2297c",
                   "test/win32/sessions-running-cmd.ps1":  "0b2c67aa7bebd9981abd9b159546885aaf8856c249cd8df26ceb2bf5f6e59ec6",

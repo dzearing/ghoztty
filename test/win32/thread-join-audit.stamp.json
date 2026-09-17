@@ -1,10 +1,12 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-09-15T19:33:19-07:00",
-    "commit":  "cb9c0b2ee",
+    "generated":  "2026-09-16T20:17:22-07:00",
+    "commit":  "c861914a3",
     "uncommitted":  [
-                        "src/remote/agent/main.zig"
+                        "src/remote/agent/main.zig",
+                        "src/remote/agent/server.zig",
+                        "src/remote/connection.zig"
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -30,7 +32,7 @@
                   "src/remote/agent/keepalive.zig":  "178584c3f9dfd67a8b00076c2ef4147631495461fec17fad8cd0a45d6cb9cb4e",
                   "src/remote/agent/layout_meta.zig":  "7541949239eed45aec6cd00297fa95e56239239e8aab33600439f258f81a00be",
                   "src/remote/agent/link_control.zig":  "e3138c9c1326081092f25b9c090388fe58a3561c17734a83778df474ededd40a",
-                  "src/remote/agent/main.zig":  "b473aa4a23daf8f9fc2db6373ef909a93c6f4d3df89c5da30d62bff9449dbaba",
+                  "src/remote/agent/main.zig":  "b4df057ca5c509800646a2ee588037a186e93e666902f51270a96b9066b7df6f",
                   "src/remote/agent/metrics.zig":  "c4f0863d8706b9b7d24057cff5b388f72cc606a30df05105b19a19f97a68a4d6",
                   "src/remote/agent/msi_ca.zig":  "fa0ef30b29983b3edf5995afbe9ac5d4c5909361ac76b33e0c43651787eb17fb",
                   "src/remote/agent/mux.zig":  "bb91f11b8e95720f71e322fe788d2b7fbeba605e99132ec0ce0f317003f49867",
@@ -47,7 +49,7 @@
                   "src/remote/agent/relay_perf.zig":  "b74d79c5fa170240818c28504aeac97e85b194fc24042d225a073a23573a2ca7",
                   "src/remote/agent/revoke_watch.zig":  "f9fcde81a20c06c12cb8f8b7876386ee8aa1055743cd78ec840ec86c8d207b90",
                   "src/remote/agent/ring_snapshot.zig":  "9beb3bc88d8050b9ffeb448d2d117485e85a8855fa01ebc7719f6c8cd1244166",
-                  "src/remote/agent/server.zig":  "83f9ac14a44b620876fbf196d032234515da2e81f16189096c42cb97429f191b",
+                  "src/remote/agent/server.zig":  "2a38e5d965b7b32b40e4fe25c6b75cccde4fa251dbe9ea4c8220029e01051b70",
                   "src/remote/agent/session.zig":  "f5bde9e073975c5ab5378f07a80df4de67387d74e35f7f9d1b373a2e7c14b7ef",
                   "src/remote/agent/session_meta.zig":  "e49d5f38c06cea3ca899917c134b8ff70aa39cb8123083450c4852d2e6b39891",
                   "src/remote/agent/sharing.zig":  "271eaa812c1282a8bf90d0585a09677a752bfb1e05e9d09f076f4bc8aa81bab3",
@@ -58,7 +60,7 @@
                   "src/remote/agent_lineage.zig":  "277bca4d33eb667f06fc7676e7c933d74b7a50911fadf6266fae5f8cc69f40d7",
                   "src/remote/agent_smoke.zig":  "d3e386356c7201fba0edf48eab76d88205556e8ec8c855bfc23c049affd3a052",
                   "src/remote/client_mux.zig":  "a305dd55d995c4b1da6a42071f4f4525c2b001c4dac8bb4a2e14e2d4011f435b",
-                  "src/remote/connection.zig":  "149621eb1837d277e8b92e1cddbd86cca552f8f7e0cc843b4be4457b767abbcc",
+                  "src/remote/connection.zig":  "7e441f075f170261fe0808db08c6ccd2da28952054e2b3d3d35084a73228d743",
                   "src/remote/google_oauth.zig":  "40138a3e0293322de8ee722b7aa0e5688eb4ac68332971c5d624f1d8471c5510",
                   "src/remote/http_client.zig":  "aa3dc49d2baa17240a59b1b51c1fc7d08b81fe8652ab7650bbdbcd59c3dff225",
                   "src/remote/inbound_ring.zig":  "7cdc4d17070ea22458dfe96552220960bc0dbff98303505ceab02eb12a89ff9c",

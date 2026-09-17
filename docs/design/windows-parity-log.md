@@ -30772,3 +30772,71 @@ deliberately does not probe this shape, for the reason it already does not
 probe UNC: neither `%` nor `\` is a selection word boundary, so word-select and
 link-select would return the same string and the assertion would pass on a
 build with no branch at all.
+
+## 2026-09-16 - T804: the repaint label was doing nothing, and only a peer that stays silent could show it
+
+T739 gave the agent a way to say "these bytes are my own paint, not your
+session's output" - a separate opcode, `DATA_REPAINT` (0x15), for the screen it
+injects on every re-attach - so a reconnecting pane stops recording a resume
+point past the end of the stream by the size of that paint. Its acceptance arms
+all ran against the local Windows agent, and one of them (arm C) took the label
+away and still came out right. The note on that arm said why, and said it was
+fine: ConPTY repaints after every attach, that paint is real stream data
+anchored at the head, and it re-states the true position over a miscounted one.
+The label's value was supposed to be for the peer that has no such backstop - a
+session on another machine, where a quiet child answers a geometry change with
+silence and the injected paint is the last thing on the wire. That claim rested
+on unit tests. This card was filed to measure it.
+
+The peer it needs is a POSIX agent, and this box may not start one (WSL is off
+limits here by standing directive). So the property was reproduced instead of
+the platform: `GHOSTTY_AGENT_QUIET_ATTACH=1` makes the agent record an attaching
+client's geometry and leave the child alone, which is a ConPTY that does not
+repaint, which is the shape a POSIX peer has for free. That is the same kind of
+seam, with the same justification, as the `GHOSTTY_AGENT_SUPPRESS_CAPS` that has
+been in the agent since T469: one tree cannot otherwise produce the other end of
+the conversation.
+
+**The measurement found the label inert.** Arms D (label on) and E (label
+suppressed) against that silent peer produced identical numbers, down to the
+byte: `counted=670 stream=407 (delta 263)` in both. The 263-byte repaint
+advanced nothing whether it was labelled or not, so the right answer was
+arriving for a reason unrelated to the mechanism that exists to produce it -
+and a broken labelling would have produced exactly the same green.
+
+The cause is a race on the accounting side of an ATTACH. The agent frames
+ATTACHED on the control lane and the gap-fill replay plus the injected repaint
+on the data lane, two independent streams, so those frames routinely arrive
+before the client has a pane to attribute them to. Their BYTES were never lost -
+`ChannelTable.pending` holds them and `register` flushes them into the ring -
+but `Connection.advanceStreamPos` did `panes.get(channel) orelse return`, so the
+position they implied was dropped, and the pane was then constructed with
+`.stream_pos = .init(resume_at)` over the top. The repaint's bytes vanishing
+from the count looked like the label working. The gap-fill REPLAY's bytes vanish
+the same way, and those are real session output: position forgotten, the next
+attach asks to resume from below them and the agent sends them again, which on a
+cross-machine pane is duplicated output on screen - the mirror image of the
+defect T739 fixed.
+
+The fix is one map. `Connection.early_stream_pos` keeps the position implied by
+bytes that landed on a channel with no pane yet - only for a `.buffered` push,
+so it is bounded by the channel table's own pre-registration caps rather than by
+whatever ids arrive - and `trackPane` folds it into the pane under
+`panes_mutex`, the same lock the data reader takes, so a frame landing between
+the pane's construction and its tracking cannot fall between the two. The fold
+is a `@max`: a clamped attach (T532) resumed deliberately above a stream the
+agent rejected, and a raced-in frame from that stream must not drag it back.
+
+Evidence: `test\win32\session-resume-offset.ps1` is ALL PASS at 115 assertions
+across five arms, and the two new ones now come out opposite - D holds
+`requested == head` at 409 across three kill/restore cycles, E overshoots to 674
+against a head of 409 with the clamp firing on every cycle after the first.
+Both read the negotiated `labeled=` bit out of the app's own attach line rather
+than trusting the env var the arm exported, so a suppression that never reached
+the agent cannot fake either result. Two `none`-lane tests in
+`src/remote/connection.zig` cover the fold and its `@max`. All four floor lanes
+PASS. The harness also gets a `guard-due` row (`resume-offset`) over
+`connection.zig` and `Remote.zig`: both files are busy and move for many
+reasons, and covering them anyway is the point - this script is the only thing
+that can see either number, and this is the second time in one card's history
+that everything else was green while the mechanism under it was not running.

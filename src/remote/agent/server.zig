@@ -443,6 +443,41 @@ pub const Server = struct {
         return false;
     }
 
+    /// Apply an attaching client's geometry to the child WITHOUT provoking a
+    /// repaint — a second test seam, in the same spirit as `suppress_buf` above
+    /// and for the same reason: a property of the WINDOWS transport hides the
+    /// case the wire framing exists for, and no unit test can put the real app
+    /// on the other end of it.
+    ///
+    /// What it emulates (T804). On this seat every attach is followed by a real
+    /// repaint the agent did not inject: `child.resize()` is
+    /// `ResizePseudoConsole`, and ConPTY re-emits the whole screen even when the
+    /// geometry is byte-identical. That paint is stream data anchored at the
+    /// head, so it re-states the true position over a miscounted one — which is
+    /// why the `repaint_data` framing can be suppressed and the client STILL
+    /// records `requested == head` (`test\win32\session-resume-offset.ps1` arm
+    /// C). A POSIX peer has no such backstop: `TIOCSWINSZ` on a quiet child
+    /// produces nothing, so the injected repaint is the LAST thing on the wire
+    /// and a miscount stands. That is the case the 0x15 opcode was added for,
+    /// and until this seam existed it could only be asserted in unit tests.
+    ///
+    /// With it set, ATTACH and RESIZE record the geometry on the session and
+    /// skip the child-side call and its one-shot `SIGWINCH`, so a quiet session
+    /// sends nothing at all after the injection — the POSIX shape, on a box with
+    /// no POSIX seat. Set-once from `GHOSTTY_AGENT_QUIET_ATTACH` at startup,
+    /// read-only afterwards → no synchronization. False in every real agent.
+    var quiet_attach: bool = false;
+
+    /// Record the quiet-attach seam (see `quiet_attach`). Idempotent.
+    pub fn setQuietAttach(on: bool) void {
+        quiet_attach = on;
+    }
+
+    /// True iff the quiet-attach seam is armed.
+    fn quietAttach() bool {
+        return quiet_attach;
+    }
+
     /// Upper bound on advertised capabilities — the `Options` default is the
     /// longest list that exists, and this is comfortably above it.
     const max_advertised_caps = 32;
@@ -1376,13 +1411,16 @@ pub const Server = struct {
         s.rows = att.rows;
         s.cols = att.cols;
         s.last_activity_ms = now;
-        s.child.resize(att.rows, att.cols, 0, 0) catch {};
+        // ...unless the quiet-attach seam is armed, in which case the geometry is
+        // recorded and the child is left alone, so nothing repaints behind the
+        // injection below (T804).
+        if (!quietAttach()) s.child.resize(att.rows, att.cols, 0, 0) catch {};
         // Re-attach repaint: the geometry restored here is only the pre-layout
         // seed; the client sends an authoritative RESIZE once the pane is live
         // (threadEnter, 106dcdc9c). Latch a one-shot SIGWINCH onto that RESIZE so
         // alt-screen apps repaint even when the restored size is byte-identical
         // (else they stay blank until a manual resize). See winch_on_next_resize.
-        s.winch_on_next_resize = true;
+        s.winch_on_next_resize = !quietAttach();
         const snapshot_at = s.snapshotOffset();
 
         self.sendJson(.attached, s.channel, protocol.Attached{
@@ -1562,7 +1600,9 @@ pub const Server = struct {
         };
         self.store.mutex.unlock();
         if (child) |c| {
-            c.resize(rz.rows, rz.cols, rz.px_w, rz.px_h) catch |err| {
+            // Quiet-attach seam (T804): the geometry above is recorded, the
+            // child-side call that would make ConPTY repaint is not.
+            if (!quietAttach()) c.resize(rz.rows, rz.cols, rz.px_w, rz.px_h) catch |err| {
                 std.log.warn("RESIZE: child.resize failed err={}", .{err});
             };
             // Ordered AFTER the resize: the app re-queries winsize on SIGWINCH,
