@@ -32,6 +32,11 @@
 #      no stream, push ZERO frames, and paint no bar in that band - the
 #      capability gate degrading to "no meter" rather than to a wedge, a wrong
 #      number, or a poll the agent never agreed to.
+#   G  hovering a meter EXPLAINS it (T812): the tip names the units, so a
+#      reading over 100 is not a mystery, and moving off the meter drops it.
+#      Its own negative control rides F's suppressed-capability agent - no
+#      column, no reading, and so no tooltip at all rather than one describing
+#      a meter that is not on screen.
 #
 # WHY A LOG LINE IS AN ORACLE. The roster is owner-drawn on the dialog's own
 # surface: there is no HWND to read a meter back from, so what ARRIVED is said
@@ -64,6 +69,8 @@ $env:GHOZTTY_PIPE_SUFFIX = "-t462$PID"
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
+
+$WM_MOUSEMOVE = 0x0200
 
 $script:pass = 0
 $script:fail = 0
@@ -170,6 +177,37 @@ function Get-MeterBarRun($shot, $client, $geo) {
         }
     }
     return $best
+}
+
+function Pack-Point([int]$x, [int]$y) {
+    return [IntPtr]((($y -band 0xFFFF) -shl 16) -bor ($x -band 0xFFFF))
+}
+
+# Park the pointer over a client point of the chooser by POSTING the dialog the
+# WM_MOUSEMOVE it would have got. The roster's cards are painted on the dialog
+# itself, so this is the same message the real pointer produces - and it is the
+# only way to hover on the background test desktop, where SetCursorPos drives a
+# cursor no window is under (T233).
+function Move-ChooserPointer($chooser, [int]$x, [int]$y) {
+    [void](Send-TestRawMessage -Window $chooser -Message $WM_MOUSEMOVE -LParam (Pack-Point $x $y))
+    Start-Sleep -Milliseconds 300
+}
+
+# The line number of the last log line matching $pattern, or 0.
+function Get-LastLineNo($path, $pattern) {
+    if (-not (Test-Path $path)) { return 0 }
+    $m = @(Select-String -Path $path -Pattern $pattern -ErrorAction SilentlyContinue)
+    if ($m.Count -eq 0) { return 0 }
+    return $m[-1].LineNumber
+}
+
+# The last tooltip text the app derived for a hovered meter, or $null.
+function Get-LastTipText($path) {
+    if (-not (Test-Path $path)) { return $null }
+    $m = @(Select-String -Path $path -Pattern 'chooser cpu tooltip row=\d+ text=' -ErrorAction SilentlyContinue)
+    if ($m.Count -eq 0) { return $null }
+    if ($m[-1].Line -match 'chooser cpu tooltip row=\d+ text=(.*)$') { return $Matches[1] }
+    return $null
 }
 
 # Launch the app on the test desktop with a pinned session and an idle one, open
@@ -287,6 +325,53 @@ try {
 
     Assert (Test-TestWindowResponsive -Window $g.Chooser) 'E the chooser''s message loop is not wedged'
 
+    # --- G: hovering a meter explains it (T812) ----------------------------
+    Write-Host ''
+    Write-Host '4b. the meter explains itself on hover'
+    $meterX = $geo.MeterLeft + [int](($geo.MeterRight - $geo.MeterLeft) / 2)
+    Move-ChooserPointer $g.Chooser $meterX $geo.CardY
+    $derived = Wait-LogCount $errlog 'chooser cpu tooltip row=\d+ text=' 1 8000
+    $tip = Get-LastTipText $errlog
+    Assert ($derived -and $null -ne $tip) 'G hovering the first row''s meter derives a tooltip'
+    # The whole point of the task: a number with no units. Asserted on the
+    # WORDS, because "a tooltip appeared" would pass over an empty one.
+    Assert ($tip -and $tip -match "^\d+% CPU across this session's whole process tree \(100% = one core\)\.") `
+        "G the tip names the units a bare number lacks (tip: $tip)"
+    # A throttled stream says so on a second line; an unthrottled one must NOT,
+    # or the ordinary case reads as degraded. Which of the two this run gets is
+    # the agent's call, so the assertion is on the pairing, not on the line.
+    $throttled = ($last.Interval -gt 2000)
+    $saysThrottled = ($tip -and $tip -match 'throttling itself under load')
+    Assert ($throttled -eq $saysThrottled) `
+        "G the throttling line matches the agent's actual cadence ($($last.Interval)ms, says=$saysThrottled)"
+
+    # Off the meter, onto the card's leading padding: the tip is dropped rather
+    # than left hanging over a row the pointer has left.
+    #
+    # Scored on ORDER, not on a count delta. A posted WM_MOUSEMOVE parks no real
+    # pointer, so the desktop's own cursor keeps producing genuine moves off the
+    # meter and the app drops the tip again on its own - which is the same
+    # behavior, arriving unbidden. What is asserted is therefore the state the
+    # sequence leaves behind: after the off-meter move the last thing the
+    # tooltip said is that it went away, with no hover after it.
+    Move-ChooserPointer $g.Chooser $meterX $geo.CardY
+    [void](Wait-LogCount $errlog 'chooser cpu tooltip row=\d+ text=' 1 8000)
+    Move-ChooserPointer $g.Chooser $geo.CardX $geo.CardY
+    $dropAt = 0
+    $hoverAt = 0
+    $waited = 0
+    while ($waited -lt 8000) {
+        $dropAt = Get-LastLineNo $errlog 'chooser cpu tooltip dropped'
+        $hoverAt = Get-LastLineNo $errlog 'chooser cpu tooltip row=\d+ text='
+        if ($dropAt -gt $hoverAt) { break }
+        Start-Sleep -Milliseconds 250
+        $waited += 250
+    }
+    Assert ($dropAt -gt $hoverAt) `
+        "G moving off the meter drops the tooltip (drop at line $dropAt, last hover at $hoverAt)"
+    Assert (Test-TestWindowResponsive -Window $g.Chooser) `
+        'G the chooser still answers after the hover'
+
     # --- F: the capability gate (negative control) -------------------------
     Write-Host ''
     Write-Host '5. an agent that cannot serve the stream gets no meter'
@@ -323,6 +408,18 @@ try {
             Assert ($run2 -lt 6) `
                 "F no bar is painted without the capability (longest run $run2 px, vs $meterRun with it)"
         } finally { Close-TestWindowPixels -Shot $shot2 }
+
+        # G's negative control: no column, no reading, so hovering the band
+        # where a meter WOULD be must derive no tooltip at all. Without this,
+        # G would pass equally well against a tip that fires on any card.
+        Move-ChooserPointer $g2.Chooser `
+            ($geo2.MeterLeft + [int](($geo2.MeterRight - $geo2.MeterLeft) / 2)) $geo2.CardY
+        # The positive side is waited for (the app's stderr reaches the file on
+        # a flush, not on the message), so the absence gets the same clock -
+        # otherwise "zero" would be a read taken before the write.
+        Start-Sleep -Seconds 3
+        Assert ((Count-LogLines $errlog2 'chooser cpu tooltip row=') -eq 0) `
+            'G no tooltip is derived where no meter is painted'
 
         Assert (-not ($g2.App.Process -and $g2.App.Process.HasExited)) `
             'F the app survived the skew'

@@ -76,6 +76,50 @@ pub fn formatPct(buf: []u8, cpu_pct: f32) []const u8 {
     return std.fmt.bufPrint(buf, "{d:.0}%", .{@round(v)}) catch "";
 }
 
+// ---------------------------------------------------------------------
+// The hover explanation (T812)
+// ---------------------------------------------------------------------
+
+/// Past this cadence the agent has stretched its own sampling interval under
+/// load, and the tooltip says so. Mac's `cpuMeterHelp` threshold: the default
+/// stream ticks well inside it, so the line appears only when the meter really
+/// has slowed down.
+pub const throttled_ms: u32 = 2000;
+
+/// The longest `helpText` can be: two lines, both fixed phrasing around a
+/// bounded number.
+pub const max_help_len: usize = 192;
+
+/// What hovering the meter says. Mac's `cpuMeterHelp`, word for word: it names
+/// the UNITS — a reading over 100 is confusing without them, because the number
+/// is per-core over a whole process tree — and, when the agent has throttled its
+/// own cadence, says so, because otherwise a slow-moving meter reads as a broken
+/// one.
+///
+/// `out.len >= max_help_len` is the caller's contract; a shorter buffer returns
+/// what fits rather than failing, since a clipped explanation still explains
+/// more than no tooltip at all.
+pub fn helpText(out: []u8, cpu_pct: f32, interval_ms: u32) []const u8 {
+    const v: f32 = if (cpu_pct > 0) cpu_pct else 0;
+    var n: usize = 0;
+    const first = std.fmt.bufPrint(
+        out,
+        "{d:.0}% CPU across this session's whole process tree (100% = one core).",
+        .{@round(v)},
+    ) catch return out[0..0];
+    n += first.len;
+    if (interval_ms > throttled_ms) {
+        const secs = @as(f32, @floatFromInt(interval_ms)) / 1000.0;
+        const second = std.fmt.bufPrint(
+            out[n..],
+            "\nUpdating every {d:.0}s \u{2014} the agent is throttling itself under load.",
+            .{secs},
+        ) catch return out[0..n];
+        n += second.len;
+    }
+    return out[0..n];
+}
+
 /// The ink for the bar's fill and its number.
 pub fn meterInk(surface: Rgb, cpu_pct: f32) Rgb {
     return chrome_theme.toneInk(surface, tone(cpu_pct));
@@ -398,6 +442,50 @@ test "meterLayout: 0% draws a track and no fill; over 100% fills it" {
 
     const pinned = meterLayout(m, col, 400);
     try testing.expectEqual(m.bar_w, pinned.fill.width());
+}
+
+test "helpText names the units so a reading over one core makes sense" {
+    var buf: [max_help_len]u8 = undefined;
+    const t = helpText(&buf, 250, 1000);
+    try testing.expectEqualStrings(
+        "250% CPU across this session's whole process tree (100% = one core).",
+        t,
+    );
+    // A cadence at or inside the threshold is the NORMAL one, and saying
+    // "updating every 2s" about it would make the ordinary case look degraded.
+    try testing.expectEqual(@as(?usize, null), std.mem.indexOf(u8, t, "throttling"));
+}
+
+test "helpText explains a slow meter rather than leaving it looking stalled" {
+    var buf: [max_help_len]u8 = undefined;
+    const t = helpText(&buf, 12.4, 6000);
+    try testing.expectEqualStrings(
+        "12% CPU across this session's whole process tree (100% = one core).\n" ++
+            "Updating every 6s \u{2014} the agent is throttling itself under load.",
+        t,
+    );
+}
+
+test "helpText never spells a negative or unknown reading" {
+    var buf: [max_help_len]u8 = undefined;
+    // Same clamp as `formatPct`: the wire cannot produce these, a malformed
+    // frame could, and a tooltip reading "-1% CPU" would be worse than the
+    // silence it replaced.
+    try testing.expect(std.mem.startsWith(u8, helpText(&buf, -5, 0), "0% CPU"));
+    try testing.expect(std.mem.startsWith(u8, helpText(&buf, std.math.nan(f32), 0), "0% CPU"));
+    // An interval of 0 is "no frame yet", not a throttled one.
+    try testing.expectEqual(
+        @as(?usize, null),
+        std.mem.indexOf(u8, helpText(&buf, 3, 0), "Updating"),
+    );
+}
+
+test "helpText fits max_help_len at the widest reading the meter can show" {
+    var buf: [max_help_len]u8 = undefined;
+    // A 64-core box pinned flat, on the slowest cadence the agent backs off to.
+    const t = helpText(&buf, 6400, 60_000);
+    try testing.expect(t.len <= max_help_len);
+    try testing.expect(std.mem.indexOf(u8, t, "throttling") != null);
 }
 
 test "the meter's ink clears the chrome contrast floor on both themes" {

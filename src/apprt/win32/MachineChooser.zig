@@ -66,6 +66,7 @@ const system_colors = @import("system_colors.zig");
 const chooser_layout = @import("chooser_layout.zig");
 const chooser_menu = @import("chooser_menu.zig");
 const chooser_sessions = @import("chooser_sessions.zig");
+const chooser_cpu = @import("chooser_cpu.zig");
 const dial_failure = @import("dial_failure.zig");
 const text_search = @import("text_search.zig");
 const utf16_text = @import("utf16_text.zig");
@@ -245,6 +246,19 @@ link_tracking_leave: bool = false,
 /// flight, so the roster's Kill hover is dropped when the pointer leaves
 /// (T588). One is armed per entry rather than per mouse-move.
 dialog_tracking_leave: bool = false,
+
+/// The CPU meter's hover tooltip (T812): a native comctl32 track-mode tooltip,
+/// created on first show and destroyed with the dialog. Null until then — a
+/// chooser nobody hovers a meter in never makes one.
+cpu_tip_hwnd: ?w32.HWND = null,
+/// Whether the CPU tooltip is currently activated (visible).
+cpu_tip_shown: bool = false,
+/// The roster row whose meter the pointer is on, or -1. Drives the show delay
+/// the way `hover_row` drives the list wash.
+cpu_tip_row: i32 = -1,
+/// UTF-16 text handed to the tooltip control. The control keeps the POINTER, so
+/// this buffer outlives every message that names it.
+cpu_tip_text: [chooser_cpu.max_help_len + 8]u16 = undefined,
 /// Wrapped line count the footer hint is currently laid out for. The dialog
 /// re-lays-out (and resizes) when a new hint needs a different number.
 hint_lines: i32 = 1,
@@ -3167,6 +3181,10 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
                 self.pollTick();
                 return 0;
             }
+            if (wparam == CPU_TIP_TIMER_ID) {
+                self.cpuTipTimerFire();
+                return 0;
+            }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
         w32.WM_DRAWITEM => {
@@ -3232,6 +3250,7 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
         w32.WM_MOUSELEAVE => {
             self.dialog_tracking_leave = false;
             self.setKillHover(-1);
+            self.cpuTipOnHoverChange(-1);
             return 0;
         },
         w32.WM_LBUTTONDOWN => {
@@ -3387,16 +3406,240 @@ fn onSessionHover(self: *MachineChooser, x: i32, y: i32) void {
     var buf: [SessionRoster.max_rows]SessionRoster.VisibleRow = undefined;
     const view = self.sessionView(&buf) orelse {
         self.setKillHover(-1);
+        self.cpuTipOnHoverChange(-1);
         return;
     };
     const hit = self.roster.killAt(view.rows, view.region, self.window.scale, x, y);
     self.setKillHover(if (hit) |i| @intCast(i) else -1);
+    // The meter's tooltip rides the same pointer walk (T812). Tested after
+    // Kill for the same reason the click is: one point can answer both, and
+    // the button is the more specific of the two - though in practice the two
+    // sit at opposite ends of a card and never overlap.
+    const on_meter = if (hit != null)
+        null
+    else
+        self.roster.cpuAt(view.rows, view.region, self.window.scale, x, y);
+    self.cpuTipOnHoverChange(if (on_meter) |i| @intCast(i) else -1);
 }
 
 fn setKillHover(self: *MachineChooser, index: i32) void {
     if (self.roster.hover_kill == index) return;
     self.roster.hover_kill = index;
     self.refreshSessions();
+}
+
+// ---------------------------------------------------------------------
+// The CPU meter's hover explanation (T812)
+// ---------------------------------------------------------------------
+//
+// Mac's `cpuMeterHelp` on a `.help()` modifier; here the same words on a
+// native track-mode tooltip, on the `Window.zig` tab-tooltip pattern - a show
+// delay armed by the hover the roster already tracks, and a comctl32 control
+// the system draws itself (design system: a native tooltip inherits the OS
+// styling and is left alone, never owner-drawn). Text derivation is pure
+// (`chooser_cpu.helpText`, none-lane tested); this block is only the plumbing.
+
+/// The CPU tooltip's show delay, on this dialog's own timer id space (the poll
+/// is 1) - so it is not a `msg_timer` id.
+const CPU_TIP_TIMER_ID: usize = 2;
+
+/// The text for roster row `idx`, or null when it has no reading to explain.
+/// Re-derived at show time rather than frozen at hover time, so the number in
+/// the tip is the number on the meter.
+fn cpuTipTextFor(self: *MachineChooser, idx: usize, out: []u8) ?[]const u8 {
+    var buf: [SessionRoster.max_rows]SessionRoster.VisibleRow = undefined;
+    const view = self.sessionView(&buf) orelse return null;
+    if (idx >= view.rows.len) return null;
+    const pct = view.rows[idx].cpu orelse return null;
+    return chooser_cpu.helpText(out, pct, self.cpu.intervalMs());
+}
+
+/// The TOOLINFOW naming this dialog's single CPU tool. Rebuilt per call - the
+/// control identifies the tool by (hwnd, uId); everything else rides along.
+fn cpuTipToolInfo(self: *MachineChooser) w32.TOOLINFOW {
+    return .{
+        .cbSize = @sizeOf(w32.TOOLINFOW),
+        .uFlags = w32.TTF_TRACK | w32.TTF_ABSOLUTE,
+        .hwnd = self.hwnd,
+        .uId = 1,
+        .rect = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+        .hinst = null,
+        .lpszText = @ptrCast(&self.cpu_tip_text),
+        .lParam = 0,
+        .lpReserved = null,
+    };
+}
+
+/// Create the tooltip control on first use, on the dialog's own theme answer.
+/// The chooser is closed and rebuilt on a theme change, so unlike the window's
+/// tab tip this one needs no mid-life reset.
+fn cpuTipEnsure(self: *MachineChooser) ?w32.HWND {
+    if (self.cpu_tip_hwnd) |h| return h;
+    const hwnd = self.hwnd;
+
+    var icc = w32.INITCOMMONCONTROLSEX{
+        .dwSize = @sizeOf(w32.INITCOMMONCONTROLSEX),
+        .dwICC = w32.ICC_TAB_CLASSES,
+    };
+    _ = w32.InitCommonControlsEx(&icc);
+
+    const tip = w32.CreateWindowExW(
+        w32.WS_EX_TOPMOST | w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE,
+        w32.TOOLTIPS_CLASS,
+        std.unicode.utf8ToUtf16LeStringLiteral(""),
+        w32.WS_POPUP | w32.TTS_ALWAYSTIP | w32.TTS_NOPREFIX,
+        w32.CW_USEDEFAULT,
+        w32.CW_USEDEFAULT,
+        w32.CW_USEDEFAULT,
+        w32.CW_USEDEFAULT,
+        hwnd,
+        null,
+        self.window.app.hinstance,
+        null,
+    ) orelse return null;
+
+    const tip_bg = self.window.app.config.background;
+    if (chrome_theme.isDark(
+        self.window.app.config.@"window-theme",
+        .{ .r = tip_bg.r, .g = tip_bg.g, .b = tip_bg.b },
+        Window.systemUsesLightTheme(),
+    )) {
+        _ = w32.SetWindowTheme(
+            tip,
+            std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"),
+            null,
+        );
+    }
+
+    self.cpu_tip_text[0] = 0;
+    var ti = self.cpuTipToolInfo();
+    _ = w32.SendMessageW(tip, w32.TTM_ADDTOOLW, 0, @bitCast(@intFromPtr(&ti)));
+    // A max width is what makes a newline break lines - the throttling line
+    // under the units line. Without one the control renders both on one line.
+    _ = w32.SendMessageW(tip, w32.TTM_SETMAXTIPWIDTH, 0, 0x7FFF);
+    self.cpu_tip_hwnd = tip;
+    return tip;
+}
+
+/// Hide the tooltip and cancel any pending show. Safe from any state - "no
+/// tooltip and none scheduled" is the postcondition.
+fn cpuTipHide(self: *MachineChooser) void {
+    _ = w32.KillTimer(self.hwnd, CPU_TIP_TIMER_ID);
+    if (!self.cpu_tip_shown) return;
+    self.cpu_tip_shown = false;
+    const tip = self.cpu_tip_hwnd orelse return;
+    var ti = self.cpuTipToolInfo();
+    _ = w32.SendMessageW(tip, w32.TTM_TRACKACTIVATE, 0, @bitCast(@intFromPtr(&ti)));
+}
+
+/// Destroy the control. Called when the dialog goes away; the next chooser
+/// makes its own on the theme it opens under.
+fn cpuTipDestroy(self: *MachineChooser) void {
+    self.cpuTipHide();
+    self.cpu_tip_row = -1;
+    const tip = self.cpu_tip_hwnd orelse return;
+    self.cpu_tip_hwnd = null;
+    _ = w32.DestroyWindow(tip);
+}
+
+/// The pointer moved onto a different meter (or off them): hide the tip, and
+/// arm a fresh delay when a meter is under the pointer. Also the debug oracle
+/// for `test\win32\chooser-cpu-tooltip.ps1` - the derived text is logged at
+/// HOVER time, because the background test desktop cannot hold a hover across
+/// the show delay (T233), so the trigger is read from this line while the
+/// timing stays unobserved.
+fn cpuTipOnHoverChange(self: *MachineChooser, new_row: i32) void {
+    if (self.cpu_tip_row == new_row) return;
+    self.cpu_tip_row = new_row;
+    self.cpuTipHide();
+    if (new_row < 0) {
+        // Said out loud rather than returned quietly: "the tip was DROPPED" is
+        // half of what the acceptance script scores, and a silent exit here
+        // would be indistinguishable from a hover that never arrived.
+        log.debug("chooser cpu tooltip dropped", .{});
+        return;
+    }
+    _ = w32.SetTimer(self.hwnd, CPU_TIP_TIMER_ID, w32.GetDoubleClickTime(), null);
+
+    var buf: [chooser_cpu.max_help_len + 8]u8 = undefined;
+    if (self.cpuTipTextFor(@intCast(new_row), &buf)) |txt| {
+        // The oracle stays ONE line: the throttled tip's newline is logged as
+        // a literal backslash-n so a grep of this line cannot be split in two.
+        var esc: [2 * (chooser_cpu.max_help_len + 8)]u8 = undefined;
+        var n: usize = 0;
+        for (txt) |c| {
+            if (c == '\n') {
+                esc[n] = '\\';
+                esc[n + 1] = 'n';
+                n += 2;
+            } else {
+                esc[n] = c;
+                n += 1;
+            }
+        }
+        log.debug("chooser cpu tooltip row={d} text={s}", .{ new_row, esc[0..n] });
+    } else {
+        log.debug("chooser cpu tooltip row={d} text=<none>", .{new_row});
+    }
+}
+
+/// The show delay elapsed with the pointer still on a meter: place the tip just
+/// under the meter's column and activate it.
+fn cpuTipTimerFire(self: *MachineChooser) void {
+    const hwnd = self.hwnd;
+    _ = w32.KillTimer(hwnd, CPU_TIP_TIMER_ID);
+    if (self.cpu_tip_row < 0) return;
+    const idx: usize = @intCast(self.cpu_tip_row);
+
+    var buf: [chooser_cpu.max_help_len + 8]u8 = undefined;
+    const text = self.cpuTipTextFor(idx, &buf) orelse return;
+    const len16 = std.unicode.utf8ToUtf16Le(
+        self.cpu_tip_text[0 .. self.cpu_tip_text.len - 1],
+        text,
+    ) catch return;
+    self.cpu_tip_text[len16] = 0;
+
+    const tip = self.cpuTipEnsure() orelse return;
+    var ti = self.cpuTipToolInfo();
+    _ = w32.SendMessageW(tip, w32.TTM_UPDATETIPTEXTW, 0, @bitCast(@intFromPtr(&ti)));
+
+    const at = self.cpuTipAnchor(idx) orelse return;
+    var pt = w32.POINT{ .x = at.x, .y = at.y };
+    _ = w32.ClientToScreen(hwnd, &pt);
+    const pos: isize = @bitCast(@as(usize, @as(u16, @bitCast(@as(i16, @truncate(pt.x))))) |
+        (@as(usize, @as(u16, @bitCast(@as(i16, @truncate(pt.y))))) << 16));
+    _ = w32.SendMessageW(tip, w32.TTM_TRACKPOSITION, 0, pos);
+    _ = w32.SendMessageW(tip, w32.TTM_TRACKACTIVATE, 1, @bitCast(@intFromPtr(&ti)));
+    self.cpu_tip_shown = true;
+    log.debug("chooser cpu tooltip shown row={d}", .{idx});
+}
+
+/// Where the tip's top-left sits in client coordinates: under the meter's own
+/// column, at its left edge, with the design system's 4 DIP clearance - the
+/// reading position for a label about that meter.
+fn cpuTipAnchor(self: *MachineChooser, idx: usize) ?struct { x: i32, y: i32 } {
+    var buf: [SessionRoster.max_rows]SessionRoster.VisibleRow = undefined;
+    const view = self.sessionView(&buf) orelse return null;
+    if (idx >= view.rows.len) return null;
+    const m = chooser_sessions.metrics(self.window.scale);
+    var cy = view.region.top - self.roster.scroll;
+    for (view.rows, 0..) |row, i| {
+        const subs = chooser_sessions.sublineCount(row.session);
+        const l = chooser_sessions.rowLayout(
+            m,
+            view.region.left,
+            cy,
+            view.region.width(),
+            subs,
+            self.roster.cpu_column,
+        );
+        cy = l.card.bottom + m.row_gap;
+        if (i == idx) {
+            const gap: i32 = @intFromFloat(@round(4.0 * self.window.scale));
+            return .{ .x = l.cpu.left, .y = l.cpu.bottom + gap };
+        }
+    }
+    return null;
 }
 
 /// A click in the roster. Returns true when it was consumed. Kill is tested
@@ -4290,6 +4533,11 @@ fn close(self: *MachineChooser, refocus_owner: bool) void {
         _ = w32.KillTimer(self.hwnd, POLL_TIMER_ID);
         self.poll_armed = false;
     }
+
+    // The CPU tooltip is a POPUP, not a child, so `DestroyWindow` on the dialog
+    // does not take it: an un-destroyed one would outlive the chooser as a
+    // floating strip of text over the desktop (T812).
+    self.cpuTipDestroy();
 
     // Put the link's own proc back before the dialog's userdata goes, else the
     // subclass loses its way to `self` and would answer the teardown's button

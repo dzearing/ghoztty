@@ -9,6 +9,41 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-17: T812 closed done — **the chooser's CPU meter explains itself on
+  hover: the units a bare number lacks, and the agent's own throttling when the
+  stream has slowed down.**
+
+  The meter has drawn a bar and a number since T462, and the number is per-core
+  over a whole process tree — so a busy session reads 250% and there was nothing
+  on screen saying what that meant. The other half is worse because it is
+  silent: the agent stretches its own sampling cadence under load, and a meter
+  that updates every six seconds looks broken rather than deliberately slowed.
+  Mac has answered both on hover since the feature shipped (`cpuMeterHelp`);
+  Windows answered neither.
+
+  The text is Mac's, word for word, in a pure deriver the none lane can assert
+  (`chooser_cpu.helpText`) — units first, then the throttling line only past the
+  2000ms threshold, because an "updating every 2s" line on the ORDINARY cadence
+  would make the normal case read as degraded. The hover surface is the
+  `Window.zig` tab-tooltip pattern: a comctl32 track-mode tooltip the system
+  draws itself, armed by the hover the roster already tracks, on the dialog's own
+  timer id space. The interval was already in every frame and already stored, so
+  nothing new goes on the wire.
+
+  Two things worth keeping. The hit test is gated on the READING, not on the
+  column: every row of a supported machine reserves the meter's space so the
+  titles line up, but a row the last frame did not name has no meter painted, and
+  a tooltip explaining something that is not on screen is worse than none. And
+  the acceptance script's drop assertion is scored on log ORDER rather than a
+  count delta — a posted `WM_MOUSEMOVE` parks no real pointer, so the test
+  desktop's own cursor keeps producing genuine off-meter moves that drop the tip
+  unbidden. A delta counted that as a failure of the behavior it was measuring;
+  the order does not care who moved last.
+
+  Validation: 7 new none-lane unit tests, section G of
+  `test\win32\chooser-session-cpu.ps1` ALL PASS (25 assertions) with its own
+  negative control under a suppressed-capability agent, and the standing floor.
+
 - 2026-09-17: T810 closed done; T1632 filed - **"Restore All" on a remote
   machine stopped dialing a second connection to ask the question, and an
   expired session stopped being reported as an empty machine.**

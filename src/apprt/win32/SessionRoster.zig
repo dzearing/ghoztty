@@ -1564,6 +1564,41 @@ pub fn rowAt(
     return null;
 }
 
+/// The visible row whose CPU METER contains the client point, or null (T812).
+/// The meter is the smallest thing on a card, so its hover is tested with the
+/// column rect the layout reserved rather than the pieces inside it: the gap
+/// between the bar and its number is part of the meter to anyone pointing at
+/// it, and a hover that dies in that gap reads as a flickering tooltip.
+///
+/// A row with no reading answers null even though the column is reserved —
+/// nothing is painted there, and a tooltip explaining a meter that is not on
+/// screen is worse than no tooltip (the T181 rule: an empty thing is an answer).
+pub fn cpuAt(
+    self: *const SessionRoster,
+    rows: []const VisibleRow,
+    region: chooser_layout.Rect,
+    scale: f32,
+    x: i32,
+    y: i32,
+) ?usize {
+    if (!self.cpu_column) return null;
+    if (x < region.left or x >= region.right) return null;
+    if (y < region.top or y >= region.bottom) return null;
+
+    const m = chooser_sessions.metrics(scale);
+    var cy = region.top - self.scroll;
+    for (rows, 0..) |row, i| {
+        const subs = chooser_sessions.sublineCount(row.session);
+        const l = chooser_sessions.rowLayout(m, region.left, cy, region.width(), subs, self.cpu_column);
+        cy = l.card.bottom + m.row_gap;
+        if (row.cpu == null) continue;
+        if (l.cpu.width() <= 0) continue;
+        if (l.cpu.left <= x and x < l.cpu.right and
+            l.cpu.top <= y and y < l.cpu.bottom) return i;
+    }
+    return null;
+}
+
 /// Whether the keyboard sub-cursor is IN the roster at all — the test the
 /// keyboard routing branches on (Return resumes the cursored row, Up/Down walk
 /// the sessions rather than the machine list).
@@ -1866,6 +1901,113 @@ test "the cursor anchor survives a re-sort, and a gone anchor leaves the list" {
     roster.setCursor("gone");
     roster.enterCursor(&rows);
     try testing.expectEqualStrings("2", roster.cursorId().?);
+}
+
+test "cpuAt answers the meter column, and only where a meter is painted (T812)" {
+    const alloc = testing.allocator;
+    var roster: SessionRoster = .init(alloc);
+    defer roster.deinit();
+    roster.cpu_column = true;
+
+    var buf: [3]VisibleRow = undefined;
+    const rows = testRows(&buf);
+    buf[0].cpu = 12;
+    buf[1].cpu = null; // this agent frame did not name row 1
+    buf[2].cpu = 250;
+
+    const scale: f32 = 1.0;
+    const m = chooser_sessions.metrics(scale);
+    const region: chooser_layout.Rect = .{
+        .left = 0,
+        .top = 0,
+        .right = 400,
+        .bottom = chooser_sessions.rowHeight(m, 0) * 3 + m.row_gap * 3,
+    };
+    const l0 = chooser_sessions.rowLayout(m, region.left, region.top, region.width(), 0, true);
+
+    // The middle of row 0's meter.
+    const mid_x = l0.cpu.left + @divTrunc(l0.cpu.width(), 2);
+    const mid_y = l0.cpu.top + @divTrunc(l0.cpu.height(), 2);
+    try testing.expectEqual(@as(?usize, 0), roster.cpuAt(rows, region, scale, mid_x, mid_y));
+
+    // The gap between the bar and its number is part of the meter to anyone
+    // pointing at it: a hover that died there would read as a flickering tip.
+    const cm = chooser_cpu.metrics(scale);
+    const gap_x = l0.cpu.left + cm.bar_w + @divTrunc(cm.gap, 2);
+    try testing.expectEqual(@as(?usize, 0), roster.cpuAt(rows, region, scale, gap_x, mid_y));
+
+    // The title beside it is not the meter.
+    try testing.expectEqual(
+        @as(?usize, null),
+        roster.cpuAt(rows, region, scale, l0.title.left + 4, mid_y),
+    );
+
+    // Row 1 reserves the column - every row of a supported machine does - but
+    // has no reading, so there is nothing on screen to explain.
+    const row1_y = mid_y + chooser_sessions.rowHeight(m, 0) + m.row_gap;
+    try testing.expectEqual(@as(?usize, null), roster.cpuAt(rows, region, scale, mid_x, row1_y));
+
+    // Row 2 has one, and the walk found it past the row that did not.
+    const row2_y = row1_y + chooser_sessions.rowHeight(m, 0) + m.row_gap;
+    try testing.expectEqual(@as(?usize, 2), roster.cpuAt(rows, region, scale, mid_x, row2_y));
+}
+
+test "cpuAt is silent for a machine whose agent cannot serve the stream (T812)" {
+    const alloc = testing.allocator;
+    var roster: SessionRoster = .init(alloc);
+    defer roster.deinit();
+    roster.cpu_column = false;
+
+    var buf: [2]VisibleRow = undefined;
+    const rows = testRows(&buf);
+    // A stale reading left over from the previous machine must not resurrect a
+    // tooltip for a column that is not reserved at all.
+    buf[0].cpu = 40;
+
+    const scale: f32 = 1.0;
+    const m = chooser_sessions.metrics(scale);
+    const region: chooser_layout.Rect = .{
+        .left = 0,
+        .top = 0,
+        .right = 400,
+        .bottom = chooser_sessions.rowHeight(m, 0) * 2,
+    };
+    const l0 = chooser_sessions.rowLayout(m, region.left, region.top, region.width(), 0, false);
+    try testing.expectEqual(@as(usize, 0), @as(usize, @intCast(l0.cpu.width())));
+    try testing.expectEqual(
+        @as(?usize, null),
+        roster.cpuAt(rows, region, scale, l0.cpu.left, l0.cpu.top + 2),
+    );
+}
+
+test "cpuAt follows the scroll offset the roster is parked at (T812)" {
+    const alloc = testing.allocator;
+    var roster: SessionRoster = .init(alloc);
+    defer roster.deinit();
+    roster.cpu_column = true;
+
+    var buf: [4]VisibleRow = undefined;
+    const rows = testRows(&buf);
+    for (&buf) |*r| r.cpu = 10;
+
+    const scale: f32 = 1.0;
+    const m = chooser_sessions.metrics(scale);
+    const row_h = chooser_sessions.rowHeight(m, 0);
+    const region: chooser_layout.Rect = .{
+        .left = 0,
+        .top = 0,
+        .right = 400,
+        .bottom = row_h * 2,
+    };
+    const l0 = chooser_sessions.rowLayout(m, region.left, region.top, region.width(), 0, true);
+    const mid_x = l0.cpu.left + @divTrunc(l0.cpu.width(), 2);
+    const mid_y = l0.cpu.top + @divTrunc(l0.cpu.height(), 2);
+
+    try testing.expectEqual(@as(?usize, 0), roster.cpuAt(rows, region, scale, mid_x, mid_y));
+    // Scrolled by exactly one row, the same point is row 1's meter - the hit
+    // test reads the offset the painter does, not a frozen origin.
+    roster.scroll = row_h + m.row_gap;
+    try testing.expectEqual(@as(?usize, 1), roster.cpuAt(rows, region, scale, mid_x, mid_y));
 }
 
 test "clampScrollTo pulls a parked offset back into a roster that shrank" {

@@ -103,6 +103,14 @@ pub fn get(self: *SessionCpuProbe, id: []const u8) ?f32 {
     return self.store.get(id);
 }
 
+/// The cadence the AGENT chose for this stream, in milliseconds, or 0 before the
+/// first frame. The agent stretches it under load, and the meter's tooltip says
+/// so (T812) — otherwise a slow-moving meter reads as a broken one.
+pub fn intervalMs(self: *SessionCpuProbe) u32 {
+    if (!self.supported()) return 0;
+    return self.store.intervalMs();
+}
+
 /// Point the probe at a connection — the selected machine's, or null for "no
 /// machine, or one with nothing warm to ride". Idempotent: the same connection
 /// twice keeps the live subscription and its readings instead of churning it.
