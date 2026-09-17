@@ -190,6 +190,62 @@ fn clampTitle(out: []u8, title: []const u8, max: usize) []const u8 {
     return out[0 .. end + ellipsis.len];
 }
 
+/// Drop trailing path separators — `~\git\x\` and `~\git\x` are the same
+/// place, and the two halves of the tip do not agree about the trailing one:
+/// the live cwd read off the OS can carry it where the shell-reported title
+/// does not.
+fn trimTrailingSeps(s: []const u8) []const u8 {
+    var out = s;
+    while (out.len > 0 and isSep(out[out.len - 1])) out = out[0 .. out.len - 1];
+    return out;
+}
+
+/// Path equality for the "does the title say anything new" question: caseless
+/// (Windows), separator-style agnostic (a title may arrive from an MSYS shell
+/// with `/` while the OS read answers `\`), trailing separator ignored.
+fn eqlPath(a_raw: []const u8, b_raw: []const u8) bool {
+    const a = trimTrailingSeps(a_raw);
+    const b = trimTrailingSeps(b_raw);
+    if (a.len != b.len) return false;
+    for (a, b) |ca, cb| {
+        // Either both bytes separate components, or they compare caseless.
+        if (isSep(ca) or isSep(cb)) {
+            if (!(isSep(ca) and isSep(cb))) return false;
+            continue;
+        }
+        if (std.ascii.toLower(ca) != std.ascii.toLower(cb)) return false;
+    }
+    return true;
+}
+
+/// True when the title would only repeat the location line (T1622). An
+/// UNTITLED pane is titled from its pwd — upstream's rule, and the one T512
+/// leans on so a strip of cmd.exe tabs does not read as a row of
+/// `C:\WINDOWS\system32\cmd.exe` — so "the title IS the cwd" is the COMMON
+/// shape here, not a corner case. Riding that title above the location gave a
+/// two-line tooltip whose first line was the RAW path and whose second was the
+/// same path with `~`: the redundant line T556 exists to avoid, in its most
+/// frequent form. Compared after `~`-abbreviation, so a shell that titles
+/// itself `~\git\x` matches the `C:\Users\…\git\x` the OS reports.
+fn titleRepeatsLocation(title: []const u8, location: []const u8, home: ?[]const u8) bool {
+    if (title.len == 0 or location.len == 0) return false;
+    // Raw first: `tildeHome` matches the home prefix caselessly but NOT across
+    // separator styles, so an MSYS-shaped `c:/users/david/x` title never
+    // abbreviates while the OS-read location does — and the two abbreviations
+    // then disagree about a place they both name. Comparing raw is exactly the
+    // test that survives that.
+    if (eqlPath(title, location)) return true;
+    var tbuf: [1024]u8 = undefined;
+    var lbuf: [1024]u8 = undefined;
+    if (title.len > tbuf.len or location.len > lbuf.len) return false;
+    // Then abbreviated, for a shell that titles itself `~\git\x` where the OS
+    // answers the full `C:\Users\…\git\x`.
+    return eqlPath(
+        tildeHome(&tbuf, title, home),
+        tildeHome(&lbuf, location, home),
+    );
+}
+
 /// Title-aware composition (T556). When the strip ELIDED the painted title,
 /// the full title rides as a first line above the location — the one thing a
 /// hover could not previously rescue. When the title fit, the tip stays
@@ -204,6 +260,9 @@ pub fn tipTextTitled(
     home: ?[]const u8,
 ) ?[]const u8 {
     if (!title_elided or title.len == 0) return tipText(out, location, home);
+    // A title that only restates the location is dropped, elided or not
+    // (T1622) — the location line already says it, in the friendlier form.
+    if (titleRepeatsLocation(title, location, home)) return tipText(out, location, home);
 
     var tbuf: [max_len]u8 = undefined;
     const t = clampTitle(&tbuf, title, max_len);
@@ -392,6 +451,82 @@ test "tipTextTitled: a title that fit keeps the tip location-only" {
             "C:\\Users\\David\\git\\ghoztty",
             "C:\\Users\\David",
         ).?,
+    );
+}
+
+test "tipTextTitled: a pwd-derived title does not repeat the location" {
+    var buf: [max_tip_len]u8 = undefined;
+    // The common shape (T1622): an untitled pane is titled from its pwd, so
+    // the title IS the raw path the location line already carries. One line,
+    // the friendly one — not the raw path above its own abbreviation.
+    try testing.expectEqualStrings(
+        "~\\git\\ghoztty",
+        tipTextTitled(
+            &buf,
+            "C:\\Users\\David\\git\\ghoztty",
+            true,
+            "C:\\Users\\David\\git\\ghoztty",
+            "C:\\Users\\David",
+        ).?,
+    );
+}
+
+test "tipTextTitled: a repeat is seen through a trailing separator and case" {
+    var buf: [max_tip_len]u8 = undefined;
+    // The live cwd read off the OS carries a trailing separator the shell's
+    // title does not, and an MSYS-reported title differs in case and slash
+    // style — none of which makes it a different place. The location line is
+    // still the location VERBATIM (bar the `~`): trimming its trailing
+    // separator here would also turn a root `C:\` into `C:`.
+    try testing.expectEqualStrings(
+        "~\\git\\ghoztty\\",
+        tipTextTitled(
+            &buf,
+            "c:/users/david/git/ghoztty",
+            true,
+            "C:\\Users\\David\\git\\ghoztty\\",
+            "C:\\Users\\David",
+        ).?,
+    );
+}
+
+test "tipTextTitled: a title ALREADY in ~ form still counts as a repeat" {
+    var buf: [max_tip_len]u8 = undefined;
+    try testing.expectEqualStrings(
+        "~\\git\\ghoztty",
+        tipTextTitled(
+            &buf,
+            "~\\git\\ghoztty",
+            true,
+            "C:\\Users\\David\\git\\ghoztty",
+            "C:\\Users\\David",
+        ).?,
+    );
+}
+
+test "tipTextTitled: a title that is a DIFFERENT path still rides above" {
+    var buf: [max_tip_len]u8 = undefined;
+    // The suppression is "says nothing new", not "looks like a path": a tab
+    // titled with another directory is information the location line lacks.
+    try testing.expectEqualStrings(
+        "C:\\Windows\\System32\n~\\git\\ghoztty",
+        tipTextTitled(
+            &buf,
+            "C:\\Windows\\System32",
+            true,
+            "C:\\Users\\David\\git\\ghoztty",
+            "C:\\Users\\David",
+        ).?,
+    );
+}
+
+test "tipTextTitled: a repeated title with no location is still title-only" {
+    var buf: [max_tip_len]u8 = undefined;
+    // An empty location cannot be repeated, so the elided title survives —
+    // the T556 title-only path is not what T1622 narrowed.
+    try testing.expectEqualStrings(
+        "C:\\Users\\David\\git\\ghoztty",
+        tipTextTitled(&buf, "C:\\Users\\David\\git\\ghoztty", true, "", "C:\\Users\\David").?,
     );
 }
 

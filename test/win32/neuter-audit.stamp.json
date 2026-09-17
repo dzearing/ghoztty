@@ -1,12 +1,10 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-09-16T11:44:47-07:00",
-    "commit":  "d72f4bd58",
+    "generated":  "2026-09-16T17:26:33-07:00",
+    "commit":  "f58a74025",
     "uncommitted":  [
-                        "src/apprt/win32/activity_rows.zig",
-                        "src/apprt/win32/MachineChooser.zig",
-                        "src/apprt/win32/text_search.zig"
+                        "src/apprt/win32/tab_tooltip.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -186,7 +184,7 @@
                   "src/apprt/win32/tab_color.zig":  "ee99fbcd94d862893aa21d4bcd3c3f7f393bcb56efd94d9061a4697971973063",
                   "src/apprt/win32/tab_shape.zig":  "df05afbe96f60a3155b90060436079f8414d1461e6e66b8381be74965e00cb0a",
                   "src/apprt/win32/tab_strip_layout.zig":  "f5b238a3c03773166e2d433f75c044eed2f29a1b0840e281ae71ae4261450aa3",
-                  "src/apprt/win32/tab_tooltip.zig":  "9dbb27927b691d7776b74d10e6cadaf911a7e50c548b1a6f80ceab3752473303",
+                  "src/apprt/win32/tab_tooltip.zig":  "025ee7c931d72df745e0d633c97ca02e7adcd03fdf94a287789db88d8f9e821f",
                   "src/apprt/win32/text_search.zig":  "ebcf6476b6536e4ff28323795ae4922259a14684c489c6ac31d814da67b645e8",
                   "src/apprt/win32/title_font.zig":  "667b752eff243abd0730eb33a74feb4d24aa6938d0b40e4e49e9aaf03476e15d",
                   "src/apprt/win32/title_spinner.zig":  "97fefca59d4ec61b52c5788b50850ba288dbc3bcc255b07f130641fe8ba03e14",

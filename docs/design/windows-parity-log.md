@@ -30647,3 +30647,49 @@ another one saw eight stray `ping` rows in M (and nine in O), tripped the safety
 guard into refusing to click, and scored a red that meant nothing about the app;
 a run started a couple of minutes later was ALL PASS. Eight is exactly the
 previous run's `New-PanelSpawn` count, which is the lead the task records.
+
+## 2026-09-16 - T1622: the tab tooltip stops saying the folder twice, once the long way
+
+Hovering a tab was answering with two lines that named the same directory: the
+raw `C:\Users\David\AppData\Local\Temp\...\tipA268`, a newline, and then the
+same path as `~\AppData\Local\Temp\...\tipA268`. The second line is the feature
+(T447); the first was T556's rescue of an ELIDED tab title, firing on a title
+that was the directory itself.
+
+Which side was wrong was the whole question, and the answer is the product. An
+UNTITLED pane is titled from its pwd - upstream's untitled-window rule in
+`stream_handler.reportPwd`, and the rule T512 leans on so a strip of cmd.exe
+tabs does not read as a row of `C:\WINDOWS\system32\cmd.exe`. So "the tab title
+IS the cwd" is not a corner case here, it is what every tab of a shell that does
+not title itself looks like; and a path deep enough to pass half the run gets
+elided, which armed T556 on it. T556's own summary says the rule out loud - "a
+line repeating what the tab already shows is noise" - so this was that rule
+being violated by its own implementation, in its most frequent form.
+
+`tab_tooltip.tipTextTitled` now drops a title line that only restates the
+location, elided or not. The comparison (`titleRepeatsLocation` ->`eqlPath`) is
+caseless, separator-style agnostic and ignores a trailing separator, because the
+two halves of the tip do not arrive in one shape: the OS-read live cwd carries a
+trailing `\` the shell-reported title does not (visible in arm C's oracle), and
+an MSYS-shaped title reports `c:/users/david/...` where the OS answers `C:\`.
+Raw paths are compared FIRST and the `~`-abbreviated pair second - `tildeHome`
+matches the home prefix caselessly but not across separator styles, so on an
+MSYS title only one side of that pair abbreviates and the two disagree about a
+place they both name. The location line stays verbatim bar the `~`: trimming its
+trailing separator too would turn a root `C:\` into `C:`.
+
+The harness half is the reason this was worth a P1: `test\win32\tab-tooltip.ps1`
+had been red since it was last edited, and its "a title that FITS keeps the tip
+cwd-only" control was measuring the DEFAULT title - which is the cwd - so once
+this fix landed that assertion would have passed on the suppression rather than
+on the elision verdict it exists to score. It now sets a given short title
+(`T556-fits-555`) first and asserts the fits path against that, and new arm G
+scores T1622 directly at the 700px width the arm above it has just proved elides
+a title that wide: a tab retitled to its own cwd gets ONE line, starting with
+`~`, still naming the directory.
+
+Evidence: `tab-tooltip.ps1` ALL PASS (25 assertions, was `2 FAILURE(S) / 18
+passed`), guard re-stamped; arm A reads `~\AppData\Local\Temp\...\tipA112` where
+it read the two-line form before. 5 new `tipTextTitled` tests in the none lane
+(27/27 standalone). `floor-lane.ps1 -Lane all` ALL LANES PASS; `-Lane harness`
+PASS for the guards this script edit made due.

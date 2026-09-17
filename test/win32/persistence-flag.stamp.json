@@ -1,10 +1,10 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-09-16T16:09:41-07:00",
-    "commit":  "b2d67fe03",
+    "generated":  "2026-09-16T17:27:29-07:00",
+    "commit":  "f58a74025",
     "uncommitted":  [
-                        "test/win32/seam-audit.ps1"
+                        "test/win32/tab-tooltip.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "a736047ae58130876460e390abc9e0e5cceef937f237386f180b44e5ab1f30e2",
@@ -274,7 +274,7 @@
                   "test/win32/tab-overview-action.ps1":  "1e9d4753c755d9846699c726a1521ef343531e4c4887e0602488bd8cf5212382",
                   "test/win32/tab-strip.ps1":  "08acaa113a4b48a8e3b0e72b086f98fc464be492ed60ca2d4545d9e8603f18e2",
                   "test/win32/tab-strip-autohide.ps1":  "18a71e8d3baf08f01dac56de94897f7ac7d116d625eccc4dd4f5cf13971e153e",
-                  "test/win32/tab-tooltip.ps1":  "e046378e7f6264fa9b0748f743f00fe41bcb69a24592244ce5564459f63c84d4",
+                  "test/win32/tab-tooltip.ps1":  "792d773047ed21a864521a87c587be3b17aae5b0a092f031cf60559357402fff",
                   "test/win32/target-staleness.ps1":  "25c28c99d39716155584ecda6f7a826dae310b3adaad3ae6dbb962c38f7f7d80",
                   "test/win32/task-dashboard.ps1":  "83ae13b22703ef50c7a3abe8fa7f819ffd4534578e9ad231b8975590bd9cc551",
                   "test/win32/terminal-link-paths.ps1":  "f3ba874ca9f97125334319222b41e785a24c9168e6bbb3b78205a1c3bc85b161",

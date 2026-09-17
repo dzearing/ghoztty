@@ -37,6 +37,10 @@
 #      relaunched, same agent; the re-attached shell's real cwd answers).
 #   E: an ELIDED tab title rides above the cwd as the tip's first line, and
 #      a title that fits keeps the tip cwd-only (T556).
+#   G: a title that only RESTATES the cwd is not rescued as a first line,
+#      elided or not - an untitled pane is titled from its pwd, so that is
+#      the common shape and the raw path over its own `~` form was the
+#      redundant line T556 was written to avoid (T1622).
 #   D: a tab whose focused pane is a VIEWER reports the viewer's location.
 #   F: an OS apps-theme flip RESETS the tooltip control, so the next show
 #      recreates it on the fresh theme (T557).
@@ -250,11 +254,30 @@ try {
         # E (T556): an ELIDED tab title rides above the cwd as a first line.
         # The oracle logs the two-line tip with the newline escaped to the
         # literal `\n`, so one grep line carries both halves. Negative
-        # control first: the current (short) title fits, so the tip must
-        # still be cwd-only. Then a title far wider than a 700px window's
-        # 50%-capped tab forces the strip to ellipsize, and the tip must
-        # answer with the FULL title + `\n` + the cwd.
+        # control first: the current title fits, so the tip must still be
+        # cwd-only. Then a title far wider than a 700px window's 50%-capped
+        # tab forces the strip to ellipsize, and the tip must answer with the
+        # FULL title + `\n` + the cwd.
+        #
+        # The FIRST negative control below is a title the tab was GIVEN and
+        # that fits - not the pwd-derived default. The default title IS the
+        # cwd (stream_handler's untitled-window rule, T512), so a tip that is
+        # cwd-only against it proves nothing about the fits path: T1622's
+        # suppression would carry that assertion on its own even if the
+        # elision verdict were stuck at "elided". One assertion per rule.
         # -------------------------------------------------------------------
+        $leavesE0 = @(All-Leaves (Get-List 'e00'))
+        $paneE0 = $leavesE0[0].id
+        $fitTitle = 'T556-fits-555'
+        Run-CliArgs @('+send-keys', "--target=$paneE0", 'title', 'Space', $fitTitle, 'Enter') "$root\title-fit.txt" 12 | Out-Null
+        $probeFit = $null
+        for ($t = 0; $t -lt 8; $t++) {
+            $probeFit = Probe-TipText $top2 $m2 $errlog2
+            if ($probeFit -like "*$(Split-Path $dirB -Leaf)*" -and $probeFit -notlike '*\n*') { break }
+            Start-Sleep -Milliseconds 700
+        }
+        Assert ($probeFit -notlike '*\n*') "E: a given title that FITS keeps the tip cwd-only ($probeFit)"
+        Assert ($probeFit -like "*$(Split-Path $dirB -Leaf)*") "E: the fits-path tip is still the cwd ($probeFit)"
         Assert ($probe -notlike '*\n*') "E: a title that fits keeps the tip cwd-only ($probe)"
         Set-TestWindowSize -Window $top2 -Width 700 -Height 700 | Out-Null
         Start-Sleep -Milliseconds 1200
@@ -276,6 +299,30 @@ try {
         Assert ($probe -like "*$longTitle*") "E: the tip carries the FULL title the strip elided ($probe)"
         Assert ($probe -like "*$longTitle\n*") "E: the title is its own line above the cwd ($probe)"
         Assert ($probe -like "*\n*$(Split-Path $dirB -Leaf)*") "E: the cwd line survives below the title ($probe)"
+
+        # -------------------------------------------------------------------
+        # G (T1622): a title that only RESTATES the cwd is not rescued, even
+        # when the strip elided it. This is the common shape, not a corner:
+        # an untitled pane is titled from its pwd (stream_handler's
+        # untitled-window rule, T512), so before the fix a hover over any
+        # cmd.exe tab with a deep cwd answered with the RAW path above the
+        # same path in `~` form - the redundant line T556 exists to avoid.
+        # Deliberately at 700px, where the previous arm just PROVED a title
+        # this wide is elided, so a pass cannot be "the title happened to
+        # fit". The retitle is the path itself, with backslashes doubled for
+        # `+send-keys` text escapes (same as the cd above).
+        # -------------------------------------------------------------------
+        Run-CliArgs @('+send-keys', "--target=$paneE", 'title', 'Space', $dirB.Replace('\', '\\'), 'Enter') "$root\title-pwd.txt" 12 | Out-Null
+        $probeG = $null
+        for ($t = 0; $t -lt 8; $t++) {
+            $probeG = Probe-TipText $top2 $m2e $errlog2
+            if ($null -ne $probeG -and $probeG -notlike '*T556-elided-title-*') { break }
+            Start-Sleep -Milliseconds 700
+        }
+        Assert ($probeG -notlike '*\n*') "G: a title that only restates the cwd is not rescued ($probeG)"
+        Assert ($probeG -like '~*') "G: the one line left is the ~-abbreviated cwd ($probeG)"
+        Assert ($probeG -like "*$(Split-Path $dirB -Leaf)*") "G: and it still names the directory ($probeG)"
+
         Set-TestWindowSize -Window $top2 -Width 1200 -Height 700 | Out-Null
         Start-Sleep -Milliseconds 1200
 
