@@ -312,6 +312,85 @@ else {
     $script:skipped++
 }
 
+# ------------------------- 6b. the offered one-time arm for full dumps (T808)
+
+# A mini dump answers a stack question and drops the heap, which is what a
+# corruption crash is made of. Full memory is a per-exe DumpType=2 under HKLM,
+# so arming it is an elevated act -- and an elevated act is exactly the shape
+# that gets asserted about instead of tested. The key root is redirectable
+# (GHOZTTY_WER_KEY_ROOT), so the WRITE runs for real here, under HKCU, with no
+# administrator anywhere in the picture.
+
+$sandboxRoot = 'HKCU:\Software\ghoztty-test-t808\LocalDumps'
+Remove-Item -LiteralPath 'HKCU:\Software\ghoztty-test-t808' -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -Path $sandboxRoot -Force | Out-Null
+$savedRoot = $env:GHOZTTY_WER_KEY_ROOT
+# Deliberately NOT a try/finally: an unwind inside one would skip the rest of
+# this run and still reach the verdict (body-complete-audit D1). If something
+# here throws, the run dies without a verdict, which is the honest outcome.
+$env:GHOZTTY_WER_KEY_ROOT = $sandboxRoot
+
+$plan = @(Get-WerArmFullPlan)
+Check 'the arm plan covers every binary a crash of ours is taken of' `
+    ($plan.Count -ge 3 -and ($plan.ExeName -contains 'ghoztty.exe') -and ($plan.ExeName -contains 'ghoztty-agent.exe') `
+        -and ($plan.ExeName -contains 'ghostty-test.exe')) ("got: " + ($plan.ExeName -join ', '))
+Check 'the plan says what it would write, as a command a human can run' `
+    (($plan | Where-Object { $_.Command -match 'reg add .*DumpType /t REG_DWORD /d 2' }).Count -eq $plan.Count)
+Check 'the plan names the registry path in reg.exe form, not PowerShell drive form' `
+    (($plan[0].Command -notmatch 'HKCU:') -and ($plan[0].Command -match 'HKCU.Software'))
+Check 'nothing on a mini-dump box reads as already armed' `
+    (($plan | Where-Object { -not $_.Needed }).Count -eq 0)
+
+$armed = @(Set-WerFullDumpArm)
+Check 'the arm reports success for every target' (($armed | Where-Object { $_.Ok }).Count -eq $armed.Count) `
+    (($armed | Where-Object { -not $_.Ok } | ForEach-Object { $_.Error }) -join '; ')
+$cfgFull = Get-WerLocalDumpConfig -ExeName 'ghoztty.exe'
+Check 'an armed binary now reads as full' ($cfgFull.DumpTypeName -eq 'full') "got '$($cfgFull.DumpTypeName)'"
+Check 'the armed entry is per-exe, not machine-wide' ($cfgFull.Scope -eq 'per-exe') "got '$($cfgFull.Scope)'"
+Check 'the arm sets DumpType alone, so folder and retention still come from the global key' `
+    ($cfgFull.DumpCount -eq 10) "got $($cfgFull.DumpCount)"
+$cfgOther = Get-WerLocalDumpConfig -ExeName 'someone-elses.exe'
+Check 'a binary that is not ours is left on mini' ($cfgOther.DumpTypeName -eq 'mini') "got '$($cfgOther.DumpTypeName)'"
+Check 'the arm is idempotent (a second run changes nothing)' `
+    ((@(Set-WerFullDumpArm) | Where-Object { $_.Changed }).Count -eq 0)
+
+$disarmed = @(Remove-WerFullDumpArm)
+Check 'the disarm reports success for every target' (($disarmed | Where-Object { $_.Ok }).Count -eq $disarmed.Count)
+Check 'the disarm leaves no per-exe subkey behind' `
+    ((@(Get-ChildItem -LiteralPath $sandboxRoot -ErrorAction SilentlyContinue)).Count -eq 0)
+Check 'the disarm never touches the global key -- that is the capture switch' `
+    (Test-Path -LiteralPath $sandboxRoot)
+Check 'after the disarm the binary reads as mini again' `
+    ((Get-WerLocalDumpConfig -ExeName 'ghoztty.exe').DumpTypeName -eq 'mini')
+if ($null -eq $savedRoot) { Remove-Item Env:\GHOZTTY_WER_KEY_ROOT -ErrorAction SilentlyContinue }
+else { $env:GHOZTTY_WER_KEY_ROOT = $savedRoot }
+Remove-Item -LiteralPath 'HKCU:\Software\ghoztty-test-t808' -Recurse -Force -ErrorAction SilentlyContinue
+
+# The CLI half, unelevated on purpose: it must print the commands and FAIL,
+# never report an arm it did not perform. (This run is unelevated; if it ever
+# is not, the offer would have written to the real HKLM, so the check is
+# conditional rather than silently inverted.)
+if (-not (Test-IsElevated)) {
+    $armLog = Join-Path $work 'armfull.log'
+    cmd.exe /c "powershell -NoProfile -File `"$Repo\scripts\crash-catch.ps1`" -ArmFull -NoElevate > `"$armLog`" 2>&1" | Out-Null
+    $armCode = $LASTEXITCODE
+    $armText = (Get-Content $armLog -Raw -ErrorAction SilentlyContinue)
+    Check '-ArmFull -NoElevate exits 2 rather than claiming an arm it cannot do' ($armCode -eq 2) "got $armCode"
+    Check '-ArmFull -NoElevate says an administrator is needed' ($armText -match 'needs an administrator')
+    Check '-ArmFull -NoElevate prints the exact commands' `
+        ($armText -match 'reg add .*LocalDumps.ghoztty\.exe. /v DumpType /t REG_DWORD /d 2')
+    Check '-ArmFull -NoElevate raises no UAC prompt' ($armText -notmatch 'asking for elevation')
+}
+else {
+    Write-Host 'SKIP the unelevated -ArmFull offer: this run IS elevated, and the real HKLM is not a test fixture'
+    $script:skipped++
+}
+
+Check '-Status names the dump type per binary, not just the box' `
+    ($statText -match 'ghoztty-agent\.exe\s+(mini|full) dumps') "status said: $statText"
+Check '-Status offers the arm whenever a binary is still on mini' `
+    (($statText -notmatch 'mini dumps') -or ($statText -match 'crash-catch\.ps1 -ArmFull')) "status said: $statText"
+
 # --------------------------------------- 7. the wrapper still runs with it
 
 $selfOut = & powershell -NoProfile -File (Join-Path $Repo 'scripts\floor-lane.ps1') -SelfTest 2>&1
@@ -333,4 +412,4 @@ if ($script:failures -eq 0 -and $script:skipped -eq 0) {
         update -Guard crash-first-chance -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 
-Write-TestVerdict -Pass $passes -Fail $failures -Skipped $script:skipped -MinPass 20
+Write-TestVerdict -Pass $passes -Fail $failures -Skipped $script:skipped -MinPass 30

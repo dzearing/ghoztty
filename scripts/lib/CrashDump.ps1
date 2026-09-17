@@ -58,6 +58,58 @@ if (-not (Get-Command Read-CrashCatchLog -ErrorAction SilentlyContinue)) {
 # HKLM, and only HKLM -- see the measured note at the top.
 $script:WER_LOCALDUMPS_KEY = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
 
+# The binaries a crash of ours is ever taken of: both zig test lanes build a
+# ghostty-test.exe, the app is ghoztty.exe, the daemon is ghoztty-agent.exe.
+$script:WER_FULL_DUMP_TARGETS = @('ghostty-test.exe', 'ghoztty.exe', 'ghoztty-agent.exe')
+
+function Get-WerLocalDumpsKeyRoot {
+    <#
+    .SYNOPSIS
+        The LocalDumps key everything here reads and writes.
+    .DESCRIPTION
+        HKLM in every real use. GHOZTTY_WER_KEY_ROOT redirects it at a key the
+        caller can actually write without elevation, which is the only way the
+        ARM path (below) is provable rather than merely asserted about: the real
+        one needs an administrator and a UAC prompt, so a test that exercised it
+        for real could not run in a lane. Same shape as GHOZTTY_CRASH_NO_WER;
+        unset everywhere except that test.
+    #>
+    if ($env:GHOZTTY_WER_KEY_ROOT) { return $env:GHOZTTY_WER_KEY_ROOT }
+    return $script:WER_LOCALDUMPS_KEY
+}
+
+function Get-WerFullDumpTargets {
+    <#
+    .SYNOPSIS
+        The exe names a full-memory arm covers.
+    #>
+    # Plain array: callers wrap in @(), and a `, @(...)` here would hand them
+    # an array holding an array (PS 5.1).
+    return $script:WER_FULL_DUMP_TARGETS
+}
+
+function ConvertTo-RegCommandPath {
+    <#
+    .SYNOPSIS
+        'HKLM:\SOFTWARE\...' -> 'HKLM\SOFTWARE\...', i.e. what reg.exe takes.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    return ($Path -replace '^([A-Za-z]+):', '$1')
+}
+
+function Test-IsElevated {
+    <#
+    .SYNOPSIS
+        Is this process running as an administrator?
+    #>
+    try {
+        $id = [Security.Principal.WindowsIdentity]::GetCurrent()
+        return ([Security.Principal.WindowsPrincipal]$id).IsInRole(
+            [Security.Principal.WindowsBuiltInRole]::Administrator)
+    }
+    catch { return $false }
+}
+
 function Get-WerDumpTypeName {
     param([int]$Type)
     switch ($Type) {
@@ -92,7 +144,7 @@ function Get-WerLocalDumpConfig {
         DumpType     = 0
         DumpTypeName = ''
         DumpCount    = 0
-        Key          = $script:WER_LOCALDUMPS_KEY
+        Key          = (Get-WerLocalDumpsKeyRoot)
     }
     # The seam that reproduces a box with no first-crash capture from this same
     # tree, so the fallback (re-run under cdb) stays measurable and the claim
@@ -100,8 +152,9 @@ function Get-WerLocalDumpConfig {
     # Unset everywhere except that test.
     if ($env:GHOZTTY_CRASH_NO_WER -and $env:GHOZTTY_CRASH_NO_WER -ne '0') { return $res }
 
-    $global = Get-ItemProperty -Path $script:WER_LOCALDUMPS_KEY -ErrorAction SilentlyContinue
-    if (-not (Test-Path -LiteralPath $script:WER_LOCALDUMPS_KEY)) { return $res }
+    $root = Get-WerLocalDumpsKeyRoot
+    $global = Get-ItemProperty -Path $root -ErrorAction SilentlyContinue
+    if (-not (Test-Path -LiteralPath $root)) { return $res }
 
     $res.Armed = $true
     $res.Scope = 'global'
@@ -115,7 +168,7 @@ function Get-WerLocalDumpConfig {
         if ($null -ne $global.DumpCount) { $count = [int]$global.DumpCount }
     }
     if ($ExeName) {
-        $exeKey = Join-Path $script:WER_LOCALDUMPS_KEY $ExeName
+        $exeKey = Join-Path $root $ExeName
         if (Test-Path -LiteralPath $exeKey) {
             $res.Scope = 'per-exe'
             $res.Key = $exeKey
@@ -135,10 +188,136 @@ function Get-WerLocalDumpConfig {
     return $res
 }
 
+function Get-WerArmFullPlan {
+    <#
+    .SYNOPSIS
+        What a full-memory arm WOULD write, per exe, without writing anything.
+    .DESCRIPTION
+        The plan is the honest half of an elevated act: it is what -NoElevate
+        prints, what the elevated run executes, and what a test can check
+        without an administrator anywhere in the picture.
+    .OUTPUTS
+        One object per exe: ExeName, Key, CurrentType, CurrentTypeName, Needed,
+        Command (the reg.exe line that would do it by hand).
+    #>
+    param([string[]]$ExeNames)
+
+    if (-not $ExeNames -or $ExeNames.Count -eq 0) { $ExeNames = @(Get-WerFullDumpTargets) }
+    $root = Get-WerLocalDumpsKeyRoot
+    $plan = @()
+    foreach ($name in $ExeNames) {
+        $cfg = Get-WerLocalDumpConfig -ExeName $name
+        $key = Join-Path $root $name
+        $plan += [pscustomobject]@{
+            ExeName         = $name
+            Key             = $key
+            CurrentType     = $cfg.DumpType
+            CurrentTypeName = $cfg.DumpTypeName
+            Needed          = ($cfg.DumpType -ne 2)
+            Command         = ('reg add "{0}" /v DumpType /t REG_DWORD /d 2 /f' -f (ConvertTo-RegCommandPath -Path $key))
+        }
+    }
+    return $plan
+}
+
+function Set-WerFullDumpArm {
+    <#
+    .SYNOPSIS
+        Write the per-exe DumpType=2 entries -- the one-time elevated act.
+    .DESCRIPTION
+        Per-exe rather than global on purpose: a machine-wide DumpType=2 makes
+        Windows keep full memory for every process on the box that ever dies,
+        which is somebody else's disk. Each entry sets DumpType alone, so the
+        folder and retention stay whatever the global key says (a per-exe subkey
+        overrides value by value, not wholesale).
+
+        Needs a writable key root -- HKLM, therefore an administrator -- and
+        says so rather than throwing: the caller's job is to offer elevation.
+    .OUTPUTS
+        One object per exe: ExeName, Key, Ok, Changed, Error.
+    #>
+    param([string[]]$ExeNames)
+
+    $results = @()
+    foreach ($item in (Get-WerArmFullPlan -ExeNames $ExeNames)) {
+        $ok = $true
+        $changed = $false
+        $err = ''
+        try {
+            if (-not (Test-Path -LiteralPath $item.Key)) {
+                New-Item -Path $item.Key -Force -ErrorAction Stop | Out-Null
+            }
+            New-ItemProperty -Path $item.Key -Name 'DumpType' -Value 2 -PropertyType DWord -Force -ErrorAction Stop | Out-Null
+            $changed = $item.Needed
+        }
+        catch {
+            $ok = $false
+            $err = $_.Exception.Message
+        }
+        $results += [pscustomobject]@{
+            ExeName = $item.ExeName
+            Key     = $item.Key
+            Ok      = $ok
+            Changed = $changed
+            Error   = $err
+        }
+    }
+    return $results
+}
+
+function Remove-WerFullDumpArm {
+    <#
+    .SYNOPSIS
+        Undo Set-WerFullDumpArm: drop the per-exe subkeys again.
+    .DESCRIPTION
+        The whole subkey, not just the value -- Set-WerFullDumpArm is what
+        created it, and leaving an empty per-exe key behind would make
+        Get-WerLocalDumpConfig report scope 'per-exe' for a binary nothing is
+        configured for. The global key is never touched: that is the switch
+        that keeps first-crash capture working at all.
+    .OUTPUTS
+        One object per exe: ExeName, Key, Ok, Changed, Error.
+    #>
+    param([string[]]$ExeNames)
+
+    if (-not $ExeNames -or $ExeNames.Count -eq 0) { $ExeNames = @(Get-WerFullDumpTargets) }
+    $root = Get-WerLocalDumpsKeyRoot
+    $results = @()
+    foreach ($name in $ExeNames) {
+        $key = Join-Path $root $name
+        $ok = $true
+        $changed = $false
+        $err = ''
+        if (Test-Path -LiteralPath $key) {
+            try {
+                Remove-Item -LiteralPath $key -Recurse -Force -ErrorAction Stop
+                $changed = $true
+            }
+            catch {
+                $ok = $false
+                $err = $_.Exception.Message
+            }
+        }
+        $results += [pscustomobject]@{
+            ExeName = $name
+            Key     = $key
+            Ok      = $ok
+            Changed = $changed
+            Error   = $err
+        }
+    }
+    return $results
+}
+
 function Write-WerArmedStatus {
     <#
     .SYNOPSIS
-        One or three lines saying whether the first crash will be captured.
+        Whether the first crash will be captured, and in how much detail.
+    .DESCRIPTION
+        The detail line is per binary since T808: "armed (global, mini ...)"
+        was true of the box and said nothing about whether the program you care
+        about keeps its heap, which is the difference between a corruption
+        crash being investigable and not.
     #>
     param(
         [string[]]$ExeNames = @('ghostty-test.exe'),
@@ -148,15 +327,25 @@ function Write-WerArmedStatus {
     if (-not $cfg.Armed) {
         & $Writer 'first-crash capture: NOT ARMED -- Windows is not keeping a dump when a process dies.'
         & $Writer '  Arm it once, from an elevated shell (machine-wide; HKCU is ignored):'
-        & $Writer ('  reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" /f')
+        & $Writer ('  reg add "{0}" /f' -f (ConvertTo-RegCommandPath -Path (Get-WerLocalDumpsKeyRoot)))
         & $Writer '  Until then a crash can only be diagnosed by reproducing it under cdb.'
         return $false
     }
     & $Writer ("first-crash capture: armed ({0}, {1} dumps, keep {2}) -> {3}" -f `
             $cfg.Scope, $cfg.DumpTypeName, $cfg.DumpCount, $cfg.DumpFolder)
-    if ($cfg.DumpType -ne 2) {
-        & $Writer ('  mini dumps carry every thread stack, which is what a stack question needs. For full memory, elevated:')
-        & $Writer ('  reg add "HKLM\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps\{0}" /v DumpType /t REG_DWORD /d 2 /f' -f $ExeNames[0])
+
+    $targets = @(Get-WerFullDumpTargets)
+    foreach ($name in $ExeNames) { if ($targets -notcontains $name) { $targets += $name } }
+    $mini = @()
+    foreach ($item in (Get-WerArmFullPlan -ExeNames $targets)) {
+        & $Writer ('  {0,-20} {1} dumps' -f $item.ExeName, $item.CurrentTypeName)
+        if ($item.Needed) { $mini += $item.ExeName }
+    }
+    if ($mini.Count -gt 0) {
+        & $Writer '  mini dumps carry every thread stack, which is what a stack question needs; they drop the heap a'
+        & $Writer '  corruption crash needs. To keep full memory for the binaries above (one UAC prompt, once):'
+        & $Writer '  powershell -NoProfile -File scripts\crash-catch.ps1 -ArmFull'
+        & $Writer '  (-NoElevate prints the reg commands instead; -Disarm puts it back.)'
     }
     return $true
 }

@@ -222,12 +222,20 @@ lane now reads that dump first (`cdb -z`, about a second) and reaches the
 
 Four things that look like details and are not:
 
-- **A mini dump answers a stack question.** LocalDumps' default type carries
-  every thread's stack, which is what the re-run was bought for; full memory
-  needs a per-exe `DumpType=2` under **HKLM** and therefore elevation, so it is
-  an upgrade and not a precondition. **HKCU is ignored outright** — measured: a
-  `DumpFolder` set there was skipped and the dump still landed in the HKLM
-  default folder.
+- **A mini dump answers a stack question; a corruption question needs the heap**
+  (T808). LocalDumps' default type carries every thread's stack, which is what
+  the re-run was bought for, and drops the process memory a heap-corruption
+  crash is made of. Full memory is a per-exe `DumpType=2` under **HKLM** and
+  therefore elevation — **HKCU is ignored outright**, measured: a `DumpFolder`
+  set there was skipped and the dump still landed in the HKLM default folder —
+  so it is an OFFER rather than a precondition:
+  `crash-catch.ps1 -ArmFull` raises one UAC prompt and writes an entry per
+  binary of ours (`-NoElevate` prints the exact `reg add` lines instead and
+  exits 2; `-Disarm` removes them again, never the global key). `-Status` names
+  the dump type per binary, so "does ghoztty.exe keep its heap?" is answerable
+  without reading the registry. The write path is proven for real against an
+  HKCU sandbox through the `GHOZTTY_WER_KEY_ROOT` seam, because an elevated act
+  is otherwise the kind of thing that only ever gets asserted about.
 - **The recorded exception is zig's handler aborting, not the fault.** The
   handler runs first and aborts, so the dump's exception is `0x80000003`; the
   frames that faulted are still on that same thread's stack *under*

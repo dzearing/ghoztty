@@ -30923,3 +30923,50 @@ PASS. The harness also gets a `guard-due` row (`resume-offset`) over
 reasons, and covering them anyway is the point - this script is the only thing
 that can see either number, and this is the second time in one card's history
 that everything else was green while the mechanism under it was not running.
+
+## 2026-09-17 - T808: a corruption crash can keep its heap now, and turning that on is one offer
+
+WER's LocalDumps has been armed on this box since T460, which is why a red lane
+gets a stack in a second instead of a ten-minute re-run. What it keeps is a MINI
+dump: every thread's stack, and none of the process memory. For the crash family
+this tooling exists for - something scribbling over the heap - the stack says
+where the corpse fell over and the heap says who shot it, and we were throwing
+the second half away.
+
+Full memory is a per-exe `DumpType=2` under HKLM, so it needs an administrator,
+and until now the whole of our support for it was a raw `reg add` line printed in
+a status message. Now it is an offer:
+`crash-catch.ps1 -ArmFull` raises one UAC prompt and writes an entry for each of
+`ghostty-test.exe`, `ghoztty.exe` and `ghoztty-agent.exe`; `-NoElevate` prints the
+exact commands and exits 2 instead of pretending; `-Disarm` removes them again
+and never touches the global key, which is the switch that keeps first-crash
+capture working at all. Per-exe rather than machine-wide on purpose: a global
+DumpType=2 would make Windows keep full memory for every process on the box that
+ever dies, which is somebody else's disk. And the elevated run is judged on the
+registry afterwards, not on the child process's exit code - the question "is it
+armed now?" has an answer on disk, and that is the one worth printing back to
+whoever just approved a prompt.
+
+The part worth keeping is how it is tested. An elevated act is the classic shape
+that gets asserted about rather than exercised, because no lane can raise a UAC
+prompt. `Get-WerLocalDumpsKeyRoot` honours `GHOZTTY_WER_KEY_ROOT` - the same
+seam shape as `GHOZTTY_CRASH_NO_WER` - so section 6b of
+`test\win32\crash-first-chance.ps1` runs the real write, the real read-back and
+the real undo against an HKCU sandbox: armed reads `full`, a binary that is not
+ours still reads `mini`, folder and retention still come from the global key, a
+second arm changes nothing, and the disarm leaves the sandbox exactly as it
+found it. The unelevated CLI is checked for the thing that would actually hurt -
+that it exits 2 and raises no prompt rather than reporting an arm it did not
+perform.
+
+Two defects the proving turned up, both in the first draft and both fixed here.
+`return , @(...)` handed callers an array holding an array under PS 5.1, so the
+new per-binary status line printed all three names as one row. And the sandbox
+section was written as a top-level `try/finally`, which `body-complete-audit`'s
+D1 arm correctly reads as an unwind path to a green verdict; it is straight-line
+code now, so a throw kills the run without a verdict instead of quietly skipping
+the rest of it.
+
+Evidence: `crash-first-chance.ps1` ALL PASS at 69 assertions and re-stamped,
+`crash-stacks.ps1` ALL PASS at 91, `floor-lane.ps1 -Lane all` all four lanes
+PASS, `-Lane harness` PASS over 28 audits and re-stamped, ipc-p1/p2/p3 ALL PASS.

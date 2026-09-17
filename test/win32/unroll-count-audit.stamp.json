@@ -1,11 +1,12 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-09-16T22:49:11-07:00",
-    "commit":  "f191dfae0",
+    "generated":  "2026-09-17T00:25:41-07:00",
+    "commit":  "8dda0b78f",
     "uncommitted":  [
-                        "test/win32/lib/SkipAudit.ps1",
-                        "test/win32/skip-visibility.ps1"
+                        "scripts/crash-catch.ps1",
+                        "scripts/lib/CrashDump.ps1",
+                        "test/win32/crash-first-chance.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -14,7 +15,7 @@
                   "scripts/ci-status.ps1":  "c273364f2c71a956e9d63876b8a0b9218388503f0a1ae7853617649403911286",
                   "scripts/commit-pressure-probe.ps1":  "06ffbbf0dec3a89096ccd6820eb2503a4a0a1842c88e7cd82378a5a3a4e8a657",
                   "scripts/control-char-scan.ps1":  "5d86caddd7c8b44be9b3148dd5994881a8f8fa8eb1a07d2fe5414b0dd6428ba8",
-                  "scripts/crash-catch.ps1":  "16ff576692a105405d015a4c314482397e7d8e51de88080bac751b54246e6bf6",
+                  "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
                   "scripts/crash-databreak.ps1":  "60428758a92aed0c48be4a57d5c83de90dca9866001a9aa94c9d7578459eae6c",
                   "scripts/daily-publish.ps1":  "e2f455d11a00ac39b3db693f2d0d0ce3bc1d7d0f658c1b6ef4027d2e456aa747",
                   "scripts/deliver-audit.ps1":  "5598626fd46a8b8da014508f9d26c8f423cebddb4c741aec4e5fbe6d882149ce",
@@ -44,7 +45,7 @@
                   "scripts/lib/CompilerCrash.ps1":  "3c0fd966fdd0fbb9daac57b22868ca7260351b812f6577b3dc43d0fedb83d09c",
                   "scripts/lib/CrashCatch.ps1":  "d0310e59cdeb9f0b5343ab5992382de3cb67cff0db93e23a902848e2e50428ba",
                   "scripts/lib/CrashDiag.ps1":  "814fca92baea3b30962792aa3fa30110fe134deedfc910643ec709a7dc0a674d",
-                  "scripts/lib/CrashDump.ps1":  "72a2eaaa7fa2bb7e24fe4ec34f23b6e7fda788784c58a2cec46028515ddf870c",
+                  "scripts/lib/CrashDump.ps1":  "17d0900f709f2b500e444f9166c1c80a712cfe33ca3f54f8c59594b4efadb670",
                   "scripts/lib/DataBreak.ps1":  "ff02a5bfc30365086dc896181bded69169bf9a0cd082589c11afd04bf98cad7f",
                   "scripts/lib/Duration.ps1":  "b9889f194a1af5fee4177fd4c87ea6f7d74be5bffac0828532b55ebaa1f4787c",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
@@ -160,7 +161,7 @@
                   "test/win32/count-or-zero.ps1":  "569947be0dd433056f05a38d16eae3c81cf3a5a02e0710669458650ea6e5e0ad",
                   "test/win32/crash-databreak.ps1":  "fc8413850cab470389fc3933a2320e065ea3ae37cc1d0f6af2e13bdc3125b22f",
                   "test/win32/crash-diagnostics.ps1":  "c09555c22faad0c3914229d756c7df9423369c0e13b2f32422e04d3eeaed8aca",
-                  "test/win32/crash-first-chance.ps1":  "f30c24b2753b983c7ec6533559e706ccc099a858d955958b914a92605ae26d8e",
+                  "test/win32/crash-first-chance.ps1":  "7436655aa57887f3a4fd32419dbde9d7669dca7d3d07727baaf85d6dd1fcfc03",
                   "test/win32/crash-stacks.ps1":  "eac9ef821336811cfc06a00db2a142bd9c32ec1e6261242234612b469654192c",
                   "test/win32/daily-publish.ps1":  "9a9c9c698f7eedc50927536a038397281e4c4471d56c4f2e9fffbf8fe61c7512",
                   "test/win32/dark-menus.ps1":  "ab97be43af44188040463ebf9c6ab7b4a96139a623445aeb145eec3e4c9f906f",

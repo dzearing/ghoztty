@@ -1,10 +1,10 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-09-16T22:37:24-07:00",
-    "commit":  "f191dfae0",
+    "generated":  "2026-09-17T00:13:59-07:00",
+    "commit":  "8dda0b78f",
     "uncommitted":  [
-                        "test/win32/skip-visibility.ps1"
+                        "test/win32/crash-first-chance.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "ef54b501298cfda9306cfb958c1094db24ee30f355b25865656b3e2bc713bcd7",
@@ -92,7 +92,7 @@
                   "test/win32/count-or-zero.ps1":  "569947be0dd433056f05a38d16eae3c81cf3a5a02e0710669458650ea6e5e0ad",
                   "test/win32/crash-databreak.ps1":  "fc8413850cab470389fc3933a2320e065ea3ae37cc1d0f6af2e13bdc3125b22f",
                   "test/win32/crash-diagnostics.ps1":  "c09555c22faad0c3914229d756c7df9423369c0e13b2f32422e04d3eeaed8aca",
-                  "test/win32/crash-first-chance.ps1":  "f30c24b2753b983c7ec6533559e706ccc099a858d955958b914a92605ae26d8e",
+                  "test/win32/crash-first-chance.ps1":  "7436655aa57887f3a4fd32419dbde9d7669dca7d3d07727baaf85d6dd1fcfc03",
                   "test/win32/crash-stacks.ps1":  "eac9ef821336811cfc06a00db2a142bd9c32ec1e6261242234612b469654192c",
                   "test/win32/daily-publish.ps1":  "9a9c9c698f7eedc50927536a038397281e4c4471d56c4f2e9fffbf8fe61c7512",
                   "test/win32/dark-menus.ps1":  "ab97be43af44188040463ebf9c6ab7b4a96139a623445aeb145eec3e4c9f906f",
