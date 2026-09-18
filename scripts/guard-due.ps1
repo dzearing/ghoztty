@@ -2099,6 +2099,25 @@ $GuardTable = @(
             'test\win32\floor-lane-verdict-detail.ps1'
         )
     },
+    # The ReleaseSafe lanes (T846). This row DOES cover scripts\floor-lane.ps1,
+    # unlike the rows around it, and deliberately: what it holds is the lane SET
+    # and the flags each lane carries, which live nowhere else. The failure it
+    # exists to catch is silent by construction - a ReleaseSafe lane that lost
+    # `-Dtest-optimize` is a second Debug lane reporting green under a name that
+    # says otherwise, and a `--seed` that stopped being printed turns a red run
+    # into one nobody can reproduce. Both cost seconds to check (the harness
+    # asserts through the dry-run paths), which is why a wide Covers is
+    # affordable here.
+    [pscustomobject]@{
+        Name   = 'lane-releasesafe'
+        Script = 'test\win32\floor-lane-releasesafe.ps1'
+        Stamp  = 'test\win32\floor-lane-releasesafe.stamp.json'
+        Covers = @(
+            'scripts\floor-lane.ps1',
+            'scripts\soak-daemon.ps1',
+            'test\win32\floor-lane-releasesafe.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'lane-compiler-crash'
         Script = 'test\win32\floor-lane-compiler-crash.ps1'

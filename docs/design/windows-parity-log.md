@@ -31825,3 +31825,52 @@ floor is clean: `floor-lane.ps1 -Lane all` lib/none/win32/agent ALL PASS with
 first invocation hit a setup failure straight off the back of the lanes and
 passed on two clean re-runs), and `docs-routing.ps1` ALL PASS (20) re-stamped for
 the `build.md` edit.
+
+## 2026-09-18 - T846: the test suite now runs compiled the way real builds are compiled
+
+Every test lane on this box built its tests at Debug, and Debug's allocator and
+frame reuse accidentally PROVIDE correctness the shipping build does not. That
+is measured, not theoretical: T477 found two live defects at once behind 26
+consecutive green Debug runs, one of them a `free()` on an `undefined` slice
+that the shipping renderer executes on its first `resize()`. The knob to compile
+tests otherwise has existed since T473 and nothing ever turned it.
+
+`scripts\floor-lane.ps1` now has `none-releasesafe` and `win32-releasesafe`,
+with `-Lane releasesafe` running the pair. They are ordinary lanes, so they
+inherit the whole wrapper - the wedge watchdog, the cache heal, the compiler
+crash retry, the leak sweep, the solo confirm, and the failure-detail block that
+names the victim test. `-DryRun` prints the command a lane would run and builds
+nothing, which is what makes the lane set assertable in seconds.
+
+**Cadence: a sweep, not a per-turn gate.** Measured from a cold optimize-mode
+cache: 545s for the none lane, 695s for the win32 lane, against ~3m for the
+whole Debug floor - and a separate optimize mode is a separate cache, so a turn
+touching `src/` pays most of it again. The standing coverage is idle time
+instead: `scripts\soak-daemon.ps1`'s DEFAULT rotation is now
+`agent,none,none-releasesafe,win32-releasesafe`, and since the installed tick
+task passes no `-Lanes`, that default IS the cadence.
+
+**Every ReleaseSafe run names its seed.** The first red these lanes produced was
+green on the very next unfiltered run of identical code; the only difference was
+a test order nobody had recorded. So a run draws a random `--seed`, prints it on
+the `LANE ...` line, and `-Seed` replays it - which turned that red into a
+reproducer for **T1645**, the ViewerPane host-floor flake:
+`-Lane win32-releasesafe -Seed 0xa1f74462` fails and the wrapper's solo confirm
+reproduces it ALONE under the same seed. T1645 now has a before/after to be
+measured against.
+
+The T477 revert was tried as the negative control and no longer reproduces - the
+tree has moved on from the codegen that trapped there in August - so the real
+red above is the demonstration instead, and the task records that rather than
+quietly dropping the criterion.
+
+Evidence: `test\win32\floor-lane-releasesafe.ps1` ALL PASS (16 assertions) with
+a negative control (deleting `-Dtest-optimize=ReleaseSafe` from one lane scores
+`1 FAILURE(S)`, exit 1), guarded by the new `lane-releasesafe` row over
+`floor-lane.ps1` + `soak-daemon.ps1`. `none-releasesafe` green unfiltered (545s);
+`win32-releasesafe` green unfiltered through the wrapper (193s). Debug floor
+`-Lane all`: lib/none/agent PASS, win32 FAIL-under-load PASS-alone on that same
+T1645 flake. Guard rows re-stamped green: soak-daemon (40), build-cache (76),
+argv-hazard (23), unroll-count (31), persistence-flag (28), caller-anchor (27),
+build-mode (55) - the last three had gone red on a stale `zig-out` after a
+`git checkout` bumped a source mtime, and passed once the debug app was rebuilt.

@@ -47,6 +47,41 @@ WebView2 hosts, log tail) instead of hanging forever with nothing to read. Exit
 0 pass / 1 fail / 2 wedged / 3 wall-clock cap; `-Lane <one>`, `-Repeat N`,
 `-Filter <test-filter>`, `-SelfTest` to prove the detector itself.
 
+**The floor compiles its tests at Debug, and Debug provides correctness the
+shipping build does not** (T846). That is not a theory: T477 found two live
+defects at once behind 26 consecutive green Debug runs — a `free()` on an
+`undefined` slice in `src/renderer/cell.zig`, which the *shipping* renderer also
+executes on its first `resize()`, and a test returning a pointer into a dead
+stack frame that segfaulted 10/10 once the frame was reused. So the same two
+test lanes exist compiled the way real builds are compiled:
+
+```powershell
+powershell -NoProfile -File scripts\floor-lane.ps1 -Lane releasesafe
+powershell -NoProfile -File scripts\floor-lane.ps1 -Lane win32-releasesafe -Seed 0xa1f74462
+powershell -NoProfile -File scripts\floor-lane.ps1 -Lane releasesafe -DryRun
+```
+
+Three things worth knowing about them:
+
+- **They are a sweep, not a floor member**, and deliberately not in `-Lane all`.
+  Measured 2026-09-18 from a cold optimize-mode cache: 545s for
+  `none-releasesafe`, 695s for `win32-releasesafe`, against ~3m for the whole
+  Debug floor — and a separate optimize mode is a separate cache, so a turn that
+  touches `src/` pays most of it again. Run the pair when you have changed
+  allocation, lifetime or pointer-shaped code.
+- **The standing cadence is idle time**: `scripts\soak-daemon.ps1` rotates both
+  lanes by default, yielding the whole round the moment a turn wants the box.
+  The installed tick task passes no `-Lanes`, so that default *is* the coverage.
+- **Every ReleaseSafe run names its `--seed`**, random per run and printed on the
+  `LANE ...` line, because this failure class depends on the order the tests run
+  in: the first red these lanes produced was green on the very next unfiltered
+  run of identical code, and `-Seed <the one from the red run>` is what brings it
+  back. A soak round records its seed in the ledger for the same reason.
+
+Acceptance: `test\win32\floor-lane-releasesafe.ps1`, which asserts the flags
+through both scripts' dry-run paths (seconds, not forty minutes) and is guarded
+by the `lane-releasesafe` row.
+
 **A filtered run that matches NOTHING now fails** (T631). `-Dtest-filter` is
 the cheap way to prove a new test really runs — break it, run the filter, watch
 it go red — and until now it reported green whether the pattern matched or not,

@@ -61,8 +61,33 @@
         See scripts\lib\CompilerCrash.ps1.
 
 .PARAMETER Lane
-    none | win32 | agent | lib | harness | all. Default `all` runs the four zig
-    lanes in sequence.
+    none | win32 | agent | lib | harness | none-releasesafe | win32-releasesafe |
+    releasesafe | all. Default `all` runs the four zig lanes in sequence.
+
+    `none-releasesafe` and `win32-releasesafe` are the `none` and `win32` lanes
+    compiled the way real builds are compiled (T846). Every other lane here
+    builds its tests at Debug, and Debug's allocation and stack-frame behavior
+    accidentally PROVIDES correctness that the shipping build does not: T477
+    found two live defects at once behind 26 consecutive green Debug runs - a
+    `free()` on an `undefined` slice in `src/renderer/cell.zig` that the
+    shipping renderer also executes, and a test returning a pointer into a dead
+    stack frame in `src/apprt/win32/App.zig` that segfaulted 10/10 at
+    ReleaseSafe. Both lanes are needed because the two victims lived on
+    different sides of the apprt split. `releasesafe` runs the pair.
+
+    These crashes take an `int 3` with no stderr message (T478), so the verdict
+    is the EXIT CODE, never the presence of output - which is what the wrapper
+    has always keyed on, and the reason this lane can live here unchanged.
+
+    They are deliberately NOT part of `all`, for the same reason `harness` is
+    not: measured on this box at 2026-09-18, `none-releasesafe` costs ~9m from a
+    cold ReleaseSafe cache and `win32-releasesafe` ~11m, against ~3m for the
+    whole Debug floor. The optimize mode has its own cache, so a turn that
+    touches `src/` pays most of that again. The cadence is therefore a sweep,
+    not a per-turn gate: run the pair when you have changed allocation,
+    lifetime or pointer-shaped code, and the standing coverage comes from the
+    idle soak daemon, which rotates these lanes in the box's idle time and
+    yields the moment a turn wants the machine (scripts\soak-daemon.ps1).
 
     `harness` is the odd one out in the other direction: it compiles nothing and
     tests no product code. It runs the standing HARNESS audits - the sweeps that
@@ -112,6 +137,18 @@
     A filtered run only ever proves something about the tests it compiled in;
     the floor is the unfiltered lane. See docs\claude\testing.md.
 
+.PARAMETER Seed
+    The build runner's `--seed`, which is what orders the tests inside a test
+    binary. Only the ReleaseSafe lanes use it, and they ALWAYS run with one:
+    given here, or a fresh random one per run, printed on the `LANE ...` line.
+
+    That is not decoration (T846). The first red this lane ever produced was a
+    crash that happens on some test orders and not others - green on one run of
+    the whole suite, dead on the next - and the only thing separating the two
+    was a seed nobody had recorded. A verdict you cannot re-run is not evidence;
+    with the seed printed, `-Seed <the one from the red run>` reproduces it
+    exactly.
+
 .OUTPUTS
     One `LANE <name> <RESULT> ...` line per run and a final summary line.
     Exit code: 0 all passed, 1 a lane failed, 2 a lane wedged, 3 a lane hit the
@@ -119,7 +156,8 @@
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('none', 'win32', 'agent', 'lib', 'harness', 'all')]
+    [ValidateSet('none', 'win32', 'agent', 'lib', 'harness',
+        'none-releasesafe', 'win32-releasesafe', 'releasesafe', 'all')]
     [string]$Lane = 'all',
     [int]$TimeoutSeconds = 1800,
     # 420s, not 180: the agent lane was measured (2026-08-03) sitting in a
@@ -131,6 +169,16 @@ param(
     [int]$SampleSeconds = 5,
     [int]$Repeat = 1,
     [string]$Filter,
+    # The build runner's --seed for the ReleaseSafe lanes; see .PARAMETER Seed.
+    [string]$Seed,
+    # Print the command each selected lane would run and exit 0, building
+    # nothing. What `-LoadDryRun` is to test-binary-soak.ps1 and `dry-run` is to
+    # soak-daemon.ps1: a way to check the flags a lane carries without paying
+    # the lane. It is also what makes the lane SET testable in seconds -- an
+    # acceptance script can assert that the ReleaseSafe lanes carry
+    # `-Dtest-optimize=ReleaseSafe` and a seed, and that the Debug floor lanes
+    # carry neither, without a ten-minute compile per assertion.
+    [switch]$DryRun,
     [string]$Repo = 'D:\git\ghoztty',
     [string]$CacheDir,
     [switch]$NoSweep,
@@ -250,6 +298,11 @@ function Get-LaneArgs {
         'win32' { return 'test -Dapp-runtime=win32' }     # win32 apprt units
         'agent' { return 'test-agent' }                   # incl. real-pty
         'lib' { return '-Dapp-runtime=none' }             # compiles lib ghostty
+        # The same two test lanes, compiled the way real builds are compiled
+        # (T846). A separate optimize mode is a separate cache, so these are
+        # sweeps rather than floor members -- see .PARAMETER Lane.
+        'none-releasesafe' { return 'test -Dapp-runtime=none -Dtest-optimize=ReleaseSafe' }
+        'win32-releasesafe' { return 'test -Dapp-runtime=win32 -Dtest-optimize=ReleaseSafe' }
     }
     throw "unknown lane: $Name"
 }
@@ -454,6 +507,33 @@ function Invoke-WebViewSweep {
 
 # ------------------------------------------------------------------- runner
 
+function Get-LaneBuildArgs {
+    # Everything after `zig build` for one lane run, in one place, so the
+    # command a dry run PRINTS is the command a real run RUNS (T846). Two
+    # spellings of it would be two things free to disagree about the very flag
+    # the dry run exists to show.
+    param([string]$Name, [string[]]$OverrideFilter)
+
+    $buildArgs = Get-LaneArgs -Name $Name
+    # `lib` runs no tests, so a test filter would only mislead the log line
+    # into claiming a filtered run happened.
+    $filters = if ($OverrideFilter) { @($OverrideFilter) } elseif ($Filter) { @($Filter) } else { @() }
+    if ($Name -eq 'lib') { $filters = @() }
+    foreach ($f in $filters) { $buildArgs = "$buildArgs -Dtest-filter=`"$f`"" }
+
+    # The ReleaseSafe lanes always name their seed (T846). The crash class they
+    # exist for depends on the order the tests run in, so a verdict without a
+    # seed is a verdict nobody can re-run: the first red this lane produced was
+    # green on the very next unfiltered run, and only `--seed 0xa1f74462` off
+    # the failing build's own command line brought it back. Random per run so
+    # the sweep keeps covering new orders; printed so any run is replayable.
+    if ($Name -like '*-releasesafe') {
+        $laneSeed = if ($Seed) { $Seed } else { '0x{0:x8}' -f (Get-Random -Minimum 1 -Maximum ([int]::MaxValue)) }
+        $buildArgs = "$buildArgs --seed $laneSeed"
+    }
+    return $buildArgs
+}
+
 function Invoke-Lane {
     # $OverrideFilter replaces -Filter for ONE call, which is what the solo
     # confirm pass below needs: the same lane, narrowed to the tests that just
@@ -487,12 +567,7 @@ function Invoke-Lane {
         Write-Host "LANE $Name run $Iteration/$Repeat : $RawCommand"
     }
     else {
-        $buildArgs = Get-LaneArgs -Name $Name
-        # `lib` runs no tests, so a test filter would only mislead the log line
-        # into claiming a filtered run happened.
-        $filters = if ($OverrideFilter) { @($OverrideFilter) } elseif ($Filter) { @($Filter) } else { @() }
-        if ($Name -eq 'lib') { $filters = @() }
-        foreach ($f in $filters) { $buildArgs = "$buildArgs -Dtest-filter=`"$f`"" }
+        $buildArgs = Get-LaneBuildArgs -Name $Name -OverrideFilter $OverrideFilter
 
         # `set "VAR=value"` -- the quotes are load-bearing: without them cmd folds
         # the space before && into the value and the link step then fails on a path
@@ -1088,7 +1163,23 @@ if ($MinCommitFreeGB -gt 0 -or $WarnCommitFreeGB -gt 0) {
 
 # `lib` runs first: it is the cheapest lane by far and it is a pure compile, so
 # a shared-core break is reported in seconds instead of after two test lanes.
-$lanes = if ($Lane -eq 'all') { @('lib', 'none', 'win32', 'agent') } else { @($Lane) }
+# `releasesafe` is a pair, not a lane: the two Debug test lanes recompiled at
+# ReleaseSafe (T846). It is NOT folded into `all` -- the measurement that
+# settled that cadence is on .PARAMETER Lane.
+$lanes = if ($Lane -eq 'all') { @('lib', 'none', 'win32', 'agent') }
+elseif ($Lane -eq 'releasesafe') { @('none-releasesafe', 'win32-releasesafe') }
+else { @($Lane) }
+if ($DryRun) {
+    foreach ($l in $lanes) {
+        if ($l -eq 'harness') {
+            Write-Host ("DRY-RUN {0}: powershell -NoProfile -File scripts\harness-floor.ps1" -f $l)
+            continue
+        }
+        Write-Host ("DRY-RUN {0}: zig build {1}" -f $l, (Get-LaneBuildArgs -Name $l))
+    }
+    exit $EXIT_PASS
+}
+
 $worst = $EXIT_PASS
 $summary = @()
 # One entry per lane that did not pass, collected so the verdict can carry the

@@ -1,12 +1,13 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-09-18T06:09:40-07:00",
-    "commit":  "82587a766",
+    "generated":  "2026-09-18T08:03:02-07:00",
+    "commit":  "abe6ab632",
     "uncommitted":  [
                         "scripts/floor-lane.ps1",
-                        "scripts/lib/WebViewLane.ps1",
-                        "test/win32/floor-lane-webview-settle.ps1"
+                        "scripts/guard-due.ps1",
+                        "scripts/soak-daemon.ps1",
+                        "test/win32/floor-lane-releasesafe.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -23,7 +24,7 @@
                   "scripts/delivery-manifest.ps1":  "9abfb09bcfbbc89f48da54590267ceb14ffe5d042b5bc20947857da6dcba2381",
                   "scripts/delivery-version.ps1":  "8678da54a8fca38a64a140258485920abbf0f282dbf07da0e51512acea3df4a0",
                   "scripts/divergence-inventory.ps1":  "33644498b65edc0f88a83a64f97686c6223c9a0fe91b4bf08c20cb48820d8dd5",
-                  "scripts/floor-lane.ps1":  "22d1a35bffc748845dc662ce70ef6b983214d526a127bd861c79c9bbc6568a01",
+                  "scripts/floor-lane.ps1":  "d2f13b24fc0b903363176697dbf28fff8232e69bd6866224d43de0a186edac12",
                   "scripts/fork-identity.ps1":  "0388b582e6b11d201d099a81533fdd4f84790c87b658c8cd75f09a00e10be8ac",
                   "scripts/ghoztty-agent-watcher.ps1":  "51f93a125f8c81543a365acc9a990175f3b1b599184c19e2a87748b417559db4",
                   "scripts/ghoztty-cleanup.ps1":  "8fc0b036bb645aed4df88b6d108e355163b6cc36665a47495dece100e53b327f",
@@ -34,7 +35,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "fec6376034427796d1f9ad0b65d5fe8a46ce24a1702398844db3ea1483bada45",
-                  "scripts/guard-due.ps1":  "ccbd515791f39275ce3a5b1fb1237d3319959285071f172e2d86c973398f2fd4",
+                  "scripts/guard-due.ps1":  "c92fd4873b3893553ec878a88eaa4816d0ea215d0c406ccdc4b8c2f8547a696c",
                   "scripts/harness-floor.ps1":  "cc4dd72fb07ebc34de67ce688e0eab7f091a7228e4baeba4f9f50d01212a0f0e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -65,7 +66,7 @@
                   "scripts/report-false-positive.ps1":  "67875bcfc4d235afa9a8810294a7ea9d48fc7cb57f69e74c9617970b65d68534",
                   "scripts/ship-feature.ps1":  "5fcde228d19c43b887fe4ae42202a1c84c0f7e0a464fbe3caec600c39796663e",
                   "scripts/ship-readiness.ps1":  "1fcab42cac628cae5852b0d1bd93b266c0d9809b015ff996362f02c5895c84f7",
-                  "scripts/soak-daemon.ps1":  "041ee4ca08b23cef70549307de0feb243435f666c99f440857be1a2a5a5257b5",
+                  "scripts/soak-daemon.ps1":  "9139df0a2bce80b62a67a53316bb4630fa9d427b68570252275cbd9e97609332",
                   "scripts/suite-run.ps1":  "cb4455bbf14f990c13a719c28140ef37a73441f2547ba266867005553d18fb96",
                   "scripts/t470-ring-measure.ps1":  "427dc0cada150aadb214a007e32238f1d75d3751ad40a02260b325157672f143",
                   "scripts/t857-boost-ab.ps1":  "a0f1bd35f21fb689f306a5a100e9cccf37b0087bbcc29e98fce0dfc1b6638071",
@@ -180,6 +181,7 @@
                   "test/win32/floor-lane-commit-headroom.ps1":  "63aed36ba60ecbd7af05f2349f050a390eccfa1f6768b52b416d9d27b60837ec",
                   "test/win32/floor-lane-compiler-crash.ps1":  "34827f1ed2d63df665d72275f13211f6a3f8273c44561b09396ffdc3f7505470",
                   "test/win32/floor-lane-leak-sweep.ps1":  "808a7e97c678e8e9b9b997f2ccca91efa8e3acdb617490ee23347412de81fb1b",
+                  "test/win32/floor-lane-releasesafe.ps1":  "ecd2f326201dfeb9cd74d67f603ec6e06ea566182e28754acc08da1629784a84",
                   "test/win32/floor-lane-solo-confirm.ps1":  "2e7b8705867fd366ef614013d2cdd8e9e213136a4f8e9347ac049215944c0a50",
                   "test/win32/floor-lane-verdict-detail.ps1":  "16068d1b9c37cfbf35f201e7a3f12f76709c2b362242b238fb2b53d96acb1fe2",
                   "test/win32/floor-lane-webview-settle.ps1":  "d5cf22c7342c16a5bebc1a27d1f7d62e1c4dbe297fe2538e9542a7b3cfe8122b",

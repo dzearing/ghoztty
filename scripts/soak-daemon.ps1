@@ -71,9 +71,22 @@
                check the cache isolation before spending an hour on it
 
 .PARAMETER Lanes
-    Which lanes to rotate through, in order. Both T443 victims by default: the
-    agent test binary and the `none` lane, which is where the freetype-victim
-    occurrences have landed.
+    Which lanes to rotate through, in order. By default the two T443 victims -
+    the agent test binary and the `none` lane, where the freetype-victim
+    occurrences have landed - plus the two ReleaseSafe lanes (T846).
+
+    The ReleaseSafe pair is here because idle time is the only place its cost
+    fits: ~9-11 minutes a run from a cold optimize-mode cache, against ~3m for
+    the whole Debug floor, which is why it is not a per-turn gate. It is not a
+    dilution of the T443 hunt either - a ReleaseSafe round runs the SAME tests
+    with the same crash instrumentation, and it additionally traps the
+    undefined behavior Debug's allocator and frame reuse quietly provide for
+    (T477 found two such defects at once behind 26 green Debug runs, one of them
+    in shipping renderer code).
+
+    The installed tick task does not pass this parameter, so the default IS the
+    standing rotation. Changing what is covered on this box means changing the
+    default, not remembering a flag.
 
 .PARAMETER FixtureCommand
     Test hook. Makes a round run this command line instead of a real lane, so
@@ -109,7 +122,7 @@ param(
     # boundary every time `start` launches `run`, and `powershell -File` hands a
     # script its arguments as literal strings, so an array parameter arrives as
     # one element that fails its own ValidateSet (T200's lesson, in the small).
-    [string]$Lanes = 'agent,none',
+    [string]$Lanes = 'agent,none,none-releasesafe,win32-releasesafe',
     [string]$StateDir = '',
     [string]$ScratchDir = '',
     [string]$Marker = '',
@@ -136,12 +149,12 @@ $ErrorActionPreference = 'Continue'
 
 $LaneList = @($Lanes -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 foreach ($l in $LaneList) {
-    if ($l -notin @('agent', 'none', 'win32')) {
-        Write-Host "soak-daemon: unknown lane '$l' (agent|none|win32)."
+    if ($l -notin @('agent', 'none', 'win32', 'none-releasesafe', 'win32-releasesafe')) {
+        Write-Host "soak-daemon: unknown lane '$l' (agent|none|win32|none-releasesafe|win32-releasesafe)."
         exit 2
     }
 }
-if ($LaneList.Count -eq 0) { $LaneList = @('agent', 'none') }
+if ($LaneList.Count -eq 0) { $LaneList = @('agent', 'none', 'none-releasesafe', 'win32-releasesafe') }
 
 $IgnoreList = @($IgnorePids -split ',' | ForEach-Object { $_.Trim() } |
     Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
@@ -308,6 +321,13 @@ function Stop-Tree {
 # manifest locks live - the hazard), shared global cache (a content-addressed
 # package store that is already populated, so the round compiles OUR source
 # instead of rebuilding freetype every time).
+function Get-RoundSeed {
+    # A fresh build-runner seed per round, in the same shape the build runner
+    # prints on a failing command line, so a red round is replayable verbatim:
+    # `floor-lane.ps1 -Lane <lane> -Seed <seed>`.
+    return ('0x{0:x8}' -f (Get-Random -Minimum 1 -Maximum ([int]::MaxValue)))
+}
+
 function Get-RoundLaneCommand {
     param([string]$Lane)
     # One cache PER LANE. The lanes alternate, and a shared cache would make
@@ -324,6 +344,15 @@ function Get-RoundLaneCommand {
         'agent' { 'zig build test-agent' }
         'none' { 'zig build test -Dapp-runtime=none' }
         'win32' { 'zig build test -Dapp-runtime=win32' }
+        # The two test lanes compiled the way real builds are compiled (T846).
+        # This is where the ReleaseSafe suite gets its STANDING cadence: it costs
+        # ~9-11 minutes a run from a cold optimize-mode cache, which is too much
+        # to spend on every turn and exactly what idle time is for. The crash
+        # class it finds depends on the order the tests run in, so a round takes
+        # a fresh random seed and the ledger keeps it - a red round nobody can
+        # re-run is not a data point.
+        'none-releasesafe' { 'zig build test -Dapp-runtime=none -Dtest-optimize=ReleaseSafe --seed ' + (Get-RoundSeed) }
+        'win32-releasesafe' { 'zig build test -Dapp-runtime=win32 -Dtest-optimize=ReleaseSafe --seed ' + (Get-RoundSeed) }
         default { 'zig build test -Dapp-runtime=none' }
     }
     $cmd = $target + ' --cache-dir "' + $cache + '" --prefix "' + $prefix + '"'

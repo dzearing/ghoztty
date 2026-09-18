@@ -1,13 +1,13 @@
 {
     "guard":  "soak-daemon",
     "script":  "test/win32/soak-daemon.ps1",
-    "generated":  "2026-09-18T02:44:09-07:00",
-    "commit":  "db5980e35",
+    "generated":  "2026-09-18T07:59:51-07:00",
+    "commit":  "abe6ab632",
     "uncommitted":  [
-                        "test/win32/soak-daemon.ps1"
+                        "scripts/soak-daemon.ps1"
                     ],
     "files":  {
-                  "scripts/soak-daemon.ps1":  "041ee4ca08b23cef70549307de0feb243435f666c99f440857be1a2a5a5257b5",
+                  "scripts/soak-daemon.ps1":  "9139df0a2bce80b62a67a53316bb4630fa9d427b68570252275cbd9e97609332",
                   "test/win32/soak-daemon.ps1":  "10a19e7d3a5b7b885afae8a3bb2a04bb92cdf20e8b17c974bb59e54f06be2470"
               }
 }
