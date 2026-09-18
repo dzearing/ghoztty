@@ -497,6 +497,23 @@ $GuardTable = @(
             'src\apprt\win32\ViewerPane.zig'
         )
     },
+    # T827: `+rearrange` over a window that holds a VIEWER pane. Main fixed a
+    # Mac defect where a layout naming a preview pane failed with 'pane is no
+    # longer alive' - win32 resolves names to *PaneView and cannot have it by
+    # construction, which is exactly the kind of property that silently stops
+    # being true. Covers the handler, the tree it swaps, and the surfaceless
+    # pane whose identity the focus pick depends on.
+    [pscustomobject]@{
+        Name   = 'rearrange-viewer'
+        Script = 'test\win32\rearrange-viewer.ps1'
+        Stamp  = 'test\win32\rearrange-viewer.stamp.json'
+        Covers = @(
+            'test\win32\rearrange-viewer.ps1',
+            'src\apprt\win32\IpcHandlers.zig',
+            'src\apprt\win32\PaneView.zig',
+            'src\datastruct\split_tree.zig'
+        )
+    },
     # The close confirmation's own harness (T41/T1398): the only thing on the box
     # that watches a BUSY pane and an IDLE pane answer the same chord
     # differently. It had no guard row until T1398, and that is how T1398

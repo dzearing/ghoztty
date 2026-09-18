@@ -9,6 +9,72 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-17: T827 closed done (T1645 filed) — **a window holding a preview
+  pane can be rearranged, and the box now checks that every build.**
+
+  Ghoztty can show a rendered document beside your shell, and it can rearrange
+  a window's panes on command. On the Mac those two were briefly mutually
+  exclusive: main c0c86e88e fixed a defect where any layout naming a preview
+  pane came back `pane '<name>' is no longer alive` — about a pane `+list` had
+  reported one line earlier — so a window with a preview in it was permanently
+  un-rearrangeable. The Mac covered the fix with `RearrangeLayoutTests` plus
+  `scripts/e2e/rearrange-viewer.py`. This is the Windows seat's half.
+
+  **It is a test and not a fix, and that was established from the code before
+  anything was written.** `IpcHandlers.handleRearrange` resolves every name in
+  a layout to a `*PaneView` through `app.ipcLookup`, checks membership against
+  the target window's own tree, and picks post-swap focus from `*PaneView`
+  identity with a first-leaf fallback. A surface is consulted in exactly one
+  place, for the OPTIONAL agent session id, behind `orelse continue`. The Mac's
+  defect was `TargetEntry.surfaceView` being nil for a viewer by design; win32
+  never asks. So the defect cannot occur here by construction — which is
+  precisely the kind of property that stops being true quietly, since nothing
+  in the tree was measuring it. It lived in a task file as an assertion about
+  code somebody had read.
+
+  `test\win32\rearrange-viewer.ps1` is what turns it into something the box
+  re-checks. Four cases, each a different code path: **A** a layout mixing
+  terminal and viewer panes (the reported shape), **B** a viewer-ONLY layout —
+  every leaf surfaceless, so a focus fallback written in terms of surfaces
+  would have nothing to choose and the window would come back with no active
+  pane — **C** a layout naming a pane that no longer exists, and **D** a layout
+  naming a live pane in another window, which is the membership check. The
+  oracle is `+list --json` (topology, leaf type, url, pane id, focus, name),
+  `+read` for scrollback, and the CLI's own exit code and stderr for the two
+  refusals — all readable from outside the process, which matters because the
+  run happens on the background test desktop where nothing can photograph a
+  window.
+
+  What section A insists on beyond "it exited 0" is the point of keeping panes
+  rather than rebuilding them: the viewer is the SAME pane afterwards (id and
+  url unchanged, so its rendered page and scroll position survive), the
+  surviving terminals keep their shells (same pid) and their scrollback (a
+  marker printed before the rearrange is still readable after it), focus stays
+  where it was, and a pane the layout omits is gone from the tree AND
+  unregistered. The two refusals leave their windows UNCHANGED — a refusal that
+  had already swapped the tree would be worse than the defect it refuses.
+
+  **Result: ALL PASS, 45 assertions.** So the triage call holds — this stays P2
+  coverage rather than being promoted to P1/M1, because there was nothing to
+  fix. `-NegativeControl` inverts section A's headline and the run fails with
+  exactly one failure, which is what makes the green a measurement rather than
+  a constant. A `rearrange-viewer` guard row over `IpcHandlers.zig`,
+  `PaneView.zig` and `split_tree.zig` makes the harness DUE the moment any of
+  them changes, so the property is standing coverage and not a one-off.
+
+  **T1645** came out of the validation rather than the code: the harness floor
+  lane went red once on `test-reach-audit`, on the live WebView2 host-floor
+  test, with `[tripwire] (warn): untripped point=read` — a recurrence of the
+  T592/T678 shape where a real controller is starved while 27 other audits
+  compete for the box. It passed alone, and the full lane passed clean on the
+  re-run this turn (1065s, 0 leaked hosts). Filed rather than papered over,
+  because a 17-minute re-run every time it lands is a real cost and
+  `HARNESS_FLOOR_PENDING` cannot hold it — that list is a ratchet that fails on
+  a green member.
+
+  Floors: `floor-lane -Lane all` (lib/none/win32/agent) ALL PASS,
+  `floor-lane -Lane harness` PASS, ipc-p1 26/26, p2 20/20, p3 16/16.
+
 - 2026-09-17: T819 and T1375 closed done — **the command palette and the find
   bar are their own windows now, so a monitor change redraws them whole.**
 
