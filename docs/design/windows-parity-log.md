@@ -31684,3 +31684,49 @@ documented in `test\win32\README.md`, which is what its F2 assertion is for.
 ipc-p1/p2/p3 ALL PASS (26/20/16), and the guards the edits touched re-run
 green: `ipc-when-idle` (22), `session-resume-offset` (115), `pane-ingest-lag`
 (11), `holder-soak` (9), `sessions-running-cmd` (16).
+
+## 2026-09-18 - T842: an isolated build is trustworthy here; a busy box is not, and the soak daemon was the one making it busy
+
+"Build it somewhere private" - a cache, global cache and prefix all its own - is
+the obvious tool for a clean-room reproduction, a bisect harness or a second
+seat on this box, and since 2026-08-14 it has been written down as untrustworthy
+here after two ad-hoc attempts failed two different ways. Measured deliberately
+this morning, that is wrong: **a fresh private global cache passed 5 of 5** on a
+quiet box, in a 423-455 s band, and all eight fresh caches fetched their 22
+packages whole (`Get-TornPackage`, 0 suspects). A shared-cache control arm
+passed 3 of 3 at 376-380 s, so what a private cache actually costs is ~12% for
+re-fetching the dependencies, not reliability. The conclusion is in
+`docs/claude/build.md`, where somebody reaching for an isolated build will find
+it instead of this task.
+
+The two attempts that DID fail were the two that shared the box with another
+build, and they have a named cause that is not the cache. Both died
+`exited with code 255` with no handler text, in two *different* victim tests -
+the signature of an arbitrary kill - each in the same second a soak-daemon round
+yielded, and the leak-sweep dump from that second names the victim: this
+experiment's own test binary, under its own private cache. T841's idle soak
+daemon runs floor lanes concurrently with a turn by design, `Invoke-LaneLeakSweep`
+reaps any process carrying a lane test-binary name that was not running when its
+lane started, and `TEST_EXE_NAMES` is `ghostty-test.exe` + `ghoztty-agent-test.exe`
+for *every* lane - so a soak **agent** round reaps a turn's **none** lane.
+`scripts\lib\LaneLeak.ps1`'s own header names an overlapping run as the one case
+its rule cannot separate, and rests on go.md forbidding overlap; T841 retired
+that premise without the sweep noticing.
+
+Filed as **T1648 (P0)**: while it stands, no red lane on this box is evidence,
+and the failure wears the costume of T443 - the P0 crash hunt the soak daemon
+exists to feed - so it would have been mis-filed as a data point in the very
+investigation it was corrupting. The daemon is **paused until T1648 is fixed**,
+and T1648 says so at the top; resuming it is the last step of that fix, not the
+first.
+
+Evidence: 9 attempts across 3 arms, one at a time, logs and per-arm summaries
+under `D:\zgc-t842`; the two kills corroborated by
+`.dumps\lane-leak-62768-20260918-004904.log` and
+`.dumps\lane-leak-60820-20260918-005353.log`, whose path-validation lines name
+`D:\zgc-t842\a2-c\o\...` and `D:\zgc-t842\a3-c\o\...`. With the daemon paused the
+floor is clean: `floor-lane.ps1 -Lane all` lib/none/win32/agent ALL PASS with
+`leaked test binaries: 0` on every lane, ipc-p1/p2/p3 ALL PASS (26/20/16 - p1's
+first invocation hit a setup failure straight off the back of the lanes and
+passed on two clean re-runs), and `docs-routing.ps1` ALL PASS (20) re-stamped for
+the `build.md` edit.

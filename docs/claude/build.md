@@ -100,6 +100,26 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
   Acceptance: `test\win32\build-cache.ps1`. Stale `zig-out-*` staging copies and
   `.dumps` are **reported and never deleted** — they sit outside a cache, so
   "entirely regenerable" is an assumption rather than a fact.
+- **A PRIVATE global cache is fine; a BUSY box is not** (T842). "Build it
+  somewhere private" — `--cache-dir` + `--global-cache-dir` + `--prefix` all of
+  its own — is the obvious tool for a clean-room reproduction, a bisect harness
+  or a second seat, and it was recorded on 2026-08-14 as untrustworthy here
+  after two ad-hoc runs failed two different ways. Measured properly on
+  2026-09-18 it is **not** the cache: **5/5 cold fresh-cache
+  `zig build test -Dapp-runtime=none` runs passed on a quiet box**, in a tight
+  423–455 s band, and all eight fresh caches fetched their 22 packages whole
+  (`Get-TornPackage`, 0 suspects). What failed was the two attempts that shared
+  the box with a concurrent build — and those had a *named* cause (T1648), not a
+  cache one.
+
+  The rule that falls out of it: **quiesce the box before you measure, whatever
+  cache you use.** Concurrent builds are this box's actual source of
+  irreproducibility, and the loudest of them is the idle soak daemon —
+  `powershell -NoProfile -File scripts\soak-daemon.ps1 pause -Reason "<why>"`,
+  then `resume` when you are done. That is what its own header means by "what a
+  turn should reach for if it wants the machine to itself". Budget about seven
+  minutes per cold run: a fresh global cache re-fetches and rebuilds every
+  third-party dependency, which the shared cache never does.
 - **`-Doptimize=Debug` is not optional**, and the reason is not speed — it is
   **endpoint isolation** (T350). The IPC pipe, the local agent's pipe and the
   state directory are all derived from the build mode: `is_debug` (Debug or
