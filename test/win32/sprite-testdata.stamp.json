@@ -1,0 +1,14 @@
+{
+    "guard":  "sprite-testdata",
+    "script":  "test/win32/sprite-testdata.ps1",
+    "generated":  "2026-09-17T17:31:52-07:00",
+    "commit":  "50294a55f",
+    "uncommitted":  [
+                        "src/font/sprite/Face.zig",
+                        "test/win32/sprite-testdata.ps1"
+                    ],
+    "files":  {
+                  "src/font/sprite/Face.zig":  "c5a1e3d94f83fe2becb2d1c49fec724365962bf78e201ed3b3ca672ae5b4422c",
+                  "test/win32/sprite-testdata.ps1":  "79914472fe57b285f38ca6e0740a22e4975c142ccd15fe554b9b3b0835033d21"
+              }
+}

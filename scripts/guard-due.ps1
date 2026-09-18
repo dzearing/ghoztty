@@ -3521,6 +3521,20 @@ $GuardTable = @(
             'test\win32\test-filter-guard.ps1'
         )
     },
+    # The sprite reference test's path resolution (T820). The floor lane always
+    # runs from the repo root, which is the one cwd the old relative reference
+    # path worked from - so the lane is structurally blind to this, and the
+    # defect surfaced only as 36 stray PNGs in src\apprt\win32. Non-interactive,
+    # launches nothing, cached builds so a couple of minutes.
+    [pscustomobject]@{
+        Name   = 'sprite-testdata'
+        Script = 'test\win32\sprite-testdata.ps1'
+        Stamp  = 'test\win32\sprite-testdata.stamp.json'
+        Covers = @(
+            'src\font\sprite\Face.zig',
+            'test\win32\sprite-testdata.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'build-fresh'
         Script = 'test\win32\build-fresh-guard.ps1'

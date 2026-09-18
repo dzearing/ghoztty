@@ -31466,3 +31466,46 @@ in `viewer-diff.ps1` failed once and passed on an immediate re-run over the
 same bytes - a fixed sleep where the harness elsewhere waits for the
 observable. Nothing a user sees, but an unnamed flake is how a real regression
 gets waved through as "that one is always red".
+
+## 2026-09-17 - T820: the sprite reference test stops littering the source tree
+
+The sprite-face reference test opened its 36 reference PNGs by the relative
+path `./src/font/sprite/testdata/...`, which resolves against whatever cwd the
+test binary was launched with. From the repo root it worked, and the floor lane
+always runs from the repo root - so the lane could never see the defect. Start
+the same `zig build test -Dapp-runtime=win32` from anywhere else (the report
+was made from `src/apprt/win32`) and every page failed to open, the test failed
+for a reason that had nothing to do with the code under test, and its
+actual-image dumps were copied into the cwd: 36 untracked PNGs in the source
+tree, none of them in `.gitignore`.
+
+`src/font/sprite/Face.zig` now resolves both halves from the source root
+instead of the cwd. `findSourceRoot` walks up from the cwd looking for the
+`src/font/sprite/testdata` marker and the references are opened by absolute
+path; `GHOSTTY_SPRITE_TESTDATA_ROOT` overrides it for an out-of-tree run, and
+when no root can be found the test says so and writes nothing anywhere rather
+than guessing. A failing run's artifacts - the actual-image copies and the
+red/green diff images, which also went to the cwd - now go to
+`<root>/zig-out/sprite-face-test`, under `zig-out` so they are easy to find and
+already git-ignored. Saving an artifact can no longer turn a diff report into a
+hard error either: the test's verdict is the diff, not whether we could save a
+picture of it. This is shared-core code and the fix is platform-neutral, so the
+Mac seat gets it too - nothing win32-specific went in.
+
+Evidence: reproduced first, from `src/apprt/win32` - test red with
+`Can't open reference file ./src/font/sprite/testdata/...` and 36 stray
+`sprite_face_test-*.png` left in that directory. After the fix the same run
+from that directory is green with nothing written into the tree, and forcing
+the failure path (an override root with no testdata in it) puts all 36
+actual-image PNGs under `<root>/zig-out/sprite-face-test` with the tree still
+clean. A new unit test covers the resolver, including that the search stops at
+the NEAREST marker rather than running to the top. `floor-lane.ps1 -Lane all`:
+lib/none/win32/agent all PASS, with win32 and none re-run over the final bytes.
+New guard `sprite-testdata` (`test\win32\sprite-testdata.ps1`, 9 assertions,
+red under `-NegativeControl`) holds the cwd-independence that the lane is
+structurally blind to. `harness-floor.ps1` ALL PASS (28 audits, 2 PENDING
+tracked by T1568/T1123) - it was 4 red on the first run: `unroll-count-audit`
+caught a real PS 5.1 unwrapped-`.Count` in the new script, and three
+staleness gates wanted the app rebuilt after the shared-core edit.
+`docs-routing`, `stderr-capture`, `stderr-launch-capture` re-stamped green.
+ipc-p1/p2/p3 ALL PASS (26/20/16).

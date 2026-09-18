@@ -229,10 +229,129 @@ pub fn renderGlyph(
     };
 }
 
+/// The repo-relative location of the sprite reference PNGs. It doubles as the
+/// marker that identifies the source root when we search for it.
+const testdata_rel = "src" ++ std.fs.path.sep_str ++
+    "font" ++ std.fs.path.sep_str ++
+    "sprite" ++ std.fs.path.sep_str ++
+    "testdata";
+
+/// Where a failing run drops its actual-image and diff PNGs. Under `zig-out`
+/// so the artifacts are easy to find and already git-ignored, rather than
+/// scattered wherever the test binary happened to be launched from.
+const testout_rel = "zig-out" ++ std.fs.path.sep_str ++ "sprite-face-test";
+
+/// Walks up from `start_abs` looking for the directory that contains
+/// `testdata_rel`, and returns that source root (caller owns the memory) or
+/// null if there isn't one.
+///
+/// The reference images used to be opened by the relative path
+/// `./src/font/sprite/testdata/...`, which resolves against whatever cwd the
+/// test binary was launched with: from the repo root it worked, from anywhere
+/// else every page failed to open, the test failed, and it dropped 36 PNGs
+/// into that cwd. Searching upward makes the test behave the same however it
+/// is invoked.
+fn findSourceRoot(alloc: Allocator, start_abs: []const u8) ?[]const u8 {
+    var dir: []const u8 = start_abs;
+    while (true) {
+        const probe = std.fs.path.join(alloc, &.{ dir, testdata_rel }) catch return null;
+        defer alloc.free(probe);
+        if (std.fs.accessAbsolute(probe, .{})) {
+            return alloc.dupe(u8, dir) catch null;
+        } else |_| {}
+
+        const parent = std.fs.path.dirname(dir) orelse return null;
+        if (parent.len >= dir.len) return null;
+        dir = parent;
+    }
+}
+
+/// The directories a reference run needs, resolved once and independent of
+/// the cwd. Both are null when the source root can't be found, in which case
+/// the test reports that instead of writing anything anywhere.
+const TestPaths = struct {
+    /// Directory holding the reference PNGs.
+    refs: ?[]const u8,
+    /// Directory failure artifacts are written to.
+    out: ?[]const u8,
+
+    fn init(alloc: Allocator) !TestPaths {
+        // An explicit root wins, so the test can be run out of tree.
+        const root: []const u8 = root: {
+            if (std.process.getEnvVarOwned(
+                alloc,
+                "GHOSTTY_SPRITE_TESTDATA_ROOT",
+            )) |v| break :root v else |_| {}
+
+            const cwd_absolute = try std.fs.cwd().realpathAlloc(alloc, ".");
+            defer alloc.free(cwd_absolute);
+            break :root findSourceRoot(alloc, cwd_absolute) orelse {
+                log.err(
+                    "Can't find the sprite reference images: no directory " ++
+                        "above the cwd contains {s}. Set " ++
+                        "GHOSTTY_SPRITE_TESTDATA_ROOT to the source root.",
+                    .{testdata_rel},
+                );
+                return .{ .refs = null, .out = null };
+            };
+        };
+        defer alloc.free(root);
+
+        const refs = try std.fs.path.join(alloc, &.{ root, testdata_rel });
+        errdefer alloc.free(refs);
+        const out = try std.fs.path.join(alloc, &.{ root, testout_rel });
+        errdefer alloc.free(out);
+
+        // Created eagerly: a failing page copies into it, and a directory
+        // that doesn't exist would turn a diff report into a file error.
+        std.fs.cwd().makePath(out) catch |err| {
+            log.err("Can't create the artifact directory {s}: {}", .{ out, err });
+            alloc.free(out);
+            return .{ .refs = refs, .out = null };
+        };
+
+        return .{ .refs = refs, .out = out };
+    }
+
+    fn deinit(self: *const TestPaths, alloc: Allocator) void {
+        if (self.refs) |v| alloc.free(v);
+        if (self.out) |v| alloc.free(v);
+    }
+};
+
+/// Copies the rendered atlas next to the reference data so a human can look
+/// at it, and returns the path it wrote (caller owns it) or null. Never
+/// writes into the source tree, and never turns a diff into a hard error:
+/// the test's verdict is the diff, not whether we could save a picture of it.
+fn testSaveArtifact(
+    alloc: Allocator,
+    paths: TestPaths,
+    src_path: []const u8,
+    prefix: []const u8,
+    i: u32,
+    width: u32,
+    height: u32,
+    thickness: u32,
+) ?[]const u8 {
+    const out = paths.out orelse return null;
+    const dest = std.fmt.allocPrint(
+        alloc,
+        "{s}{c}{s}-U+{X}...U+{X}-{d}x{d}+{d}.png",
+        .{ out, std.fs.path.sep, prefix, i, i + 0xFF, width, height, thickness },
+    ) catch return null;
+    std.fs.copyFileAbsolute(src_path, dest, .{}) catch |err| {
+        log.err("Can't write {s}: {}", .{ dest, err });
+        alloc.free(dest);
+        return null;
+    };
+    return dest;
+}
+
 /// Used in `testDrawRanges`, checks for diff between the provided atlas
 /// and the reference file for the range, returns true if there is a diff.
 fn testDiffAtlas(
     alloc: Allocator,
+    paths: TestPaths,
     atlas: *z2d.Surface,
     path: []const u8,
     i: u32,
@@ -251,32 +370,35 @@ fn testDiffAtlas(
     );
     defer alloc.free(test_bytes);
 
-    const cwd_absolute = try std.fs.cwd().realpathAlloc(alloc, ".");
-    defer alloc.free(cwd_absolute);
-
-    // Get the reference file contents to compare.
+    // Get the reference file contents to compare. The reference directory is
+    // resolved from the source root rather than the cwd, so this run behaves
+    // the same however the test binary was invoked.
+    const refs = paths.refs orelse return true;
     const ref_path = try std.fmt.allocPrint(
         alloc,
-        "./src/font/sprite/testdata/U+{X}...U+{X}-{d}x{d}+{d}.png",
-        .{ i, i + 0xFF, width, height, thickness },
+        "{s}{c}U+{X}...U+{X}-{d}x{d}+{d}.png",
+        .{ refs, std.fs.path.sep, i, i + 0xFF, width, height, thickness },
     );
     defer alloc.free(ref_path);
     const ref_file =
-        std.fs.cwd().openFile(ref_path, .{ .mode = .read_only }) catch |err| {
+        std.fs.openFileAbsolute(ref_path, .{ .mode = .read_only }) catch |err| {
             log.err("Can't open reference file {s}: {}\n", .{
                 ref_path,
                 err,
             });
 
-            // Copy the test PNG in to the CWD so it isn't
+            // Save the test PNG out of the tmp dir so it isn't
             // cleaned up with the rest of the tmp dir files.
-            const test_path = try std.fmt.allocPrint(
+            if (testSaveArtifact(
                 alloc,
-                "{s}/sprite_face_test-U+{X}...U+{X}-{d}x{d}+{d}.png",
-                .{ cwd_absolute, i, i + 0xFF, width, height, thickness },
-            );
-            defer alloc.free(test_path);
-            try std.fs.copyFileAbsolute(path, test_path, .{});
+                paths,
+                path,
+                "sprite_face_test",
+                i,
+                width,
+                height,
+                thickness,
+            )) |saved| alloc.free(saved);
 
             return true;
         };
@@ -292,15 +414,19 @@ fn testDiffAtlas(
     // a pixel-for-pixel diff.
     if (std.mem.eql(u8, test_bytes, ref_bytes)) return false;
 
-    // Copy the test PNG in to the CWD so it isn't
+    // Save the test PNG out of the tmp dir so it isn't
     // cleaned up with the rest of the tmp dir files.
-    const test_path = try std.fmt.allocPrint(
+    const test_path = testSaveArtifact(
         alloc,
-        "{s}/sprite_face_test-U+{X}...U+{X}-{d}x{d}+{d}.png",
-        .{ cwd_absolute, i, i + 0xFF, width, height, thickness },
-    );
-    defer alloc.free(test_path);
-    try std.fs.copyFileAbsolute(path, test_path, .{});
+        paths,
+        path,
+        "sprite_face_test",
+        i,
+        width,
+        height,
+        thickness,
+    ) orelse path;
+    defer if (test_path.ptr != path.ptr) alloc.free(test_path);
 
     // Use wuffs to decode the reference PNG to raw pixels.
     // These will be RGBA, so when diffing we can just compare
@@ -357,18 +483,21 @@ fn testDiffAtlas(
         return true;
     }
 
-    // Drop the diff image as a PNG in the cwd.
-    const diff_path = try std.fmt.allocPrint(
+    // Drop the diff image as a PNG next to the actual-image artifact, never
+    // in the cwd - a failing run must not litter the source tree.
+    const diff_path: ?[]const u8 = if (paths.out) |out| try std.fmt.allocPrint(
         alloc,
-        "./sprite_face_diff-U+{X}...U+{X}-{d}x{d}+{d}.png",
-        .{ i, i + 0xFF, width, height, thickness },
-    );
-    defer alloc.free(diff_path);
-    try z2d.png_exporter.writeToPNGFile(diff, diff_path, .{});
+        "{s}{c}sprite_face_diff-U+{X}...U+{X}-{d}x{d}+{d}.png",
+        .{ out, std.fs.path.sep, i, i + 0xFF, width, height, thickness },
+    ) else null;
+    defer if (diff_path) |v| alloc.free(v);
+    if (diff_path) |v| z2d.png_exporter.writeToPNGFile(diff, v, .{}) catch |err| {
+        log.err("Can't write {s}: {}", .{ v, err });
+    };
     log.err(
         "One or more glyphs differ from reference file in range U+{X}...U+{X}! " ++
             "test={s}, reference={s}, diff={s}",
-        .{ i, i + 0xFF, test_path, ref_path, diff_path },
+        .{ i, i + 0xFF, test_path, ref_path, diff_path orelse "(not written)" },
     );
 
     return true;
@@ -435,6 +564,11 @@ fn testDrawRanges(
     const tmp_dir = try dir.dir.realpathAlloc(alloc, ".");
     defer alloc.free(tmp_dir);
 
+    // Where the reference images live and where a failure writes its
+    // artifacts, both resolved from the source root rather than the cwd.
+    const paths: TestPaths = try .init(alloc);
+    defer paths.deinit(alloc);
+
     // We set this to true if we have any fails so we can
     // return an error after we're done comparing all glyphs.
     var fail: bool = false;
@@ -455,6 +589,7 @@ fn testDrawRanges(
 
                 if (try testDiffAtlas(
                     alloc,
+                    paths,
                     &atlas,
                     path,
                     i,
@@ -499,6 +634,7 @@ fn testDrawRanges(
     try z2d.png_exporter.writeToPNGFile(atlas, path, .{});
     if (try testDiffAtlas(
         alloc,
+        paths,
         &atlas,
         path,
         i,
@@ -508,6 +644,39 @@ fn testDrawRanges(
     )) fail = true;
 
     return fail;
+}
+
+test "T820: source root is found above the cwd, nearest first" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var dir = testing.tmpDir(.{});
+    defer dir.cleanup();
+
+    // An outer root and an inner one, so we can prove the search stops at
+    // the nearest marker instead of running all the way to the top.
+    try dir.dir.makePath(testdata_rel);
+    try dir.dir.makePath("inner/" ++ testdata_rel);
+    try dir.dir.makePath("inner/deep/deeper");
+
+    const outer = try dir.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(outer);
+    const inner = try dir.dir.realpathAlloc(alloc, "inner");
+    defer alloc.free(inner);
+    const start = try dir.dir.realpathAlloc(alloc, "inner/deep/deeper");
+    defer alloc.free(start);
+
+    const found = findSourceRoot(alloc, start) orelse return error.NoSourceRoot;
+    defer alloc.free(found);
+    try testing.expectEqualStrings(inner, found);
+
+    // And from the outer tree we find the outer root.
+    const outer_start = try dir.dir.realpathAlloc(alloc, testdata_rel);
+    defer alloc.free(outer_start);
+    const outer_found = findSourceRoot(alloc, outer_start) orelse
+        return error.NoSourceRoot;
+    defer alloc.free(outer_found);
+    try testing.expectEqualStrings(outer, outer_found);
 }
 
 test "sprite face render all sprites" {

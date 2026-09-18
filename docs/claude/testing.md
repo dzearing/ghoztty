@@ -129,6 +129,8 @@ case of a PASSING unit test, printed by `wssBase` on its way out. The message
 now belongs to the CLI call sites, so a negative test no longer plants an
 argument-validation error in a green lane's log for the next reader to chase.
 
+**A lane is run from the repo root, but no test may depend on that** (T820). The sprite-face reference test opened its reference PNGs by the relative path `./src/font/sprite/testdata/...`, so it resolved against the cwd the test binary happened to be launched with: green from the repo root, and from anywhere else it failed on every page for a reason that had nothing to do with the code under test AND dropped 36 actual-image PNGs into that cwd (`src\apprt\win32\`, in the run that found it). It now walks up from the cwd for the `src/font/sprite/testdata` marker, and a failing run writes its actual-image and diff PNGs to `<root>/zig-out/sprite-face-test` — under `zig-out` so the artifacts are easy to find and cannot dirty `git status`. `GHOSTTY_SPRITE_TESTDATA_ROOT` overrides the root for an out-of-tree run. The floor lane is structurally blind to this (it always runs from the root), so the coverage is its own guard: `test\win32\sprite-testdata.ps1`.
+
 **And two lanes never share a browser teardown** (T592). The `win32` and
 `agent` lanes each stand up a real WebView2, and `-Lane all` used to start the
 next one the instant the previous exited - into a browser tree that was still
