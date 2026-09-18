@@ -38,6 +38,16 @@
   WEDGED, which is what the detector answered wrongly for as long as any CPU in
   the tree counted.
 
+  Arms 17-18 are T1648's half: two runs of the same lane share the test-binary
+  NAME and the clock, so name-plus-clock cannot tell them apart -- and since the
+  idle soak daemon (T841) overlaps a turn on purpose, a round reaped a turn's
+  ghostty-test.exe and the turn's lane died at exit 255 with nothing printed.
+  Arm 17 stages that exact collision with live processes carrying the real
+  shared name out of two different cache roots, and requires the UNSCOPED rule
+  to still report the foreign one (the negative control: the bug is reproducible
+  against the old rule) while the scoped rule reports only its own. Arm 18 runs
+  it end to end through floor-lane.ps1 -Command.
+
   Prints a single ALL PASS / N FAILURE(S) line, like every other script here.
 
   ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
@@ -323,6 +333,113 @@ try {
     Check 'the failed lane took its process tree with it' `
         (@(Get-LaneTestProcess -ExeNames @($FixtureName)).Count -eq 0) 'fixture outlived the watchdog error'
 
+    # -- 17: T1648. A concurrent run's test binary is NOT this run's leak.
+    #        The identity rules up to arm 4 are name + clock, and two runs of
+    #        the same lane share both -- which is how a soak round reaped a
+    #        turn's ghostty-test.exe on 2026-09-18 and left it dead at exit 255
+    #        with nothing printed. The separator is the BUILD ROOT.
+    Check 'an explicit --cache-dir is the run''s root' `
+        (@(Get-LaneBuildRoot -Command 'zig build test --cache-dir D:\soak\none\zig-cache --prefix D:\soak\none\zig-out' `
+                -RepoPath 'D:\git\ghoztty') -contains 'D:\soak\none\zig-cache') ''
+    Check 'the repo is NOT a root once the command names its own cache' `
+        (-not (@(Get-LaneBuildRoot -Command 'zig build test --cache-dir D:\soak\none\zig-cache' `
+                    -RepoPath 'D:\git\ghoztty') -contains 'D:\git\ghoztty')) ''
+    Check 'a quoted cache path is read whole' `
+        (@(Get-LaneBuildRoot -Command 'zig build test --cache-dir "D:\soak dir\zig-cache"' -RepoPath 'D:\r') `
+            -contains 'D:\soak dir\zig-cache') ''
+    Check 'a lane with no explicit cache builds under the repo' `
+        (@(Get-LaneBuildRoot -Command 'set ZIG_GLOBAL_CACHE_DIR=D:\zig-global-cache && zig build test' `
+                -RepoPath 'D:\git\ghoztty') -contains 'D:\git\ghoztty') ''
+    Check 'the SHARED global cache is never a root' `
+        (-not (@(Get-LaneBuildRoot -Command 'zig build test --cache-dir D:\soak\c --global-cache-dir D:\zig-global-cache' `
+                    -RepoPath 'D:\r') -contains 'D:\zig-global-cache')) ''
+    Check 'a sibling directory is not inside the root' `
+        (-not (Test-PathUnderRoot -Path 'D:\zig-out2\x.exe' -Roots @('D:\zig-out'))) ''
+    Check 'a file under the root is inside it' `
+        (Test-PathUnderRoot -Path 'D:\zig-out\o\ab\x.exe' -Roots @('D:\zig-out')) ''
+
+    # The negative control, live: a real process carrying the SHARED name,
+    # running out of a cache root this lane never built into.
+    $ForeignDir = Join-Path $Sandbox 'foreign-cache'
+    $MineDir = Join-Path $Sandbox 'mine-cache'
+    New-Item -ItemType Directory -Path $ForeignDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $MineDir -Force | Out-Null
+    $SharedName = 'ghostty-test.exe'
+    $ForeignExe = Join-Path $ForeignDir $SharedName
+    $MineExe = Join-Path $MineDir $SharedName
+    Copy-Item -LiteralPath "$env:SystemRoot\System32\waitfor.exe" -Destination $ForeignExe -Force
+    Copy-Item -LiteralPath "$env:SystemRoot\System32\waitfor.exe" -Destination $MineExe -Force
+
+    $t17 = Get-Date
+    # persistence: not a terminal launch - these are copies of waitfor.exe wearing
+    # the test-binary name, so there is no session state and no flag to pass.
+    $fgn = Start-Process -FilePath $ForeignExe -ArgumentList '/t', '600', 'GhozttyLaneLeakArm17F' `
+        -PassThru -WindowStyle Hidden -RedirectStandardError (Join-Path $Sandbox 'arm17-foreign.err')
+    $null = $fgn.Handle
+    $script:Started += $fgn
+    # persistence: as above - a renamed waitfor.exe, not the terminal.
+    $own = Start-Process -FilePath $MineExe -ArgumentList '/t', '600', 'GhozttyLaneLeakArm17M' `
+        -PassThru -WindowStyle Hidden -RedirectStandardError (Join-Path $Sandbox 'arm17-mine.err')
+    $null = $own.Handle
+    $script:Started += $own
+    for ($i = 0; $i -lt 50; $i++) {
+        $seen = @(Get-LaneTestProcess -ExeNames @($SharedName) |
+            Where-Object { $_.ProcessId -eq $fgn.Id -or $_.ProcessId -eq $own.Id })
+        if ($seen.Count -eq 2) { break }
+        Start-Sleep -Milliseconds 100
+    }
+
+    # Unscoped -- the rule as it stood before T1648 -- reports BOTH. This is the
+    # arm that proves the control reproduces the cross-kill rather than testing
+    # a condition that could never happen.
+    $unscoped = @(Get-LeakedLaneProcess -ExeNames @($SharedName) -Since $t17)
+    Check 'without build-root scoping, the foreign binary IS reported (the T1648 bug)' `
+        (@($unscoped | Where-Object { $_.ProcessId -eq $fgn.Id }).Count -eq 1) "got $($unscoped.Count)"
+
+    $scopedLeaks = @(Get-LeakedLaneProcess -ExeNames @($SharedName) -Since $t17 `
+            -Roots @($MineDir) -ScopedNames @($SharedName))
+    Check 'a test binary from another run''s cache is not this lane''s leak' `
+        (@($scopedLeaks | Where-Object { $_.ProcessId -eq $fgn.Id }).Count -eq 0) `
+        "got [$(@($scopedLeaks | ForEach-Object { $_.ProcessId }) -join ',')]"
+    Check 'this run''s own leak is still reported' `
+        (@($scopedLeaks | Where-Object { $_.ProcessId -eq $own.Id }).Count -eq 1) `
+        "got [$(@($scopedLeaks | ForEach-Object { $_.ProcessId }) -join ',')]"
+
+    # A fixture name the caller passed in (-ExtraTestExeNames) is private to
+    # that harness and lives wherever the harness put it, so scoping must not
+    # reach it -- or arm 9's count would go to zero for the wrong reason.
+    $fixtureCand = @([pscustomobject]@{
+            ProcessId = 4242; Name = $FixtureName; ExecutablePath = $Fixture
+            CreationDate = (Get-Date); CpuSeconds = 0.0; CommandLine = ''
+        })
+    $splitFx = Split-LaneLeakByRoot -Candidates $fixtureCand -Roots @($MineDir) -Names @($SharedName)
+    Check 'a caller-named fixture is never scoped out by build root' `
+        (@($splitFx.Mine).Count -eq 1 -and @($splitFx.Foreign).Count -eq 0) `
+        "mine=$(@($splitFx.Mine).Count) foreign=$(@($splitFx.Foreign).Count)"
+
+    # -- 18: end to end. A lane whose command names its own cache must leave a
+    #        foreign test binary ALIVE, say so, and count zero leaks.
+    $arm18 = Join-Path $Sandbox 'arm18.cmd'
+    @(
+        '@echo off',
+        ('start /b "" "{0}" /t 600 GhozttyLaneLeakArm18' -f $ForeignExe)
+    ) | Set-Content -LiteralPath $arm18 -Encoding ASCII
+    $cmd18 = "$arm18 --cache-dir $MineDir"
+    $laneOut = & powershell -NoProfile -File (Join-Path $RepoRoot 'scripts\floor-lane.ps1') `
+        -Command $cmd18 -NoCatch -SampleSeconds 2 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String
+    Start-Sleep -Milliseconds 500
+    Check 'the lane leaves the other run''s test binary running' `
+        (@(Get-LaneTestProcess -ExeNames @($SharedName) |
+            Where-Object { $_.ExecutablePath -eq $ForeignExe }).Count -ge 1) $laneOut
+    Check 'the lane says which process it deliberately left alone' `
+        ($laneOut -match 'LANE LEAK IGNORED') $laneOut
+    Check 'and counts no leak of its own' ($laneOut -match 'leaked test binaries: 0') $laneOut
+    foreach ($p in @(Get-LaneTestProcess -ExeNames @($SharedName) |
+            Where-Object { $_.ExecutablePath -eq $ForeignExe -or $_.ExecutablePath -eq $MineExe })) {
+        try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop } catch {}
+    }
+
     # -- 10: floor-lane.ps1 parses, and its wiring is the wiring described above
     $tokens = $null; $errors = $null
     $null = [System.Management.Automation.Language.Parser]::ParseFile(
@@ -340,6 +457,11 @@ try {
         ($src -match '\$tree = @\(Get-ProcessTree') ''
     Check 'floor-lane cannot leave its watchdog loop without a verdict' `
         ($src -match 'WATCHDOG ERROR') ''
+    Check 'floor-lane asks where THIS run builds' ($src -match 'Get-LaneBuildRoot -Command') ''
+    Check 'floor-lane scopes its leak set by that root' `
+        ($src -match 'Split-LaneLeakByRoot -Candidates \$leakCandidates') ''
+    Check 'floor-lane scopes only the shared test-binary names' `
+        ($src -match '-Names \$script:CRASHDIAG_TEST_EXES') ''
     Complete-TestBody  # T1039: the run reached the end of its body
 }
 finally {
@@ -348,6 +470,14 @@ finally {
     }
     # Anything the end-to-end arm started, whatever its pid.
     foreach ($p in @(Get-LaneTestProcess -ExeNames @($FixtureName, 'ghoztty-leakspin-fixture.exe'))) {
+        try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop } catch {}
+    }
+    # Arm 17/18 run copies carrying the REAL test-binary name, so they are
+    # matched by their path under this run's sandbox and never by name alone:
+    # a real lane's ghostty-test.exe must not be touched by a cleanup.
+    foreach ($p in @(Get-LaneTestProcess -ExeNames @('ghostty-test.exe'))) {
+        if (-not $p.ExecutablePath) { continue }
+        if (-not $p.ExecutablePath.StartsWith($Sandbox, [System.StringComparison]::OrdinalIgnoreCase)) { continue }
         try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop } catch {}
     }
     Start-Sleep -Milliseconds 300

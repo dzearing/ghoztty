@@ -622,8 +622,25 @@ function Invoke-Lane {
     # even under -NoSweep -- the count is the point of T837, the killing is the
     # cleanup -- and the stack is taken before the kill, because cleanup that
     # destroys the evidence guarantees the leak is still unexplained next time.
-    $leakedProcs = @(Get-LeakedLaneProcess -ExeNames $TEST_EXE_NAMES `
+    #
+    # ...and only binaries THIS run built (T1648). The idle soak daemon runs
+    # lanes concurrently with a turn on purpose, so "a matching name that was
+    # not running when I started" now names the other run's test binary as
+    # often as a real leak -- and killing it reads, at the far end, as an
+    # unexplained exit 255 in the middle of somebody's floor.
+    $leakCandidates = @(Get-LeakedLaneProcess -ExeNames $TEST_EXE_NAMES `
             -ExcludePids $preTestPids -Since $laneStart)
+    $laneRoots = @(Get-LaneBuildRoot -Command $cmd -RepoPath $Repo)
+    # Scoped to the SHARED names only: an -ExtraTestExeNames fixture is private
+    # to the harness that named it and lives wherever that harness put it, so
+    # scoping it by build root would disarm the count it was passed in to make.
+    $split = Split-LaneLeakByRoot -Candidates $leakCandidates -Roots $laneRoots `
+        -Names $script:CRASHDIAG_TEST_EXES
+    foreach ($f in @($split.Foreign)) {
+        Write-Host ("  LANE LEAK IGNORED: {0} pid={1} is not this run's ({2}); left alone (T1648)" -f `
+                $f.Name, $f.ProcessId, $(if ($f.ExecutablePath) { $f.ExecutablePath } else { 'image path unreadable' }))
+    }
+    $leakedProcs = @($split.Mine)
     $leakedTests = 0
     if ($leakedProcs.Count -gt 0) {
         $leakReport = Invoke-LaneLeakSweep -Leaked $leakedProcs -CdbPath (Get-CdbPath) `

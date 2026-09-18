@@ -9,6 +9,47 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-18: T1648 closed done, T1649 filed — **a test run can no longer kill
+  another run's test binary, so a red lane means red code again.**
+
+  The idle soak daemon (T841) runs floor lanes in the box's spare time, on
+  purpose, while a turn is working. Every lane ends by reaping the test binaries
+  it "leaked", and its notion of a leak was *a process carrying one of the lane's
+  test-binary names that was not running when this lane started*. Two concurrent
+  runs of the same lane share that name and share that clock — so within twenty
+  minutes of the daemon going live, a soak round took a non-invasive stack of a
+  turn's healthy `ghostty-test.exe` and killed it. At the far end the turn saw
+  `test 'font.Collection.test.add full' ... exited with code 255`: no crash text,
+  no handler output, 5405 other tests green. The instrument was manufacturing the
+  signal it exists to hunt, and while it stood, no red lane on this box was
+  evidence.
+
+  The separator is where each run BUILDS. `Get-LaneBuildRoot` reads
+  `--cache-dir` / `--prefix` off the lane's own command — a command that names
+  its own cache is isolated by construction, so those paths are the whole answer
+  and the repo is deliberately not added; a command with neither builds under the
+  repo, which is where every real lane binary here lives. The shared global cache
+  is never a root: zig writes packages there, never a test binary, and it is the
+  one directory a round and a turn have in common. `Split-LaneLeakByRoot` applies
+  that to the candidates, and only to the SHARED names, so a harness that passes
+  `-ExtraTestExeNames` for a fixture still gets its count. floor-lane prints
+  `LANE LEAK IGNORED: ... is not this run's (<path>)` rather than deciding
+  silently.
+
+  The negative control is the part worth keeping: arm 17 stages the real
+  collision with live processes carrying the real name out of two cache roots,
+  and requires the UNSCOPED rule to still report the foreign one — so the arm
+  proves the bug is reproducible, not just that the new code is quiet. Arm 18
+  runs it end to end, and `soak-daemon.ps1`'s new section I asks the same of a
+  round that yields mid-flight. Green: `floor-lane-leak-sweep.ps1` ALL PASS (65),
+  `soak-daemon.ps1` ALL PASS (40), and a full `-Lane all` over the top of the
+  resumed daemon.
+
+  **The same cross-kill exists on a second resource and is NOT fixed here**:
+  a lane's WebView2 sweep identifies hosts by a profile prefix and an exe name,
+  both shared by every concurrent run, so a round's cleanup kills the browser
+  processes a turn's win32 lane is using. Filed as T1649 (P0), same shape of fix.
+
 - 2026-09-18: T841 closed done, T1647 filed+closed — **the T443 crash hunt now
   runs in the box's idle time, and gets off the box the moment a turn wants it.**
 

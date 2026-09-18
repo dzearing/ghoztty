@@ -24,17 +24,30 @@
     names, (b) was NOT running when this lane started, and (c) was created at or
     after this lane started. (b) is what keeps a sweep from reaching into a
     binary somebody else was already running -- including a debugger session a
-    human left attached -- and (c) is belt and braces on top of it. The one case
-    this cannot separate is a SECOND floor run overlapping this one, which the
-    house rules already forbid (go.md step 3: lanes and acceptance scripts run
-    sequentially, never overlapped).
+    human left attached -- and (c) is belt and braces on top of it.
+
+    (a)-(c) alone cannot separate a SECOND run overlapping this one, and since
+    T841 that overlap is SCHEDULED rather than forbidden: the idle soak daemon
+    runs floor lanes in the box's idle time, by design, while a turn is running.
+    On 2026-09-18 a soak round therefore reaped a turn's `ghostty-test.exe` --
+    same name, started after the round's own lane -- and the turn's lane died at
+    exit 255 with nothing printed, wearing the costume of the crash the soak
+    exists to hunt. So there is a fourth rule, (d): the process's image must live
+    under one of THIS run's build roots (T1648). Two builds on one box write
+    their test binaries to different cache paths, which separates them exactly.
 
     Functions, split so the caller owns the policy and a test can drive each
     one without staging a real 30-minute lane:
 
       Get-LaneTestProcess    the test binaries alive right now
       Get-LeakedLaneProcess  ...minus the ones that were already there, plus the
-                             created-after-the-lane-started rule
+                             created-after-the-lane-started rule, plus the
+                             built-where-this-run-builds rule
+      Get-LaneBuildRoot      where a lane's command builds its binaries, from
+                             its --cache-dir / --prefix / --global-cache-dir
+      Split-LaneLeakByRoot   candidates split into this run's and somebody
+                             else's, by image path
+      Test-PathUnderRoot     is this path inside that directory?
       Get-LeakedProcessStack a non-invasive `cdb -pv -p <pid>` stack for one of
                              them, which is what turns "it leaked again" into a
                              named wait
@@ -87,10 +100,145 @@ function Get-LaneTestProcess {
     return $out
 }
 
+function Test-PathUnderRoot {
+    <#
+    .SYNOPSIS
+        Does $Path sit inside one of $Roots?
+    .DESCRIPTION
+        Full-path, case-insensitive, boundary-safe: a root is compared with a
+        trailing separator, so `D:\zig-out2\x.exe` is NOT under `D:\zig-out`.
+        Neither path has to exist -- the candidate's image may already be gone.
+    #>
+    param([string]$Path, [string[]]$Roots)
+    if (-not $Path) { return $false }
+    $p = $Path
+    try { $p = [System.IO.Path]::GetFullPath($Path) } catch {}
+    foreach ($r in @($Roots)) {
+        if (-not $r) { continue }
+        $full = $r
+        try { $full = [System.IO.Path]::GetFullPath($r) } catch {}
+        if (-not $full.EndsWith('\')) { $full += '\' }
+        if ($p.StartsWith($full, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
+function Get-LaneBuildRoot {
+    <#
+    .SYNOPSIS
+        The directories a lane could have built a test binary into.
+    .DESCRIPTION
+        This is the answer to "whose binary is that?" (T1648). A zig build
+        writes its test binaries under the caches and prefix it was given, so
+        two builds on one box put their `ghostty-test.exe` at two different
+        paths -- which is the only thing that separates them once the process
+        tree is gone and the names are identical.
+
+        A command carrying an explicit `--cache-dir` / `--prefix` is ISOLATED by
+        construction (that is what the soak daemon's rounds do), so those paths
+        are the whole answer and the repo is deliberately NOT added: a round
+        that builds into its own scratch tree has no claim on a binary sitting
+        in the repo's `.zig-cache`.
+
+        A command with neither -- an ordinary floor lane -- builds into the local
+        cache, which zig resolves against the cwd as `<repo>\.zig-cache`. That
+        is where every lane test binary on this box actually lives.
+
+        The GLOBAL cache is deliberately not a root, for both shapes. Zig builds
+        packages and the build runner there, never a test binary, and it is the
+        one directory the soak and a turn SHARE -- so admitting it would hand
+        both runs a claim on the same path and reopen T1648 the day zig starts
+        writing a test binary into it.
+    .OUTPUTS
+        [string[]] directories. Empty only when the caller supplied nothing.
+    #>
+    param([string]$Command, [string]$RepoPath)
+    $roots = @()
+    if ($Command) {
+        foreach ($opt in @('--cache-dir', '--prefix')) {
+            # `--opt <value>` or `--opt=<value>`, value optionally quoted.
+            $rx = [regex]::Escape($opt) + '(?:\s+|=)(?:"([^"]+)"|''([^'']+)''|([^\s"'']+))'
+            foreach ($m in [regex]::Matches($Command, $rx)) {
+                $v = if ($m.Groups[1].Success) { $m.Groups[1].Value }
+                elseif ($m.Groups[2].Success) { $m.Groups[2].Value }
+                else { $m.Groups[3].Value }
+                if ($v) { $roots += $v }
+            }
+        }
+    }
+    if ($roots.Count -eq 0 -and $RepoPath) { $roots += $RepoPath }
+    return $roots
+}
+
+function Split-LaneLeakByRoot {
+    <#
+    .SYNOPSIS
+        Split leak candidates into the ones this run built and the ones it did
+        not.
+    .DESCRIPTION
+        The baseline rule above ("a matching name that was not running when this
+        lane started") cannot separate two CONCURRENT runs, and as of T841 that
+        overlap is scheduled: the idle soak daemon runs lanes in the box's idle
+        time, on purpose, while a turn is running. Its round then found the
+        turn's `ghostty-test.exe` -- a name it shares, started after its own lane
+        did -- took a stack of it and killed it, and the turn's lane died at exit
+        255 with nothing printed. Measured twice on 2026-09-18.
+
+        So identity is the build tree, not the name plus a clock. A candidate
+        whose image does not live under one of this run's roots is somebody
+        else's process, however new it is.
+    .PARAMETER Roots
+        This run's build roots (Get-LaneBuildRoot). EMPTY means no scoping is
+        possible, and then nothing is dropped -- the sweep behaves as it did
+        before, because a caller that cannot say where it built must not be
+        silently disarmed.
+    .PARAMETER Names
+        The image names the rule applies to -- the SHARED test-binary names
+        (`ghostty-test.exe` and friends), which is exactly the set where a
+        second run can be mistaken for this one. A candidate carrying any other
+        name is private to its caller by construction (floor-lane's
+        -ExtraTestExeNames names a fixture nobody else runs, and a fixture lives
+        wherever its harness put it), so it is never scoped out. Empty means
+        scope everything.
+    .OUTPUTS
+        Mine / Foreign, each an array of the candidate objects.
+    #>
+    param(
+        [Parameter(Mandatory)][AllowNull()][AllowEmptyCollection()]$Candidates,
+        [string[]]$Roots = @(),
+        [string[]]$Names = @()
+    )
+    $all = @(@($Candidates) | Where-Object { $null -ne $_ })
+    $scoped = @(@($Roots) | Where-Object { $_ })
+    if ($scoped.Count -eq 0) {
+        return [pscustomobject]@{ Mine = $all; Foreign = @() }
+    }
+    $only = @{}
+    foreach ($n in @($Names)) { if ($n) { $only[$n.ToLowerInvariant()] = $true } }
+
+    $mine = @()
+    $foreign = @()
+    foreach ($p in $all) {
+        $name = [string]$p.Name
+        if ($only.Count -gt 0 -and -not ($name -and $only.ContainsKey($name.ToLowerInvariant()))) {
+            $mine += $p
+            continue
+        }
+        if (Test-PathUnderRoot -Path $p.ExecutablePath -Roots $scoped) { $mine += $p }
+        else { $foreign += $p }
+    }
+    return [pscustomobject]@{ Mine = $mine; Foreign = $foreign }
+}
+
 function Get-LeakedLaneProcess {
     <#
     .SYNOPSIS
         The test binaries THIS lane started and did not take with it.
+    .PARAMETER Roots
+        This lane's build roots (Get-LaneBuildRoot). When given, a candidate
+        whose image does not live under one of them is not this lane's leak --
+        the T1648 rule, which is what keeps two concurrent runs of the same
+        lane off each other's processes. Omitted means no scoping.
     .PARAMETER ExcludePids
         The pids that already carried a test-binary name before the lane
         launched. Anything on this list is somebody else's process and is never
@@ -107,7 +255,9 @@ function Get-LeakedLaneProcess {
         [Parameter(Mandatory)][string[]]$ExeNames,
         [int[]]$ExcludePids = @(),
         [datetime]$Since,
-        [int]$SkewSeconds = 5
+        [int]$SkewSeconds = 5,
+        [string[]]$Roots = @(),
+        [string[]]$ScopedNames = @()
     )
     $exclude = @{}
     # Same null rule as the tree parameters (T982): a caller whose "pids that
@@ -124,7 +274,8 @@ function Get-LeakedLaneProcess {
         if ($cutoff -and $p.CreationDate -and $p.CreationDate -lt $cutoff) { continue }
         $out += $p
     }
-    return $out
+    # T1648: and it has to have been built where this run builds.
+    return @((Split-LaneLeakByRoot -Candidates $out -Roots $Roots -Names $ScopedNames).Mine)
 }
 
 function Test-BuildRunnerCommandLine {

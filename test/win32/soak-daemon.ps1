@@ -18,6 +18,7 @@
 #   E  foreground work on the box does the same, and is NOT killed itself
 #   F  the daemon does not yield to ITSELF (the marker), or it would never run
 #   G  the measured lane is cache-isolated from the repo (the T401 rule)
+#   I  a round never reaps a test binary it did not build (T1648)
 #   H  stop leaves nothing behind
 #
 # Hermetic: its own state directory, its own scratch directory, its own mutex
@@ -201,6 +202,63 @@ try {
         $r.Out -match '--cache-dir' -and $r.Out -match '--prefix')
     Assert 'G3 nothing points at the repo working tree' ($r.Out -notmatch ([regex]::Escape($Repo) + '\\.?zig-cache'))
     Assert 'G4 the build-runner shape is kept (a zig build, not a bare exe)' ($r.Out -match 'zig build')
+
+    ""
+    "I. a round never reaps a test binary it did not build (T1648)"
+    # The round's lane ends in floor-lane's leak sweep, whose old rule was "a
+    # process carrying one of the lane's test-binary names that was not running
+    # when this lane started". Two concurrent runs share that name and that
+    # clock, and the daemon overlaps a turn BY DESIGN - so on 2026-09-18 a round
+    # took a stack of a turn's ghostty-test.exe and killed it, and the turn's
+    # lane died at a bare exit 255. What separates them is where each one BUILDS.
+    . (Join-Path $Repo 'scripts\lib\LaneLeak.ps1')
+    $dry = (Daemon @('dry-run')).Out
+    $roundCmd = ''
+    foreach ($l in ($dry -split "`r?`n")) { if ($l -match 'zig build') { $roundCmd = $l; break } }
+    if (-not $roundCmd) { Skip 'I the dry-run named no lane command' 'nothing matched "zig build"' }
+    else {
+        $roots = @(Get-LaneBuildRoot -Command $roundCmd -RepoPath $Repo)
+        Assert 'I1 the round builds under its own scratch directory' (
+            @($roots | Where-Object { $_ -like ($scratchDir + '*') }).Count -gt 0)
+        Assert 'I2 and claims nothing in the repo working tree' (
+            @($roots | Where-Object { $_ -eq $Repo }).Count -eq 0)
+
+        # A live process carrying the REAL shared name, out of a cache root this
+        # round never built into: the exact 2026-09-18 collision.
+        $foreignDir = Join-Path $stateDir 'foreign-cache'
+        New-Item -ItemType Directory -Force $foreignDir | Out-Null
+        $foreignExe = Join-Path $foreignDir 'ghostty-test.exe'
+        Copy-Item -LiteralPath "$env:SystemRoot\System32\waitfor.exe" -Destination $foreignExe -Force
+        $fp = Start-Process -FilePath $foreignExe -ArgumentList '/t', '120', 'GhozttySoakForeign' `
+            -PassThru -WindowStyle Hidden
+        $null = $fp.Handle
+        $script:sleepers += $fp
+        $cand = @(Get-LaneTestProcess -ExeNames @('ghostty-test.exe') |
+            Where-Object { $_.ProcessId -eq $fp.Id })
+        Assert 'I3 the stand-in foreign test binary is running' ($cand.Count -eq 1)
+        $split = Split-LaneLeakByRoot -Candidates $cand -Roots $roots -Names @('ghostty-test.exe')
+        Assert 'I4 a round classifies it as somebody else''s, not its leak' (
+            @($split.Foreign).Count -eq 1 -and @($split.Mine).Count -eq 0)
+
+        # ...and the YIELD path, which is where the kill actually happened: the
+        # round is torn down mid-flight and the foreign binary must be untouched.
+        Daemon @('start', '-MaxRounds', '1', '-FixtureCommand', "Start-Sleep -Seconds 120",
+            '-YieldPollSeconds', '1', '-IdleWaitSeconds', '1') | Out-Null
+        $inFlight = Wait-For {
+            @(Get-ChildItem -Path (Join-Path $scratchDir 'rounds') -Filter '*.ps1' -ErrorAction SilentlyContinue).Count -gt 0
+        } 25
+        if (-not $inFlight) { Skip 'I5 the round never started' 'no round script appeared' }
+        else {
+            Start-Sleep -Seconds 2
+            Daemon @('pause', '-Reason', 'T1648 acceptance: yield with a foreign test binary running') | Out-Null
+            $yielded = Wait-For { @(Read-Ledger | Where-Object { $_.outcome -eq 'yielded' }).Count -ge 2 } 30
+            Assert 'I5 the round yielded' $yielded
+            Assert 'I6 and the foreign test binary is still running' (-not $fp.HasExited)
+            Daemon @('resume') | Out-Null
+        }
+        Daemon @('stop') | Out-Null
+        Stop-Process -Id $fp.Id -Force -ErrorAction SilentlyContinue
+    }
 
     ""
     "H. stop leaves nothing behind"
