@@ -32041,3 +32041,45 @@ command-resolve, unroll-count, job-teardown, lane-releasesafe and build-cache.
 Filed **T1655**: the worktree probe carries the same shape at a 15 s interval
 behind a cache, where `dirty` also means "the question moved" and so needs the
 same explicit/poll split rather than a one-line drop.
+
+## 2026-09-18 - T853: the soak's worker counts could not go above one
+
+The soak tool can hold the box busy with background workers while it hunts for a
+rare crash, and its summary reports how many it started and how many of them
+died. Both numbers were stuck at one. `scripts\test-binary-soak.ps1` returned
+its worker lists with PS 5.1's `return , $array` idiom while every call site
+wrapped the call in `@()`, and that combination is the one that cannot work: the
+comma's outer wrapper SURVIVES the wrap, so the call site sees a single element
+that happens to be the whole array. Measured on this box, `@(f)` is Count 1 for
+an empty, a one-element and a two-element comma-protected return alike.
+
+What that produced in the wild: a soak whose two load workers both crashed
+reported `worker-crash=1`, and named them as the single mangled line
+`w0 1: Segmentation fault ... Segmentation fault ...` - both slot numbers and
+both crash lines member-enumerated together. A run in which no worker started at
+all would have reported one phantom worker in its slot table, which is the shape
+[[T494]] found in `CacheHeal.ps1` and the reason this task was filed.
+
+The fix is the other half of the pair the repo already documents: the three
+helpers return plainly, because the callers wrap. (The inverse pair - comma
+return, unwrapped call - is equally correct and is what most of the acceptance
+suite does.) The comment at each site now says which pair it is in, so the next
+reader is not left to infer it.
+
+The harness grew a section for this. Six of the eight new assertions are made on
+the helpers DIRECTLY, lifted out of the script by the PowerShell parser, because
+the zero-started case needs `Start-Process` itself to fail and cannot be staged
+through the soak's own command line; the other two are end to end, on a soak
+with two deliberately crashing load workers. All eight fail against the unfixed
+script - that pre-fix run is the negative control, not an argument.
+
+Evidence: `test\win32\test-binary-soak.ps1` **ALL PASS (88 assertions)**, 8
+failures before the fix. `floor-lane.ps1 -Lane all` **ALL LANES PASS** (lib 60s,
+none 338s, win32 515s, agent 444s). `harness-floor.ps1` green, re-stamping the
+row this edit made due.
+
+Filed **T1656**: `unroll-count-audit.ps1` measures both halves of this trap
+(assertions B5/B6) and its index deliberately steps past comma-protected
+helpers, so the shape found here - an `@()` wrapped around such a call - is
+known to the suite and machine-checked by nothing. A rule for it would have
+found this without a human reading the file.

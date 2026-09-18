@@ -515,7 +515,12 @@ function Start-SoakLoadWorkers {
         }
         catch {}
     }
-    return , $procs
+    # A PLAIN return, deliberately: every caller wraps this in `@()`, and PS 5.1's
+    # `return , $procs` wrapper SURVIVES that wrap -- `@(f)` is Count 1 whether the
+    # loop collected nothing, one worker or five, with the whole array as the single
+    # element (T853, the trap T494 found in CacheHeal.ps1). Plain return + `@()` at
+    # the call site is the pair that counts correctly at both ends.
+    return $procs
 }
 
 # What a command/build worker would run, per worker index. Build kind composes
@@ -600,7 +605,12 @@ function Start-SoakCommandWorkers {
         }
         catch {}
     }
-    return , $procs
+    # A PLAIN return, deliberately: every caller wraps this in `@()`, and PS 5.1's
+    # `return , $procs` wrapper SURVIVES that wrap -- `@(f)` is Count 1 whether the
+    # loop collected nothing, one worker or five, with the whole array as the single
+    # element (T853, the trap T494 found in CacheHeal.ps1). Plain return + `@()` at
+    # the call site is the pair that counts correctly at both ends.
+    return $procs
 }
 
 # Started and completed iterations, so `load=2:build` can be read with the work
@@ -667,12 +677,11 @@ function Get-SoakWorkerCrash {
         }
         if ($line) { $hits += [pscustomobject]@{ Index = $w; Log = $log; Line = $line } }
     }
-    # `return ,` so a ONE-hit result does not unroll to a bare object whose
-    # .Count is $null at the call site (the PS 5.1 trap this script already
-    # documents once) -- but NOT on an empty result, where the wrapper survives
-    # `@()` as a single element and invents a crash that never happened.
-    if ($hits.Count -eq 0) { return @() }
-    return , $hits
+    # Plain return, and `@()` at the call site -- see Start-SoakLoadWorkers. The
+    # `return , $hits` this used to do made TWO crashed workers report as one
+    # (T853), with both slot numbers member-enumerated into a single mangled
+    # line, which is the opposite of what the comma was reached for.
+    return $hits
 }
 
 # Kill the worker AND anything it launched. A command worker's zig build is a

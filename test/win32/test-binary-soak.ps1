@@ -396,6 +396,93 @@ else { '' }
 Check 'a later soak does not delete the earlier soak''s crash evidence' `
 ($keptText -match 'Segmentation fault') "kept log: $keptText"
 
+# ------------- 3e. a worker list says how many workers there are (T853)
+#
+# PS 5.1's `return , $array` wraps the whole array as ONE pipeline object, and
+# that wrapper SURVIVES `@()` at the call site: `@(f)` is Count 1 whether the
+# function collected nothing, one worker, or five. Every caller of these three
+# helpers wraps in `@()`, so the idiom was answering a different question than
+# the one being asked -- an empty worker list read as one worker (the phantom
+# element T494 found in CacheHeal.ps1), and a soak in which THREE worker
+# iterations died reported `worker-crash=1` with the three slot numbers
+# member-enumerated into one mangled line.
+#
+# Asserted on the helpers directly, by lifting them out of the script with the
+# parser: the zero case cannot be staged through the soak's own command line
+# (it needs Start-Process to fail), and a count is exactly the kind of claim
+# that should be checked where it is made.
+
+. "$Repo\scripts\lib\CrashCatch.ps1"
+. "$Repo\scripts\lib\CrashDiag.ps1"
+$soakAst = [System.Management.Automation.Language.Parser]::ParseFile($soak, [ref]$null, [ref]$null)
+function Get-SoakFunctionText {
+    param([string]$Name)
+    $fn = @($soakAst.FindAll({
+                param($n)
+                $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $Name
+            }, $true))
+    if ($fn.Count -ne 1) { return '' }
+    return $fn[0].Extent.Text
+}
+$lifted = @('Start-SoakLoadWorkers', 'Start-SoakCommandWorkers', 'Get-SoakWorkerCrash',
+    'Get-SoakLoadWorkerSpec', 'Stop-SoakLoadWorkers', 'Stop-SoakProcessTree')
+$liftedText = (@($lifted | ForEach-Object { Get-SoakFunctionText -Name $_ }) -join "`r`n")
+Check 'every worker helper could be lifted out of the soak script' `
+($lifted.Count -eq @($lifted | Where-Object { (Get-SoakFunctionText -Name $_) }).Count) `
+    'a helper was renamed or duplicated -- this section is asserting nothing'
+. ([scriptblock]::Create($liftedText))
+
+$psExe = (Get-Command powershell.exe).Source
+$noExe = Join-Path $work 'no-such-powershell.exe'
+
+$none = @(Start-SoakLoadWorkers -Count 2 -Seconds 1 -PsExe $noExe)
+Check 'no cpu worker started counts as zero, not as one phantom' ($none.Count -eq 0) "got $($none.Count)"
+
+$two = @(Start-SoakLoadWorkers -Count 2 -Seconds 2 -PsExe $psExe)
+Check 'two cpu workers count as two' ($two.Count -eq 2) "got $($two.Count)"
+Check 'each counted cpu worker is a process, not a nested array' `
+(@($two | Where-Object { $_.Id -gt 0 }).Count -eq 2) `
+    ((@($two | ForEach-Object { $_.GetType().Name }) -join ','))
+Stop-SoakLoadWorkers $two
+
+$cmdWork = Join-Path $work 'liftcmd'
+$noneCmd = @(Start-SoakCommandWorkers -Count 2 -Seconds 1 -PsExe $noExe -Kind 'command' `
+        -WorkDir $cmdWork -Repo $Repo -Command 'cmd /c exit 0')
+Check 'no command worker started counts as zero, not as one phantom' ($noneCmd.Count -eq 0) "got $($noneCmd.Count)"
+$twoCmd = @(Start-SoakCommandWorkers -Count 2 -Seconds 2 -PsExe $psExe -Kind 'command' `
+        -WorkDir $cmdWork -Repo $Repo -Command 'cmd /c exit 0')
+Check 'two command workers count as two' ($twoCmd.Count -eq 2) "got $($twoCmd.Count)"
+Stop-SoakLoadWorkers $twoCmd
+
+# The crash scanner, whose count lands in the summary line a human pastes.
+$hitWork = Join-Path $work 'lifthits'
+foreach ($w in 0, 1) {
+    $d = Join-Path $hitWork ("w{0}" -f $w)
+    New-Item -ItemType Directory -Force -Path $d | Out-Null
+    Set-Content -LiteralPath (Join-Path $d 'worker.log') -Encoding ASCII `
+        -Value @('Segmentation fault at address 0x0')
+}
+$pats = @('Segmentation fault')
+$hits0 = @(Get-SoakWorkerCrash -WorkDir (Join-Path $work 'nothing-here') -Count 2 -Patterns $pats)
+Check 'no worker crash counts as zero, not as one phantom' ($hits0.Count -eq 0) "got $($hits0.Count)"
+$hits2 = @(Get-SoakWorkerCrash -WorkDir $hitWork -Count 2 -Patterns $pats)
+Check 'two crashed workers count as two, not as one' ($hits2.Count -eq 2) "got $($hits2.Count)"
+Check 'each counted crash names its own slot' `
+((@($hits2 | ForEach-Object { $_.Index }) -join ',') -eq '0,1') `
+((@($hits2 | ForEach-Object { $_.Index }) -join ','))
+
+# ...and end to end: two crashing load workers are reported as two, named one
+# per line. This is the shape that reached a human as `worker-crash=1`.
+$twoCrashWork = Join-Path $work 'keep2'
+$r = Invoke-Soak @{
+    LaneCommand = 'cmd /c exit 0'; Runs = 1; Label = 'w2crash'; LoadWorkers = 2
+    LoadCommand = "cmd /c $crashLoad"; LoadWorkDir = $twoCrashWork
+}
+Check 'two crashed load workers are counted as two in the summary line' `
+($r.Text -match 'SOAK w2crash:.*worker-crash=2') ($r.Text -replace '\s+', ' ')
+Check 'both crashed load workers are named, one line each' `
+($r.Text -match '(?m)^\s*w0: \S' -and $r.Text -match '(?m)^\s*w1: \S') ($r.Text -replace '\s+', ' ')
+
 # ------------------------------- 4. standalone still works, and admits what it is
 
 # A lane-shaped NAME is what turns the warning on: a fixture exe has no build
