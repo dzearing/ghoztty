@@ -2048,6 +2048,22 @@ $GuardTable = @(
             'test\win32\floor-lane-solo-confirm.ps1'
         )
     },
+    # The stall detector itself (T848). Unlike the rows around it this one DOES
+    # cover scripts\floor-lane.ps1, because the file IS the subject: the rule
+    # that decides WEDGED from BUSY lives in its watchdog loop and nowhere else,
+    # and the defect it caught -- an unsampleable box reading as progress --
+    # was invisible for a month precisely because nothing re-ran the wedge case
+    # against a loaded machine. The harness stages the load rather than waiting
+    # for one, so the question can be asked on any box, any day.
+    [pscustomobject]@{
+        Name   = 'lane-stall-sampling'
+        Script = 'test\win32\floor-lane-stall-sampling.ps1'
+        Stamp  = 'test\win32\floor-lane-stall-sampling.stamp.json'
+        Covers = @(
+            'scripts\floor-lane.ps1',
+            'test\win32\floor-lane-stall-sampling.ps1'
+        )
+    },
     # The between-lane WebView2 settle (T592) speaks only on a box where the
     # previous lane's browser tree is still up, which is a matter of a second or
     # two -- so a matcher that has quietly stopped recognising a lane's browser

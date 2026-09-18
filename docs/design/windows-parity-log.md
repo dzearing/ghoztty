@@ -9,6 +9,52 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-18: T848 closed done, T1652 filed and folded into T1645 — **a lane the
+  box cannot see is no longer mistaken for a lane that is working.**
+
+  `floor-lane.ps1` decides WEDGED from BUSY by watching a lane's process tree
+  burn CPU. The signal it read was "did the number change", and two things move
+  that number without any work happening: a process leaving the tree takes its
+  CPU with it, and a `Get-CimInstance Win32_Process` that comes back empty or
+  short — which is what a loaded box returns — takes out everything it missed. A
+  sample that flapped empty and back therefore reset the no-progress clock every
+  time, so a genuinely wedged lane looked busy right up to the wall-clock cap.
+  That is the red `crash-stacks.ps1` kept producing: `FAIL selftest-wedge:
+  wanted STALL, got TIMEOUT` on an unchanged tree, green on the retry.
+
+  The title's theory — the box still flushing two ~100 MB minidumps — turned out
+  to be the wrong suspect, and cheap to disprove: a probe held a wedged `waitfor`
+  tree under four spinning jobs for a minute and its CPU never moved a tick. Load
+  never reached the signal. The sample did.
+
+  Three rules now. Tree CPU is a per-pid HIGH-WATER sum, so it is cumulative and
+  monotonic and only work can move it. Progress means GREATER, not different —
+  both inputs are monotonic by construction, so a drop is a measurement artifact.
+  And a sample that saw nothing is not a sample: it buys no progress, its seconds
+  are not charged as stall time either, and no wedge is declared off one. The
+  wall-clock cap still is, so a box that can never be sampled cannot hold a lane
+  open forever.
+
+  The defect was made deterministic before it was fixed, and stays that way: a
+  new `GHOZTTY_FLOOR_LANE_BLIND_EVERY` forces every Nth sample empty, which is
+  the load artifact nobody can schedule. Grafted into the PRE-FIX script it
+  scores the reported failure verbatim (`WALL-CLOCK CAP after 124s`); against the
+  fix the wedge is still named a wedge (`WEDGED (no CPU and no output for 17s,
+  plus 15s the box could not be sampled)`).
+
+  Evidence: new `test\win32\floor-lane-stall-sampling.ps1` ALL PASS (18
+  assertions), whose arm 11 is the negative control — it grafts the pre-fix rule
+  back into a copy of the shipped script and fails the harness if that copy does
+  NOT go red. Guarded by a new `lane-stall-sampling` row which, unlike the lane
+  rows around it, covers `scripts\floor-lane.ps1` itself: the rule that decides
+  every lane verdict lives there and nowhere else. Five consecutive
+  `crash-stacks.ps1` runs ALL PASS (91 assertions each), no retry. Floor
+  `-Lane all`: lib/none/win32 PASS, agent FAIL-under-load PASS-alone (198s) on
+  T1645 — that flake was filed a second time as T1652 before the log was read,
+  and is closed as a duplicate with its new datapoint moved onto T1645: it is
+  not specific to the win32 lane or to test-reach-audit's nested lane, any lane
+  hosting a live WebView2 controller on a busy box can score it.
+
 - 2026-09-18: T1649 closed done, T1650 filed — **a floor lane can no longer kill
   another run's browser processes, which was the second half of yesterday's
   cross-kill.**

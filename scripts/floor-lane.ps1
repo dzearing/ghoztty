@@ -369,16 +369,56 @@ function Get-TreeCpu {
         again. Counting it turns a wedged lane into one that looks busy for as
         long as the copy lives, which is exactly the reading that hid 40 minutes
         of dead time per floor run.
+
+        -State makes the number CUMULATIVE and therefore MONOTONIC (T848): the
+        hashtable remembers the highest CPU ever seen for each pid, and the total
+        is the sum over every pid the lane has ever owned. Without it the number
+        is "CPU of the processes visible in THIS sample", which moves for two
+        reasons that are not work: a process that exits takes its CPU out of the
+        tree, and a sample that comes back short -- the CIM query returns nothing
+        or a partial list on a loaded box -- takes out everything it missed. The
+        stall detector read any CHANGE as progress, so a sample that flapped
+        empty and back reset the clock every time: on a box still flushing two
+        ~100 MB minidumps, `floor-lane -SelfTest` reported TIMEOUT where it had
+        just proved STALL, and the assertion in crash-stacks.ps1 went red for a
+        reason that had nothing to do with either script.
     #>
-    param($Tree, [int[]]$IgnorePids = @())
+    param($Tree, [int[]]$IgnorePids = @(), $State = $null)
     $skip = @{}
     foreach ($i in @($IgnorePids)) { $skip[[int]$i] = $true }
-    $total = [uint64]0
+    if ($null -eq $State) {
+        $total = [uint64]0
+        foreach ($p in $Tree) {
+            if ($null -eq $p) { continue }
+            if ($skip.ContainsKey([int]$p.ProcessId)) { continue }
+            if ($null -ne $p.UserModeTime) { $total += [uint64]$p.UserModeTime }
+            if ($null -ne $p.KernelModeTime) { $total += [uint64]$p.KernelModeTime }
+        }
+        return $total
+    }
+
+    # An ignored pid stays ignored for the rest of the lane: self-spawn is a
+    # property of how the process was started, and a sample that happens not to
+    # see the parent must not let the copy's CPU back into the signal.
+    if (-not $State.ContainsKey('__ignored')) { $State['__ignored'] = @{} }
+    foreach ($i in @($IgnorePids)) { $State['__ignored'][[int]$i] = $true }
+
     foreach ($p in $Tree) {
         if ($null -eq $p) { continue }
-        if ($skip.ContainsKey([int]$p.ProcessId)) { continue }
-        if ($null -ne $p.UserModeTime) { $total += [uint64]$p.UserModeTime }
-        if ($null -ne $p.KernelModeTime) { $total += [uint64]$p.KernelModeTime }
+        $procId = [int]$p.ProcessId
+        $c = [uint64]0
+        if ($null -ne $p.UserModeTime) { $c += [uint64]$p.UserModeTime }
+        if ($null -ne $p.KernelModeTime) { $c += [uint64]$p.KernelModeTime }
+        # High-water per pid: CPU time only ever grows for a live process, so a
+        # lower reading is a bad sample, never a rollback.
+        if (-not $State.ContainsKey($procId) -or [uint64]$State[$procId] -lt $c) { $State[$procId] = $c }
+    }
+
+    $total = [uint64]0
+    foreach ($k in @($State.Keys)) {
+        if ($k -isnot [int]) { continue }
+        if ($State['__ignored'].ContainsKey([int]$k)) { continue }
+        $total += [uint64]$State[$k]
     }
     return $total
 }
@@ -625,6 +665,16 @@ function Invoke-Lane {
     $lastCpu = [uint64]0
     $lastLogLen = [int64]0
     $lastProgress = Get-Date
+    # Per-pid CPU high-water marks, so the progress signal cannot move for any
+    # reason but work (T848). See Get-TreeCpu's -State.
+    $cpuState = @{}
+    # Seconds inside the current no-progress window during which the box could
+    # not be sampled at all. A wedge verdict is "I watched and saw nothing"; time
+    # spent unable to watch is not evidence of either answer, so it is subtracted
+    # rather than counted (T848).
+    $blindSeconds = 0
+    $blindNoted = $false
+    $sampleNo = 0
     $result = $null
 
     # The watchdog's own contract (T982): this lane ALWAYS ends with a verdict.
@@ -651,37 +701,80 @@ function Invoke-Lane {
             if ($env:GHOZTTY_FLOOR_LANE_FAULT) {
                 throw "injected watchdog fault (GHOZTTY_FLOOR_LANE_FAULT=$($env:GHOZTTY_FLOOR_LANE_FAULT))"
             }
+            # The other fault injection, for the same reason (T848): a short CIM
+            # sample is a load artifact nobody can schedule, so the only way to
+            # prove the watchdog survives one is to stage it. N means "every Nth
+            # sample comes back empty". Never set outside
+            # test\win32\floor-lane-stall-sampling.ps1.
+            $sampleNo++
+            if ($env:GHOZTTY_FLOOR_LANE_BLIND_EVERY) {
+                $every = [int]$env:GHOZTTY_FLOOR_LANE_BLIND_EVERY
+                if ($every -gt 0 -and ($sampleNo % $every) -eq 0) { $snapshot = @() }
+            }
             # @() is load-bearing: an empty sample unrolls to $null, and every
             # consumer below then sees a null tree (T982).
             $tree = @(Get-ProcessTree -RootPid $rootPid -Snapshot $snapshot)
-            # A test binary under a test binary is the code under test spawning its
-            # own image, not a step of this lane -- so its CPU is not progress (T933).
-            $selfSpawned = @(Get-SelfSpawnedTestPids -Tree $tree -ExeNames $TEST_EXE_NAMES)
-            if ($selfSpawned.Count -gt 0 -and -not $selfSpawnNoted) {
-                Write-Host ("  LANE SELF-SPAWN: {0} process(es) in this lane's tree are a test binary launched by a test binary; their CPU is NOT counted as progress (T933)" -f $selfSpawned.Count)
-                $selfSpawnNoted = $true
+            # A sample that saw nothing is not a sample (T848). The root is still
+            # alive -- `HasExited` was checked at the top of this iteration -- so
+            # an empty tree means the CIM query came back short, and the honest
+            # thing to do with it is nothing at all: no progress, and no stall
+            # time charged for the interval either.
+            $blind = ($tree.Count -eq 0)
+            if ($blind) {
+                $blindSeconds += [math]::Max(1, $SampleSeconds)
+                if (-not $blindNoted) {
+                    Write-Host "  LANE BLIND SAMPLE: the process snapshot came back empty while the lane is still running; not counting it as progress or as stall time (T848)"
+                    $blindNoted = $true
+                }
             }
-            $cpu = Get-TreeCpu -Tree $tree -IgnorePids $selfSpawned
-            $logLen = 0
-            if (Test-Path $log) { $logLen = (Get-Item $log).Length }
+            else {
+                # A test binary under a test binary is the code under test spawning its
+                # own image, not a step of this lane -- so its CPU is not progress (T933).
+                $selfSpawned = @(Get-SelfSpawnedTestPids -Tree $tree -ExeNames $TEST_EXE_NAMES)
+                if ($selfSpawned.Count -gt 0 -and -not $selfSpawnNoted) {
+                    Write-Host ("  LANE SELF-SPAWN: {0} process(es) in this lane's tree are a test binary launched by a test binary; their CPU is NOT counted as progress (T933)" -f $selfSpawned.Count)
+                    $selfSpawnNoted = $true
+                }
+                $cpu = Get-TreeCpu -Tree $tree -IgnorePids $selfSpawned -State $cpuState
+                $logLen = 0
+                if (Test-Path $log) { $logLen = (Get-Item $log).Length }
 
-            if ($cpu -ne $lastCpu -or $logLen -ne $lastLogLen) {
-                $lastProgress = Get-Date
-                $lastCpu = $cpu
-                $lastLogLen = $logLen
+                # GREATER, not different (T848). Both numbers are monotonic by
+                # construction -- cumulative CPU, and a log that is only appended to
+                # -- so a drop is a measurement artifact and reading it as progress
+                # is what let a wedged lane look busy forever.
+                if ($cpu -gt $lastCpu -or $logLen -gt $lastLogLen) {
+                    $lastProgress = Get-Date
+                    $lastCpu = $cpu
+                    $lastLogLen = $logLen
+                    $blindSeconds = 0
+                }
             }
 
-            $stalledFor = [int]((Get-Date) - $lastProgress).TotalSeconds
+            $stalledFor = [int]((Get-Date) - $lastProgress).TotalSeconds - $blindSeconds
+            if ($stalledFor -lt 0) { $stalledFor = 0 }
 
+            # The wall-clock cap is checked on EVERY iteration, blind ones
+            # included: a box that cannot be sampled at all must still not hold
+            # a lane open forever. Its diagnostic re-samples, since the tree this
+            # iteration saw is the empty one.
             if ($elapsed -ge $TimeoutSeconds) {
+                if ($blind) {
+                    $tree = @(Get-ProcessTree -RootPid $rootPid `
+                            -Snapshot (Get-CimInstance Win32_Process -ErrorAction SilentlyContinue))
+                }
                 Write-Diagnostic -Reason 'WALL-CLOCK CAP' -Tree $tree -LogPath $log -ElapsedSeconds $elapsed -LaneName $Name
                 Stop-Tree -Tree $tree
+                try { Stop-Process -Id $rootPid -Force -ErrorAction Stop } catch {}
                 $result = 'TIMEOUT'
                 break
             }
 
-            if ($stalledFor -ge $StallSeconds) {
-                Write-Diagnostic -Reason "WEDGED (no CPU and no output for ${stalledFor}s)" `
+            # A wedge is never declared off a blind iteration: the verdict says
+            # "I looked and saw nothing", and this iteration did not look.
+            if (-not $blind -and $stalledFor -ge $StallSeconds) {
+                $blindNote = if ($blindSeconds -gt 0) { ", plus ${blindSeconds}s the box could not be sampled" } else { '' }
+                Write-Diagnostic -Reason "WEDGED (no CPU and no output for ${stalledFor}s$blindNote)" `
                     -Tree $tree -LogPath $log -ElapsedSeconds $elapsed -LaneName $Name
                 Stop-Tree -Tree $tree
                 $result = 'STALL'
