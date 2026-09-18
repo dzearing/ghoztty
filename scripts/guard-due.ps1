@@ -3702,6 +3702,27 @@ $GuardTable = @(
         )
     }
 
+    # T831 - the counted-wait sweep. It covers the two files that rediscovered
+    # the wall-clock deadline independently, the shared helper they now share,
+    # and the directories whose waits are cross-thread: the case the rule exists
+    # for is a NEW wait arriving, and a row watching only the analyzer would go
+    # green on the day that wait lands. `src\cli\*.zig` is in the list because
+    # the sweep found one there too - the `--when-idle` poll budget.
+    [pscustomobject]@{
+        Name   = 'test-wait-oracle'
+        Script = 'test\win32\test-wait-oracle.ps1'
+        Stamp  = 'test\win32\test-wait-oracle.stamp.json'
+        Covers = @(
+            'test\win32\test-wait-oracle.ps1',
+            'test\win32\lib\TestWaitAudit.ps1',
+            'src\remote\test_util.zig',
+            'src\remote\agent\test_util.zig',
+            'src\remote\connection.zig',
+            'src\remote\agent\pty_child.zig',
+            'src\cli\*.zig'
+        )
+    }
+
     # T1191 - the reachability sweep. It covers `src\apprt\win32.zig` itself,
     # which is unusual for a row and is the whole point: the file the rule is
     # about is a hand-written list, and the moment somebody adds a win32 module

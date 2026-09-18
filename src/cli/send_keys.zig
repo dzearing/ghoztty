@@ -412,8 +412,16 @@ fn waitForIdle(alloc: Allocator, name: []const u8, timeout_secs: u32, markers: [
     var prev_hash: u64 = 0;
     var have_prev = false;
     var stable: u32 = 0;
+    // The budget is WALL-CLOCK, not a count of polls (T831). `timeout_secs * 2`
+    // was a duration only if a poll itself cost nothing, and a poll is an IPC
+    // round trip to the app: on a loaded box `--idle-timeout=30` held the send
+    // for considerably longer than the thirty seconds the flag promises. A
+    // count of polls is kept only for the box with no usable clock, where it is
+    // the sole bound left.
+    var timer: ?std.time.Timer = std.time.Timer.start() catch null;
+    const budget_ns: u64 = @as(u64, timeout_secs) * std.time.ns_per_s;
     var remaining_polls: u64 = @as(u64, timeout_secs) * 2;
-    while (remaining_polls > 0) : (remaining_polls -= 1) {
+    while (true) {
         const text = read_cli.queryPaneText(alloc, name, 10, stderr) catch return;
         const marker = for (markers) |m| {
             if (std.mem.indexOf(u8, text, m) != null) break true;
@@ -427,6 +435,12 @@ fn waitForIdle(alloc: Allocator, name: []const u8, timeout_secs: u32, markers: [
             if (stable >= 2) return;
         } else {
             stable = 0;
+        }
+        if (timer) |*t| {
+            if (t.read() >= budget_ns) return;
+        } else {
+            if (remaining_polls == 0) return;
+            remaining_polls -= 1;
         }
         std.Thread.sleep(500 * std.time.ns_per_ms);
     }

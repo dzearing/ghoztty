@@ -59,6 +59,7 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'desktop-launch-audit.ps1'; Why = 'a GUI script launches on the test desktop, not the user''s' }
     [pscustomobject]@{ Name = 'printclient-audit.ps1'; Why = 'every painting window answers the screenshot path the tests read' }
     [pscustomobject]@{ Name = 'thread-join-audit.ps1'; Why = 'a thread a test starts is joined, so a leak is not scored green' }
+    [pscustomobject]@{ Name = 'test-wait-oracle.ps1'; Why = 'a wait is bounded by the wall clock, never by a count of spins (T831)' }
     [pscustomobject]@{ Name = 'foreground-audit.ps1'; Why = 'a script states what it does to the foreground window (T272/T276)' }
     [pscustomobject]@{ Name = 'caller-anchor.ps1'; Why = 'a shared helper is anchored to the caller that is actually under test' }
     [pscustomobject]@{ Name = 'control-char-scan.ps1'; Why = 'no script carries a control character that breaks it on another box' }

@@ -9,6 +9,7 @@
 const shared = @import("../test_util.zig");
 
 pub const liveness_ns = shared.liveness_ns;
+pub const Deadline = shared.Deadline;
 pub const waitUntil = shared.waitUntil;
 pub const waitEvent = shared.waitEvent;
 pub const drainRing = shared.drainRing;

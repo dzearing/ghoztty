@@ -1332,6 +1332,7 @@ fn ptyPreExec(cmd: *Command) ?u8 {
 // =============================================================================
 
 const testing = std.testing;
+const test_util = @import("test_util.zig");
 
 test "resolveShellPath: POSIX falls back to the login shell before /bin/sh (Bug 2)" {
     if (is_windows) return error.SkipZigTest;
@@ -1374,24 +1375,25 @@ const CaptureSink = struct {
     }
 };
 
-/// Spin (async reader thread) until the sink has captured `needle`, or fail.
-/// Wall-clock bounded, NOT spin-counted: `Thread.sleep(100µs)` rounds up to
-/// the ~15.6ms timer tick on Windows, so 30k spins was ~8 MINUTES of timeout
-/// per miss there (T89b). On timeout, dump what WAS captured so a mismatch is
-/// diagnosable from the test log.
+/// Wait (async reader thread) until the sink has captured `needle`, or fail.
+/// Wall-clock bounded on the SHARED helper, not spin-counted and not on a
+/// deadline of its own (T831): `Thread.sleep(100us)` rounds up to the ~15.6ms
+/// timer tick on Windows, so 30k sleeping spins was ~8 MINUTES of timeout per
+/// miss there (T89b), and this file had rediscovered that on its own. On
+/// timeout, dump what WAS captured so a mismatch is diagnosable from the log.
 fn waitContains(cap: *CaptureSink, needle: []const u8) !void {
-    const deadline = std.time.milliTimestamp() + 30_000;
-    while (std.time.milliTimestamp() < deadline) {
-        if (cap.contains(needle)) return;
-        std.Thread.sleep(std.time.ns_per_ms);
+    var deadline = test_util.Deadline.start("the pty child's output to carry the needle this test is watching for");
+    while (!cap.contains(needle)) {
+        deadline.tick() catch {
+            cap.mutex.lock();
+            defer cap.mutex.unlock();
+            std.debug.print(
+                "waitContains: needle \"{s}\" not seen; captured {d} bytes: {s}\n",
+                .{ needle, cap.buf.items.len, cap.buf.items },
+            );
+            return error.TimedOutWaitingForOutput;
+        };
     }
-    cap.mutex.lock();
-    defer cap.mutex.unlock();
-    std.debug.print(
-        "waitContains: needle \"{s}\" not seen; captured {d} bytes: {s}\n",
-        .{ needle, cap.buf.items.len, cap.buf.items },
-    );
-    return error.TimedOutWaitingForOutput;
 }
 
 test "PtyChild: OPEN.env reaches the child and does not leak between spawns" {
@@ -1602,13 +1604,13 @@ test "PtyChild: real pty spawn → input echoes back → exit/tombstone" {
         try pc.child().writeAll(&.{0x04});
     }
     var reaped: ?i64 = null;
-    const reap_deadline = std.time.milliTimestamp() + 30_000;
-    while (std.time.milliTimestamp() < reap_deadline) {
+    var reap_deadline = test_util.Deadline.start("the pty child to exit and be reaped");
+    while (reaped == null) {
         if (pc.child().tryWait()) |code| {
             reaped = code;
             break;
         }
-        std.Thread.sleep(std.time.ns_per_ms);
+        reap_deadline.tick() catch break;
     }
     try testing.expect(reaped != null);
     try testing.expectEqual(want_code, reaped.?);
@@ -1802,13 +1804,13 @@ test "PtyChild: SIGNAL terminates the child via its process group" {
     try pc.child().signal("KILL");
 
     var reaped: ?i64 = null;
-    const reap_deadline = std.time.milliTimestamp() + 30_000;
-    while (std.time.milliTimestamp() < reap_deadline) {
+    var reap_deadline = test_util.Deadline.start("the pty child to exit and be reaped");
+    while (reaped == null) {
         if (pc.child().tryWait()) |code| {
             reaped = code;
             break;
         }
-        std.Thread.sleep(std.time.ns_per_ms);
+        reap_deadline.tick() catch break;
     }
     try testing.expect(reaped != null);
     // POSIX: killed by SIGKILL → 128 + 9 = 137 (shell-convention mapping).

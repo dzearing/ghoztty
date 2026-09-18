@@ -4413,68 +4413,10 @@ fn agentSendDataFramed(
     try agent.sendFrame(.{ .type = ftype, .channel = channel, .seq = 0, .payload = payload });
 }
 
-/// How long a test wait may take before it is called a timeout. Generous on
-/// purpose: it is an upper bound on a hang, not a performance assertion.
-/// Follows the shared liveness bound (60s): 10s of a liveness bound proved
-/// spendable under acceptance-script load (T183), and a spent bound turns a
-/// green run red for nothing.
-const test_wait_ms: u64 = test_util.liveness_ns / std.time.ns_per_ms;
-
-/// A wall-clock budget for a test that waits on another thread.
-///
-/// Spin counts do not measure time, they measure scheduler contention (T472).
-/// On a box running three test lanes and a WebView2 host, the 100_000 yields
-/// this replaced could burn through in far less time than the writer thread
-/// needed, so a green tree produced `error.Timeout` at random — and a flaky
-/// red run costs more than a real one, because it trains whoever is watching
-/// to shrug at red. A deadline cannot be starved that way, and it says what it
-/// means: "nothing arrived within the liveness bound."
-const TestDeadline = struct {
-    timer: std.time.Timer,
-    budget_ns: u64,
-
-    fn start() !TestDeadline {
-        return startWith(test_wait_ms);
-    }
-
-    fn startWith(budget_ms: u64) !TestDeadline {
-        return .{
-            .timer = try std.time.Timer.start(),
-            .budget_ns = budget_ms * std.time.ns_per_ms,
-        };
-    }
-
-    fn expired(self: *TestDeadline) bool {
-        return self.timer.read() > self.budget_ns;
-    }
-
-    /// Yield to the thread we are waiting on, or report the budget is spent.
-    fn yield(self: *TestDeadline) error{Timeout}!void {
-        if (self.expired()) return error.Timeout;
-        std.Thread.yield() catch {};
-    }
-};
-
-test "T472: a test wait is bounded by the wall clock, not by a spin count" {
-    // A spent budget is a timeout, and says so through the error rather than
-    // by falling off the end of a loop.
-    var spent = try TestDeadline.startWith(0);
-    std.Thread.sleep(2 * std.time.ns_per_ms);
-    try testing.expect(spent.expired());
-    try testing.expectError(error.Timeout, spent.yield());
-
-    // ...and no number of yields can spend a budget that has not elapsed. This
-    // is the property the old oracle lacked: 100_000 contended yields on a
-    // loaded box were a "timeout" while nothing was actually late.
-    var generous = try TestDeadline.startWith(10 * std.time.ms_per_s * 60);
-    for (0..200_000) |_| try generous.yield();
-    try testing.expect(!generous.expired());
-}
-
 /// Drain a channel's ring until `want` bytes have been collected into `out`.
 fn drainChannel(ch: *ring.Channel, out: *std.ArrayList(u8), alloc: Allocator, want: usize) !void {
     var dst: [256]u8 = undefined;
-    var deadline = try TestDeadline.start();
+    var deadline = test_util.Deadline.start("the channel ring to hand over the bytes the test asked to drain");
     while (out.items.len < want) {
         const r = ch.pop(&dst);
         if (r.read == 0) {
@@ -4483,7 +4425,7 @@ fn drainChannel(ch: *ring.Channel, out: *std.ArrayList(u8), alloc: Allocator, wa
                 // of a drain names neither the channel nor how far it got.
                 std.debug.print(
                     "\ndrainChannel: {d}ms budget spent with {d} of {d} byte(s): \"{s}\"\n",
-                    .{ test_wait_ms, out.items.len, want, out.items },
+                    .{ test_util.liveness_ns / std.time.ns_per_ms, out.items.len, want, out.items },
                 );
                 return error.Timeout;
             };
@@ -4608,13 +4550,13 @@ test "T739: an injected repaint is rendered like DATA but advances no offset" {
     // which is past everything the session ever produced.
     // On the budget rather than a spin count (T472): a `break` on the deadline
     // hands the failure to `expectEqual`, which prints both positions.
-    var deadline = try TestDeadline.start();
+    var deadline = test_util.Deadline.start("the pane position to settle at the agent's head after a repaint");
     while (pane.streamPos() != 103) deadline.yield() catch break;
     try testing.expectEqual(@as(u64, 103), pane.streamPos());
 
     // Live output from the head advances it again — the repaint cost nothing.
     try agentSendData(&data_agent, ch_id, 103, "live");
-    deadline = try TestDeadline.start();
+    deadline = test_util.Deadline.start("the pane position to advance again on live output past the repaint");
     while (pane.streamPos() != 107) deadline.yield() catch break;
     try testing.expectEqual(@as(u64, 107), pane.streamPos());
 
@@ -4684,7 +4626,7 @@ test "T804: data that lands before the pane is tracked still carries its positio
 
     // The connection has to have SEEN them before the pane exists, or this test
     // would be asserting the ordinary tracked path by accident.
-    var deadline = try TestDeadline.start();
+    var deadline = test_util.Deadline.start("the connection to record the pre-pane position for the early gap-fill");
     while (earlyPosFor(conn, ch_id) != 103) deadline.yield() catch break;
     try testing.expectEqual(@as(u64, 103), earlyPosFor(conn, ch_id));
 
@@ -4766,7 +4708,7 @@ test "T804: an adopted early position never pulls a pane backwards" {
     defer data_agent.deinit();
     try agentSendData(&data_agent, ch_id, 10, "old");
 
-    var deadline = try TestDeadline.start();
+    var deadline = test_util.Deadline.start("the connection to record the pre-pane position for the stale early data");
     while (earlyPosFor(conn, ch_id) != 13) deadline.yield() catch break;
     try testing.expectEqual(@as(u64, 13), earlyPosFor(conn, ch_id));
 
@@ -5431,9 +5373,10 @@ const HealthAgentCtx = struct {
 
 /// Wait until `cond()` is true or the wall-clock budget is spent (no fixed
 /// sleeps — the agent thread makes progress on its own). The budget is a
-/// deadline rather than a spin count for the reason in `TestDeadline` (T472).
+/// deadline rather than a spin count for the reason in `test_util.Deadline`
+/// (T472, hoisted by T831).
 fn spinUntil(comptime ctx_t: type, ctx: *ctx_t, cond: *const fn (*ctx_t) bool) !void {
-    var deadline = try TestDeadline.start();
+    var deadline = test_util.Deadline.start("the condition a heartbeat/link-state test is spinning on");
     while (!cond(ctx)) try deadline.yield();
 }
 
@@ -6520,7 +6463,7 @@ test "unsubscribeMetrics: clears the handler slot (no callback after)" {
 
     // The agent recorded the unsub. On the wall-clock budget (T472), so a
     // loaded box cannot turn a slow round trip into a failure.
-    var deadline = try TestDeadline.start();
+    var deadline = test_util.Deadline.start("the agent to record the metrics unsubscribe");
     while (!a.saw_metrics_unsub.load(.monotonic)) deadline.yield() catch break;
     try testing.expect(a.saw_metrics_unsub.load(.monotonic));
 

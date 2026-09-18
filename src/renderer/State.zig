@@ -105,6 +105,8 @@ fn yieldToPriorityWaitersFor(self: *State, budget_ns: u64) void {
 
     // No clock: fall back to a bounded spin rather than waiting forever.
     var timer = std.time.Timer.start() catch {
+        // test-wait-audit: the clock itself is unavailable here, so a count is
+        // the only bound left; every other path below is on the timer.
         for (0..512) |_| {
             std.Thread.yield() catch return;
             if (self.priority_waiters.load(.acquire) == 0) return;

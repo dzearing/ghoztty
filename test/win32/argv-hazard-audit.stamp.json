@@ -1,11 +1,13 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-17T18:26:54-07:00",
-    "commit":  "d67842d9c",
+    "generated":  "2026-09-17T20:18:51-07:00",
+    "commit":  "b7126204a",
     "uncommitted":  [
                         "scripts/guard-due.ps1",
-                        "test/win32/rearrange-viewer.ps1"
+                        "scripts/lib/HarnessFloor.ps1",
+                        "test/win32/lib/TestWaitAudit.ps1",
+                        "test/win32/test-wait-oracle.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -33,7 +35,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "fec6376034427796d1f9ad0b65d5fe8a46ce24a1702398844db3ea1483bada45",
-                  "scripts/guard-due.ps1":  "ffdd8baf01e2f5b12116821e201cb3202523bbea7740d099097601ed601d9710",
+                  "scripts/guard-due.ps1":  "54f2ff8ffbd4e992e611c6df0d079902c13344bccb2d3a28d1465ce963d1edc3",
                   "scripts/harness-floor.ps1":  "cc4dd72fb07ebc34de67ce688e0eab7f091a7228e4baeba4f9f50d01212a0f0e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -48,7 +50,7 @@
                   "scripts/lib/DataBreak.ps1":  "ff02a5bfc30365086dc896181bded69169bf9a0cd082589c11afd04bf98cad7f",
                   "scripts/lib/Duration.ps1":  "b9889f194a1af5fee4177fd4c87ea6f7d74be5bffac0828532b55ebaa1f4787c",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
-                  "scripts/lib/HarnessFloor.ps1":  "d82a87cc1089beadd086c06f3b0ed253b845ab4bcdf8f4aa043d1c7716e27a80",
+                  "scripts/lib/HarnessFloor.ps1":  "3c2df04f0574da0dd29298527b69761f6e77da04f0424a909baed859b72371fa",
                   "scripts/lib/LaneLeak.ps1":  "352b3fc4a641008d93ebbb3edcde10bc71e82131f25a84845d854d80a6df2b1e",
                   "scripts/lib/LaneSolo.ps1":  "10feea32628e97345f5aaa156128261e5b597cea97d462590d75b6420d3401d4",
                   "scripts/lib/LaneVerdict.ps1":  "16cbff132750edcd067c5747259497a6d89b1531226345adcf0f0d34817d67ee",
@@ -292,6 +294,7 @@
                   "test/win32/lib/TestDesktop.ps1":  "e06616a214ad9cb9bc95cb0cfb354c3f2763b920f1975b6875586255faeca6a4",
                   "test/win32/lib/TestReachAudit.ps1":  "3b2fb64aee74f3451127f4f9776141f5781dd210a6fdf0019410485664f0a840",
                   "test/win32/lib/TestScore.ps1":  "1bc571121b1b60ce5d9b63a0e1c8ebf23f6da575f8e9f7dab1a410cbc2888acc",
+                  "test/win32/lib/TestWaitAudit.ps1":  "632b1d2adad0400247dd7d51c7f9ebad0e2c47ca9a7afe5cbdca2cd09318be3d",
                   "test/win32/lib/ThreadJoinAudit.ps1":  "5a25a369563fc6904e8155828c1850b403062b7d955ae7a4cdc4ca340232f034",
                   "test/win32/lib/ThrowawayProduct.ps1":  "d0754fbb3791ee3d5fec2369a523df0c23ccb6d4738bad21dd37c25cf86c82fd",
                   "test/win32/lib/UnrollCountAudit.ps1":  "4ec16ee97c358c267e2e07003178429acb80142a0a9c54c1cb0d7cec08d27325",
@@ -407,6 +410,7 @@
                   "test/win32/test-desktop-spike.ps1":  "fe210e65c149640f7641882b23be4f13d9ec43be05d0b1347de88576950d7b54",
                   "test/win32/test-filter-guard.ps1":  "8804ee177e925a2cdfbc14a75f80ec01b217378a80025b55c80d7831c2beec00",
                   "test/win32/test-reach-audit.ps1":  "7e19e08bfc34ffe47b30c3c81a250d0b62dce8f062e021df315976859864d77a",
+                  "test/win32/test-wait-oracle.ps1":  "63ccef37878450ba45a00998c1d19974c42da08ece7b4160305becb11549ec3d",
                   "test/win32/thread-join-audit.ps1":  "636191df9344abe883a41479504bef2f67fae58e0fff5e609c3050ca793ce219",
                   "test/win32/title-font.ps1":  "946fd12880bb0433a535283fb6146fb7d2a8fd1b2d1f0f74e00fa7ce1720dcb8",
                   "test/win32/title-jitter.ps1":  "cddd430bceb80810b24814bd1e3047534b578c8d87390827f105ac5915c198f0",

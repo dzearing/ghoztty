@@ -28,6 +28,80 @@ const std = @import("std");
 /// cross-thread effect may take before the test calls it a hang.
 pub const liveness_ns: u64 = 60 * std.time.ns_per_s;
 
+/// A wall-clock budget for a test that waits by SPINNING on another thread's
+/// progress — the shape `waitUntil` cannot express, because the condition is
+/// not a predicate call but "this loop made progress" (a ring drain, a capture
+/// sink, a position that has to settle).
+///
+/// Spin counts do not measure time, they measure scheduler contention (T472).
+/// On a box running three test lanes and a WebView2 host, 100_000 yields can
+/// burn through in far less time than the watched thread needed, so a green
+/// tree produces `error.Timeout` at random — and a flaky red costs more than a
+/// real one, because it trains whoever is watching to shrug at red. On Windows
+/// the other direction hurts too: `Thread.sleep(100µs)` rounds up to the
+/// ~15.6ms timer tick, so 30k sleeping spins was ~8 MINUTES per miss (T89b).
+/// A deadline is neither: it says "nothing arrived within the liveness bound."
+///
+/// This lived twice — `connection.zig`'s `TestDeadline` and `pty_child.zig`'s
+/// `waitContains`, each written after the other's lesson was already paid for
+/// (T831). One home, so the third one is an import rather than a rediscovery.
+pub const Deadline = struct {
+    timer: std.time.Timer,
+    budget_ns: u64,
+    what: []const u8,
+
+    /// `what` names the condition in plain words, and is what a timeout prints
+    /// (T436): "the agent recorded the metrics unsubscribe", not `error.Timeout`.
+    pub fn start(comptime what: []const u8) Deadline {
+        return startWith(what, liveness_ns);
+    }
+
+    /// `start` with an explicit budget. Only the shared `liveness_ns` bound
+    /// belongs in a test body — this exists so the timeout path itself is
+    /// testable without spending that bound.
+    pub fn startWith(comptime what: []const u8, budget_ns: u64) Deadline {
+        return .{
+            .timer = std.time.Timer.start() catch unreachable,
+            .budget_ns = budget_ns,
+            .what = what,
+        };
+    }
+
+    pub fn expired(self: *Deadline) bool {
+        return self.timer.read() > self.budget_ns;
+    }
+
+    /// Progress: the budget bounds a STALL from here, not the whole wait, so a
+    /// slow loaded box cannot spend it while the transfer is still moving.
+    pub fn progress(self: *Deadline) void {
+        self.timer.reset();
+    }
+
+    /// Yield to the thread we are waiting on, or report the budget is spent.
+    pub fn yield(self: *Deadline) error{Timeout}!void {
+        if (self.spent()) return error.Timeout;
+        std.Thread.yield() catch {};
+    }
+
+    /// `yield` for a wait on something that is NOT another runnable thread of
+    /// this process (a child process's output, a file appearing): sleeping a
+    /// millisecond leaves the box alone instead of spinning a core hot.
+    pub fn tick(self: *Deadline) error{Timeout}!void {
+        if (self.spent()) return error.Timeout;
+        std.Thread.sleep(1 * std.time.ns_per_ms);
+    }
+
+    fn spent(self: *Deadline) bool {
+        const waited = self.timer.read();
+        if (waited <= self.budget_ns) return false;
+        std.debug.print(
+            "\ntest wait TIMEOUT after {d} ms waiting for: {s}\n",
+            .{ waited / std.time.ns_per_ms, self.what },
+        );
+        return true;
+    }
+};
+
 /// Poll `pred(args...)` until it returns true or the liveness deadline
 /// expires; returns whether the predicate ever held.
 ///
@@ -148,4 +222,35 @@ test "drainRing: bytes already present are collected without waiting" {
     var buf: [8]u8 = undefined;
     const total = try drainRing(&ring, &buf, 4);
     try std.testing.expectEqualStrings("ping", buf[0..total]);
+}
+
+test "T472/T831: a test wait is bounded by the wall clock, not by a spin count" {
+    // A spent budget is a timeout, and says so through the error rather than
+    // by falling off the end of a loop.
+    var spent = Deadline.startWith("the deliberately spent budget in Deadline's own test", 0);
+    std.Thread.sleep(2 * std.time.ns_per_ms);
+    try std.testing.expect(spent.expired());
+    try std.testing.expectError(error.Timeout, spent.yield());
+
+    // ...and no number of yields can spend a budget that has not elapsed. This
+    // is the property the old oracle lacked: 100_000 contended yields on a
+    // loaded box were a "timeout" while nothing was actually late.
+    var generous = Deadline.startWith("the generous budget no yield count can spend", 10 * std.time.ns_per_s * 60);
+    for (0..200_000) |_| try generous.yield();
+    try std.testing.expect(!generous.expired());
+}
+
+test "Deadline: progress resets the budget, so a moving wait is never a stall" {
+    var d = Deadline.startWith("the budget a progress report keeps alive", 20 * std.time.ns_per_ms);
+    // test-wait-audit: this counts deliberate sleeps to MEASURE the budget, it
+    // does not wait on another thread - the count is the subject, not an oracle.
+    for (0..4) |_| {
+        std.Thread.sleep(8 * std.time.ns_per_ms);
+        try std.testing.expect(!d.expired());
+        d.progress();
+    }
+    // ...and with no progress reported, the same elapsed time spends it.
+    std.Thread.sleep(25 * std.time.ns_per_ms);
+    try std.testing.expect(d.expired());
+    try std.testing.expectError(error.Timeout, d.tick());
 }

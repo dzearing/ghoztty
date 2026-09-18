@@ -31575,3 +31575,50 @@ caught a real PS 5.1 unwrapped-`.Count` in the new script, and three
 staleness gates wanted the app rebuilt after the shared-core edit.
 `docs-routing`, `stderr-capture`, `stderr-launch-capture` re-stamped green.
 ipc-p1/p2/p3 ALL PASS (26/20/16).
+
+## 2026-09-17 - T831: a test that waits now watches the clock, and counting is a check that fails
+
+Waits in this tree used to give up after a fixed number of sleeps or yields.
+That number is not a duration. On a box running three lanes and a WebView2
+host, 100k yields burn through in milliseconds while the thread being waited on
+has not run once, so a healthy build goes red for nothing - and a flaky red
+costs more than a real one, because it teaches whoever is watching to shrug.
+On Windows the other direction hurts too: `Thread.sleep(100us)` rounds up to
+the ~15.6ms timer tick, so 30k sleeping spins was eight minutes of dead lane per
+miss. `connection.zig` (T472) and `pty_child.zig` (T89b) had each replaced
+their own counted waits with a wall-clock deadline, independently, for the same
+reason, neither knowing about the other - and nothing stopped the third from
+going back to counting.
+
+There is one deadline now: `test_util.Deadline`, beside the other shared test
+waits, with `yield` for a wait on another thread of this process, `tick` for a
+wait on a child's output, and `progress` for a transfer that bounds a stall
+rather than a total. Both files use it, and every wait carries a plain-words
+label the timeout prints instead of a bare `error.Timeout`. The sweep the task
+asked for found one more counted wait, and it was in shipping code:
+`+send-keys --when-idle` spent its `--idle-timeout` in POLLS, two per second,
+so every IPC round trip pushed the real give-up point past the number of
+seconds the flag promises. It is on the clock now, with the poll count kept
+only for a box whose `Timer.start()` fails, where a count is the sole bound
+left.
+
+The other half is that the sweep is standing rather than remembered, because a
+hand audit that finds nothing looks exactly like one nobody re-runs.
+`test\win32\test-wait-oracle.ps1` reads every `.zig` file under `src`, names
+any wait whose bound is an iteration count, and honours a
+`// test-wait-audit: <reason>` marker only when it carries a reason - a bare
+marker waives nothing. It is in the harness floor and has a guard-due row
+covering the helper, the two files and `src\cli\*.zig`, so touching any of them
+marks it due and `validate` refuses the commit.
+
+Evidence: `test-wait-oracle.ps1` ALL PASS (19 assertions, 338 files swept);
+`-NegativeControl` plants a counted wait into the real tree and scores FAIL N1
+with the probe restored byte for byte. `floor-lane.ps1` lanes none, agent,
+win32 and lib all PASS (win32's first run hit the known WebView2
+environment-creation flake, PASS alone and on a clean re-run). Harness floor
+ALL PASS (29 audits, 2 PENDING tracked by T1568/T1123) after a rebuild cleared
+three staleness reds; `harness-floor.ps1` ALL PASS (46) once the new member was
+documented in `test\win32\README.md`, which is what its F2 assertion is for.
+ipc-p1/p2/p3 ALL PASS (26/20/16), and the guards the edits touched re-run
+green: `ipc-when-idle` (22), `session-resume-offset` (115), `pane-ingest-lag`
+(11), `holder-soak` (9), `sessions-running-cmd` (16).
