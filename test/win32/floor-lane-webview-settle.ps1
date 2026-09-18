@@ -39,6 +39,17 @@
   user's own terminal), those panes never being claimed by the KILLING sweep,
   and the wait being asked for by the lane that starts behind them.
 
+  Arms 19-24 are WHOSE run a host belongs to (T1649). Both markers arms 1-2
+  test are shared by every concurrent run, and since the idle soak daemon
+  (T841) overlaps a turn on purpose, a round ending its lane killed the browser
+  processes the turn's lane was driving -- T1648's cross-kill on a second
+  resource. Ownership is now the build root of the test binary the profile pid
+  names. Arm 20 is the negative control: two live owners carrying the real
+  shared name out of two roots, with the UNSCOPED rule required to still claim
+  the foreign one, so the arm proves the bug reproduces rather than that the
+  new code is quiet. Arm 22 runs the real sweep over that staging and requires
+  the other run's host to be alive afterwards.
+
   Prints a single ALL PASS / N FAILURE(S) line, like every other script here.
 
   ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
@@ -284,6 +295,111 @@ try {
         ($src -match 'Wait-WebViewLaneSettle -ExeNames \$TEST_EXE_NAMES[^\r\n]*-IncludeAppTeardown') $null
     Check 'the end-of-lane sweep still does NOT (it kills what it finds)' `
         ($src -notmatch 'Invoke-WebViewLaneSweep[^\r\n]*-IncludeAppTeardown') $null
+
+    # -- 19-24: WHOSE run owns the host (T1649). Both markers arms 1-2 test are
+    # shared by every concurrent run -- the profile PREFIX is a constant, the
+    # exe name is the same ghostty-test.exe -- so the sweep, which KILLS what it
+    # finds, reached the browser processes another run's tests were driving.
+    # Same cross-kill as T1648 on a second resource, same separator: the build
+    # root of the test binary that owns the host.
+
+    # -- 19: the ownership record itself.
+    Check 'the owning test binary is read off the private profile' `
+        ((Get-WebViewHostOwnerPid -CommandLine 'x --user-data-dir=D:\t\ghoztty-wv2test-4242\ghoztty\EBWebView') -eq 4242) ''
+    Check 'a host with no profile falls back to its creator' `
+        ((Get-WebViewHostOwnerPid -CommandLine '--webview-exe-name=ghostty-test.exe' -ParentProcessId 77) -eq 77) ''
+    Check 'and a host that says nothing at all owns nobody' `
+        ((Get-WebViewHostOwnerPid -CommandLine 'nothing here') -eq 0) ''
+
+    # Two owners carrying the SHARED test-binary name out of two build roots --
+    # the real collision, staged live.
+    $MineDir = Join-Path $Sandbox 'mine-cache'
+    $ForeignDir = Join-Path $Sandbox 'foreign-cache'
+    New-Item -ItemType Directory -Path $MineDir -Force | Out-Null
+    New-Item -ItemType Directory -Path $ForeignDir -Force | Out-Null
+    $SharedName = 'ghostty-test.exe'
+    Copy-Item -LiteralPath "$env:SystemRoot\System32\waitfor.exe" -Destination (Join-Path $MineDir $SharedName) -Force
+    Copy-Item -LiteralPath "$env:SystemRoot\System32\waitfor.exe" -Destination (Join-Path $ForeignDir $SharedName) -Force
+    # persistence: not a terminal launch - renamed copies of waitfor.exe, so
+    # there is no session state and no flag to pass.
+    $ownerMine = Start-Process -FilePath (Join-Path $MineDir $SharedName) `
+        -ArgumentList '/t', '600', 'GhozttyWv2OwnerMine' -PassThru -WindowStyle Hidden `
+        -RedirectStandardError (Join-Path $Sandbox 'owner-mine.err')
+    $null = $ownerMine.Handle
+    $script:Started += $ownerMine
+    $ownerForeign = Start-Process -FilePath (Join-Path $ForeignDir $SharedName) `
+        -ArgumentList '/t', '600', 'GhozttyWv2OwnerForeign' -PassThru -WindowStyle Hidden `
+        -RedirectStandardError (Join-Path $Sandbox 'owner-foreign.err')
+    $null = $ownerForeign.Handle
+    $script:Started += $ownerForeign
+
+    $hostMine = Start-Fixture -Marker "ghoztty-wv2test-$($ownerMine.Id)"
+    $hostForeign = Start-Fixture -Marker "ghoztty-wv2test-$($ownerForeign.Id)"
+    # An orphan: a profile pid nothing is running under any more. It belongs to
+    # no live run, and reaping it is what the sweep is FOR.
+    $hostOrphan = Start-Fixture -Marker 'ghoztty-wv2test-999998'
+
+    # -- 20: THE NEGATIVE CONTROL. Unscoped -- the rule as it stood before
+    # T1649 -- claims the other run's host, which is what made the cross-kill
+    # possible. The arm fails if the bug is not reproducible.
+    $unscoped = @((Split-WebViewHostByOwner -Hosts (Get-WebViewLaneHost -ExeNames @($FakeExe)) -Roots @()).Mine)
+    Check 'without build-root scoping the other run''s host IS claimed (the T1649 bug)' `
+        (@($unscoped | Where-Object { $_.ProcessId -eq $hostForeign.Id }).Count -eq 1) "claimed $($unscoped.Count)"
+
+    $scoped = Split-WebViewHostByOwner -Hosts (Get-WebViewLaneHost -ExeNames @($FakeExe)) -Roots @($MineDir)
+    Check 'a host owned by another run''s test binary is not this run''s' `
+        (@(@($scoped.Mine) | Where-Object { $_.ProcessId -eq $hostForeign.Id }).Count -eq 0) `
+        "mine=$(@($scoped.Mine).Count)"
+    Check 'and it is REPORTED as foreign rather than silently dropped' `
+        (@(@($scoped.Foreign) | Where-Object { $_.ProcessId -eq $hostForeign.Id }).Count -eq 1) `
+        "foreign=$(@($scoped.Foreign).Count)"
+    Check 'this run''s own host is still claimed' `
+        (@(@($scoped.Mine) | Where-Object { $_.ProcessId -eq $hostMine.Id }).Count -eq 1) ''
+    Check 'an orphaned host - owner long gone - is still this run''s to reap' `
+        (@(@($scoped.Mine) | Where-Object { $_.ProcessId -eq $hostOrphan.Id }).Count -eq 1) ''
+
+    # -- 21: the settle. A concurrent run's LIVE browser tree must not hold this
+    # lane at the gate for the whole deadline and then be reported as a teardown
+    # that never happened.
+    # The orphan goes first: it is owned by nobody, so it counts for EVERY run
+    # and would mask what these two arms are measuring.
+    Stop-Fixture $hostOrphan
+    for ($i = 0; $i -lt 50; $i++) {
+        if (-not (Get-Process -Id $hostOrphan.Id -ErrorAction SilentlyContinue)) { break }
+        Start-Sleep -Milliseconds 100
+    }
+    $asForeignRun = Wait-WebViewLaneSettle -ExeNames @($FakeExe) -TimeoutSeconds 1 -Roots @($ForeignDir)
+    Check 'a settle DOES wait for the hosts its own run owns' `
+        ((-not $asForeignRun.Settled) -and $asForeignRun.Remaining -ge 1) `
+        "settled=$($asForeignRun.Settled) remaining=$($asForeignRun.Remaining)"
+    $mineOnlyRoot = Join-Path $Sandbox 'nobody-cache'
+    New-Item -ItemType Directory -Path $mineOnlyRoot -Force | Out-Null
+    $noneOfMine = Wait-WebViewLaneSettle -ExeNames @($FakeExe) -TimeoutSeconds 5 -Roots @($mineOnlyRoot)
+    Check 'a run that owns none of the live hosts settles immediately' `
+        ($noneOfMine.Settled -and $noneOfMine.WaitedMs -lt 1000) `
+        "settled=$($noneOfMine.Settled) waited=$($noneOfMine.WaitedMs)ms"
+
+    # -- 22: the sweep, which is the half that KILLS. Scoped to this run's root
+    # it takes its own host and leaves the other run's browser tree running.
+    $scopedSweep = Invoke-WebViewLaneSweep -ExeNames @($FakeExe) -TimeoutSeconds 30 -Roots @($MineDir)
+    Check 'the scoped sweep killed this run''s host' `
+        ($null -eq (Get-Process -Id $hostMine.Id -ErrorAction SilentlyContinue)) ''
+    Check 'THE CROSS-KILL: the other run''s host survived the sweep' `
+        ($null -ne (Get-Process -Id $hostForeign.Id -ErrorAction SilentlyContinue)) ''
+    Check 'and the sweep says whose host it left alone' `
+        (@(@($scopedSweep.Foreign) | Where-Object { $_.ProcessId -eq $hostForeign.Id }).Count -eq 1) `
+        "foreign=$(@($scopedSweep.Foreign).Count)"
+    Stop-Fixture $hostForeign
+
+    # -- 23-24: the wiring. The library is only a fix if the lane asks for it.
+    Check 'floor-lane derives its build roots BEFORE the pre-lane settle' `
+        ($src -match '(?s)\$laneRoots = @\(Get-LaneBuildRoot.*Wait-WebViewLaneSettle') $null
+    Check 'the pre-lane settle is scoped to this run' `
+        ($src -match 'Wait-WebViewLaneSettle[^\r\n]*-Roots \$laneRoots') $null
+    Check 'the end-of-lane sweep is scoped to this run' `
+        ($src -match 'Invoke-WebViewLaneSweep -ExeNames \$TEST_EXE_NAMES[^\r\n]*-Roots \$Roots') $null
+    Check 'and the lane names the host it left to its owner' `
+        ($src -match 'WEBVIEW HOST IGNORED') $null
 
     Complete-TestBody  # T1039: the run reached the end of its body
 }

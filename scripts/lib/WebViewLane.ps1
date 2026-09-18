@@ -35,10 +35,25 @@
     the back-to-back case it exists for. `Get-WebViewAppDebugHost` names it by
     the DEBUG profile folder, which a release install never uses.
 
+  * WHOSE RUN a lane host belongs to (T1649). Both markers above are shared by
+    every concurrent run of the same lane -- the profile PREFIX is a constant
+    and the exe name is the same `ghostty-test.exe` -- so a soak round ending
+    its lane killed the browser processes a turn's win32 lane was using right
+    then. That is T1648's cross-kill on a second resource, and the separator is
+    the same one: a host belongs to the run whose BUILD ROOT its owning test
+    binary was launched from. `Get-WebViewHostOwnerPid` reads that owner off the
+    profile folder (or, for an exe-name-only match, off the creator), and
+    `Split-WebViewHostByOwner` applies `Test-PathUnderRoot` to its image.
+
   Nothing here ever touches a WebView2 process that is not a test lane's: the
   user's own Ghoztty runs its viewer panes out of the same exe, and a sweep
   that took those would close the panes they are reading this in.
 #>
+
+# Test-PathUnderRoot / Get-LaneBuildRoot: ownership by build root is one rule,
+# written once, for test binaries (T1648) and for the browser processes they own
+# (T1649). Nothing in LaneLeak.ps1 runs at load.
+. "$PSScriptRoot\LaneLeak.ps1"
 
 # Profile directories `webview2.TestProfile` mints, one per test-binary pid.
 # The name is the contract between the Zig side and this file.
@@ -75,6 +90,98 @@ function Get-WebViewLaneHost {
         }
     }
     return $found
+}
+
+function Get-WebViewHostOwnerPid {
+    <#
+    .SYNOPSIS
+        The pid of the TEST BINARY a lane's WebView2 host belongs to, or 0 when
+        nothing on the process says.
+    .DESCRIPTION
+        The private profile a test binary mints carries that binary's own pid in
+        the folder name -- `ghoztty-wv2test-<pid>`, minted by
+        `webview2.TestProfile` -- and every process in the browser tree inherits
+        the folder on its command line, children included. So the profile is an
+        ownership RECORD rather than a mere marker, and it survives the tree
+        being reparented, which is what makes it usable after the fact.
+
+        A host matched only by `--webview-exe-name=` carries no profile, and
+        then the creator is the best answer available: the WebView2 loader
+        launches the browser process from the embedder, so the parent pid is the
+        test binary until that binary exits.
+    .OUTPUTS
+        [int] the owning pid, or 0.
+    #>
+    param([string]$CommandLine, [int]$ParentProcessId = 0)
+
+    if ($CommandLine -and $CommandLine -match "$script:WEBVIEW_LANE_PROFILE_PREFIX(\d+)") {
+        return [int]$matches[1]
+    }
+    if ($ParentProcessId -gt 0) { return [int]$ParentProcessId }
+    return 0
+}
+
+function Split-WebViewHostByOwner {
+    <#
+    .SYNOPSIS
+        Split lane WebView2 hosts into the ones THIS run owns and the ones
+        another concurrent run does (T1649).
+    .DESCRIPTION
+        `Get-WebViewLaneHost` answers "is this a test lane's browser process?",
+        and that was the only question anyone asked until the idle soak daemon
+        (T841) started running lanes alongside a turn on purpose. Both of its
+        markers are shared by every concurrent run, so the end-of-lane sweep --
+        which KILLS what it finds -- reached the browser processes the other
+        run's tests were driving, and that run went red for somebody else's
+        cleanup. Same failure as T1648, same remedy: identity is where the
+        owning test binary was BUILT.
+
+        A host is this run's when its owner is: the owner's image lives under
+        one of this run's roots. An owner that is GONE is nobody's live process
+        -- a true orphan, which is exactly what the sweep exists to reap -- so
+        it stays ours. An owner that is alive but whose image cannot be read is
+        left alone, the same conservative call `Split-LaneLeakByRoot` makes.
+    .PARAMETER Roots
+        This run's build roots (`Get-LaneBuildRoot`). EMPTY means no scoping is
+        possible and nothing is dropped: a caller that cannot say where it built
+        must not be silently disarmed.
+    .OUTPUTS
+        Mine / Foreign, each an array of the host objects passed in.
+    #>
+    param(
+        [Parameter(Mandatory)][AllowNull()][AllowEmptyCollection()]$Hosts,
+        [string[]]$Roots = @()
+    )
+
+    $all = @(@($Hosts) | Where-Object { $null -ne $_ })
+    $scoped = @(@($Roots) | Where-Object { $_ })
+    if ($scoped.Count -eq 0) {
+        return [pscustomobject]@{ Mine = $all; Foreign = @() }
+    }
+
+    # One CIM lookup per distinct owner: a browser tree is a dozen processes
+    # sharing one owner, and the sweep runs at every lane boundary.
+    $imageOf = @{}
+    $mine = @()
+    $foreign = @()
+    foreach ($h in $all) {
+        $ownerPid = Get-WebViewHostOwnerPid -CommandLine ([string]$h.CommandLine) `
+            -ParentProcessId ([int]$h.ParentProcessId)
+        if ($ownerPid -le 0) { $mine += $h; continue }
+        if (-not $imageOf.ContainsKey($ownerPid)) {
+            $owner = Get-CimInstance Win32_Process -Filter "ProcessId=$ownerPid" -ErrorAction SilentlyContinue
+            $image = $null
+            if ($owner) { $image = [string]$owner.ExecutablePath }
+            $imageOf[$ownerPid] = $image
+        }
+        $image = $imageOf[$ownerPid]
+        # Owner gone: an orphan belongs to no live run, and reaping it is the
+        # whole point of the sweep.
+        if ($null -eq $image) { $mine += $h; continue }
+        if (Test-PathUnderRoot -Path $image -Roots $scoped) { $mine += $h }
+        else { $foreign += $h }
+    }
+    return [pscustomobject]@{ Mine = $mine; Foreign = $foreign }
 }
 
 function Get-WebViewAppDebugHost {
@@ -128,6 +235,11 @@ function Wait-WebViewLaneSettle {
         script's viewer panes, on their way down or still up. This is for the
         wait a lane does BEFORE it starts; the end-of-lane sweep stays strictly
         about the lane's own leaks, because it KILLS what it finds.
+    .PARAMETER Roots
+        This run's build roots (T1649). When given, only hosts owned by a test
+        binary built under one of them are counted -- so a concurrent run's live
+        browser tree neither holds this lane at the gate for the full deadline
+        nor gets reported as an unsettled teardown that never was one.
     .OUTPUTS
         [pscustomobject] Settled (bool), WaitedMs (int), Remaining (int),
         RemainingApp (int).
@@ -136,11 +248,13 @@ function Wait-WebViewLaneSettle {
         [string[]]$ExeNames,
         [int]$TimeoutSeconds = 20,
         [int]$PollMs = 250,
-        [switch]$IncludeAppTeardown
+        [switch]$IncludeAppTeardown,
+        [string[]]$Roots = @()
     )
 
     $count = {
-        $lane = @(Get-WebViewLaneHost -ExeNames $ExeNames).Count
+        $lane = @((Split-WebViewHostByOwner -Hosts (Get-WebViewLaneHost -ExeNames $ExeNames) `
+                    -Roots $Roots).Mine).Count
         $app = if ($IncludeAppTeardown) { @(Get-WebViewAppDebugHost).Count } else { 0 }
         [pscustomobject]@{ Lane = $lane; App = $app; Total = $lane + $app }
     }
@@ -199,24 +313,36 @@ function Invoke-WebViewLaneSweep {
         old shape, and it lost both halves on a loaded box: the delete failed
         because the browser still had the files open, and the next lane started
         while the tree was still unwinding.
+        And it only ever kills THIS run's hosts (T1649). Both identity markers
+        are shared by every concurrent run, so without `-Roots` a soak round
+        ending its lane takes down the browser processes a turn's lane is
+        driving right now -- a red lane that is somebody else's cleanup, which
+        is the whole T1648 story on a second resource.
+    .PARAMETER Roots
+        This run's build roots (`Get-LaneBuildRoot`). Empty means no scoping,
+        which is the pre-T1649 behavior for a caller that cannot say where it
+        built.
     .OUTPUTS
         [pscustomobject] Killed (int), Settled (bool), WaitedMs (int),
-        Remaining (int), ProfilesRemoved (int).
+        Remaining (int), ProfilesRemoved (int), Foreign (the hosts left alone
+        because another run owns them).
     #>
     param(
         [string[]]$ExeNames,
         [int]$TimeoutSeconds = 20,
-        [switch]$NoKill
+        [switch]$NoKill,
+        [string[]]$Roots = @()
     )
 
-    $hosts = @(Get-WebViewLaneHost -ExeNames $ExeNames)
+    $split = Split-WebViewHostByOwner -Hosts (Get-WebViewLaneHost -ExeNames $ExeNames) -Roots $Roots
+    $hosts = @($split.Mine)
     if (-not $NoKill) {
         foreach ($h in $hosts) {
             try { Stop-Process -Id $h.ProcessId -Force -ErrorAction Stop } catch {}
         }
     }
 
-    $settle = Wait-WebViewLaneSettle -ExeNames $ExeNames -TimeoutSeconds $TimeoutSeconds
+    $settle = Wait-WebViewLaneSettle -ExeNames $ExeNames -TimeoutSeconds $TimeoutSeconds -Roots $Roots
     $profiles = Remove-WebViewLaneProfile
 
     return [pscustomobject]@{
@@ -225,6 +351,7 @@ function Invoke-WebViewLaneSweep {
         WaitedMs        = $settle.WaitedMs
         Remaining       = $settle.Remaining
         ProfilesRemoved = $profiles
+        Foreign         = @($split.Foreign)
     }
 }
 

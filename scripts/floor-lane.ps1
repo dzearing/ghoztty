@@ -430,10 +430,20 @@ function Invoke-WebViewSweep {
     # T592's half: `Stop-Process` returns before the process dies, and the next
     # lane used to start on that return -- straight into the teardown it had
     # just asked for. lib\WebViewLane.ps1 owns all three steps.
-    param([switch]$Quiet)
-    $r = Invoke-WebViewLaneSweep -ExeNames $TEST_EXE_NAMES -TimeoutSeconds $WebViewSettleSeconds
+    #
+    # ...and only the hosts THIS run owns (T1649). Both markers the sweep
+    # identifies a host by are shared by every concurrent run, so an unscoped
+    # sweep at the end of a soak round kills the browser processes a turn's lane
+    # is driving right now -- T1648's cross-kill on a second resource.
+    param([switch]$Quiet, [string[]]$Roots = @())
+    $r = Invoke-WebViewLaneSweep -ExeNames $TEST_EXE_NAMES -TimeoutSeconds $WebViewSettleSeconds -Roots $Roots
     if (-not $Quiet -and $r.Killed -gt 0) {
         Write-Host "swept $($r.Killed) leaked WebView2 process(es) owned by test binaries"
+    }
+    foreach ($f in @($r.Foreign)) {
+        if ($Quiet) { break }
+        Write-Host ("  WEBVIEW HOST IGNORED: pid={0} belongs to another run's test binary; left alone (T1649)" -f `
+                $f.ProcessId)
     }
     if (-not $Quiet) {
         $line = Format-WebViewSettle -Settle $r
@@ -492,6 +502,14 @@ function Invoke-Lane {
     }
     Write-Host "  log: $log"
 
+    # Where THIS run builds, which is the only thing that separates it from a
+    # concurrent run of the same lane: the test binaries it leaks (T1648) and
+    # the WebView2 hosts those binaries own (T1649) are both identified by it.
+    # Derived here, before the lane starts, because the pre-lane settle below
+    # needs it too -- a wait that counted another run's live browser tree would
+    # burn its whole deadline and then report a teardown that never happened.
+    $laneRoots = @(Get-LaneBuildRoot -Command $cmd -RepoPath $Repo)
+
     # Do not start into the previous lane's teardown (T592). Two of these lanes
     # stand up a REAL WebView2 environment, `-Lane all` starts the next one the
     # instant the previous exits, and asking for an environment while the old
@@ -510,7 +528,7 @@ function Invoke-Lane {
     # tree counts, so a dev Ghoztty left open costs nothing and the user's own
     # release terminal is never even looked at.
     if (-not $NoSweep) {
-        $settle = Wait-WebViewLaneSettle -ExeNames $TEST_EXE_NAMES -TimeoutSeconds $WebViewSettleSeconds -IncludeAppTeardown
+        $settle = Wait-WebViewLaneSettle -ExeNames $TEST_EXE_NAMES -TimeoutSeconds $WebViewSettleSeconds -IncludeAppTeardown -Roots $laneRoots
         $settleLine = Format-WebViewSettle -Settle $settle
         if ($settleLine) { Write-Host "  $settleLine" }
     }
@@ -630,7 +648,6 @@ function Invoke-Lane {
     # unexplained exit 255 in the middle of somebody's floor.
     $leakCandidates = @(Get-LeakedLaneProcess -ExeNames $TEST_EXE_NAMES `
             -ExcludePids $preTestPids -Since $laneStart)
-    $laneRoots = @(Get-LaneBuildRoot -Command $cmd -RepoPath $Repo)
     # Scoped to the SHARED names only: an -ExtraTestExeNames fixture is private
     # to the harness that named it and lives wherever that harness put it, so
     # scoping it by build root would disarm the count it was passed in to make.
@@ -649,7 +666,7 @@ function Invoke-Lane {
     }
 
     $leaked = 0
-    if (-not $NoSweep) { $leaked = Invoke-WebViewSweep }
+    if (-not $NoSweep) { $leaked = Invoke-WebViewSweep -Roots $laneRoots }
 
     $tail = ''
     if (Test-Path $log) {

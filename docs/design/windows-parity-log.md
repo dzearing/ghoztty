@@ -9,6 +9,60 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-18: T1649 closed done, T1650 filed — **a floor lane can no longer kill
+  another run's browser processes, which was the second half of yesterday's
+  cross-kill.**
+
+  T1648 stopped a run from reaping another run's test BINARY. This is the same
+  bug on the resource those binaries own. Every lane ends by sweeping the
+  WebView2 hosts it "leaked", and it recognised one by two markers:
+  `--user-data-dir=...\ghoztty-wv2test-<pid>` and
+  `--webview-exe-name=<a lane test binary>`. The prefix is a constant and the
+  exe name is the same `ghostty-test.exe` in every run, so both markers are
+  shared — and an idle soak round ending its lane killed the browser processes a
+  turn's win32 lane was driving at that moment. The turn would then read a
+  WebView2 failure in its own lane as its own code.
+
+  Ownership was there to be read the whole time: `webview2.TestProfile` mints the
+  profile folder as `ghoztty-wv2test-<the test binary's own pid>`, and every
+  process in the browser tree — renderers, GPU, crashpad — inherits that folder
+  on its command line. So the profile is an ownership RECORD, not just a marker.
+  `Get-WebViewHostOwnerPid` reads the owner off it (falling back to the creator
+  for an exe-name-only match, since the WebView2 loader launches the browser from
+  the embedder), and `Split-WebViewHostByOwner` decides with T1648's separator:
+  the owner's image under one of this run's `Get-LaneBuildRoot` roots. An owner
+  that is GONE stays ours — an orphan belongs to no live run and reaping it is
+  what the sweep is for — and an owner alive but unreadable is left alone.
+
+  `Wait-WebViewLaneSettle` takes the same `-Roots`, because scoping only the kill
+  would have left the wait counting another run's healthy tree: the lane would
+  burn its full 20s deadline and then print `WEBVIEW NOT SETTLED`, blaming a
+  teardown that never happened. floor-lane derives `$laneRoots` before the
+  pre-lane settle now, passes it to both ends, and prints
+  `WEBVIEW HOST IGNORED: pid=... belongs to another run's test binary` instead of
+  deciding silently.
+
+  The negative control is arm 20: two live owners carrying the real shared name
+  `ghostty-test.exe` out of two build roots, with the UNSCOPED rule required to
+  still claim the foreign one — so the arm proves the cross-kill reproduces
+  rather than that the new code is quiet. Arm 22 runs the real sweep over that
+  staging and requires the other run's host to be ALIVE afterwards. Green:
+  `floor-lane-webview-settle.ps1` ALL PASS (45), `floor-lane-leak-sweep.ps1` ALL
+  PASS (65), `build-cache.ps1` (76), `persistence-flag.ps1` (28),
+  `stderr-launch-capture.ps1` (20), `job-teardown.ps1` (15),
+  `harness-floor.ps1` (46), the harness floor lane, and `-Lane all`
+  lib/none/win32/agent all PASS.
+
+  Two things the validation turned up. `soak-daemon.ps1` scores 1 FAILURE on D6
+  whether or not this change is applied: `busy` names the PRODUCTION soak
+  daemon's own round as foreground work, so that harness is red for a box
+  condition rather than for code — filed as **T1650**. And `test-reach-audit.ps1`
+  went red inside the harness sweep and green alone (T1643's known ~4-in-5
+  flake); registering it in `$HARNESS_FLOOR_PENDING` does NOT work and should not
+  be tried again — the ratchet scores a pending member that passes as STALE,
+  which is red, so an INTERMITTENT member cannot be excused by that list at all.
+  Journalled on T1643.
+
 - 2026-09-18: T1648 closed done, T1649 filed — **a test run can no longer kill
   another run's test binary, so a red lane means red code again.**
 
