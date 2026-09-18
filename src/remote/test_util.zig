@@ -241,16 +241,28 @@ test "T472/T831: a test wait is bounded by the wall clock, not by a spin count" 
 }
 
 test "Deadline: progress resets the budget, so a moving wait is never a stall" {
-    var d = Deadline.startWith("the budget a progress report keeps alive", 20 * std.time.ns_per_ms);
+    // The three numbers below are the whole test, and they are sized against
+    // the SCHEDULER rather than for brevity (T1647). The first version asked a
+    // 20 ms budget to survive four 8 ms sleeps: on a busy box an 8 ms sleep
+    // routinely lands at 20 ms and more, so the assertion measured Windows'
+    // timer slack rather than Deadline, and it reddened the win32 lane - and
+    // test-reach-audit's lane arm with it - every time the box had work on it.
+    //
+    // step must be far enough under budget that ordinary overshoot cannot
+    // reach it (3x here), and steps * step must be over budget, or a
+    // progress() that reset NOTHING would pass this loop just as happily.
+    const step_ns = 100 * std.time.ns_per_ms;
+    const budget_ns = 300 * std.time.ns_per_ms;
+    var d = Deadline.startWith("the budget a progress report keeps alive", budget_ns);
     // test-wait-audit: this counts deliberate sleeps to MEASURE the budget, it
     // does not wait on another thread - the count is the subject, not an oracle.
-    for (0..4) |_| {
-        std.Thread.sleep(8 * std.time.ns_per_ms);
+    for (0..5) |_| {
+        std.Thread.sleep(step_ns);
         try std.testing.expect(!d.expired());
         d.progress();
     }
-    // ...and with no progress reported, the same elapsed time spends it.
-    std.Thread.sleep(25 * std.time.ns_per_ms);
+    // ...and with no progress reported, elapsed time past the budget spends it.
+    std.Thread.sleep(budget_ns + step_ns);
     try std.testing.expect(d.expired());
     try std.testing.expectError(error.Timeout, d.tick());
 }

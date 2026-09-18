@@ -260,6 +260,36 @@ Library: `scripts/lib/CrashDump.ps1`. Acceptance:
 dump exists, and, under `GHOZTTY_CRASH_NO_WER=1` (a box with no capture,
 reproduced from this same tree), the re-run fallback.
 
+**And the hunt runs in the box's idle time now, not in a turn's** (T841). A turn
+can afford about five lane runs; the T443 signal shows up in roughly a fifth of
+runs on the days it shows up at all. Turns are the scarce resource and wall
+clock is not, so `scripts\soak-daemon.ps1` accumulates rounds between them — a
+per-user scheduled task ticks every ten minutes and starts the daemon if it is
+down, each round is `test-binary-soak.ps1` in build-runner mode (the only
+condition the defect has ever occurred in, T832), and every outcome is appended
+to a ledger that outlives the process:
+
+```powershell
+powershell -NoProfile -File scripts\soak-daemon.ps1 install   # once, per box
+powershell -NoProfile -File scripts\soak-daemon.ps1 status    # what has accumulated
+```
+
+Its licence to exist is that it is INTERRUPTIBLE, and that is two mechanisms
+rather than a promise. **Isolation**: the measured round is a `zig build` over
+its own per-lane cache, global cache and prefix, because a second `zig build` in
+this repo takes the lane's cache manifest locks and can stall the very lane a
+turn is timing (T401). **Yield**: before each round and every few seconds inside
+one, the daemon asks whether the box is wanted — an explicit `pause`, or a live
+command line that names foreground work (`floor-lane.ps1`, `suite-run.ps1`,
+anything under `test\win32\`, a `zig build`) — and kills the round's whole
+process tree when it is. `soak-daemon.ps1 busy` asks that question out loud,
+which is both how you find out why nothing is accumulating and how the rule
+stays testable. Its own descendants are excluded by the scratch directory's name
+appearing in their command lines; without that the daemon would yield to itself
+for ever and stay green while accumulating nothing. Acceptance:
+`test\win32\soak-daemon.ps1`, which puts a round in flight and requires it dead —
+with the foreground process it yielded to untouched.
+
 **A harness must never fabricate a failure, and one shape of that is now
 checked** (T197). `Start-Process -PassThru` hands back a process object whose
 `ExitCode` reads back **empty** unless something touched `$p.Handle` while the

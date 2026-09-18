@@ -9,6 +9,68 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-18: T841 closed done, T1647 filed+closed — **the T443 crash hunt now
+  runs in the box's idle time, and gets off the box the moment a turn wants it.**
+
+  T443 — the intermittent segfault in our own test binaries — has never been
+  short of instruments. It is short of RUNS. A turn can afford about five lane
+  runs, the signal appears in roughly a fifth of runs on the days it appears at
+  all, and the scarce resource is turns: the machine itself is idle whenever a
+  turn is thinking and completely idle between tasks. So the soak now runs
+  there. `scripts\soak-daemon.ps1` is a per-user scheduled task that ticks every
+  ten minutes, starts the daemon when it is down, runs one `test-binary-soak.ps1`
+  round after another, and appends every outcome to a ledger that outlives the
+  process. One command is the whole turn-facing surface:
+
+      powershell -NoProfile -File scripts\soak-daemon.ps1 status
+
+  **Its licence to exist is that it is interruptible, so that is the part with
+  teeth.** A background process running lanes on this box is one bad poll away
+  from being the thing that wedges a turn's lane (T401) — and "it yields" is
+  exactly the kind of claim that is true the day it is written and quietly false
+  three edits later. Two mechanisms, both checked. ISOLATION: the measured round
+  is a `zig build` over its own per-lane cache, global cache and prefix, so it
+  shares no manifest lock with the lane a turn is timing. YIELD: before each
+  round and every few seconds inside one, the daemon asks whether the box is
+  wanted — an explicit `pause`, or a live command line naming foreground work
+  (`floor-lane.ps1`, `suite-run.ps1`, anything under `test\win32\`, a
+  `zig build`) — and kills the round's whole process tree when it is.
+
+  `test\win32\soak-daemon.ps1` (34 assertions) demonstrates the yield rather
+  than asserting it: a round is put IN FLIGHT, the box is made busy both ways,
+  and the round is required to be dead within a poll with the foreground process
+  it yielded to untouched. Section F is the half that is easy to forget — a
+  process carrying the soak's own marker is NOT foreground work, because a
+  daemon that yielded to itself would accumulate nothing for ever while every
+  check stayed green. Two traps were paid for on the way and are now commented
+  where they bit: `Start-Process` joins `-ArgumentList` without quoting (a
+  fixture command with a space in it started a daemon that died instantly in a
+  hidden window, and `status` simply said `stopped`), and the acceptance
+  harness's own `test\win32\` command line reads as foreground work to the rule
+  it is testing, which is what `-IgnorePids` exists for.
+
+  The harness-floor audits then caught three defects in that new file before it
+  landed — an unwrapped `.Count` that unrolls, a merged stream reaching
+  `Out-String` unstringified, and a top-level `try` with an unwind path to a
+  green verdict — which is the floor doing exactly what T725 built it for.
+
+  **T1647 was found by this turn and fixed by it**, because it was in the way:
+  T831's `Deadline` self-test timed four 8 ms sleeps against a 20 ms budget, and
+  on a busy box an 8 ms sleep lands at 20 ms and more. It reddened the win32
+  lane — and `test-reach-audit`'s nested lane with it — in three of the day's
+  four harness sweeps, with no crash and no diagnosis, which is the most
+  expensive shape of red there is: it makes every other lane result that morning
+  unusable. Sized against the scheduler now (100 ms steps under a 300 ms budget,
+  five of them, so the cumulative wait still exceeds the budget and the
+  `progress()` property still has teeth).
+
+  Floor: lib PASS, none PASS, agent PASS, harness PASS (re-stamped, 393 files);
+  win32 failed in the all-lane run on the ViewerPane live-WebView2 host-floor
+  test and passed alone on the same tree — the known T1645/T678 flake under
+  suite load, not this change. Next: the ledger answers whether idle time
+  actually produces occurrences; if it does, T443 comes off its armed watch with
+  a data point nobody had to spend a turn on.
+
 - 2026-09-17: T827 closed done (T1645 filed) — **a window holding a preview
   pane can be rearranged, and the box now checks that every build.**
 

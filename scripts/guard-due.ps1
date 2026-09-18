@@ -2143,6 +2143,19 @@ $GuardTable = @(
             'test\win32\test-binary-soak.ps1'
         )
     },
+    # The idle-time soak (T841) is the same class again, one step further out:
+    # it runs lanes on this box unattended, so the thing that must not rot is
+    # the YIELD - a daemon that stopped getting off the box would be discovered
+    # as "the lanes got flaky again", weeks later and by the wrong name.
+    [pscustomobject]@{
+        Name   = 'soak-daemon'
+        Script = 'test\win32\soak-daemon.ps1'
+        Stamp  = 'test\win32\soak-daemon.stamp.json'
+        Covers = @(
+            'scripts\soak-daemon.ps1',
+            'test\win32\soak-daemon.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'crash-databreak'
         Script = 'test\win32\crash-databreak.ps1'

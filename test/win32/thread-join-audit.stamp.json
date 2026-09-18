@@ -1,12 +1,9 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-09-17T20:31:06-07:00",
-    "commit":  "b7126204a",
+    "generated":  "2026-09-17T23:57:56-07:00",
+    "commit":  "63a7859f1",
     "uncommitted":  [
-                        "src/remote/agent/pty_child.zig",
-                        "src/remote/agent/test_util.zig",
-                        "src/remote/connection.zig",
                         "src/remote/test_util.zig"
                     ],
     "files":  {
@@ -81,7 +78,7 @@
                   "src/remote/ssh_transport.zig":  "6974193d293b50203864ce9c751aa1d48c1d93f31abaaa9f52fef7940c51ffdc",
                   "src/remote/tcp_dial.zig":  "e6dfdd2713cb2462e5556f473022e0b086e1ed31dee5a36e27d40c6e48dde262",
                   "src/remote/test_client.zig":  "a7f416584d53dc4782f6050cb94e6877e74c8bef96d3b1bc283f8f1b9b3d0f8c",
-                  "src/remote/test_util.zig":  "857fb17f62b7bc88c5d1714c4f41cae3b4900c599675d2d638aeafcaec51659c",
+                  "src/remote/test_util.zig":  "a645a6fe87547061970dfa2ddeefcbc0c6e36b008e1333d992f31cb8b50d07db",
                   "src/remote/win_acl.zig":  "f2f54e307556a1229a30c511e83c5cb88dd919e2e3100e84e66051a03b470ede",
                   "src/remote/wp4_e2e.zig":  "3e9e478bce138dec04eb191c830f614fe269a3a8ff8638e5e1d7161c0617e0fe",
                   "src/remote/ws_client.zig":  "9d6bf5343afa0c3a934d110e7e0b0a505a867170f1de76bba0ff4f77dccf522b",
