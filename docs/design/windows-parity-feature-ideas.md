@@ -338,3 +338,13 @@ as the digest that showed them.
 - Jump to the session eating the box (the CPU meter's number becomes a target)
 - Tell me when the long one finishes (toast on completion past a threshold, with the exit code)
 - A re-attach that catches you up (foldable notice listing what completed while you were gone)
+
+## 2026-09-18
+
+- Wake a machine that is asleep, from the chooser (magic packet plus wait-and-attach)
+- Tell me when a machine comes back (watch an unreachable machine, notify on answer)
+- Drop a file onto a remote pane and have it arrive there (drag-and-drop transfer over the open connection)
+- Open a remote machine's file in a viewer pane beside it (remote paths in viewer panes)
+- A machine row that says more than CPU (memory, disk and uptime in the chooser strip)
+- Press a key, jump to any pane (hint labels on panes, not just on printed links)
+- One desktop, one app launch, every due GUI check (batch the due GUI harnesses into one fixture)
