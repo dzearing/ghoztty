@@ -9,6 +9,83 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-18: T849 closed done — **the loop can now get itself going again when
+  the terminal window it was working in has closed.**
+
+  Session persistence gives the app and the session separate lifetimes. On
+  2026-08-14, closing out T478, the app exited while `ghoztty-agent.exe` went on
+  hosting that session's ConPTYs: the turn was complete, pushed, alive and
+  healthy — and detached, with no UI to type into. `/reset-context` answered
+  `FAILED: not in a Ghoztty pane`, correctly. Every reset path ends in "send
+  keys to a pane", so step 7 had nowhere to go, and the loop waited out the
+  watchdog's sweep — up to 45 minutes of dead time for a turn that had finished
+  its work.
+
+  The supervisor could not have done better, which is the part worth saying out
+  loud: its own last resort is `+new-window`, an IPC call, and with nothing
+  listening that exits 1 with *"No running Ghoztty instance found. Launch
+  Ghoztty first."* (`src/cli/new_window.zig`). So in the one state that most
+  needed the safety net, the safety net's recovery was the same dead end as the
+  reset's.
+
+  Two halves. The watchdog's last resort is now app-aware: it asks `+list`
+  whether anything is listening, and when nothing is it LAUNCHES the app with
+  the resume shim instead of asking a window of it — `ghoztty.exe
+  --working-directory=<repo> --command=<shim>`, which is the same call either
+  way thanks to T104 (the launch path forwards a command) and T487 (a launch
+  against a running instance forwards it too). The log line says which state it
+  saw (`app=running` / `app=gone`), because "the pane is closed" and "nothing is
+  listening" used to be the same `$false` from `Test-PaneExists` with opposite
+  right answers.
+
+  The other half is the turn's own way out, and it is what makes this seconds
+  rather than minutes: `go-loop-exec.ps1 recover`. It refuses outright (exit 2)
+  while an app IS answering — "the reset failed" has many causes and only one of
+  them is this one, and typing at a live loop over a misdiagnosis is worse than
+  reporting it. When the app really is gone it releases this detached session's
+  lock first (without that, `Wait-LoopHeld` would confirm the recovery against
+  the very session being abandoned), runs the forced watchdog tick, and is
+  judged on the lock reaching `held`. go.md step 7 now branches on it instead of
+  ending the loop.
+
+  A judgement call, recorded rather than filed (go.md 5b: no mac→win experience
+  gap here): a window appearing on an unattended desktop is a real cost, and
+  T849's second goal names it. It is allowed because the last-resort branch
+  ALREADY opens one, and only ever with open tasks and a stalled loop behind it
+  — launching the app is that existing promise with its precondition satisfied,
+  not a new one.
+
+  Two arms of the harness were wrong in ways the change exposed rather than
+  caused. `P3` waited for a beacon, not for a beacon from a completed tick, and
+  the daemon deliberately stamps `last_tick = 'start'` before its first — a race
+  that went red under load. And sections H3/H5/H7c/H10 read "is an app running"
+  off whatever ghoztty happened to be up on the box, which was this session's
+  own; they now say so with a stand-in, so they cannot false-red on a box with
+  nothing open.
+
+  A third defect, found by the rule rather than by luck: `gate-negatives.ps1`
+  refused the change because four new labels were undeclared. Two of them are
+  verdicts, so T1133's rule applies — `NOT THE APP-GONE CASE` and `RECOVER
+  INCOMPLETE` ship with H15 and H17 driving them red, the second by launching a
+  stand-in that exits immediately so the lock never reaches `held`. That is the
+  2026-09-09 shape, demonstrated rather than asserted.
+
+  Evidence: `test\win32\go-loop-guard.ps1` **ALL PASS (404 assertions)**,
+  including eight new arms (H11–H18). `test\win32\go-loop-resume.ps1` ALL PASS
+  (22). `gate-negatives.ps1` ALL PASS (58), `merge-terminology.ps1` ALL PASS
+  (29), `argv-hazard-audit.ps1` ALL PASS (23) — all four re-stamped green.
+
+  The floor is **not** green, and not because of this: `-Lane all` gave lib PASS
+  (87s), none PASS (337s), **win32 FAIL, agent FAIL**, both on
+  `apprt.win32.ViewerPane` *host floor: a real controller on a real window*, and
+  the wrapper's solo confirm REPRODUCED each one alone. This change is
+  PowerShell and Markdown only — no Zig, so the test binary is the same one that
+  was green yesterday — and the assertion is `error.WaitForTimeout` at
+  `ViewerPane.zig:8764`, thirty seconds into the git-status diff section with
+  `diff{… busy=true}`. Filed as **T1654** (P1) with all four lane logs, and
+  cross-referenced on T1645, whose failure of the same test has a different
+  signature (`untripped point=read`) and needs a busy box to appear.
+
 - 2026-09-18: T848 closed done, T1652 filed and folded into T1645 — **a lane the
   box cannot see is no longer mistaken for a lane that is working.**
 

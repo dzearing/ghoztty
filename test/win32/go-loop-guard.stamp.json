@@ -1,22 +1,23 @@
 {
     "guard":  "go-loop",
     "script":  "test/win32/go-loop-guard.ps1",
-    "generated":  "2026-09-14T11:52:58-07:00",
-    "commit":  "07d8d8336",
+    "generated":  "2026-09-18T13:53:46-07:00",
+    "commit":  "87eb1d304",
     "uncommitted":  [
                         "scripts/go-loop-exec.ps1",
-                        "scripts/go-loop-health.ps1"
+                        "scripts/go-loop-watchdog.ps1",
+                        "test/win32/go-loop-guard.ps1"
                     ],
     "files":  {
                   "scripts/git-commit-guard.ps1":  "61b9c30de6abd3fa3730d73f07fc310063251595191bc45655aa46853b1c9e2f",
                   "scripts/githooks/pre-commit":  "daec7d5f82b46569ef65b60775e50f2dc971c8fa6dc21855d438c14e3dd52d92",
                   "scripts/go-loop-boot.ps1":  "e5de72ebfc0d1b065c9090e7b4c968c46edc217a08277d1feab61d1452441545",
-                  "scripts/go-loop-exec.ps1":  "d4e2fcd707f8331b406ec6aa67bde2a5aeb9c113af564cdd0ad91f40a430f16e",
+                  "scripts/go-loop-exec.ps1":  "6c374684629689efb4f949b1304cbae83130796d2efd7161dd92cbd934564794",
                   "scripts/go-loop-health.ps1":  "7f08cc6046c56ee514c46a1f96b755634302a7aaeefa16640d92ae34be756a82",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
-                  "scripts/go-loop-watchdog.ps1":  "fec6376034427796d1f9ad0b65d5fe8a46ce24a1702398844db3ea1483bada45",
+                  "scripts/go-loop-watchdog.ps1":  "61a2f343692d94d93033fc3b0af51a80b7c08a543a85c1b2e38b62edc1f3ad3e",
                   "scripts/loop-session.ps1":  "f8d64e24c43f7595203611f6263afbeb52d3dba6e05794a625c6789abbcfe22d",
-                  "test/win32/go-loop-guard.ps1":  "095499f3262659e840b22ee58872b472fcfcda8495f7e2d0a56f5a555eac2d68"
+                  "test/win32/go-loop-guard.ps1":  "175c421fe100d6cae8541fbe541c8bc2cd46ed5bc6f44d22f72a16b4a91b8f96"
               }
 }

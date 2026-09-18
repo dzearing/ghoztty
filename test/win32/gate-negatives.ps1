@@ -138,6 +138,24 @@ $Registry = @(
     # fixture that cannot come back; the end-to-end recovery it replaces is
     # test\win32\go-loop-resume.ps1.
     [pscustomobject]@{ Label = 'RESUME INCOMPLETE'; Kind = 'gate'; Demo = $Loop; Marker = 'RESUME INCOMPLETE' }
+    # T849. `recover` is what a turn runs when `/reset-context` reports it has
+    # nowhere to type - the app has exited while the agent goes on hosting this
+    # session's ConPTYs. Two of its four labels are verdicts and earn a
+    # demonstration; the other two are the diagnosis and the success line.
+    #
+    # NOT THE APP-GONE CASE is a refusal (exit 2): an app IS answering, so the
+    # reset failed for some other reason, and typing at a live loop over a
+    # misdiagnosis is worse than reporting it. RECOVER INCOMPLETE is exit 5, the
+    # same shape as RESUME INCOMPLETE above and for the same reason - the window
+    # operation exiting 0 is not the loop coming back.
+    [pscustomobject]@{ Label = 'NOT THE APP-GONE CASE'; Kind = 'gate'; Demo = $Loop
+        Marker = 'NOT THE APP-GONE CASE'
+    }
+    [pscustomobject]@{ Label = 'RECOVER INCOMPLETE'; Kind = 'gate'; Demo = $Loop
+        Marker = 'RECOVER INCOMPLETE'
+    }
+    [pscustomobject]@{ Label = 'APP GONE'; Kind = 'status' }
+    [pscustomobject]@{ Label = 'RECOVERED'; Kind = 'status' }
 
     # --- what claim DELEGATES ----------------------------------------------
     [pscustomobject]@{ Label = 'GUARD DUE'; Kind = 'gate'; Demo = 'test\win32\guard-due.ps1'

@@ -27,16 +27,23 @@
 # watchdog and the health check read the same flag, or the loop simply comes
 # back - see the Graceful stop block in loop-session.ps1.
 #
-# Actions: claim | mark | unmark | list | stop | resume
+# `recover` is the turn's own escape from the one state it cannot reset out of
+# (T849): the Ghoztty APP has exited while the agent still hosts this session's
+# ConPTYs, so the session is alive, healthy and detached with no UI. Every reset
+# path ends in "send keys to a pane", so go.md step 7 has nowhere to type, and
+# before this the only way out was the watchdog noticing up to 45 minutes later.
+#
+# Actions: claim | mark | unmark | list | stop | resume | recover
 # Exit codes: 0 primary (carry on), 3 stood down (stop), 4 stopped by request
-#             (the queue is drained; do not pick a task), 5 resume did not bring
-#             the loop back, 2 error.
+#             (the queue is drained; do not pick a task), 5 resume/recover did
+#             not bring the loop back, 2 error (recover: an app IS running, so
+#             whatever failed was not this).
 #
 #   powershell -NoProfile -File scripts\go-loop-exec.ps1 claim
 #   powershell -NoProfile -File scripts\go-loop-exec.ps1 list
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('claim', 'mark', 'unmark', 'list', 'stop', 'resume')]
+    [ValidateSet('claim', 'mark', 'unmark', 'list', 'stop', 'resume', 'recover')]
     [string]$Action = 'list',
 
     [string]$Repo,
@@ -270,6 +277,70 @@ switch ($Action) {
         "RESUME INCOMPLETE the stop flag is clear but the loop did not come back"
         "  read the loop pane: ghoztty +read --name=<pane>   (or go-loop-health.ps1 -Postmortem)"
         "  then retry: powershell -NoProfile -File scripts\go-loop-exec.ps1 resume"
+        exit 5
+    }
+
+    'recover' {
+        # THE APP IS GONE AND THE SESSION IS NOT (T849).
+        #
+        # Found closing out T478: the turn was complete and pushed, and
+        # `/reset-context` answered "not in a Ghoztty pane". It was right - the
+        # app had exited while ghoztty-agent.exe went on hosting this session's
+        # ConPTYs. That is session persistence working exactly as designed, and
+        # it is also the one state in which the loop cannot perpetuate itself,
+        # because step 7's every path ends in "send keys to a pane". The
+        # watchdog did recover it - after up to 45 minutes of dead time, which
+        # is the safety net doing a job the turn should have done in seconds.
+        #
+        # The FIRST thing this asks is whether the app is really gone, because
+        # "the reset failed" has many causes and only one of them is this one.
+        # A running app means the failure was something else, and typing at a
+        # live loop over a misdiagnosis is worse than reporting it.
+        $probe = Ghoz @('+list', '--json')
+        if ($probe.Code -eq 0) {
+            "NOT THE APP-GONE CASE a Ghoztty app IS running and answering +list."
+            "  Whatever failed, it was not 'there is nowhere to type'. Read the reset's own"
+            "  log first: %TEMP%\reset-context-last.log (or /tmp/reset-context-last.log)."
+            exit 2
+        }
+        "APP GONE +list finds no running instance$(if ($probe.Err) { " ($($probe.Err))" })"
+
+        # Give up the lock before asking for a replacement. Two reasons, and the
+        # second is the one that bites: this session is detached with no UI and
+        # is about to end, so holding the loop's lock would make every later
+        # tick read `held` over a window nobody can see; and `Wait-LoopHeld`
+        # below gates on exactly `held` + a live owner, which THIS session
+        # already satisfies - so without the release the recovery would confirm
+        # itself instantly and falsely.
+        $rel = (& powershell @(Lock-Args 'release') 2>&1 | Out-String).Trim()
+        foreach ($line in ($rel -split "`r?`n")) { if ($line.Trim()) { "  $($line.Trim())" } }
+        # No Clear-Mark here, unlike `stop -Force`: unmarking the window is an
+        # IPC call, and there is no app to receive it. The window is gone with
+        # the app, so its title went with it.
+
+        $dog = Join-Path $PSScriptRoot 'go-loop-watchdog.ps1'
+        $dogArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $dog,
+            '-Repo', $Repo, '-Once', '-Force', '-RearmMinutes', '0',
+            '-WaitForHeldSeconds', $HeldTimeoutSeconds)
+        if ($LockPath) { $dogArgs += @('-LockPath', $LockPath) }
+        if ($StopPath) { $dogArgs += @('-StopPath', $StopPath) }
+        if ($StatePath) { $dogArgs += @('-StatePath', $StatePath) }
+        if ($GhozttyExe) { $dogArgs += @('-GhozttyExe', $GhozttyExe) }
+        if ($NoRecover) {
+            "  -NoRecover: the lock is released, but nothing was restarted"
+            exit 0
+        }
+        "  launching a fresh loop window (watchdog forced tick, up to ${HeldTimeoutSeconds}s for it to take the lock)"
+        $out = (& powershell @dogArgs 2>&1 | ForEach-Object { $_.ToString() } | Out-String).Trim()
+        $code = $LASTEXITCODE
+        foreach ($line in ($out -split "`r?`n")) { if ($line.Trim()) { "    $line" } }
+        if ($code -eq 0) {
+            "RECOVERED the loop is running again in a new window (lock held)"
+            exit 0
+        }
+        "RECOVER INCOMPLETE the app was launched but the loop did not come back"
+        "  read the watchdog's log: %TEMP%\ghoztty-go-loop-watchdog.log"
+        "  then retry: powershell -NoProfile -File scripts\go-loop-exec.ps1 recover"
         exit 5
     }
 

@@ -426,6 +426,25 @@ function Test-PaneExists($paneId) {
     return ($r.Out -match [regex]::Escape($paneId))
 }
 
+# Is there an APP to talk to at all (T849)? Distinct from Test-PaneExists, which
+# answers `$false` for both "that pane is closed" and "nothing is listening" -
+# the same answer for two states whose recoveries are opposite. Every IPC verb
+# needs a running instance, so when this is false the last-resort branch must
+# LAUNCH one rather than ask one to open a window.
+#
+# An unreachable or missing exe counts as no app: it is the same dead end from
+# where the caller stands, and a probe that throws must never take the
+# supervisor down with it.
+function Test-AppRunning {
+    try {
+        $r = Invoke-Ghoztty @('+list', '--json')
+        return ($r.Code -eq 0)
+    } catch {
+        Log "  note: the app probe failed ($($_.Exception.Message)); treating the app as gone"
+        return $false
+    }
+}
+
 # A stale heartbeat with a live claude means the turn ended without a reset -
 # unless the session is simply mid-task and slow. Sample the pane twice: output
 # that is still moving means it is working, so leave it alone.
@@ -836,9 +855,42 @@ function Invoke-Tick {
     # Reached only when NOTHING is open to type into: no lock pane, no ledger
     # pane, or one that no longer exists. Say which, because "no live loop pane"
     # used to print over a pane that was alive and merely idle (T1478).
+    # ...and whether there is an APP to ask at all (T849). `+new-window` is an
+    # IPC call: with no instance listening it exits 1 with "No running Ghoztty
+    # instance found. Launch Ghoztty first." (src/cli/new_window.zig), so the
+    # supervisor's own last resort could not fire in the one state that most
+    # needs it. That state is not hypothetical - it is session persistence
+    # working as designed: the app is closed, the agent still hosts the
+    # session's ConPTYs, the loop is alive and detached with no UI to type into.
+    #
+    # The remedy is to satisfy the precondition rather than report it. Launching
+    # the exe with `--command=` is the same window this branch already opens -
+    # T104 made the launch path forward a command, and T487 made a launch
+    # against an ALREADY-RUNNING instance forward it too - so this is the one
+    # call that works either way, and the probe below only decides which line
+    # goes in the log.
+    $appAlive = Test-AppRunning
     Log ("re-entering: no live loop pane anywhere (lock pane=$(if ($lock -and $lock.pane_id) { $lock.pane_id } else { 'none' }), " +
-         "last pane=$(if ($NoPaneHistory) { 'not looked up' } else { $(if (Get-HistoryPane) { (Get-HistoryPane) + ' (closed)' } else { 'none' }) })) - " +
-         "opening a new window (state=$state, remaining=$remaining)")
+         "last pane=$(if ($NoPaneHistory) { 'not looked up' } else { $(if (Get-HistoryPane) { (Get-HistoryPane) + ' (closed)' } else { 'none' }) }), " +
+         "app=$(if ($appAlive) { 'running' } else { 'gone' })) - " +
+         "$(if ($appAlive) { 'opening a new window' } else { 'no app is running, so LAUNCHING one with the resume shim' }) " +
+         "(state=$state, remaining=$remaining)")
+    if (-not $appAlive) {
+        if ($DryRun) { return 'launch-app' }
+        # Not Invoke-Ghoztty: that resolves the `.com` CLI twin and waits for it.
+        # This wants the GUI exe, detached, exactly as a user double-clicking it
+        # would start it.
+        $launchArgs = @("--working-directory=$Repo", "--command=$shim")
+        try {
+            $p = Start-Process -FilePath $GhozttyExe -ArgumentList $launchArgs -PassThru -ErrorAction Stop
+            Log "  launch-app started $GhozttyExe pid=$($p.Id) --command=$shim"
+        } catch {
+            Log "  LAUNCH-APP FAILED: could not start $GhozttyExe ($($_.Exception.Message))"
+        }
+        Add-Ineffective $turnKey $blocker
+        Write-State 'launch-app'
+        return 'launch-app'
+    }
     if ($DryRun) { return 'new-window' }
     $r = Invoke-Ghoztty @('+new-window', "--target=$WindowTarget", "--working-directory=$Repo", "--command=$shim")
     Log "  new-window exit=$($r.Code) $($r.Out)"
@@ -868,7 +920,7 @@ function Wait-LoopHeld([int]$seconds) {
 # caller asked to be gated on it.
 function Confirm-Recovery($action) {
     if ($WaitForHeldSeconds -le 0) { return $true }
-    if ($action -notin @('nudge', 'restart-in-pane', 'new-window')) { return $true }
+    if ($action -notin @('nudge', 'restart-in-pane', 'new-window', 'launch-app')) { return $true }
     if ($DryRun) { return $true }
     if (Wait-LoopHeld $WaitForHeldSeconds) {
         Log "  RECOVERED: the lock reads held within ${WaitForHeldSeconds}s of the $action"

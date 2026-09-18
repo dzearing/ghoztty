@@ -17,7 +17,14 @@
 #   H. Watchdog decisions (dry run): healthy lock => none; stale + open task
 #      files => new-window; no open task for this seat (all closed, or only
 #      seat: mac left) => none; missing task dir => still re-enters; rearm
-#      window not elapsed => none.
+#      window not elapsed => none. Plus the app-gone arms (T849): with NO
+#      instance answering `+list` the last resort LAUNCHES the app with the
+#      resume shim instead of asking it for a window, an app that answers is
+#      the negative control for that same probe, a healthy lock is still not
+#      recovered, and `go-loop-exec.ps1 recover` - the turn's own way out when
+#      `/reset-context` has nowhere to type - refuses (exit 2) while an app is
+#      up, diagnoses APP GONE when one is not, and scores RECOVER INCOMPLETE
+#      (exit 5) when the launch it made does not bring the loop back.
 #   I. Watchdog REAL re-entry, against a live debug GUI: no lock at all =>
 #      it opens a window running the resume shim (asserted by reading the
 #      pane's own output back).
@@ -382,13 +389,24 @@ $r = Dog-Run @('-DryRun')
 Assert 'H1 a healthy lock produces no action' ($r.Out -match 'ACTION none')
 Assert 'H2 the healthy tick is logged' ($r.Out -match 'healthy: pane=PANE-H')
 
+# Which window the last-resort branch opens depends on whether an APP is
+# running (T849), so every arm below that expects `new-window` says so with a
+# stand-in that ANSWERS `+list` - an empty window list, which is "an app is up
+# and the pane is not in it", the state these arms were always about. Before
+# T849 they read the question off whatever ghoztty happened to be running on
+# the box, which was this session's own installed app: correct here and a
+# false red on a box with nothing open.
+$fakeAppUp = Join-Path $root 'fake-ghoztty-app-up.cmd'
+@('@echo off', 'echo {"data":{"windows":[]}}', 'exit /b 0') -join "`r`n" |
+    Out-File -FilePath $fakeAppUp -Encoding ascii
+
 Set-LockStale 120
-$r = Dog-Run @('-DryRun')
+$r = Dog-Run @('-DryRun', '-GhozttyExe', $fakeAppUp)
 Assert 'H3 a stale lock with a gone pane opens a window' ($r.Out -match 'ACTION new-window')
 Assert 'H4 the re-entry names the remaining task count' ($r.Out -match 'remaining=1')
 
 Remove-Item $lock -Force -ErrorAction SilentlyContinue
-$r = Dog-Run @('-DryRun')
+$r = Dog-Run @('-DryRun', '-GhozttyExe', $fakeAppUp)
 Assert 'H5 no lock at all also re-enters' ($r.Out -match 'ACTION new-window')
 
 $r = Dog-Run @('-DryRun') $emptyTaskDir
@@ -396,7 +414,7 @@ Assert 'H6 a task dir with nothing open produces no action' ($r.Out -match 'ACTI
 Assert 'H7 and says why' ($r.Out -match 'no open tasks for this seat')
 $r = Dog-Run @('-DryRun') $macOnlyTaskDir
 Assert 'H7b a dir whose only open task is seat: mac also idles' ($r.Out -match 'ACTION none' -and $r.Out -match 'no open tasks for this seat')
-$r = Dog-Run @('-DryRun') (Join-Path $root 'no-such-tasks')
+$r = Dog-Run @('-DryRun', '-GhozttyExe', $fakeAppUp) (Join-Path $root 'no-such-tasks')
 Assert 'H7c a missing task dir never blocks re-entry' ($r.Out -match 'ACTION new-window' -and $r.Out -match 'remaining=-1')
 
 # Rearm: a real (non-dry) action stamps the state file; the next tick holds off.
@@ -405,8 +423,76 @@ Assert 'H7c a missing task dir never blocks re-entry' ($r.Out -match 'ACTION new
 $r = Dog-Run @('-DryRun')
 Assert 'H8 the rearm window suppresses a second re-entry' ($r.Out -match 'ACTION none')
 Assert 'H9 and says so' ($r.Out -match 'rearm not elapsed')
-$r = Dog-Run @('-DryRun', '-RearmMinutes', 0)
+$r = Dog-Run @('-DryRun', '-RearmMinutes', 0, '-GhozttyExe', $fakeAppUp)
 Assert 'H10 -RearmMinutes 0 re-enters again' ($r.Out -match 'ACTION new-window')
+Remove-Item $state -Force -ErrorAction SilentlyContinue
+
+# --- H11-H16. the app is GONE, not just the pane (T849) -------------------
+#
+# Session persistence means the app and the session have separate lifetimes: the
+# window can close while ghoztty-agent.exe goes on hosting the session's
+# ConPTYs, leaving the loop alive, healthy, and with no UI to type into. Every
+# recovery above ends in an IPC call, and `+new-window` against no instance
+# exits 1 with "No running Ghoztty instance found. Launch Ghoztty first."
+# (src/cli/new_window.zig) - so the supervisor's own last resort could not fire
+# in the one state that most needs it, and the loop waited out the 45-minute
+# sweep instead.
+""
+"H11-H16. app-gone recovery (T849)"
+# A stand-in that answers the way the CLI does with nothing listening. Same
+# shape as the app-up stub above, opposite verdict, so the two arms differ in
+# exactly the thing under test.
+$fakeAppGone = Join-Path $root 'fake-ghoztty-app-gone.cmd'
+@('@echo off', 'echo No running Ghoztty instance found. 1>&2', 'exit /b 1') -join "`r`n" |
+    Out-File -FilePath $fakeAppGone -Encoding ascii
+
+Remove-Item $lock -Force -ErrorAction SilentlyContinue
+$r = Dog-Run @('-DryRun', '-GhozttyExe', $fakeAppGone)
+Assert 'H11 no app at all launches one instead of asking for a window' ($r.Out -match 'ACTION launch-app')
+Assert 'H12 and says which state it saw' ($r.Out -match 'app=gone' -and $r.Out -match 'LAUNCHING one with the resume shim')
+# The negative control for the same probe: the ONLY difference between these two
+# runs is whether the stand-in answers, and the verdict must follow it.
+$r = Dog-Run @('-DryRun', '-GhozttyExe', $fakeAppUp)
+Assert 'H13 an app that answers still gets asked for a window' ($r.Out -match 'ACTION new-window' -and $r.Out -match 'app=running')
+# A pane that IS reachable is still the better target: launching is the last
+# resort of a last resort, never the first thing tried.
+Lock-Run @('acquire', '-PaneId', 'PANE-H', '-ClaudePid', $PID) | Out-Null
+$r = Dog-Run @('-DryRun', '-GhozttyExe', $fakeAppGone)
+Assert 'H14 a healthy lock is not recovered just because the app probe would fail' ($r.Out -match 'ACTION none')
+Remove-Item $lock -Force -ErrorAction SilentlyContinue
+
+# And the TURN's own way out, which is the half that makes this seconds rather
+# than minutes: `go-loop-exec.ps1 recover`. It refuses outright when an app is
+# running, because "the reset failed" has many causes and typing at a live loop
+# over a misdiagnosis is worse than reporting one.
+# Exec-Run pins the repo's own zig-out exe, and which ghoztty answers is the
+# whole question here - so these two drive the script against the stand-ins
+# directly. -NoRecover stops after the diagnosis: this arm pins WHAT it decided,
+# not the window it would open (I/J own real re-entry against a live GUI).
+# -StatePath is not optional here: without it the watchdog this spawns would
+# write its rearm stamp into the REAL repo's temp\, and suppress the live
+# supervisor's next re-entry for twenty minutes.
+function Recover-Run([string]$exeArg, [string[]]$more) {
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $execScript,
+        '-Repo', $Repo, '-LockPath', $lock, '-StopPath', $stopFile, '-StatePath', $state,
+        '-GhozttyExe', $exeArg, 'recover', '-PaneId', 'PANE-NONE') + $more
+    $o = & powershell @argList 2>&1 | ForEach-Object { $_.ToString() } | Out-String
+    return @{ Code = $LASTEXITCODE; Out = $o.Trim() }
+}
+$r = Recover-Run $fakeAppUp @('-NoRecover')
+Assert 'H15 recover refuses while an app is answering (exit 2)' ($r.Code -eq 2 -and $r.Out -match 'NOT THE APP-GONE CASE')
+$r = Recover-Run $fakeAppGone @('-NoRecover')
+Assert 'H16 with no app it says so and stops at -NoRecover' ($r.Code -eq 0 -and $r.Out -match 'APP GONE' -and $r.Out -match 'nothing was restarted')
+# T1133's rule, for this gate: the failure verdict has to be OBSERVED. Driven
+# for real against the app-gone stand-in, the watchdog launches it, the
+# stand-in exits, and the lock never reaches `held` - which is exactly the
+# 2026-09-09 shape the loop must not report as success. -HeldTimeoutSeconds
+# keeps the wait short; the verdict, not the duration, is what is being pinned.
+Remove-Item $state -Force -ErrorAction SilentlyContinue
+$r = Recover-Run $fakeAppGone @('-HeldTimeoutSeconds', '6')
+Assert 'H17 a launch the loop never comes back from is RECOVER INCOMPLETE (exit 5)' `
+    ($r.Code -eq 5 -and $r.Out -match 'RECOVER INCOMPLETE')
+Assert 'H18 and the watchdog really took the launch-app path getting there' ($r.Out -match 'ACTION launch-app')
 Remove-Item $state -Force -ErrorAction SilentlyContinue
 
 # --- I / J. real re-entry against a live GUI -----------------------------
@@ -498,9 +584,27 @@ if ($ready) {
         Assert 'J3 the resume prompt was typed into the pane' ($seen -match 'read go\.md and go')
 
         # A pane that is still producing output is mid-task: leave it alone.
+        #
+        # The producer must outlast the probe, which is the bug this arm had
+        # until 2026-09-18: `(1,1,9999)` echoes take under a second of CPU, so
+        # on an idle box the loop had finished long before the watchdog's second
+        # sample, the pane read static, and J4/J5 went red over a watchdog that
+        # was behaving perfectly. It passed only when the box was loaded enough
+        # to stretch 9999 echoes past five seconds - a test that measures the
+        # box, inverted. The count is now effectively unbounded (hours at this
+        # rate); the C-c and the +close below are what end it.
         Remove-Item $state -Force -ErrorAction SilentlyContinue
-        Ghoz @('+send-keys', "--target=$($pane.id)", 'for /l %i in (1,1,9999) do @echo busy %i', 'Enter') | Out-Null
+        Ghoz @('+send-keys', "--target=$($pane.id)", 'for /l %i in (1,1,99999999) do @echo busy %i', 'Enter') | Out-Null
         Start-Sleep -Seconds 2
+        # And SAY whether the pane was producing, rather than inferring it from
+        # the verdict. Without this the arm cannot tell "the watchdog correctly
+        # left a busy pane alone" from "the producer died and the watchdog was
+        # wrong about a static one" - which is exactly the confusion that made
+        # the old red unreadable.
+        $bA = (Ghoz @('+read', "--name=$($pane.id)", '--lines=20')).Out
+        Start-Sleep -Seconds 3
+        $bB = (Ghoz @('+read', "--name=$($pane.id)", '--lines=20')).Out
+        Assert 'J3b the pane really is still producing (the arm below measures nothing otherwise)' ($bA -ne $bB)
         $r = Dog-Run @('-GhozttyExe', $Exe, '-ProbeGapSeconds', 3)
         Assert 'J4 a pane that is still producing output is not nudged' ($r.Out -match 'ACTION none')
         Assert 'J5 and the watchdog says why' ($r.Out -match 'still producing output')
@@ -1029,12 +1133,18 @@ $dog = Start-Process powershell -PassThru -WindowStyle Hidden -ArgumentList @(
     '-Repo', $Repo, '-LockPath', $lock, '-StatePath', $pState,
     '-TaskDir', $emptyTaskDir, '-LogPath', $pLog, '-MutexName', $pMutex,
     '-StopPath', $stopFile, '-PollSeconds', '2', '-DryRun')
+# Wait for a beacon from a completed TICK, not merely for a beacon. The daemon
+# stamps `last_tick = 'start'` before its first tick on purpose - a supervisor
+# that has just come up should be visibly alive - so a wait that broke on
+# `tick_at` alone was racing the first tick, and P3 went red whenever the box
+# was loaded enough for the read to win. Observed 2026-09-18; it is a defect in
+# the wait, not in the beacon, so the fix belongs here.
 $beacon = $null
 foreach ($i in 1..40) {
     Start-Sleep -Milliseconds 500
     if (Test-Path $pState) {
-        $beacon = Get-Content $pState -Raw | ConvertFrom-Json
-        if ($beacon.tick_at) { break }
+        try { $beacon = Get-Content $pState -Raw | ConvertFrom-Json } catch { continue }
+        if ($beacon.tick_at -and $beacon.last_tick -ne 'start') { break }
     }
 }
 Assert 'P1 a running watchdog stamps a beacon' ($null -ne $beacon -and $null -ne $beacon.tick_at)
@@ -2630,8 +2740,13 @@ Assert 'CC22 while a matching turn reads its count back' `
 # And the wiring: every action the watchdog can take has to advance the count,
 # or the seeded arms above are measuring a number nothing writes.
 $ccDogSrc = Get-Content $dogScript -Raw
-Assert 'CC23 all three re-entry actions advance the count' `
-    (([regex]::Matches($ccDogSrc, 'Add-Ineffective \$turnKey \$blocker')).Count -eq 3)
+# Four since T849 split the last resort in two: `new-window` when an app is
+# answering, `launch-app` when none is. A new action that forgets this line is
+# an action whose repetitions are invisible, which is the failure CC17 exists
+# to catch - so this count is meant to go red when one is added, and the fix is
+# to wire the new arm up, not to raise the number.
+Assert 'CC23 all four re-entry actions advance the count' `
+    (([regex]::Matches($ccDogSrc, 'Add-Ineffective \$turnKey \$blocker')).Count -eq 4)
 
 # --- health says it too ---------------------------------------------------
 # AF's rule, applied to the new fact: the actor and the observer must not reach

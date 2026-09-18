@@ -928,8 +928,32 @@ thing that REPORTS a stall and the thing that RECOVERS one can no longer
 disagree, which they did for two and a half hours on 2026-09-04 with the
 observer right and the actor wrong.
 
-The one allowed exception: if the reset probe finds this session is not in a
-Ghoztty pane, say so plainly and ask the user to run `/clear`.
+**If the reset reports that this session is not in a Ghoztty pane, ASK WHY
+before you accept it** (T849). There are two different states behind that one
+message, and only one of them is the user's problem:
+
+- **The app is gone and this session is not.** Session persistence gives the
+  app and the session separate lifetimes: the window can close - a delivery
+  restart that did not come back, a window closed by hand - while
+  `ghoztty-agent.exe` goes on hosting this session's ConPTYs. The turn is
+  alive, healthy, detached, and has nowhere to type, which is the one state in
+  which the loop cannot perpetuate itself. One command ends the turn from
+  there:
+
+  ```
+  powershell -NoProfile -File scripts\go-loop-exec.ps1 recover
+  ```
+
+  It launches a fresh loop window and waits for the lock to read `held`, so the
+  loop is back in seconds rather than at the watchdog's next sweep - which is
+  up to 45 minutes, and is what happened on 2026-08-14. Exit 0 means the loop
+  is running again and **this turn is over**: do not pick up another task, and
+  do not keep working in a window nobody can see. Exit 5 means the app was
+  launched and the loop did not come back - say so and stop. Exit **2** means
+  an app IS running and answering, so this was never the app-gone case:
+  fall through to the line below.
+- **This session genuinely is not in a Ghoztty** (Windows Terminal, a
+  pre-IPC build): say so plainly and ask the user to run `/clear`.
 
 ## THE CONTEXT RULE (read this first, it overrides everything below)
 

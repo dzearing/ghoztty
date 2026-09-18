@@ -88,10 +88,19 @@ function Lock-Run([string[]]$extra) {
     $out = (& powershell @argList 2>&1 | ForEach-Object { $_.ToString() } | Out-String).Trim()
     return @{ Code = $LASTEXITCODE; Out = $out }
 }
-function Dog-Run([string[]]$extra) {
+function Dog-Run([string[]]$extra, [string]$exeOverride) {
+    # -File binds each named parameter once, so the exe is chosen HERE rather
+    # than appended by a caller (T849: one arm needs a stand-in ghoztty).
+    #
+    # NOT named $exe: PowerShell variable names are case-INSENSITIVE, so a
+    # parameter called $exe IS the script's $Exe inside this function, and
+    # `if (-not $exe) { $exe = $Exe }` quietly assigns the empty default to
+    # itself. Every caller then drove a ghoztty whose path was '', which reads
+    # as "no app" and silently changed three verdicts.
+    $useExe = if ($exeOverride) { $exeOverride } else { $Exe }
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $dogScript,
         '-Repo', $Repo, '-LockPath', $lock, '-StatePath', $state, '-TaskDir', $taskDir,
-        '-LogPath', $log, '-StopPath', $stopFile, '-GhozttyExe', $Exe,
+        '-LogPath', $log, '-StopPath', $stopFile, '-GhozttyExe', $useExe,
         '-ClaudeCommand', 'echo', '-Once') + $extra
     $out = (& powershell @argList 2>&1 | ForEach-Object { $_.ToString() } | Out-String).Trim()
     return @{ Code = $LASTEXITCODE; Out = $out }
@@ -170,7 +179,18 @@ Assert 'B2 the ledger recorded the release with its pane' `
     ((Test-Path $ledger) -and ((Get-Content $ledger -Raw) -match 'PANE-STAGE'))
 # A remembered pane that no longer exists must still open a window - and must
 # say that is what happened, rather than the old blanket "no live loop pane".
-$r = Dog-Run @('-DryRun', '-RearmMinutes', '0')
+#
+# Which KIND of window depends on whether an app is answering (T849): with an
+# instance up the watchdog asks it for one, with none it launches the app. This
+# section is about the ledger, not about that fork, so it pins the app-is-up
+# side with a stand-in that answers `+list` with an empty window list - "an app
+# is running and the remembered pane is not in it", which is the state B is
+# about. Driving the repo exe instead read the answer off whether a debug GUI
+# happened to be up, which this harness never starts.
+$fakeAppUp = Join-Path $root 'fake-ghoztty-app-up.cmd'
+@('@echo off', 'echo {"data":{"windows":[]}}', 'exit /b 0') -join "`r`n" |
+    Out-File -FilePath $fakeAppUp -Encoding ascii
+$r = Dog-Run @('-DryRun', '-RearmMinutes', '0') $fakeAppUp
 Assert 'B3 a remembered pane that is gone still opens a window' ($r.Out -match 'ACTION new-window')
 Assert 'B4 and the log names it as closed rather than absent' `
     ($r.Out -match 'last pane=PANE-STAGE \(closed\)')
