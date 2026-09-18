@@ -196,6 +196,20 @@ want_listing: bool = false,
 want_patch: ?usize = null,
 want_scroll: ?[]const u8 = null,
 
+// --- activity counters, for the one moment they matter --------------------
+//
+// A probe that reads `busy` forever is three different defects — a worker still
+// out, a completion that was never delivered, and a chain of re-issues that
+// never leaves an idle moment — and the published state above cannot tell them
+// apart (T1654). These can: `spawns` against `completions` says whether a
+// worker is still out, and `deferred` says whether something keeps queueing
+// behind it.
+spawns: u64 = 0,
+completions: u64 = 0,
+deferred: u64 = 0,
+/// When the current worker was spawned, for "out for how long".
+spawned_at_ms: i64 = 0,
+
 pub fn init(alloc: Allocator) Probe {
     return .{ .alloc = alloc };
 }
@@ -257,13 +271,73 @@ pub fn resolvedSpec(self: *const Probe, location: []const u8) ?diff.Spec {
     return spec;
 }
 
+/// What a request asked for while a worker is out should do (T1654).
+pub const Disposition = enum {
+    /// No worker is out: run it now.
+    start,
+    /// Re-issue it the moment the current worker lands.
+    queue,
+    /// Throw it away; the worker already out is answering the same question.
+    drop,
+};
+
+/// Why a listing was asked for, which is the whole of what decides the above.
+pub const Reason = enum {
+    /// A page that has no answer yet: a fresh navigation, a reloaded template.
+    /// Losing it leaves the pane blank, so it waits its turn.
+    explicit,
+    /// The two-second working-tree tick. Losing it costs one interval.
+    poll,
+};
+
+/// The rule, spelled out as a pure function so it can be asserted without a
+/// window, a thread, or git: a poll that lands on a busy probe is DROPPED, and
+/// everything else queues. Queueing a poll is what chains git end to end on a
+/// repository whose listing outlasts the interval.
+pub fn disposition(busy_now: bool, reason: Reason) Disposition {
+    if (!busy_now) return .start;
+    return switch (reason) {
+        .explicit => .queue,
+        .poll => .drop,
+    };
+}
+
 /// Re-run the file list for a pane at `location`, opened from `directory`.
+///
+/// Deferring: a listing asked for while a worker is out is re-issued the moment
+/// that worker lands, because the caller asked for an answer that does not
+/// exist yet (a fresh page, a navigation) and dropping the request would leave
+/// the pane showing nothing.
 pub fn requestListing(self: *Probe, location: []const u8, directory: ?[]const u8) void {
-    if (self.thread != null) {
-        self.want_listing = true;
-        return;
+    switch (disposition(self.busy(), .explicit)) {
+        .start => self.startListing(location, directory),
+        .queue => {
+            self.want_listing = true;
+            self.deferred += 1;
+        },
+        .drop => {},
     }
-    self.startListing(location, directory);
+}
+
+/// The two-second working-tree POLL, which must not queue (T1654).
+///
+/// The poll asks "is the tree still what you last told me", and a worker that
+/// is already out is on its way to answering exactly that — so a tick that
+/// lands while one is running has nothing to add and is DROPPED, not deferred.
+/// Deferring it re-spawns git the instant the previous listing lands, and on a
+/// repository whose listing takes longer than the interval that is an unbroken
+/// chain: git runs continuously for as long as the pane is open, the probe
+/// never reads idle for a single message-loop turn, and a `git-status:` pane on
+/// a large repository costs a core for nothing. It is also what wedged the host
+/// floor test, whose wait requires the probe to be idle once.
+///
+/// What a dropped tick costs is at most one interval of latency: the next tick
+/// finds the probe free and asks again.
+pub fn pollListing(self: *Probe, location: []const u8, directory: ?[]const u8) void {
+    switch (disposition(self.busy(), .poll)) {
+        .start => self.startListing(location, directory),
+        .queue, .drop => {},
+    }
 }
 
 /// Fetch one file's patch. `index` is into `files`, which only the GUI thread
@@ -273,6 +347,7 @@ pub fn requestPatch(self: *Probe, location: []const u8, index: usize, scroll_to:
     if (self.thread != null) {
         self.want_patch = index;
         self.want_scroll = scroll_to;
+        self.deferred += 1;
         return;
     }
     self.startPatch(location, index, scroll_to);
@@ -333,6 +408,8 @@ fn startPatch(self: *Probe, location: []const u8, index: usize, scroll_to: ?[]co
 
 fn spawn(self: *Probe, job: *Job) void {
     self.job = job;
+    self.spawns += 1;
+    self.spawned_at_ms = std.time.milliTimestamp();
     self.thread = std.Thread.spawn(.{}, work, .{ self, job }) catch |err| {
         log.warn("diff worker thread failed err={}; pane will not render", .{err});
         job.destroy();
@@ -347,6 +424,7 @@ pub fn complete(self: *Probe) Completion {
     if (self.thread) |t| {
         t.join();
         self.thread = null;
+        self.completions += 1;
     }
     var what: Completion = .none;
     if (self.job) |job| {
@@ -399,6 +477,12 @@ pub fn drainDeferred(self: *Probe, location: []const u8, directory: ?[]const u8)
 /// True while the answer to something is still coming.
 pub fn busy(self: *const Probe) bool {
     return self.thread != null;
+}
+
+/// How long the current worker has been out, in ms; 0 when none is.
+pub fn busyForMs(self: *const Probe) i64 {
+    if (self.thread == null) return 0;
+    return std.time.milliTimestamp() - self.spawned_at_ms;
 }
 
 /// Whether `files` differs from `previous` — what a live refresh asks before
@@ -817,4 +901,30 @@ test "a synthesized untracked patch reads as an all-added file" {
     }).?;
     defer alloc.free(tail);
     try testing.expect(std.mem.endsWith(u8, tail, "+only\n\\ No newline at end of file\n"));
+}
+
+test "a poll that lands on a busy probe is dropped; an explicit ask queues (T1654)" {
+    // The whole of the wedge, in one table. An idle probe runs either kind
+    // straight away; a busy one keeps the ask that a page is waiting on and
+    // throws away the tick, because the worker already out is answering the
+    // tick's own question.
+    try testing.expectEqual(Disposition.start, disposition(false, .explicit));
+    try testing.expectEqual(Disposition.start, disposition(false, .poll));
+    try testing.expectEqual(Disposition.queue, disposition(true, .explicit));
+    // The line under test. With `.queue` here, every tick that lands during a
+    // listing re-spawns git the instant that listing completes, so a probe on a
+    // repository slower than the interval is never idle for one message-loop
+    // turn - which is both a core spent for nothing and a `!busy()` wait that
+    // can never come true.
+    try testing.expectEqual(Disposition.drop, disposition(true, .poll));
+}
+
+test "the poll entry point cannot queue, whatever the probe's want flags say" {
+    var p = Probe.init(testing.allocator);
+    defer p.deinit();
+    // No window, so nothing spawns either way (see the test above this file's
+    // request paths); what is asserted is the bookkeeping a queued ask leaves.
+    p.pollListing("git-status:", null);
+    try testing.expect(!p.want_listing);
+    try testing.expectEqual(@as(u64, 0), p.deferred);
 }

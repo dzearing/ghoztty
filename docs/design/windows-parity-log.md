@@ -31997,3 +31997,47 @@ T1645 flake. Guard rows re-stamped green: soak-daemon (40), build-cache (76),
 argv-hazard (23), unroll-count (31), persistence-flag (28), caller-anchor (27),
 build-mode (55) - the last three had gone red on a stale `zig-out` after a
 `git checkout` bumped a source mtime, and passed once the debug app was rebuilt.
+
+## 2026-09-18 - T1654: a git-status pane stops re-running git the instant it finishes
+
+The viewer's working-tree pane asks git what has changed every two seconds. A
+tick that landed while the previous answer was still being fetched was
+REMEMBERED rather than dropped, and the completion handler re-issued it
+immediately - so on any repository whose listing takes longer than the interval,
+the two chained end to end: git ran continuously for as long as the pane was
+open, and the probe never once read idle between one worker and the next.
+
+What made it visible was the host-floor test, whose git-status section waits for
+the probe to be idle before it reads the DOM back. That wait cannot come true
+against an unbroken chain, so the win32 and agent lanes both went red on a tree
+with no Zig in it at all, and the failure looked like a wedge in a viewer that
+was in fact working perfectly.
+
+The rule is now a pure function, `ViewerDiffProbe.disposition(busy, reason)`: an
+EXPLICIT ask - a fresh page, a navigation - still queues behind the worker,
+because dropping it would leave the pane blank; a POLL tick that lands on a busy
+probe is DROPPED, because the worker already out is answering that tick's own
+question. The cost of a dropped tick is at most one interval of latency; the
+cost of keeping it was a core.
+
+The second half of the task was the diagnosis. The probe now counts its spawns,
+completions and deferred re-issues and how long the current worker has been out,
+and the `waitFor` timeout prints them followed by a sentence naming which of the
+three shapes it is: a worker still out (git is slow or wedged), a worker that
+landed with no completion (a message that never arrived), or a probe that has
+not been idle for one message-loop turn (this bug). A reader is handed a
+conclusion instead of a row of numbers.
+
+Evidence: `floor-lane.ps1 -Lane all` **ALL LANES PASS** (lib 65s, none 338s,
+win32 448s, agent 372s) - the two lanes that were red before the fix, on the
+same box. Two unit tests in the win32 lane cover the disposition table, and
+restoring `.queue` for a busy poll is the one edit that fails them. P1/P2/P3
+ALL PASS. Guard rows re-stamped green: window-active-audit, printclient-audit,
+neuter-audit, test-reach-audit, seam-audit, viewer-worktree-port, viewer-close,
+viewer-nav-pin - and, paying [[T1653]]'s debt from the previous turn's
+`-NoGuardDue`, isolation-meta, launch-preflight, verdict-exit, cleanslate,
+persistence-flag, stderr-launch-capture, stderr-capture, desktop-launch,
+command-resolve, unroll-count, job-teardown, lane-releasesafe and build-cache.
+Filed **T1655**: the worktree probe carries the same shape at a 15 s interval
+behind a cache, where `dirty` also means "the question moved" and so needs the
+same explicit/poll split rather than a one-line drop.

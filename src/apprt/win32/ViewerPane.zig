@@ -1970,6 +1970,16 @@ fn refreshDiff(self: *ViewerPane) void {
     probe.requestListing(self.location orelse return, self.origin_directory);
 }
 
+/// The working-tree poll's own ask (T1654). Same question, but a tick that
+/// lands while git is already out is dropped rather than queued — see
+/// `ViewerDiffProbe.pollListing` for why that distinction is the difference
+/// between a pane that polls and a pane that never stops running git.
+fn pollDiff(self: *ViewerPane) void {
+    const probe = if (self.diff_probe) |*p| p else return;
+    if (self.mode != .diff) return;
+    probe.pollListing(self.location orelse return, self.origin_directory);
+}
+
 /// A listing arrived: push the header, then open a file so the pane is not a
 /// summary over an empty page.
 fn applyDiffListing(self: *ViewerPane, alloc: Allocator) void {
@@ -6256,9 +6266,11 @@ pub fn wndProc(
                 // The working-tree poll (T463). Repeating, not one-shot: it is
                 // a question about a repository that never stops being asked
                 // while the pane is open. Re-entrancy is the probe's problem
-                // and it has an answer — one worker, deferred re-issue — so a
-                // slow `git diff` cannot stack spawns behind itself.
-                self.refreshDiff();
+                // and it has an answer — one worker, and a tick that lands on
+                // a busy one is DROPPED (T1654) — so a slow `git diff` can
+                // neither stack spawns behind itself nor chain them
+                // back-to-back for the life of the pane.
+                self.pollDiff();
                 return 0;
             }
             if (wparam != reload_timer_id) {
@@ -9253,14 +9265,46 @@ fn logWaitState(p: *const ViewerPane) void {
     if (p.diff_probe) |*d| {
         log.warn(
             "waitFor: state={s} mode={s} page_loaded={} diff_pushed={} controller={} failure={} " ++
-                "callbacks={d} title={?s} location={?s} diff{{repo={?s} files={d} patch={} busy={}}}",
+                "callbacks={d} title={?s} location={?s} " ++
+                "diff{{repo={?s} files={d} patch={} busy={} for={d}ms " ++
+                "spawns={d} completions={d} deferred={d} want_listing={} want_patch={?d}}}",
             .{
-                @tagName(p.state),    @tagName(p.mode),  p.page_loaded, p.diff_pushed,
+                @tagName(p.state),    @tagName(p.mode),  p.page_loaded,        p.diff_pushed,
                 p.controller != null, p.failure != null, p.wait_progress,
                 p.title,              p.location,
                 d.repo,               d.files.items.len, d.patch_path != null, d.busy(),
+                d.busyForMs(),        d.spawns,          d.completions,        d.deferred,
+                d.want_listing,       d.want_patch,
             },
         );
+        // And what that adds up to, so the reader is handed a conclusion rather
+        // than a row of numbers (T1654). Three states are worth naming, because
+        // each sends you somewhere different: a worker still out is git being
+        // slow or wedged, a worker that landed with no completion is a message
+        // that never arrived, and a probe that has never once been idle is a
+        // re-issue chain — which no wait requiring `!busy()` can outlast.
+        if (d.busy()) {
+            if (d.deferred > 0 and d.completions > 0) {
+                log.warn(
+                    "waitFor: the diff probe has not been idle for one message-loop turn: " ++
+                        "{d} spawns, {d} completions, {d} deferred re-issues - a wait on !busy() " ++
+                        "cannot be satisfied while requests keep queueing behind the worker",
+                    .{ d.spawns, d.completions, d.deferred },
+                );
+            } else {
+                log.warn(
+                    "waitFor: a diff worker has been out for {d}ms ({d} spawns, {d} completions) - " ++
+                        "git is still running, or its completion was never delivered",
+                    .{ d.busyForMs(), d.spawns, d.completions },
+                );
+            }
+        } else if (d.spawns > d.completions) {
+            log.warn(
+                "waitFor: {d} diff spawns but only {d} completions, and no worker is out - " ++
+                    "an answer was dropped",
+                .{ d.spawns, d.completions },
+            );
+        }
     } else {
         log.warn(
             "waitFor: state={s} mode={s} page_loaded={} diff_pushed={} controller={} failure={} " ++

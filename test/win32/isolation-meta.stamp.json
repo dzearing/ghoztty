@@ -1,10 +1,10 @@
 {
     "guard":  "isolation-meta",
     "script":  "test/win32/isolation-meta.ps1",
-    "generated":  "2026-09-18T08:10:58-07:00",
-    "commit":  "abe6ab632",
+    "generated":  "2026-09-18T15:01:27-07:00",
+    "commit":  "03db20be0",
     "uncommitted":  [
-                        "test/win32/floor-lane-releasesafe.ps1"
+
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -111,6 +111,7 @@
                   "test/win32/floor-lane-leak-sweep.ps1":  "808a7e97c678e8e9b9b997f2ccca91efa8e3acdb617490ee23347412de81fb1b",
                   "test/win32/floor-lane-releasesafe.ps1":  "ecd2f326201dfeb9cd74d67f603ec6e06ea566182e28754acc08da1629784a84",
                   "test/win32/floor-lane-solo-confirm.ps1":  "2e7b8705867fd366ef614013d2cdd8e9e213136a4f8e9347ac049215944c0a50",
+                  "test/win32/floor-lane-stall-sampling.ps1":  "1ffd9b4a466850f44fd49712ad9c82cf8a8e89ead999cea40903eb3ce0306418",
                   "test/win32/floor-lane-verdict-detail.ps1":  "16068d1b9c37cfbf35f201e7a3f12f76709c2b362242b238fb2b53d96acb1fe2",
                   "test/win32/floor-lane-webview-settle.ps1":  "d5cf22c7342c16a5bebc1a27d1f7d62e1c4dbe297fe2538e9542a7b3cfe8122b",
                   "test/win32/focus-defer.ps1":  "0781efdaa91cf1730f88acaec0143573697a9d4d305e4becdd08eab8774efafd",
@@ -118,10 +119,10 @@
                   "test/win32/font-inherit.ps1":  "f303affd8f1c72da77f48f09a10b18d0c7c72af845a4602455bf013662d8c257",
                   "test/win32/foreground-audit.ps1":  "3bed621f12ee9e3da162f60882f39145b60b382e34b772d47e4c1fb3eeb413e7",
                   "test/win32/fork-identity.ps1":  "9661dc44ad46212f55a3f65601c083cd0f1eebcba2e3a323f6fe4c4f44b62cbe",
-                  "test/win32/gate-negatives.ps1":  "1be8b6c6ffbf3d9969263a5d227a44d95b890446557ab803d1a6e03e68c075d2",
+                  "test/win32/gate-negatives.ps1":  "337fc01f68d2977db0edc76d18b23856f3351862fd9faa5ca376c15eb0c8662b",
                   "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76",
-                  "test/win32/go-loop-guard.ps1":  "095499f3262659e840b22ee58872b472fcfcda8495f7e2d0a56f5a555eac2d68",
-                  "test/win32/go-loop-resume.ps1":  "3d83f2603cd0f5184d2d08087b2d8bc8a8e544c62bbc6ed1786e4e655ebe583a",
+                  "test/win32/go-loop-guard.ps1":  "175c421fe100d6cae8541fbe541c8bc2cd46ed5bc6f44d22f72a16b4a91b8f96",
+                  "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "306e120c7282b5c4c50c75ac9d7a30a8db84e94e92745cc79caa6ea4eb437d01",
                   "test/win32/gui-launch-command.ps1":  "d8f12df0d3397be451bc64c41f910162d4adccc932b7028c21db1cfe8d09e60a",
