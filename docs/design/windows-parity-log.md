@@ -9,6 +9,34 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-19: T876 closed done — **the GUI test toolkit's class filter no
+  longer lies about being case-sensitive, and the wrapper the scripts actually
+  call is tested for it.**
+
+  The card was filed after `-Class 'static'` came back empty during T871 and
+  eighteen assertions failed describing the dialog rather than the spelling.
+  CHECK FIRST found the compare fix had already landed at the source as T687
+  (f51fc234b): `ClassMatches()` in `test\win32\lib\TestDesktop.ps1` is
+  `OrdinalIgnoreCase` and all four enumerating finders share it. What was left
+  was the part T687 did not cover — the validation this card names by its own
+  wrapper, and a comment still telling future authors the opposite.
+
+  So `test\win32\test-desktop-harness.ps1` now asserts the insensitivity at
+  `Get-TestControls`, the surface a GUI script reaches for, against the live
+  rename dialog (`Edit` and `edit` return the same rows); T687's five
+  assertions all sit on the lower-level finders. And the note at
+  `test\win32\claude-integration.ps1` L200, which said the filter was an
+  "EXACT, case-sensitive GetClassNameW compare", now says it matches the way
+  win32 matches and records that it used not to — a stale comment on a trap
+  that no longer exists is how the next author re-derives a fix that already
+  shipped.
+
+  Green over this exact tree: all four zig lanes (`floor-lane -Lane all`),
+  `test-desktop-harness.ps1` ALL PASS (78) with the new assertion,
+  `claude-integration.ps1` ALL PASS (87), and the harness floor
+  (`-Lane harness`) PASS in 1008s — its two red members are inherited ratchet
+  reds against already-filed tasks and report PENDING.
+
 - 2026-09-19: T1663 closed done — **the session-restore test waits for the
   layout to be saved before it kills the app.**
 
