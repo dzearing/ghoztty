@@ -197,8 +197,10 @@ function Launch-Gui([string]$stateDir, [string]$agentHome, [string]$stubMode) {
 # whose clicks are driven by POSTING WM_COMMAND with the button's own
 # control id - a SENT BM_CLICK would block the harness's one worker thread
 # for as long as Uninstall's nested confirm dialog stays open.
-# NB: the Children class filter is an EXACT, case-sensitive GetClassNameW
-# compare — 'Static'/'Button', never 'static'/'button'.
+# The class filter matches the way win32 matches, case-INSENSITIVELY, so
+# 'Static' and 'static' are the same filter (T687/T876). It was an exact,
+# case-sensitive compare when these helpers were written, and this note
+# used to say so.
 function Get-AgentStaticTexts([IntPtr]$dlg) {
     return @(Get-TestControls -Window $dlg -Class 'Static' | ForEach-Object { $_.Text })
 }

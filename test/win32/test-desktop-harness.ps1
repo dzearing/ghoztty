@@ -660,6 +660,16 @@ try {
         $topsUpper = @(Get-TestWindows -ProcessId $app.Pid -Class 'ghozttyrenamedialog')
         Assert ($topsUpper.Count -ge 1) `
             "Get-TestWindows matches a top-level class case-insensitively ($($topsUpper.Count) found)"
+
+        # Get-TestControls is the wrapper the GUI scripts actually reach
+        # for, and it is the one that bit T871: -Class 'static' came back
+        # empty and eighteen assertions failed describing the dialog
+        # rather than the spelling (T876). Assert the insensitivity at
+        # that surface too - a wrapper is only as honest as its own test.
+        $ctrlsExact = @(Get-TestControls -Window $dlg -Class 'Edit')
+        $ctrlsLower = @(Get-TestControls -Window $dlg -Class 'edit')
+        Assert ($ctrlsExact.Count -ge 1 -and $ctrlsLower.Count -eq $ctrlsExact.Count) `
+            "Get-TestControls matches a class case-insensitively (Edit=$($ctrlsExact.Count) edit=$($ctrlsLower.Count))"
         if ($edit -ne [IntPtr]::Zero) {
             # No ctrl+A first: a modifier chord does NOT survive into a
             # standard control this way. The app TranslateMessage's dialog
