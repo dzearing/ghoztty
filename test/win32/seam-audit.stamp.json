@@ -1,10 +1,11 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-19T11:35:51-07:00",
-    "commit":  "f3df2426d",
+    "generated":  "2026-09-19T13:00:17-07:00",
+    "commit":  "8bb0e3bbe",
     "uncommitted":  [
-
+                        "src/termio/shell_integration.zig",
+                        "test/win32/gui-launch-command.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -421,7 +422,7 @@
                   "src/termio/restore_history.zig":  "17ffdfe2bf7e107fe11cf26eab4c79bc6f815f85ad38e9531a5a5daa464e9de2",
                   "src/termio/restore_park.zig":  "1e68d21a293216cfb5a003f0fa1cb494ba031fe4d7ac236b4f5ccd168e6f50bd",
                   "src/termio/session_notice.zig":  "63971c48177ef72d6360dbf28895963aa79ffbecad126e04626f70bd5dd707d2",
-                  "src/termio/shell_integration.zig":  "6700d58bd2a39278a76dc6327db92ba8fcb2fdd689b782d0668ed7092e70f383",
+                  "src/termio/shell_integration.zig":  "b3d9d289c3cfdcfc7f9e1b2719690c58485df095699713a9670e64934f5c0c64",
                   "src/termio/stream_handler.zig":  "fffa60db96f0b5a4eb7864fb57d279def56d75f805c90c6f9577a33cb164edb0",
                   "src/termio/Termio.zig":  "e81db26701a1c3f42f7ff112ef32df398a98e2001701eeaad11007f49257370b",
                   "src/termio/Thread.zig":  "d5d50b40c04bcb3a33d0e1c8091e6a856747c8da3c6bf2fee5b902eaf7aee25a",
@@ -543,7 +544,7 @@
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "306e120c7282b5c4c50c75ac9d7a30a8db84e94e92745cc79caa6ea4eb437d01",
-                  "test/win32/gui-launch-command.ps1":  "d8f12df0d3397be451bc64c41f910162d4adccc932b7028c21db1cfe8d09e60a",
+                  "test/win32/gui-launch-command.ps1":  "f919dcf022ea99019000702d0029738ac91242a5ad464e8fab6c0731683c6c84",
                   "test/win32/gui-postmortem.ps1":  "5c63e9a8563ad9f82bb9c9888bbadbe650f41173508f0d124d83b840d4918077",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
                   "test/win32/harness-floor.ps1":  "20da30cf36ce777075e54e05e262939aff18f007445a4dab09d7802849066e12",

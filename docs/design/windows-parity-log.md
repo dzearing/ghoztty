@@ -32455,3 +32455,54 @@ Two follow-ups filed: T1665 (`--shell=` is silently ignored for a pane with no
 and T1666 (a `direct:` command in the CONFIG still cannot express an argument
 containing a space; `parseCLI` splits it naively, and that surface is shared
 core, so the Mac seat owns half the answer).
+
+
+## 2026-09-19 - T864: pointing the config at WSL starts WSL, not a hidden cmd wrapper around it
+
+`command = wsl` in the config gave you a working WSL pane with a stowaway: the
+agent ran `cmd /c wsl`, so every such pane carried an extra hidden process,
+`+list` reported the wrapper's pid as the pane's shell, and cwd tracking
+followed the wrapper instead of the shell. T514 had already fixed this shape
+for every shell Ghoztty ships an integration script for; WSL was the one left
+behind.
+
+Half the card was stale before it was picked up. It named `cmd` alongside
+`wsl`, and `detectShell` grew a `cmd` row back in T512, so a bare
+`command = cmd` has unwrapped correctly for a while — that half needed the
+re-verification, not a fix.
+
+The live half turned on a question the code was asking slightly wrong.
+`bareShellCommand` decided "is this a shell choice?" by asking `detectShell`,
+which answers "which integration script does this shell get?". For every shell
+in the table those are the same answer. For WSL they are not: there is no
+integration script — one would belong to the shell inside the distro, not to
+`wsl.exe` — and it is still unmistakably a shell choice. So `bareShellCommand`
+now accepts either a `detectShell` hit or a name on a new
+`bare_shells_without_integration` allowlist, and the basename/`.exe`/case
+normalization the two share is factored out into `shellName`. The allowlist
+holds exactly `wsl`, and the bar for a row on it is that the agent already
+knows how to run the program as a shell — `windowsCommandArgs` in
+`pty_child.zig` has had a `wsl` row since T704. It is deliberately not "any
+single bare word": `command = htop` is a command, and quietly reinterpreting
+it as a shell would change what happens when it exits.
+
+Section G of `test\win32\gui-launch-command.ps1` pins it, and it runs against
+a STUB named `wsl.exe` rather than the real one — starting WSL boots the WSL2
+VM, which is the user's call and not a test's. The first version of that stub
+was put on `$env:PATH`, and it tested the wrong binary while reading green:
+`CreateProcessW` searches System32 **before** `%PATH%`, so nothing on PATH can
+shadow `System32\wsl.exe`. G5 — assert the spawned process's
+`ExecutablePath` is the stub, not merely that its name is `wsl.exe` — is what
+caught that, and naming the stub by full path is what fixes it. As a bonus the
+full-path spelling exercises the basename half of the match that the bare word
+does not.
+
+The section was then shown to discriminate: with `bare_shells_without_integration`
+emptied and the app rebuilt, G3 reads `cmd.exe`, G4 finds the `/c` tail and G5
+reads `C:\Windows\System32\cmd.exe` — the pre-fix shape the card described,
+reproduced on the box. Restored and green again at 34 assertions, with F1-F4
+(T514's recognized-shell path) untouched throughout.
+
+One follow-up filed: T1667, because `bare_shells_without_integration` and the
+agent's `windowsCommandArgs` are now a hand-kept PAIR that must agree, and
+nothing checks that they do.

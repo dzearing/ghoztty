@@ -36,6 +36,10 @@
 #      UN-NESTED with shell integration (T514). Pre-fix the agent ran
 #      `cmd /c powershell`: the user's shell nested under a hidden cmd.exe, the
 #      integration argv rewrite dropped, and +list frozen on the wrapper's cwd.
+#   G  the same is true of a bare shell with NO integration script (`wsl`) -
+#      "did the user name their shell?" is a broader question than "which
+#      integration script?", and T864 is the gap between them. Runs against a
+#      stub named wsl.exe, never the real one (starting WSL boots a VM).
 #
 # Non-interactive; asserts and exits nonzero on any failure. Hermetic: a per-run
 # $env:LOCALAPPDATA + GHOSTTY_LOCAL_AGENT_BIN (so no real session-layout is
@@ -463,6 +467,71 @@ while ((Get-Date) -lt $deadlineF) {
     Start-Sleep -Milliseconds 800
 }
 Assert "F4 +list follows an in-pane cd (pre-fix: frozen on the wrapper's cwd)" ($gotWdF -ne '')
+
+Stop-TestProcs
+
+# ============================================================================
+"== G: a bare shell with NO integration is still un-nested (T864)"
+# ============================================================================
+# Section F's shells all have an integration script, and until T864 that was
+# the whole test: `bareShellCommand` asked `detectShell`, which answers "which
+# integration script?" rather than "did the user name their shell?". For `wsl`
+# the answers differ - no script exists, but it is plainly a shell choice - so
+# a bare `--command=wsl` fell through to OPEN.command and the agent ran
+# `cmd /c wsl`: a hidden wrapper process per pane, `+list` naming the wrapper
+# as the shell, and cwd tracking following the wrapper.
+#
+# The pane here runs a STUB named wsl.exe (a copy of cmd.exe in a private
+# directory), never the real one: starting real WSL boots the WSL2 VM, which
+# is the user's call and not a test's to make. The stub is exact for what this
+# section asserts, because the whole routing decision is made from the NAME -
+# `bare_shells_without_integration` in src/termio/shell_integration.zig
+# matches on the basename, and nothing downstream of that looks at the binary.
+# What the stub cannot cover (the real wsl actually starting a distro) is not
+# a Ghoztty behavior.
+#
+# It is named by FULL PATH rather than put on $env:PATH, which was the first
+# attempt and silently tested the wrong binary: CreateProcessW searches
+# System32 BEFORE %PATH%, so nothing on PATH can ever shadow System32\wsl.exe
+# and the section booted the real VM while reading green. G5 is what caught
+# that and is what keeps it caught. Naming the full path also exercises the
+# basename half of the match, which the bare spelling does not.
+$stubG = Join-Path $root 'stubpath'
+New-Item -ItemType Directory -Force $stubG | Out-Null
+$stubWslG = Join-Path $stubG 'wsl.exe'
+Copy-Item (Join-Path $env:SystemRoot 'System32\cmd.exe') $stubWslG -Force
+Assert "G1 the wsl.exe stub exists and its path has no spaces" `
+    ((Test-Path $stubWslG) -and -not ($stubWslG -like '* *'))
+
+$tmpG = Join-Path $root 'g'
+Launch $tmpG @("--command=$stubWslG")
+$paneG = First-Pane $tmpG 'g' 60
+Assert "G2 the launch opened a window with a pane" ($paneG -ne '')
+
+# Same oracle as F2: the leaf pid IS the process the agent spawned. Pre-fix
+# that was cmd.exe (the `cmd /c wsl` wrapper) with the shell one level below.
+$leafG = $null
+$deadlineG = (Get-Date).AddSeconds(45)
+while ((Get-Date) -lt $deadlineG) {
+    $leaves = @(Leaves-Of-Windows (Snapshot-Windows $tmpG 'g-pid'))
+    $leafG = @($leaves | Where-Object { [string]$_.name -eq $paneG })[0]
+    if ($null -ne $leafG -and [int]$leafG.pid -gt 0) { break }
+    Start-Sleep -Milliseconds 700
+}
+$shellProcG = $null
+if ($null -ne $leafG -and [int]$leafG.pid -gt 0) {
+    $shellProcG = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$leafG.pid)"
+}
+AssertEq "G3 the pane's shell IS wsl (pre-fix: a nested cmd.exe wrapper)" `
+    'wsl.exe' ([string]$shellProcG.Name)
+Assert "G4 and it was spawned as the shell, with no /c command tail" `
+    (([string]$shellProcG.CommandLine) -notmatch '(?i)/c\s')
+# Load-bearing, not belt-and-braces: if the private PATH did not reach the
+# spawn, G3 passes against the REAL wsl.exe and this section quietly boots the
+# WSL2 VM on every run. The stub's own path is the only thing that tells the
+# two apart.
+AssertEq "G5 and it was the STUB that ran, not the real WSL" `
+    ($stubWslG.ToLower()) ([string]$shellProcG.ExecutablePath).ToLower()
 
 Stop-TestProcs
 

@@ -152,25 +152,35 @@ test "shell integration failure" {
     try testing.expectEqual(0, env.count());
 }
 
-fn detectShell(alloc: Allocator, command: config.Command) !?Shell {
-    var arg_iter = try command.argIterator(alloc);
-    defer arg_iter.deinit();
+/// The longest shell name the tables here compare against, and therefore the
+/// only buffer size `shellName` ever needs.
+const shell_name_max = 16;
 
-    const arg0 = arg_iter.next() orelse return null;
+/// Reduce an argv0 to the name the shell tables compare against: basename,
+/// a trailing ".exe" stripped, lowercased into `buf`.
+///
+/// On Windows a shell is routinely named with the extension or by full path
+/// ("bash.exe", "C:\...\bash.exe"), and Windows filenames are
+/// case-insensitive, so both normalizations happen before any name check. A
+/// name longer than the buffer cannot match any shell we know, so it comes
+/// back null.
+fn shellName(buf: []u8, arg0: []const u8) ?[]const u8 {
     const exe = std.fs.path.basename(arg0);
-
-    // On Windows a shell is routinely named with the extension or by full
-    // path ("bash.exe", "C:\...\bash.exe"), and Windows filenames are
-    // case-insensitive, so strip a trailing ".exe" and lowercase before
-    // every name check. A name longer than the buffer cannot match any
-    // shell we know.
-    var buf: [16]u8 = undefined;
     const stripped = if (std.ascii.endsWithIgnoreCase(exe, ".exe"))
         exe[0 .. exe.len - 4]
     else
         exe;
     if (stripped.len > buf.len) return null;
-    const name = std.ascii.lowerString(buf[0..stripped.len], stripped);
+    return std.ascii.lowerString(buf[0..stripped.len], stripped);
+}
+
+fn detectShell(alloc: Allocator, command: config.Command) !?Shell {
+    var arg_iter = try command.argIterator(alloc);
+    defer arg_iter.deinit();
+
+    const arg0 = arg_iter.next() orelse return null;
+    var buf: [shell_name_max]u8 = undefined;
+    const name = shellName(&buf, arg0) orelse return null;
 
     if (std.mem.eql(u8, "bash", name)) {
         // Apple distributes their own patched version of Bash 3.2
@@ -243,10 +253,27 @@ test detectShell {
     }
 }
 
+/// Programs that ARE shells for the purpose of `bareShellCommand` but that
+/// `detectShell` returns null for, because there is no integration to inject.
+///
+/// The bar for a row here is that the pane's backend already knows how to run
+/// the program as an interactive shell — the agent's `windowsCommandArgs`
+/// table (`src/remote/agent/pty_child.zig`) is the other half of the pair, and
+/// `wsl` has a row there. It is deliberately an allowlist and not "any single
+/// bare word": `command = htop` is a COMMAND, and reinterpreting it as a shell
+/// would silently change what happens when it exits. Nothing checks that the
+/// two tables agree — T1667.
+const bare_shells_without_integration = [_][]const u8{"wsl"};
+
 /// Answer whether `command` is nothing but a BARE shell — a single argv0
-/// with no arguments that `detectShell` recognizes. Returns the argv0 duped
-/// into `alloc` (caller frees), or null when the command carries arguments
-/// or names anything else.
+/// with no arguments naming a shell we know. Returns the argv0 duped into
+/// `alloc` (caller frees), or null when the command carries arguments or
+/// names anything else.
+///
+/// "A shell we know" is deliberately BROADER than `detectShell`, which
+/// answers the narrower question "which integration script?" (T864). For
+/// every shell in that table the two answers coincide; for `wsl` they do
+/// not, and the right answer to *this* function's question is still yes.
 ///
 /// Why it exists (T514): a config `command = pwsh` is a shell CHOICE, but on
 /// an agent-backed pane it used to travel as `OPEN.command`, so the agent ran
@@ -257,12 +284,31 @@ test detectShell {
 /// keeps command semantics untouched: only the pure "this is my shell"
 /// spelling is reinterpreted.
 pub fn bareShellCommand(alloc: Allocator, command: config.Command) !?[]const u8 {
-    if (try detectShell(alloc, command) == null) return null;
-
     var arg_iter = try command.argIterator(alloc);
     defer arg_iter.deinit();
     const arg0 = arg_iter.next() orelse return null;
     if (arg_iter.next() != null) return null;
+
+    recognized: {
+        // The usual case: a shell we have an integration script for.
+        if (try detectShell(alloc, command) != null) break :recognized;
+
+        // T864: and the ones we do not. `detectShell` answers "which
+        // integration script?", which is a NARROWER question than the one
+        // this function asks — "did the user name their shell?" — and for
+        // `command = wsl` the answers differ: no integration, but plainly a
+        // shell choice. Falling through to OPEN.command ran it as `cmd /c
+        // wsl`, so the pane carried a hidden wrapper process, `+list` named
+        // the wrapper as the shell, and cwd tracking followed the wrapper
+        // instead of the shell.
+        var buf: [shell_name_max]u8 = undefined;
+        const name = shellName(&buf, arg0) orelse return null;
+        for (bare_shells_without_integration) |s| {
+            if (std.mem.eql(u8, s, name)) break :recognized;
+        }
+        return null;
+    }
+
     return try alloc.dupe(u8, arg0);
 }
 
@@ -302,17 +348,56 @@ test bareShellCommand {
         try testing.expectEqualStrings("cmd.exe", got);
     }
 
+    // T864: a shell with no integration is still a shell CHOICE. `wsl` has
+    // no integration script (detectShell says null) but the agent knows how
+    // to run it, so a bare one must unwrap rather than travel as a command
+    // the agent would run under `cmd /c`.
+    try testing.expect(try detectShell(alloc, .{ .shell = "wsl" }) == null);
+    for ([_][:0]const u8{ "wsl", "wsl.exe", "WSL.EXE" }) |spelling| {
+        const got = (try bareShellCommand(alloc, .{ .shell = spelling })).?;
+        defer alloc.free(got);
+        try testing.expectEqualStrings(spelling, got);
+    }
+    {
+        const got = (try bareShellCommand(alloc, .{ .direct = &.{"wsl"} })).?;
+        defer alloc.free(got);
+        try testing.expectEqualStrings("wsl", got);
+    }
+    // ...and it is still only the BARE spelling: `wsl -d Ubuntu` is a command
+    // line, with command semantics.
+    try testing.expect(try bareShellCommand(
+        alloc,
+        .{ .direct = &.{ "wsl", "-d", "Ubuntu" } },
+    ) == null);
+
     // Unrecognized programs (scripts are commands).
     try testing.expect(try bareShellCommand(alloc, .{ .shell = "python" }) == null);
+    // The allowlist is an allowlist, not "any single bare word" — a command
+    // that happens to be one token keeps command semantics.
+    try testing.expect(try bareShellCommand(alloc, .{ .shell = "htop" }) == null);
 
     if (comptime builtin.target.os.tag == .windows) {
         // A quoted full path is still bare: one argv0, recognized.
-        const got = (try bareShellCommand(
-            alloc,
-            .{ .shell = "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\"" },
-        )).?;
-        defer alloc.free(got);
-        try testing.expectEqualStrings("C:\\Program Files\\PowerShell\\7\\pwsh.exe", got);
+        {
+            const got = (try bareShellCommand(
+                alloc,
+                .{ .shell = "\"C:\\Program Files\\PowerShell\\7\\pwsh.exe\"" },
+            )).?;
+            defer alloc.free(got);
+            try testing.expectEqualStrings("C:\\Program Files\\PowerShell\\7\\pwsh.exe", got);
+        }
+        // The allowlist matches on the BASENAME too, which is the spelling
+        // section G of `test\win32\gui-launch-command.ps1` launches with —
+        // it names its stub by full path, because a stub on %PATH% cannot
+        // shadow System32\wsl.exe (CreateProcessW searches System32 first).
+        {
+            const got = (try bareShellCommand(
+                alloc,
+                .{ .direct = &.{"C:\\Windows\\System32\\wsl.exe"} },
+            )).?;
+            defer alloc.free(got);
+            try testing.expectEqualStrings("C:\\Windows\\System32\\wsl.exe", got);
+        }
     }
 }
 
