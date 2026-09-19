@@ -9,6 +9,47 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-19: T861 closed done — **every status change in the tracker now names
+  who made it, even when nobody said.**
+
+  T564 made a status transition journal itself, and the dashboard has always
+  attributed its own writes. A bare `parity-tasks.ps1 set-status Tnnn -Status
+  todo` typed into a shell did not: it wrote `status: a -> b` with no `(by ...)`
+  at all, which is how the 2026-08-15 reopen of T443's armed watch became a
+  whodunit that cost the next turn its opening minutes. `Get-DefaultSourceNote`
+  now synthesizes the missing attribution out of what the script can read for
+  free — the user, the parent process, the leaf of the working directory — so
+  the line reads `status: todo -> done (by cli: David, from pwsh, in ghoztty)`.
+  Every read is wrapped; an unreadable parent degrades to `from unknown` rather
+  than failing the flip.
+
+  The fallback is attribution, not evidence. It is computed at journal time,
+  after the T892 un-block gate, so a bare flip out of `blocked(...)` is still
+  refused — "David, from pwsh" is not a claim that a park condition was checked.
+  An explicit `-SourceNote` still wins verbatim and `-NoNote` still writes
+  nothing. Acceptance: six new assertions in section N of
+  `test\win32\parity-tasks-seat.ps1` (ALL PASS, 202 assertions).
+
+  Two things the turn found and filed rather than fixed. Section O of that same
+  harness probed the dashboard's liveness with `/api/data` on a 5-second
+  timeout, and that endpoint now takes **58 seconds** against the real tracker —
+  so a merely slow server read as one that never started, and the section went
+  red over something it does not test. The probe now asks `/`, which is the
+  question it meant to ask; the slowness is **T1660** (P1 — the board polls
+  every 5s, so it can never keep up). And the harness lane's default 30-minute
+  budget no longer fits its own suite: 22m of audits plus a confirm pass killed
+  the first sweep as TIMEOUT with no verdict at all, which is **T1661**.
+
+  Floor: lib, none and agent lanes PASS; the win32 lane is RED on **T1645**'s
+  ViewerPane host-floor test. That card was filed as a load-only flake, and this
+  turn it stopped being one — the lane failed it twice, once alone on an
+  otherwise quiet box, while a `-Dtest-filter` run of that single test passes.
+  So the variable is what else runs inside the lane process, not box load, and
+  the card is now P1: it red-lines the standing floor and `test-reach-audit`'s
+  nested lane every turn. The harness sweep otherwise came back 1 FAILURE of 29
+  audits + 2 PENDING, with every other audit re-stamping its guard; the commit
+  therefore takes `-NoGuardDue` naming T1645.
+
 - 2026-09-18: T859 closed done — **a dead pooled connection is now replaced by
   the fetch that discovers it, so the chooser's session list comes back on its
   own instead of sitting there wrong.**

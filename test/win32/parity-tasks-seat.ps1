@@ -635,7 +635,25 @@ Assert '-NoNote suppresses the entry' ((Get-LogLines).Count -eq 2)
 $r = Task-Run @('set-status', 'T1', '-Status', 'todo')
 $r = Task-Run @('set-status', 'T1', '-Status', 'done', '-Commit', 'def5678')
 $txt = [System.IO.File]::ReadAllText((Join-Path $fixture 'T1.md'))
-Assert 'a done transition carries its commit' ($txt -match 'status: todo -> done \[commit def5678\]')
+Assert 'a done transition carries its commit' ($txt -match 'status: todo -> done \(by [^)]+\) \[commit def5678\]')
+
+# T861: a bare CLI set-status is attributed too. Until now the dashboard named
+# itself and the loop named its turn, and a plain shell invocation journaled
+# "status: a -> b" with no "(by ...)" at all - which is how the 2026-08-15
+# reopen of T443's armed watch became a whodunit for the following turn.
+New-FixtureTask -Id 'T9'
+$r = Task-Run @('set-status', 'T9', '-Status', 'done')
+Assert 'a bare set-status exits 0' ($r.Code -eq 0)
+$txt = [System.IO.File]::ReadAllText((Join-Path $fixture 'T9.md'))
+Assert 'an omitted -SourceNote still journals an attribution' (
+    $txt -match 'status: todo -> done \(by cli: [^,)]+, from [^,)]+')
+Assert 'the synthesized source names the CLI as the writer' ($txt -match '\(by cli: ')
+Assert 'and set-status prints the attributed line it wrote' ($r.Out -match 'journaled: status: todo -> done \(by cli: ')
+# An explicit note is never overwritten by the synthesized one.
+$r = Task-Run @('set-status', 'T9', '-Status', 'todo', '-SourceNote', 'dashboard: Reopen')
+$txt = [System.IO.File]::ReadAllText((Join-Path $fixture 'T9.md'))
+Assert 'an explicit -SourceNote still wins' ($txt -match 'status: done -> todo \(by dashboard: Reopen\)')
+Assert 'and the synthesized source is not appended to it' (-not ($txt -match '\(by dashboard: Reopen.*cli: '))
 
 $r = Task-Run @('validate')
 Assert 'a journaled fixture still validates' ($r.Code -eq 0)
@@ -666,10 +684,16 @@ else {
     # ExitCode and a dead server reads as a healthy one (the T443 soak lesson).
     $null = $srv.Handle
     try {
+        # Liveness is asked of the static page, not of /api/data (T1660). The
+        # payload endpoint walks git history over 1600+ task files and takes
+        # about a minute on the real tracker, so probing it on a 5s timeout
+        # read a merely-slow server as one that never started, and this whole
+        # section went red for a reason it does not test. `/` answers from a
+        # file read, which is exactly the question "is it listening".
         $up = $false
         foreach ($i in 1..40) {
             try {
-                $null = Invoke-RestMethod -Uri "http://127.0.0.1:$port/api/data" -TimeoutSec 5
+                $null = Invoke-WebRequest -Uri "http://127.0.0.1:$port/" -UseBasicParsing -TimeoutSec 5
                 $up = $true; break
             }
             catch { Start-Sleep -Milliseconds 250 }

@@ -26,6 +26,14 @@
   The note preserves the old status verbatim, reason included. `-NoNote` opts a
   bulk normalisation pass out; nothing else should.
 
+  AND IT IS ALWAYS ATTRIBUTED (T861). Omitting `-SourceNote` no longer means an
+  anonymous line: the journal falls back to a source synthesized from the user,
+  the parent process and the working directory ("by cli: David, from pwsh, in
+  ghoztty"). The CLI was the last writer that could edit the queue and leave a
+  whodunit behind; a reopen that cost the following turn its opening minutes is
+  why that matters. The fallback is attribution, not evidence - the un-block
+  gate below still demands a real `-SourceNote`.
+
   UN-BLOCKING NEEDS EVIDENCE (T892). Moving a task OUT of `blocked(...)` is the
   transition that puts work back in front of the loop, and it asserts something
   nobody checked: that the park condition is now satisfied. `set-status`
@@ -348,6 +356,40 @@ function Add-ProgressNote {
         $new = $text.TrimEnd() + "`n`n## Progress log`n`n$entry`n"
     }
     [System.IO.File]::WriteAllText($Path, $new, (New-Object System.Text.UTF8Encoding $false))
+}
+
+# Who is making this edit, when the caller did not say (T861). A bare
+# `set-status Tnnn -Status todo` from a shell used to journal an unattributed
+# "status: a -> b": the dashboard names itself, the loop names its turn, and the
+# CLI was the one path that left a whodunit. On 2026-08-15 exactly that shape
+# reopened T443's armed watch and the next turn spent its opening minutes ruling
+# out every other writer. Everything here is free to read - the user, the parent
+# process, the directory the command was typed in - so the caller pays nothing
+# for the receipt. This is journal attribution ONLY: the T892 un-block evidence
+# gate still demands a real `-SourceNote`, because "David, from pwsh" is not a
+# claim that a park condition was checked.
+function Get-DefaultSourceNote {
+    $parent = 'unknown'
+    try {
+        $ppid = (Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop).ParentProcessId
+        if ($ppid) {
+            $pp = Get-Process -Id $ppid -ErrorAction Stop
+            if ($pp -and $pp.ProcessName) { $parent = $pp.ProcessName }
+        }
+    }
+    catch { $parent = 'unknown' }
+
+    $who = if ($env:USERNAME) { $env:USERNAME } else { 'unknown' }
+
+    $where = ''
+    try {
+        $cwd = (Get-Location).Path
+        if ($cwd) { $where = Split-Path -Leaf $cwd }
+    }
+    catch { $where = '' }
+
+    if ($where) { "cli: {0}, from {1}, in {2}" -f $who, $parent, $where }
+    else { "cli: {0}, from {1}" -f $who, $parent }
 }
 
 # Wrap a long free-text field to a readable width and indent every line, so a
@@ -1109,7 +1151,12 @@ switch ($Command) {
         if (-not $NoNote -and $was -ne $Status) {
             $from = if ($was) { $was } else { '(none)' }
             $line = "status: {0} -> {1}" -f $from, $Status
-            if ($SourceNote) { $line += (" (by {0})" -f $SourceNote) }
+            # T861: never journal an unattributed transition. A caller who did
+            # not name a source gets one synthesized from what the script can
+            # see for free, so the line reads "(by cli: David, from pwsh, in
+            # ghoztty)" rather than saying nothing at all.
+            $by = if ($SourceNote) { $SourceNote } else { Get-DefaultSourceNote }
+            $line += (" (by {0})" -f $by)
             if ($Commit) { $line += (" [commit {0}]" -f $Commit) }
             Add-ProgressNote -Path $path -SessionId $Session -NoteText $line
             Write-Host ("      journaled: {0}" -f $line)
