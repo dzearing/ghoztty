@@ -1,10 +1,11 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-18T23:13:50-07:00",
-    "commit":  "7ff8ecb6a",
+    "generated":  "2026-09-19T07:03:34-07:00",
+    "commit":  "ab37eccf9",
     "uncommitted":  [
-                        "test/win32/parity-tasks-seat.ps1"
+                        "src/apprt/win32/ViewerWorktreeProbe.zig",
+                        "test/win32/harness-floor.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -228,7 +229,7 @@
                   "src/apprt/win32/ViewerNavBar.zig":  "5c01e8984a1298b0ce8800493c0f7233b5981aec5a142b25344e800c903e2a05",
                   "src/apprt/win32/ViewerPane.zig":  "77395855359339c8eaf497018577d7f643295e1ddbdbc3a57b1826e92735cc01",
                   "src/apprt/win32/ViewerTOCPanel.zig":  "9ea364bf3315b719ee8697446efe5cb478d6aa2e33ba0813f896159ce2ce1c26",
-                  "src/apprt/win32/ViewerWorktreeProbe.zig":  "35eebce05a8c8e98cfab762aadc04f8b909c20ccbbbf5c8c1b00104ca7244efc",
+                  "src/apprt/win32/ViewerWorktreeProbe.zig":  "f64bcab388e4c9ab0ff7475358e042bba21647f9b3c559477b6f405b73bd36b2",
                   "src/apprt/win32/webview2.zig":  "dd1be48ff6cf7fe4032d6f4dabe76a1198e50de7e8b6695b59e545a365814efc",
                   "src/apprt/win32/webview2_iface.zig":  "cdfe46db3c405118ff363783a9dd825b7ad4a14d6722b3158328ab27759d4636",
                   "src/apprt/win32/webview2_paths.zig":  "125e4d497fe25e488b9f5a8aee4f0ffe34b7c6f377b0741a89c6781552bc9cf6",
@@ -546,7 +547,7 @@
                   "test/win32/gui-launch-command.ps1":  "d8f12df0d3397be451bc64c41f910162d4adccc932b7028c21db1cfe8d09e60a",
                   "test/win32/gui-postmortem.ps1":  "5c63e9a8563ad9f82bb9c9888bbadbe650f41173508f0d124d83b840d4918077",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
-                  "test/win32/harness-floor.ps1":  "b27139f3ac9523ad01fd2c0aed38f4a8512df5e847ab235d936eeba46ed5d7d8",
+                  "test/win32/harness-floor.ps1":  "20da30cf36ce777075e54e05e262939aff18f007445a4dab09d7802849066e12",
                   "test/win32/harness-process-leak.ps1":  "b46c6e53003f25b41da789d1b52d215d9864b2ce6020edf9cac7e6ada45f6b53",
                   "test/win32/hero-mode.ps1":  "fd4d53f673f48c6e1ec598873360e1a724ee5584ade3679404099097447d0d95",
                   "test/win32/hero-nav.ps1":  "98d4e384d4a7472af20bddbe1ce244c7ec7e34f90178288c475a1f68a398776a",

@@ -348,3 +348,13 @@ as the digest that showed them.
 - A machine row that says more than CPU (memory, disk and uptime in the chooser strip)
 - Press a key, jump to any pane (hint labels on panes, not just on printed links)
 - One desktop, one app launch, every due GUI check (batch the due GUI harnesses into one fixture)
+
+## 2026-09-19
+
+- Say which repository this pane is filing against (repository name in the viewer's own chrome)
+- A pane that notices the folder underneath it changed (re-resolve on repository mutation, not at next navigation)
+- Take back the last thing I sent to a pane (show what was delivered, offer to interrupt)
+- A confirmation that shows the blast radius (name the sessions a close would end, and what is running in them)
+- Show me today, as a timeline (cross-session view of what ran, how long, what failed)
+- Search everything I have seen, not just this pane (scrollback search across open and restored sessions)
+- Keep the line that names the failure, not the line that matches the pattern (anchored failure summaries)

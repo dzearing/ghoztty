@@ -76,6 +76,10 @@ $script:HARNESS_FLOOR_PENDING = @{
     # C5: eight scripts stamp a guard from a body that may have unwound, against
     # a ratchet ceiling of six.
     'asserted-nothing.ps1' = 'T1568'
+    # C2a/C2b: a relaunch restores no window at all (got -1 panes). REPRODUCED
+    # alone on a quiet box and on a clean ab37eccf9 with nothing uncommitted, so
+    # it is the product or the box, not T1572's sweep noise.
+    'persistence-flag.ps1' = 'T1663'
 }
 
 function Get-HarnessFloorAudits { return @($script:HARNESS_FLOOR_AUDITS) }

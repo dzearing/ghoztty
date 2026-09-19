@@ -241,8 +241,27 @@ try {
     "== E: the lane"
     # ========================================================================
 
-    $laneText = Get-Content -LiteralPath (Join-Path $Repo 'scripts\floor-lane.ps1') -Raw
-    Assert 'E1 floor-lane accepts -Lane harness' ($laneText -match "ValidateSet\('none', 'win32', 'agent', 'lib', 'harness', 'all'\)") ''
+    $lanePath = Join-Path $Repo 'scripts\floor-lane.ps1'
+    $laneText = Get-Content -LiteralPath $lanePath -Raw
+
+    # Ask the PARAMETER what it accepts, not the source text what it looks
+    # like. This assertion used to pin the whole ValidateSet literal on one
+    # line, so T846 adding the releasesafe lanes - and wrapping the list onto a
+    # second line - scored it red over a lane that works perfectly well. A
+    # summary that matches on spelling reports the wrong thing the moment the
+    # spelling moves; the lesson is T1662's, and this is the same shape.
+    $laneSet = @()
+    try {
+        $laneParam = (Get-Command -Name $lanePath -CommandType ExternalScript).Parameters['Lane']
+        foreach ($attr in @($laneParam.Attributes)) {
+            if ($attr -is [System.Management.Automation.ValidateSetAttribute]) {
+                $laneSet = @($attr.ValidValues)
+            }
+        }
+    }
+    catch { $laneSet = @() }
+    Assert 'E1 floor-lane accepts -Lane harness' ($laneSet -contains 'harness') `
+        "-Lane accepts: $($laneSet -join ', ')"
     Assert 'E2 and runs the floor runner for it' ($laneText -match 'harness-floor\.ps1') ''
     # Deliberate, and asserted so it cannot drift by accident: the set is ~15
     # minutes of source scanning and guard-due is what makes it standing.

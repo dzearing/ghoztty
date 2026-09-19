@@ -32195,3 +32195,61 @@ Filed **T1656**: `unroll-count-audit.ps1` measures both halves of this trap
 helpers, so the shape found here - an `@()` wrapped around such a call - is
 known to the suite and machine-checked by nothing. A rule for it would have
 found this without a human reading the file.
+
+## 2026-09-19 - T1645: a viewer pane could file feedback against the repository its folder used to be in
+
+Filed as a flake, and it was not one. The ViewerPane host-floor test had been
+red on most turns with `[tripwire] (warn): untripped point=read`, a line that
+came from `src/tripwire.zig`'s own PASSING test: zig's build runner prints
+`error: <test> failed: <text>` with whatever stderr happened to arrive, and
+every test in the binary shares one stream. The real failure was
+`error.WaitForTimeout` at `ViewerPane.zig:8237`, sitting unread in the same
+logs for four turns. That misattribution is filed as **T1662**.
+
+What the timeout was waiting for is a product defect. `ViewerWorktreeProbe`
+memoizes directory -> worktree root for five minutes so the loopback poll -
+which asks the same question every second about a dev server that never moves -
+does not spawn `git` each time. But the memo was attached to EVERY job,
+navigations included, and a navigation is where the answer can have changed:
+the host floor test writes a file into a tmp dir, `git init`s that dir, and
+then asks again. Every earlier navigation in that dir had memoized the OUTER
+repository, so the pane answered `D:\git\ghoztty` for the next five minutes and
+`feedbackWorktree()` never became the tmp dir. A user would feel that as the
+feedback button filing a report into the wrong project, with nothing on screen
+saying so.
+
+The fix is scope, not invalidation: `attachMemo` returns early for a job with
+no port. A navigation is a user-paced act that already costs a page render, so
+one `git rev-parse` is worth nothing against answering from a repository that
+may have moved; the poll, whose repetition is the whole reason the memo exists,
+keeps it. The memo's ttl comment had named `git init` as the mutation that
+would break it - a comment that predicts a failure is not a mitigation.
+
+Three unit tests carry it, none needing a browser or timing luck: the poll's
+second question still answers from the memo (on a real loopback listener, since
+only a port job has one now), a navigation asks git, and a `git init` inside a
+memoized directory is not hidden by the memo. The last one fails before the fix
+in 30 seconds.
+
+Evidence: `floor-lane.ps1 -Lane all` **ALL LANES PASS** (lib/none/win32/agent;
+win32 502s, agent 436s) - both lanes had failed on this test twice running on
+the previous tree. `test\win32\viewer-worktree-port.ps1` **ALL PASS (23
+assertions)**, `test\win32\window-active-audit.ps1` **ALL PASS (16
+assertions)**, both re-stamping the guards this edit made due.
+
+Two things this turn ran down rather than dismissed. The harness floor scored
+`persistence-flag.ps1` red, which T1572 has twice recorded as that lane's known
+false red - but `suite-run`'s confirm pass REPRODUCED it alone on a quiet box,
+and it reproduces on a clean `ab37eccf9` with this task's edit stashed and the
+app rebuilt Debug. So session restore is genuinely bringing back nothing, on the
+branch head, and the commit range since the last green stamp is tracker-only:
+**T1663** carries that with the boot-outage hypothesis, and the script is listed
+in `$HARNESS_FLOOR_PENDING` against it - the documented mechanism, and one the
+ratchet will fail on the moment it goes green.
+
+Adding that entry surfaced a second one. `test\win32\harness-floor.ps1`'s E1
+asserted that `floor-lane.ps1` accepts `-Lane harness` by pinning its
+`ValidateSet` as a single-line literal, so T846 adding the releasesafe lanes -
+and wrapping the list - scored it red over a lane that works. It now reads the
+parameter's `ValidateSet` attribute. Same shape as T1662 above: a check that
+matches on spelling reports the wrong thing the moment the spelling moves.

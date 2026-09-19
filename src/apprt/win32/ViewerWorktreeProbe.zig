@@ -99,6 +99,14 @@ const Job = struct {
 /// It expires rather than living for the pane's life because the mapping is not
 /// truly immutable: `git init` in the server's directory changes it, and a memo
 /// with no clock would hide that until the pane navigated.
+///
+/// And it is reached ONLY by a port job, for the same reason (T1645). A
+/// navigation is a user-paced act that already costs a page render, so the
+/// process it saves is worth nothing next to answering from a repository that
+/// may have moved under it — which is not hypothetical: the viewer's own host
+/// floor test runs `git init` in the directory it is browsing and then read the
+/// OUTER repository back for the next five minutes, because every file in that
+/// directory memoizes to the same answer.
 pub const dir_memo_ttl_ms: u64 = 300_000;
 
 alloc: Allocator,
@@ -319,7 +327,13 @@ fn kick(self: *Probe) Outcome {
 /// that memo is still young. A job with no memo always spawns git, which is
 /// what makes a first resolution — and one made after the memo aged out —
 /// answer from the filesystem rather than from history.
+///
+/// Only a PORT job gets one (T1645): the saving exists for the loopback poll,
+/// which asks the same question forever, and paying it on a navigation buys one
+/// process spawn at the price of an answer about a directory as it was up to
+/// `dir_memo_ttl_ms` ago.
 fn attachMemo(self: *Probe, job: *Job, now_ms: u64) void {
+    if (job.port == null) return;
     const dir = self.memo_dir orelse return;
     if (now_ms -% self.memo_at_ms >= dir_memo_ttl_ms) return;
     job.known_dir = self.alloc.dupe(u8, dir) catch return;
@@ -596,22 +610,37 @@ test "a directory in no repository resolves to no worktree" {
     try testing.expect(p.worktreePath() == null);
 }
 
-test "a second resolution of the same directory answers from the memo" {
+test "the loopback poll's second question answers from the memo" {
     var p = Probe.init(testing.allocator);
     defer p.deinit();
 
     if (!worktree.realDirExists("D:\\git\\ghoztty")) return error.SkipZigTest;
-    const a = "D:\\git\\ghoztty\\src\\apprt\\win32\\ViewerWorktreeProbe.zig";
-    const b = "D:\\git\\ghoztty\\src\\apprt\\win32\\ViewerPane.zig";
+
+    // A REAL listener, which is this test process, so the directory behind the
+    // port is our own cwd and the memo is about the repository holding it. The
+    // shape matters: since T1645 only a port job carries a memo, because only
+    // the poll asks the same question over and over.
+    const addr = try std.net.Address.parseIp("127.0.0.1", 0);
+    var server = try addr.listen(.{});
+    defer server.deinit();
+    const port = server.listen_address.getPort();
+
+    var a_buf: [64]u8 = undefined;
+    const a = try std.fmt.bufPrint(&a_buf, "http://localhost:{d}/one", .{port});
+    var b_buf: [64]u8 = undefined;
+    const b = try std.fmt.bufPrint(&b_buf, "http://localhost:{d}/two", .{port});
+    var c_buf: [64]u8 = undefined;
+    const c = try std.fmt.bufPrint(&c_buf, "http://localhost:{d}/three", .{port});
 
     try testing.expectEqual(Outcome.pending, p.refresh(a, null));
     _ = p.complete();
     try testing.expect(!p.last_reused); // nothing to reuse yet: git ran
-    const root = try testing.allocator.dupe(u8, p.worktreePath().?);
+    const root = testing.allocator.dupe(u8, p.worktreePath() orelse
+        return error.SkipZigTest) catch return error.SkipZigTest;
     defer testing.allocator.free(root);
 
-    // A DIFFERENT location — so the cache cannot answer it — in the SAME
-    // directory. That is the poll's steady state: a fresh question whose
+    // A DIFFERENT location — so the cache cannot answer it — behind the SAME
+    // listener. That is the poll's steady state: a fresh question whose
     // directory has not moved, which must not cost another `git rev-parse`.
     try testing.expectEqual(Outcome.pending, p.refresh(b, null));
     _ = p.complete();
@@ -622,10 +651,80 @@ test "a second resolution of the same directory answers from the memo" {
     // dev server is not hidden for the pane's whole life.
     // A third location, for the same reason `b` was a second one: `a` is still
     // in the cache and would answer without a worker at all.
-    const c = "D:\\git\\ghoztty\\src\\apprt\\win32\\ViewerNavBar.zig";
     p.memo_at_ms -%= dir_memo_ttl_ms;
     try testing.expectEqual(Outcome.pending, p.refresh(c, null));
     _ = p.complete();
     try testing.expect(!p.last_reused);
     try testing.expectEqualStrings(root, p.worktreePath().?);
+}
+
+test "a navigation asks git rather than answering from the memo" {
+    var p = Probe.init(testing.allocator);
+    defer p.deinit();
+
+    // The counterpart to the poll test above (T1645): two files in one
+    // directory, which is the shape a docs viewer walks all day. The memo would
+    // answer the second one, and that is exactly what must not happen — the
+    // directory's repository can have moved between them.
+    if (!worktree.realDirExists("D:\\git\\ghoztty")) return error.SkipZigTest;
+    const a = "D:\\git\\ghoztty\\src\\apprt\\win32\\ViewerWorktreeProbe.zig";
+    const b = "D:\\git\\ghoztty\\src\\apprt\\win32\\ViewerPane.zig";
+
+    try testing.expectEqual(Outcome.pending, p.refresh(a, null));
+    _ = p.complete();
+    const root = try testing.allocator.dupe(u8, p.worktreePath().?);
+    defer testing.allocator.free(root);
+
+    try testing.expectEqual(Outcome.pending, p.refresh(b, null));
+    _ = p.complete();
+    try testing.expect(!p.last_reused);
+    try testing.expectEqualStrings(root, p.worktreePath().?);
+}
+
+test "a git init inside a memoized directory is not hidden by the memo" {
+    var p = Probe.init(testing.allocator);
+    defer p.deinit();
+
+    // A directory that starts out inside THIS repository's working tree and
+    // then becomes a working tree of its own — which is the one mutation the
+    // memo's ttl comment names, and the one the viewer's own live test makes
+    // (`ViewerPane`'s host floor builds a throwaway repo out of its tmp dir so
+    // a test report cannot land in the real feedback queue).
+    if (!worktree.realDirExists("D:\\git\\ghoztty")) return error.SkipZigTest;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = tmp.dir.realpathAlloc(testing.allocator, ".") catch
+        return error.SkipZigTest;
+    defer testing.allocator.free(dir_path);
+
+    var a_buf: [path_cap]u8 = undefined;
+    const a = try std.fmt.bufPrint(&a_buf, "{s}\\a.md", .{dir_path});
+    var b_buf: [path_cap]u8 = undefined;
+    const b = try std.fmt.bufPrint(&b_buf, "{s}\\b.md", .{dir_path});
+
+    try testing.expectEqual(Outcome.pending, p.refresh(a, null));
+    _ = p.complete();
+    const outer = p.worktreePath() orelse return error.SkipZigTest;
+    try testing.expect(!std.ascii.eqlIgnoreCase(outer, dir_path));
+
+    if (!gitInitForTest(testing.allocator, dir_path)) return error.SkipZigTest;
+
+    // A DIFFERENT file in the SAME directory, so the location cache cannot
+    // answer it and the memo is the only thing between the pane and git.
+    try testing.expectEqual(Outcome.pending, p.refresh(b, null));
+    _ = p.complete();
+    try testing.expect(std.ascii.eqlIgnoreCase(p.worktreePath().?, dir_path));
+}
+
+/// `git init` a throwaway repository at `dir`, answering whether git now
+/// reports `dir` itself as the working tree root. Test-only.
+fn gitInitForTest(alloc: Allocator, dir: []const u8) bool {
+    var buf: [4096]u8 = undefined;
+    _ = git_run.capture(alloc, &.{ "git", "-C", dir, "init", "--initial-branch=main" }, &buf) orelse
+        return false;
+    var root_buf: [path_cap]u8 = undefined;
+    const argv = worktree.rootArgv(0, dir);
+    const out = git_run.capture(alloc, &argv, &buf) orelse return false;
+    const root = worktree.parseRoot(&root_buf, out) orelse return false;
+    return std.ascii.eqlIgnoreCase(root, dir);
 }
