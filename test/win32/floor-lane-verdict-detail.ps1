@@ -195,6 +195,95 @@ try {
     Check 'and it carries the process tree the watchdog sampled before the kill' `
         ($wedgeTail -match 'lane command: -- process tree --') $wedgeTail
 
+    # ---- arms 20-27: the error return trace (T1662) -------------------------
+
+    # The shape verbatim from floor-lane-win32-20260918-221751-383.log, the log
+    # T1645 spent four turns reading wrong. The runner's `failed:` line names
+    # the right test and, after `failed:`, a line emitted by a DIFFERENT test
+    # that passed - every test in one binary shares one stderr. The cause is the
+    # error return trace at the bottom, and not one line of it says `error:`.
+    $misLog = Join-Path $Sandbox 'win32-misattributed.log'
+    @(
+        'install zig build',
+        "error: 'apprt.win32.ViewerPane.test.host floor: a real controller on a real window, on this box' failed: [tripwire] (warn): untripped point=read",
+        '[terminal_apc] (warn): kitty graphics protocol error: error.InvalidFormat',
+        '[viewer_pane] (warn): waitFor: nothing satisfied the wait; pane still for 30015ms (bound 30s)',
+        'D:\git\ghoztty\src\apprt\win32\ViewerPane.zig:9386:5: 0x7ff62c6feea4 in waitFor (ghostty-test_zcu.obj)',
+        '    return error.WaitForTimeout;',
+        '    ^',
+        'D:\git\ghoztty\src\apprt\win32\ViewerPane.zig:8237:13: 0x7ff62c72b205 in test.host floor: a real controller on a real window, on this box (ghostty-test_zcu.obj)',
+        '            try waitFor(&msg, 30, Wanted.ready, &pane);',
+        '            ^',
+        "error: while executing test 'cli.send_keys.test.flags: the known flags are recorded and consumed', the following test command failed:",
+        'error: the following build command failed with exit code 1:'
+    ) | Set-Content -LiteralPath $misLog -Encoding ascii
+
+    $dMis = Get-LaneFailureDetail -LaneName 'win32' -LogPath $misLog
+    Check 'the failing test is read out of the runner line, not guessed' `
+        ($dMis.FailedTest -eq 'apprt.win32.ViewerPane.test.host floor: a real controller on a real window, on this box') `
+        $dMis.FailedTest
+
+    $misBlock = (@(Format-FloorFailureDetail -Details @($dMis))) -join "`n"
+    # THE RULE of T1662: the kept output carries the REAL cause, which is the
+    # error return trace, and not only the stderr line the runner happened to
+    # attribute to it.
+    Check 'the block surfaces the error the test actually returned' `
+        ($misBlock -match 'return error\.WaitForTimeout;') $misBlock
+    Check 'and the frame that names the failing test, with its file and line' `
+        ($misBlock -match 'ViewerPane\.zig:8237:13.+in test\.host floor') $misBlock
+    Check 'the innermost frame comes too, so the origin of the error is readable' `
+        ($misBlock -match 'ViewerPane\.zig:9386:5.+in waitFor') $misBlock
+    Check 'the trace section says the failed: text above it is shared stderr' `
+        ($misBlock -match "the 'failed:' text above is shared stderr") $misBlock
+    Check 'every trace line is attributed to its lane like the rest of the block' `
+        (@(@(Format-FloorFailureDetail -Details @($dMis)) |
+            Where-Object { $_ -match 'ViewerPane\.zig|WaitForTimeout' } |
+            Where-Object { $_ -notmatch 'lane win32:' }).Count -eq 0) $misBlock
+    # Caret lines are dropped: re-indented under a `lane <name>:` prefix they
+    # align with nothing, so they are only lines a caller is keeping a budget of.
+    Check 'the bare caret lines are dropped rather than re-indented into nonsense' `
+        (@(@(Format-FloorFailureDetail -Details @($dMis)) |
+            Where-Object { $_ -match '^\s*lane win32:\s*\^\s*$' }).Count -eq 0) $misBlock
+
+    # A trace belonging to a DIFFERENT test must not be volunteered as this
+    # one's cause - that is the same mistake the runner made, made twice.
+    $otherLog = Join-Path $Sandbox 'win32-other-trace.log'
+    @(
+        "error: 'apprt.win32.ViewerPane.test.host floor: a real controller on a real window, on this box' failed: [tripwire] (warn): untripped point=read",
+        'D:\git\ghoztty\src\apprt\win32\claude_plugin_migration.zig:135:22: 0x7ff62b1223a2 in scriptIsPluginOwned (ghostty-test_zcu.obj)',
+        '    const target = try dir.readLink(name, &buf);',
+        '    ^',
+        'D:\git\ghoztty\src\apprt\win32\claude_plugin_migration.zig:255:12: 0x7ff62b121896 in test.run uninstalls every registration through the runner, then cleans up (ghostty-test_zcu.obj)',
+        '    try run(alloc, &runner);',
+        '    ^'
+    ) | Set-Content -LiteralPath $otherLog -Encoding ascii
+    $dOther = Get-LaneFailureDetail -LaneName 'win32' -LogPath $otherLog
+    $otherBlock = (@(Format-FloorFailureDetail -Details @($dOther))) -join "`n"
+    Check 'a trace for a different test is NOT offered as this failure cause' `
+        ($otherBlock -notmatch 'claude_plugin_migration') $otherBlock
+    Check 'and the absence is stated rather than left as silence' `
+        ($otherBlock -match 'no error return trace naming') $otherBlock
+
+    # Criterion 2: an ordinary red log - one with no `failed:` line at all -
+    # is formatted exactly as it was before T1662. The whole block is compared,
+    # not a substring, so a stray extra line cannot slip past.
+    $plainLog = Join-Path $Sandbox 'win32-plain.log'
+    @(
+        'error: the following build command failed with exit code 1:',
+        'error: unable to spawn zig'
+    ) | Set-Content -LiteralPath $plainLog -Encoding ascii
+    $plain = @(Format-FloorFailureDetail -Details @(Get-LaneFailureDetail -LaneName 'win32' -LogPath $plainLog))
+    $expected = @(
+        '',
+        '-- FLOOR FAILURE DETAIL (read this, not the scrollback) --',
+        "  lane win32: FAIL - $plainLog",
+        '    lane win32: the lane exited non-zero; the errors below come from its own log.',
+        '    lane win32: error: the following build command failed with exit code 1:',
+        '    lane win32: error: unable to spawn zig'
+    )
+    Check 'a log with no misattribution is formatted exactly as it was before' `
+        ((($plain -join "`n")) -eq ($expected -join "`n")) ($plain -join "`n")
+
     Complete-TestBody  # T1039: the run reached the end of its body
 }
 finally {

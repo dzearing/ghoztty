@@ -30,6 +30,20 @@ may have died before writing one - and comes back with no errors and whatever
 path was passed, because a path that does not exist is still the answer to
 "where would it have been".
 
+`FailedTest` and `Trace` are T1662's half, and they exist because the `error:`
+filter above can keep a line that names the wrong cause. Zig's build runner
+prints `error: '<test>' failed: <text>` where `<text>` is whatever arrived on
+stderr at that moment - and every test in one binary shares one stderr, so the
+text is routinely a note from a test that PASSED. The REAL cause is the error
+return trace, which carries no `error:` prefix and is therefore dropped by the
+only filter this block had. On 2026-09-18 that cost T1645 four turns chasing
+`[tripwire] (warn): untripped point=read` - emitted by `src/tripwire.zig`'s own
+passing test - while `error.WaitForTimeout at ViewerPane.zig:8237` sat unread in
+the same logs. So when a `failed:` line is present, `FailedTest` carries the test
+it names and `Trace` carries the trace frames from the same log that name THAT
+test. An empty `Trace` beside a non-null `FailedTest` is itself the finding:
+nothing in the log blames the test the runner blamed.
+
 `Result` and `Diagnostic` are T815's half. A wedged lane writes no `error:`
 line at all, so the block above could only say "the lane died without one
 (crash, stall, or a kill)" - three different answers offered as one, under a
@@ -45,26 +59,129 @@ function Get-LaneFailureDetail {
         [string]$LogPath,
         [int]$MaxErrors = 6,
         [string]$Result = 'FAIL',
-        [string[]]$Diagnostic = @()
+        [string[]]$Diagnostic = @(),
+        [int]$MaxTraceLines = 12
     )
     $errors = @()
     $total = 0
+    $lines = @()
     if ($LogPath -and (Test-Path -LiteralPath $LogPath)) {
-        foreach ($line in (Get-Content -LiteralPath $LogPath -ErrorAction SilentlyContinue)) {
+        $lines = @(Get-Content -LiteralPath $LogPath -ErrorAction SilentlyContinue)
+        foreach ($line in $lines) {
             if ($line -match 'error:') {
                 $total++
                 if ($errors.Count -lt $MaxErrors) { $errors += $line.TrimEnd() }
             }
         }
     }
-    return [pscustomobject]@{
-        Lane       = $LaneName
-        LogPath    = $LogPath
-        Errors     = $errors
-        Total      = $total
-        Result     = $Result
-        Diagnostic = @($Diagnostic)
+    $failedTest = Get-LaneFailedTestName -Lines $lines
+    $trace = @()
+    $traceTruncated = 0
+    if ($failedTest) {
+        $found = @(Get-LaneErrorReturnTrace -Lines $lines -TestName $failedTest -MaxLines $MaxTraceLines)
+        $trace = @($found | Where-Object { $_ -ne '__TRUNCATED__' })
+        if ($found -contains '__TRUNCATED__') { $traceTruncated = 1 }
     }
+    return [pscustomobject]@{
+        Lane           = $LaneName
+        LogPath        = $LogPath
+        Errors         = $errors
+        Total          = $total
+        Result         = $Result
+        Diagnostic     = @($Diagnostic)
+        FailedTest     = $failedTest
+        Trace          = $trace
+        TraceTruncated = [bool]$traceTruncated
+    }
+}
+
+<#
+.SYNOPSIS
+The test name out of zig's `error: '<test>' failed: <text>` line, or $null.
+
+.DESCRIPTION
+Only the NAME is taken. The text after `failed:` is deliberately ignored here:
+it is whatever was on the shared stderr when the runner gave up, which is the
+entire defect T1662 records. A log with no such line answers $null, and the
+caller then prints exactly what it printed before this existed.
+#>
+function Get-LaneFailedTestName {
+    param([string[]]$Lines)
+    foreach ($line in @($Lines)) {
+        if ($line -match "^error: '(?<name>.+?)' failed:") { return $Matches['name'] }
+    }
+    return $null
+}
+
+<#
+.SYNOPSIS
+The error return trace frames in a lane log that name a given test.
+
+.DESCRIPTION
+A zig error return trace is groups of three lines - a frame
+(`<file>:<line>:<col>: 0x<addr> in <symbol> (<obj>)`), the source line, and a
+caret. The frame that names the failing test is the BOTTOM of its trace, so the
+search is: find the last frame whose symbol is that test, then walk backwards
+over the contiguous groups above it to the origin of the error. The caret lines
+are dropped - re-indented under a `lane <name>:` prefix they no longer line up
+with anything, so they are only cost.
+
+The test's qualified name in the `failed:` line (`apprt.win32.ViewerPane.test.
+host floor: ...`) and its symbol in a frame (`test.host floor: ...`) differ by
+the module path, so the marker is rebuilt from the last `.test.` / `.decltest.`
+segment.
+
+The LAST matching frame wins because a handled error earlier in the same test
+prints a trace too, and the one that ended the run is the one at the bottom of
+the log. `MaxLines` bounds what comes back; a truncated trace carries a
+`__TRUNCATED__` sentinel as its final element so the caller can say so.
+#>
+function Get-LaneErrorReturnTrace {
+    param(
+        [string[]]$Lines,
+        [string]$TestName,
+        [int]$MaxLines = 12
+    )
+    $out = @()
+    $all = @($Lines)
+    if ($all.Count -eq 0 -or -not $TestName) { return $out }
+
+    $marker = $TestName
+    if ($TestName -match '\.(decltest)\.(?<short>.+)$') { $marker = "decltest.$($Matches['short'])" }
+    elseif ($TestName -match '\.test\.(?<short>.+)$') { $marker = "test.$($Matches['short'])" }
+
+    $frameRe = '^.+:\d+:\d+: 0x[0-9a-fA-F]+ in (?<sym>.+) \([^)]+\)\s*$'
+    $isFrame = {
+        param($idx)
+        if ($idx -lt 0 -or $idx -ge $all.Count) { return $false }
+        return ($all[$idx] -match $frameRe)
+    }
+
+    $anchor = -1
+    for ($i = $all.Count - 1; $i -ge 0; $i--) {
+        if ($all[$i] -match $frameRe -and $Matches['sym'] -eq $marker) { $anchor = $i; break }
+    }
+    if ($anchor -lt 0) { return $out }
+
+    # Walk back to the top of the contiguous trace block. A line belongs to it
+    # when it is a frame, the source line under a frame, or the caret under one.
+    $start = $anchor
+    for ($j = $anchor - 1; $j -ge 0; $j--) {
+        if ((& $isFrame $j) -or (& $isFrame ($j - 1)) -or (& $isFrame ($j - 2))) { $start = $j }
+        else { break }
+    }
+
+    # The anchor's own source line, when one follows it.
+    $end = $anchor
+    if (($anchor + 1) -lt $all.Count -and -not (& $isFrame ($anchor + 1))) { $end = $anchor + 1 }
+
+    for ($k = $start; $k -le $end; $k++) {
+        $line = $all[$k]
+        if ($line -match '^\s*\^\s*$') { continue }
+        if ($out.Count -ge $MaxLines) { $out += '__TRUNCATED__'; break }
+        $out += $line.TrimEnd()
+    }
+    return $out
 }
 
 <#
@@ -142,6 +259,25 @@ function Format-FloorFailureDetail {
             $dropped = $d.Total - $d.Errors.Count
             if ($dropped -gt 0) {
                 $out += "    lane $($d.Lane): ... $dropped more 'error:' line(s) in that log"
+            }
+        }
+        # T1662: the `error: '<test>' failed: <text>` line above names the test
+        # correctly and the CAUSE only by accident - the text is whatever was on
+        # the binary's shared stderr at that moment. The error return trace is
+        # the part that is actually about the failure, and nothing in it matches
+        # `error:`, so until now none of it survived into this block.
+        $failedTest = if ($d.PSObject.Properties['FailedTest']) { $d.FailedTest } else { $null }
+        if ($failedTest) {
+            $trace = if ($d.PSObject.Properties['Trace']) { @($d.Trace) } else { @() }
+            if ($trace.Count -gt 0) {
+                $out += "    lane $($d.Lane): -- error return trace for '$failedTest' (the 'failed:' text above is shared stderr, not necessarily the cause) --"
+                foreach ($line in $trace) { $out += "    lane $($d.Lane): $line" }
+                if ($d.PSObject.Properties['TraceTruncated'] -and $d.TraceTruncated) {
+                    $out += "    lane $($d.Lane): ... trace truncated; the rest is in that log"
+                }
+            }
+            else {
+                $out += "    lane $($d.Lane): no error return trace naming '$failedTest' in that log - the 'failed:' text above is the only clue, and it may belong to a different test"
             }
         }
         $diag = @()

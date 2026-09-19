@@ -1,10 +1,10 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-09-19T07:34:34-07:00",
-    "commit":  "5742a3d10",
+    "generated":  "2026-09-19T08:35:01-07:00",
+    "commit":  "6b453972b",
     "uncommitted":  [
-                        "test/win32/task-dashboard.ps1"
+                        "test/win32/floor-lane-verdict-detail.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "ef54b501298cfda9306cfb958c1094db24ee30f355b25865656b3e2bc713bcd7",
@@ -113,7 +113,7 @@
                   "test/win32/floor-lane-releasesafe.ps1":  "ecd2f326201dfeb9cd74d67f603ec6e06ea566182e28754acc08da1629784a84",
                   "test/win32/floor-lane-solo-confirm.ps1":  "2e7b8705867fd366ef614013d2cdd8e9e213136a4f8e9347ac049215944c0a50",
                   "test/win32/floor-lane-stall-sampling.ps1":  "1ffd9b4a466850f44fd49712ad9c82cf8a8e89ead999cea40903eb3ce0306418",
-                  "test/win32/floor-lane-verdict-detail.ps1":  "16068d1b9c37cfbf35f201e7a3f12f76709c2b362242b238fb2b53d96acb1fe2",
+                  "test/win32/floor-lane-verdict-detail.ps1":  "bd1896f4dd90f975a9d703e2565957dcd5e1553755d1ae1d3816c054090627f5",
                   "test/win32/floor-lane-webview-settle.ps1":  "d5cf22c7342c16a5bebc1a27d1f7d62e1c4dbe297fe2538e9542a7b3cfe8122b",
                   "test/win32/focus-defer.ps1":  "0781efdaa91cf1730f88acaec0143573697a9d4d305e4becdd08eab8774efafd",
                   "test/win32/focus-follows-mouse.ps1":  "09c5f9884b9c51bdb0d91321a12c0e8b8c554552434fd78f7b6267826caaa4e1",

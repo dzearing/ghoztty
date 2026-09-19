@@ -32312,3 +32312,37 @@ parses all of it every five seconds.
 so this task's harness edit made it due, and it is red for **T1663**'s reason
 (session restore brings nothing back), reproduced here on a freshly rebuilt
 Debug app rather than assumed.
+
+## 2026-09-19 - T1662: a red lane now prints the trace that names the failing test, not whatever was on stderr
+
+Zig's build runner reports a failed test as `error: '<test>' failed: <text>`,
+and `<text>` is simply whatever arrived on the binary's shared stderr at that
+moment - routinely a note from a test that PASSED. `floor-lane.ps1`'s FLOOR
+FAILURE DETAIL kept the first six lines matching `error:`, so that misattributed
+line was the one that survived, while the real cause - the error return trace -
+carries no `error:` prefix and was dropped. T1645 is the bill: four turns chasing
+`[tripwire] (warn): untripped point=read`, emitted by `src/tripwire.zig`'s own
+passing test, while `error.WaitForTimeout at ViewerPane.zig:8237` sat unread in
+the same log.
+
+`Get-LaneFailureDetail` now also answers `FailedTest` and `Trace`:
+`Get-LaneFailedTestName` takes only the NAME out of the `failed:` line (the text
+after it is exactly the thing that lies), and `Get-LaneErrorReturnTrace` finds
+the last trace frame whose symbol is that test, walks back over the contiguous
+frame groups above it, and drops the caret lines. `Format-FloorFailureDetail`
+prints those under the error block. Replaying the real
+`floor-lane-win32-20260918-221751-383.log` through it surfaces
+`ViewerPane.zig:9386 in waitFor`, `return error.WaitForTimeout;` and
+`ViewerPane.zig:8237:13 in test.host floor: ...` - precisely what T1645 could
+not see.
+
+An empty trace beside a named test is itself a finding, and the block says so
+rather than printing nothing: "no error return trace naming '<test>' in that log
+- the 'failed:' text above is the only clue, and it may belong to a different
+test". Two negative controls hold that line honest - a log whose only trace
+belongs to a different test (it must not offer that test as the cause), and the
+real `floor-lane-agent-20260918-222931-510.log`, which genuinely carries none.
+Arm 27 compares the ordinary no-misattribution case against the whole literal
+pre-T1662 block, so the new section cannot leak into a run that does not need
+it. `test\win32\floor-lane-verdict-detail.ps1` is ALL PASS at 37 assertions, and
+`floor-lane.ps1 -Lane all` plus `-Lane harness` are green over this tree.

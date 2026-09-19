@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-19T07:32:31-07:00",
-    "commit":  "5742a3d10",
+    "generated":  "2026-09-19T08:32:54-07:00",
+    "commit":  "6b453972b",
     "uncommitted":  [
-                        "test/win32/task-dashboard.ps1"
+                        "scripts/lib/LaneVerdict.ps1",
+                        "test/win32/floor-lane-verdict-detail.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -50,7 +51,7 @@
                   "scripts/lib/HarnessFloor.ps1":  "3dd762599daee61228bd3bfc35c349e045c44f32a2340d36b4e773cd3f5b9572",
                   "scripts/lib/LaneLeak.ps1":  "6726edfdc47336ad70d6664990d976a49ac455a1f7ca3225a1725c4a839ac654",
                   "scripts/lib/LaneSolo.ps1":  "10feea32628e97345f5aaa156128261e5b597cea97d462590d75b6420d3401d4",
-                  "scripts/lib/LaneVerdict.ps1":  "16cbff132750edcd067c5747259497a6d89b1531226345adcf0f0d34817d67ee",
+                  "scripts/lib/LaneVerdict.ps1":  "bdb4b789b8f0f85521f01dcd2fb758be058ac9f5b5b39bb549d6d090d993e19c",
                   "scripts/lib/NativeArgv.ps1":  "49faad6cbe0907079281ac45a3e96f140fd6162f4c1729e82b145105137933b5",
                   "scripts/lib/WebViewLane.ps1":  "14ff86074a34aef73316a5c94032bf32bd42845d7e831170366034700898a579",
                   "scripts/loop-session.ps1":  "f8d64e24c43f7595203611f6263afbeb52d3dba6e05794a625c6789abbcfe22d",
@@ -181,7 +182,7 @@
                   "test/win32/floor-lane-releasesafe.ps1":  "ecd2f326201dfeb9cd74d67f603ec6e06ea566182e28754acc08da1629784a84",
                   "test/win32/floor-lane-solo-confirm.ps1":  "2e7b8705867fd366ef614013d2cdd8e9e213136a4f8e9347ac049215944c0a50",
                   "test/win32/floor-lane-stall-sampling.ps1":  "1ffd9b4a466850f44fd49712ad9c82cf8a8e89ead999cea40903eb3ce0306418",
-                  "test/win32/floor-lane-verdict-detail.ps1":  "16068d1b9c37cfbf35f201e7a3f12f76709c2b362242b238fb2b53d96acb1fe2",
+                  "test/win32/floor-lane-verdict-detail.ps1":  "bd1896f4dd90f975a9d703e2565957dcd5e1553755d1ae1d3816c054090627f5",
                   "test/win32/floor-lane-webview-settle.ps1":  "d5cf22c7342c16a5bebc1a27d1f7d62e1c4dbe297fe2538e9542a7b3cfe8122b",
                   "test/win32/focus-defer.ps1":  "0781efdaa91cf1730f88acaec0143573697a9d4d305e4becdd08eab8774efafd",
                   "test/win32/focus-follows-mouse.ps1":  "09c5f9884b9c51bdb0d91321a12c0e8b8c554552434fd78f7b6267826caaa4e1",
