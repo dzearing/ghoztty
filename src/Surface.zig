@@ -677,10 +677,19 @@ fn appendLocalShellIntegrationEnv(
             .windows => "cmd.exe",
             else => "/bin/zsh",
         });
+        // `.direct`, NOT `.shell` (T862). This value is ONE executable path —
+        // `--shell=`, the agent OPEN's shell, or the inherited parent shell —
+        // never a command line, so it must not go through the shell-words
+        // parse that `.shell` implies. `C:\Program Files\Git\bin\bash.exe`
+        // split at the space there: detection basenamed `Program` and found no
+        // shell, while the agent spawned the path whole, so a pane opened with
+        // the integration silently missing. A one-element argv says "this
+        // whole string is argv[0]", which is what every caller means.
+        const shell_argv: []const [:0]const u8 = &.{shell_z};
         const integration = (shell_integration.setup(
             sa,
             resources_dir,
-            .{ .shell = shell_z },
+            .{ .direct = shell_argv },
             scratch,
             force,
         ) catch |err| {

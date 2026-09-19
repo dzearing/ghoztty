@@ -32399,3 +32399,59 @@ Arm 27 compares the ordinary no-misattribution case against the whole literal
 pre-T1662 block, so the new section cannot leak into a run that does not need
 it. `test\win32\floor-lane-verdict-detail.ps1` is ALL PASS at 37 assertions, and
 `floor-lane.ps1 -Lane all` plus `-Lane harness` are green over this tree.
+
+## 2026-09-19 - T862: a shell path with a space in it gets its integration attached
+
+Pointing Ghoztty at a shell under `Program Files` — which on Windows is most of
+them — opened a pane whose shell came up plain. No directory in the tab title,
+no command marks, nothing to say anything had gone wrong. The two spellings that
+worked were the DOS 8.3 short path (`C:\PROGRA~1\Git\bin\bash.exe`, which is what
+section C of `agent-shell-integration.ps1` had been using) and burying a second
+layer of quotes inside the value. Neither is what anyone would type.
+
+The split was not where the card guessed. `command-shell` and `--shell` both
+travel as whole strings the whole way down: `wrapShellCommandArgv` dupes the
+value into argv[0] intact, the agent's `resolveShellPath` hands it to
+`CommandCore.startWindows`, and `windowsCreateCommandLine` quotes it because it
+contains a space. The break was in the SHELL-INTEGRATION seam. `Surface.zig`
+wrapped the resolved shell PATH as `config.Command{ .shell = ... }`, whose
+`argIterator` is `ArgIteratorGeneral` — shell-words. So detection saw arg0
+`C:\Program`, basenamed `Program`, matched no shell we know, and returned null;
+the agent then spawned the path whole with no integration argv at all. Detection
+and spawn disagreed about what the value even was.
+
+The fix is option (c) from the card: a value that names ONE executable is passed
+as `.direct` — a one-element argv — rather than as a command line. That is what
+every caller of that seam means (`--shell=`, the agent OPEN's shell, the
+inherited parent shell), and an argv array cannot lose a word boundary.
+
+The other half was on the way back out. `setupBash` and `setupNushell` BUILD a
+new invocation rather than cloning the one they were given, and both collapsed it
+into a space-joined `.shell` string with no quoting — so even a correct argv
+re-split on the return trip to `OPEN.argv`. A new `RewriteBuilder` accumulates
+under the tag it was handed: `.direct` in, argv array out; `.shell` in, the
+identical space-joined string as before. `setupCmd`, `setupZsh` and the
+fish/elvish branch already cloned, and `setupPowershell` already returned
+`.direct`, so those needed nothing. Nushell's `--execute 'use ghostty *'` is the
+one argument whose quoting is load-bearing, and it is now appended as a pair: the
+pre-quoted spelling for `.shell`, the flag plus the raw value for `.direct`.
+
+Because the tag is preserved, the Mac seat is untouched by construction — every
+POSIX shell path (`command = ...`, `$SHELL`, the passwd entry) is a `.shell`
+command and still produces byte-identical output, which the pre-existing `bash`
+and `nushell` tests assert directly.
+
+Section C of `test\win32\agent-shell-integration.ps1` now spells the flag the
+natural way — `--shell="C:\Program Files\Git\bin\bash.exe"`, one ordinary level
+of shell quoting — and the 8.3 workaround is gone. C4 (the child's command line
+carries `--posix`) is the real discriminator: before this, detection failed and
+the agent spawned bare `bash.exe` with no rewrite at all. New C5 asserts the
+shape underneath it — argv[0] reached CreateProcess as one QUOTED element
+immediately followed by `--posix`, which a split value cannot produce. ALL PASS
+at 28 assertions; `floor-lane.ps1 -Lane all` is green over this tree.
+
+Two follow-ups filed: T1665 (`--shell=` is silently ignored for a pane with no
+`--command` when session-persistence is off — the non-agent path never reads it)
+and T1666 (a `direct:` command in the CONFIG still cannot express an argument
+containing a space; `parseCLI` splits it naively, and that surface is shared
+core, so the Mac seat owns half the answer).

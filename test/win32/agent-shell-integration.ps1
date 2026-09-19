@@ -27,10 +27,15 @@
 #      user-visible payoff is a tab title that follows `cd` rather than saying
 #      "cmd" forever — carried by OSC 7, deliberately not by an OSC 2, so
 #      cmd's own `title` command still works.
-#   C  (T513) `--shell=<full path to git-bash's bash.exe>`: detection must
+#   C  (T513/T862) `--shell=<full path to git-bash's bash.exe>`: detection must
 #      survive the Windows spelling (full path + .exe), proven by the child
-#      command line carrying bash's `--posix` integration rewrite. Uses the
-#      8.3 short path so the space in "Program Files" needs no quoting.
+#      command line carrying bash's `--posix` integration rewrite. Spelled the
+#      NATURAL way — `--shell="C:\Program Files\Git\bin\bash.exe"`, one level
+#      of ordinary shell quoting — because that is the spelling T862 fixed.
+#      Before it, the space split the value on the detection side (`C:\Program`
+#      basenames to `Program`, which is no shell we know) while the spawn side
+#      used the path whole, so the pane opened with the integration silently
+#      missing and only the 8.3 short path worked.
 #
 # Non-interactive; asserts and exits nonzero on any failure. Hermetic: per-run
 # LOCALAPPDATA + GHOSTTY_LOCAL_AGENT_BIN + private IPC suffix (Isolation.ps1),
@@ -307,7 +312,7 @@ Assert "B13 +list reports the cd'd directory for the cmd pane" `
     ($null -ne $paneB2 -and (Norm $paneB2.working_directory) -eq (Norm $titleDir))
 
 # ============================================================================
-"== C: --shell=<full git-bash path> gets the --posix rewrite (T513)"
+"== C: --shell=<full git-bash path, spaces and all> gets the --posix rewrite (T513/T862)"
 # ============================================================================
 $bashPath = 'C:\Program Files\Git\bin\bash.exe'
 $bashRes = 'D:\git\ghoztty\zig-out\share\ghostty\shell-integration\bash\ghostty.bash'
@@ -316,28 +321,32 @@ if (-not (Test-Path $bashPath)) {
     $script:skips++
 } else {
     Assert "C0 ghostty.bash is in the build's resources" (Test-Path $bashRes)
-    # 8.3 short path: same file, no space, so no quoting layer can mangle it.
-    $shortBash = (New-Object -ComObject Scripting.FileSystemObject).GetFile($bashPath).ShortPath
-    if ($shortBash -match ' ') {
-        "  SKIP C: volume has no space-free short path for $bashPath"
-        $script:skips++
-    } else {
-        $codeC = Run-Cli "+new-window --target=t513bash --shell=$shortBash" "$root\new-c.txt" 60
-        Assert "C1 +new-window --shell=<full bash.exe path> succeeded (exit 0)" ($codeC -eq 0)
+    # The natural spelling: the path as written, quoted once the way any shell
+    # needs a spaced path quoted. No 8.3 short path, no doubled quotes (T862).
+    $codeC = Run-Cli "+new-window --target=t513bash --shell=`"$bashPath`"" "$root\new-c.txt" 60
+    Assert "C1 +new-window --shell=<full bash.exe path> succeeded (exit 0)" ($codeC -eq 0)
 
-        $paneC = Wait-Pane 'c' 't513bash' 40
-        Assert "C2 the bash pane is up with a live pid" ($null -ne $paneC -and [int]$paneC.pid -gt 0)
+    $paneC = Wait-Pane 'c' 't513bash' 40
+    Assert "C2 the bash pane is up with a live pid" ($null -ne $paneC -and [int]$paneC.pid -gt 0)
 
-        $procC = $null
-        if ($null -ne $paneC -and [int]$paneC.pid -gt 0) {
-            $procC = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$paneC.pid)"
-        }
-        Assert "C3 the pane's child is bash.exe" ($null -ne $procC -and $procC.Name -ieq 'bash.exe')
-        Assert "C4 its command line carries the --posix integration rewrite" `
-            ($null -ne $procC -and $procC.CommandLine -match '--posix')
-
-        Run-Cli '+close --target=t513bash' "$root\close-c.txt" 15 | Out-Null
+    $procC = $null
+    if ($null -ne $paneC -and [int]$paneC.pid -gt 0) {
+        $procC = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$paneC.pid)"
     }
+    Assert "C3 the pane's child is bash.exe" ($null -ne $procC -and $procC.Name -ieq 'bash.exe')
+    Assert "C4 its command line carries the --posix integration rewrite" `
+        ($null -ne $procC -and $procC.CommandLine -match '--posix')
+    # C4 above is the real discriminator for T862 — before the fix, detection
+    # saw `C:\Program`, matched no shell, and the agent spawned bare `bash.exe`
+    # with no `--posix` at all. C5 is the shape underneath it: argv[0] reached
+    # CreateProcess as ONE element, which `windowsCreateCommandLine` renders
+    # with quotes precisely because it contains a space. A split value produces
+    # an UNQUOTED `C:\Program Files\...` line, so this is falsifiable.
+    Assert "C5 argv[0] is the quoted whole path, immediately followed by --posix" `
+        ($null -ne $procC -and
+         $procC.CommandLine -match ('^\s*"' + [regex]::Escape($bashPath) + '"\s+--posix'))
+
+    Run-Cli '+close --target=t513bash' "$root\close-c.txt" 15 | Out-Null
 }
 
 # ---- teardown --------------------------------------------------------------

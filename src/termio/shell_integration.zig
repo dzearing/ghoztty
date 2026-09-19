@@ -418,6 +418,80 @@ test "setup features" {
     }
 }
 
+/// Accumulates the rewritten invocation for the setups that BUILD a new
+/// command (bash, nushell) rather than cloning the one they were given, and
+/// hands it back under the SAME tag it came in as (T862).
+///
+/// The tag matters because it decides whether the words can be recovered. A
+/// `.shell` command is space-joined with no quoting rules, so the moment one
+/// argument contains a space the round trip through `argIterator` produces
+/// different words than went in — which is how `C:\Program Files\Git\bin\
+/// bash.exe` reached the agent as `OPEN.argv[0] = "C:\Program"`. A `.direct`
+/// command carries its argv as an array and cannot lose a boundary, so a
+/// caller that handed us one (every caller naming a PATH does) gets one back.
+///
+/// A `.shell` input keeps the old space-joined string exactly as before, so
+/// nothing about the plain `command = bash --norc` config changes.
+const RewriteBuilder = struct {
+    tag: std.meta.Tag(config.Command),
+    args: std.ArrayList([:0]const u8),
+    text: internal_os.shell.ShellCommandBuilder,
+
+    fn init(alloc: Allocator, command: config.Command) RewriteBuilder {
+        return .{
+            .tag = std.meta.activeTag(command),
+            .args = .empty,
+            .text = .init(alloc),
+        };
+    }
+
+    fn deinit(self: *RewriteBuilder, alloc: Allocator) void {
+        self.args.deinit(alloc);
+        self.text.deinit();
+    }
+
+    /// Append one argument. Empty arguments are dropped, matching
+    /// `ShellCommandBuilder.appendArg` (a `.shell` command cannot express one).
+    fn appendArg(self: *RewriteBuilder, alloc: Allocator, arg: []const u8) !void {
+        if (arg.len == 0) return;
+        switch (self.tag) {
+            .shell => try self.text.appendArg(arg),
+            .direct => try self.args.append(alloc, try alloc.dupeZ(u8, arg)),
+        }
+    }
+
+    /// Append a flag whose value needs shell quoting to survive a `.shell`
+    /// command's space-join (nushell's `--execute 'use ghostty *'`).
+    ///
+    /// `.shell` takes the caller's pre-quoted spelling verbatim — the quotes
+    /// are what the shell-words parse on the way back out reads. `.direct` has
+    /// no such parse, so it takes the flag and the RAW value as two argv
+    /// elements; pushing the quoted spelling in there would hand nushell a
+    /// single argument with literal quote characters in it.
+    fn appendQuotedPair(
+        self: *RewriteBuilder,
+        alloc: Allocator,
+        shell_form: []const u8,
+        flag: []const u8,
+        value: []const u8,
+    ) !void {
+        switch (self.tag) {
+            .shell => try self.text.appendArg(shell_form),
+            .direct => {
+                try self.args.append(alloc, try alloc.dupeZ(u8, flag));
+                try self.args.append(alloc, try alloc.dupeZ(u8, value));
+            },
+        }
+    }
+
+    fn finish(self: *RewriteBuilder, alloc: Allocator) !config.Command {
+        return switch (self.tag) {
+            .shell => .{ .shell = try alloc.dupeZ(u8, try self.text.toOwnedSlice()) },
+            .direct => .{ .direct = try self.args.toOwnedSlice(alloc) },
+        };
+    }
+};
+
 /// Setup the bash automatic shell integration. This works by
 /// starting bash in POSIX mode and using the ENV environment
 /// variable to load our bash integration script. This prevents
@@ -433,9 +507,8 @@ fn setupBash(
     resource_dir: []const u8,
     env: *EnvMap,
 ) !?config.Command {
-    var stack_fallback = std.heap.stackFallback(4096, alloc);
-    var cmd = internal_os.shell.ShellCommandBuilder.init(stack_fallback.get());
-    defer cmd.deinit();
+    var cmd: RewriteBuilder = .init(alloc, command);
+    defer cmd.deinit(alloc);
 
     // Iterator that yields each argument in the original command line.
     // This will allocate once proportionate to the command line length.
@@ -444,9 +517,9 @@ fn setupBash(
 
     // Start accumulating arguments with the executable and initial flags.
     if (iter.next()) |exe| {
-        try cmd.appendArg(exe);
+        try cmd.appendArg(alloc, exe);
     } else return null;
-    try cmd.appendArg("--posix");
+    try cmd.appendArg(alloc, "--posix");
 
     // Stores the list of intercepted command line flags that will be passed
     // to our shell integration script: --norc --noprofile
@@ -479,17 +552,17 @@ fn setupBash(
             if (std.mem.indexOfScalar(u8, arg, 'c') != null) {
                 return null;
             }
-            try cmd.appendArg(arg);
+            try cmd.appendArg(alloc, arg);
         } else if (std.mem.eql(u8, arg, "-") or std.mem.eql(u8, arg, "--")) {
             // All remaining arguments should be passed directly to the shell
             // command. We shouldn't perform any further option processing.
-            try cmd.appendArg(arg);
+            try cmd.appendArg(alloc, arg);
             while (iter.next()) |remaining_arg| {
-                try cmd.appendArg(remaining_arg);
+                try cmd.appendArg(alloc, remaining_arg);
             }
             break;
         } else {
-            try cmd.appendArg(arg);
+            try cmd.appendArg(alloc, arg);
         }
     }
 
@@ -536,7 +609,7 @@ fn setupBash(
     }
 
     // Return a copy of our modified command line to use as the shell command.
-    return .{ .shell = try alloc.dupeZ(u8, try cmd.toOwnedSlice()) };
+    return try cmd.finish(alloc);
 }
 
 test "bash" {
@@ -560,6 +633,83 @@ test "bash" {
         try std.fmt.bufPrint(&path_buf, "{s}/ghostty.bash", .{res.shell_path}),
         env.get("ENV").?,
     );
+}
+
+test "bash: a direct command keeps its argv boundaries (T862)" {
+    const testing = std.testing;
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var res: TmpResourcesDir = try .init(alloc, .bash);
+    defer res.deinit();
+
+    var env = EnvMap.init(alloc);
+    defer env.deinit();
+
+    // The shape `Surface.zig` sends for `--shell=C:\Program Files\...`: ONE
+    // argv element that happens to contain a space. The rewrite must hand
+    // back an argv, not a space-joined string that re-splits into
+    // `C:\Program` + `Files\Git\bin\bash.exe`.
+    const spaced = "C:\\Program Files\\Git\\bin\\bash.exe";
+    const argv: []const [:0]const u8 = &.{spaced};
+    const command = try setupBash(alloc, .{ .direct = argv }, res.path, &env);
+    try testing.expect(command.? == .direct);
+    try testing.expectEqual(@as(usize, 2), command.?.direct.len);
+    try testing.expectEqualStrings(spaced, command.?.direct[0]);
+    try testing.expectEqualStrings("--posix", command.?.direct[1]);
+
+    // And the round trip a caller actually makes is lossless.
+    var it = try command.?.argIterator(alloc);
+    defer it.deinit();
+    try testing.expectEqualStrings(spaced, it.next().?);
+    try testing.expectEqualStrings("--posix", it.next().?);
+    try testing.expect(it.next() == null);
+}
+
+test "bash: a direct command carries its own flags through (T862)" {
+    const testing = std.testing;
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var res: TmpResourcesDir = try .init(alloc, .bash);
+    defer res.deinit();
+
+    var env = EnvMap.init(alloc);
+    defer env.deinit();
+
+    const argv: []const [:0]const u8 = &.{ "/a b/bash", "--norc", "-l" };
+    const command = try setupBash(alloc, .{ .direct = argv }, res.path, &env);
+    try testing.expect(command.? == .direct);
+    try testing.expectEqual(@as(usize, 3), command.?.direct.len);
+    try testing.expectEqualStrings("/a b/bash", command.?.direct[0]);
+    try testing.expectEqualStrings("--posix", command.?.direct[1]);
+    try testing.expectEqualStrings("-l", command.?.direct[2]);
+    // --norc is intercepted into the inject list, exactly as for `.shell`.
+    try testing.expectEqualStrings("1 --norc", env.get("GHOSTTY_BASH_INJECT").?);
+}
+
+test "detectShell: a direct spaced path is one argument (T862)" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    // The `.shell` spelling is what broke: shell-words splits at the space
+    // and `detectShell` basenames `Program`.
+    try testing.expect(try detectShell(
+        alloc,
+        .{ .shell = "C:\\Program Files\\Git\\bin\\bash.exe" },
+    ) == null);
+
+    // The `.direct` spelling the shell-path callers now use detects.
+    const argv: []const [:0]const u8 = &.{"C:\\Program Files\\Git\\bin\\bash.exe"};
+    try testing.expectEqual(.bash, try detectShell(alloc, .{ .direct = argv }));
+
+    const pwsh: []const [:0]const u8 = &.{"C:\\Program Files\\PowerShell\\7\\pwsh.exe"};
+    try testing.expectEqual(.powershell, try detectShell(alloc, .{ .direct = pwsh }));
+
+    const nu: []const [:0]const u8 = &.{"C:\\Program Files\\nu\\bin\\nu.exe"};
+    try testing.expectEqual(.nushell, try detectShell(alloc, .{ .direct = nu }));
 }
 
 test "bash: unsupported options" {
@@ -895,9 +1045,8 @@ fn setupNushell(
     // of the later checks abort the rest of our automatic integration.
     if (!try setupXdgDataDirs(alloc, resource_dir, env)) return null;
 
-    var stack_fallback = std.heap.stackFallback(4096, alloc);
-    var cmd = internal_os.shell.ShellCommandBuilder.init(stack_fallback.get());
-    defer cmd.deinit();
+    var cmd: RewriteBuilder = .init(alloc, command);
+    defer cmd.deinit(alloc);
 
     // Iterator that yields each argument in the original command line.
     // This will allocate once proportionate to the command line length.
@@ -906,7 +1055,7 @@ fn setupNushell(
 
     // Start accumulating arguments with the executable and initial flags.
     if (iter.next()) |exe| {
-        try cmd.appendArg(exe);
+        try cmd.appendArg(alloc, exe);
     } else return null;
 
     // Tell nu to immediately "use" all of the exported functions in our
@@ -915,7 +1064,12 @@ fn setupNushell(
     // We can consider making this more specific based on the set of
     // enabled shell features (e.g. `use ghostty sudo`). At the moment,
     // shell features are all runtime-guarded in the nushell script.
-    try cmd.appendArg("--execute 'use ghostty *'");
+    try cmd.appendQuotedPair(
+        alloc,
+        "--execute 'use ghostty *'",
+        "--execute",
+        "use ghostty *",
+    );
 
     // Walk through the rest of the given arguments. If we see an option that
     // would require complex or unsupported integration behavior, we bail out
@@ -932,22 +1086,22 @@ fn setupNushell(
             if (std.mem.indexOfScalar(u8, arg, 'c') != null) {
                 return null;
             }
-            try cmd.appendArg(arg);
+            try cmd.appendArg(alloc, arg);
         } else if (std.mem.eql(u8, arg, "-") or std.mem.eql(u8, arg, "--")) {
             // All remaining arguments should be passed directly to the shell
             // command. We shouldn't perform any further option processing.
-            try cmd.appendArg(arg);
+            try cmd.appendArg(alloc, arg);
             while (iter.next()) |remaining_arg| {
-                try cmd.appendArg(remaining_arg);
+                try cmd.appendArg(alloc, remaining_arg);
             }
             break;
         } else {
-            try cmd.appendArg(arg);
+            try cmd.appendArg(alloc, arg);
         }
     }
 
     // Return a copy of our modified command line to use as the shell command.
-    return .{ .shell = try alloc.dupeZ(u8, try cmd.toOwnedSlice()) };
+    return try cmd.finish(alloc);
 }
 
 /// The OSC 133;A prompt mark, written in cmd's PROMPT escape language
@@ -1240,6 +1394,30 @@ test "nushell" {
         env.get("XDG_DATA_DIRS").?,
         try std.fmt.bufPrint(&path_buf, "{s}/shell-integration", .{res.path}),
     );
+}
+
+test "nushell: a direct command keeps its argv boundaries (T862)" {
+    const testing = std.testing;
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var res: TmpResourcesDir = try .init(alloc, .nushell);
+    defer res.deinit();
+
+    var env = EnvMap.init(alloc);
+    defer env.deinit();
+
+    const spaced = "C:\\Program Files\\nu\\bin\\nu.exe";
+    const argv: []const [:0]const u8 = &.{spaced};
+    const command = try setupNushell(alloc, .{ .direct = argv }, res.path, &env);
+    try testing.expect(command.? == .direct);
+    try testing.expectEqual(@as(usize, 3), command.?.direct.len);
+    try testing.expectEqualStrings(spaced, command.?.direct[0]);
+    // The `--execute` VALUE is a separate argv element with no quote
+    // characters in it: `.direct` has no shell-words parse to strip them.
+    try testing.expectEqualStrings("--execute", command.?.direct[1]);
+    try testing.expectEqualStrings("use ghostty *", command.?.direct[2]);
 }
 
 test "nushell: unsupported options" {
