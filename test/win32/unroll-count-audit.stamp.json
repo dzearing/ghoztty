@@ -1,10 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-09-18T15:05:51-07:00",
-    "commit":  "03db20be0",
+    "generated":  "2026-09-18T16:43:26-07:00",
+    "commit":  "dfd301848",
     "uncommitted":  [
-
+                        "scripts/test-binary-soak.ps1",
+                        "test/win32/test-binary-soak.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -68,7 +69,7 @@
                   "scripts/t470-ring-measure.ps1":  "427dc0cada150aadb214a007e32238f1d75d3751ad40a02260b325157672f143",
                   "scripts/t857-boost-ab.ps1":  "a0f1bd35f21fb689f306a5a100e9cccf37b0087bbcc29e98fce0dfc1b6638071",
                   "scripts/task-dashboard.ps1":  "616fa636356bdfa1dc07aafe573f5aaf3b9a421ee6bbdc4c4404367845564fd7",
-                  "scripts/test-binary-soak.ps1":  "2b705c475bc4db5115a15c28a30ed34b77e71b39278b8b49b1f349184137f341",
+                  "scripts/test-binary-soak.ps1":  "b7fdb0608d5067fd08949295f42c5e329ff204e520d0fffe060b0f84a61bd791",
                   "scripts/upgrade-ghoztty-windows.ps1":  "ab38adaaf6c2eb15e421e90e7b287ae7f98749ae3f62b2ea923185c084d66edc",
                   "scripts/upstream-remote.ps1":  "1eaafbe08c8b98e9520b96cbba2db8799879864d2a5163f0e64277636793cfbc",
                   "scripts/verify-release-clean.ps1":  "ee41494c52f72b6d60caf4ee8750f3fc760ab4330481a7a16c4b4f1d8830c39b",
@@ -405,7 +406,7 @@
                   "test/win32/target-staleness.ps1":  "25c28c99d39716155584ecda6f7a826dae310b3adaad3ae6dbb962c38f7f7d80",
                   "test/win32/task-dashboard.ps1":  "83ae13b22703ef50c7a3abe8fa7f819ffd4534578e9ad231b8975590bd9cc551",
                   "test/win32/terminal-link-paths.ps1":  "f3ba874ca9f97125334319222b41e785a24c9168e6bbb3b78205a1c3bc85b161",
-                  "test/win32/test-binary-soak.ps1":  "d467c64271dcab231f453a2172f51239b8677391948065e16e0b75acf143fbce",
+                  "test/win32/test-binary-soak.ps1":  "30b5cf96c2b3327944009926cb274799a23dd1552d183a9ee6b2127d4a0c51ae",
                   "test/win32/test-client-build.ps1":  "4151eff034e0de3acacf2e176c97702fd757f2c83f863476a115da9dc34e7b2b",
                   "test/win32/test-desktop-harness.ps1":  "0a85fed78368138ff6c9672ca12b46fb57f7110de9e191cdbd52353e0698e1f9",
                   "test/win32/test-desktop-spike.ps1":  "fe210e65c149640f7641882b23be4f13d9ec43be05d0b1347de88576950d7b54",
