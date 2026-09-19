@@ -81,14 +81,21 @@ function Start-FakeRelay {
         # the answer is deferred to a later pass of the loop, never slept on, so
         # every live bridge keeps pumping in the meantime.
         [string]$SlowConnectFile = '',
-        [int]$SlowConnectMs = 1500
+        [int]$SlowConnectMs = 1500,
+        # A one-shot bridge KILL (T859). When this file appears, every LIVE
+        # bridge is closed and the file is deleted, so the next `/connect` is
+        # bridged normally. That is the only way to produce the state the app has
+        # to recover from - the socket its pooled connection rides is gone while
+        # the machine itself is fine - since killing the agent would make the
+        # recovery dial fail too, and tripping the relay would fail every dial.
+        [string]$DropBridgesFile = ''
     )
 
     Remove-Item $LogPath -ErrorAction SilentlyContinue
 
     $job = Start-Job -ScriptBlock {
         param($port, $agentPort, $devicesJson, $logPath, $unauthDev, $deadDev, $tripFile, $tripAuthFile,
-            $slowFile, $slowMs)
+            $slowFile, $slowMs, $dropFile)
 
         function Write-RelayLog([string]$m) {
             Add-Content -Path $logPath -Value ("{0} {1}" -f (Get-Date -Format 'HH:mm:ss.fff'), $m)
@@ -322,6 +329,21 @@ function Start-FakeRelay {
                 Complete-Connect $p
             }
 
+            # The one-shot bridge kill (`-DropBridgesFile`). Consumed by
+            # deleting the file, BEFORE the sweep below, so the sockets are gone
+            # by the time the app's next RPC goes out and the dial it makes in
+            # response is bridged like any other.
+            if ($dropFile -and (Test-Path $dropFile)) {
+                $idle = $false
+                Remove-Item $dropFile -Force -ErrorAction SilentlyContinue
+                foreach ($b in @($bridges)) {
+                    Write-RelayLog "BRIDGE dropped device=$($b.Device)"
+                    try { $b.Client.Close() } catch {}
+                    try { $b.Agent.Close() } catch {}
+                    $bridges.Remove($b)
+                }
+            }
+
             foreach ($b in @($bridges)) {
                 $dead = $false
 
@@ -421,7 +443,7 @@ function Start-FakeRelay {
 
             if ($idle) { Start-Sleep -Milliseconds 5 }
         }
-    } -ArgumentList $Port, $AgentPort, $DevicesJson, $LogPath, $UnauthorizedDevice, $UnreachableDevice, $TripFile, $TripUnauthorizedFile, $SlowConnectFile, $SlowConnectMs
+    } -ArgumentList $Port, $AgentPort, $DevicesJson, $LogPath, $UnauthorizedDevice, $UnreachableDevice, $TripFile, $TripUnauthorizedFile, $SlowConnectFile, $SlowConnectMs, $DropBridgesFile
 
     # Wait for the listener to actually bind before handing the job back: a
     # relay that is not listening yet reads exactly like a relay that is broken.

@@ -240,6 +240,31 @@ pub const Ledger = struct {
         return true;
     }
 
+    /// A BORROWER proved the ready connection unusable — its RPC failed with the
+    /// link closed, or with the transport FSM already past `degraded` (T859).
+    /// Condemn that connection and dial again NOW, bypassing the redial cooldown.
+    /// Returns `.dial` (with the slot and the generation the dial must present
+    /// back) when there was a ready connection to replace, `.hold` otherwise.
+    ///
+    /// Only from `ready`, and only on the CURRENT generation: a slot that is
+    /// already dialing, absent or cooling down holds nothing a borrower can have
+    /// disproved, so the caller reports the failure it already has instead.
+    ///
+    /// Bypassing the cooldown is the point, and it does not weaken it. The
+    /// cooldown exists so an automatic sweep (`ensure`, driven by whatever its
+    /// subscriber already ticks on) cannot become a dial storm. This path is not
+    /// a sweep: it costs one dial per connection PROVEN dead by a call that was
+    /// made over it, and the borrower is single-shot per success. Making it wait
+    /// would only mean showing a list already known to be wrong for 5s longer.
+    pub fn redial(self: *Ledger, k: []const u8, gen: u64) Outcome {
+        const i = self.find(k) orelse return .{ .decision = .hold };
+        if (self.slots[i].leases == 0) return .{ .decision = .hold };
+        if (self.slots[i].generation != gen) return .{ .decision = .hold };
+        if (self.slots[i].phase != .ready) return .{ .decision = .hold };
+        self.slots[i].phase = .dialing;
+        return .{ .decision = .dial, .slot = i, .generation = self.bump(i) };
+    }
+
     /// The live connection stopped being usable (the link went dead). Leaves the
     /// machine retryable after the cooldown, with its LEASES INTACT — the
     /// subscribers still want it, the socket just died. Returns true when there
@@ -391,6 +416,50 @@ test "a dead link keeps the leases and becomes retryable after the cooldown" {
     const redial = l.ensure("relay:r|dev", 15_000);
     try testing.expectEqual(Decision.dial, redial.decision);
     try testing.expect(redial.generation != d.generation);
+}
+
+test "a borrower's proven-dead connection is redialed without waiting out the cooldown" {
+    var l: Ledger = .{};
+    const d = l.acquire("relay:r|dev");
+    try testing.expect(l.dialSucceeded("relay:r|dev", d.generation));
+
+    // T859: a fetch made over this connection proved it gone. `ensure` would
+    // hold for 5s here (the phase is ready, so it would not even be asked);
+    // `redial` goes straight to a fresh dial on a new generation.
+    const again = l.redial("relay:r|dev", d.generation);
+    try testing.expectEqual(Decision.dial, again.decision);
+    try testing.expectEqual(d.slot, again.slot);
+    try testing.expect(again.generation != d.generation);
+    try testing.expectEqual(Phase.dialing, l.phaseOf("relay:r|dev"));
+    // The lease is the chooser's and survives — only the socket was condemned.
+    try testing.expectEqual(@as(usize, 1), l.leaseCount("relay:r|dev"));
+
+    // The dial that follows installs normally.
+    try testing.expect(l.dialSucceeded("relay:r|dev", again.generation));
+    try testing.expectEqual(Phase.ready, l.phaseOf("relay:r|dev"));
+}
+
+test "redial refuses anything but the current ready connection" {
+    var l: Ledger = .{};
+    // Unknown endpoint.
+    try testing.expectEqual(Decision.hold, l.redial("relay:r|dev", 1).decision);
+
+    const d = l.acquire("relay:r|dev");
+    // Mid-dial: there is no connection a borrower could have disproved.
+    try testing.expectEqual(Decision.hold, l.redial("relay:r|dev", d.generation).decision);
+    try testing.expect(l.dialSucceeded("relay:r|dev", d.generation));
+    // A stale generation — the borrower's connection was already replaced.
+    try testing.expectEqual(Decision.hold, l.redial("relay:r|dev", d.generation + 99).decision);
+    // The real one goes through exactly once: the second ask sees `dialing`.
+    try testing.expectEqual(Decision.dial, l.redial("relay:r|dev", d.generation).decision);
+    try testing.expectEqual(Decision.hold, l.redial("relay:r|dev", d.generation).decision);
+
+    // And never for a machine nobody holds.
+    var l2: Ledger = .{};
+    const e = l2.acquire("tcp:h:1");
+    try testing.expect(l2.dialSucceeded("tcp:h:1", e.generation));
+    try testing.expect(l2.release("tcp:h:1"));
+    try testing.expectEqual(Decision.hold, l2.redial("tcp:h:1", e.generation).decision);
 }
 
 test "invalidate is idempotent and never fires mid-dial" {

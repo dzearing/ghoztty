@@ -9,6 +9,77 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-18: T859 closed done — **a dead pooled connection is now replaced by
+  the fetch that discovers it, so the chooser's session list comes back on its
+  own instead of sitting there wrong.**
+
+  The machine chooser borrows a machine's one warm pooled connection to list its
+  sessions (T461). The pool drops a connection when the link FSM says `dead` —
+  and that is the wrong clock for a socket that went away. A reader EOF drives
+  `onTransportError`, which moves the FSM to `reconnecting`
+  (`connection.zig:3639`); `dead` is the end of the heartbeat backoff, minutes
+  later. So a pooled connection whose socket died stayed INSTALLED, and every
+  roster fetch in between borrowed it, failed, and left the region showing a list
+  already known to be wrong. That is what this card called polish and it is not:
+  the recovery path had no trigger the fetch could pull.
+
+  It has one now. The fetch reports what it DISPROVED — `Result.dead_entry`
+  carries the pooled `Entry.id` whose RPC failed — and the GUI thread calls
+  `MachineConnectionPool.redialNow`, which condemns that exact entry and starts
+  the pool's own dial at once, bypassing the 5s redial cooldown that `ensure`
+  honours. The refetch then arrives through the ordinary lease notification, with
+  nothing new in that path. From the user's side the list simply comes back.
+
+  Three decisions worth recording, all mechanism (go.md 5b: my call, not the
+  user's). **The worker does not dial.** T328 tried a retry-on-fresh-dial inside
+  the worker and wedged it; T510 has since bounded every dial phase, so it would
+  be safe now — but it is still wrong. A connection made in the worker heals one
+  fetch and leaves the dead entry installed for the next, re-paying a relay
+  upgrade per fetch, which is the cost T461 existed to remove. The pool owns
+  dialing; the borrower only reports. **What counts as proof:**
+  `error.ConnectionClosed` (the connection's own machinery failed the caller), or
+  the FSM already past `degraded`. A plain `error.Timeout` over a `connected`
+  link does NOT count — heartbeats are answered by the reader thread, not by
+  session logic, so a slow or wedged agent (T1589) keeps a healthy link, and
+  condemning it would tear down the one connection every borrower on that machine
+  shares over a call that was only slow. **One dial, never a storm:** two
+  independent brakes, the roster being single-shot until a roster lands
+  (`SessionRoster.redialed`) and the ledger's `redial` only ever replacing a
+  `ready` connection on its current generation, so a machine that accepts and
+  closes immediately cannot be chased.
+
+  The recovery is NOT gated on the region's state, and that is the bug the first
+  draft had: `adopt` keeps `loaded` when a failed fetch lands over rows already on
+  screen, because a stale list beats a blank region — and that stale list is the
+  symptom. The policy reads `dead_entry`, which only a failed RPC sets.
+
+  Evidence: section G of `test\win32\chooser-conn-pool.ps1` — ALL PASS (26
+  assertions) with all 7 new assertions green, and a negative control that
+  disables the single `retryDeadPool` call turns 4 of the 7 red (condemn, pool
+  dial, roster-came-back, dial-count). `floor-lane.ps1 -Lane all` ALL LANES PASS.
+  Standalone and green on this box because `FakeRelay.ps1` is in their guard
+  coverage: `chooser-sessions-remote` (20) and its `-NegativeControl` (13),
+  `chooser-resume-remote` (40), `activity-monitor-dialed` (44),
+  `remote-reconnect-relay` (12), `chooser-controls` (54), `chooser-modeless`
+  (22), `chooser-orphan-badge` (17), `chooser-resume` (29), `chooser-selection`
+  (35), `window-active-audit` (16).
+
+  Two surprises, both about the harness rather than the product. The interrupted
+  turn left a 10-script acceptance batch running in the background; this turn
+  started its own scripts on top of it and three of the batch's verdicts came
+  back red that were ALL PASS standalone minutes later — a turn boundary can see
+  stranded FILES but not a stranded RUN, filed as **T1658**. And
+  `floor-lane.ps1 -Lane harness` now hits its own 1800s wall-clock cap after
+  every audit has already reported (the 29-audit sweep is ~24 minutes), so the
+  documented wrapper path prints FLOOR NOT GREEN over a completed suite — filed
+  as **T1657**; the guard row's own command, `scripts\harness-floor.ps1`, has no
+  cap and is what stamped here. The floor's one non-pending red, test-reach-audit
+  via the ViewerPane host-floor WebView2 test, is the known load-only flake
+  T1645 and another occurrence is journaled there.
+
+  Filed: T1657, T1658 (and T1659, closed immediately as a duplicate of T1645 —
+  the `SIMILAR:` block named it).
+
 - 2026-09-18: T849 closed done — **the loop can now get itself going again when
   the terminal window it was working in has closed.**
 

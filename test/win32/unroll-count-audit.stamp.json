@@ -1,11 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-09-18T16:43:26-07:00",
-    "commit":  "dfd301848",
+    "generated":  "2026-09-18T19:25:26-07:00",
+    "commit":  "39a1007b3",
     "uncommitted":  [
-                        "scripts/test-binary-soak.ps1",
-                        "test/win32/test-binary-soak.ps1"
+                        "test/win32/chooser-conn-pool.ps1",
+                        "test/win32/lib/FakeRelay.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -116,7 +116,7 @@
                   "test/win32/caller-anchor.ps1":  "81cb4dd79a7168195352d3006a6f8247c199237458b2a25a040567940e8c83b4",
                   "test/win32/caption-bar.ps1":  "35741eff2030b10da24130dcac8e8bfc7f7c9e73a853ddf25af11bda63d42d02",
                   "test/win32/chooser-close-chord.ps1":  "a3013aa41320b1c764f5a63df64068b651174f761e486dbddb52da672b3b711a",
-                  "test/win32/chooser-conn-pool.ps1":  "432ccae3f5710b76b73d24ce49fd5b69e9ef4039e053cb42e20bcde28fff5d0f",
+                  "test/win32/chooser-conn-pool.ps1":  "f9f574dd490ad406f5e76cf010dae9b21472641218f121449360c4f08d353fbd",
                   "test/win32/chooser-controls.ps1":  "69a8d25a53eba9af41871bfebc202b015c83baebe4df8caa8a33ad7cb991a7d5",
                   "test/win32/chooser-kill-hover.ps1":  "c4d65e3d549b4be314cb58a4fd445b0d3d1981417ee9af1600bc551fb95e2ec5",
                   "test/win32/chooser-link-hover.ps1":  "48e4e10db2db05a12a32a073d57bd60e7e7b3f3297a4f1c58a5c897497dd5f48",
@@ -268,7 +268,7 @@
                   "test/win32/lib/DesktopLaunchAudit.ps1":  "6a520668a22c54f4c5163d5efe9fb3a01bdb8568d60f6cfa5366a1fb2edad86f",
                   "test/win32/lib/ExitCodeAudit.ps1":  "c6aa6eb8adbe8d682bdacc2a0034e4accf17ee1790b5867a856de3105ba6806c",
                   "test/win32/lib/FakeAgentRelay.ps1":  "75beb6bffdb603e237860dc7bcbda4cfc41ace110f7f12b13777395244c232c7",
-                  "test/win32/lib/FakeRelay.ps1":  "e30d00b4c6d6d58bbdc23d82fa76b586a84143111b8d00bcd5a7777736088075",
+                  "test/win32/lib/FakeRelay.ps1":  "c1d824a5de199369521042d5eadb2ca0c879b55d92104b709c98d17b880eee26",
                   "test/win32/lib/FixedPortAudit.ps1":  "5b8eae57bc3afba34e185140098cce1509f5a3ebca7d5e67d59f1c6d2ad21212",
                   "test/win32/lib/FloorFixture.ps1":  "d2becd0816d1623fc18be994609fcbc22a6fd165fd19656c50f67abe86538155",
                   "test/win32/lib/ForegroundAudit.ps1":  "e80293089d7cf2659d5877eba17ce8e511ebd12ba2a7f0f81a26bc0b5a2661a2",

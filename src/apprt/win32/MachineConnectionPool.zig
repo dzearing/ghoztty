@@ -330,6 +330,44 @@ pub fn ensureConnected(self: *MachineConnectionPool, hwnd: w32.HWND, ep: machine
     if (out.decision == .dial) self.startDial(hwnd, out.slot, out.generation);
 }
 
+/// A borrower found the warm connection unusable: a call it made over `entry_id`
+/// failed with the link closed or the transport already past `degraded`. Condemn
+/// THAT connection and dial a fresh one immediately, bypassing the redial
+/// cooldown (T859). Returns true when a dial was started.
+///
+/// `entry_id` is what makes this safe to call from a reply that was in flight:
+/// the entry the borrower used may already be gone — the link handler condemned
+/// it, the machine was re-dialed, another borrower got here first — and in every
+/// one of those cases this is a no-op rather than a second dial.
+///
+/// Deliberately does NOT notify the leases that the machine went offline. It did
+/// not: it is being re-dialed, and the answer to "is it reachable" arrives from
+/// the dial a moment later (`onDialed` notifies either way). Saying `offline`
+/// first would flash an error card over a region that is about to be refetched.
+pub fn redialNow(
+    self: *MachineConnectionPool,
+    hwnd: w32.HWND,
+    ep: machine_pool.Endpoint,
+    entry_id: u64,
+) bool {
+    if (comptime builtin.os.tag != .windows) return false;
+    var kbuf: [machine_pool.max_key]u8 = undefined;
+    const k = machine_pool.key(&kbuf, ep) orelse return false;
+    const slot = self.ledger.find(k) orelse return false;
+    const entry = self.entries[slot] orelse return false;
+    if (entry.id != entry_id) return false;
+    const gen = self.ledger.generationOf(k) orelse return false;
+    const out = self.ledger.redial(k, gen);
+    if (out.decision != .dial) return false;
+    log.info(
+        "machine pool: a borrower proved the warm connection dead {s} entry={d}; redialing",
+        .{ k, entry_id },
+    );
+    self.freeEntry(slot);
+    self.startDial(hwnd, out.slot, out.generation);
+    return true;
+}
+
 /// Borrow the machine's warm connection for a BLOCKING call, or null when it has
 /// none. The returned entry carries a reference the caller MUST give back with
 /// `Entry.release()` — from any thread, whenever the call is done.

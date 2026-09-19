@@ -35,6 +35,11 @@
 #      still pass and E could not.
 #   F  arrowing AWAY from the machine and back also re-dials (same policy as D,
 #      measured while one chooser stays open)
+#   G  T859: a pooled connection that DIED is condemned by the fetch that
+#      discovered it, redialed at once, and the roster comes back on its own.
+#      The relay drops the live bridge without touching the agent, so the
+#      machine is fine and only the socket is gone - the state the pool used to
+#      sit on until the heartbeat backoff eventually declared the link dead.
 #
 # T211/T217: runs on a BACKGROUND Win32 desktop and never takes the user's
 # foreground. T248: the repo's agent and app are killed at setup and the app is
@@ -136,9 +141,10 @@ $devicesJson = '{"devices":[' +
 $errlog = Join-Path $env:TEMP "ghoztty-t461-stderr-$PID.log"
 $relaylog = Join-Path $env:TEMP "ghoztty-t461-relay-$PID.log"
 $agentlog = Join-Path $env:TEMP "ghoztty-t461-agent-$PID.log"
+$dropFile = Join-Path $env:TEMP "ghoztty-t461-drop-$PID.flag"
 $tmp = Join-Path $env:TEMP "ghoztty-t461-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
-Remove-Item $errlog, $relaylog -ErrorAction SilentlyContinue
+Remove-Item $errlog, $relaylog, $dropFile -ErrorAction SilentlyContinue
 
 Write-Host 'T461 machine connection pool - one dial per machine, not per fetch'
 Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
@@ -165,7 +171,7 @@ try {
     Write-Host "  OK   remote agent pid=$($script:agent.Id) on 127.0.0.1:$AgentPort"
 
     $script:relay = Start-FakeRelay -Port $RelayPort -AgentPort $AgentPort `
-        -DevicesJson $devicesJson -LogPath $relaylog
+        -DevicesJson $devicesJson -LogPath $relaylog -DropBridgesFile $dropFile
     if (-not (Select-String -Path $relaylog -Pattern 'LISTEN' -Quiet)) {
         Write-TestAssertedNothing -Reason 'the fake relay never listened'
     }
@@ -247,9 +253,58 @@ try {
     Assert ((Count-LogLines $errlog "machine pool: warm connection ready relay:.*\|$DEV") -eq 1) `
         'C the pool still reports exactly one warm connection for it'
 
+    # --- G: a pooled connection that died is replaced, not sat on (T859) ---
+    Write-Host ''
+    Write-Host '3. a dead pooled connection is condemned and redialed on the spot'
+    # Drop the bridge the app's pooled connection rides. The agent is untouched,
+    # so the machine still has its session to list - which is what makes the
+    # recovery measurable: a roster that comes back could only have come back
+    # over a NEW connection.
+    New-Item -ItemType File -Path $dropFile -Force | Out-Null
+    $dropped = $false
+    for ($i = 0; $i -lt 40; $i++) {
+        if (Count-LogLines $relaylog "BRIDGE dropped device=$DEV") { $dropped = $true; break }
+        Start-Sleep -Milliseconds 250
+    }
+    Assert $dropped 'G the relay dropped the live bridge (fixture control)'
+    $dialsBeforeHeal = Count-RelayConnects $relaylog $DEV
+    $loadsBeforeHeal = Count-LogLines $errlog "chooser roster: loaded \d+ session.*device=$DEV"
+    $poolDialsBeforeHeal = Count-LogLines $errlog "machine pool: dialing relay:.*\|$DEV"
+
+    # One refetch over the dead connection. Its RPC is what discovers the death
+    # (up to the roster's 5s RPC timeout), so everything after it is generous.
+    Send-TestControlKey -Control $chooser -Key Down | Out-Null
+    $condemned = Wait-LogCount $errlog 'chooser roster: the pooled connection was gone; redialing' 1 20000
+    Assert $condemned 'G the fetch that failed over it condemned the connection'
+    Assert ((Count-LogLines $errlog 'machine pool: a borrower proved the warm connection dead') -ge 1) `
+        'G the pool agreed and dialed a fresh one'
+    $healed = Wait-LogCount $errlog "chooser roster: loaded \d+ session.*device=$DEV" ($loadsBeforeHeal + 1) 25000
+    Assert $healed 'G the roster came back by itself, with nobody clicking anything'
+    $dialsAfterHeal = Wait-RelaySettled $relaylog $DEV
+    # The independent half: the relay really saw a new socket for this device.
+    # NOT an equality here, deliberately - the drop also kills the bridge the
+    # remote WINDOW rides, and its own reconnect dials the same device through
+    # the same relay, so the relay's count carries traffic this section is not
+    # about. Which also means this assertion is a WITNESS, not the
+    # discriminator: it passes at delta 1 against an unwired build (measured),
+    # on that reconnect alone. The four assertions that go red there are the
+    # condemn, the pool's dial, the roster coming back, and the count below.
+    Assert (($dialsAfterHeal - $dialsBeforeHeal) -ge 1) `
+        "G the relay saw the fresh socket (delta $($dialsAfterHeal - $dialsBeforeHeal))"
+    # The exactly-one claim is made where it belongs: the POOL's dials for this
+    # machine. One per proven-dead connection, never a storm - the roster's
+    # single-shot flag and the pool's `ready`-only redial are both in this number.
+    Assert ((Count-LogLines $errlog "machine pool: dialing relay:.*\|$DEV") -eq ($poolDialsBeforeHeal + 1)) `
+        'G and the pool dialed exactly once to recover'
+    Assert (Test-TestWindowResponsive -Window $chooser) `
+        'G the chooser is not wedged - the retry dial never parked its worker'
+    # Re-baseline for the sections below, which measure deltas.
+    $afterRefetch = $dialsAfterHeal
+    $loadsAfter = Count-LogLines $errlog "chooser roster: loaded \d+ session.*device=$DEV"
+
     # --- F: leaving the machine gives the socket back ----------------------
     Write-Host ''
-    Write-Host '3. arrowing away and back re-dials (a browse holds one machine, not all of them)'
+    Write-Host '4. arrowing away and back re-dials (a browse holds one machine, not all of them)'
     Send-TestControlKey -Control $chooser -Key Up | Out-Null
     Start-Sleep -Milliseconds 800
     Assert ((Count-LogLines $errlog 'machine pool: last lease released') -ge 1) `
@@ -262,7 +317,7 @@ try {
 
     # --- D: the chooser closing takes the connection with it ---------------
     Write-Host ''
-    Write-Host '4. closing the chooser drops the connection'
+    Write-Host '5. closing the chooser drops the connection'
     $releasesBefore = Count-LogLines $errlog 'machine pool: last lease released'
     Send-TestControlKey -Control $chooser -Key Escape | Out-Null
     Start-Sleep -Milliseconds 800
@@ -272,7 +327,7 @@ try {
 
     # --- E: the control that makes C a result rather than a silence --------
     Write-Host ''
-    Write-Host '5. a second chooser dials again - the pool did not just stop dialing'
+    Write-Host '6. a second chooser dials again - the pool did not just stop dialing'
     $chooser2 = [IntPtr]::Zero
     foreach ($try in 1..3) {
         if (Send-TestKeys -Window $top -Target $surface -Modifiers ctrl, shift -Key N) {
@@ -305,6 +360,7 @@ try {
     Stop-RepoProcesses
     Remove-TestDesktop
     Remove-Item 'env:GHOSTTY_AGENT_LOCK' -ErrorAction SilentlyContinue
+    Remove-Item $dropFile -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host ''

@@ -2115,6 +2115,14 @@ pub fn onSessions(app: *App, res: *SessionRoster.Result) void {
                 // roster is showing, and how many finished sessions it hid.
                 chooser.roster.logListed(app);
             }
+            // T859: the fetch may have discovered that the machine's pooled
+            // connection is gone. Condemning it and dialing a fresh one happens
+            // AFTER the adopt, so a roster that landed anyway still counts as a
+            // success and re-arms the single shot. Deliberately NOT gated on the
+            // region's state: a failed fetch over a roster already on screen
+            // keeps `loaded` (showing the last known list beats blanking it),
+            // and that stale list is the very symptom this recovers from.
+            chooser.roster.retryDeadPool(app, res.dead_entry);
             chooser.refreshSessions();
             // The session count in the identity subtitle lives in the band
             // (T602) and just changed with the roster.

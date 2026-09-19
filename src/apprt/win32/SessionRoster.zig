@@ -102,6 +102,13 @@ owned: ?remote_connection.OwnedSessions = null,
 /// chooser has moved on — and is freed rather than adopted.
 serial: u64 = 0,
 inflight: bool = false,
+/// Whether this roster has already condemned a pooled connection and asked for a
+/// fresh dial since the last roster it managed to load (T859). The retry is
+/// SINGLE-SHOT for exactly the reason it is allowed to skip the pool's redial
+/// cooldown: one dial per proven-dead connection is a recovery, and an
+/// unbounded chain of them — dial, RPC, die, dial — is a dial storm. Cleared by
+/// a fetch that lands, so a machine that comes back is recoverable again.
+redialed: bool = false,
 scroll: i32 = 0,
 /// Index (into the VISIBLE rows) whose Kill button is under the pointer, or -1.
 hover_kill: i32 = -1,
@@ -201,6 +208,10 @@ const Request = struct {
     /// set for a REMOTE target: the local machine's layout view is the on-disk
     /// manifest, which costs no RPC at all.
     want_layouts: bool = false,
+    /// `entry`'s pool-wide id, carried by VALUE so the reply can name the
+    /// connection this fetch actually used (T859) without dereferencing an entry
+    /// the pool may have dropped in the meantime. Zero for a local fetch.
+    entry_id: u64 = 0,
 
     fn destroy(self: *Request) void {
         if (self.kill_id) |k| self.alloc.free(k);
@@ -222,6 +233,10 @@ pub const Result = struct {
     /// not asked for or did not land. A failed pull is not a failed fetch: the
     /// rows are still worth showing, they just cannot name their windows.
     layouts: ?layout_blobs.Decoded = null,
+    /// The POOLED connection this fetch proved unusable, by id (T859), or zero
+    /// when the fetch either worked or failed for a reason that says nothing
+    /// about the transport. `retryDeadPool` is what acts on it.
+    dead_entry: u64 = 0,
 
     pub fn destroy(self: *Result) void {
         if (self.roster) |*r| r.deinit();
@@ -286,6 +301,8 @@ fn clear(self: *SessionRoster) void {
     // on every highlight move, `MachineChooserView.swift:1328`).
     self.cursor_id_len = 0;
     self.killed_count = 0;
+    // A different machine's dead connection is not this one's (T859).
+    self.redialed = false;
     // Bump the serial so a reply already in flight for the OLD machine is
     // dropped instead of adopted under the new machine's name.
     self.serial +%= 1;
@@ -360,6 +377,7 @@ pub fn fetch(
         };
         if (app.machine_pool.borrow(ep)) |entry| {
             req.entry = entry;
+            req.entry_id = entry.id;
             req.warm = entry.conn();
         } else {
             // Not warm. The pool is already dialing (the chooser's lease started
@@ -413,6 +431,9 @@ fn worker(req: *Request) void {
     var killed_ok: ?bool = null;
     var roster: ?remote_connection.OwnedSessions = null;
     var layouts: ?layout_blobs.Decoded = null;
+    // The pooled connection this fetch disproved, reported back so the GUI
+    // thread can condemn it and redial (T859).
+    var dead_entry: u64 = 0;
     if (conn) |c| {
         if (req.kill_id) |id| {
             killed_ok = c.closeSession(id, rpc_timeout_ns) catch |err| ok: {
@@ -425,6 +446,7 @@ fn worker(req: *Request) void {
         }
         roster = c.requestSessions(rpc_timeout_ns) catch |err| r: {
             log.warn("chooser roster: LIST_SESSIONS failed err={}", .{err});
+            if (req.entry_id != 0 and connectionGone(c, err)) dead_entry = req.entry_id;
             break :r null;
         };
         // T1296: the machine's own layout view, on the same connection and the
@@ -443,6 +465,15 @@ fn worker(req: *Request) void {
             }
         }
     }
+    // T859 (resolved, and the mechanism is above): a pooled connection that
+    // died is now CONDEMNED by the fetch that discovered it — `dead_entry` names
+    // it, `retryDeadPool` asks the pool to replace it, and the pool's own dial
+    // (bounded end to end since T510) is the fresh one the retry rides. The
+    // worker deliberately does not dial anything itself: the pool owns dialing,
+    // so a connection made here would heal this one fetch and leave the dead
+    // entry installed for the next one, re-paying a relay upgrade every time —
+    // the exact cost T461 removed.
+    //
     // T328 (resolved): a Kill on a REMOTE row used to lose its connection here
     // — both RPCs came back `error.ConnectionClosed`/`error.Timeout` — but the
     // defect was never in this worker: the agent's per-connection push pumps
@@ -468,11 +499,37 @@ fn worker(req: *Request) void {
         .roster = roster,
         .killed_ok = killed_ok,
         .layouts = layouts,
+        .dead_entry = dead_entry,
     };
     if (w32.PostMessageW(req.hwnd, WM_APP_CHOOSER_SESSIONS, @intFromPtr(res), 0) == 0) {
         // The app is going away; nothing will ever collect this.
         res.destroy();
     }
+}
+
+/// Worker thread: does a failed RPC say the CONNECTION is gone, or only that the
+/// agent did not answer this call (T859)?
+///
+/// Two ways to be sure, and nothing else counts:
+///
+///   * `error.ConnectionClosed` — the connection's own machinery failed the
+///     caller because it is shutting down (`failPendingRpcs`). Proof.
+///   * the link FSM has moved past `degraded` — `reconnecting` is 3 missed
+///     heartbeats or a transport error (§5.1), `dead` is terminal. Both are the
+///     TRANSPORT reporting itself broken, which is what distinguishes a dropped
+///     socket from a busy agent.
+///
+/// `error.Timeout` on a `connected` or `degraded` link is deliberately NOT
+/// enough: heartbeats are answered by the reader thread, not by session logic,
+/// so an agent that is merely slow (or wedged — T1589) keeps its link healthy,
+/// and condemning that connection would tear down the one warm link every
+/// borrower on this machine shares over a call that was only slow.
+fn connectionGone(c: *remote_connection.Connection, err: anyerror) bool {
+    if (err == error.ConnectionClosed) return true;
+    return switch (c.state()) {
+        .connected, .degraded => false,
+        .reconnecting, .reattaching, .dead => true,
+    };
 }
 
 /// GUI thread: take ownership of a landed fetch. Returns true when it was
@@ -499,6 +556,9 @@ pub fn adopt(self: *SessionRoster, res: *Result) bool {
         self.owned = r;
         res.roster = null; // adopted
         self.state = .loaded;
+        // A landed roster re-arms the T859 retry: whatever went wrong before is
+        // over, so the NEXT dead connection gets its own single shot.
+        self.redialed = false;
         self.pruneKilled();
         // The acceptance oracle: an owner-drawn roster has no HWNDs to read
         // back, so what it LOADED is said out loud (T318) — WITH the machine it
@@ -582,6 +642,53 @@ pub fn adoptPushed(self: *SessionRoster, roster: remote_connection.OwnedSessions
         self.targetDevice(),
     });
     return true;
+}
+
+/// Whether a landed failure should condemn its pooled connection and redial
+/// (T859). Pure, so the policy is readable and testable without an App or a
+/// pool: the answer is yes exactly when this fetch DISPROVED the pooled
+/// connection it used, over a remote machine we are still looking at, and we
+/// have not already spent this roster's one shot.
+///
+/// A non-zero `dead_entry` already means the fetch failed — the worker sets it
+/// only where `requestSessions` returned an error — so the region's own state is
+/// deliberately not consulted. It could not be: a failed fetch over rows that
+/// are already on screen stays `loaded` (`adopt` keeps the last known list
+/// rather than blanking it), and that stale list is the symptom.
+fn shouldRedial(self: *const SessionRoster, dead_entry: u64) bool {
+    if (dead_entry == 0) return false;
+    if (self.target != .remote) return false;
+    if (self.redialed) return false;
+    return true;
+}
+
+/// GUI thread: a fetch came back empty over a pooled connection it proved dead.
+/// Condemn that connection and dial a fresh one NOW, so the region recovers by
+/// itself instead of showing a list known to be wrong until the user clicks
+/// somewhere else (T859).
+///
+/// Why this is the roster's job and not the pool's: the pool learns a connection
+/// died from the link FSM, and a dropped socket only reaches `dead` after the
+/// heartbeat backoff has run out — minutes, on a link nothing else is using. The
+/// fetch knows in one RPC. So the borrower reports, the pool decides and dials,
+/// and the roster refetches when the lease notification says the machine is warm
+/// again — the ordinary `onPoolChange` path, with nothing new in it.
+pub fn retryDeadPool(self: *SessionRoster, app: *App, dead_entry: u64) void {
+    if (comptime builtin.os.tag != .windows) return;
+    if (!self.shouldRedial(dead_entry)) return;
+    const ep = self.endpoint() orelse return;
+    const msg_hwnd = app.msg_hwnd orelse return;
+    if (!app.machine_pool.redialNow(msg_hwnd, ep, dead_entry)) return;
+    self.redialed = true;
+    log.info(
+        "chooser roster: the pooled connection was gone; redialing device={s}",
+        .{self.targetDevice()},
+    );
+    // Not `failed`: the machine is being re-dialed, and `adopt` only reached for
+    // that state because this fetch's RPC failed. Saying so would paint an error
+    // card for the second it takes the dial to answer — and if it cannot, the
+    // pool's own notification writes the failure with a better reason.
+    if (self.owned == null) self.state = .loading;
 }
 
 /// This roster's pool endpoint, or null when there is nothing poolable to name:
@@ -1823,6 +1930,61 @@ test "a machine change still resets the offset" {
     try testing.expectEqual(@as(i32, 0), roster.scroll);
     try testing.expect(!roster.hasCursor());
     try testing.expectEqual(@as(i32, -1), roster.hover_kill);
+}
+
+test "a fetch that disproved its pooled connection asks for one redial (T859)" {
+    const alloc = testing.allocator;
+    var roster: SessionRoster = .init(alloc);
+    defer roster.deinit();
+    roster.target = .{ .remote = "dev-remote" };
+
+    // The shape the worker reports: no roster, and the id of the pooled
+    // connection whose RPC proved it gone.
+    try testing.expect(roster.shouldRedial(42));
+
+    // Single-shot until something lands. `retryDeadPool` sets the flag after the
+    // pool agrees; the policy's job is to refuse the second ask.
+    roster.redialed = true;
+    try testing.expect(!roster.shouldRedial(42));
+
+    // A landed roster re-arms it — a machine that came back is recoverable again.
+    // Note what this state also is: rows on screen, `state == .loaded`. The next
+    // failed fetch keeps both (a stale list beats a blank region) and must STILL
+    // be able to condemn the connection it failed over, which is why the policy
+    // reads `dead_entry` and never the region's state.
+    var res: Result = .{
+        .alloc = alloc,
+        .chooser_id = 1,
+        .serial = roster.serial,
+        .roster = try testSessions(alloc, 2),
+    };
+    defer if (res.roster) |*r| r.deinit();
+    try testing.expect(roster.adopt(&res));
+    try testing.expect(!roster.redialed);
+    try testing.expect(roster.shouldRedial(42));
+}
+
+test "nothing is condemned for a fetch that said nothing about its transport (T859)" {
+    const alloc = testing.allocator;
+    var roster: SessionRoster = .init(alloc);
+    defer roster.deinit();
+
+    // A failure the worker did not classify as connection-shaped (a slow agent's
+    // `error.Timeout` over a healthy link) carries no entry id, so there is
+    // nothing to condemn.
+    roster.target = .{ .remote = "dev-remote" };
+    try testing.expect(!roster.shouldRedial(0));
+
+    // And the LOCAL target never has a pooled connection to replace: its
+    // connection is `LocalAgent`'s, for the app's life.
+    roster.target = .local;
+    try testing.expect(!roster.shouldRedial(42));
+
+    // A machine change drops the armed state with the rows it belonged to.
+    roster.target = .{ .remote = "dev-remote" };
+    roster.redialed = true;
+    roster.clear();
+    try testing.expect(!roster.redialed);
 }
 
 test "sortRows: the displayed order follows the active column, ties by name then id" {
