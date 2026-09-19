@@ -32534,3 +32534,30 @@ reproduced on the box. Restored and green again at 34 assertions, with F1-F4
 One follow-up filed: T1667, because `bare_shells_without_integration` and the
 agent's `windowsCommandArgs` are now a hand-kept PAIR that must agree, and
 nothing checks that they do.
+
+## 2026-09-19 - T882: the chooser-resume orphan fixture was already repaired
+
+T882 (filed 2026-08-16) said `test/win32/chooser-resume.ps1` still built its
+"orphaned live session" the pre-T194 way -- kill the app, delete
+`session-layout-debug.json`, relaunch -- and that T194's agent-side layout store
+re-attached the sessions anyway, so the fixture yielded zero orphans. The
+CHECK FIRST prompt was right to fire: 622cdf9e1 (T620) landed the same day and
+fixed exactly that, by setting `GHOZTTY_RESTORE_SKIP` on the relaunch and
+asserting the seam engaged, so a future launch-order change fails on the seam
+line instead of three asserts later. The card's other ask is satisfied too --
+`scripts/guard-due.ps1` has carried a `chooser-resume` row (and a separate
+`chooser-resume-remote` one) for some time, and this turn's claim reported it
+GUARD CURRENT.
+
+On this shape the test IS the deliverable, so the harness was run rather than
+taken on the stamp's word: ALL PASS (29 assertions) against a debug win32 build,
+with the orphan fixture, the dead-tombstone section and the positive control all
+green. Both validation criteria are ticked from that run.
+
+One follow-up filed: T1668. Three `GUI POSTMORTEM ... CRASHED - 0xFFFFFFFF
+unnamed NTSTATUS` blocks print under that ALL PASS verdict, one per app process
+the script deliberately force-kills. `Stop-Process -Force` exits -1, the high bit
+is set, and `ConvertTo-GuiExitVerdict` reads every high-bit exit as an unhandled
+exception. Report-only today, but it teaches readers that CRASHED blocks are
+normal -- and the T1511 family is making GUI scripts refuse a crashed run as
+proof, at which point it becomes a false FAIL.
