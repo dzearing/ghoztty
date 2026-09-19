@@ -264,6 +264,30 @@ function Stop-RepoGhoztty {
     return $stopped.Count
 }
 
+function Get-DebugSessionLayoutPath {
+    <#
+    .SYNOPSIS
+    Where the DEBUG build writes its session-layout manifest right now, or $null
+    when there is no LOCALAPPDATA to derive it from.
+
+    .DESCRIPTION
+    T1663: the derivation was inlined in the one function that DELETED the file.
+    A script that wants to READ it - to know the layout has actually been
+    persisted before it kills the app - had to re-derive it, and a second copy
+    of "-debug, plus the lineage suffix" is exactly the kind of drift the
+    lineage rule below exists to prevent. One copy, here; the clear uses it too.
+    #>
+    $local = $env:LOCALAPPDATA
+    if (-not $local) { return $null }
+    # T691: and only ever THIS lineage's file. The manifest follows
+    # GHOZTTY_AGENT_INSTANCE the way the agent's state dir does
+    # (src\apprt\win32\session_layout.zig `layoutPath`), so under a lineage the
+    # unsuffixed one describes somebody else's windows.
+    $inst = Get-GhozttyAgentLineage
+    $stem = if ($inst) { "session-layout-debug-$inst" } else { 'session-layout-debug' }
+    return (Join-Path $local (Join-Path 'ghoztty' "$stem.json"))
+}
+
 function Clear-DebugSessionLayout {
     <#
     .SYNOPSIS
@@ -279,15 +303,8 @@ function Clear-DebugSessionLayout {
     # (Clear-TestWindowPlacement in lib\TestDesktop.ps1, T267) rather than
     # here, because every GUI script goes through Start-OnTestDesktop while
     # only some dot-source this file. One copy, in the file that launches.
-    $local = $env:LOCALAPPDATA
-    if (-not $local) { return $false }
-    # T691: and only ever THIS lineage's file. The manifest follows
-    # GHOZTTY_AGENT_INSTANCE the way the agent's state dir does
-    # (src\apprt\win32\session_layout.zig `layoutPath`), so under a lineage the
-    # unsuffixed one describes somebody else's windows.
-    $inst = Get-GhozttyAgentLineage
-    $stem = if ($inst) { "session-layout-debug-$inst" } else { 'session-layout-debug' }
-    $path = Join-Path $local (Join-Path 'ghoztty' "$stem.json")
+    $path = Get-DebugSessionLayoutPath
+    if (-not $path) { return $false }
     if (-not (Test-Path $path)) { return $false }
     Remove-Item $path -Force -ErrorAction SilentlyContinue
     return (-not (Test-Path $path))

@@ -9,6 +9,59 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-19: T1663 closed done — **the session-restore test waits for the
+  layout to be saved before it kills the app.**
+
+  `test\win32\persistence-flag.ps1` section C had been reporting that a relaunch
+  restores nothing at all (`got -1 panes`), which reads as session persistence
+  being dead — the feature the whole `ghoztty-agent` exists to provide. It was
+  not. The script killed its fixture app inside the app's own 250 ms layout
+  debounce (`App.markLayoutDirty`, and every further mutation RESTARTS that
+  timer), with a `Stop-Process -Force` that gives no shutdown flush. The failing
+  run's `app1.err.txt` carries **zero** `session-layout sync` lines and the
+  manifest never held `t158-pair`, so the relaunch correctly restored nothing:
+  C2 was measuring a fixture that was never saved. That also disposes of the
+  card's own most interesting fact — the red appeared across a commit range
+  containing only tracker and PowerShell changes, and a pure-docs range cannot
+  cause a product regression. A ~300 ms poll racing a 250 ms debounce is a coin
+  toss the box's speed decides, which is why it was green on 09-18 and red on
+  09-19.
+
+  The fix is in the harness. `C1d` now asserts the fixture is on DISK before the
+  kill (`Wait-Persisted` / `Get-PersistedLeafCount` poll the manifest for the
+  two leaves), so a write that stops happening fails there, naming the fixture,
+  instead of three assertions later as a restore that did nothing. `C3a` is no
+  longer vacuous: "nothing came back with persistence off" only counts as the
+  flag working if C2 proved something would have come back without it, so it
+  ANDs in C2's result. And the manifest path has one owner —
+  `Get-DebugSessionLayoutPath` in `test\win32\lib\CleanSlate.ps1`, the `-debug`
+  stem plus the T691 lineage suffix, in the file that already knew how to delete
+  it.
+
+  Validated: `persistence-flag.ps1` **ALL PASS (29)** on a freshly rebuilt Debug
+  `zig-out`; a `GHOZTTY_RESTORE_SKIP=1` negative control makes the new `C3a`
+  FAIL where the old assertion passed, which is the demonstration that the
+  non-vacuous version has teeth; `floor-lane -Lane harness` →
+  `HARNESS FLOOR: ALL PASS (29 audits, 2 PENDING)` with `persistence-flag.ps1`
+  green and its `$HARNESS_FLOOR_PENDING` entry removed; `floor-lane -Lane all` →
+  ALL LANES PASS; P1/P2/P3 all green; `harness-floor.ps1`,
+  `harness-process-leak.ps1` and `agent-lineage-suites.ps1` re-run and stamped
+  for the `CleanSlate.ps1` edit.
+
+  The restore was also checked BY HAND, which took two attempts and the second
+  is the point. Closing the windows one at a time is **not** the gesture that
+  should restore anything — that is the user saying they do not want them back,
+  and it correctly persists nothing. The gesture that should is **ctrl+shift+q**,
+  the win32 `quit` binding, which leaves the windows open and goes out through
+  the teardown flush. With a two-pane window, isolated endpoints, and the first
+  app confirmed gone afterwards (0 windows, `+list` answering `-1`, so the
+  relaunch cannot be reading the old process), both panes come back.
+
+  Left for somebody else, as the card asked: **T1491** is about section **A** of
+  this same script, and section A is green now (`0 undeclared of 309`). It looks
+  already-fixed — close it naming the commit that actually fixed it and land the
+  validation it was owed, rather than folding it into this one.
+
 - 2026-09-19: T861 closed done — **every status change in the tracker now names
   who made it, even when nobody said.**
 

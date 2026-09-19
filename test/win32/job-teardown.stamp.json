@@ -1,10 +1,11 @@
 {
     "guard":  "job-teardown",
     "script":  "test/win32/job-teardown.ps1",
-    "generated":  "2026-09-19T08:37:30-07:00",
-    "commit":  "6b453972b",
+    "generated":  "2026-09-19T10:04:42-07:00",
+    "commit":  "d3e4b6db5",
     "uncommitted":  [
-                        "test/win32/floor-lane-verdict-detail.ps1"
+                        "test/win32/lib/CleanSlate.ps1",
+                        "test/win32/persistence-flag.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -188,7 +189,7 @@
                   "test/win32/lib/ChooserControls.ps1":  "a89ca8550ef8143250eb27df76bfa9e11b5c1af46f086ea23e07defd5d8eaec0",
                   "test/win32/lib/ChooserCursor.ps1":  "07632267956e7b2647f6227181d98c0ca50e8d68556c7e987e1817424d583e74",
                   "test/win32/lib/ChromeGeometry.ps1":  "1b8e59d8fd07b0b470f6a83cdb53791e688a4b0d15e88bb3a16beefa115cc06a",
-                  "test/win32/lib/CleanSlate.ps1":  "63213647778828beb632eacd9bf0b4dd758614671b5ed73e20a818e4cce8e172",
+                  "test/win32/lib/CleanSlate.ps1":  "97b5dfd912243a94ef32ab285f4f905615a43767609d34fea3b27949e8d07860",
                   "test/win32/lib/CleanSlateAudit.ps1":  "bf059c29d82282e5e559747a42b1a81f463abf60c22474a273aa23ed95c772e5",
                   "test/win32/lib/ColorMath.ps1":  "a825f6793a37181cb68b840042fa4403b08a60de696e36e677bb3d3cdda16e04",
                   "test/win32/lib/CommandResolveAudit.ps1":  "9ed2f0925dfee89eb032a932ef0d0b046f5d5ed38a7e1a5c4cef19cb2109e424",
@@ -262,7 +263,7 @@
                   "test/win32/parity-tasks-seat.ps1":  "a3e33e0cc4a2633529d776ff91897aa20694cf893dc9ec3f1143907496fac510",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "e37347a9c7c11b2b85bcb7fca1fb80a13fe5984a401f9cadcd81ee245d41781f",
-                  "test/win32/persistence-flag.ps1":  "9d9185750d597d1c3dbf1f659b4deeeb60f39912df3cd900c04903d6e54338b4",
+                  "test/win32/persistence-flag.ps1":  "338f60f1d67c918dfc4cdf77aa360f2f491f2b3a9f8114e15aa8c62859b96356",
                   "test/win32/printclient-audit.ps1":  "876bc3a0a69619bc34e41ba6ed41897107a314628c858d371da3559050087c1b",
                   "test/win32/probe-topmost-restore.ps1":  "b2e3afe3d1e5db7cd3555160771e966e8e7c7d5260e1ca4f9fe2c304fd53540a",
                   "test/win32/profile-latency.ps1":  "ca0e6053bcf6bd4ea2de39f1f8aa6037405765ff41f58a35071eba89b21918b5",

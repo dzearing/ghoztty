@@ -122,6 +122,49 @@ function Get-PaneCount($target) {
     return -1
 }
 
+# Leaves recorded for $target in the on-disk manifest, or -1 when the file does
+# not exist / does not mention it. T1663: the manifest is what a relaunch
+# restores FROM, so this is the only way to ask "has the layout actually been
+# recorded yet" - `+list --json` answers about the live app, which is a
+# different question and the one this script used to confuse it with.
+function Get-PersistedLeafCount($target) {
+    $path = Get-DebugSessionLayoutPath
+    if (-not $path -or -not (Test-Path $path)) { return -1 }
+    try { $doc = (Get-Content $path -Raw -ErrorAction Stop) | ConvertFrom-Json }
+    catch { return -1 }   # a torn read of the atomic rewrite: not "absent", just not yet
+    foreach ($w in @($doc.windows)) {
+        if ([string]$w.ipc_name -ne $target) { continue }
+        $n = 0
+        foreach ($t in @($w.tabs)) {
+            foreach ($node in @($t.nodes)) {
+                if ($node.PSObject.Properties.Name -contains 'leaf') { $n++ }
+            }
+        }
+        return $n
+    }
+    return -1
+}
+
+# T1663: the layout write is DEBOUNCED (App.zig LAYOUT_SYNC_DEBOUNCE_MS = 250)
+# and every further mutation RESTARTS the timer, so `+new-window` immediately
+# followed by `+split` can leave the app with nothing on disk at all. Killing
+# it there - and the kill is TerminateProcess, so there is no shutdown flush -
+# destroys the fixture the two relaunches below are measured against, and the
+# failure surfaces as "restore is broken" rather than "nothing was ever saved".
+# That is what made C2 red on 2026-09-19 against a product with no code change
+# in range: a 300 ms poll racing a 250 ms debounce is a coin toss that the box's
+# speed decides.
+function Wait-Persisted($target, $leaves, $timeoutSec = 20) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    $seen = -1
+    while ((Get-Date) -lt $deadline) {
+        $seen = Get-PersistedLeafCount $target
+        if ($seen -eq $leaves) { return $seen }
+        Start-Sleep -Milliseconds 200
+    }
+    return $seen
+}
+
 function Wait-PaneCount($target, $count, $timeoutSec = 45) {
     $deadline = (Get-Date).AddSeconds($timeoutSec)
     $seen = -1
@@ -413,6 +456,14 @@ try {
     Assert ($r.Code -eq 0) "C1b +split exits 0 (got $($r.Code))"
     $panes = Wait-PaneCount 't158-pair' 2
     Assert ($panes -eq 2) "C1c the fixture window has 2 panes (got $panes)"
+    # T1663. The fixture is not built until it is on DISK: everything below
+    # measures a relaunch, and a relaunch reads the manifest, not the window
+    # that was on screen a moment ago. Asserted rather than slept, so a write
+    # that stops happening fails HERE, naming the fixture, instead of three
+    # assertions later as a restore that did nothing.
+    $saved = Wait-Persisted 't158-pair' 2
+    Assert ($saved -eq 2) `
+        "C1d the fixture window is PERSISTED before the app is killed (2 leaves on disk, got $saved)"
 
     Say '== C2: relaunch WITHOUT the flag - the panes come back'
     Stop-AppOnly
@@ -424,7 +475,8 @@ try {
         Say 'SETUP FAIL: relaunched app has no GhozttyWindow'
     }
     $back = Wait-PaneCount 't158-pair' 2 60
-    Assert ($back -eq 2) `
+    $restoreWorked = ($back -eq 2)
+    Assert $restoreWorked `
         "C2a a launch with no persistence flag RESTORES the previous run's window (2 panes, got $back)"
     # T652: attached is not alive. A restored pane that came back as a frozen
     # picture satisfies every assertion above, so type into it and require an
@@ -445,8 +497,14 @@ try {
     # not happen: an assertion that fires immediately would pass on a slow box
     # for the wrong reason.
     $late = Wait-PaneCount 't158-pair' 2 20
-    Assert ($late -eq -1) `
-        "C3a --session-persistence=false restores nothing (expected no t158-pair window, got $late pane(s))"
+    # T1663: "nothing came back" is only evidence that the FLAG works if
+    # something would have come back without it. C2 answers that, so it is part
+    # of this assertion - otherwise a restore that is dead in both arms reads as
+    # a correct refusal, which is exactly how a dead restore hid here for a day.
+    Assert (($late -eq -1) -and $restoreWorked) `
+        ("C3a --session-persistence=false restores nothing, and C2 proved there was " +
+            "something to refuse (expected no t158-pair window, got $late pane(s); " +
+            "C2 restored=$restoreWorked)")
     $wins = @(Get-Windows)
     Assert ($wins.Count -eq 1) `
         "C3b the non-persistent launch comes up with exactly its own window (got $($wins.Count))"

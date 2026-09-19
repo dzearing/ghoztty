@@ -1,10 +1,10 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-09-18T23:13:31-07:00",
-    "commit":  "7ff8ecb6a",
+    "generated":  "2026-09-19T09:34:27-07:00",
+    "commit":  "d3e4b6db5",
     "uncommitted":  [
-                        "test/win32/parity-tasks-seat.ps1"
+                        "test/win32/persistence-flag.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -112,7 +112,7 @@
                   "test/win32/floor-lane-releasesafe.ps1":  "ecd2f326201dfeb9cd74d67f603ec6e06ea566182e28754acc08da1629784a84",
                   "test/win32/floor-lane-solo-confirm.ps1":  "2e7b8705867fd366ef614013d2cdd8e9e213136a4f8e9347ac049215944c0a50",
                   "test/win32/floor-lane-stall-sampling.ps1":  "1ffd9b4a466850f44fd49712ad9c82cf8a8e89ead999cea40903eb3ce0306418",
-                  "test/win32/floor-lane-verdict-detail.ps1":  "16068d1b9c37cfbf35f201e7a3f12f76709c2b362242b238fb2b53d96acb1fe2",
+                  "test/win32/floor-lane-verdict-detail.ps1":  "bd1896f4dd90f975a9d703e2565957dcd5e1553755d1ae1d3816c054090627f5",
                   "test/win32/floor-lane-webview-settle.ps1":  "d5cf22c7342c16a5bebc1a27d1f7d62e1c4dbe297fe2538e9542a7b3cfe8122b",
                   "test/win32/focus-defer.ps1":  "0781efdaa91cf1730f88acaec0143573697a9d4d305e4becdd08eab8774efafd",
                   "test/win32/focus-follows-mouse.ps1":  "09c5f9884b9c51bdb0d91321a12c0e8b8c554552434fd78f7b6267826caaa4e1",
@@ -128,7 +128,7 @@
                   "test/win32/gui-launch-command.ps1":  "d8f12df0d3397be451bc64c41f910162d4adccc932b7028c21db1cfe8d09e60a",
                   "test/win32/gui-postmortem.ps1":  "5c63e9a8563ad9f82bb9c9888bbadbe650f41173508f0d124d83b840d4918077",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
-                  "test/win32/harness-floor.ps1":  "b27139f3ac9523ad01fd2c0aed38f4a8512df5e847ab235d936eeba46ed5d7d8",
+                  "test/win32/harness-floor.ps1":  "20da30cf36ce777075e54e05e262939aff18f007445a4dab09d7802849066e12",
                   "test/win32/harness-process-leak.ps1":  "b46c6e53003f25b41da789d1b52d215d9864b2ce6020edf9cac7e6ada45f6b53",
                   "test/win32/hero-mode.ps1":  "fd4d53f673f48c6e1ec598873360e1a724ee5584ade3679404099097447d0d95",
                   "test/win32/hero-nav.ps1":  "98d4e384d4a7472af20bddbe1ce244c7ec7e34f90178288c475a1f68a398776a",
@@ -209,7 +209,7 @@
                   "test/win32/parity-tasks-seat.ps1":  "a3e33e0cc4a2633529d776ff91897aa20694cf893dc9ec3f1143907496fac510",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "e37347a9c7c11b2b85bcb7fca1fb80a13fe5984a401f9cadcd81ee245d41781f",
-                  "test/win32/persistence-flag.ps1":  "9d9185750d597d1c3dbf1f659b4deeeb60f39912df3cd900c04903d6e54338b4",
+                  "test/win32/persistence-flag.ps1":  "338f60f1d67c918dfc4cdf77aa360f2f491f2b3a9f8114e15aa8c62859b96356",
                   "test/win32/printclient-audit.ps1":  "876bc3a0a69619bc34e41ba6ed41897107a314628c858d371da3559050087c1b",
                   "test/win32/probe-topmost-restore.ps1":  "b2e3afe3d1e5db7cd3555160771e966e8e7c7d5260e1ca4f9fe2c304fd53540a",
                   "test/win32/profile-latency.ps1":  "ca0e6053bcf6bd4ea2de39f1f8aa6037405765ff41f58a35071eba89b21918b5",
@@ -281,7 +281,7 @@
                   "test/win32/tab-strip-autohide.ps1":  "18a71e8d3baf08f01dac56de94897f7ac7d116d625eccc4dd4f5cf13971e153e",
                   "test/win32/tab-tooltip.ps1":  "792d773047ed21a864521a87c587be3b17aae5b0a092f031cf60559357402fff",
                   "test/win32/target-staleness.ps1":  "25c28c99d39716155584ecda6f7a826dae310b3adaad3ae6dbb962c38f7f7d80",
-                  "test/win32/task-dashboard.ps1":  "83ae13b22703ef50c7a3abe8fa7f819ffd4534578e9ad231b8975590bd9cc551",
+                  "test/win32/task-dashboard.ps1":  "c676c3f475745b47a7a661e6ee9d80631ae1951b6995d006d3e2dd52c95c2d0d",
                   "test/win32/terminal-link-paths.ps1":  "f3ba874ca9f97125334319222b41e785a24c9168e6bbb3b78205a1c3bc85b161",
                   "test/win32/test-binary-soak.ps1":  "30b5cf96c2b3327944009926cb274799a23dd1552d183a9ee6b2127d4a0c51ae",
                   "test/win32/test-client-build.ps1":  "4151eff034e0de3acacf2e176c97702fd757f2c83f863476a115da9dc34e7b2b",
