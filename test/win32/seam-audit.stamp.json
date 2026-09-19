@@ -1,11 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-19T10:07:31-07:00",
-    "commit":  "d3e4b6db5",
+    "generated":  "2026-09-19T11:35:51-07:00",
+    "commit":  "f3df2426d",
     "uncommitted":  [
-                        "test/win32/lib/CleanSlate.ps1",
-                        "test/win32/persistence-flag.ps1"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -422,7 +421,7 @@
                   "src/termio/restore_history.zig":  "17ffdfe2bf7e107fe11cf26eab4c79bc6f815f85ad38e9531a5a5daa464e9de2",
                   "src/termio/restore_park.zig":  "1e68d21a293216cfb5a003f0fa1cb494ba031fe4d7ac236b4f5ccd168e6f50bd",
                   "src/termio/session_notice.zig":  "63971c48177ef72d6360dbf28895963aa79ffbecad126e04626f70bd5dd707d2",
-                  "src/termio/shell_integration.zig":  "d473d3ce3afa626a4c79bd6fffe4a80bd1993720aef2e3268a39f1a46bd13ff7",
+                  "src/termio/shell_integration.zig":  "6700d58bd2a39278a76dc6327db92ba8fcb2fdd689b782d0668ed7092e70f383",
                   "src/termio/stream_handler.zig":  "fffa60db96f0b5a4eb7864fb57d279def56d75f805c90c6f9577a33cb164edb0",
                   "src/termio/Termio.zig":  "e81db26701a1c3f42f7ff112ef32df398a98e2001701eeaad11007f49257370b",
                   "src/termio/Thread.zig":  "d5d50b40c04bcb3a33d0e1c8091e6a856747c8da3c6bf2fee5b902eaf7aee25a",
@@ -449,7 +448,7 @@
                   "test/win32/agent-relay-session-e2e.ps1":  "cba46a2dca7006bfca021bb77b35acb4fe5a666097003293ae432f9b003addb5",
                   "test/win32/agent-session-cap.ps1":  "1c90f39debadea2b3312dd9c887d8eafaadfc8caf2ac5892ba5aaffaaf5fee66",
                   "test/win32/agent-sharing-uplink.ps1":  "2bf17d913b72fbf1ca94cf9bae729e0c6cf1e95e683485d78ac5b44affd2e3b4",
-                  "test/win32/agent-shell-integration.ps1":  "f770ac1643037ffc9b28cc9fe73e27440e684005af3e389d2f78c66ce306fbb1",
+                  "test/win32/agent-shell-integration.ps1":  "861471cbef71f2d4f8d2cc2c3b836328d1a2b3844942fc5d71fa1f347b8a9acf",
                   "test/win32/agent-stamp-inputs.ps1":  "95fbc858cddc1e0fde3e896ec699998298f5cfebbb1b595acd190e21cc913fe3",
                   "test/win32/agent-upgrade.ps1":  "6f9d232d9c276bdc37157aab7b284463472c9637e3ead11f0f3ae5c4aa262143",
                   "test/win32/agent-user-env.ps1":  "7ea19bc9332a520cec15cf4ff3c2b40a2c1daa7968c5a6bf9951d4c3151e9df3",
