@@ -32253,3 +32253,62 @@ asserted that `floor-lane.ps1` accepts `-Lane harness` by pinning its
 and wrapping the list - scored it red over a lane that works. It now reads the
 parameter's `ValidateSet` attribute. Same shape as T1662 above: a check that
 matches on spelling reports the wrong thing the moment the spelling moves.
+
+## 2026-09-19 - T1660: the task board answers in under a second instead of a minute
+
+`GET /api/data` against the real tracker took **57.9s** when T1660 was filed,
+against a page that polls it every 5s. It now answers in **0.55-0.96s**
+measured the same way, and ~100ms server-side on a cache hit.
+
+The suspected culprit - the per-commit `git grep` history walk - was not it;
+that has been cached on disk since the feature shipped. Two other things were,
+both paid on every single request:
+
+- `lastTouched()` ran one `git log -1 --format=%at -- <file>` per in-progress
+  or blocked task. Each costs ~350ms on this box and there are sixteen such
+  tasks: **5.6s of a 7s build**. The same number was already sitting in
+  `fileDates()`'s single `git log --name-only` walk, which the file's own
+  comment explains was written precisely because per-file `git log` calls take
+  minutes - the new code just never used it.
+- `commitList()` re-walked the whole tracker history with commit bodies,
+  twice, ~850ms. Memoised on HEAD, like `fileDates()` beside it already was.
+
+And the gap between "a 7s build" and "a 58s endpoint" is the part worth
+remembering. Node is single-threaded and every git call here is
+`execFileSync`, so a build that outlasts the poll interval queues the next poll
+behind it and the queue only grows - the measured latency is not the cost of
+the work, it is the depth of a queue that can never drain. So the payload is
+memoised too, keyed on HEAD plus (file count, newest mtime) for the task,
+decision and digest directories, plus the served page version and the calendar
+day: ~60ms to compute against ~350ms for a warm rebuild. The handful of fields
+that are a function of the clock rather than of content - `generatedAt`, the
+loop and watchdog state, the live end of the burndown series, each in-flight
+task's `staleMs` - are recomputed on every serve, so a cache hit never shows a
+frozen "now".
+
+Evidence: `test\win32\task-dashboard.ps1` **ALL PASS (30 assertions)** with a
+new section G, `test\win32\dashboard-dom.ps1` **ALL PASS (45 assertions)**,
+`floor-lane.ps1 -Lane harness` **PASS** (1410s), and the payload diffed
+`--once` before and after: byte-identical except `pageVersion` and the
+in-progress task's `statusSince`, which is `now` by design while a status is
+uncommitted.
+
+Section G is the standing check, and it has teeth: G1 budgets half the page's
+own `POLL_MS`, read out of the served HTML rather than duplicated, and the same
+measurement against the pre-fix code on this tree reads 7.3-7.8s. G2 and G3 are
+what stop the speed being bought with staleness - a task file written between
+two polls is in the next payload, and a cache hit still carries a fresh
+`generatedAt`. G1 measures through `Invoke-RestMethod` on purpose: `Get-Http`'s
+`Invoke-WebRequest -UseBasicParsing` spends ~4.5s of its own on a six-megabyte
+body under PS 5.1, which would have made the assertion a measurement of the
+client.
+
+That six megabytes is the other half of the story and is now **T1664**: 4.3 MB
+of it is per-task prose the board does not draw until you open a card, and
+505 KB is a `validation` field nothing in the page reads at all - the browser
+parses all of it every five seconds.
+
+`persistence-flag` was left DUE under `-NoGuardDue`: it covers every test script
+so this task's harness edit made it due, and it is red for **T1663**'s reason
+(session restore brings nothing back), reproduced here on a freshly rebuilt
+Debug app rather than assumed.

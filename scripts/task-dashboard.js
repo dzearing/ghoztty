@@ -14,10 +14,16 @@
  * HTML *source*, syntax-highlighted, not the page. `http://` locations are the
  * only ones the pane actually browses, so the dashboard is served.
  *
- * The payload is rebuilt from disk on EVERY request, so the page stays current
- * with no file watcher: the page polls `/api/data` and re-renders in place
- * (holding the previous render rather than flashing a skeleton). Edit a task
- * file, and the pane reflects it within the poll interval.
+ * The payload is rebuilt whenever anything it is derived from moves, so the
+ * page stays current with no file watcher: the page polls `/api/data` and
+ * re-renders in place (holding the previous render rather than flashing a
+ * skeleton). Edit a task file, and the pane reflects it within the poll
+ * interval. "Whenever it moves" rather than "on every request" because node is
+ * single-threaded and every git call here is synchronous: a build that outlasts
+ * the poll interval queues the next poll behind it and never catches up, which
+ * is how a seven-second build was measured at the endpoint as 58s (T1660).
+ * `payloadKey()` is the fingerprint; `freshenPayload()` is the handful of
+ * clock-dependent fields a cache hit still recomputes.
  *
  * History comes from git. Each commit that touched the tasks directory is one
  * `git grep '^status:' <sha>` (~60ms), so the first build of the 250-odd
@@ -55,6 +61,11 @@ const CACHE = path.join(REPO, 'temp', 'task-dashboard-history.json');
 // Bump when a cached point gains or changes a field, so an old cache is
 // rebuilt instead of silently feeding half-populated activity items.
 const CACHE_VERSION = 3;
+
+// How long an in-progress task may sit untouched before the board calls it
+// stale. Module-level because the cached payload's staleness is recomputed on
+// every serve, outside the build (T1660).
+const STALE_MS = 24 * 3600 * 1000;
 
 // A gap longer than this between tracker commits is idle time, not work. The
 // loop stalled for six days once; reporting that as a six-day "duration" would
@@ -447,7 +458,18 @@ function git(args) {
  * at the split and throw away the project's first two and a half weeks — so
  * both are read and the timeline spans both formats.
  */
+let commitCache = { head: null, list: null };
 function commitList() {
+  // Memoised on HEAD. Two full `git log` walks with bodies over the whole
+  // tracker history cost ~850ms here, and they can only produce a different
+  // answer when HEAD moves - so on the long-lived server this runs once per
+  // commit rather than once per five-second poll (T1660).
+  let head = '';
+  try {
+    head = git(['rev-parse', 'HEAD']).trim();
+  } catch {}
+  if (commitCache.head === head && commitCache.list) return commitCache.list;
+
   const seen = new Map();
   // Unit separator between fields, record separator between commits — a commit
   // body is multi-line prose, so newline cannot be the record delimiter.
@@ -472,7 +494,9 @@ function commitList() {
       });
     }
   }
-  return [...seen.values()].sort((a, b) => a.ts - b.ts);
+  const list = [...seen.values()].sort((a, b) => a.ts - b.ts);
+  commitCache = { head, list };
+  return list;
 }
 
 /**
@@ -889,20 +913,6 @@ function pidAlive(pid) {
 }
 
 /**
- * Git's last-commit time for a file. Used only for the handful of in-progress
- * and blocked tasks, so one `git log` each is fine; doing it for all 460 would
- * not be.
- */
-function lastTouched(relPath) {
-  try {
-    const out = git(['log', '-1', '--format=%at', '--', relPath]).trim();
-    return out ? Number(out) * 1000 : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Created / last-modified time for EVERY task file, from ONE
  * `git log --name-only` walk over the tasks directory rather than 485
  * `git log -1` calls (which takes minutes on this box).
@@ -1015,6 +1025,88 @@ function pageVersion() {
   }
 }
 
+/** (file count, newest mtime) for a directory - one stat per entry, ~30ms. */
+function contentFingerprint(dir) {
+  let names;
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return '0:0';
+  }
+  let newest = 0;
+  for (const n of names) {
+    try {
+      const s = fs.statSync(path.join(dir, n));
+      if (s.mtimeMs > newest) newest = s.mtimeMs;
+    } catch {}
+  }
+  return names.length + ':' + Math.round(newest);
+}
+
+/**
+ * Cheap fingerprint of everything the payload is derived from: HEAD, the three
+ * content directories, the served code, and the calendar day.
+ *
+ * ~60ms, against ~350ms for a warm rebuild and 2.3s for a cold one. The page
+ * polls every five seconds and node is single-threaded with `execFileSync`, so
+ * before this a build that cost longer than the poll interval queued the next
+ * poll behind it and the queue only grew — which is why the endpoint was
+ * measured at 58s while a single build took seven (T1660). Nothing in the
+ * payload can change without moving
+ * one of these, except the live fields `freshenPayload` recomputes on the way
+ * out.
+ */
+function payloadKey() {
+  let head = '';
+  try {
+    head = git(['rev-parse', 'HEAD']).trim();
+  } catch {}
+  return [
+    head,
+    contentFingerprint(TASK_DIR),
+    contentFingerprint(DECISION_DIR),
+    contentFingerprint(DIGEST_DIR),
+    pageVersion(),
+    // The daily-completions axis runs to today, so a payload built yesterday
+    // is stale at midnight even if nothing on disk moved.
+    dayKey(Date.now()),
+  ].join('|');
+}
+
+/**
+ * The fields that are a function of the CLOCK rather than of the content, so a
+ * cached payload never serves a stale "now": the loop's own state (its
+ * heartbeat advances constantly and is a file read, not a git walk), the
+ * generation stamp, the live end of the burndown series, and how long each
+ * in-flight task has been sitting.
+ */
+function freshenPayload(p) {
+  const now = Date.now();
+  p.generatedAt = now;
+  p.loop = loopState();
+  p.watchdog = watchdogState();
+  if (p.series.length) p.series[p.series.length - 1].ts = now;
+  for (const t of p.tasks) {
+    if (t.touchedAt == null) continue;
+    t.staleMs = now - t.touchedAt;
+    t.stale = t.bucket === 'in_progress' && t.staleMs > STALE_MS;
+  }
+  return p;
+}
+
+let payloadCache = { key: null, payload: null };
+
+/** The served payload: rebuilt only when the fingerprint moves. */
+function payload() {
+  const key = payloadKey();
+  if (payloadCache.key === key && payloadCache.payload) {
+    return freshenPayload(payloadCache.payload);
+  }
+  const built = buildPayload();
+  payloadCache = { key, payload: built };
+  return built;
+}
+
 function buildPayload() {
   const tasks = loadTasks();
   annotateReadiness(tasks);
@@ -1080,10 +1172,16 @@ function buildPayload() {
   // active turn edits the file long before it commits), so the filesystem
   // mtime wins there — without this the task being worked right now reads as
   // "stale, untouched for days" the moment a turn runs long.
-  const STALE_MS = 24 * 3600 * 1000;
   for (const t of tasks) {
     if (t.bucket !== 'in_progress' && t.bucket !== 'blocked') continue;
-    const gitTs = lastTouched(t.file);
+    // The git side comes out of the SAME `git log --name-only` walk `dates`
+    // was built from (`modifiedAny` is the newest commit touching the file,
+    // bulk passes included — which is what "touched" means here). It used to
+    // be one `git log -1 -- <file>` per task, ~350ms each on this box: with
+    // sixteen in-progress and blocked tasks that was 5.6s of the payload, paid
+    // on every five-second poll (T1660).
+    const g = dates.get(t.id);
+    const gitTs = g ? g.modifiedAny : null;
     const fsTs = dirty.has(t.id) ? statDates(t.file).modified : null;
     t.touchedAt = Math.max(gitTs || 0, fsTs || 0) || null;
     t.staleMs = t.touchedAt ? now - t.touchedAt : null;
@@ -1282,7 +1380,7 @@ function serve(port) {
           });
       }
       if (url === '/api/data') {
-        return send(res, 200, 'application/json; charset=utf-8', JSON.stringify(buildPayload()));
+        return send(res, 200, 'application/json; charset=utf-8', JSON.stringify(payload()));
       }
       // Full task text, on demand. The detail popup wants the whole file, and
       // 485 whole files in every poll payload would be megabytes on the wire

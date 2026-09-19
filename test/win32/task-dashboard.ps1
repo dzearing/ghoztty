@@ -308,6 +308,94 @@ try {
     } finally {
         Remove-Item $fix -Recurse -Force -ErrorAction SilentlyContinue
     }
+    # --- section G: the payload answers inside the poll interval (T1660) ----
+    # The page polls /api/data every 5s and node is single-threaded with
+    # execFileSync, so a build that costs longer than the interval queues the
+    # next poll behind it and never catches up: on 2026-09-18 a seven-second
+    # build was measured at the endpoint as 58s. The floor here is the poll
+    # interval itself, read out of the page rather than duplicated, and the
+    # budget is half of it - a payload that needs more than half the interval
+    # is already on the path back to a growing queue.
+    $pollMs = 5000
+    $pm = [regex]::Match($html, 'POLL_MS\s*=\s*(\d+)')
+    if ($pm.Success) { $pollMs = [int]$pm.Groups[1].Value }
+    $budgetMs = [int]($pollMs / 2)
+
+    # Section B already paid for the first build (the cold one, which walks the
+    # git history). What the page lives on afterwards is this.
+    #
+    # Measured through Invoke-RestMethod, the way the 57.9s reading that filed
+    # T1660 was taken. NOT through Get-Http: `Invoke-WebRequest
+    # -UseBasicParsing` spends seconds of its OWN on a six-megabyte body under
+    # PS 5.1, which would make this assertion a measurement of the client.
+    $times = @()
+    foreach ($i in 1..3) {
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        $ok = $true
+        try { $null = Invoke-RestMethod "$Base/api/data" -TimeoutSec 120 } catch { $ok = $false }
+        $sw.Stop()
+        if (-not $ok) { $times = @(); break }
+        $times += [int]$sw.ElapsedMilliseconds
+    }
+    $worst = if ($times.Count) { ($times | Measure-Object -Maximum).Maximum } else { -1 }
+    Assert "G1 a warm /api/data answers inside ${budgetMs}ms (half the ${pollMs}ms poll)" `
+        ($times.Count -eq 3 -and $worst -lt $budgetMs) "times = $($times -join ', ') ms"
+
+    # ...and the speed must not come from serving a stale answer. A second
+    # server, pointed at a fixture tracker, is asked for the payload, has a
+    # task added under it, and is asked again immediately: the new task has to
+    # be there. This is the check that would fail if the cache key stopped
+    # noticing a task-file write.
+    $fxDir = Join-Path $env:TEMP "dashboard-fixture-$PID"
+    New-Item -ItemType Directory -Force -Path $fxDir | Out-Null
+    $fxPort = 0
+    foreach ($p2 in 7861..7880) { if (Test-PortFree $p2) { $fxPort = $p2; break } }
+    $fxSrv = $null
+    try {
+        if ($fxPort -eq 0) {
+            Write-Host 'SKIP  G2: no free port in 7861-7880 for the fixture server'
+            $script:skipped++
+        } else {
+            function Write-FxTask([string]$id, [string]$status) {
+                $t = "---`nid: $id`ntitle: `"fixture $id`"`nstatus: `"$status`"`nseat: `"win`"`n---`n`n# $id`n"
+                [System.IO.File]::WriteAllText((Join-Path $fxDir "$id.md"), $t)
+            }
+            Write-FxTask 'T9001' 'todo'
+            Write-FxTask 'T9002' 'done'
+            $env:GHOZTTY_TASK_DIR = $fxDir
+            $fxSrv = Start-Process -FilePath $node.Source -ArgumentList ('"' + $dash + '" --port ' + $fxPort) `
+                -WorkingDirectory $Repo -WindowStyle Hidden -PassThru
+            Remove-Item Env:GHOZTTY_TASK_DIR -ErrorAction SilentlyContinue
+            $fxBase = "http://127.0.0.1:$fxPort"
+            $fxUp = $false
+            foreach ($i in 1..60) {
+                if ((Get-Http "$fxBase/" 5).Status -eq 200) { $fxUp = $true; break }
+                Start-Sleep -Milliseconds 500
+            }
+            if (-not $fxUp) {
+                Assert 'G2 the fixture server came up' $false 'never answered GET /'
+            } else {
+                $before = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
+                Write-FxTask 'T9003' 'todo'
+                $after = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
+                Assert 'G2 a task written between two polls shows up in the next payload' `
+                    ($null -ne $before -and $null -ne $after -and
+                     $before.tasks.Count -eq 2 -and $after.tasks.Count -eq 3) `
+                    "before=$($before.tasks.Count) after=$($after.tasks.Count)"
+                # And the live half is never frozen by the cache: the stamp the
+                # page shows as "updated Ns ago" has to move on every answer.
+                Start-Sleep -Milliseconds 1100
+                $again = ((Get-Http "$fxBase/api/data" 120).Body | ConvertFrom-Json)
+                Assert 'G3 a cache-hit answer still carries a fresh generatedAt' `
+                    ($null -ne $again -and $again.generatedAt -gt $after.generatedAt) `
+                    "after=$($after.generatedAt) again=$($again.generatedAt)"
+            }
+        }
+    } finally {
+        Remove-Item Env:GHOZTTY_TASK_DIR -ErrorAction SilentlyContinue
+        if ($fxSrv -and -not $fxSrv.HasExited) { Stop-Process -Id $fxSrv.Id -Force -ErrorAction SilentlyContinue }
+        Remove-Item $fxDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 } catch {
     # An abort mid-suite (server died, JSON refused to parse where an Assert
     # did not guard it) must still end in the one verdict line, red - not in a
