@@ -1,16 +1,20 @@
 {
     "guard":  "ipc-floor-setup",
     "script":  "test/win32/ipc-floor-setup.ps1",
-    "generated":  "2026-09-14T02:36:33-07:00",
-    "commit":  "f2761be48",
+    "generated":  "2026-09-19T23:57:23-07:00",
+    "commit":  "842afcc50",
     "uncommitted":  [
-                        "test/win32/ipc-p1.ps1"
+                        "test/win32/ipc-floor-setup.ps1",
+                        "test/win32/ipc-p1.ps1",
+                        "test/win32/ipc-p2.ps1",
+                        "test/win32/ipc-p3.ps1",
+                        "test/win32/lib/FloorFixture.ps1"
                     ],
     "files":  {
-                  "test/win32/ipc-floor-setup.ps1":  "2e61ec25a39e23d5be37f5deb7d6014f441dd4bc1f31924ad8b885e605aa673c",
-                  "test/win32/ipc-p1.ps1":  "133a9b95f6cffa1467dbc047766aae6e53f7e6e731270626510501e40c990708",
-                  "test/win32/ipc-p2.ps1":  "1f20cfe50e0517943b8629cf65236c69b68d1c893925cea4920179278e6359b3",
-                  "test/win32/ipc-p3.ps1":  "a5b0e3d15cae250bf7b30de29d28cc62fcbb6ebfd1e0a5562e47392edec17871",
-                  "test/win32/lib/FloorFixture.ps1":  "d2becd0816d1623fc18be994609fcbc22a6fd165fd19656c50f67abe86538155"
+                  "test/win32/ipc-floor-setup.ps1":  "79b1439c30634472a45a79141c11484281df48ef451758879d4973d1f848277b",
+                  "test/win32/ipc-p1.ps1":  "67f9c8d7cae96b109c08e50173e46a727154babcb06d8941ea1fb3696a2de5ab",
+                  "test/win32/ipc-p2.ps1":  "e6a27f066500373dad50dda7d0ca9499c6b674d113c313d3a7293ae4cf6081ac",
+                  "test/win32/ipc-p3.ps1":  "b2cb0bf7f706fea4e1e2383e70646d37480ddc006c2ef6dcc5f7e2fc6b0db4e5",
+                  "test/win32/lib/FloorFixture.ps1":  "be8bbec8e445e0d35f8141a13ecfbbbc82aa58fa58134cb28895f2bdbf9530af"
               }
 }

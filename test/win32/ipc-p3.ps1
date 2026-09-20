@@ -57,7 +57,14 @@ function Get-P3Title {
 function Get-P3Json {
     # T1285: STDOUT alone - a CLI diagnostic sharing the stream is how a slow
     # answer read as a malformed one.
-    $j = (Ghoz @('+list', '--json')).StdOut | ConvertFrom-Json
+    # T894: a snapshot that does not parse stops the run with ONE setup failure
+    # carrying the raw answer, instead of handing $null to callers that index
+    # into it (an error that is neither a PASS nor a FAIL, so it goes unscored).
+    $jsonArgs = @('+list', '--json')
+    $call = Ghoz $jsonArgs
+    $j = $null
+    try { $j = $call.StdOut | ConvertFrom-Json } catch {}
+    Need-Parsed 'the +list --json snapshot' $jsonArgs $call $j
     $j.data.windows | Where-Object { $_.target -eq 'p3' }
 }
 

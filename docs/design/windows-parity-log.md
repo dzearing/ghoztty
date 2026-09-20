@@ -32878,3 +32878,49 @@ half of this under the platform-symmetry rule -- Sparkle's offer is a window
 rather than a balloon, but what persists after "Later" is unmeasured. T1676: the
 command palette lists `Install Available Update` unconditionally, which is a row
 that is a lie on every day there is nothing to install.
+
+## 2026-09-20 - T894: the floor stops calling a slow cold start a broken app
+
+The first `ipc-p1.ps1` run after `floor-lane.ps1 -Lane all` went red on a
+perfectly healthy build and green on the warm re-run. Whoever was watching had
+to recognise the shape, re-run it, and watch it pass -- which is the exact cost
+a test is supposed to spare you, and the exact way a test stops being believed.
+
+The cause is one sentence read as another. `ghoztty` prints "Waiting for
+Ghoztty to answer ... (the app may still be starting up)" at five seconds and
+then KEEPS waiting, to a bound that is thirty seconds
+(`ipc_timeout.auto_launch_ms`) precisely because a cold auto-launch pays for
+the loader, Defender scanning a freshly built exe, config parsing and a session
+restore. The other sentence it can print -- "Timed out after 30000ms trying
+to ..." -- is the CLI GIVING UP, and only that one means the verb did not
+happen. T1285 made both of them the failure signal, which fixed the
+twenty-one-assertion cascade this task was filed against and left a
+one-assertion false red in its place: the same cry-wolf defect, one layer down.
+
+`Need-Ghoz` separates them now. A give-up, a nonzero exit or a harness timeout
+still stops the run with the single `FAIL SETUP:` block; a call that was merely
+slow returns and is recorded as `NOTE SLOW SETUP: <what> answered after <n>ms`.
+That note is not decoration. A fix that simply stopped noticing the notice
+would trade a visible false red for an invisible real one, and a box that is
+slow for a genuine reason would then look exactly like a fast one.
+
+The `Cannot index into a null array` in the original report turned out to be
+the worse half. A PowerShell null-index kills its own statement, so the
+`Assert` it lands in scores neither a PASS nor a FAIL -- six checks in P1's
+JSON section were going unscored and the verdict was under-counting rather than
+over-counting. `Need-Parsed` gives an unparseable `+list --json` the same
+one-failure-with-the-raw-answer shape as an unreachable app, in all three floor
+scripts. The wait itself lives in the shared `lib\FloorFixture.ps1`, so P2 and
+P3 were never a separate question: one edit answers all three.
+
+New gate, so a demonstration it can fail: section C of
+`test\win32\ipc-floor-setup.ps1` drives `Need-Ghoz` over canned CLI answers,
+because the two sentences cannot be produced on demand end to end. Against a
+copy of the file carrying the old combined pattern the slow probe answers
+`OUTCOME: stopped / FAILURES: 1 / the app under test stopped answering IPC` at
+`exit: 0 after 7ms`, and C1-C3 go red.
+
+T1677: `Wait-ListMatch` polls for 20 seconds while a single `+list` inside it
+is allowed 30, so one cold call can spend the entire wait and the run then
+reports the fixture as missing -- the same family, a different number in a
+different place.

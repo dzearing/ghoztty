@@ -135,8 +135,16 @@ Assert "exec window registered" ($list -match '\[target: p1exec\]')
 "== 5: json shape"
 $json = $null
 # T1285: STDOUT alone - the CLI's own diagnostics share the merged stream.
-try { $json = (Ghoz @('+list', '--json')).StdOut | ConvertFrom-Json } catch {}
+$jsonArgs = @('+list', '--json')
+$jsonCall = Ghoz $jsonArgs
+try { $json = $jsonCall.StdOut | ConvertFrom-Json } catch {}
 Assert "json parses" ($null -ne $json)
+# T894: and STOP if it did not. Every assertion below indexes into this answer,
+# and over a $null it raises `Cannot index into a null array` - an error that is
+# neither PASS nor FAIL, so six checks silently go unscored and the verdict
+# under-counts. One setup failure carrying the raw answer is the readable
+# version of the same news.
+Need-Parsed 'the +list --json snapshot' $jsonArgs $jsonCall $json
 Assert "success true" ($json.success -eq $true)
 Assert "windows array present" ($null -ne $json.data.windows)
 $p1ide = $json.data.windows | Where-Object { $_.target -eq 'p1ide' }

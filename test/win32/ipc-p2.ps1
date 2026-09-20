@@ -56,7 +56,15 @@ function Get-IdeJson {
     # T1285: the JSON comes off STDOUT alone. Sharing one stream with the CLI's
     # diagnostics is how a 5s "Waiting for Ghoztty to answer" notice turned a
     # slow answer into "Invalid JSON primitive: Waiting."
-    $j = (Ghoz @('+list', '--json')).StdOut | ConvertFrom-Json
+    # T894: and a snapshot that does not parse stops the run with ONE setup
+    # failure carrying the raw answer. Returning $null here instead lets every
+    # caller below raise `Cannot index into a null array`, which is neither a
+    # PASS nor a FAIL and so leaves its assertions unscored.
+    $jsonArgs = @('+list', '--json')
+    $call = Ghoz $jsonArgs
+    $j = $null
+    try { $j = $call.StdOut | ConvertFrom-Json } catch {}
+    Need-Parsed 'the +list --json snapshot' $jsonArgs $call $j
     $j.data.windows | Where-Object { $_.target -eq 'p2ide' }
 }
 
