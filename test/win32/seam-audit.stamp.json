@@ -1,20 +1,11 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-20T03:45:08-07:00",
-    "commit":  "179b59e17",
+    "generated":  "2026-09-20T04:38:48-07:00",
+    "commit":  "e535790b1",
     "uncommitted":  [
-                        "test/win32/cli-argv-fidelity.ps1",
-                        "test/win32/fail-transcript.ps1",
-                        "test/win32/ipc-floor-setup.ps1",
-                        "test/win32/ipc-list-session-id.ps1",
-                        "test/win32/ipc-p1.ps1",
-                        "test/win32/ipc-p2.ps1",
-                        "test/win32/ipc-p3.ps1",
-                        "test/win32/ipc-target-exists-note.ps1",
-                        "test/win32/lib/Transcript.ps1",
-                        "test/win32/lib/VerdictExitAudit.ps1",
-                        "test/win32/verdict-exit-audit.ps1"
+                        "src/apprt/win32/App.zig",
+                        "test/win32/job-escape-startup.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -40,7 +31,7 @@
                   "src/apprt/win32/agent_upgrade.zig":  "32238c442c66a6ee5885c31c751f9fbf23f174c36bf852905eda7cd1ad3ea603",
                   "src/apprt/win32/AgentIntegration.zig":  "ce4bbfbbf2bc5159eab352bda4d83b4039616b94fc14f938274e3a97efdb945d",
                   "src/apprt/win32/AgentIntegrationsDialog.zig":  "bae8123be8ee78f13e7c5008ef66f2589e26eaf047e42163a3be94879952d92d",
-                  "src/apprt/win32/App.zig":  "846653aac7776fe1ccb51fd3da7911db62c0a45ab84ec9ef24ff9d0bfd0988ae",
+                  "src/apprt/win32/App.zig":  "d47299af4b69e3017df99f913fa9c9e2c940ac844f7f7e33cc1da781c62c6735",
                   "src/apprt/win32/banner_card.zig":  "8a8ae5c2bc901bfc594b23bb443f6d919bdc4756d9f42d7c9c102f5e05a13b90",
                   "src/apprt/win32/banner_layout.zig":  "9a4fef1af1553e28f590f3bd5efab4791d03bddea0122b0b53b2cf92cd80f195",
                   "src/apprt/win32/banner_link.zig":  "77bd381ab5cca8cf4a4d12d9e15971303d5d4e83ea600fe4576c9e5bf4a34c95",
@@ -599,7 +590,7 @@
                   "test/win32/ipc-version.ps1":  "09d5d1b7a53c70ebe20b8eb2a4e36f51d7c3ed8d5d542e61ba9101acfa34e145",
                   "test/win32/ipc-when-idle.ps1":  "9f4f4e064df51079fdd4dd86dfb8afad9b4f639e43f91f7bd557f75dc5fb50d6",
                   "test/win32/isolation-meta.ps1":  "f5ba7519276c43f2e56cfa3480e0bb237e3d20304d3190ca83ed2fd8b465b95f",
-                  "test/win32/job-escape-startup.ps1":  "1e7dc7bfa24cc690dbc9df6abe446a6368e3666849a646f9e055deb06426f385",
+                  "test/win32/job-escape-startup.ps1":  "2fd5d62a8338cb814cf17f4d729b86020a6a0c167094d181b6204c9f0b910a91",
                   "test/win32/job-teardown.ps1":  "caee876fa71416e56fb48c0688a54971ddbc0eabd851947f73b706e8fe14734b",
                   "test/win32/kb-actions.ps1":  "59a4c832fee92a2a76be5c9179b71ee8515cb19721ad7fe451c97cc174791771",
                   "test/win32/keybinds-t01.ps1":  "77d86dafe21d72ca1424579503a72fc62342e22097c50d16286df096d508b653",

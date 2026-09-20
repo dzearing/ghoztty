@@ -23,6 +23,11 @@
 #   C: the job's teardown (TerminateJobObject - what the agent's death does)
 #      kills the jailed control and NOT the escaped twin, which is the outcome
 #      the membership probe is a proxy for.
+#   D: T901 - on the COMMONEST launch path (`ghoztty` typed in a pane, which
+#      reaches the console twin ghoztty.com), the twin now spawns the GUI
+#      through those same escape tiers, so the child is born outside the job
+#      and A-C's backstop has nothing to do. Measured as both halves at once:
+#      the GUI is out of the job AND no re-exec happened.
 #
 # Runs anywhere as of T674: breakaway is forbidden (field shape) and
 # GetShellWindow() answers nothing on a background test desktop, but the
@@ -170,6 +175,7 @@ $errFile = Join-Path $root 'app.err.txt'
 $launcherPs1 = Join-Path $root 'launcher.ps1'
 
 $job = [IntPtr]::Zero
+$job2 = [IntPtr]::Zero
 try {
     Stop-TestProcs
 
@@ -289,9 +295,134 @@ Set-Content -Path '$appPidFile' -Value `$app.Id
         ($null -eq (Get-Process -Id $victimPid -ErrorAction SilentlyContinue))
     Assert "C2 the escaped app SURVIVED the teardown that used to kill it" `
         ($twinPid -ne 0 -and $null -ne (Get-Process -Id $twinPid -ErrorAction SilentlyContinue))
+
+    # ========================================================================
+    Say "== D: ghoztty.com spawns the GUI already escaped, with no second hop (T901)"
+    # ========================================================================
+    # Sections A-C prove the BACKSTOP: a GUI born inside the job re-execs
+    # itself out. That backstop covers every launch path, and on the commonest
+    # one - `ghoztty` typed in a pane, which reaches the console twin
+    # ghoztty.com - it cost a whole extra process start every time. T901 makes
+    # the twin spawn the GUI through the same escape tiers, so the child is
+    # born outside the job and the backstop finds nothing to do.
+    #
+    # What is measured, and why each half is needed: the child must be OUT of
+    # the job (the correctness the backstop was there for) AND must not have
+    # re-execed (the cost T901 removes). Either one alone is satisfied by the
+    # pre-T901 behavior.
+    #
+    # Its own jail, built after C tore the first one down, and its own launch:
+    # the B twin is stopped first so the com-spawned GUI is the sole instance
+    # and stays alive to be probed, rather than forwarding to an existing app
+    # over the single-instance pipe and exiting mid-measurement.
+    Stop-TestProcs
+
+    $comExe = Join-Path (Split-Path -Parent $Exe) 'ghoztty.com'
+    Assert "D0 premise: the console twin is built beside the exe under test" `
+        (Test-Path $comExe)
+
+    $job2 = [T675Job]::CreateJobObject([IntPtr]::Zero, $null)
+    $jobInfo2 = New-Object T675Job+JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    $jobInfo2.BasicLimitInformation.LimitFlags = 0x2000
+    $jobSet2 = [T675Job]::SetInformationJobObject($job2, 9, [ref]$jobInfo2, $jobLen)
+    Assert "D1 premise: a second kill-on-close job exists (flags 0x2000)" `
+        ($job2 -ne [IntPtr]::Zero -and $jobSet2)
+
+    # Same WMI-created, go-marker-gated launcher as section A, for the same
+    # reasons (exactly one job; no environment inheritance) - except that what
+    # it launches is the COM TWIN, which is what a pane shell running
+    # `ghoztty` actually starts.
+    $go2File = Join-Path $root 'go2.marker'
+    $victim2PidFile = Join-Path $root 'victim2.pid'
+    $comErrFile = Join-Path $root 'com.err.txt'
+    $launcher2Ps1 = Join-Path $root 'launcher2.ps1'
+    @"
+`$env:LOCALAPPDATA = '$root'
+`$env:GHOZTTY_PIPE_SUFFIX = '-t675-$PID'
+Remove-Item env:GHOZTTY_IPC_SOCKET -ErrorAction SilentlyContinue
+`$env:GHOZTTY_PANE_ID = 'T901-ACCEPTANCE-PANE'
+Remove-Item env:GHOZTTY_NO_STARTUP_ESCAPE -ErrorAction SilentlyContinue
+Remove-Item env:GHOZTTY_JOB_ESCAPED -ErrorAction SilentlyContinue
+while (-not (Test-Path '$go2File')) { Start-Sleep -Milliseconds 200 }
+`$victim = Start-Process -FilePath cmd.exe -ArgumentList '/c','ping -n 120 127.0.0.1 > nul' -WindowStyle Hidden -PassThru
+Set-Content -Path '$victim2PidFile' -Value `$victim.Id
+`$com = Start-Process -FilePath '$comExe' -ArgumentList '--title=t901' -RedirectStandardError '$comErrFile' -PassThru
+`$com.WaitForExit()
+"@ | Set-Content -Path $launcher2Ps1 -Encoding ascii
+
+    $created2 = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{
+        CommandLine = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher2Ps1`""
+    }
+    $launcher2Pid = if ($created2.ReturnValue -eq 0) { [int]$created2.ProcessId } else { 0 }
+    $launcher2Jailed = $false
+    if ($launcher2Pid -ne 0) {
+        try {
+            $launcher2Proc = Get-Process -Id $launcher2Pid -ErrorAction Stop
+            [T675Job]::AssignProcessToJobObject($job2, $launcher2Proc.Handle) | Out-Null
+            [T675Job]::IsProcessInJob($launcher2Proc.Handle, $job2, [ref]$launcher2Jailed) | Out-Null
+        } catch {}
+    }
+    Assert "D2 premise: the com-twin launcher is jailed in that job" $launcher2Jailed
+
+    New-Item -ItemType File -Path $go2File -Force | Out-Null
+
+    $victim2Seen = Wait-File $victim2PidFile 20
+    $victim2Pid = if ($victim2Seen) { [int](Get-Content $victim2PidFile | Select-Object -First 1) } else { 0 }
+    Start-Sleep -Milliseconds 300
+    Assert "D3 control: a plain child of THAT launcher inherits membership" `
+        ($victim2Pid -ne 0 -and (Test-InJob $victim2Pid $job2) -eq $true)
+
+    # The GUI the twin spawned, identified by the title it was launched with -
+    # the exe path alone would also match a stray app this run did not start.
+    $guiPid = 0
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        $cand = @(Get-CimInstance Win32_Process -Filter "Name='ghoztty.exe'" |
+            Where-Object { $_.ExecutablePath -eq $Exe -and $_.CommandLine -match 't901' })
+        if ($cand.Count -gt 0) { $guiPid = [int]$cand[0].ProcessId; break }
+        Start-Sleep -Milliseconds 400
+    }
+    Assert "D4 the console twin started a GUI" ($guiPid -ne 0)
+
+    # Correctness, which A-C's backstop also delivers: whatever route it took,
+    # the GUI that is RUNNING is out of the job. Measured against the negative
+    # control (the twin's escape forced to fail, 2026-09-20) this one stays
+    # green - it is D7 below that tells the two routes apart.
+    Assert "D5 that GUI is not a member of the hostile job" `
+        ($guiPid -ne 0 -and (Test-InJob $guiPid $job2) -eq $false)
+
+    # The twin's own trail. Read from its stderr and not from the shared log
+    # sink: the sink is compiled out of Debug builds (main_ghostty's logFn
+    # gates the file branch on `mode != .Debug`), and a Debug build is the only
+    # thing an acceptance script is allowed to launch - so an oracle reading
+    # the sink here would be reading an empty string and passing on it.
+    [void](Wait-LogMatch $comErrFile 'respawned the GUI sibling' 20)
+    $comErr = Read-AppLog $comErrFile
+    Assert "D6 the twin named the tier it escaped through, and the pid it made" `
+        ($comErr -match 'respawned the GUI sibling as pid (\d+) \(escape=(breakaway|shell-parent|jobless-parent)\)')
+    $spawnedPid = if ($comErr -match 'respawned the GUI sibling as pid (\d+)') { [int]$Matches[1] } else { 0 }
+
+    # The heart of T901, and the half that can only pass after it: BEFORE this
+    # change the twin's child was born jailed and re-execed itself, so the
+    # surviving GUI was a DIFFERENT process from the one the twin started.
+    # Same pid means one process start, not two.
+    Assert "D7 ... and the GUI still running IS that process - no second hop" `
+        ($spawnedPid -ne 0 -and $spawnedPid -eq $guiPid)
+
+    # The outcome the membership probe is a proxy for, proved the same way C
+    # proves it for the backstop path.
+    [T675Job]::TerminateJobObject($job2, 1) | Out-Null
+    [T675Job]::CloseHandle($job2) | Out-Null
+    $job2 = [IntPtr]::Zero
+    Start-Sleep -Seconds 3
+    Assert "D8 the teardown killed that launcher's control child" `
+        ($null -eq (Get-Process -Id $victim2Pid -ErrorAction SilentlyContinue))
+    Assert "D9 ... and the com-spawned GUI SURVIVED it" `
+        ($guiPid -ne 0 -and $null -ne (Get-Process -Id $guiPid -ErrorAction SilentlyContinue))
     Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     if ($job -ne [IntPtr]::Zero) { [T675Job]::CloseHandle($job) | Out-Null }
+    if ($job2 -ne [IntPtr]::Zero) { [T675Job]::CloseHandle($job2) | Out-Null }
     Stop-TestProcs
     $env:LOCALAPPDATA = $savedLocalAppData
     if ($savedPipe) { $env:GHOZTTY_PIPE_SUFFIX = $savedPipe }

@@ -6930,11 +6930,73 @@ pub fn runComShimGuiRespawn(alloc: Allocator) bool {
         );
         defer _ = w32.SetEnvironmentVariableW(cli_env_w, null);
 
-        // Same detached spawn as autoLaunchInstance above, and safe for the
-        // same reasons: no handle inheritance (a GUI child holding the
-        // caller's pipes would keep them open for its whole life), and
-        // App.init clears the inherited ignore-^C flag the process-group
-        // flag sets (T84).
+        // T901: spawn the GUI ALREADY OUTSIDE the pane's job, rather than
+        // letting it be born inside and re-exec itself a millisecond later.
+        // `ghoztty` typed in a pane is the commonest launch there is, and
+        // until now it cost three process starts: this shim, a jailed GUI,
+        // and the twin T675's startup escape respawned. The escape tiers here
+        // are the ones that respawn would have used, so the outcome is
+        // identical and one process start cheaper.
+        //
+        // `GHOZTTY_JOB_ESCAPED` is set for the spawn and ONLY when a tier
+        // actually got the child out. It is not bookkeeping: the child
+        // inherits this pane's `GHOZTTY_PANE_ID`, and pane lineage is a
+        // hazard signal the startup probe trusts on its own — this box
+        // compat-jails GUI launches, so an escaped child still reads
+        // `in_job`, and without the marker it would re-exec anyway and the
+        // hop would be right back. With it, the child reports where it landed
+        // and carries on as THE app.
+        //
+        // When NO tier can escape, the marker is cleared again and the child
+        // is spawned plainly, inside the job: its own startup escape is then
+        // the backstop, exactly as before this change. Degraded, never
+        // absent.
+        //
+        // Safe for the same reasons the old spawn was: no handle inheritance
+        // (a GUI child holding the caller's pipes would keep them open for
+        // its whole life), and DETACHED_PROCESS with no
+        // CREATE_NEW_PROCESS_GROUP — the group flag is inherited by every
+        // descendant and disables Ctrl-C for all of them (T84), which is why
+        // `job_escape` omits it too. It bought nothing here: `App.init` only
+        // ever had to CLEAR what it set.
+        var arena_state = std.heap.ArenaAllocator.init(alloc);
+        defer arena_state.deinit();
+        const escaped_env_w = std.unicode.utf8ToUtf16LeStringLiteral(
+            job_escape.env_var,
+        );
+        _ = w32.SetEnvironmentVariableW(
+            escaped_env_w,
+            std.unicode.utf8ToUtf16LeStringLiteral("1"),
+        );
+        defer _ = w32.SetEnvironmentVariableW(escaped_env_w, null);
+
+        if (job_spawn.spawnEscapedOnly(
+            arena_state.allocator(),
+            @ptrCast(cmd.items.ptr),
+            job_spawn.DETACHED_PROCESS,
+            "com shim gui respawn",
+        )) |spawned| {
+            // The PID is not decoration: it is what says the process the twin
+            // started is the process still running, i.e. that no second hop
+            // happened after it (T901).
+            log.info("ghoztty.com respawned the GUI sibling as pid {d} (escape={s})", .{
+                w32.GetProcessId(spawned.pi.hProcess),
+                spawned.tier.name(),
+            });
+            windows.CloseHandle(spawned.pi.hProcess);
+            windows.CloseHandle(spawned.pi.hThread);
+            return true;
+        } else |_| {
+            // No tier available. The child must NOT think it is the escape
+            // attempt, or the backstop it needs is disarmed.
+            _ = w32.SetEnvironmentVariableW(escaped_env_w, null);
+            log.warn(
+                "ghoztty.com: no escape tier for the GUI sibling; spawning it inside the job " ++
+                    "(its own startup escape is the backstop)",
+                .{},
+            );
+        }
+
         var si: windows.STARTUPINFOW = std.mem.zeroes(windows.STARTUPINFOW);
         si.cb = @sizeOf(windows.STARTUPINFOW);
         var pi: windows.PROCESS_INFORMATION = undefined;
@@ -6944,7 +7006,7 @@ pub fn runComShimGuiRespawn(alloc: Allocator) bool {
             null,
             null,
             windows.FALSE,
-            .{ .detached_process = true, .create_new_process_group = true },
+            .{ .detached_process = true },
             null,
             null,
             &si,

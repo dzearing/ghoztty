@@ -33006,3 +33006,46 @@ other edited harnesses.
 
 Filed T1678: `Tee-Object` writes UTF-16 on PS 5.1, so `grep` finds nothing in a
 preserved transcript that plainly contains the string.
+
+## 2026-09-20 - T901: typing `ghoztty` in a pane starts the window once
+
+`ghoztty` typed inside a Ghoztty pane is the commonest way a window gets
+opened here, and since T675 it cost three process starts: the console twin
+`ghoztty.com`, the GUI it spawned, and then a second GUI, because the first one
+was born inside the agent's kill-on-close PTY job and re-execed itself out. The
+middle start is gone. The twin now spawns the GUI through the same escape tiers
+the re-exec would have used (`job_spawn.spawnEscapedOnly` -- breakaway, the
+shell-parent hop, a jobless donor), so the window is born outside the job and
+T675's startup escape finds nothing to do.
+
+The part that is not just swapping one spawn call for another is the marker.
+The child inherits the pane's `GHOZTTY_PANE_ID`, and pane lineage is a hazard
+signal the startup probe trusts on its own -- deliberately, because with nested
+jobs the flags query answers for the first job joined. This box compat-jails
+GUI launches, so an escaped child still reads `in_job` and would have re-execed
+anyway, leaving the hop exactly where it was. So the twin sets
+`GHOZTTY_JOB_ESCAPED` for the spawn, and only when a tier actually got the
+child out: the child then reports where it landed and carries on as THE app.
+When no tier can escape, the marker is cleared again and the child is spawned
+plainly, inside the job, with its own startup escape as the backstop -- the
+pre-T901 behavior, degraded rather than absent.
+
+`CREATE_NEW_PROCESS_GROUP` is dropped from that spawn. It is inherited by every
+descendant and disables Ctrl-C for all of them (T84), which is why
+`job_escape` omits it; it bought nothing here, since `App.init` only ever had
+to clear what it set.
+
+Validation: section D of `test\win32\job-escape-startup.ps1` (new, 10
+assertions, ALL PASS at 21). It builds a second kill-on-close jail after C
+tears the first one down, has a jailed launcher start the com twin the way a
+pane shell does, and measures both halves: the GUI is out of the job, and the
+pid the twin reports spawning IS the pid still running -- which is only true
+when nothing re-execed. The oracle reads the twin's stderr rather than the
+shared log sink, because `main_ghostty`'s `logFn` compiles the file branch out
+of Debug builds and a Debug build is the only thing an acceptance script may
+launch: a sink-reading oracle here was passing on an empty string. Negative
+control: with the twin's escape forced to fail, D6 and D7 go red and D5 stays
+green, so D7 is the assertion that measures this task rather than the
+correctness the backstop already provided. `auto-launch-cwd.ps1` ALL PASS
+(T506's marker still reaches the child). Floor green: four zig lanes, the
+harness floor, P1-P3.
