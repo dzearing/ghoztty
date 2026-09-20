@@ -32959,3 +32959,50 @@ local manifest never listed, so the window count after a restore is a floor and
 not an equality. The new sections wait for the list to stop growing and assert
 about the windows they can name, which is why the first run of E read five
 windows where the previous one read two.
+
+## 2026-09-20 - T900: a failed run's transcript outlives the re-run
+
+The report was a floor that cried wolf: on 2026-08-16 `ipc-p2.ps1` scored 16
+failures and two immediate re-runs were ALL PASS with nothing changed in
+between. Re-checking it before building found the cascade half already fixed --
+T1285's `lib\FloorFixture.ps1` quotes that exact verdict line and records the
+root cause it read off the run's transcript, an app that had stopped answering
+IPC so every verb after the fixture addressed a window that was never built.
+
+What was still open was the evidence itself. The transcript existed (T379 put a
+`Tee-Object` in these scripts for exactly this) but went to a FIXED path, and
+the first green re-run truncated it. So the one flake anybody had seen was
+diagnosable for about ninety seconds. Five of the seven teed harnesses also
+never named the file, and the floor is habitually read as
+`| Select-Object -Last 1`.
+
+`lib\Transcript.ps1` is the keeper that replaced the hand-rolled trailers. A red
+run appends its verdict to the transcript, copies it to
+`ghoztty-<name>-fail-<yyyyMMdd-HHmmss>-<pid>.log` -- a name no later run writes
+-- prunes to the ten newest per harness, and prints the verdict with
+` - evidence: <path>` appended, so the path is in the one line a summary keeps.
+A green run preserves nothing and its wording is byte for byte what it was.
+
+Wiring the seven harnesses to it turned up something the trailer had been
+hiding: `ipc-list-session-id.ps1` and `ipc-target-exists-note.ps1` counted
+failures but never passes, so their `if ($failures -eq 0) { "ALL PASS" }` would
+have scored green over a run whose fixture died before the first assertion --
+the T271 shape verbatim. Both count passes now and score through the shared
+scorer, which is the only reason the zero surfaced.
+
+`lib\VerdictExitAudit.ps1` learned the third scorer entry point.
+`Complete-TestTranscript` is always the hand-back form, so naming it obliges the
+file to contain an exit -- with one refinement the audit needed anyway: a
+self-exiting scorer call anywhere in the file answers for hand-back calls beside
+it, which is T900's own acceptance script, where the hand-back form is the
+subject under test. A15-A19 demonstrate both directions.
+
+Validation: `test\win32\fail-transcript.ps1` ALL PASS (42 assertions). Section D
+is the 2026-08-16 sequence itself -- a throwaway harness run red, then green
+twice -- and requires the preserved file to come back byte for byte; section E
+is the negative control that the old fixed-path shape does lose the lines.
+Floor green: four zig lanes, the 29-audit harness floor, P1/P2/P3, plus the four
+other edited harnesses.
+
+Filed T1678: `Tee-Object` writes UTF-16 on PS 5.1, so `grep` finds nothing in a
+preserved transcript that plainly contains the string.

@@ -13,11 +13,16 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
+$script:passes = 0
 $tmp = Join-Path $env:TEMP "ghoztty-ipc-t332-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 
 function Assert($name, $cond) {
-    if ($cond) { "  PASS $name" } else { "  FAIL $name"; $script:failures++ }
+    # T900: the PASS arm counts too. It did not until the shared scorer arrived
+    # here, and a verdict that reads `$script:failures -eq 0` as ALL PASS is the
+    # T271 defect verbatim - a run whose fixture died before the first assertion
+    # scored green with nothing measured.
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
@@ -71,7 +76,10 @@ function Get-WindowLeaves([string]$Target) {
     return $out
 }
 
-$transcript = Join-Path $env:TEMP 'ghoztty-ipc-t332-last.log'
+# T900: a RED run's transcript is copied somewhere the next re-run cannot
+# truncate, and the verdict line names it. See lib\Transcript.ps1.
+. (Join-Path $PSScriptRoot 'lib\Transcript.ps1')
+$transcript = New-TestTranscript -Name 'ipc-t332'
 
 $td = New-TestDesktop
 
@@ -134,12 +142,9 @@ Remove-TestDesktop | Out-Null
 } 2>&1 | Tee-Object -FilePath $transcript
 
 ""
-if ($script:failures -eq 0) {
-    "T332 ACCEPTANCE: ALL PASS"
-    exit 0
-} else {
-    $trailer = "T332 ACCEPTANCE: $script:failures FAILURE(S) - details: $transcript"
-    Add-Content $transcript $trailer
-    $trailer
-    exit 1
-}
+# T900: the verdict now goes through the shared scorer (T271/T1039) as well as
+# the transcript keeper - this script used to hand-roll `ALL PASS`/`exit 0`, so
+# a run that asserted nothing scored green.
+Complete-TestBody  # T1039: the run reached the end of its body
+exit (Complete-TestTranscript -Name 'ipc-t332' -Path $transcript `
+        -Label 'T332 ACCEPTANCE' -Pass $script:passes -Fail $script:failures).Code

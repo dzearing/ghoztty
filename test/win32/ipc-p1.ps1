@@ -86,7 +86,11 @@ function Wait-ListMatch([string]$Pattern, [int]$TimeoutSec = 20) {
 # its evidence. Callers summarise with `| Select-Object -Last 1` by design,
 # which used to discard exactly the lines that said WHAT failed; the trailer
 # now names this file, so the summary still points at the details.
-$transcript = Join-Path $env:TEMP 'ghoztty-ipc-p1-last.log'
+# T900: and a RED one is COPIED somewhere the next re-run cannot truncate -
+# the 2026-08-16 flake's transcript was overwritten by the green re-run that
+# followed it ninety seconds later. See lib\Transcript.ps1.
+. (Join-Path $PSScriptRoot 'lib\Transcript.ps1')
+$transcript = New-TestTranscript -Name 'ipc-p1'
 
 $td = New-TestDesktop
 
@@ -212,9 +216,10 @@ Remove-TestDesktop | Out-Null
 
 ""
 # The verdict goes through the shared scorer (T271), which refuses to call a
-# run with zero passing assertions a pass; -NoExit is how the failure trailer
-# still reaches the transcript.
+# run with zero passing assertions a pass.
 Complete-TestBody  # T1039: the run reached the end of its body
-$verdict = Write-TestVerdict -Label 'P1 ACCEPTANCE' -Pass $script:passes -Fail $script:failures -NoExit
-if ($verdict.Code -ne 0) { Add-Content $transcript $verdict.Line }
-exit $verdict.Code
+# T900: scores, and on a red run appends the verdict to the transcript,
+# preserves it under a name no later run writes, and names that file in the
+# verdict line - the one line a `-Last 1` summary keeps.
+exit (Complete-TestTranscript -Name 'ipc-p1' -Path $transcript `
+        -Label 'P1 ACCEPTANCE' -Pass $script:passes -Fail $script:failures).Code

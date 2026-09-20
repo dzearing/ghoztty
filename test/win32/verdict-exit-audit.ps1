@@ -134,6 +134,29 @@ Assert "A14 and an exit 0 nested in the pass branch does not answer for the fail
     '}',
     'else { "$script:fail FAILURE(S) / $script:pass passed" }')) -eq 'fallthrough')
 
+# A15-A18 (T900): the three shared-scorer entry points. A script that scores
+# through lib\TestScore.ps1 prints no `ALL PASS` of its own, so without this
+# arm it reads as `no-verdict` - and the hole it leaves is the form that hands
+# the code BACK. `Complete-TestTranscript` is always that form (it exists to
+# preserve a red run's transcript and then let the caller exit with the code),
+# so it is held to the stricter half unconditionally: without the `exit` it is
+# a fallthrough, which is the demonstration that this arm can still fail.
+Assert "A15 a script scoring through Write-TestVerdict is clean" ((KindsOf @(
+    'Write-TestVerdict -Label ''X'' -Pass $script:passes -Fail $script:failures')) -eq '')
+Assert "A16 Write-TestVerdict -NoExit with nothing exiting is a fallthrough" ((KindsOf @(
+    '$v = Write-TestVerdict -Label ''X'' -Pass $p -Fail $f -NoExit')) -eq 'fallthrough')
+Assert "A17 Complete-TestTranscript exited with is clean" ((KindsOf @(
+    'exit (Complete-TestTranscript -Name ''x'' -Path $t -Label ''X'' -Pass $p -Fail $f).Code')) -eq '')
+Assert "A18 Complete-TestTranscript whose code nothing exits with is a fallthrough" ((KindsOf @(
+    '$v = Complete-TestTranscript -Name ''x'' -Path $t -Label ''X'' -Pass $p -Fail $f')) -eq 'fallthrough')
+# A19: the mix - a script that CALLS the hand-back form as its subject under
+# test and scores ITSELF with the self-exiting one. That is T900's own
+# acceptance script, and a rule that reads "any hand-back call needs a literal
+# exit" would score it as a fallthrough over a verdict that exits correctly.
+Assert "A19 a self-exiting scorer call answers for hand-back calls beside it" ((KindsOf @(
+    '$red = Complete-TestTranscript -Name ''x'' -Path $t -Label ''X'' -Pass 1 -Fail 1',
+    'Write-TestVerdict -Label ''SELF'' -Pass $script:passes -Fail $script:failures')) -eq '')
+
 # ============================================================================
 ""
 "== B: the sweep - every acceptance script scores its own verdict"

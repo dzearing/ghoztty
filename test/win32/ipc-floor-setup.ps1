@@ -51,7 +51,10 @@ function Assert($name, $cond) {
 [void](Set-GhozttyTestIsolation -Tag 'floorsetup')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
-$transcript = Join-Path $env:TEMP 'ghoztty-ipc-floor-setup-last.log'
+# T900: a RED run's transcript is copied somewhere the next re-run cannot
+# truncate, and the verdict line names it. See lib\Transcript.ps1.
+. (Join-Path $PSScriptRoot 'lib\Transcript.ps1')
+$transcript = New-TestTranscript -Name 'ipc-floor-setup'
 $td = New-TestDesktop
 
 & {
@@ -176,6 +179,5 @@ if ($script:failures -eq 0) {
         -File (Join-Path $PSScriptRoot '..\..\scripts\guard-due.ps1') `
         update -Guard ipc-floor-setup 2>&1 | ForEach-Object { "  $_" }
 }
-$verdict = Write-TestVerdict -Label 'IPC FLOOR SETUP' -Pass $script:passes -Fail $script:failures -NoExit
-if ($verdict.Code -ne 0) { Add-Content $transcript $verdict.Line }
-exit $verdict.Code
+exit (Complete-TestTranscript -Name 'ipc-floor-setup' -Path $transcript `
+        -Label 'IPC FLOOR SETUP' -Pass $script:passes -Fail $script:failures).Code

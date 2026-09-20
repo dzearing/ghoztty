@@ -271,19 +271,35 @@ function Get-VerdictExitFindings {
     # shared scorer satisfies it rather than reading as `no-verdict`. The one
     # hole is `-NoExit`, which hands the code back to the caller: that shape must
     # still contain an `exit` somewhere.
+    #
+    # T900: `Complete-TestTranscript` (lib\Transcript.ps1) is the third entry
+    # point, and it is ALWAYS the `-NoExit` shape - it scores through the same
+    # `Get-VerdictLine`, preserves a red run's transcript, and hands the code
+    # back so the caller can `exit (...).Code`. There is no arm of it that
+    # exits by itself, so it is held to the stricter half of the rule
+    # unconditionally: name it and the file must still contain an `exit`.
     $scorerCalls = @($parsed.Ast.FindAll({ param($n)
         $n -is [System.Management.Automation.Language.CommandAst] -and
         ($n.GetCommandName() -eq 'Write-TestVerdict' -or
-         $n.GetCommandName() -eq 'Write-TestAssertedNothing') }, $true))
+         $n.GetCommandName() -eq 'Write-TestAssertedNothing' -or
+         $n.GetCommandName() -eq 'Complete-TestTranscript') }, $true))
     if ($scorerCalls.Count -gt 0) {
-        $noExit = @($scorerCalls | Where-Object { $_.Extent.Text -match '-NoExit' })
-        if ($noExit.Count -eq 0) { return $findings }
+        $noExit = @($scorerCalls | Where-Object {
+            $_.Extent.Text -match '-NoExit' -or
+            $_.GetCommandName() -eq 'Complete-TestTranscript' })
+        # A self-exiting scorer call ends the process with the right code all by
+        # itself, so one of those anywhere in the file answers the question this
+        # rule asks - even alongside hand-back calls. T900's own acceptance
+        # script is exactly that mix: it CALLS `Complete-TestTranscript` as the
+        # subject under test a dozen times, and scores ITSELF with a plain
+        # `Write-TestVerdict`.
+        if ($noExit.Count -lt $scorerCalls.Count) { return $findings }
         $exits = @($parsed.Ast.FindAll({ param($n)
             $n -is [System.Management.Automation.Language.ExitStatementAst] }, $true))
         if ($exits.Count -gt 0) { return $findings }
         [void]$findings.Add([pscustomobject]@{
             Path = $Path; Line = $noExit[0].Extent.StartLineNumber; Kind = 'fallthrough'
-            Detail = 'Write-TestVerdict -NoExit hands back the exit code and nothing exits with it' })
+            Detail = "$($noExit[0].GetCommandName()) hands back the exit code and nothing exits with it" })
         return $findings
     }
 

@@ -63,7 +63,10 @@ function Assert($name, $cond) {
 
 [void](Set-GhozttyTestIsolation -Tag 't279argv')
 
-$transcript = Join-Path $env:TEMP 'ghoztty-t279-argv-last.log'
+# T900: a RED run's transcript is copied somewhere the next re-run cannot
+# truncate, and the verdict line names it. See lib\Transcript.ps1.
+. (Join-Path $PSScriptRoot 'lib\Transcript.ps1')
+$transcript = New-TestTranscript -Name 't279-argv'
 $target = 't279win'
 
 # Read `+list --json` through Invoke-NativeExact: stdout only, so a stderr line
@@ -271,7 +274,6 @@ Remove-TestDesktop | Out-Null
 
 ""
 Complete-TestBody  # T1039: the run reached the end of its body
-$verdict = Write-TestVerdict -Label 'T279 ARGV FIDELITY' -Pass $script:passes -Fail $script:failures `
-    -Skipped $script:skipped -NoExit
-if ($verdict.Code -ne 0) { Add-Content $transcript $verdict.Line }
-exit $verdict.Code
+exit (Complete-TestTranscript -Name 't279-argv' -Path $transcript `
+        -Label 'T279 ARGV FIDELITY' -Pass $script:passes -Fail $script:failures `
+        -Skipped $script:skipped).Code

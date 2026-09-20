@@ -3563,6 +3563,32 @@ $GuardTable = @(
             'test\win32\ipc-p3.ps1'
         )
     },
+    # A RED run's transcript must outlive the re-run (T900). On 2026-08-16 the
+    # floor's only observed flake wrote a full transcript to a FIXED path and
+    # the green re-run ninety seconds later truncated it, so the one piece of
+    # evidence anybody ever had lasted about as long as it took to type the
+    # re-run. lib\Transcript.ps1 is the keeper that replaced it, and a keeper is
+    # only a keeper while it can still fire: section D of the harness runs a
+    # throwaway harness red, then green twice, and demands the preserved file
+    # come out byte for byte. The seven teed harnesses ride along because
+    # section F is what stops one of them quietly reverting to the fixed-path
+    # shape. Pure PowerShell, no exe, about ten seconds.
+    [pscustomobject]@{
+        Name   = 'fail-transcript'
+        Script = 'test\win32\fail-transcript.ps1'
+        Stamp  = 'test\win32\fail-transcript.stamp.json'
+        Covers = @(
+            'test\win32\lib\Transcript.ps1',
+            'test\win32\fail-transcript.ps1',
+            'test\win32\ipc-p1.ps1',
+            'test\win32\ipc-p2.ps1',
+            'test\win32\ipc-p3.ps1',
+            'test\win32\cli-argv-fidelity.ps1',
+            'test\win32\ipc-floor-setup.ps1',
+            'test\win32\ipc-list-session-id.ps1',
+            'test\win32\ipc-target-exists-note.ps1'
+        )
+    },
     # The build-mode gate itself (T350, tightened by T1158). BuildMode.ps1 was
     # only ever covered by the build-fresh row above, whose script grades the
     # FRESHNESS half - so the gate's own harness, build-mode-guard.ps1, had no
