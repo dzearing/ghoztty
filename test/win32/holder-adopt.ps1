@@ -466,7 +466,11 @@ try {
     Stop-AppAndAgent
     $foreignId = "t1594-$PID"
     $ourLineage = $env:GHOZTTY_AGENT_INSTANCE
-    $env:GHOZTTY_AGENT_INSTANCE = 't1594other'
+    # Run-unique, for the same reason the pipe suffix is (T352/T903): a fixed
+    # lineage is the endpoint a holder LEAKED by an earlier run of this script
+    # is still serving on, and "did the foreign holder survive" would then be
+    # answering about that one.
+    $env:GHOZTTY_AGENT_INSTANCE = "t1594other-$PID"
     $foreign = Start-Process -FilePath $AgentExe `
         -ArgumentList @('--pty-host', '--session-id', $foreignId, '--exit-linger-ms', '120000') `
         -WindowStyle Hidden -PassThru

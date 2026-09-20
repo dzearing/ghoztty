@@ -33125,3 +33125,36 @@ Floor: four zig lanes green, the harness floor green, the acceptance script
 green. Section B of the same script flaked red in three of seven runs with its
 stderr file at zero bytes, reproduces with the pre-change copy of the script,
 and is filed as T1680 rather than fixed here.
+
+## 2026-09-20 - T903: an acceptance run can no longer inherit a leaked AGENT, either
+
+T903 asked for the mechanical half of the isolation sweep: the ~90 acceptance
+scripts still naming their private IPC endpoint with a fixed string. That work
+was already done -- 4dc012073 keyed every hand-rolled `GHOZTTY_PIPE_SUFFIX` on
+`$PID` five days after this card was filed, and put the rule under
+`isolation-meta.ps1` section C so it cannot come back. Re-verified today: no
+top-level script pins one, C1 green. On that shape go.md says the test is the
+deliverable, so this turn went looking for what the rule does NOT cover.
+
+It does not cover `GHOZTTY_AGENT_INSTANCE`. That is the second of the three
+isolation knobs, and it keys the agent's own control pipe, its state directory
+and its autostart entry -- so a fixed lineage has exactly the failure the pipe
+suffix had, one process over: a holder LEAKED by an earlier run of the script
+is still serving on that lineage's pipe when the next run dials it.
+`holder-adopt.ps1` pinned `'t1594other'` for the foreign holder its section D
+starts on purpose, and that section's whole question is "did the foreign holder
+survive the orphan sweep?" -- a question a leftover would have answered.
+
+The lineage is per-PID now, and the rule is checked rather than remembered:
+section C grew `C2 no script pins a fixed agent lineage`, sharing the suffix
+check's engine (the literal test, the save/restore tolerance and the
+`# isolation: shared - <why>` escape all apply unchanged). Controls A11 and A12
+are its demonstration that it can go red and green. A13 is the third: a script
+that GENERATES a child script splices the lineage into a here-string, so the
+source line reads `'$instanceValue'` -- a literal the scanner would have
+flagged, for a value chosen at the call site three functions up
+(job-escape-startup). A `$` in the literal now means "judged where it is
+chosen", which is the rule the double-quoted branch already used.
+
+Floor: four zig lanes green, harness floor green, `isolation-meta` ALL PASS
+(17 assertions), `holder-adopt` ALL PASS (27 assertions).

@@ -31,7 +31,9 @@
 # registered, and `+new-window --target=` FOCUSES a name it finds rather than
 # building the fixture again. `$PID` in the suffix is what closes it, and it
 # closes the whole class at one site per script instead of at every name the
-# script registers.
+# script registers. Since T903 the same question is asked of
+# `GHOZTTY_AGENT_INSTANCE`, which keys the agent's own pipe and state dir: a
+# fixed lineage is a leaked HOLDER from an earlier run still answering.
 #
 # This is a PRESENCE check on purpose. An execution-order check would need to
 # actually trace PowerShell, and a text-order check ("first verb line vs first
@@ -103,9 +105,24 @@ function Get-IsolationViolation([string]$Path) {
 #   * `# isolation: shared - <why>` for a script that genuinely needs an
 #     endpoint a second process can name from a literal. The reason is
 #     required, for the same purpose it is required on a cleanslate exemption.
+#
+# T903: the agent's lineage is judged by the same rule. `GHOZTTY_AGENT_INSTANCE`
+# keys the agent's own pipe, state dir and autostart entry, so a fixed value has
+# exactly the pipe suffix's failure: a holder leaked by an earlier run of the
+# script is still serving on that lineage's control pipe, and the assertion that
+# reads it ("is the foreign holder still alive?") answers about the leftover.
 $script:SuffixAssign = '\$env:GHOZTTY_PIPE_SUFFIX\s*=\s*([^\r\n]+)'
+$script:InstanceAssign = '\$env:GHOZTTY_AGENT_INSTANCE\s*=\s*([^\r\n]+)'
 
 function Get-SuffixUniquenessViolation([string]$Path) {
+    return (Get-PinnedEnvViolation $Path $script:SuffixAssign 'pipe suffix')
+}
+
+function Get-InstanceUniquenessViolation([string]$Path) {
+    return (Get-PinnedEnvViolation $Path $script:InstanceAssign 'agent lineage')
+}
+
+function Get-PinnedEnvViolation([string]$Path, [string]$Assign, [string]$What) {
     $text = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
     if ([string]::IsNullOrEmpty($text)) { return $null }
     # The reason has to be ON the marker line: `\s` matches a newline in a
@@ -117,17 +134,21 @@ function Get-SuffixUniquenessViolation([string]$Path) {
     foreach ($line in ($text -split "`r?`n")) {
         # A commented-out assignment documents; it does not aim anything.
         if ($line -match '^\s*#') { continue }
-        if ($line -notmatch $script:SuffixAssign) { continue }
+        if ($line -notmatch $Assign) { continue }
         $rhs = $Matches[1].Trim()
         if ($rhs -match '\$PID') { continue }
         # Only a bare quoted literal is judged here. Anything else defers to a
         # value chosen elsewhere, and that site is judged on its own line.
-        if ($rhs -match "^'([^']*)'" -or $rhs -match '^"([^"$]*)"') {
+        # A `$` in the literal means the value is chosen elsewhere too: these
+        # scripts generate CHILD scripts through a here-string, so the line
+        # `'$instanceValue'` in the source is an interpolation whose real value
+        # is whatever the parent passed (job-escape-startup, T903).
+        if ($rhs -match "^'([^'$]*)'" -or $rhs -match '^"([^"$]*)"') {
             $fixed += $Matches[1]
         }
     }
     if ($fixed.Count -eq 0) { return $null }
-    return "pins a FIXED pipe suffix ($($fixed -join ', ')) - a leaked instance from an earlier run answers there"
+    return "pins a FIXED $What ($($fixed -join ', ')) - a leaked instance from an earlier run answers there"
 }
 
 # ---------------------------------------------------------------------------
@@ -218,6 +239,37 @@ try {
     )
     Assert 'A10 an EMPTY shared reason is still a violation' `
         ($null -ne (Get-SuffixUniquenessViolation $stamp))
+
+    # T903: the agent lineage half of section C. Same rule, same fixtures -
+    # demonstrated separately because it is a separate variable and a separate
+    # pipe, and a check nobody has watched go red is not a check.
+    $pinnedInstance = Join-Path $fixDir 'pinned-instance.ps1'
+    Set-Content -LiteralPath $pinnedInstance -Encoding ASCII -Value @(
+        '$env:GHOZTTY_PIPE_SUFFIX = "-fixture$PID"',
+        '$env:GHOZTTY_AGENT_INSTANCE = ''otherlineage''',
+        '& $exe +list --json'
+    )
+    Assert 'A11 a FIXED agent lineage is flagged as not run-unique' `
+        ($null -ne (Get-InstanceUniquenessViolation $pinnedInstance))
+
+    $uniqueInstance = Join-Path $fixDir 'unique-instance.ps1'
+    Set-Content -LiteralPath $uniqueInstance -Encoding ASCII -Value @(
+        '$env:GHOZTTY_PIPE_SUFFIX = "-fixture$PID"',
+        '$env:GHOZTTY_AGENT_INSTANCE = "otherlineage-$PID"',
+        '& $exe +list --json'
+    )
+    Assert 'A12 a $PID-keyed agent lineage passes' `
+        ($null -eq (Get-InstanceUniquenessViolation $uniqueInstance))
+
+    $generated = Join-Path $fixDir 'generated.ps1'
+    Set-Content -LiteralPath $generated -Encoding ASCII -Value @(
+        '$child = @"',
+        '`$env:GHOZTTY_AGENT_INSTANCE = ''$instanceValue''',
+        '"@',
+        '& $exe +list --json'
+    )
+    Assert 'A13 a here-string interpolation is judged where its value is chosen' `
+        ($null -eq (Get-InstanceUniquenessViolation $generated))
 } catch {
     # T1511: score the throw rather than unwinding past it to a green verdict.
     # Sections B/C read the real tree and do not depend on these fixtures, so
@@ -257,6 +309,15 @@ foreach ($s in $scripts) {
 foreach ($v in $pinned) { "  VIOLATION $v" }
 Assert 'C1 no script pins a fixed pipe suffix' `
     ($pinned.Count -eq 0) "($($pinned.Count) violation(s))"
+
+$pinnedLineage = @()
+foreach ($s in $scripts) {
+    $why = Get-InstanceUniquenessViolation $s.FullName
+    if ($null -ne $why) { $pinnedLineage += "$($s.Name): $why" }
+}
+foreach ($v in $pinnedLineage) { "  VIOLATION $v" }
+Assert 'C2 no script pins a fixed agent lineage (T903)' `
+    ($pinnedLineage.Count -eq 0) "($($pinnedLineage.Count) violation(s))"
 
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1
 # can answer "has this scan been run against the test tree as it now stands?".

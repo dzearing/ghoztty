@@ -1,10 +1,11 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-09-20T06:20:05-07:00",
-    "commit":  "9caa063d8",
+    "generated":  "2026-09-20T07:20:46-07:00",
+    "commit":  "f20c0a07c",
     "uncommitted":  [
-                        "test/win32/job-escape-startup.ps1"
+                        "test/win32/holder-adopt.ps1",
+                        "test/win32/isolation-meta.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "ef54b501298cfda9306cfb958c1094db24ee30f355b25865656b3e2bc713bcd7",
@@ -136,7 +137,7 @@
                   "test/win32/hero-nav.ps1":  "98d4e384d4a7472af20bddbe1ce244c7ec7e34f90178288c475a1f68a398776a",
                   "test/win32/hero-viewer-tile.ps1":  "93872c39191a45aca2e453ed936d9f2aa08c2032b2745d8b8613693b1e299006",
                   "test/win32/history-guard-flavor.ps1":  "764859c2785f580a4c58e5e8af65e1d4c1fedfc15d81f0281f54d518fb91cf73",
-                  "test/win32/holder-adopt.ps1":  "815521f7d9ed4fca4be48d24e6ad9afa7d35aa82cf53f4f293c9e69161998a59",
+                  "test/win32/holder-adopt.ps1":  "29d1c2e049f06473c3cb1003c930fdf6822c6718527789cdeed1dd4f6431983d",
                   "test/win32/holder-durable.ps1":  "d05741a073f0b9fa99534297d55e46330668c9866804e1c6142d2c6b47a613ff",
                   "test/win32/holder-soak.ps1":  "a8c7eaa00a75aeb97f8436055214b4afc913f9af0f6f9c552f672cd42f4f30f6",
                   "test/win32/holder-volume.ps1":  "d02ee330dd064bc6a723ee4a27ded93fdd8c6874a0c079ec42531d28cf5e97ac",
@@ -169,7 +170,7 @@
                   "test/win32/ipc-under-load.ps1":  "e086bb69c413c1cff080a5b54579d37c709e28c54749c00a3359bcb5fd60e6f1",
                   "test/win32/ipc-version.ps1":  "09d5d1b7a53c70ebe20b8eb2a4e36f51d7c3ed8d5d542e61ba9101acfa34e145",
                   "test/win32/ipc-when-idle.ps1":  "9f4f4e064df51079fdd4dd86dfb8afad9b4f639e43f91f7bd557f75dc5fb50d6",
-                  "test/win32/isolation-meta.ps1":  "f5ba7519276c43f2e56cfa3480e0bb237e3d20304d3190ca83ed2fd8b465b95f",
+                  "test/win32/isolation-meta.ps1":  "0b47af0a0f91bf0aa2c838d571a4b3fcae69eb8134af6a87b2d3ffd289e8164a",
                   "test/win32/job-escape-startup.ps1":  "abcc76e94b96212275eeb72c47b9085942b2aa55d5d4e868d360b3d490928a1c",
                   "test/win32/job-teardown.ps1":  "caee876fa71416e56fb48c0688a54971ddbc0eabd851947f73b706e8fe14734b",
                   "test/win32/kb-actions.ps1":  "59a4c832fee92a2a76be5c9179b71ee8515cb19721ad7fe451c97cc174791771",
