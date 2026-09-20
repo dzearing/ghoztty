@@ -416,6 +416,29 @@ six phantom FAILs, and a seat that fixed the path would have lost the coverage
 to a skip instead — on exactly the seats that have sign-in configured, which is
 the population that hid T747 in the first place.
 
+Everything above measures the MECHANISM against a fake relay under a fake client
+id, which is the right way to test it and says nothing about whether the
+credential a delivered build actually carries is a live one. T795 baked it and
+closed naming exactly that gap. `test/win32/relay-signin-live.ps1` (T915) closes
+it, and needs nobody signed in: Google's authorization endpoint validates a
+`client_id` on an unauthenticated GET, so the harness builds the exact URL
+`authorizationURL` constructs and reads the verdict out of the redirect — a 302
+to `/v3/signin/identifier` for a live credential, `error=` carrying
+`invalid_client` for a dead one, and `redirect_uri_mismatch` when the client is
+not the Desktop-app type the loopback receiver requires. It asks the baked
+`relay_directory.default_base` the same kind of question (exchange 400, renew
+401, devices 401, a nonsense path 404), so "the relay is up" is distinguished
+from "the relay is a configured broker".
+
+Consent is the one step it does not take — that is the user's Google account.
+`-Observe`, run after signing in from the chooser, reads the account store back
+and requires the REAL relay to honour the stored token with 200 on the route
+that answered 401 above, which is the only assertion here that a hand-written
+file cannot satisfy. Point `GHOSTTY_ACCOUNT_STORE` at a seeded store to exercise
+those assertions without touching the real one. The guard row is **advisory**:
+its subject is the network and a third party, so a red run may only mean the box
+is offline and must never refuse a commit.
+
 Once signed in, `+new-remote-window --relay/--device` with **no** `--token`
 uses the account's session token (token-resolution order: explicit `--token`
 → signed-in account → `GHOSTTY_RELAY_TOKEN`). A pre-brokered store

@@ -1,0 +1,14 @@
+{
+    "guard":  "relay-signin-live",
+    "script":  "test/win32/relay-signin-live.ps1",
+    "generated":  "2026-09-20T09:18:06-07:00",
+    "commit":  "0d5bcceb5",
+    "uncommitted":  [
+                        "test/win32/relay-signin-live.ps1"
+                    ],
+    "files":  {
+                  "src/remote/google_oauth.zig":  "40138a3e0293322de8ee722b7aa0e5688eb4ac68332971c5d624f1d8471c5510",
+                  "src/remote/relay_directory.zig":  "69b406e2f41856cf317780028cca84c214d7e8a8a30193f45de94e35c8c514a0",
+                  "test/win32/relay-signin-live.ps1":  "f35a640bd8f1bd3dfb8eec671e051d3c5d061026fd7609c62326d3cff96a02fe"
+              }
+}

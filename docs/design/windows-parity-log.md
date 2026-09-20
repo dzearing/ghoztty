@@ -9,6 +9,57 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-20: T915 worked down to its last human step (T1683 filed) — **the
+  Google credential every Windows build ships is now checked against the real
+  Google, on every run, with nobody signed in.**
+
+  T795 baked the credential and closed naming what it could not do: "this seat
+  can prove everything except that the credential is the RIGHT credential."
+  T915 inherited that and was parked at P2 on two conditions — the user's
+  `google-client-id.txt`, and a reachable relay with brokered sign-in. Both had
+  quietly become true: the file is at the repo root, all three delivered
+  locations (repo build, Desktop portable, the user's installed release) bake
+  the same real id, and the relay at the baked `default_base` answers its
+  brokered routes.
+
+  The surprise is that the blocking premise was wrong. Proving the credential is
+  the right one was assumed to need a consent click, and it does not: Google's
+  authorization endpoint validates a `client_id` on an unauthenticated GET. So
+  `test\win32\relay-signin-live.ps1` builds the exact URL `authorizationURL`
+  constructs and reads what Google decides — a 302 to the sign-in page for the
+  shipped id, `invalid_client` for a never-issued one, `redirect_uri_mismatch`
+  for the real id asked for a non-loopback redirect (the shape a
+  Web-application client id would produce, which is the plausible way a WRONG
+  credential gets baked in). That last pair runs every time, so the check has
+  been observed saying no rather than only "fine". Section D does the same for
+  the relay: exchange 400, renew 401, devices 401, and a nonsense path 404 so
+  those codes are the routes answering and not a catch-all.
+
+  What genuinely needs a person is consent — that is the user's Google account,
+  and a turn must not click it. So the script does not drive a browser; it reads
+  the result back under `-Observe` and closes the loop the one way that cannot
+  be faked by writing a file, calling the real relay with the stored token and
+  requiring 200 where D5 got 401. Those assertions ship exercised rather than
+  merely written: pointed at a seeded store via `GHOSTTY_ACCOUNT_STORE` (the
+  product's own override, so the path resolves the way `relay_account.zig` does)
+  E1–E5 pass and E6 scores a fabricated token red. T915 is therefore
+  `blocked(...)` on one sign-in by the user, with the two-line recipe in its
+  `unblock:`, rather than open against work nobody can do.
+
+  The guard row is ADVISORY, for `rdp-session`'s reason: the subject is the
+  network and a third party, so a red run may only mean the box is offline and
+  must never refuse a commit. Its teeth are section C, every pass.
+
+  T1683 filed for the gap this exposed: the three locations measured here are
+  all built on this box, and the MSI and portable zip a USER downloads are built
+  in CI from a repository secret nothing ever reads back out of the artifact —
+  `release-artifacts.ps1` section F checks that the workflow passes the flag,
+  which is a claim about the YAML, not about the binary.
+
+  Green: `floor-lane -Lane all` ALL LANES PASS; `-Lane harness`;
+  relay-signin-live ALL PASS (19 assertions), `-NegativeControl` 1 FAILURE(S)
+  at exit 1.
+
 - 2026-09-19: T893 closed done (T1672 filed) — **a script can now tell a
   running Ghoztty to re-read its configuration: `ghoztty +reload --config`.**
 

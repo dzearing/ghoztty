@@ -3134,6 +3134,39 @@ $GuardTable = @(
             'test\win32\relay-account.ps1'
         )
     },
+    # The SHIPPED sign-in configuration, against the real Google and the real
+    # relay (T915). The row above proves the flow works against a FAKE relay
+    # under GHOSTTY_GOOGLE_CLIENT_ID=cid-e2e, which is the right way to test the
+    # mechanism and says nothing about whether the credential a delivered build
+    # actually carries is a live one - T795 baked it and closed naming exactly
+    # that gap. This harness asks Google, which answers for free and
+    # unauthenticated: a client id that has been deleted, revoked, or issued as
+    # the wrong application type is refused at the authorization endpoint, and
+    # every delivered Windows build would then show the machine chooser's
+    # sign-in as broken with nothing in the repo able to notice.
+    #
+    # Coverage is the two files that decide what gets dialed - the URL the
+    # browser is sent to and the relay base baked in as the default - plus the
+    # harness. Neither is reachable from the fake-relay run, which overrides
+    # both.
+    #
+    # ADVISORY, and for the reason `rdp-session` above is: the subject is the
+    # ENVIRONMENT rather than a code path. It needs the public internet, a live
+    # third-party (Google) and a running relay, so a green run is evidence and a
+    # red one may only mean the box is offline - which must never be able to
+    # refuse a commit. Its teeth are in the run itself: section C proves the
+    # check can say no, every time it passes.
+    [pscustomobject]@{
+        Name     = 'relay-signin-live'
+        Script   = 'test\win32\relay-signin-live.ps1'
+        Stamp    = 'test\win32\relay-signin-live.stamp.json'
+        Advisory = $true
+        Covers   = @(
+            'src\remote\google_oauth.zig',
+            'src\remote\relay_directory.zig',
+            'test\win32\relay-signin-live.ps1'
+        )
+    },
     # The chooser's TEXT FIELD (T990), the sibling of the activity-monitor row
     # above: both harnesses exist because a fixed-size UTF-8 destination behind
     # a win32 EDIT is a crash with a threshold, and neither floor lane can see
