@@ -358,3 +358,13 @@ as the digest that showed them.
 - Show me today, as a timeline (cross-session view of what ran, how long, what failed)
 - Search everything I have seen, not just this pane (scrollback search across open and restored sessions)
 - Keep the line that names the failure, not the line that matches the pattern (anchored failure summaries)
+
+## 2026-09-20
+
+- Type what you want, not what it is called (palette matches on what a command does, not only its name)
+- Run the last thing again, from anywhere (repeat-last-action entry at the top of the palette)
+- See the update’s changes in the balloon itself (plain-language headlines on the update card)
+- Hold this update until I am done (defer an update to the next window close, badge stops nagging)
+- Tell me my shell is not fully wired up (one dismissible line when shell integration cannot attach)
+- Show me the shell this pane actually started (executable, flavour and integration state on tab hover)
+- A health card you can open (build, release gap, agent state and share staleness in one panel)
