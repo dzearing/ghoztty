@@ -54,6 +54,8 @@ const proc = @import("proc.zig");
 const foreground = @import("foreground.zig");
 const pty_holder_child = @import("pty_holder_child.zig");
 const relay_perf = @import("relay_perf.zig");
+const agent_lineage = @import("../agent_lineage.zig");
+const pty_job_name = @import("../pty_job_name.zig");
 
 /// On Windows the OS-specific arms reach `ReadFile`/`WriteFile`/`TerminateProcess`
 /// straight from `std.os.windows` — the same kernel32 surface the smoke uses.
@@ -175,7 +177,7 @@ const PtyJob = if (is_windows) struct {
 
     /// Build the job + set its kill-on-close limit. Runs exactly once.
     fn init() void {
-        const h = win_job.CreateJobObjectW(null, null) orelse {
+        const h = createNamed() orelse win_job.CreateJobObjectW(null, null) orelse {
             log.warn("CreateJobObjectW failed (gle={d}); PTY children will not be job-managed (may orphan)", .{@intFromEnum(windows.kernel32.GetLastError())});
             return;
         };
@@ -193,6 +195,56 @@ const PtyJob = if (is_windows) struct {
         }
         // Hold the handle for the process lifetime — do NOT close it.
         handle = h;
+    }
+
+    /// Create the job under the NAME the app's startup escape probes (T902), or
+    /// null to fall back to an anonymous job.
+    ///
+    /// The name is what lets an app launched inside a pane ask
+    /// `IsProcessInJob(self, this job)` EXACTLY, instead of inferring membership
+    /// from first-job flags that a nested job hides and from `$GHOZTTY_PANE_ID`
+    /// lineage that a launch from another terminal does not have.
+    ///
+    /// **An existing name is never adopted.** `CreateJobObjectW` with a name
+    /// that already exists OPENS the existing job and reports
+    /// `ERROR_ALREADY_EXISTS`, which would put THIS agent's shells into ANOTHER
+    /// agent's kill domain: that agent's death would then kill panes it never
+    /// hosted, which is a worse failure than the blind spot the name closes.
+    /// The lineage in the name (`pty_job_name.compose`) is the same identity the
+    /// single-instance guard enforces one-agent-per, so this should be
+    /// unreachable — and it is handled anyway, by falling back to an anonymous
+    /// job. The app then finds no membership and keeps the T675 heuristic, which
+    /// is exactly the behavior of an agent too old to expose a name at all.
+    fn createNamed() ?windows.HANDLE {
+        var name_buf: [pty_job_name.max_len]u8 = undefined;
+        var sfx_buf: [agent_lineage.max_len]u8 = undefined;
+        const name = pty_job_name.compose(
+            &name_buf,
+            @import("agent_build_options").is_debug,
+            agent_lineage.fromEnv(&sfx_buf),
+        ) catch return null;
+
+        var w_buf: [pty_job_name.max_len + 1]u16 = undefined;
+        const n = std.unicode.utf8ToUtf16Le(&w_buf, name) catch return null;
+        w_buf[n] = 0;
+
+        const h = win_job.CreateJobObjectW(null, @ptrCast(w_buf[0..n :0].ptr)) orelse {
+            log.warn(
+                "CreateJobObjectW('{s}') failed (gle={d}); falling back to an anonymous PTY job (the app's startup escape falls back to its heuristic)",
+                .{ name, @intFromEnum(windows.kernel32.GetLastError()) },
+            );
+            return null;
+        };
+        if (windows.kernel32.GetLastError() == .ALREADY_EXISTS) {
+            log.warn(
+                "PTY job name '{s}' already exists - another agent owns it; using an anonymous job rather than joining its kill domain",
+                .{name},
+            );
+            windows.CloseHandle(h);
+            return null;
+        }
+        log.info("PTY job created as '{s}'", .{name});
+        return h;
     }
 
     /// Get the (lazily-created) job handle, or null if creation failed.

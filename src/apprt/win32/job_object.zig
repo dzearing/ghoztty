@@ -133,6 +133,46 @@ pub fn selfJob() SelfJob {
     return facts;
 }
 
+/// Are we a member of the job named `name` — the EXACT question the startup
+/// escape wants answered (T902), as opposed to the first-job flags and pane
+/// lineage it has to infer from otherwise.
+///
+/// `null` means "could not tell", with the same force it has everywhere else in
+/// this module: no such job exists (an agent too old to name its job, or none
+/// running), we may not open it, or the membership call itself failed. Only a
+/// successful `IsProcessInJob` against a job we actually opened answers `false`,
+/// and even that answer is about THAT job alone — the caller must not read it as
+/// "in no hostile job", because a job we could not open is a job we know nothing
+/// about.
+///
+/// `JOB_OBJECT_QUERY` is the whole access we ask for: this is a question, and a
+/// handle with the rights to TERMINATE the user's panes is not one this process
+/// has any business holding.
+pub fn inNamedJob(name: []const u8) ?bool {
+    if (comptime builtin.os.tag != .windows) return null;
+
+    var w_buf: [256]u16 = undefined;
+    if (name.len + 1 > w_buf.len) return null;
+    const n = std.unicode.utf8ToUtf16Le(&w_buf, name) catch return null;
+    w_buf[n] = 0;
+
+    const job = OpenJobObjectW(JOB_OBJECT_QUERY, 0, @ptrCast(w_buf[0..n :0].ptr)) orelse {
+        // Names the reason, because the two reasons are worlds apart: FILE_NOT_FOUND
+        // is the ordinary "no agent of this lineage is running" and needs nobody,
+        // while ACCESS_DENIED is a real defect in how the job was created.
+        std.log.scoped(.win32_job_object).debug(
+            "named job '{s}' not opened (gle={d})",
+            .{ name, @intFromEnum(windows.kernel32.GetLastError()) },
+        );
+        return null;
+    };
+    defer windows.CloseHandle(job);
+
+    var b: windows.BOOL = 0;
+    if (IsProcessInJob(windows.kernel32.GetCurrentProcess(), job, &b) == 0) return null;
+    return b != 0;
+}
+
 /// Measure the facts for `other_pid`. Never fails: every step that cannot be
 /// answered leaves its field null.
 ///
@@ -360,6 +400,16 @@ const JOBOBJECT_BASIC_PROCESS_ID_LIST = extern struct {
     NumberOfProcessIdsInList: windows.DWORD,
     ProcessIdList: [1]usize,
 };
+
+/// `JOB_OBJECT_QUERY` (winnt.h 0x0004): read the job's limits and membership,
+/// and nothing else. Deliberately not `JOB_OBJECT_ALL_ACCESS`.
+const JOB_OBJECT_QUERY: windows.DWORD = 0x0004;
+
+extern "kernel32" fn OpenJobObjectW(
+    dwDesiredAccess: windows.DWORD,
+    bInheritHandle: windows.BOOL,
+    lpName: windows.LPCWSTR,
+) callconv(.winapi) ?windows.HANDLE;
 
 extern "kernel32" fn IsProcessInJob(
     ProcessHandle: windows.HANDLE,

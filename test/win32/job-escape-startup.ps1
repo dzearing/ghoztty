@@ -28,6 +28,16 @@
 #      through those same escape tiers, so the child is born outside the job
 #      and A-C's backstop has nothing to do. Measured as both halves at once:
 #      the GUI is out of the job AND no re-exec happened.
+#   E: T902 - the blind spot A-D cannot reach. A kill-on-close job NESTED
+#      behind a limitless one, launched with no pane lineage: both of the old
+#      clues miss (measured from the app's own probe line, not assumed), and
+#      the app escapes anyway because it opened the agent's job BY NAME and
+#      asked IsProcessInJob.
+#   F: E's negative control and the lineage-isolation proof - the identical
+#      shape with the job named for a DIFFERENT GHOZTTY_AGENT_INSTANCE. The
+#      app must not claim membership, and must not escape.
+#   G: the agent's half of E - the REAL agent, launched under its own lineage,
+#      creates its PTY job under exactly the name the app probes for.
 #
 # Runs anywhere as of T674: breakaway is forbidden (field shape) and
 # GetShellWindow() answers nothing on a background test desktop, but the
@@ -91,6 +101,9 @@ public static class T675Job {
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool TerminateJobObject(IntPtr job, uint exitCode);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool CloseHandle(IntPtr handle);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
+  // T902 section G: open the agent's PTY job BY NAME, the way the app does.
+  // Unicode explicitly - this one is compared against a name the app composed.
+  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)] public static extern IntPtr OpenJobObjectW(uint access, bool inherit, string name);
 }
 '@
 Add-Type -TypeDefinition $jobSig -ErrorAction SilentlyContinue
@@ -176,6 +189,10 @@ $launcherPs1 = Join-Path $root 'launcher.ps1'
 
 $job = [IntPtr]::Zero
 $job2 = [IntPtr]::Zero
+$jobOuter = [IntPtr]::Zero
+$jobNamed = [IntPtr]::Zero
+$jobOuter2 = [IntPtr]::Zero
+$jobOther = [IntPtr]::Zero
 try {
     Stop-TestProcs
 
@@ -419,16 +436,282 @@ Set-Content -Path '$victim2PidFile' -Value `$victim.Id
         ($null -eq (Get-Process -Id $victim2Pid -ErrorAction SilentlyContinue))
     Assert "D9 ... and the com-spawned GUI SURVIVED it" `
         ($guiPid -ne 0 -and $null -ne (Get-Process -Id $guiPid -ErrorAction SilentlyContinue))
+
+    # ========================================================================
+    Say "== E: the exact named-job probe escapes where both heuristics miss (T902)"
+    # ========================================================================
+    # The blind spot A-D cannot reach. Two clues decided the escape before
+    # T902: the NULL-handle flags query (which with NESTED jobs answers for the
+    # FIRST job this process joined, so a limitless compat job in front of the
+    # killer reads 0x0) and $GHOZTTY_PANE_ID lineage (which a launch from
+    # ANOTHER terminal does not have). Construct exactly that: an outer job
+    # with no limits, the kill-on-close job nested inside it, and a launcher
+    # with no pane lineage. Both clues miss.
+    #
+    # What must still fire is the exact probe: the agent creates its PTY job
+    # under a NAME (src\remote\pty_job_name.zig) and the app opens that name
+    # and asks IsProcessInJob directly. Here the HARNESS plays the agent - it
+    # creates the job under the name the app will compose for this lineage,
+    # which is also what proves the two sides derive the same string.
+    #
+    # E2 below is this section's negative control: the identical shape with
+    # one lineage of difference in the name scores the opposite way.
+    Stop-TestProcs
+
+    # The lineage half of the name is `build_config.is_debug`, which
+    # Test-GhozttyIsolatedBuildMode mirrors - and it takes the MODE, not the
+    # exe. Passing -Exe bound nothing, answered $false for a Debug build, and
+    # composed `-local` where the app composes `-local-debug`: E then looked
+    # perfectly correct and measured a job that did not exist (2026-09-20).
+    $buildMode = Get-GhozttyBuildMode -Exe $Exe
+    $isDebugBuild = Test-GhozttyIsolatedBuildMode -Mode $buildMode
+    $lineage = if ($isDebugBuild) { 'local-debug' } else { 'local' }
+    Assert "E-0 premise: the build mode under test is known ($buildMode -> lineage '$lineage')" `
+        ($null -ne $buildMode -and $buildMode -ne '')
+    $instance = "t902-$PID"
+    $jobName = "Local\GhozttyAgentPtyJob-$lineage-$instance"
+    # The name E2 uses: a DIFFERENT sandbox lineage, which the app running
+    # under $instance must not be able to name, open, or be told it belongs to.
+    $otherInstance = "t902x-$PID"
+    $otherJobName = "Local\GhozttyAgentPtyJob-$lineage-$otherInstance"
+
+    # Launch a jailed app the same shape A and D do - a go-marker-gated launcher
+    # jailed before it spawns anything - with ONE deliberate difference: it is
+    # started with Start-Process, not through WMI.
+    #
+    # A and D use Win32_Process.Create to guarantee the launcher is in exactly
+    # one job. That is the wrong tool here, and measurably so: a process created
+    # through WMI belongs to WmiPrvSE and lands in SESSION 0, and the agent's
+    # PTY job name lives in the `Local\` namespace, which is PER LOGON SESSION.
+    # The app then looked for a job in session 0's namespace while this script
+    # had created it in session 1's, and the probe answered `null` - not a
+    # defect in the probe, an artifact of launching across a session boundary
+    # that the field never crosses (the agent is spawned BY the app, in the
+    # user's own session). Measured 2026-09-20 while writing this section.
+    #
+    # Start-Process keeps the launcher in this session, at the cost of it also
+    # inheriting whatever job the test runner sits in. That costs nothing here:
+    # E wants a nested chain, one more limitless layer in front changes nothing,
+    # and E4 MEASURES what the flags query actually answered rather than
+    # assuming it - so a runner whose own job is a killer fails loudly instead
+    # of quietly turning E into a test of the old heuristic.
+    function Start-JailedApp($tag, $instanceValue, $jobs) {
+        $goF = Join-Path $root "go-$tag.marker"
+        $pidF = Join-Path $root "app-$tag.pid"
+        $errF = Join-Path $root "app-$tag.err.txt"
+        $ps1 = Join-Path $root "launcher-$tag.ps1"
+        # NO GHOZTTY_PANE_ID: half the blind spot is the absence of lineage.
+        @"
+`$env:LOCALAPPDATA = '$root'
+`$env:GHOZTTY_PIPE_SUFFIX = '-t675-$PID'
+`$env:GHOZTTY_AGENT_INSTANCE = '$instanceValue'
+Remove-Item env:GHOZTTY_IPC_SOCKET -ErrorAction SilentlyContinue
+Remove-Item env:GHOZTTY_PANE_ID -ErrorAction SilentlyContinue
+Remove-Item env:GHOZTTY_NO_STARTUP_ESCAPE -ErrorAction SilentlyContinue
+Remove-Item env:GHOZTTY_JOB_ESCAPED -ErrorAction SilentlyContinue
+while (-not (Test-Path '$goF')) { Start-Sleep -Milliseconds 200 }
+`$app = Start-Process -FilePath '$Exe' -ArgumentList '--title=$tag' -RedirectStandardError '$errF' -PassThru
+Set-Content -Path '$pidF' -Value `$app.Id
+"@ | Set-Content -Path $ps1 -Encoding ascii
+
+        $made = Start-Process -FilePath 'powershell.exe' `
+            -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $ps1 `
+            -WindowStyle Hidden -PassThru
+        $lp = if ($made) { [int]$made.Id } else { 0 }
+        # With no jobs to assign (section G), "jailed" means only "the launcher
+        # started" - there is nothing to be inside of.
+        $jailed = $false
+        if ($lp -ne 0) {
+            try {
+                $lproc = Get-Process -Id $lp -ErrorAction Stop
+                # Order is load-bearing: the limitless job FIRST, so it is the
+                # first job joined and the one the flags query answers for.
+                foreach ($j in $jobs) {
+                    [T675Job]::AssignProcessToJobObject($j, $lproc.Handle) | Out-Null
+                }
+                $jailed = $true
+                foreach ($j in $jobs) {
+                    $inIt = $false
+                    [T675Job]::IsProcessInJob($lproc.Handle, $j, [ref]$inIt) | Out-Null
+                    if (-not $inIt) { $jailed = $false }
+                }
+            } catch {}
+        }
+        New-Item -ItemType File -Path $goF -Force | Out-Null
+        [void](Wait-File $pidF 25)
+        $appPid = if (Test-Path $pidF) { [int](Get-Content $pidF | Select-Object -First 1) } else { 0 }
+        return [pscustomobject]@{ Jailed = $jailed; AppPid = $appPid; Err = $errF }
+    }
+
+    # The outer job: NO limits at all. This is the compat job that sits in
+    # front of the killer and makes the flags query answer 0x0.
+    $jobOuter = [T675Job]::CreateJobObject([IntPtr]::Zero, $null)
+    # The killer, under the AGENT's name for this lineage.
+    $jobNamed = [T675Job]::CreateJobObject([IntPtr]::Zero, $jobName)
+    $jobInfoE = New-Object T675Job+JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    $jobInfoE.BasicLimitInformation.LimitFlags = 0x2000
+    $setE = $false
+    if ($jobNamed -ne [IntPtr]::Zero) {
+        $setE = [T675Job]::SetInformationJobObject($jobNamed, 9, [ref]$jobInfoE, $jobLen)
+    }
+    Assert "E0 premise: a limitless outer job and a NAMED kill-on-close job exist" `
+        ($jobOuter -ne [IntPtr]::Zero -and $jobNamed -ne [IntPtr]::Zero -and $setE)
+
+    $e = Start-JailedApp 't902' $instance @($jobOuter, $jobNamed)
+    Assert "E1 premise: the launcher is inside BOTH jobs (killer nested behind the limitless one)" `
+        $e.Jailed
+    Assert "E2 premise: the jailed launcher started the app" ($e.AppPid -ne 0)
+
+    # The app's own breadcrumb, which is where the premise is MEASURED rather
+    # than assumed: it records what each signal answered.
+    [void](Wait-LogMatch $e.Err 'startup job probe:' 30)
+    $eLog = Read-AppLog $e.Err
+    $eProbe = if ($eLog -match 'startup job probe: [^\r\n]*') { $Matches[0] } else { '' }
+    Say "  probe line: $eProbe"
+    Assert "E3 premise: the pane-lineage clue MISSED (no GHOZTTY_PANE_ID on this launch)" `
+        ($eProbe -match 'pane_lineage=false')
+    Assert "E4 premise: the first-job flags clue MISSED (the limitless job answered, not the killer)" `
+        ($eProbe -match 'flags=0x0 ')
+    Assert "E5 the exact probe found us in the agent's NAMED job" `
+        ($eProbe -match 'agent_job_member=true')
+    Assert "E6 ... and the app escaped on that alone, where both heuristics said stay" `
+        (Wait-LogMatch $e.Err 'startup escape: respawned as pid \d+ \((breakaway|shell-parent|jobless-parent)\)' 30)
+
+    $eTwinPid = if ((Read-AppLog $e.Err) -match 'startup escape: respawned as pid (\d+)') { [int]$Matches[1] } else { 0 }
+    $eTwin = $null
+    if ($eTwinPid -ne 0) {
+        $deadline = (Get-Date).AddSeconds(20)
+        while ((Get-Date) -lt $deadline) {
+            $eTwin = Get-Process -Id $eTwinPid -ErrorAction SilentlyContinue
+            if ($eTwin) { break }
+            Start-Sleep -Milliseconds 300
+        }
+    }
+    Assert "E7 the escaped twin is alive and is NOT a member of the named killer job" `
+        ($null -ne $eTwin -and (Test-InJob $eTwinPid $jobNamed) -eq $false)
+
+    [T675Job]::TerminateJobObject($jobNamed, 1) | Out-Null
+    [T675Job]::CloseHandle($jobNamed) | Out-Null
+    $jobNamed = [IntPtr]::Zero
+    Start-Sleep -Seconds 2
+    Assert "E8 the teardown that used to kill it left the twin running" `
+        ($eTwinPid -ne 0 -and $null -ne (Get-Process -Id $eTwinPid -ErrorAction SilentlyContinue))
+
+    # ========================================================================
+    Say "== F: a job named for ANOTHER lineage is not ours, and E can go red (T902)"
+    # ========================================================================
+    # E's negative control, and the isolation claim in one. Identical shape -
+    # limitless outer job, nested kill-on-close job, no pane lineage - with the
+    # killer named for a DIFFERENT GHOZTTY_AGENT_INSTANCE than the app runs
+    # under. The app must not be able to claim membership of a job belonging to
+    # a lineage that is not its own, so the probe answers nothing, both
+    # heuristics still miss, and the escape does NOT fire.
+    #
+    # That is the demonstration that E5/E6 measure something: one lineage of
+    # difference in the name flips both of them. It is also the property that
+    # keeps a harness agent out of the dev agent's kill domain.
+    Stop-TestProcs
+
+    $jobOuter2 = [T675Job]::CreateJobObject([IntPtr]::Zero, $null)
+    $jobOther = [T675Job]::CreateJobObject([IntPtr]::Zero, $otherJobName)
+    $setF = $false
+    if ($jobOther -ne [IntPtr]::Zero) {
+        $setF = [T675Job]::SetInformationJobObject($jobOther, 9, [ref]$jobInfoE, $jobLen)
+    }
+    Assert "F0 premise: a kill-on-close job exists under ANOTHER lineage's name" `
+        ($jobOuter2 -ne [IntPtr]::Zero -and $jobOther -ne [IntPtr]::Zero -and $setF)
+
+    $f = Start-JailedApp 't902x' $instance @($jobOuter2, $jobOther)
+    Assert "F1 premise: the launcher is inside both of THOSE jobs" $f.Jailed
+
+    [void](Wait-LogMatch $f.Err 'startup job probe:' 30)
+    $fLog = Read-AppLog $f.Err
+    $fProbe = if ($fLog -match 'startup job probe: [^\r\n]*') { $Matches[0] } else { '' }
+    Say "  probe line: $fProbe"
+    Assert "F2 the app did NOT claim membership of another lineage's job" `
+        ($fProbe -ne '' -and $fProbe -notmatch 'agent_job_member=true')
+    Assert "F3 ... so with both heuristics still missing, it did not escape" `
+        ($fLog -notmatch 'startup escape: respawned as pid')
+
+    [T675Job]::TerminateJobObject($jobOther, 1) | Out-Null
+    [T675Job]::CloseHandle($jobOther) | Out-Null
+    $jobOther = [IntPtr]::Zero
+    [T675Job]::CloseHandle($jobOuter2) | Out-Null
+    $jobOuter2 = [IntPtr]::Zero
+    [T675Job]::CloseHandle($jobOuter) | Out-Null
+    $jobOuter = [IntPtr]::Zero
+
+
+    # ========================================================================
+    Say "== G: the REAL agent creates its PTY job under that name (T902)"
+    # ========================================================================
+    # E and F prove the APP's half against a job this script created. The other
+    # half is the agent's, and nothing above exercises it: a name only two
+    # processes agree on is worth nothing if the process that is supposed to
+    # create it never does, or creates it under a different string. So launch
+    # the real app under a private lineage - it spawns the agent, the agent
+    # spawns the first pane's ConPTY child, and THAT is what creates the job -
+    # and then open the name from here.
+    #
+    # Launched through the same helper E and F use, with NO jobs to be put in:
+    # this section has no jail to build, and routing the launch through the
+    # helper keeps every app start in this file behind one launcher script
+    # rather than adding a bare `Start-Process $Exe` site of its own (which the
+    # desktop-launch audit reads, correctly, as a GUI launched straight onto
+    # the caller's desktop).
+    Stop-TestProcs
+
+    $gInstance = "t902g-$PID"
+    $gName = "Local\GhozttyAgentPtyJob-$lineage-$gInstance"
+    $g = Start-JailedApp 't902g' $gInstance @()
+    Assert "G0 premise: the app started under its own agent lineage '$gInstance'" `
+        ($g.AppPid -ne 0)
+
+    $gJob = [IntPtr]::Zero
+    $gDeadline = (Get-Date).AddSeconds(45)
+    while ((Get-Date) -lt $gDeadline) {
+        $gJob = [T675Job]::OpenJobObjectW(0x0004, $false, $gName)
+        if ($gJob -ne [IntPtr]::Zero) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert "G1 the agent's PTY job exists under the name the app probes for" `
+        ($gJob -ne [IntPtr]::Zero)
+    if ($gJob -ne [IntPtr]::Zero) { [void][T675Job]::CloseHandle($gJob) }
+
+    # And the name is LINEAGE-scoped, which is what keeps this run's agent out
+    # of the dev agent's kill domain: a neighbouring name must resolve to
+    # nothing at all.
+    $gOther = [T675Job]::OpenJobObjectW(0x0004, $false, "Local\GhozttyAgentPtyJob-$lineage-$gInstance-x")
+    Assert "G2 ... and only under THAT lineage's name, not a neighbouring one" `
+        ($gOther -eq [IntPtr]::Zero)
+    if ($gOther -ne [IntPtr]::Zero) { [void][T675Job]::CloseHandle($gOther) }
+
+    Stop-TestProcs
+
     Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     if ($job -ne [IntPtr]::Zero) { [T675Job]::CloseHandle($job) | Out-Null }
     if ($job2 -ne [IntPtr]::Zero) { [T675Job]::CloseHandle($job2) | Out-Null }
+    # T902's four handles. A named job outlives its creator as long as ANY
+    # handle to it is open, so leaking one here would leave the name taken and
+    # the next run's CreateJobObject would OPEN ours instead of making its own.
+    foreach ($h in @($jobOuter, $jobNamed, $jobOuter2, $jobOther)) {
+        if ($null -ne $h -and $h -ne [IntPtr]::Zero) { [T675Job]::CloseHandle($h) | Out-Null }
+    }
     Stop-TestProcs
     $env:LOCALAPPDATA = $savedLocalAppData
     if ($savedPipe) { $env:GHOZTTY_PIPE_SUFFIX = $savedPipe }
     else { Remove-Item env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue }
     if ($savedSocket) { $env:GHOZTTY_IPC_SOCKET = $savedSocket }
-    Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    # A red run KEEPS its evidence (the same lesson as T900): every oracle here
+    # reads an app's stderr, and deleting those files on the way out means the
+    # next question - what did the app actually print? - can only be answered by
+    # re-running and hoping. Green runs still clean up.
+    if ($script:failures -eq 0) {
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    } else {
+        Write-Host "  evidence kept (run was red): $root"
+    }
 }
 
 Say ""

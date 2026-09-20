@@ -288,7 +288,13 @@ $GuardTable = @(
             'test\win32\job-escape-startup.ps1',
             'src\apprt\win32\job_escape.zig',
             'src\apprt\win32\job_spawn.zig',
-            'src\apprt\win32\job_object.zig'
+            'src\apprt\win32\job_object.zig',
+            # T902: the exact membership probe spans a process boundary - the
+            # NAME the agent creates its PTY job under and the name the app
+            # opens have to be the same string, and nothing but this harness
+            # runs both halves against each other.
+            'src\remote\pty_job_name.zig',
+            'src\remote\agent\pty_child.zig'
         )
     },
     # The overview action (T708): the only thing that proves a bound

@@ -1,8 +1,8 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-09-20T04:38:38-07:00",
-    "commit":  "e535790b1",
+    "generated":  "2026-09-20T06:18:54-07:00",
+    "commit":  "9caa063d8",
     "uncommitted":  [
                         "test/win32/job-escape-startup.ps1"
                     ],
@@ -169,7 +169,7 @@
                   "test/win32/ipc-version.ps1":  "09d5d1b7a53c70ebe20b8eb2a4e36f51d7c3ed8d5d542e61ba9101acfa34e145",
                   "test/win32/ipc-when-idle.ps1":  "9f4f4e064df51079fdd4dd86dfb8afad9b4f639e43f91f7bd557f75dc5fb50d6",
                   "test/win32/isolation-meta.ps1":  "f5ba7519276c43f2e56cfa3480e0bb237e3d20304d3190ca83ed2fd8b465b95f",
-                  "test/win32/job-escape-startup.ps1":  "2fd5d62a8338cb814cf17f4d729b86020a6a0c167094d181b6204c9f0b910a91",
+                  "test/win32/job-escape-startup.ps1":  "abcc76e94b96212275eeb72c47b9085942b2aa55d5d4e868d360b3d490928a1c",
                   "test/win32/job-teardown.ps1":  "caee876fa71416e56fb48c0688a54971ddbc0eabd851947f73b706e8fe14734b",
                   "test/win32/kb-actions.ps1":  "59a4c832fee92a2a76be5c9179b71ee8515cb19721ad7fe451c97cc174791771",
                   "test/win32/keybinds-t01.ps1":  "77d86dafe21d72ca1424579503a72fc62342e22097c50d16286df096d508b653",

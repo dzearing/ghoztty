@@ -41,17 +41,32 @@
 //!   and exit code belong to its caller, and a job teardown is not a hazard it
 //!   lives long enough to meet.
 //!
-//! Known limit: with NESTED jobs, the NULL-handle flags query answers for the
-//! FIRST job this process joined, and there is no public API to walk the rest
-//! of the chain. A killer job nested inside a benign outer one is therefore
-//! not detected — no worse than before this module existed, and not the field
-//! shape: a pane shell's one and only job is the agent's PTY job, and the
-//! dying app's own diagnostic measured exactly its flags (0x2000, T426/T268).
+//! The nested-job limit, and what closed it (T902): with NESTED jobs the
+//! NULL-handle flags query answers for the FIRST job this process joined, and
+//! there is no public API to walk the rest of the chain — so a killer job
+//! nested inside a benign outer one read as `0x0` and was invisible. The agent
+//! now creates its PTY job under a NAME (`remote/pty_job_name.zig`), and this
+//! module opens that name and asks `IsProcessInJob` directly, which answers the
+//! actual question regardless of how the chain is shaped.
+//!
+//! That probe is **positive-only, on purpose**. A `true` forces the escape,
+//! outranking every heuristic. A `false` or an unknown changes nothing: the
+//! flags-and-lineage heuristic still decides. The asymmetry is the asymmetry of
+//! the outcomes — a false negative here is the app being destroyed mid-refresh
+//! with the user's windows unrestored, and a false positive is one wasted
+//! re-exec of a process that has not built a window yet. So the only thing the
+//! probe is allowed to do is ADD certainty, never withdraw suspicion: an agent
+//! whose job creation fell back to an anonymous one, or an app opening a name
+//! some other lineage owns, gets a truthful `false` about a job that is not the
+//! one holding it, and must not have that read as an exoneration.
 
 const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
+const build_config = @import("../../build_config.zig");
+const agent_lineage = @import("../../remote/agent_lineage.zig");
+const pty_job_name = @import("../../remote/pty_job_name.zig");
 const job_object = @import("job_object.zig");
 const job_spawn = @import("job_spawn.zig");
 const w32 = @import("win32.zig");
@@ -83,6 +98,13 @@ pub const suppress_env_var = "GHOZTTY_NO_STARTUP_ESCAPE";
 /// module doc's known limit — measured while building this task's acceptance
 /// harness).
 ///
+/// `agent_job_member` is the EXACT signal (T902): `IsProcessInJob` against the
+/// agent's PTY job, opened by name. `true` escapes on its own — it is the only
+/// input here that is measured rather than inferred, so it outranks the two
+/// heuristics AND `in_job`, whose NULL-handle query is blind to the same nested
+/// chain. `false` and `null` are NOT vetoes: see the module doc for why the
+/// probe may only add certainty.
+///
 /// Unknowns stay put: a probe that could not answer is not evidence of a
 /// hazard, and a re-exec on a guess would tax every clean launch. And the
 /// escape attempt's own twin never escapes again, whatever it sees.
@@ -90,13 +112,31 @@ pub fn shouldEscape(
     in_job: ?bool,
     flags: ?u32,
     pane_lineage: bool,
+    agent_job_member: ?bool,
     already_attempted: bool,
 ) bool {
     if (already_attempted) return false;
+    // The EXACT answer (T902), and the only signal here that does not have to
+    // be inferred: we opened the agent's own kill-on-close job by name and it
+    // says we are inside it. It outranks `in_job` too — the NULL-handle
+    // membership query is the same nested-job-blind call as the flags query,
+    // so a `false` from it cannot outvote a named job that has us on its list.
+    if (agent_job_member orelse false) return true;
     if (!(in_job orelse false)) return false;
     if (pane_lineage) return true;
     const f = flags orelse return false;
     return f & job_object.limit_kill_on_job_close != 0;
+}
+
+/// The name of the agent's PTY job for OUR lineage, into `buf`. Null when it
+/// cannot be composed, which leaves the decision on the heuristic.
+fn agentJobName(buf: []u8) ?[]const u8 {
+    var sfx_buf: [agent_lineage.max_len]u8 = undefined;
+    return pty_job_name.compose(
+        buf,
+        build_config.is_debug,
+        agent_lineage.fromEnv(&sfx_buf),
+    ) catch null;
 }
 
 /// Probe, and respawn outside the job if the probe says we must. True means a
@@ -141,24 +181,35 @@ fn escapeImpl(alloc: Allocator) !bool {
         const raw = std.process.getEnvVarOwned(arena, "GHOZTTY_PANE_ID") catch break :blk false;
         break :blk raw.len > 0;
     };
+    // The exact question, asked of the agent's own job by name (T902). Null
+    // whenever it could not be asked — no agent, an agent too old to name its
+    // job, a denied open — which leaves the two heuristics in charge exactly as
+    // before.
+    var name_buf: [pty_job_name.max_len]u8 = undefined;
+    const agent_job_member: ?bool = if (agentJobName(&name_buf)) |name|
+        job_object.inNamedJob(name)
+    else
+        null;
     {
         // Permanent breadcrumb: the next "app died mid-refresh" incident must
         // be able to say what the startup probe SAW, not only what it did.
         var flags_buf: [64]u8 = undefined;
-        log.debug("startup job probe: in_job={?} flags={s} pane_lineage={} attempted={}", .{
+        log.debug("startup job probe: in_job={?} flags={s} pane_lineage={} agent_job_member={?} attempted={}", .{
             facts.in_job,
             if (facts.flags) |f| job_object.describeFlags(&flags_buf, f) else "?",
             pane_lineage,
+            agent_job_member,
             attempted,
         });
     }
-    if (!shouldEscape(facts.in_job, facts.flags, pane_lineage, attempted)) {
+    if (!shouldEscape(facts.in_job, facts.flags, pane_lineage, agent_job_member, attempted)) {
         if (attempted) {
             // The twin reports where it landed, so the log tells a successful
             // escape apart from one that went nowhere.
             var flags_buf: [64]u8 = undefined;
-            const still_jailed = (facts.in_job orelse false) and
-                (facts.flags orelse 0) & job_object.limit_kill_on_job_close != 0;
+            const still_jailed = (agent_job_member orelse false) or
+                ((facts.in_job orelse false) and
+                    (facts.flags orelse 0) & job_object.limit_kill_on_job_close != 0);
             if (still_jailed) {
                 log.warn(
                     "startup escape: STILL inside a kill-on-close job after the respawn (flags {s}); running jailed",
@@ -227,14 +278,14 @@ const testing = std.testing;
 
 test "shouldEscape fires on a known kill-on-close job" {
     // Flags answered honestly (the field's T426 diagnostic did): 0x2000.
-    try testing.expect(shouldEscape(true, job_object.limit_kill_on_job_close, false, false));
+    try testing.expect(shouldEscape(true, job_object.limit_kill_on_job_close, false, null, false));
     // Kill-on-close plus breakaway bits is still a job that kills its members.
-    try testing.expect(shouldEscape(true, 0x3C00, false, false));
+    try testing.expect(shouldEscape(true, 0x3C00, false, null, false));
     // A job that does NOT kill on close is not a hazard worth a re-exec.
-    try testing.expect(!shouldEscape(true, 0x0, false, false));
-    try testing.expect(!shouldEscape(true, job_object.limit_breakaway_ok, false, false));
+    try testing.expect(!shouldEscape(true, 0x0, false, null, false));
+    try testing.expect(!shouldEscape(true, job_object.limit_breakaway_ok, false, null, false));
     // Not in a job at all.
-    try testing.expect(!shouldEscape(false, job_object.limit_kill_on_job_close, false, false));
+    try testing.expect(!shouldEscape(false, job_object.limit_kill_on_job_close, false, null, false));
 }
 
 test "shouldEscape trusts pane lineage over a flagless first job" {
@@ -242,24 +293,57 @@ test "shouldEscape trusts pane lineage over a flagless first job" {
     // NULL-handle query answered a limitless compat job in front of the
     // killer. Pane lineage says the agent's kill-on-close job is in the
     // chain regardless.
-    try testing.expect(shouldEscape(true, 0x0, true, false));
-    try testing.expect(shouldEscape(true, null, true, false));
+    try testing.expect(shouldEscape(true, 0x0, true, null, false));
+    try testing.expect(shouldEscape(true, null, true, null, false));
     // ... but lineage alone, with no job membership at all, stays put: there
     // is nothing to escape from.
-    try testing.expect(!shouldEscape(false, null, true, false));
-    try testing.expect(!shouldEscape(null, null, true, false));
+    try testing.expect(!shouldEscape(false, null, true, null, false));
+    try testing.expect(!shouldEscape(null, null, true, null, false));
 }
 
 test "shouldEscape treats unknowns as stay-put, never as escape" {
     // A probe that could not answer must not tax every clean launch with a
     // speculative re-exec.
-    try testing.expect(!shouldEscape(null, job_object.limit_kill_on_job_close, false, false));
-    try testing.expect(!shouldEscape(true, null, false, false));
-    try testing.expect(!shouldEscape(null, null, false, false));
+    try testing.expect(!shouldEscape(null, job_object.limit_kill_on_job_close, false, null, false));
+    try testing.expect(!shouldEscape(true, null, false, null, false));
+    try testing.expect(!shouldEscape(null, null, false, null, false));
 }
 
 test "shouldEscape never fires twice" {
     // The marker is the fork-bomb guard: even a fully-jailed twin stays put.
-    try testing.expect(!shouldEscape(true, job_object.limit_kill_on_job_close, false, true));
-    try testing.expect(!shouldEscape(true, 0x0, true, true));
+    try testing.expect(!shouldEscape(true, job_object.limit_kill_on_job_close, false, null, true));
+    try testing.expect(!shouldEscape(true, 0x0, true, null, true));
+    // ...and that holds even for the EXACT signal: a twin that measured itself
+    // still inside the agent's job reports it (the caller logs "STILL inside")
+    // and runs jailed rather than forking again.
+    try testing.expect(!shouldEscape(true, 0x0, false, true, true));
+}
+
+test "T902: exact membership escapes where BOTH heuristics miss" {
+    // The nested-killer blind spot, exactly: a limitless compat job sits in
+    // front of the agent's kill-on-close job, so the flags query answers 0x0,
+    // and the launch carries no pane lineage (a script's Start-Process from
+    // another terminal). Before the named-job probe this returned false and
+    // the app ran inside a job that would kill it with the agent.
+    try testing.expect(!shouldEscape(true, 0x0, false, null, false));
+    try testing.expect(shouldEscape(true, 0x0, false, true, false));
+
+    // It also outranks `in_job` itself: the NULL-handle membership query is
+    // the same nested-blind call as the flags query, so a job we are provably
+    // a NAMED member of cannot be outvoted by it answering no or unknown.
+    try testing.expect(shouldEscape(false, null, false, true, false));
+    try testing.expect(shouldEscape(null, null, false, true, false));
+}
+
+test "T902: a negative from the exact probe never vetoes the heuristics" {
+    // The asymmetry the module doc argues for. An agent whose job creation fell
+    // back to an anonymous one - or an app that opened a name owned by another
+    // lineage - gets a TRUTHFUL `false` about a job that is not the one holding
+    // it. Reading that as an exoneration is how the app dies mid-refresh.
+    try testing.expect(shouldEscape(true, job_object.limit_kill_on_job_close, false, false, false));
+    try testing.expect(shouldEscape(true, 0x0, true, false, false));
+    // And a negative does not INVENT a hazard either: a clean launch stays
+    // clean, which is what keeps the probe off the cost of every start.
+    try testing.expect(!shouldEscape(true, 0x0, false, false, false));
+    try testing.expect(!shouldEscape(false, null, false, false, false));
 }

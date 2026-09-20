@@ -506,6 +506,13 @@ test {
     // the `none` lane too.
     _ = @import("remote/agent_lineage.zig");
 
+    // The agent PTY job's object NAME (T902): the one string the agent's job
+    // creation and the app's startup membership probe must derive identically,
+    // on both sides of a process boundary that never talks. Pure, and reached
+    // only through Windows-gated call sites, so pull it in explicitly to run
+    // its unit tests in the `none` lane on every platform.
+    _ = @import("remote/pty_job_name.zig");
+
     // The shared Windows log sink's per-line prefix (T270): pure timestamp/pid
     // formatting, reached only through this file's own `logFn` — which is
     // compiled out of Debug builds — so pull it in explicitly to run its unit

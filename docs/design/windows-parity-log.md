@@ -33049,3 +33049,79 @@ green, so D7 is the assertion that measures this task rather than the
 correctness the backstop already provided. `auto-launch-cwd.ps1` ALL PASS
 (T506's marker still reaches the child). Floor green: four zig lanes, the
 harness floor, P1-P3.
+
+## 2026-09-20 - T902: the app asks the agent whether it is in the fatal job, instead of guessing
+
+An app launched from inside a Ghoztty pane inherits the agent's kill-on-close
+PTY job, and dies with the agent unless it re-execs out of it at startup
+(T675). Whether it is in danger was decided by two CLUES: what
+`QueryInformationJobObject(NULL, ...)` says about the first job this process
+joined, and whether `$GHOZTTY_PANE_ID` is in the environment. Both can miss at
+once. With nested jobs the flags query answers only for the FIRST job joined,
+so a kill-on-close job sitting behind a limitless compat job reads `0x0`; and a
+launch from another terminal carries no pane lineage. In that corner the app
+runs jailed and the next destructive agent refresh takes it down with the
+agent, which is the T229/T421/T426 family this whole mechanism exists to end.
+
+There is no public API to enumerate the jobs you are in, so the exact question
+-- `IsProcessInJob(self, the agent's job)` -- needs a handle that can only come
+from the agent. It now comes as a NAME. `src\remote\pty_job_name.zig` composes
+`Local\GhozttyAgentPtyJob-local[-debug][-<instance>]`; `agent\pty_child.zig`
+creates its process-global PTY job under that name; and
+`job_object.inNamedJob` opens it with `JOB_OBJECT_QUERY` and asks. The other
+candidate -- advertising the job handle in `port.json` and duplicating it --
+was not taken: the info file is a compatibility surface, and a stale one
+degrades to a WRONG answer rather than to no answer.
+
+Three properties are load-bearing.
+
+**The name carries the lineage, and that is not tidiness.**
+`CreateJobObjectW` with an existing name OPENS the existing job, so two agents
+naming the same job would merge their kill domains -- a harness agent could
+take the dev agent's panes down with it, which is worse than the blind spot
+being closed. The name uses exactly the identity the single-instance guard
+enforces one-agent-per (`local` / `local-debug` plus `GHOZTTY_AGENT_INSTANCE`),
+so sharing a name requires sharing a key the guard already forbids. And
+`createNamed` refuses an existing name anyway: `ERROR_ALREADY_EXISTS` closes
+the handle and falls back to an anonymous job, which reads to the app exactly
+like an agent too old to expose a name.
+
+**The probe is positive-only.** A `true` forces the escape and outranks every
+other signal, including `in_job` -- whose NULL-handle query is blind to the
+same nested chain. A `false` or an unknown changes nothing; the old heuristic
+still decides. The asymmetry is the asymmetry of the outcomes: a false negative
+is the app being destroyed mid-refresh with the user's windows unrestored, a
+false positive is one wasted re-exec of a process that has not drawn a window
+yet.
+
+**`Local\` is the right namespace.** Unlike the agent's guard mutex, which must
+see across logon sessions, this name only has to be openable by an app in the
+same session as the agent whose panes it hosts -- which is the only session
+that agent serves, since the app spawns it. Per-session also means two users'
+agents cannot collide, and nothing needs a privilege to create it.
+
+Validation: three new sections in `test\win32\job-escape-startup.ps1` (ALL
+PASS, 38 assertions). **E** builds the blind spot -- a limitless outer job, the
+kill-on-close job nested inside it, a launcher with no pane lineage -- and does
+not assume the clues missed, it reads the app's own probe line saying
+`flags=0x0 pane_lineage=false agent_job_member=true`, then asserts it escaped
+and survived the teardown. **F** is E's negative control and the isolation
+proof in one: the identical shape with the job named for a different lineage
+reads `agent_job_member=null`, and the app correctly does not escape. **G** is
+the agent's half -- the real agent, under its own lineage, creates the job
+under exactly the name the app opens, and under no neighbouring name.
+
+Two things the writing of it cost, both worth keeping. The harness called
+`Test-GhozttyIsolatedBuildMode -Exe`, and it takes `-Mode`: the parameter bound
+nothing, a Debug build answered "not debug", and the section composed `-local`
+where the app composes `-local-debug`. It looked perfectly correct and measured
+a job that did not exist; there is an `E-0` assertion on the build mode now.
+And a WMI-created launcher (`Win32_Process.Create`, which A and D use to get a
+launcher in exactly one job) lands in SESSION 0 -- so the app looked for the
+name in session 0's namespace while the script had created it in session 1's.
+E/F/G use `Start-Process` and say why.
+
+Floor: four zig lanes green, the harness floor green, the acceptance script
+green. Section B of the same script flaked red in three of seven runs with its
+stderr file at zero bytes, reproduces with the pre-change copy of the script,
+and is filed as T1680 rather than fixed here.
