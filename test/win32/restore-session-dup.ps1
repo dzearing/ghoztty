@@ -107,21 +107,47 @@ function Get-Panes {
     return $rows
 }
 
+# The APP only: the agent has to survive this, because it is what still holds
+# the session the doctored manifest names. The shared kill is what waits for the
+# processes to actually be gone (T688) instead of sleeping and hoping.
 function Stop-App {
-    Get-CimInstance Win32_Process -Filter "Name='ghoztty.exe'" |
-        Where-Object { $_.ExecutablePath -eq $Exe } |
-        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    Start-Sleep -Milliseconds 1500
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 1500)
 }
 
-# Wait until at least `$Want` panes are reporting a session id. Polled rather
-# than slept: an ATTACH publishes its id from the IO thread, so "the window is
-# there" and "the pane knows its session" are different moments.
-function Wait-Panes([int]$Want, [int]$TimeoutSec = 60) {
+# Wait until at least `$Want` panes are reporting a session id AND no listed
+# pane is still without one. Polled rather than slept: an ATTACH publishes its
+# id from the IO thread, so "the window is there" and "the pane knows its
+# session" are different moments - and the two halves of the condition settle
+# at different times. Waiting on the count alone returned the instant the
+# restored panes were up, with the probe window this run launched itself still
+# mid-attach, and B5 ("no restored pane is left without a session") then scored
+# that moment as the defect it exists to catch. A wait that times out still
+# returns the state it last saw, so a pane that genuinely never gets a shell
+# still fails the assertion rather than hanging.
+# `$Ignore` names the windows this script opened only to DRIVE the app - the
+# probe that triggers the relaunch - whose own persistence is not the subject
+# and is the one most exposed to T1688. Everything else must have settled.
+#
+# `$Require` names windows that must be PRESENT before the wait is over. A
+# restore brings its windows back one at a time, so a count alone is satisfied
+# by the wrong three: the run that exposed this had window-1, the probe and
+# dupsessA settled while dupsessB was still being replayed, and scored its
+# absence as the defect. Naming what the restore owes is the only condition
+# that cannot be met early.
+function Wait-Panes {
+    param(
+        [int]$Want,
+        [int]$TimeoutSec = 60,
+        [string[]]$Ignore = @(),
+        [string[]]$Require = @()
+    )
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     do {
         $p = @(Get-Panes)
-        if (@($p | Where-Object { $_.sid }).Count -ge $Want) { return $p }
+        $unsettled = @($p | Where-Object { -not $_.sid -and $Ignore -notcontains $_.window })
+        $absent = @($Require | Where-Object { $w = $_; -not (@($p | Where-Object { $_.window -eq $w }).Count) })
+        if (@($p | Where-Object { $_.sid }).Count -ge $Want -and
+            $unsettled.Count -eq 0 -and $absent.Count -eq 0) { return $p }
         Start-Sleep -Milliseconds 800
     } while ((Get-Date) -lt $deadline)
     return @(Get-Panes)
@@ -135,11 +161,29 @@ function Show-Panes($panes) {
 
 try {
     "== A: one window, one session"
-    [void](Ghoz @('+new-window', '--target=dupsessA'))
-    $panes = Wait-Panes 2
-    "  panes: " + (Show-Panes $panes)
+    # T1688: a window created while the app is still resolving its link to the
+    # session manager is handed no agent at all and opens as a plain local
+    # shell - no session id, ever. That is a real defect and has its own task;
+    # it is not this script's subject, and it lands on the FIRST window this
+    # script opens because that is the window closest to the launch. So the
+    # fixture is BUILT rather than assumed: a window that came up unpersisted
+    # is closed and asked for again, and the attempts are printed so a run that
+    # needed three is visible as one that needed three. If no attempt produces
+    # a persisted window, A1 fails loudly - a regression that stopped windows
+    # being persisted at all still scores red rather than retrying forever.
+    $mine = @()
+    $panes = @()
+    foreach ($attempt in 1..3) {
+        [void](Ghoz @('+new-window', '--target=dupsessA'))
+        $panes = Wait-Panes -Want 2 -TimeoutSec 25
+        "  attempt ${attempt}: " + (Show-Panes $panes)
+        $mine = @($panes | Where-Object { $_.window -eq 'dupsessA' -and $_.sid })
+        if ($mine.Count -eq 1) { break }
+        "  dupsessA came up without a session (T1688); closing it and asking again"
+        [void](Ghoz @('+close', '--target=dupsessA'))
+        Start-Sleep -Milliseconds 1500
+    }
     Assert-GhozttyIsolated -Exe $Exe
-    $mine = @($panes | Where-Object { $_.window -eq 'dupsessA' -and $_.sid })
     Assert "A1 the dupsessA pane came up with a session of its own" ($mine.Count -eq 1)
     if ($mine.Count -ne 1) { throw "no dupsessA pane to build the duplicate from" }
     $sid = $mine[0].sid
@@ -178,7 +222,7 @@ try {
     # Relaunch. The restore replays both windows; only one of them may take the
     # session.
     [void](Ghoz @('+new-window', '--target=dupsessProbe'))
-    $panes = Wait-Panes 3 90
+    $panes = Wait-Panes -Want 3 -TimeoutSec 90 -Ignore 'dupsessProbe' -Require 'dupsessB'
     "  panes after restore: " + (Show-Panes $panes)
 
     $withSid = @($panes | Where-Object { $_.sid -eq $sid })
@@ -187,13 +231,17 @@ try {
     Assert "B2 exactly ONE pane holds the recorded session" $onlyOne
     Assert "B3 the duplicate window came back" (@($panes | Where-Object { $_.window -eq 'dupsessB' }).Count -ge 1)
     Assert "B4 some other pane has a session of its own" (@($panes | Where-Object { $_.sid -and $_.sid -ne $sid }).Count -ge 1)
-    Assert "B5 no restored pane is left without a session" (@($panes | Where-Object { -not $_.sid }).Count -eq 0)
+    # The probe is excluded by name, not by luck: it is the window this script
+    # launched to trigger the restore, it is not part of the manifest under
+    # test, and it opens at the one moment T1688 can strike. A restored pane
+    # without a session is the defect B5 is here for.
+    $restored = @($panes | Where-Object { $_.window -ne 'dupsessProbe' })
+    Assert "B5 no restored pane is left without a session" (@($restored | Where-Object { -not $_.sid }).Count -eq 0)
 
     # And the panes really are different shells, not one pid reported twice.
     $pids = @($panes | Where-Object { $_.pid } | ForEach-Object { $_.pid })
     Assert "B6 no two panes report the same shell pid" ($pids.Count -eq (@($pids | Sort-Object -Unique)).Count)
 
-    Complete-TestBody  # T1039: the run reached the end of its body
 } catch {
     "  FAIL setup: $_"
     $script:failures++
@@ -205,6 +253,11 @@ try {
 }
 
 } 2>&1 | Tee-Object -FilePath $transcript
+
+# Top level, after the block: the body-complete rule reads the script's own
+# flow, and a marker buried inside `& { ... }` is invisible to it (and to a
+# reader asking where the run ends).
+Complete-TestBody  # T1039: the run reached the end of its body
 
 # --- stamp (T783) -----------------------------------------------------------
 if ($script:failures -eq 0 -and -not $NegativeControl) {

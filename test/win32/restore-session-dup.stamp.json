@@ -1,14 +1,13 @@
 {
     "guard":  "restore-session-dup",
     "script":  "test/win32/restore-session-dup.ps1",
-    "generated":  "2026-09-20T11:14:10-07:00",
-    "commit":  "55cd54590",
+    "generated":  "2026-09-20T12:03:24-07:00",
+    "commit":  "9f106acc7",
     "uncommitted":  [
-                        "src/apprt/win32/session_layout.zig",
                         "test/win32/restore-session-dup.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/session_layout.zig":  "419e049bd80014370aa9850cfc4bb791d1919926f954df93be9e744b46842dc7",
-                  "test/win32/restore-session-dup.ps1":  "1ecee6ca7061f276b8f84742c9c0fb8842a3d401a6c83dfad2e2956d8d3e9b35"
+                  "test/win32/restore-session-dup.ps1":  "3a98531e97ed32fef1cb9aca6439576ca54cc1221b6c3a5564e431b0fb612e28"
               }
 }
