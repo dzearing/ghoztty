@@ -993,6 +993,32 @@ $GuardTable = @(
             'src\apprt\win32\tray_notify.zig'
         )
     },
+    # The OUTCOME half of that same restart (T421/T884): while the app is down
+    # replacing its agent, a detached watcher holds its process handle and starts
+    # it again if it ends early. The defect it exists for was reported twice and
+    # is invisible to every lane - the app simply never comes back, with no crash
+    # record and no further log line, and on 2026-08-03 the box sat with no
+    # terminal for fourteen minutes. Nothing in the P1-P3 floor or either unit
+    # lane can see it: the guard is a separate detached process, and the arms
+    # that matter are the NEGATIVE ones (a cleared marker must relaunch nothing,
+    # a malformed spec must launch nothing), which a broken always-relaunch guard
+    # would pass on the positive arm alone. `job_spawn.zig` is covered because
+    # arm F is precisely about it - the breakaway that keeps the relaunched app
+    # alive through a kill-on-close job teardown was EXTRACTED out of
+    # relaunch_guard.zig in T524, which is the exact shape where a row naming
+    # only relaunch_guard.zig goes quietly blind. App.zig is deliberately not
+    # here, for the reason agent-upgrade gives; its ARMING half is covered end to
+    # end by that harness's arm H.
+    [pscustomobject]@{
+        Name   = 'relaunch-guard'
+        Script = 'test\win32\relaunch-guard.ps1'
+        Stamp  = 'test\win32\relaunch-guard.stamp.json'
+        Covers = @(
+            'test\win32\relaunch-guard.ps1',
+            'src\apprt\win32\relaunch_guard.zig',
+            'src\apprt\win32\job_spawn.zig'
+        )
+    },
     # Cross-lineage layout blobs (T337/T623): the only harness that proves the
     # REAL binary translates a Mac-shaped blob on the launch-restore path and,
     # since T623, that the restored window lands the right way up (the

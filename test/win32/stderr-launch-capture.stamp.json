@@ -1,11 +1,11 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-19T14:37:48-07:00",
-    "commit":  "b6b6f2b79",
+    "generated":  "2026-09-19T16:13:01-07:00",
+    "commit":  "3afaf4e73",
     "uncommitted":  [
-                        "test/win32/claude-integration.ps1",
-                        "test/win32/test-desktop-harness.ps1"
+                        "test/win32/chooser-sessions-push.ps1",
+                        "test/win32/relaunch-guard.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "56099107ead57785a0a002a7cb345c55f5e6d1f8d8d4a54ce9eee8b117979260",
@@ -66,7 +66,7 @@
                   "test/win32/chooser-session-cpu.ps1":  "67360796401c0381e4a9f09603a7149d1db077b8cb6c6f04124f463ef168e194",
                   "test/win32/chooser-sessions.ps1":  "7f21f3537696c70144241327120c7099004f2d1f66947be3d4ed7d296cb3bbd8",
                   "test/win32/chooser-session-sort.ps1":  "0c056f4bea3e52e371f633afb02a08c33075053c3964a7a4d5434e4df0613b6a",
-                  "test/win32/chooser-sessions-push.ps1":  "620396f231ee9ced118b5be197eb43cd9b2bd6fbeb705167ccbb7db96c119fa8",
+                  "test/win32/chooser-sessions-push.ps1":  "052ab1d8c7ff1343f1670780616de988ff876e0815cb050b3703494a659a1dec",
                   "test/win32/chooser-sessions-remote.ps1":  "00f7ab5ee0f8f066d1e5c7cce32a7099987d4d9ef4d7408dc8f583fab1e9b85a",
                   "test/win32/chooser-warm-list.ps1":  "c615a0de86c2debc15e196b56f97cc2021594a6548058fa4f9a48e991fca28f2",
                   "test/win32/chrome-merged-row.ps1":  "d33d8e41a1c00c40822433b47ddc00ea9cb572cf42829277c39d3334cd3a8020",
@@ -228,7 +228,7 @@
                   "test/win32/rearrange-viewer.ps1":  "863ec84196d1f42cff0e3fc681c5b153a4b81c467b5b42fb6a5fff0c7432c7ae",
                   "test/win32/rearrange-window-drop.ps1":  "2bcb5775a4356286d3f975a87f5e7733a5d6d0c91d15618f065e3cf514cebe1d",
                   "test/win32/registration-sites.ps1":  "98cd7d949f693dee766dc37e1c8457d5bcdc0dee2144581b3c9a30e35de44146",
-                  "test/win32/relaunch-guard.ps1":  "54d167ae5a5574a5def6abbd9264ea37f65aa1376adc05d7981408d190163f06",
+                  "test/win32/relaunch-guard.ps1":  "89e7e6c52462a0c0af5ff17f5d228f265e4166a41fefc02b5ac0b20068aa15e9",
                   "test/win32/relay-account.ps1":  "49ea7b9524bb8055f0fa3e54a0abc724e14d74a7eda9ed035a67c08efcf712f7",
                   "test/win32/release-artifacts.ps1":  "4d357c76be5a7126f1330e842007438bcab749c7f1d11c51704e62aef0241189",
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",

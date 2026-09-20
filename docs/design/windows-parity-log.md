@@ -32561,3 +32561,60 @@ is set, and `ConvertTo-GuiExitVerdict` reads every high-bit exit as an unhandled
 exception. Report-only today, but it teaches readers that CRASHED blocks are
 normal -- and the T1511 family is making GUI scripts refuse a crashed run as
 proof, at which point it becomes a false FAIL.
+
+## 2026-09-19 - T884: editing the relaunch guard now obliges somebody to re-run the suite that proves the terminal comes back
+
+The relaunch guard is the detached watcher that holds the app's process handle
+while the app is down replacing its background agent, and starts it again if it
+ends early. The defect it exists for was reported twice and is invisible to
+every lane: the app simply never comes back, with no crash record and no further
+log line. Its harness had no `guard-due` row, so an edit to that code obliged
+nobody to re-run it -- the exact T783 gap that left `upgrade-no-fork.ps1` red at
+L24 for weeks.
+
+The row covers `test\win32\relaunch-guard.ps1`, `src\apprt\win32\relaunch_guard.zig`
+and `src\apprt\win32\job_spawn.zig`. `job_spawn.zig` is in the list because arm F
+is precisely the T524 breakaway that keeps the relaunched app alive through a
+kill-on-close job teardown, and that code was EXTRACTED out of
+`relaunch_guard.zig` -- which is the exact shape where a row naming only the
+obvious file goes quietly blind. `App.zig` is deliberately not in it, for the
+reason the `agent-upgrade` row gives: its arming half is covered end to end by
+that harness's arm H. The harness re-stamps itself on a clean green sweep, so
+CURRENT means somebody ran it rather than somebody wrote a stamp by hand.
+
+CHECK FIRST was right to fire on this card. Three of the four harnesses it names
+were already resolved: `agent-upgrade` by T1037, `deliver-windows-build` by the
+`deliver-verify` row (T198/T727), and `morning-refresh` retired along with the
+morning swap itself under D85 -- `scripts\morning-refresh.ps1` and its harness no
+longer exist, and `install-ownership` + `daily-publish` are its replacements. So
+the deliverable here was the last one, rewritten to that before it was built.
+
+Fixed in passing: arm H2 of `test\win32\guard-due.ps1` (every row names a harness
+that stamps itself) was RED at HEAD over `chooser-roster-push`, which had a stamp
+but no stamp block -- its CURRENT could only ever have been hand-written.
+`chooser-sessions-push.ps1` now re-stamps on a clean green run, proven by that
+run stamping it this turn.
+
+Validation, all on the box: `relaunch-guard.ps1` ALL PASS (25) followed by
+`STAMPED relaunch-guard (3 files)`; `guard-due.ps1 check` then CURRENT, and DUE
+naming `src/apprt/win32/relaunch_guard.zig` with a byte appended to it;
+`chooser-sessions-push.ps1` ALL PASS (19) + `STAMPED chooser-roster-push`;
+harness floor ALL PASS of 29 audits (2 inherited PENDING); the four zig lanes;
+P1/P2/P3 ALL PASS.
+
+A note worth keeping for the next turn that probes a guard this way. The
+append-then-revert that proves a row goes DUE leaves the source file's mtime
+NEWER than the exe, with its content unchanged -- so `zig build` correctly has
+nothing to do and the freshness gate refuses three harness-floor audits
+(`build-mode-guard`, `caller-anchor`, `persistence-flag`) as stale. Those reds
+are phantoms and a rebuild does not clear them; the gate names its own remedy,
+`GHOZTTY_TEST_REBUILD_STALE=1`, which records that a build covered those sources
+and is exactly this case.
+
+One follow-up filed: T1669. `test\win32\guard-due.ps1` arms A2, C6 and C10 are
+red at HEAD `3afaf4e73` and unrelated to this row -- the fixture's deliberately
+uncovered probe file `scripts\uncovered-by-any-row.ps1` is matched by the
+sweeping wildcard audit rows (`argv-hazard`, `unroll-count`, `seam-audit`), so
+the fixture's "nothing else covers this" assertions cannot hold. The gate that
+proves guard-due works must not be permanently red; that is the state it exists
+to prevent.

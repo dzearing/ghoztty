@@ -311,4 +311,13 @@ try {
 }
 
 Write-Host ''
+# T884: the `chooser-roster-push` row had a stamp but no way to earn one - a
+# green run of this harness re-stamps the covered files now, so the guard's
+# CURRENT means "somebody ran this" rather than "somebody stamped it by hand".
+# Red leaves the stamp alone, and so does a run that skipped an arm.
+if ($script:fail -eq 0 -and $script:skipped -eq 0) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard chooser-roster-push -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
+
 Write-TestVerdict -Pass $script:pass -Fail $script:fail -Skipped $script:skipped

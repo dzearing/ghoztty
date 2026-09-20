@@ -379,6 +379,16 @@ public static class T524Job {
 }
 
 Say ""
+# A clean green run stamps the covered files (T783/T884) so scripts\guard-due.ps1
+# can answer "has anybody proved the relaunch guard still brings the app back,
+# against the code as it now stands?". Red leaves the stamp alone; this harness
+# has no skip path, so a green run is always a full sweep.
+if ($script:failures -eq 0) {
+    $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts\guard-due.ps1') `
+        update -Guard relaunch-guard -Repo $repoRoot 2>&1 | ForEach-Object { "  $_" }
+}
+
 if ($script:failures -eq 0) { Say "ALL PASS ($($script:passes) assertions)"; exit 0 }
 Say "$($script:failures) FAILURE(S) ($($script:passes) passed)"
 exit 1
