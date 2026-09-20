@@ -2824,6 +2824,18 @@ $GuardTable = @(
             'test\win32\palette-jump.ps1'
         )
     },
+    # The palette's ordering and its "Recent" section (T891). Same shape as
+    # palette-jump: the ordering and the MRU are pure and ride the none lane,
+    # so this row ties the on-box harness to its own family only.
+    [pscustomobject]@{
+        Name   = 'palette-order'
+        Script = 'test\win32\palette-order.ps1'
+        Stamp  = 'test\win32\palette-order.stamp.json'
+        Covers = @(
+            'src\apprt\win32\palette_order.zig',
+            'test\win32\palette-order.ps1'
+        )
+    },
     # The three-windows-one-wndproc routing rule (T613 for WM_DESTROY, T742 for
     # everything else). The rule itself is `drivesTerminal` in
     # surface_window_role.zig and rides the none lane; this harness scores it

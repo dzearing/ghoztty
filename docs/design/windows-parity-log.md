@@ -32709,3 +32709,57 @@ sweeping wildcard audit rows (`argv-hazard`, `unroll-count`, `seam-audit`), so
 the fixture's "nothing else covers this" assertions cannot hold. The gate that
 proves guard-due works must not be permanently red; that is the state it exists
 to prevent.
+
+## 2026-09-19 - T891: the command palette is a list you can scan, and it remembers what you use
+
+The win32 palette showed its commands in REGISTRY order -- the order they
+happen to be written in `commands.zig`. That was fine at twenty commands and
+unreadable at eighty: the only way to find one was to read the whole list or
+already know its name. Mac's palette has sorted alphabetically and kept a
+"Recent" section since `PaletteHistory` landed, and that section is what makes
+a palette feel learned rather than merely searchable.
+
+Both behaviors are here now. With no filter the palette lists the ten most
+recently used commands first, in recency order, under a **Recent** header,
+then everything else alphabetically under **All Commands**; with a filter the
+same order is shown flat and headerless, which is exactly what Mac's query
+path does. The sort is Mac's: case-insensitive over titles whose `:` has been
+replaced by a TAB, so a prefixed family ("Viewer: ...") groups ahead of a plain
+title that shares the prefix. "Focus: <pane>" jump entries (T555) now sort in
+with everything else rather than being appended last -- Mac folds `jumpOptions`
+into the same sort -- and they never enter Recent, because the pane a jump
+entry names is gone tomorrow and Mac's jump options carry no identifier either.
+
+The ordering and the MRU are a pure module, `src/apprt/win32/palette_order.zig`
+(the `palette_jump.zig` pattern): title order, a bounded allocation-free
+history held newest-first, and `arrange`, which returns the display order and
+how much of its front is recent. `App` holds one history for the whole app --
+"recently used" is the user's habit, not one window's -- read lazily from
+`%LOCALAPPDATA%\ghoztty\palette-history[-debug].json` the first time a palette
+opens and written back on every execution. A built-in is keyed by its registry
+id rather than its display name, so the T89e quit rename (which happens while
+the app is running) cannot lose a command its recency; a user's own
+`command-palette-entry` is keyed by its title behind a `user:` prefix. The
+recording happens BEFORE the command is performed, because Close Window and
+Quit do not come back to write anything afterwards. Every failure in there --
+no store, an unreadable one, JSON that will not parse, an over-long key --
+degrades to "no recents", which is plain alphabetical order.
+
+The headers are rows of the same list (two sentinel values in
+`palette_filtered`), so scrolling, hit-testing and painting all count in the
+same units; they are never selectable, arrowing steps over them, and a click on
+one does nothing.
+
+Validation: 15 new none-lane tests over the order, the history and the
+arrangement; `test\win32\palette-order.ps1` ALL PASS (19) on the box, which
+scores the one thing a script can read about an owner-drawn list -- which row
+Enter runs. Its three states are deliberately distinguishable: with no history
+the "new " filter runs *New Remote Window* (alphabetically first, and it opens
+a differently-classed window), registry order would have run *New Window*, and
+with the store seeded before the launch *New Tab* wins instead. The four zig
+lanes and P1-P3 are green.
+
+One follow-up filed: T1671. The palette's click hit-test turns the click Y
+into a VISUAL row and assigns it to the ABSOLUTE selection index, so once the
+list has scrolled a click runs the command some rows further down. It predates
+this change and is only reachable after arrowing past the last visible row.

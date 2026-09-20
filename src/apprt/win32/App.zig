@@ -72,6 +72,7 @@ const utf16_text = @import("utf16_text.zig");
 const tray_notify = @import("tray_notify.zig");
 const msg_timer = @import("msg_timer.zig");
 const orphan_notify = @import("orphan_notify.zig");
+const palette_order = @import("palette_order.zig");
 const session_layout = @import("session_layout.zig");
 const layout_refresh = @import("layout_refresh.zig");
 const layout_cost = @import("layout_cost.zig");
@@ -501,6 +502,15 @@ notif_desktop_surface_id: u64 = 0,
 /// True while a long-unattached session check (T534) has a worker thread out
 /// reading the local agent's roster; at most one is ever in flight.
 orphan_check_inflight: bool = false,
+
+/// The command palette's recent-command history (T891) — app-wide, because
+/// "recently used" is the user's habit and not one window's. Loaded from
+/// `%LOCALAPPDATA%\ghoztty\palette-history[-debug].json` the first time a
+/// palette opens (`paletteHistory`), so a launch that never opens one pays
+/// nothing, and written back on every execution.
+palette_history: palette_order.History = .{},
+/// Whether `palette_history` has been read from the store yet.
+palette_history_loaded: bool = false,
 
 /// Version text of the newest win-v release the update check found (heap,
 /// app allocator). A click on the update balloon offers to install that
@@ -9913,6 +9923,76 @@ fn saveOrphanStamps(alloc: Allocator, stamps: []const orphan_notify.Stamp) void 
     f.writeAll(json) catch {};
 }
 
+// ---------------------------------------------------------------------
+// Command palette history (T891)
+// ---------------------------------------------------------------------
+
+/// `%LOCALAPPDATA%\ghoztty\palette-history[-debug].json` — the same
+/// debug-build coexistence pattern as the orphan-notify and layout stores,
+/// so a dev build never rewrites the recents of the release the user is
+/// sitting in. Caller frees.
+fn paletteHistoryPath(alloc: Allocator) ?[]u8 {
+    const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return null;
+    defer alloc.free(dir);
+    const name = if (comptime build_config.is_debug)
+        "palette-history-debug.json"
+    else
+        "palette-history.json";
+    return std.fs.path.join(alloc, &.{ dir, "ghoztty", name }) catch null;
+}
+
+/// The recent-command history, read from the store on first use. Every
+/// failure — no store, an unreadable one, JSON that will not parse — loads
+/// as "no recents": the palette then shows pure alphabetical order, which is
+/// the right degradation for a convenience.
+pub fn paletteHistory(self: *App) *palette_order.History {
+    if (self.palette_history_loaded) return &self.palette_history;
+    self.palette_history_loaded = true;
+
+    const alloc = self.core_app.alloc;
+    const path = paletteHistoryPath(alloc) orelse return &self.palette_history;
+    defer alloc.free(path);
+    const f = std.fs.openFileAbsolute(path, .{}) catch return &self.palette_history;
+    defer f.close();
+    const bytes = f.readToEndAlloc(alloc, 64 * 1024) catch return &self.palette_history;
+    defer alloc.free(bytes);
+    // `.alloc_always` for the same reason the orphan stamps need it: the ids
+    // are copied INTO the history value below, but the parse must not leave
+    // them pointing at `bytes`, which is freed on the way out of here.
+    const parsed = std.json.parseFromSlice(palette_order.File, alloc, bytes, .{
+        .ignore_unknown_fields = true,
+        .allocate = .alloc_always,
+    }) catch return &self.palette_history;
+    defer parsed.deinit();
+    self.palette_history = palette_order.History.fromFile(parsed.value);
+    return &self.palette_history;
+}
+
+/// Record a command's use and persist the history. Called on every palette
+/// execution, so the write is small and best-effort: a store that cannot be
+/// written costs the next launch its recents and nothing else.
+pub fn recordPaletteUse(self: *App, key: []const u8) void {
+    const history = self.paletteHistory();
+    history.record(key, std.time.timestamp());
+    if (!history.dirty) return;
+    history.clearDirty();
+
+    const alloc = self.core_app.alloc;
+    const path = paletteHistoryPath(alloc) orelse return;
+    defer alloc.free(path);
+    var stamps: [palette_order.capacity]palette_order.Stamp = undefined;
+    const json = std.json.Stringify.valueAlloc(
+        alloc,
+        palette_order.File{ .commands = history.toStamps(&stamps) },
+        .{},
+    ) catch return;
+    defer alloc.free(json);
+    if (std.fs.path.dirname(path)) |dir| std.fs.makeDirAbsolute(dir) catch {};
+    const f = std.fs.createFileAbsolute(path, .{}) catch return;
+    defer f.close();
+    f.writeAll(json) catch {};
+}
+
 /// Notify the core app of a tick.
 fn tick(self: *App) void {
     self.core_app.tick(self) catch |err| {
@@ -10361,8 +10441,7 @@ fn surfaceWndProc(
                 if (y >= list_top) {
                     const clicked = @divTrunc(y - list_top, item_height);
                     if (clicked >= 0 and clicked < surface.palette_count) {
-                        surface.palette_selected = @intCast(clicked);
-                        surface.executePaletteSelection();
+                        surface.clickPaletteRow(@intCast(clicked));
                     }
                 }
                 return 0;

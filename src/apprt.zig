@@ -252,6 +252,11 @@ test {
     // subtitle suppression, filter matching (T555), same no-OS-imports deal.
     _ = @import("apprt/win32/palette_jump.zig");
 
+    // Pure win32 command-palette ordering and recent-command history —
+    // alphabetical order and the "Recent" section (T891), same
+    // no-OS-imports deal.
+    _ = @import("apprt/win32/palette_order.zig");
+
     // Pure win32 icon-button geometry shared by the tab strip and the pane
     // banner (T204), same no-OS-imports deal.
     _ = @import("apprt/win32/icon_button.zig");

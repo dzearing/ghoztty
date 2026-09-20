@@ -47,6 +47,7 @@ const commands = @import("commands.zig");
 const menu_label = @import("menu_label.zig");
 const pane_id_mod = @import("pane_id.zig");
 const palette_jump = @import("palette_jump.zig");
+const palette_order = @import("palette_order.zig");
 const tab_tooltip = @import("tab_tooltip.zig");
 const brush_cache = @import("brush_cache.zig");
 const panel_theme = @import("panel_theme.zig");
@@ -359,10 +360,11 @@ palette_paint_font: ?*anyopaque = null,
 palette_active: bool = false,
 /// Currently selected item in the filtered palette list.
 palette_selected: u16 = 0,
-/// Number of items currently in the filtered list.
+/// Number of rows currently in the filtered list, section headers included.
 palette_count: u16 = 0,
-/// Indices into palette_entries for the current filter.
-palette_filtered: [palette_entries.len + MAX_USER_PALETTE_ENTRIES + palette_jump.max_entries]u16 = undefined,
+/// The rows of the filtered list, in display order: an entry index, or one
+/// of the two `PALETTE_HEADER_*` sentinels for a section header (T891).
+palette_filtered: [MAX_PALETTE_ROWS]u16 = undefined,
 /// Arena holding the "Focus: <pane>" jump-entry snapshot (T555) — taken
 /// each time the palette opens, freed when it closes. Null while closed.
 palette_jump_arena: ?std.heap.ArenaAllocator = null,
@@ -2626,6 +2628,25 @@ pub const MAX_USER_PALETTE_ENTRIES = 64;
 /// while the palette is open cannot re-map a jump index onto a command.
 const JUMP_BASE: u16 = palette_entries.len + MAX_USER_PALETTE_ENTRIES;
 
+/// Every entry the palette could possibly show at once.
+const MAX_PALETTE_ENTRIES: usize =
+    palette_entries.len + MAX_USER_PALETTE_ENTRIES + palette_jump.max_entries;
+
+/// …plus the two section headers (T891), which are rows of the same list.
+const MAX_PALETTE_ROWS: usize = MAX_PALETTE_ENTRIES + 2;
+
+/// Sentinel rows for the "Recent" / "All Commands" headers (T891). They are
+/// stored in `palette_filtered` like any other row so scrolling, hit-testing
+/// and painting all count in the same units; they are never selectable and
+/// never executable. The values sit above every real entry index, which is
+/// bounded by `JUMP_BASE + palette_jump.max_entries`.
+const PALETTE_HEADER_RECENT: u16 = 0xFFFF;
+const PALETTE_HEADER_ALL: u16 = 0xFFFE;
+
+fn paletteRowIsHeader(row: u16) bool {
+    return row == PALETTE_HEADER_RECENT or row == PALETTE_HEADER_ALL;
+}
+
 /// One "Focus: <pane>" palette entry (T555): a live pane somewhere in the
 /// app, named the way the Mac palette's jumpOptions name it. The pane is
 /// held by its stable id rather than a pointer — a pane can be closed over
@@ -2660,6 +2681,35 @@ fn paletteEntryName(self: *const Surface, idx: u16) []const u8 {
     const uidx = idx - palette_entries.len;
     if (uidx >= user.len) return "";
     return user[uidx].title;
+}
+
+/// The history key for an entry (T891), or null for a row with no stable
+/// identity. A built-in is keyed by its registry id rather than its display
+/// name, so renaming a command (or the T89e quit rename, which happens while
+/// the app is running) keeps its recency; a user's own command is keyed by
+/// its config title behind a `user:` prefix, so it can never collide with an
+/// id. A "Focus: <pane>" jump entry has no key at all — the pane it names is
+/// gone tomorrow, and Mac's jump options carry no identifier either.
+/// `buf` holds a composed `user:` key for the caller; a built-in's key is
+/// its comptime tag name and does not touch it.
+fn paletteEntryKey(
+    self: *const Surface,
+    idx: u16,
+    buf: *[palette_order.max_key_len]u8,
+) ?[]const u8 {
+    if (idx < palette_entries.len) return @tagName(palette_entries[idx].id);
+    if (idx >= JUMP_BASE) return null;
+    const user = self.app.config.@"command-palette-entry".value.items;
+    const uidx = idx - palette_entries.len;
+    if (uidx >= user.len) return null;
+    const title = user[uidx].title;
+    const prefix = palette_order.user_key_prefix;
+    // A title too long to key is simply not remembered (History.record
+    // rejects an over-long key); truncating would merge two commands.
+    if (prefix.len + title.len > buf.len) return null;
+    @memcpy(buf[0..prefix.len], prefix);
+    @memcpy(buf[prefix.len..][0..title.len], title);
+    return buf[0 .. prefix.len + title.len];
 }
 
 fn paletteEntryAction(self: *const Surface, idx: u16) ?input.Binding.Action {
@@ -2902,35 +2952,76 @@ fn positionCommandPalette(self: *Surface) void {
     }
 }
 
-/// Filter palette entries by a case-insensitive substring match.
+/// Filter palette entries by a case-insensitive substring match, then order
+/// them the way Mac's `commandSections` does (T891): the ten most recently
+/// used first in recency order, everything else alphabetically. With no
+/// filter the two groups carry "Recent" / "All Commands" headers; with a
+/// filter the same order is shown flat, which is what Mac's query path does.
 fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
-    var count: u16 = 0;
+    // The surviving candidates, in index order, with what ordering needs.
+    var idxs: [MAX_PALETTE_ENTRIES]u16 = undefined;
+    var items: [MAX_PALETTE_ENTRIES]palette_order.Item = undefined;
+    // Backing store for the composed `user:` keys, one slot per user entry.
+    var key_bufs: [MAX_USER_PALETTE_ENTRIES][palette_order.max_key_len]u8 = undefined;
+    var n: usize = 0;
+
     for (palette_entries, 0..) |entry, i| {
-        if (filter.len == 0 or std.ascii.indexOfIgnoreCase(entry.name, filter) != null) {
-            self.palette_filtered[count] = @intCast(i);
-            count += 1;
-        }
+        if (filter.len != 0 and std.ascii.indexOfIgnoreCase(entry.name, filter) == null) continue;
+        const idx: u16 = @intCast(i);
+        idxs[n] = idx;
+        items[n] = .{ .title = self.paletteEntryName(idx), .key = @tagName(entry.id) };
+        n += 1;
     }
-    // User-configured command-palette-entry commands, appended after the
-    // built-in entries.
+    // User-configured command-palette-entry commands.
     const user = self.app.config.@"command-palette-entry".value.items;
     const user_len = @min(user.len, MAX_USER_PALETTE_ENTRIES);
     for (user[0..user_len], 0..) |entry, i| {
-        if (filter.len == 0 or std.ascii.indexOfIgnoreCase(entry.title, filter) != null) {
-            self.palette_filtered[count] = @intCast(palette_entries.len + i);
-            count += 1;
-        }
+        if (filter.len != 0 and std.ascii.indexOfIgnoreCase(entry.title, filter) == null) continue;
+        const idx: u16 = @intCast(palette_entries.len + i);
+        idxs[n] = idx;
+        items[n] = .{
+            .title = entry.title,
+            .key = self.paletteEntryKey(idx, &key_bufs[i]),
+        };
+        n += 1;
     }
-    // "Focus: <pane>" jump entries (T555), appended last. The filter also
-    // matches the SUBTITLE, so panes can be found by directory.
+    // "Focus: <pane>" jump entries (T555). The filter also matches the
+    // SUBTITLE, so panes can be found by directory; they sort by title with
+    // everything else (Mac folds `jumpOptions` into the same sort) and never
+    // enter Recent.
     for (self.palette_jump_entries, 0..) |entry, i| {
-        if (palette_jump.matches(filter, entry.label, entry.subtitle)) {
-            self.palette_filtered[count] = @intCast(JUMP_BASE + i);
-            count += 1;
-        }
+        if (!palette_jump.matches(filter, entry.label, entry.subtitle)) continue;
+        idxs[n] = @intCast(JUMP_BASE + i);
+        items[n] = .{ .title = entry.label, .key = null };
+        n += 1;
     }
+
+    var ordered: [MAX_PALETTE_ENTRIES]u16 = undefined;
+    const recent_n = palette_order.arrange(items[0..n], self.app.paletteHistory(), ordered[0..n]);
+
+    const headers = filter.len == 0 and recent_n > 0;
+    var count: u16 = 0;
+    if (headers) {
+        self.palette_filtered[count] = PALETTE_HEADER_RECENT;
+        count += 1;
+    }
+    for (ordered[0..recent_n]) |o| {
+        self.palette_filtered[count] = idxs[o];
+        count += 1;
+    }
+    if (headers and n > recent_n) {
+        self.palette_filtered[count] = PALETTE_HEADER_ALL;
+        count += 1;
+    }
+    for (ordered[recent_n..n]) |o| {
+        self.palette_filtered[count] = idxs[o];
+        count += 1;
+    }
+
     self.palette_count = count;
-    self.palette_selected = 0;
+    // The first row is a header when there are recents, and a header can
+    // never be the selection.
+    self.palette_selected = if (headers) 1 else 0;
     // Trigger repaint of the list area
     if (self.palette_hwnd) |popup| {
         _ = w32.InvalidateRect(popup, null, 1);
@@ -2953,6 +3044,32 @@ pub fn handlePaletteChange(self: *Surface) void {
     self.filterPaletteEntries(utf8_buf[0..utf8_len]);
 }
 
+/// Move the palette selection by one row in `delta`'s direction, stepping
+/// OVER a section header (T891): a header is a label, not a command, so
+/// arrowing through the list must not stop on one — and must not be able to
+/// leave the selection on one at either end.
+fn movePaletteSelection(self: *Surface, delta: i32) void {
+    if (self.palette_count == 0) return;
+    var next: i32 = @as(i32, self.palette_selected) + delta;
+    while (next >= 0 and next < @as(i32, self.palette_count)) : (next += delta) {
+        if (paletteRowIsHeader(self.palette_filtered[@intCast(next)])) continue;
+        self.palette_selected = @intCast(next);
+        if (self.palette_hwnd) |popup| {
+            _ = w32.InvalidateRect(popup, null, 1);
+        }
+        return;
+    }
+}
+
+/// A click on a palette row (App.zig's `WM_LBUTTONDOWN`): a header row is
+/// not a command, so clicking one changes nothing at all.
+pub fn clickPaletteRow(self: *Surface, row: u16) void {
+    if (row >= self.palette_count) return;
+    if (paletteRowIsHeader(self.palette_filtered[row])) return;
+    self.palette_selected = row;
+    self.executePaletteSelection();
+}
+
 /// Handle key events in the command palette. Returns true if handled.
 pub fn handlePaletteKey(self: *Surface, vk: u16) bool {
     switch (vk) {
@@ -2965,21 +3082,11 @@ pub fn handlePaletteKey(self: *Surface, vk: u16) bool {
             return true;
         },
         w32.VK_UP => {
-            if (self.palette_selected > 0) {
-                self.palette_selected -= 1;
-                if (self.palette_hwnd) |popup| {
-                    _ = w32.InvalidateRect(popup, null, 1);
-                }
-            }
+            self.movePaletteSelection(-1);
             return true;
         },
         w32.VK_DOWN => {
-            if (self.palette_count > 0 and self.palette_selected < self.palette_count - 1) {
-                self.palette_selected += 1;
-                if (self.palette_hwnd) |popup| {
-                    _ = w32.InvalidateRect(popup, null, 1);
-                }
-            }
+            self.movePaletteSelection(1);
             return true;
         },
         else => return false,
@@ -3115,6 +3222,17 @@ pub fn executePaletteSelection(self: *Surface) void {
     if (self.palette_selected >= self.palette_count) return;
 
     const entry_idx = self.palette_filtered[self.palette_selected];
+    // A section header is a label (T891), never a command.
+    if (paletteRowIsHeader(entry_idx)) return;
+
+    // Remember it as recently used BEFORE performing it: the command may
+    // close this surface (Close Window, Quit), and a store written after
+    // that would never be written at all. A jump entry has no key and is
+    // never remembered.
+    var key_buf: [palette_order.max_key_len]u8 = undefined;
+    if (self.paletteEntryKey(entry_idx, &key_buf)) |key| {
+        self.app.recordPaletteUse(key);
+    }
 
     // A "Focus: <pane>" jump entry (T555). The pane id is copied out BEFORE
     // the close — closing frees the jump-entry arena — and re-resolved by
@@ -3347,6 +3465,28 @@ pub fn paintPaletteInto(self: *Surface, hdc: w32.HDC, hwnd: w32.HWND) void {
 
         const y = list_top + visual_idx * item_height;
         const entry_idx = self.palette_filtered[i];
+
+        // A section header (T891): the group's name in the dim secondary
+        // color, never highlighted and never carrying a keybind hint —
+        // Mac's uppercase caption above each section.
+        if (paletteRowIsHeader(entry_idx)) {
+            const label = if (entry_idx == PALETTE_HEADER_RECENT)
+                palette_order.recent_header
+            else
+                palette_order.all_header;
+            _ = w32.SetTextColor(hdc, system_colors.cr(p.secondary));
+            var whdr_buf: [32]u16 = undefined;
+            const whdr_len = std.unicode.utf8ToUtf16Le(&whdr_buf, label) catch 0;
+            var hdr_rect = w32.RECT{
+                .left = @intFromFloat(@round(12.0 * s)),
+                .top = y + @as(i32, @intFromFloat(@round(6.0 * s))),
+                .right = client_rect.right,
+                .bottom = y + item_height,
+            };
+            _ = w32.DrawTextW(hdc, @ptrCast(&whdr_buf), @intCast(whdr_len), &hdr_rect, 0);
+            continue;
+        }
+
         const entry_name = self.paletteEntryName(entry_idx);
         const entry_action = self.paletteEntryAction(entry_idx);
 
