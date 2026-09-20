@@ -163,6 +163,7 @@ const ProcessTree = @import("ProcessTree.zig");
 const host_defaults = @import("host_defaults.zig");
 const commands = @import("commands.zig");
 const menu_bar = @import("menu_bar.zig");
+const update_badge = @import("update_badge.zig");
 const menu_label = @import("menu_label.zig");
 const overlay_zorder = @import("overlay_zorder.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
@@ -7562,6 +7563,11 @@ fn paintCaption(self: *Window, hdc_screen: w32.HDC) void {
                 cap_b,
                 w32.RGB(pal.text.r, pal.text.g, pal.text.b),
             );
+            // The pending-update badge (T1673). On a merged-chrome window the
+            // strip's "≡" rect is zero and THIS is the only host the menu has,
+            // so the mark has to be paintable in both places or it is a mark
+            // half the windows on the box never show.
+            self.paintUpdateDot(mem_dc, m.ib, btn.rect, .{ .r = cap_r, .g = cap_g, .b = cap_b });
         } else {
             paintCaptionSlab(mem_dc, m.ib, btn.rect, btn.glyph, state, pal);
         }
@@ -7801,6 +7807,61 @@ fn paintChromeInto(self: *Window, hdc_screen: w32.HDC) void {
 
 /// Light a strip button ("+" or "≡") the way Windows 11 does: a rounded rect
 /// inset inside the hit box, not a full-bleed square across it (T202).
+/// Paint the pending-update badge over a menu button that has just been drawn
+/// (T1673).
+///
+/// `box` is the button's HIT box — the same rect `paintIconButton` was handed
+/// — so the badge lands on the square that was actually painted, whichever of
+/// the two hosts is carrying the menu today.
+///
+/// The ring is the band color, not a shade of it: the dot sits on the ≡ glyph's
+/// top bar, and without a hole punched around it the two marks merge into one
+/// smudge at 1.0x. Every badged menu button in Windows' own shell does the
+/// same thing.
+///
+/// Draws nothing when nothing is pending, and nothing when the button is too
+/// small to hold the badge without clipping — the menu row is what carries the
+/// meaning in words, and it is there either way.
+fn paintUpdateDot(
+    self: *Window,
+    mem_dc: w32.HDC,
+    ib: icon_button.Metrics,
+    box: icon_button.Rect,
+    band: color_math.Rgb,
+) void {
+    if (box.isEmpty()) return;
+    const pending = self.app.pendingUpdate() orelse return;
+    const dot = update_badge.dotRect(icon_button.targetBox(ib, box), self.scale);
+    if (dot.isEmpty()) return;
+
+    const m = update_badge.Metrics.init(self.scale);
+    const ink = update_badge.dotColor(band, pending.urgency);
+
+    // The band-colored moat first, then the dot inside it.
+    fillEllipse(mem_dc, .{
+        .left = dot.left - m.ring,
+        .top = dot.top - m.ring,
+        .right = dot.right + m.ring,
+        .bottom = dot.bottom + m.ring,
+    }, band);
+    fillEllipse(mem_dc, dot, ink);
+}
+
+/// A filled circle in `color`, no outline of its own — the pen matches the
+/// brush so the rim cannot read as a second color at fractional scales.
+fn fillEllipse(hdc: w32.HDC, r: icon_button.Rect, color: color_math.Rgb) void {
+    const ref = w32.RGB(color.r, color.g, color.b);
+    const brush = w32.CreateSolidBrush(ref) orelse return;
+    defer _ = w32.DeleteObject(brush);
+    const pen = w32.CreatePen(w32.PS_SOLID, 1, ref) orelse return;
+    defer _ = w32.DeleteObject(pen);
+    const ob = w32.SelectObject(hdc, brush);
+    const op = w32.SelectObject(hdc, pen);
+    _ = w32.Ellipse(hdc, r.left, r.top, r.right, r.bottom);
+    _ = w32.SelectObject(hdc, ob);
+    _ = w32.SelectObject(hdc, op);
+}
+
 /// Paint ONE icon button: the shared rounded fill for its state, then its
 /// glyph stroked centered in the shared square (T204).
 ///
@@ -8218,19 +8279,23 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
     // rect is asked about here rather than assumed harmless: `paintIconButton`
     // would happily paint a degenerate square at the origin, which is a glyph
     // in the top-left corner of the strip.
-    if (!strip.menu.isEmpty()) paintIconButton(
-        mem_dc,
-        ib,
-        strip.menu,
-        .menu,
-        if (self.menu_open)
-            .active
-        else if (self.hover_menu_btn) .hover else .normal,
-        bar_r,
-        bar_g,
-        bar_b,
-        inactive_text_color,
-    );
+    if (!strip.menu.isEmpty()) {
+        paintIconButton(
+            mem_dc,
+            ib,
+            strip.menu,
+            .menu,
+            if (self.menu_open)
+                .active
+            else if (self.hover_menu_btn) .hover else .normal,
+            bar_r,
+            bar_g,
+            bar_b,
+            inactive_text_color,
+        );
+        // The pending-update badge, on top of the glyph it marks (T1673).
+        self.paintUpdateDot(mem_dc, ib, strip.menu, .{ .r = bar_r, .g = bar_g, .b = bar_b });
+    }
 
     // --- The PINNED window title, in the drag band (T265) ---
     // Merged, `caption_layout` lays out no title on purpose — tabs are the
@@ -8855,6 +8920,33 @@ pub fn openMenuBarAt(self: *Window, anchor: MenuAnchor) void {
     defer _ = w32.DestroyMenu(menu); // recursively frees the submenus too
 
     const state = self.menuBarState();
+
+    // The pending-update row, at the TOP and above everything else (T1673).
+    //
+    // Position is the whole point. The offer that put the dot on this button
+    // is the reason the user opened this menu, and burying the way to act on
+    // it three levels down in Help — where "Check for Updates…" lives, and
+    // where it belongs — would be a badge that points at nothing. Chrome, Edge
+    // and VS Code all put the same row in the same place for the same reason.
+    //
+    // Built here rather than in `menu_bar.root` because the row is
+    // conditional and its label names a version, and the static tree is
+    // comptime UTF-16 literals.
+    if (self.app.pendingUpdate()) |pending| blk: {
+        var utf8: [update_badge.label_cap]u8 = undefined;
+        var wide: [update_badge.label_cap + 1]u16 = undefined;
+        const text = update_badge.menuLabel(&utf8, pending.version, pending.staged);
+        const n = std.unicode.utf8ToUtf16Le(wide[0 .. wide.len - 1], text) catch break :blk;
+        wide[n] = 0;
+        _ = w32.AppendMenuW(
+            menu,
+            w32.MF_STRING,
+            menu_bar.menuCommandId(.install_update),
+            @ptrCast(&wide),
+        );
+        _ = w32.AppendMenuW(menu, w32.MF_SEPARATOR, 0, null);
+    }
+
     self.buildMenuNodes(menu, &menu_bar.root, state);
 
     // Keep the button lit for the life of the popup (Windows menu-button

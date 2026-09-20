@@ -32803,3 +32803,78 @@ One follow-up filed: T1671. The palette's click hit-test turns the click Y
 into a VISUAL row and assigns it to the ABSOLUTE selection index, so once the
 list has scrolled a click runs the command some rows further down. It predates
 this change and is only reachable after arrowing past the last visible row.
+
+## 2026-09-19 - T1673: an update you missed the balloon for now waits for you in the window
+
+USER-REPORTED. The box's installed Ghoztty was 1.36.12 while win-v1.36.30 had
+shipped -- eighteen releases and fourteen days behind, with BOTH
+Ghoztty-1.36.29-x64.msi and Ghoztty-1.36.30-x64.msi already downloaded and
+verified in `%LOCALAPPDATA%\ghoztty\updates`. Every part of the updater worked
+except the last one. The offer was a balloon, a balloon appears once, and after
+it every hourly check logged `already offered; not re-notifying`. Away from the
+desk, notifications quiet, a full-screen app -- the offer is gone, and nothing
+anywhere in the window said an update was waiting.
+
+T1563 had already bounded that silence at a day, which is the right answer to
+how often to INTERRUPT somebody. It is not an answer to "where do I look for
+the thing I missed", and that question needs an affordance that is simply
+there. Ghoztty now keeps one: the menu button (the tab strip's `=` or, on a
+merged-chrome window, the caption's `...`) wears a dot for as long as an update
+is unapplied, and the popup it opens carries an `Install Update 1.36.30` row at
+the top -- above File, because the offer that put the dot there is why the menu
+was opened, and burying the way to act on it inside Help would be a badge that
+points at nothing.
+
+The dot ESCALATES: green while the offer is fresh, amber after two days, red
+after a week. That is the half a notification can never do -- a user who
+dismissed one balloon and a user who is fourteen days behind are the same user
+to a notification, and they are not the same user to somebody deciding whether
+to stop and install now. Two days rather than one for the first rung because
+this project publishes daily, and marking the normal state amber teaches people
+that amber means nothing. Colour is never the only signal (WCAG 1.4.1): the row
+beside it says the version in words, in all three states.
+
+The third part is a durable record, `update-offer[-debug].txt` beside the
+throttle stamp, and it is the part that mattered most on the reporter's box.
+The offer used to live only in the process that made it, so a restart forgot
+both the offer and its AGE -- and the age is what the ladder measures. Worse, a
+build that came up with two verified packages already on disk said nothing
+until the next hourly check happened to succeed. It is read at launch, before
+the first packet leaves, and the one rule that keeps the ladder honest lives in
+one place: re-offering the SAME version keeps its original clock. Without that,
+T1563's daily re-offer would walk the badge back to green every morning and a
+month-behind user would wear the freshest possible mark -- the reported defect
+with a new coat of paint. The record is debug-suffixed for a reason this file
+makes sharper than most: an acceptance script drives fake feeds naming versions
+that do not exist, and an unsuffixed record would leave the user's installed
+terminal offering them `win-v9.9.9`.
+
+The affordance retires exactly when the running build catches up, by the same
+`update_check.isNewer` the check itself uses. That is also how a successful
+install cleans up after itself with no bookkeeping in the apply path -- which
+could not report back anyway, since it replaces the exe and the process is
+gone.
+
+Validation: `update_badge.zig` is pure, so the ladder's edges (including a
+clock that went backwards), the 3:1 contrast floor for every rung on eight
+chrome bands, the badge geometry at 1.0/1.25/1.5/2.0, the wording and the
+record's round trip are all asserted in every lane. Three new scenarios in
+`test\win32\update-check.ps1` drive the durable half end to end on the box:
+offer -> restart with NO feed -> the offer is restored anyway; a re-offer reads
+the original timestamp back off disk unchanged; a record the build has
+overtaken is deleted at launch; a corrupt one restores nothing and the app
+comes up. That script is ALL PASS at 48 assertions (35 of them pre-existing, so
+T24/T1171/T1563/T1565 all still hold). The four zig lanes, the harness floor
+and P1-P3 are green, and every acceptance guard the change made due -- menu-bar,
+kb-actions, the six rearrange suites, split-inherit-cwd, viewer-close,
+close-confirm, remote-disconnect, activity-monitor-remote, window-active-audit,
+msg-timer-ids -- was run green; `guard-due.ps1 check` exits 0.
+
+Three follow-ups filed. T1674: the badge's colour is computed at paint time, and
+a SUPPRESSED automatic check repaints nothing, so a window nobody touches can
+hold a rung's colour up to a day past its line. T1675 (seat: mac): nobody has
+established whether Mac loses a deferred offer the same way, which is the other
+half of this under the platform-symmetry rule -- Sparkle's offer is a window
+rather than a balloon, but what persists after "Later" is unmeasured. T1676: the
+command palette lists `Install Available Update` unconditionally, which is a row
+that is a lie on every day there is nothing to install.

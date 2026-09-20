@@ -32,6 +32,15 @@
 #      screen - in a window, which is where the person who clicked is looking
 #   9. a manual check that finds NOTHING says so in that same window - "up
 #      to date" is an answer, and silence is what T1563 was
+#  10. an offer OUTLIVES the process that made it (T1673): a balloon is
+#      missable, so the offer is written to disk and restored at the next
+#      launch with no check at all - and re-offering the same version keeps
+#      the original staleness clock rather than walking the badge back to
+#      green
+#  11. the affordance RETIRES when the build catches up: a record naming a
+#      version this build has overtaken is dropped at launch, which is also
+#      what cleans up after a successful install
+#  12. a corrupt record costs the affordance and nothing else
 param([string]$ExePath)
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
@@ -367,6 +376,67 @@ $afterAsk9 = ($log9 -split 'scripted manual update check')[-1]
 Assert ($afterAsk9 -match 'update check \(manual\): up to date') 'uptodate: the manual check concluded there is nothing newer'
 Assert ($afterAsk9 -match 'update answer dialog: Ghoztty is up to date') 'uptodate: the user who asked is TOLD so, in a window'
 Assert ($log9 -notmatch 'with nothing to show') 'uptodate: the check did not end without an answer'
+
+# -- 10. an offer OUTLIVES the process that made it (T1673) ---------------
+# The defect: the box's installed build was eighteen releases and fourteen
+# days behind with two verified packages already staged, because the only
+# affordance was a balloon and a balloon is missable by construction. Every
+# hourly check afterwards logged "already offered; not re-notifying", and
+# nothing in the window ever said an update was waiting.
+#
+# The fix's durable half is a record the app writes when it offers and reads
+# at launch, so the affordance is up before the first network call and the
+# escalation ladder measures from the FIRST time the user was told rather
+# than from this process's start. This scenario drives it end to end: offer,
+# restart, restore.
+$offerPath = Join-Path $env:LOCALAPPDATA 'ghoztty\update-offer-debug.txt'
+Remove-Item $offerPath -ErrorAction SilentlyContinue
+
+$log10a = Run-Scenario 'persist-offer' (New-Feed 'persist.json' $feedNewer)
+Assert ($log10a -match 'showing update balloon for win-v9\.9\.9') 'persist: the offer was made'
+Assert (Test-Path $offerPath) 'persist: the offer was WRITTEN to disk, not only to a balloon'
+$rec10 = if (Test-Path $offerPath) { [IO.File]::ReadAllText($offerPath) } else { '' }
+Assert ($rec10 -match '(?m)^version=9\.9\.9\s*$') 'persist: the record names the offered version'
+Assert ($rec10 -match '(?m)^first_offered_ms=\d{10,}\s*$') 'persist: the record carries the clock the escalation measures from'
+$first10 = if ($rec10 -match '(?m)^first_offered_ms=(\d+)') { [int64]$Matches[1] } else { 0 }
+
+# Restart with NO feed at all: what the app says now can only have come from
+# the record, which is the whole point - on the user's box the check had
+# succeeded eighteen times and they still saw nothing.
+$log10b = Run-Scenario 'persist-restore' ''
+Assert ($log10b -match 'restored pending update offer win-v9\.9\.9') 'persist: a fresh launch restores the offer with no check at all'
+
+# ...and the staleness clock does NOT restart. A daily re-offer that reset it
+# would leave a user a month behind wearing the same fresh-green dot, which is
+# the reported defect wearing a new coat of paint.
+$log10c = Run-Scenario 'persist-reoffer' (New-Feed 'persist2.json' $feedNewer)
+$rec10c = if (Test-Path $offerPath) { [IO.File]::ReadAllText($offerPath) } else { '' }
+$first10c = if ($rec10c -match '(?m)^first_offered_ms=(\d+)') { [int64]$Matches[1] } else { -1 }
+Assert ($log10c -match 'restored pending update offer win-v9\.9\.9') 'persist: the re-offer run started from the stored offer'
+Assert ($first10c -eq $first10) 'persist: re-offering the same version keeps the ORIGINAL clock'
+
+# -- 11. the affordance retires when the build catches up (T1673) ---------
+# The only honest reason for the dot to disappear is that the install landed.
+# A record naming a version this build is no longer behind is dropped at
+# launch - which is also what cleans up after a successful update, with no
+# extra bookkeeping in the apply path (which cannot report back: it replaces
+# the exe and the process is gone).
+[IO.File]::WriteAllText($offerPath, "version=0.0.1`nfirst_offered_ms=1700000000000`n")
+$log11 = Run-Scenario 'persist-retire' ''
+Assert ($log11 -match 'update offer for win-v0\.0\.1 is no longer pending') 'retire: a record this build has overtaken is recognised'
+Assert (-not (Test-Path $offerPath)) 'retire: and the record is deleted rather than left to nag forever'
+Assert ($log11 -notmatch 'restored pending update offer') 'retire: nothing is restored from it'
+
+# -- 12. a corrupt record costs the affordance, never the app (T1673) -----
+# Fail-closed: the worst a damaged record may do is put the app back in the
+# state it was in before any of this existed, with the hourly check still
+# there to re-establish the offer.
+[IO.File]::WriteAllText($offerPath, "version=1.2.3`nfirst_offered_ms=banana`n")
+$log12 = Run-Scenario 'persist-corrupt' ''
+Assert ($log12 -notmatch 'restored pending update offer') 'corrupt: an unparseable record restores nothing'
+Assert ($log12 -notmatch 'panic|Unhandled exception') 'corrupt: and the app comes up regardless'
+Remove-Item $offerPath -ErrorAction SilentlyContinue
+
 
 Kill-RepoInstances
 Remove-TestDesktop | Out-Null

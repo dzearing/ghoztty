@@ -1,10 +1,10 @@
 {
     "guard":  "verdict-exit",
     "script":  "test/win32/verdict-exit-audit.ps1",
-    "generated":  "2026-09-19T21:46:35-07:00",
-    "commit":  "6127f6956",
+    "generated":  "2026-09-19T23:16:40-07:00",
+    "commit":  "ea956e9ed",
     "uncommitted":  [
-                        "test/win32/tab-tooltip.ps1"
+                        "test/win32/update-check.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -349,7 +349,7 @@
                   "test/win32/title-jitter.ps1":  "cddd430bceb80810b24814bd1e3047534b578c8d87390827f105ac5915c198f0",
                   "test/win32/unroll-count-audit.ps1":  "4774094b99a4aa9506ac07fe3c4dce49704615fbadc469e41ee90a533401fa31",
                   "test/win32/update-apply.ps1":  "ed99645a2d9b0c9c005079cc3957df31bccc1b043e397f13315d6e4d1b4bb400",
-                  "test/win32/update-check.ps1":  "ed9491f7742c412e75760c1ca8ed2907fb2ff2adf9a29a57fb0ca3ddf6af091d",
+                  "test/win32/update-check.ps1":  "b881bc9de358a4526e91d737d5a28a0f10e113845d633fab1aea1b9b21aa6cc5",
                   "test/win32/update-failure-visible.ps1":  "1461a89d59acbfe5b8c66685cf50d786aa51c97e7d5bb64ae683ff6593773647",
                   "test/win32/update-graceful.ps1":  "8dd249a5f108c2f129a2673c857e68808115c8fd963d67ffaef7ab43a3c70944",
                   "test/win32/update-progress.ps1":  "eb5f961ca43ee0a2e75f3d00cc7c0f7d84cd908ef50c7c0cfa98dfb6dee96f42",

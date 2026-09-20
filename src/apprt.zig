@@ -155,6 +155,14 @@ test {
     // and "does this URL belong to this release" are answered.
     _ = @import("apprt/win32/update_apply.zig");
 
+    // Pure win32 PERSISTENT update affordance (T1673): the escalation ladder
+    // behind the menu-button dot, its geometry, the row's wording, and the
+    // durable record that makes an offer — and its age — survive a restart.
+    // Every lane, same no-OS-imports deal. The user was eighteen releases
+    // behind with the packages already staged because the only affordance was
+    // a balloon; every number that decides what the dot says is asserted here.
+    _ = @import("apprt/win32/update_badge.zig");
+
     // Pure win32 update-DOWNLOAD progress model (T1195): byte formatting, the
     // bar's fill, the marquee for an unknown total, and the movement tracker
     // that tells a stalled download from a merely slow one. Every lane, same

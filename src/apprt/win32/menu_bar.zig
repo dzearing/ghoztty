@@ -323,6 +323,14 @@ pub const omitted = [_]Omitted{
         .cmd = .reset_terminal,
         .why = "pane-scoped; lives in the right-click context menu (T102)",
     },
+    .{
+        .cmd = .install_update,
+        .why = "not in the static tree because its row is CONDITIONAL and its " ++
+            "label carries a version (T1673): `Window.openMenu` prepends " ++
+            "`Install Update <ver>` to the root popup while an offer is " ++
+            "pending, and nothing at all when there is none — a permanently " ++
+            "present row would be a row that is grayed out 364 days a year",
+    },
 };
 
 // --- Lookup / dispatch ----------------------------------------------------

@@ -38,6 +38,13 @@ pub const Kind = enum {
     about,
     /// Open the "What's New in Ghoztty" window (T624).
     whats_new,
+    /// Take the update that is already waiting (T1673) — the action behind
+    /// the row the root popup grows while an offer is pending. Deliberately
+    /// NOT `check_for_updates`: the check has already happened, possibly days
+    /// ago, and re-running it to reach an answer the app is already holding is
+    /// a network round trip that can fail in front of somebody who only wanted
+    /// to install.
+    install_update,
     /// Install the agent integrations for every detected agent (T870).
     claude,
     /// Open the documentation in the default browser (macOS "Ghoztty Help").
@@ -140,6 +147,9 @@ pub const Id = enum {
     viewer_open_file,
     viewer_open_url,
     viewer_open_browser,
+    // Appended, never inserted: an id's ordinal IS its win32 menu command id
+    // (`menuCommandId`), so a new name goes on the end (T1673).
+    install_update,
 };
 
 /// Where "Ghoztty Help" goes. The docs are the same for every platform, so
@@ -261,6 +271,10 @@ pub const registry = [_]Command{
     .{ .id = .open_config, .name = "Open Config", .action = .open_config },
     .{ .id = .reload_config, .name = "Reload Config", .action = .reload_config },
     .{ .id = .check_for_updates, .name = "Check for Updates…", .action = .check_for_updates },
+    // T1673. The palette name is generic because the registry name is static
+    // and the version is not; the MENU row says the version, because that is
+    // where it is read at a glance.
+    .{ .id = .install_update, .name = "Install Available Update", .action = .new_window, .kind = .install_update },
     .{ .id = .help, .name = "Ghoztty Help", .action = .new_window, .kind = .help },
     .{ .id = .about, .name = "About Ghoztty", .action = .new_window, .kind = .about },
     // Mac lists this in the application menu directly under About
@@ -336,6 +350,7 @@ test "only the local kinds carry a placeholder action" {
         .viewer_open_file,
         .viewer_open_url,
         .viewer_open_browser,
+        .install_update,
         => try std.testing.expectEqual(
             input.Binding.Action.new_window,
             c.action,

@@ -60,6 +60,7 @@ const clipboard_open = @import("clipboard_open.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
 const update_check = @import("update_check.zig");
+const update_badge = @import("update_badge.zig");
 const install_location = @import("install_location.zig");
 const update_apply = @import("update_apply.zig");
 const update_install = @import("update_install.zig");
@@ -540,6 +541,24 @@ update_asset_url: ?[]u8 = null,
 /// than starting a fetch the user has to wait through.
 update_staged_msi: ?[]u8 = null,
 
+/// When the user was FIRST told about `update_latest_ver`, in ms since the
+/// epoch — the clock the persistent affordance's escalation ladder measures
+/// from (T1673), and deliberately NOT `update_offered_at_ms`, which is reset
+/// by every daily re-offer and so can only ever describe "recently".
+///
+/// Restored from the durable record at launch, so an offer the user missed
+/// keeps aging across restarts instead of walking back to green every time
+/// the terminal reopens.
+update_first_offered_ms: i64 = 0,
+
+/// Whether `update_latest_ver` describes an update this build has NOT taken,
+/// i.e. whether the menu button wears the dot and the popup carries the
+/// install row. Distinct from `update_latest_ver != null` because a record
+/// restored at launch is dropped when the running build has caught up — the
+/// affordance retires because the install landed, which is the only honest
+/// reason for it to disappear.
+update_pending: bool = false,
+
 /// True while a download worker is out. At most one is ever in flight: a
 /// second click while the first is still fetching must not start a second
 /// 40MB transfer into the same staged path.
@@ -920,6 +939,15 @@ pub fn init(
     // the package it just staged. It walks two small directories and treats
     // every failure as "not yet, try next launch".
     update_install.sweep(self.core_app.alloc);
+
+    // Restore a pending offer from the last run BEFORE the check goes out
+    // (T1673). The check is a network round trip that may take seconds, may
+    // fail, and in the state this task was filed from had already succeeded
+    // eighteen times without the user ever seeing the result. The record is on
+    // disk, so the affordance can be up before the first packet leaves — and
+    // after the sweep above, which is what makes a staged path in the record
+    // trustworthy enough to `access`.
+    self.loadPendingUpdate();
 
     self.startUpdateCheck(.automatic);
 
@@ -8510,7 +8538,7 @@ fn updatePolicy(self: *const App) update_apply.Policy {
 /// the portable copies too, so the answer could not be moved into the build —
 /// it has to be about where the exe is, which is what `install_location`
 /// answers.
-fn startUpdateCheck(self: *App, trigger: UpdateTrigger) void {
+pub fn startUpdateCheck(self: *App, trigger: UpdateTrigger) void {
     if (trigger == .automatic) {
         const overridden = envUpdateUrlIsSet(self.core_app.alloc);
         if (!self.autoUpdateCheckAllowed() and !overridden) return;
@@ -8578,6 +8606,130 @@ fn envUpdateUrlIsSet(alloc: Allocator) bool {
     const v = std.process.getEnvVarOwned(alloc, "GHOZTTY_UPDATE_URL") catch return false;
     defer alloc.free(v);
     return v.len > 0;
+}
+
+/// `%LOCALAPPDATA%\ghoztty\update-offer[-debug].txt` (T1673) — the durable
+/// record of an outstanding update offer. Caller frees.
+///
+/// Debug-suffixed, the same coexistence pattern as the palette history and the
+/// orphan-notify store beside it, and for a reason this particular file makes
+/// sharper than most: an acceptance script drives fake feeds naming versions
+/// that do not exist, and an unsuffixed record would leave the user's INSTALLED
+/// terminal wearing a dot for `win-v9.9.9`. The throttle stamp next door
+/// (`update_check_at`) is shared, which is harmless — the worst it costs is a
+/// delayed check — but an offer is a claim about what the user should install,
+/// and a test must not be able to make one on their behalf.
+fn updateOfferPath(self: *App, alloc: Allocator) ?[]u8 {
+    _ = self;
+    const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return null;
+    defer alloc.free(dir);
+    const name = if (comptime build_config.is_debug)
+        "update-offer-debug.txt"
+    else
+        "update-offer.txt";
+    return std.fs.path.join(alloc, &.{ dir, "ghoztty", name }) catch null;
+}
+
+/// Restore a pending offer from disk at launch (T1673).
+///
+/// This is what makes the affordance survive a restart, and it is the half of
+/// the report that matters most on the box the task was filed from: two
+/// verified packages were already staged in `%LOCALAPPDATA%\ghoztty\updates`
+/// and the app said nothing about either until the next hourly check happened
+/// to succeed. With the record read here, a build that comes up behind wears
+/// the dot before it has made a single network call.
+///
+/// Silent on every failure. A missing, empty or unparseable record is exactly
+/// the state the app was in before this existed, and the update check will
+/// re-establish the offer within the hour.
+fn loadPendingUpdate(self: *App) void {
+    const alloc = self.core_app.alloc;
+    const path = self.updateOfferPath(alloc) orelse return;
+    defer alloc.free(path);
+
+    const text = std.fs.cwd().readFileAlloc(alloc, path, 8 * 1024) catch return;
+    defer alloc.free(text);
+
+    const rec = update_badge.parse(text) orelse return;
+    if (!update_badge.isPending(rec, build_config.version)) {
+        // The install landed (or this build overtook the offer some other
+        // way). Drop the record rather than leaving a dot that can never be
+        // satisfied.
+        std.fs.cwd().deleteFile(path) catch {};
+        log.info("update offer for win-v{s} is no longer pending (running {s}); record cleared", .{
+            rec.version, build_config.version_string,
+        });
+        return;
+    }
+
+    self.update_latest_ver = alloc.dupe(u8, rec.version) catch return;
+    self.update_first_offered_ms = rec.first_offered_ms;
+    self.update_staged_msi = if (rec.staged_msi) |p| blk: {
+        // A package the record names but that is no longer on disk is not a
+        // staged install: the click path must download rather than hand
+        // msiexec a path that has been cleaned up underneath it.
+        std.fs.cwd().access(p, .{}) catch break :blk null;
+        break :blk alloc.dupe(u8, p) catch null;
+    } else null;
+    self.update_pending = true;
+    log.info("restored pending update offer win-v{s} (first offered {d}, staged={})", .{
+        rec.version, rec.first_offered_ms, self.update_staged_msi != null,
+    });
+}
+
+/// Write the durable record for the offer now held in `update_latest_ver`.
+/// Best-effort: losing it costs the affordance a restart, never an update.
+fn savePendingUpdate(self: *App) void {
+    const alloc = self.core_app.alloc;
+    const version = self.update_latest_ver orelse return;
+    const path = self.updateOfferPath(alloc) orelse return;
+    defer alloc.free(path);
+
+    var buf: [1024]u8 = undefined;
+    const text = update_badge.serialize(&buf, .{
+        .version = version,
+        .first_offered_ms = self.update_first_offered_ms,
+        .staged_msi = self.update_staged_msi,
+    }) orelse return;
+
+    if (std.fs.path.dirname(path)) |d| std.fs.cwd().makePath(d) catch {};
+    const f = std.fs.cwd().createFile(path, .{ .truncate = true }) catch return;
+    defer f.close();
+    f.writeAll(text) catch {};
+}
+
+/// The offer the chrome should be showing, or null when there is nothing
+/// waiting. Read by the menu build and by the dot's paint, both on the GUI
+/// thread.
+pub const PendingUpdate = struct {
+    version: []const u8,
+    staged: bool,
+    urgency: update_badge.Urgency,
+};
+
+pub fn pendingUpdate(self: *const App) ?PendingUpdate {
+    if (!self.update_pending) return null;
+    const version = self.update_latest_ver orelse return null;
+    return .{
+        .version = version,
+        .staged = self.update_staged_msi != null,
+        .urgency = update_badge.urgencyFor(
+            self.update_first_offered_ms,
+            std.time.milliTimestamp(),
+        ),
+    };
+}
+
+/// Repaint every window's chrome so the dot appears, escalates or goes away.
+///
+/// Both hosts are invalidated because either can be the one carrying it: a
+/// merged-chrome window hangs the menu off the caption's "…" and leaves the
+/// strip's "≡" rect zero, and a standalone one does the opposite.
+fn refreshUpdateAffordance(self: *App) void {
+    for (self.windows.items) |win| {
+        win.invalidateTabBar();
+        win.invalidateCaption();
+    }
 }
 
 /// Read the persisted "last checked at" timestamp; return true if
@@ -8859,16 +9011,42 @@ fn reportUpdateProgress(ctx: *anyopaque, received: u64, total: u64) void {
 /// (message handler) still owns and frees `found`.
 fn rememberUpdate(self: *App, found: *UpdateFound) void {
     const alloc = self.core_app.alloc;
+    const now = std.time.milliTimestamp();
+
+    // The STALENESS clock, decided before the version text is replaced —
+    // `advance` needs to compare the old offer with the new one (T1673).
+    // `update_offered_at_ms` below is a different clock for a different
+    // question: that one is "when did we last interrupt them", reset by every
+    // daily re-offer, and this one is "how far behind are they", which a
+    // re-offer of the same version must never walk back to green.
+    const advanced = update_badge.advance(
+        if (self.update_pending) if (self.update_latest_ver) |v| update_badge.Record{
+            .version = v,
+            .first_offered_ms = self.update_first_offered_ms,
+        } else null else null,
+        found.version,
+        null, // filled from `update_staged_msi` when the record is written
+        now,
+    );
+
     if (self.update_latest_ver) |old| alloc.free(old);
     self.update_latest_ver = alloc.dupe(u8, found.version) catch null;
     // When, so the automatic dedupe can expire rather than hold forever
     // (T1563). Written here because this is the moment the user was actually
     // told, which is the thing the expiry measures from.
-    self.update_offered_at_ms.store(std.time.milliTimestamp(), .release);
+    self.update_offered_at_ms.store(now, .release);
     if (self.update_asset_url) |old| alloc.free(old);
     self.update_asset_url = if (found.asset_url) |u| (alloc.dupe(u8, u) catch null) else null;
     if (self.update_staged_msi) |old| alloc.free(old);
     self.update_staged_msi = if (found.staged_msi) |p| (alloc.dupe(u8, p) catch null) else null;
+
+    // The PERSISTENT half (T1673): the offer outlives this balloon, and the
+    // affordance that says so goes up now and stays up until the install
+    // lands.
+    self.update_first_offered_ms = advanced.first_offered_ms;
+    self.update_pending = true;
+    self.savePendingUpdate();
+    self.refreshUpdateAffordance();
 }
 
 /// Show a notification balloon that an update is available — the AUTOMATIC
@@ -9051,7 +9229,7 @@ fn openUpdateReleasePage(self: *App) void {
 /// The confirmation is mandatory and it is Ghoztty's own dialog rather than
 /// msiexec's: what the user is consenting to is their terminal CLOSING, and
 /// that sentence has to be said by the thing that is about to close.
-fn offerUpdate(self: *App) bool {
+pub fn offerUpdate(self: *App) bool {
     const alloc = self.core_app.alloc;
     const ver = self.update_latest_ver orelse return false;
     if (self.update_staged_msi == null and self.update_asset_url == null) return false;

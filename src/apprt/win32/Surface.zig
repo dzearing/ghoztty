@@ -3126,6 +3126,16 @@ pub fn performCommand(self: *Surface, id: commands.Id) void {
         // the same window (AppDelegate.showWhatsNew).
         .whats_new => WhatsNewWindow.open(self.parent_window),
 
+        // Take the update the app is already holding (T1673). The offer was
+        // made at some point in the past — possibly days ago, possibly to a
+        // balloon nobody saw — and this row is the persistent way back to it.
+        // `offerUpdate` raises the same "Install and Restart" / "Later"
+        // dialog a balloon click does, so the two routes to the same decision
+        // cannot present it differently. It returns false only when there is
+        // nothing installable, which is the one case where re-checking is the
+        // honest thing to do.
+        .install_update => if (!self.app.offerUpdate()) self.app.startUpdateCheck(.manual),
+
         // The Agent Integrations management window (T871): per-agent state
         // rows with Set Up / Update / Uninstall, probing off-thread. Mac's
         // palette entry opens the same window
