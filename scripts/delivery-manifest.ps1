@@ -17,11 +17,20 @@
 # The files a delivery copies into a portable install directory, in the order a
 # reader would expect to see them logged.
 #
-# -AppOnly is the morning refresh (T525): the app and nothing else. The agent
-# outlives the app on purpose, and an agent swapped underneath a portable copy
-# would hand the mandatory agent-restart confirmation to whoever launches it
-# next - "app-only except over there" is the per-location divergence this repo
-# does not ship.
+# -AppOnly ships the app and nothing else. The agent outlives the app on
+# purpose, and an agent swapped underneath a portable copy would hand the
+# mandatory agent-restart confirmation to whoever launches it next -
+# "app-only except over there" is the per-location divergence this repo does
+# not ship.
+#
+# It used to be the morning refresh's mode (T525). That script was retired by
+# D85 - nothing in this repo replaces the user's installed terminal any more -
+# so -AppOnly has no automatic caller left: it reaches the scripts only through
+# a hand-run `launch-upgrade.ps1 -ExtraArgs '-AppOnly'`. The route an agent fix
+# actually takes to the user is the daily publish, and build-msi.sh's package
+# both REQUIRES ghoztty-agent.exe and versions it alongside ghoztty.exe, so the
+# in-app updater installs the agent from the same build as the app (T913,
+# asserted by A14a/A14b2 in test\win32\release-artifacts.ps1).
 function Get-DeliveryFileSet {
     param([switch]$AppOnly)
     # ghoztty.com is NOT optional (T245): PATHEXT resolves .COM before .EXE, so

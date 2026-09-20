@@ -127,6 +127,22 @@ Assert "A13 on-box script runs the shared script" ($ps1 -match 'build-release-ar
 Assert "A14 portable ZIP requires the agent" ($zipSh -match 'ghoztty-agent\.exe not found|must carry the session-persistence agent')
 Assert "A15 portable ZIP requires the terminfo sentinel" ($zipSh -match 'ghostty\.terminfo')
 
+# A14a-A14b2: the MSI side of the same rule, which the comment above has
+# asserted in prose since T89h while nothing checked it (T913). The release the
+# in-app updater installs is now the ONLY route an agent fix takes to the user -
+# the morning refresh that used to swap the app in place was retired by D85 -
+# so "the package carries a matching agent" stopped being a packaging nicety
+# and became the thing that decides whether a landed agent fix ever arrives.
+# Two ways it can fail, one assert each:
+Assert "A14a MSI requires the agent" (
+    $msiSh -match 'must carry the session-persistence agent')
+# ...and if the agent has no File-table version, Windows Installer falls back to
+# the created/modified-date rule and can leave LAST release's agent beside a
+# fresh app - a user who updates to get an agent fix then runs the old agent,
+# with nothing anywhere saying so. Same row as its two siblings, same reason.
+Assert "A14b2 MSI versions the agent like its siblings" (
+    $msiSh -match 'want = \{[^}]*"ghoztty-agent\.exe": 0')
+
 # A14b-A15c: the console twin ships in BOTH layouts too (T1052). It did not,
 # for as long as either artifact has existed: `ghoztty.com` is the binary a
 # shell actually runs (PATHEXT prefers .COM, and the GUI ghoztty.exe is not

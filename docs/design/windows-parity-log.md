@@ -33158,3 +33158,36 @@ chosen", which is the rule the double-quoted branch already used.
 
 Floor: four zig lanes green, harness floor green, `isolation-meta` ALL PASS
 (17 assertions), `holder-adopt` ALL PASS (27 assertions).
+
+## 2026-09-20 - T913: the installer is checked to carry a matching session agent
+
+T913 asked the morning refresh to deliver `ghoztty-agent.exe` alongside the app,
+so agent-side fixes would stop waiting for a deliberate, attended delivery. The
+morning refresh no longer exists: 49462b527 deleted it under D85 -- *"the
+terminal should only ever run something that was actually published"* -- and
+took `test\win32\morning-refresh.ps1` with it. Nothing calls `-AppOnly`
+automatically any more; it reaches the delivery scripts only through a hand-run
+`launch-upgrade.ps1 -ExtraArgs '-AppOnly'`.
+
+The goal outlived the vehicle, and the route that replaced it already meets it.
+`build-msi.sh` refuses to package without `ghoztty-agent.exe` and gives it the
+same strictly-increasing File-table version as `ghoztty.exe`, so the in-app
+updater installs an agent from the same build as the app, unattended. What was
+missing was the check. `test\win32\release-artifacts.ps1` asserted both rules
+for the portable ZIP and for `ghoztty.com` and neither for the agent in the MSI
+-- the comment above A14 said "the MSI has enforced this since T89h" in prose,
+and nothing read it back. Since the MSI became the only route an agent fix takes
+to the user, that prose was the last thing standing between a packaging edit and
+a user who updates to get an agent fix and runs last release's agent instead.
+
+So the deliverable is the assertion, not a delivery change: A14a (the MSI
+requires the session-persistence agent) and A14b2 (it versions the agent in the
+File table like `ghoztty.exe` and `ghoztty.com`, so Windows Installer's
+created/modified-date fallback cannot leave the previous one in place). Both
+were demonstrated red against a mutated `build-msi.sh` before being believed.
+The retired-morning-refresh prose in `scripts\delivery-manifest.ps1` and `go.md`
+now names the publish route instead of a script that is not there.
+
+Floor: four zig lanes green, harness floor green, `release-artifacts` ALL PASS
+(1 skipped: the Docker packaging section), `deliver-windows-build` and
+`merge-terminology` green over the two comment changes.

@@ -1206,8 +1206,13 @@ the fix is the message.
   against the STAGED agent's; a mismatch is `AGENT VERIFY FAILED` and the run is
   a failure with nothing propagated onward. What is deliberately NOT asserted is
   the RUNNING agent's build — it is expected to be older, which is the whole
-  lazy-upgrade contract — and `-AppOnly` (the morning refresh, which ships no
-  agent at all) logs `AGENT VERIFY SKIP` rather than failing every morning. The
+  lazy-upgrade contract — and `-AppOnly` (which ships no agent at all, and since
+  D85 retired the morning refresh has no automatic caller left) logs
+  `AGENT VERIFY SKIP` rather than failing. The route an agent fix takes to the
+  user is the daily publish: the MSI both requires `ghoztty-agent.exe` and gives
+  it the same File-table version as `ghoztty.exe`, so the in-app updater installs
+  an agent from the same build as the app rather than leaving the previous
+  release's beside it (T913; A14a/A14b2 of `test\win32\release-artifacts.ps1`). The
   mirrored locations are read back too, as a `WARNING` naming the location: they
   are best-effort by design, but silence was the wrong outcome. Acceptance:
   section E of `test\win32\upgrade-staleness.ps1`, whose negative control holds
