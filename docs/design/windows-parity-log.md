@@ -9,6 +9,40 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-20: T1684 (user report, P0), T1687 filed — **two windows could end up
+  typing into one shell, and now they cannot.**
+
+  The user hit it on the installed release: a window came up already attached to
+  the process another open window was running. The mechanism is the one T703
+  documented from the other side — the session manager binds a session to the
+  NEWEST `ATTACH` and never refuses — so a restore that names one session twice
+  does not show it twice, it MOVES it, and the window that had it is left a
+  frozen picture that still delivers keystrokes.
+
+  Two halves, and both are now closed. The restore had no rule against handing
+  one session to two leaves: `reconcile` refuses an AGENT-recovered window whose
+  session a local window claimed, but the local manifest was never checked
+  against itself. And `mergeCarried` could WRITE that manifest — it adjudicated a
+  carried window by its window key alone, so a session that came back under a new
+  key (a Restore All, an adoption) was recorded in the live window AND in the
+  carried one. `SessionClaims` now gives each session to at most one leaf per
+  restore pass and the loser OPENs a fresh shell; `mergeCarried` drops a carried
+  window whose sessions are live elsewhere.
+
+  Measured, not assumed. The plain new-window path was probed first and was
+  never broken — three windows, three distinct sessions and pids, before and
+  after a relaunch — so the defect is specifically the restore's, which is why
+  the fix and the test both live there. `test\win32\restore-session-dup.ps1`
+  builds the doctored manifest by hand (the only deterministic way to get it),
+  scores ALL PASS, and `-NegativeControl` is the demonstration that its central
+  assertion can go red.
+
+  The claim set is deliberately live only for the launch/deferred pass: the
+  in-place recovery walk shares the same subtree builder and legitimately
+  re-attaches sessions live panes hold, so it sees the rule switched off rather
+  than half-applied. T1687 is what is still missing from the user's side — the
+  pane that opened fresh instead of stealing says nothing about why.
+
 - 2026-09-20: T915 worked down to its last human step (T1683 filed) — **the
   Google credential every Windows build ships is now checked against the real
   Google, on every run, with nobody signed in.**

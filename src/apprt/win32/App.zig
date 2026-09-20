@@ -399,6 +399,9 @@ pushed_layouts: std.StringHashMapUnmanaged(u64) = .empty,
 /// what keeps the manifest from becoming immortal.
 carried_layout_windows: std.StringHashMapUnmanaged(void) = .empty,
 
+/// One-pane-per-session bookkeeping for the current restore pass (T1684).
+restore_claims: SessionClaims = .{},
+
 /// The connection `pushed_layouts` describes. A reconnect (agent restart, link
 /// recovery) means the peer's store is not the one we tracked, so the map is
 /// dropped and the whole topology re-pushed rather than assumed present.
@@ -2031,6 +2034,9 @@ pub fn terminate(self: *App) void {
     self.clearCarriedLayouts();
     self.carried_layout_windows.deinit(alloc);
 
+    // T1684: same shape — gpa-owned dupes of session ids.
+    self.restore_claims.deinit(alloc);
+
     // T109: the last restored leaf's decoded screen. Every surface that
     // borrowed it is long gone by now (they dupe what they keep).
     if (self.restore_snapshot_scratch) |s| {
@@ -2504,6 +2510,117 @@ fn clearCarriedLayouts(self: *App) void {
     var it = self.carried_layout_windows.iterator();
     while (it.next()) |entry| gpa.free(entry.key_ptr.*);
     self.carried_layout_windows.clearRetainingCapacity();
+}
+
+fn beginRestoreClaims(self: *App) void {
+    self.restore_claims.begin(self.core_app.alloc);
+}
+
+fn endRestoreClaims(self: *App) void {
+    self.restore_claims.end(self.core_app.alloc);
+}
+
+fn claimRestoreSession(self: *App, sid: []const u8) bool {
+    return self.restore_claims.claim(self.core_app.alloc, sid);
+}
+
+/// Which sessions a restore pass has already handed to a pane (T1684).
+///
+/// A session can only be SHOWN in one pane. The agent rebinds a session to the
+/// newest ATTACH and never refuses (T703), so a second pane naming the same id
+/// does not share the shell — it TAKES it, leaving the first pane a frozen
+/// picture the user can still type into. From outside that is "two windows are
+/// typing into one shell", which is what the user reported on 2026-09-20.
+///
+/// The restore is where a duplicate arrives: it reconciles the local manifest
+/// with the agent's layout blobs, both of which describe windows by KEY, so a
+/// manifest that named one session in two windows replayed both and attached
+/// both. `session_layout.mergeCarried` is where such a manifest came from, and
+/// it no longer writes one; this is the rule that holds whatever the file says.
+///
+/// Live only between `begin` and `end`, which wrap the launch/deferred pass and
+/// nothing else. The in-place recovery walk (`rebuildTabLeavesInPlace`) shares
+/// the same subtree builder and legitimately re-attaches sessions live panes are
+/// holding, so it must see this switched OFF rather than half-populated —
+/// inactive answers `true` to everything, which is the pre-T1684 behaviour byte
+/// for byte.
+const SessionClaims = struct {
+    /// Claimed ids, gpa-owned dupes (a leaf's id borrows the manifest arena,
+    /// which does not outlive the pass by much and is not ours to depend on).
+    map: std.StringHashMapUnmanaged(void) = .empty,
+    active: bool = false,
+
+    /// Start a pass. Idempotent, so a pass that returned early through any of
+    /// `restorePass`'s exits cannot leave claims behind for the next one.
+    fn begin(self: *SessionClaims, gpa: Allocator) void {
+        self.end(gpa);
+        self.active = true;
+    }
+
+    /// End a pass and drop its claims. Idempotent.
+    fn end(self: *SessionClaims, gpa: Allocator) void {
+        var it = self.map.iterator();
+        while (it.next()) |entry| gpa.free(entry.key_ptr.*);
+        self.map.clearRetainingCapacity();
+        self.active = false;
+    }
+
+    fn deinit(self: *SessionClaims, gpa: Allocator) void {
+        self.end(gpa);
+        self.map.deinit(gpa);
+    }
+
+    /// Claim `sid` for the leaf about to ATTACH to it. True ⇒ this pass's first
+    /// claim on that session, so the ATTACH goes ahead; false ⇒ an earlier leaf
+    /// already has it and the caller must OPEN a fresh shell instead of taking
+    /// the session off the pane that is getting it.
+    ///
+    /// An allocation failure answers true: losing the claim costs the duplicate
+    /// check, never the restore.
+    fn claim(self: *SessionClaims, gpa: Allocator, sid: []const u8) bool {
+        if (!self.active) return true;
+        if (sid.len == 0) return true;
+        const gop = self.map.getOrPut(gpa, sid) catch return true;
+        if (gop.found_existing) return false;
+        gop.key_ptr.* = gpa.dupe(u8, sid) catch {
+            _ = self.map.remove(sid);
+            return true;
+        };
+        return true;
+    }
+};
+
+test "SessionClaims: one pane per session, and only while a pass is running" {
+    const gpa = std.testing.allocator;
+    var claims: SessionClaims = .{};
+    defer claims.deinit(gpa);
+
+    // Inactive: every path but the launch/deferred restore, which must behave
+    // exactly as it did before this rule existed.
+    try std.testing.expect(claims.claim(gpa, "sess-a"));
+    try std.testing.expect(claims.claim(gpa, "sess-a"));
+
+    claims.begin(gpa);
+    try std.testing.expect(claims.claim(gpa, "sess-a"));
+    // The second leaf naming the same session opens fresh instead of stealing.
+    try std.testing.expect(!claims.claim(gpa, "sess-a"));
+    // A DIFFERENT session is untouched by the refusal.
+    try std.testing.expect(claims.claim(gpa, "sess-b"));
+    // An id-less leaf is never a claim (it opens fresh anyway) and must not
+    // block the next one.
+    try std.testing.expect(claims.claim(gpa, ""));
+    try std.testing.expect(claims.claim(gpa, ""));
+
+    // A claim does not outlive its pass: the same session may be restored again
+    // next time, which is the ordinary relaunch.
+    claims.end(gpa);
+    claims.begin(gpa);
+    try std.testing.expect(claims.claim(gpa, "sess-a"));
+
+    // begin() is idempotent and clears, so an early-returning pass leaves
+    // nothing behind for the next one.
+    claims.begin(gpa);
+    try std.testing.expect(claims.claim(gpa, "sess-a"));
 }
 
 const FrameCapture = struct {
@@ -3809,6 +3926,12 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
     // not disturb it.
     if (deferred) self.clearCarriedLayouts();
 
+    // T1684: one pane per session, for the whole pass — the union set can offer
+    // the same session under two window keys, and replaying both would take the
+    // shell from the pane that just got it.
+    self.beginRestoreClaims();
+    defer self.endRestoreClaims();
+
     var restored: usize = 0;
     for (union_set.windows) |win| {
         // T188: a window boundary is the natural yield point — nothing of this
@@ -4206,7 +4329,21 @@ fn restoreAttachOverride(
         .working_directory = leaf.working_directory,
     };
 
-    const sid: ?[]const u8 = leafAttachSessionId(leaf, attach);
+    // T1684: the attach rule, then the one-pane-per-session rule. A session the
+    // pass has already handed to another leaf is treated exactly like a
+    // positively-gone one — this pane OPENs a fresh shell — because attaching
+    // it twice would not show the shell in two places, it would move it, and
+    // leave the first pane a frozen picture the user can still type into.
+    const sid: ?[]const u8 = blk: {
+        const candidate = leafAttachSessionId(leaf, attach) orelse break :blk null;
+        if (self.claimRestoreSession(candidate)) break :blk candidate;
+        log.warn(
+            "session-restore: session {s} is already being restored into another pane; " ++
+                "opening a fresh shell here instead of taking it",
+            .{candidate},
+        );
+        break :blk null;
+    };
     // T109: the recorded screen goes with the SESSION we are re-attaching to.
     // A leaf whose session is gone OPENs a fresh shell, and painting the dead
     // session's last screen over it would be a lie about what the pane is —

@@ -791,6 +791,26 @@ $GuardTable = @(
             'src\apprt\win32\session_layout.zig'
         )
     },
+    # ONE PANE PER SESSION (T1684): the only harness that measures what a
+    # restore does when its own manifest names one session in TWO windows. The
+    # agent binds a session to the newest ATTACH and never refuses, so getting
+    # this wrong does not show up as an error anywhere - it shows up as two
+    # windows typing into one shell, which is what the user reported. The rule
+    # has two halves: the restore pass's claim set in `App.zig`, and the merge
+    # that decides what the manifest RECORDS in `session_layout.zig`. Only the
+    # second is covered here, for the same reason no guard row names `App.zig` -
+    # it is touched most turns, and a row on it would report DUE every turn
+    # regardless of whether restore was the thing that changed. The claim set's
+    # own half is unit-tested in the win32 lane (`SessionClaims`).
+    [pscustomobject]@{
+        Name   = 'restore-session-dup'
+        Script = 'test\win32\restore-session-dup.ps1'
+        Stamp  = 'test\win32\restore-session-dup.stamp.json'
+        Covers = @(
+            'test\win32\restore-session-dup.ps1',
+            'src\apprt\win32\session_layout.zig'
+        )
+    },
     # Holder RE-ADOPTION (T906): the only harness that measures the number that
     # separates adoption from the relaunch path agent-recovery.ps1 covers - the
     # SHELL PID is unchanged across a manager kill. It also owns the orphan

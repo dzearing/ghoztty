@@ -701,6 +701,17 @@ pub fn mergeCarried(
     }
     if (carried.count() == 0) return live;
 
+    // T1684: a session adjudicates too, not only a key. A carried window whose
+    // session came back under a DIFFERENT key — a Restore All, an adoption, a
+    // window the user rebuilt — is a superseded record of a shell that is on
+    // screen right now, and appending it would write that session into the
+    // manifest TWICE. The next launch then replays both windows and the second
+    // ATTACH takes the shell off the first, which is how a window ends up
+    // showing the shell another window is already running.
+    var live_sessions: std.StringHashMapUnmanaged(void) = .empty;
+    defer live_sessions.deinit(gpa);
+    for (live) |win| try claimSessions(gpa, &live_sessions, win);
+
     var out: std.ArrayList(Window) = .empty;
     errdefer out.deinit(arena);
     try out.appendSlice(arena, live);
@@ -711,9 +722,20 @@ pub fn mergeCarried(
     for (manifest) |win| {
         const key = windowKey(win);
         if (!carried.contains(key)) continue;
+        // T1684: adjudicated by its sessions being live elsewhere. Dropped from
+        // the carried set as well as from the output, exactly like a key that
+        // came back — its future is the live capture's business now, and
+        // leaving it in would re-append it on every sync forever.
+        if (sessionsClaimed(&live_sessions, win)) {
+            if (carried.fetchRemove(key)) |kv| gpa.free(kv.key);
+            continue;
+        }
         const gop = try appended.getOrPut(gpa, key);
         if (gop.found_existing) continue;
         try out.append(arena, win);
+        // A carried window's OWN sessions are spoken for from here on, so two
+        // carried entries naming one session cannot both ride along either.
+        try claimSessions(gpa, &live_sessions, win);
     }
     return try out.toOwnedSlice(arena);
 }
@@ -1479,6 +1501,85 @@ test "T590: a duplicated manifest key is appended once" {
     const out = try mergeCarried(arena, alloc, &.{}, &manifest, &carried);
     try testing.expectEqual(@as(usize, 1), out.len);
     try testing.expectEqualStrings("old", out[0].id);
+}
+
+test "T1684: a carried window whose session is live under another key is dropped" {
+    const alloc = testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var ln: [1]Node = undefined;
+    var lt: [1]Tab = undefined;
+    var mn: [1]Node = undefined;
+    var mt: [1]Tab = undefined;
+    // The shell `sess-a` is on screen right now, in a window with a NEW key (a
+    // Restore All rebuilt it, an adoption re-keyed it). The old record of the
+    // same shell is still carried. Appending it would write `sess-a` into the
+    // manifest twice, and the next launch would restore two windows onto one
+    // shell.
+    const live = [_]Window{reconcileWindow("now", "uuid-now", "sess-a", &ln, &lt)};
+    const manifest = [_]Window{reconcileWindow("then", "uuid-then", "sess-a", &mn, &mt)};
+    var carried = try carriedSet(alloc, &.{"uuid-then"});
+    defer freeCarriedSet(alloc, &carried);
+
+    const out = try mergeCarried(arena, alloc, &live, &manifest, &carried);
+    try testing.expectEqual(@as(usize, 1), out.len);
+    try testing.expectEqualStrings("now", out[0].id);
+    // Adjudicated the same way a returning key is: it does not come back on the
+    // next sync either.
+    try testing.expectEqual(@as(usize, 0), carried.count());
+}
+
+test "T1684: two carried windows naming one session ride along once" {
+    const alloc = testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var an: [1]Node = undefined;
+    var at: [1]Tab = undefined;
+    var bn: [1]Node = undefined;
+    var bt: [1]Tab = undefined;
+    var cn: [1]Node = undefined;
+    var ct: [1]Tab = undefined;
+    const manifest = [_]Window{
+        reconcileWindow("first", "uuid-1", "sess-a", &an, &at),
+        reconcileWindow("second", "uuid-2", "sess-a", &bn, &bt),
+        reconcileWindow("other", "uuid-3", "sess-b", &cn, &ct),
+    };
+    var carried = try carriedSet(alloc, &.{ "uuid-1", "uuid-2", "uuid-3" });
+    defer freeCarriedSet(alloc, &carried);
+
+    const out = try mergeCarried(arena, alloc, &.{}, &manifest, &carried);
+    try testing.expectEqual(@as(usize, 2), out.len);
+    try testing.expectEqualStrings("first", out[0].id);
+    try testing.expectEqualStrings("other", out[1].id);
+    try testing.expectEqual(@as(usize, 2), carried.count());
+}
+
+test "T1684: a carried window with no sessions is unaffected by the session rule" {
+    const alloc = testing.allocator;
+    var arena_state = std.heap.ArenaAllocator.init(alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    var ln: [1]Node = undefined;
+    var lt: [1]Tab = undefined;
+    var mn: [1]Node = undefined;
+    var mt: [1]Tab = undefined;
+    // A viewer-only window claims no session at all (`sessionIds` is empty for
+    // it), so it must keep riding along — the rule above is about a shell being
+    // in two places, and this window holds none.
+    const live = [_]Window{reconcileWindow("blank", "uuid-live", null, &ln, &lt)};
+    const manifest = [_]Window{reconcileWindow("viewers", "uuid-v", null, &mn, &mt)};
+    var carried = try carriedSet(alloc, &.{"uuid-v"});
+    defer freeCarriedSet(alloc, &carried);
+
+    const out = try mergeCarried(arena, alloc, &live, &manifest, &carried);
+    try testing.expectEqual(@as(usize, 2), out.len);
+    try testing.expectEqualStrings("viewers", out[1].id);
+    try testing.expectEqual(@as(usize, 1), carried.count());
 }
 
 // -- pairWindows (T343) -------------------------------------------------------
