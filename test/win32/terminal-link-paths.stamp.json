@@ -1,13 +1,13 @@
 {
     "guard":  "terminal-link-paths",
     "script":  "test/win32/terminal-link-paths.ps1",
-    "generated":  "2026-09-16T18:47:07-07:00",
-    "commit":  "80dbb732c",
+    "generated":  "2026-09-20T09:57:09-07:00",
+    "commit":  "ca298f035",
     "uncommitted":  [
-                        "src/config/url.zig"
+                        "test/win32/terminal-link-paths.ps1"
                     ],
     "files":  {
                   "src/config/url.zig":  "d37a97661e533fc92f71aef24f3b3974714f6f5b8a2a5d65f52d3261d3a20a26",
-                  "test/win32/terminal-link-paths.ps1":  "f3ba874ca9f97125334319222b41e785a24c9168e6bbb3b78205a1c3bc85b161"
+                  "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3"
               }
 }

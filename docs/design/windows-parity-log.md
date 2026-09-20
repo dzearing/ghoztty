@@ -33242,3 +33242,42 @@ now names the publish route instead of a script that is not there.
 Floor: four zig lanes green, harness floor green, `release-artifacts` ALL PASS
 (1 skipped: the Docker packaging section), `deliver-windows-build` and
 `merge-terminology` green over the two comment changes.
+
+## 2026-09-20 - T916: the link-paths probe walk can no longer miss the lines it aims at
+
+The card said the walk was clamping to the bottom row, on the strength of an
+instrumented build that appeared to show the core receiving a y about 39x the
+one the harness posted. That is not what is happening, and the way to find out
+was a ruler rather than an argument: fill the pane with `R1`..`R60`, one marker
+per row, then probe every 10px down the client rect and print what each probe
+selects. The mapping is strictly linear at about 26px per row, monotone from
+the first content row to the last, the blank row answers with no selection, and
+only a y past the last content row answers with the bottom prompt. No scaling,
+no clamp - `Get-TestWindowRect -Client` plus `Send-TestMouse` hits the row it is
+aimed at, and the jitter double-click walks identically, so T802's `samePin`
+guard has been live the whole time.
+
+The real defect is aliasing. `Write-Lines` sent `echo <text>` once per line,
+which leaves the screen as a repeating three-row block - the echoed command,
+its output, a blank - so only one row in three carries the text. A fixed-pitch
+walk beats against that period: twelve probes are ~1.5 rows apart and section
+E's eight are ~2.1, so which phase each probe lands on depends on where the
+content happened to stop, and the de-duplication then collapses whatever it did
+hit into one or two strings. Section E drew eight prompt rows in a row, which is
+how a correct build came to look like a product failure. The cross-pass drift
+has the same root: a probe that selects nothing sends its ctrl+c through to the
+shell as `^C`, cmd prints a prompt, and the screen scrolls under the next probe.
+
+So the fill is now one `for /l` command that puts the line on EVERY row, nothing
+can miss and nothing scrolls; every section asserts that every probe answered,
+not just that the set contained the right string; and a new section W walks the
+numbered ruler and scores the walk itself - content rows only, at least eight
+distinct, monotone, never jumping more than two rows, traversing ten or more.
+That is the assertion the script never had: on a uniform screen a walk that had
+collapsed to one row returns exactly what a healthy one returns. Section E is
+back on the exact URL string it was written for.
+
+Floor: four zig lanes green, harness floor green, `terminal-link-paths` ALL PASS
+at 35 assertions (was 23) and `-NegativeControl` still scores its single red.
+Filed T1685: the first run after the fill change died mid-walk with exit
+0xFFFFFFFF and no panic line, not reproduced by the two runs after it.

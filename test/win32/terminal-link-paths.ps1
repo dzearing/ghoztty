@@ -76,8 +76,27 @@ function Get-ActiveSurface {
     return $h
 }
 
-# Fill the screen with one line, repeated, so a probe row lands on it. `cls`
+# Fill EVERY row of the screen with one line, so a probe row lands on it. `cls`
 # first: without it the rows above are whatever the shell's startup printed.
+#
+# ONE shell command emits all `count` copies (T916). Sending `echo <text>`
+# `count` times instead - which is what this did until 2026-09-20 - leaves the
+# screen as a repeating THREE-row block (the echoed command line, its output,
+# a blank), and only one row in three carries the text. A fixed-pitch walk
+# down that screen is an aliasing problem: with `-Rows 8` the probe pitch is
+# about 2.1 rows against a 3-row period, and which phase each probe lands on
+# depends on where the content happened to stop. That is why T802's section E
+# could see nothing but prompt rows over 8 probes, and why the same points
+# answered differently across two passes - a probe that finds no selection
+# sends `^C` through to the shell, which prints a prompt and scrolls the
+# screen under the next one. With every row holding the text, no probe can
+# miss and nothing scrolls.
+#
+# `for /l` is cmd.exe, which is the shell this app launches by default
+# (IpcHandlers.zig: `command-shell` orelse "cmd.exe") and the one `cls` above
+# already assumes. `@echo` keeps the loop body off the screen. If that default
+# ever moves, the transport control below fails loudly rather than quietly
+# going back to a striped screen.
 #
 # The command goes through `--keys-file=`, not as a positional argument, for
 # the reason docs/claude/cli.md gives: a positional is checked for key notation and
@@ -85,20 +104,43 @@ function Get-ActiveSurface {
 # are not escapes it knows. The first draft of this script sent it as a
 # positional and the pane received `Q:UsersDavidclip.mp4` - three assertions
 # red against a build whose regex was correct.
-function Write-Lines([string]$text, [int]$count = 14) {
+function Write-Lines([string]$text, [int]$count = 40) {
     & $Exe +send-keys --target=$script:pane "cls" Enter | Out-Null
     Start-Sleep -Milliseconds 700
     $keys = Join-Path $env:TEMP 'ghoztty-linkpath-keys.txt'
-    [System.IO.File]::WriteAllText($keys, "echo $text", (New-Object System.Text.UTF8Encoding($false)))
-    for ($i = 0; $i -lt $count; $i++) {
-        & $Exe +send-keys --target=$script:pane "--keys-file=$keys" Enter | Out-Null
-    }
+    [System.IO.File]::WriteAllText($keys, "for /l %i in (1,1,$count) do @echo $text",
+        (New-Object System.Text.UTF8Encoding($false)))
+    & $Exe +send-keys --target=$script:pane "--keys-file=$keys" Enter | Out-Null
     Start-Sleep -Seconds 2
     Remove-Item $keys -ErrorAction SilentlyContinue
     # Transport control: what the pane HOLDS, before anything is asserted
-    # about what it selects.
-    $tail = (& $Exe +read --name=$script:pane --lines=6 | Out-String)
-    return $tail.Contains($text)
+    # about what it selects. Stronger than "the text is in there somewhere" -
+    # the fill is only useful if it really filled, so every one of the last
+    # four content rows must BE the text.
+    $tail = @((& $Exe +read --name=$script:pane --lines=8) -split "`r?`n" |
+        ForEach-Object { $_.TrimEnd() } | Where-Object { $_ -ne '' })
+    $body = @($tail | Where-Object { $_ -ne $text })
+    return ($tail.Count - $body.Count) -ge 4
+}
+
+# Fill every row with a DISTINCT marker - `R1`, `R2`, ... - so the row a probe
+# lands on is readable from the string it selects. This is what section W
+# measures the walk with; every other section wants a uniform screen.
+#
+# `R<n>` has no word-boundary character in it, so column 0 selects the whole
+# marker whether link detection fires or not - which is what makes it an
+# honest ruler for the walk rather than a second link assertion.
+function Write-NumberedLines([int]$count = 60) {
+    & $Exe +send-keys --target=$script:pane "cls" Enter | Out-Null
+    Start-Sleep -Milliseconds 700
+    $keys = Join-Path $env:TEMP 'ghoztty-linkpath-keys.txt'
+    [System.IO.File]::WriteAllText($keys, "for /l %i in (1,1,$count) do @echo R%i",
+        (New-Object System.Text.UTF8Encoding($false)))
+    & $Exe +send-keys --target=$script:pane "--keys-file=$keys" Enter | Out-Null
+    Start-Sleep -Seconds 2
+    Remove-Item $keys -ErrorAction SilentlyContinue
+    $tail = (& $Exe +read --name=$script:pane --lines=4 | Out-String)
+    return $tail.Contains("R$count")
 }
 
 # Right-click column 0 of some row and return what the terminal selected.
@@ -126,6 +168,7 @@ function Get-Column0Selections([int]$Rows = 12) {
     # any cell width the font can produce at any of our scale factors.
     $x = $pr.Left + 4
     $seen = @()
+    $script:lastWalk = @()
     for ($i = 1; $i -le $Rows; $i++) {
         $y = [int]($pr.Top + ($pr.Bottom - $pr.Top) * $i / ($Rows + 2))
         Set-Clipboard -Value 'T757_CLIP_SENTINEL'
@@ -142,9 +185,30 @@ function Get-Column0Selections([int]$Rows = 12) {
         $clip = (Get-Clipboard -Raw -ErrorAction SilentlyContinue) -join ''
         if ($null -eq $clip) { $clip = '' }
         $clip = $clip.TrimEnd("`r", "`n")
+        $script:lastWalk += $clip
         if ($clip -ne 'T757_CLIP_SENTINEL' -and $clip -ne '') { $seen += $clip }
     }
     return , @($seen | Select-Object -Unique)
+}
+
+<#
+Did the walk that just ran actually reach a content row on EVERY probe?
+
+`$script:lastWalk` is the raw per-probe answer, before the de-duplication the
+walks return - so a probe that found nothing is visible here as the sentinel
+and a probe that found the wrong row is visible as its text. A probe that
+selects nothing is the shape T916 is about: it means the pitch landed on a
+blank or a prompt row, the `^C` that follows goes to the shell, and the screen
+scrolls under the next probe.
+#>
+function Assert-WalkLanded([string]$expect, [string]$label) {
+    $raw = @($script:lastWalk)
+    $hits = @($raw | Where-Object { $_ -eq $expect })
+    if ($hits.Count -ne $raw.Count) {
+        $odd = @($raw | Where-Object { $_ -ne $expect } | Select-Object -Unique)
+        Write-Host "  walk landed $($hits.Count)/$($raw.Count); other answers: $($odd -join ' | ')"
+    }
+    Assert ($raw.Count -gt 0 -and $hits.Count -eq $raw.Count) $label
 }
 
 <#
@@ -174,6 +238,7 @@ function Get-Column0DoubleClickSelections {
     $pr = Get-TestWindowRect -Window $surface -Client
     $x = $pr.Left + 4
     $seen = @()
+    $script:lastWalk = @()
     for ($i = 1; $i -le $Rows; $i++) {
         $y = [int]($pr.Top + ($pr.Bottom - $pr.Top) * $i / ($Rows + 2))
         Set-Clipboard -Value 'T802_CLIP_SENTINEL'
@@ -192,6 +257,7 @@ function Get-Column0DoubleClickSelections {
         $clip = (Get-Clipboard -Raw -ErrorAction SilentlyContinue) -join ''
         if ($null -eq $clip) { $clip = '' }
         $clip = $clip.TrimEnd("`r", "`n")
+        $script:lastWalk += $clip
         if ($clip -ne 'T802_CLIP_SENTINEL' -and $clip -ne '') { $seen += $clip }
     }
     return , @($seen | Select-Object -Unique)
@@ -237,6 +303,50 @@ try {
         Write-TestAssertedNothing -Reason 'no pane name in +list --json'
     }
 
+    # --- W: the walk really walks (T916) --------------------------------------
+    # Every section below reads a SET of selections gathered by walking twelve
+    # points down the pane, and every one of them is worthless if those twelve
+    # points are really one row sampled twelve times. Nothing said otherwise
+    # until now: the screens those sections probe hold the same string on every
+    # content row, so a walk that had collapsed to one row would return exactly
+    # what a healthy one returns.
+    #
+    # So measure it against a ruler. With `R1`..`R60` on the screen, one marker
+    # per row, the walk's own answers say which rows it reached: they must be
+    # many, in top-to-bottom order, and evenly spaced - which is the definition
+    # of "probe i lands on row i".
+    if (-not (Write-NumberedLines)) {
+        Write-TestAssertedNothing -Reason 'the numbered fill never reached the pane'
+    }
+    [void](Get-Column0Selections)
+    $walk = @($script:lastWalk)
+    Write-Host "  walk ruler: $($walk -join ' ')"
+    $nums = @($walk | ForEach-Object { if ($_ -match '^R(\d+)$') { [int]$Matches[1] } else { -1 } })
+    Assert (@($nums | Where-Object { $_ -lt 0 }).Count -eq 0) `
+        'W: every probe in the walk landed on a content row'
+    Assert (@($nums | Select-Object -Unique).Count -ge 8) `
+        'W: the walk reached at least 8 distinct rows (not one row sampled 12 times)'
+    $descending = $false
+    $steps = @()
+    for ($i = 1; $i -lt $nums.Count; $i++) {
+        if ($nums[$i] -lt $nums[$i - 1]) { $descending = $true }
+        $steps += ($nums[$i] - $nums[$i - 1])
+    }
+    Assert (-not $descending) 'W: the walk runs top to bottom, never backwards'
+    # An even pitch is what makes probe i a POSITION rather than a lucky hit.
+    # The pitch is not a whole number of rows (twelve probes over fourteen
+    # fourteenths of a pane about twenty-one rows tall is ~1.5), so consecutive
+    # steps alternate between one row and two and the odd rounding repeat is
+    # honest. What cannot happen on a healthy walk is a JUMP: a probe that
+    # clamped, or a screen that scrolled under the walk, shows up as a step
+    # bigger than two, and a walk that collapsed shows up as no traversal at
+    # all.
+    $maxStep = if ($steps.Count -gt 0) { ($steps | Measure-Object -Maximum).Maximum } else { 99 }
+    $travel = $nums[$nums.Count - 1] - $nums[0]
+    Write-Host "  walk row steps: $($steps -join ',') (max $maxStep, travelled $travel rows)"
+    Assert ($maxStep -le 2) 'W: no probe jumped rows - the walk never clamps or scrolls under itself'
+    Assert ($travel -ge 10) 'W: the walk traverses the pane, top row to bottom row'
+
     # --- 0: positive control - a plain URL selects whole ----------------------
     # If this fails, nothing below is a verdict on T757: it means link
     # detection itself is not reaching this build.
@@ -249,6 +359,7 @@ try {
         Write-Host '       link detection is not reaching this build, so nothing below is a T757 verdict.'
     }
     Assert ($sel0 -contains $ctl) '0: positive control - ctrl+right-click selects a whole URL'
+    Assert-WalkLanded $ctl '0: every probed row answered with the URL'
 
     # --- A: a backslash drive path selects whole ------------------------------
     $pathA = 'Q:\Users\David\clip.mp4'
@@ -265,6 +376,7 @@ try {
     # The un-linked answer must not ALSO be present from the same rows: it
     # would mean some rows detect the link and some do not.
     Assert (-not ($selA -contains 'Q')) 'A: no probed row fell back to the bare drive letter'
+    if (-not $NegativeControl) { Assert-WalkLanded $pathA 'A: every probed row answered with the drive path' }
 
     # --- B: a drive path spelled with forward slashes -------------------------
     $pathB = 'R:/tools/run.bat'
@@ -272,6 +384,7 @@ try {
     $selB = Get-Column0Selections
     Write-Host "  column-0 selections seen: $($selB -join ' | ')"
     Assert ($selB -contains $pathB) "B: forward-slash drive path selects whole ($pathB)"
+    Assert-WalkLanded $pathB 'B: every probed row answered with the drive path'
 
     # --- C: control - the same click on prose is a WORD, not a path -----------
     # Without this, A and B would pass on a build where a double-click simply
@@ -281,6 +394,7 @@ try {
     Write-Host "  column-0 selections seen: $($selC -join ' | ')"
     Assert ($selC -contains 'Z') 'C: control - column 0 of prose selects the single word'
     Assert (-not ($selC -contains 'Z: not a path here')) 'C: control - prose with a colon is not treated as a path'
+    Assert-WalkLanded 'Z' 'C: every probed row answered with the bare word'
 
     # --- D/E: T802 - the user's own gesture, a plain double-click ------------
     # The regression signature is exact: `:` is a word boundary, so a build
@@ -292,18 +406,20 @@ try {
     Write-Host "  double-click selections seen: $($selD -join ' | ')"
     Assert ($selD -contains $ctl) "D: a plain double-click selects the whole URL ($ctl)"
     Assert (-not ($selD -contains 'https')) 'D: no probed row came back with the bare word https'
+    Assert-WalkLanded $ctl 'D: every probed row answered with the URL'
 
-    # E asserts SHAPE rather than one exact string. Which row a probe lands on
-    # drifts once a ctrl+c falls through to the shell (no selection -> the
-    # performable binding sends ^C, the shell prints a prompt, the screen
-    # scrolls), so "row i held the URL" is not stable across two passes over
-    # the same points - see T916. What IS stable is the granularity: every
-    # selection the gesture produces must be a WHOLE link (a URL or a drive
-    # path), never the fragment before the first `:`.
+    # E asserted SHAPE rather than one exact string between T802 and T916,
+    # because "row i held the URL" was not stable across two passes: on the
+    # striped screen the old fill produced, a probe could land on a prompt or a
+    # blank row, and a ctrl+c with no selection falls through to the shell,
+    # which prints a prompt and scrolls the screen under the next probe. The
+    # fill now puts the URL on every row and section W proves the walk reaches
+    # them, so the exact string is assertable again - which is what the jitter
+    # arm was always meant to say.
     $selE = Get-Column0DoubleClickSelections -Gesture jitter -Rows 8
     Write-Host "  double-click (jitter) selections seen: $($selE -join ' | ')"
-    $linksE = @($selE | Where-Object { $_ -match '^(https?://|[A-Za-z]:[\\/])' })
-    Assert ($linksE.Count -gt 0) 'E: a double-click that wobbles inside the cell still selects a whole link'
+    Assert ($selE -contains $ctl) "E: a double-click that wobbles inside the cell still selects the whole URL ($ctl)"
+    Assert-WalkLanded $ctl 'E: every probed row answered with the URL'
     Assert (-not ($selE -contains 'https')) 'E: no probed row came back with the bare word https'
     Assert (-not ($selE -contains 'C')) 'E: no probed row came back with a bare drive letter'
 
@@ -313,6 +429,7 @@ try {
     Write-Host "  double-click selections seen: $($selF -join ' | ')"
     Assert ($selF -contains $pathA) "F: a plain double-click selects the whole drive path ($pathA)"
     Assert (-not ($selF -contains 'Q')) 'F: no probed row fell back to the bare drive letter'
+    Assert-WalkLanded $pathA 'F: every probed row answered with the drive path'
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash'
     Complete-TestBody  # T1039: the run reached the end of its body
