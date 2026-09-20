@@ -32924,3 +32924,38 @@ T1677: `Wait-ListMatch` polls for 20 seconds while a single `+list` inside it
 is allowed 30, so one cold call can spend the entire wait and the run then
 reports the fixture as missing -- the same family, a different number in a
 different place.
+
+## 2026-09-20 - T896: a restored window cannot come back with no name at all
+
+T590's carry-forward can merge manifest entries written by two different app
+runs into one file, and each run's auto name allocator starts at zero -- so the
+saved layout can legitimately record `window-1` twice. The card was filed
+against what happens next: the first window to ask for the name gets it, and
+the second was believed to come back nameless, with an empty `target` in
+`+list` that no `--target=` could reach.
+
+Re-checking that before building it found the collision itself already handled:
+`Window.init` has minted a fallback name since T121 (`0ea951448`) whenever the
+adopted one is already held. So the deliverable here was the coverage the fix
+never got, plus whatever the coverage turned up.
+
+Section E of `test\win32\window-name-restore.ps1` doctors the manifest to hold
+`window-1` twice, identifies the two entries by the pane id restore re-adopts,
+and requires both to come back with distinct non-empty names -- then renames by
+the fallback and requires the title to land on that window and no other, and
+the next sync to record both names distinctly. Its teeth were demonstrated
+against a temporarily restored pre-T121 arm, where it scores exactly the
+symptom the card describes: one window with an empty `target`.
+
+Section F found the hole that was still open. An entry whose `ipc_name` is
+present but EMPTY was adopted verbatim: the window registered the empty string
+and reported a blank `target`, which is the same unreachable window by another
+route. An adopted name of zero length is now treated as absent and a name is
+minted, so "no name" cannot be spelled two ways with two different outcomes.
+F was red before that change and green after.
+
+One fixture note worth keeping: a launch also adopts agent-held sessions the
+local manifest never listed, so the window count after a restore is a floor and
+not an equality. The new sections wait for the list to stop growing and assert
+about the windows they can name, which is why the first run of E read five
+windows where the previous one read two.

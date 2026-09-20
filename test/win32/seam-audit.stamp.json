@@ -1,14 +1,11 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-20T00:17:28-07:00",
-    "commit":  "842afcc50",
+    "generated":  "2026-09-20T01:49:52-07:00",
+    "commit":  "6b477b124",
     "uncommitted":  [
-                        "test/win32/ipc-floor-setup.ps1",
-                        "test/win32/ipc-p1.ps1",
-                        "test/win32/ipc-p2.ps1",
-                        "test/win32/ipc-p3.ps1",
-                        "test/win32/lib/FloorFixture.ps1"
+                        "src/apprt/win32/Window.zig",
+                        "test/win32/window-name-restore.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -244,7 +241,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "fa357cbf351a4d66e9e585d0817a37f617fcb9b21e79da7222d507888cbeff47",
-                  "src/apprt/win32/Window.zig":  "69c9ed3f1f4fb316e4401de7fbba5aa737f62ce364eea12a83e5aef4138164cf",
+                  "src/apprt/win32/Window.zig":  "d54bb0b5090e2d7f8b9e25d1060052f44cb22a3d1ee4a41de20a4952b1d7d92d",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
                   "src/apprt/win32/window_memory.zig":  "b4f2912a881c6380b205744d5516b50677557f483d1776e8edbaaa75a99e1269",
@@ -820,7 +817,7 @@
                   "test/win32/window-composite.ps1":  "3d96a6e334f34aa55785e2792b3d5d21d2636f5e0eb5d2c32f4c726a646e5232",
                   "test/win32/window-modal-block.ps1":  "5a2962e9dd1d3c9a39d35c3aa82bae16be5f62d4067e2b68145cb954ae45dfd5",
                   "test/win32/window-name-env.ps1":  "c7c104c6015b4d434126f10943fbd0bac1b194dad564f8f1a4571ffbee5be27a",
-                  "test/win32/window-name-restore.ps1":  "056f50b36cb6a75b5a96f286fb7041b805a5031216cb83c44a267bbff5077f0e",
+                  "test/win32/window-name-restore.ps1":  "b4d08e4d9e79ee0a596ec6880999923235a7e1b985939002a6c5a19825c7fb74",
                   "test/win32/window-placement-isolation.ps1":  "20d8b605382eb89ef87c19898b48f0c3a195236f29a7ff46d82f92a2ff87e560",
                   "test/win32/window-size-memory.ps1":  "02ff1ad3e3602b2233ebb1d6867168238fad6ec68f6e36293a3eaaec754e1bb1",
                   "test/win32/window-title.ps1":  "72dbfe4576fa2206a7ffeb8cbea2358b7b1b4e31acd0af82bee0f0347941eac1",

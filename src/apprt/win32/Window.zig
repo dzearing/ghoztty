@@ -1317,7 +1317,19 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         // without this a run that restored `window-3` mints `window-3` again
         // on its third fresh window: two live windows holding one target
         // name, with `+close`/`+rename` routed to whichever registered first.
-        if (options.ipc_name) |n| app.ipcReserveWindowName(n);
+        // An adopted name of "" is not a name (T896). A manifest entry can
+        // record an empty `ipc_name` — a hand-edited file, or a producer that
+        // spells "no name" as a blank string — and adopting it registers the
+        // empty string: the window then reports a blank `target` in `+list`
+        // that no `--target=` can reach, which is the same nameless-window
+        // symptom the collision fallback below exists to prevent. Treat it as
+        // absent and mint one.
+        const adopted: ?[]const u8 = if (options.ipc_name) |n|
+            (if (n.len == 0) null else n)
+        else
+            null;
+
+        if (adopted) |n| app.ipcReserveWindowName(n);
 
         // Claim a name this window actually HOLDS. `register` keeps the
         // incumbent when a name is already taken, so recording the string
@@ -1328,8 +1340,8 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         // becoming a second holder). Bounded, because a PANE can be named
         // `window-N` too and the allocator does not know about pane names.
         const claimed: []u8 = claim: for (0..8) |attempt| {
-            const name: []u8 = if (attempt == 0 and options.ipc_name != null)
-                gpa.dupe(u8, options.ipc_name.?) catch break :register
+            const name: []u8 = if (attempt == 0 and adopted != null)
+                gpa.dupe(u8, adopted.?) catch break :register
             else
                 app.ipcNextWindowName() catch break :register;
             const result = app.ipcRegisterChecked(name, .{ .window = self }) catch |err| {

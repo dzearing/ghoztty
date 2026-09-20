@@ -23,6 +23,14 @@
 #                none of the restored names moved to a different window.
 #   D (routing)  `+close --target=window-3` closes THE window that holds
 #                window-3 and no other - checked by pane id, not by counting.
+#   E (T896)     a manifest that ALREADY holds the same name twice - what
+#                T590's carry-forward can merge out of two app runs - restores
+#                both windows: the incumbent keeps the name, the loser takes a
+#                deterministic fallback that `+list` reports, `--target=`
+#                routes to, and the next sync re-records.
+#   F (T896)     the other shape of the same symptom: a manifest entry whose
+#                `ipc_name` is present but EMPTY mints a name rather than
+#                leaving the window with a blank `target` nothing can reach.
 #
 # Hermetic: per-run LOCALAPPDATA, per-run agent binary override, a private IPC
 # pipe suffix, and it only ever kills ghoztty processes launched from this
@@ -119,11 +127,46 @@ function Get-FirstPaneId($w) {
     return $null
 }
 
+# The same identity, read out of a MANIFEST window instead of a live one: the
+# first leaf of tab 0, walking left at every split. Restore re-adopts a
+# recorded pane id, so this is how a doctored entry is recognised afterwards.
+function Get-ManifestFirstPane($w) {
+    $tab = @($w.tabs)[0]
+    if (-not $tab) { return $null }
+    $nodes = @($tab.nodes)
+    $i = 0
+    for ($guard = 0; $guard -le $nodes.Count; $guard++) {
+        if ($i -lt 0 -or $i -ge $nodes.Count) { return $null }
+        $n = $nodes[$i]
+        if ($n.leaf) { return [string]$n.leaf.pane_id }
+        if (-not $n.split) { return $null }
+        $i = [int]$n.split.left
+    }
+    return $null
+}
+
 function Get-PaneIdOf($target) {
     foreach ($w in Get-Windows) {
         if ([string]$w.target -eq $target) { return Get-FirstPaneId $w }
     }
     return $null
+}
+
+# Wait for the window list to STOP growing, not merely to reach a number: a
+# restore brings windows back over seconds, and a launch can also adopt
+# agent-held sessions the local manifest never listed. A count-threshold wait
+# samples mid-restore and answers a different question every run.
+function Wait-WindowsSettle($min, $timeoutSec = 60) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    $last = -1
+    $stable = 0
+    while ((Get-Date) -lt $deadline) {
+        $n = @(Get-Windows).Count
+        if ($n -eq $last) { $stable++ } else { $stable = 0; $last = $n }
+        if ($n -ge $min -and $stable -ge 3) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    return @(Get-Windows)
 }
 
 function Wait-WindowCount($count, $timeoutSec = 45) {
@@ -200,7 +243,7 @@ try {
     $missing = @($restored | Where-Object { $pre -notcontains $_ })
     Assert ($missing.Count -eq 0) `
         "A1 the three auto names are live pre-quit (missing: $($missing -join ', '); got $($pre -join ', '))"
-    Assert ((Get-Duplicates $pre).Count -eq 0) `
+    Assert (@(Get-Duplicates $pre).Count -eq 0) `
         "A2 no duplicate target name before the restore (dupes: $((Get-Duplicates $pre) -join ', '))"
 
     $m = Wait-Manifest $tmp {
@@ -224,7 +267,7 @@ try {
     $stillMissing = @($restored | Where-Object { $post -notcontains $_ })
     Assert ($stillMissing.Count -eq 0) `
         "B1 the restored windows kept their names (missing: $($stillMissing -join ', '); got $($post -join ', '))"
-    Assert ((Get-Duplicates $post).Count -eq 0) `
+    Assert (@(Get-Duplicates $post).Count -eq 0) `
         "B2 the restore itself minted no duplicate (dupes: $((Get-Duplicates $post) -join ', '))"
 
     # Identities to check routing against, captured BEFORE anything new opens.
@@ -278,6 +321,152 @@ try {
     Assert ($collateral.Count -eq 0) `
         "D2 no other window was closed (lost $($collateral.Count) of $($survivors.Count))"
     Assert ((Get-Targets) -notcontains 'window-3') 'D3 window-3 no longer names any live window'
+
+    # ---- E: a manifest that already holds a DUPLICATE name (T896) ----------
+    # T590's carry-forward can merge entries written by two different app runs
+    # into one manifest, and each run's auto allocator starts at zero - so the
+    # file can legitimately record `window-1` twice. Restore must still give
+    # every window a target: the incumbent keeps the name and the loser takes a
+    # deterministic fallback, rather than coming back nameless and unreachable.
+    Say '== E: duplicate names in the manifest'
+    Stop-AppOnly
+    $mpath = Manifest-Path $tmp
+    $doc = $null
+    try { $doc = Get-Content $mpath -Raw | ConvertFrom-Json } catch { $doc = $null }
+    if ($null -eq $doc) {
+        Assert $false 'E0 the manifest is readable before doctoring it'
+    } else {
+        # Two windows, both recording the same auto name - the exact shape the
+        # carry-forward produces. Trimmed to two so the assertions below are
+        # about the collision and nothing else.
+        $keep = @(@($doc.windows) | Select-Object -First 2)
+        foreach ($w in $keep) { $w.ipc_name = 'window-1'; $w.id = 'window-1' }
+        $doc.windows = $keep
+        # No `Set-Content -Encoding utf8`: PowerShell 5.1 writes a BOM, and the
+        # manifest reader is a JSON parser that would reject the file outright -
+        # a doctored fixture that never loads proves nothing.
+        [System.IO.File]::WriteAllText(
+            $mpath,
+            ($doc | ConvertTo-Json -Depth 40),
+            (New-Object System.Text.UTF8Encoding($false)))
+        $recheck = Get-Content $mpath -Raw | ConvertFrom-Json
+        $dupNames = @(@($recheck.windows) | ForEach-Object { [string]$_.ipc_name })
+        Assert ($dupNames.Count -eq 2 -and @(Get-Duplicates $dupNames).Count -eq 1) `
+            "E0 the manifest now records one name twice (got: $($dupNames -join ', '))"
+        # The two colliding entries, named by the pane id restore re-adopts -
+        # so the assertions below are about THOSE windows and not about
+        # whatever else the launch brings back.
+        $dupPanes = @(@($recheck.windows) | ForEach-Object { Get-ManifestFirstPane $_ } |
+            Where-Object { $_ })
+        Assert ($dupPanes.Count -eq 2) `
+            "E0b both colliding entries name a pane to identify them by (got $($dupPanes.Count))"
+
+        $env:LOCALAPPDATA = $tmp
+        $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
+        # persistence: on (default) - the doctored manifest above is what this
+        # launch must restore.
+        $dup = Start-OnTestDesktop -Exe $exe
+        if ((Wait-TestWindow -ProcessId $dup.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
+            Say 'SETUP FAIL: duplicate-name relaunch has no GhozttyWindow'
+        }
+        # Both doctored entries come back - and possibly more, since a launch
+        # also adopts agent-held sessions the local file never listed. The
+        # subject is the NAMES, so the count is a floor, not an equality.
+        $eWins = @(Wait-WindowsSettle 2)
+        Assert ($eWins.Count -ge 2) `
+            "E1 both windows in the manifest came back (got $($eWins.Count))"
+
+        # The two colliding windows, found by the pane ids they re-adopted.
+        $eDup = @($eWins | Where-Object { $dupPanes -contains (Get-FirstPaneId $_) })
+        Assert ($eDup.Count -eq 2) `
+            "E1b both colliding entries are identifiable after the restore (found $($eDup.Count) of 2)"
+
+        # The defect, stated: a window whose recorded name the incumbent kept
+        # used to record no name at all, so `+list` reported an empty target
+        # and `--target=` could not reach it.
+        $eTargets = @($eDup | ForEach-Object { [string]$_.target })
+        $allTargets = @($eWins | ForEach-Object { [string]$_.target })
+        $nameless = @($allTargets | Where-Object { -not $_ })
+        Assert ($nameless.Count -eq 0) `
+            "E2 no restored window came back nameless (empty targets: $($nameless.Count) of $($allTargets.Count))"
+        Assert (@(Get-Duplicates $allTargets).Count -eq 0) `
+            "E3 every live window holds a DIFFERENT name (got: $($allTargets -join ', '))"
+        Assert (@($eTargets | Where-Object { $_ -eq 'window-1' }).Count -eq 1) `
+            "E4 exactly one of the two kept the contested name (got: $($eTargets -join ', '))"
+
+        # E5: the fallback is a name that actually ROUTES, not just a string in
+        # `+list`. Rename by it and require the title to land on that window
+        # and no other.
+        $fallback = @($eTargets | Where-Object { $_ -and $_ -ne 'window-1' })[0]
+        $fallbackPane = if ($fallback) { Get-PaneIdOf $fallback } else { $null }
+        $otherPane = @($eDup | ForEach-Object { Get-FirstPaneId $_ } |
+            Where-Object { $_ -and $_ -ne $fallbackPane })[0]
+        if (-not $fallback) {
+            Assert $false 'E5 the losing window has a fallback name to route by'
+        } else {
+            $r = Invoke-Verb @('+rename', "--target=$fallback", '--title=T896 routed')
+            Assert ($r.Code -eq 0) "E5 +rename --target=$fallback exits 0 (got $($r.Code))"
+            $landed = $false
+            $strayed = $false
+            $deadline = (Get-Date).AddSeconds(20)
+            while ((Get-Date) -lt $deadline) {
+                foreach ($w in Get-Windows) {
+                    if ([string]$w.title -notlike '*T896 routed*') { continue }
+                    if ((Get-FirstPaneId $w) -eq $fallbackPane) { $landed = $true }
+                    else { $strayed = $true }
+                }
+                if ($landed -or $strayed) { break }
+                Start-Sleep -Milliseconds 400
+            }
+            Assert $landed "E6 --target=$fallback reached the window that holds it"
+            Assert (-not $strayed) 'E7 the rename did not reach the other window'
+            Assert ($null -ne $otherPane) 'E8 the incumbent window is still a distinct window'
+        }
+
+        # E9: the next sync records the fallback, so the name survives the NEXT
+        # restart instead of being re-contested every launch.
+        $synced = Wait-Manifest $tmp {
+            param($mm)
+            $all = @(@($mm.windows) | ForEach-Object { [string]$_.ipc_name })
+            $named = @($all | Where-Object { $_ })
+            $named.Count -ge 2 -and $named.Count -eq $all.Count -and
+                @(Get-Duplicates $named).Count -eq 0
+        } 30
+        Assert ($null -ne $synced) 'E9 the manifest re-recorded both names, now distinct'
+    }
+
+    # ---- F: a manifest recording an EMPTY name (T896) -----------------------
+    # The other way a restored window ends up with nothing in `+list`'s
+    # `target`: a manifest entry whose `ipc_name` is present but blank. An
+    # adopted name of "" is not a name - it must mint one, the same as an entry
+    # that recorded no name at all.
+    Say '== F: an empty recorded name'
+    Stop-AppOnly
+    $fdoc = $null
+    try { $fdoc = Get-Content (Manifest-Path $tmp) -Raw | ConvertFrom-Json } catch { $fdoc = $null }
+    if ($null -eq $fdoc) {
+        Assert $false 'F0 the manifest is readable before doctoring it'
+    } else {
+        foreach ($w in @($fdoc.windows)) { $w.ipc_name = '' }
+        [System.IO.File]::WriteAllText(
+            (Manifest-Path $tmp),
+            ($fdoc | ConvertTo-Json -Depth 40),
+            (New-Object System.Text.UTF8Encoding($false)))
+        $env:LOCALAPPDATA = $tmp
+        $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
+        # persistence: on (default) - this launch restores the blank-name manifest.
+        $blank = Start-OnTestDesktop -Exe $exe
+        if ((Wait-TestWindow -ProcessId $blank.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
+            Say 'SETUP FAIL: empty-name relaunch has no GhozttyWindow'
+        }
+        $fWins = @(Wait-WindowsSettle 2)
+        Assert ($fWins.Count -ge 2) "F1 both windows came back (got $($fWins.Count))"
+        $fTargets = @($fWins | ForEach-Object { [string]$_.target })
+        Assert (@($fTargets | Where-Object { -not $_ }).Count -eq 0) `
+            "F2 a blank recorded name mints a real one (targets: '$($fTargets -join "', '")')"
+        Assert (@(Get-Duplicates @($fTargets | Where-Object { $_ })).Count -eq 0) `
+            "F3 the minted names are distinct (targets: $($fTargets -join ', '))"
+    }
 
 } finally {
     Say '== cleanup'

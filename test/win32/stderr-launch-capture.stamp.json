@@ -1,13 +1,10 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-20T00:18:34-07:00",
-    "commit":  "842afcc50",
+    "generated":  "2026-09-20T01:51:11-07:00",
+    "commit":  "6b477b124",
     "uncommitted":  [
-                        "test/win32/ipc-floor-setup.ps1",
-                        "test/win32/ipc-p1.ps1",
-                        "test/win32/ipc-p2.ps1",
-                        "test/win32/ipc-p3.ps1"
+                        "test/win32/window-name-restore.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "56099107ead57785a0a002a7cb345c55f5e6d1f8d8d4a54ce9eee8b117979260",
@@ -346,7 +343,7 @@
                   "test/win32/window-composite.ps1":  "3d96a6e334f34aa55785e2792b3d5d21d2636f5e0eb5d2c32f4c726a646e5232",
                   "test/win32/window-modal-block.ps1":  "5a2962e9dd1d3c9a39d35c3aa82bae16be5f62d4067e2b68145cb954ae45dfd5",
                   "test/win32/window-name-env.ps1":  "c7c104c6015b4d434126f10943fbd0bac1b194dad564f8f1a4571ffbee5be27a",
-                  "test/win32/window-name-restore.ps1":  "056f50b36cb6a75b5a96f286fb7041b805a5031216cb83c44a267bbff5077f0e",
+                  "test/win32/window-name-restore.ps1":  "b4d08e4d9e79ee0a596ec6880999923235a7e1b985939002a6c5a19825c7fb74",
                   "test/win32/window-placement-isolation.ps1":  "20d8b605382eb89ef87c19898b48f0c3a195236f29a7ff46d82f92a2ff87e560",
                   "test/win32/window-size-memory.ps1":  "02ff1ad3e3602b2233ebb1d6867168238fad6ec68f6e36293a3eaaec754e1bb1",
                   "test/win32/window-title.ps1":  "72dbfe4576fa2206a7ffeb8cbea2358b7b1b4e31acd0af82bee0f0347941eac1",

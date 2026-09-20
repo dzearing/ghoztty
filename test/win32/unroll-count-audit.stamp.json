@@ -1,14 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-09-20T00:23:18-07:00",
-    "commit":  "842afcc50",
+    "generated":  "2026-09-20T01:40:26-07:00",
+    "commit":  "6b477b124",
     "uncommitted":  [
-                        "test/win32/ipc-floor-setup.ps1",
-                        "test/win32/ipc-p1.ps1",
-                        "test/win32/ipc-p2.ps1",
-                        "test/win32/ipc-p3.ps1",
-                        "test/win32/lib/FloorFixture.ps1"
+                        "test/win32/unroll-count-audit.baseline.json",
+                        "test/win32/window-name-restore.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -420,7 +417,7 @@
                   "test/win32/thread-join-audit.ps1":  "636191df9344abe883a41479504bef2f67fae58e0fff5e609c3050ca793ce219",
                   "test/win32/title-font.ps1":  "946fd12880bb0433a535283fb6146fb7d2a8fd1b2d1f0f74e00fa7ce1720dcb8",
                   "test/win32/title-jitter.ps1":  "cddd430bceb80810b24814bd1e3047534b578c8d87390827f105ac5915c198f0",
-                  "test/win32/unroll-count-audit.baseline.json":  "310692570b6693b35499f84afbb5eb431395b4030c46a90bb90e1478152e8c85",
+                  "test/win32/unroll-count-audit.baseline.json":  "64ef612eedf92acf45fe103cd8e72c49c444a4215daa081d75b2e51a4e54f459",
                   "test/win32/unroll-count-audit.ps1":  "4774094b99a4aa9506ac07fe3c4dce49704615fbadc469e41ee90a533401fa31",
                   "test/win32/update-apply.ps1":  "ed99645a2d9b0c9c005079cc3957df31bccc1b043e397f13315d6e4d1b4bb400",
                   "test/win32/update-check.ps1":  "b881bc9de358a4526e91d737d5a28a0f10e113845d633fab1aea1b9b21aa6cc5",
@@ -469,7 +466,7 @@
                   "test/win32/window-composite.ps1":  "3d96a6e334f34aa55785e2792b3d5d21d2636f5e0eb5d2c32f4c726a646e5232",
                   "test/win32/window-modal-block.ps1":  "5a2962e9dd1d3c9a39d35c3aa82bae16be5f62d4067e2b68145cb954ae45dfd5",
                   "test/win32/window-name-env.ps1":  "c7c104c6015b4d434126f10943fbd0bac1b194dad564f8f1a4571ffbee5be27a",
-                  "test/win32/window-name-restore.ps1":  "056f50b36cb6a75b5a96f286fb7041b805a5031216cb83c44a267bbff5077f0e",
+                  "test/win32/window-name-restore.ps1":  "b4d08e4d9e79ee0a596ec6880999923235a7e1b985939002a6c5a19825c7fb74",
                   "test/win32/window-placement-isolation.ps1":  "20d8b605382eb89ef87c19898b48f0c3a195236f29a7ff46d82f92a2ff87e560",
                   "test/win32/window-size-memory.ps1":  "02ff1ad3e3602b2233ebb1d6867168238fad6ec68f6e36293a3eaaec754e1bb1",
                   "test/win32/window-title.ps1":  "72dbfe4576fa2206a7ffeb8cbea2358b7b1b4e31acd0af82bee0f0347941eac1",
