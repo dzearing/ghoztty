@@ -1,10 +1,10 @@
 {
     "guard":  "launch-preflight",
     "script":  "test/win32/launch-preflight-audit.ps1",
-    "generated":  "2026-09-20T09:25:07-07:00",
-    "commit":  "0d5bcceb5",
+    "generated":  "2026-09-20T10:25:27-07:00",
+    "commit":  "ca298f035",
     "uncommitted":  [
-                        "test/win32/relay-signin-live.ps1"
+                        "test/win32/terminal-link-paths.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -339,7 +339,7 @@
                   "test/win32/tab-tooltip.ps1":  "7396f516bb309e6399469a48e3e41996df7e7ed6e138cd49f84418cce3a6145b",
                   "test/win32/target-staleness.ps1":  "25c28c99d39716155584ecda6f7a826dae310b3adaad3ae6dbb962c38f7f7d80",
                   "test/win32/task-dashboard.ps1":  "c676c3f475745b47a7a661e6ee9d80631ae1951b6995d006d3e2dd52c95c2d0d",
-                  "test/win32/terminal-link-paths.ps1":  "f3ba874ca9f97125334319222b41e785a24c9168e6bbb3b78205a1c3bc85b161",
+                  "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3",
                   "test/win32/test-binary-soak.ps1":  "30b5cf96c2b3327944009926cb274799a23dd1552d183a9ee6b2127d4a0c51ae",
                   "test/win32/test-client-build.ps1":  "4151eff034e0de3acacf2e176c97702fd757f2c83f863476a115da9dc34e7b2b",
                   "test/win32/test-desktop-harness.ps1":  "6c0e29567b024d2d9d9f60f52bf3ea438f3b85690bbf8f5a9ec9d8925a95fb1f",
