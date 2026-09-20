@@ -9,6 +9,43 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-20: T1684 closed, T1688 filed — **the check that proves the fix now
+  proves it every time, and a second defect fell out of making it do so.**
+
+  T1684's fix and its acceptance script landed last turn; the turn ended before
+  the guard rows the edit made due had been run, so this one finished them.
+  Re-running `restore-session-dup.ps1` immediately turned up the thing a single
+  green run cannot see: it was intermittent, about two runs in five, and each
+  failure named a different assertion, which is the signature of a script
+  measuring a moment rather than a state.
+
+  Three causes, and none of them was the product. Its pane wait returned on a
+  COUNT of panes carrying a session, so a probe window still mid-attach read as
+  "a restored pane left without a session"; the restore's own duplicate window
+  could still be replaying when that count was already satisfied by the wrong
+  three, so its absence scored as a failure to come back; and the waits are now
+  state-based, with the window the restore owes waited for BY NAME.
+
+  The third cause is a real defect and is filed as **T1688**: the first window
+  the script opens sometimes comes up with no session at all, because a window
+  created while the app is still resolving its link to the session manager is
+  handed no agent and opens as a plain local shell. `sharedConnection` answers
+  none while `resolving` is set — correct, and deliberate since T188, because
+  re-entering would spawn a second agent — but nothing revisits the window once
+  the resolve finishes. It looks entirely normal and is simply not persisted,
+  which the user would discover at the one moment they were counting on it. The
+  script now BUILDS its fixture rather than assuming it: a window that came up
+  unpersisted is closed and asked for again, each attempt printed.
+
+  Two harness rules were also red on this one script and are green again — the
+  verdict marker was buried inside a `& { }` block where the body-complete rule
+  cannot see it, and the app kill was a private `Stop-Process` loop instead of
+  the shared `Stop-RepoGhoztty -AppOnly` that waits for the process to be gone.
+  Twelve consecutive green runs after the de-flake; `-NegativeControl` still
+  fails B2 and exits 1. Every due guard is green over the final code, including
+  harness-floor (29 audits, with the two long-standing PENDINGs T1568/T1123).
+  Shipped to the user as win-v1.36.33.
+
 - 2026-09-20: T1684 (user report, P0), T1687 filed — **two windows could end up
   typing into one shell, and now they cannot.**
 
