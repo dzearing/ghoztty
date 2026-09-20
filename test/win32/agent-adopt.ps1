@@ -13,6 +13,12 @@
 # done); the done short-circuit on restart; and the GHOSTTY_ADOPT_DISABLE
 # kill switch.
 #
+# Section R (T890) is the other half: a read-only read-back of the REAL
+# adoption on this box - standalone install dir gone, no product left under the
+# agent UpgradeCode, the GhozttyAgent Run entry app-owned and relay-free, the
+# sharing decision recorded. It asserts only where the adoption marker says it
+# completed, and it never calls msiexec.
+#
 # Hermetic: GHOZTTY_AGENT_INSTANCE forks the single-instance guard, the state
 # dir + fake install dir live under $env:TEMP (no spaces - the uninstall
 # override is a raw CreateProcessW line), GHOSTTY_RELAY_ENV points at a
@@ -34,6 +40,91 @@ function Assert($name, $cond) {
     if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
 }
 
+# --- R: the REAL install on this box, read back (T890) -----------------------
+# Sections 0-4 below prove the flow against a fake install dir and a fake
+# uninstall command, which is the only way to exercise it repeatably. What they
+# cannot say is whether the real adoption ever fired on a machine that actually
+# carried the standalone 'Ghoztty Agent' MSI - the flow only runs when a RELEASE
+# agent with the code starts, which the lazy-upgrade contract defers to a
+# deliberate delivery. This section is that read-back, and it is pure
+# observation: it opens no process, writes nothing, and NEVER calls msiexec (the
+# 26.7.502 ghost product on this box must stay untouched - see T549's CAUTION).
+#
+# It asserts only on a box whose adoption marker says the adoption COMPLETED;
+# anywhere else (a machine that never had the standalone install, or one where
+# it is still pending) the retirement invariants are not yet owed, so the
+# section skips with its reason and the fixture sections carry the run.
+$script:realSkipped = 0
+$agentUpgradeCode = '{7143BA66-FD7B-4D45-8555-E946D2141912}'
+$appUpgradeCode   = '{5EB02044-7F06-498B-B7A9-7EFD65486CFB}'
+
+function Get-RelatedProducts([string]$upgradeCode) {
+    # MsiEnumRelatedProducts through the Installer COM object: a read-only
+    # query, the same one adopt.zig's relatedProducts() makes.
+    #
+    # Returns an OBJECT carrying the count, never a bare array: `return ,@()`
+    # scores as one element at an `@(...)` call site (lib\UnrollCount.ps1), and
+    # that trap turned "no agent product is registered" into a FAIL here the
+    # first time this section ran.
+    $codes = New-Object System.Collections.Generic.List[string]
+    $inst = New-Object -ComObject WindowsInstaller.Installer
+    try { $list = $inst.GetType().InvokeMember('RelatedProducts', 'GetProperty', $null, $inst, @($upgradeCode)) }
+    catch { $list = $null }
+    if ($null -ne $list) {
+        $n = $list.GetType().InvokeMember('Count', 'GetProperty', $null, $list, $null)
+        for ($k = 0; $k -lt $n; $k++) {
+            $codes.Add([string]$list.GetType().InvokeMember('Item', 'GetProperty', $null, $list, @($k)))
+        }
+    }
+    return [pscustomobject]@{ Count = $codes.Count; Codes = ($codes -join ',') }
+}
+
+"== R: the real standalone install on this box is retired (T890)"
+$realStateDir   = Join-Path $env:LOCALAPPDATA 'ghoztty\local-agent'
+$realAdoptFile  = Join-Path $realStateDir 'adoption.json'
+$realSharing    = Join-Path $realStateDir 'sharing.json'
+$standaloneDir  = Join-Path $env:LOCALAPPDATA 'Programs\Ghoztty Agent'
+$appInstallDir  = Join-Path $env:LOCALAPPDATA 'Programs\Ghoztty'
+$realAdopt      = if (Test-Path -LiteralPath $realAdoptFile) { Get-Content -LiteralPath $realAdoptFile -Raw } else { '' }
+
+if ($realAdopt -notmatch '"done"\s*:\s*true') {
+    # skip-audit: the retirement invariants are only owed on a box that adopted
+    "  SKIP R: this box has no completed adoption marker ($realAdoptFile) - nothing was adopted here"
+    $script:realSkipped = 1
+} else {
+    Assert 'R1 the standalone install dir is gone' (-not (Test-Path -LiteralPath $standaloneDir))
+
+    # Positive control first: the enumeration must be able to FIND a product, or
+    # "no agent product" would be the same answer as "this query never works".
+    $appProducts = Get-RelatedProducts $appUpgradeCode
+    Assert 'R2a the MSI query works (the app product is found by its UpgradeCode)' ($appProducts.Count -ge 1)
+    $agentProducts = Get-RelatedProducts $agentUpgradeCode
+    if ($agentProducts.Count -gt 0) { "  (agent UpgradeCode still resolves to: $($agentProducts.Codes))" }
+    Assert 'R2b no product is registered under the agent UpgradeCode' ($agentProducts.Count -eq 0)
+
+    $runValue = (Get-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
+        -Name 'GhozttyAgent' -ErrorAction SilentlyContinue).GhozttyAgent
+    Assert 'R3a the GhozttyAgent Run entry survived the uninstall' (-not [string]::IsNullOrWhiteSpace($runValue))
+    Assert 'R3b it points at the app-managed agent, not the retired install' (
+        $runValue -and $runValue -like "*$appInstallDir\ghoztty-agent.exe*" -and $runValue -notlike '*Ghoztty Agent*')
+    Assert 'R3c it no longer carries the standalone relay flag' ($runValue -and $runValue -notmatch '--relay')
+
+    Assert 'R4 the adoption marker records the sharing decision' ($realAdopt -match '"sharing_marked"\s*:\s*true')
+    # Sharing continuity has two legal outcomes: marked ON (the box was serving),
+    # or an explicit pre-existing opt-out, which adoption respects rather than
+    # overriding. Either is fine; an unreadable/absent file is not.
+    $sharingText = if (Test-Path -LiteralPath $realSharing) { Get-Content -LiteralPath $realSharing -Raw } else { '' }
+    Assert 'R5 sharing.json is present and states a decision' ($sharingText -match '"enabled"\s*:\s*(true|false)')
+    if ($sharingText -match '"enabled"\s*:\s*false') {
+        "  NOTE R5: sharing reads disabled - the opt-out branch (adopt.zig respects an existing no)"
+    }
+
+    # cleanslate-exempt: reads the process table, kills nothing
+    $stillRunning = @(Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" |
+        Where-Object { $_.ExecutablePath -and $_.ExecutablePath -like "$standaloneDir*" })
+    Assert 'R6 no agent is running out of the retired install' ($stillRunning.Count -eq 0)
+}
+
 $tmp = Join-Path $env:TEMP "ghoztty-t549-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
 $stateDir = Join-Path $tmp 'agent-state'
@@ -51,8 +142,11 @@ $runValueName = "GhozttyAgentT549-$PID"
 $preRunValue = '"C:\app\ghoztty-agent.exe" "--listen-pipe=app-t549"'
 
 if (-not (Test-Path $AgentExe)) {
+    # Section R above needs no build, so its score is real and is kept; only
+    # the fixture sections are skipped.
     "SKIP whole run: $AgentExe not built (zig build agent first)"
-    Write-TestVerdict -Label 'T549 AGENT ADOPT' -Pass 0 -Fail 0 -Skipped 1
+    Write-TestVerdict -Label 'T549 AGENT ADOPT' -Pass $script:passes -Fail $script:failures `
+        -Skipped (1 + $script:realSkipped)
 }
 
 function Stop-TestProcs {
@@ -215,5 +309,8 @@ if ($script:failures -eq 0) {
 }
 
 # MinPass = the full-run assertion count: an abort mid-run must never score a
-# truncated run as ALL PASS.
-Write-TestVerdict -Label 'T549 AGENT ADOPT' -Pass $script:passes -Fail $script:failures -MinPass 26
+# truncated run as ALL PASS. 26 fixture assertions + section R's 9, which are
+# owed only on a box that actually adopted (hence the -realSkipped subtraction:
+# a machine that never carried the standalone install still has a floor).
+Write-TestVerdict -Label 'T549 AGENT ADOPT' -Pass $script:passes -Fail $script:failures `
+    -Skipped $script:realSkipped -MinPass (35 - (9 * $script:realSkipped))

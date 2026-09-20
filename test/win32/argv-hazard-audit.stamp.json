@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-19T17:33:08-07:00",
-    "commit":  "71bcd41b2",
+    "generated":  "2026-09-19T18:52:32-07:00",
+    "commit":  "45bfbb9d0",
     "uncommitted":  [
-                        "test/win32/share-machine.ps1"
+                        "test/win32/agent-adopt.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -83,7 +83,7 @@
                   "test/win32/activity-pane-column.ps1":  "0048768f928d269a2141a5206ad3b7c63771478f7aa46de7d4f424e64b8be4ea",
                   "test/win32/activity-selection.ps1":  "1f4bb378c0c200bb4c6900ef4ea7eb86f3611f524722cafaefecfc577ee051b5",
                   "test/win32/activity-state.ps1":  "209ae3df48c44fb7543ce13583d55b3204698531ed4a398075ca097164428c74",
-                  "test/win32/agent-adopt.ps1":  "ec013976f8ff1f18feda897f356b63a365ef7271e44399199de5204ba9c4f43c",
+                  "test/win32/agent-adopt.ps1":  "ad623f859373a4440041eaa76c432687bd75384e9a7819a61a27ab0054d1efbd",
                   "test/win32/agent-attach-refused.ps1":  "b4895179be0eca31e5afe9b9df2c6143848a2696add5ca355f1098a7ea23a341",
                   "test/win32/agent-autostart.ps1":  "a17c57c698a0eee06edafc0900045ad53885962d555675a63943099b9f6ae22d",
                   "test/win32/agent-first-answer.ps1":  "71579be7cba1b5c6c5f1db2a1f85376beb906fcab05e5dd5ec6133bf71b654b3",

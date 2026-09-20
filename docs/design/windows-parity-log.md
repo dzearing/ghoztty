@@ -9,6 +9,50 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-19: T890 closed done — **the old standalone "Ghoztty Agent" install
+  on this box really was adopted and retired, and the check that says so is now
+  part of the suite.**
+
+  T549 built the adoption — a released agent that finds the standalone MSI keeps
+  sharing as it was, waits for the old agent to go idle, uninstalls it under a
+  deny-terminate shield and repairs the Run key the uninstall deletes — and
+  proved it against a fake install dir and a fake uninstall command. What a
+  fixture cannot say is whether it ever fired for real, because the real path
+  only runs when a RELEASE agent carrying the code starts. It fired on
+  2026-08-31 at 06:58, during the user's T1179 install walk: `adoption.json`
+  beside the release agent's `sessions.json` reads `done:true,
+  sharing_marked:true`, `%LOCALAPPDATA%\Programs\Ghoztty Agent` is gone, and
+  `MsiEnumRelatedProducts` over the agent UpgradeCode `{7143BA66-…}` returns
+  nothing while the app's `{5EB02044-…}` still resolves to `{52D7157A-…}` — the
+  positive control, without which "no product" and "this query never works" read
+  the same. The `GhozttyAgent` Run entry survived and names
+  `…\Programs\Ghoztty\ghoztty-agent.exe` with the app's arguments and no
+  `--relay`. Nothing was stranded: the loop committed at 06:53 and again at
+  07:06 that morning, straddling the adoption, so the app-managed agent and its
+  ConPTYs lived through the MSI's kill-every-agent custom action.
+
+  One observed deviation from the card, and it is the specified behavior:
+  `sharing.json` reads `enabled:false`, last written 2026-08-17. Adoption took
+  the branch that respects an existing opt-out rather than flipping sharing on.
+  The task's "sharing.json enabled" line was written before that branch had ever
+  been exercised here; section R accepts either decision and prints which one it
+  saw.
+
+  All of that is section R of `test\win32\agent-adopt.ps1` now, so the retirement
+  cannot quietly come undone — a returning install dir, a re-registered product,
+  or a Run entry stolen back all score red. It is pure observation: no process is
+  started, nothing is written, and `msiexec /x` is never called (the 26.7.502
+  ghost product stays untouched). It asserts only where the adoption marker says
+  the adoption completed, and skips with its reason elsewhere, so a machine that
+  never carried the standalone install is not failed for it. Green over this
+  tree: `agent-adopt.ps1` ALL PASS (35), all four zig lanes PASS, the harness
+  floor PASS in 909s, P1 (26) / P2 (20) / P3 (16) ALL PASS.
+
+  Trap worth naming: the first run scored R2b red. `return ,$out` on an EMPTY
+  array counts as one element at an `@(...)` call site, so "no agent product" was
+  measured as one product. The helper returns an object carrying its own count
+  now.
+
 - 2026-09-19: T889 closed done — **the "Share this machine" switch no longer
   claims a machine is shared when the process that would serve it is an older
   build that cannot.**
