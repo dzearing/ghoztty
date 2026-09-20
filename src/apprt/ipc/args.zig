@@ -54,6 +54,12 @@ pub const VerbArgs = struct {
     /// consulted by the dropped-flag note on the idempotent focus path; both
     /// servers ignore it as an unknown flag when older.
     cwd_implicit: bool = false,
+    /// `+reload --config` (T893): reload the APP's configuration from disk
+    /// instead of a viewer pane's content. The one externally drivable entry
+    /// to `reload_config` — the menu item comes back in-process from
+    /// `TrackPopupMenuEx` and the keybind needs a foreground keyboard, so
+    /// before this nothing a script can send reached `onConfigChange`.
+    config: bool = false,
     /// `+new-window --from-focused` / `+split --from-focused`: mirror the
     /// keyboard "New Window"/split action on the focused window so the new
     /// frame inherits its remote host (T68, Mac §WP4 parity).
@@ -91,6 +97,8 @@ pub fn parseVerbArgs(
             result.from_focused = true;
         } else if (std.mem.eql(u8, arg, "--cwd-implicit")) {
             result.cwd_implicit = true;
+        } else if (std.mem.eql(u8, arg, "--config")) {
+            result.config = true;
         } else if (dropPrefix(arg, "--working-directory=")) |v| {
             result.working_directory = v;
         } else if (dropPrefix(arg, "--command=")) |v| {
@@ -213,6 +221,11 @@ pub fn dropPrefix(arg: []const u8, comptime prefix: []const u8) ?[]const u8 {
 /// nothing for a command to run in. Byte-matches the Mac server's string
 /// (`IPCServer.swift:387` for `+new-window`, `:574` for `+split`).
 pub const view_command_conflict_error = "--view cannot be combined with --command/-e";
+
+/// `+reload --config` reloads the APP's configuration and names no pane, so
+/// a `--target` beside it is a mistake about which reload was meant. Both
+/// servers answer with this exact string (T893).
+pub const reload_config_target_error = "--config cannot be combined with --target";
 
 /// Which kind of viewer a `--view=` value asks for. The split is the one the
 /// Phase K band is built on: T374 ships WEB mode (the pane navigates to the URL
@@ -1103,6 +1116,35 @@ test "parseVerbArgs: --direction aliases --split" {
     const args = [_][]const u8{"--direction=left"};
     const parsed = try parseVerbArgs(arena.allocator(), &args);
     try testing.expectEqualStrings("left", parsed.split_direction.?);
+}
+
+test "parseVerbArgs: --config is a valueless flag, off unless given (T893)" {
+    var arena = testArena();
+    defer arena.deinit();
+
+    // Absent.
+    {
+        const args = [_][]const u8{"--target=dev"};
+        const parsed = try parseVerbArgs(arena.allocator(), &args);
+        try testing.expect(!parsed.config);
+    }
+
+    // Alone: the app-wide form names no target.
+    {
+        const args = [_][]const u8{"--config"};
+        const parsed = try parseVerbArgs(arena.allocator(), &args);
+        try testing.expect(parsed.config);
+        try testing.expect(parsed.target == null);
+    }
+
+    // Both: parsed, so the server can REFUSE the combination rather than
+    // silently picking one of the two reloads.
+    {
+        const args = [_][]const u8{ "--config", "--target=dev" };
+        const parsed = try parseVerbArgs(arena.allocator(), &args);
+        try testing.expect(parsed.config);
+        try testing.expectEqualStrings("dev", parsed.target.?);
+    }
 }
 
 test "wrapShellCommandArgv: every flavor branch" {

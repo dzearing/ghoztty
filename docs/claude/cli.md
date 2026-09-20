@@ -444,12 +444,27 @@ file is re-fetched bypassing caches like a website — the verb is the explicit
 "these bytes are stale" one, which is how it picks up an edited sibling
 stylesheet that the file watcher never saw.
 
+It is also how a script tells a running instance to **re-read its own
+configuration** — `--config`, the app-wide form, which names no pane. That is
+the only external trigger for a config reload (T893): the menu's Reload
+Configuration comes back in-process from `TrackPopupMenuEx` and never as a
+postable `WM_COMMAND`, and the keybind needs a foreground keyboard, so before
+this nothing an automation could send reached `onConfigChange` — and
+everything a reload changes (fonts, colors, tooltip themes, dividers) was
+unreachable by the acceptance harnesses.
+
 ```
 ghoztty +reload --target=<name>
+ghoztty +reload --config
 ```
 
-- `--target`: Named window or pane (or a pane id). Required. For a window
-  target the reload applies to its focused pane.
+- `--target`: Named window or pane (or a pane id). Required unless `--config`
+  is given. For a window target the reload applies to its focused pane.
+- `--config`: Reload the application configuration from disk, app-wide (a
+  HARD reload: the file is re-parsed and its diagnostics surface exactly as at
+  startup). Cannot be combined with `--target` — the two are different
+  requests, and naming both fails with `--config cannot be combined with
+  --target` (exit 1).
 - Targeting a terminal pane fails with `... is a terminal pane, nothing to
   reload` (exit 1), mirroring how terminal-only commands reject viewer panes.
 - Interactive equivalent: **Cmd+R** while a viewer pane is focused (see

@@ -9,6 +9,46 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-19: T893 closed done (T1672 filed) — **a script can now tell a
+  running Ghoztty to re-read its configuration: `ghoztty +reload --config`.**
+
+  Until now nothing outside the app could reach a config reload. The menu's
+  Reload Configuration comes back in-process from `TrackPopupMenuEx` with
+  `TPM_RETURNCMD`, so it is never a postable `WM_COMMAND`; the keybind and the
+  viewer chord both need a foreground keyboard, which the background test
+  desktop does not have; and `+reload` was the VIEWER verb (T390). The cost was
+  not abstract: everything a reload changes — fonts, colors, tooltip themes,
+  dividers, the whole `onConfigChange` fan-out — was unscorable, and T557's
+  harness could only prove the `WM_SETTINGCHANGE` half of the tooltip reset
+  while the config half sat one adjacent line away, externally unreachable.
+
+  The fix is a flag on the verb that already means "re-read": `--config`, the
+  app-wide form, which names no pane. It lands on **both** servers in this
+  change, per the standing CLI-surface rule — win32 routes it to
+  `performAction(.app, .reload_config, .{ .soft = false })`, the same hard
+  reload the menu item runs (re-parse from disk, push to the core, surface the
+  file's diagnostics); the Swift `IPCServer.handleReload` routes it to
+  `AppDelegate.reloadConfig(nil)` on the main queue. `--config` beside
+  `--target` is refused rather than silently doing one of the two reloads, with
+  one shared string (`apprt.ipc.args.reload_config_target_error`) so neither
+  server can drift from the other.
+
+  Validation: `tab-tooltip.ps1` section F got the arm it had to skip. F2 sends
+  `+reload --config` from a plain CLI invocation on the background desktop and
+  watches the `tab tooltip reset` oracle fire — the second trigger into the
+  same code the OS theme flip reaches, now scored. F3 pins the refusal and its
+  text. Green: `floor-lane -Lane all` ALL LANES PASS; tab-tooltip ALL PASS
+  (29); P1/P2/P3 ALL PASS (26/20/16); `cli-unknown-flag` ALL PASS (110) and
+  `viewer-panes` ALL PASS (195), the two suites owning the surfaces touched.
+  Two new none-lane unit tests pin the parse (`--config` is valueless, off
+  unless given, and still parsed when `--target` rides along so the server can
+  refuse) and the flag allowlist.
+
+  One half is unproven and says so: this seat cannot compile Swift, so the mac
+  branch is written but never built or run. **T1672** (`seat: mac`) is filed to
+  do exactly that, and the docs went out with it — `docs/claude/cli.md` and
+  both live `SKILL.md` copies, kept byte-identical.
+
 - 2026-09-19: T890 closed done — **the old standalone "Ghoztty Agent" install
   on this box really was adopted and retired, and the check that says so is now
   part of the suite.**

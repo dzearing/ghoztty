@@ -1345,6 +1345,25 @@ fn handleReload(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     const arena = arena_state.allocator();
 
     const args = try parseVerbArgs(arena, request.arguments);
+
+    // `--config` is the app-wide form (T893): re-read the configuration from
+    // disk, exactly as the menu's Reload Configuration does. It names no
+    // pane, so combining it with `--target` is a mistake about which reload
+    // was meant rather than two requests to run.
+    if (args.config) {
+        if (args.target != null) return try errorResponse(
+            ctx.alloc,
+            "{s}",
+            .{verb_args.reload_config_target_error},
+        );
+
+        _ = ctx.app.performAction(.app, .reload_config, .{ .soft = false }) catch |err| {
+            return try errorResponse(ctx.alloc, "config reload failed: {}", .{err});
+        };
+        log.info("IPC: reloaded configuration", .{});
+        return try ctx.alloc.dupe(u8, "{\"success\":true}");
+    }
+
     const target = args.target orelse
         return try errorResponse(ctx.alloc, "--target is required for +reload", .{});
 

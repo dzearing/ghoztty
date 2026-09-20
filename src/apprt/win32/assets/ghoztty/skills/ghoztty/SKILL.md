@@ -323,9 +323,11 @@ ghoztty +reload --target=<name>
 
 | Flag | Description |
 |------|-------------|
-| `--target=<name>` | Named window or pane (or a pane id). Required. For a window target, the reload applies to its focused pane. |
+| `--target=<name>` | Named window or pane (or a pane id). Required unless `--config` is given. For a window target, the reload applies to its focused pane. |
+| `--config` | Reload the **application configuration** from disk, app-wide — the same thing the Reload Configuration menu item does. Names no pane, so it cannot be combined with `--target`. |
 
 - Targeting a terminal pane fails with `... is a terminal pane, nothing to reload` (exit 1) — mirroring how terminal-only commands reject viewer panes.
+- `ghoztty +reload --config` is the way to make a running Ghoztty pick up an edited config file without restarting it or touching the menu.
 
 ```bash
 # Refresh a local dev-server preview after rebuilding

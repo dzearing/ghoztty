@@ -56,10 +56,20 @@ pub const Options = struct {
 ///
 /// Targeting a terminal pane is an error: there is nothing to reload.
 ///
+/// `--config` is the other thing a running instance can be told to
+/// re-read: its own configuration file, app-wide, exactly as the Reload
+/// Configuration menu item does. It names no pane, so it is the one form
+/// of the verb that takes no `--target` — and it is the only external
+/// trigger for a config reload, which is what lets a script (or an
+/// acceptance harness) exercise everything a reload changes.
+///
 /// Flags:
 ///
-///   * `--target=<name>`: The named window or pane. Required. For a
-///     window target the reload applies to its focused pane.
+///   * `--target=<name>`: The named window or pane. Required unless
+///     `--config` is given. For a window target the reload applies to its
+///     focused pane.
+///   * `--config`: Reload the application configuration from disk instead
+///     of a viewer pane. Cannot be combined with `--target`.
 ///
 /// Any other argument starting with `--` is an error, so a misspelled
 /// flag is rejected instead of being dropped by the server.

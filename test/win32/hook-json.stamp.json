@@ -1,10 +1,10 @@
 {
     "guard":  "hook-json",
     "script":  "test/win32/hook-json.ps1",
-    "generated":  "2026-09-14T04:36:36-07:00",
-    "commit":  "9d5910689",
+    "generated":  "2026-09-19T22:07:10-07:00",
+    "commit":  "6127f6956",
     "uncommitted":  [
-                        "test/win32/hook-json.ps1"
+                        "src/apprt/win32/assets/ghoztty/skills/ghoztty/SKILL.md"
                     ],
     "upstream":  {
                      "origin/main:macos/Resources/Ghoztty/hooks/ghoztty-banner.sh":  "cb1f08a942eba4a032fcd84fa9b6c6aba8449b1f",
@@ -15,7 +15,7 @@
     "files":  {
                   "src/apprt/win32/assets/ghoztty/hooks/ghoztty-activity-state.sh":  "8a37b7305be4d2b14e9c12455bee30b155ea46ea93a88f431667257e124a05b5",
                   "src/apprt/win32/assets/ghoztty/hooks/ghoztty-banner.sh":  "ea3178b42df3acbf7f7068c4842cd770f10be23fd5e2935b97e62e9b4e1b47eb",
-                  "src/apprt/win32/assets/ghoztty/skills/ghoztty/SKILL.md":  "3653b1fe81d049ffc6ebe4274662917cd6ff4251790a113b8f61d6fe4fdff749",
+                  "src/apprt/win32/assets/ghoztty/skills/ghoztty/SKILL.md":  "1873439d7d5a9fd768a0489a531ab55e835466afa141cc0d4fed3dce9eb3f431",
                   "src/apprt/win32/assets/ghoztty/skills/process-feedback/SKILL.md":  "ce075937bf7ae0ec64d0d7d0d7b764c7c1641642a03e724f68459ca554c1e0aa",
                   "src/apprt/win32/assets/ghoztty/upstream/hooks/ghoztty-activity-state.sh":  "6ddd430c98cb22e5d03ad8f299a5f41e38a6bb19893bfd9b2d9c9b6bdc697c6b",
                   "src/apprt/win32/assets/ghoztty/upstream/hooks/ghoztty-banner.sh":  "9432321fb843eb4966f88aa53427254832d6c5e492b0ed58843b178a8a883788",

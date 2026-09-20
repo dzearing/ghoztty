@@ -342,19 +342,23 @@ try {
         # F (T557): a mid-session theme flip RESETS the tooltip control so
         # the next show recreates it with the fresh dark/light answer - the
         # theme is applied once, at creation, so a control that survives the
-        # flip keeps the stale palette. The trigger exercised is the OS
-        # apps-theme flip (WM_SETTINGCHANGE lParam "ImmersiveColorSet");
-        # the other trigger, a config reload (onConfigChange), calls the
-        # SAME tabTipReset one line from here but has no externally drivable
-        # entry on this desktop: `+reload` is the viewer verb, the menu's
-        # Reload Configuration comes back in-process from TrackPopupMenuEx
-        # (never as a postable WM_COMMAND), and keybinds need a foreground
-        # keyboard the background desktop does not have. What is scored is
-        # the WIRING via the `tab tooltip reset` oracle, logged before the
-        # control-exists check: this desktop cannot hold a hover across the
-        # show delay (T233), so no control exists to destroy here, and the
-        # recreation half is tabTipEnsure - the same lazy path sections A-E
-        # already score.
+        # flip keeps the stale palette. Two triggers reach the SAME
+        # tabTipReset, and both are scored here: the OS apps-theme flip
+        # (WM_SETTINGCHANGE lParam "ImmersiveColorSet"), and a config reload
+        # (onConfigChange).
+        #
+        # The config-reload arm was unscorable until T893: `+reload` was the
+        # viewer verb only, the menu's Reload Configuration comes back
+        # in-process from TrackPopupMenuEx (never as a postable WM_COMMAND),
+        # and keybinds need a foreground keyboard the background desktop
+        # does not have. `+reload --config` is the external trigger that
+        # closed it, and it is what this arm sends.
+        #
+        # What is scored is the WIRING via the `tab tooltip reset` oracle,
+        # logged before the control-exists check: this desktop cannot hold a
+        # hover across the show delay (T233), so no control exists to destroy
+        # here, and the recreation half is tabTipEnsure - the same lazy path
+        # sections A-E already score.
         # -------------------------------------------------------------------
         function Wait-ResetOracle($log) {
             for ($t = 0; $t -lt 10; $t++) {
@@ -382,6 +386,23 @@ public static class TabTipSettingChange {
         # SMTO_ABORTIFHUNG, same shape as the lib's Send().
         [void][TabTipSettingChange]::SendMessageTimeoutW($top2, 0x001A, [IntPtr]::Zero, 'ImmersiveColorSet', 0x0002, 10000, [ref]$resF)
         Assert (Wait-ResetOracle $errlog2) 'F: an OS apps-theme flip (ImmersiveColorSet) resets the tooltip control'
+
+        # F2 (T893): the other trigger, now externally drivable. A hard
+        # config reload runs onConfigChange on every live window, which
+        # calls the same tabTipReset - so the oracle is the same one, read
+        # after a fresh clear so the flip above cannot be mistaken for it.
+        Clear-Content $errlog2 -ErrorAction SilentlyContinue
+        $rcCfg = Run-CliArgs @('+reload', '--config') "$root\reload-config.txt" 20
+        Assert ($rcCfg -eq 0) "F2: +reload --config exits 0 (rc=$rcCfg, $(Out-Text "$root\reload-config.txt.err"))"
+        Assert (Wait-ResetOracle $errlog2) 'F2: a config reload resets the tooltip control'
+
+        # F3 (T893): the two reloads are different requests, so naming a
+        # pane beside --config is refused rather than silently doing one of
+        # them. Same string on both servers.
+        $rcBoth = Run-CliArgs @('+reload', '--config', "--target=$pane") "$root\reload-both.txt" 20
+        Assert ($rcBoth -eq 1) "F3: +reload --config --target is refused (rc=$rcBoth)"
+        Assert ((Out-Text "$root\reload-both.txt.err") -like '*--config cannot be combined with --target*') `
+            "F3: and it says which combination was wrong ($(Out-Text "$root\reload-both.txt.err"))"
     }
 
     Assert (-not (Test-TestDesktopLeak -ProcessId $app.Pid)) 'no window leaked onto the interactive desktop'

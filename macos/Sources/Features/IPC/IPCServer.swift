@@ -1156,10 +1156,31 @@ class IPCServer {
     /// is nothing to reload.
     private func handleReload(_ request: IPCRequest) -> IPCResponse {
         var target: String?
+        var reloadConfig = false
         for arg in request.arguments ?? [] {
             if let value = arg.dropPrefix("--target=") {
                 target = String(value)
+            } else if arg == "--config" {
+                reloadConfig = true
             }
+        }
+
+        // `--config` is the app-wide form (T893): re-read the configuration
+        // from disk, exactly as the Reload Configuration menu item does. It
+        // names no pane, so combining it with `--target` is a mistake about
+        // which reload was meant rather than two requests to run.
+        if reloadConfig {
+            guard target == nil else {
+                return IPCResponse(
+                    success: false,
+                    error: "--config cannot be combined with --target")
+            }
+
+            DispatchQueue.main.sync {
+                (NSApp.delegate as? AppDelegate)?.reloadConfig(nil)
+            }
+            Self.logger.info("IPC: reloaded configuration")
+            return .ok
         }
 
         guard let target else {

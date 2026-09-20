@@ -161,9 +161,12 @@ pub const set_state: Spec = .{
     .flags = &.{ "target", "state" },
 };
 
+/// `--config` (T893) takes no value: it is the whole-app "re-read your
+/// configuration" form of the verb, and it is the only one that does not
+/// name a target.
 pub const reload: Spec = .{
     .verb = "+reload",
-    .flags = &.{"target"},
+    .flags = &.{ "target", "config" },
 };
 
 /// `--split=`/`--direction=` and `--split-percent=`/`--percent=` are aliases
@@ -255,6 +258,10 @@ test "unknownFlag: another verb's flag is still unknown here" {
     // `+close`, and forwarding it there did nothing at exit 0.
     try testing.expectEqualStrings("layout", unknownFlag(close, "--layout={}").?);
     try testing.expectEqualStrings("state", unknownFlag(reload, "--state=busy").?);
+
+    // T893: `--config` is real on `+reload` and takes no value, so the
+    // valueless spelling has to pass the same check `--target=` does.
+    try testing.expect(unknownFlag(reload, "--config") == null);
 }
 
 test "unknownFlag: single-dash arguments and a bare -- are not flags" {
