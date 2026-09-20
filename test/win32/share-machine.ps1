@@ -20,6 +20,14 @@
 #      reads sharing.json and opens checked.
 #   F. enrollment failure (relay unreachable) leaves the box UNCHECKED and
 #      sharing DISABLED - the box never shows a state the work did not reach.
+#   G. with a RUNNING agent that predates the sharing reconciler
+#      (GHOSTTY_AGENT_SUPPRESS_CAPS=sharing_reconcile makes this same agent
+#      advertise like one too old), flipping the toggle on says sharing starts
+#      after that agent's pending update - instead of claiming the machine is
+#      already served by an agent that will never read sharing.json (T889).
+#   H. the negative control that makes G mean anything: the SAME flip against
+#      the same agent with nothing suppressed says the ordinary "your other
+#      devices can open terminals here", with no update sentence anywhere.
 #
 # Hermetic: GHOSTTY_SHARING_CONFIG and GHOSTTY_RELAY_ENV point both files at a
 # scratch dir (the same overrides the agent's own path resolution honors, so
@@ -161,6 +169,29 @@ function Get-ShareChecked([IntPtr]$chooser) {
     return ((Invoke-TestMessage -Window $cb.Hwnd -Message 0x00F0) -eq 1)
 }
 
+# The chooser's footer hint: the STATIC carrying the sentence the toggle just
+# set. Read with WM_GETTEXT through the harness, never GetWindowTextW - that one
+# reads a cache the other process never fills.
+function Get-ChooserHint([IntPtr]$chooser) {
+    $texts = @(Get-TestControls -Window $chooser -Class 'Static' |
+        ForEach-Object { $_.Text } | Where-Object { $_ -and $_.Trim().Length -gt 0 })
+    $hit = @($texts | Where-Object { $_ -match 'Sharing is on' })
+    if ($hit.Count -ge 1) { return $hit[0] }
+    return ($texts -join ' | ')
+}
+
+# Poll for a footer hint that says sharing is on; the flip is synchronous but
+# the repaint that follows it is not.
+function Wait-ChooserHint([IntPtr]$chooser, [int]$timeoutSec = 6) {
+    $deadline = (Get-Date).AddSeconds($timeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        $h = Get-ChooserHint $chooser
+        if ($h -match 'Sharing is on') { return $h }
+        Start-Sleep -Milliseconds 300
+    }
+    return (Get-ChooserHint $chooser)
+}
+
 # Wait until sharing.json exists and reports the wanted enabled value.
 function Wait-SharingEnabled([bool]$want, [int]$timeoutSec = 8) {
     $deadline = (Get-Date).AddSeconds($timeoutSec)
@@ -175,15 +206,21 @@ function Wait-SharingEnabled([bool]$want, [int]$timeoutSec = 8) {
     return $false
 }
 
-function Launch-Gui($relayBase) {
+# `$persistence` brings a real local agent up (G/H need one to judge);
+# `$suppress` is a capability string that agent will NOT advertise, which is how
+# a single tree produces an agent OLDER than itself (T469 seam).
+function Launch-Gui($relayBase, $persistence = $false, $suppress = $null) {
     $env:GHOSTTY_SHARING_CONFIG = $sharingCfg
     $env:GHOSTTY_RELAY_ENV = $relayEnv
     $env:GHOSTTY_RELAY_BASE = $relayBase
     $env:GHOSTTY_ACCOUNT_STORE = (Join-Path $tmp 'account.dat')
     $env:GHOZTTY_ENROLL_NO_OPEN = '1'
-    $app = Start-OnTestDesktop -Exe $Exe -Arguments @('--session-persistence=false') -StdErr $errlog
+    if ($suppress) { $env:GHOSTTY_AGENT_SUPPRESS_CAPS = $suppress }
+    else { Remove-Item 'env:GHOSTTY_AGENT_SUPPRESS_CAPS' -ErrorAction SilentlyContinue }
+    $persistArg = if ($persistence) { '--session-persistence=true' } else { '--session-persistence=false' }
+    $app = Start-OnTestDesktop -Exe $Exe -Arguments @($persistArg) -StdErr $errlog
     foreach ($k in 'GHOSTTY_SHARING_CONFIG', 'GHOSTTY_RELAY_ENV', 'GHOSTTY_RELAY_BASE',
-        'GHOSTTY_ACCOUNT_STORE', 'GHOZTTY_ENROLL_NO_OPEN') {
+        'GHOSTTY_ACCOUNT_STORE', 'GHOZTTY_ENROLL_NO_OPEN', 'GHOSTTY_AGENT_SUPPRESS_CAPS') {
         Remove-Item "env:$k" -ErrorAction SilentlyContinue
     }
     Start-Sleep -Seconds 3
@@ -303,6 +340,51 @@ try {
             Assert 'no relay.env from a failed enrollment' (-not (Test-Path $relayEnv))
         }
     }
+    # --- G/H: what the footer says about the RUNNING agent (T889) ------------
+    # The app and the agent have separate lifetimes on purpose, so the agent
+    # serving this box is routinely an older build than the one the app ships
+    # beside. One older than the sharing reconciler never reads sharing.json,
+    # and the pre-T889 toggle read ON over a machine serving nothing.
+    $agentArm = {
+        param($suppress, $label)
+        Stop-DebugGhoztty
+        Remove-Item $sharingCfg -Force -ErrorAction SilentlyContinue
+        Set-Content -Path $relayEnv -Value "RELAY_BASE=http://127.0.0.1:$port`nDEVICE_TOKEN=tok-seeded-t889`n" -Encoding ascii
+        $gg = Launch-Gui "http://127.0.0.1:$port" $true $suppress
+        if ($null -eq $gg) { return @{ Ok = $false; Why = "$label GUI did not come up" } }
+        $ch = Open-Chooser $gg
+        if ($ch -eq [IntPtr]::Zero) { return @{ Ok = $false; Why = "$label chooser never opened" } }
+        $box = Get-ShareCheckbox $ch
+        if ($null -eq $box) { return @{ Ok = $false; Why = "$label no share checkbox" } }
+        [void](Send-TestControlClick -Control $box.Hwnd)
+        $enabled = Wait-SharingEnabled $true
+        $hint = Wait-ChooserHint $ch
+        return @{ Ok = $true; Enabled = $enabled; Hint = $hint; Gui = $gg }
+    }
+
+    "== G: a RUNNING agent older than the sharing reconciler says so"
+    $old = & $agentArm 'sharing_reconcile' 'G'
+    Assert 'G fixture came up (agent + chooser + checkbox)' $old.Ok
+    if ($old.Ok) {
+        Assert 'G sharing is still PERSISTED (the user asked for it)' $old.Enabled
+        Assert "G footer says sharing is on (got: '$($old.Hint)')" ($old.Hint -match 'Sharing is on')
+        Assert 'G footer names the agent update the sharing is waiting on' ($old.Hint -match 'update')
+        Assert 'G footer never exposes the mechanism' ($old.Hint -notmatch 'sharing\.json|capability|T546')
+    }
+
+    "== H: the same flip against a CURRENT agent says nothing about updates"
+    $new = & $agentArm $null 'H'
+    Assert 'H fixture came up (agent + chooser + checkbox)' $new.Ok
+    if ($new.Ok) {
+        Assert 'H sharing persisted' $new.Enabled
+        Assert "H footer says sharing is on (got: '$($new.Hint)')" ($new.Hint -match 'Sharing is on')
+        Assert 'H footer promises the machine is served NOW' ($new.Hint -match 'other devices')
+        Assert 'H footer has NO pending-update sentence (negative control)' ($new.Hint -notmatch 'update')
+    }
+    if ($old.Ok -and $new.Ok) {
+        Assert 'G and H are DIFFERENT sentences (the gate can score both ways)' ($old.Hint -ne $new.Hint)
+    }
+
     Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     Remove-TestDesktop
@@ -338,4 +420,4 @@ if ($script:failures -eq 0) {
         update -Guard share-machine -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
-Write-TestVerdict -Label 'T547 SHARE MACHINE' -Pass $script:passes -Fail $script:failures -MinPass 28
+Write-TestVerdict -Label 'T547 SHARE MACHINE' -Pass $script:passes -Fail $script:failures -MinPass 37

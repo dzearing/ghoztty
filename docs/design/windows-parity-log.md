@@ -9,6 +9,53 @@ task (why a decision was made, what a past validation actually proved).
 Append newest-first: `YYYY-MM-DD — <tasks touched> — <what happened, what's
 next, any surprises>`.
 
+- 2026-09-19: T889 closed done — **the "Share this machine" switch no longer
+  claims a machine is shared when the process that would serve it is an older
+  build that cannot.**
+
+  Flipping the toggle writes one flag file; the thing that acts on it is
+  `ghoztty-agent`, whose 5-second reconciler (T546) raises the relay uplink to
+  match. The app and that agent have separate lifetimes on purpose — the agent
+  keeps your sessions alive and only replaces itself when it can hand them over
+  intact — so the agent actually running is routinely an older build than the one
+  shipped beside the app, and an agent older than T546 never reads the file at
+  all. The box read ON, nothing was served, and nothing said why.
+
+  The chooser now asks. `capability.sharing_reconcile` is a new HELLO string the
+  agent advertises because its build carries the reconciler, and the app
+  advertises so `negotiate`'s intersection contract keeps its no-exception shape
+  (the `cpu_units` precedent: the load-bearing half is the agent's, but both
+  sides say it). It gates a SENTENCE, never a frame — no opcode, no field, and
+  both skew directions are therefore safe by construction.
+  `LocalAgent.reconcilesSharing()` reads it off the warm shared connection and
+  answers `?bool`; null — no agent to ask — stays the ordinary sentence, because
+  a warning invented from a missing answer is a guess in front of the user. A
+  known-old agent gets its own: *"Sharing is on — this machine starts serving
+  once its background terminal process finishes the update that's already
+  waiting."*
+
+  Green over this exact tree: all four zig lanes PASS, the harness floor
+  (`-Lane harness`) PASS in 902s, and `share-machine.ps1` ALL PASS (41) with two
+  new arms — G runs a real agent under
+  `GHOSTTY_AGENT_SUPPRESS_CAPS=sharing_reconcile` and reads the pending-update
+  sentence out of the chooser's footer, H runs the same fixture unsuppressed and
+  reads the ordinary one, and the run asserts the two differ so the gate can
+  score both ways. Every other guard the shared-core edits made due was run
+  green too (chooser-controls/-modeless/-selection, registration-sites,
+  agent-autostart, restore-late-agent, sessions-running-cmd,
+  session-resume-offset, agent-upgrade, agent-relay-session-e2e,
+  window-active-audit).
+
+  One surprise worth the paragraph: `pane-ingest-ab.ps1` B4 — "the agent-held
+  pane is still LIVE afterwards" — went red twice against this tree. Rather than
+  assume, the six changed source files were reverted to HEAD, rebuilt, and the
+  harness re-run: green. Restored, rebuilt, re-run: green. Four runs, one bit
+  flipping, and the two REDS were the runs where the box was freer. So the
+  deadline is being measured, not the product; filed T1670, which holds the T831
+  rule (quiesce on the pane's own output, then type) and keeps a negative
+  control so the relaxed wait cannot neuter the one check that would catch a
+  flood genuinely killing a session.
+
 - 2026-09-19: T876 closed done — **the GUI test toolkit's class filter no
   longer lies about being case-sensitive, and the wrapper the scripts actually
   call is tested for it.**

@@ -821,6 +821,24 @@ pub const capability = struct {
     /// live answer: an agent can only hand off once nothing legacy is left.
     /// Skew degrades in both directions to exactly the pre-T907 behavior.
     pub const agent_handoff = "agent_handoff";
+
+    /// **Sharing reconciler** (T546): this agent build WATCHES `sharing.json` and
+    /// raises or parks its relay uplink to match, within a few seconds and with
+    /// nothing poking it.
+    ///
+    /// The load-bearing half is the AGENT's advertisement, exactly like
+    /// `cpu_units`: the app writes the file, the agent is the thing that acts on
+    /// it. An agent built before the reconciler never reads the file at all, so
+    /// the machine-chooser's "Share this machine" toggle would sit checked over a
+    /// machine that serves nothing — and the lazy-upgrade contract (T907) means
+    /// such an agent is routinely the one running. Absent ⇒ the chooser says
+    /// sharing starts after the agent's pending update, instead of claiming the
+    /// machine is already shared (T889).
+    ///
+    /// Purely additive: no opcode, no field, and the string is advertised by both
+    /// sides so `negotiate`'s intersection contract has no exception. It gates a
+    /// SENTENCE, never a frame, so both skew directions are safe by construction.
+    pub const sharing_reconcile = "sharing_reconcile";
 };
 
 /// The kind of pseudo-terminal a peer spawns its children on. Wire-visible
@@ -1022,6 +1040,13 @@ pub const Negotiated = struct {
     /// pre-T907 policy (refresh at idle, confirm while live) — reduced function,
     /// never a lost session.
     agent_handoff: bool = false,
+
+    /// True iff BOTH peers advertised `capability.sharing_reconcile` — the agent
+    /// reconciles `sharing.json` onto its relay uplink (T546) and the client
+    /// knows to judge it by that. False against any older agent, in which case
+    /// the share toggle tells the user that sharing starts once the agent's
+    /// pending update lands rather than claiming the machine is already served.
+    sharing_reconcile: bool = false,
 };
 
 /// True iff `caps` contains the capability string `name`.
@@ -1070,6 +1095,8 @@ pub fn negotiate(local: Hello, remote: Hello) ProtocolError!Negotiated {
             hasCapability(remote.capabilities, capability.repaint_data),
         .agent_handoff = hasCapability(local.capabilities, capability.agent_handoff) and
             hasCapability(remote.capabilities, capability.agent_handoff),
+        .sharing_reconcile = hasCapability(local.capabilities, capability.sharing_reconcile) and
+            hasCapability(remote.capabilities, capability.sharing_reconcile),
     };
 }
 
@@ -2578,6 +2605,32 @@ test "HELLO encode / parse / negotiate" {
         .{ .proto_version = 1, .transfer_encoding = .raw },
         .{ .proto_version = 2, .transfer_encoding = .raw },
     ));
+}
+
+test "negotiate: sharing_reconcile is the intersection, and an old agent reads false" {
+    const both = [_][]const u8{capability.sharing_reconcile};
+    const other = [_][]const u8{capability.rpc};
+
+    try testing.expect((try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+    )).sharing_reconcile);
+
+    // The direction that matters: a modern app against an agent that predates
+    // the reconciler. False is what makes the chooser say sharing is waiting on
+    // that agent's update rather than claiming the machine is already served.
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+        .{ .transfer_encoding = .raw, .capabilities = &other },
+    )).sharing_reconcile);
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &other },
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+    )).sharing_reconcile);
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw },
+        .{ .transfer_encoding = .raw },
+    )).sharing_reconcile);
 }
 
 test "negotiate: agent_handoff is the intersection, and skew keeps the old policy" {

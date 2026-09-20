@@ -1,12 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-19T16:05:26-07:00",
-    "commit":  "3afaf4e73",
+    "generated":  "2026-09-19T17:33:08-07:00",
+    "commit":  "71bcd41b2",
     "uncommitted":  [
-                        "scripts/guard-due.ps1",
-                        "test/win32/chooser-sessions-push.ps1",
-                        "test/win32/relaunch-guard.ps1"
+                        "test/win32/share-machine.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -383,7 +381,7 @@
                   "test/win32/session-snapshot-reattach.ps1":  "c7e335d7b8e77831bb94f7bbe30060a51008319defd354e567b830cc91f2297c",
                   "test/win32/sessions-running-cmd.ps1":  "0b2c67aa7bebd9981abd9b159546885aaf8856c249cd8df26ceb2bf5f6e59ec6",
                   "test/win32/session-vanished.ps1":  "61b7542f3a5d3d1f1fea94e55df07bf7a373b1f72cb4d60a5d5d03f514a7e777",
-                  "test/win32/share-machine.ps1":  "eb76c746586476e1a85c09c1d1ce78b22f9ecf0221df24e1e43f5f8cad3d20c6",
+                  "test/win32/share-machine.ps1":  "7e38d9a1d3f33b03578aef85567a5a7fda29d02bc6d8388d0ff0dd582c09e7a4",
                   "test/win32/ship-workflow.ps1":  "28634520cb227573a1a9acf8a9cb7006389228c34a56f3776072eca61f5b1b83",
                   "test/win32/single-instance-join.ps1":  "d276a7d97773c26b7cc622fe3ae14c735381f5e15c7ce137cfb44d84aa249039",
                   "test/win32/skip-visibility.ps1":  "8e38cf9572e9d999a0bd9286eebbcfb343a878af5af8fce816038f5e57938167",

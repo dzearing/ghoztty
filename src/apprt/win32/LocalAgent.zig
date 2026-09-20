@@ -537,6 +537,22 @@ pub fn runningVersion(self: *LocalAgent) ?[]const u8 {
     return null;
 }
 
+/// Whether the RUNNING local agent reconciles `sharing.json` onto its relay
+/// uplink (T546), or null when there is no warm connection to judge.
+///
+/// Three-valued on purpose. `true` and `false` are both facts about a specific
+/// running agent; `null` is "no agent has told us anything", which is the state
+/// on a box with persistence off or an agent that has not come up yet — and a
+/// warning drawn from an absent answer would be a guess in front of the user.
+///
+/// Warm rather than LIVE (T1589): this READS a property the handshake already
+/// settled, so a wedged link that would not carry a request still knows which
+/// build it shook hands with.
+pub fn reconcilesSharing(self: *LocalAgent) ?bool {
+    const conn = self.sharedConnectionIfWarm() orelse return null;
+    return conn.peerReconcilesSharing();
+}
+
 /// Whether a shared connection exists right now (i.e. persistence has actually
 /// engaged and there is an agent whose build we can judge).
 pub fn hasSharedConnection(self: *const LocalAgent) bool {

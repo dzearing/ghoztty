@@ -537,6 +537,11 @@ pub const Server = struct {
         // the client stops recording a resume point past our stream head by
         // the size of our own repaint (T739).
         protocol.capability.repaint_data,
+        // This build WATCHES `sharing.json` and raises or parks the relay
+        // uplink to match (T546), so the machine-chooser's share toggle can
+        // trust that flipping the file is enough. An agent without this string
+        // never reads the file, and the chooser says so (T889).
+        protocol.capability.sharing_reconcile,
     };
 
     pub const Options = struct {

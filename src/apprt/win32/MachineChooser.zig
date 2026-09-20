@@ -1596,7 +1596,7 @@ fn onShareToggled(self: *MachineChooser) void {
     switch (ShareMachineRow.enableAsync(self.window.app, self.relay_base, path)) {
         .enabled => {
             self.share_enabled = true;
-            self.setHint(ShareMachineRow.enabled_hint);
+            self.setHint(ShareMachineRow.enabledHint(self.shareReconciler()));
         },
         .enrolling => self.setHint(ShareMachineRow.pending_hint),
         .busy => {},
@@ -1614,7 +1614,22 @@ pub fn onShareResult(self: *MachineChooser, res: *const ShareMachineRow.Result) 
         self.share_enabled = ShareMachineRow.isEnabled(arena, p);
     }
     self.refreshAccountRow();
-    if (res.message.len > 0) self.setHint(res.message);
+    // A SUCCESS is re-worded here rather than taken from the worker: whether the
+    // running agent will act on the flag is a GUI-thread question (it reads the
+    // shared connection), and the worker answered minutes ago on another thread.
+    if (res.ok) {
+        self.setHint(ShareMachineRow.enabledHint(self.shareReconciler()));
+    } else if (res.message.len > 0) {
+        self.setHint(res.message);
+    }
+}
+
+/// Whether the RUNNING local agent will act on the sharing flag this chooser
+/// just wrote (T889). The app and the agent have separate lifetimes on purpose,
+/// so the one serving this box is routinely an older build than the one shipped
+/// beside this app — and an older build than T546 never reads `sharing.json`.
+fn shareReconciler(self: *MachineChooser) ShareMachineRow.Reconciler {
+    return ShareMachineRow.reconciler(self.window.app.local_agent.reconcilesSharing());
 }
 
 /// Drop the current device list and fetch it again with the current token,

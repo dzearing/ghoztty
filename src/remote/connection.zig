@@ -1261,6 +1261,13 @@ pub const Connection = struct {
         // advertises the other half, the negotiated flag stays false, and the
         // caller keeps its pre-T907 policy.
         protocol.capability.agent_handoff,
+        // We judge the "Share this machine" toggle by whether the agent
+        // RECONCILES `sharing.json` (T546). Advertising it is what lets a modern
+        // agent say it does; an older one never advertises it, the negotiated
+        // flag stays false, and the chooser tells the user sharing starts after
+        // the agent's pending update instead of claiming the machine is served
+        // (T889).
+        protocol.capability.sharing_reconcile,
     };
 
     /// `create` with explicit health/heartbeat tunables (increment 2).
@@ -2849,6 +2856,19 @@ pub const Connection = struct {
     /// handoff that is never coming.
     pub fn peerHandsOffItself(self: *Connection) bool {
         if (self.negotiated) |n| return n.agent_handoff else |_| return false;
+    }
+
+    /// True iff the peer negotiated `capability.sharing_reconcile` — i.e. the
+    /// RUNNING agent watches `sharing.json` and raises or parks its relay uplink
+    /// to match (T546).
+    ///
+    /// False is the answer that matters: the app may have just written
+    /// `{"enabled":true}` to a file this agent will never read, because the
+    /// lazy-upgrade contract leaves an older build running until it can hand off.
+    /// The chooser turns that into a sentence rather than a checkbox that lies
+    /// (T889).
+    pub fn peerReconcilesSharing(self: *const Connection) bool {
+        if (self.negotiated) |n| return n.sharing_reconcile else |_| return false;
     }
 
     /// End a session on the agent BY SESSION ID (the session-scoped equivalent of

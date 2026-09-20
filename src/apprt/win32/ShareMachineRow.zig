@@ -264,6 +264,49 @@ pub const pending_hint =
 pub const save_failed_hint =
     "Couldn't save the sharing setting. Check that the agent's data folder is writable.";
 
+/// The same "sharing is on" news, for a machine whose background terminal
+/// process is an OLDER build than the one this app ships beside — one that
+/// predates the `sharing.json` reconciler (T546) and so will never act on the
+/// flag the toggle just wrote.
+///
+/// This is the ordinary state, not an error: the app and the agent have separate
+/// lifetimes by design, and a stale agent hands itself over to the newer build
+/// once its sessions allow it. What must not happen is the checkbox reading ON
+/// over a machine that is serving nothing, with no hint of why (T889).
+pub const enabled_pending_agent_hint =
+    "Sharing is on — this machine starts serving once its background terminal process finishes the update that's already waiting.";
+
+/// What the RUNNING agent can be known to do about `sharing.json`.
+pub const Reconciler = enum {
+    /// The connected agent advertised the reconciler: flipping the file is
+    /// enough, and sharing is live within seconds.
+    ready,
+    /// The connected agent predates the reconciler. Sharing is persisted and
+    /// will start when that agent is replaced by the build beside this app.
+    pending_update,
+    /// Nobody to ask — no warm agent connection (persistence off, or the agent
+    /// has not come up). Say nothing extra rather than guess.
+    unknown,
+};
+
+/// Classify what `LocalAgent.reconcilesSharing` answered. Null — no agent to
+/// judge — is `unknown`, never `pending_update`: a warning invented from a
+/// missing answer is worse than the plain sentence.
+pub fn reconciler(reconciles: ?bool) Reconciler {
+    const r = reconciles orelse return .unknown;
+    return if (r) .ready else .pending_update;
+}
+
+/// The footer sentence for a flip that has just persisted `enabled = true`.
+/// Only a KNOWN-old agent changes it: `unknown` reads exactly as `ready`, so a
+/// box with persistence off sees the sentence it always saw.
+pub fn enabledHint(state: Reconciler) []const u8 {
+    return switch (state) {
+        .pending_update => enabled_pending_agent_hint,
+        .ready, .unknown => enabled_hint,
+    };
+}
+
 /// A user-facing sentence for a failed enrollment. Mirrors the tone of
 /// `relay_signin.errorMessage`: what happened and what to do, no error codes.
 pub fn errorMessage(err: anyerror) []const u8 {
@@ -311,6 +354,30 @@ test "errorMessage: every enrollment failure has a plain sentence" {
     // Denied and expired both say how to recover: flip again.
     try testing.expect(std.mem.indexOf(u8, errorMessage(error.EnrollDenied), "again") != null);
     try testing.expect(std.mem.indexOf(u8, errorMessage(error.EnrollExpired), "again") != null);
+}
+
+test "reconciler: only a known-old agent is pending; no answer is not a warning" {
+    try testing.expectEqual(Reconciler.ready, reconciler(true));
+    try testing.expectEqual(Reconciler.pending_update, reconciler(false));
+    try testing.expectEqual(Reconciler.unknown, reconciler(null));
+}
+
+test "enabledHint: a stale agent is the only state that changes the sentence" {
+    try testing.expectEqualStrings(enabled_hint, enabledHint(.ready));
+    try testing.expectEqualStrings(enabled_hint, enabledHint(.unknown));
+    try testing.expectEqualStrings(enabled_pending_agent_hint, enabledHint(.pending_update));
+}
+
+test "enabled_pending_agent_hint: says sharing is on AND why nothing is served yet" {
+    // The user's intent is honored (the box stays checked), so the sentence must
+    // not read as a failure - and it must name the wait, or the checkbox lies.
+    try testing.expect(std.mem.indexOf(u8, enabled_pending_agent_hint, "Sharing is on") != null);
+    try testing.expect(std.mem.indexOf(u8, enabled_pending_agent_hint, "update") != null);
+    // No mechanism in front of the user: no task ids, no capability strings.
+    try testing.expect(std.mem.indexOf(u8, enabled_pending_agent_hint, "T546") == null);
+    try testing.expect(std.mem.indexOf(u8, enabled_pending_agent_hint, "sharing.json") == null);
+    // It is a DIFFERENT sentence, or the negative control could never fail.
+    try testing.expect(!std.mem.eql(u8, enabled_pending_agent_hint, enabled_hint));
 }
 
 test "hints: the toggle's sentences say what changed for the user" {

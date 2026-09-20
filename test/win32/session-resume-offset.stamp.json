@@ -1,13 +1,13 @@
 {
     "guard":  "resume-offset",
     "script":  "test/win32/session-resume-offset.ps1",
-    "generated":  "2026-09-17T21:08:29-07:00",
-    "commit":  "b7126204a",
+    "generated":  "2026-09-19T17:57:07-07:00",
+    "commit":  "71bcd41b2",
     "uncommitted":  [
                         "src/remote/connection.zig"
                     ],
     "files":  {
-                  "src/remote/connection.zig":  "ae7da9764239eba224fb23ee03222e3552ff3a517d47af0280de2ca78ed210af",
+                  "src/remote/connection.zig":  "c160044133ee678cba2807b1bb4897181a62cde4d98776092323182c2c09104e",
                   "src/termio/Remote.zig":  "392442e03d037e9703e8bef255662757d377eed97117f21408db8a76c8b7e82e",
                   "test/win32/session-resume-offset.ps1":  "846615b46537a08a777b2806b52e0b695a60d17958753d9e70597573a91fbc3d"
               }
