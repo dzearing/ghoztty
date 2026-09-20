@@ -1,12 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-20T11:42:55-07:00",
-    "commit":  "55cd54590",
+    "generated":  "2026-09-20T12:22:21-07:00",
+    "commit":  "ef8bb88a1",
     "uncommitted":  [
-                        "src/apprt/win32/App.zig",
-                        "src/apprt/win32/session_layout.zig",
-                        "test/win32/restore-session-dup.ps1"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -719,7 +717,7 @@
                   "test/win32/reset-window-size.ps1":  "163ab9bfcf216a224adcd886da9787dc33e5d1d3ed078a541028e3116918526c",
                   "test/win32/resize-flicker.ps1":  "1d26095577e205443d15d2ba97385f887cf09c6b28a016cd520d9056ad8f2772",
                   "test/win32/restore-late-agent.ps1":  "3829f0995438fd0aec0866dd1f76cd34cb4cd5127bab8ae39ac4657d52e50630",
-                  "test/win32/restore-session-dup.ps1":  "1ecee6ca7061f276b8f84742c9c0fb8842a3d401a6c83dfad2e2956d8d3e9b35",
+                  "test/win32/restore-session-dup.ps1":  "3a98531e97ed32fef1cb9aca6439576ca54cc1221b6c3a5564e431b0fb612e28",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
                   "test/win32/seam-audit.ps1":  "b6df80f87a37af263b728e4ae4c0dcfcdeb93f9a87bd48df2340244cac110dad",
                   "test/win32/seam-audit.registry.json":  "a9b142ca75ab9a5c2ab36b5d6a312ee66490800e2139c5a73815c3a1786bfb98",
