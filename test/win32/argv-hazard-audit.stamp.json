@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-20T10:20:57-07:00",
-    "commit":  "ca298f035",
+    "generated":  "2026-09-20T11:35:23-07:00",
+    "commit":  "55cd54590",
     "uncommitted":  [
-                        "test/win32/terminal-link-paths.ps1"
+                        "scripts/guard-due.ps1",
+                        "test/win32/restore-session-dup.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -32,7 +33,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "61a2f343692d94d93033fc3b0af51a80b7c08a543a85c1b2e38b62edc1f3ad3e",
-                  "scripts/guard-due.ps1":  "d520286c7008345b00f3caec241f4a1d0b62e6421043e7d38b5f958fc4ac2895",
+                  "scripts/guard-due.ps1":  "f535ae3e1f82fc0135a9f3e60c58acea4b6f0360797226cd3b4a1b0f52ea29f1",
                   "scripts/harness-floor.ps1":  "cc4dd72fb07ebc34de67ce688e0eab7f091a7228e4baeba4f9f50d01212a0f0e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -365,6 +366,7 @@
                   "test/win32/reset-window-size.ps1":  "163ab9bfcf216a224adcd886da9787dc33e5d1d3ed078a541028e3116918526c",
                   "test/win32/resize-flicker.ps1":  "1d26095577e205443d15d2ba97385f887cf09c6b28a016cd520d9056ad8f2772",
                   "test/win32/restore-late-agent.ps1":  "3829f0995438fd0aec0866dd1f76cd34cb4cd5127bab8ae39ac4657d52e50630",
+                  "test/win32/restore-session-dup.ps1":  "1ecee6ca7061f276b8f84742c9c0fb8842a3d401a6c83dfad2e2956d8d3e9b35",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
                   "test/win32/seam-audit.ps1":  "b6df80f87a37af263b728e4ae4c0dcfcdeb93f9a87bd48df2340244cac110dad",
                   "test/win32/send-keys-bracketed.ps1":  "3f04c907b40d40409069ee8fe9369820cd96c2c6644567ddfd70d8fdb41bec10",
