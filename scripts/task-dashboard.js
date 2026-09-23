@@ -37,7 +37,7 @@
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
-const { execFileSync } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 
 const REPO = path.resolve(__dirname, '..');
 const REL_TASK_DIR = 'docs/design/windows-parity-tasks';
@@ -858,6 +858,99 @@ function paneHoldsClaude(j) {
 }
 
 /**
+ * Does the box sign itself back in after a reboot, and what have reboots cost?
+ * (T931.)
+ *
+ * T829 measures every reboot's boot-to-desktop gap and shouts once, at claim
+ * time, when nobody could sign in - a single line a watcher who was away never
+ * sees. This is the second place to read it: the total downtime reboots have
+ * cost the loop, and a standing alarm while the box does NOT sign itself in,
+ * which is a one-time Windows setting only the owner can flip.
+ *
+ * Asked of `go-loop-boot.ps1 check -Json` rather than re-derived from the
+ * ledger, for the reason `paneHoldsClaude` asks go-loop-lock.ps1: the
+ * same-boot rule (drift tolerance) and the link verdict live there, and a
+ * second implementation here would disagree with the claim-time block the
+ * first time either changed. The probe costs a PowerShell start plus two CIM
+ * queries, so it runs in the BACKGROUND on a slow TTL and the page is served
+ * the last answer - a reboot is not a five-second event.
+ *
+ * GHOZTTY_BOOT_JSON names a file holding a check -Json answer, for the
+ * selftest and harnesses; it replaces the probe entirely.
+ */
+const BOOT_TTL = 10 * 60 * 1000;
+let bootCache = { at: 0, state: null, pending: false };
+
+function shapeBoot(j) {
+  if (!j || typeof j !== 'object' || !j.verdict) return null;
+  const row = (r) => (r ? { boot: r.boot || null, signInMin: r.signInMin == null ? null : Number(r.signInMin) } : null);
+  const needs = Array.isArray(j.needs_human) ? j.needs_human : (j.needs_human ? [j.needs_human] : []);
+  const broken = Array.isArray(j.broken) ? j.broken : (j.broken ? [j.broken] : []);
+  return {
+    verdict: j.verdict,
+    link1: j.link1 || 'unknown',
+    // The alarm: the box does not sign itself in, so a reboot nobody attends
+    // stops the loop until somebody arrives. `unknown` is NOT an alarm - a
+    // box that has never recorded a boot has not shown it waits for anyone.
+    signInOff: j.link1 === 'waited-for-human',
+    needsHuman: needs,
+    broken,
+    boots: Number(j.boots_recorded) || 0,
+    outages: Number(j.outages) || 0,
+    lostMinutes: Number(j.lost_minutes) || 0,
+    lastOutage: row(j.last_outage),
+    lastBoot: row(j.last_boot),
+    fix: Array.isArray(j.sign_in_fix) ? j.sign_in_fix : [],
+  };
+}
+
+function parseBootOut(out) {
+  try { return shapeBoot(JSON.parse(String(out || '').replace(/^﻿/, ''))); } catch { return null; }
+}
+
+const BOOT_ARGS = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+  path.join(REPO, 'scripts', 'go-loop-boot.ps1'), 'check', '-Json'];
+
+function bootFixture() {
+  const f = process.env.GHOZTTY_BOOT_JSON;
+  if (!f) return undefined;
+  try { return parseBootOut(fs.readFileSync(f, 'utf8')); } catch { return null; }
+}
+
+/** The page's read: the cached answer, refreshed behind the request. */
+function bootState() {
+  const fx = bootFixture();
+  if (fx !== undefined) return fx;
+  if (!bootCache.pending && Date.now() - bootCache.at > BOOT_TTL) {
+    bootCache.pending = true;
+    // check exits 1 (needs a human) and 2 (broken) by design, and still prints
+    // its JSON - so the answer is read off stdout whatever the exit code says.
+    execFile('powershell', BOOT_ARGS, { cwd: REPO, encoding: 'utf8', timeout: 60000, windowsHide: true },
+      (_err, stdout) => {
+        const s = parseBootOut(stdout);
+        // An unreadable probe keeps the previous answer rather than blanking a
+        // standing alarm; a first probe that fails leaves it absent.
+        if (s) bootCache.state = s;
+        bootCache.at = Date.now();
+        bootCache.pending = false;
+      });
+  }
+  return bootCache.state;
+}
+
+/** The one-shot CLI modes (--once, --loop) have no later poll to wait for. */
+function bootStateSync() {
+  const fx = bootFixture();
+  if (fx !== undefined) return fx;
+  try {
+    return parseBootOut(execFileSync('powershell', BOOT_ARGS,
+      { cwd: REPO, encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] }));
+  } catch (e) {
+    return parseBootOut(e && e.stdout);
+  }
+}
+
+/**
  * Is the loop's supervisor itself alive? (T440.)
  *
  * The watchdog died at 09:14 on 2026-08-03 and nothing noticed for thirteen
@@ -1085,6 +1178,7 @@ function freshenPayload(p) {
   p.generatedAt = now;
   p.loop = loopState();
   p.watchdog = watchdogState();
+  p.boot = bootState();
   if (p.series.length) p.series[p.series.length - 1].ts = now;
   for (const t of p.tasks) {
     if (t.touchedAt == null) continue;
@@ -1213,6 +1307,7 @@ function buildPayload() {
     taskDir: REL_TASK_DIR,
     loop,
     watchdog,
+    boot: bootState(),
     decisions,
     openDecisions: decisions.filter((d) => d.status !== 'resolved').length,
     activity,
@@ -1529,6 +1624,24 @@ function selfTest() {
     w = watchdogState(write({ watchdog_pid: process.pid, tick_at: iso(30e3), poll_seconds: 300, last_tick: 'nudge' }));
     check('W7 the last tick action is reported', w.lastTick === 'nudge');
 
+    // Boot revival (T931): how this page reads go-loop-boot.ps1 check -Json.
+    const bootJson = (o) => JSON.stringify(Object.assign({
+      verdict: 'ok', link1: 'unattended', boots_recorded: 7, outages: 5, lost_minutes: 2906.3,
+      last_outage: { boot: '2026-09-19T01:39:18', signInMin: 260.8 }, last_boot: { boot: '2026-09-21T21:06:00', signInMin: 0.5 },
+      broken: [], needs_human: [], sign_in_fix: ['fix: Settings > Accounts > Sign-in options'],
+    }, o));
+    let b = parseBootOut('﻿' + bootJson({}));
+    check('B1 a healthy box reads quietly, with its downtime total', b && b.signInOff === false && b.lostMinutes === 2906.3 && b.outages === 5);
+    check('B2 the last outage is carried for the page to date', b && b.lastOutage.boot === '2026-09-19T01:39:18' && b.lastOutage.signInMin === 260.8);
+    b = parseBootOut(bootJson({ verdict: 'needs-human', link1: 'waited-for-human', needs_human: ['the box does not sign in by itself'] }));
+    check('B3 a box that waited for a human raises the standing alarm', b && b.signInOff === true && b.needsHuman.length === 1 && b.fix.length === 1);
+    // ConvertTo-Json collapses a one-element array to a scalar on PS 5.1.
+    b = parseBootOut(bootJson({ verdict: 'broken', broken: 'the revive task is disabled' }));
+    check('B4 a scalar broken list still reads as a list', b && b.broken.length === 1 && b.signInOff === false);
+    b = parseBootOut(bootJson({ link1: 'unknown', verdict: 'needs-human', boots_recorded: 0, outages: 0, lost_minutes: 0, last_outage: null, last_boot: null }));
+    check('B5 a box with no recorded boot is not an alarm', b && b.signInOff === false && b.lastOutage === null);
+    check('B6 an unreadable probe is absent, not a healthy box', parseBootOut('not json') === null && parseBootOut('') === null);
+
     // Progress-log parsing (go.md journaling): the resume path and the
     // in-flight card both read these, so the shapes the tooling writes —
     // and the hand-written degradations — must all parse.
@@ -1551,7 +1664,9 @@ function main() {
   const argv = process.argv.slice(2);
   if (argv.includes('--selftest')) return selfTest();
   if (argv.includes('--once')) {
-    process.stdout.write(JSON.stringify(buildPayload(), null, 2) + '\n');
+    const p = buildPayload();
+    p.boot = bootStateSync();
+    process.stdout.write(JSON.stringify(p, null, 2) + '\n');
     return;
   }
   // Just the loop half of the payload, which `--once` takes half a minute to
@@ -1559,7 +1674,7 @@ function main() {
   // bar's freshness rule is the part worth asserting three ways, and a harness
   // that pays 30s per assertion gets run once and then stops being run.
   if (argv.includes('--loop')) {
-    process.stdout.write(JSON.stringify({ loop: loopState(), watchdog: watchdogState() }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ loop: loopState(), watchdog: watchdogState(), boot: bootStateSync() }, null, 2) + '\n');
     return;
   }
   const pi = argv.indexOf('--port');

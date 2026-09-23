@@ -1,15 +1,15 @@
 {
     "guard":  "task-dashboard",
     "script":  "test/win32/task-dashboard.ps1",
-    "generated":  "2026-09-19T07:56:42-07:00",
-    "commit":  "5742a3d10",
+    "generated":  "2026-09-23T13:52:18-07:00",
+    "commit":  "8e29dbe13",
     "uncommitted":  [
                         "scripts/task-dashboard.js",
-                        "test/win32/task-dashboard.ps1"
+                        "scripts/task-dashboard.page.html"
                     ],
     "files":  {
-                  "scripts/task-dashboard.js":  "0387ac420dd4bfdf3f45365b050cd107fac8eaf61fcb8e8f034e9f7f97402f0a",
-                  "scripts/task-dashboard.page.html":  "90d1b02df9831dd196fddbb81de2d8a34b234cb09a2ea55324e5b6ce7e200633",
+                  "scripts/task-dashboard.js":  "fe280586e5a656a5420d3f9f9be2b548d960b5a3441f8505c0e05f6e775d8d8b",
+                  "scripts/task-dashboard.page.html":  "4880d9623672f43a75798e9d6b39a5c7980509dcee9c4119213338994abd786b",
                   "test/win32/task-dashboard.ps1":  "c676c3f475745b47a7a661e6ee9d80631ae1951b6995d006d3e2dd52c95c2d0d"
               }
 }

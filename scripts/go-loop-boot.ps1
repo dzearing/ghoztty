@@ -96,6 +96,9 @@ param(
     # checkout, or the first run after this script shipped). Its sign-in gap is
     # still real; its claim lag is not a measurement of the loop, and is marked.
     [int]$FreshMinutes = 60,
+    # Two boot times closer than this are ONE boot whose LastBootUpTime drifted
+    # (T931). A real reboot takes longer than this to come round anyway.
+    [int]$BootToleranceMinutes = 10,
 
     # Test seams. The acceptance harness drives the classifier with known times
     # instead of rebooting the box.
@@ -133,9 +136,12 @@ $SignInFix = @(
 function Fmt-Span([double]$minutes) {
     if ([double]::IsNaN($minutes) -or [double]::IsInfinity($minutes)) { return 'unknown' }
     if ($minutes -lt 1) { return '{0:N0}s' -f ($minutes * 60) }
+    # Round ONCE, up front: rounding the remainder after flooring the hours is
+    # how 3d 6h 59.6m printed as "3d 6h 60m" (T931).
+    $minutes = [math]::Round($minutes)
     if ($minutes -lt 60) { return '{0:N0}m' -f $minutes }
     $h = [math]::Floor($minutes / 60)
-    $m = [math]::Round($minutes - ($h * 60))
+    $m = $minutes - ($h * 60)
     if ($h -lt 24) { return "${h}h ${m}m" }
     $d = [math]::Floor($h / 24)
     return "${d}d $($h - $d * 24)h ${m}m"
@@ -180,11 +186,40 @@ function Add-LedgerRow($row) {
     ($row | ConvertTo-Json -Depth 4 -Compress) | Add-Content -LiteralPath $LedgerPath -Encoding utf8
 }
 
-# One row per boot. The key is the boot timestamp to the second: two records for
-# one boot would double-count the downtime and re-print the loud block forever.
+# One row per boot: two records for one boot would double-count the downtime and
+# re-print the loud block. The key is the boot timestamp to the second, but the
+# key is NOT the identity (T931): LastBootUpTime is derived as now-minus-uptime,
+# so every clock correction slides it by a second or two, and the ledger
+# measured on this box held SEVEN rows for the 2026-09-09 reboot (01:45:38 ...
+# 01:45:53), each a fresh BOOT OUTAGE shout, inflating 15 days of real downtime
+# to 46. Same-boot is therefore "within -BootToleranceMinutes of a recorded
+# boot, or the same shell start" - two genuine boots cannot share either.
 function Get-BootKey($t) {
     if (-not $t) { return '' }
     return ([datetime]$t).ToString('yyyy-MM-ddTHH:mm:ss')
+}
+
+function Test-SameBoot($a, $b) {
+    if ($a.logon -and $b.logon -and [string]$a.logon -eq [string]$b.logon) { return $true }
+    try {
+        $gap = [math]::Abs(([datetime]$a.boot - [datetime]$b.boot).TotalMinutes)
+        return ($gap -le $BootToleranceMinutes)
+    } catch { return ([string]$a.boot -eq [string]$b.boot) }
+}
+
+# The ledger with drift duplicates collapsed onto the FIRST record of each boot
+# - the one written closest to the event, so its claim lag is the real one.
+# Readers use this, never the raw rows; the file itself is left as written.
+function Get-DistinctBoots {
+    $kept = New-Object System.Collections.ArrayList
+    foreach ($r in @(Read-Ledger)) {
+        $dup = $false
+        foreach ($k in $kept) { if (Test-SameBoot $k $r) { $dup = $true; break } }
+        if (-not $dup) { [void]$kept.Add($r) }
+    }
+    # No leading comma: callers wrap in @(), and `return ,` on an EMPTY array
+    # reads as one phantom row there.
+    return $kept.ToArray()
 }
 
 # --- the scheduled task ----------------------------------------------------
@@ -350,7 +385,11 @@ $unattended = ((-not [double]::IsNaN($signIn)) -and $signIn -le $UnattendedMinut
 if ($Action -eq 'record') {
     $key = Get-BootKey $boot
     if (-not $key) { if (-not $Quiet) { '  (boot record skipped: LastBootUpTime unavailable)' }; exit 0 }
-    $seen = @(Read-Ledger | Where-Object { $_.boot -eq $key })
+    $probe = [pscustomobject]@{
+        boot  = $key
+        logon = if ($logon) { ([datetime]$logon).ToString('yyyy-MM-ddTHH:mm:ss') } else { $null }
+    }
+    $seen = @(Read-Ledger | Where-Object { Test-SameBoot $_ $probe })
     if ($seen.Count -gt 0) { exit 0 }      # already recorded: silent by design
 
     $now = Get-Date
@@ -397,7 +436,7 @@ try {
     try { if ($m.WaitOne(0)) { $m.ReleaseMutex() } else { $dogRunning = $true } } finally { $m.Dispose() }
 } catch { }
 
-$ledger = @(Read-Ledger)
+$ledger = @(Get-DistinctBoots)
 $outages = @($ledger | Where-Object { $_.unattended -eq $false -and $null -ne $_.signInMin })
 $lostMin = 0.0
 foreach ($o in $outages) { $lostMin += [double]$o.signInMin }
@@ -453,8 +492,15 @@ if ($Json) {
         boots_recorded = $ledger.Count
         outages        = $outages.Count
         lost_minutes   = [math]::Round($lostMin, 1)
+        # T931: what the dashboard shows beside the totals, so it can say WHEN
+        # rather than only how much. Rows as recorded (boot/logon/signInMin).
+        last_boot      = if ($ledger.Count -gt 0) { $ledger[-1] } else { $null }
+        last_outage    = if ($outages.Count -gt 0) { $outages[-1] } else { $null }
         broken         = $broken
         needs_human    = $needsHuman
+        # The one-time human fix, verbatim, so a second reader never words it
+        # differently from the claim-time block.
+        sign_in_fix    = $SignInFix
     } | ConvertTo-Json -Depth 5
     exit $code
 }

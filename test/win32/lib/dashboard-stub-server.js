@@ -147,6 +147,25 @@ const BLOCKED_LOOP = Object.assign(
 );
 payload.loop = BLOCKED_LOOP;
 
+/* A box that does not sign itself back in after a reboot (T931), injected over
+   whatever go-loop-boot.ps1 said about THIS box - which is a real, varying
+   fact and not a state a test may depend on. Served with the block so the two
+   bars are also shown to STACK; cleared with it by /api/_unblock, to a box
+   that revives by itself, so the sign-in bar has to go away too. */
+const BOOT_SIGNIN_OFF = {
+  verdict: 'needs-human', link1: 'waited-for-human', signInOff: true,
+  needsHuman: ['the box does not sign in by itself after a restart'], broken: [],
+  boots: 7, outages: 5, lostMinutes: 2906.3,
+  lastOutage: { boot: '2026-09-19T01:39:18', signInMin: 260.8 },
+  lastBoot: { boot: '2026-09-19T01:39:18', signInMin: 260.8 },
+  fix: ['fix: Settings > Accounts > Sign-in options'],
+};
+const BOOT_REVIVES = Object.assign({}, BOOT_SIGNIN_OFF, {
+  verdict: 'ok', link1: 'unattended', signInOff: false, needsHuman: [],
+  boots: 8, lastBoot: { boot: '2026-09-21T21:06:00', signInMin: 0.5 },
+});
+payload.boot = BOOT_SIGNIN_OFF;
+
 /* The negative control for that bar, served rather than simulated: after
    GET /api/_unblock the SAME payload comes back with no `blocked` field, so
    the page's own fetch-and-render path is what has to make the bar go away.
@@ -154,7 +173,7 @@ payload.loop = BLOCKED_LOOP;
 let blockedNow = true;
 const dataJsonBlocked = JSON.stringify(payload);
 const dataJsonClear = JSON.stringify(
-  Object.assign({}, payload, { loop: Object.assign({}, BLOCKED_LOOP, { blocked: null }) })
+  Object.assign({}, payload, { loop: Object.assign({}, BLOCKED_LOOP, { blocked: null }), boot: BOOT_REVIVES })
 );
 
 /* --- the page ------------------------------------------------------------- */

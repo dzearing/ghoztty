@@ -311,8 +311,28 @@
           txt.indexOf('The loop is stopped') >= 0 && txt.indexOf('usage limit') >= 0, txt);
         check('C33 the bar quotes the message and says when it clears',
           txt.indexOf('monthly spend limit') >= 0 && txt.indexOf('2026-09-12 01:00') >= 0, txt);
+        // The bars share one sticky host since T931, which is itself a child of
+        // <body> - outside every view either way.
         check('C34 the bar is on every view, not just the one it was rendered under',
-          bar !== null && bar.parentNode === document.body);
+          bar !== null && !bar.closest('#view') && bar.parentNode.parentNode === document.body);
+
+        /* --- the sign-in bar (T931) -------------------------------------- */
+        var sb = document.querySelector('#bootbar.bootbar');
+        var stxt = sb ? (sb.textContent || '') : '';
+        check('C36 a box that does not sign itself in says so without anybody clicking', !!sb,
+          'no #bootbar.bootbar in the document');
+        check('C37 the sign-in bar names the Windows setting that fixes it',
+          stxt.indexOf('Sign-in options') >= 0 && stxt.indexOf('automatically finish setting up') >= 0, stxt);
+        check('C38 the sign-in bar dates the last outage and what reboots have cost',
+          stxt.indexOf('Sep 19') >= 0 && stxt.indexOf('4h 21m') >= 0 && stxt.indexOf('2d 0h') >= 0, stxt);
+        check('C39 the sign-in bar stacks under the block bar instead of covering it',
+          !!sb && !!bar && sb.parentNode === bar.parentNode && sb.getBoundingClientRect().top >= bar.getBoundingClientRect().bottom - 1);
+        var lc = Array.prototype.filter.call(document.querySelectorAll('#view .loop-task'), function (e) {
+          return (e.textContent || '').indexOf('Reboots:') === 0;
+        })[0];
+        check('C40 the loop card totals reboot downtime', !!lc &&
+          lc.textContent.indexOf('5 of 7 recorded reboots') >= 0 && lc.textContent.indexOf('2d 0h') >= 0,
+          lc ? lc.textContent : 'no Reboots: row in the loop card');
         /* The negative control: the same page, the same render path, a payload
            that is no longer blocked. A bar that cannot go away is worse than
            no bar at all. */
@@ -326,6 +346,13 @@
           .then(function (gone) {
             check('C35 the bar clears itself once the block lifts', !!gone,
               'the bar is still up over an unblocked loop');
+            return waitFor(function () {
+              return !document.querySelector('#bootbar.bootbar');
+            }, 'sign-in bar gone');
+          })
+          .then(function (gone) {
+            check('C41 the sign-in bar clears once a reboot signs in by itself', !!gone,
+              'the sign-in bar is still up over a box that revives unattended');
           });
       })
       .then(function () {

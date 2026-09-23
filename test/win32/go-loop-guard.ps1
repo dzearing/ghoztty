@@ -1395,6 +1395,32 @@ Assert 'V7 re-recording the same boot adds no row' ((Ledger-Rows).Count -eq $bef
 $r = Boot-Run @('record', '-BootTime', '2026-08-04T03:00:00', '-LogonTime', '2026-08-04T03:00:30')
 Assert 'V8 a different boot is a new row' ((Ledger-Rows).Count -eq ($before + 1))
 
+# T931: LastBootUpTime is now-minus-uptime, so clock corrections slide it by
+# seconds. The live ledger held SEVEN rows for one reboot, each a fresh BOOT
+# OUTAGE shout, and 15 real days of downtime read as 46. Same boot, drifted key:
+$before = (Ledger-Rows).Count
+$r = Boot-Run @('record', '-BootTime', '2026-08-02T03:00:04', '-LogonTime', '2026-08-03T04:09:00')
+Assert 'V8a a drifted boot time is the same boot: silent' ($r.Out -eq '')
+Assert 'V8b ...and adds no row' ((Ledger-Rows).Count -eq $before)
+# Same boot again, but explorer restarted since, so the shell start moved too -
+# the 2026-08-26 shape, which recorded an unattended boot as a six-day outage.
+$r = Boot-Run @('record', '-BootTime', '2026-08-02T03:00:07', '-LogonTime', '2026-08-05T10:00:00')
+Assert 'V8c a restarted shell on the same boot is not a new outage' ($r.Out -notmatch 'BOOT OUTAGE' -and (Ledger-Rows).Count -eq $before)
+# ...and the negative control: the SAME record with the tolerance switched off
+# is the old behaviour, a fresh shout. Also pins the span's rounding, which
+# printed this one as "3d 6h 60m".
+$negLedger = Join-Path $root 'boots-neg.jsonl'
+& powershell -NoProfile -ExecutionPolicy Bypass -File $bootScript record -Repo $Repo -LedgerPath $negLedger `
+    -BootTime '2026-08-02T03:00:00' -LogonTime '2026-08-03T04:09:00' *> $null
+$neg = (& powershell -NoProfile -ExecutionPolicy Bypass -File $bootScript record -Repo $Repo -LedgerPath $negLedger `
+    -BootTime '2026-08-02T03:00:04' -LogonTime '2026-08-05T10:00:00' -BootToleranceMinutes 0 2>&1 |
+    ForEach-Object { $_.ToString() } | Out-String)
+Assert 'V8d negative control: with no drift tolerance the same boot shouts again' ($neg -match 'BOOT OUTAGE')
+Assert 'V8e a span never prints 60 minutes' ($neg -match '3d 7h 0m' -and $neg -notmatch '60m')
+# A ledger that already HOLDS drift duplicates (every box that ran T829) must
+# total each boot once: append one by hand, as the old key would have.
+Add-Content -LiteralPath $bootLedger -Encoding utf8 -Value '{"boot":"2026-08-02T03:00:02","logon":"2026-08-03T04:09:00","signInMin":1509.0,"unattended":false}'
+
 # `check`'s link-1 verdict comes from the ledger, never from the registry - the
 # registry on this box reads "configured" (AutoLogonSID set to the user's own
 # SID) while the box demonstrably does not sign itself in.
@@ -1402,7 +1428,11 @@ $r = Boot-Run @('check', '-Json', '-TaskName', $fixtureTask)
 $j = $null
 try { $j = ($r.Out | ConvertFrom-Json) } catch { }
 Assert 'V9 check reads link 1 off the last recorded boot' ($null -ne $j -and $j.link1 -eq 'unattended')
-Assert 'V10 check totals the downtime it has measured' ($null -ne $j -and [math]::Round([double]$j.lost_minutes) -eq 1509)
+Assert 'V10 check totals the downtime it has measured, each boot once' ($null -ne $j -and [math]::Round([double]$j.lost_minutes) -eq 1509)
+Assert 'V10a a drift duplicate already in the ledger is not a boot' ($null -ne $j -and [int]$j.boots_recorded -eq 3 -and [int]$j.outages -eq 1)
+Assert 'V10b check names the last outage for the dashboard (T931)' `
+    ($null -ne $j -and $null -ne $j.last_outage -and [string]$j.last_outage.boot -eq '2026-08-02T03:00:00')
+Assert 'V10c check carries the sign-in fix wording verbatim' ($null -ne $j -and (@($j.sign_in_fix) -join ' ') -match 'Sign-in options')
 Assert 'V11 an unregistered revive task is BROKEN, not merely noted' `
     ($r.Code -eq 2 -and $null -ne $j -and @($j.broken).Count -gt 0)
 
