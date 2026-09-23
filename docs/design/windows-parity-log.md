@@ -33352,3 +33352,34 @@ Floor: four zig lanes green, harness floor green, `terminal-link-paths` ALL PASS
 at 35 assertions (was 23) and `-NegativeControl` still scores its single red.
 Filed T1685: the first run after the fill change died mid-walk with exit
 0xFFFFFFFF and no panic line, not reproduced by the two runs after it.
+
+## 2026-09-23 - T1686: the app can no longer disappear without leaving a reason
+
+The installed terminal vanished on 2026-09-20 with nothing in the Application
+event log. The cause was found from two logs that happened to line up to the
+second: Windows Update disabled `nvlddmkm` to replace the NVIDIA driver at
+10:29:49 local, and the app's last three log lines, at the same second, are the
+only "software processing fallback in framebuffer pipeline" warnings it has
+ever written. No dump exists, so the card records the cause as named from
+those logs rather than from a stack. Surviving a driver swap is T1690.
+
+What landed is the ledger the card asked for:
+`%LOCALAPPDATA%\ghoztty\exit-log[-debug].txt`, append-only, one line per event.
+Every launch writes `start`; every deliberate ending writes `exit reason=`
+(user-quit, startup-failed, forwarded, forward-failed, handoff-cancelled,
+session-end, restart-manager); an unhandled exception writes its code and
+address and is passed on untouched; and the case nothing inside a dying process
+can witness is written by the next launch as `unrecorded-exit`, never for a pid
+that is still alive. The format and the dangling-run audit are pure
+(`src/os/exit_ledger.zig`, `none` lane).
+
+A dead turn had left most of this uncommitted. Resuming it found two defects in
+it: a second launch that forwards to the running app ended without a record,
+so the next launch would have reported every second click as a vanished app;
+and the acceptance script's record reader returned `, $out`, which under `@()`
+is a one-element array of arrays - every count read 1 and every detail was all
+of that pid's details joined, so half its assertions passed without checking
+anything. Both fixed; case C now runs on its own pipe suffix, and a case D
+covers the forwarded launch. `test\win32\exit-reason.ps1` ALL PASS (25), with
+a new guard-due row. Filed T1690 (driver swap, P1), T1691 (the crash line has
+no test), T1692 (the macOS ledger, seat: mac).

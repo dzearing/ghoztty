@@ -1540,6 +1540,22 @@ $GuardTable = @(
             'test\win32\ipc-version.ps1'
         )
     },
+    # The app never just stops (T1686). The exit ledger is the only witness a
+    # vanished terminal leaves, and its failure modes are silent both ways: a
+    # missing `exit` record makes every clean quit look like a disappearance,
+    # and a bad liveness check makes every second window accuse the first.
+    # `App.zig`/`Window.zig` hold the recordExit call sites and are left out for
+    # the same permanently-due reason the startup-failure row gives.
+    [pscustomobject]@{
+        Name   = 'exit-reason'
+        Script = 'test\win32\exit-reason.ps1'
+        Stamp  = 'test\win32\exit-reason.stamp.json'
+        Covers = @(
+            'src\apprt\win32\exit_reason.zig',
+            'src\os\exit_ledger.zig',
+            'test\win32\exit-reason.ps1'
+        )
+    },
     # A startup failure is VISIBLE (T1177). The whole point of this code is a
     # dialog that appears when nothing else can, so an edit to any link in that
     # chain - the reporter, the dialog it builds on, the message text, or the

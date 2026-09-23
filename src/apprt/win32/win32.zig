@@ -1058,6 +1058,84 @@ pub extern "kernel32" fn CreateFileW(
     hTemplateFile: ?HANDLE,
 ) callconv(.winapi) HANDLE;
 
+// -----------------------------------------------------------------------
+// Append-only file writing and the crash filter (T1686)
+//
+// The exit ledger opens its file `FILE_APPEND_DATA` WITHOUT `FILE_WRITE_DATA`
+// - the same guarantee `main_ghostty.zig` relies on for the shared log sink:
+// with append-only access Windows ignores the file pointer and places each
+// write at the current end of file as one operation, so several Ghoztty
+// processes sharing one ledger interleave whole lines instead of clobbering
+// each other's bytes.
+// -----------------------------------------------------------------------
+
+pub const FILE_APPEND_DATA: u32 = 0x0000_0004;
+pub const SYNCHRONIZE: u32 = 0x0010_0000;
+pub const OPEN_ALWAYS: u32 = 4;
+pub const FILE_ATTRIBUTE_NORMAL: u32 = 0x0000_0080;
+
+pub extern "kernel32" fn WriteFile(
+    hFile: HANDLE,
+    lpBuffer: [*]const u8,
+    nNumberOfBytesToWrite: u32,
+    lpNumberOfBytesWritten: ?*u32,
+    lpOverlapped: ?*anyopaque,
+) callconv(.winapi) i32;
+
+pub const SYSTEMTIME = extern struct {
+    wYear: u16,
+    wMonth: u16,
+    wDayOfWeek: u16,
+    wDay: u16,
+    wHour: u16,
+    wMinute: u16,
+    wSecond: u16,
+    wMilliseconds: u16,
+};
+
+pub extern "kernel32" fn GetSystemTime(lpSystemTime: *SYSTEMTIME) callconv(.winapi) void;
+
+pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+pub const STILL_ACTIVE: u32 = 259;
+
+pub extern "kernel32" fn OpenProcess(
+    dwDesiredAccess: u32,
+    bInheritHandle: i32,
+    dwProcessId: u32,
+) callconv(.winapi) ?HANDLE;
+
+pub extern "kernel32" fn GetExitCodeProcess(
+    hProcess: HANDLE,
+    lpExitCode: *u32,
+) callconv(.winapi) i32;
+
+/// Returned by an unhandled-exception filter that wants the exception to keep
+/// travelling - to WER, to a debugger, to any LocalDumps rule. The ledger's
+/// filter always returns this: it makes a death legible, never survivable.
+pub const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
+
+pub const EXCEPTION_RECORD = extern struct {
+    ExceptionCode: u32,
+    ExceptionFlags: u32,
+    ExceptionRecord: ?*EXCEPTION_RECORD,
+    ExceptionAddress: ?*anyopaque,
+    NumberParameters: u32,
+    ExceptionInformation: [15]usize,
+};
+
+pub const EXCEPTION_POINTERS = extern struct {
+    ExceptionRecord: ?*EXCEPTION_RECORD,
+    ContextRecord: ?*anyopaque,
+};
+
+pub const TOP_LEVEL_EXCEPTION_FILTER = *const fn (
+    ?*EXCEPTION_POINTERS,
+) callconv(.winapi) i32;
+
+pub extern "kernel32" fn SetUnhandledExceptionFilter(
+    lpTopLevelExceptionFilter: ?TOP_LEVEL_EXCEPTION_FILTER,
+) callconv(.winapi) ?TOP_LEVEL_EXCEPTION_FILTER;
+
 pub extern "kernel32" fn ReadDirectoryChangesW(
     hDirectory: HANDLE,
     lpBuffer: *anyopaque,

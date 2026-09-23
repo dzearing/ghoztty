@@ -73,6 +73,7 @@ const utf16_text = @import("utf16_text.zig");
 const tray_notify = @import("tray_notify.zig");
 const msg_timer = @import("msg_timer.zig");
 const orphan_notify = @import("orphan_notify.zig");
+const exit_reason = @import("exit_reason.zig");
 const palette_order = @import("palette_order.zig");
 const session_layout = @import("session_layout.zig");
 const layout_refresh = @import("layout_refresh.zig");
@@ -687,6 +688,16 @@ pub fn init(
     // never interrupts native children in ANY pane of this instance (T84).
     _ = w32.SetConsoleCtrlHandler(null, 0);
 
+    // Open the exit ledger (T1686) before anything that can fault. From here
+    // on the process cannot end without leaving a reason: a deliberate quit
+    // closes the entry, an unhandled exception writes its code on the way
+    // out, and a death nothing inside the process can witness - killed from
+    // outside, or taken down with the display driver, which is what happened
+    // on 2026-09-20 - is named by the NEXT launch, which finds this entry
+    // still open. Failure here is silent on purpose: a diagnostic must never
+    // be the reason a terminal does not start.
+    exit_reason.install(core_app.alloc);
+
     // Load the configuration for this application.
     const alloc = core_app.alloc;
     var config = Config.load(alloc) catch |err| err: {
@@ -915,6 +926,7 @@ pub fn init(
             var id = launchIdentity(alloc);
             if (self.handoffChoice(alloc, &id) == .cancel) {
                 log.info("launch cancelled: a different build owns the endpoint", .{});
+                exit_reason.recordExit("handoff-cancelled");
                 std.process.exit(0);
             }
             const ok = internal_os.ipc_client.sendActionWithHandoff(
@@ -923,6 +935,10 @@ pub fn init(
                 fwd_args,
                 id,
             ) catch false;
+            // This launch opened a ledger entry in init and is about to end
+            // by design; closing it here is what keeps the next launch from
+            // reporting every forwarded second click as a vanished app (T1686).
+            exit_reason.recordExit(if (ok) "forwarded" else "forward-failed");
             std.process.exit(if (ok) 0 else 1);
         },
         error.OutOfMemory => return error.OutOfMemory,
@@ -1224,6 +1240,11 @@ fn startupFailSeam(self: *App, which: []const u8) bool {
 /// them. `main_ghostty` discovers it with `@hasDecl`, which is how the win32
 /// apprt gets a dialog while the apprts with a console keep stderr.
 pub fn reportStartupFailure(stage: []const u8, err: anyerror) void {
+    // A startup that ends in the dialog is still an ending, and the ledger
+    // records it as one (T1686) - otherwise the next launch would read this
+    // run's open entry and accuse it of having vanished, when in fact it
+    // said exactly what went wrong.
+    exit_reason.recordExit("startup-failed");
     startup_error.reportFatal(stage, err);
 }
 
@@ -1917,6 +1938,13 @@ pub fn run(self: *App) !void {
 }
 
 pub fn terminate(self: *App) void {
+    // Close this run's ledger entry FIRST (T1686). Teardown is long and
+    // touches every subsystem, so a reason recorded at the end of it is a
+    // reason that is missing exactly when teardown is what killed us; a
+    // quit that began is the fact worth keeping, and a crash partway
+    // through still writes its own line after this one.
+    exit_reason.recordExit("user-quit");
+
     self.stopQuitTimer();
 
     // Activity Monitor panels (T285) are independent top-level windows, so they

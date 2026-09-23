@@ -520,6 +520,13 @@ test {
     _ = @import("os/log_stamp.zig");
     _ = @import("os/log_rotate.zig");
 
+    // The exit ledger's line format and dangling-run audit (T1686): pure text
+    // handling, reached only through the win32 apprt, so pull it in explicitly
+    // to run its unit tests in the `none` lane on every platform. The rule it
+    // encodes — an app that ends for any reason but the user closing it leaves
+    // a reason behind — is not one that should depend on this box being free.
+    _ = @import("os/exit_ledger.zig");
+
     // Socket Reader/Writer with panic-free close-race error mappings (T81):
     // the ws transport teardown depends on these staying error-returning.
     _ = @import("remote/socket_rw.zig");

@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-20T12:15:27-07:00",
-    "commit":  "ef8bb88a1",
+    "generated":  "2026-09-23T05:29:54-07:00",
+    "commit":  "fe270b5f7",
     "uncommitted":  [
-
+                        "scripts/guard-due.ps1",
+                        "test/win32/exit-reason.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -31,8 +32,8 @@
                   "scripts/go-loop-health.ps1":  "7f08cc6046c56ee514c46a1f96b755634302a7aaeefa16640d92ae34be756a82",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
-                  "scripts/go-loop-watchdog.ps1":  "61a2f343692d94d93033fc3b0af51a80b7c08a543a85c1b2e38b62edc1f3ad3e",
-                  "scripts/guard-due.ps1":  "f535ae3e1f82fc0135a9f3e60c58acea4b6f0360797226cd3b4a1b0f52ea29f1",
+                  "scripts/go-loop-watchdog.ps1":  "38a6ad04360aaaeeff804386edaf8e82f5654fd927621bbaad90aca91cb345d1",
+                  "scripts/guard-due.ps1":  "041f79af911890a8dbf71b1d68579dd0a948b908e9e2ba64f99d30d10b40197b",
                   "scripts/harness-floor.ps1":  "cc4dd72fb07ebc34de67ce688e0eab7f091a7228e4baeba4f9f50d01212a0f0e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -170,6 +171,7 @@
                   "test/win32/divergence-inventory.ps1":  "829edd00d4ed65595adf6d9a837414af1f212b18f4cbfff9f4ce4568e43b7c09",
                   "test/win32/docs-routing.ps1":  "0df33f259fc8eb88f4eb186c8f0fb216bfe5e929d3e8e85e59a9b3cbd4b6d821",
                   "test/win32/drag-perf.ps1":  "c9a8403c5c39980a8851c4f24ecc57613d1a50a29a2f748c80733ab19355a43f",
+                  "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff",
                   "test/win32/fail-transcript.ps1":  "b64b16fd5433ae33842afa550ab62b9b8b845c755553bb4842af24132c3ae604",
                   "test/win32/false-positive-report.ps1":  "3e4c34e6b40b6b99969d38afbd1c055899802cfa119529c06f84c6ad24a4e981",
                   "test/win32/feedback-user-report.ps1":  "cfda91deffac1fe7971ef8c37c1cb1d4d275ee34ea7c83c87460d740508917fd",

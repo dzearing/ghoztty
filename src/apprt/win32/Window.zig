@@ -31,6 +31,7 @@ const terminal = @import("../../terminal/main.zig");
 const tcp_dial = @import("../../remote/tcp_dial.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
 const restart_manager = @import("restart_manager.zig");
+const exit_reason = @import("exit_reason.zig");
 const remote_connection = @import("../../remote/connection.zig");
 const RemoteReconnect = @import("RemoteReconnect.zig");
 
@@ -10345,6 +10346,10 @@ pub fn windowWndProc(
             // current (T412) — this is what a post-reboot restore paints.
             window.app.syncSessionLayout(.fresh);
 
+            // T1686: a logoff or shutdown ends this process from outside once
+            // we return, so this is the last moment it can say why.
+            exit_reason.recordExit("session-end");
+
             // T1204: when this is the RESTART MANAGER closing us for an
             // installer, somebody is WAITING on this process to end — and an
             // app that says "yes I can close" and then keeps running is worse
@@ -10355,6 +10360,7 @@ pub fn windowWndProc(
             // shutdown, so this is deliberately narrowed to the RM case.
             if (restart_manager.isCloseAppRequest(@bitCast(lparam))) {
                 log.info("restart manager asked us to close for an update; exiting", .{});
+                exit_reason.recordExit("restart-manager");
                 std.process.exit(0);
             }
             return 0;
