@@ -83,6 +83,7 @@ const restore_frame = @import("restore_frame.zig");
 const window_placement = @import("window_placement.zig");
 const agent_recovery = @import("agent_recovery.zig");
 const restore_retry = @import("restore_retry.zig");
+const resolve_defer = @import("resolve_defer.zig");
 const RemoteReconnect = @import("RemoteReconnect.zig");
 const agent_upgrade = @import("agent_upgrade.zig");
 const release_notes_bundle = @import("release_notes_bundle.zig");
@@ -1368,13 +1369,62 @@ pub fn pumpIpc(self: *App) void {
     ipc_pumping = true;
     defer ipc_pumping = false;
 
+    // T1688: a request that would resolve the local agent is not served from
+    // inside the resolve that is already doing it — it would get "none" and
+    // open a window that is never persisted. Hold those back and put them on
+    // the queue again AFTER the drain (re-posting inside the loop would hand
+    // them straight back to it), so the main loop serves them once the resolve
+    // returns. Bounded: past eight held at once the rest are served as before,
+    // which is the old race and never a stuck caller.
+    var deferred: [8]*IpcServer.Pending = undefined;
+    var n_deferred: usize = 0;
+    const resolving = self.local_agent.resolving;
+    const persistence = self.config.@"session-persistence" and !resolveDeferDisabled();
+
     var msg: w32.MSG = undefined;
     while (w32.PeekMessageW(&msg, hwnd, WM_APP_IPC, WM_APP_IPC, w32.PM_REMOVE) != 0) {
         if (msg.wParam != 0) {
             const pending: *IpcServer.Pending = @ptrFromInt(msg.wParam);
+            if (n_deferred < deferred.len and
+                resolve_defer.shouldDefer(pending.request_json, resolving, persistence))
+            {
+                deferred[n_deferred] = pending;
+                n_deferred += 1;
+                continue;
+            }
             IpcServer.serveOnGuiThread(pending);
         }
     }
+
+    for (deferred[0..n_deferred]) |pending| {
+        log.info("IPC: new-window held until the local-agent resolve finishes", .{});
+        if (w32.PostMessageW(hwnd, WM_APP_IPC, @intFromPtr(pending), 0) == 0) {
+            // The queue refused it: serving it now, without persistence, beats
+            // leaving its listener thread waiting forever.
+            IpcServer.serveOnGuiThread(pending);
+        }
+    }
+}
+
+/// Test hook (DEBUG BUILDS ONLY): `GHOZTTY_IPC_NO_RESOLVE_DEFER=1` turns the
+/// T1688 hold off, so `test\win32\resolve-window-persist.ps1 -NegativeControl`
+/// can show the pre-fix race scoring red. Read once per process; never honored
+/// in a release build.
+fn resolveDeferDisabled() bool {
+    if (!build_config.is_debug) return false;
+    const S = struct {
+        var cached: ?bool = null;
+    };
+    if (S.cached) |c| return c;
+    var buf: [16]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const on = if (std.process.getEnvVarOwned(fba.allocator(), "GHOZTTY_IPC_NO_RESOLVE_DEFER")) |v|
+        std.mem.eql(u8, v, "1")
+    else |_|
+        false;
+    if (on) log.warn("T1688 resolve hold DISABLED (debug test hook)", .{});
+    S.cached = on;
+    return on;
 }
 
 /// T487: the `+new-window` argv a second launch forwards to the running

@@ -592,6 +592,11 @@ test {
     // enum, which builds in every lane.
     _ = @import("apprt/win32/agent_recovery.zig");
 
+    // Pure win32 rule for which IPC requests wait out an in-flight local-agent
+    // resolve instead of opening a window without persistence (T1688). Pure
+    // std, same no-OS-imports deal.
+    _ = @import("apprt/win32/resolve_defer.zig");
+
     // Pure win32 non-destructive agent-upgrade policy: is the running agent
     // older than the one we ship, and may it be restarted now or only after a
     // confirmation (T147). Pure std, same no-OS-imports deal.

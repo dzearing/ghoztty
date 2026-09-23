@@ -1,0 +1,16 @@
+{
+    "guard":  "resolve-window-persist",
+    "script":  "test/win32/resolve-window-persist.ps1",
+    "generated":  "2026-09-23T06:14:04-07:00",
+    "commit":  "682f0da17",
+    "uncommitted":  [
+                        "src/apprt/win32/LocalAgent.zig",
+                        "src/apprt/win32/resolve_defer.zig",
+                        "test/win32/resolve-window-persist.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/LocalAgent.zig":  "33f032263c54ff6a97fd0de53c6c5b2e14f0606760715a913b55bad19ce1b3d9",
+                  "src/apprt/win32/resolve_defer.zig":  "267a538d490ece3f25763b40bb3b88b1ea1b9f7e0d026bdb126f510d06f07f80",
+                  "test/win32/resolve-window-persist.ps1":  "663ce9c17c752a2167abec0969e769082d517106f14c1e712c597b6ecc172179"
+              }
+}

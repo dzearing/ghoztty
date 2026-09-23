@@ -166,6 +166,11 @@
             "unset": "shipped-elsewhere",
             "note": "Holder-backed is the default since T909; the seam is the OFF switch, so unset is what every other session takes."
         },
+        "GHOZTTY_AGENT_RESOLVE_DELAY_MS": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "T1688. Stretches the local-agent resolve so a +new-window lands inside it on purpose; unset = the real (short) resolve, which section B of resolve-window-persist.ps1 and every other launch run."
+        },
         "GHOZTTY_AGENT_SNAPSHOT_VOLUME_BYTES": {
             "class": "tuning",
             "unset": "shipped-elsewhere",
@@ -247,6 +252,11 @@
             "class": "isolation",
             "unset": "shipped-elsewhere",
             "note": "unset = the installer's real unlock arguments."
+        },
+        "GHOZTTY_IPC_NO_RESOLVE_DEFER": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T1688. The OFF switch for holding +new-window across a local-agent resolve, set only by resolve-window-persist.ps1 -NegativeControl; unset = the fix on, which every other run takes."
         },
         "GHOZTTY_IPC_SOCKET": {
             "class": "isolation",

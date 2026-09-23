@@ -33383,3 +33383,22 @@ anything. Both fixed; case C now runs on its own pipe suffix, and a case D
 covers the forwarded launch. `test\win32\exit-reason.ps1` ALL PASS (25), with
 a new guard-due row. Filed T1690 (driver swap, P1), T1691 (the crash line has
 no test), T1692 (the macOS ledger, seat: mac).
+
+## 2026-09-23 - T1688: a window asked for during startup is persisted like every other
+
+A `+new-window` that arrived while the app was still finding its session
+manager was served from inside that search (the T188 pump keeps IPC answering
+while it waits), was told "no manager yet", and opened as a plain local shell:
+normal-looking, `session_id: null` forever, gone at the next restart. It hit
+about two runs in five. The nested pump now holds a `+new-window` until the
+search returns and serves it then, with the connection warm; every other verb
+is still answered mid-search. The rule is pure and unit-tested
+(`resolve_defer.zig`, both lanes).
+
+New harness `test/win32/resolve-window-persist.ps1` (guard row added): section
+A holds the resolve open 2.5s with a debug hook so the request lands inside it
+every time (answered in 2926ms, both panes persisted); section B runs three
+natural cold launches (all persisted). `-NegativeControl` turns the hold off
+and reproduces the defect exactly (`rdA=<none>`, exit 1). Filed T1693 (a
+resolve that FAILS still opens windows silently unpersisted for the 15s
+cooldown, P2) and T1694 (check the Mac path for the same race, seat: mac).

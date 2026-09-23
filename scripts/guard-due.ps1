@@ -811,6 +811,21 @@ $GuardTable = @(
             'src\apprt\win32\session_layout.zig'
         )
     },
+    # A window asked for WHILE the local agent is still being resolved (T1688):
+    # the nested IPC pump holds `+new-window` until the resolve returns, and
+    # this is the only harness that drives a request into that gap - on
+    # purpose, by holding the resolve open. A change to the pump or to the
+    # resolve could quietly reopen the race, which reproduced two runs in five.
+    [pscustomobject]@{
+        Name   = 'resolve-window-persist'
+        Script = 'test\win32\resolve-window-persist.ps1'
+        Stamp  = 'test\win32\resolve-window-persist.stamp.json'
+        Covers = @(
+            'test\win32\resolve-window-persist.ps1',
+            'src\apprt\win32\resolve_defer.zig',
+            'src\apprt\win32\LocalAgent.zig'
+        )
+    },
     # Holder RE-ADOPTION (T906): the only harness that measures the number that
     # separates adoption from the relaunch path agent-recovery.ps1 covers - the
     # SHELL PID is unchanged across a manager kill. It also owns the orphan

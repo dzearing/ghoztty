@@ -1008,6 +1008,8 @@ fn writeAutostart(self: *LocalAgent, arena: Allocator) !void {
 /// Find an existing agent (dial its recorded pipe) or spawn one and poll until
 /// it dials, within `spawn_deadline_ms`. Returns the dialed connection or null.
 fn findOrSpawn(self: *LocalAgent) ?tcp_dial.Dialed {
+    if (build_config.is_debug) testResolveDelay();
+
     // 1. Find: dial the agent recorded in port.json, if any. The dial itself is
     //    bounded by `probe_handshake_ns`, and a WEDGED agent spends all of it —
     //    so pump either side of it (T188) AND through it (T630,
@@ -1060,6 +1062,33 @@ fn findOrSpawn(self: *LocalAgent) ?tcp_dial.Dialed {
     log.warn("local agent did not become dialable within {d}ms", .{spawn_deadline_ms});
     self.resolve_failure = .unresponsive;
     return null;
+}
+
+/// Test hook (DEBUG BUILDS ONLY, like `GHOZTTY_AGENT_BUNDLED_VERSION`):
+/// `GHOZTTY_AGENT_RESOLVE_DELAY_MS=<n>` holds every resolve open for `n` ms
+/// before it dials, pumping IPC throughout exactly as the real spawn poll does.
+///
+/// It exists for T1688, whose defect lives in the gap between "a resolve is in
+/// flight" and "it has finished": a cold spawn opens that gap for a few hundred
+/// milliseconds, which is why the acceptance script that found it hit it two
+/// runs in five. Stretching the gap makes the race a certainty instead of a
+/// roll, in both directions — the fix is seen holding a request across the
+/// whole of it, and the negative control is seen losing the window every time.
+/// The wait is the real one (pumped, on the GUI thread); only its length is
+/// fabricated.
+fn testResolveDelay() void {
+    var buf: [32]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const v = std.process.getEnvVarOwned(fba.allocator(), "GHOZTTY_AGENT_RESOLVE_DELAY_MS") catch return;
+    const ms = std.fmt.parseInt(i64, std.mem.trim(u8, v, " "), 10) catch return;
+    if (ms <= 0) return;
+    log.warn("local-agent resolve held open {d}ms (debug test hook)", .{ms});
+    const deadline = std.time.milliTimestamp() + ms;
+    while (std.time.milliTimestamp() < deadline) {
+        gui_pump.pump();
+        std.Thread.sleep(poll_interval_ms * std.time.ns_per_ms);
+    }
+    gui_pump.pump();
 }
 
 /// Dial the agent recorded in the info file, if it looks alive. A stale record
