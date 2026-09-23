@@ -33423,3 +33423,5 @@ reset is T1695 (it waits for a release carrying this); the Mac Metal equivalent
 is T1696 (seat: mac).
 
 - 2026-09-23 T919 done (d4d25c004): test panics lost their stack trace because LLD puts PDB stream data in unneeded FPM-slot blocks that std.debug.Pdb rejects (InvalidBlockIndex; ~1 in 5 test builds). New host tool pdb-msf-fix relocates them and keeps the FPM exact (cdb refuses an inexact map - found by experiment) before every Windows test run. Verified zig trace + cdb symbols; floor green.
+
+- 2026-09-23 T921 done: scripts\guard-due.ps1 now has a `guard-due` row covering itself and its harness, and test\win32\guard-due.ps1 stamps it on a clean green run (N1-N3 pin both). Editing the gate re-arms its test now: an edit read `GUARD DUE guard-due` (exit 1). Three arms (A2, C6, C10) had been red and unseen since the argv-hazard and unroll-count audits started globbing scripts\*.ps1; they are now scoped to one row. guard-due ALL PASS 103; harness floor PASS.

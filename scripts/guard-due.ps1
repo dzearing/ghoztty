@@ -3898,6 +3898,20 @@ $GuardTable = @(
             'test\win32\lib\TestScore.ps1',
             'scripts\guard-due.ps1'
         )
+    },
+    # The gate's own acceptance (T921). body-complete above watches this script
+    # for the stamp-honesty half alone; everything else the gate decides - the
+    # hashing, the DUE/CURRENT verdict, the advisory and stamp-ci paths, the
+    # claim and validate wirings - is measured by test\win32\guard-due.ps1, and
+    # until this row an edit to any of it re-armed nothing.
+    [pscustomobject]@{
+        Name   = 'guard-due'
+        Script = 'test\win32\guard-due.ps1'
+        Stamp  = 'test\win32\guard-due.stamp.json'
+        Covers = @(
+            'scripts\guard-due.ps1',
+            'test\win32\guard-due.ps1'
+        )
     }
 
     # T702 - the thread-join sweep. It covers the directories whose tests

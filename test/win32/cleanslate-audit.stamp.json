@@ -1,10 +1,10 @@
 {
     "guard":  "cleanslate",
     "script":  "test/win32/cleanslate-audit.ps1",
-    "generated":  "2026-09-23T08:04:55-07:00",
-    "commit":  "c8fa8c3f5",
+    "generated":  "2026-09-23T09:31:45-07:00",
+    "commit":  "3efe50b15",
     "uncommitted":  [
-                        "test/win32/gl-device-lost.ps1"
+                        "test/win32/guard-due.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -127,7 +127,7 @@
                   "test/win32/go-loop-guard.ps1":  "175c421fe100d6cae8541fbe541c8bc2cd46ed5bc6f44d22f72a16b4a91b8f96",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
-                  "test/win32/guard-due.ps1":  "306e120c7282b5c4c50c75ac9d7a30a8db84e94e92745cc79caa6ea4eb437d01",
+                  "test/win32/guard-due.ps1":  "94068439b3fe8e2054c15a1349c5632be8640eb27fde266f0925181242f55269",
                   "test/win32/gui-launch-command.ps1":  "f919dcf022ea99019000702d0029738ac91242a5ad464e8fab6c0731683c6c84",
                   "test/win32/gui-postmortem.ps1":  "5c63e9a8563ad9f82bb9c9888bbadbe650f41173508f0d124d83b840d4918077",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",

@@ -1,0 +1,14 @@
+{
+    "guard":  "guard-due",
+    "script":  "test/win32/guard-due.ps1",
+    "generated":  "2026-09-23T09:28:15-07:00",
+    "commit":  "3efe50b15",
+    "uncommitted":  [
+                        "scripts/guard-due.ps1",
+                        "test/win32/guard-due.ps1"
+                    ],
+    "files":  {
+                  "scripts/guard-due.ps1":  "7db5a36a11e17b6c474a1b2baf171e67bc173df09671a692675a6e89be5b4202",
+                  "test/win32/guard-due.ps1":  "94068439b3fe8e2054c15a1349c5632be8640eb27fde266f0925181242f55269"
+              }
+}

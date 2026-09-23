@@ -115,8 +115,13 @@ try {
     Check 'A1 list names the covered files' `
         ($r.Text -match 'scripts/go-loop-lock\.ps1' -and $r.Text -match 'scripts/loop-session\.ps1' `
             -and $r.Text -match 'test/win32/go-loop-guard\.ps1') $r.Text
+    # Scoped to go-loop (T921): the whole-repo audits (argv-hazard,
+    # unroll-count) glob scripts\*.ps1 and so DO cover the control file, and an
+    # unscoped list went red the day they landed - unseen, since this harness
+    # never stamped. The claim is about the row the fixture is shaped like.
+    $r = Invoke-Due list -Guard 'go-loop'
     Check 'A2 list excludes a script the row does not cover' `
-        ($r.Text -notmatch 'uncovered-by-any-row\.ps1') $r.Text
+        ($r.Text -match 'go-loop-lock\.ps1' -and $r.Text -notmatch 'uncovered-by-any-row\.ps1') $r.Text
 
     $r = Invoke-Due check
     Check 'A3 with no stamp the guard is DUE' ($r.Text -match 'GUARD DUE go-loop') $r.Text
@@ -185,7 +190,7 @@ try {
     Set-FixtureFile 'scripts\loop-session.ps1' "# fake loop-session v1`n"
 
     Set-FixtureFile 'scripts\uncovered-by-any-row.ps1' "# an uncovered script changed a lot`n"
-    $r = Invoke-Due check
+    $r = Invoke-Due check -Guard 'go-loop'
     Check 'C6 an uncovered file changing does not make the row due' ($r.Exit -eq 0) $r.Text
 
     # Scoped to the row this fixture is shaped like: the table has other rows,
@@ -200,11 +205,13 @@ try {
     Check 'C8 -Json reports the machine token' `
         ($null -ne $j -and $j[0].Kind -eq 'current' -and $j[0].Name -eq 'go-loop') $r.Text
 
-    # A row that covers nothing in THIS tree is not applicable, not due. Every
-    # other row in the real table is in that state against this fixture, and
+    # A row that covers nothing in THIS tree is not applicable, not due. Most
+    # other rows in the real table are in that state against this fixture, and
     # before it existed each new row failed eight arms here over an exit code
-    # that had nothing to do with them.
-    $r = Invoke-Due check
+    # that had nothing to do with them. Scoped to one such row (T921): the
+    # scripts\*.ps1 audits DO match this fixture, so the table-wide exit is not
+    # a statement about N/A.
+    $r = Invoke-Due check -Guard 'crash-first-chance'
     Check 'C10 a row covering nothing here is N/A, not DUE' `
         ($r.Exit -eq 0 -and $r.Text -match 'GUARD N/A') "exit=$($r.Exit): $($r.Text)"
     Check 'C11 and N/A is not silent (a typo''d row still says so)' `
@@ -902,6 +909,19 @@ $rows
          $realTableText -match 'macos/Resources/Ghoztty/skills/process-feedback/SKILL\.md' -and
          $realTableText -match 'macos/Resources/Ghoztty/hooks/ghoztty-banner\.sh') $realTableText
 
+    # --- N. the gate watches itself (T921) ----------------------------------
+    # The one script that can fail a commit over a stale harness used to be the
+    # one nothing re-checked: no row pointed its harness at it, and this file
+    # never stamped. Both halves are pinned here.
+    Write-Host "`n-- N. the gate's own row --"
+    Check 'N1 the live table has a guard-due row run by this harness' `
+        ($realTableText -match "(?s)Name\s*=\s*'guard-due'\s*\r?\n\s*Script\s*=\s*'test\\win32\\guard-due\.ps1'") $realTableText
+    Check 'N2 and it covers the gate itself and this harness' `
+        ($realTableText -match "(?s)Name\s*=\s*'guard-due'.*?Covers\s*=\s*@\(\s*'scripts\\guard-due\.ps1',\s*'test\\win32\\guard-due\.ps1'\s*\)") $realTableText
+    $selfSrc = [System.IO.File]::ReadAllText($PSCommandPath)
+    Check 'N3 this harness stamps its row only inside a failures-eq-0 branch' `
+        ($selfSrc -match '(?s)if \(\$script:failures -eq 0\) \{\s*\r?\n\s*&[^\r\n]*\$Due `\s*\r?\n\s*update -Guard guard-due') ''
+
     Complete-TestBody  # T1039: the run reached the end of its body
 }
 finally {
@@ -911,6 +931,16 @@ finally {
     if ($CiFixture) { Remove-Item -LiteralPath $CiFixture -Recurse -Force -ErrorAction SilentlyContinue }
     if ($TabFixture) { Remove-Item -LiteralPath $TabFixture -Recurse -Force -ErrorAction SilentlyContinue }
     if ($UpFixture) { Remove-Item -LiteralPath $UpFixture -Recurse -Force -ErrorAction SilentlyContinue }
+}
+
+# --- stamp (T921) ----------------------------------------------------------
+# The gate's own harness stamps like every other one: only a clean green run
+# records scripts\guard-due.ps1 as proven, so an edit to the gate is DUE until
+# this has been run over it.
+if ($script:failures -eq 0) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $Due `
+        update -Guard guard-due -Repo $Repo 2>&1 |
+        ForEach-Object { Write-Host "  $($_.ToString())" }
 }
 
 Write-Host ''
