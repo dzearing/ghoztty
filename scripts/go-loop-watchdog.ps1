@@ -118,7 +118,13 @@ param(
     # as `powershell -File ... -ResumePrompt "<text>"` is the argv hop T210
     # exists to close. Wins over -ResumePrompt when the file is readable.
     [string]$ResumePromptFile,
-    [string]$ClaudeCommand = 'claude --dangerously-skip-permissions --continue',
+    # No `--continue`: it resumes the MOST RECENT conversation in the repo, and
+    # while a start-go controller chat is open that is the controller, not the
+    # loop. On 2026-09-23 a forced re-entry opened a window that became a clone
+    # of the controller, which declined to run the loop and tried to type the
+    # loop prompt back into the controller's pane. The resume prompt resets
+    # context before doing anything, so a fresh session loses nothing.
+    [string]$ClaudeCommand = 'claude --dangerously-skip-permissions',
     [string]$WindowTarget = 'main',
     [int]$PollSeconds = 300,
     [int]$StaleMinutes = 45,
