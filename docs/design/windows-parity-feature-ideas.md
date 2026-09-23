@@ -368,3 +368,13 @@ as the digest that showed them.
 - Tell me my shell is not fully wired up (one dismissible line when shell integration cannot attach)
 - Show me the shell this pane actually started (executable, flavour and integration state on tab hover)
 - A health card you can open (build, release gap, agent state and share staleness in one panel)
+
+## 2026-09-23
+
+- Warn me before Windows restarts under me (pending-update restart notice naming busy panes, with postpone)
+- This shell is open in another window: go there, or open a copy (ask instead of silently picking when a session is already on screen)
+- Mark the panes that will not come back (quiet not-persisted marker on a pane, with one-click keep)
+- After a reboot, show me what ended and put it back (reboot-aware restore: machine-ended sessions vs ones you closed)
+- Tell me how the app closed last time (new angle on crash-restore: quit / crash / killed / vanished, named on next launch)
+- A day-long soak before every release (hours of real use on the release build; a silent disappearance holds the release)
+- Rehearse the restart you are relying on (standing quit/relaunch check that every window and kept session returns, including one opened in the first second)
