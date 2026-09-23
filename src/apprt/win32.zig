@@ -66,6 +66,11 @@ test {
     // module that touches the registry, LoadLibraryW and a COM vtable is the
     // last one that should go uncompiled until then.
     _ = @import("win32/webview2.zig");
+    // The iframe interfaces (T928). ViewerPane imports them, which compiles
+    // them and runs none of their slot assertions — the reason this list
+    // exists — and a slot in the wrong position calls the wrong method in the
+    // browser process.
+    _ = @import("win32/webview2_frame_iface.zig");
     // The agent-refresh relaunch guard (T421). Its spec parser is the only
     // thing standing between a malformed environment variable and a guard that
     // waits on the wrong pid, so the lane compiles and checks it in its own

@@ -51,6 +51,7 @@ const Allocator = std.mem.Allocator;
 const w32 = @import("win32.zig");
 const com = @import("com.zig");
 const iface = @import("webview2_iface.zig");
+const frame_iface = @import("webview2_frame_iface.zig");
 const webview2 = @import("webview2.zig");
 const color_math = @import("color_math.zig");
 const chrome_theme = @import("chrome_theme.zig");
@@ -410,6 +411,21 @@ accel_handler: ?*AcceleratorKeyPressedHandler = null,
 
 /// Our reference on the `WindowCloseRequested` handler (T163), same rule.
 window_close_handler: ?*WindowCloseRequestedHandler = null,
+
+/// The iframe half of the link menu (T928). ONE object of each kind, registered
+/// on every frame, rather than one per frame: each holds a token reference and
+/// a page that churns ad iframes would otherwise run the token's count up
+/// without bound. Same ownership rule as the handlers above.
+frame_created_handler: ?*FrameCreatedHandler = null,
+child_frame_handler: ?*ChildFrameCreatedHandler = null,
+frame_message_handler: ?*FrameMessageHandler = null,
+
+/// Our references on the page's live iframes. Held because a frame's event
+/// registrations belong to the frame object, and a frame nobody references is
+/// free to go — taking its `WebMessageReceived` subscription with it. Pruned of
+/// destroyed frames each time a new one arrives, so a page that replaces its
+/// iframes does not grow this for the life of the pane.
+frames: std.ArrayListUnmanaged(*frame_iface.ICoreWebView2Frame) = .empty,
 
 /// The `window.open()` this pane exists to BE, from the moment the popup
 /// trampoline builds the window until the pane's controller arrives and is
@@ -846,6 +862,7 @@ pub fn deinit(self: *ViewerPane, alloc: Allocator) void {
         h.release();
         self.window_close_handler = null;
     }
+    self.releaseFrames(alloc);
     // A pane that dies before its controller arrives still owes the opening
     // script an answer (T163). Releasing the last reference here is what turns
     // its `window.open()` into a null return instead of a permanent wait.
@@ -2666,20 +2683,224 @@ fn onWebMessageReceived(
     const self = p.pane orelse return com.S_OK;
     self.wait_progress +%= 1;
 
-    const raw = a.jsonRaw() orelse return com.S_OK;
+    const parsed = decodeMessage(p.alloc, a) orelse return com.S_OK;
+    defer parsed.deinit();
+    self.applyMessage(p.alloc, parsed.message);
+    return com.S_OK;
+}
+
+/// One posted message, read off the event args and parsed. Shared by the
+/// top-level page's event and every iframe's, which carry the same args type.
+fn decodeMessage(
+    alloc: Allocator,
+    a: *iface.ICoreWebView2WebMessageReceivedEventArgs,
+) ?bridge.Parsed {
+    const raw = a.jsonRaw() orelse return null;
     // The runtime allocated it on the COM heap; we free it on ours.
     defer w32.CoTaskMemFree(@ptrCast(raw));
 
     // The JSON is UTF-16 and everything downstream is UTF-8. A payload that is
     // not valid UTF-16 came from a page, not from us, so it is dropped rather
     // than fatal.
-    const utf8 = std.unicode.utf16LeToUtf8Alloc(p.alloc, std.mem.span(raw)) catch return com.S_OK;
-    defer p.alloc.free(utf8);
+    const utf8 = std.unicode.utf16LeToUtf8Alloc(alloc, std.mem.span(raw)) catch return null;
+    defer alloc.free(utf8);
+    return bridge.parse(alloc, utf8);
+}
 
-    const parsed = bridge.parse(p.alloc, utf8) orelse return com.S_OK;
-    defer parsed.deinit();
-    self.applyMessage(p.alloc, parsed.message);
+// -------------------------------------------------------------------------
+// Iframes (T928)
+//
+// WebView2 delivers an iframe's `postMessage` to the FRAME's own event, not
+// the web view's, so the link menu inside an iframe needs every frame found
+// and subscribed. `FrameCreated` on the web view reports the page's own
+// iframes; the same event on a frame (`ICoreWebView2Frame7`) reports an iframe
+// inside that one. Both land in `adoptFrame`.
+// -------------------------------------------------------------------------
+
+const FrameCreatedHandler = com.CallbackOwning(
+    frame_iface.IID_FrameCreatedHandler,
+    onFrameCreated,
+    releasePendingToken,
+);
+
+const ChildFrameCreatedHandler = com.CallbackOwning(
+    frame_iface.IID_FrameChildFrameCreatedHandler,
+    onChildFrameCreated,
+    releasePendingToken,
+);
+
+const FrameMessageHandler = com.CallbackOwning(
+    frame_iface.IID_FrameWebMessageReceivedHandler,
+    onFrameMessage,
+    releasePendingToken,
+);
+
+fn onFrameCreated(
+    p: *Pending,
+    sender: ?*iface.ICoreWebView2,
+    args: ?*frame_iface.ICoreWebView2FrameCreatedEventArgs,
+) com.HRESULT {
+    _ = sender;
+    const self = p.pane orelse return com.S_OK;
+    const frame = (args orelse return com.S_OK).frame() orelse return com.S_OK;
+    self.adoptFrame(p.alloc, frame);
     return com.S_OK;
+}
+
+fn onChildFrameCreated(
+    p: *Pending,
+    sender: ?*frame_iface.ICoreWebView2Frame,
+    args: ?*frame_iface.ICoreWebView2FrameCreatedEventArgs,
+) com.HRESULT {
+    _ = sender;
+    const self = p.pane orelse return com.S_OK;
+    const frame = (args orelse return com.S_OK).frame() orelse return com.S_OK;
+    self.adoptFrame(p.alloc, frame);
+    return com.S_OK;
+}
+
+/// What an iframe posts. The link menu, and ONLY the link menu: a subframe is
+/// content this pane did not render, so it does not get to set the table of
+/// contents, file a quote, or put its selection into a feedback report — the
+/// injected `subframe_js` never sends those, and a page that uses the bridge
+/// directly gets them dropped here.
+fn onFrameMessage(
+    p: *Pending,
+    sender: ?*frame_iface.ICoreWebView2Frame,
+    args: ?*iface.ICoreWebView2WebMessageReceivedEventArgs,
+) com.HRESULT {
+    _ = sender;
+    const a = args orelse return com.S_OK;
+    const self = p.pane orelse return com.S_OK;
+    self.wait_progress +%= 1;
+
+    const parsed = decodeMessage(p.alloc, a) orelse return com.S_OK;
+    defer parsed.deinit();
+    switch (parsed.message) {
+        .link_menu => |href| {
+            log.info("viewer frame linkMenu pane={s}", .{self.paneId()});
+            self.armLinkMenu(p.alloc, href);
+        },
+        else => {},
+    }
+    return com.S_OK;
+}
+
+/// Take a reference on a new iframe and subscribe to it. `frame` arrives owned
+/// (the args' getter AddRefs), and this either keeps it or releases it.
+///
+/// Every step is best-effort, and the degrade is always the same one: that
+/// frame's links keep WebView2's own menu, which is what every iframe had
+/// before T928.
+fn adoptFrame(self: *ViewerPane, alloc: Allocator, frame: *frame_iface.ICoreWebView2Frame) void {
+    self.pruneFrames();
+
+    const msg = self.frame_message_handler orelse {
+        frame.release();
+        return;
+    };
+    const v2 = frame.queryV2() orelse {
+        frame.release();
+        return;
+    };
+    const subscribed = v2.addWebMessageReceived(@ptrCast(msg));
+    v2.release();
+    if (!subscribed) {
+        log.warn("iframe add_WebMessageReceived failed pane={s}", .{self.paneId()});
+        frame.release();
+        return;
+    }
+
+    // Its own iframes, on a runtime new enough to report them.
+    if (self.child_frame_handler) |child| {
+        if (frame.queryV7()) |v7| {
+            defer v7.release();
+            _ = v7.addFrameCreated(@ptrCast(child));
+        }
+    }
+
+    self.frames.append(alloc, frame) catch {
+        frame.release();
+        return;
+    };
+    log.info("viewer frame adopted pane={s} live={d}", .{ self.paneId(), self.frames.items.len });
+}
+
+/// Drop our reference on every frame that has left the page.
+fn pruneFrames(self: *ViewerPane) void {
+    var i: usize = 0;
+    while (i < self.frames.items.len) {
+        const f = self.frames.items[i];
+        if (f.isDestroyed()) {
+            f.release();
+            _ = self.frames.swapRemove(i);
+        } else i += 1;
+    }
+}
+
+/// Pane teardown: the three handlers and every frame reference.
+fn releaseFrames(self: *ViewerPane, alloc: Allocator) void {
+    if (self.frame_created_handler) |h| {
+        h.release();
+        self.frame_created_handler = null;
+    }
+    if (self.child_frame_handler) |h| {
+        h.release();
+        self.child_frame_handler = null;
+    }
+    if (self.frame_message_handler) |h| {
+        h.release();
+        self.frame_message_handler = null;
+    }
+    for (self.frames.items) |f| f.release();
+    self.frames.deinit(alloc);
+    self.frames = .empty;
+}
+
+/// Install the subframe blob and start hearing about iframes (T928). Called
+/// from `subscribeBridge`, so it shares that function's before-the-first-
+/// navigation contract, and it is non-fatal in the same way: a runtime without
+/// `ICoreWebView2_4` has no iframe menu, which is where every pane was before.
+fn subscribeFrames(self: *ViewerPane, web: *iface.ICoreWebView2) void {
+    const p = self.pending orelse return;
+    const alloc = p.alloc;
+
+    const v4 = frame_iface.queryV4(web) orelse {
+        log.info("runtime has no ICoreWebView2_4; iframe links keep the browser menu", .{});
+        return;
+    };
+    defer v4.release();
+
+    // The message handler first: a frame reported before it existed would be
+    // adopted with nothing to subscribe it to.
+    const msg = FrameMessageHandler.create(alloc, p) catch return;
+    p.refs += 1;
+    self.frame_message_handler = msg;
+
+    if (ChildFrameCreatedHandler.create(alloc, p)) |child| {
+        p.refs += 1;
+        self.child_frame_handler = child;
+    } else |_| {}
+
+    const created = FrameCreatedHandler.create(alloc, p) catch return;
+    p.refs += 1;
+    self.frame_created_handler = created;
+    if (!v4.addFrameCreated(@ptrCast(created))) {
+        log.warn("add_FrameCreated failed; iframe links keep the browser menu", .{});
+        return;
+    }
+
+    // Only once frames can actually be heard from: a subframe copy of links.js
+    // with no subscription behind it would suppress the browser's menu and
+    // open nothing.
+    const wide = std.unicode.utf8ToUtf16LeAllocZ(alloc, bridge.subframe_js) catch return;
+    defer alloc.free(wide);
+    const handler = AddScriptCompletedHandler.create(alloc, p) catch return;
+    p.refs += 1;
+    defer handler.release();
+    if (!web.addScriptToExecuteOnDocumentCreated(wide.ptr, @ptrCast(handler))) {
+        log.warn("subframe script was refused; iframe links keep the browser menu", .{});
+    }
 }
 
 /// Act on one parsed page message. Split out from the COM callback so it is
@@ -3275,6 +3496,10 @@ fn subscribeBridge(self: *ViewerPane) void {
     } else |_| {
         log.warn("could not widen the viewer bridge script; no quoting in this pane", .{});
     }
+
+    // The iframes' half of the link menu (T928), independent of the page's own
+    // subscription below: either can fail without costing the other.
+    self.subscribeFrames(web);
 
     const handler = WebMessageReceivedHandler.create(alloc, p) catch return;
     // The token reference the handler borrows. Taken BEFORE the object can
@@ -8151,6 +8376,124 @@ test "host floor: a real controller on a real window, on this box" {
         const want_missing = try std.fmt.allocPrint(alloc, "menu-file:{s}", .{missing_path});
         defer alloc.free(want_missing);
         try testing.expectEqualStrings(want_missing, sink.entries.items[12]);
+
+        // --------------------------------------------------------------
+        // T928: the same menu for a link inside an IFRAME, and one inside
+        // an iframe inside that
+        // --------------------------------------------------------------
+        //
+        // An iframe's `postMessage` goes to the frame's own event, so every
+        // hop above is re-proven for a document the web view's subscription
+        // never hears from: the subframe blob installed, the frame was
+        // adopted and subscribed, and the href resolved against the FRAME's
+        // page. The nested page is the `ICoreWebView2Frame7` half, which the
+        // web view's own `FrameCreated` does not report.
+        //
+        // And the negative that bounds it: a frame posting anything other
+        // than a link menu is dropped. It is posted BEFORE a link right-click
+        // in the same frame, and a frame's messages arrive in order, so by
+        // the time the link's entry lands the stray message has either been
+        // acted on or it never will be.
+        try tmp.dir.writeFile(.{ .sub_path = "t928-deep.html", .data =
+        \\<!doctype html><meta charset="utf-8"><title>t928-deep</title>
+        \\<a id="deep" href="https://example.com/deep">deep</a>
+        \\
+        });
+        try tmp.dir.writeFile(.{ .sub_path = "t928-inner.html", .data =
+        \\<!doctype html><meta charset="utf-8"><title>t928-inner</title>
+        \\<a id="ext" href="https://example.com/in-frame">out</a>
+        \\<a id="nb" href="t826-two.html">in</a>
+        \\<a id="mail" href="mailto:a@b.c">mail</a>
+        \\<iframe id="g" src="t928-deep.html"></iframe>
+        \\
+        });
+        try tmp.dir.writeFile(.{ .sub_path = "t928-outer.html", .data =
+        \\<!doctype html><meta charset="utf-8"><title>t928</title>
+        \\<script>
+        \\window.rcf = function (doc, id) {
+        \\  doc.getElementById(id).dispatchEvent(
+        \\    new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+        \\};
+        \\window.inner = function () {
+        \\  return document.getElementById("f").contentDocument;
+        \\};
+        \\window.deep = function () {
+        \\  return inner().getElementById("g").contentDocument;
+        \\};
+        \\window.ready = function () {
+        \\  window.webkit.messageHandlers.viewerTOC.postMessage(
+        \\    { type: "active", id: "t928-ready" });
+        \\};
+        \\</script>
+        \\<iframe id="f" src="t928-inner.html" onload="ready()"></iframe>
+        \\
+        });
+        const outer_path = try std.fs.path.join(alloc, &.{ dir_path, "t928-outer.html" });
+        defer alloc.free(outer_path);
+        try pane.navigate(alloc, outer_path);
+        // The iframe's load event waits for ITS iframe, so ready means both
+        // frames have documents.
+        try waitFor(&msg, 30, struct {
+            fn ready(p: *ViewerPane) bool {
+                const a = p.active_heading orelse return false;
+                return p.mode == .html and std.mem.eql(u8, a, "t928-ready");
+            }
+        }.ready, &pane);
+        log.warn("t928: outer ready, live frames={d}", .{pane.frames.items.len});
+
+        // The declined scheme first, then the web link: the web link landing
+        // at index 13 is the assertion that the mailto produced nothing.
+        pane.executeScript(alloc, "rcf(inner(), 'mail')");
+        pane.executeScript(alloc, "rcf(inner(), 'ext')");
+        try waitFor(&msg, 30, struct {
+            fn ready(p: *ViewerPane) bool {
+                _ = p;
+                return link_sink.?.entries.items.len >= 14;
+            }
+        }.ready, &pane);
+        log.warn("t928: iframe right-click entries={d}", .{sink.entries.items.len});
+        try testing.expectEqual(@as(usize, 14), sink.entries.items.len);
+        try testing.expectEqualStrings("menu-web:https://example.com/in-frame", sink.entries.items[13]);
+
+        // A relative link in the frame resolves against the FRAME's page to
+        // a real file, exactly as it would in the top-level page.
+        pane.executeScript(alloc, "rcf(inner(), 'nb')");
+        try waitFor(&msg, 30, struct {
+            fn ready(p: *ViewerPane) bool {
+                _ = p;
+                return link_sink.?.entries.items.len >= 15;
+            }
+        }.ready, &pane);
+        try testing.expectEqualStrings(want_local, sink.entries.items[14]);
+
+        // The nested frame: only reachable through the frame's own
+        // `FrameCreated`.
+        pane.executeScript(alloc, "rcf(deep(), 'deep')");
+        try waitFor(&msg, 30, struct {
+            fn ready(p: *ViewerPane) bool {
+                _ = p;
+                return link_sink.?.entries.items.len >= 16;
+            }
+        }.ready, &pane);
+        try testing.expectEqualStrings("menu-web:https://example.com/deep", sink.entries.items[15]);
+
+        // The negative: a frame's non-link message is dropped. The inner
+        // frame's own bridge carries it (its shim, not the top page's), and
+        // the link right-click behind it is the ordering fence.
+        pane.executeScript(alloc,
+            \\document.getElementById("f").contentWindow.webkit.messageHandlers
+            \\  .viewerTOC.postMessage({ type: "active", id: "from-frame" });
+            \\rcf(inner(), 'ext');
+        );
+        try waitFor(&msg, 30, struct {
+            fn ready(p: *ViewerPane) bool {
+                _ = p;
+                return link_sink.?.entries.items.len >= 17;
+            }
+        }.ready, &pane);
+        try testing.expectEqualStrings("t928-ready", pane.active_heading.?);
+        try testing.expectEqual(@as(usize, 17), sink.entries.items.len);
+        try testing.expect(pane.frames.items.len >= 2);
     }
 
     // ------------------------------------------------------------------

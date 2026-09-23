@@ -35,7 +35,9 @@
 //!   WebView2 injects into every frame, so the blob's outermost guard is
 //!   `window.top !== window`. The toolbar positions itself in viewport
 //!   coordinates a subframe does not share, and a subframe is content we did
-//!   not render — it does not get to post to native.
+//!   not render — it does not get to post to native. The one exception is the
+//!   link menu (T928), which rides a separate `subframe_js` blob and is the only
+//!   message the pane accepts from a frame.
 //! - **A missing bridge is not a missing toolbar.** If `chrome.webview` is not
 //!   there, the shim skips its install and `selection.js` still runs: its own
 //!   `post` already no-ops without a handler, so Copy keeps working and only
@@ -73,15 +75,14 @@ pub const selection_js = @embedFile("../../viewer/selection.js");
 /// same-document rule and the inside-a-selection rule live in ONE file for both
 /// platforms.
 ///
-/// One deliberate divergence from Mac, and it is the wrapper's rather than this
-/// file's: Mac injects it into subframes too, and here it rides the main-frame
-/// blob. WebView2 delivers a subframe's `postMessage` to
-/// `ICoreWebView2Frame`'s own event rather than to `add_WebMessageReceived`, so
-/// a subframe copy would suppress the browser's menu and then have nowhere to
-/// send the href — a right-click that opens nothing, which is the exact outcome
-/// the file's own "only suppress once we know we can replace it" guard exists to
-/// prevent. A link inside an iframe therefore keeps WebView2's menu until the
-/// frame plumbing lands (T928).
+/// Like Mac, it runs in SUBFRAMES too (T928) — but in a blob of its own,
+/// `subframe_js`, rather than by lifting the main-frame guard off everything
+/// else. WebView2 delivers a subframe's `postMessage` to that frame's
+/// `ICoreWebView2Frame2` event rather than to `add_WebMessageReceived`, so the
+/// pane subscribes to every frame as it is created; without that plumbing a
+/// subframe copy would suppress the browser's menu and have nowhere to send the
+/// href, which is the exact outcome the file's own "only suppress once we know
+/// we can replace it" guard exists to prevent.
 pub const links_js = @embedFile("../../viewer/links.js");
 
 /// The shared find-in-page engine (T1184), verbatim for the same P1 reason
@@ -160,6 +161,26 @@ const epilogue = "\n})();\n";
 pub const injected_js =
     prologue ++ shim_js ++ selection_js ++ selection_tracker_js ++ links_js ++
     find_js ++ epilogue;
+
+/// The SUBFRAME blob (T928): the shim, then `links.js`, and nothing else.
+///
+/// Its guard is the main blob's inverted — it runs ONLY where that one
+/// declines — so the two never both install in one document. And it carries
+/// only the link decider on purpose: the selection toolbar positions itself in
+/// viewport coordinates a subframe does not share, and find-in-page is one
+/// search over one document's offsets. A right-click menu has neither problem,
+/// because it pops up at the pointer.
+///
+/// A subframe is content we did not render, and the shim hands it a bridge.
+/// What bounds that is on the native side: the pane acts on a subframe's
+/// `linkMenu` and nothing else (`ViewerPane.onFrameMessage`), so an ad iframe
+/// cannot post a heading list, a quote, or a selection into the feedback
+/// report.
+pub const subframe_js =
+    "(function () {\n" ++
+    "  \"use strict\";\n" ++
+    "  if (window.top === window) return;\n" ++
+    shim_js ++ links_js ++ epilogue;
 
 // -------------------------------------------------------------------------
 // Messages coming back up
@@ -539,6 +560,29 @@ test "T826: links.js is embedded VERBATIM too, and it is the shared file" {
     // And it reaches native through the same handler everything else does,
     // which is what makes the shim the whole of the Windows half.
     try testing.expect(std.mem.indexOf(u8, links_js, "messageHandlers." ++ handler_name) != null);
+}
+
+test "T928: subframes get the shim and links.js, and nothing else" {
+    // The guard is the main blob's inverted, and it comes first: a top-level
+    // document must be turned away before the shim installs a second bridge.
+    const guard = std.mem.indexOf(u8, subframe_js, "if (window.top === window) return;").?;
+    const shim = std.mem.indexOf(u8, subframe_js, "window.chrome && window.chrome.webview").?;
+    const links = std.mem.indexOf(u8, subframe_js, links_js).?;
+    try testing.expect(guard < shim);
+    try testing.expect(shim < links);
+
+    // Nothing that positions itself in the viewport or searches one document's
+    // offsets rides along — and nothing that reports a selection upward.
+    try testing.expect(std.mem.indexOf(u8, subframe_js, selection_js) == null);
+    try testing.expect(std.mem.indexOf(u8, subframe_js, find_js) == null);
+    try testing.expect(std.mem.indexOf(u8, subframe_js, "type: \"selection\"") == null);
+
+    // The two guards are complements, so no document runs both blobs.
+    try testing.expect(std.mem.indexOf(u8, subframe_js, "window.top !== window") == null);
+    try testing.expect(std.mem.indexOf(u8, injected_js, "if (window.top === window) return;") == null);
+
+    // And it is an IIFE that closes what it opens.
+    try testing.expect(std.mem.endsWith(u8, subframe_js, "})();\n"));
 }
 
 test "T826: the link script runs AFTER the shim installed the bridge" {
