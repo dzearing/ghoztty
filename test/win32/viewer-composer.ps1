@@ -27,6 +27,12 @@
 #      create/destroy cycle is repeatable rather than a one-shot.
 #   G. the band is still exactly the height the pane reserved for it, so the
 #      swap did not move the geometry.
+#   H. TYPING reaches the web surface from the background desktop (T1702):
+#      lib\WebViewCdp.ps1 arms the runtime's DevTools port, finds the composer's
+#      page, types text and an Enter into it, and reads the document back - and
+#      the HOST's own echo line agrees on the byte count, so the keystrokes went
+#      through the page into the pane's buffer, not just into a DOM. Ctrl+Z /
+#      Ctrl+Y, which the PAGE owns (T983), take the typing back and forth.
 #
 # ORACLES. This runs on the background test desktop, where CopyFromScreen and
 # SendInput are dead (T233), so nothing here looks at a painted caret. Two
@@ -38,11 +44,13 @@
 #     `echo` line is a number the PAGE produced -- a value that cannot exist
 #     unless the document loaded, the seed arrived and the snapshot came back.
 #
-# What this deliberately does NOT assert: typing. A posted WM_CHAR does not
-# reach a Chromium renderer, and there is no input desktop here. The typing
-# path is proven in-process instead, by the `host floor` test in
-# `ViewerPane.zig`, which drives a real controller through open, seed, quote,
-# send and a report on disk.
+# Typing is section H, and it goes through the DevTools protocol rather than
+# the window: a posted WM_CHAR does not reach a Chromium renderer, and there is
+# no input desktop here. (The in-process `host floor` test in `ViewerPane.zig`
+# still drives a real controller through open, seed, quote, send and a report
+# on disk.) What H does NOT prove is a chord NATIVE owns - Ctrl+Enter, Esc -
+# because native reads modifiers from the OS keyboard state; see the header of
+# lib\WebViewCdp.ps1.
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
 #
@@ -70,6 +78,11 @@ $env:GHOZTTY_PIPE_SUFFIX = "-fbwebtest$PID"
 $env:GHOZTTY_COMPOSER_SURFACE = 'web'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T1702: the DevTools driver, armed before the launch below - the runtime reads
+# the switch when the app's browser process starts.
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+. (Join-Path $PSScriptRoot 'lib\WebViewCdp.ps1')
+$cdpPort = Enable-WebViewCdp
 # T1511: the shared scorer, and the dot-source is also what ARMS the run - a
 # body that unwinds before `Complete-TestBody` may not print a pass, and the
 # guard-stamping child below reads the same state and refuses to write.
@@ -361,6 +374,82 @@ try {
         Start-Sleep -Milliseconds 250
     }
     Assert ($null -ne $cv2 -and $cv2.Width -gt 0) 'a fresh controller window is back in the band'
+
+    # --- H. typing reaches the web surface (T1702) ---------------------------
+    # The negative control first: a port nobody armed answers with NO targets,
+    # so the finds below cannot be scoring a driver that sees pages everywhere.
+    $unarmed = Get-FreePort
+    Assert (@(Get-CdpTargets -Port $unarmed).Count -eq 0) `
+        "an unarmed port ($unarmed) lists no pages"
+
+    $cdp = $null
+    try {
+        $cdp = Find-CdpComposer -Port $cdpPort
+    } catch {
+        Write-Host "      $($_.Exception.Message)"
+    }
+    Assert ($null -ne $cdp) "the composer's page was found on the DevTools port ($cdpPort)"
+    if ($cdp) {
+        try {
+            # A non-ASCII letter on purpose: the page counts UTF-16 units and the
+            # host counts UTF-8 bytes (the T648 boundary), so the host's byte
+            # count below only matches when the text crossed intact.
+            $first = 'h' + [char]0xE9 + 'llo'
+            Send-CdpComposerText $cdp $first
+            Send-CdpKey $cdp 'Enter'
+            Send-CdpComposerText $cdp 'world'
+            $want = $first + "`n" + 'world'
+            $got = Wait-CdpComposerText $cdp $want
+            Assert ($got -ceq $want) "typed text reads back from the page ('$($got -replace "`n", '\n')')"
+
+            # Undo takes 'world' back and leaves the first line. Not compared to an
+            # exact string: the engine restores the post-Enter document, whose
+            # empty last line it may keep as a trailing "\n" text placeholder
+            # rather than a <br> - the page serializes that as a second break
+            # (T1705), which is a separate defect from whether undo worked.
+            Send-CdpKey $cdp 'z' -Ctrl
+            $undone = Get-CdpComposerText $cdp
+            $undoOk = ($undone -notmatch 'w') -and $undone.StartsWith($first + "`n")
+            Assert $undoOk `
+                "Ctrl+Z (the page's own undo) took typing back ('$($undone -replace "`n", '\n')')"
+            if (-not $undoOk) {
+                $html = Invoke-CdpEval $cdp "JSON.stringify(document.getElementById('c').innerHTML)"
+                Write-Host "      the box after Ctrl+Z: $html"
+            }
+            Send-CdpKey $cdp 'y' -Ctrl
+            $redone = Wait-CdpComposerText $cdp $want
+            Assert ($redone -ceq $want) "Ctrl+Y put it back ('$($redone -replace "`n", '\n')')"
+
+            Send-CdpKey $cdp 'Backspace'
+            $bs = Wait-CdpComposerText $cdp ($first + "`n" + 'worl')
+            Assert ($bs -ceq ($first + "`n" + 'worl')) 'Backspace removed exactly one character'
+        } finally {
+            Close-Cdp $cdp
+        }
+
+        # The typing reached the HOST, not just a DOM: close the composer (its
+        # page is destroyed), reopen it, and the new page is seeded from the
+        # pane's buffer. The first echo after an open states that buffer's
+        # UTF-8 size, and the new page must read back the same document.
+        $final = $first + "`n" + 'worl'
+        $bytes = [System.Text.Encoding]::UTF8.GetByteCount($final)
+        $destroyed = Measure-LogLine $errlog 'viewer composer destroyed'
+        Assert (Invoke-FeedbackButton $view) 'the feedback button closes the typed-into composer'
+        Assert (Wait-Log $errlog 'viewer composer destroyed' ($destroyed + 1)) '...and its page is destroyed'
+        Assert (Invoke-FeedbackButton $view) 'the feedback button reopens it'
+        Assert (Wait-Log $errlog "viewer composer echo pane=$([regex]::Escape($paneId)) bytes=$bytes lines=2" 1) `
+            "the HOST held the typing: the reopened page echoed $bytes bytes on 2 lines"
+        $cdp2 = $null
+        try {
+            $cdp2 = Find-CdpComposer -Port $cdpPort
+            $back = Wait-CdpComposerText $cdp2 $final
+            Assert ($back -ceq $final) "the reopened page was seeded with the typed text ('$($back -replace "`n", '\n')')"
+        } catch {
+            Assert $false "the reopened composer's page could be read: $($_.Exception.Message)"
+        } finally {
+            Close-Cdp $cdp2
+        }
+    }
 
     # --- app survived all of it ----------------------------------------------
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'

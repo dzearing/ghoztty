@@ -711,7 +711,10 @@ $GuardTable = @(
             'src\apprt\win32\ViewerFeedbackWeb.zig',
             'src\apprt\win32\viewer_feedback_page.zig',
             'src\viewer\composer.js',
-            'src\viewer\composer.css'
+            'src\viewer\composer.css',
+            # T1702: section H types through this driver; a change to it is a
+            # change to what H proves.
+            'test\win32\lib\WebViewCdp.ps1'
         )
     },
     # The per-session ConPTY holder (T904): the only harness that drives a
