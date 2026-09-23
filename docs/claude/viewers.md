@@ -179,7 +179,13 @@ ghoztty +close --target=doc
   site. Only the person's own click on the top-level page leaves: a page's own
   redirects, script navigations, form posts and iframes are the page working,
   and so are the pane's own loads (`--view=<url>`, the address bar, a restored
-  session).
+  session). The click takes the **banner-link modifier scheme** (**T926**; Mac
+  `BannerLinkOpener`): plain → browser, Ctrl/Cmd → a side pane, Ctrl-Shift /
+  Cmd-Shift → a viewer window of its own; a `file://` link takes the file half
+  (reveal, side pane, owning app). WebView2 carries no modifiers, so win32
+  reads them off the keyboard once a user gesture is established, and routes
+  from BOTH `NavigationStarting` and `NewWindowRequested` — Chromium turns a
+  Ctrl-click on a plain link into a new-tab request.
 - **Right-clicking a link** in ANY viewer page — the bundled template, a
   rendered `.html` file, a website — shows **Ghoztty's own link menu**, the same
   one a terminal banner link shows: the left-click default first, then Open in

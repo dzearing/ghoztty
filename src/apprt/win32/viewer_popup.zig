@@ -88,6 +88,31 @@ pub fn ctrlEscape(ctrl_held: bool, user_initiated: bool) bool {
     return ctrl_held and user_initiated;
 }
 
+/// Whether a popup request is really a MODIFIED CLICK on a link out of a live
+/// page, and so belongs to the banner's modifier scheme rather than to
+/// `destination` (T926).
+///
+/// Chromium turns a Ctrl-click on an ordinary link into a new-tab request, so
+/// on win32 the click Mac sees as a `.linkActivated` navigation carrying
+/// `.command` arrives here instead of at `NavigationStarting`. Mac routes that
+/// click — plain to the browser, Cmd to a side pane, Cmd-Shift to a window —
+/// and `destination`'s Ctrl hatch would otherwise adopt it as a popup window
+/// every time, which is the Cmd-Shift answer given to a Cmd click.
+///
+/// Scoped exactly like the navigation path it stands in for: a live page, a
+/// link that leaves the page's site (`cross_site`, which is
+/// `isExternalLivePageLink`), and the Ctrl hatch's own pairing of the key with
+/// a gesture, so a Ctrl held in another app cannot reroute a page's scripted
+/// `window.open()` (T860). A same-site Ctrl-click keeps `destination`'s answer.
+pub fn modifiedLivePageLink(
+    live_page: bool,
+    cross_site: bool,
+    ctrl_held: bool,
+    user_initiated: bool,
+) bool {
+    return live_page and cross_site and ctrlEscape(ctrl_held, user_initiated);
+}
+
 /// The bare-`window.open()` location, in WebView2's spelling. Compared
 /// case-insensitively and with any query/fragment ignored, because
 /// `about:blank#x` is still the blank page a script writes into.
@@ -198,6 +223,16 @@ test "a Ctrl the user is holding for something else does not reroute a scripted 
     try testing.expect(!ctrlEscape(true, false));
     try testing.expect(!ctrlEscape(false, true));
     try testing.expect(!ctrlEscape(false, false));
+}
+
+test "a Ctrl-click out of a live page is a link, not a popup" {
+    // The one case this exists for: a user's Ctrl-click, off-site, in a page.
+    try testing.expect(modifiedLivePageLink(true, true, true, true));
+    // Each gate is load-bearing on its own.
+    try testing.expect(!modifiedLivePageLink(false, true, true, true)); // a file pane
+    try testing.expect(!modifiedLivePageLink(true, false, true, true)); // same site
+    try testing.expect(!modifiedLivePageLink(true, true, false, true)); // no Ctrl
+    try testing.expect(!modifiedLivePageLink(true, true, true, false)); // T860: no gesture
 }
 
 test "a popup the browser cannot be handed stays in ghoztty" {

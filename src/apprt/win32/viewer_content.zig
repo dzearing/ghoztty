@@ -48,6 +48,11 @@ const view_arg = @import("../../cli/view_arg.zig");
 /// resolves per-declaration, and neither direction is reached at comptime.
 const viewer_diff = @import("viewer_diff.zig");
 
+/// The banner's link-modifier scheme (T926) — `clickAction` only, which is
+/// pure: a link that leaves a live page answers to the same modifiers as every
+/// other link surface.
+const banner_link = @import("banner_link.zig");
+
 /// The image extension table and the zoom rules (T1183). The table lives with
 /// the rules rather than here for the same reason the diff spec does: whoever
 /// changes what counts as a picture is changing how the picture is shown.
@@ -1067,8 +1072,9 @@ pub fn classifyLink(mode: Mode, page: ?[]const u8, uri: []const u8) LinkClass {
 ///   whatever handler happens to be registered.
 /// - **A `file://` link from a web page** is the exception to that: the engine
 ///   refuses the navigation outright, so following it in the pane is a dead
-///   click. It leaves, and the shell opens it in whatever owns that file type —
-///   which is what `NSWorkspace.open` does with the same link on Mac.
+///   click. It leaves through the banner's modifier scheme
+///   (`livePageLinkAction`, T926): a plain click reveals it in File Explorer,
+///   which is what Mac's `BannerLinkOpener` does with the same link in Finder.
 ///
 /// Where Mac needs a second family of rules and we do not: a Mac `.html` pane
 /// loads the file itself, so its same-site test is `loadFileURL`'s read grant —
@@ -1250,6 +1256,26 @@ pub fn routesAsLivePageLink(kind: ?NavKind, user_initiated: bool, redirected: bo
     if (!routesAsLink(kind)) return false;
     if (redirected) return false;
     return user_initiated;
+}
+
+/// What a click that leaves a LIVE page does, given the modifiers held (T926).
+/// Mac's `BannerLinkOpener.action(for:modifiers:)` on the same navigation, so
+/// the link out of a page obeys the one scheme every link surface shares:
+/// plain click leaves Ghoztty, `Ctrl` opens a side pane, `Ctrl+Shift` a window
+/// of its own.
+///
+/// The link's kind comes from its scheme, the way Mac's `url.isFileURL` does:
+/// the only non-web target `isExternalLivePageLink` ever reports is a
+/// `file://` link, and a file answers the file half of the scheme (reveal it;
+/// `Ctrl+Shift` hands it to the app that owns it).
+///
+/// The caller supplies `ctrl`/`shift` from the keyboard, so it is the caller's
+/// job to have already established that a user's click asked for this
+/// navigation — `routesAsLivePageLink` on one path,
+/// `viewer_popup.modifiedLivePageLink` on the other.
+pub fn livePageLinkAction(uri: []const u8, ctrl: bool, shift: bool) banner_link.Action {
+    const kind: banner_link.Kind = if (isFileUrl(uri)) .file else .web;
+    return banner_link.clickAction(kind, ctrl, shift);
 }
 
 /// Mac `resolveForNavigation`'s first try: the clicked link resolved against
@@ -2336,6 +2362,25 @@ test "routesAsLivePageLink: only a user's click out of a live page routes" {
     try testing.expect(!routesAsLivePageLink(.back_or_forward, true, false));
     try testing.expect(!routesAsLivePageLink(.new_document, true, true));
     try testing.expect(!routesAsLivePageLink(.new_document, false, false));
+}
+
+test "livePageLinkAction: a link out of a live page answers the banner's modifiers" {
+    // Web: plain leaves for the browser, Ctrl a side pane, Ctrl+Shift a window —
+    // Mac's Cmd / Cmd-Shift on the same click. Shift alone is a plain click.
+    const web = "https://example.com/x";
+    try testing.expectEqual(banner_link.Action.open_with_system, livePageLinkAction(web, false, false));
+    try testing.expectEqual(banner_link.Action.open_with_system, livePageLinkAction(web, false, true));
+    try testing.expectEqual(banner_link.Action.open_in_side_pane, livePageLinkAction(web, true, false));
+    try testing.expectEqual(banner_link.Action.open_in_new_window, livePageLinkAction(web, true, true));
+    // `http` is the same kind as `https`, whatever the case.
+    try testing.expectEqual(banner_link.Action.open_in_side_pane, livePageLinkAction("HTTP://a.test/", true, false));
+
+    // File: the file half of the scheme — reveal, side pane, the owning app.
+    const file = "file:///D:/docs/report.pdf";
+    try testing.expectEqual(banner_link.Action.reveal_in_explorer, livePageLinkAction(file, false, false));
+    try testing.expectEqual(banner_link.Action.open_in_side_pane, livePageLinkAction(file, true, false));
+    try testing.expectEqual(banner_link.Action.open_with_system, livePageLinkAction(file, true, true));
+    try testing.expectEqual(banner_link.Action.reveal_in_explorer, livePageLinkAction("FILE:///x", false, false));
 }
 
 test "routesAsLink: new documents route, the pane's own kinds do not" {

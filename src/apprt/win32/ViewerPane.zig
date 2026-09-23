@@ -2397,14 +2397,35 @@ var last_popup_user_initiated: ?bool = null;
 /// the person at the machine is typing, which is the ~13% flake T860 was filed
 /// for. What Ctrl does to the routing is a decision, and decisions are checked
 /// in `viewer_popup`'s own tests, where both states are reachable on purpose.
-var ctrl_probe: ?*const fn () bool = null;
+///
+/// Since T926 it answers Shift as well: the link out of a live page takes the
+/// banner's whole modifier scheme, and Ctrl+Shift is half of it.
+var mods_probe: ?*const fn () LinkMods = null;
+
+/// The two modifiers a link click is routed by.
+const LinkMods = struct { ctrl: bool = false, shift: bool = false };
+
+/// Ctrl and Shift as held on the keyboard RIGHT NOW. WebView2 puts no modifier
+/// state on its navigation or popup args — there is no win32 analog of
+/// `navigationAction.modifierFlags` — so they are read off the keyboard.
+/// `GetAsyncKeyState`, not `GetKeyState`: the latter answers for the message
+/// this thread is currently dispatching, which is a browser-process message
+/// here and not the click at all. That read is the whole desktop's keyboard,
+/// so every caller pairs it with a user gesture before it counts (T860).
+fn heldLinkMods() LinkMods {
+    if (mods_probe) |probe| return probe();
+    const down: i16 = @bitCast(@as(u16, 0x8000));
+    return .{
+        .ctrl = (w32.GetAsyncKeyState(w32.VK_CONTROL) & down) != 0,
+        .shift = (w32.GetAsyncKeyState(w32.VK_SHIFT) & down) != 0,
+    };
+}
 
 fn onNewWindowRequested(
     p: *Pending,
     sender: ?*iface.ICoreWebView2,
     args: ?*iface.ICoreWebView2NewWindowRequestedEventArgs,
 ) com.HRESULT {
-    _ = sender;
     const a = args orelse return com.S_OK;
 
     // Handled FIRST, and unconditionally: whatever else goes wrong below, a
@@ -2465,13 +2486,9 @@ fn onNewWindowRequested(
     };
     if (too_long) return com.S_OK;
 
-    // WebView2 puts no modifier state on the args — there is no win32 analog of
-    // `navigationAction.modifierFlags` — so the Ctrl escape hatch is read off
-    // the keyboard directly. `GetAsyncKeyState`, not `GetKeyState`: the latter
-    // answers for the message this thread is currently dispatching, which is a
-    // browser-process message here and not the click at all.
-    const ctrl_held = if (ctrl_probe) |probe| probe() else
-        (w32.GetAsyncKeyState(w32.VK_CONTROL) & @as(i16, @bitCast(@as(u16, 0x8000)))) != 0;
+    // The Ctrl escape hatch, read off the keyboard (see `heldLinkMods`).
+    const mods = heldLinkMods();
+    const ctrl_held = mods.ctrl;
 
     // …and that read is the whole desktop's keyboard, not this page's event, so
     // it only counts when a user gesture asked for the popup at all. Mac gets
@@ -2486,6 +2503,23 @@ fn onNewWindowRequested(
         if (first_popup_user_initiated == null) first_popup_user_initiated = user_initiated;
         last_popup_user_initiated = user_initiated;
     }
+
+    // A Ctrl-click on a link OUT of a live page is not a popup at all (T926):
+    // Chromium reports it as a new-tab request, and on Mac the same click is a
+    // navigation that takes the banner's modifier scheme. So it goes where that
+    // scheme says — Ctrl a side pane, Ctrl+Shift a window of its own — instead
+    // of being adopted as a popup window whatever the Shift key says.
+    if (uri) |u| if (self.mode.isLivePage()) {
+        const cross_site = crossSite: {
+            const page = sourceUtf8(p.alloc, sender) orelse break :crossSite false;
+            defer p.alloc.free(page);
+            break :crossSite content.classifyLink(self.mode, page, u) == .browser;
+        };
+        if (viewer_popup.modifiedLivePageLink(self.mode.isLivePage(), cross_site, ctrl_held, user_initiated)) {
+            self.routeLivePageLink(p.alloc, u, mods);
+            return com.S_OK;
+        }
+    };
 
     switch (viewer_popup.destination(uri, ctrl_held, user_initiated)) {
         .default_browser => {
@@ -3470,12 +3504,7 @@ fn onNavigationStarting(
     // the one being asked for. Null before the pane's first commit, and on the
     // allocation failure — either way the cross-site test declines and the
     // navigation is left alone.
-    const page: ?[]u8 = blk: {
-        const web = sender orelse break :blk null;
-        const src = web.sourceRaw() orelse break :blk null;
-        defer w32.CoTaskMemFree(@ptrCast(src));
-        break :blk std.unicode.utf16LeToUtf8Alloc(p.alloc, std.mem.span(src)) catch null;
-    };
+    const page = sourceUtf8(p.alloc, sender);
     defer if (page) |b| p.alloc.free(b);
 
     // Consumed here, ahead of every branch, so a navigation the pane issued in
@@ -3514,7 +3543,10 @@ fn onNavigationStarting(
             a.isRedirected(),
         )) {
             _ = a.setCancel(true);
-            self.openExternal(p.alloc, uri);
+            // Through the banner's modifier scheme (T926): the gate above has
+            // already established a user's click, which is what makes the
+            // keyboard read below mean something.
+            self.routeLivePageLink(p.alloc, uri, heldLinkMods());
         }
         return com.S_OK;
     }
@@ -3542,6 +3574,30 @@ fn onNavigationStarting(
         .drop => _ = a.setCancel(true),
     }
     return com.S_OK;
+}
+
+/// The document `web` has committed, as UTF-8 the caller frees — or null
+/// before the first commit, without a sender, or on an allocation failure.
+fn sourceUtf8(alloc: Allocator, sender: ?*iface.ICoreWebView2) ?[]u8 {
+    const web = sender orelse return null;
+    const src = web.sourceRaw() orelse return null;
+    defer w32.CoTaskMemFree(@ptrCast(src));
+    return std.unicode.utf16LeToUtf8Alloc(alloc, std.mem.span(src)) catch null;
+}
+
+/// Send a click that leaves a live page where the banner's modifier scheme
+/// says (T926) — `content.livePageLinkAction`, carried out by the same verbs
+/// the link menu uses. A file link is acted on as its path; one whose path
+/// cannot be decoded goes to the shell as written, which is what every such
+/// link did before this.
+fn routeLivePageLink(self: *ViewerPane, alloc: Allocator, uri: []const u8, mods: LinkMods) void {
+    const act = content.livePageLinkAction(uri, mods.ctrl, mods.shift);
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const target = if (std.ascii.startsWithIgnoreCase(uri, "file://"))
+        content.filePath(&buf, uri) orelse return self.openExternal(alloc, uri)
+    else
+        uri;
+    self.performLinkMenuAction(alloc, act, target);
 }
 
 /// The navigation kind, or null on a runtime whose args predate
@@ -7748,6 +7804,16 @@ test "host floor: a real controller on a real window, on this box" {
         @setEvalBranchQuota(20_000);
         try testing.expectEqual(@as(usize, 4), sink.entries.items.len);
 
+        // No modifiers, stated rather than sampled: the routed click below
+        // reads the keyboard (T926), and a Ctrl held at this desk must not turn
+        // the browser hand-off into a split — the T860 flake, on this path.
+        mods_probe = &struct {
+            fn f() LinkMods {
+                return .{};
+            }
+        }.f;
+        defer mods_probe = null;
+
         // Both off-site targets point at the loopback server: a different site
         // from the page host, and unlike a real external URL it is reachable,
         // so the page-driven control can actually complete its navigation.
@@ -7850,6 +7916,71 @@ test "host floor: a real controller on a real window, on this box" {
             ));
         }
 
+        // ------------------------------------------------------------------
+        // T926: the link out takes the banner's modifier scheme
+        // ------------------------------------------------------------------
+        //
+        // Mac sends the same click through `BannerLinkOpener`: Cmd to a side
+        // pane, Cmd-Shift to a window. WebView2 carries no modifiers, so the
+        // pane reads them off the keyboard — stubbed here, since what Ctrl
+        // DOES is the claim and a desk's keyboard is not.
+        //
+        // Two routes, because Chromium has two: a click reaches
+        // `NavigationStarting` (legs 4 and 5), but a Ctrl-click on a link is a
+        // new-tab request and reaches `NewWindowRequested` instead (leg 6,
+        // driven by `window.open` from the gesture `ExecuteScript` carries).
+        // Its same-site control is T163's own Ctrl leg, which adopts.
+        const Leg = struct {
+            fn none() LinkMods {
+                return .{};
+            }
+            fn ctrl() LinkMods {
+                return .{ .ctrl = true };
+            }
+            fn ctrlShift() LinkMods {
+                return .{ .ctrl = true, .shift = true };
+            }
+            fn routed(n: usize) type {
+                return struct {
+                    fn ready(p: *ViewerPane) bool {
+                        _ = p;
+                        return link_sink.?.entries.items.len >= n;
+                    }
+                };
+            }
+        };
+
+        // (4) Ctrl: a side pane, and the page stays put.
+        mods_probe = &Leg.ctrl;
+        pane.executeScript(alloc, "document.getElementById('ext').click()");
+        try waitFor(&msg, 30, Leg.routed(6).ready, &pane);
+        const want_split = try std.fmt.allocPrint(alloc, "split:{s}", .{page_url});
+        defer alloc.free(want_split);
+        try testing.expectEqualStrings(want_split, sink.entries.items[5]);
+        try testing.expectEqual(content.Mode.html, pane.mode);
+
+        // (5) Ctrl+Shift: a window of its own.
+        mods_probe = &Leg.ctrlShift;
+        pane.executeScript(alloc, "document.getElementById('ext').click()");
+        try waitFor(&msg, 30, Leg.routed(7).ready, &pane);
+        const want_window = try std.fmt.allocPrint(alloc, "window:{s}", .{page_url});
+        defer alloc.free(want_window);
+        try testing.expectEqualStrings(want_window, sink.entries.items[6]);
+
+        // (6) The popup route: Ctrl on a user's request for an off-site window
+        // is the same click, and goes to a side pane rather than being adopted.
+        mods_probe = &Leg.ctrl;
+        {
+            const js = try std.fmt.allocPrint(alloc, "window.open('{s}')", .{page_url});
+            defer alloc.free(js);
+            pane.executeScript(alloc, js);
+        }
+        try waitFor(&msg, 30, Leg.routed(8).ready, &pane);
+        try testing.expectEqualStrings(want_split, sink.entries.items[7]);
+        log.warn("t926: routed={d} mode={s}", .{ sink.entries.items.len, @tagName(pane.mode) });
+        try testing.expectEqual(content.Mode.html, pane.mode);
+        mods_probe = &Leg.none;
+
         // (3) A click that stays on the site is untouched — same gesture, same
         // gate, and the pane walks to the mock's second page in place.
         pane.executeScript(alloc, "document.getElementById('same').click()");
@@ -7863,8 +7994,9 @@ test "host floor: a real controller on a real window, on this box" {
             pane.file_path,
             sink.entries.items.len,
         });
-        try testing.expectEqual(@as(usize, 5), sink.entries.items.len);
+        try testing.expectEqual(@as(usize, 8), sink.entries.items.len);
         try testing.expectEqual(content.Mode.html, pane.mode);
+
     }
 
     // ------------------------------------------------------------------
@@ -7928,19 +8060,19 @@ test "host floor: a real controller on a real window, on this box" {
 
         // The two the shared script must turn away, then the one it must not.
         // `postMessage` delivery is ordered, so the web link's entry landing at
-        // index 5 is the assertion that neither of the first two produced one.
+        // index 8 is the assertion that neither of the first two produced one.
         pane.executeScript(alloc, "rc('mail')");
         pane.executeScript(alloc, "rc('frag')");
         pane.executeScript(alloc, "rc('ext')");
         try waitFor(&msg, 30, struct {
             fn ready(p: *ViewerPane) bool {
                 _ = p;
-                return link_sink.?.entries.items.len >= 6;
+                return link_sink.?.entries.items.len >= 9;
             }
         }.ready, &pane);
         log.warn("t826: after three right-clicks entries={d}", .{sink.entries.items.len});
-        try testing.expectEqual(@as(usize, 6), sink.entries.items.len);
-        try testing.expectEqualStrings("menu-web:https://example.com/x", sink.entries.items[5]);
+        try testing.expectEqual(@as(usize, 9), sink.entries.items.len);
+        try testing.expectEqualStrings("menu-web:https://example.com/x", sink.entries.items[8]);
 
         // A link to the page's neighbour: the menu acts on the FILE, resolved
         // through the page host's own read grant.
@@ -7948,14 +8080,14 @@ test "host floor: a real controller on a real window, on this box" {
         try waitFor(&msg, 30, struct {
             fn ready(p: *ViewerPane) bool {
                 _ = p;
-                return link_sink.?.entries.items.len >= 7;
+                return link_sink.?.entries.items.len >= 10;
             }
         }.ready, &pane);
         const two_path = try std.fs.path.join(alloc, &.{ dir_path, "t826-two.html" });
         defer alloc.free(two_path);
         const want_local = try std.fmt.allocPrint(alloc, "menu-file:{s}", .{two_path});
         defer alloc.free(want_local);
-        try testing.expectEqualStrings(want_local, sink.entries.items[6]);
+        try testing.expectEqualStrings(want_local, sink.entries.items[9]);
 
         // And a `ghoztty://` link is a command, whose menu offers Focus and
         // Copy and nothing that opens a destination (`banner_link` owns that
@@ -7964,12 +8096,12 @@ test "host floor: a real controller on a real window, on this box" {
         try waitFor(&msg, 30, struct {
             fn ready(p: *ViewerPane) bool {
                 _ = p;
-                return link_sink.?.entries.items.len >= 8;
+                return link_sink.?.entries.items.len >= 11;
             }
         }.ready, &pane);
         try testing.expectEqualStrings(
             "menu-command:ghoztty://focus/dev",
-            sink.entries.items[7],
+            sink.entries.items[10],
         );
 
         // The pane never moved: a right-click is not a navigation.
@@ -7995,14 +8127,14 @@ test "host floor: a real controller on a real window, on this box" {
         try waitFor(&msg, 30, struct {
             fn ready(p: *ViewerPane) bool {
                 _ = p;
-                return link_sink.?.entries.items.len >= 9;
+                return link_sink.?.entries.items.len >= 12;
             }
         }.ready, &pane);
         const linked_path = try std.fs.path.join(alloc, &.{ dir_path, "linked.md" });
         defer alloc.free(linked_path);
         const want_doc = try std.fmt.allocPrint(alloc, "menu-file:{s}", .{linked_path});
         defer alloc.free(want_doc);
-        try testing.expectEqualStrings(want_doc, sink.entries.items[8]);
+        try testing.expectEqualStrings(want_doc, sink.entries.items[11]);
 
         pane.executeScript(alloc,
             \\document.querySelector('a[href="nope-linked.md"]').dispatchEvent(
@@ -8011,14 +8143,14 @@ test "host floor: a real controller on a real window, on this box" {
         try waitFor(&msg, 30, struct {
             fn ready(p: *ViewerPane) bool {
                 _ = p;
-                return link_sink.?.entries.items.len >= 10;
+                return link_sink.?.entries.items.len >= 13;
             }
         }.ready, &pane);
         const missing_path = try std.fs.path.join(alloc, &.{ dir_path, "nope-linked.md" });
         defer alloc.free(missing_path);
         const want_missing = try std.fmt.allocPrint(alloc, "menu-file:{s}", .{missing_path});
         defer alloc.free(want_missing);
-        try testing.expectEqualStrings(want_missing, sink.entries.items[9]);
+        try testing.expectEqualStrings(want_missing, sink.entries.items[12]);
     }
 
     // ------------------------------------------------------------------
@@ -10516,12 +10648,12 @@ test "T163: a popup is adopted as a pane, sized, and can close itself" {
     // thirty seconds downstream of the routing it was really about. What Ctrl
     // does to the routing is decided in `viewer_popup`, and tested there with
     // both states reachable on purpose.
-    ctrl_probe = &struct {
-        fn f() bool {
-            return false;
+    mods_probe = &struct {
+        fn f() LinkMods {
+            return .{};
         }
     }.f;
-    defer ctrl_probe = null;
+    defer mods_probe = null;
 
     // The browser leg must never reach `ShellExecuteW` from a test lane: it
     // would open the user's real browser over a green run.
@@ -10695,9 +10827,9 @@ test "T163: a popup is adopted as a pane, sized, and can close itself" {
     // leg fails by NAME instead of as a baffling "Ctrl did nothing".
     try testing.expectEqual(@as(?bool, true), last_popup_user_initiated);
 
-    ctrl_probe = &struct {
-        fn f() bool {
-            return true;
+    mods_probe = &struct {
+        fn f() LinkMods {
+            return .{ .ctrl = true };
         }
     }.f;
     const links_before = links.entries.items.len;
