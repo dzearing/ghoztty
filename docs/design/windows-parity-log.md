@@ -33421,3 +33421,5 @@ pixels are captured and checked. It also covers three failed rebuilds, plus a
 negative control showing a healthy device is never reported lost. A real driver
 reset is T1695 (it waits for a release carrying this); the Mac Metal equivalent
 is T1696 (seat: mac).
+
+- 2026-09-23 T919 done (d4d25c004): test panics lost their stack trace because LLD puts PDB stream data in unneeded FPM-slot blocks that std.debug.Pdb rejects (InvalidBlockIndex; ~1 in 5 test builds). New host tool pdb-msf-fix relocates them and keeps the FPM exact (cdb refuses an inexact map - found by experiment) before every Windows test run. Verified zig trace + cdb symbols; floor green.
