@@ -39,9 +39,11 @@
 #     survive off the input desktop (the band handles WM_PRINTCLIENT for exactly
 #     this). The terminal surface, which does not, is never captured here.
 #
-# Ctrl+V is sent with Send-TestViewerChord rather than Send-TestKeys: the
-# composer's interception asks the app's own GetKeyState for the modifier, and
-# only the attaching variant arranges that.
+# The picture goes in through the composer's web page (T1703): the DevTools
+# driver in lib\WebViewCdp.ps1 hands the page a paste event carrying the PNG,
+# which is the route a real paste takes from the moment the engine delivers it.
+# The OS clipboard is not involved, and neither is the RichEdit fallback this
+# suite used to pin itself to.
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
 #
@@ -67,12 +69,13 @@ if ($ExePath) { $exe = $ExePath }
 # a script's output is a cost paid by every later reader of it.
 $env:GHOZTTY_PIPE_SUFFIX = "-fbalpha$PID"
 
-# The paste goes through window messages into a native control, so this suite
-# pins itself to the RichEdit surface (T1102). The CAROUSEL is the band's own
-# GDI paint on either surface -- it is not part of the web composer's document --
-# but the only way to put a picture in it from here is the control.
+# The paste goes through the web composer's page over the DevTools protocol
+# (T1703). The CAROUSEL is the band's own GDI paint -- it is not part of the
+# page's document -- so the pixels below are read from the band exactly as
+# before; only the way the picture gets in has moved.
 . (Join-Path $PSScriptRoot 'lib\ComposerSurface.ps1')
-Set-ComposerSurface 'richedit'
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+. (Join-Path $PSScriptRoot 'lib\WebViewCdp.ps1')
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
@@ -261,19 +264,14 @@ function New-HalfTransparentPng([int]$Side) {
     return $bmp
 }
 
-function Set-ClipboardTransparentPng([int]$Side) {
+# PNG specifically: it is the format that carries an alpha channel, so a
+# picture in any other shape would test nothing.
+function Get-TransparentPngBytes([int]$Side) {
     $bmp = New-HalfTransparentPng $Side
     $ms = New-Object System.IO.MemoryStream
     $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
     $bmp.Dispose()
-    $bytes = $ms.ToArray()
-    # The PNG format specifically, not a DIB: a device bitmap on the clipboard
-    # has nowhere to put an alpha channel, so pasting one would test nothing.
-    $do = New-Object System.Windows.Forms.DataObject
-    $do.SetData('PNG', $false, (New-Object System.IO.MemoryStream(, $bytes)))
-    [System.Windows.Forms.Clipboard]::SetDataObject($do, $true)
-    Start-Sleep -Milliseconds 250
-    return $bytes.Length
+    return ,$ms.ToArray()
 }
 
 function Format-Color($c) { return "$($c.R),$($c.G),$($c.B)" }
@@ -345,8 +343,8 @@ function Invoke-Arm([string]$Label, [string]$Background) {
 
     Assert (Invoke-FeedbackButton $view) "[$Label] the revealed nav bar took a click at the feedback button"
     Assert (Wait-FeedbackOpen $errlog $paneId) "[$Label] the pane reports the composer OPEN"
-    Assert (Wait-ComposerSurface $errlog 'richedit') `
-        "[$Label] ...on the RichEdit surface this script can drive (got '$(Get-ComposerSurface $errlog)')"
+    Assert (Wait-ComposerSurface $errlog 'web') `
+        "[$Label] ...on the web surface (got '$(Get-ComposerSurface $errlog)')"
 
     $fb = $null
     for ($t = 0; $t -lt 20; $t++) {
@@ -357,16 +355,15 @@ function Invoke-Arm([string]$Label, [string]$Background) {
     Assert ($null -ne $fb) "[$Label] a GhozttyViewerFeedback child window exists"
     if (-not $fb) { return }
 
-    $rich = $null
-    foreach ($c in @(Get-TestChildWindows -Window $fb -Class $null)) {
-        if ([string]$c.Class -eq 'RichEdit50W') { $rich = [IntPtr]$c.Hwnd; break }
-    }
-    Assert ($null -ne $rich) "[$Label] the composer hosts its RichEdit50W text control"
-    if (-not $rich) { return }
+    $cdp = $null
+    try { $cdp = Find-CdpComposer -Port $script:cdpPort -Exclude $script:cdpSeen } catch { Write-Host "  $($_.Exception.Message)" }
+    Assert ($null -ne $cdp) "[$Label] the composer's page answers on the DevTools port"
+    if (-not $cdp) { return }
 
-    $bytes = Set-ClipboardTransparentPng 48
-    Assert ($bytes -gt 0) "[$Label] a half-transparent PNG is on the clipboard ($bytes bytes)"
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key V -Modifiers Ctrl)
+    $png = Get-TransparentPngBytes 48
+    Assert ($png.Length -gt 0) "[$Label] a half-transparent PNG was made ($($png.Length) bytes)"
+    $script:cdpSeen += $cdp.Url
+    try { Send-CdpComposerImage -Conn $cdp -Bytes $png } finally { Close-Cdp $cdp }
     Assert (Wait-Image $errlog $paneId 1) "[$Label] the paste attached image #1"
 
     $geo = Wait-Carousel $errlog $paneId 1
@@ -431,6 +428,12 @@ function Invoke-Arm([string]$Label, [string]$Background) {
 }
 
 Stop-RepoInstances
+# ONE port for both arms: the second app joins the first app's WebView2 browser
+# process (same user-data folder), so its pages are listed on the first app's
+# port, beside the first arm's composer - which is why each arm skips the pages
+# an earlier arm used.
+$script:cdpPort = Enable-WebViewCdp
+$script:cdpSeen = @()
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
 

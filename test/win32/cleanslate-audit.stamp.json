@@ -1,11 +1,11 @@
 {
     "guard":  "cleanslate",
     "script":  "test/win32/cleanslate-audit.ps1",
-    "generated":  "2026-09-23T15:24:54-07:00",
-    "commit":  "3709dbe23",
+    "generated":  "2026-09-23T15:56:38-07:00",
+    "commit":  "6eccc6868",
     "uncommitted":  [
                         "test/win32/lib/WebViewCdp.ps1",
-                        "test/win32/viewer-composer.ps1"
+                        "test/win32/viewer-feedback-alpha.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -237,7 +237,7 @@
                   "test/win32/lib/UnrollCountAudit.ps1":  "4ec16ee97c358c267e2e07003178429acb80142a0a9c54c1cb0d7cec08d27325",
                   "test/win32/lib/VerdictExitAudit.ps1":  "87d8cad08aa867a0cc2de896872e47d4abcd469850f4f5a897deb778a7aaf16f",
                   "test/win32/lib/VtText.ps1":  "e9a099093c681d1bbef2c78055e1ed4b29daf9b0d020a3e4c454509c9ee28f9a",
-                  "test/win32/lib/WebViewCdp.ps1":  "66c577eb969bbb074119124af9408802ac3f6b4ebfad817dbc6c3775b749182b",
+                  "test/win32/lib/WebViewCdp.ps1":  "69b27f4277092da5e8b2633d50dddcd376b6bfca10b6e9fc5b526e4bfcfd8f6a",
                   "test/win32/lib/WindowComposite.ps1":  "d008709aee808b1e3d02f6da34d0bf910168df10bd5ab284e9037e706d9a74fa",
                   "test/win32/local-split-no-command-rerun.ps1":  "ee277b6308cdb172e153fe92d0624732f8b64743418134ce466da5534138fae2",
                   "test/win32/log-append.ps1":  "61e904625bdcce9ad697d8d8ea6065dcd15673388768a1b306cf72902d255b11",
@@ -377,7 +377,7 @@
                   "test/win32/viewer-diff-tree.ps1":  "5877f359c51ec7de7fdd91e626c11f008e99dac36fcece9733eafad7302a2661",
                   "test/win32/viewer-error-card.ps1":  "bc486ca60cf4eaed7e2bb772a8e6dc80818ef04696f86ea7ea054238dacf2f4c",
                   "test/win32/viewer-feedback.ps1":  "ee5562524e4456c44d9f27637a94e8f8afe723e9c60053001292393e75b5e62c",
-                  "test/win32/viewer-feedback-alpha.ps1":  "31c29c40f7afe3f8f06b028f05adc1dd82d19dd2537d5a580c632fbc3c4de2af",
+                  "test/win32/viewer-feedback-alpha.ps1":  "7e3ed8de4c1caf1382b53ab1fa99ce89b4a3d9239263be65c7bbf80de97f34c1",
                   "test/win32/viewer-feedback-capture.ps1":  "83e46b33ef57964c51f711170eb675af06eb24e98eef58723b276d2c7bff83f7",
                   "test/win32/viewer-feedback-carousel.ps1":  "1314ea54a3791488a2a4eb2b3957ed3ba407a3ebdaa0dbc0a823ff9764574155",
                   "test/win32/viewer-feedback-images.ps1":  "94b4f8872030210fa2350ff841f37dc8550eb19ac120638753be2f429b402f2f",

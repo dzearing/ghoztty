@@ -34,7 +34,11 @@ Three consequences to keep in mind:
     build's (paths.userDataFolder), and the harness's shared kill clears repo
     instances,
     so in practice the switch sticks; Find-CdpComposer saying "no endpoint"
-    is the symptom if it ever does not.
+    is the symptom if it ever does not. The same reuse bites a script that
+    launches a SECOND app while the first still runs: the second app's pages
+    land on the first app's port. Arm one port for the whole script and pass
+    Find-CdpComposer -Exclude the sessions already used (T1703,
+    viewer-feedback-alpha.ps1).
 
 USE
 
@@ -200,14 +204,21 @@ $script:CdpComposerProbe = "(function(){var e=document.getElementById('c');" +
 # Find the open composer's page and return a session on it. Waits for it to
 # appear (the controller is created lazily when the composer opens) and THROWS
 # when it never does, naming what the port did answer.
+#
+# `-Exclude` takes the `.Url` of sessions already used. Two apps on the same
+# user-data folder share ONE browser process, so the second app's pages appear
+# on the FIRST app's port (a port armed for the second app never opens) - and
+# the first app's composer is still listed there. A script that launches more
+# than one app arms one port for all of them and skips what it has seen.
 function Find-CdpComposer {
-    param([Parameter(Mandatory = $true)][int]$Port, [int]$TimeoutMs = 15000)
+    param([Parameter(Mandatory = $true)][int]$Port, [int]$TimeoutMs = 15000, [string[]]$Exclude = @())
     $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
     $seen = 'no endpoint answered'
     while ((Get-Date) -lt $deadline) {
         $targets = @(Get-CdpTargets -Port $Port)
         if ($targets.Count -gt 0) { $seen = "$($targets.Count) page(s): " + (($targets | ForEach-Object { $_.url }) -join ', ') }
         foreach ($t in $targets) {
+            if ($Exclude -contains [string]$t.webSocketDebuggerUrl) { continue }
             $c = $null
             try {
                 $c = Connect-Cdp -WebSocketUrl $t.webSocketDebuggerUrl
@@ -244,6 +255,31 @@ function Send-CdpComposerText {
     param([Parameter(Mandatory = $true)]$Conn, [Parameter(Mandatory = $true)][string]$Text, [switch]$KeepCaret)
     Set-CdpComposerFocus -Conn $Conn -KeepCaret:$KeepCaret
     [void](Invoke-Cdp $Conn 'Input.insertText' @{ text = $Text })
+}
+
+# Paste a picture at the caret (T1703). The OS clipboard is no route in: a
+# Ctrl+V dispatched over CDP runs the engine's paste command, which reads the
+# clipboard through the browser process on a desktop the harness does not own.
+# So the bytes go through the page's OWN paste listener instead - a synthetic
+# ClipboardEvent carrying a File, the shape the host floor test in
+# ViewerPane.zig uses - which is the path a real paste takes from the moment the
+# engine hands the page its event: decode, size check, base64, `image` message.
+function Send-CdpComposerImage {
+    param(
+        [Parameter(Mandatory = $true)]$Conn,
+        [Parameter(Mandatory = $true)][byte[]]$Bytes,
+        [string]$Type = 'image/png',
+        [string]$Name = 'pasted.png',
+        [switch]$KeepCaret
+    )
+    Set-CdpComposerFocus -Conn $Conn -KeepCaret:$KeepCaret
+    $b64 = [Convert]::ToBase64String($Bytes)
+    $js = "(function(){var s=atob('$b64');var u=new Uint8Array(s.length);" +
+        "for(var i=0;i<s.length;i++)u[i]=s.charCodeAt(i);" +
+        "var f=new File([u],'$Name',{type:'$Type'});var dt=new DataTransfer();dt.items.add(f);" +
+        "var e=document.getElementById('c');" +
+        "return e.dispatchEvent(new ClipboardEvent('paste',{clipboardData:dt,bubbles:true,cancelable:true}));})()"
+    [void](Invoke-CdpEval $Conn $js)
 }
 
 # key -> (code, virtual-key, text a keyDown inserts). Letters and digits are
