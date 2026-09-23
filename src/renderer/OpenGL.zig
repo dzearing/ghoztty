@@ -12,6 +12,7 @@ const configpkg = @import("../config.zig");
 const rendererpkg = @import("../renderer.zig");
 const gl_report = @import("gl_report.zig");
 const gl_loader = @import("gl_loader.zig");
+const gl_robust = @import("gl_robust.zig");
 const build_config = @import("../build_config.zig");
 const Renderer = rendererpkg.GenericRenderer(OpenGL);
 
@@ -82,6 +83,35 @@ snap_fbo: ?gl.Framebuffer = null,
 snap_rbo: ?gl.Renderbuffer = null,
 snap_w: u32 = 0,
 snap_h: u32 = 0,
+
+/// Lost-device state (T1690, win32 only). Renderer-thread only, like every
+/// other GL-touching field here.
+device: DeviceState = .{},
+
+const DeviceState = struct {
+    /// The context stopped answering: a driver reset or swap. Every GPU
+    /// resource the renderer owns is dead with it.
+    lost: bool = false,
+
+    /// Rebuild attempts made since the loss, for the backoff schedule.
+    attempts: u32 = 0,
+
+    /// Earliest moment (`std.time.milliTimestamp`) the next attempt may run,
+    /// or null for "now".
+    next_attempt_ms: ?i64 = null,
+
+    /// Frames presented, for the debug-only simulation hook.
+    frames: u64 = 0,
+
+    /// The debug-only simulation has already fired for this renderer.
+    simulated: bool = false,
+
+    /// Rebuild attempts still to fail on purpose (debug-only simulation).
+    sim_failures_left: u32 = 0,
+
+    /// Successful rebuilds, for the log line a harness reads.
+    rebuilds: u32 = 0,
+};
 
 /// NOTE: This is an error{}!OpenGL instead of just OpenGL for parity with
 ///       Metal, since it needs to be fallible so does this, even though it
@@ -451,8 +481,198 @@ pub fn drawFrameEnd(self: *OpenGL) void {
         if (swap_start) |start| {
             if (perf.now()) |end| swap_ns = end.since(start);
         }
+
+        // T1690: once per presented frame, ask whether the device is still
+        // there. Only where this thread has the context current — the reset
+        // status belongs to the context, not to the process.
+        self.checkDevice();
     }
     perf.frame(self.rt_surface, swap_ns);
+}
+
+// -------------------------------------------------------------------------
+// Lost-device recovery (T1690). See `gl_robust.zig` for the why; this is the
+// renderer-thread half that notices a loss and builds a new context. The GPU
+// resources the generic renderer owns are rebuilt by
+// `GenericRenderer.recoverLostContext`, which drives these.
+// -------------------------------------------------------------------------
+
+/// `glGetGraphicsResetStatus`, resolved once per thread and again after every
+/// rebuild. Per thread for the same reason the glad context is: a GL entry
+/// point is only meaningful where the context it came from is current.
+threadlocal var reset_status_fn: ?*const fn () callconv(.winapi) u32 = null;
+threadlocal var reset_status_resolved: bool = false;
+
+fn resetStatusFn() ?*const fn () callconv(.winapi) u32 {
+    if (comptime apprt.runtime != apprt.win32) return null;
+    if (!reset_status_resolved) {
+        reset_status_resolved = true;
+        const api = gl_loader.active();
+        const p = api.proc("glGetGraphicsResetStatus") orelse
+            api.proc("glGetGraphicsResetStatusARB");
+        reset_status_fn = if (p) |f| @ptrCast(f) else null;
+    }
+    return reset_status_fn;
+}
+
+/// Debug-only seams that let an acceptance script drive the recovery path on
+/// a box whose driver nobody is going to reset on purpose (T1690), the same
+/// pattern and the same rule as `GHOZTTY_GL_FORCE_VERSION`: never compiled into
+/// a release build.
+///
+/// - `GHOZTTY_GL_SIMULATE_RESET_AFTER=<n>`: after the n-th presented frame,
+///   report the context as lost. The rebuild that follows is entirely real —
+///   the live context is deleted and a new one created — so what it proves is
+///   that the renderer draws again from a brand-new context.
+/// - `GHOZTTY_GL_SIMULATE_REBUILD_FAILURES=<k>`: after a simulated loss, the
+///   first k rebuild attempts OF EACH PANE fail, which is the shape of a driver
+///   swap that leaves the machine without usable OpenGL for a while. Per pane
+///   rather than per process so the outcome is deterministic however many
+///   panes are open.
+const sim = struct {
+    var loaded: bool = false;
+    var reset_after: ?u64 = null;
+    var rebuild_failures: u32 = 0;
+    var lock: std.Thread.Mutex = .{};
+
+    fn load() void {
+        if (comptime !build_config.is_debug) return;
+        lock.lock();
+        defer lock.unlock();
+        if (loaded) return;
+        loaded = true;
+        reset_after = envInt("GHOZTTY_GL_SIMULATE_RESET_AFTER");
+        if (envInt("GHOZTTY_GL_SIMULATE_REBUILD_FAILURES")) |k|
+            rebuild_failures = @intCast(@min(k, 1000));
+    }
+
+    fn envInt(name: []const u8) ?u64 {
+        const raw = std.process.getEnvVarOwned(std.heap.page_allocator, name) catch return null;
+        defer std.heap.page_allocator.free(raw);
+        return std.fmt.parseInt(u64, std.mem.trim(u8, raw, " \t\r\n"), 10) catch null;
+    }
+};
+
+fn checkDevice(self: *OpenGL) void {
+    if (comptime apprt.runtime != apprt.win32) return;
+    if (self.device.lost) return;
+    self.device.frames +%= 1;
+
+    if (comptime build_config.is_debug) {
+        sim.load();
+        if (!self.device.simulated) if (sim.reset_after) |n| {
+            if (self.device.frames >= n) {
+                self.device.simulated = true;
+                self.markLost("simulated (debug test hook)");
+                self.device.sim_failures_left = sim.rebuild_failures;
+                return;
+            }
+        };
+    }
+
+    const get = resetStatusFn() orelse return;
+    const status = gl_robust.ResetStatus.fromGl(get());
+    if (status.lost()) self.markLost(@tagName(status));
+}
+
+fn markLost(self: *OpenGL, why: []const u8) void {
+    self.device.lost = true;
+    self.device.attempts = 0;
+    self.device.next_attempt_ms = null;
+
+    // Everything below names objects in the dead context. They are dropped,
+    // never deleted: once a new context exists those names can belong to ITS
+    // objects, and deleting them would destroy live resources.
+    self.last_target = null;
+    self.snap_fbo = null;
+    self.snap_rbo = null;
+    self.snap_w = 0;
+    self.snap_h = 0;
+
+    log.warn("graphics device lost ({s}); rebuilding this pane's renderer", .{why});
+}
+
+/// The new context came up but the renderer could not rebuild its resources
+/// in it (shader compile, buffer allocation). Treat it as still lost and try
+/// the whole rebuild again on the backoff.
+pub fn markRebuildIncomplete(self: *OpenGL) void {
+    self.device.lost = true;
+    self.device.next_attempt_ms = std.time.milliTimestamp() +
+        gl_robust.retryDelayMs(self.device.attempts);
+}
+
+/// Whether the context was lost and has not been rebuilt yet.
+pub fn contextLost(self: *const OpenGL) bool {
+    return self.device.lost;
+}
+
+/// Milliseconds until the next rebuild attempt may run: 0 when one is due now,
+/// null when nothing is lost.
+pub fn rebuildDelayMs(self: *const OpenGL) ?u64 {
+    if (!self.device.lost) return null;
+    const next = self.device.next_attempt_ms orelse return 0;
+    const now = std.time.milliTimestamp();
+    if (now >= next) return 0;
+    return @intCast(next - now);
+}
+
+/// Replace the dead context with a new one on the same window and make it
+/// current on this (the renderer) thread. The caller has already released
+/// every GPU resource it held in the old one, while the old one was still
+/// current. On failure the next attempt is scheduled on the backoff and the
+/// error returned; the caller tries again when `rebuildDelayMs` says so.
+pub fn rebuildContext(self: *OpenGL) !void {
+    if (comptime apprt.runtime != apprt.win32) return error.Unsupported;
+
+    const attempt = self.device.attempts;
+    self.device.attempts +|= 1;
+    errdefer |err| {
+        const delay = gl_robust.retryDelayMs(self.device.attempts);
+        self.device.next_attempt_ms = std.time.milliTimestamp() + delay;
+        if (gl_robust.shouldLogAttempt(attempt)) log.warn(
+            "graphics device rebuild attempt {d} failed: {}; next try in {d}ms",
+            .{ attempt + 1, err, delay },
+        );
+    }
+
+    if (comptime build_config.is_debug) {
+        if (self.device.sim_failures_left > 0) {
+            self.device.sim_failures_left -= 1;
+            return error.SimulatedRebuildFailure;
+        }
+    }
+
+    const surface = self.rt_surface;
+    const hdc = surface.hdc orelse return error.InvalidSurface;
+    const api = gl_loader.active();
+
+    _ = api.makeCurrent(null, null);
+    if (surface.hglrc) |old| {
+        _ = api.deleteContext(@ptrCast(old));
+        surface.hglrc = null;
+    }
+
+    const created = gl_robust.createContext(@ptrCast(hdc)) orelse
+        return error.GLContextCreateFailed;
+    surface.hglrc = @ptrCast(created.hglrc);
+
+    if (api.makeCurrent(@ptrCast(hdc), created.hglrc) == 0)
+        return error.WGLMakeCurrentFailed;
+    reset_status_resolved = false;
+
+    // Same loader as threadEnter, and the same version floor: a driver swap
+    // that leaves the machine on the basic display adapter answers with GDI's
+    // OpenGL 1.1, which fails here and is retried until the new driver is in.
+    const loader: gl_loader.GladLoadFn = gl_loader.gladLoad;
+    try prepareContext(loader);
+
+    self.device.lost = false;
+    self.device.next_attempt_ms = null;
+    self.device.rebuilds += 1;
+    log.warn(
+        "graphics device rebuilt after {d} attempt(s) robust={} rebuilds={d}",
+        .{ attempt + 1, created.robust, self.device.rebuilds },
+    );
 }
 
 /// Win32 frame-pacing telemetry (T40/T48): when GHOZTTY_PERF is set in

@@ -15,6 +15,7 @@ const CoreSurface = @import("../../Surface.zig");
 const internal_os = @import("../../os/main.zig");
 const remote_connection = @import("../../remote/connection.zig");
 const gl_loader = @import("../../renderer/gl_loader.zig");
+const gl_robust = @import("../../renderer/gl_robust.zig");
 
 const App = @import("App.zig");
 const AgentIntegration = @import("AgentIntegration.zig");
@@ -680,9 +681,14 @@ fn initOnce(
     // Set up the pixel format for OpenGL
     try self.setupPixelFormat();
 
-    // Create the WGL context
-    self.hglrc = @ptrCast(gl_loader.active().createContext(@ptrCast(self.hdc.?)));
+    // Create the WGL context — a robust one where the driver offers it, so a
+    // graphics driver reset or swap is something the renderer can detect and
+    // rebuild from instead of something that takes the process down (T1690).
+    const created = gl_robust.createContext(@ptrCast(self.hdc.?)) orelse
+        return error.Win32Error;
+    self.hglrc = @ptrCast(created.hglrc);
     if (self.hglrc == null) return error.Win32Error;
+    log.info("GL context created robust={}", .{created.robust});
     errdefer {
         _ = gl_loader.active().makeCurrent(null, null);
         _ = gl_loader.active().deleteContext(@ptrCast(self.hglrc.?));

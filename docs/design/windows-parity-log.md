@@ -33402,3 +33402,22 @@ natural cold launches (all persisted). `-NegativeControl` turns the hold off
 and reproduces the defect exactly (`rdA=<none>`, exit 1). Filed T1693 (a
 resolve that FAILS still opens windows silently unpersisted for the 15s
 cooldown, P2) and T1694 (check the Mac path for the same race, seat: mac).
+
+## 2026-09-23 - T1690: a graphics driver reset no longer closes every window
+
+The cause of the T1686 vanish. Surfaces made their OpenGL context with plain
+`wglCreateContext`, which has no contract for a device reset, and the
+2026-09-20 NVIDIA driver swap ended the process. Contexts are now robust
+(`WGL_ARB_create_context_robustness`, lose context on reset; a plain context
+where the driver has no robust option). Each presented frame checks
+`glGetGraphicsResetStatus`. On a loss the pane releases its GPU resources while
+the dead context is still current, creates a new context on the same window,
+and rebuilds shaders, frames, the atlas, inline images and the background image
+(`gl_robust.zig`, `OpenGL.zig`, `generic.zig recoverLostContext`, a retry timer
+in `Thread.zig`). An unusable device is retried at 0/250/1000/2000 ms, then
+every 5 s. New `test\win32\gl-device-lost.ps1` ALL PASS (22). It uses a
+debug-only simulated loss; the rebuild itself is real, and the rebuilt panes'
+pixels are captured and checked. It also covers three failed rebuilds, plus a
+negative control showing a healthy device is never reported lost. A real driver
+reset is T1695 (it waits for a release carrying this); the Mac Metal equivalent
+is T1696 (seat: mac).

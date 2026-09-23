@@ -72,6 +72,13 @@ cursor_h: xev.Timer,
 cursor_c: xev.Completion = .{},
 cursor_c_cancel: xev.Completion = .{},
 
+/// Retries the rebuild of a lost graphics device (T1690) on the backoff
+/// the renderer asks for, so an idle pane whose device vanished comes back
+/// without waiting for output or a keypress to trigger a draw.
+recover_h: xev.Timer,
+recover_c: xev.Completion = .{},
+recover_armed: bool = false,
+
 /// The surface we're rendering to.
 surface: *apprt.Surface,
 
@@ -158,6 +165,10 @@ pub fn init(
     var cursor_timer = try xev.Timer.init();
     errdefer cursor_timer.deinit();
 
+    // Lost-device rebuild retries (T1690).
+    var recover_h = try xev.Timer.init();
+    errdefer recover_h.deinit();
+
     // The mailbox for messaging this thread
     var mailbox = try Mailbox.create(alloc);
     errdefer mailbox.destroy(alloc);
@@ -172,6 +183,7 @@ pub fn init(
         .draw_h = draw_h,
         .draw_now = draw_now,
         .cursor_h = cursor_timer,
+        .recover_h = recover_h,
         .surface = surface,
         .renderer = renderer_impl,
         .state = state,
@@ -189,6 +201,7 @@ pub fn deinit(self: *Thread) void {
     self.draw_h.deinit();
     self.draw_now.deinit();
     self.cursor_h.deinit();
+    self.recover_h.deinit();
     self.loop.deinit();
 
     // Nothing can possibly access the mailbox anymore, destroy it.
@@ -512,7 +525,51 @@ fn drawFrame(self: *Thread, now: bool) void {
     } else {
         self.renderer.drawFrame(false) catch |err|
             log.warn("error drawing err={}", .{err});
+        self.recoverLostContext();
     }
+}
+
+/// If the frame just drawn found the graphics device gone (T1690), rebuild
+/// the renderer's GPU state now or arm the retry timer for when the backoff
+/// allows. A no-op for a renderer that cannot report a lost device.
+fn recoverLostContext(self: *Thread) void {
+    if (comptime !@hasDecl(rendererpkg.Renderer, "recoverLostContext")) return;
+
+    // A retry is already scheduled; it will come back on its own.
+    if (self.recover_armed) return;
+
+    switch (self.renderer.recoverLostContext()) {
+        .none => {},
+
+        // Draw the pane from scratch in the new context. `wakeup` rather
+        // than a direct draw so the frame state is rebuilt first.
+        .recovered => self.wakeup.notify() catch {},
+
+        .pending => |ms| {
+            self.recover_armed = true;
+            self.recover_h.run(
+                &self.loop,
+                &self.recover_c,
+                @max(ms, 1),
+                Thread,
+                self,
+                recoverCallback,
+            );
+        },
+    }
+}
+
+fn recoverCallback(
+    self_: ?*Thread,
+    _: *xev.Loop,
+    _: *xev.Completion,
+    r: xev.Timer.RunError!void,
+) xev.CallbackAction {
+    _ = r catch return .disarm;
+    const t = self_ orelse return .disarm;
+    t.recover_armed = false;
+    t.recoverLostContext();
+    return .disarm;
 }
 
 /// Env-gated telemetry (GHOZTTY_PERF): count wakeupCallback firings per

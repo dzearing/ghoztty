@@ -988,6 +988,84 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             self.shaders.deinit(self.alloc);
         }
 
+        /// Recover from a lost graphics device (T1690): only for a graphics
+        /// API that can report one (`contextLost`), which today is the win32
+        /// OpenGL backend. Called by the renderer thread after each draw.
+        ///
+        /// The first call after a loss releases every GPU resource while the
+        /// dead context is still current — GL calls on a lost robust context
+        /// are harmless no-ops, and doing it later would aim the deletes at the
+        /// NEW context, whose object names can collide with the old ones. Then,
+        /// whenever the backoff allows, it asks the API for a new context and
+        /// rebuilds what `displayRealized` rebuilds, plus the images, whose
+        /// pixels are no longer held CPU-side once uploaded.
+        ///
+        /// Says whether it recovered, or the milliseconds until the next attempt
+        /// when the device is still lost, so the caller can come back without
+        /// waiting for something else to trigger a draw.
+        pub const Recovery = union(enum) {
+            /// Nothing was lost.
+            none,
+            /// The device was rebuilt; the pane needs a full redraw.
+            recovered,
+            /// Still lost; try again in this many milliseconds.
+            pending: u64,
+        };
+
+        pub fn recoverLostContext(self: *Self) Recovery {
+            if (comptime !@hasDecl(GraphicsAPI, "contextLost")) return .none;
+            if (!self.api.contextLost()) return .none;
+
+            self.draw_mutex.lock();
+            defer self.draw_mutex.unlock();
+
+            if (!self.swap_chain.defunct) {
+                self.swap_chain.deinit();
+                self.shaders.deinit(self.alloc);
+                self.images.deinit(self.alloc);
+                self.images = .empty;
+                if (self.bg_image) |img| {
+                    img.deinit(self.alloc);
+                    self.bg_image = null;
+                }
+            }
+
+            if (self.api.rebuildDelayMs()) |ms| if (ms > 0) return .{ .pending = ms };
+
+            self.api.rebuildContext() catch {
+                // Logged (rate-limited) by the API with the next delay.
+                return .{ .pending = self.api.rebuildDelayMs() orelse 0 };
+            };
+
+            self.initShaders() catch |err| {
+                log.err("rebuilding shaders after a lost device failed err={}", .{err});
+                self.api.markRebuildIncomplete();
+                return .{ .pending = self.api.rebuildDelayMs() orelse 0 };
+            };
+            self.swap_chain = SwapChain.init(
+                self.api,
+                self.has_custom_shaders,
+            ) catch |err| {
+                log.err("rebuilding frames after a lost device failed err={}", .{err});
+                self.shaders.deinit(self.alloc);
+                self.api.markRebuildIncomplete();
+                return .{ .pending = self.api.rebuildDelayMs() orelse 0 };
+            };
+            self.reinitialize_shaders = false;
+            self.target_config_modified +%= 1;
+
+            // Images come back from their CPU-side sources: kitty images from
+            // the terminal's image storage on the next frame update, the
+            // background image from its configured path.
+            self.images.force_kitty_update = true;
+            self.prepBackgroundImage() catch |err| {
+                log.warn("reloading the background image after a lost device failed err={}", .{err});
+            };
+
+            self.markDirty();
+            return .recovered;
+        }
+
         fn displayLinkCallback(
             _: *macos.video.DisplayLink,
             ud: ?*xev.Async,
@@ -1485,6 +1563,11 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // data we access while we're in the middle of drawing.
             self.draw_mutex.lock();
             defer self.draw_mutex.unlock();
+
+            // No GPU resources to draw with: the display was unrealized, or
+            // the device was lost and is waiting to be rebuilt (T1690). There
+            // is nothing to present, and trying would only fail every frame.
+            if (self.swap_chain.defunct) return;
 
             // After the graphics API is complete (so we defer) we want to
             // update our scrollbar state.

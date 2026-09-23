@@ -233,6 +233,16 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the driver's real GL version, as in every other launch."
         },
+        "GHOZTTY_GL_SIMULATE_REBUILD_FAILURES": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = a lost-device rebuild succeeds or fails on its own merits; gl-device-lost.ps1 arm A and every real reset run it that way."
+        },
+        "GHOZTTY_GL_SIMULATE_RESET_AFTER": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = only the driver's real reset status can report a loss; gl-device-lost.ps1 arm C is that state and asserts nothing is ever reported lost."
+        },
         "GHOZTTY_HANDOFF_COMMIT": {
             "class": "isolation",
             "unset": "shipped-elsewhere",

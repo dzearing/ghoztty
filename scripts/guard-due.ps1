@@ -1594,6 +1594,22 @@ $GuardTable = @(
             'test\win32\startup-failure.ps1'
         )
     },
+    # Surviving a lost graphics device (T1690). A driver reset or swap used to
+    # take every window down with it; now the pane rebuilds its context and
+    # its GPU resources in place. Nothing but a real rebuild observed through
+    # the pane's pixels can say that still works: a compile cannot, and the
+    # unit tests cover only the policy half.
+    [pscustomobject]@{
+        Name   = 'gl-device-lost'
+        Script = 'test\win32\gl-device-lost.ps1'
+        Stamp  = 'test\win32\gl-device-lost.stamp.json'
+        Covers = @(
+            'src\renderer\gl_robust.zig',
+            'src\renderer\OpenGL.zig',
+            'src\renderer\Thread.zig',
+            'test\win32\gl-device-lost.ps1'
+        )
+    },
     # The in-app update (T1178). This is the one code path that REPLACES the
     # app on disk and quits the terminal to do it, and every failure mode is
     # invisible to a compiler: an asset matcher that picks the wrong release,
