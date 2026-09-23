@@ -1,12 +1,10 @@
 {
     "guard":  "printclient-audit",
     "script":  "test/win32/printclient-audit.ps1",
-    "generated":  "2026-09-23T11:12:33-07:00",
-    "commit":  "3076d3d1a",
+    "generated":  "2026-09-23T11:56:27-07:00",
+    "commit":  "2b5475b6f",
     "uncommitted":  [
-                        "src/apprt/win32/viewer_content.zig",
-                        "src/apprt/win32/viewer_popup.zig",
-                        "src/apprt/win32/ViewerPane.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -232,11 +230,11 @@
                   "src/apprt/win32/ViewerFeedbackWeb.zig":  "bd420cf35aa02909c9632b2589b36b69ba0ac141a87add034ae7c0080af4f1f3",
                   "src/apprt/win32/ViewerFindBar.zig":  "265556167eea1ac38bab8d1b05101bc8c3621a7cb100b7147b95b826b28dc03c",
                   "src/apprt/win32/ViewerNavBar.zig":  "5c01e8984a1298b0ce8800493c0f7233b5981aec5a142b25344e800c903e2a05",
-                  "src/apprt/win32/ViewerPane.zig":  "a5c0ee835ca4a4403259c2ad265d9491499909c9dabfea866c0d4a9b92df1917",
+                  "src/apprt/win32/ViewerPane.zig":  "a742dbe5ada34ddae0ce21453dbcb9a5539228497ad7746e11a6a56cdf312776",
                   "src/apprt/win32/ViewerTOCPanel.zig":  "9ea364bf3315b719ee8697446efe5cb478d6aa2e33ba0813f896159ce2ce1c26",
                   "src/apprt/win32/ViewerWorktreeProbe.zig":  "f64bcab388e4c9ab0ff7475358e042bba21647f9b3c559477b6f405b73bd36b2",
                   "src/apprt/win32/webview2.zig":  "dd1be48ff6cf7fe4032d6f4dabe76a1198e50de7e8b6695b59e545a365814efc",
-                  "src/apprt/win32/webview2_iface.zig":  "cdfe46db3c405118ff363783a9dd825b7ad4a14d6722b3158328ab27759d4636",
+                  "src/apprt/win32/webview2_iface.zig":  "3be368b7502b9c2e56b688aa81eb94cda71238d4280c9839b45d673c9fa14014",
                   "src/apprt/win32/webview2_paths.zig":  "125e4d497fe25e488b9f5a8aee4f0ffe34b7c6f377b0741a89c6781552bc9cf6",
                   "src/apprt/win32/whats_new_layout.zig":  "b6b8eb2feb08dabd5e2e5649f5d0212e83e36afd3f12fe0b7bb764aa7cd97c8e",
                   "src/apprt/win32/whats_new_notes.zig":  "0931a2eb029ba1718c5b0b9e8cd1ae31e06c6da967e6491676da77051c707577",
