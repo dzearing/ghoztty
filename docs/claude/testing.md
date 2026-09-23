@@ -221,6 +221,15 @@ access-violating process named `zig.exe` through the wrapper. The compiler on
 this box is byte-identical to the official `zig-x86_64-windows-0.15.2` release,
 so this is zig 0.15.2 (or the machine), not a corrupted install.
 
+**A test panic prints its own stack trace** (T919). It used to print
+`Unable to dump stack trace: InvalidBlockIndex` on roughly one test build in
+five: LLD puts debug data in PDB blocks that zig's own PDB reader refuses. Every
+Windows test binary's PDB now goes through `pdb-msf-fix`
+(`src/build/pdb_msf_fix.zig`) between the link and the run, which moves those
+blocks and leaves the file readable by both zig and cdb. If that message ever
+comes back, the step did not run for that binary — look for
+`pdb-msf-fix <name>` in `--summary all`.
+
 **And a red lane captures a real stack** (T450). Zig's segfault handler dies in
 a recursive panic here, and even when it works it only ever walks the thread
 that faulted — never the one that did the damage. So a crash in one of our test

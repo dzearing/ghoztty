@@ -134,6 +134,10 @@ pub fn build(b: *std.Build) !void {
     // open, not the files beside it.
     const install_unlock = buildpkg.InstallUnlock.create(b);
 
+    // T919: every Windows test binary's PDB is made readable by std.debug
+    // before the binary runs, so a panicking test prints its stack trace.
+    const pdb_msf_fix = buildpkg.PdbMsfFix.create(b);
+
     // Ghostty resources like terminfo, shell integration, themes, etc.
     const resources = try buildpkg.GhosttyResources.init(b, &config, &deps);
     const i18n = if (config.i18n) try buildpkg.GhosttyI18n.init(b, &config) else null;
@@ -180,6 +184,7 @@ pub fn build(b: *std.Build) !void {
             }).createModule(),
         );
         const agent_test_run = b.addRunArtifact(agent_test);
+        pdb_msf_fix.attach(agent_test, agent_test_run);
         test_agent_filter_guard.add(agent_test_run);
         test_agent_step.dependOn(&agent_test_run.step);
 
@@ -531,6 +536,7 @@ pub fn build(b: *std.Build) !void {
             .use_llvm = test_llvm,
         });
         const build_helpers_test_run = b.addRunArtifact(build_helpers_test);
+        pdb_msf_fix.attach(build_helpers_test, build_helpers_test_run);
         test_filter_guard.add(build_helpers_test_run);
         test_step.dependOn(&build_helpers_test_run.step);
 
@@ -577,6 +583,7 @@ pub fn build(b: *std.Build) !void {
 
         // Normal test running
         const test_run = b.addRunArtifact(test_exe);
+        pdb_msf_fix.attach(test_exe, test_run);
         test_filter_guard.add(test_run);
         test_step.dependOn(&test_run.step);
 

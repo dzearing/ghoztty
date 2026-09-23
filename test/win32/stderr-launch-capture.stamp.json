@@ -1,13 +1,13 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-23T08:11:58-07:00",
-    "commit":  "c8fa8c3f5",
+    "generated":  "2026-09-23T09:15:47-07:00",
+    "commit":  "fdc29fd6a",
     "uncommitted":  [
-                        "test/win32/gl-device-lost.ps1"
+                        "docs/claude/testing.md"
                     ],
     "files":  {
-                  "docs/claude/testing.md":  "56099107ead57785a0a002a7cb345c55f5e6d1f8d8d4a54ce9eee8b117979260",
+                  "docs/claude/testing.md":  "c328f05e744ff64cb09ff1c256811f4b5a795837d3cbc9317e5a960265b0d528",
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",
                   "test/win32/activity-monitor-probe-fail.ps1":  "94e258e9ba979ecf0416ba87f088e273d8326d6d37ce3404b3f111b4cba250e6",
