@@ -1,13 +1,15 @@
 # Viewer contents-card SELECTION EMPHASIS acceptance (T729).
 #
-# THE CONTRACT, translated from Mac's key-window rule. The contents card beside
-# a viewer document marks the section you are on. While the viewer's window is
-# the ACTIVE one, that mark is the accent pill with contrast-checked text; the
-# moment activation moves to another window, it drops to a neutral wash off the
-# card's own fill and the ordinary label colour. The selection never disappears
-# with the emphasis - the pill SHAPE is the state, and colour is the weight -
-# which is the half a "just always paint accent" build and a "just never paint
-# accent" build each get wrong in opposite directions.
+# THE CONTRACT, translated from Mac's key-window rule into Windows 11's list
+# language (T930). The contents card beside a viewer document marks the section
+# you are on. While the viewer's window is the ACTIVE one, that mark is a quiet
+# NEUTRAL fill plus a small accent indicator bar at the row's leading edge - the
+# chooser's selection (T828), never Mac's solid accent pill. The moment
+# activation moves to another window, it drops to a lighter neutral wash with a
+# neutral bar. The selection never disappears with the emphasis - the fill and
+# the bar are the state, and weight is the emphasis - which is the half a "just
+# always paint accent" build and a "just never paint accent" build each get
+# wrong in opposite directions.
 #
 # WHY THIS SCRIPT EXISTS. The gate is `ViewerTOCPanel.isEmphasized()`, which
 # T215 rewrote off `GetForegroundWindow` (null for every window on a background
@@ -22,23 +24,25 @@
 #
 # WHAT IS MEASURED:
 #
-#   A. with the viewer window ACTIVE, the card carries the user's accent, and
-#      the card's own fill is sampled here so B's derivation is off a measured
-#      colour rather than a pasted one;
+#   A. with the viewer window ACTIVE, the card carries the user's accent as a
+#      narrow indicator BAR (not a filled pill) over the neutral focused wash,
+#      and the card's own fill is sampled here so the washes are derived off a
+#      measured colour rather than a pasted one;
 #   B. with activation moved to a SECOND ghoztty window - the real gesture,
 #      rather than deactivating everything - the accent is GONE from the card,
-#      the derived unemphasized wash (`color_math.wash(card_fill, 0.14)`, which
+#      the derived unemphasized wash (`color_math.wash(card_fill, 0.10)`, which
 #      ColorMath spells `Get-Wash`) IS on it, and that wash is NEUTRAL ink;
-#   C. the two treatments are two different colours, and activating the viewer
-#      again brings the accent back - so the pill is reading activation live
+#   C. the two fills are two different weights, and activating the viewer
+#      again brings the accent bar back - so the row is reading activation live
 #      rather than having painted once at open.
 #
-# THE ORACLE is an exact colour match over a `-Sync` capture of the card, not a
-# chroma scan: the card's row labels are drawn with subpixel antialiasing whose
-# fringes are as saturated as any accent, so "are there colourful pixels on it"
-# would be scoring the font renderer. The accent is the card's only RAW accent
-# (every other accent use on it is mixed), and the wash is a solid rounded fill,
-# so both are colours that exist exactly or not at all.
+# THE ORACLES work over a `-Sync` capture of the card. The washes are solid
+# rounded fills, so they are exact colour matches. The accent is NOT: it reaches
+# the bar through two contrast floors, so its RGB depends on the card it sits on.
+# It is found by SHAPE instead (`Find-SaturatedBar`): a solid vertical run of one
+# saturated colour, ten or more pixels tall. A plain chroma scan would score the
+# font renderer - the labels' subpixel fringes are as saturated as any accent -
+# but no fringe is a ten-pixel solid run of one colour.
 #
 # THE ACCENT IS SET, not read. A box whose accent happens to sit near the
 # unemphasized grey would make every assertion here vacuous, and that is not a
@@ -71,6 +75,8 @@ $env:GHOZTTY_PIPE_SUFFIX = "-vtoce$PID"
 Assert-GhozttyIsolatedBuild -Exe $exe | Out-Null
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\ColorMath.ps1')
+# T930: the selection indicator bar, found by shape (shared with chrome-theme.ps1).
+. (Join-Path $PSScriptRoot 'lib\SelectionBar.ps1')
 . (Join-Path $PSScriptRoot 'lib\HarnessLeak.ps1')
 # T1511: the shared scorer, and the dot-source is also what ARMS the run - a
 # body that unwinds before `Complete-TestBody` may not print a pass, and the
@@ -93,10 +99,12 @@ function Assert-Pair([bool]$cond, [string]$label) {
     else { Assert $cond $label }
 }
 
-# The unemphasized weight, by its Zig name (`ViewerTOCPanel.unemphasizedFill`
-# -> `color_math.wash(fill, 0.14)`). DERIVED from the sampled card fill, never
-# pasted as a colour: move the weight in the Zig and this script moves with it.
-$UNEMPHASIZED_WASH = 0.14
+# The two selection weights, by their Zig names (`list_selection.
+# selection_wash_focused` / `selection_wash_unfocused`, T930 - the card speaks
+# the chooser's selection language). DERIVED from the sampled card fill, never
+# pasted as colours: move a weight in the Zig and this script moves with it.
+$EMPHASIZED_WASH = 0.16
+$UNEMPHASIZED_WASH = 0.10
 
 # A deliberately saturated accent nothing on the card derives by accident, and
 # far from any grey the wash could land on.
@@ -136,6 +144,12 @@ function Restore-Accent($Raw) {
 
 function Get-Chroma([int[]]$c) {
     return (($c | Measure-Object -Maximum).Maximum - ($c | Measure-Object -Minimum).Minimum)
+}
+
+# Does a bar colour read as the TEST accent's hue (red dominant, green least:
+# #d02b8a), whatever lightness the contrast floors moved it to?
+function Test-AccentHue([int[]]$c) {
+    return ($c[0] -gt $c[2] -and $c[2] -gt $c[1] -and ($c[0] - $c[1]) -ge 48)
 }
 
 function Invoke-Verb([string[]]$VerbArgs) {
@@ -227,10 +241,10 @@ try {
     if ($other -eq [IntPtr]::Zero) { Write-Host 'ABORT: nothing to move activation to'; exit 1 }
 
     # =======================================================================
-    # A. ACTIVE: the selection is the accent pill
+    # A. ACTIVE: neutral fill + accent indicator bar (T930)
     # =======================================================================
     Write-Host ''
-    Write-Host 'A. with the viewer window active, the card marks its selection with the accent'
+    Write-Host 'A. with the viewer window active, the selected row is a neutral fill with an accent bar'
     Set-TestActiveWindow -Window $vtop | Out-Null
     Start-Sleep -Milliseconds 800
     Assert ((Get-TestActiveWindow -Window $vtop) -eq $vtop) `
@@ -251,15 +265,30 @@ try {
             $cardFill = $box.Mode
             Write-Host "      card fill = $(Format-Rgb $cardFill) ($($box.ModeN) px, $($box.Distinct) distinct)"
         }
-        Assert-Pair (Test-CardHasColor $shotA $TEST_ACCENT) `
-            "A the selected row is filled with the accent $(Format-Rgb $TEST_ACCENT)"
+        # T930: the accent is a small BAR at the row's leading edge, not the
+        # row's fill. The pair assertion is that the bar is there, in the
+        # accent's hue; the plain one beside it is the defect T930 retired - a
+        # solid accent pill is a saturated run as wide as the row.
+        $barA = Find-SaturatedBar $shotA
+        if ($barA) { Write-Host "      accent bar = $(Format-Rgb $barA.Rgb) ($($barA.HRun) px wide, $($barA.VRun) px tall)" }
+        Assert-Pair ($null -ne $barA -and (Test-AccentHue $barA.Rgb)) `
+            "A the selected row carries an indicator bar in the accent's hue (set $(Format-Rgb $TEST_ACCENT))"
+        if ($barA) {
+            Assert ($barA.HRun -le 12 -and $barA.VRun -gt $barA.HRun) `
+                "A that accent mark is a narrow bar, not a filled pill ($($barA.HRun) px wide, $($barA.VRun) px tall)"
+        }
+        if ($cardFill) {
+            $washA = Get-Wash $cardFill $EMPHASIZED_WASH
+            Assert (Test-CardHasColor $shotA $washA) `
+                "A the row's fill is the NEUTRAL focused wash $(Format-Rgb $washA), not an accent tint"
+        }
     } finally { Close-TestWindowPixels -Shot $shotA }
 
     # =======================================================================
-    # B. ACTIVATION ELSEWHERE: the pill drops to the neutral wash
+    # B. ACTIVATION ELSEWHERE: the lighter wash and a neutral bar
     # =======================================================================
     Write-Host ''
-    Write-Host 'B. with activation on another window, the pill is the neutral wash and no accent is left'
+    Write-Host 'B. with activation on another window, the row drops to the lighter wash and no accent is left'
     Set-TestActiveWindow -Window $other | Out-Null
     Start-Sleep -Milliseconds 1200
     Assert ((Get-TestActiveWindow -Window $vtop) -eq $other) `
@@ -274,10 +303,12 @@ try {
     try {
         Assert ((Get-TestDistinctColors -Shot $shotB) -ge 8) `
             'B the card is still painting real content (positive control for the two assertions below)'
-        Assert-Pair (-not (Test-CardHasColor $shotB $TEST_ACCENT)) `
-            "B the accent $(Format-Rgb $TEST_ACCENT) is GONE from the card"
+        $barB = Find-SaturatedBar $shotB
+        if ($barB) { Write-Host "      saturated bar still present = $(Format-Rgb $barB.Rgb)" }
+        Assert-Pair ($null -eq $barB -or -not (Test-AccentHue $barB.Rgb)) `
+            'B the accent indicator is GONE from the card'
         # The selection did not vanish with its emphasis: the pill is still
-        # drawn, in the wash. This is the assertion a "never paint accent"
+        # drawn, in the lighter wash. This is the assertion a "never paint accent"
         # build passes and a "paint nothing" build does not.
         if ($wash) {
             Assert-Pair (Test-CardHasColor $shotB $wash) `
@@ -295,8 +326,9 @@ try {
     if ($cardFill -and $wash) {
         # A build that collapsed the two would pass every assertion above one
         # weight at a time.
-        Assert ((Get-ChannelDistance $wash $TEST_ACCENT) -gt 24) `
-            "C the emphasized and unemphasized treatments are different colours ($(Format-Rgb $TEST_ACCENT) vs $(Format-Rgb $wash))"
+        $washOn = Get-Wash $cardFill $EMPHASIZED_WASH
+        Assert ((Get-ChannelDistance $wash $washOn) -ge 3) `
+            "C the emphasized and unemphasized fills are different weights ($(Format-Rgb $washOn) vs $(Format-Rgb $wash))"
         # And the wash is a step off the card, not the card itself - otherwise
         # B's "still marked" assertion would be satisfied by the background.
         Assert ((Get-ChannelDistance $wash $cardFill) -ge 3) `
@@ -308,8 +340,9 @@ try {
     Assert ((Get-TestActiveWindow -Window $vtop) -eq $vtop) 'C activation came back to the viewer window'
     $shotC = Get-TestWindowPixels -Window $toc -Sync
     try {
-        Assert-Pair (Test-CardHasColor $shotC $TEST_ACCENT) `
-            'C the accent is back on the card - the pill reads activation live, it did not paint once at open'
+        $barC = Find-SaturatedBar $shotC
+        Assert-Pair ($null -ne $barC -and (Test-AccentHue $barC.Rgb)) `
+            'C the accent bar is back on the card - the row reads activation live, it did not paint once at open'
     } finally { Close-TestWindowPixels -Shot $shotC }
 
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'the GUI survived the whole run'

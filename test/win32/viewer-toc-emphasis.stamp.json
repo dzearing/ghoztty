@@ -1,15 +1,15 @@
 {
     "guard":  "viewer-toc-emphasis",
     "script":  "test/win32/viewer-toc-emphasis.ps1",
-    "generated":  "2026-09-14T12:44:33-07:00",
-    "commit":  "287c3994b",
+    "generated":  "2026-09-23T13:13:56-07:00",
+    "commit":  "dba585bb6",
     "uncommitted":  [
-                        "src/apprt/win32/window_active.zig",
+                        "src/apprt/win32/ViewerTOCPanel.zig",
                         "test/win32/viewer-toc-emphasis.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/ViewerTOCPanel.zig":  "9ea364bf3315b719ee8697446efe5cb478d6aa2e33ba0813f896159ce2ce1c26",
+                  "src/apprt/win32/ViewerTOCPanel.zig":  "a3aff2c12cec4449dcc0cf0ad3c62b7275784f9696ddb7b35b5ab5b561e3006b",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
-                  "test/win32/viewer-toc-emphasis.ps1":  "b18a569a1e38f32a70002ef9d8f54797b798332af01310bfa56bccfbcc4ce5e5"
+                  "test/win32/viewer-toc-emphasis.ps1":  "337dbba50bb5b54ae0a3d67f9a4db9a43e483cda7068abfb5f3f130c09e6fb77"
               }
 }

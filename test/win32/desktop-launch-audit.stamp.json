@@ -1,10 +1,11 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-09-23T09:32:39-07:00",
-    "commit":  "3efe50b15",
+    "generated":  "2026-09-23T13:30:22-07:00",
+    "commit":  "dba585bb6",
     "uncommitted":  [
-                        "test/win32/guard-due.ps1"
+                        "test/win32/chrome-theme.ps1",
+                        "test/win32/viewer-toc-emphasis.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "ef54b501298cfda9306cfb958c1094db24ee30f355b25865656b3e2bc713bcd7",
@@ -69,7 +70,7 @@
                   "test/win32/chooser-sessions-remote.ps1":  "00f7ab5ee0f8f066d1e5c7cce32a7099987d4d9ef4d7408dc8f583fab1e9b85a",
                   "test/win32/chooser-warm-list.ps1":  "c615a0de86c2debc15e196b56f97cc2021594a6548058fa4f9a48e991fca28f2",
                   "test/win32/chrome-merged-row.ps1":  "d33d8e41a1c00c40822433b47ddc00ea9cb572cf42829277c39d3334cd3a8020",
-                  "test/win32/chrome-theme.ps1":  "1c4ab7c5cb3bb1cc4b6f5411f38f235ded11703e68fa740a082b6b621a8a4a35",
+                  "test/win32/chrome-theme.ps1":  "92d71dc5766283047e1432b1e318ea74b9a2ca1962746fa99cc4969db4428380",
                   "test/win32/claude-integration.ps1":  "a65c25e4bb1b51a50a227b72126a6feedb1a0c7443f3838d32888b9359c4090b",
                   "test/win32/cleanslate-audit.ps1":  "cb6bcd4aa4122ce79eec0f10213acc3ed0906e4b68d836df4ebcc89b13080244",
                   "test/win32/cli-argv-fidelity.ps1":  "c51d36e42d332a1085d12418098befe48a46aa119badb5173be35727cc598221",
@@ -334,7 +335,7 @@
                   "test/win32/viewer-panes.ps1":  "48f14cadbd50683a65db2580e600dc1354cd40cc372cde6d60791e8d8e9d6377",
                   "test/win32/viewer-popup.ps1":  "95e087b6da54fef5a359fd3ae813fba0b90193db95991c2611b88e4497873eec",
                   "test/win32/viewer-restore.ps1":  "1080e470b9ac26ab15b09e317ef53df3ed55a27882e97538892b443bad4b846b",
-                  "test/win32/viewer-toc-emphasis.ps1":  "b18a569a1e38f32a70002ef9d8f54797b798332af01310bfa56bccfbcc4ce5e5",
+                  "test/win32/viewer-toc-emphasis.ps1":  "337dbba50bb5b54ae0a3d67f9a4db9a43e483cda7068abfb5f3f130c09e6fb77",
                   "test/win32/viewer-window-chords.ps1":  "6fb60550287b70944041d11dbf47d52e2085ae450fee5f2cb9bb50f2da1d739c",
                   "test/win32/viewer-worktree.ps1":  "1d8091bad18fee1a104e7629267bd4599975812e5d222f0f15428c9d8742f3c7",
                   "test/win32/viewer-worktree-port.ps1":  "b991f340cf0f1f4a34fa3edab4305aad56e131ad7115a9e01417343306fe31e2",

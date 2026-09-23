@@ -435,6 +435,43 @@ pub fn badgeWidth(text_w: i32, line_h: i32, scale: f32) i32 {
     return @max(line_h, text_w + 2 * px(row_gap_dip, scale));
 }
 
+/// The selected row's leading-edge indicator bar (T930): the one place the
+/// accent appears on the card, in Windows 11's list language
+/// (`list_selection.zig`). Same numbers as the machine chooser's
+/// (`chooser_rows.rowMetrics`, T828) — `sm` wide, 16 DIP tall, 2 DIP inside
+/// the fill so it clears the fill's rounded corner — so the two lists mark a
+/// selection with the same mark.
+pub const indicator_w_dip: f32 = 4;
+pub const indicator_h_dip: f32 = 16;
+pub const indicator_inset_x_dip: f32 = 2;
+/// The least clearance above and below the bar, for a row too short to
+/// centre a full-height one with room to spare.
+pub const indicator_min_v_clear_dip: f32 = 4;
+
+/// Where the indicator sits, relative to the FILL rect's left edge and the
+/// row's top. A two-line row keeps the bar at 16 DIP and centres it, the way
+/// a WinUI list does, rather than stretching it into a stripe.
+pub const Indicator = struct {
+    left: i32,
+    top: i32,
+    width: i32,
+    height: i32,
+    radius: i32,
+};
+
+pub fn selectionIndicator(row_h: i32, scale: f32) Indicator {
+    const w = @max(px(indicator_w_dip, scale), 1);
+    const room = row_h - 2 * px(indicator_min_v_clear_dip, scale);
+    const h = @max(@min(px(indicator_h_dip, scale), room), 1);
+    return .{
+        .left = px(indicator_inset_x_dip, scale),
+        .top = @divTrunc(row_h - h, 2),
+        .width = w,
+        .height = h,
+        .radius = @divTrunc(w, 2),
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -634,6 +671,44 @@ test "row metrics: label inset, indent steps, and heights at every scale" {
         );
         try testing.expectEqual(@as(i32, 1), rowTextWidth(4, 3, scale));
     }
+}
+
+test "T930 selection indicator: a centred bar inside the fill, clear of the label" {
+    for (scales) |scale| {
+        const line_h = px(16, scale);
+        for ([_]i32{ 1, 2 }) |lines| {
+            const row_h = rowHeight(lines, line_h, scale);
+            const bar = selectionIndicator(row_h, scale);
+
+            // A bar, not a band: narrower than tall, well short of the row.
+            try testing.expect(bar.width > 0 and bar.height > 0);
+            try testing.expect(bar.width < bar.height);
+            try testing.expect(bar.height < row_h);
+            // Two-line rows keep the one bar height rather than stretching.
+            try testing.expectEqual(px(indicator_h_dip, scale), bar.height);
+            try testing.expectEqual(@divTrunc(bar.width, 2), bar.radius);
+
+            // Centred to the pixel an odd remainder allows.
+            const above = bar.top;
+            const below = row_h - (bar.top + bar.height);
+            try testing.expect(above > 0 and below > 0);
+            try testing.expect(@abs(above - below) <= 1);
+
+            // Inside the fill (clear of its rounded corner) and clear of the
+            // shallowest label, so the mark never touches text. `bar.left` is
+            // fill-relative; the label is card-relative.
+            try testing.expect(bar.left > 0);
+            const bar_right_card = px(fill_inset_dip, scale) + bar.left + bar.width;
+            try testing.expect(bar_right_card < rowTextLeft(0, scale));
+        }
+    }
+    // The same mark the machine chooser draws (T828): 4 x 16 at 1x.
+    const one = selectionIndicator(rowHeight(1, 16, 1.0), 1.0);
+    try testing.expectEqual(@as(i32, 4), one.width);
+    try testing.expectEqual(@as(i32, 16), one.height);
+    // A starved row still yields a drawable bar with clearance kept.
+    const tiny = selectionIndicator(10, 1.0);
+    try testing.expect(tiny.height >= 1 and tiny.top >= 0);
 }
 
 test "T543 slide: the curve is fixed at both ends and never goes backwards" {

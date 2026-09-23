@@ -72,9 +72,9 @@
 #
 #   F. THE CHILD WINDOWS FOLLOW THE ACCENT TOO (T307's child half, T585). The
 #      surface is the viewer's contents card (`GhozttyViewerTOC`), a real child
-#      HWND whose ACTIVE row is filled with the RAW accent - the only unmixed
-#      accent pixel the card paints, so an exact-RGB hit is that pill and
-#      nothing else. The card is put in its GUTTER layout (a viewer pane wider
+#      HWND whose ACTIVE row carries the accent as a small indicator bar (T930)
+#      - the card's only solid accent mark, found by shape and scored by hue
+#      because the bar is contrast-floored against the fill under it. The card is put in its GUTTER layout (a viewer pane wider
 #      than `viewer_toc_layout.gutter_min_dip`, which is why the window is
 #      resized), where it is always visible instead of being an overlay a click
 #      has to open.
@@ -217,6 +217,7 @@ function Kill-RepoInstances {
 # ---------------------------------------------------------------------------
 
 . (Join-Path $PSScriptRoot 'lib\ColorMath.ps1')
+. (Join-Path $PSScriptRoot 'lib\SelectionBar.ps1')
 # T1511: the shared scorer, and the dot-source is also what ARMS the run - a
 # body that unwinds before `Complete-TestBody` may not print a pass, and the
 # guard-stamping child below reads the same state and refuses to write.
@@ -828,9 +829,10 @@ try {
     #   the way section E and printclient-audit.ps1 assert the other contracts
     #   with no observable symptom under the harness.
     #
-    # The pixel is the contents card's active-row pill, the card's only raw
-    # accent (every other accent use on the card is mixed). The colors run
-    # A -> B, reusing the two probes B already vetted.
+    # The mark is the contents card's active-row indicator BAR (T930), the
+    # card's only solid accent mark. It is floored against the selection fill,
+    # so it is found by shape and scored by hue rather than by exact RGB. The
+    # colors run A -> B, reusing the two probes B already vetted.
     Kill-RepoInstances
     Set-Accent $ACCENT_A
     $g = Start-Gui @()
@@ -880,8 +882,13 @@ try {
         try {
             Assert ((Get-TestDistinctColors -Shot $shot) -ge 8) `
                 "F the card capture holds real content ($(Get-TestDistinctColors -Shot $shot) distinct colors)"
-            Assert (Test-ShotHasColor $shot $ACCENT_A) "F1 the card's selected row is filled with $(Format-Rgb $ACCENT_A)"
-            Assert (-not (Test-ShotHasColor $shot $ACCENT_B)) "F1 and nothing on it is $(Format-Rgb $ACCENT_B) yet"
+            # T930: the accent is the selected row's indicator BAR, floored
+            # against the fill it sits on - so it is found by shape and scored
+            # by hue, not by the registry RGB (lib\SelectionBar.ps1).
+            $bar = Find-SaturatedBar $shot
+            if ($bar) { Write-Host "      card accent bar = $(Format-Rgb $bar.Rgb)" }
+            Assert ($bar -and (Test-DominantChannel $bar.Rgb 0)) "F1 the card's selected row carries a bar in $(Format-Rgb $ACCENT_A)'s hue"
+            Assert (-not ($bar -and (Test-DominantChannel $bar.Rgb 1))) "F1 and it is not $(Format-Rgb $ACCENT_B)'s hue yet"
         } finally { Close-TestWindowPixels -Shot $shot }
 
         # F2: the accent MOVES on the card. Notified to the top-level window,
@@ -894,9 +901,11 @@ try {
         Start-Sleep -Milliseconds 1200
         $shot = Get-TestWindowPixels -Window $toc -Sync
         try {
-            Assert (Test-ShotHasColor $shot $ACCENT_B) `
-                "F2 the card's pill is $(Format-Rgb $ACCENT_B) after the accent changed, though only its OWNER was notified"
-            Assert (-not (Test-ShotHasColor $shot $ACCENT_A)) `
+            $bar = Find-SaturatedBar $shot
+            if ($bar) { Write-Host "      card accent bar = $(Format-Rgb $bar.Rgb)" }
+            Assert ($bar -and (Test-DominantChannel $bar.Rgb 1)) `
+                "F2 the card's bar is $(Format-Rgb $ACCENT_B)'s hue after the accent changed, though only its OWNER was notified"
+            Assert (-not ($bar -and (Test-DominantChannel $bar.Rgb 0))) `
                 'F2 and the accent it painted with is gone - the card holds no accent of its own'
         } finally { Close-TestWindowPixels -Shot $shot }
 

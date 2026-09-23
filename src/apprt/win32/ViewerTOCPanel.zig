@@ -43,6 +43,9 @@ const system_colors = @import("system_colors.zig");
 const banner_card = @import("banner_card.zig");
 const type_ramp = @import("type_ramp.zig");
 const toc = @import("viewer_toc_layout.zig");
+/// What a selected row looks like on this platform (T828/T1008) — the card's
+/// rows speak the same selection language as the chooser's since T930.
+const list_selection = @import("list_selection.zig");
 const file_tree = @import("viewer_file_tree.zig");
 const diff = @import("viewer_diff.zig");
 const ViewerPane = @import("ViewerPane.zig");
@@ -1094,8 +1097,10 @@ fn paint(self: *ViewerTOCPanel, hdc: w32.HDC, width: i32, height: i32) void {
 
         const fill_inset = self.px(toc.fill_inset_dip);
         const origin_y = list_top + fill_inset - self.scroll;
-        const accent = system_colors.accentCached();
-        const accent_text = chrome_theme.textOn(accent);
+        // Floored against the card before it is spent, exactly as the
+        // chooser's rows take it (T305); `list_selection` floors it again
+        // against the fill it actually lands on.
+        const accent = chrome_theme.accentOn(self.card_fill, system_colors.accentCached());
         const row_radius = self.px(toc.row_corner_dip);
         const emphasized = self.isEmphasized();
 
@@ -1116,33 +1121,38 @@ fn paint(self: *ViewerTOCPanel, hdc: w32.HDC, width: i32, height: i32) void {
                 .bottom = top + row.h,
             };
 
-            var color = self.secondary_ref;
-            if (is_active) {
-                // The macOS selection rule, translated: the KEY window gets
-                // the accent pill with contrast-checked text; every other
-                // window drops to a neutral wash with the ordinary label
-                // color (state never carried by color alone — the pill shape
-                // itself is the state).
-                if (emphasized) {
-                    fillRoundRect(
-                        hdc,
-                        fill_rect,
-                        row_radius,
-                        w32.RGB(accent.r, accent.g, accent.b),
-                    );
-                    color = w32.RGB(accent_text.r, accent_text.g, accent_text.b);
-                } else {
-                    const wash = unemphasizedFill(self.card_fill);
-                    fillRoundRect(hdc, fill_rect, row_radius, w32.RGB(wash.r, wash.g, wash.b));
-                    color = self.text_ref;
-                }
-            } else if (is_hover) {
-                const wash = hoverFill(self.card_fill);
-                fillRoundRect(hdc, fill_rect, row_radius, w32.RGB(wash.r, wash.g, wash.b));
+            // Windows 11's list selection (T930, the T828 vocabulary): a
+            // quiet NEUTRAL fill plus a small accent bar at the leading edge,
+            // never the solid accent pill Mac's sidebar paints. Mac's
+            // key-window rule survives as the two weights: the ACTIVE window
+            // gets the heavier fill and the accent bar, every other window
+            // the lighter fill and a neutral bar — so the selection never
+            // disappears with its emphasis, and is never carried by color
+            // alone. No focus rim: the card takes no keyboard focus, so there
+            // is no caret row to mark.
+            const sel = list_selection.rowPaint(self.card_fill, accent, .{
+                .selected = is_active,
+                .focused = emphasized,
+                .hovered = is_hover,
+                .focus_visible = false,
+            });
+            if (sel.fill) |f| fillRoundRect(hdc, fill_rect, row_radius, w32.RGB(f.r, f.g, f.b));
+            if (sel.indicator) |c| {
+                const bar = toc.selectionIndicator(row.h, self.scale);
+                const bar_rect = w32.RECT{
+                    .left = fill_rect.left + bar.left,
+                    .top = top + bar.top,
+                    .right = fill_rect.left + bar.left + bar.width,
+                    .bottom = top + bar.top + bar.height,
+                };
+                fillRoundRect(hdc, bar_rect, bar.radius, w32.RGB(c.r, c.g, c.b));
             }
+            // The selected row's label steps up from the secondary ink the
+            // rest of the list reads in.
+            const color = if (is_active) self.text_ref else self.secondary_ref;
 
             if (row.kind != .heading) {
-                self.paintTreeRow(hdc, row, top, color, is_active and emphasized);
+                self.paintTreeRow(hdc, row, top, color);
                 continue;
             }
 
@@ -1291,17 +1301,15 @@ fn paint(self: *ViewerTOCPanel, hdc: w32.HDC, width: i32, height: i32) void {
 /// for a folder, and a plain caption for a section header.
 ///
 /// `ink` is the label color the row loop already resolved (selection, hover
-/// and unemphasized states are its business, not this function's);
-/// `on_accent` says the row is sitting on the accent pill, which is the one
-/// state where the badge and the counts drop their own colors -- nothing else
-/// clears contrast against a saturated fill.
+/// and unemphasized states are its business, not this function's). The row
+/// always sits on a neutral wash since T930, so the badge and the counts keep
+/// their own tones in every state.
 fn paintTreeRow(
     self: *ViewerTOCPanel,
     hdc: w32.HDC,
     row: Row,
     top: i32,
     ink: u32,
-    on_accent: bool,
 ) void {
     const l = self.layout;
     const boxes = toc.treeRowBoxes(
@@ -1347,29 +1355,16 @@ fn paintTreeRow(
         };
         var badge_ink = ink;
         if (row.kind == .file) {
-            if (on_accent) {
-                // On the pill: a translucent wash of the pill's own text, with
-                // the pill's text color on top.
-                const accent = system_colors.accentCached();
-                const fill = color_math.mix(accent, chrome_theme.textOn(accent), 0.22);
-                fillRoundRect(
-                    hdc,
-                    badge,
-                    @divTrunc(self.line_h, 2),
-                    w32.RGB(fill.r, fill.g, fill.b),
-                );
-            } else {
-                const fill = chrome_theme.toneFill(self.card_fill, row.tone);
-                fillRoundRect(
-                    hdc,
-                    badge,
-                    @divTrunc(self.line_h, 2),
-                    w32.RGB(fill.r, fill.g, fill.b),
-                );
-                const tint = chrome_theme.toneInk(self.card_fill, row.tone);
-                badge_ink = w32.RGB(tint.r, tint.g, tint.b);
-            }
-        } else if (!on_accent) {
+            const fill = chrome_theme.toneFill(self.card_fill, row.tone);
+            fillRoundRect(
+                hdc,
+                badge,
+                @divTrunc(self.line_h, 2),
+                w32.RGB(fill.r, fill.g, fill.b),
+            );
+            const tint = chrome_theme.toneInk(self.card_fill, row.tone);
+            badge_ink = w32.RGB(tint.r, tint.g, tint.b);
+        } else {
             badge_ink = self.secondary_ref;
         }
         var br = badge;
@@ -1395,7 +1390,7 @@ fn paintTreeRow(
         .right = l.card.left + boxes.name_right,
         .bottom = text_bottom,
     };
-    const name_ink = if (row.kind == .folder and !on_accent) self.secondary_ref else ink;
+    const name_ink = if (row.kind == .folder) self.secondary_ref else ink;
     _ = w32.SetTextColor(hdc, name_ink);
     _ = w32.DrawTextW(
         hdc,
@@ -1414,9 +1409,7 @@ fn paintTreeRow(
     if (row.adds16.len > 0) {
         const w = measureText(hdc, row.adds16);
         var r = w32.RECT{ .left = x, .top = text_top, .right = x + w, .bottom = text_bottom };
-        const c: u32 = if (on_accent)
-            ink
-        else if (row.binary)
+        const c: u32 = if (row.binary)
             self.secondary_ref
         else
             w32.RGB(added.r, added.g, added.b);
@@ -1433,7 +1426,7 @@ fn paintTreeRow(
     if (row.dels16.len > 0) {
         const w = measureText(hdc, row.dels16);
         var r = w32.RECT{ .left = x, .top = text_top, .right = x + w, .bottom = text_bottom };
-        _ = w32.SetTextColor(hdc, if (on_accent) ink else w32.RGB(removed.r, removed.g, removed.b));
+        _ = w32.SetTextColor(hdc, w32.RGB(removed.r, removed.g, removed.b));
         _ = w32.DrawTextW(
             hdc,
             row.dels16.ptr,
@@ -1445,8 +1438,9 @@ fn paintTreeRow(
 }
 
 /// True when this card's top-level window is the ACTIVE window — the Windows
-/// reading of Mac's "key window", which decides whether the selection pill
-/// paints in the accent or the neutral unemphasized gray.
+/// reading of Mac's "key window", which decides whether the selected row
+/// carries the heavier fill and the accent indicator or the lighter fill and
+/// a neutral one (T930).
 ///
 /// `w32.windowIsActive` rather than a bare `GetForegroundWindow` comparison
 /// (T215): the latter is null for every window on a background desktop, so
@@ -1454,18 +1448,6 @@ fn paintTreeRow(
 /// probes that are supposed to prove it does not.
 fn isEmphasized(self: *const ViewerTOCPanel) bool {
     return w32.windowIsActive(w32.GetAncestor(self.hwnd, w32.GA_ROOT));
-}
-
-/// The unemphasized selection wash: a visible step off the card fill.
-/// `color_math.wash` picks its direction from the fill's own luminance, so
-/// one alpha serves both themes.
-fn unemphasizedFill(fill: color_math.Rgb) color_math.Rgb {
-    return color_math.wash(fill, 0.14);
-}
-
-/// The hover wash: fainter than any selection (Mac: primary at 6%).
-fn hoverFill(fill: color_math.Rgb) color_math.Rgb {
-    return color_math.wash(fill, 0.06);
 }
 
 // -------------------------------------------------------------------------
