@@ -10853,3 +10853,317 @@ test "T163: a popup is adopted as a pane, sized, and can close itself" {
     try testing.expectEqual(links_before, links.entries.items.len);
     log.warn("T163: with Ctrl held, the same http popup stayed in ghoztty", .{});
 }
+
+// ----------------------------------------------------------------------
+// A real press, for tests that need one (T927)
+// ----------------------------------------------------------------------
+//
+// `ExecuteScript` is the way these tests drive a page, and it is the wrong
+// tool exactly when the claim is about a USER: it runs with user activation of
+// its own, so a script click and a person's click look the same to
+// `IsUserInitiated` (T825 and T860 both measured that the hard way), while the
+// click event it produces says `isTrusted: false` - a page that checks, or a
+// browser feature that does, sees a synthetic click. `testPressElement` is the
+// other thing: a press through the DevTools input domain
+// (`Input.dispatchMouseEvent`), which Chromium delivers down the same path as
+// a mouse, so the page sees a trusted click and the runtime a user gesture.
+//
+// It works on a hidden test window with the controller hidden too (measured
+// for T927), so it needs no desktop, no focus and no `SendInput` - which is
+// dead on the background desktop the acceptance scripts run on anyway.
+//
+// T825 tried this route and recorded it as inert. It is not: pressed and
+// released both return S_OK and the page sees the click, with a completion
+// handler or with null. What that attempt did not have is the thing
+// `testPressElement` adds - aiming. A press lands on whatever is at (x, y) in
+// CSS pixels of the viewport, and a one-word link is a small target; the
+// element's own box is measured first so the press cannot miss it.
+
+/// The centre of element `id`, in the CSS pixels `Input.dispatchMouseEvent`
+/// takes, after scrolling it into view. `error.NoSuchElement` when the page
+/// has no such element, rather than a press at the origin that "did nothing".
+fn testElementCenter(pane: *ViewerPane, alloc: Allocator, id: []const u8) ![2]f64 {
+    for (id) |ch| if (!(std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_'))
+        return error.BadElementId;
+    const c = pane.controller orelse return error.NoController;
+    const web = c.coreWebView() orelse return error.NoWebView;
+    defer web.release();
+
+    const js = try std.fmt.allocPrint(alloc,
+        \\(function () {{
+        \\  var e = document.getElementById("{s}");
+        \\  if (!e) return null;
+        \\  e.scrollIntoView({{ block: "center", inline: "center" }});
+        \\  var r = e.getBoundingClientRect();
+        \\  return [r.left + r.width / 2, r.top + r.height / 2];
+        \\}})()
+    , .{id});
+    defer alloc.free(js);
+    const wide = try std.unicode.utf8ToUtf16LeAllocZ(alloc, js);
+    defer alloc.free(wide);
+
+    const Probe = struct {
+        done: bool = false,
+        ok: bool = false,
+        text: [256]u8 = undefined,
+        len: usize = 0,
+
+        fn onDone(p: *@This(), result: com.HRESULT, value: ?[*:0]const u16) com.HRESULT {
+            p.done = true;
+            p.ok = !com.failed(result);
+            if (value) |v| p.len = utf16_text.toUtf8Truncating(&p.text, std.mem.span(v));
+            return com.S_OK;
+        }
+    };
+    var probe: Probe = .{};
+    const handler = try com.Callback(iface.IID_ExecuteScriptCompletedHandler, Probe.onDone)
+        .create(alloc, &probe);
+    defer handler.release();
+    if (!web.executeScript(wide.ptr, @ptrCast(handler))) return error.ScriptRefused;
+    if (!testPumpUntil(&probe.done)) return error.ScriptTimeout;
+    if (!probe.ok) return error.ScriptFailed;
+
+    const text = probe.text[0..probe.len];
+    if (std.mem.eql(u8, text, "null")) return error.NoSuchElement;
+    const parsed = std.json.parseFromSlice([2]f64, alloc, text, .{}) catch {
+        log.warn("testElementCenter: '{s}' answered '{s}'", .{ id, text });
+        return error.BadElementRect;
+    };
+    defer parsed.deinit();
+    return parsed.value;
+}
+
+/// One left press and release at (x, y), each confirmed by its completion
+/// handler before this returns - so a caller's next wait starts after the
+/// click was delivered, not while it is still in flight.
+fn testPressAt(pane: *ViewerPane, alloc: Allocator, x: f64, y: f64) !void {
+    const c = pane.controller orelse return error.NoController;
+    const web = c.coreWebView() orelse return error.NoWebView;
+    defer web.release();
+
+    const Done = struct {
+        done: bool = false,
+        hr: com.HRESULT = com.S_OK,
+
+        fn onDone(p: *@This(), result: com.HRESULT, value: ?[*:0]const u16) com.HRESULT {
+            _ = value;
+            p.done = true;
+            p.hr = result;
+            return com.S_OK;
+        }
+    };
+    const Handler = com.Callback(iface.IID_CallDevToolsProtocolMethodCompletedHandler, Done.onDone);
+
+    const phases = [_]struct { kind: []const u8, buttons: u8 }{
+        .{ .kind = "mousePressed", .buttons = 1 },
+        .{ .kind = "mouseReleased", .buttons = 0 },
+    };
+    for (phases) |ph| {
+        const params = try std.fmt.allocPrint(
+            alloc,
+            "{{\"type\":\"{s}\",\"x\":{d},\"y\":{d},\"button\":\"left\",\"buttons\":{d},\"clickCount\":1}}",
+            .{ ph.kind, x, y, ph.buttons },
+        );
+        defer alloc.free(params);
+        const wide = try std.unicode.utf8ToUtf16LeAllocZ(alloc, params);
+        defer alloc.free(wide);
+
+        var done: Done = .{};
+        const handler = try Handler.create(alloc, &done);
+        defer handler.release();
+        if (!web.callDevToolsProtocolMethod(
+            std.unicode.utf8ToUtf16LeStringLiteral("Input.dispatchMouseEvent"),
+            wide.ptr,
+            @ptrCast(handler),
+        )) return error.PressRefused;
+        if (!testPumpUntil(&done.done)) return error.PressTimeout;
+        if (com.failed(done.hr)) {
+            log.warn("testPressAt: {s} answered hr=0x{x}", .{ ph.kind, @as(u32, @bitCast(done.hr)) });
+            return error.PressFailed;
+        }
+    }
+}
+
+/// A real press on the middle of element `id` (see the block comment above).
+fn testPressElement(pane: *ViewerPane, alloc: Allocator, id: []const u8) !void {
+    const at = try testElementCenter(pane, alloc, id);
+    try testPressAt(pane, alloc, at[0], at[1]);
+}
+
+/// Pump this thread's messages until `flag` is set; false after 15s. Both
+/// completion handlers above arrive on this thread's message loop.
+fn testPumpUntil(flag: *const bool) bool {
+    var msg: w32.MSG = undefined;
+    var timer = std.time.Timer.start() catch return false;
+    while (timer.read() < 15 * std.time.ns_per_s) {
+        while (w32.PeekMessageW(&msg, null, 0, 0, w32.PM_REMOVE) != 0) {
+            _ = w32.TranslateMessage(&msg);
+            _ = w32.DispatchMessageW(&msg);
+        }
+        if (flag.*) return true;
+        std.Thread.sleep(10 * std.time.ns_per_ms);
+    }
+    return flag.*;
+}
+
+fn t927Reported(p: *ViewerPane, want: []const u8) bool {
+    const got = p.active_heading orelse return false;
+    return std.mem.eql(u8, got, want);
+}
+
+test "T927: a harness press is a real click, and an ExecuteScript click is not" {
+    // Live, like the host floor: the claim is about what the runtime does with
+    // a press, which nothing short of the runtime can answer.
+    const alloc = testing.allocator;
+
+    var test_profile = try webview2.TestProfile.begin(alloc);
+    defer test_profile.end();
+    _ = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
+
+    const hinstance = w32.GetModuleHandleW(null);
+    _ = registerClass(hinstance);
+    defer _ = w32.UnregisterClassW(CLASS_NAME, hinstance);
+
+    // Hidden, on purpose: the press has to work where the lanes run.
+    const parent_class = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyPressTestParent");
+    const pc = w32.WNDCLASSEXW{
+        .cbSize = @sizeOf(w32.WNDCLASSEXW),
+        .style = 0,
+        .lpfnWndProc = &w32.DefWindowProcW,
+        .cbClsExtra = 0,
+        .cbWndExtra = 0,
+        .hInstance = hinstance,
+        .hIcon = null,
+        .hCursor = null,
+        .hbrBackground = null,
+        .lpszMenuName = null,
+        .lpszClassName = parent_class,
+        .hIconSm = null,
+    };
+    _ = w32.RegisterClassExW(&pc);
+    defer _ = w32.UnregisterClassW(parent_class, hinstance);
+    const parent = w32.CreateWindowExW(
+        0,
+        parent_class,
+        std.unicode.utf8ToUtf16LeStringLiteral("press test"),
+        w32.WS_OVERLAPPEDWINDOW,
+        0,
+        0,
+        800,
+        600,
+        null,
+        null,
+        hinstance,
+        null,
+    ) orelse return error.Win32Error;
+    defer _ = w32.DestroyWindow(parent);
+
+    var host = webview2.Host.init(alloc);
+    defer host.deinit();
+
+    // No modifiers, stated rather than sampled (T860): the routed leg below
+    // reads the keyboard, and a Ctrl held at this desk must not turn its
+    // browser hand-off into a split.
+    mods_probe = &struct {
+        fn f() LinkMods {
+            return .{};
+        }
+    }.f;
+    defer mods_probe = null;
+    // The browser leg must never reach `ShellExecuteW` from a test lane.
+    var links: LinkSink = .{ .alloc = alloc };
+    defer links.deinit();
+    link_sink = &links;
+    defer link_sink = null;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+
+    // Two small targets well away from the origin and from each other, so a
+    // press that is not AIMED cannot land on the right one by accident. Each
+    // reports through the viewer bridge, the same channel T825's mock uses.
+    try tmp.dir.writeFile(.{ .sub_path = "press.html", .data =
+        \\<!doctype html><meta charset="utf-8"><title>t927</title>
+        \\<style>body{margin:0}#b{position:absolute;left:300px;top:260px}#out{position:absolute;left:40px;top:1400px}</style>
+        \\<button id="b">press</button>
+        \\<a id="out" href="https://t927.invalid/away">out</a>
+        \\<script>
+        \\function rep(id) {
+        \\  var w = window.webkit && window.webkit.messageHandlers
+        \\    && window.webkit.messageHandlers.viewerTOC;
+        \\  if (w) w.postMessage({ type: "active", id: id });
+        \\}
+        \\window.rep = rep;
+        \\document.getElementById("b").addEventListener("click", function (e) {
+        \\  rep("click:" + e.isTrusted);
+        \\});
+        \\rep("ready");
+        \\</script>
+        \\
+    });
+    const page_path = try std.fs.path.join(alloc, &.{ dir_path, "press.html" });
+    defer alloc.free(page_path);
+
+    var pane: ViewerPane = .{};
+    defer pane.deinit(alloc);
+    {
+        var id_bytes: [16]u8 = undefined;
+        std.crypto.random.bytes(&id_bytes);
+        _ = pane_id_mod.format(&pane.pane_id, id_bytes);
+    }
+    try pane.createHostWindow(hinstance, parent, .{ .left = 0, .top = 0, .right = 640, .bottom = 480 });
+    try pane.navigate(alloc, page_path);
+    pane.start(alloc, &host);
+
+    var msg: w32.MSG = undefined;
+    const settled = webview2.pumpUntil(&pane, struct {
+        fn f(ctx: *const anyopaque) bool {
+            const p: *const ViewerPane = @ptrCast(@alignCast(ctx));
+            return p.state != .waiting_env and p.state != .creating;
+        }
+    }.f);
+    if (!settled) return error.WebView2ControllerTimeout;
+    if (pane.state == .failed) {
+        log.warn("SKIPPED live press test, no usable runtime: {s}", .{@tagName(pane.failure.?)});
+        return;
+    }
+    try waitFor(&msg, 30, struct {
+        fn ready(p: *ViewerPane) bool {
+            return t927Reported(p, "ready");
+        }
+    }.ready, &pane);
+
+    // Aiming is measured, not assumed: an element the page does not have is
+    // an error with a name, never a press at (0, 0).
+    try testing.expectError(error.NoSuchElement, testElementCenter(&pane, alloc, "missing"));
+
+    // THE CLAIM: a harness press is a click the page trusts.
+    try testPressElement(&pane, alloc, "b");
+    try waitFor(&msg, 30, struct {
+        fn ready(p: *ViewerPane) bool {
+            return t927Reported(p, "click:true");
+        }
+    }.ready, &pane);
+
+    // …and the control that makes it mean something: the stand-in every other
+    // test here uses produces a click the page can tell is synthetic. Without
+    // this leg, a page that reported `true` for everything would pass above.
+    pane.executeScript(alloc, "document.getElementById('b').click()");
+    try waitFor(&msg, 30, struct {
+        fn ready(p: *ViewerPane) bool {
+            return t927Reported(p, "click:false");
+        }
+    }.ready, &pane);
+
+    // End to end through the one gate that needed this (T825): a real press
+    // on a link out of a live page is a user's click, so it is cancelled here
+    // and handed to the browser. `#out` sits below the fold, so this leg also
+    // proves the element is scrolled to before it is pressed.
+    try testing.expectEqual(@as(usize, 0), links.entries.items.len);
+    try testPressElement(&pane, alloc, "out");
+    try waitFor(&msg, 30, aLinkWasRouted, &pane);
+    try testing.expectEqual(@as(usize, 1), links.entries.items.len);
+    try testing.expectEqualStrings("browser:https://t927.invalid/away", links.entries.items[0]);
+}

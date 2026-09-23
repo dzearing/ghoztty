@@ -304,6 +304,15 @@ pub const IID_ExecuteScriptCompletedHandler: GUID = .{
     .Data3 = 0x4BCA,
     .Data4 = .{ 0x99, 0x23, 0x13, 0x71, 0x12, 0xF4, 0xC4, 0xCC },
 };
+// `ICoreWebView2CallDevToolsProtocolMethodCompletedHandler` (T927). Same
+// `Invoke(HRESULT, LPCWSTR json)` shape as the one above; production passes
+// null for it, and the test harness's press waits on it (`testPressAt`).
+pub const IID_CallDevToolsProtocolMethodCompletedHandler: GUID = .{
+    .Data1 = 0x5C4889F0,
+    .Data2 = 0x5EF6,
+    .Data3 = 0x4C5A,
+    .Data4 = .{ 0x95, 0x2C, 0xD8, 0xF1, 0xB9, 0x2D, 0x05, 0x74 },
+};
 
 // {697E05E9-3D8F-45FA-96F4-8FFE1EDEDAF5}
 // `ICoreWebView2CapturePreviewCompletedHandler` (T397). The only handler on

@@ -192,6 +192,19 @@ box no longer fails a wait that two worker round trips were plainly still
 satisfying. A timeout prints the whole observable pane state, so the next one is
 diagnosable from the log rather than from a re-run.
 
+**When a viewer test needs a USER's click, press — do not `ExecuteScript`**
+(T927). `ExecuteScript` carries user activation of its own, so its click reads
+as user-initiated to `NavigationStarting` and `NewWindowRequested` exactly like
+a person's, while the page sees `isTrusted: false`. It cannot be the control
+for "a page acting alone", and it is not a real click either. The real one is
+`testPressElement(pane, alloc, "<element id>")` in `ViewerPane.zig`: it measures
+the element's box (scrolling it into view), then sends a left press and release
+through the DevTools input domain and waits for both to complete. The page sees
+a trusted click; it works on the hidden test window with no focus, desktop or
+`SendInput`. The DevTools route was once recorded as inert (T825) — it is not;
+that attempt pressed coordinates without aiming them. The page-driven case (no
+gesture at all) still comes from the page's own load-time script.
+
 **A red lane never ends on a bare exit code** (T444). `std.process.Child`
 truncates a Windows exit code to a byte, so a *crashed* child reaches `zig build`
 as `NTSTATUS & 0xFF` — `0xC0000005` (access violation) arrives as
