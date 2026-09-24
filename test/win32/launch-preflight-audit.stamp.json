@@ -1,10 +1,10 @@
 {
     "guard":  "launch-preflight",
     "script":  "test/win32/launch-preflight-audit.ps1",
-    "generated":  "2026-09-24T06:48:27-07:00",
-    "commit":  "d4e4abce7",
+    "generated":  "2026-09-24T07:57:24-07:00",
+    "commit":  "96715eb71",
     "uncommitted":  [
-                        "test/win32/viewer-feedback-images.ps1"
+                        "test/win32/restore-late-agent.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -300,7 +300,7 @@
                   "test/win32/reset-window-size.ps1":  "163ab9bfcf216a224adcd886da9787dc33e5d1d3ed078a541028e3116918526c",
                   "test/win32/resize-flicker.ps1":  "1d26095577e205443d15d2ba97385f887cf09c6b28a016cd520d9056ad8f2772",
                   "test/win32/resolve-window-persist.ps1":  "663ce9c17c752a2167abec0969e769082d517106f14c1e712c597b6ecc172179",
-                  "test/win32/restore-late-agent.ps1":  "3829f0995438fd0aec0866dd1f76cd34cb4cd5127bab8ae39ac4657d52e50630",
+                  "test/win32/restore-late-agent.ps1":  "ea1e5bc07ddbca39cc51c3c15fd8200c1d02597998fd9998ab6bea98ed420f29",
                   "test/win32/restore-session-dup.ps1":  "3a98531e97ed32fef1cb9aca6439576ca54cc1221b6c3a5564e431b0fb612e28",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
                   "test/win32/seam-audit.ps1":  "b6df80f87a37af263b728e4ae4c0dcfcdeb93f9a87bd48df2340244cac110dad",
