@@ -1121,13 +1121,13 @@ foreach ($axis in @('down', 'right')) {
 # ---------------------------------------------------------------------------
 Kill-RepoInstances
 # T1129 binds the divider actions onto plain ctrl+shift+alt chords for this
-# run. The SHIPPING chords are super-modified (ctrl+win+arrow to move a
-# divider, super+alt+arrow to change focus) and a posted WM_KEYDOWN carrying a
-# faked VK_LWIN does not resolve them off the input desktop, while every
-# non-super chord in this harness does - measured 2026-08-23, and filed as
-# T1149 because whether that is the harness or the product is a separate
-# question from the divider semantics under test here. The action reached is
-# identical either way: this run is about what `resize_split` DOES.
+# run, so (a)-(c) below test what `resize_split` DOES independently of which
+# chord reaches it. The SHIPPING chords are super-modified - super+ctrl+shift+
+# arrow moves a divider, super+ctrl+[ / ] walks focus - and section T1149 at
+# the end presses exactly those. (T1149 was filed believing a faked VK_LWIN
+# never resolves off the input desktop; the 2026-08-23 probe had pressed
+# win+ctrl+arrow and win+alt+arrow, neither of which is bound on Windows. With
+# the real defaults the harness carries `super` fine.)
 $kb = @('--keybind=ctrl+shift+alt+right=resize_split:right,10',
     '--keybind=ctrl+shift+alt+left=resize_split:left,10',
     '--keybind=ctrl+shift+alt+up=goto_split:left')
@@ -1237,7 +1237,7 @@ if ($a495.Process -and $a495.Process.HasExited) {
             # ---------------------------------------------------------------
             # T1129: the KEYBOARD is the same gesture as the drag.
             #
-            # `resize_split` (Move Divider / ctrl+win+arrow) used to go through
+            # `resize_split` (Move Divider / super+ctrl+shift+arrow) used to go through
             # SplitTree.resize, which applies a ratio DELTA to the nearest
             # matching split - so it carried both defects the mouse path had
             # already had fixed: a nested divider teleported (T495's shape,
@@ -1263,7 +1263,7 @@ if ($a495.Process -and $a495.Process.HasExited) {
             Assert ($null -ne $k1 -and [math]::Abs(($k1.X - $k0.X) - $step) -le 6) `
                 "T1129: one keyboard step moves the nested divider one step, not a leap (wanted ~$step, got $($k1.X - $k0.X))"
 
-            # (b) Walk focus to the leftmost pane (super+alt+left twice) and
+            # (b) Walk focus to the leftmost pane (goto_split:left twice) and
             # move divider 1 ten steps: divider 2 must hold its absolute x and
             # the far pane must keep its width, exactly as under a mouse drag.
             [void](Send-TestKeys -Window $t495 -Target $panesK[2] -Modifiers ctrl, shift, alt -Key up)
@@ -1303,6 +1303,51 @@ if ($a495.Process -and $a495.Process.HasExited) {
                 "T1129: ten steps out and ten back returns the first divider to its pixel ($($m0.FirstX) -> $($m2.FirstX))"
             Assert ($null -ne $m2 -and [math]::Abs($m2.X - $m0.X) -le 6) `
                 "T1129: and the second divider is still where it started ($($m0.X) -> $($m2.X))"
+
+            # ---------------------------------------------------------------
+            # T1149: the SHIPPING Windows-key chords, not a rebinding of them.
+            #
+            # (a)-(c) drive the actions through ctrl+shift+alt stand-ins. This
+            # presses the defaults `+list-keybinds --default` prints on Windows
+            # - super+ctrl+shift+arrow for resize_split and super+ctrl+[ / ]
+            # for goto_split previous/next - so a regression in how `super`
+            # reaches the binding lookup (or in the defaults themselves) fails
+            # here. The --keybind lines above ADD to the defaults, they do not
+            # clear them.
+            # ---------------------------------------------------------------
+            $w0 = Get-SecondDividerX $t495
+            [void](Send-TestKeys -Window $t495 -Target $panesK[0] -Modifiers ctrl, shift, win -Key right)
+            Start-Sleep -Milliseconds 250
+            $w1 = Get-SecondDividerX $t495
+            Assert ($null -ne $w1 -and [math]::Abs(($w1.FirstX - $w0.FirstX) - $step) -le 6) `
+                "T1149: the default super+ctrl+shift+right moves the first divider one step (wanted ~$step, got $($w1.FirstX - $w0.FirstX))"
+            [void](Send-TestKeys -Window $t495 -Target $panesK[0] -Modifiers ctrl, shift, win -Key left)
+            Start-Sleep -Milliseconds 250
+            $w2 = Get-SecondDividerX $t495
+            Assert ($null -ne $w2 -and [math]::Abs($w2.FirstX - $w0.FirstX) -le 6) `
+                "T1149: and super+ctrl+shift+left moves it back ($($w0.FirstX) -> $($w2.FirstX))"
+
+            # goto_split:next from the leftmost pane lands focus on the middle
+            # one. Control first: the harness itself focuses the target pane
+            # before posting, so a press that does nothing reads back pane 0.
+            [void](Send-TestKeys -Window $t495 -Target $panesK[0] -Modifiers ctrl, win -Key rbracket)
+            $fNext = [IntPtr]::Zero
+            for ($i = 0; $i -lt 20; $i++) {
+                $fNext = Get-TestFocusedWindow -Window $t495
+                if ($fNext -eq $panesK[1]) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            Assert ($fNext -eq $panesK[1]) `
+                "T1149: the default super+ctrl+] moves focus to the next pane (focused=$fNext, want=$($panesK[1]))"
+            [void](Send-TestKeys -Window $t495 -Target $panesK[1] -Modifiers ctrl, win -Key lbracket)
+            $fPrev = [IntPtr]::Zero
+            for ($i = 0; $i -lt 20; $i++) {
+                $fPrev = Get-TestFocusedWindow -Window $t495
+                if ($fPrev -eq $panesK[0]) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            Assert ($fPrev -eq $panesK[0]) `
+                "T1149: the default super+ctrl+[ moves focus back to the previous pane (focused=$fPrev, want=$($panesK[0]))"
 
             Assert (-not ($a495.Process -and $a495.Process.HasExited)) 'T495: no crash'
         }

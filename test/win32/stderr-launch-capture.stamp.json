@@ -1,10 +1,10 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-24T08:01:14-07:00",
-    "commit":  "96715eb71",
+    "generated":  "2026-09-24T08:49:18-07:00",
+    "commit":  "53e3dc063",
     "uncommitted":  [
-                        "test/win32/restore-late-agent.ps1"
+                        "test/win32/split-divider.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "8c1deebc52e7f8ec94ce24ba781512d3bda5240759151c0822d763b410b799f4",
@@ -275,7 +275,7 @@
                   "test/win32/soak-daemon.ps1":  "10a19e7d3a5b7b885afae8a3bb2a04bb92cdf20e8b17c974bb59e54f06be2470",
                   "test/win32/split-dim.ps1":  "a0d3d7e7816fc6a89ab6c2f285c2d19f2e2a550333765c2a3fabdb377c9e8b8b",
                   "test/win32/split-dim-viewer.ps1":  "454a52890b54b98bd41361b823291d51d54b6986180613e921fd0d185324dea9",
-                  "test/win32/split-divider.ps1":  "d65288528cab6f897660c3473b4c3a52e928ef1948637d3d2cdd4acff3d3abac",
+                  "test/win32/split-divider.ps1":  "f3ef692329085abefb527c622478b7ca4a06b8b0f44d18c5d10c913221c20ab8",
                   "test/win32/split-inherit-cwd.ps1":  "f26f4a4f33220e2a2b13418a71da0a6e1feb2644eebce5ae09d8751e06a3b443",
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",
                   "test/win32/sprite-testdata.ps1":  "79914472fe57b285f38ca6e0740a22e4975c142ccd15fe554b9b3b0835033d21",
