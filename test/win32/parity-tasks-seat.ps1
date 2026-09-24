@@ -37,6 +37,10 @@
 #      renumbering. Plus the P3 band: "reviewed and deliberately last" outranks
 #      "nobody has looked yet", and a band outside the set is a validate
 #      FAILURE rather than the silent blanking that hid `P3` in two real files.
+#   K4. The milestone ranks inside a band (T1722). An M1 task goes ahead of an
+#      older or hand-placed non-M1 task of the same priority, but never ahead
+#      of a higher priority; `list` agrees with `next`, and `next` names the
+#      milestone it picked on.
 #   L. `next -Claim` marks the picked task in-progress in the same breath;
 #      plain `next` stays a read-only question.
 #   M. Stale in-progress resume (2026-08-05): one agent runs the queue, so a
@@ -184,7 +188,7 @@ Assert 'next reports the seat it resolved to' ($r.Out -match 'seat=win')
 $r = Task-Run @('list')
 Assert 'list shows a Seat column' ($r.Out -match 'Seat')
 # Columns are Ord, Id, Pri, Status, Seat; unset shows '--' in both numeric ones.
-Assert 'list reports T1 as win' ($r.Out -match '(?m)^\s*--\s+T1\s+--\s+todo\s+win\b')
+Assert 'list reports T1 as win' ($r.Out -match '(?m)^\s*--\s+T1\s+--\s+--\s+todo\s+win\b')
 
 # --- B. next skips mac, loudly ----------------------------------------------
 ""
@@ -326,7 +330,7 @@ Assert 'and next names the untriaged one it passed over' ($r.Out -notmatch 'NEXT
 
 $r = Task-Run @('list', '-Priority', 'P2')
 Assert 'list -Priority filters to that band' ($r.Out -match '1 task\(s\)')
-Assert 'list shows the Pri column value' ($r.Out -match '(?m)^\s*--\s+T1\s+P2\s+todo\b')
+Assert 'list shows the Pri column value' ($r.Out -match '(?m)^\s*--\s+T1\s+P2\s+--\s+todo\b')
 
 $r = Task-Run @('set-priority', 'T2', '-Priority', 'P0', '-Summary', 'it wedges the app')
 Assert 'set-priority exits 0' ($r.Code -eq 0)
@@ -506,6 +510,38 @@ Assert 'and names the task and the bogus value' ($r.Out -match "ODD PRIORITY: T4
 Assert 'and says what it is being read as' ($r.Out -match 'read as untriaged')
 $r = Task-Run @('next')
 Assert 'the bogus band still sorts last rather than seizing the head' ($r.Out -match 'NEXT: T20\b')
+
+# --- K4. the milestone ranks inside a band (T1722) -----------------------------
+""
+"K4. inside a priority band, the current milestone's tasks come first"
+Reset-Fixture
+# The 2026-09-23 shape: the P0/P1 bands are empty, so the loop works the P2
+# band - and by id that put 350 older non-M1 cards ahead of the 43 M1 P2s the
+# convergence number counts. 35 closes that day, 8 of them M1.
+New-FixtureTask -Id 'T5'   -PriorityLine 'priority: "P2"'                          # old, not in M1
+New-FixtureTask -Id 'T6'   -PriorityLine 'priority: "P2"' -OrderLine 'order: 1'    # hand-placed, not in M1
+New-FixtureTask -Id 'T900' -PriorityLine 'priority: "P2"' -ExtraLines @('milestone: "M1"')
+New-FixtureTask -Id 'T901' -PriorityLine 'priority: "P2"' -ExtraLines @('milestone: "M2"')
+$r = Task-Run @('next')
+Assert 'an M1 P2 outranks older and hand-placed non-M1 P2s' ($r.Out -match 'NEXT: T900\b')
+Assert 'and next names the milestone it picked on' ($r.Out -match 'milestone=M1\b')
+$r = Task-Run @('list')
+Assert 'list agrees with next: M1 first, then order, then id' ($r.Out -match '(?s)T900.*T6.*T5.*T901')
+Assert 'and list shows the milestone column' ($r.Out -match '(?m)^\s*--\s+T900\s+P2\s+M1\s+todo\b')
+
+# Below priority, never above it: an M1 P2 must not outrank a P1 somebody
+# called more urgent.
+New-FixtureTask -Id 'T7' -PriorityLine 'priority: "P1"'
+$r = Task-Run @('next')
+Assert 'a non-M1 P1 still outranks an M1 P2' ($r.Out -match 'NEXT: T7\b')
+Assert 'and next says it is outside any milestone' ($r.Out -match 'milestone=none\b')
+
+# Inside the milestone, `order:` and then id still sequence as before.
+Reset-Fixture
+New-FixtureTask -Id 'T50' -PriorityLine 'priority: "P2"' -ExtraLines @('milestone: "M1"')
+New-FixtureTask -Id 'T60' -PriorityLine 'priority: "P2"' -OrderLine 'order: 2' -ExtraLines @('milestone: "M1"')
+$r = Task-Run @('next')
+Assert 'inside M1 a placed task still goes before an unplaced one' ($r.Out -match 'NEXT: T60\b')
 
 # --- L. next -Claim marks the task -------------------------------------------
 ""

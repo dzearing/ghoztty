@@ -246,6 +246,13 @@ $ValidSeats = @('win', 'mac', 'any')
 $DefaultPriority = 'P1'
 $ValidPriorities = @('P0', 'P1', 'P2', 'P3')
 
+# The milestone the convergence number counts (go.md step 0.6). Inside a
+# priority band its members sort ahead of everything else (T1722): `next` used
+# to rank a band by `order:` and then id alone, so on 2026-09-23 the loop closed
+# 35 tasks, 8 of them M1, while 43 M1 P2s waited behind 350 older non-M1 P2s.
+# Keep in step with the dashboard's convergence card (task-dashboard.js).
+$CurrentMilestone = 'M1'
+
 # The closed tag vocabulary. feature/fix/polish are the user-facing bands;
 # perf/test/infra/docs/security are the internal ones. Closed on purpose:
 # an open vocabulary grows "tests", "testing" and "test-quality" for one idea,
@@ -317,6 +324,7 @@ function ConvertFrom-Frontmatter {
         PriorityRaw  = $priorityRaw
         TriageReason = & $unquote (& $get 'triage-reason')
         Tags         = & $parseList (& $get 'tags')
+        Milestone    = & $unquote (& $get 'milestone')
         # What has to be TRUE before this task comes back into the queue, in the
         # parker's own words (the dashboard has rendered it on blocked cards
         # since T564's follow-ups). `set-status` reads it so an un-block can
@@ -448,6 +456,31 @@ function Get-PriorityRank {
         'P3' { return 3 }
         default { return 9 }
     }
+}
+
+# Sort key for milestone membership: the current milestone's members first
+# inside their priority band (T1722). It sits BELOW priority, never above it -
+# an M1 P2 must not outrank a P1 somebody called more urgent - and ABOVE
+# `order:`, so a hand-placed non-M1 task cannot hold the milestone back.
+function Get-MilestoneRank {
+    param([string]$M)
+    if ($M -eq $CurrentMilestone) { return 0 }
+    return 1
+}
+
+# The queue order, in ONE place (T1722). `list` and `next` used to carry two
+# copies of this sort with a comment asking that they stay identical; a list
+# that disagrees with the selector is how a human "verifies" the queue and is
+# shown something the loop will not do. Priority, then milestone, then order,
+# then id - see the long note in `next`.
+function Sort-TaskQueue {
+    param([object[]]$Tasks)
+    return @($Tasks | Sort-Object `
+        @{ Expression = { Get-PriorityRank $_.Priority } }, `
+        @{ Expression = { Get-MilestoneRank $_.Milestone } }, `
+        @{ Expression = { Get-OrderRank $_.Order } }, `
+        @{ Expression = { [int]([regex]::Match($_.Id, '\d+').Value) } }, `
+        @{ Expression = { $_.Id } })
 }
 
 # A seat can work its own tasks plus the ones marked `any`. `all` is the
@@ -896,16 +929,9 @@ switch ($Command) {
         if ($Status) { $tasks = $tasks | Where-Object { $_.Status -like "$Status*" } }
         if ($Priority) { $tasks = $tasks | Where-Object { $_.Priority -eq $Priority } }
         $tasks = @($tasks | Where-Object { Test-SeatMatch $_.Seat $wantSeat })
-        # Queue order, so `list` reads the same way `next` picks. Priority
-        # first, then order - see the long note in `next`. These two sorts must
-        # stay identical: a list that disagrees with the selector is how a
-        # human "verifies" the queue and is shown something the loop will not
-        # actually do.
-        $tasks = @($tasks | Sort-Object `
-            @{ Expression = { Get-PriorityRank $_.Priority } }, `
-            @{ Expression = { Get-OrderRank $_.Order } }, `
-            @{ Expression = { [int]([regex]::Match($_.Id, '\d+').Value) } }, `
-            @{ Expression = { $_.Id } })
+        # Queue order, so `list` reads the same way `next` picks: the one
+        # shared sort, Sort-TaskQueue.
+        $tasks = Sort-TaskQueue $tasks
         # Rendered at a FIXED width, not the host's. Format-Table truncates to
         # the console window, and it does it silently: in a 62-column pane this
         # table stopped after Status, so Seat, Deps and Title - the three
@@ -916,6 +942,8 @@ switch ($Command) {
             @{ N = 'Ord'; E = { if ($null -ne $_.Order) { $_.Order } else { '--' } } },
         Id,
         @{ N = 'Pri'; E = { if ($_.Priority) { $_.Priority } else { '--' } } },
+        # The milestone is part of the queue order (T1722), so the list shows it.
+        @{ N = 'MS'; E = { if ($_.Milestone) { $_.Milestone } else { '--' } } },
         # Capped like Title. A `skipped(<reason>)` status runs to 166 characters
         # here, and -AutoSize sizes the column to the longest VALUE, so one such
         # row shoved Title off the right edge of every other row. The head of a
@@ -974,11 +1002,12 @@ switch ($Command) {
         # of them without renumbering. What it can no longer do is outrank
         # importance. Id remains the last tiebreaker, so the ordering is total
         # and deterministic no matter how little is filled in.
-        $ordered = $tasks | Sort-Object `
-        @{ Expression = { Get-PriorityRank $_.Priority } }, `
-        @{ Expression = { Get-OrderRank $_.Order } }, `
-        @{ Expression = { [int]([regex]::Match($_.Id, '\d+').Value) } }, `
-        @{ Expression = { $_.Id } }
+        #
+        # Milestone sits between priority and order (T1722). With the P0/P1
+        # bands empty or blocked the loop works the P2 band, and by id that
+        # put 350 older harness and tooling cards ahead of the 43 P2s the
+        # convergence number counts: 35 closes on 2026-09-23, 8 of them M1.
+        $ordered = Sort-TaskQueue $tasks
 
         # ONE agent works this queue at a time, so any task already marked
         # in-progress when a turn starts is a STALE claim: the turn that made
@@ -1030,7 +1059,8 @@ switch ($Command) {
                 Write-Host ("NEXT: {0} - {1}" -f $t.Id, $t.Title)
                 $pri = if ($t.Priority) { $t.Priority } else { 'untriaged' }
                 $ord = if ($null -ne $t.Order) { $t.Order } else { 'unordered' }
-                Write-Host ("      order={0} priority={1} deps={2} seat={3}" -f $ord, $pri, ($t.Deps -join ','), $t.Seat)
+                $ms = if ($t.Milestone) { $t.Milestone } else { 'none' }
+                Write-Host ("      order={0} priority={1} milestone={2} deps={3} seat={4}" -f $ord, $pri, $ms, ($t.Deps -join ','), $t.Seat)
                 if ($t.TriageReason) { Write-Host ("      why: {0}" -f $t.TriageReason) }
                 Write-Host ("      file: docs/design/windows-parity-tasks/{0}.md" -f $t.Id)
                 # "Is this still true?" asked BEFORE the build, not after it

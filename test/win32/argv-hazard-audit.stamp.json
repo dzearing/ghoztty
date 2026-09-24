@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-24T05:07:38-07:00",
-    "commit":  "689b1e267",
+    "generated":  "2026-09-24T05:47:17-07:00",
+    "commit":  "de1febc3d",
     "uncommitted":  [
-                        "test/win32/pty-host.ps1"
+                        "scripts/parity-tasks.ps1",
+                        "test/win32/parity-tasks-seat.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -57,7 +58,7 @@
                   "scripts/msi-test-identity.ps1":  "375396ad262bf0cd1905b85707fa70f48604f9d8d79a14174311d968e428c2ac",
                   "scripts/parity-decisions.ps1":  "2475b9be8aa438a4f5b0cbe1f977253e14a669de074547c869246b83b44d5030",
                   "scripts/parity-sweep.ps1":  "2558a090ed2db1add4c101c99b74c469c6c4904ed1646f1dd4138c5bc0ca5046",
-                  "scripts/parity-tasks.ps1":  "15ec659b3e5021a138365a29f09006a22f3278e2d3048aa4d9b161818dd09767",
+                  "scripts/parity-tasks.ps1":  "9a1dab7d56e707ca815e80b330b9462483facbc681be63d996e033d71967d25e",
                   "scripts/publish-windows-release.ps1":  "0b26b7ea16c1676b2a1d090f9acae47966f72302ad2cf6037d9c646b80cab544",
                   "scripts/publish-windows-tag.ps1":  "fbf416f550baf907a037646938e8c0eccb52ac6d47644cc31307aa08a44d5383",
                   "scripts/report-false-positive.ps1":  "67875bcfc4d235afa9a8810294a7ea9d48fc7cb57f69e74c9617970b65d68534",
@@ -335,7 +336,7 @@
                   "test/win32/pane-ingest-lag.ps1":  "a5c9ffcbdeae28c26b54d98d09586137bcba9be70691c2b2634c781b3fdf9768",
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",
-                  "test/win32/parity-tasks-seat.ps1":  "a3e33e0cc4a2633529d776ff91897aa20694cf893dc9ec3f1143907496fac510",
+                  "test/win32/parity-tasks-seat.ps1":  "5d814ef482832a003c873a695bcc87d404e788cf8d7c6554493dbcaf91237deb",
                   "test/win32/parity-tasks-split-deps.ps1":  "4cae00c40c97f85c7a4b6871ff32a8276cb752fe7c6c8a5120844dd614e71a78",
                   "test/win32/path-selfheal.ps1":  "e37347a9c7c11b2b85bcb7fca1fb80a13fe5984a401f9cadcd81ee245d41781f",
                   "test/win32/persistence-flag.ps1":  "338f60f1d67c918dfc4cdf77aa360f2f491f2b3a9f8114e15aa8c62859b96356",

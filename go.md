@@ -365,9 +365,12 @@ Concretely, in order, with no stops in between:
    the flag; `set-priority <id> -UserReport` adds it to one already filed.
 
    `next` picks by **`priority:`** (P0 → P1 → P2 → P3 → untriaged), then
-   `order:` within that band, then id (D55; user, 2026-08-12). Priority is what
-   the work is WORTH and it decides; `order:` only sequences tasks that are
-   worth the same.
+   **milestone** (M1 members first), then `order:` within that band, then id
+   (D55; user, 2026-08-12; milestone since T1722). Priority is what the work is
+   WORTH and it decides; `order:` only sequences tasks that are worth the same.
+   The milestone rank is what makes promoting a task into M1 (step 0.6) move the
+   queue: before it, the loop worked the P2 band by id and closed 35 tasks on
+   2026-09-23 while M1 moved by 8.
 
    **`next` IS the ordering authority, as of 2026-08-21 (T345).** There is no
    hand-curated list above it any more: every task named in **Current
