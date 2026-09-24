@@ -63,6 +63,7 @@ const update_badge = @import("update_badge.zig");
 const install_location = @import("install_location.zig");
 const update_apply = @import("update_apply.zig");
 const update_install = @import("update_install.zig");
+const update_reopen = @import("update_reopen.zig");
 const update_progress = @import("update_progress.zig");
 const UpdateProgress = @import("UpdateProgress.zig");
 const install_prepare = @import("install_prepare.zig");
@@ -1727,6 +1728,11 @@ pub fn run(self: *App) !void {
     // Registered here, after a window exists, so a launch that never got that
     // far is not a thing Windows would relaunch into the same failure.
     restart_manager.register();
+
+    // T1208: if the process before this one was closed FOR an update, say so.
+    // After the first window exists, so the notice lands beside the terminal
+    // it is about rather than before anything is on screen.
+    self.announceUpdateReopen();
 
     // Surface config load diagnostics once at startup (T69). After the
     // first window exists so the dialog has an owner to center on; the
@@ -8803,6 +8809,8 @@ const NOTIF_STALE_UID: u32 = tray_notify.stale_build_uid;
 const NOTIF_APP_OLDER_UID: u32 = tray_notify.app_outdated_uid;
 const NOTIF_STALE_TIMER_ID: usize = msg_timer.notif_stale;
 const NOTIF_APP_OLDER_TIMER_ID: usize = msg_timer.notif_app_outdated;
+const NOTIF_REOPENED_UID: u32 = tray_notify.update_reopened_uid;
+const NOTIF_REOPENED_TIMER_ID: usize = msg_timer.notif_update_reopened;
 
 /// Register a notification-area icon's behavior version, which is what turns
 /// the `NIN_*` balloon notifications on. Without it the icon keeps the
@@ -9676,6 +9684,7 @@ fn applyStagedUpdate(self: *App) void {
         return;
     }
     log.warn("update: applier armed, quitting to install", .{});
+    recordUpdateClose(self.core_app.alloc, .updater);
     self.quit_requested = true;
     w32.PostQuitMessage(0);
 }
@@ -9771,6 +9780,96 @@ pub fn restartIntoInstalledBuild(self: *App) void {
 
     self.quit_requested = true;
     w32.PostQuitMessage(0);
+}
+
+/// `%LOCALAPPDATA%\ghoztty\update-reopen[-debug]` (T1208). Caller frees.
+fn updateReopenMarkerPath(alloc: Allocator) ?[]u8 {
+    const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return null;
+    defer alloc.free(dir);
+    return std.fs.path.join(alloc, &.{
+        dir,
+        "ghoztty",
+        update_reopen.fileName(build_config.is_debug),
+    }) catch null;
+}
+
+/// Leave the marker that tells the NEXT launch this process was closed for an
+/// update (T1208). Called on the way out of both update paths: the Restart
+/// Manager's close (`Window.zig`, `WM_ENDSESSION` + `ENDSESSION_CLOSEAPP`)
+/// and the in-app updater's quit (`applyStagedUpdate`).
+///
+/// Synchronous and silent on every failure: the RM caller exits the process
+/// the moment this returns, and a marker that cannot be written costs the
+/// notice, never the close somebody is waiting on.
+pub fn recordUpdateClose(alloc: Allocator, reason: update_reopen.Reason) void {
+    const path = updateReopenMarkerPath(alloc) orelse return;
+    defer alloc.free(path);
+    var buf: [256]u8 = undefined;
+    const line = update_reopen.format(&buf, .{
+        .reason = reason,
+        .at_ms = std.time.milliTimestamp(),
+        .from_version = WhatsNewWindow.currentVersion(),
+    });
+    if (line.len == 0) return;
+    if (std.fs.path.dirname(path)) |dir| std.fs.makeDirAbsolute(dir) catch {};
+    const f = std.fs.createFileAbsolute(path, .{ .truncate = true }) catch |err| {
+        log.warn("update-reopen: could not write the marker err={}", .{err});
+        return;
+    };
+    defer f.close();
+    f.writeAll(line) catch return;
+    log.info("update-reopen: marker written reason={s} from={s}", .{ reason.text(), WhatsNewWindow.currentVersion() });
+}
+
+/// Consume the update-close marker, if any, and tell the user what happened
+/// (T1208). The marker is deleted whatever it says, so one close is announced
+/// at most once and a stale one never lingers into a later launch.
+fn announceUpdateReopen(self: *App) void {
+    const alloc = self.core_app.alloc;
+    const path = updateReopenMarkerPath(alloc) orelse return;
+    defer alloc.free(path);
+
+    var raw: [256]u8 = undefined;
+    const n = blk: {
+        const f = std.fs.openFileAbsolute(path, .{}) catch return;
+        defer f.close();
+        break :blk f.readAll(&raw) catch 0;
+    };
+    std.fs.deleteFileAbsolute(path) catch |err| {
+        log.warn("update-reopen: could not delete the marker err={}", .{err});
+    };
+
+    const marker = update_reopen.parse(raw[0..n]);
+    var body_buf: [256]u8 = undefined;
+    const notice = update_reopen.decide(
+        &body_buf,
+        marker,
+        WhatsNewWindow.currentVersion(),
+        std.time.milliTimestamp(),
+    ) orelse {
+        log.info("update-reopen: marker consumed, nothing to say (parsed={} current={s})", .{
+            marker != null,
+            WhatsNewWindow.currentVersion(),
+        });
+        return;
+    };
+
+    const shown = self.showTrayBalloon(
+        NOTIF_REOPENED_UID,
+        NOTIF_REOPENED_TIMER_ID,
+        notice.title,
+        notice.body,
+    );
+    // The line the acceptance script reads back: what was said, and whether
+    // the notification area accepted it (a refused balloon is otherwise
+    // indistinguishable from one nobody looked at).
+    log.warn("update-reopen: notice shown={} reason={s} from={s} to={s} title=\"{s}\"", .{
+        shown,
+        marker.?.reason.text(),
+        marker.?.from_version,
+        WhatsNewWindow.currentVersion(),
+        notice.title,
+    });
 }
 
 /// Show a balloon on the update tray icon. A click is delivered as
@@ -11535,6 +11634,19 @@ fn msgWndProc(
                 log.info("app-older notice clicked: looking for an update", .{});
                 app.startUpdateCheck(.manual);
             },
+            .open_whats_new => {
+                // T1208: the user was just told their terminal was closed and
+                // reopened for an update; the click asks what that update
+                // brought. The split anchors on the version they had before
+                // this launch, so the fresh tab is exactly the jump they made.
+                log.info("update-reopened notice clicked: opening What's New", .{});
+                const owner: ?*Window = if (app.windows.items.len > 0) app.windows.items[0] else null;
+                WhatsNewWindow.openFor(
+                    app,
+                    if (owner) |w| w.hwnd else null,
+                    if (owner) |w| w.scale else 1.0,
+                );
+            },
             .restart_into_new_build => {
                 // T1205: the newer build is already on disk — nothing to
                 // fetch, nothing to install. Restarting IS the whole action,
@@ -11673,13 +11785,14 @@ fn msgWndProc(
     if (msg == w32.WM_TIMER and
         (wparam == NOTIF_DESKTOP_TIMER_ID or wparam == NOTIF_UPDATE_TIMER_ID or
             wparam == NOTIF_ORPHAN_TIMER_ID or wparam == NOTIF_STALE_TIMER_ID or
-            wparam == NOTIF_APP_OLDER_TIMER_ID))
+            wparam == NOTIF_APP_OLDER_TIMER_ID or wparam == NOTIF_REOPENED_TIMER_ID))
     {
         const uid: u32 = switch (wparam) {
             NOTIF_DESKTOP_TIMER_ID => NOTIF_DESKTOP_UID,
             NOTIF_UPDATE_TIMER_ID => NOTIF_UPDATE_UID,
             NOTIF_STALE_TIMER_ID => NOTIF_STALE_UID,
             NOTIF_APP_OLDER_TIMER_ID => NOTIF_APP_OLDER_UID,
+            NOTIF_REOPENED_TIMER_ID => NOTIF_REOPENED_UID,
             else => NOTIF_ORPHAN_UID,
         };
         _ = w32.KillTimer(hwnd, wparam);

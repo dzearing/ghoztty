@@ -596,6 +596,113 @@ try {
             Assert 'L13 with a window, not just a process' ($freshWin -ne [IntPtr]::Zero)
         }
 
+        # ====================================================================
+        "== install-restart U: the user is TOLD the update closed and reopened it (T1208) =="
+        # ====================================================================
+        # The close above is silent by itself: windows vanish and come back.
+        # The process being closed leaves a marker, and the next launch reads it
+        # and says what happened. Everything here is read back from the running
+        # debug build (the marker it wrote, the line it logged about the
+        # notice), never asserted from the source. The versions are pinned with
+        # GHOZTTY_WHATS_NEW_VERSION, the debug-only seam What's New already
+        # uses, so "the version moved" is a real difference between two runs.
+        [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
+        $tmpU = Join-Path $root 'u'
+        New-Item -ItemType Directory -Force (Join-Path $tmpU 'ghoztty') | Out-Null
+        $env:LOCALAPPDATA = $tmpU
+        $marker = Join-Path $tmpU 'ghoztty\update-reopen-debug'
+        $savedWhatsNewVersion = $env:GHOZTTY_WHATS_NEW_VERSION
+
+        # persistence: on (default) - arm U gets its own empty $env:LOCALAPPDATA
+        # ($tmpU), so there is no manifest to restore from.
+        function Start-ReopenProbe($version, $tag) {
+            $env:GHOZTTY_WHATS_NEW_VERSION = $version
+            $errFile = Join-Path $root "reopen-$tag.err"
+            $h = Start-OnTestDesktop -Exe $Exe -Arguments @("--title=t1208-$tag") -StdErr $errFile
+            if ($h.Process) { $null = $h.Process.Handle }
+            $w = Wait-TestWindow -ProcessId $h.Pid -Class 'GhozttyWindow' -TimeoutMs 30000
+            # The notice is decided right after the first window exists; poll
+            # the log for the verdict line rather than sleeping and hoping.
+            $line = ''
+            for ($i = 0; $i -lt 60 -and -not $line; $i++) {
+                if (Test-Path -LiteralPath $errFile) {
+                    $hit = Select-String -LiteralPath $errFile -Pattern 'update-reopen: (notice shown=|marker consumed)' |
+                        Select-Object -Last 1
+                    if ($hit) { $line = $hit.Line }
+                }
+                if (-not $line) { Start-Sleep -Milliseconds 250 }
+            }
+            return [pscustomobject]@{ Process = $h.Process; Pid = $h.Pid; Window = $w; Line = $line }
+        }
+        function Write-Marker($reason, $ageMs, $from) {
+            $at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - $ageMs
+            [IO.File]::WriteAllText($marker, "v1 $reason $at $from`n", (New-Object Text.UTF8Encoding $false))
+        }
+
+        # The real path: an installer's close of a running 1.40.0 ...
+        $u = Start-ReopenProbe '1.40.0' 'before'
+        Assert 'U0 the instance to be updated came up' ($u.Window -ne [IntPtr]::Zero)
+        if ($u.Window -ne [IntPtr]::Zero) {
+            [void](Invoke-TestMessage -Window $u.Window -Message ([uint32]$WM_QUERYENDSESSION) `
+                -WParam ([IntPtr]::Zero) -LParam ([IntPtr]$ENDSESSION_CLOSEAPP))
+            [void](Invoke-TestMessage -Window $u.Window -Message ([uint32]$WM_ENDSESSION) `
+                -WParam ([IntPtr]1) -LParam ([IntPtr]$ENDSESSION_CLOSEAPP))
+        }
+        $uExited = $false
+        if ($u.Process) { $uExited = $u.Process.WaitForExit(15000) }
+        Assert 'U1 the installer close still exits promptly' $uExited
+        $markerText = ''
+        if (Test-Path -LiteralPath $marker) { $markerText = (Get-Content -LiteralPath $marker -Raw) }
+        Assert "U2 and leaves word for the relaunch: installer, from 1.40.0 ('$($markerText.Trim())')" `
+            ($markerText -match '^v1 installer \d{13} 1\.40\.0\s*$')
+
+        # ... reopened as 1.40.1: the user is told, with both versions.
+        $u2 = Start-ReopenProbe '1.40.1' 'after'
+        Assert "U3 the relaunch announces the update ('$($u2.Line)')" `
+            ($u2.Line -match 'notice shown=\w+ reason=installer from=1\.40\.0 to=1\.40\.1 title="Ghoztty Was Updated"')
+        Assert 'U4 and consumes the marker, so it is said once' (-not (Test-Path -LiteralPath $marker))
+
+        # A launch with no marker says nothing - the notice is not a banner on
+        # every start.
+        [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
+        $env:GHOZTTY_WHATS_NEW_VERSION = '1.40.1'
+        $errPlain = Join-Path $root 'reopen-plain.err'
+        # persistence: on (default) - still arm U's private $env:LOCALAPPDATA
+        # ($tmpU), where the previous launch left no manifest worth restoring.
+        $hp =Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t1208-plain') -StdErr $errPlain
+        $wp = Wait-TestWindow -ProcessId $hp.Pid -Class 'GhozttyWindow' -TimeoutMs 30000
+        Start-Sleep -Milliseconds 1500
+        $plainHit = $null
+        if (Test-Path -LiteralPath $errPlain) {
+            $plainHit = Select-String -LiteralPath $errPlain -Pattern 'update-reopen: notice shown='
+        }
+        Assert 'U5 an ordinary launch announces nothing' (($wp -ne [IntPtr]::Zero) -and -not $plainHit)
+
+        # The in-app updater relaunching the SAME version is a failed install;
+        # its applier already says so in a modal (T1206), so this stays quiet.
+        [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
+        Write-Marker 'updater' 2000 '1.40.1'
+        $u3 = Start-ReopenProbe '1.40.1' 'failed'
+        Assert "U6 a failed in-app update is not announced as an update ('$($u3.Line)')" `
+            ($u3.Line -match 'marker consumed, nothing to say')
+
+        # A marker from long ago is not about this launch.
+        [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
+        Write-Marker 'installer' (20 * 60 * 1000) '1.39.0'
+        $u4 = Start-ReopenProbe '1.40.1' 'stale'
+        Assert "U7 a stale marker says nothing ('$($u4.Line)')" ($u4.Line -match 'marker consumed, nothing to say')
+        Assert 'U8 and is cleared anyway' (-not (Test-Path -LiteralPath $marker))
+
+        # An installer that closed us without changing the version (a repair)
+        # still closed and reopened the terminal, and that is what the user saw.
+        [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 600)
+        Write-Marker 'installer' 2000 '1.40.1'
+        $u5 = Start-ReopenProbe '1.40.1' 'repair'
+        Assert "U9 a same-version installer close says it was reopened ('$($u5.Line)')" `
+            ($u5.Line -match 'reason=installer from=1\.40\.1 to=1\.40\.1 title="Ghoztty Was Reopened"')
+
+        if ($null -eq $savedWhatsNewVersion) { Remove-Item Env:\GHOZTTY_WHATS_NEW_VERSION -ErrorAction SilentlyContinue }
+        else { $env:GHOZTTY_WHATS_NEW_VERSION = $savedWhatsNewVersion }
     }
 
     # LAST statement of the top-level try (T1039): an unwind from anywhere

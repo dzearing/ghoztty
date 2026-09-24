@@ -33520,3 +33520,19 @@ times with `No running Ghoztty instance found`. `persistence-flag.ps1`
 launches and resets debug instances, and the lane scored it red for the
 same collision. The sequential-only rule holds. Filed T1727 (the same
 sleep-then-read shape in P1 and P2).
+
+## 2026-09-24 - T1208: an update that closes the terminal now says so when it reopens
+
+An upgrade over a running Ghoztty closed it and brought it back with no word
+about why, which reads like a crash. The process being closed for an update
+(a Restart Manager close from an installer, or the in-app updater quitting to
+install) now leaves a one-line marker, and the next launch turns it into a tray
+notice: "Ghoztty Was Updated" naming both versions, with a click that opens
+What's New. A repair that changed nothing says "Reopened". A failed in-app
+update says nothing, because the applier's own dialog already does. So does a
+marker older than 15 minutes. A balloon rather than a dialog, so an unattended
+install is never blocked. The decisions are unit-tested in `update_reopen.zig`.
+`install-restart.ps1` section U drives a real RM close of the debug build and
+reads back the marker and the relaunch's verdict line (ALL PASS, 63). The
+standard MSI Files In Use dialog is still missing for a by-hand install. It is
+filed as T1728, since it needs wixl to validate.

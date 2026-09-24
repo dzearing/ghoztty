@@ -169,6 +169,12 @@ test {
     // no-OS-imports deal.
     _ = @import("apprt/win32/update_progress.zig");
 
+    // Pure win32 "your terminal was closed and reopened for an update" notice
+    // (T1208): the marker the closing process leaves, when it is too old to be
+    // about this launch, and what the balloon says. Every lane, same
+    // no-OS-imports deal.
+    _ = @import("apprt/win32/update_reopen.zig");
+
     // Pure win32 "is this window running the build that is on disk?" (T1205):
     // the FILETIME conversion and the started-vs-written comparison behind
     // About's stale-build line and its restart offer. Every lane, same

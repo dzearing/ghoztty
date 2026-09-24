@@ -76,6 +76,9 @@ pub const notif_app_outdated: usize = 16;
 /// through the Help menu (T1563).
 pub const update_manual: usize = 17;
 
+/// Icon cleanup for the "closed and reopened for an update" balloon (T1208).
+pub const notif_update_reopened: usize = 18;
+
 // Fail the build if two ids above are equal. Every `pub const … : usize` in
 // this file is a timer id and is compared against every other one, so a new
 // entry is covered by adding it — there is no second list to keep in step.

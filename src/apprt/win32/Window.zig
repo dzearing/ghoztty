@@ -10363,6 +10363,9 @@ pub fn windowWndProc(
             // shutdown, so this is deliberately narrowed to the RM case.
             if (restart_manager.isCloseAppRequest(@bitCast(lparam))) {
                 log.info("restart manager asked us to close for an update; exiting", .{});
+                // T1208: leave word for the relaunch, so the user is told why
+                // their windows just blinked out and back.
+                App.recordUpdateClose(window.app.core_app.alloc, .installer);
                 exit_reason.recordExit("restart-manager");
                 std.process.exit(0);
             }
