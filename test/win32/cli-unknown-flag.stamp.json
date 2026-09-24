@@ -1,14 +1,15 @@
 {
     "guard":  "cli-unknown-flag",
     "script":  "test/win32/cli-unknown-flag.ps1",
-    "generated":  "2026-09-19T21:36:14-07:00",
-    "commit":  "6127f6956",
+    "generated":  "2026-09-23T23:57:10-07:00",
+    "commit":  "9b90bd36b",
     "uncommitted":  [
-                        "src/cli/verb_flags.zig"
+                        "src/cli/verb_flags.zig",
+                        "test/win32/cli-unknown-flag.ps1"
                     ],
     "files":  {
                   "src/cli/args.zig":  "76cc8b648aa605674b588665c9a45b2b1f489027e5945ab41aa411f88b13cb8c",
-                  "src/cli/verb_flags.zig":  "93bc067630ebbd8ceca5844eedd66d4f86393cc729744309cc1abaae90a7eb55",
-                  "test/win32/cli-unknown-flag.ps1":  "07ea51f386b5d1f59c1ad1a1ae7ff93c4b14ab35b7d4468a7ae9313e208427f2"
+                  "src/cli/verb_flags.zig":  "bfd1150c23bf4ead6005bec293ea9f6895344fda2f5ec52b1de0b26693b3e7d6",
+                  "test/win32/cli-unknown-flag.ps1":  "5e26d47c22c6a6225b99523219a32941dd7d389219312c4a235c9f239f6d3387"
               }
 }

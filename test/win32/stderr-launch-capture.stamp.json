@@ -1,11 +1,10 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-23T23:33:10-07:00",
-    "commit":  "48a8b81de",
+    "generated":  "2026-09-24T00:21:23-07:00",
+    "commit":  "9b90bd36b",
     "uncommitted":  [
-                        "test/win32/split-divider.ps1",
-                        "test/win32/tab-strip.ps1"
+                        "test/win32/cli-unknown-flag.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "30b6ae803ff1b3b7149358fd49ef8c9dc50405980f9812fd2ca5a8bcdd910a39",
@@ -78,7 +77,7 @@
                   "test/win32/clipboard-paste.ps1":  "67efee510ca4a568e9f637be63f6dc1eba023242f3ffbf6e9733388420ee8325",
                   "test/win32/clipboard-retry.ps1":  "43b4fe9e1b843df6e073bcec780f8b10a2051e948566c99a6c776d2e13992208",
                   "test/win32/cli-shim-redirect.ps1":  "d9270707fa5daba04008292352c21cfb3aa71a688528a10a3db2319484e5f3bb",
-                  "test/win32/cli-unknown-flag.ps1":  "07ea51f386b5d1f59c1ad1a1ae7ff93c4b14ab35b7d4468a7ae9313e208427f2",
+                  "test/win32/cli-unknown-flag.ps1":  "5e26d47c22c6a6225b99523219a32941dd7d389219312c4a235c9f239f6d3387",
                   "test/win32/close-confirm-idle.ps1":  "208c3276ba5db71b667cefebfe3fe4a2177843344001f6825a4def3bb9f3da4c",
                   "test/win32/close-glyph-white.ps1":  "6d6b3cc1c05e01ad16553375b1b4fbaa06ced25c674d0138108c41f692652238",
                   "test/win32/color-contrast.ps1":  "464aa2aa9a4e6cf6470fbcd1ec523b705a9f3260a04f6af57f406ff36e00cb4e",

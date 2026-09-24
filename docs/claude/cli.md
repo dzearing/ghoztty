@@ -34,6 +34,16 @@ $ ghoztty +split --dirction=right
 run 'ghoztty +split --help' for usage
 ```
 
+**So is a real flag in the wrong shape** (T950). A flag that carries a value
+is always written `--flag=value`; a space instead of the `=` is refused and the
+message shows the form to write. A switch (`--no-activate`, `--from-focused`,
+`--clear`, `--config`) takes no value and refuses one:
+
+```
+$ ghoztty +close --target dev
++close: --target needs a value; write it as --target=dev
+```
+
 The SERVER stays tolerant of flags it does not know — that is the
 compatibility contract that lets a week-old running instance accept a
 CLI that learned a flag this morning — so the check lives in the CLI, which

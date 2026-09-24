@@ -1,11 +1,12 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-23T23:32:11-07:00",
-    "commit":  "48a8b81de",
+    "generated":  "2026-09-24T00:20:25-07:00",
+    "commit":  "9b90bd36b",
     "uncommitted":  [
-                        "test/win32/split-divider.ps1",
-                        "test/win32/tab-strip.ps1"
+                        "src/cli/send_keys.zig",
+                        "src/cli/verb_flags.zig",
+                        "test/win32/cli-unknown-flag.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -274,7 +275,7 @@
                   "src/cli/rearrange.zig":  "c9acb9c8b5d3082feccc322a20cda3cea14cbca653a202d0b029a731cdf185ce",
                   "src/cli/reload.zig":  "5755d8fdc574f26b41cf39486b2e31502bc0ee938346c7bd337f40b985095ced",
                   "src/cli/rename.zig":  "d3cd394288ea21515ee0b30fcda6288cbb7e0a56f5a98808eb01ad54f30a18f9",
-                  "src/cli/send_keys.zig":  "5fbf6e3688e079a0b7688666acff4e083ada443d4244eef197e1ca63513a5bd6",
+                  "src/cli/send_keys.zig":  "eadc5860163f0131418b4826922cb715c8e8ebd7913d83ac4811fdcbd5cba395",
                   "src/cli/sessions.zig":  "d3eaf730bd26e20422b3ff7b7870999f80c3ad1bda361d10485da33b363bddc9",
                   "src/cli/set_banner.zig":  "3de7548bc1abbd047c91fb49b680437ef621d549812aecc08348e789a3e9db00",
                   "src/cli/set_state.zig":  "0d20fe8ccd6fe87235c260df2997785acd3a972240e8d38eecd345c05bce019a",
@@ -284,7 +285,7 @@
                   "src/cli/ssh_cache.zig":  "331150de56825aaa082a6cbce92e0cde7422be640bf9668498dffb63916bb6d3",
                   "src/cli/tui.zig":  "21a3e0dd4ea549586350837e1ea35073de0c8dcc9008d1f5fb4b8afe8591e6f8",
                   "src/cli/validate_config.zig":  "3fd055811e322ce2b52b5155fb18d9138d02e5cc2f600b744a3b5513d1bc57aa",
-                  "src/cli/verb_flags.zig":  "93bc067630ebbd8ceca5844eedd66d4f86393cc729744309cc1abaae90a7eb55",
+                  "src/cli/verb_flags.zig":  "bfd1150c23bf4ead6005bec293ea9f6895344fda2f5ec52b1de0b26693b3e7d6",
                   "src/cli/version.zig":  "6b2bc632a3f4096373189da3b0ca71103dac63ceaeb15d24cb3b9eafe2693303",
                   "src/cli/view_arg.zig":  "e743f118fc97e7c676b7fc40e2448b0285439e956a8131bdb03bc5faa0697cbf",
                   "src/os/args.zig":  "cca966e4cb921c688a8c6e3fae1e576562418a614997038c3a173dd5b8798d2d",
@@ -502,7 +503,7 @@
                   "test/win32/clipboard-paste.ps1":  "67efee510ca4a568e9f637be63f6dc1eba023242f3ffbf6e9733388420ee8325",
                   "test/win32/clipboard-retry.ps1":  "43b4fe9e1b843df6e073bcec780f8b10a2051e948566c99a6c776d2e13992208",
                   "test/win32/cli-shim-redirect.ps1":  "d9270707fa5daba04008292352c21cfb3aa71a688528a10a3db2319484e5f3bb",
-                  "test/win32/cli-unknown-flag.ps1":  "07ea51f386b5d1f59c1ad1a1ae7ff93c4b14ab35b7d4468a7ae9313e208427f2",
+                  "test/win32/cli-unknown-flag.ps1":  "5e26d47c22c6a6225b99523219a32941dd7d389219312c4a235c9f239f6d3387",
                   "test/win32/close-confirm-idle.ps1":  "208c3276ba5db71b667cefebfe3fe4a2177843344001f6825a4def3bb9f3da4c",
                   "test/win32/close-glyph-white.ps1":  "6d6b3cc1c05e01ad16553375b1b4fbaa06ced25c674d0138108c41f692652238",
                   "test/win32/color-contrast.ps1":  "464aa2aa9a4e6cf6470fbcd1ec523b705a9f3260a04f6af57f406ff36e00cb4e",

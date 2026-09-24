@@ -22,7 +22,10 @@
 # ON PURPOSE - that tolerance is the app<->CLI compatibility contract. So a
 # typo reached the server, was dropped, and left the verb doing something
 # else at exit 0. Each of those verbs now carries an explicit flag allowlist
-# in src\cli\verb_flags.zig; sections 13-18 cover them.
+# in src\cli\verb_flags.zig; sections 13-18 cover them. T950 made the
+# allowlist check the SHAPE too (`--target dev` is a value flag missing its
+# `=`, `--clear=1` a switch given one); sections 20-22 cover that, +send-keys
+# included.
 #
 # Exit codes are read through cmd.exe redirection, not a PS 5.1 pipeline:
 # $LASTEXITCODE after a native command in a pipeline is not trustworthy here
@@ -231,6 +234,67 @@ Assert "it is not reported as an unknown flag" ($r.out -notmatch 'unknown flag')
 $r = Invoke-Verb '+set-banner --target=x -- --help'
 Assert "after a bare -- it is banner text, not help" `
     ($r.out -notmatch 'unknown flag' -and $r.out -match 'running Ghoztty instance')
+
+# --- T950: a real flag in the wrong shape ---------------------------------
+#
+# T852 checked flag NAMES only, so `--target dev` matched `target`, passed,
+# and reached the server as a valueless `--target` plus a stray word - both
+# dropped at exit 0. Every value flag now needs its `=`, every switch refuses
+# one, and the message says the form to write. All of these fail before the
+# IPC call, which is again what keeps +new-window from launching anything.
+"== 20: a value flag written with a space instead of = is rejected, with the fix"
+$spaced = @(
+    @{ verb = '+close';             line = '--target dev';   fix = '--target=dev' }
+    @{ verb = '+rename';            line = '--target=x --title mine'; fix = '--title=mine' }
+    @{ verb = '+rearrange';         line = '--layout {}';    fix = '--layout=\{}' }
+    @{ verb = '+read';              line = '--name x --lines=5'; fix = '--name=x' }
+    @{ verb = '+set-banner';        line = '--target dev hello'; fix = '--target=dev' }
+    @{ verb = '+set-state';         line = '--target=x --state busy'; fix = '--state=busy' }
+    @{ verb = '+reload';            line = '--target dev';   fix = '--target=dev' }
+    @{ verb = '+split';             line = '--direction right'; fix = '--direction=right' }
+    @{ verb = '+new-window';        line = '--target dev';   fix = '--target=dev' }
+    @{ verb = '+new-remote-window'; line = '--host box';     fix = '--host=box' }
+)
+foreach ($s in $spaced) {
+    $r = Invoke-Verb "$($s.verb) $($s.line)"
+    Assert "$($s.verb) exits nonzero" ($r.exit -ne 0)
+    Assert "$($s.verb) says the flag needs a value and shows $($s.fix)" `
+        ($r.out -match "\$($s.verb): --\S+ needs a value; write it as $($s.fix)")
+    Assert "$($s.verb) did not reach the server" ($r.out -notmatch 'running Ghoztty instance')
+}
+$r = Invoke-Verb '+close --target'
+Assert "a trailing valueless flag shows the <value> placeholder" `
+    ($r.exit -ne 0 -and $r.out -match 'write it as --target=<value>')
+
+"== 21: a switch given a value is rejected, with the bare form"
+$switched = @(
+    @{ verb = '+set-banner';        line = '--target=x --clear=1';  name = 'clear' }
+    @{ verb = '+reload';            line = '--config=yes';          name = 'config' }
+    @{ verb = '+split';             line = '--from-focused=true';   name = 'from-focused' }
+    @{ verb = '+new-window';        line = '--no-activate=true';    name = 'no-activate' }
+    @{ verb = '+new-remote-window'; line = '--host=h --no-activate=1'; name = 'no-activate' }
+)
+foreach ($s in $switched) {
+    $r = Invoke-Verb "$($s.verb) $($s.line)"
+    Assert "$($s.verb) exits nonzero" ($r.exit -ne 0)
+    Assert "$($s.verb) says --$($s.name) takes no value" `
+        ($r.out -match "\$($s.verb): --$($s.name) takes no value; write it as --$($s.name)")
+}
+
+# +send-keys parses its own flags and already refused both shapes, but called
+# them "unknown flag" - wrong for a flag that exists. Same wording now.
+"== 22: +send-keys names a real flag in the wrong shape"
+$r = Invoke-Verb '+send-keys --target foo hi'
+Assert "--target foo exits nonzero" ($r.exit -ne 0)
+Assert "--target foo says it needs a value" `
+    ($r.out -match '\+send-keys: --target needs a value; write it as --target=<value>')
+Assert "--target foo is not called unknown" ($r.out -notmatch 'unknown flag')
+$r = Invoke-Verb '+send-keys --target=x --enter=1 hi'
+Assert "--enter=1 says it takes no value" `
+    ($r.exit -ne 0 -and $r.out -match '\+send-keys: --enter takes no value')
+$r = Invoke-Verb '+send-keys --target=x --press-enter hi'
+Assert "a genuinely unknown flag is still unknown" `
+    ($r.exit -ne 0 -and $r.out -match "unknown flag '--press-enter'")
 Complete-TestBody  # T1039: the run reached the end of its body
 
 } finally {

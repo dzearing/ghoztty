@@ -5,6 +5,15 @@ const Action = @import("../cli.zig").ghostty.Action;
 const apprt = @import("../apprt.zig");
 const args = @import("args.zig");
 const diagnostics = @import("diagnostics.zig");
+const verb_flags = @import("verb_flags.zig");
+
+/// `+send-keys` parses its own flags (`checkArg`), so this list only shapes
+/// the error for a real flag written the wrong way; it must name the same
+/// flags `checkArg` consumes.
+const flag_spec: verb_flags.Spec = .{
+    .verb = "+send-keys",
+    .flags = &.{ "target=", "when-idle", "enter", "idle-timeout=", "busy-marker=", "keys-file=" },
+};
 
 /// One surviving positional argument, plus whether it came after a bare
 /// `--`.
@@ -267,6 +276,26 @@ fn runArgs(
     // aren't doing. Name the submit spellings here rather than leaving them
     // to the docs — this message is where a wrong guess actually lands.
     if (opts.unknown_flag) |flag| {
+        // A real flag in the wrong shape (`--target foo`, `--enter=1`) gets
+        // the same "write it as" line the forwarding verbs give (T950),
+        // rather than being called unknown.
+        if (verb_flags.checkFlag(flag_spec, flag)) |problem| switch (problem.kind) {
+            .unknown => {},
+            .value_required => {
+                try stderr.print(
+                    "+send-keys: --{s} needs a value; write it as --{s}=<value>\n",
+                    .{ problem.name, problem.name },
+                );
+                return 1;
+            },
+            .value_not_allowed => {
+                try stderr.print(
+                    "+send-keys: --{s} takes no value; write it as --{s}\n",
+                    .{ problem.name, problem.name },
+                );
+                return 1;
+            },
+        };
         try stderr.print(
             \\+send-keys: unknown flag '{s}'.
             \\To submit, use --enter, a trailing \n, or a separate Enter argument.
@@ -1172,6 +1201,38 @@ test "flags: an unknown --flag is recorded, not turned into text" {
     try std.testing.expectEqualStrings("--target=x", opts.target.?);
     try std.testing.expectEqual(@as(usize, 1), opts._arguments.items.len);
     try std.testing.expectEqualStrings("hi", opts._arguments.items[0].text);
+}
+
+test "flags: flag_spec names exactly the flags checkArg takes, in their shape" {
+    var arena = ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // T950: `--target foo` is rejected (it always was), and now as a real
+    // flag missing its value rather than an "unknown flag". That wording is
+    // only right if `flag_spec` and `checkArg` agree about every flag.
+    for (flag_spec.flags) |entry| {
+        const wants_value = std.mem.endsWith(u8, entry, "=");
+        const name = if (wants_value) entry[0 .. entry.len - 1] else entry;
+
+        const right = if (wants_value)
+            try std.fmt.allocPrint(alloc, "--{s}=5", .{name})
+        else
+            try std.fmt.allocPrint(alloc, "--{s}", .{name});
+        const right_opts = try testCheckArgs(alloc, &.{right});
+        try std.testing.expect(right_opts.unknown_flag == null);
+
+        const wrong = if (wants_value)
+            try std.fmt.allocPrint(alloc, "--{s}", .{name})
+        else
+            try std.fmt.allocPrint(alloc, "--{s}=1", .{name});
+        const wrong_opts = try testCheckArgs(alloc, &.{wrong});
+        const kind = verb_flags.checkFlag(flag_spec, wrong_opts.unknown_flag.?).?.kind;
+        try std.testing.expectEqual(
+            if (wants_value) verb_flags.Problem.Kind.value_required else .value_not_allowed,
+            kind,
+        );
+    }
 }
 
 test "flags: single-dash arguments stay ordinary text" {
