@@ -1,9 +1,10 @@
 {
     "guard":  "job-teardown",
     "script":  "test/win32/job-teardown.ps1",
-    "generated":  "2026-09-24T13:13:30-07:00",
-    "commit":  "655a2eed8",
+    "generated":  "2026-09-24T14:30:15-07:00",
+    "commit":  "866a86863",
     "uncommitted":  [
+                        "test/win32/install-maintenance.ps1",
                         "test/win32/install-walkthrough.ps1"
                     ],
     "files":  {
@@ -145,11 +146,11 @@
                   "test/win32/host-settings.ps1":  "1bc9c64131b1c97a74eb41b461102d69f6ca9a28dfc72b34b42f6bff9337cb6d",
                   "test/win32/hover-capture.ps1":  "f36af98b0a13a5c6e72c685cd52070af5a74b7ac9af3845f90636fa9fae1a2ff",
                   "test/win32/install-launch.ps1":  "df8a8917d448d735d327ae87bcfde00f09a665dcbe0737ae56c4c0487d8225ca",
-                  "test/win32/install-maintenance.ps1":  "10d631dcd262ebd6dfb8b3b044c63ee1686fcd73581a0ac375e1576e92f1b1d6",
+                  "test/win32/install-maintenance.ps1":  "6100b728a908e6705fcd216b003aa53164a19ddef8ce5975b9527c3f3c9aeaf8",
                   "test/win32/install-ownership.ps1":  "0c574d3d71e1b8b86c3ff21fbd54eb8dd8a5341a117ad83ea969480ec9e188ad",
                   "test/win32/install-prepare.ps1":  "d7cd016c06a092a2fae56929a0b78549c778a8ee00d603bf0d874d83dc07bc10",
                   "test/win32/install-restart.ps1":  "a68bdefb06b2165f981e9d5b993bf789fae8c831086b7a606a25833236208063",
-                  "test/win32/install-walkthrough.ps1":  "8d68fb222fa6cbf3442e1e43898e5e9f9a995e81d512fbaa36127d208df62f32",
+                  "test/win32/install-walkthrough.ps1":  "7b7bb79c84e46044dca423485049d74e7a7ef48b95125e10af580ce5782e3aba",
                   "test/win32/ipc-child-exited.ps1":  "d976a5172b4773f582972eedc3fa1b00bb1c03f5c33eeb5efc06e5d52542112b",
                   "test/win32/ipc-command-keepalive.ps1":  "ba23f0c0d0ed404ef6999e9588e75002efa1bbec8b3756659920acbd5db3bd7a",
                   "test/win32/ipc-fake-server.ps1":  "d8a18c722615e1ca8582e804d794886cb7734a9eb084f87add9d411b285a689b",

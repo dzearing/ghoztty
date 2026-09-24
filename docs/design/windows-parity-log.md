@@ -33566,3 +33566,19 @@ failure left is a product defect. The app exits 1602 on Cancel, but Windows
 Installer does not read an EXE action's exit code as a status. It shows Error
 1722 ("There is a problem with this Windows Installer package") and ends at
 1603. That is filed as T1730 (P1, M1), and D3 stays red until T1730 lands.
+
+## 2026-09-24 - T1730: Cancel on the "already installed" prompt now closes the installer quietly
+
+Pressing Cancel used to end in Error 1722 and an install failure. The cause
+was the kind of step the installer used to ask the question. An EXE step's
+non-zero exit is always a failure, whatever the number. Only a DLL step's
+return value can say "the user cancelled". So the package now carries a small
+DLL, `ghoztty-msi-ca.dll`, which runs the same Ghoztty prompt, waits for the
+answer, and returns the user-exit status itself. The build's read-back check
+now refuses the old EXE shape. This box cannot build an MSI (wixl needs
+Docker), so it was proven on the published 1.36.36 package rewritten to the
+new shape. Under a real msiexec, Cancel ends at 1602 with no 1722, Repair ends
+at 0, and the full walk is ALL PASS (40). The unchanged package goes red on the
+new D3b check, as it should. One finding: deleting rows from a wixl package
+corrupts its string pool unless every string involved is pinned first. T1731
+walks the first published release that carries the fix.

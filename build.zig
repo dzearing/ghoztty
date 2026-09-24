@@ -361,6 +361,13 @@ pub fn build(b: *std.Build) !void {
                 for (exe.gl_install_steps) |gl| install_unlock.guardInstallFile(gl);
                 install_unlock.guardArtifact(agent.install_step);
                 if (agent.ca_dll_install_step) |ca| install_unlock.guardArtifact(ca);
+
+                // T1730: the installer's Repair / Cancel custom action. Built
+                // beside the exe for build-msi.sh to embed in the package's
+                // Binary table; never installed by the MSI itself.
+                const msi_ca = buildpkg.GhosttyMsiCa.init(b, &config);
+                msi_ca.install();
+                install_unlock.guardArtifact(msi_ca.install_step);
             }
         }
     } else if (!config.emit_lib_vt) {

@@ -493,7 +493,11 @@ if (-not $hasMaintenancePrompt) {
             Stop-Process -Id $run.Pid -Force -ErrorAction SilentlyContinue
             Stop-ThrowawayInstances -InstallDir $installDir -RealLocalAppData $realLocalAppData
         }
-        return [pscustomobject]@{ Dialog = $dlg; Labels = $labels; Pressed = $pressed; ExitCode = $code }
+        $logText = if (Test-Path -LiteralPath $log) {
+            $lt = Get-Content -LiteralPath $log -Raw -ErrorAction SilentlyContinue
+            if ($null -eq $lt) { '' } else { $lt }
+        } else { '' }
+        return [pscustomobject]@{ Dialog = $dlg; Labels = $labels; Pressed = $pressed; ExitCode = $code; Log = $logText }
     }
 
     $cancel = Invoke-MaintenanceRun -Press 'Cancel'
@@ -503,6 +507,13 @@ if (-not $hasMaintenancePrompt) {
         ((($cancel.Labels | Sort-Object) -join '|') -eq 'Cancel|Repair')
     Assert 'D3 Cancel ends the transaction cleanly (1602), not with an error' `
         ($cancel.Pressed -and $cancel.ExitCode -eq 1602)
+    # T1730: 1602 alone was not the whole story. T1291's EXE action made the
+    # engine log error 1722 ("a program run as part of the setup did not finish
+    # as expected") and put it up as a modal box at /qr before ending at 1603.
+    # So the log is read too: the answer has to have arrived as a user exit.
+    Assert 'D3b and without error 1722 on the way - the prompt ended as a user exit, not a failure' `
+        ($cancel.Log -ne '' -and $cancel.Log -notmatch 'Error 1722' -and
+         $cancel.Log -notmatch 'MainEngineThread is returning 1603')
     Assert 'D4 and Cancel left the install exactly where it was' `
         ((Test-Path $installedExe) -and
          ((Get-ArpEntryVersion -Name $Identity) -eq $sourceVersion))

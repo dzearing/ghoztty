@@ -13,14 +13,18 @@
 # there was nothing to show, no feature state changed, and msiexec exited 0
 # without a word. Every part of that was working as designed.
 #
-# The fix under test: the package asks THE APP, through the same type-51/type-50
-# custom-action pair it already uses for --install-prepare and for
-# launch-on-finish. msiexec runs `[INSTALLDIR]ghoztty.exe --install-maintenance`,
-# the app puts up the dark Ghoztty dialog relabelled Repair / Cancel, and the
-# answer comes back as the process exit code - 0 to let the pre-armed
-# REINSTALL=ALL proceed, 1602 (ERROR_INSTALL_USEREXIT) to end the transaction
-# cleanly. Those two numbers ARE the feature: any other non-zero value surfaces
-# as error 1721, which is a worse outcome than the silence being replaced.
+# The fix under test: the package asks THE APP. The app puts up the dark Ghoztty
+# dialog relabelled Repair / Cancel and answers with its exit code - 0 for
+# Repair, 1602 for Cancel.
+#
+# T1730: HOW the package runs it. T1291 made it an EXE custom action (type 50)
+# on the premise that an exit code of 1602 ends the install quietly. It does
+# not: an EXE action's non-zero exit is always a failure, so Cancel raised
+# error 1722 and msiexec ended at 1603 (found by install-walkthrough.ps1 against
+# a real msiexec, T1302). So the package now runs a DLL action from its Binary
+# table - MaintenancePromptCA in ghoztty-msi-ca.dll (install_ca.zig) - which
+# starts the exe, waits, and RETURNS ERROR_INSTALL_USEREXIT on 1602 and success
+# otherwise. Only an action's return value can be a user exit.
 #
 # What this asserts:
 #
@@ -40,11 +44,10 @@
 #      control - the seam that answers without a dialog agrees with the dialog,
 #      so neither half can be passing for the trivial reason.
 #
-# What is deliberately NOT here: a real msiexec maintenance run. That needs a
-# signed, versioned package and would touch the user's installed Ghoztty, which
-# is this repo's first non-negotiable. The MSI half is asserted at its source
-# and at its build-time read-back; the half that decides what the user actually
-# sees and what msiexec is actually told - the dialog and its exit codes - is
+# What is deliberately NOT here: a real msiexec maintenance run. That lives in
+# install-walkthrough.ps1 section D, which installs a real package under a
+# throwaway identity and presses both buttons. The MSI half is asserted here at
+# its source and at its build-time read-back; the dialog and its exit codes are
 # measured live.
 #
 # Runs on a BACKGROUND Win32 desktop (test/win32/lib/TestDesktop.ps1), so the
@@ -91,6 +94,9 @@ $paths = [ordered]@{
     main  = 'src\main_ghostty.zig'
     agg   = 'src\apprt\win32.zig'
     msi   = 'dist\windows-installer\build-msi.sh'
+    ca    = 'src\apprt\win32\install_ca.zig'
+    calog = 'src\apprt\win32\maintenance_ca.zig'
+    build = 'build.zig'
 }
 
 $text = [ordered]@{}
@@ -125,7 +131,7 @@ function MaintSequence($msi) {
 $checks = [ordered]@{
     'A1 the prompt is spelled as an argv flag, the way its neighbour is' =
         { param($t) $t.maint -match 'pub const flag = "--install-maintenance";' }
-    'A2 Cancel is 1602, the one code msiexec ends quietly on' =
+    'A2 Cancel is 1602, the code the package''s DLL action reads as a user exit' =
         { param($t) $t.maint -match 'pub const user_exit_code: u32 = 1602;' -and
                     $t.maint -match '(?s)\.cancel => user_exit_code' }
     'A3 Repair is 0, indistinguishable from an action that just succeeded' =
@@ -145,9 +151,12 @@ $checks = [ordered]@{
         { param($t) $t.main -match '(?s)@hasDecl\(apprt\.App, "runInstallMaintenance"\) and state\.action == null' }
     'A10 the module tests are wired into the lane (T1191)' =
         { param($t) $t.agg -match '_ = @import\("win32/install_maintenance\.zig"\);' }
-    'A11 the MSI carries the prompt custom action' =
-        { param($t) $t.msi -match '<CustomAction Id="MaintenancePrompt"' -and
-                    $t.msi -match 'ExeCommand="--install-maintenance --installed-version=\[ARPDISPLAYVERSION\]"' }
+    'A11 the MSI carries the prompt as a DLL action from its Binary table (T1730)' =
+        { param($t)
+          $ca = ([regex]'(?s)<CustomAction Id="MaintenancePrompt".*?/>').Match($t.msi)
+          $ca.Success -and $ca.Value -match 'BinaryKey="GhozttyMsiCa"' -and
+          $ca.Value -match 'DllEntry="MaintenancePromptCA"' -and $ca.Value -notmatch 'ExeCommand' -and
+          $t.msi -match '<Binary Id="GhozttyMsiCa" SourceFile="@MSI_CA_DLL@"/>' }
     'A12 the prompt is immediate and CHECKS its exit code' =
         { param($t)
           $ca = ([regex]'(?s)<CustomAction Id="MaintenancePrompt".*?/>').Match($t.msi)
@@ -161,25 +170,24 @@ $checks = [ordered]@{
     'A14 the question is asked after INSTALLDIR resolves and before anything is written (T1367)' =
         { param($t)
           $n = MaintSequence $t.msi
-          $n['SetMaintenancePromptCmd'] -gt 1000 -and
-          $n['MaintenancePrompt'] -gt $n['SetMaintenancePromptCmd'] -and
+          $n['MaintenancePrompt'] -gt 1000 -and
           $n['MaintenancePrompt'] -lt $n['PrepareInstallDir'] -and
           $n['PrepareInstallDir'] -lt 1400 }
     'A14b no action in that band anchors on another CUSTOM action (T1367)' =
         { param($t)
           # wixl appends an After= that names a custom action to the end of the
           # table - past InstallFinalize - so the whole band is numbered by hand.
-          $band = 'NoteRepairRequested|SetRepairMode|SetRepairModeFlags|SetMaintenancePromptCmd|MaintenancePrompt|SetPrepareInstallDirCmd|PrepareInstallDir'
+          $band = 'NoteRepairRequested|SetRepairMode|SetRepairModeFlags|MaintenancePrompt|SetPrepareInstallDirCmd|PrepareInstallDir'
           $rows = ([regex]"(?m)^\s*<Custom Action=`"($band)`"([^>]*)>").Matches($t.msi)
-          ($rows.Count -eq 7) -and -not ($rows | Where-Object { $_.Groups[2].Value -notmatch 'Sequence="\d+"' }) }
+          ($rows.Count -eq 6) -and -not ($rows | Where-Object { $_.Groups[2].Value -notmatch 'Sequence="\d+"' }) }
     'A15 a silent or updater-driven install never sees the dialog' =
         { param($t)
-          $rows = ([regex]'(?m)^\s*<Custom Action="(MaintenancePrompt|SetMaintenancePromptCmd|SetRepairMode|SetRepairModeFlags)"[^>]*>(.*?)</Custom>').Matches($t.msi)
-          ($rows.Count -eq 4) -and -not ($rows | Where-Object { $_.Groups[2].Value -notmatch 'UILevel &gt; 3' }) }
+          $rows = ([regex]'(?m)^\s*<Custom Action="(MaintenancePrompt|SetRepairMode|SetRepairModeFlags)"[^>]*>(.*?)</Custom>').Matches($t.msi)
+          ($rows.Count -eq 3) -and -not ($rows | Where-Object { $_.Groups[2].Value -notmatch 'UILevel &gt; 3' }) }
     'A16 uninstall, patching and being replaced by a newer package are excluded' =
         { param($t)
-          $rows = ([regex]'(?m)^\s*<Custom Action="(MaintenancePrompt|SetMaintenancePromptCmd|SetRepairMode|SetRepairModeFlags)"[^>]*>(.*?)</Custom>').Matches($t.msi)
-          ($rows.Count -eq 4) -and -not ($rows | Where-Object {
+          $rows = ([regex]'(?m)^\s*<Custom Action="(MaintenancePrompt|SetRepairMode|SetRepairModeFlags)"[^>]*>(.*?)</Custom>').Matches($t.msi)
+          ($rows.Count -eq 3) -and -not ($rows | Where-Object {
               $_.Groups[2].Value -notmatch 'NOT REMOVE' -or
               $_.Groups[2].Value -notmatch 'NOT PATCH' -or
               $_.Groups[2].Value -notmatch 'NOT UPGRADINGPRODUCTCODE' }) }
@@ -208,18 +216,35 @@ $checks = [ordered]@{
           $n['NoteRepairRequested'] -gt 0 -and $n['NoteRepairRequested'] -lt $n['SetRepairMode'] }
     'A25 Control Panel''s Repair is not asked about a second time' =
         { param($t)
-          $rows = ([regex]'(?m)^\s*<Custom Action="(MaintenancePrompt|SetMaintenancePromptCmd|SetRepairMode|SetRepairModeFlags)"[^>]*>(.*?)</Custom>').Matches($t.msi)
-          ($rows.Count -eq 4) -and -not ($rows | Where-Object { $_.Groups[2].Value -notmatch 'AND NOT REPAIRREQUESTED' }) }
+          $rows = ([regex]'(?m)^\s*<Custom Action="(MaintenancePrompt|SetRepairMode|SetRepairModeFlags)"[^>]*>(.*?)</Custom>').Matches($t.msi)
+          ($rows.Count -eq 3) -and -not ($rows | Where-Object { $_.Groups[2].Value -notmatch 'AND NOT REPAIRREQUESTED' }) }
     'A26 the build reads the ARP pair and the stand-down back out of the package' =
         { param($t) $t.msi -match 'for prop in \("ARPNOMODIFY", "ARPNOREPAIR"\):' -and
                     $t.msi -match 'CustomAction table has no NoteRepairRequested row' -and
                     $t.msi -match 'does not stand down on REPAIRREQUESTED' }
+    # T1730: the DLL action, which is where "Cancel" becomes a quiet exit.
+    'A27 the DLL action ends the install as a user exit on the exe''s Cancel, and only then' =
+        { param($t) $t.calog -match 'pub const status_user_exit: u32 = 1602;' -and
+                    $t.calog -match 'return if \(code == exe_cancel_code\) status_user_exit else status_proceed;' }
+    'A28 an exe that cannot run PROCEEDS with the repair rather than failing the installer' =
+        { param($t) $t.calog -match 'const code = exe_exit orelse return status_proceed;' }
+    'A29 the DLL exports the entry point the package names, and runs the maintenance flag' =
+        { param($t) $t.ca -match 'export fn MaintenancePromptCA\(hInstall: MSIHANDLE\) callconv\(\.winapi\) UINT' -and
+                    $t.calog -match 'ghoztty\.exe\\" --install-maintenance' }
+    'A30 the build produces the DLL on Windows beside the exe' =
+        { param($t) $t.build -match 'buildpkg\.GhosttyMsiCa\.init\(b, &config\)' -and
+                    $t.msi -match 'MSI_CA_DLL="\$REPO_ROOT/zig-out/bin/ghoztty-msi-ca\.dll"' }
+    'A31 the DLL logic''s tests are wired into the lane' =
+        { param($t) $t.maint -match '_ = @import\("maintenance_ca\.zig"\);' }
+    'A32 the read-back refuses the T1291 EXE-action shape outright' =
+        { param($t) $t.msi -match 'is an EXE action \(type \{t\}\) - Cancel would end in error 1722' -and
+                    $t.msi -match 'does not export MaintenancePromptCA' }
 }
 
 $mutations = [ordered]@{
     'A1 the prompt is spelled as an argv flag, the way its neighbour is' =
         @{ Key = 'maint'; Find = 'pub const flag = "--install-maintenance";'; Replace = 'pub const flag = "";' }
-    'A2 Cancel is 1602, the one code msiexec ends quietly on' =
+    'A2 Cancel is 1602, the code the package''s DLL action reads as a user exit' =
         @{ Key = 'maint'; Find = 'pub const user_exit_code: u32 = 1602;'; Replace = 'pub const user_exit_code: u32 = 1;' }
     'A3 Repair is 0, indistinguishable from an action that just succeeded' =
         @{ Key = 'maint'; Find = '.repair => 0'; Replace = '.repair => 3' }
@@ -239,8 +264,8 @@ $mutations = [ordered]@{
         @{ Key = 'main'; Find = '@hasDecl(apprt.App, "runInstallMaintenance")'; Replace = '@hasDecl(apprt.App, "runNothing")' }
     'A10 the module tests are wired into the lane (T1191)' =
         @{ Key = 'agg'; Find = '_ = @import("win32/install_maintenance.zig");'; Replace = '' }
-    'A11 the MSI carries the prompt custom action' =
-        @{ Key = 'msi'; Find = 'ExeCommand="--install-maintenance --installed-version=[ARPDISPLAYVERSION]"'; Replace = 'ExeCommand=""' }
+    'A11 the MSI carries the prompt as a DLL action from its Binary table (T1730)' =
+        @{ Key = 'msi'; Find = 'DllEntry="MaintenancePromptCA"'; Replace = 'ExeCommand="--install-maintenance"' }
     'A12 the prompt is immediate and CHECKS its exit code' =
         @{ Key = 'msi'; Find = "                  Execute=`"immediate`"`n                  Return=`"check`"/>"
            Replace = "                  Execute=`"immediate`"`n                  Return=`"ignore`"/>" }
@@ -252,7 +277,7 @@ $mutations = [ordered]@{
            Replace = '<Custom Action="MaintenancePrompt" Sequence="1050">' }
     'A14b no action in that band anchors on another CUSTOM action (T1367)' =
         @{ Key = 'msi'; Find = '<Custom Action="MaintenancePrompt" Sequence="1020">'
-           Replace = '<Custom Action="MaintenancePrompt" After="SetMaintenancePromptCmd">' }
+           Replace = '<Custom Action="MaintenancePrompt" After="SetRepairModeFlags">' }
     'A15 a silent or updater-driven install never sees the dialog' =
         @{ Key = 'msi'; Find = '<Custom Action="MaintenancePrompt" Sequence="1020">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3 AND NOT REPAIRREQUESTED</Custom>'
            Replace = '<Custom Action="MaintenancePrompt" Sequence="1020">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND NOT REPAIRREQUESTED</Custom>' }
@@ -282,6 +307,19 @@ $mutations = [ordered]@{
            Replace = '<Custom Action="MaintenancePrompt" Sequence="1020">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3</Custom>' }
     'A26 the build reads the ARP pair and the stand-down back out of the package' =
         @{ Key = 'msi'; Find = 'does not stand down on REPAIRREQUESTED'; Replace = 'is fine' }
+    'A27 the DLL action ends the install as a user exit on the exe''s Cancel, and only then' =
+        @{ Key = 'calog'; Find = 'pub const status_user_exit: u32 = 1602;'; Replace = 'pub const status_user_exit: u32 = 1603;' }
+    'A28 an exe that cannot run PROCEEDS with the repair rather than failing the installer' =
+        @{ Key = 'calog'; Find = 'const code = exe_exit orelse return status_proceed;'
+           Replace = 'const code = exe_exit orelse return status_user_exit;' }
+    'A29 the DLL exports the entry point the package names, and runs the maintenance flag' =
+        @{ Key = 'ca'; Find = 'export fn MaintenancePromptCA('; Replace = 'export fn MaintenancePrompt(' }
+    'A30 the build produces the DLL on Windows beside the exe' =
+        @{ Key = 'build'; Find = 'buildpkg.GhosttyMsiCa.init(b, &config)'; Replace = 'undefined' }
+    'A31 the DLL logic''s tests are wired into the lane' =
+        @{ Key = 'maint'; Find = '_ = @import("maintenance_ca.zig");'; Replace = '' }
+    'A32 the read-back refuses the T1291 EXE-action shape outright' =
+        @{ Key = 'msi'; Find = 'is an EXE action (type {t}) - Cancel would end in error 1722'; Replace = 'is fine' }
 }
 
 if ($TeethCheck) {
@@ -330,7 +368,7 @@ foreach ($cand in @('python', 'python3', 'py')) {
 if (-not $py) {
     Skip 'E  maintenance gate demonstration' 'no python interpreter on PATH'
 } else {
-    $verifier = ([regex]'(?ms)^python3 - "\$WORK/CustomAction\.idt" "\$WORK/InstallExecuteSequence\.idt" "\$WORK/Upgrade\.idt".*?\n(.*?)\nPYEOF$').Match($text.msi)
+    $verifier = ([regex]'(?ms)^python3 - "\$WORK/CustomAction\.idt" "\$WORK/InstallExecuteSequence\.idt" "\$WORK/Upgrade\.idt" "\$WORK/Binary\.idt" "\$MSI_CA_DLL".*?\n(.*?)\nPYEOF$').Match($text.msi)
     if (-not $verifier.Success) {
         Assert 'E0 the maintenance verifier is extractable from build-msi.sh' $false
     } else {
@@ -358,9 +396,28 @@ if (-not $py) {
                 "NoteRepairRequested${t}51${t}REPAIRREQUESTED${t}1",
                 "SetRepairMode${t}51${t}REINSTALL${t}ALL",
                 "SetRepairModeFlags${t}51${t}REINSTALLMODE${t}amus",
-                "SetMaintenancePromptCmd${t}51${t}MAINTENANCEPROMPTCMD${t}[INSTALLDIR]ghoztty.exe",
-                "MaintenancePrompt${t}50${t}MAINTENANCEPROMPTCMD${t}--install-maintenance --installed-version=[ARPDISPLAYVERSION]"
+                "MaintenancePrompt${t}1${t}GhozttyMsiCa${t}MaintenancePromptCA"
             ) -join "`r`n"
+            # T1291's shape, which T1730 replaced: an EXE action whose Cancel is
+            # error 1722, not a quiet exit.
+            $exeCa = @(
+                ($goodCa -split "`r`n" | Where-Object { $_ -notmatch "^MaintenancePrompt`t" }) +
+                @("SetMaintenancePromptCmd${t}51${t}MAINTENANCEPROMPTCMD${t}[INSTALLDIR]ghoztty.exe",
+                  "MaintenancePrompt${t}50${t}MAINTENANCEPROMPTCMD${t}--install-maintenance --installed-version=[ARPDISPLAYVERSION]")
+            ) -join "`r`n"
+            $goodBin = @(
+                "Name${t}Data",
+                "s72${t}v0",
+                "Binary${t}Name",
+                "GhozttyMsiCa${t}GhozttyMsiCa.ibd"
+            ) -join "`r`n"
+            $noBin = ($goodBin -split "`r`n" | Select-Object -First 3) -join "`r`n"
+            # A stand-in for the DLL: the verifier asks only whether the export
+            # name is in the image, which is the one thing a stand-in can carry.
+            $goodDll = Join-Path $tmpE 'good-ca.dll'
+            [System.IO.File]::WriteAllBytes($goodDll, [byte[]](@(0x4D, 0x5A) + [System.Text.Encoding]::ASCII.GetBytes("MaintenancePromptCA") + @(0)))
+            $badDll = Join-Path $tmpE 'bad-ca.dll'
+            [System.IO.File]::WriteAllBytes($badDll, [byte[]](@(0x4D, 0x5A) + [System.Text.Encoding]::ASCII.GetBytes("KillAgentCA") + @(0)))
             # CostFinalize sits at 1000 in the standard sequence and
             # InstallValidate at 1400; the arming rows are below the first and
             # the whole question sits between them, ahead of the prepare step,
@@ -373,7 +430,6 @@ if (-not $py) {
                 "SetRepairMode${t}$cond${t}990",
                 "SetRepairModeFlags${t}$cond${t}991",
                 "CostFinalize${t}${t}1000",
-                "SetMaintenancePromptCmd${t}$cond${t}1010",
                 "MaintenancePrompt${t}$cond${t}1020",
                 "PrepareInstallDir${t}Installed OR OLDERVERSIONFOUND${t}1040",
                 "InstallValidate${t}${t}1400"
@@ -387,11 +443,12 @@ if (-not $py) {
                 "{GUID}${t}26.9.301${t}${t}${t}2${t}${t}NEWERVERSIONFOUND"
             ) -join "`r`n"
 
-            function RunVerifier($ca, $seq, $up) {
+            function RunVerifier($ca, $seq, $up, $bin = $goodBin, $dll = $goodDll) {
                 $f1 = Put ("ca-" + [guid]::NewGuid().ToString('N') + '.idt') $ca
                 $f2 = Put ("seq-" + [guid]::NewGuid().ToString('N') + '.idt') $seq
                 $f3 = Put ("up-" + [guid]::NewGuid().ToString('N') + '.idt') $up
-                & $py $vp $f1 $f2 $f3 2>&1 | Out-Null
+                $f4 = Put ("bin-" + [guid]::NewGuid().ToString('N') + '.idt') $bin
+                & $py $vp $f1 $f2 $f3 $f4 $dll 2>&1 | Out-Null
                 return $LASTEXITCODE
             }
             function DropRow($table, $action) {
@@ -403,11 +460,11 @@ if (-not $py) {
             Assert 'E2 an MSI with no MaintenancePrompt - the silent one - is rejected' `
                 ((RunVerifier (DropRow $goodCa 'MaintenancePrompt') (DropRow $goodSeq 'MaintenancePrompt') $goodUp) -ne 0)
             Assert 'E3 a prompt that IGNORES its answer, so Cancel repairs anyway, is rejected' `
-                ((RunVerifier ($goodCa -replace "MaintenancePrompt${t}50", "MaintenancePrompt${t}114") $goodSeq $goodUp) -ne 0)
+                ((RunVerifier ($goodCa -replace "MaintenancePrompt${t}1${t}", "MaintenancePrompt${t}65${t}") $goodSeq $goodUp) -ne 0)
             Assert 'E4 an ASYNCHRONOUS prompt, which nobody waits for, is rejected' `
-                ((RunVerifier ($goodCa -replace "MaintenancePrompt${t}50", "MaintenancePrompt${t}178") $goodSeq $goodUp) -ne 0)
-            Assert 'E5 a prompt that runs the wrong command is rejected' `
-                ((RunVerifier ($goodCa -replace '--install-maintenance', '--version') $goodSeq $goodUp) -ne 0)
+                ((RunVerifier ($goodCa -replace "MaintenancePrompt${t}1${t}", "MaintenancePrompt${t}129${t}") $goodSeq $goodUp) -ne 0)
+            Assert 'E5 a prompt that calls the wrong entry point is rejected' `
+                ((RunVerifier ($goodCa -replace "${t}MaintenancePromptCA", "${t}KillAgentCA") $goodSeq $goodUp) -ne 0)
             Assert 'E6 an unconditional prompt - one a silent install would hit - is rejected' `
                 ((RunVerifier $goodCa ($goodSeq -replace [regex]::Escape($cond), '1') $goodUp) -ne 0)
             Assert 'E7 a prompt sequenced BEFORE CostFinalize, with no INSTALLDIR yet, is rejected' `
@@ -416,8 +473,8 @@ if (-not $py) {
                 ((RunVerifier $goodCa ($goodSeq -replace "SetRepairMode${t}$([regex]::Escape($cond))${t}990", "SetRepairMode${t}$cond${t}1200") $goodUp) -ne 0)
             Assert 'E9 an MSI that never arms REINSTALL at all is rejected' `
                 ((RunVerifier (DropRow $goodCa 'SetRepairMode') (DropRow $goodSeq 'SetRepairMode') $goodUp) -ne 0)
-            Assert 'E10 a prompt with no command property set is rejected' `
-                ((RunVerifier (DropRow $goodCa 'SetMaintenancePromptCmd') (DropRow $goodSeq 'SetMaintenancePromptCmd') $goodUp) -ne 0)
+            Assert 'E10 a prompt whose DLL is missing from the Binary table is rejected (T1730)' `
+                ((RunVerifier $goodCa $goodSeq $goodUp $noBin) -ne 0)
             Assert 'E11 an Upgrade table with no equal-version band is rejected' `
                 ((RunVerifier $goodCa $goodSeq (DropRow $goodUp '\{GUID\}\t26\.9\.301\t26\.9\.301')) -ne 0)
             Assert 'E12 a NEWERVERSIONFOUND that swallows the equal version is rejected' `
@@ -442,6 +499,13 @@ if (-not $py) {
                 ((RunVerifier $goodCa ($goodSeq -replace "NoteRepairRequested${t}REINSTALL${t}985", "NoteRepairRequested${t}REINSTALL${t}995") $goodUp) -ne 0)
             Assert 'E18 a prompt that does not stand down on the note is rejected' `
                 ((RunVerifier $goodCa ($goodSeq -replace "MaintenancePrompt${t}$([regex]::Escape($cond))", "MaintenancePrompt${t}$($cond -replace ' AND NOT REPAIRREQUESTED', '')") $goodUp) -ne 0)
+            # T1730. The T1291 EXE action passed every check above and still
+            # ended Cancel in error 1722 on a real msiexec.
+            $exeSeq = ($goodSeq -replace "(MaintenancePrompt${t}[^\r\n]*1020)", "SetMaintenancePromptCmd${t}$cond${t}1010`r`n`$1")
+            Assert 'E19 the T1291 EXE-action prompt - Cancel as error 1722 - is rejected' `
+                ((RunVerifier $exeCa $exeSeq $goodUp) -ne 0)
+            Assert 'E20 a DLL that does not export MaintenancePromptCA is rejected' `
+                ((RunVerifier $goodCa $goodSeq $goodUp $goodBin $badDll) -ne 0)
         } finally {
             Remove-Item -LiteralPath $tmpE -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -526,7 +590,7 @@ try {
         }
 
         $cancel = Invoke-LivePrompt 'Cancel'
-        Assert 'L4 pressing Cancel leaves msiexec ERROR_INSTALL_USEREXIT (1602)' `
+        Assert 'L4 pressing Cancel exits 1602, which the package''s DLL action turns into a quiet user exit' `
             ($cancel.Pressed -and $cancel.ExitCode -eq 1602)
 
         # The control. If the seam and the dialog ever disagreed, the two

@@ -1,13 +1,13 @@
 {
     "guard":  "install-prepare",
     "script":  "test/win32/install-prepare.ps1",
-    "generated":  "2026-09-24T12:34:31-07:00",
-    "commit":  "169c4fdbe",
+    "generated":  "2026-09-24T14:23:03-07:00",
+    "commit":  "866a86863",
     "uncommitted":  [
                         "dist/windows-installer/build-msi.sh"
                     ],
     "files":  {
-                  "dist/windows-installer/build-msi.sh":  "64589fac35a155cdba1c95cb0e7f448f9c043c1ae30bfdd71a799e100a0193f8",
+                  "dist/windows-installer/build-msi.sh":  "f22512ebbd9967806b3184aabfafc7e294b402dd91c0a952a19a00f2fc8ac79d",
                   "src/apprt/win32/install_prepare.zig":  "661e30c9ca180ca97b65a87d98517d1b8acb38caa27678533309ea357d780462",
                   "test/win32/install-prepare.ps1":  "d7cd016c06a092a2fae56929a0b78549c778a8ee00d603bf0d874d83dc07bc10"
               }

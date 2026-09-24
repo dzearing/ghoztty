@@ -1,14 +1,12 @@
 {
     "guard":  "window-active-audit",
     "script":  "test/win32/window-active-audit.ps1",
-    "generated":  "2026-09-24T11:26:09-07:00",
-    "commit":  "607a75853",
+    "generated":  "2026-09-24T14:24:20-07:00",
+    "commit":  "866a86863",
     "uncommitted":  [
-                        "src/apprt/win32/App.zig",
-                        "src/apprt/win32/msg_timer.zig",
-                        "src/apprt/win32/tray_notify.zig",
-                        "src/apprt/win32/update_reopen.zig",
-                        "src/apprt/win32/Window.zig"
+                        "src/apprt/win32/install_ca.zig",
+                        "src/apprt/win32/install_maintenance.zig",
+                        "src/apprt/win32/maintenance_ca.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -93,8 +91,9 @@
                   "src/apprt/win32/icon_button.zig":  "0c6a9ed5bbe197afa9f3602004cf099dbc724f95ba9c95b33cdd2d6fbd1e60ff",
                   "src/apprt/win32/icon_button_paint.zig":  "f2ee56ebc42cd585686189db01ec6b294b6819d28f6f35d256402b3ce32f52df",
                   "src/apprt/win32/image_freshness.zig":  "8edb6d86781716200a50df3157f8a1a396da5f2f265db20f470aa72f0f177f1c",
+                  "src/apprt/win32/install_ca.zig":  "36cb6447141b865573ba3359f9163c7c5c64ce23724b31b27b78ffe08967f664",
                   "src/apprt/win32/install_location.zig":  "9a6320f5bd3191c1381dc7514d03c2ae1a6bd43176dd1019d2007bf6dc372eaf",
-                  "src/apprt/win32/install_maintenance.zig":  "c8afdf82a77625b27c2d2daabf4b6ebf754e2f949cd44f5a68ef953431b4d1b8",
+                  "src/apprt/win32/install_maintenance.zig":  "e597445709556433175edcd6daf1c4e05275ade065da65c0057b9ab8c6129072",
                   "src/apprt/win32/install_prepare.zig":  "661e30c9ca180ca97b65a87d98517d1b8acb38caa27678533309ea357d780462",
                   "src/apprt/win32/install_restart.zig":  "9bff073e1341a223576febf6da5a03940227ba24c9d0f5c403c1b5c512240645",
                   "src/apprt/win32/ipc_agent_integration.zig":  "df7de6466f6d5036d5725e22d8d3913a03081c0b249931518f4a41c3a9d4cf80",
@@ -120,6 +119,7 @@
                   "src/apprt/win32/machine_pool.zig":  "dc9ea32cd4bb666bdcc86e392f62cfbbb52abca5520c63fe80c0c4994f0bc377",
                   "src/apprt/win32/MachineChooser.zig":  "760dda366f3acec124c6a3a7c19fcaca00a7d6059a999d199077ca82ecab2056",
                   "src/apprt/win32/MachineConnectionPool.zig":  "8980bac75a5cee294d0c9bb840b4c757e9bcf93b6e229906e73fac9f5be3196b",
+                  "src/apprt/win32/maintenance_ca.zig":  "98c11eb22a63fc3a3dc8b2e5f18e68873c144e10ecde1e4135e011ad064dac1a",
                   "src/apprt/win32/managed_file.zig":  "986e641e52cf1d8c2e807cd38dbfd6e62e660868d1063b2d6bee1acdb5ed50ac",
                   "src/apprt/win32/managed_marker.zig":  "4f0d8fe0c6bfdd0a7410c3eaa1d810fb1148d943d688bfef4b8eeda1e02d46a5",
                   "src/apprt/win32/menu_activation.zig":  "139e31d1ccad3fab222128fd81c14189d290dbad5f11452f60bbf60b409b19b4",

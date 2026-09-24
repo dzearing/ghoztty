@@ -126,6 +126,7 @@ EXE="$REPO_ROOT/zig-out/bin/ghoztty.exe"
 COM_EXE="$REPO_ROOT/zig-out/bin/ghoztty.com"
 AGENT_EXE="$REPO_ROOT/zig-out/bin/ghoztty-agent.exe"
 GL_DIR="$REPO_ROOT/zig-out/bin/gl"
+MSI_CA_DLL="$REPO_ROOT/zig-out/bin/ghoztty-msi-ca.dll"
 SHARE="$REPO_ROOT/zig-out/share"
 [[ -f "$EXE" ]] || { echo "error: $EXE not found (build first)" >&2; exit 1; }
 # ghoztty.com is the console-subsystem twin (T245, src/cli/com_shim.zig) and it
@@ -138,6 +139,10 @@ SHARE="$REPO_ROOT/zig-out/share"
 # a Windows install without it silently degrades every pane to non-persistent
 # exec. The default `zig build` installs it on Windows targets.
 [[ -f "$AGENT_EXE" ]] || { echo "error: $AGENT_EXE not found — the MSI must carry the session-persistence agent (T89h); build first" >&2; exit 1; }
+# The package's own custom-action DLL (T1730): it asks "Repair or Cancel?" when
+# the installer is run for the version already installed. Carried in the
+# Binary table, never installed. Without it Cancel is error 1722 again.
+[[ -f "$MSI_CA_DLL" ]] || { echo "error: $MSI_CA_DLL not found - the MSI's Repair / Cancel prompt runs from it (T1730); build first" >&2; exit 1; }
 [[ -f "$SHARE/terminfo/ghostty.terminfo" ]] || { echo "error: $SHARE/terminfo/ghostty.terminfo missing — resourcesDir sentinel would break" >&2; exit 1; }
 # The fallback OpenGL implementation (T1252), installed into gl\ and NEVER
 # beside ghoztty.exe — opengl32.dll is not a KnownDLL, so an adjacent copy is
@@ -207,7 +212,7 @@ WXS="$WORK/ghoztty.wxs"
 # Generate the WiX source. Directory tree + one component per file with
 # GUIDs derived deterministically from the install path (uuid5) so component
 # identity is stable across builds (MSI component rules).
-python3 - "$EXE" "$COM_EXE" "$AGENT_EXE" "$SHARE" "$WXS" "$TEST_IDENTITY" "$GL_DIR" <<'PYEOF'
+python3 - "$EXE" "$COM_EXE" "$AGENT_EXE" "$SHARE" "$WXS" "$TEST_IDENTITY" "$GL_DIR" "$MSI_CA_DLL" <<'PYEOF'
 import os, sys, uuid, hashlib
 import xml.etree.ElementTree as ET
 from xml.sax.saxutils import escape
@@ -217,6 +222,7 @@ identity = sys.argv[6] if len(sys.argv) > 6 else ""
 # The fallback OpenGL implementation's directory (T1252). Optional so the WXS
 # generator stays runnable over a fixture that has no gl\ tree.
 gl = sys.argv[7] if len(sys.argv) > 7 else ""
+msi_ca_dll = sys.argv[8] if len(sys.argv) > 8 else ""
 
 # Stable namespace for component GUID derivation. NEVER change this, or
 # every component changes identity and upgrades misbehave.
@@ -568,8 +574,8 @@ template = """<?xml version="1.0" encoding="utf-8"?>
          The user, 2026-09-03: "it just silently quit ... there should be some
          message to ask what to do (reinstall, cancel)".
 
-         The answer is the app, through the same type 51 / type 50 pair the two
-         actions above use, rather than a WixUI dialog set: a second,
+         The answer is the app, run by a custom action (point 3 below says
+         which kind, and why), rather than a WixUI dialog set: a second,
          differently styled installer UI for the rarest path is a worse
          experience than the one dark Ghoztty dialog every other prompt in this
          product uses. `ghoztty.exe install-maintenance` shows Repair / Cancel
@@ -585,10 +591,19 @@ template = """<?xml version="1.0" encoding="utf-8"?>
          2. MaintenancePrompt runs AFTER CostFinalize, which is the first
             moment INSTALLDIR resolves and therefore the first moment there is
             an exe path to run.
-         3. Return="check": exit 0 lets the pre-armed repair proceed, and 1602
-            (ERROR_INSTALL_USEREXIT) ends the transaction cleanly with no
-            error dialog. That is the ONE non-zero code Windows Installer reads
-            as "the user said no"; every other value surfaces as error 1721.
+         3. T1730: MaintenancePrompt is a DLL action (type 1, from the
+            Binary table), not an EXE action. MaintenancePromptCA in
+            ghoztty-msi-ca.dll (src/apprt/win32/install_ca.zig) runs
+            [INSTALLDIR]ghoztty.exe install-maintenance, waits, and RETURNS
+            ERROR_INSTALL_USEREXIT when the exe exits 1602 (Cancel), and
+            success otherwise, which lets the pre-armed repair proceed.
+            T1291 ran the exe as a type 50 action and relied on its exit
+            code being 1602, on the premise that Windows Installer reads that
+            as "the user said no". It does not: an EXE action's non-zero exit
+            is always a failure, so Cancel raised error 1722 ("a program run
+            as part of the setup did not finish as expected") and ended the
+            install at 1603. Only a DLL or script action's RETURN VALUE is an
+            action status, and only an action status can be a user exit.
 
          Gated on UILevel > 3 for the reason LaunchApp is: the in app updater
          installs with /qb-! (UILevel 3), and a modal dialog inside an
@@ -606,12 +621,10 @@ template = """<?xml version="1.0" encoding="utf-8"?>
     <CustomAction Id="NoteRepairRequested" Property="REPAIRREQUESTED" Value="1"/>
     <CustomAction Id="SetRepairMode" Property="REINSTALL" Value="ALL"/>
     <CustomAction Id="SetRepairModeFlags" Property="REINSTALLMODE" Value="amus"/>
-    <CustomAction Id="SetMaintenancePromptCmd"
-                  Property="MAINTENANCEPROMPTCMD"
-                  Value="[INSTALLDIR]ghoztty.exe"/>
+    <Binary Id="GhozttyMsiCa" SourceFile="@MSI_CA_DLL@"/>
     <CustomAction Id="MaintenancePrompt"
-                  Property="MAINTENANCEPROMPTCMD"
-                  ExeCommand="--install-maintenance --installed-version=[ARPDISPLAYVERSION]"
+                  BinaryKey="GhozttyMsiCa"
+                  DllEntry="MaintenancePromptCA"
                   Execute="immediate"
                   Return="check"/>
 
@@ -718,7 +731,6 @@ template = """<?xml version="1.0" encoding="utf-8"?>
       <Custom Action="NoteRepairRequested" Sequence="985">REINSTALL</Custom>
       <Custom Action="SetRepairMode" Sequence="990">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3 AND NOT REPAIRREQUESTED</Custom>
       <Custom Action="SetRepairModeFlags" Sequence="991">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3 AND NOT REPAIRREQUESTED</Custom>
-      <Custom Action="SetMaintenancePromptCmd" Sequence="1010">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3 AND NOT REPAIRREQUESTED</Custom>
       <Custom Action="MaintenancePrompt" Sequence="1020">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3 AND NOT REPAIRREQUESTED</Custom>
       <Custom Action="SetPrepareInstallDirCmd" Sequence="1030"/>
       <Custom Action="PrepareInstallDir" Sequence="1040">Installed OR OLDERVERSIONFOUND</Custom>
@@ -732,6 +744,7 @@ template = """<?xml version="1.0" encoding="utf-8"?>
 """
 
 xml = template.replace("@FILES@", files_xml).replace("@REFS@", refs_xml)
+xml = xml.replace("@MSI_CA_DLL@", escape(msi_ca_dll))
 xml = xml.replace("@CLEANUP_GUID@", guid("__installdir_cleanup__"))
 xml = xml.replace("@SHORTCUT_GUID@", guid("__startmenu_shortcut__"))
 xml = xml.replace("@PATHENV_GUID@", guid("__user_path_entry__"))
@@ -1034,7 +1047,8 @@ PYEOF
 echo "==> verify already-installed maintenance prompt (CustomAction + sequence + Upgrade)"
 msiinfo export "$OUT" Upgrade > "$WORK/Upgrade.idt" || {
   echo "error: the MSI has no Upgrade table - it could not tell an existing install apart at all" >&2; exit 1; }
-python3 - "$WORK/CustomAction.idt" "$WORK/InstallExecuteSequence.idt" "$WORK/Upgrade.idt" <<'PYEOF'
+msiinfo export "$OUT" Binary > "$WORK/Binary.idt" 2>/dev/null || : > "$WORK/Binary.idt"
+python3 - "$WORK/CustomAction.idt" "$WORK/InstallExecuteSequence.idt" "$WORK/Upgrade.idt" "$WORK/Binary.idt" "$MSI_CA_DLL" <<'PYEOF'
 import sys
 
 def rows(path):
@@ -1057,26 +1071,34 @@ if "MaintenancePrompt" not in ca:
     errs.append("CustomAction table has no MaintenancePrompt row - re-running the installer for the installed version would silently exit again")
 else:
     t = int(ca["MaintenancePrompt"][1])
-    if t & 0x3F != 50:
-        errs.append(f"MaintenancePrompt base type is {t & 0x3F}, expected 50 (exe from property)")
+    # T1730: an EXE action (type 50, 34, 18, 2) cannot end the install as a
+    # user exit - its non-zero exit code is always a failure, so Cancel is
+    # error 1722 and msiexec 1603. Only a DLL action's return value can be.
+    if t & 0x3F == 50:
+        errs.append(f"MaintenancePrompt is an EXE action (type {t}) - Cancel would end in error 1722, not quietly (T1730); it must be the DLL action MaintenancePromptCA")
+    elif t & 0x3F != 1:
+        errs.append(f"MaintenancePrompt base type is {t & 0x3F}, expected 1 (DLL from the Binary table)")
     if t & 64:
         errs.append(f"MaintenancePrompt type {t} ignores its exit code - Cancel would repair anyway")
     if t & 128:
         errs.append(f"MaintenancePrompt type {t} is asynchronous - msiexec would not wait for the answer")
     if t & 0x400:
         errs.append(f"MaintenancePrompt type {t} is deferred - it must run in the immediate sequence to be able to stop the install")
-    if ca["MaintenancePrompt"][2] != "MAINTENANCEPROMPTCMD":
-        errs.append(f"MaintenancePrompt source is {ca['MaintenancePrompt'][2]!r}, expected MAINTENANCEPROMPTCMD")
-    if "--install-maintenance" not in ca["MaintenancePrompt"][3]:
-        errs.append(f"MaintenancePrompt arguments are {ca['MaintenancePrompt'][3]!r}, expected to carry --install-maintenance")
+    if ca["MaintenancePrompt"][2] != "GhozttyMsiCa":
+        errs.append(f"MaintenancePrompt source is {ca['MaintenancePrompt'][2]!r}, expected the GhozttyMsiCa binary")
+    if ca["MaintenancePrompt"][3] != "MaintenancePromptCA":
+        errs.append(f"MaintenancePrompt entry point is {ca['MaintenancePrompt'][3]!r}, expected MaintenancePromptCA")
 
-if "SetMaintenancePromptCmd" not in ca:
-    errs.append("CustomAction table has no SetMaintenancePromptCmd row - MAINTENANCEPROMPTCMD would be empty and nothing would ask")
-else:
-    if int(ca["SetMaintenancePromptCmd"][1]) != 51:
-        errs.append(f"SetMaintenancePromptCmd type is {ca['SetMaintenancePromptCmd'][1]}, expected 51 (property set)")
-    if ca["SetMaintenancePromptCmd"][3] != "[INSTALLDIR]ghoztty.exe":
-        errs.append(f"SetMaintenancePromptCmd target is {ca['SetMaintenancePromptCmd'][3]!r}, expected [INSTALLDIR]ghoztty.exe")
+# The DLL it names has to be in the package, and has to export that entry
+# point - msiexec reports a missing one as error 1723 at the moment the
+# person runs the installer, which is the worst possible time to find out.
+binary = {r[0]: r for r in rows(sys.argv[4])}
+if "GhozttyMsiCa" not in binary:
+    errs.append("Binary table has no GhozttyMsiCa row - MaintenancePrompt would fail with error 1723")
+if b"MaintenancePromptCA\x00" not in open(sys.argv[5], "rb").read():
+    errs.append(f"{sys.argv[5]} does not export MaintenancePromptCA - MaintenancePrompt would fail with error 1723")
+if "SetMaintenancePromptCmd" in ca:
+    errs.append("CustomAction table still has SetMaintenancePromptCmd - the T1291 EXE-action pair is back")
 
 # Answering Repair has to actually repair something. REINSTALL is read at
 # CostFinalize, so it is armed before the question is asked and unwound by a
@@ -1095,7 +1117,7 @@ for action, prop, value in (
         if ca[action][3] != value:
             errs.append(f"{action} value is {ca[action][3]!r}, expected {value!r}")
 
-for action in ("MaintenancePrompt", "SetMaintenancePromptCmd", "SetRepairMode",
+for action in ("MaintenancePrompt", "SetRepairMode",
                "SetRepairModeFlags", "CostFinalize", "InstallValidate"):
     if action not in seq:
         errs.append(f"InstallExecuteSequence has no {action} row")
@@ -1104,7 +1126,6 @@ if not errs:
     n_arm = int(seq["SetRepairMode"][2])
     n_arm_flags = int(seq["SetRepairModeFlags"][2])
     n_ask = int(seq["MaintenancePrompt"][2])
-    n_ask_set = int(seq["SetMaintenancePromptCmd"][2])
     n_validate = int(seq["InstallValidate"][2])
     if n_arm >= n_cost or n_arm_flags >= n_cost:
         errs.append(f"REINSTALL is armed at {n_arm}/{n_arm_flags}, not before CostFinalize at {n_cost} - feature states are decided there, so Repair would do nothing")
@@ -1117,8 +1138,6 @@ if not errs:
     # cancelled nothing.
     if n_ask >= n_validate:
         errs.append(f"MaintenancePrompt is sequenced at {n_ask}, at or after InstallValidate at {n_validate} - the question would be asked after the install had already run, so Cancel would have nothing left to cancel")
-    if n_ask_set >= n_ask:
-        errs.append(f"SetMaintenancePromptCmd is sequenced at {n_ask_set}, not before MaintenancePrompt at {n_ask}")
     # And ahead of the prepare step (T1207), which renames ghoztty-agent.exe
     # aside: a Cancel answered after that has already left the existing install
     # without an agent image.
@@ -1128,7 +1147,7 @@ if not errs:
             errs.append(f"MaintenancePrompt is sequenced at {n_ask}, not before PrepareInstallDir at {n_prep} - that step renames ghoztty-agent.exe aside, so a Cancel would leave the existing install without one")
     # The gate. UILevel is the one that keeps the in-app updater's /qb-! install
     # from stopping on a modal dialog nobody is there to answer.
-    for action in ("MaintenancePrompt", "SetMaintenancePromptCmd", "SetRepairMode", "SetRepairModeFlags"):
+    for action in ("MaintenancePrompt", "SetRepairMode", "SetRepairModeFlags"):
         cond = seq[action][1]
         for want in ("Installed", "REMOVE", "UPGRADINGPRODUCTCODE", "UILevel"):
             if want not in cond:
@@ -1153,7 +1172,7 @@ elif not errs:
         errs.append(f"NoteRepairRequested condition is {seq['NoteRepairRequested'][1]!r}, expected REINSTALL")
     if n_note >= int(seq["SetRepairMode"][2]):
         errs.append(f"NoteRepairRequested is sequenced at {n_note}, not before SetRepairMode at {seq['SetRepairMode'][2]} - SetRepairMode sets REINSTALL itself, so every maintenance run would look requested and nobody would ever be asked")
-    for action in ("MaintenancePrompt", "SetMaintenancePromptCmd", "SetRepairMode", "SetRepairModeFlags"):
+    for action in ("MaintenancePrompt", "SetRepairMode", "SetRepairModeFlags"):
         if "NOT REPAIRREQUESTED" not in seq[action][1]:
             errs.append(f"{action} condition {seq[action][1]!r} does not stand down on REPAIRREQUESTED - a repair already chosen in Control Panel would be asked about again")
 
@@ -1179,13 +1198,13 @@ if errs:
     for e in errs:
         print(f"error: {e}", file=sys.stderr)
     sys.exit(1)
-print("already-installed ok: REINSTALL armed before CostFinalize, MaintenancePrompt (immediate, check) between it and InstallValidate")
+print("already-installed ok: REINSTALL armed before CostFinalize, MaintenancePrompt (DLL, immediate, check) between it and InstallValidate")
 # The resolved numbers, said out loud (T1367): what wixl DID with each anchor is
 # the evidence, and reading them back only from an assertion means the numbers
 # nobody asserted on are invisible.
-print("  sequence: CostFinalize={} SetRepairMode={} SetRepairModeFlags={} SetMaintenancePromptCmd={} MaintenancePrompt={} SetPrepareInstallDirCmd={} PrepareInstallDir={} InstallValidate={} RemoveExistingProducts={} InstallFinalize={}".format(
+print("  sequence: CostFinalize={} SetRepairMode={} SetRepairModeFlags={} MaintenancePrompt={} SetPrepareInstallDirCmd={} PrepareInstallDir={} InstallValidate={} RemoveExistingProducts={} InstallFinalize={}".format(
     seq["CostFinalize"][2], seq["SetRepairMode"][2], seq["SetRepairModeFlags"][2],
-    seq["SetMaintenancePromptCmd"][2], seq["MaintenancePrompt"][2],
+    seq["MaintenancePrompt"][2],
     seq["SetPrepareInstallDirCmd"][2] if "SetPrepareInstallDirCmd" in seq else "?",
     seq["PrepareInstallDir"][2] if "PrepareInstallDir" in seq else "?",
     seq["InstallValidate"][2] if "InstallValidate" in seq else "?",

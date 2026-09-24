@@ -30,19 +30,26 @@
 //! same dark `ConfirmDialog` every other Ghoztty prompt uses, relabelled
 //! Repair / Cancel.
 //!
-//! The answer travels back as the process EXIT CODE, which is the one channel
-//! an EXE custom action has:
+//! The answer travels back as the process EXIT CODE:
 //!
 //! - **Repair** exits 0. The package has already pre-armed `REINSTALL=ALL`
 //!   before `CostFinalize` (which is where feature states are decided, and
 //!   therefore too early to have asked the question yet), so a success here
 //!   simply lets the repair it already planned proceed.
-//! - **Cancel** exits `user_exit_code` (1602, `ERROR_INSTALL_USEREXIT`). That
-//!   is the ONE non-zero code Windows Installer reads as "the person said no":
-//!   it ends the transaction cleanly, rolls nothing back because nothing has
-//!   been written yet, and shows no error. Any other non-zero value would
-//!   surface as error 1721, "a program run as part of the setup did not finish
-//!   as expected", which is a worse outcome than the silence being fixed.
+//! - **Cancel** exits `user_exit_code` (1602, `ERROR_INSTALL_USEREXIT`).
+//!
+//! ## Why msiexec does not run this exe directly any more (T1730)
+//!
+//! T1291 ran this exe as an EXE custom action (type 50, `Return="check"`) on
+//! the premise that 1602 is the one exit code Windows Installer reads as "the
+//! user said no". It is not: for an EXE action EVERY non-zero exit is a
+//! failure, so Cancel raised error 1722 ("A program run as part of the setup
+//! did not finish as expected") and the install ended at 1603 - T1302's walk
+//! against a real msiexec caught it. The user-exit mapping exists only for
+//! actions whose RETURN VALUE is an action status. So the package now runs
+//! `MaintenancePromptCA` in `ghoztty-msi-ca.dll` (`install_ca.zig`), which
+//! starts this exe, waits, and returns `ERROR_INSTALL_USEREXIT` itself when the
+//! exit code is 1602. This file's contract is unchanged; only its caller moved.
 //!
 //! ## Deliberately NOT here
 //!
@@ -88,11 +95,11 @@ pub const version_flag = "--installed-version=";
 ///
 /// This is the acceptance seam, and it is here for the same reason
 /// `install_prepare.dir_flag` is: the behaviour worth measuring is the CONTRACT
-/// WITH MSIEXEC — that Repair exits 0 and Cancel exits 1602 — and that contract
-/// cannot be measured by a script that has to click a button on a background
-/// desktop where synthetic input does not reach. The dialog itself is the part
-/// a human sees; the exit codes are the part that decides whether an installer
-/// ends cleanly or with error 1721.
+/// WITH THE PACKAGE — that Repair exits 0 and Cancel exits 1602 — and that
+/// contract cannot be measured by a script that has to click a button on a
+/// background desktop where synthetic input does not reach. The dialog itself
+/// is the part a human sees; the exit codes are what the package's custom
+/// action (`install_ca.zig`) turns into "repair" or a quiet user exit.
 pub const answer_flag = "--answer=";
 
 /// What the person chose.
@@ -107,9 +114,9 @@ pub const Answer = enum {
     }
 };
 
-/// `ERROR_INSTALL_USEREXIT`. See the module header for why this exact number
-/// and no other: it is the only non-zero exit an EXE custom action can make
-/// that Windows Installer treats as a clean, quiet, user-initiated stop.
+/// `ERROR_INSTALL_USEREXIT`: what Cancel exits with. The package's DLL action
+/// (`install_ca.zig`) reads it and ends the install as a quiet user exit; the
+/// number itself means nothing to msiexec as an exit code (see the header).
 pub const user_exit_code: u32 = 1602;
 
 /// The exit code msiexec must see for a given answer.
@@ -265,6 +272,17 @@ fn exitProcess(code: u32) noreturn {
 
 const testing = std.testing;
 
+test {
+    _ = @import("maintenance_ca.zig");
+}
+
+test "the DLL action reads the exit code this file writes" {
+    const ca = @import("maintenance_ca.zig");
+    try testing.expectEqual(ca.exe_cancel_code, exitCode(.cancel));
+    try testing.expectEqual(ca.status_user_exit, ca.status(exitCode(.cancel)));
+    try testing.expectEqual(ca.status_proceed, ca.status(exitCode(.repair)));
+}
+
 test "parse: recognises the flag anywhere in argv" {
     const req = parse(&.{ "ghoztty.exe", flag }) orelse return error.NotParsed;
     try testing.expect(req.version == null);
@@ -307,10 +325,9 @@ test "parse: reads the acceptance answer" {
 }
 
 test "exitCode: the contract with msiexec" {
-    // These two numbers ARE the feature. Repair must be indistinguishable from
-    // a custom action that succeeded, and Cancel must be the one code Windows
-    // Installer ends quietly on — anything else is error 1721 in the user's
-    // face, which is worse than the silence this replaces.
+    // These two numbers ARE the feature. `install_ca.zig` proceeds with the
+    // repair on anything but 1602 and ends the install as a quiet user exit on
+    // 1602, so a Cancel that exited anything else would repair instead.
     try testing.expectEqual(@as(u32, 0), exitCode(.repair));
     try testing.expectEqual(@as(u32, 1602), exitCode(.cancel));
     try testing.expectEqual(@as(u32, 1602), user_exit_code);
