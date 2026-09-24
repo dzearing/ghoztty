@@ -28,7 +28,10 @@
 #      windows must come back into the SAME app process (C1/C2), live rather
 #      than merely listed (C3), and every target name must still be unique
 #      (C4) - the launch reserved the carried `window-N` names so its own blank
-#      startup window could not mint one out from under them.
+#      startup window could not mint one out from under them. T1003: that blank
+#      window, untouched, is closed once the real ones are back (C5/C6).
+#   D. The same blackout again, but the blank window is typed into first. It
+#      must survive the restore (D5) - the control that keeps C5 honest.
 #
 # Hermetic: per-run LOCALAPPDATA, per-run agent binary override, a private IPC
 # pipe suffix, and it only ever kills ghoztty processes launched from this
@@ -272,6 +275,67 @@ try {
     $dupes = @(Get-Duplicates $after)
     Assert ($dupes.Count -eq 0) `
         "C4 every window still has a target name nobody else holds (dupes: $($dupes -join ', '); all: $($after -join ', '))"
+
+    # T1003: the blank window the launch opened in B was only ever a stand-in,
+    # and nobody touched it, so the restore puts it away. The close follows the
+    # rebuild on the same tick, so a short wait covers it.
+    $blankB = @($blackout | Where-Object { $want -notcontains $_ })
+    Assert ($blankB.Count -ge 1) `
+        "C5a B's blank window had a name of its own to look for (got: $($blackout -join ', '))"
+    $deadline = (Get-Date).AddSeconds(10)
+    do {
+        $nowC = @(Get-Targets)
+        $leftC = @($blankB | Where-Object { $nowC -contains $_ })
+        if ($leftC.Count -eq 0) { break }
+        Start-Sleep -Milliseconds 400
+    } while ((Get-Date) -lt $deadline)
+    Assert ($leftC.Count -eq 0) `
+        "C5 the untouched blank window was closed once the restore landed (still open: $($leftC -join ', '); all: $($nowC -join ', '))"
+    Assert ($nowC.Count -eq $want.Count) `
+        "C6 exactly the restored windows remain (got: $($nowC -join ', '))"
+
+    # ---- D: a blank window the user HAS used is never closed (T1003) ---------
+    # The same blackout again, but this time something is typed into the blank
+    # window before the agent arrives. Without D, C5 would pass just as well for
+    # a change that closed the window unconditionally.
+    Say '== D: relaunch agentless again, type into the blank window, then start the agent'
+    Stop-Process -Id $script:lateAgent.Id -Force -ErrorAction SilentlyContinue
+    $script:lateAgent = $null
+    Stop-RepoInstances
+    # persistence: on (default) - like B, this launch must restore NOTHING from
+    # the manifest C left behind, and the flag would erase it.
+    $lateD = Start-OnTestDesktop -Exe $exe
+    if ((Wait-TestWindow -ProcessId $lateD.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
+        Say 'SETUP FAIL: the second agentless app has no GhozttyWindow'
+    }
+    Start-Sleep -Seconds 6
+    $blackoutD = @(Get-Targets)
+    $restoredEarlyD = @($want | Where-Object { $blackoutD -contains $_ })
+    Assert ($restoredEarlyD.Count -eq 0) `
+        "D1 the second agentless launch restored none of them (unexpectedly live: $($restoredEarlyD -join ', '))"
+    $blankD = @($blackoutD | Where-Object { $want -notcontains $_ })
+    Assert ($blankD.Count -eq 1) `
+        "D2 it opened exactly one blank window (got: $($blackoutD -join ', '))"
+    if ($blankD.Count -ge 1) {
+        $r = Invoke-Verb @('+send-keys', "--target=$($blankD[0])", 'echo', 'Space', 'kept-t1003', 'Enter')
+        Assert ($r.Code -eq 0) "D3 typing into the blank window succeeded (exit $($r.Code): $($r.Out.Trim()))"
+    }
+
+    $script:lateAgent = Start-Process -FilePath $agent -PassThru -WindowStyle Hidden `
+        -RedirectStandardOutput (Join-Path $root 'late-agent-d-out.txt') `
+        -RedirectStandardError (Join-Path $root 'late-agent-d-err.txt') `
+        -ArgumentList $agentArgs
+    $null = $script:lateAgent.Handle
+    $afterD = @(Wait-Targets $want 60)
+    $missingD = @($want | Where-Object { $afterD -notcontains $_ })
+    Assert ($missingD.Count -eq 0) `
+        "D4 the windows came back once the agent arrived (missing: $($missingD -join ', '); got: $($afterD -join ', '))"
+    # Give a wrong close the same room C5 had to happen.
+    Start-Sleep -Seconds 4
+    $nowD = @(Get-Targets)
+    $keptD = @($blankD | Where-Object { $nowD -contains $_ })
+    Assert ($blankD.Count -ge 1 -and $keptD.Count -eq $blankD.Count) `
+        "D5 the blank window that was typed into is still open (want: $($blankD -join ', '); all: $($nowD -join ', '))"
 
 } catch {
     # T1511: this try is not the whole body - the foreground-leak check below

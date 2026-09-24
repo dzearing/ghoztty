@@ -62,6 +62,13 @@ size: renderer.Size,
 /// The mailbox implementation to use.
 mailbox: termio.Mailbox,
 
+/// Set the first time anything is queued for writing to the pty (a key, a
+/// paste, a mouse report, a scripted send). Program output never sets it, so
+/// it answers "has anybody used this terminal yet?" even though every shell
+/// prints a prompt on its own. The win32 app reads it to decide whether the
+/// launch's stand-in window is still untouched after a late restore (T1003).
+input_written: std.atomic.Value(bool) = .init(false),
+
 /// The stream parser. This parses the stream of escape codes and so on
 /// from the child process and calls callbacks in the stream handler.
 terminal_stream: StreamHandler.Stream,
@@ -483,6 +490,9 @@ pub fn queueMessage(
             self.pending_resize_mutex.unlock();
             self.mailbox.notify();
             return;
+        },
+        .write_small, .write_stable, .write_alloc => {
+            self.input_written.store(true, .monotonic);
         },
         else => {},
     }

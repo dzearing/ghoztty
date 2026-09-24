@@ -597,6 +597,10 @@ test {
     // std, same no-OS-imports deal.
     _ = @import("apprt/win32/resolve_defer.zig");
 
+    // Pure win32 rule for when the launch's stand-in window may be closed
+    // after a late session restore (T1003). Pure std.
+    _ = @import("apprt/win32/restore_placeholder.zig");
+
     // Pure win32 non-destructive agent-upgrade policy: is the running agent
     // older than the one we ship, and may it be restarted now or only after a
     // confirmation (T147). Pure std, same no-OS-imports deal.

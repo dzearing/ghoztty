@@ -9916,6 +9916,9 @@ fn onDestroy(self: *Window) void {
             break;
         }
     }
+    // T1003: a stand-in window the user closed first is no longer the deferred
+    // restore's to close.
+    if (app.restore_placeholder_window == self) app.restore_placeholder_window = null;
 
     // T89f: this window is gone → re-persist the layout so it drops from the
     // manifest (a no-op during app-quit teardown, where msg_hwnd is already

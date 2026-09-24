@@ -83,6 +83,7 @@ const window_placement = @import("window_placement.zig");
 const agent_recovery = @import("agent_recovery.zig");
 const restore_retry = @import("restore_retry.zig");
 const resolve_defer = @import("resolve_defer.zig");
+const restore_placeholder = @import("restore_placeholder.zig");
 const RemoteReconnect = @import("RemoteReconnect.zig");
 const agent_upgrade = @import("agent_upgrade.zig");
 const release_notes_bundle = @import("release_notes_bundle.zig");
@@ -638,6 +639,13 @@ restore_retry_attempts: usize = 0,
 
 /// True while `RESTORE_RETRY_TIMER_ID` is armed (T976).
 restore_retry_armed: bool = false,
+
+/// The blank window this launch opened because its restore could not finish
+/// (T1003), kept only while the deferred pass is still pending. When that pass
+/// rebuilds the real windows, this one is closed if nobody has used it
+/// (`restore_placeholder.zig`). Cleared when the window goes away on its own,
+/// so it never dangles.
+restore_placeholder_window: ?*Window = null,
 
 /// Non-zero while a destructive agent refresh is tearing the app's terminals
 /// down and rebuilding them (T229). The app deliberately has zero — or
@@ -1685,6 +1693,11 @@ pub fn run(self: *App) !void {
     const force_no_window = self.startupFailSeam("no-window");
     if (startup_window == null and !restored and !force_no_window) {
         startup_window = try self.createWindow(.{});
+        // T1003: when the restore is still waiting on the agent, this window is
+        // a stand-in for the ones it will rebuild. Remember it so the deferred
+        // pass can put it away if the user never touched it. A launch-command
+        // window never takes this branch: it is the user's, not a stand-in.
+        if (self.restore_retry_armed) self.restore_placeholder_window = startup_window;
     }
 
     // Restore's windows were created after the launch-command window and are
@@ -4184,10 +4197,13 @@ fn tickRestoreRetry(self: *App) void {
         self.restore_retry_attempts,
     )) {
         .stand_down => {
+            self.restore_placeholder_window = null;
             self.cancelRestoreRetry();
             return;
         },
         .exhausted => {
+            // The stand-in window is now simply the user's terminal.
+            self.restore_placeholder_window = null;
             self.reportRestoreDeferred();
             self.cancelRestoreRetry();
             return;
@@ -4228,11 +4244,13 @@ fn tickRestoreRetry(self: *App) void {
         };
     }
     if (keys.items.len == 0) {
+        self.restore_placeholder_window = null;
         self.cancelRestoreRetry();
         return;
     }
 
     const restored = self.restorePass(keys.items);
+    self.retireRestorePlaceholder(restored);
 
     // The manifest must learn what just happened either way: a rebuilt window
     // has to be captured (it is live now, and the carried entry that stood in
@@ -4258,6 +4276,56 @@ fn tickRestoreRetry(self: *App) void {
         .{self.carried_layout_windows.count()},
     );
     self.cancelRestoreRetry();
+}
+
+/// Close the launch's stand-in window once the deferred restore has rebuilt the
+/// real ones, if it is still exactly as the launch left it (T1003). Either way
+/// the window stops being a stand-in here: the deferred pass runs once, so
+/// whatever this decides is final. GUI thread.
+fn retireRestorePlaceholder(self: *App, restored: bool) void {
+    const window = self.restore_placeholder_window orelse return;
+    self.restore_placeholder_window = null;
+
+    const facts = self.restorePlaceholderFacts(window);
+    if (!restore_placeholder.shouldClose(restored, facts)) {
+        if (restored) log.info(
+            "session-restore: keeping the launch's blank window (in use: tabs={d} panes={d} viewer={} input={})",
+            .{ facts.tabs, facts.panes, facts.viewer, facts.input_seen },
+        );
+        return;
+    }
+    log.info("session-restore: closing the launch's untouched blank window; the restored windows replace it", .{});
+    // A real close, not a discard: the pane has a shell (and, with an agent,
+    // a session) behind it, and both must end with the window.
+    window.close();
+}
+
+/// Read what `restore_placeholder.shouldClose` needs about `window`.
+fn restorePlaceholderFacts(self: *App, window: *Window) restore_placeholder.Facts {
+    var facts: restore_placeholder.Facts = .{
+        .alive = self.hasWindow(window) and !window.closing,
+        .tabs = 0,
+        .panes = 0,
+        .viewer = false,
+        .initialized = false,
+        .input_seen = false,
+    };
+    if (!facts.alive) return facts;
+    facts.tabs = window.tab_count;
+    if (window.tab_count != 1) return facts;
+    var it = window.tab_trees[0].iterator();
+    while (it.next()) |entry| {
+        facts.panes += 1;
+        if (entry.view.isViewer()) {
+            facts.viewer = true;
+            continue;
+        }
+        const surface = entry.view.surface() orelse continue;
+        if (!surface.core_surface_initialized) continue;
+        facts.initialized = true;
+        if (surface.core_surface.io.input_written.load(.monotonic)) facts.input_seen = true;
+    }
+    return facts;
 }
 
 /// Load the app-local session-layout manifest, or null when there isn't a usable
