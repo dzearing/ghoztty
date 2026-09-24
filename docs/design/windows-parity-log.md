@@ -33592,3 +33592,18 @@ PASS (40). Pressing Cancel on the "already installed" prompt now ends at 1602,
 and no Error 1722 appears in the log. Repair ends at 0. The installed exe
 reports version 1.36.37. This closes the user's Cancel report (T1291/T1730)
 for the package people actually install, not only for a rewritten test copy.
+
+## 2026-09-24 - T1368: Repair is proven to repair, and the question to come before any file moves
+
+`install-walkthrough.ps1` act D already pressed both answers (T1302) against the
+published fix (T1731). What was still unobserved: that Repair actually rewrites
+the install, and that nothing moves before the question is answered. Act D now
+reads the install directory while the prompt is on screen (it must match the
+pre-run state), reads the action order out of the msiexec log, and back-dates a
+shipped file that Repair must replace. Against published win-v1.36.37: ALL PASS
+(47), and the guard is stamped. `-TeethUnarmedRepair` arms REINSTALL only after
+InstallFinalize and goes red on exactly D7 and D8. Two findings on the way:
+deleting a file proves nothing, because Windows Installer restores a missing
+file on any same-version run; and wixl's under-counted string pool struck a
+fourth time (a Condition edit left the prompt unconditioned). The pool is filed
+as T1732.

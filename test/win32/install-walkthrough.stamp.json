@@ -1,15 +1,14 @@
 {
     "guard":  "install-walkthrough",
     "script":  "test/win32/install-walkthrough.ps1",
-    "generated":  "2026-09-24T14:00:19-07:00",
-    "commit":  "866a86863",
+    "generated":  "2026-09-24T15:58:52-07:00",
+    "commit":  "512b1c665",
     "uncommitted":  [
-                        "dist/windows-installer/build-msi.sh",
                         "test/win32/install-walkthrough.ps1"
                     ],
     "files":  {
                   "dist/windows-installer/build-msi.sh":  "f22512ebbd9967806b3184aabfafc7e294b402dd91c0a952a19a00f2fc8ac79d",
                   "scripts/msi-test-identity.ps1":  "375396ad262bf0cd1905b85707fa70f48604f9d8d79a14174311d968e428c2ac",
-                  "test/win32/install-walkthrough.ps1":  "7b7bb79c84e46044dca423485049d74e7a7ef48b95125e10af580ce5782e3aba"
+                  "test/win32/install-walkthrough.ps1":  "e913d1a8f4deb7dd67b4046b2cb977ab269237da788f8408adf1183e9ad375bf"
               }
 }

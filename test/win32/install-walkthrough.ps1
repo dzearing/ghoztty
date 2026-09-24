@@ -41,7 +41,9 @@
 #   D  SAME VERSION AGAIN - the case this task was filed from (T1291). The
 #      package enters maintenance mode, the app's Repair / Cancel dialog appears
 #      on screen, and Cancel ends the transaction at 1602 with the install
-#      untouched. Skipped, named, when the package predates the feature: a
+#      untouched. The install directory is read while the question is still on
+#      screen and must not have moved yet, and Repair must put back a file
+#      removed before it (T1368). Skipped, named, when the package predates the feature: a
 #      release published before T1291 has no MaintenancePrompt row to run.
 #   E  OLDER PACKAGE OVER A NEWER INSTALL. A plain explanation, not a bare 1638,
 #      and nothing about the install moves.
@@ -75,6 +77,12 @@ param(
     # Prove the guard that keeps all of this off the user's product goes red,
     # and assert nothing else. Installs nothing, needs no network.
     [switch]$TeethCheck,
+    # Negative control for act D's Repair arm (T1368): after the identity
+    # rewrite, condition the two rows that arm REINSTALL so they never fire.
+    # D7 and D8 must then go red - a Repair that ends at 0 and restores nothing.
+    # (The source package cannot be edited instead: the rewriter refuses one
+    # that has been through a database commit.)
+    [switch]$TeethUnarmedRepair,
     [switch]$KeepInstall
 )
 
@@ -249,6 +257,9 @@ function Invoke-IdentityRewrite {
         [Parameter(Mandatory = $true)][string]$Out,
         [string]$ProductVersion = ''
     )
+    # A previous run's package at the same path would otherwise answer for a
+    # rewrite that failed this time (T1368 watched exactly that pass A1).
+    Remove-Item -LiteralPath $Out -Force -ErrorAction SilentlyContinue
     $a = @('-Msi', $Source, '-Out', $Out, '-Identity', $Identity)
     if ($ProductVersion) { $a += @('-ProductVersion', $ProductVersion) }
     & powershell -NoProfile -ExecutionPolicy Bypass `
@@ -309,6 +320,33 @@ Assert 'A1 the package was rewritten to the throwaway identity' ($pkgNew -ne '')
 if (-not $pkgNew) {
     Write-TestAssertedNothing -Label 'install-walkthrough' -Skipped 1 `
         -Reason 'the identity rewrite produced nothing - the walk cannot run against the real product'
+}
+if ($TeethUnarmedRepair) {
+    # The two arming rows move to 6700, after InstallFinalize: REINSTALL is
+    # still set, but only once there is nothing left for it to arm. Only the
+    # integer Sequence column is written - wixl under-counts the package's
+    # shared strings (T1732), and a Condition edit freed the one
+    # MaintenancePrompt still used, leaving it to prompt inside /qn upgrades
+    # and uninstalls. The prompt's condition is read back to prove it survived.
+    #
+    # In a child process: the database handle is only reliably released when
+    # the process that opened it exits (forcing a GC over the live COM objects
+    # in this one crashed the run with an AccessViolation).
+    $env:GHOZTTY_T1368_PKG = $pkgNew
+    & powershell -NoProfile -Command {
+        $db = (New-Object -ComObject WindowsInstaller.Installer).OpenDatabase($env:GHOZTTY_T1368_PKG, 1)
+        $v = $db.OpenView("UPDATE ``InstallExecuteSequence`` SET ``Sequence``=6700 WHERE ``Action``='SetRepairMode' OR ``Action``='SetRepairModeFlags'")
+        $v.Execute(); $v.Close(); $db.Commit()
+    } *> $null
+    Remove-Item Env:\GHOZTTY_T1368_PKG -ErrorAction SilentlyContinue
+    $seqs = @(Get-MsiTableColumn -Package $pkgNew -Query "SELECT ``Sequence`` FROM ``InstallExecuteSequence`` WHERE ``Action``='SetRepairMode' OR ``Action``='SetRepairModeFlags'")
+    $ask = @(Get-MsiTableColumn -Package $pkgNew -Query "SELECT ``Condition`` FROM ``InstallExecuteSequence`` WHERE ``Action``='MaintenancePrompt'")
+    if ((($seqs | Sort-Object) -join '|') -ne '6700|6700' -or
+        $ask.Count -ne 1 -or $ask[0] -notmatch '^Installed AND NOT REMOVE .*UILevel > 3') {
+        Write-TestAssertedNothing -Label 'install-walkthrough' -Skipped 1 `
+            -Reason "the teeth edit did not land cleanly (arming at $($seqs -join '/'), prompt condition '$($ask -join '')')"
+    }
+    Write-Host '  TEETH: REINSTALL armed only after InstallFinalize in the walked package - D7/D8 must FAIL'
 }
 
 $pkgOld = ''
@@ -448,6 +486,27 @@ if (-not $hasMaintenancePrompt) {
     # interactive desktop. It is there for well under a second: BM_CLICK is a
     # sent message, needs no foreground and injects no input.
     $inputDesk = [GhozttyTestDesktop]::Create('install-walkthrough-input', $true)
+
+    # T1368: what the install directory holds, as one comparable string -
+    # every file's relative path, length and last-write time. Taken before a
+    # run and again while the prompt is on screen, it answers the question
+    # T1367's 6605 sequencing got wrong: was anything moved before the user was
+    # asked? (PrepareInstallDir renames the agent aside and InstallFiles
+    # rewrites everything under REINSTALLMODE=amus, so either one running early
+    # changes this string.)
+    function Get-InstallSnapshot {
+        if (-not (Test-Path -LiteralPath $installDir)) { return '' }
+        $rows = foreach ($f in (Get-ChildItem -LiteralPath $installDir -Recurse -File -Force -ErrorAction SilentlyContinue)) {
+            '{0}|{1}|{2}' -f $f.FullName.Substring($installDir.Length), $f.Length, $f.LastWriteTimeUtc.Ticks
+        }
+        return (@($rows) | Sort-Object) -join "`n"
+    }
+    # The order msiexec actually ran things in, from the verbose log.
+    function Get-ActionStarts([string]$LogText) {
+        return @([regex]::Matches($LogText, 'Action start [0-9:]+: ([A-Za-z0-9_]+)\.') |
+            ForEach-Object { $_.Groups[1].Value })
+    }
+
     function Invoke-MaintenanceRun {
         param([Parameter(Mandatory = $true)][string]$Press)
         $log = Join-Path $work "d-maintenance-$($Press.ToLower()).log"
@@ -480,6 +539,8 @@ if (-not $hasMaintenancePrompt) {
                 }
             }
         }
+        # The dialog is up and unanswered: this is the moment T1368 asks about.
+        $atPrompt = if ($target -ne [IntPtr]::Zero) { Get-InstallSnapshot } else { $null }
         $pressed = $false
         if ($target -ne [IntPtr]::Zero) {
             Send-TestControlClick -Control $target -Desktop $inputDesk | Out-Null
@@ -497,9 +558,11 @@ if (-not $hasMaintenancePrompt) {
             $lt = Get-Content -LiteralPath $log -Raw -ErrorAction SilentlyContinue
             if ($null -eq $lt) { '' } else { $lt }
         } else { '' }
-        return [pscustomobject]@{ Dialog = $dlg; Labels = $labels; Pressed = $pressed; ExitCode = $code; Log = $logText }
+        return [pscustomobject]@{ Dialog = $dlg; Labels = $labels; Pressed = $pressed; ExitCode = $code
+                                  Log = $logText; AtPrompt = $atPrompt; Actions = (Get-ActionStarts $logText) }
     }
 
+    $beforeCancel = Get-InstallSnapshot
     $cancel = Invoke-MaintenanceRun -Press 'Cancel'
     Assert 'D1 the installer says something instead of vanishing: a dialog appears' `
         ($cancel.Dialog -ne [IntPtr]::Zero)
@@ -517,6 +580,30 @@ if (-not $hasMaintenancePrompt) {
     Assert 'D4 and Cancel left the install exactly where it was' `
         ((Test-Path $installedExe) -and
          ((Get-ArpEntryVersion -Name $Identity) -eq $sourceVersion))
+    # T1368: the two things a same-version reinstall cannot show by its end
+    # state, since an identical payload looks "untouched" either way.
+    Assert 'D4b the question was asked before anything in the install moved (snapshot at the prompt == before the run)' `
+        ($beforeCancel -ne '' -and $cancel.AtPrompt -eq $beforeCancel)
+    $askAt = [array]::IndexOf([string[]]$cancel.Actions, 'MaintenancePrompt')
+    Assert 'D4c the log agrees: the prompt ran, and nothing that installs (PrepareInstallDir, InstallValidate, InstallFiles) ran around a Cancel' `
+        ($askAt -ge 0 -and
+         -not ($cancel.Actions | Where-Object { $_ -in @('PrepareInstallDir', 'InstallValidate', 'InstallFiles', 'InstallFinalize') }))
+    Assert 'D4d and Cancel changed nothing on disk' ((Get-InstallSnapshot) -eq $beforeCancel)
+
+    # Repair has to REPAIR, not merely end at 0. Deleting a file does not
+    # prove that: Windows Installer copies a MISSING file of an installed
+    # component on any same-version /i, armed or not (T1368's negative control
+    # watched it). What only REINSTALLMODE=amus does is rewrite a file that is
+    # present at the same version - so back-date one, and Repair must replace
+    # it. ghoztty.exe is left alone; the prompt itself runs out of it.
+    $victim = Get-ChildItem -LiteralPath $installDir -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne 'ghoztty.exe' } |
+        Sort-Object @{ Expression = { $_.Name -ne 'ghoztty.com' } }, Name |
+        Select-Object -First 1
+    $victimPath = if ($victim) { $victim.FullName } else { $null }
+    $backdate = [datetime]::new(2001, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+    if ($victimPath) { (Get-Item -LiteralPath $victimPath).LastWriteTimeUtc = $backdate }
+    $beforeRepair = Get-InstallSnapshot
 
     $repair = Invoke-MaintenanceRun -Press 'Repair'
     Assert 'D5 Repair runs the repair through to a plain success (0)' `
@@ -524,6 +611,20 @@ if (-not $hasMaintenancePrompt) {
     Assert 'D6 and the product is still installed after it' `
         ((Test-Path $installedExe) -and
          ((Get-ArpEntryVersion -Name $Identity) -eq $sourceVersion))
+    $victimNow = if ($victimPath -and (Test-Path -LiteralPath $victimPath)) { (Get-Item -LiteralPath $victimPath).LastWriteTimeUtc } else { $null }
+    Assert "D7 Repair rewrote a file that was present at the same version ($(if ($victim) { $victim.Name } else { 'none found' }), back-dated to 2001 before it)" `
+        ($victimPath -and ($beforeRepair -match [regex]::Escape("|$($backdate.Ticks)")) -and
+         $null -ne $victimNow -and $victimNow -ne $backdate)
+    $armedAt = $repair.Log.IndexOf("PROPERTY CHANGE: Adding REINSTALL property. Its value is 'ALL'")
+    $promptAt = ([regex]::Match($repair.Log, 'Action start [0-9:]+: MaintenancePrompt\.')).Index
+    Assert 'D8 it was armed as a full reinstall (REINSTALL=ALL) before the question was asked' `
+        ($armedAt -ge 0 -and $promptAt -gt $armedAt)
+    $askAt = [array]::IndexOf([string[]]$repair.Actions, 'MaintenancePrompt')
+    $filesAt = [array]::IndexOf([string[]]$repair.Actions, 'InstallFiles')
+    Assert 'D9 and the files were written only AFTER the question was answered (MaintenancePrompt before InstallFiles)' `
+        ($askAt -ge 0 -and $filesAt -gt $askAt)
+    Assert 'D9b nothing moved while the Repair question was on screen either' `
+        ($repair.AtPrompt -eq $beforeRepair)
 }
 
 # ================================================= E. an older package, after
