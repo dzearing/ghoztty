@@ -1,10 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-24T16:07:59-07:00",
-    "commit":  "512b1c665",
+    "generated":  "2026-09-24T16:54:16-07:00",
+    "commit":  "ba5c6dea1",
     "uncommitted":  [
-                        "test/win32/install-walkthrough.ps1"
+                        "src/os/homedir.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -300,7 +300,7 @@
                   "src/os/exit_ledger.zig":  "ba7e57d8efcf4790f0408b1add104f6c47699e3592b855a37dbca3a18bb60947",
                   "src/os/file.zig":  "638ef064314e7cd10df45036faaf7c445398813e3200c42f53c920909b6aa297",
                   "src/os/flatpak.zig":  "a8d66423953802485d2035451493826896faf32bd1bfdaf3895e54549509990e",
-                  "src/os/homedir.zig":  "983656eb12a2248b0cbc5adf4e0e653dc56473416557f6667b113a42f3a8d746",
+                  "src/os/homedir.zig":  "47ed2777ec445d309d7a912b81826c19348c115e1f53160f8001e24d2c8298ea",
                   "src/os/hostname.zig":  "b402e461f30d22a5f8227af8591f505c0e76ccaaaf816c7b81b8ce6c7468823b",
                   "src/os/i18n.zig":  "133cfac2158e97441381ec012d76dba5f2ff3f4c09793da129d75e2299c462c4",
                   "src/os/i18n_locales.zig":  "90f6fcf72fc67cfa0223d7786f18467fd58529807a5b00ffd557d11ad447afc2",

@@ -77,32 +77,47 @@ fn homeUnix(buf: []u8) !?[]const u8 {
 }
 
 fn homeWindows(buf: []u8) !?[]const u8 {
-    const drive_len = blk: {
-        var fba_instance = std.heap.FixedBufferAllocator.init(buf);
-        const fba = fba_instance.allocator();
-        const drive = std.process.getEnvVarOwned(fba, "HOMEDRIVE") catch |err| switch (err) {
-            error.OutOfMemory => return Error.BufferTooSmall,
-            error.InvalidWtf8, error.EnvironmentVariableNotFound => return null,
-        };
-        // could shift the contents if this ever happens
-        if (drive.ptr != buf.ptr) @panic("codebug");
-        break :blk drive.len;
-    };
+    var scratch: [3 * 1024]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&scratch);
+    const alloc = fba.allocator();
+    return composeWindowsHome(
+        buf,
+        try windowsEnv(alloc, "HOMEDRIVE"),
+        try windowsEnv(alloc, "HOMEPATH"),
+        try windowsEnv(alloc, "USERPROFILE"),
+    );
+}
 
-    const path_len = blk: {
-        const path_buf = buf[drive_len..];
-        var fba_instance = std.heap.FixedBufferAllocator.init(buf[drive_len..]);
-        const fba = fba_instance.allocator();
-        const homepath = std.process.getEnvVarOwned(fba, "HOMEPATH") catch |err| switch (err) {
-            error.OutOfMemory => return Error.BufferTooSmall,
-            error.InvalidWtf8, error.EnvironmentVariableNotFound => return null,
-        };
-        // could shift the contents if this ever happens
-        if (homepath.ptr != path_buf.ptr) @panic("codebug");
-        break :blk homepath.len;
+fn windowsEnv(alloc: std.mem.Allocator, name: []const u8) !?[]const u8 {
+    return std.process.getEnvVarOwned(alloc, name) catch |err| switch (err) {
+        error.OutOfMemory => return Error.BufferTooSmall,
+        error.InvalidWtf8, error.EnvironmentVariableNotFound => return null,
     };
+}
 
-    return buf[0 .. drive_len + path_len];
+/// HOMEDRIVE + HOMEPATH when both are present (the historical answer), else
+/// USERPROFILE. The pair is a logon convention that some launch paths do not
+/// carry; USERPROFILE is set for every interactive process, so without the
+/// fallback a missing pair silently read as "no home" and every `~`
+/// abbreviation downstream (tab tips, palette subtitles) printed full paths.
+fn composeWindowsHome(
+    buf: []u8,
+    drive: ?[]const u8,
+    path: ?[]const u8,
+    profile: ?[]const u8,
+) Error!?[]const u8 {
+    if (drive != null and path != null and drive.?.len > 0 and path.?.len > 0) {
+        const len = drive.?.len + path.?.len;
+        if (buf.len < len) return Error.BufferTooSmall;
+        @memcpy(buf[0..drive.?.len], drive.?);
+        @memcpy(buf[drive.?.len..len], path.?);
+        return buf[0..len];
+    }
+    const p = profile orelse return null;
+    if (p.len == 0) return null;
+    if (buf.len < p.len) return Error.BufferTooSmall;
+    @memcpy(buf[0..p.len], p);
+    return buf[0..p.len];
 }
 
 fn trimSpace(input: []const u8) []const u8 {
@@ -186,4 +201,36 @@ test {
     const result = try home(&buf);
     try testing.expect(result != null);
     try testing.expect(result.?.len > 0);
+}
+
+test "composeWindowsHome: HOMEDRIVE + HOMEPATH wins when both are set" {
+    var buf: [64]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "C:\\Users\\David",
+        (try composeWindowsHome(&buf, "C:", "\\Users\\David", "D:\\Other")).?,
+    );
+}
+
+test "composeWindowsHome: USERPROFILE alone still answers" {
+    var buf: [64]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "C:\\Users\\David",
+        (try composeWindowsHome(&buf, null, null, "C:\\Users\\David")).?,
+    );
+    // Half the pair is as good as none of it.
+    try std.testing.expectEqualStrings(
+        "C:\\Users\\David",
+        (try composeWindowsHome(&buf, "C:", null, "C:\\Users\\David")).?,
+    );
+    try std.testing.expectEqualStrings(
+        "C:\\Users\\David",
+        (try composeWindowsHome(&buf, "", "", "C:\\Users\\David")).?,
+    );
+}
+
+test "composeWindowsHome: nothing set is null, a short buffer is an error" {
+    var buf: [4]u8 = undefined;
+    try std.testing.expectEqual(@as(?[]const u8, null), try composeWindowsHome(&buf, null, null, null));
+    try std.testing.expectEqual(@as(?[]const u8, null), try composeWindowsHome(&buf, null, null, ""));
+    try std.testing.expectError(Error.BufferTooSmall, composeWindowsHome(&buf, null, null, "C:\\Users"));
 }

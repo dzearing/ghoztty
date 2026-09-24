@@ -33607,3 +33607,13 @@ deleting a file proves nothing, because Windows Installer restores a missing
 file on any same-version run; and wixl's under-counted string pool struck a
 fourth time (a Condition edit left the prompt unconditioned). The pool is filed
 as T1732.
+## 2026-09-24 - T1395: the home folder is found without HOMEDRIVE/HOMEPATH
+
+The tab-tooltip harness was already green on the head, so the symptom as filed
+had gone with the harness's launch environment. The cause underneath had not:
+Windows home lookup (`src/os/homedir.zig`) read only HOMEDRIVE + HOMEPATH and
+answered "no home" without them, which silently switched off every `~`
+abbreviation. It now falls back to USERPROFILE (pure `composeWindowsHome`,
+three tests). Proof: with both variables stripped, the fixed build is ALL PASS
+(29), and a pre-fix build is red on arms A and G with the original
+`C:\Users\...` tip. Floor ALL LANES PASS.
