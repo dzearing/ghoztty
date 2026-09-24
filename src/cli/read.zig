@@ -68,7 +68,8 @@ pub const Options = struct {
 ///
 ///   * `--name=<pane>`: The name of the pane to read from. Required.
 ///     The pane must have been created with `+split --name=<name>` or
-///     registered via `+new-window --target=<name>`.
+///     `+new-window --name=<name>`, or registered via
+///     `+new-window --target=<name>`.
 ///
 ///   * `--lines=<N>`: Number of lines to read from the end of the
 ///     scrollback buffer. Default: 50.

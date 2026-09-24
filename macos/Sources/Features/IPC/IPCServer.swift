@@ -417,10 +417,37 @@ class IPCServer {
             }
         }
 
+        // T968: `--name` names a PANE (the first one, or the inline split's)
+        // and is idempotent the way `+split --name` is: a live pane already
+        // under that name is focused rather than a second window opened.
+        // `--target` decided first above, so this only answers when the
+        // caller named no window.
+        if parsed.target == nil, let name = parsed.name {
+            pruneStaleTargets()
+            if let entry = resolveTarget(name), let controller = entry.controller {
+                if !parsed.noActivate {
+                    DispatchQueue.main.async {
+                        controller.window?.makeKeyAndOrderFront(nil)
+                        NSApp.activate(ignoringOtherApps: true)
+                    }
+                }
+                return .ok
+            }
+        }
+
+        // T968: without `--split`, `--name` names the window's FIRST pane (the
+        // pane this verb creates); with one it names the inline split pane.
+        // Same rule as the win32 frontend's `newWindowFirstPaneName`.
+        let firstPaneName: String? = parsed.splitDirection == nil
+            ? parsed.name.flatMap { $0.isEmpty ? nil : $0 }
+            : nil
+
         // Inject window/pane name env vars for the main surface
         if let target = parsed.target {
             parsed.config.environmentVariables["GHOZTTY_WINDOW_NAME"] = target
-            parsed.config.environmentVariables["GHOZTTY_PANE_NAME"] = target
+        }
+        if let paneName = firstPaneName ?? parsed.target {
+            parsed.config.environmentVariables["GHOZTTY_PANE_NAME"] = paneName
         }
 
         // Validate percent if provided
@@ -517,6 +544,22 @@ class IPCServer {
             if let target = parsed.target {
                 self?.targetRegistry[target] = .window(WeakRef(controller))
                 Self.logger.info("IPC: registered window target '\(target)'")
+            }
+
+            if let firstPaneName {
+                // Same hop the inline split below takes: the first surface is
+                // the controller's focused one once the window has settled.
+                DispatchQueue.main.async { [weak self] in
+                    guard let surfaceView = controller.focusedSurface else {
+                        Self.logger.warning("IPC: no surface view to name '\(firstPaneName)'")
+                        return
+                    }
+                    self?.targetRegistry[firstPaneName] = .pane(
+                        controller: WeakRef(controller),
+                        surface: WeakRef(surfaceView)
+                    )
+                    Self.logger.info("IPC: registered pane target '\(firstPaneName)'")
+                }
             }
 
             if let splitDir = parsed.splitDirection,

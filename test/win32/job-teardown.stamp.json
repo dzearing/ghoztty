@@ -1,10 +1,10 @@
 {
     "guard":  "job-teardown",
     "script":  "test/win32/job-teardown.ps1",
-    "generated":  "2026-09-24T03:08:15-07:00",
-    "commit":  "884b7fe2a",
+    "generated":  "2026-09-24T04:09:08-07:00",
+    "commit":  "6ca29e2d5",
     "uncommitted":  [
-                        "test/win32/divergence-inventory.ps1"
+                        "test/win32/ipc-target-exists-note.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -165,7 +165,7 @@
                   "test/win32/ipc-remote.ps1":  "0392ad4e1751b8f12a06ccc1b3bb4fc2cf9c29c923178435d98d1d00258ad2e7",
                   "test/win32/ipc-send-keys-fidelity.ps1":  "ecd1a63052e0a9c52fdb10003f817026c4b95acd8fe76b4e2cff8a57a1ff2fd8",
                   "test/win32/ipc-startup-latency.ps1":  "e05ebff757be728430c252c640fb5bd76cbd2842fbb4b5b572603e3d30daa828",
-                  "test/win32/ipc-target-exists-note.ps1":  "d87ed6391ccda8cc8c515b76c194272184bf57b7c80757ace1cf35a00c950bb2",
+                  "test/win32/ipc-target-exists-note.ps1":  "1a5e848d4ce47cace17947bf9a276b79ffdb978d56ea9488e323ebe1c0de70d3",
                   "test/win32/ipc-timeout.ps1":  "1cc28e2c148b1e65b8e4ec719f0cd1e22b936506a49c75581590da11692d5d30",
                   "test/win32/ipc-under-load.ps1":  "e086bb69c413c1cff080a5b54579d37c709e28c54749c00a3359bcb5fd60e6f1",
                   "test/win32/ipc-version.ps1":  "09d5d1b7a53c70ebe20b8eb2a4e36f51d7c3ed8d5d542e61ba9101acfa34e145",

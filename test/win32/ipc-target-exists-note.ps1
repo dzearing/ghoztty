@@ -91,7 +91,35 @@ Assert "explicit-cwd focus exit 0" ($code -eq 0)
 $err = Get-CliErr
 Assert "note names --working-directory only" (($err -match '--working-directory') -and ($err -notmatch '--command'))
 
+"== 5: T968 - +new-window --name (no --split) names the first pane"
+$code = Invoke-Cli "+new-window --name=t968pane"
+Assert "named create exit 0" ($code -eq 0)
+Assert "no note on named create" ([string]::IsNullOrWhiteSpace((Get-CliErr)))
+# The defect: exit 0, then the very next --target=<name> said "not found".
+$deadline = (Get-Date).AddSeconds(20)
+do {
+    $code = Invoke-Cli "+read --name=t968pane"
+    if ($code -eq 0) { break }
+    Start-Sleep -Milliseconds 500
+} while ((Get-Date) -lt $deadline)
+Assert "+read --name=<name> finds the pane (exit $code; $(Get-CliErr))" ($code -eq 0)
+$code = Invoke-Cli "+send-keys --target=t968pane x"
+Assert "+send-keys --target=<name> finds the pane (exit $code; $(Get-CliErr))" ($code -eq 0)
+$windowsBefore = ([regex]::Matches((Get-List), '(?m)^\S.*window')).Count
+
+"== 6: T968 - a second +new-window --name=<live pane> focuses it, and says what it dropped"
+$code = Invoke-Cli "+new-window --name=t968pane --command=whoami"
+Assert "re-name exit 0" ($code -eq 0)
+$err = Get-CliErr
+Assert "note names the pane" ($err -match "pane 't968pane' already exists")
+Assert "note names --command" ($err -match '--command')
+Assert "note does not list --name as dropped" ($err -notmatch '--name')
+Start-Sleep -Milliseconds 1000
+$windowsAfter = ([regex]::Matches((Get-List), '(?m)^\S.*window')).Count
+Assert "no second window opened ($windowsBefore -> $windowsAfter)" ($windowsAfter -eq $windowsBefore)
+
 "== teardown"
+Invoke-Cli "+close --target=t968pane" | Out-Null
 Invoke-Cli "+close --target=t135win" | Out-Null
 Stop-DebugGhoztty
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

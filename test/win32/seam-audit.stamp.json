@@ -1,10 +1,13 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-24T03:10:54-07:00",
-    "commit":  "884b7fe2a",
+    "generated":  "2026-09-24T04:11:52-07:00",
+    "commit":  "6ca29e2d5",
     "uncommitted":  [
-                        "test/win32/divergence-inventory.ps1"
+                        "src/apprt/win32/IpcHandlers.zig",
+                        "src/cli/new_window.zig",
+                        "src/cli/read.zig",
+                        "test/win32/ipc-target-exists-note.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -97,7 +100,7 @@
                   "src/apprt/win32/ipc_capture.zig":  "4d6c1c356c844d38fde23941fbe670ea16680d4d4d2ee5db08934434a217d26e",
                   "src/apprt/win32/ipc_hover.zig":  "07bbf74a9a035867d9843abcdf41c7c968b561c5868d6821ea149e613eced8be",
                   "src/apprt/win32/ipc_whats_new.zig":  "35f9a55aca347095990a162cba08e95edf95b3ff9440b04c9dd58370a58e1d10",
-                  "src/apprt/win32/IpcHandlers.zig":  "e7e534696673248b29d010f6e3e1c257e33e006c7e9544d5811da05d8dd0f822",
+                  "src/apprt/win32/IpcHandlers.zig":  "cfee61b78b3f9184e7c5abc7daa42a20036948538395b5c99891e8f89696551f",
                   "src/apprt/win32/IpcRegistry.zig":  "5ebe2322ff50416cd1b825989ab10e1d4563955f497a445e3e00ea7f4c42fef6",
                   "src/apprt/win32/IpcServer.zig":  "2d07c784b46762ef1205a8113f0fbc68d10ada6b06b907dd90b524204fcc0d56",
                   "src/apprt/win32/job_escape.zig":  "060f58a8a8739baf8246aaca8cf5d4a0e6113bfa69e981fdc2282ea8a060cb7e",
@@ -267,9 +270,9 @@
                   "src/cli/list_keybinds.zig":  "00a9740b9e968dd78928a83007c2304837257fd2a531a0f0a1ed53cc72e83838",
                   "src/cli/list_themes.zig":  "82c3da8189d052a5bee078a09fbf3070a5829d0eab3cb0a388f454a90ccd3d51",
                   "src/cli/new_remote_window.zig":  "077c333d863c8c130e7cb25d0083187c5e25aa15389a64ea5dfadc3839cc6090",
-                  "src/cli/new_window.zig":  "eb77d97c0c941c0c2aafbe4ea52a36d3764306f9501943f57866803700c74437",
+                  "src/cli/new_window.zig":  "987ee7271892207f4283065349a1919b26acc6feec2c342d3369ffd92f19fb1c",
                   "src/cli/Pager.zig":  "79147cd5cba83289e2f690cfbc1d1592f6b6cb3da0dfe4157f24995978be65f5",
-                  "src/cli/read.zig":  "cb655d5821e0f71e4dcddc0b0a5043f004a833548d148ca64b401d2e65b3e062",
+                  "src/cli/read.zig":  "fe842974cd323e35a69052789a02f968d092eff8477eac1426071f5eb93cf4e5",
                   "src/cli/rearrange.zig":  "c9acb9c8b5d3082feccc322a20cda3cea14cbca653a202d0b029a731cdf185ce",
                   "src/cli/reload.zig":  "5755d8fdc574f26b41cf39486b2e31502bc0ee938346c7bd337f40b985095ced",
                   "src/cli/rename.zig":  "d3cd394288ea21515ee0b30fcda6288cbb7e0a56f5a98808eb01ad54f30a18f9",
@@ -590,7 +593,7 @@
                   "test/win32/ipc-remote.ps1":  "0392ad4e1751b8f12a06ccc1b3bb4fc2cf9c29c923178435d98d1d00258ad2e7",
                   "test/win32/ipc-send-keys-fidelity.ps1":  "ecd1a63052e0a9c52fdb10003f817026c4b95acd8fe76b4e2cff8a57a1ff2fd8",
                   "test/win32/ipc-startup-latency.ps1":  "e05ebff757be728430c252c640fb5bd76cbd2842fbb4b5b572603e3d30daa828",
-                  "test/win32/ipc-target-exists-note.ps1":  "d87ed6391ccda8cc8c515b76c194272184bf57b7c80757ace1cf35a00c950bb2",
+                  "test/win32/ipc-target-exists-note.ps1":  "1a5e848d4ce47cace17947bf9a276b79ffdb978d56ea9488e323ebe1c0de70d3",
                   "test/win32/ipc-timeout.ps1":  "1cc28e2c148b1e65b8e4ec719f0cd1e22b936506a49c75581590da11692d5d30",
                   "test/win32/ipc-under-load.ps1":  "e086bb69c413c1cff080a5b54579d37c709e28c54749c00a3359bcb5fd60e6f1",
                   "test/win32/ipc-version.ps1":  "09d5d1b7a53c70ebe20b8eb2a4e36f51d7c3ed8d5d542e61ba9101acfa34e145",

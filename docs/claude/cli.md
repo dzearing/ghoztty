@@ -58,7 +58,7 @@ it after a bare `--`, which stops flag parsing.
 Create or focus a terminal window. Auto-launches Ghoztty if no instance is running.
 
 ```
-ghoztty +new-window --target=<name> --working-directory=<path> --command=<cmd> --view=<path-or-url-or-diff> --shell=<path> --title=<title> --split=right|down|left|up --split-command=<cmd> --no-activate -e <args...>
+ghoztty +new-window --target=<name> --name=<pane-name> --working-directory=<path> --command=<cmd> --view=<path-or-url-or-diff> --shell=<path> --title=<title> --split=right|down|left|up --split-command=<cmd> --no-activate -e <args...>
 ```
 
 - `--shell`: Shell to use for `--command`/`--split-command`, invoked with `-lic` so profile is loaded. Falls back to config `command-shell`, then `$SHELL`, then `/bin/zsh`.
@@ -489,6 +489,12 @@ ghoztty +reload --target=preview
 
 - `+new-window --target=<name>` registers a **window**
 - `+split --name=<name>` registers a **pane**
+- `+new-window --name=<name>` registers a **pane** too (T968): the window's
+  first pane, or with `--split` the inline split pane. It is idempotent like
+  `+split --name` — a live pane already under that name is focused instead of
+  a second window opening (unless `--target` is also given, which decides
+  first). It used to be accepted and silently dropped for a window without
+  `--split`, so the next `--target=<name>` answered `not found`.
 - `+split --target`, `+close --target`, and `+send-keys --target` reference either kind
 
 A window opened without an explicit `--target=` (Cmd-N, or a bare

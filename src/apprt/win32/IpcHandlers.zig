@@ -326,13 +326,40 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         }
     }
 
+    // T968: `--name` names a PANE (the first one, or the inline split's), and
+    // is idempotent the same way `+split --name` is — a live pane already
+    // under that name is focused rather than a second window opened beside
+    // it. `--target` decided first above, so this only answers when the
+    // caller named no window.
+    if (args.name) |name| if (args.target == null) {
+        if (app.ipcLookup(name)) |entry| {
+            if (!args.no_activate) focusTarget(entry);
+            var lost = args;
+            lost.name = null;
+            if (try verb_args.droppedOnExistingTarget(arena, lost)) |dropped| {
+                const note = try std.fmt.allocPrint(
+                    arena,
+                    "pane '{s}' already exists; focused it. Ignored: {s}. +close it first to recreate.",
+                    .{ name, dropped },
+                );
+                return try successResponse(ctx.alloc, "focused", note);
+            }
+            return try successResponse(ctx.alloc, "focused", null);
+        }
+    };
+
+    const first_pane_name = verb_args.newWindowFirstPaneName(args);
+
     // Environment for the first surface: --env flags plus the window/pane
-    // name vars the Mac injects for named windows.
+    // name vars the Mac injects for named windows. A `--name` for the first
+    // pane (T968) is its pane name; otherwise the window name doubles as it.
     var env: std.ArrayList(Surface.Overrides.EnvVar) = .empty;
     try env.appendSlice(arena, args.env);
     if (args.target) |t| {
         try env.append(arena, .{ .key = "GHOZTTY_WINDOW_NAME", .value = t });
-        try env.append(arena, .{ .key = "GHOZTTY_PANE_NAME", .value = t });
+    }
+    if (first_pane_name orelse args.target) |p| {
+        try env.append(arena, .{ .key = "GHOZTTY_PANE_NAME", .value = p });
     }
 
     // T374: `--view` makes the window's one pane a VIEWER, so none of the shell
@@ -409,6 +436,12 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         log.warn("IPC new-window failed err={}", .{err});
         return try errorResponse(ctx.alloc, "failed to create window", .{});
     };
+
+    // T968: register the first pane — terminal or viewer — under `--name`,
+    // so the next `--target=<name>` finds it.
+    if (first_pane_name) |n| {
+        if (window.tab_count > 0) app.ipcRegister(n, .{ .pane = window.tab_active_pane[0] }) catch {};
+    }
 
     // T92: an empty `--title=` means "no pin", not "pin empty".
     if (args.title) |title| {

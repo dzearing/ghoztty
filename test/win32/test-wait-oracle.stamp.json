@@ -1,11 +1,11 @@
 {
     "guard":  "test-wait-oracle",
     "script":  "test/win32/test-wait-oracle.ps1",
-    "generated":  "2026-09-24T00:25:18-07:00",
-    "commit":  "9b90bd36b",
+    "generated":  "2026-09-24T04:17:20-07:00",
+    "commit":  "6ca29e2d5",
     "uncommitted":  [
-                        "src/cli/send_keys.zig",
-                        "src/cli/verb_flags.zig"
+                        "src/cli/new_window.zig",
+                        "src/cli/read.zig"
                     ],
     "files":  {
                   "src/cli/action.zig":  "dedb0dfe145e8d39dfb53af30225e6c8a170a02e1d79a9c224de1779f0efb654",
@@ -28,9 +28,9 @@
                   "src/cli/list_keybinds.zig":  "00a9740b9e968dd78928a83007c2304837257fd2a531a0f0a1ed53cc72e83838",
                   "src/cli/list_themes.zig":  "82c3da8189d052a5bee078a09fbf3070a5829d0eab3cb0a388f454a90ccd3d51",
                   "src/cli/new_remote_window.zig":  "077c333d863c8c130e7cb25d0083187c5e25aa15389a64ea5dfadc3839cc6090",
-                  "src/cli/new_window.zig":  "eb77d97c0c941c0c2aafbe4ea52a36d3764306f9501943f57866803700c74437",
+                  "src/cli/new_window.zig":  "987ee7271892207f4283065349a1919b26acc6feec2c342d3369ffd92f19fb1c",
                   "src/cli/Pager.zig":  "79147cd5cba83289e2f690cfbc1d1592f6b6cb3da0dfe4157f24995978be65f5",
-                  "src/cli/read.zig":  "cb655d5821e0f71e4dcddc0b0a5043f004a833548d148ca64b401d2e65b3e062",
+                  "src/cli/read.zig":  "fe842974cd323e35a69052789a02f968d092eff8477eac1426071f5eb93cf4e5",
                   "src/cli/rearrange.zig":  "c9acb9c8b5d3082feccc322a20cda3cea14cbca653a202d0b029a731cdf185ce",
                   "src/cli/reload.zig":  "5755d8fdc574f26b41cf39486b2e31502bc0ee938346c7bd337f40b985095ced",
                   "src/cli/rename.zig":  "d3cd394288ea21515ee0b30fcda6288cbb7e0a56f5a98808eb01ad54f30a18f9",

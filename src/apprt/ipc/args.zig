@@ -259,6 +259,20 @@ pub fn viewConflictsWithCommand(args: VerbArgs) bool {
     return args.command != null or args.e_args.len > 0;
 }
 
+/// T968: the name `+new-window --name=` gives the window's FIRST pane, or null
+/// when `--name` belongs to something else. With `--split` the flag names the
+/// inline split pane (the pane the verb creates last), so the first pane gets
+/// no name of its own; without one, the first pane IS the pane the verb
+/// creates and the flag names it. Before this, a terminal window without
+/// `--split` dropped the name and the next `--target=<name>` answered "not
+/// found". Both frontends apply the same rule.
+pub fn newWindowFirstPaneName(args: VerbArgs) ?[]const u8 {
+    if (args.split_direction != null) return null;
+    const name = args.name orelse return null;
+    if (name.len == 0) return null;
+    return name;
+}
+
 /// T135: the flags `+new-window` silently ignores when `--target` names a
 /// window that already exists (the idempotent rule focuses it instead of
 /// recreating). Returns a comma-joined list of the flag names the caller
@@ -933,6 +947,34 @@ test "callerAnchorPane: a caller pane that no longer resolves falls back" {
     // nothing, which stays a hard error in the handler.
     const gone = try parseVerbArgs(testing.allocator, &[_][]const u8{"--caller-pane=PANE-GONE"});
     try testing.expect(callerAnchorPane(gone, {}, testPaneAlive) == null);
+}
+
+test "newWindowFirstPaneName: --name names the first pane unless --split takes it" {
+    var arena = testArena();
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // The T968 shape: no --split, so the first pane is the pane being named.
+    const bare = try parseVerbArgs(alloc, &[_][]const u8{"--name=worker"});
+    try testing.expectEqualStrings("worker", newWindowFirstPaneName(bare).?);
+
+    // Alongside --target the window keeps its name and the pane gets its own.
+    const both = try parseVerbArgs(alloc, &[_][]const u8{ "--target=main", "--name=worker" });
+    try testing.expectEqualStrings("worker", newWindowFirstPaneName(both).?);
+
+    // A viewer window's one pane is named the same way.
+    const viewer = try parseVerbArgs(alloc, &[_][]const u8{ "--view=README.md", "--name=doc" });
+    try testing.expectEqualStrings("doc", newWindowFirstPaneName(viewer).?);
+
+    // With --split the name belongs to the inline split pane instead.
+    const split = try parseVerbArgs(alloc, &[_][]const u8{ "--split=down", "--name=worker" });
+    try testing.expect(newWindowFirstPaneName(split) == null);
+
+    // No name, or an empty one, names nothing.
+    const none = try parseVerbArgs(alloc, &[_][]const u8{"--target=main"});
+    try testing.expect(newWindowFirstPaneName(none) == null);
+    const empty = try parseVerbArgs(alloc, &[_][]const u8{"--name="});
+    try testing.expect(newWindowFirstPaneName(empty) == null);
 }
 
 test "droppedOnExistingTarget: names exactly the flags the caller passed" {

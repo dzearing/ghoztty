@@ -209,6 +209,13 @@ pub const Options = struct {
 ///     ignored; a note naming the ignored flags is printed to stderr and
 ///     the exit code stays 0. Close the target first to recreate it.
 ///
+///   * `--name=<name>`: Register a PANE under a name, so `+send-keys`,
+///     `+read` and `+split --pane` can target it. Without `--split` it names
+///     the window's first pane; with `--split` it names the inline split
+///     pane. If a pane with this name already exists (and no `--target` was
+///     given), it is focused instead of opening a new window, with the same
+///     stderr note `--target` prints for ignored flags.
+///
 ///   * `--split=right|down|left|up`: After creating the new window, create a
 ///     split in the given direction.
 ///
