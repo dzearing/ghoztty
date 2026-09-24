@@ -33582,3 +33582,13 @@ at 0, and the full walk is ALL PASS (40). The unchanged package goes red on the
 new D3b check, as it should. One finding: deleting rows from a wixl package
 corrupts its string pool unless every string involved is pinned first. T1731
 walks the first published release that carries the fix.
+
+## 2026-09-24 - T1731: the published installer's Cancel is fixed where users get it
+
+`win-v1.36.37` is the first release built after T1730, on 3c88289dc. It was
+published by the evening run. `install-walkthrough.ps1` ran with no `-Msi`, so
+it downloaded that release and walked the real package. The result was ALL
+PASS (40). Pressing Cancel on the "already installed" prompt now ends at 1602,
+and no Error 1722 appears in the log. Repair ends at 0. The installed exe
+reports version 1.36.37. This closes the user's Cancel report (T1291/T1730)
+for the package people actually install, not only for a rewritten test copy.
