@@ -1,10 +1,11 @@
 {
     "guard":  "command-resolve",
     "script":  "test/win32/command-resolve-audit.ps1",
-    "generated":  "2026-09-24T01:01:01-07:00",
-    "commit":  "7b53a701c",
+    "generated":  "2026-09-24T02:33:28-07:00",
+    "commit":  "e4364e21b",
     "uncommitted":  [
-                        "test/win32/crash-stacks.ps1"
+                        "test/win32/crash-first-chance.ps1",
+                        "test/win32/floor-lane-verdict-detail.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -91,7 +92,7 @@
                   "test/win32/count-or-zero.ps1":  "569947be0dd433056f05a38d16eae3c81cf3a5a02e0710669458650ea6e5e0ad",
                   "test/win32/crash-databreak.ps1":  "fc8413850cab470389fc3933a2320e065ea3ae37cc1d0f6af2e13bdc3125b22f",
                   "test/win32/crash-diagnostics.ps1":  "c09555c22faad0c3914229d756c7df9423369c0e13b2f32422e04d3eeaed8aca",
-                  "test/win32/crash-first-chance.ps1":  "7436655aa57887f3a4fd32419dbde9d7669dca7d3d07727baaf85d6dd1fcfc03",
+                  "test/win32/crash-first-chance.ps1":  "87ef370d66a61a2689c51f3d677589eab39e4ac1def7230cc320d4d72ef50a7e",
                   "test/win32/crash-stacks.ps1":  "c1b73b66a3afbebf2c7aa7d22dd69f96f956ea978dbc0f0d97ac0dad76371b99",
                   "test/win32/daily-publish.ps1":  "9a9c9c698f7eedc50927536a038397281e4c4471d56c4f2e9fffbf8fe61c7512",
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
@@ -114,7 +115,7 @@
                   "test/win32/floor-lane-releasesafe.ps1":  "ecd2f326201dfeb9cd74d67f603ec6e06ea566182e28754acc08da1629784a84",
                   "test/win32/floor-lane-solo-confirm.ps1":  "2e7b8705867fd366ef614013d2cdd8e9e213136a4f8e9347ac049215944c0a50",
                   "test/win32/floor-lane-stall-sampling.ps1":  "1ffd9b4a466850f44fd49712ad9c82cf8a8e89ead999cea40903eb3ce0306418",
-                  "test/win32/floor-lane-verdict-detail.ps1":  "bd1896f4dd90f975a9d703e2565957dcd5e1553755d1ae1d3816c054090627f5",
+                  "test/win32/floor-lane-verdict-detail.ps1":  "a4553943b43928fed9dee5abbac068f64d8adef4c5feff05dbf8e761093faaa5",
                   "test/win32/floor-lane-webview-settle.ps1":  "d5cf22c7342c16a5bebc1a27d1f7d62e1c4dbe297fe2538e9542a7b3cfe8122b",
                   "test/win32/focus-defer.ps1":  "0781efdaa91cf1730f88acaec0143573697a9d4d305e4becdd08eab8774efafd",
                   "test/win32/focus-follows-mouse.ps1":  "09c5f9884b9c51bdb0d91321a12c0e8b8c554552434fd78f7b6267826caaa4e1",

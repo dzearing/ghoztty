@@ -1,14 +1,14 @@
 {
     "guard":  "lane-verdict-detail",
     "script":  "test/win32/floor-lane-verdict-detail.ps1",
-    "generated":  "2026-09-19T08:11:25-07:00",
-    "commit":  "6b453972b",
+    "generated":  "2026-09-24T02:03:18-07:00",
+    "commit":  "e4364e21b",
     "uncommitted":  [
                         "scripts/lib/LaneVerdict.ps1",
                         "test/win32/floor-lane-verdict-detail.ps1"
                     ],
     "files":  {
-                  "scripts/lib/LaneVerdict.ps1":  "bdb4b789b8f0f85521f01dcd2fb758be058ac9f5b5b39bb549d6d090d993e19c",
-                  "test/win32/floor-lane-verdict-detail.ps1":  "bd1896f4dd90f975a9d703e2565957dcd5e1553755d1ae1d3816c054090627f5"
+                  "scripts/lib/LaneVerdict.ps1":  "0bf9b8d3e6e15b3c0e6f2a3a87d7bd0ac6a6e3fe363ac55d0323cdc767718b0d",
+                  "test/win32/floor-lane-verdict-detail.ps1":  "a4553943b43928fed9dee5abbac068f64d8adef4c5feff05dbf8e761093faaa5"
               }
 }
