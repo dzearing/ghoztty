@@ -125,7 +125,11 @@ function Test-Port([int]$P) {
 
 $lock = $null
 try {
-    $lockArgs = @('status', '-Json')
+    # -StaleMinutes is passed through, not left to the lock's own 30m default:
+    # the watchdog passes its 45m, so without this a loop quiet for 30-45m
+    # (a turn waiting on a background floor run) read DOWN here while the
+    # watchdog, the thing that acts, logged it healthy (2026-09-23 18:37).
+    $lockArgs = @('status', '-Json', '-StaleMinutes', $StaleMinutes)
     if ($LockPath) { $lockArgs += @('-LockPath', $LockPath, '-NoPaneProbe') }
     $raw = & powershell -NoProfile -File (Join-Path $PSScriptRoot 'go-loop-lock.ps1') @lockArgs 2>$null
     if ($raw) { $lock = ($raw | Out-String | ConvertFrom-Json) }
