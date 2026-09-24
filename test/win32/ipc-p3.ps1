@@ -113,50 +113,62 @@ Start-Sleep -Seconds 2
 
 "== 1: +read echoes back known strings byte-accurate"
 [void](Ghoz @('+send-keys', '--target=p3a', 'echo P3-READ-MARKER', 'Enter'))
-Start-Sleep -Seconds 2
-$r = Ghoz @('+read', '--name=p3a', '--lines=5')
-Assert "read exit 0" ($r.ExitCode -eq 0)
-Assert "marker line exact" (($r.Output -split "`r?`n") -contains 'P3-READ-MARKER')
+# T1156: every effect below is POLLED for, bounded by Wait-FloorState's clock,
+# instead of read once after a fixed sleep that a slow box outruns.
+$script:p3Read = $null
+$markerSeen = Wait-FloorState 'the p3a echo marker' -NominalMs 2000 {
+    $script:p3Read = Ghoz @('+read', '--name=p3a', '--lines=5')
+    ($script:p3Read.ExitCode -eq 0) -and (($script:p3Read.Output -split "`r?`n") -contains 'P3-READ-MARKER')
+}
+Assert "read exit 0" ($script:p3Read.ExitCode -eq 0)
+Assert "marker line exact" $markerSeen
 
 "== 2: +read missing pane errors"
 $r = Ghoz @('+read', '--name=p3ghost')
 Assert "nonzero exit" ($r.ExitCode -ne 0)
 
 "== 3: +set-state states + aggregation + title suffix"
-[void](Ghoz @('+set-state', '--target=p3', '--state=busy'))
-Start-Sleep -Seconds 1
 # NOTE: debug builds append a " [DEBUG]" title marker after the activity
-# suffix (added 2026-07-13), so these anchors allow it.
-Assert "window busy suffix" ((Get-P3Title) -match '\(busy\)( \[DEBUG\])?$')
+# suffix (added 2026-07-13), so these anchors allow it. Each negative wait
+# below follows a positive one, so "not busy" cannot pass on a title that
+# simply has not changed yet.
+[void](Ghoz @('+set-state', '--target=p3', '--state=busy'))
+Assert "window busy suffix" (Wait-FloorState 'the busy title' -NominalMs 1000 { (Get-P3Title) -match '\(busy\)( \[DEBUG\])?$' })
 [void](Ghoz @('+set-state', '--target=p3a', '--state=needs_input'))
-Start-Sleep -Seconds 1
 # The title shows the HUMAN label: needs_input reads "(question)" (T465).
-Assert "needs_input outranks busy" ((Get-P3Title) -match '\(question\)( \[DEBUG\])?$')
+Assert "needs_input outranks busy" (Wait-FloorState 'the question title' -NominalMs 1000 { (Get-P3Title) -match '\(question\)( \[DEBUG\])?$' })
 [void](Ghoz @('+set-state', '--target=p3a', '--state=idle'))
-Start-Sleep -Seconds 1
-Assert "back to busy" ((Get-P3Title) -match '\(busy\)( \[DEBUG\])?$')
+Assert "back to busy" (Wait-FloorState 'the title back to busy' -NominalMs 1000 { (Get-P3Title) -match '\(busy\)( \[DEBUG\])?$' })
 [void](Ghoz @('+set-state', '--target=p3', '--state=idle'))
-Start-Sleep -Seconds 1
-Assert "suffix cleared" (-not ((Get-P3Title) -match '\(busy\)|\(question\)|\(needs_input\)'))
+Assert "suffix cleared" (Wait-FloorState 'the cleared title' -NominalMs 1000 { -not ((Get-P3Title) -match '\(busy\)|\(question\)|\(needs_input\)') })
 $r = Ghoz @('+set-state', '--target=p3', '--state=bogus')
 Assert "invalid state errors" ($r.ExitCode -ne 0)
 
 "== 4: OSC 7777 round-trip from inside a pane"
 $oscBusy = "powershell -NoProfile -Command `"[console]::Write([char]27+']7777;busy'+[char]7)`""
 [void](Ghoz @('+send-keys', '--target=p3a', $oscBusy, 'Enter'))
-Start-Sleep -Seconds 6
-Assert "OSC busy set" ((Get-P3Title) -match '\(busy\)( \[DEBUG\])?$')
+# T1156: the state arrives when the NESTED powershell has started, which is
+# the slowest thing in this script - a cold or loaded box takes longer than the
+# six seconds this used to sleep, and a late busy then also fails the idle read.
+Assert "OSC busy set" (Wait-FloorState 'the OSC busy title' -NominalMs 6000 { (Get-P3Title) -match '\(busy\)( \[DEBUG\])?$' })
 $oscIdle = "powershell -NoProfile -Command `"[console]::Write([char]27+']7777;idle'+[char]7)`""
 [void](Ghoz @('+send-keys', '--target=p3a', $oscIdle, 'Enter'))
-Start-Sleep -Seconds 6
-Assert "OSC idle cleared" (-not ((Get-P3Title) -match '\(busy\)'))
+Assert "OSC idle cleared" (Wait-FloorState 'the OSC idle title' -NominalMs 6000 { -not ((Get-P3Title) -match '\(busy\)') })
 
 "== 5: +rearrange rebuilds tree, closes unnamed pane"
 $layout = '{"direction":"horizontal","ratio":30,"left":{"pane":"p3a"},"right":{"pane":"p3b"}}'
 # PS 5.1 native-arg passing eats embedded quotes; escape them for Win32.
 $r = Ghoz @('+rearrange', '--target=p3', ('--layout=' + ($layout -replace '"','\"')))
 Assert "exit 0" ($r.ExitCode -eq 0)
-Start-Sleep -Seconds 2
+# Poll for the rebuilt tree on a raw read (a Need-Parsed failure inside a poll
+# would score once per attempt), then take the asserted snapshot through the
+# checked path.
+[void](Wait-FloorState 'the rearranged tree' -NominalMs 2000 {
+    $j = $null
+    try { $j = (Ghoz @('+list', '--json')).StdOut | ConvertFrom-Json } catch {}
+    $pw = $j.data.windows | Where-Object { $_.target -eq 'p3' }
+    ([regex]::Matches(($pw | ConvertTo-Json -Depth 15), '"type":\s*"leaf"')).Count -eq 2
+})
 $w = Get-P3Json
 $s = $w.tabs[0].splits
 Assert "2 leaves after" (([regex]::Matches(($w | ConvertTo-Json -Depth 15), '"type":\s*"leaf"')).Count -eq 2)

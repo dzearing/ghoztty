@@ -33491,3 +33491,32 @@ is T1696 (seat: mac).
 - 2026-09-24 T1003 done: after a late restore, the blank window the launch opened now closes by itself if nobody used it. When the local agent is not up in time, the launch opens one blank terminal and T976's deferred pass later rebuilds the real windows around it, which used to leave that blank window behind. "Used" is decided by input, not output, because every shell prints a prompt on its own. `termio.Termio.input_written` (shared core, atomic) is set in `queueMessage` for every `write_*` message, and keys, paste, mouse reports, IPC `+send-keys` and the IME path all go through there. `restore_placeholder.zig` holds the rule as a pure function: close only if the deferred pass rebuilt something and the window still has one tab and one initialized terminal pane with no input. The app remembers the window only when the blank startup window opens while the retry is armed (never a launch-command window), forgets it if it is destroyed first, and closes it with a real `Window.close()`. restore-late-agent ALL PASS (27): new C5/C6 show the untouched window closed; new phase D types into the blank window first and D5 shows it kept, which is the control for C5. Floor lib/none/win32/agent, P1-P3 and the harness floor (the persistence-flag audit caught an undeclared launch in phase D, now declared) PASS. Filed T1724 (seat mac): the Mac has no deferred restore at all.
 
 - 2026-09-24 T1149 done (no product defect): the Windows-key shortcuts work, and a test now presses them. The card was filed because three win-key chords did nothing under the off-desktop harness, and it asked whether the harness or the product was at fault. Neither: the 2026-08-23 probe pressed `win+ctrl+right` and `win+alt+left`, and `ghoztty +list-keybinds --default` shows that neither is bound on Windows. The real defaults are `super+ctrl+shift+arrow` (move divider), `super+ctrl+[`/`]` (previous/next pane) and `super+shift+up`/`down`. Pressed through the existing `SendChord` route, the faked VK_LWIN reaches `Surface.getModifiers` and all of them resolve. split-divider ALL PASS (85, new `T1149:` rows: one divider step right and back, focus next and previous, each with a built-in control because a press that does nothing leaves the divider or focus where the harness put it). The script's comment that said super could not be driven is corrected. Posted messages cannot show whether the Windows shell takes a chord first on a real keyboard, and `super+shift+up/down` is Windows' own stretch-window shortcut, so that is filed as T1725.
+
+## 2026-09-24 - T1156: the P3 floor waits for what it checks instead of guessing how long it takes
+
+The task's hypothesis was wrong. P3's one-off `2 FAILURE(S) (14 assertions
+passed)` on 2026-08-23 was not something P2 left behind. It was a fixed
+sleep. Section 4 typed a nested `powershell` into the pane to send an OSC
+busy/idle pair, and read the title six seconds later each time. A nested
+PowerShell that starts slower than that fails `OSC busy set`. The idle
+command then queues behind the late busy one, which fails `OSC idle cleared`.
+Everything else passes. That is the only single delay in the script that
+produces exactly that count, and delaying both typed commands by seven
+seconds reproduces it on demand. The overlap theory got its test and failed
+it: 10x P2 then P3 back to back and 5x P3 under 32 CPU busy-loops were all
+green.
+
+`Wait-FloorState` (test/win32/lib/FloorFixture.ps1) is the shared
+replacement: poll the observable state to a 30 s bound, never throw, and
+park a `NOTE SLOW STATE` when the state only arrived past the sleep it
+replaced, so a slow box stays visible. P3 sections 1, 3, 4 and 5 use it.
+P3 went from 31 s to 12 s, 20/20 green after P2, and the no-OSC negative
+control still scores red. A trap for anyone injecting delays the same way:
+`Start-Sleep 7` typed through `+send-keys` inside the quoted command arrives
+as `Start-Sleep7`, so use a space-free call.
+
+Also paid again: a 20x run started beside the harness-floor lane went red six
+times with `No running Ghoztty instance found`. `persistence-flag.ps1`
+launches and resets debug instances, and the lane scored it red for the
+same collision. The sequential-only rule holds. Filed T1727 (the same
+sleep-then-read shape in P1 and P2).

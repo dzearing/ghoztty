@@ -195,6 +195,52 @@ function Need-Listed {
 }
 
 <#
+Wait for an observable state, bounded by the clock rather than a guess (T1156).
+
+A fixed `Start-Sleep` between an action and the assertion that reads its effect
+is a bet on how long the box takes, and the bet is lost exactly when the box is
+slow. `ipc-p3.ps1` sent an OSC from a nested `powershell` in the pane, slept six
+seconds, read the title - and on 2026-08-23 scored
+`2 FAILURE(S) (14 assertions passed)` once and passed twice. That signature is
+what a nested PowerShell start slower than the sleep produces, and nothing else
+in the script does: the busy read comes too early, and the idle read then sees
+the late busy. Reproduced on demand by making both starts take seven seconds.
+
+Returns $true as soon as `$Condition` does, $false once `$TimeoutSec` has run
+out; it never throws, so it is the condition of an Assert and a genuinely
+missing state still scores the arm red (after the full bound, not after a
+guess). A state that only arrived after `$NominalMs` - the sleep this replaced -
+parks a `NOTE SLOW STATE:` that `Invoke-FloorBody` prints on every exit, for the
+same reason as T894's slow-setup note: a wait that quietly absorbs a slow box
+makes the next box that is slow for a REAL reason look exactly like a fast one.
+#>
+function Wait-FloorState {
+    param(
+        [Parameter(Mandatory = $true)][string]$What,
+        [Parameter(Mandatory = $true)][scriptblock]$Condition,
+        [int]$TimeoutSec = 30,
+        [int]$NominalMs = 2000,
+        [int]$PollMs = 250
+    )
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    do {
+        $ok = $false
+        # A setup failure raised inside the condition has already scored itself
+        # and must still stop the body; anything else is "not yet".
+        try { $ok = [bool](& $Condition) } catch { if ("$_" -eq $script:FloorSetupFail) { throw } }
+        if ($ok) {
+            $ms = $sw.ElapsedMilliseconds
+            if ($ms -gt $NominalMs) {
+                $script:FloorSetupNotes += "  NOTE SLOW STATE: $What settled after ${ms}ms (nominal ${NominalMs}ms)"
+            }
+            return $true
+        }
+        Start-Sleep -Milliseconds $PollMs
+    } while ($sw.Elapsed.TotalSeconds -lt $TimeoutSec)
+    return $false
+}
+
+<#
 Run the acceptance body, swallowing ONLY the setup sentinel. Anything else is
 re-thrown with its original error, so a real bug in a script still surfaces.
 #>

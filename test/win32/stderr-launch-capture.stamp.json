@@ -1,10 +1,10 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-24T08:49:18-07:00",
-    "commit":  "53e3dc063",
+    "generated":  "2026-09-24T09:38:52-07:00",
+    "commit":  "867ea0fdf",
     "uncommitted":  [
-                        "test/win32/split-divider.ps1"
+                        "test/win32/ipc-p3.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "8c1deebc52e7f8ec94ce24ba781512d3bda5240759151c0822d763b410b799f4",
@@ -160,7 +160,7 @@
                   "test/win32/ipc-machine-chooser.ps1":  "bbd575343ac0aa7e971f79bab1d59aed296ff72af2c400abcc93cbf335973d9f",
                   "test/win32/ipc-p1.ps1":  "a414e7de2771cec78fb8808095efa0240c43c77eb676d6294b8376253ef2f641",
                   "test/win32/ipc-p2.ps1":  "6c4936ffa14e56b5aaf8cb6da751fb423a2d13f3154e775f7e7692408cfe2ebf",
-                  "test/win32/ipc-p3.ps1":  "83380c11f4bdcad1291e85c138ea41a010bf946cc89c344a97c488dc9437d3ee",
+                  "test/win32/ipc-p3.ps1":  "2a547a5072718057f3f1d21d939867971e153782492bb36d3810fbee3f3d86a9",
                   "test/win32/ipc-read-race.ps1":  "ff6f89cab2e92dae0fa13e1ea2f9a89f2579175ddcc2b8b55c53b8b7f330bee6",
                   "test/win32/ipc-relay.ps1":  "5dbd86cb6959254935e7fb8bb1d96aeab2ed96b0634b10241693d06a35cf7c45",
                   "test/win32/ipc-remote.ps1":  "0392ad4e1751b8f12a06ccc1b3bb4fc2cf9c29c923178435d98d1d00258ad2e7",
