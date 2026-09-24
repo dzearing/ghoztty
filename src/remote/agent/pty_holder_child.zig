@@ -1114,6 +1114,12 @@ const win = struct {
             "session '{s}': {d} byte(s) of output were dropped from the holder's replay buffer while no agent was running",
             .{ opts.session_id, hello.start - opts.ack },
         );
+        // T970: the loss the gap above cannot show - bytes a previous owner had
+        // already received and not yet saved when the ring dropped them.
+        if (hello.dropped_unreleased > 0) log.warn(
+            "session '{s}': the holder has dropped {d} byte(s) of output an agent had received but not yet saved; a crash in those windows lost them",
+            .{ opts.session_id, hello.dropped_unreleased },
+        );
         return .{
             .child = self.child(),
             .info = .{

@@ -12,7 +12,9 @@
 #      (`pty_holder_child.open`, the one the agent uses) through the
 #      `session.Child` vtable: output to the sink, the spawn spec's forwarded
 #      `OPEN.env` reaching the shell, resize, the exit code via `tryWait`, and
-#      a terminate that leaves neither shell nor holder behind.
+#      a terminate that leaves neither shell nor holder behind. Since T970, an
+#      owner that never releases what it took is flooded past a 4 KB ring, and
+#      the drop must be logged by the holder and totalled in the next HELLO.
 #   B. Pipe security: a live holder's control pipe carries an owner-only DACL
 #      - every access rule on it names the current user, nobody else.
 #
@@ -86,6 +88,15 @@ Assert 'A14 production owner: forwarded OPEN.env reached the shell' ($joined -ma
 Assert 'A15 production owner: resize reaches the shell' ($joined -match 'ok - production owner: resize reaches the shell')
 Assert 'A16 production owner: exit code arrives via tryWait' ($joined -match 'ok - production owner: exit code via tryWait')
 Assert 'A17 production owner: terminate leaves no shell and no holder' (($joined -match 'ok - production owner: terminate leaves no shell') -and ($joined -match 'ok - production owner: terminate leaves no holder'))
+
+# T970: an owner that takes every byte and releases none, against a 4 KB ring.
+# The owner itself sees no gap, so the holder is the only witness: it must log
+# the drop and hand the running total to the next owner in HELLO.
+Assert 'A18 unreleased drop: the owner saw no gap (only the holder can see this loss)' ($joined -match 'ok - unreleased-drop: the owner saw no gap')
+Assert 'A19 unreleased drop: the next owner''s HELLO carries a non-zero total' (($joined -match 'ok - unreleased-drop: the next owner''s HELLO carries the total') -and ($joined -match 'ok - unreleased-drop: the total is the flood'))
+Assert 'A20 unreleased drop: the holder''s log names it' ($joined -match 'ok - unreleased-drop: the holder''s log names the drop')
+$t970 = @($smokeOut | Where-Object { $_ -match 'unreleased-drop: the (next owner|total)' })
+foreach ($l in $t970) { "    $l" }
 
 # --- Section B: the control pipe is owner-only ------------------------------
 #

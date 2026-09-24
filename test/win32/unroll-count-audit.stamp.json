@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-09-24T04:18:25-07:00",
-    "commit":  "6ca29e2d5",
+    "generated":  "2026-09-24T05:21:56-07:00",
+    "commit":  "689b1e267",
     "uncommitted":  [
-                        "test/win32/ipc-target-exists-note.ps1"
+                        "test/win32/pty-host.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -343,7 +343,7 @@
                   "test/win32/probe-topmost-restore.ps1":  "b2e3afe3d1e5db7cd3555160771e966e8e7c7d5260e1ca4f9fe2c304fd53540a",
                   "test/win32/profile-latency.ps1":  "ca0e6053bcf6bd4ea2de39f1f8aa6037405765ff41f58a35071eba89b21918b5",
                   "test/win32/pty-holder.ps1":  "ac9811305a50f2a86dca0af16b2725c8414ed78ebe26c84572ca6599326af88e",
-                  "test/win32/pty-host.ps1":  "96bf43d7747fa8f7f3ba2fe57b9d41fa9bf0df47e2577c332992d65b3c9a900b",
+                  "test/win32/pty-host.ps1":  "87026bc360b873c55bfae3fc3056f8590d75bde54c995a131e680b9e7e2c8f21",
                   "test/win32/rdp-session.ps1":  "b1fdd6d61b7163a275ed0145df904c5ded06f0e800ae30c2140c7c16ebe61b54",
                   "test/win32/readonly-badge.ps1":  "be8e9c5793795ff3502b077f674c531a510b2755819fbe989237897e6076ae61",
                   "test/win32/rearrange-desktop-drop.ps1":  "28050df206eef9bcd4c121958224e0c29d05e6b8b4c34cea17b1955ede2b93d8",

@@ -167,7 +167,16 @@ const win = struct {
         /// has. It is the number every leg downstream is bounded by, and
         /// without it a slow relay and a slow ConPTY read look identical.
         read_meter: relay_perf.Meter = .init("holder_read"),
+
+        /// T970: how much of `replay.dropped_unreleased` the log has already
+        /// named, and when. A pane that outruns its owner drops on every read,
+        /// so the log line is throttled rather than per-chunk.
+        drop_logged: u64 = 0,
+        drop_logged_ms: i64 = 0,
     };
+
+    /// Minimum spacing between two "dropped unreleased output" log lines.
+    const drop_log_interval_ms: i64 = 5_000;
 
     // MEASURED AND REJECTED (T1464): a one-millisecond coalescing wait here,
     // taken when the ring held less than 4 KiB, so a burst left with ~1,000 real
@@ -275,6 +284,7 @@ const win = struct {
             state.mutex.lock();
             const finished = state.exit_delivered;
             state.owner_connected = false;
+            state.replay.resetDelivered();
             state.last_disconnect_ms = std.time.milliTimestamp();
             state.mutex.unlock();
             if (finished) {
@@ -294,9 +304,24 @@ const win = struct {
         state.read_meter.wake();
         state.read_meter.frame(bytes.len);
         state.mutex.lock();
-        defer state.mutex.unlock();
         state.replay.append(bytes);
         state.cond.broadcast();
+        // T970: bytes the owner had taken but not released just fell out of the
+        // ring. Nothing downstream can see that - the owner already has them -
+        // so this is the only place it can be said.
+        const total = state.replay.dropped_unreleased;
+        const now = if (total > state.drop_logged) std.time.milliTimestamp() else 0;
+        const say = total > state.drop_logged and now - state.drop_logged_ms >= drop_log_interval_ms;
+        const fresh = total - state.drop_logged;
+        if (say) {
+            state.drop_logged = total;
+            state.drop_logged_ms = now;
+        }
+        state.mutex.unlock();
+        if (say) log.warn(
+            "holder dropped {d} byte(s) of output its owner had received but not yet saved ({d} total): an agent crash now could not recover them",
+            .{ fresh, total },
+        );
     }
 
     /// Reap the shell, then enforce the no-owner linger.
@@ -353,6 +378,7 @@ const win = struct {
             .end = state.replay.end,
             .stamp = opts.stamp,
             .session_id = opts.session_id,
+            .dropped_unreleased = state.replay.dropped_unreleased,
         };
         state.owner_connected = true;
         state.mutex.unlock();
@@ -446,6 +472,9 @@ const win = struct {
         var frame_buf: [prefix_len + 32 * 1024]u8 = undefined;
         const chunk = frame_buf[prefix_len..];
         var meter: relay_perf.Meter = .init("holder_out");
+        // End of what has actually reached this owner's pipe (T970). Not
+        // `start_from`: bytes below the ATTACH ack were never sent from here.
+        var written: u64 = 0;
         while (true) {
             meter.report();
             var send_n: usize = 0;
@@ -453,6 +482,9 @@ const win = struct {
             var exit_code: i64 = 0;
 
             state.mutex.lock();
+            // Published under the lock this loop takes anyway, rather than a
+            // second acquisition per frame on the relay's hot path (T1464).
+            state.replay.markDelivered(written);
             while (true) {
                 if (conn.closed) {
                     state.mutex.unlock();
@@ -497,6 +529,7 @@ const win = struct {
                 conn.stream.writeAll(frame_buf[0 .. prefix_len + send_n]) catch return;
                 meter.stop(io);
                 sent += send_n;
+                written = sent;
                 continue;
             }
 

@@ -4,7 +4,8 @@
 //! box what the unit lane cannot: ConPTY output flows, RESIZE reaches the
 //! shell, an owner disconnect + reconnect replays the gap without losing a
 //! byte, EXIT carries the shell's code, an ownerless holder is torn down by
-//! its Job Object when killed, and an owner dying never touches the shell.
+//! its Job Object when killed, an owner dying never touches the shell, and a
+//! drop of output the owner had but had not released is counted (T970).
 //!
 //! Output contract (consumed by `test\win32\pty-host.ps1`): one `ok - ...` /
 //! `FAIL - ...` line per check on STDOUT, and a final verdict line
@@ -278,6 +279,7 @@ const win = struct {
         try scenarioLifecycle(alloc, self_exe);
         try scenarioJobKill(alloc, self_exe);
         try scenarioProductionOwner(alloc);
+        try scenarioUnreleasedDrop(alloc, self_exe);
 
         if (failures == 0) {
             say("PTY-HOST SMOKE: ALL PASS", .{});
@@ -489,5 +491,119 @@ const win = struct {
             "job-kill: killing the holder terminates the shell subtree",
             .{},
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // T970 — a drop of output the owner HAD but had not released is counted
+    // -------------------------------------------------------------------------
+
+    /// Everything a child writes to stderr, drained on its own thread so the
+    /// child can never block on a full pipe.
+    const StderrTap = struct {
+        alloc: Allocator,
+        file: std.fs.File,
+        mutex: std.Thread.Mutex = .{},
+        buf: std.ArrayList(u8) = .empty,
+
+        fn pump(self: *StderrTap) void {
+            var chunk: [4096]u8 = undefined;
+            while (true) {
+                const n = self.file.read(&chunk) catch 0;
+                if (n == 0) return;
+                self.mutex.lock();
+                self.buf.appendSlice(self.alloc, chunk[0..n]) catch {};
+                self.mutex.unlock();
+            }
+        }
+
+        fn has(self: *StderrTap, needle: []const u8, ms: u64) bool {
+            var waited: u64 = 0;
+            while (true) : (waited += 100) {
+                self.mutex.lock();
+                const found = std.mem.indexOf(u8, self.buf.items, needle) != null;
+                self.mutex.unlock();
+                if (found or waited >= ms) return found;
+                std.Thread.sleep(100 * std.time.ns_per_ms);
+            }
+        }
+    };
+
+    /// The owner takes every byte and releases none — exactly an owner whose
+    /// durability gate (T911) is waiting on a snapshot — while the shell prints
+    /// far more than the holder retains. Nothing looks wrong from the owner's
+    /// end (no gap: it already has every byte), so the holder is the only party
+    /// that can say those bytes left the recoverable window. It must say so in
+    /// its log, and the next owner's HELLO must carry the total.
+    fn scenarioUnreleasedDrop(alloc: Allocator, self_exe: []const u8) !void {
+        var sid_buf: [64]u8 = undefined;
+        const sid = try std.fmt.bufPrint(&sid_buf, "smoke-{d}-d", .{GetCurrentProcessId()});
+        const pipe_name = try pty_host.defaultPipeName(alloc, sid);
+        defer alloc.free(pipe_name);
+
+        // The smallest ring the holder accepts, and a shell named outright so
+        // the flood below is cmd syntax whatever %COMSPEC% says.
+        var holder = std.process.Child.init(&.{
+            self_exe,         "--pty-host",
+            "--session-id",   sid,
+            "--replay-bytes", "4096",
+            "--shell",        "C:\\Windows\\System32\\cmd.exe",
+        }, alloc);
+        holder.stdin_behavior = .Ignore;
+        holder.stdout_behavior = .Ignore;
+        holder.stderr_behavior = .Pipe;
+        try holder.spawn();
+        // The tap owns the read end from here, so `wait`/`kill` cannot close it
+        // under the reader thread.
+        var tap: StderrTap = .{ .alloc = alloc, .file = holder.stderr.? };
+        holder.stderr = null;
+        defer tap.buf.deinit(alloc);
+        const tap_thread = std.Thread.spawn(.{}, StderrTap.pump, .{&tap}) catch |err| {
+            _ = holder.kill() catch {};
+            tap.file.close();
+            return err;
+        };
+        var holder_done = false;
+        // Order matters: the holder must be gone before the join (its exit is
+        // what ends the reader), and the join before the handle closes.
+        defer {
+            if (!holder_done) _ = holder.kill() catch {};
+            tap_thread.join();
+            tap.file.close();
+        }
+
+        var own = try Owner.connect(alloc, pipe_name, 0);
+        check(own.hello.dropped_unreleased == 0, "unreleased-drop: a fresh holder reports 0 dropped ({d})", .{own.hello.dropped_unreleased});
+
+        // ~50 KB of lines into a 4 KB ring, read as fast as it comes and never
+        // ACKed. The last line is assembled from two halves so the echo of the
+        // command itself cannot satisfy the wait.
+        try own.sendInput("for /L %i in (1,1,700) do @echo T970-FILL-%i-..................................................\r\n");
+        try own.sendInput("echo T970-FLOOD-^DONE\r\n");
+        check(try own.pumpUntil("T970-FLOOD-DONE"), "unreleased-drop: the flood arrived ({d} bytes taken, none released)", .{own.received});
+        check(own.contiguous, "unreleased-drop: the owner saw no gap (it had every byte, which is why nobody else can see this loss)", .{});
+        const taken = own.received;
+        own.deinit();
+
+        // The next owner is told.
+        var own2 = try Owner.connect(alloc, pipe_name, taken);
+        const dropped = own2.hello.dropped_unreleased;
+        check(dropped > 0, "unreleased-drop: the next owner's HELLO carries the total ({d} bytes)", .{dropped});
+        check(
+            dropped + 4096 >= taken / 2 and dropped <= own2.hello.end,
+            "unreleased-drop: the total is the flood, not noise ({d} of {d} taken)",
+            .{ dropped, taken },
+        );
+        check(
+            tap.has("had received but not yet saved", 5_000),
+            "unreleased-drop: the holder's log names the drop",
+            .{},
+        );
+
+        try own2.sendInput("exit 0\r\n");
+        _ = try own2.pumpUntilExit();
+        own2.deinit();
+        check(waitHolderExit(&holder, 10_000), "unreleased-drop: holder exits after EXIT", .{});
+        holder_done = true;
+        _ = holder.wait() catch {};
     }
 };

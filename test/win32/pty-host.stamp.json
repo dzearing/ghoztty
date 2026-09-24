@@ -1,16 +1,18 @@
 {
     "guard":  "pty-host",
     "script":  "test/win32/pty-host.ps1",
-    "generated":  "2026-09-15T16:54:46-07:00",
-    "commit":  "250ff8fdb",
+    "generated":  "2026-09-24T04:38:22-07:00",
+    "commit":  "689b1e267",
     "uncommitted":  [
                         "src/remote/agent/pty_host.zig",
+                        "src/remote/agent/pty_host_proto.zig",
+                        "src/remote/agent/pty_host_smoke.zig",
                         "test/win32/pty-host.ps1"
                     ],
     "files":  {
-                  "src/remote/agent/pty_host.zig":  "3c39bc56dd8af4d50f1a214b11936899389c007dca449e2e5f0aff971d858e4d",
-                  "src/remote/agent/pty_host_proto.zig":  "5ac87489e712361e3dce7b83695385130be5c9fa258ccf94f10e86ac762bbbb2",
-                  "src/remote/agent/pty_host_smoke.zig":  "daaed0c30fc9224f48488e2fd4af9e753a2ae2efaf55f29a6d255112071b14b3",
-                  "test/win32/pty-host.ps1":  "96bf43d7747fa8f7f3ba2fe57b9d41fa9bf0df47e2577c332992d65b3c9a900b"
+                  "src/remote/agent/pty_host.zig":  "3d8487a37eb3a3fb8155d9520d72186f63ca830385a4ef5c91b7132e897a5d8b",
+                  "src/remote/agent/pty_host_proto.zig":  "a8ef76003f78d212f41503343106f5bbe6ec1ce38fbf4c661c545e8a4d6babd3",
+                  "src/remote/agent/pty_host_smoke.zig":  "c1957fde848c92e60f6ea7080371e4eed0f590b7f9dd81339d5eca96d3b49315",
+                  "test/win32/pty-host.ps1":  "87026bc360b873c55bfae3fc3056f8590d75bde54c995a131e680b9e7e2c8f21"
               }
 }

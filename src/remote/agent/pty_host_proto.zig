@@ -101,12 +101,17 @@ pub const Hello = struct {
     /// Holder build stamp (the agent build stamp of the binary serving).
     stamp: []const u8,
     session_id: []const u8,
+    /// Running total of bytes the ring dropped AFTER handing them to an owner
+    /// that had not yet released them (T970) - see
+    /// `ReplayBuffer.dropped_unreleased`. Additive trailing field: a holder
+    /// that predates it sends none, and that decodes as 0.
+    dropped_unreleased: u64 = 0,
 
     pub fn encode(self: Hello, alloc: Allocator) ![]u8 {
         if (self.stamp.len > std.math.maxInt(u16)) return Error.Malformed;
         if (self.session_id.len > std.math.maxInt(u16)) return Error.Malformed;
         const fixed = 2 + 1 + 8 + 4 + 8 + 8;
-        const n = fixed + 2 + self.stamp.len + 2 + self.session_id.len;
+        const n = fixed + 2 + self.stamp.len + 2 + self.session_id.len + 8;
         const buf = try alloc.alloc(u8, n);
         var w: Writer = .{ .buf = buf };
         w.int(u16, self.version);
@@ -117,6 +122,7 @@ pub const Hello = struct {
         w.int(u64, self.end);
         w.str(self.stamp);
         w.str(self.session_id);
+        w.int(u64, self.dropped_unreleased);
         std.debug.assert(w.pos == n);
         return buf;
     }
@@ -131,6 +137,9 @@ pub const Hello = struct {
         const end = try r.int(u64);
         const stamp = try r.str();
         const session_id = try r.str();
+        // Optional trailer (T970): absent from an older holder, and a short
+        // remainder is some newer peer's bytes - both read as 0.
+        const dropped_unreleased: u64 = r.int(u64) catch 0;
         return .{
             .version = version,
             .exited = (flags & 1) != 0,
@@ -140,6 +149,7 @@ pub const Hello = struct {
             .end = end,
             .stamp = stamp,
             .session_id = session_id,
+            .dropped_unreleased = dropped_unreleased,
         };
     }
 };
@@ -316,12 +326,30 @@ pub fn frameHeader(t: FrameType, len: u32, buf: *[header_len]u8) void {
 /// ring is full the OLDEST bytes are dropped (`start` advances) — the pty
 /// reader must never stall on a slow/absent owner. `ackTo` releases bytes the
 /// owner has confirmed. Not thread-safe (callers hold the holder's state lock).
+///
+/// Everything retained is un-released by construction (`ackTo` advances
+/// `start`), so an overflow drop always costs something. Two different costs
+/// hide behind it (T970), split at `delivered`:
+///
+///   - below `delivered`: the owner already HAS these bytes, so nothing looks
+///     wrong from either end - but it had not released them, so they were the
+///     stretch a crash was meant to recover. Counted in `dropped_unreleased`,
+///     because nobody else can see it.
+///   - at or above `delivered`: the owner never got them; its next OUTPUT frame
+///     starts past what it expected, and the owner reports that gap itself.
 pub const ReplayBuffer = struct {
     data: []u8,
     /// Oldest retained offset.
     start: u64 = 0,
     /// Next offset to be assigned (== total bytes ever appended).
     end: u64 = 0,
+    /// High-water mark of bytes handed to the CURRENT owner (`markDelivered`).
+    /// Reset when that owner goes away (`resetDelivered`): a drop with nobody
+    /// attached surfaces as the next owner's replay gap instead.
+    delivered: u64 = 0,
+    /// Running total of bytes dropped from `[start, delivered)`: held by a live
+    /// owner, not yet released, and no longer recoverable from here.
+    dropped_unreleased: u64 = 0,
 
     pub fn init(alloc: Allocator, capacity: usize) !ReplayBuffer {
         std.debug.assert(capacity > 0);
@@ -340,6 +368,8 @@ pub const ReplayBuffer = struct {
 
     pub fn append(self: *ReplayBuffer, bytes: []const u8) void {
         const cap = self.data.len;
+        const old_start = self.start;
+        defer self.countDrop(old_start);
         // A chunk at least as large as the ring replaces its entire contents;
         // only the last `cap` bytes are retainable.
         var src = bytes;
@@ -355,6 +385,26 @@ pub const ReplayBuffer = struct {
         }
         self.end += src.len;
         if (self.end - self.start > cap) self.start = self.end - cap;
+    }
+
+    /// An append dropped `[old_start, start)`; charge the part the owner had
+    /// already been handed. A chunk larger than the ring skips only bytes at or
+    /// above the old `end`, so it can never skip a delivered one.
+    fn countDrop(self: *ReplayBuffer, old_start: u64) void {
+        if (self.start == old_start) return;
+        const hi = @min(@max(self.delivered, old_start), self.start);
+        self.dropped_unreleased += hi - old_start;
+    }
+
+    /// The current owner has been sent everything below `offset`. Monotonic
+    /// and clamped to `end`, like `ackTo`.
+    pub fn markDelivered(self: *ReplayBuffer, offset: u64) void {
+        self.delivered = @max(self.delivered, @min(offset, self.end));
+    }
+
+    /// The owner that was receiving is gone.
+    pub fn resetDelivered(self: *ReplayBuffer) void {
+        self.delivered = 0;
     }
 
     /// Owner confirmed receipt through `offset`: drop retained bytes below it.
@@ -485,11 +535,87 @@ test "hello: encode/decode round-trip, exited flag, trailing bytes ignored" {
     const dec2 = try Hello.decode(padded);
     try testing.expectEqualStrings("sess-01", dec2.session_id);
 
-    // Truncation anywhere is Malformed, never a crash.
+    // Truncation anywhere in the v1 layout is Malformed, never a crash. (The
+    // T970 trailer after it is optional; its own test covers that.)
+    const v1_len = enc.len - 8;
     var i: usize = 0;
-    while (i < enc.len) : (i += 1) {
+    while (i < v1_len) : (i += 1) {
         try testing.expectError(Error.Malformed, Hello.decode(enc[0..i]));
     }
+}
+
+test "T970: hello carries the dropped-unreleased total, and an older holder's HELLO reads as 0" {
+    const h: Hello = .{
+        .version = 1,
+        .exited = false,
+        .exit_code = 0,
+        .shell_pid = 1,
+        .start = 10,
+        .end = 20,
+        .stamp = "s",
+        .session_id = "x",
+        .dropped_unreleased = 123_456,
+    };
+    const enc = try h.encode(testing.allocator);
+    defer testing.allocator.free(enc);
+    try testing.expectEqual(@as(u64, 123_456), (try Hello.decode(enc)).dropped_unreleased);
+
+    // A holder built before T970 stops at session_id.
+    const old = try Hello.decode(enc[0 .. enc.len - 8]);
+    try testing.expectEqual(@as(u64, 0), old.dropped_unreleased);
+    try testing.expectEqualStrings("x", old.session_id);
+    // A short trailer is someone else's bytes, not a half-read count.
+    try testing.expectEqual(@as(u64, 0), (try Hello.decode(enc[0 .. enc.len - 3])).dropped_unreleased);
+}
+
+test "T970: a drop is charged to the owner only for bytes it was already handed" {
+    var rb = try ReplayBuffer.init(testing.allocator, 8);
+    defer rb.deinit(testing.allocator);
+
+    // No owner has taken anything: an overflow is the NEXT owner's replay gap,
+    // which it reports itself - not a durability loss counted here.
+    rb.append("abcdefgh");
+    rb.append("ij"); // drops [0,2)
+    try testing.expectEqual(@as(u64, 2), rb.start);
+    try testing.expectEqual(@as(u64, 0), rb.dropped_unreleased);
+
+    // The owner takes through 7 and releases nothing; the ring drops [2,5),
+    // all of it already delivered.
+    rb.markDelivered(7);
+    rb.append("klm");
+    try testing.expectEqual(@as(u64, 5), rb.start);
+    try testing.expectEqual(@as(u64, 3), rb.dropped_unreleased);
+
+    // A drop that straddles the mark: [5,9) dropped, only [5,7) was held.
+    rb.append("nopq");
+    try testing.expectEqual(@as(u64, 9), rb.start);
+    try testing.expectEqual(@as(u64, 5), rb.dropped_unreleased);
+
+    // Released bytes leave by ACK, not by drop: nothing to charge.
+    rb.markDelivered(rb.end);
+    rb.ackTo(rb.end);
+    rb.append("rstuvwxy"); // exactly fills an empty ring
+    try testing.expectEqual(@as(u64, 5), rb.dropped_unreleased);
+
+    // Owner gone: its mark no longer counts.
+    rb.markDelivered(rb.end);
+    rb.resetDelivered();
+    rb.append("z");
+    try testing.expectEqual(@as(u64, 5), rb.dropped_unreleased);
+
+    // A chunk bigger than the ring: of the dropped stretch, only what the
+    // (new) owner already had is charged.
+    rb.markDelivered(rb.start + 2);
+    const before = rb.dropped_unreleased;
+    rb.append("0123456789ABCDEF");
+    try testing.expectEqual(before + 2, rb.dropped_unreleased);
+
+    // markDelivered is monotonic and clamped to end.
+    const mark = rb.delivered;
+    rb.markDelivered(1);
+    try testing.expectEqual(mark, rb.delivered);
+    rb.markDelivered(rb.end + 100);
+    try testing.expectEqual(rb.end, rb.delivered);
 }
 
 test "attach/ack/resize/exit/output: fixed-layout round-trips" {
