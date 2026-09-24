@@ -378,3 +378,12 @@ as the digest that showed them.
 - Tell me how the app closed last time (new angle on crash-restore: quit / crash / killed / vanished, named on next launch)
 - A day-long soak before every release (hours of real use on the release build; a silent disappearance holds the release)
 - Rehearse the restart you are relying on (standing quit/relaunch check that every window and kept session returns, including one opened in the first second)
+
+## 2026-09-24
+
+- Mark the spot where output was lost (a visible scrollback line where the session keeper dropped unsaved output, with how much)
+- A feedback draft that survives (unsent feedback text restored after a pane close, restart or crash)
+- Hand this to the agent next door (new angle on the select-and-act toolbar: selected output lands quoted in the adjacent feedback/agent pane)
+- See where a link goes before you click it (hover preview of a viewer link's destination)
+- Spell-check in the feedback box (Windows spell-checker underlines and fixes in the web composer)
+- A driver reset you do not see (keep the last good frame on screen while the drawing surface rebuilds)
