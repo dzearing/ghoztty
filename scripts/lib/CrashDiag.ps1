@@ -217,6 +217,54 @@ function Get-CrashOccurrenceLine {
     return ''
 }
 
+function Test-LaneTestBinaryCrash {
+    <#
+    .SYNOPSIS
+        Did one of OUR test binaries die during this lane? floor-lane's CRASH
+        verdict (T955).
+    .DESCRIPTION
+        The same two pieces of evidence the soak counts a crash round by (T877),
+        so the lane word and the soak's tally cannot disagree about one run:
+
+          - an `Application Error` record naming a test binary since the lane
+            started (the condition Invoke-LaneCrashCatch already gates on), or
+          - a line in the lane log that Get-CrashOccurrenceLine calls an
+            occurrence (zig's truncated `exited with code N` of a fatal
+            NTSTATUS).
+
+        A compiler crash is never a test-binary crash: T451's verdict owns that
+        case, and its retry policy keys on the lane still reading FAIL. A test
+        crash in the same window vetoes the compiler verdict upstream, so the
+        two cannot both hold.
+    .PARAMETER Crashes
+        The crash records to judge. Defaults to the Application log since
+        -Since; tests pass planted records.
+    #>
+    param(
+        [Parameter(Mandatory)][datetime]$Since,
+        [string]$LogPath,
+        [object]$CompilerCrash,
+        [string[]]$ExeNames = $script:CRASHDIAG_TEST_EXES,
+        [AllowNull()][AllowEmptyCollection()][object[]]$Crashes
+    )
+
+    if ($CompilerCrash -and $CompilerCrash.IsCompilerCrash) { return $false }
+
+    if (-not $PSBoundParameters.ContainsKey('Crashes')) { $Crashes = @(Get-ProcessCrashEvent -Since $Since) }
+    foreach ($c in @($Crashes)) {
+        if ($c -and $ExeNames -contains $c.App) { return $true }
+    }
+
+    if ($LogPath -and (Test-Path -LiteralPath $LogPath)) {
+        # Only the occurrence shapes can ever match, so filter before handing a
+        # log of thousands of test lines to the classifier.
+        $hits = @(Select-String -LiteralPath $LogPath -ErrorAction SilentlyContinue `
+                -Pattern '^\s*CRASH\s+\d', 'exited with (?:error )?code' | ForEach-Object { $_.Line })
+        if ($hits.Count -gt 0 -and (Get-CrashOccurrenceLine -Lines $hits -ExeNames $ExeNames)) { return $true }
+    }
+    return $false
+}
+
 function Write-CrashDiagnostic {
     <#
     .SYNOPSIS

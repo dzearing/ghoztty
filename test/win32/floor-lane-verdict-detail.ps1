@@ -17,7 +17,9 @@
   are the wiring, including a REAL red run driven through `-Command`, whose last
   few lines are then checked the way a context-rule caller would keep them;
   arms 12-19 do both halves again for a STALL, ending on a REAL wedge staged
-  with `waitfor` on a signal that never arrives.
+  with `waitfor` on a signal that never arrives. Arms 28-37 hold the CRASH
+  verdict (T955): a lane whose test binary died says CRASH, not FAIL, in the
+  LANE line and the summary alike, and still exits 1.
 
   Prints a single ALL PASS / N FAILURE(S) line, like every other script here.
 
@@ -112,7 +114,7 @@ try {
 
     # A command that fails and writes an `error:` line: the cheapest real red
     # lane there is, and the one shape a harness can stage deterministically.
-    $cmd = 'echo error: staged red for T776 verdict detail && exit 1'
+    $cmd = '(echo error: staged red for T776 verdict detail&& exit 1)'
     $out = & powershell -NoProfile -ExecutionPolicy Bypass -File $floor `
         -Command $cmd -MinFreeGB 0 -NoCatch 2>&1 |
         ForEach-Object { $_.ToString() }
@@ -283,6 +285,72 @@ try {
     )
     Check 'a log with no misattribution is formatted exactly as it was before' `
         ((($plain -join "`n")) -eq ($expected -join "`n")) ($plain -join "`n")
+
+    # ---- arms 28-37: a crashed test binary is CRASH, not FAIL (T955) --------
+
+    # The pure classifier, against planted crash records, so each rule is held
+    # without waiting on Windows Error Reporting.
+    . (Join-Path $RepoRoot 'scripts\lib\CrashDiag.ps1')
+    $since = (Get-Date).AddMinutes(-1)
+    $ours = [pscustomobject]@{ App = 'ghostty-test.exe' }
+    $zig = [pscustomobject]@{ App = 'zig.exe' }
+    $foreign = [pscustomobject]@{ App = 'HxTsr.exe' }
+    Check 'a crash record naming one of our test binaries is a CRASH' `
+        (Test-LaneTestBinaryCrash -Since $since -Crashes @($ours))
+    Check 'somebody else crashing in the same window is not' `
+        (-not (Test-LaneTestBinaryCrash -Since $since -Crashes @($foreign)))
+    Check 'a crashed compiler alone is not a test-binary crash' `
+        (-not (Test-LaneTestBinaryCrash -Since $since -Crashes @($zig)))
+    Check 'no record and no log is not a crash' `
+        (-not (Test-LaneTestBinaryCrash -Since $since -Crashes @()))
+    Check 'a T451 compiler-crash verdict keeps the lane FAIL, so its retry still keys' `
+        (-not (Test-LaneTestBinaryCrash -Since $since -Crashes @($ours) `
+                -CompilerCrash ([pscustomobject]@{ IsCompilerCrash = $true })))
+    Check 'a caller-extended test-binary list is honoured' `
+        (Test-LaneTestBinaryCrash -Since $since -Crashes @([pscustomobject]@{ App = 'fixture-t955.exe' }) `
+            -ExeNames @('fixture-t955.exe'))
+
+    # The 2026-08-15 shape, from the log alone: zig's truncated `code 3` is the
+    # low byte of a breakpoint abort, i.e. the test binary died.
+    $crashLog = Join-Path $Sandbox 'none-crash.log'
+    @(
+        'install zig build',
+        "error: while executing test 'terminal.Screen.test.resize', the following test command failed:",
+        'error: the following command exited with error code 3:'
+    ) | Set-Content -LiteralPath $crashLog -Encoding ascii
+    Check 'the 2026-08-15 log shape is a CRASH with no crash record at all' `
+        (Test-LaneTestBinaryCrash -Since $since -Crashes @() -LogPath $crashLog)
+    Check 'a plain red log (exit code 1) is not' `
+        (-not (Test-LaneTestBinaryCrash -Since $since -Crashes @() -LogPath $plainLog))
+
+    # The verdict block gives the new word its own meaning.
+    $crashBlock = @(Format-FloorFailureDetail -Details @(
+            Get-LaneFailureDetail -LaneName 'none' -LogPath $crashLog -Result 'CRASH')) -join "`n"
+    Check 'a CRASH block says a test binary died, not that the lane was red' `
+        ($crashBlock -match 'lane none: CRASH - ' -and $crashBlock -match 'A TEST BINARY DIED') $crashBlock
+
+    # The wiring, on a REAL staged run: the transcript shape of 2026-08-15,
+    # driven through -Command. The parentheses are load-bearing: floor-lane
+    # appends `> log` to the command, and without the group that redirect binds
+    # to `exit 1` alone, so the echo never reaches the log it is staging. It is the same staged-lane mechanism arm 10
+    # uses, so the positive and the negative control differ only in the log.
+    $crashCmd = '(echo error: the following command exited with error code 3:&& exit 1)'
+    $crashOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $floor `
+        -Command $crashCmd -MinFreeGB 0 -MinCommitFreeGB 0 -NoCatch 2>&1 |
+        ForEach-Object { $_.ToString() }
+    $crashCode = $LASTEXITCODE
+    $crashText = $crashOut -join "`n"
+    Check 'a staged test-binary death reports LANE command CRASH' `
+        ($crashText -match 'LANE command CRASH in ') $crashText
+    Check 'and its summary says CRASH, so a pasted line is unambiguous' `
+        ($crashText -match 'FLOOR SUMMARY: command=CRASH') $crashText
+    Check 'and there is ONE verdict line, not a FAIL line corrected later' `
+        ($crashText -notmatch 'LANE command FAIL') $crashText
+    Check 'a CRASH exits 1, the same code FAIL always has' ($crashCode -eq 1) "exit=$crashCode"
+    # The negative control: arm 10's plain red run, read for the same words.
+    $failText = $out -join "`n"
+    Check 'a genuinely red lane still reads LANE command FAIL' `
+        ($failText -match 'LANE command FAIL in ' -and $failText -notmatch 'LANE command CRASH|=CRASH') $failText
 
     Complete-TestBody  # T1039: the run reached the end of its body
 }

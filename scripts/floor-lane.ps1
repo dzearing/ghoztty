@@ -28,6 +28,10 @@
       * On a wedge (or the wall-clock cap) it dumps a diagnostic FIRST -- the
         process tree with CPU times, every thread's wait reason, any WebView2
         hosts, and the log tail -- and only then kills the tree.
+      * It tells a CRASHED lane from a red one (T955): when one of our test
+        binaries died, the verdict word is CRASH rather than FAIL, in the
+        `LANE` line and the `FLOOR SUMMARY` both. It exits 1 exactly as FAIL
+        does -- the word is new, the exit contract is not.
       * It sweeps leaked `msedgewebview2.exe` processes, which are invisible to
         a sweep that filters on zig-out/zig-cache paths (that exe lives under
         Program Files). Match on `--webview-exe-name=` and on the private
@@ -280,6 +284,9 @@ $ErrorActionPreference = 'Stop'
 
 # Exit codes, named so a caller does not have to guess.
 $EXIT_PASS = 0
+# FAIL and CRASH share this code (T955). CRASH is a new WORD - a test binary
+# died, as opposed to a test that answered wrong - but the exit code is a
+# compatibility surface, and every caller already reads 1 as "red".
 $EXIT_FAIL = 1
 $EXIT_STALL = 2
 # How much of a watchdog diagnostic the verdict replays (T815). 60 lines carries
@@ -842,7 +849,9 @@ function Invoke-Lane {
         if ($lines.Count -gt 0) { $tail = $lines[-1] }
     }
 
-    Write-Host "LANE $Name $result in ${elapsed}s (leaked webview hosts swept: $leaked; leaked test binaries: $leakedTests) | $tail"
+    # The verdict line is written AFTER the failure evidence below (T955), not
+    # before it: the crash diagnostics are what decide between FAIL and CRASH,
+    # and a line printed ahead of them could only ever say FAIL.
     if ($result -eq 'FAIL' -and (Test-Path $log)) {
         # Every line says which lane wrote it (T776). The T776 report spent its
         # evidence arguing about whether the visible errors belonged to the lane
@@ -872,7 +881,20 @@ function Invoke-Lane {
         # full dump. The thread that corrupted memory is usually not the thread
         # that faulted, which is the whole reason this is worth the minutes.
         if (-not $NoCatch) { Invoke-LaneCrashCatch -Since $started -LaneLog $log }
+
+        # ...and SAY it (T955). Everything above already knew a test binary
+        # died, and the verdict word still read FAIL - the same word as a wrong
+        # answer - so `none#1=FAIL` was what got pasted into task files while
+        # the block naming the dead process sat in the scrollback. The test is
+        # the soak's (T877), so the two instruments cannot disagree about one
+        # run. A crashed COMPILER stays FAIL: that verdict is T451's, and its
+        # retry policy keys on the word.
+        if (Test-LaneTestBinaryCrash -Since $started -LogPath $log `
+                -CompilerCrash $script:LastLaneCompilerCrash -ExeNames $TEST_EXE_NAMES) {
+            $result = 'CRASH'
+        }
     }
+    Write-Host "LANE $Name $result in ${elapsed}s (leaked webview hosts swept: $leaked; leaked test binaries: $leakedTests) | $tail"
     return $result
 }
 
@@ -1295,7 +1317,7 @@ foreach ($l in $lanes) {
                         -Result $r -Diagnostic $script:LastLaneDiagnostic)
             }
             switch ($r) {
-                'FAIL' { if ($worst -lt $EXIT_FAIL) { $worst = $EXIT_FAIL } }
+                { $_ -in 'FAIL', 'CRASH' } { if ($worst -lt $EXIT_FAIL) { $worst = $EXIT_FAIL } }
                 'STALL' { if ($worst -lt $EXIT_STALL) { $worst = $EXIT_STALL } }
                 'TIMEOUT' { if ($worst -lt $EXIT_TIMEOUT) { $worst = $EXIT_TIMEOUT } }
             }
@@ -1343,7 +1365,7 @@ foreach ($l in $lanes) {
                     -Result $r -Diagnostic $script:LastLaneDiagnostic)
         }
         switch ($r) {
-            'FAIL' { if ($worst -lt $EXIT_FAIL) { $worst = $EXIT_FAIL } }
+            { $_ -in 'FAIL', 'CRASH' } { if ($worst -lt $EXIT_FAIL) { $worst = $EXIT_FAIL } }
             'STALL' { if ($worst -lt $EXIT_STALL) { $worst = $EXIT_STALL } }
             'TIMEOUT' { if ($worst -lt $EXIT_TIMEOUT) { $worst = $EXIT_TIMEOUT } }
         }

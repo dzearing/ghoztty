@@ -913,7 +913,7 @@ if ($mode -eq 'build-runner') {
             $verdict = 'HANG'; $totals.hang++
             $note = "floor-lane reported $laneResult"
         }
-        elseif ($sig -or $diagHit) {
+        elseif ($sig -or $diagHit -or $laneResult -eq 'CRASH') {
             $verdict = 'CRASH'; $totals.crash++
             $hitLine = ''
             foreach ($pat in $laneCrashPatterns) {

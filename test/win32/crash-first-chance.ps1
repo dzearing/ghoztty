@@ -277,7 +277,10 @@ if ((Test-Path $avExe) -and $builtTest) {
     $laneLog = Join-Path $work 'lane.log'
     cmd.exe /c "powershell -NoProfile -File `"$Repo\scripts\floor-lane.ps1`" -Command `"$laneCrasher`" -StallSeconds 60 -TimeoutSeconds 180 > `"$laneLog`" 2>&1" | Out-Null
     $laneText = (Get-Content $laneLog -Raw -ErrorAction SilentlyContinue)
-    Check 'the lane sees the crash as a failure' ($laneText -match 'LANE command FAIL') `
+    # CRASH, not FAIL (T955): the lane word says a test binary died.
+    Check 'the lane sees the crash as a crash' ($laneText -match 'LANE command CRASH') `
+        "tail: $(($laneText -split "`n" | Select-Object -Last 2) -join ' / ')"
+    Check 'and its summary says so' ($laneText -match 'FLOOR SUMMARY: command=CRASH') `
         "tail: $(($laneText -split "`n" | Select-Object -Last 2) -join ' / ')"
     Check 'the lane reads the dump Windows already wrote' ($laneText -match 'no re-run') `
         "tail: $(($laneText -split "`n" | Select-Object -Last 3) -join ' / ')"

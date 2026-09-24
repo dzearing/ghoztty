@@ -250,7 +250,7 @@ function Format-FloorFailureDetail {
         $out += "  lane $($d.Lane): $verdict - $where"
         $out += "    lane $($d.Lane): $(Get-LaneVerdictMeaning -Result $verdict)"
         if ($d.Errors.Count -eq 0) {
-            if ($verdict -eq 'FAIL') {
+            if ($verdict -eq 'FAIL' -or $verdict -eq 'CRASH') {
                 $out += "    lane $($d.Lane): no 'error:' line in that log - the lane died without one (a crash or a kill)"
             }
         }
@@ -316,6 +316,7 @@ function Get-LaneVerdictMeaning {
         'STALL' { return 'WEDGED: no CPU and no output for the whole stall window - this is a hang, not a slow test. The tree below was sampled before anything was killed.' }
         'TIMEOUT' { return 'WALL-CLOCK CAP: the lane was still making progress but ran past -TimeoutSeconds - this one may really be slow rather than wedged.' }
         'FAIL' { return 'the lane exited non-zero; the errors below come from its own log.' }
+        'CRASH' { return 'A TEST BINARY DIED: this is a crash, not a wrong answer - the crash diagnostics in the lane output decode the exit code, and name the process and fault when Windows recorded one.' }
         default { return "the lane ended $Result." }
     }
 }
