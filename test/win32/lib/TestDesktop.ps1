@@ -48,6 +48,10 @@
 # (60/60 identical after the switch). It needs a WM_PRINTCLIENT handler in the
 # window - add one, it is three lines beside the WM_PAINT case - and it throws
 # rather than returning the blank frame a window without one prints.
+# Since T944 the torn capture is no longer a default at all: a call with no
+# -Sync must pass -TornReason naming the window and why it cannot pose (a user32
+# popup menu, the terminal surface), or it is refused - and
+# printclient-audit.ps1 section C holds every call site to the same rule.
 #
 # CAPTURE LIMIT (measured here 2026-07-30, and it REVISES T207's answer):
 # PrintWindow on a background desktop returns the window's GDI-painted CHROME
@@ -4222,6 +4226,14 @@ function Get-TestWindowPixels {
         [switch]$AllowTerminalSurface,
         [switch]$AllowUniform,
         [switch]$Sync,
+        # T944: the asynchronous PW_RENDERFULLCONTENT capture is the TORN one
+        # (see CaptureWindowSync), so taking it is a declared exception, never
+        # a default. A probe either asks for -Sync or names, here, why the
+        # window it photographs cannot answer WM_PRINTCLIENT - a popup menu
+        # user32 paints, the renderer-drawn terminal surface. Neither is a
+        # refusal: a torn probe nobody explained reads exactly like one nobody
+        # got to. printclient-audit.ps1 section C holds every call site to it.
+        [string]$TornReason,
         # Long enough to outlast a mid-paint window by a wide margin (T216
         # measured a context menu solid at 350ms and painted at 400ms), and to
         # stay inside the retry budget the scripts that poll for real content
@@ -4230,6 +4242,18 @@ function Get-TestWindowPixels {
         # turn a slow paint into a red run, which is the opposite of the job.
         [int]$UniformTimeoutMs = 2000
     )
+    # Checked before anything touches the desktop, so the refusal is the same
+    # whatever window was named and needs no app to demonstrate.
+    if ($Sync -and $TornReason) {
+        throw "Get-TestWindowPixels: -Sync and -TornReason contradict each other - a synchronous capture is not torn. Drop the reason."
+    }
+    if (-not $Sync -and [string]::IsNullOrWhiteSpace($TornReason)) {
+        throw ("Get-TestWindowPixels: no -Sync and no -TornReason. The default capture is the " +
+               "ASYNCHRONOUS one, which reads one unchanged window differently run to run (T835), " +
+               "so it is never taken silently (T944). Pass -Sync - and add a WM_PRINTCLIENT arm to " +
+               "the window class if it has none - or, for a window that is not ours to change, " +
+               "-TornReason '<which window, and why it cannot pose>'.")
+    }
     $td = Resolve-TestDesktop $Desktop
     if (-not $AllowTerminalSurface) {
         $cls = $td.ClassName($Window)

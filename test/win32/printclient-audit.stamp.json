@@ -1,16 +1,10 @@
 {
     "guard":  "printclient-audit",
     "script":  "test/win32/printclient-audit.ps1",
-    "generated":  "2026-09-23T21:58:13-07:00",
-    "commit":  "32479ce2f",
+    "generated":  "2026-09-23T22:48:37-07:00",
+    "commit":  "888609609",
     "uncommitted":  [
-                        "src/apprt/win32/App.zig",
-                        "src/apprt/win32/viewer_accel.zig",
-                        "src/apprt/win32/viewer_feedback_doc.zig",
-                        "src/apprt/win32/viewer_feedback_images.zig",
-                        "src/apprt/win32/ViewerFeedbackBar.zig",
-                        "src/apprt/win32/ViewerPane.zig",
-                        "src/apprt/win32/win32.zig"
+                        "test/win32/printclient-audit.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -253,6 +247,6 @@
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
                   "src/apprt/win32/window_memory.zig":  "b4f2912a881c6380b205744d5516b50677557f483d1776e8edbaaa75a99e1269",
                   "src/apprt/win32/window_placement.zig":  "49f0b1d97ab1d9e0baf0e0a79697140fe7f205968fef8a0274122f4cc0e4d3ea",
-                  "test/win32/printclient-audit.ps1":  "876bc3a0a69619bc34e41ba6ed41897107a314628c858d371da3559050087c1b"
+                  "test/win32/printclient-audit.ps1":  "4a24bbd0e3ee2f47aed2c53e5996cb792e92b94082be61dcd4b0799338f84418"
               }
 }

@@ -84,7 +84,12 @@ function Measure-Menu([int]$gpid, [IntPtr]$top, [IntPtr]$target, [int]$sx, [int]
     $b = -1
     for ($t = 0; $t -lt 20; $t++) {
         Start-Sleep -Milliseconds 150
-        $shot = Get-TestWindowPixels -Window $menu
+        # Torn on purpose (T944): '#32768' is user32's popup-menu class, not
+        # ours. We owner-draw the items, but the window and its WndProc belong
+        # to Windows, which never answers WM_PRINTCLIENT for it - a -Sync
+        # capture comes back as the untouched sentinel. The distinct-colors
+        # gate above the brightness read is what keeps the torn frame honest.
+        $shot = Get-TestWindowPixels -Window $menu -TornReason 'user32 popup menu (#32768): the WndProc is not ours and does not answer WM_PRINTCLIENT'
         try {
             $colors = Get-TestDistinctColors -Shot $shot
             if ($colors -ge 8) {

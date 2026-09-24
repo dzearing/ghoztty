@@ -28,7 +28,8 @@
 # be written down with its reason.
 #
 # Section A gives the analyzer teeth against fixtures; section B is the sweep
-# that must stay at zero.
+# that must stay at zero. Section C (T944) is the call-site half: no probe in
+# test\win32 takes the torn capture without `-Sync` or a stated `-TornReason`.
 param(
     [string]$Repo = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 )
@@ -154,6 +155,85 @@ foreach ($name in $exempt.Keys) {
 }
 
 "  NOTE painting classes: $($painters -join ', ')"
+
+# ============================================================================
+"== C: the call sites -- no probe takes the torn capture without saying why (T944)"
+# ============================================================================
+# B proves every class we own CAN pose. C is the other half: every probe
+# ASKS it to. A `Get-TestWindowPixels` call must carry `-Sync`, or
+# `-TornReason '<why>'` for a window that is not ours to change. The function
+# refuses the bare call at run time too; this catches it in a script nobody
+# has run yet, which is how 65 probes stayed torn unremarked (T843).
+#
+# A call is `Get-TestWindowPixels -Window` outside a comment - matched that
+# narrowly because this suite's prose names the function constantly, and
+# backtick continuations are joined so a wrapped call is judged whole.
+function Get-TornCallFindings {
+    param([Parameter(Mandatory = $true)][string]$Text)
+    $found = @()
+    $inBlock = $false
+    $joined = ''
+    $n = 0
+    foreach ($raw in ($Text -split "`r?`n")) {
+        $n++
+        $line = $raw
+        if ($inBlock) {
+            if ($line -match '#>') { $inBlock = $false; $line = $line.Substring($line.IndexOf('#>') + 2) } else { continue }
+        }
+        if ($line -match '<#') {
+            $pre = $line.Substring(0, $line.IndexOf('<#'))
+            if ($line.Substring($line.IndexOf('<#')) -notmatch '#>') { $inBlock = $true }
+            $line = $pre
+        }
+        if ($line -match '^\s*#') { continue }
+        if ($line -match '`\s*$') { $joined += ($line -replace '`\s*$', ' '); continue }
+        $stmt = $joined + $line
+        $joined = ''
+        if ($stmt -notmatch 'Get-TestWindowPixels\s+-Window\b') { continue }
+        if ($stmt -match '\s-Sync\b' -or $stmt -match '\s-TornReason\s+\S') { continue }
+        # A call whose whole point is to be REFUSED carries this marker on its
+        # own line, so the demonstration of the refusal is not itself a finding.
+        if ($stmt -match '#\s*torn-refusal-fixture\b') { continue }
+        $found += "line ${n}: $($stmt.Trim())"
+    }
+    return , $found
+}
+
+Assert 'C1 a bare call is a finding' `
+((Get-TornCallFindings -Text '    $shot = Get-TestWindowPixels -Window $h').Count -eq 1)
+Assert 'C2 -Sync clears it' `
+((Get-TornCallFindings -Text '    $shot = Get-TestWindowPixels -Window $h -Sync').Count -eq 0)
+Assert 'C3 -TornReason clears it' `
+((Get-TornCallFindings -Text "    `$shot = Get-TestWindowPixels -Window `$m -TornReason 'user32 menu'").Count -eq 0)
+Assert 'C4 prose naming the function is not a call' `
+((Get-TornCallFindings -Text (@('# Get-TestWindowPixels -Window $h is torn', '<#', 'Get-TestWindowPixels -Window $x', '#>') -join "`n")).Count -eq 0)
+Assert 'C5 a wrapped call is judged whole, flag on the continuation line' `
+((Get-TornCallFindings -Text (@('$s = Get-TestWindowPixels -Window $h `', '    -Sync') -join "`n")).Count -eq 0)
+Assert 'C6 a wrapped call with no flag is still a finding' `
+((Get-TornCallFindings -Text (@('$s = Get-TestWindowPixels -Window $h `', '    -AllowUniform') -join "`n")).Count -eq 1)
+Assert 'C6b the refusal-fixture marker excuses a deliberately bare call' `
+((Get-TornCallFindings -Text '    try { Get-TestWindowPixels -Window $h } catch {}  # torn-refusal-fixture').Count -eq 0)
+Assert 'C6c ...and only the call on its own line' `
+((Get-TornCallFindings -Text (@('# torn-refusal-fixture', '$s = Get-TestWindowPixels -Window $h') -join "`n")).Count -eq 1)
+
+$testDir = Join-Path $Repo 'test\win32'
+$calls = 0
+$torn = @()
+$tornBare = @()
+foreach ($f in (Get-ChildItem -LiteralPath $testDir -Filter '*.ps1' -Recurse)) {
+    # This file's own fixtures above are calls by construction.
+    if ($f.FullName -eq $PSCommandPath) { continue }
+    $text = Get-Content -LiteralPath $f.FullName -Raw
+    if (-not $text) { continue }
+    $rel = $f.FullName.Substring($testDir.Length + 1)
+    $calls += [regex]::Matches($text, 'Get-TestWindowPixels\s+-Window\b').Count
+    foreach ($m in [regex]::Matches($text, 'Get-TestWindowPixels\s+-Window[^\r\n]*-TornReason')) { $torn += $rel }
+    foreach ($x in (Get-TornCallFindings -Text $text)) { $tornBare += "$rel $x" }
+}
+Assert "C7 the sweep found the probes ($calls call sites)" ($calls -ge 50) "$calls"
+Assert 'C8 every torn capture names its reason at the call site' ($tornBare.Count -eq 0) `
+    ($tornBare -join ' | ')
+"  NOTE torn by declaration: $($torn.Count) call site(s) in $((@($torn | Sort-Object -Unique)) -join ', ')"
 
 # --- stamp (T783 / T478) ---------------------------------------------------
 # Only a CLEAN run stamps; a red one must stay due.

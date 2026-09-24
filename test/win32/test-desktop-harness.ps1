@@ -134,8 +134,15 @@ function Get-TabCount {
 # harness header), so a probe aimed at the terminal would read a flat fill and
 # "pass" against nothing. Since T254 that band is ours, not DWM's, which is
 # exactly why it is capturable at all.
+#
+# Torn on purpose (T944): this is the harness's own proof that the
+# asynchronous PW_RENDERFULLCONTENT path works off the input desktop, and
+# dark-menus.ps1 still depends on that path for a window that cannot pose.
+# Converting it to -Sync would leave the path it relies on unexercised. A mean
+# luminance over the band is also insensitive to the tear - T835's drift moved
+# where a line of text ENDS, not how bright a whole band is.
 function Measure-TitlebarLuminance([IntPtr]$Window) {
-    $shot = Get-TestWindowPixels -Window $Window
+    $shot = Get-TestWindowPixels -Window $Window -TornReason 'harness self-test of the asynchronous capture path itself'
     try {
         # Parenthesised: in a PowerShell array literal the comma binds tighter
         # than `+`, so unbracketed arithmetic concatenates arrays instead.
@@ -525,8 +532,24 @@ try {
     #     guards a real limit. They are also the trap itself, stated as a
     #     measurement - a probe here does not fail loudly, it passes against
     #     nothing.
+    # T944: the torn capture is opt-in. A call with neither -Sync nor
+    # -TornReason is refused before it reaches the desktop, and a call with
+    # both is refused as contradictory - the demonstration that the rule can
+    # say something other than "fine".
+    $surfaceLimit = 'measuring the renderer-drawn terminal surface limit itself (T214)'
+    $tornRefused = $false
+    try { Get-TestWindowPixels -Window $top | Out-Null }  # torn-refusal-fixture
+    catch { $tornRefused = ($_.Exception.Message -match 'TornReason') }
+    if ($NegativeControl) { $tornRefused = -not $tornRefused }
+    Assert $tornRefused 'Get-TestWindowPixels REFUSES a capture with neither -Sync nor -TornReason (T944)'
+    $bothRefused = $false
+    try { Get-TestWindowPixels -Window $top -Sync -TornReason 'x' | Out-Null }
+    catch { $bothRefused = ($_.Exception.Message -match 'contradict') }
+    if ($NegativeControl) { $bothRefused = -not $bothRefused }
+    Assert $bothRefused 'Get-TestWindowPixels REFUSES -Sync together with -TornReason (T944)'
+
     $refused = $false
-    try { Get-TestWindowPixels -Window $pane | Out-Null }
+    try { Get-TestWindowPixels -Window $pane -TornReason 'the class refusal is the subject' | Out-Null }
     catch { $refused = ($_.Exception.Message -match 'GhozttyTerminal') }
     if ($NegativeControl) { $refused = -not $refused }
     Assert $refused 'Get-TestWindowPixels REFUSES the GhozttyTerminal surface by class'
@@ -542,7 +565,7 @@ try {
     #     on purpose, which is what makes this fixture possible at all.
     $uniformRefused = $false
     $uniformMsg = ''
-    try { Get-TestWindowPixels -Window $pane -AllowTerminalSurface -UniformTimeoutMs 300 | Out-Null }
+    try { Get-TestWindowPixels -Window $pane -AllowTerminalSurface -TornReason $surfaceLimit -UniformTimeoutMs 300 | Out-Null }
     catch { $uniformMsg = $_.Exception.Message; $uniformRefused = ($uniformMsg -match 'UNIFORM') }
     if ($uniformRefused) {
         Write-Host "capture: uniform guard fired - $($uniformMsg.Substring(0, [math]::Min(120, $uniformMsg.Length)))..."
@@ -569,7 +592,7 @@ try {
     if ($NegativeControl) { $chromeOk = -not $chromeOk }
     Assert $chromeOk 'the uniform guard does NOT refuse a real ghoztty chrome window'
 
-    $shot = Get-TestWindowPixels -Window $pane -AllowTerminalSurface -AllowUniform
+    $shot = Get-TestWindowPixels -Window $pane -AllowTerminalSurface -AllowUniform -TornReason $surfaceLimit
     try {
         $surfColors = Get-TestDistinctColors -Shot $shot
         $surfLum = Get-TestBrightness -Shot $shot
@@ -581,7 +604,7 @@ try {
     Send-TestText -Window $top -Target $pane -Text 'echo ZZZZZZZZZZZZZZZZ' | Out-Null
     Send-TestKeys -Window $top -Target $pane -Key Enter | Out-Null
     Start-Sleep -Milliseconds 1200
-    $shot2 = Get-TestWindowPixels -Window $pane -AllowTerminalSurface -AllowUniform
+    $shot2 = Get-TestWindowPixels -Window $pane -AllowTerminalSurface -AllowUniform -TornReason $surfaceLimit
     try {
         $surfColors2 = Get-TestDistinctColors -Shot $shot2
         $surfLum2 = Get-TestBrightness -Shot $shot2
