@@ -685,6 +685,13 @@ if ($ready) {
             }
             Assert 'L12 a stood-down duplicate closes itself' $gone
         }
+        # Say so when the app itself is gone: every window assertion above then
+        # measures its absence, and on 2026-09-23 that read as an L regression
+        # when a concurrent harness's clean-slate reset had killed it (T1715).
+        if ((Ghoz @('+list')).Code -ne 0) {
+            "  NOTE the debug app stopped answering during section L - window failures here are " +
+                "its absence, not the protocol; was another acceptance script running at the same time? (T401)"
+        }
         Ghoz @('+close', '--target=exec-a') | Out-Null
         Ghoz @('+close', '--target=plain-c') | Out-Null
     }
@@ -2538,8 +2545,14 @@ Write-LockFile $L
 Assert 'BB16 the lock still reads held - no liveness signal is stale' `
     ((Lock-Run @('status', '-PaneId', 'PANE-BB')).Out -match '^held')
 $r = Dog-Run @('-DryRun')
+# Either last resort is a re-entry, and this arm's subject is the DECISION, not
+# which one. The pick is `new-window` when an app answers and `launch-app` when
+# none does (T849, covered by H11), and that depends on the section-I debug app
+# still being alive this late in the run: on 2026-09-23 a concurrent acceptance
+# script's clean-slate reset killed it, and BB17 went red over a decision that
+# was right (T1715). BB20 is still the teeth - same fixture, ACTION none.
 Assert 'BB17 a held lock whose turn has not completed is re-entered anyway' `
-    ($r.Out -match 'ACTION new-window')
+    ($r.Out -match 'ACTION (new-window|launch-app)')
 Assert 'BB18 and the log names the clock it decided on' ($r.Out -match 'STALLED\(by=turn\)')
 Assert 'BB19 and the number, so a wrong call is auditable' `
     ($r.Out -match 'no turn has completed for 200' -and $r.Out -match 'turn_age=200\.\d+m\(limit=180m\)')

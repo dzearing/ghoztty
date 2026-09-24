@@ -1,10 +1,10 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-09-23T18:11:39-07:00",
-    "commit":  "b0ffb2381",
+    "generated":  "2026-09-23T19:19:15-07:00",
+    "commit":  "7a8b4cd22",
     "uncommitted":  [
-                        "test/win32/viewer-feedback-capture.ps1"
+                        "test/win32/go-loop-guard.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -124,7 +124,7 @@
                   "test/win32/gate-negatives.ps1":  "337fc01f68d2977db0edc76d18b23856f3351862fd9faa5ca376c15eb0c8662b",
                   "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76",
                   "test/win32/gl-device-lost.ps1":  "3bb5067fd1c667f8b9d9d5d28e04acaae173beee1d78e68a79f673e159e462aa",
-                  "test/win32/go-loop-guard.ps1":  "96b483ba538394c1012f4225e39f10144c79ee4b5be335a65c0959f36100fb62",
+                  "test/win32/go-loop-guard.ps1":  "107a9718639a72e0ba1c9e940b4a570fb28dde89d14293fcb7ce784055da8334",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "94068439b3fe8e2054c15a1349c5632be8640eb27fde266f0925181242f55269",
