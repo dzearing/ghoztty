@@ -1,14 +1,13 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-09-24T01:05:48-07:00",
-    "commit":  "7b53a701c",
+    "generated":  "2026-09-24T01:53:34-07:00",
+    "commit":  "a5b8fa2e2",
     "uncommitted":  [
-                        "docs/claude/testing.md",
-                        "test/win32/crash-stacks.ps1"
+
                     ],
     "files":  {
-                  "docs/claude/testing.md":  "cdfc70b6d7c64ba1f59d9d57a498b592d9cca0246331a7207e1b23d20787d345",
+                  "docs/claude/testing.md":  "8c1deebc52e7f8ec94ce24ba781512d3bda5240759151c0822d763b410b799f4",
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",
                   "test/win32/activity-monitor-probe-fail.ps1":  "94e258e9ba979ecf0416ba87f088e273d8326d6d37ce3404b3f111b4cba250e6",
