@@ -1,10 +1,10 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-09-23T17:50:32-07:00",
-    "commit":  "2c0478ccb",
+    "generated":  "2026-09-23T18:11:39-07:00",
+    "commit":  "b0ffb2381",
     "uncommitted":  [
-                        "test/win32/viewer-feedback.ps1"
+                        "test/win32/viewer-feedback-capture.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -321,7 +321,7 @@
                   "test/win32/viewer-error-card.ps1":  "bc486ca60cf4eaed7e2bb772a8e6dc80818ef04696f86ea7ea054238dacf2f4c",
                   "test/win32/viewer-feedback.ps1":  "7227ac8117f1966ec856996c6a347ec535ba2f51d5b47924c970fbecf43d30cb",
                   "test/win32/viewer-feedback-alpha.ps1":  "7e3ed8de4c1caf1382b53ab1fa99ce89b4a3d9239263be65c7bbf80de97f34c1",
-                  "test/win32/viewer-feedback-capture.ps1":  "83e46b33ef57964c51f711170eb675af06eb24e98eef58723b276d2c7bff83f7",
+                  "test/win32/viewer-feedback-capture.ps1":  "bd538fda121fe8cf7f9f4ddbe1a44efa4ce8b60a921b8ede857c89de1da0e156",
                   "test/win32/viewer-feedback-carousel.ps1":  "1314ea54a3791488a2a4eb2b3957ed3ba407a3ebdaa0dbc0a823ff9764574155",
                   "test/win32/viewer-feedback-images.ps1":  "94b4f8872030210fa2350ff841f37dc8550eb19ac120638753be2f429b402f2f",
                   "test/win32/viewer-feedback-utf16.ps1":  "0fc675f98d693d20c7f1db7510d3f60d0b284b2faa97ff52ca3954bcc058e88a",

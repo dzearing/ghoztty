@@ -56,7 +56,9 @@
 #     the app's window list rather than about paint;
 #   - the pane's stderr, which reports every capture it begins, finishes and
 #     cancels;
-#   - the RichEdit's own text, which is what the user sees;
+#   - the composer's own document, read out of its web page over the DevTools
+#     protocol (lib\WebViewCdp.ps1), which is what the user sees - a chip reads
+#     as its '[Image #N]' label there;
 #   - the report FOLDER on disk, which is the artifact the feature produces.
 #
 # The drag is POSTED (Send-TestMouse), which works because the selector reads
@@ -88,11 +90,14 @@ if ($ExePath) { $exe = $ExePath }
 
 $env:GHOZTTY_PIPE_SUFFIX = "-fbcap$PID"
 
-# The chip oracle below is the RichEdit's own text, so this suite pins itself to
-# the RichEdit surface (T1102). See lib\ComposerSurface.ps1 for why asking is not
-# enough and the run also PROVES which surface it got.
+# The composer is the web surface users get (T1707; before it this suite pinned
+# itself to the RichEdit fallback, T1102). Its text is typed and read through the
+# page over the DevTools protocol; the chords NATIVE owns (Ctrl+Shift+S, Ctrl+Enter)
+# go to the band as the web surface's own chord message. The run still PROVES which
+# surface it got - see lib\ComposerSurface.ps1.
 . (Join-Path $PSScriptRoot 'lib\ComposerSurface.ps1')
-Set-ComposerSurface 'richedit'
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+. (Join-Path $PSScriptRoot 'lib\WebViewCdp.ps1')
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
@@ -438,7 +443,47 @@ $viewFile = Join-Path $work 'README.md'
 
 $script:vsX = 0; $script:vsY = 0; $script:vsW = 0; $script:vsH = 0
 
+# A chord NATIVE owns, delivered the way the web surface delivers it: the
+# controller's accelerator handler posts WM_APP_COMPOSER_CHORD (WM_APP+2) to the
+# band with the virtual key in wParam and input.Mods bits in lParam (shift=1,
+# ctrl=2). The same hop viewer-feedback.ps1 drives (T1706).
+$script:ChordMsg = 0x8002
+$script:ModShift = 1
+$script:ModCtrl = 2
+function Send-ComposerChord($band, [int]$Vk, [int]$Mods = 0) {
+    return (Send-TestRawMessage -Window $band -Message $script:ChordMsg `
+            -WParam ([IntPtr]$Vk) -LParam ([IntPtr]$Mods))
+}
+
+# A DevTools session on the composer's CURRENT page. Closing the composer
+# destroys its page and reopening builds a new one, so every reopen needs a new
+# session, skipping the pages already used (a destroyed target can still be
+# listed for a moment after it goes).
+$script:cdpSeen = @()
+function Connect-Composer {
+    $c = $null
+    try {
+        $c = Find-CdpComposer -Port $script:cdpPort -Exclude $script:cdpSeen
+    } catch {
+        Write-Host "      $($_.Exception.Message)"
+        return $null
+    }
+    $script:cdpSeen += $c.Url
+    return $c
+}
+
+# The composer's document, or '' when there is no session to read it through
+# (the assertion that needed the session has already failed by then).
+function Read-Composer($cdp) {
+    if (-not $cdp) { return '' }
+    return (Get-CdpComposerText $cdp)
+}
+
 Stop-RepoInstances
+# Armed before the launch: the switch is read when the app's WebView2 browser
+# process starts, on the first viewer pane.
+$script:cdpPort = Enable-WebViewCdp
+$cdp = $null
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
 
@@ -471,8 +516,8 @@ try {
 
     Assert (Invoke-FeedbackButton $view) 'the revealed nav bar took a click at the feedback button'
     Assert (Wait-FeedbackOpen $errlog $paneId) 'the pane reports the composer OPEN'
-    Assert (Wait-ComposerSurface $errlog 'richedit') `
-        "...on the RichEdit surface this script can drive (got '$(Get-ComposerSurface $errlog)')"
+    Assert (Wait-ComposerSurface $errlog 'web') `
+        "...on the web surface (got '$(Get-ComposerSurface $errlog)')"
 
     $fb = $null
     for ($t = 0; $t -lt 20; $t++) {
@@ -483,12 +528,9 @@ try {
     Assert ($null -ne $fb) 'a GhozttyViewerFeedback child window exists'
     if (-not $fb) { throw 'no composer window' }
 
-    $rich = $null
-    foreach ($c in @(Get-TestChildWindows -Window $fb -Class $null)) {
-        if ([string]$c.Class -eq 'RichEdit50W') { $rich = [IntPtr]$c.Hwnd; break }
-    }
-    Assert ($null -ne $rich) 'the composer hosts its RichEdit50W text control'
-    if (-not $rich) { throw 'no text control in the composer' }
+    $cdp = Connect-Composer
+    Assert ($null -ne $cdp) "the composer's page answers over DevTools (port $($script:cdpPort))"
+    if (-not $cdp) { throw 'no composer page to drive' }
 
     # --- C (first half). A known string goes on the clipboard BEFORE any
     # capture, so every arm below runs across it.
@@ -519,7 +561,7 @@ try {
     Assert ($tally.Cancel -ge 1) "Escape cancels the capture (cancel=$($tally.Cancel))"
     Assert ($null -eq (Wait-Overlay $appPid $false)) '...and the overlay window is gone'
     Assert ($null -eq (Get-LastImage $errlog $paneId)) '...with no image attached'
-    Assert ((Get-TestControlText $rich) -notmatch '\[Image') '...and no chip in the composer'
+    Assert ((Read-Composer $cdp) -notmatch '\[Image') '...and no chip in the composer'
 
     # --- E. a click with no drag is a cancel, not an empty picture ------------
     Assert (Invoke-SnapshotButton $view $fb) 'the + button opens a second selector'
@@ -536,7 +578,7 @@ try {
     Assert ($null -eq (Wait-Overlay $appPid $false)) '...and the overlay is gone'
 
     # --- F. Ctrl+Shift+S opens it from the keyboard ---------------------------
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key S -Modifiers Ctrl, Shift)
+    [void](Send-ComposerChord $fb 0x53 ($script:ModCtrl -bor $script:ModShift))
     $overlay = Wait-Overlay $appPid $true
     Assert ($null -ne $overlay) 'Ctrl+Shift+S puts the selector up too'
     $tally = Wait-Tally $errlog 'Begin' 3
@@ -569,7 +611,12 @@ try {
     $img = Wait-Image $errlog $paneId 1
     Assert ($img -and $img.Number -eq 1) "the capture attaches as image #1 (got '$($img.Number)')"
     Assert ($img -and $img.Live -eq 1) "...and one image is live in the report ($($img.Live))"
-    $text = (Get-TestControlText $rich)
+    $text = $null
+    for ($t = 0; $t -lt 20; $t++) {
+        $text = (Read-Composer $cdp)
+        if ($text -match '\[Image #1\]') { break }
+        Start-Sleep -Milliseconds 250
+    }
     Assert ($text -match '\[Image #1\]') "the composer shows an '[Image #1]' chip (holds '$text')"
     Assert ($null -eq (Wait-Overlay $appPid $false)) 'the overlay came down after the drag'
 
@@ -579,9 +626,13 @@ try {
         "the clipboard survived every capture byte for byte (holds '$after')"
 
     # --- G. the picture reaches the report at the dragged size ---------------
-    [void](Send-TestControlText -Control $rich -Text 'this bit here')
-    Start-Sleep -Milliseconds 300
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key Enter -Modifiers Ctrl)
+    # Typed after the chip, at the end of the document, through the page's own
+    # editing - so the send carries text AND the picture.
+    # The chip leaves a space after itself for the caret to land beyond.
+    if ($cdp) { Send-CdpComposerText $cdp 'this bit here' }
+    $typed = Wait-CdpComposerText $cdp '[Image #1] this bit here'
+    Assert ($typed -ceq '[Image #1] this bit here') "the text lands beside the chip (holds '$typed')"
+    [void](Send-ComposerChord $fb 0x0D $script:ModCtrl)
 
     $folder = $null
     for ($t = 0; $t -lt 40; $t++) {
@@ -600,6 +651,8 @@ try {
             "...at the size that was dragged ($($arr[0].pixelWidth)x$($arr[0].pixelHeight), want 160x120)"
         Assert ($report.body -match '!\[Image #1\]\(images/image-1\.png\)') `
             'the body links the screenshot as a markdown image reference'
+        Assert ($report.body -match 'this bit here') `
+            "...beside the text typed into the page (body '$($report.body)')"
     }
 
     # --- H. the keyboard drives the selector, with no mouse at all -----------
@@ -616,11 +669,11 @@ try {
         Start-Sleep -Milliseconds 250
     }
     Assert ($null -ne $fb) '...and the composer window is back'
-    $rich = $null
+    Close-Cdp $cdp
+    $cdp = $null
     if ($fb) {
-        foreach ($c in @(Get-TestChildWindows -Window $fb -Class $null)) {
-            if ([string]$c.Class -eq 'RichEdit50W') { $rich = [IntPtr]$c.Hwnd; break }
-        }
+        $cdp = Connect-Composer
+        Assert ($null -ne $cdp) "...and the reopened composer's page answers over DevTools"
     }
 
     if ($fb) {
@@ -686,10 +739,10 @@ try {
                     "...and at the announced origin ($($tally.Rect.X),$($tally.Rect.Y), want $ox2,$oy2)"
                 Assert ($null -eq (Wait-Overlay $appPid $false)) '...and the overlay came down'
 
-                if ($rich) {
+                if ($cdp) {
                     $ktext = $null
                     for ($t = 0; $t -lt 20; $t++) {
-                        $ktext = (Get-TestControlText $rich)
+                        $ktext = (Read-Composer $cdp)
                         if ($ktext -match '\[Image #1\]') { break }
                         Start-Sleep -Milliseconds 250
                     }
@@ -876,6 +929,8 @@ try {
     Assert $false "the run threw and did not finish its scenarios: $($_.Exception.Message)"
     Write-Host $_.ScriptStackTrace
 } finally {
+    Close-Cdp $cdp
+    Disable-WebViewCdp
     Remove-TestDesktop
     Stop-RepoInstances
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue

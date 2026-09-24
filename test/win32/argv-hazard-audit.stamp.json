@@ -1,11 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-23T17:44:20-07:00",
-    "commit":  "2c0478ccb",
+    "generated":  "2026-09-23T18:39:05-07:00",
+    "commit":  "b0ffb2381",
     "uncommitted":  [
-                        "test/win32/lib/WebViewCdp.ps1",
-                        "test/win32/viewer-feedback.ps1"
+                        "scripts/go-loop-health.ps1",
+                        "test/win32/viewer-feedback-capture.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -29,7 +29,7 @@
                   "scripts/git-commit-guard.ps1":  "61b9c30de6abd3fa3730d73f07fc310063251595191bc45655aa46853b1c9e2f",
                   "scripts/go-loop-boot.ps1":  "4623179b0ff82e9621ba9c443c37970c9a98a5cf5a805f3cb140001db7bbc5fc",
                   "scripts/go-loop-exec.ps1":  "6c374684629689efb4f949b1304cbae83130796d2efd7161dd92cbd934564794",
-                  "scripts/go-loop-health.ps1":  "4d7b11d344e52701d216ddcdcb616984a2b0429239b3c1bf9fb9b10412910c1a",
+                  "scripts/go-loop-health.ps1":  "5e26bbe4f91af3c2d6699d343e934008280668256d19a2af93e80c5d03924bb1",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
@@ -447,7 +447,7 @@
                   "test/win32/viewer-error-card.ps1":  "bc486ca60cf4eaed7e2bb772a8e6dc80818ef04696f86ea7ea054238dacf2f4c",
                   "test/win32/viewer-feedback.ps1":  "7227ac8117f1966ec856996c6a347ec535ba2f51d5b47924c970fbecf43d30cb",
                   "test/win32/viewer-feedback-alpha.ps1":  "7e3ed8de4c1caf1382b53ab1fa99ce89b4a3d9239263be65c7bbf80de97f34c1",
-                  "test/win32/viewer-feedback-capture.ps1":  "83e46b33ef57964c51f711170eb675af06eb24e98eef58723b276d2c7bff83f7",
+                  "test/win32/viewer-feedback-capture.ps1":  "bd538fda121fe8cf7f9f4ddbe1a44efa4ce8b60a921b8ede857c89de1da0e156",
                   "test/win32/viewer-feedback-carousel.ps1":  "1314ea54a3791488a2a4eb2b3957ed3ba407a3ebdaa0dbc0a823ff9764574155",
                   "test/win32/viewer-feedback-images.ps1":  "94b4f8872030210fa2350ff841f37dc8550eb19ac120638753be2f429b402f2f",
                   "test/win32/viewer-feedback-utf16.ps1":  "0fc675f98d693d20c7f1db7510d3f60d0b284b2faa97ff52ca3954bcc058e88a",
