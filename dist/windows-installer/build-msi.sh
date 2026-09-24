@@ -337,7 +337,34 @@ template = """<?xml version="1.0" encoding="utf-8"?>
     <!-- T1205: what Apps & Features SHOWS, which is not what the installer
          SEQUENCES on. See DISPLAY_VERSION in build-msi.sh. -->
     <Property Id="ARPDISPLAYVERSION" Value="@DISPLAY_VERSION@"/>
-    <Property Id="ARPNOMODIFY" Value="1"/>
+    <!-- T1300: Apps and Features offers the repair, so neither ARPNOMODIFY nor
+         ARPNOREPAIR is set, and the Property read-back below fails the build if
+         either comes back.
+
+         (No double hyphen anywhere in this comment: XML forbids one inside a
+         comment and wixl rejects the whole document over it.)
+
+         ARPNOMODIFY used to be set, on the reasoning that a Modify button
+         opening a wizard this product does not have is worse than no button.
+         T1291 removed the premise: the maintenance path now asks Repair /
+         Cancel in the app's own dialog. And on Windows 11 the Settings page
+         offers a desktop app exactly two verbs, Modify and Uninstall; there is
+         no Repair entry to turn on instead. With ARPNOMODIFY set, the page
+         people actually go to when an app misbehaves offered nothing but
+         Uninstall, and the repair was reachable only by finding the original
+         download.
+
+         So both surfaces now lead to the same repair:
+           Settings, Modify          runs the ModifyPath Windows Installer
+                                     writes (msiexec /I with the product code)
+                                     at full UI, which is the maintenance path
+                                     below: Repair / Cancel, then REINSTALL=ALL.
+           Control Panel, Repair     runs msiexec with REINSTALL already set,
+                                     i.e. the user has ALREADY chosen repair.
+                                     NoteRepairRequested sees that, and the
+                                     prompt stands down rather than asking the
+                                     same question a second time. -->
+
 
     <!-- T1204: a per-user terminal NEVER asks for a reboot.
 
@@ -567,7 +594,16 @@ template = """<?xml version="1.0" encoding="utf-8"?>
          installs with /qb-! (UILevel 3), and a modal dialog inside an
          unattended update is a hang, not a courtesy. REMOVE, PATCH and
          UPGRADINGPRODUCTCODE exclude uninstall, patching and being removed by
-         a newer package, so the only case left is the one the user hit. -->
+         a newer package, so the only case left is the one the user hit.
+
+         T1300: and REPAIRREQUESTED excludes a repair somebody has already
+         asked for. Control Panel's Repair button and msiexec /f both arrive
+         with REINSTALL set on the command line; asking "Repair or Cancel?"
+         after the user pressed Repair is the question twice. The mark has to
+         be taken BEFORE SetRepairMode, which sets REINSTALL itself and would
+         otherwise make every maintenance run look requested. Skipping the
+         arming rows too leaves the requester's own REINSTALLMODE alone. -->
+    <CustomAction Id="NoteRepairRequested" Property="REPAIRREQUESTED" Value="1"/>
     <CustomAction Id="SetRepairMode" Property="REINSTALL" Value="ALL"/>
     <CustomAction Id="SetRepairModeFlags" Property="REINSTALLMODE" Value="amus"/>
     <CustomAction Id="SetMaintenancePromptCmd"
@@ -679,10 +715,11 @@ template = """<?xml version="1.0" encoding="utf-8"?>
            processes to shut down and the first bytes get committed to). The
            two arming rows sit just below CostFinalize because that is where
            feature states are decided. -->
-      <Custom Action="SetRepairMode" Sequence="990">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3</Custom>
-      <Custom Action="SetRepairModeFlags" Sequence="991">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3</Custom>
-      <Custom Action="SetMaintenancePromptCmd" Sequence="1010">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3</Custom>
-      <Custom Action="MaintenancePrompt" Sequence="1020">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3</Custom>
+      <Custom Action="NoteRepairRequested" Sequence="985">REINSTALL</Custom>
+      <Custom Action="SetRepairMode" Sequence="990">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3 AND NOT REPAIRREQUESTED</Custom>
+      <Custom Action="SetRepairModeFlags" Sequence="991">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3 AND NOT REPAIRREQUESTED</Custom>
+      <Custom Action="SetMaintenancePromptCmd" Sequence="1010">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3 AND NOT REPAIRREQUESTED</Custom>
+      <Custom Action="MaintenancePrompt" Sequence="1020">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3 AND NOT REPAIRREQUESTED</Custom>
       <Custom Action="SetPrepareInstallDirCmd" Sequence="1030"/>
       <Custom Action="PrepareInstallDir" Sequence="1040">Installed OR OLDERVERSIONFOUND</Custom>
       <Custom Action="SetLaunchAppCmd" Before="LaunchApp"/>
@@ -1097,6 +1134,29 @@ if not errs:
             if want not in cond:
                 errs.append(f"{action} condition {cond!r} does not gate on {want}")
 
+# T1300: a repair somebody already asked for is not asked about again. Control
+# Panel's Repair button arrives with REINSTALL set, and so would every run once
+# SetRepairMode has set it - so the mark is taken from REINSTALL BEFORE the
+# arming row, and all four maintenance rows stand down on it.
+if "NoteRepairRequested" not in ca:
+    errs.append("CustomAction table has no NoteRepairRequested row - Control Panel's Repair would be answered with a second Repair / Cancel question")
+else:
+    if int(ca["NoteRepairRequested"][1]) != 51:
+        errs.append(f"NoteRepairRequested type is {ca['NoteRepairRequested'][1]}, expected 51 (property set)")
+    if ca["NoteRepairRequested"][2] != "REPAIRREQUESTED" or ca["NoteRepairRequested"][3] != "1":
+        errs.append(f"NoteRepairRequested sets {ca['NoteRepairRequested'][2]!r}={ca['NoteRepairRequested'][3]!r}, expected REPAIRREQUESTED='1'")
+if "NoteRepairRequested" not in seq:
+    errs.append("InstallExecuteSequence has no NoteRepairRequested row - the mark is never taken")
+elif not errs:
+    n_note = int(seq["NoteRepairRequested"][2])
+    if seq["NoteRepairRequested"][1].strip() != "REINSTALL":
+        errs.append(f"NoteRepairRequested condition is {seq['NoteRepairRequested'][1]!r}, expected REINSTALL")
+    if n_note >= int(seq["SetRepairMode"][2]):
+        errs.append(f"NoteRepairRequested is sequenced at {n_note}, not before SetRepairMode at {seq['SetRepairMode'][2]} - SetRepairMode sets REINSTALL itself, so every maintenance run would look requested and nobody would ever be asked")
+    for action in ("MaintenancePrompt", "SetMaintenancePromptCmd", "SetRepairMode", "SetRepairModeFlags"):
+        if "NOT REPAIRREQUESTED" not in seq[action][1]:
+            errs.append(f"{action} condition {seq[action][1]!r} does not stand down on REPAIRREQUESTED - a repair already chosen in Control Panel would be asked about again")
+
 # The equal-version band is detected on its own, so a same-version package is
 # never announced as a "newer version".
 for prop in ("OLDERVERSIONFOUND", "SAMEVERSIONFOUND", "NEWERVERSIONFOUND"):
@@ -1197,11 +1257,22 @@ if want_display:
             f"{want_display!r}"
         )
 
+# T1300: Apps and Features offers the repair. On Windows 11 Settings the only
+# verb that can reach it is Modify, so ARPNOMODIFY hides it there, and
+# ARPNOREPAIR hides Control Panel's Repair button.
+for prop in ("ARPNOMODIFY", "ARPNOREPAIR"):
+    if props.get(prop, "") not in ("", "0"):
+        errs.append(
+            f"{prop} is {props[prop]!r} - Apps and Features would stop offering "
+            "the repair, which is then reachable only by finding the original download"
+        )
+
 if errs:
     for e in errs:
         print(f"error: {e}", file=sys.stderr)
     sys.exit(1)
 print("no-reboot ok: REBOOT=ReallySuppress, Restart Manager left enabled")
+print("repair entry ok: neither ARPNOMODIFY nor ARPNOREPAIR is set")
 if want_display:
     print(f"display version ok: Apps & Features will show {want_display}")
 PYEOF

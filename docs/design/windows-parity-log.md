@@ -33536,3 +33536,18 @@ install is never blocked. The decisions are unit-tested in `update_reopen.zig`.
 reads back the marker and the relaunch's verdict line (ALL PASS, 63). The
 standard MSI Files In Use dialog is still missing for a by-hand install. It is
 filed as T1728, since it needs wixl to validate.
+
+## 2026-09-24 - T1300: Settings > Apps now leads to Ghoztty's repair
+
+Ghoztty's entry in Settings > Apps offered only Uninstall. The package set
+`ARPNOMODIFY`, and on Windows 11 Settings gives a desktop app only two verbs,
+Modify and Uninstall. There is no Repair verb to turn on instead. (Control Panel
+already had its Repair button, since `NoRepair` was never set.) The flag is
+gone, so Modify now opens the T1291 Repair / Cancel dialog. Control Panel's
+Repair arrives with `REINSTALL` already set, so a new `NoteRepairRequested` row
+records that before `SetRepairMode` sets it too. The prompt then stands down,
+so nobody is asked twice. The package read-back rejects either ARP switch and
+any unwired stand-down. `install-maintenance.ps1` (A23-A26, E16-E18, ALL PASS
+51, teeth ALL PASS) and `install-restart.ps1` (E6/E7, ALL PASS 65) cover it.
+The MSI itself compiles on CI (wixl needs Docker here). Clicking both on a real
+sandbox install is filed as T1729.

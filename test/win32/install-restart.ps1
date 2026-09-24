@@ -262,7 +262,6 @@ if (-not $py) {
                 "s72${t}l0",
                 "Property${t}Property",
                 "MSIINSTALLPERUSER${t}1",
-                "ARPNOMODIFY${t}1",
                 "REBOOT${t}ReallySuppress"
             ) -join "`r`n"
 
@@ -281,6 +280,11 @@ if (-not $py) {
                 ((RunVerifier ($goodProps + "`r`nMSIRESTARTMANAGERCONTROL${t}Disable")) -ne 0)
             Assert 'E5 an MSI that closes the app and never reopens it is rejected' `
                 ((RunVerifier ($goodProps + "`r`nMSIDISABLERMRESTART${t}1")) -ne 0)
+            # T1300: Apps and Features must be allowed to offer the repair.
+            Assert 'E6 an MSI that hides Modify - Settings''s only road to the repair - is rejected' `
+                ((RunVerifier ($goodProps + "`r`nARPNOMODIFY${t}1")) -ne 0)
+            Assert 'E7 an MSI that hides Control Panel''s Repair button is rejected' `
+                ((RunVerifier ($goodProps + "`r`nARPNOREPAIR${t}1")) -ne 0)
         } finally {
             Remove-Item -LiteralPath $tmpE -Recurse -Force -ErrorAction SilentlyContinue
         }

@@ -169,9 +169,9 @@ $checks = [ordered]@{
         { param($t)
           # wixl appends an After= that names a custom action to the end of the
           # table - past InstallFinalize - so the whole band is numbered by hand.
-          $band = 'SetRepairMode|SetRepairModeFlags|SetMaintenancePromptCmd|MaintenancePrompt|SetPrepareInstallDirCmd|PrepareInstallDir'
+          $band = 'NoteRepairRequested|SetRepairMode|SetRepairModeFlags|SetMaintenancePromptCmd|MaintenancePrompt|SetPrepareInstallDirCmd|PrepareInstallDir'
           $rows = ([regex]"(?m)^\s*<Custom Action=`"($band)`"([^>]*)>").Matches($t.msi)
-          ($rows.Count -eq 6) -and -not ($rows | Where-Object { $_.Groups[2].Value -notmatch 'Sequence="\d+"' }) }
+          ($rows.Count -eq 7) -and -not ($rows | Where-Object { $_.Groups[2].Value -notmatch 'Sequence="\d+"' }) }
     'A15 a silent or updater-driven install never sees the dialog' =
         { param($t)
           $rows = ([regex]'(?m)^\s*<Custom Action="(MaintenancePrompt|SetMaintenancePromptCmd|SetRepairMode|SetRepairModeFlags)"[^>]*>(.*?)</Custom>').Matches($t.msi)
@@ -196,6 +196,24 @@ $checks = [ordered]@{
     'A21 the read-back rejects a prompt whose answer would be ignored' =
         { param($t) $t.msi -match 'ignores its exit code - Cancel would repair anyway' -and
                     $t.msi -match 'is asynchronous - msiexec would not wait for the answer' }
+    # T1300: Apps and Features leads to this repair, from both of its surfaces.
+    'A23 Apps and Features is allowed to offer the repair - neither ARP switch hides it' =
+        { param($t) $t.msi -notmatch '<Property Id="ARPNOMODIFY"' -and
+                    $t.msi -notmatch '<Property Id="ARPNOREPAIR"' }
+    'A24 a repair already chosen is noted BEFORE SetRepairMode sets REINSTALL itself' =
+        { param($t)
+          $n = MaintSequence $t.msi
+          ($t.msi -match '<CustomAction Id="NoteRepairRequested" Property="REPAIRREQUESTED" Value="1"/>') -and
+          ($t.msi -match '<Custom Action="NoteRepairRequested" Sequence="\d+">REINSTALL</Custom>') -and
+          $n['NoteRepairRequested'] -gt 0 -and $n['NoteRepairRequested'] -lt $n['SetRepairMode'] }
+    'A25 Control Panel''s Repair is not asked about a second time' =
+        { param($t)
+          $rows = ([regex]'(?m)^\s*<Custom Action="(MaintenancePrompt|SetMaintenancePromptCmd|SetRepairMode|SetRepairModeFlags)"[^>]*>(.*?)</Custom>').Matches($t.msi)
+          ($rows.Count -eq 4) -and -not ($rows | Where-Object { $_.Groups[2].Value -notmatch 'AND NOT REPAIRREQUESTED' }) }
+    'A26 the build reads the ARP pair and the stand-down back out of the package' =
+        { param($t) $t.msi -match 'for prop in \("ARPNOMODIFY", "ARPNOREPAIR"\):' -and
+                    $t.msi -match 'CustomAction table has no NoteRepairRequested row' -and
+                    $t.msi -match 'does not stand down on REPAIRREQUESTED' }
 }
 
 $mutations = [ordered]@{
@@ -236,11 +254,11 @@ $mutations = [ordered]@{
         @{ Key = 'msi'; Find = '<Custom Action="MaintenancePrompt" Sequence="1020">'
            Replace = '<Custom Action="MaintenancePrompt" After="SetMaintenancePromptCmd">' }
     'A15 a silent or updater-driven install never sees the dialog' =
-        @{ Key = 'msi'; Find = '<Custom Action="MaintenancePrompt" Sequence="1020">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3</Custom>'
-           Replace = '<Custom Action="MaintenancePrompt" Sequence="1020">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE</Custom>' }
+        @{ Key = 'msi'; Find = '<Custom Action="MaintenancePrompt" Sequence="1020">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3 AND NOT REPAIRREQUESTED</Custom>'
+           Replace = '<Custom Action="MaintenancePrompt" Sequence="1020">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND NOT REPAIRREQUESTED</Custom>' }
     'A16 uninstall, patching and being replaced by a newer package are excluded' =
-        @{ Key = 'msi'; Find = '<Custom Action="SetRepairMode" Sequence="990">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3</Custom>'
-           Replace = '<Custom Action="SetRepairMode" Sequence="990">Installed AND UILevel &gt; 3</Custom>' }
+        @{ Key = 'msi'; Find = '<Custom Action="SetRepairMode" Sequence="990">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3 AND NOT REPAIRREQUESTED</Custom>'
+           Replace = '<Custom Action="SetRepairMode" Sequence="990">Installed AND UILevel &gt; 3 AND NOT REPAIRREQUESTED</Custom>' }
     'A17 the same version is its own band, detected separately from a newer one' =
         @{ Key = 'msi'; Find = 'Property="SAMEVERSIONFOUND"/>'; Replace = 'Property="NEWERVERSIONFOUND"/>' }
     'A18 and the newer band no longer swallows the equal version' =
@@ -253,6 +271,17 @@ $mutations = [ordered]@{
         @{ Key = 'msi'; Find = 'CustomAction table has no MaintenancePrompt row'; Replace = 'warning only' }
     'A21 the read-back rejects a prompt whose answer would be ignored' =
         @{ Key = 'msi'; Find = 'ignores its exit code - Cancel would repair anyway'; Replace = 'is fine' }
+    'A23 Apps and Features is allowed to offer the repair - neither ARP switch hides it' =
+        @{ Key = 'msi'; Find = '<Property Id="ARPDISPLAYVERSION" Value="@DISPLAY_VERSION@"/>'
+           Replace = "<Property Id=`"ARPDISPLAYVERSION`" Value=`"@DISPLAY_VERSION@`"/>`n    <Property Id=`"ARPNOMODIFY`" Value=`"1`"/>" }
+    'A24 a repair already chosen is noted BEFORE SetRepairMode sets REINSTALL itself' =
+        @{ Key = 'msi'; Find = '<Custom Action="NoteRepairRequested" Sequence="985">'
+           Replace = '<Custom Action="NoteRepairRequested" Sequence="995">' }
+    'A25 Control Panel''s Repair is not asked about a second time' =
+        @{ Key = 'msi'; Find = '<Custom Action="MaintenancePrompt" Sequence="1020">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3 AND NOT REPAIRREQUESTED</Custom>'
+           Replace = '<Custom Action="MaintenancePrompt" Sequence="1020">Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel &gt; 3</Custom>' }
+    'A26 the build reads the ARP pair and the stand-down back out of the package' =
+        @{ Key = 'msi'; Find = 'does not stand down on REPAIRREQUESTED'; Replace = 'is fine' }
 }
 
 if ($TeethCheck) {
@@ -316,7 +345,7 @@ if (-not $py) {
             }
             $vp = Put 'verify.py' $verifier.Groups[1].Value
             $t = "`t"
-            $cond = 'Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel > 3'
+            $cond = 'Installed AND NOT REMOVE AND NOT PATCH AND NOT UPGRADINGPRODUCTCODE AND UILevel > 3 AND NOT REPAIRREQUESTED'
 
             # A correctly wired package, in .idt shape: three header lines then
             # rows. CustomAction is Action/Type/Source/Target; sequence tables
@@ -326,6 +355,7 @@ if (-not $py) {
                 "Action${t}Type${t}Source${t}Target",
                 "s72${t}i2${t}S72${t}S255",
                 "CustomAction${t}Action",
+                "NoteRepairRequested${t}51${t}REPAIRREQUESTED${t}1",
                 "SetRepairMode${t}51${t}REINSTALL${t}ALL",
                 "SetRepairModeFlags${t}51${t}REINSTALLMODE${t}amus",
                 "SetMaintenancePromptCmd${t}51${t}MAINTENANCEPROMPTCMD${t}[INSTALLDIR]ghoztty.exe",
@@ -339,6 +369,7 @@ if (-not $py) {
                 "Action${t}Condition${t}Sequence",
                 "s72${t}S255${t}I2",
                 "InstallExecuteSequence${t}Action",
+                "NoteRepairRequested${t}REINSTALL${t}985",
                 "SetRepairMode${t}$cond${t}990",
                 "SetRepairModeFlags${t}$cond${t}991",
                 "CostFinalize${t}${t}1000",
@@ -403,6 +434,14 @@ if (-not $py) {
                 ((RunVerifier $goodCa ($goodSeq -replace "MaintenancePrompt${t}$([regex]::Escape($cond))${t}1020", "MaintenancePrompt${t}$cond${t}1300") $goodUp) -ne 0)
             Assert 'E15 a sequence table with no InstallValidate to measure against is rejected' `
                 ((RunVerifier $goodCa (DropRow $goodSeq 'InstallValidate') $goodUp) -ne 0)
+            # T1300. Control Panel's Repair arrives with REINSTALL already set;
+            # these are the shapes in which it would be asked about again.
+            Assert 'E16 an MSI that never notes a requested repair - Repair asked twice - is rejected' `
+                ((RunVerifier (DropRow $goodCa 'NoteRepairRequested') (DropRow $goodSeq 'NoteRepairRequested') $goodUp) -ne 0)
+            Assert 'E17 the note taken AFTER SetRepairMode, when every run looks requested, is rejected' `
+                ((RunVerifier $goodCa ($goodSeq -replace "NoteRepairRequested${t}REINSTALL${t}985", "NoteRepairRequested${t}REINSTALL${t}995") $goodUp) -ne 0)
+            Assert 'E18 a prompt that does not stand down on the note is rejected' `
+                ((RunVerifier $goodCa ($goodSeq -replace "MaintenancePrompt${t}$([regex]::Escape($cond))", "MaintenancePrompt${t}$($cond -replace ' AND NOT REPAIRREQUESTED', '')") $goodUp) -ne 0)
         } finally {
             Remove-Item -LiteralPath $tmpE -Recurse -Force -ErrorAction SilentlyContinue
         }
