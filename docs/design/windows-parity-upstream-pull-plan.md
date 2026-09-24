@@ -39,6 +39,11 @@ daily main intake already keeps it fed.
     moved on (T957 fetched it at `e6605009b`), so S6's range grows a little each
     week until it is taken - re-run `scripts\divergence-inventory.ps1` before
     S6, not before S1.
+  - How far it has moved is measured, not assumed (T960): the daily triage
+    re-runs the inventory monthly, and the "Since the last run" section of
+    [`windows-parity-divergence.md`](windows-parity-divergence.md) is the
+    current gap - on 2026-09-24 the risk set was 145 files (up from 131) with
+    683 upstream commits past this pin.
 - **Risk set (both sides touched):** 131 files
 - **Changed only here:** 1973 files - no conflict possible
 - **Changed only upstream:** 616 files - arrive clean

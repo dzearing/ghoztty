@@ -17,6 +17,13 @@
        (git log --full-history --no-merges -- <path>);
     C. error paths answer instead of lying: a bogus ref and unrelated
        histories both exit 2 with an ERROR line and write no report.
+    D. a second run reports the delta since the first (T960): the path that
+       joined the risk set, the new upstream commits, and upstream's
+       minimum_zig_version moving; the history file carries both runs;
+    E. -Check is due exactly at the interval, current before it, due when
+       nothing was ever recorded, and writes nothing;
+    F. a report written before the history existed is the baseline, so the
+       first monthly run still has a delta to report.
 
   No network, no GUI, no ghoztty processes - safe on the background desktop.
 
@@ -77,6 +84,9 @@ try {
     Set-Content -LiteralPath (Join-Path $tmp 'a.txt') -Value 'a v0' -Encoding Ascii
     Set-Content -LiteralPath (Join-Path $tmp 'b.txt') -Value 'b v0' -Encoding Ascii
     Set-Content -LiteralPath (Join-Path $tmp 'c.txt') -Value 'c v0' -Encoding Ascii
+    # Unchanged on both sides until section D bumps it upstream, so it is in
+    # none of section A's sets.
+    Set-Content -LiteralPath (Join-Path $tmp 'build.zig.zon') -Value '.{ .minimum_zig_version = "0.15.2" }' -Encoding Ascii
     $null = Invoke-TmpGit $tmp @('add', '-A')
     $null = Invoke-TmpGit $tmp @('commit', '--quiet', '-m', 'base')
     # @(...) wrap: a 1-line git answer unrolls to a bare string on return,
@@ -109,8 +119,13 @@ try {
 
     # --- A. the three sets --------------------------------------------------
     $report = Join-Path $tmp 'report.md'
-    $r = Invoke-Inventory @('-RepoRoot', $tmp, '-OurRef', 'fork', '-UpstreamRef', 'upstreamref', '-NoFetch', '-OutFile', $report)
+    $history = Join-Path $tmp 'report-history.json'
+    $r = Invoke-Inventory @('-RepoRoot', $tmp, '-OurRef', 'fork', '-UpstreamRef', 'upstreamref', '-NoFetch', '-OutFile', $report, '-Now', '2026-01-01')
     Check 'A1 run exits 0' ($r.Code -eq 0) ("exit=" + $r.Code)
+    Check 'A11 first run says there is no baseline' ($r.Text -match 'DELTA first recorded run') $r.Text
+    Check 'A12 min zig read from both sides' ($r.Text -match 'min zig: ours 0\.15\.2, upstream 0\.15\.2') $r.Text
+    Check 'A13 history written beside the report' (Test-Path -LiteralPath $history)
+    $reportA = if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report -Raw } else { '' }
     Check 'A2 fork point is the base commit' ($r.Text -match [regex]::Escape("fork point $baseShort")) $r.Text
     Check 'A3 risk set counted as 1' ($r.Text -match 'changed both \(risk set\): 1\b') $r.Text
     Check 'A4 only-here counted as 2' ($r.Text -match 'changed only here: 2\b') $r.Text
@@ -135,6 +150,65 @@ try {
         (($rep -split "`n" | Where-Object { $_ -match 'e\.txt' }) -join '; ')
     $oracle = @(Invoke-TmpGit $tmp @('log', '--format=%H', '--full-history', '--no-merges', "$baseSha..fork", '--', 'e.txt')).Count
     Check 'B2 count matches git log --full-history --no-merges' ($oracle -eq 1) ("oracle=" + $oracle)
+
+    # --- D. delta since the previous run (T960) ------------------------------
+    # upstreamref gains two commits: it adds d.txt (which fork added too, so
+    # d joins the risk set) and bumps minimum_zig_version.
+    $null = Invoke-TmpGit $tmp @('checkout', '--quiet', 'upstreamref')
+    Set-Content -LiteralPath (Join-Path $tmp 'd.txt') -Value 'd up' -Encoding Ascii
+    $null = Invoke-TmpGit $tmp @('add', 'd.txt')  # never -A: the report and history live in this repo's tree
+    $null = Invoke-TmpGit $tmp @('commit', '--quiet', '-m', 'up: add d')
+    Set-Content -LiteralPath (Join-Path $tmp 'build.zig.zon') -Value '.{ .minimum_zig_version = "0.16.0" }' -Encoding Ascii
+    $null = Invoke-TmpGit $tmp @('commit', '--quiet', '-am', 'up: zig 0.16')
+    $null = Invoke-TmpGit $tmp @('checkout', '--quiet', 'fork')
+
+    $r = Invoke-Inventory @('-RepoRoot', $tmp, '-OurRef', 'fork', '-UpstreamRef', 'upstreamref', '-NoFetch', '-OutFile', $report, '-Now', '2026-01-15')
+    Check 'D1 second run exits 0' ($r.Code -eq 0) ("exit=" + $r.Code)
+    Check 'D2 delta names the risk-set move and the new upstream commits' `
+        ($r.Text -match 'DELTA since 2026-01-01: risk set 1 -> 2 \(\+1 -0\), upstream \+2 commits, fork point unchanged') $r.Text
+    Check 'D3 upstream zig bump is reported as MOVED' ($r.Text -match 'DELTA upstream zig 0\.15\.2 -> 0\.16\.0 \(MOVED\); our zig 0\.15\.2 \(unchanged\)') $r.Text
+    $rep = if (Test-Path -LiteralPath $report) { Get-Content -LiteralPath $report -Raw } else { '' }
+    Check 'D4 report lists d.txt as joining the risk set' `
+        (($rep -match 'Joined the risk set \(1\)') -and ($rep -match '(?m)^d\.txt\r?$')) `
+        (($rep -split "`n" | Where-Object { $_ -match 'Joined|Risk set' }) -join '; ')
+    $h = if (Test-Path -LiteralPath $history) { ConvertFrom-Json ([System.IO.File]::ReadAllText($history)) } else { $null }
+    $runs = if ($null -ne $h) { @($h.runs) } else { @() }
+    Check 'D5 history carries both runs in order' `
+        (($runs.Count -eq 2) -and ($runs[0].date -eq '2026-01-01') -and ($runs[1].date -eq '2026-01-15') -and ($runs[1].upZig -eq '0.16.0')) `
+        ("runs=" + $runs.Count)
+    Check 'D6 run-history table has a row per run' `
+        (($rep -match '\| 2026-01-01 \| `') -and ($rep -match '\| 2026-01-15 \| `')) ''
+
+    # --- E. -Check ------------------------------------------------------------
+    $before = [System.IO.File]::ReadAllText($history)
+    $r = Invoke-Inventory @('-RepoRoot', $tmp, '-Check', '-OutFile', $report, '-Now', '2026-02-13')
+    Check 'E1 29 days after the last run is CURRENT (exit 0)' `
+        (($r.Code -eq 0) -and ($r.Text -match 'DIVERGENCE CURRENT last run 2026-01-15 \(29d ago, risk set 2') -and ($r.Text -match 'next due in 1d')) ("exit=" + $r.Code + " " + $r.Text)
+    $r = Invoke-Inventory @('-RepoRoot', $tmp, '-Check', '-OutFile', $report, '-Now', '2026-02-14')
+    Check 'E2 30 days after the last run is DUE (exit 3)' `
+        (($r.Code -eq 3) -and ($r.Text -match 'DIVERGENCE DUE last run 2026-01-15 \(30d ago')) ("exit=" + $r.Code + " " + $r.Text)
+    Check 'E3 -Check wrote nothing' ([System.IO.File]::ReadAllText($history) -eq $before)
+    $r = Invoke-Inventory @('-RepoRoot', $tmp, '-Check', '-OutFile', (Join-Path $tmp 'never.md'), '-Now', '2026-02-14')
+    Check 'E4 nothing ever recorded is DUE (exit 3)' `
+        (($r.Code -eq 3) -and ($r.Text -match 'DIVERGENCE DUE never run')) ("exit=" + $r.Code + " " + $r.Text)
+    Check 'E5 -Check on a fresh path created nothing' `
+        ((-not (Test-Path -LiteralPath (Join-Path $tmp 'never.md'))) -and (-not (Test-Path -LiteralPath (Join-Path $tmp 'never-history.json'))))
+
+    # --- F. a pre-history report is the baseline ----------------------------
+    $legacy = Join-Path $tmp 'legacy.md'
+    $legacyHistory = Join-Path $tmp 'legacy-history.json'
+    [System.IO.File]::WriteAllText($legacy, $reportA)
+    $r = Invoke-Inventory @('-RepoRoot', $tmp, '-Check', '-OutFile', $legacy, '-Now', '2026-01-20')
+    Check 'F1 -Check reads the legacy report date' `
+        (($r.Code -eq 0) -and ($r.Text -match 'last run 2026-01-01 \(19d ago, risk set 1')) ("exit=" + $r.Code + " " + $r.Text)
+    $r = Invoke-Inventory @('-RepoRoot', $tmp, '-OurRef', 'fork', '-UpstreamRef', 'upstreamref', '-NoFetch', '-OutFile', $legacy, '-Now', '2026-01-20')
+    Check 'F2 first run over a legacy report reports its delta' `
+        (($r.Code -eq 0) -and ($r.Text -match 'DELTA since 2026-01-01: risk set 1 -> 2 \(\+1 -0\), upstream \+2 commits')) ("exit=" + $r.Code + " " + $r.Text)
+    Check 'F3 legacy baseline had no zig record and says so' ($r.Text -match 'DELTA upstream zig 0\.16\.0 \(not recorded last run\)') $r.Text
+    $lh = if (Test-Path -LiteralPath $legacyHistory) { ConvertFrom-Json ([System.IO.File]::ReadAllText($legacyHistory)) } else { $null }
+    $lruns = if ($null -ne $lh) { @($lh.runs) } else { @() }
+    Check 'F4 the legacy baseline becomes the first history record' `
+        (($lruns.Count -eq 2) -and ($lruns[0].date -eq '2026-01-01') -and (@($lruns[0].riskSet).Count -eq 1)) ("runs=" + $lruns.Count)
 
     # --- C. error paths -----------------------------------------------------
     $badReport = Join-Path $tmp 'bad.md'
@@ -169,4 +243,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -MinPass 13
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -MinPass 33

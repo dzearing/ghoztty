@@ -233,6 +233,16 @@ Concretely, in order, with no stops in between:
      arrives here. `-Format markdown` emits the `## Parity coverage` block —
      paste it into the intake note so the enumeration is the evidence rather
      than prose about it. Acceptance: `test\win32\parity-sweep.ps1`.
+   - **Monthly upstream divergence** (T960): ask
+     `powershell -NoProfile -File scripts\divergence-inventory.ps1 -Check`.
+     Exit 3 (`DIVERGENCE DUE`, 30 days since the last run) means run the
+     inventory itself (no `-Check`; it fetches ghostty-org `main` read-only) and
+     commit the regenerated `windows-parity-divergence.md` plus its
+     `-history.json` with the triage. Its `DELTA` lines - risk-set growth, new
+     upstream commits, whether the fork point or either side's
+     `minimum_zig_version` moved - go into `## Task triage` as one bullet. This
+     measures the gap an upstream pull would have to close; it never starts one
+     (D80: that is the user's call).
    - **Write `## Task triage`** into today's digest: counts (filed
      yesterday, closed yesterday, net flow, M1 closed/total), **main intake
      (N commits evaluated, M tasks filed, current lag in commits)**, what

@@ -1,16 +1,17 @@
 {
     "guard":  "merge-terminology",
     "script":  "test/win32/merge-terminology.ps1",
-    "generated":  "2026-09-20T08:08:46-07:00",
-    "commit":  "ed60f5244",
+    "generated":  "2026-09-24T03:02:04-07:00",
+    "commit":  "884b7fe2a",
     "uncommitted":  [
+                        "docs/design/windows-parity-upstream-pull-plan.md",
                         "go.md"
                     ],
     "files":  {
                   "CLAUDE.md":  "ed2bd546b1fb102c9ed719093fb0bfa3b52c407acae184ef2880e1b7aba027d7",
                   "docs/design/windows-parity-ship-workflow.md":  "f7289e5a320ad543ee36ece4ddef741e958f78ba942eed49547f9db26784e0c6",
-                  "docs/design/windows-parity-upstream-pull-plan.md":  "ce7efdbe6eb4cec9529fce4a4656cf17f0b13db5f35c5738524ed86ccee56002",
-                  "go.md":  "d6b71a9d425ad6d1a37b1bcacf5865229184406cd65bb2ae8568c85e4f666722",
+                  "docs/design/windows-parity-upstream-pull-plan.md":  "745020bf54846ee5fcc2e2313df0c8c280f51e548a86b1a4913a4c5f453aa5a6",
+                  "go.md":  "9977a104cf9ad10532ddcf652126c2fef2ef1b5a2032b3102e6124080f59f87a",
                   "scripts/ship-readiness.ps1":  "1fcab42cac628cae5852b0d1bd93b266c0d9809b015ff996362f02c5895c84f7",
                   "test/win32/merge-terminology.ps1":  "7d155ca2da0de4866e7afab82df19ab046be33aa3c34655481192c1e158b5d25"
               }
