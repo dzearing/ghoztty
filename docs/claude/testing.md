@@ -354,6 +354,19 @@ for ever and stay green while accumulating nothing. Acceptance:
 `test\win32\soak-daemon.ps1`, which puts a round in flight and requires it dead —
 with the foreground process it yielded to untouched.
 
+**A loaded soak CAN run from a turn — as a background task writing to a file**
+(T954). Two T860 attempts at `-LoadWorkers 8 -LoadKind build` died about three
+minutes in with no verdict, and for five weeks that read as "a turn cannot run
+this". Re-run on 2026-09-24 from a background Bash task
+(`run_in_background`, stdout redirected to a file under `%TEMP%`), the same
+command reached its `SOAK` summary line after eight minutes, exit 0. Never run it
+in the foreground under a tool timeout, and wait on the summary line rather than
+polling. The daemon above is still the right home for a RATE, which needs more
+rounds than a turn can afford; a turn's soak is for one or two confirmation
+rounds. And read the `load:` lines, not just `load=N:build`: that run's build
+workers failed every first build within a minute (T1718), so the box it
+measured was far less loaded than the summary claims.
+
 **A harness must never fabricate a failure, and one shape of that is now
 checked** (T197). `Start-Process -PassThru` hands back a process object whose
 `ExitCode` reads back **empty** unless something touched `$p.Handle` while the
