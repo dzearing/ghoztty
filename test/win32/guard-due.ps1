@@ -922,6 +922,107 @@ $rows
     Check 'N3 this harness stamps its row only inside a failures-eq-0 branch' `
         ($selfSrc -match '(?s)if \(\$script:failures -eq 0\) \{\s*\r?\n\s*&[^\r\n]*\$Due `\s*\r?\n\s*update -Guard guard-due') ''
 
+    # --- O. a known-blocked row names its task, and only while it is open ----
+    # T938. A guard this box cannot clear, reported identically to a fresh
+    # regression, was filed as a NEW task by every turn that met it - T898
+    # collected twelve duplicates. A row may now name the open task that
+    # already explains it. The pointer is read from the task file, never
+    # trusted, so closing the task makes the note disappear by itself.
+    Write-Host "`n-- O. known-blocked rows --"
+
+    $KbFixture = Join-Path $env:TEMP ("ghoztty-guard-kb-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    foreach ($d in @('scripts', 'test\win32', 'docs\design\windows-parity-tasks')) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $KbFixture $d) | Out-Null
+    }
+    function Set-KbFile([string]$rel, [string]$text) {
+        [System.IO.File]::WriteAllText((Join-Path $KbFixture $rel), ($text -replace "`r`n", "`n"),
+            (New-Object System.Text.UTF8Encoding($false)))
+    }
+    function Set-KbTask([string]$status) {
+        Set-KbFile 'docs\design\windows-parity-tasks\T9001.md' (
+            "---`nid: T9001`ntitle: `"The fixture harness needs a second machine`"`nstatus: `"$status`"`n---`n`n# T9001`n")
+    }
+    Set-KbFile 'scripts\blocked-one.ps1' "# fixture`n"
+    Set-KbFile 'scripts\plain-one.ps1' "# fixture`n"
+    $kbTable = @"
+`$GuardTable = @(
+    [pscustomobject]@{
+        Name           = 'kb-blocked'
+        Script         = 'test\win32\kb-blocked.ps1'
+        Stamp          = 'test\win32\kb-blocked.stamp.json'
+        KnownBlockedBy = 'T9001'
+        Covers         = @(
+            'scripts\blocked-one.ps1'
+        )
+    },
+    [pscustomobject]@{
+        Name   = 'kb-plain'
+        Script = 'test\win32\kb-plain.ps1'
+        Stamp  = 'test\win32\kb-plain.stamp.json'
+        Covers = @(
+            'scripts\plain-one.ps1'
+        )
+    }
+)
+
+"@
+    [System.IO.File]::WriteAllText((Join-Path $KbFixture 'scripts\guard-due.ps1'),
+        ($realDue.Substring(0, $tabStart) + $kbTable + $realDue.Substring($tabEnd)),
+        (New-Object System.Text.UTF8Encoding($false)))
+    function Invoke-KbDue([string]$Guard, [switch]$Json) {
+        $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+            (Join-Path $KbFixture 'scripts\guard-due.ps1'), 'check', '-Repo', $KbFixture, '-Guard', $Guard)
+        if ($Json) { $a += '-Json' }
+        $out = & powershell.exe @a 2>&1
+        return [pscustomobject]@{ Exit = $LASTEXITCODE; Text = (@($out) -join "`n") }
+    }
+
+    Set-KbTask 'blocked(needs a second machine)'
+    $rb = Invoke-KbDue 'kb-blocked'
+    Check 'O1 a due row naming an OPEN task prints the pointer beside the DUE line' `
+        ($rb.Text -match 'GUARD DUE kb-blocked' -and
+         $rb.Text -match 'known-blocked by T9001 \(blocked\(needs a second machine\)\): The fixture harness needs a second machine' -and
+         $rb.Text -match 'do not file a new task') $rb.Text
+    Check 'O2 and it is still honestly due: same exit code as any due row' `
+        ($rb.Exit -eq 1) "exit=$($rb.Exit)"
+
+    # The control: an ordinary due row. Same wording, same exit, no annotation.
+    $rp = Invoke-KbDue 'kb-plain'
+    Check 'O3 an ordinarily-due row is unchanged: no annotation, exit 1' `
+        ($rp.Exit -eq 1 -and $rp.Text -match 'GUARD DUE kb-plain: no stamp' -and $rp.Text -notmatch 'known-blocked') `
+        "exit=$($rp.Exit): $($rp.Text)"
+    # Wording parity: the blocked row's report minus its two added lines is the
+    # plain row's report with the name swapped - nothing else moved.
+    $rbCore = (@($rb.Text -split "`n") | Where-Object { $_ -notmatch 'known-blocked|already tracked' }) -join "`n"
+    Check 'O3b and the blocked row says nothing else differently' `
+        (($rbCore -replace 'kb-blocked', 'kb-X') -eq ($rp.Text -replace 'kb-plain', 'kb-X')) "blocked:`n$rbCore`nplain:`n$($rp.Text)"
+
+    $rj = Invoke-KbDue 'kb-blocked' -Json
+    Check 'O4 -Json carries the verified pointer' `
+        ($rj.Text -match '"KnownBlockedBy":\s*"T9001"') $rj.Text
+
+    # The negative controls: the task closes, and the note must go with it.
+    Set-KbTask 'done'
+    $rb = Invoke-KbDue 'kb-blocked'
+    Check 'O5 once the named task is DONE the annotation disappears' `
+        ($rb.Exit -eq 1 -and $rb.Text -match 'GUARD DUE kb-blocked' -and $rb.Text -notmatch 'known-blocked') `
+        "exit=$($rb.Exit): $($rb.Text)"
+    $rj = Invoke-KbDue 'kb-blocked' -Json
+    Check 'O5b and -Json reports no pointer for it' `
+        ($rj.Text -match '"KnownBlockedBy":\s*""') $rj.Text
+    Set-KbTask 'skipped(superseded)'
+    $rb = Invoke-KbDue 'kb-blocked'
+    Check 'O6 a SKIPPED task drops the annotation too' ($rb.Text -notmatch 'known-blocked') $rb.Text
+    Remove-Item -LiteralPath (Join-Path $KbFixture 'docs\design\windows-parity-tasks\T9001.md') -Force
+    $rb = Invoke-KbDue 'kb-blocked'
+    Check 'O7 a pointer to a task that does not exist is dropped, not trusted' `
+        ($rb.Exit -eq 1 -and $rb.Text -notmatch 'known-blocked') "exit=$($rb.Exit): $($rb.Text)"
+
+    # O8: the live table. rdp-session is the row that needs this today - a
+    # remote session must be originated by a person on a second machine.
+    Check 'O8 the shipped rdp-session row names T1256 as its known blocker' `
+        ($realTableText -match "(?s)Name\s*=\s*'rdp-session'.*?KnownBlockedBy\s*=\s*'T1256'.*?Covers") ''
+
     Complete-TestBody  # T1039: the run reached the end of its body
 }
 finally {
@@ -931,6 +1032,7 @@ finally {
     if ($CiFixture) { Remove-Item -LiteralPath $CiFixture -Recurse -Force -ErrorAction SilentlyContinue }
     if ($TabFixture) { Remove-Item -LiteralPath $TabFixture -Recurse -Force -ErrorAction SilentlyContinue }
     if ($UpFixture) { Remove-Item -LiteralPath $UpFixture -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($KbFixture) { Remove-Item -LiteralPath $KbFixture -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 # --- stamp (T921) ----------------------------------------------------------

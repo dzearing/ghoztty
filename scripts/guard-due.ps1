@@ -55,6 +55,15 @@
   whole mechanism exists to prevent, so the content check is not optional and
   there is no hatch past it.
 
+  KNOWN-BLOCKED ROWS (T938). A row may declare `KnownBlockedBy = 'T<id>'`,
+  naming the open task that already explains why it cannot be cleared here.
+  The DUE line, its wording and its exit code are unchanged; the report adds a
+  `known-blocked by T<id>` line so the next turn does not file the same gap
+  again (T898 collected twelve duplicates before this existed). The pointer is
+  VERIFIED against the task's own file on every check: once that task is done
+  or skipped - or if it does not exist - the line disappears and the row reads
+  as an ordinary due guard again.
+
   WIRED INTO (both deliberately different in force):
     * scripts\go-loop-exec.ps1 claim - go.md step 0, every turn. Reports, never
       fails: a claim that can exit nonzero over a stale stamp would wedge the
@@ -1376,6 +1385,9 @@ $GuardTable = @(
         Script   = 'test\win32\rdp-session.ps1'
         Stamp    = 'test\win32\rdp-session.stamp.json'
         Advisory = $true
+        # A remote session has to be ORIGINATED from a second machine by a
+        # person; T1256 is parked on exactly that (T938).
+        KnownBlockedBy = 'T1256'
         Covers   = @(
             'src\renderer\gl_loader.zig',
             'src\renderer\gl_report.zig',
@@ -4377,6 +4389,32 @@ function Get-StampUpstreamMap($stamp) {
     return $map
 }
 
+function Get-KnownBlocker($row) {
+    <#
+      T938. A row may name the OPEN task that explains why it cannot be
+      cleared on this box (`KnownBlockedBy = 'T1256'`). Returned only while
+      that task is still open - read from its own file, never trusted from the
+      table - so the note disappears the moment the reason for it does, rather
+      than outliving it as the next false all-clear. A pointer to a task that
+      is closed, or that does not exist, yields $null and the row reads as an
+      ordinary due guard again.
+    #>
+    $id = [string]$row.KnownBlockedBy
+    if (-not $id) { return $null }
+    $file = Join-Path $Repo ("docs\design\windows-parity-tasks\{0}.md" -f $id)
+    if (-not (Test-Path -LiteralPath $file)) { return $null }
+    $status = ''; $title = ''
+    $inFront = $false
+    foreach ($line in [System.IO.File]::ReadAllLines($file, [System.Text.Encoding]::UTF8)) {
+        if ($line -eq '---') { if ($inFront) { break } else { $inFront = $true; continue } }
+        if (-not $inFront) { continue }
+        if ($line -match '^status:\s*"?(.*?)"?\s*$') { $status = $Matches[1] }
+        elseif ($line -match '^title:\s*"?(.*?)"?\s*$') { $title = $Matches[1] }
+    }
+    if (-not $status -or $status -match '^(done|skipped)') { return $null }
+    return [pscustomobject]@{ Id = $id; Status = $status; Title = $title }
+}
+
 function Get-GuardState($row) {
     <#
       The whole decision, as data: Kind ('current' | 'due'), Findings (one per
@@ -4842,7 +4880,17 @@ switch ($Action) {
     }
 
     'check' {
-        $states = @(foreach ($row in $rows) { Get-GuardState $row })
+        $states = @(foreach ($row in $rows) {
+                $st = Get-GuardState $row
+                # The VERIFIED pointer (T938): the task id only while that task
+                # is still open, '' otherwise - so -Json readers get the same
+                # answer the text report prints.
+                $kb = if ($st.Kind -eq 'due') { Get-KnownBlocker $row } else { $null }
+                $st | Add-Member -NotePropertyName KnownBlockedBy -NotePropertyValue $(if ($kb) { $kb.Id } else { '' })
+                $st | Add-Member -NotePropertyName KnownBlockedStatus -NotePropertyValue $(if ($kb) { $kb.Status } else { '' })
+                $st | Add-Member -NotePropertyName KnownBlockedTitle -NotePropertyValue $(if ($kb) { $kb.Title } else { '' })
+                $st
+            })
         # The table's own integrity, before its verdicts (T1227): a row whose
         # coverage names a path that cannot match is reporting on less code than
         # it says it does, and every CURRENT line it prints afterwards is worth
@@ -4906,6 +4954,14 @@ switch ($Action) {
             # one that does not work here.
             if ($s.CiGuard) {
                 "  or, once the build machine has gone green over this exact code: powershell -NoProfile -File scripts\guard-due.ps1 stamp-ci -Guard {0}" -f $s.Name
+            }
+            # T938: a condition already tracked says so in the same breath, or
+            # every turn that meets it files it again (T898 collected twelve
+            # duplicates that way). The guard stays honestly due - same line,
+            # same exit code - only the re-filing reflex is answered.
+            if ($s.KnownBlockedBy) {
+                "  known-blocked by {0} ({1}): {2}" -f $s.KnownBlockedBy, $s.KnownBlockedStatus, $s.KnownBlockedTitle
+                "    already tracked - do not file a new task for this; run it anyway if you can"
             }
         }
         exit ([int]($due -gt 0))
