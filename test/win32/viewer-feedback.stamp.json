@@ -1,15 +1,22 @@
 {
     "guard":  "viewer-feedback",
     "script":  "test/win32/viewer-feedback.ps1",
-    "generated":  "2026-09-23T17:23:04-07:00",
-    "commit":  "2c0478ccb",
+    "generated":  "2026-09-23T21:47:47-07:00",
+    "commit":  "32479ce2f",
     "uncommitted":  [
+                        "src/apprt/win32/viewer_feedback_doc.zig",
+                        "src/apprt/win32/ViewerFeedbackBar.zig",
+                        "test/win32/lib/ComposerSurface.ps1",
                         "test/win32/viewer-feedback.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/richedit_tom.zig":  "1cdc66022c7e724d0dd5a3bbd76e83285a9ebcb1b5f4968ac1b4b6e5bacf2523",
-                  "src/apprt/win32/viewer_feedback_doc.zig":  "e934bd536bb22be7484e66de00060f32832243928b733350a07828083d22573b",
-                  "src/apprt/win32/ViewerFeedbackBar.zig":  "859642cadcb428ec473c31212773ae4130668e4165c879631da33f208793848b",
-                  "test/win32/viewer-feedback.ps1":  "7227ac8117f1966ec856996c6a347ec535ba2f51d5b47924c970fbecf43d30cb"
+                  "src/apprt/win32/viewer_feedback_doc.zig":  "f5c871e6e68e437dcb170794201619d59664e9e60077ef3453910b65f3e004e9",
+                  "src/apprt/win32/viewer_feedback_page.zig":  "ac36942837a410cfb0d4661bb78004aeef1168b41bb7d57deb745cb6e8c016b4",
+                  "src/apprt/win32/ViewerFeedbackBar.zig":  "a2178a127fbd271a3ded542ab2be93f38e73088c631f9f45c38fce7330dfaacb",
+                  "src/apprt/win32/ViewerFeedbackWeb.zig":  "bd420cf35aa02909c9632b2589b36b69ba0ac141a87add034ae7c0080af4f1f3",
+                  "src/viewer/composer.js":  "7687e37882abceae4f48be0df321818bee5e89eb66a9ff30e3479fc90ff2d74b",
+                  "test/win32/lib/ComposerSurface.ps1":  "7edd6dccc01fa8654f186ad97e64fb13bd9199305aa0424aebfbe7537e39d287",
+                  "test/win32/lib/WebViewCdp.ps1":  "694f3e4f7852950d38ca69bcd317b75b1797f364c7f41fa5c23ed3cb56abd5fe",
+                  "test/win32/viewer-feedback.ps1":  "fa5765780089947c0a242fbcabc094ab72c7393fbe21370eaab86b2aa9bc5ec2"
               }
 }

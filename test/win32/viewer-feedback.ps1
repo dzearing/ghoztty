@@ -84,16 +84,13 @@ if ($ExePath) { $exe = $ExePath }
 # Isolate the IPC endpoint (inherited through CreateProcessW).
 $env:GHOZTTY_PIPE_SUFFIX = "-fbtest$PID"
 
-# WHICH SURFACE THIS SUITE DRIVES: the web composer, the one users get (T1706).
-# Stated rather than assumed, so a stale `richedit` left in the environment by
-# another run cannot quietly move the suite back onto the fallback -- and arm C2
-# asserts the app agreed.
+# WHICH SURFACE THIS SUITE DRIVES: the web composer, the only one there is
+# (T1706, T1704). Arm C2 asserts the app actually brought it up.
 . (Join-Path $PSScriptRoot 'lib\ComposerSurface.ps1')
 # ComposerSurface.ps1 turns on strict mode, and a dot-sourced file's strict mode
 # is the CALLER's; this script's helpers read properties of maybe-null results
 # on purpose (`$s.Open` on a state nobody logged yet), so it stays off here.
 Set-StrictMode -Off
-Set-ComposerSurface 'web'
 . (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
 . (Join-Path $PSScriptRoot 'lib\WebViewCdp.ps1')
 
@@ -567,8 +564,8 @@ try {
     # --- C2. the editing surface is the web page (T934, T1706) ---------------
     # The band paints the pill; the text lives in a WebView2 page filling the
     # pill's text rect. Everything below types into THAT, so this arm first
-    # proves the app put the composer on it -- a suite that silently landed on
-    # the RichEdit fallback would fail every typing arm with no explanation.
+    # proves the app put the composer on it -- a composer that came up with no
+    # surface would fail every typing arm with no explanation.
     Assert (Wait-ComposerSurface $errlog 'web') `
         "the composer opened on the web surface (got '$(Get-ComposerSurface $errlog)')"
     $cv = $null

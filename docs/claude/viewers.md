@@ -587,8 +587,8 @@ ship, in `GhosttyAssets.zig`'s none-lane tests and
   field all come from the browser engine rather than from us. Four things to
   know before touching it:
 
-  - **The direction of truth is inverted.** A RichEdit answers `caret()` and
-    `lineCount()` on the caller's stack; a WebView2 cannot. So the PAGE owns the
+  - **The direction of truth is inverted.** A native control would answer
+    `caret()` and `lineCount()` on the caller's stack; a WebView2 cannot. So the PAGE owns the
     live document and pushes a snapshot up (`{t:"state", text, lines, caret,
     gen}`) on every edit, and native keeps the last snapshot as what it lays out
     and serializes from. Native writes go down as `{t:"seed", …}` — "make the
@@ -611,43 +611,33 @@ ship, in `GhosttyAssets.zig`'s none-lane tests and
     properties on each theme or scale change (D43's other mitigation); the
     stylesheet states no size or colour of its own, and a unit test asserts that.
 
-  **The RichEdit below it is the FALLBACK**, not dead code: a box whose
-  environment cannot produce a controller still gets a composer, and
-  `GHOZTTY_COMPOSER_SURFACE=richedit` forces it. **T937** retires it. Which one
-  is live is stated on every open —
-  `viewer feedback composer surface=web|richedit(...)`. Acceptance is split to
-  match: `test/win32/viewer-composer.ps1` proves the web surface's lifecycle and
-  its round trip, `test/win32/viewer-feedback.ps1` pins itself to the fallback
-  and keeps proving the editing semantics (window messages cannot drive a
-  Chromium window off the input desktop, T233), and the in-process `host floor`
-  test in `ViewerPane.zig` drives a real controller end to end — open, seed,
-  quote, send, report on disk.
-
-  The RichEdit half, as it was and as the fallback still is (T635): the
-  control is the storage while the composer is open and every change mirrors
-  back into the pane from `EN_CHANGE`; the pane is still what outlives the
-  window. Three win32 details worth knowing: RichEdit sends **no** notifications
-  until `EM_SETEVENTMASK`/`ENM_CHANGE` asks for them; it does **not**
-  answer `EM_SETCUEBANNER`, so the empty composer's placeholder is painted by
-  a subclass over the control's own `WM_PAINT`; and the mirror reads the
-  control with `EM_GETTEXTEX`/`GT_DEFAULT` rather than `WM_GETTEXT`, because
-  the latter expands each paragraph mark to CR+LF and every quote offset the
-  composer computes has to index the control and the pane's buffer the same
-  way.
+  **There is no fallback surface** (T1704). The RichEdit that T635 hosted and
+  T934 kept hidden behind the page, with `GHOZTTY_COMPOSER_SURFACE=richedit` to
+  force it, is gone: a viewer pane cannot exist without WebView2, so a composer
+  whose second controller fails degrades to where a failed pane already is —
+  the band opens, its footer says *The feedback box could not start*, and the
+  report text stays on the pane. Which way it went is stated on every open —
+  `viewer feedback composer surface=web|none(<why>)`. Acceptance:
+  `test/win32/viewer-composer.ps1` proves the page's lifecycle and its round
+  trip, `test/win32/viewer-feedback.ps1` proves the editing semantics on the
+  same page through the DevTools driver (`test/win32/lib/WebViewCdp.ps1`,
+  T1702 — window messages cannot drive a Chromium window off the input
+  desktop, T233), and the in-process `host floor` test in `ViewerPane.zig`
+  drives a real controller end to end — open, seed, quote, send, report on
+  disk.
   **The composer's two indexings are BYTES and CODE UNITS, and it converts
   between them** (T648). Every pure module here works in byte offsets into the
   pane's UTF-8 buffer — which is right, since that buffer is what the report is
-  written from — and every edit message (`EM_EXSETSEL`, `EM_EXGETSEL`,
-  `EM_POSFROMCHAR`) works in UTF-16 code units. Those agree **only for ASCII**:
+  written from — and the page's DOM offsets (the caret, every quote and chip
+  span in a snapshot) are UTF-16 code units. Those agree **only for ASCII**:
   `é` is 2 bytes and 1 unit, an emoji is 4 bytes and 2 units. Handed straight
   across, a quote or an image chip landed short by the accumulated difference —
   silent corruption of what the user wrote, invisible to anyone typing plain
-  English. So a `CHARRANGE` is never filled from a byte offset directly: it
-  goes through `ViewerFeedbackBar.charIndex`, and a number out of the control
-  goes through `.byteOffset`, both over the pure `utf16_offset.zig`. The
-  conversion has exactly ONE home — the address bar and the banner editor only
+  English. So every offset crossing the channel goes through the pure
+  `utf16_offset.zig` (`unitsBeforeByte` down, `byteForUnits` up) — the
+  conversion has exactly ONE home; the address bar and the banner editor only
   ever `EM_SETSEL(0, -1)`, so they compute no offset to get wrong. Line endings
-  need no conversion (see `GT_DEFAULT` above); the encoding does. Acceptance:
+  need no conversion (the page reports LF); the encoding does. Acceptance:
   `test/win32/viewer-feedback-utf16.ps1`, whose every arm compares the WHOLE
   composer text — its first draft used a `[Image` substring needle and passed
   against a deliberately broken build that had left `[Imag` behind.
@@ -721,20 +711,18 @@ ship, in `GhosttyAssets.zig`'s none-lane tests and
   not the toolbar).
 
   **Windows pastes pictures too** (T637), by the same two rules and with the
-  same consequences. A chip there is literally the characters `[Image #3]` —
-  RichEdit has no attachment run to hang an image off, the same hole quoting
-  works around — so the NUMBER is the identity and the report's `images` array
-  is derived by scanning the composer text for chips, exactly as `quotes` is
-  derived by scanning it for passages. Delete a chip and its picture leaves the
-  report; nothing has to be told about the deletion. Atomicity is restored by
-  hand: Backspace or Delete against a chip selects the whole run first, because
-  eating the `]` alone would leave text that still LOOKS attached and no longer
-  parses (`src/apprt/win32/viewer_feedback_images.zig`, pure and asserted in
-  the none lane).
-  The paste path has Mac's `readablePasteboardTypes` trap in win32 dress: a
-  RichEdit asks the clipboard for text and nothing else, so an image-only
-  clipboard would paste as silence. The composer therefore asks first
-  (`clipboard_image.zig`), preferring the registered **`"PNG"`** format — which
+  same consequences. In the pane's buffer a chip is literally the characters
+  `[Image #3]`, so the NUMBER is the identity and the report's `images` array
+  is derived by scanning the composer text for chips
+  (`src/apprt/win32/viewer_feedback_images.zig`, pure and asserted in the none
+  lane). Delete a chip and its picture leaves the report; nothing has to be
+  told about the deletion. On the page a chip is one `contenteditable="false"`
+  node (T936), so Backspace takes it whole rather than eating the `]` and
+  leaving text that still LOOKS attached and no longer parses.
+  Pictures reach the page through its own paste and drop listeners. The
+  native clipboard reader the RichEdit needed (`clipboard_image.zig`) has had
+  no caller since T1704 (T1716 decides its fate); what it did was prefer the
+  registered **`"PNG"`** format — which
   browsers publish and which is copied **byte for byte**, never re-encoded —
   then `CF_DIBV5`/`CF_DIB`/`CF_BITMAP`, which are normalised through one
   `StretchDIBits` into a 32-bit top-down DIB section (GDI already knows every
@@ -763,10 +751,9 @@ ship, in `GhosttyAssets.zig`'s none-lane tests and
   **cached by (chip number, tile size)**, which is why filing a report has to
   tell the bar its store was reset — the number sequence restarts at 1 and the
   cache would otherwise paint the picture that was just sent. The sync is a
-  click on a tile → `EM_EXSETSEL` over its whole chip, and a caret inside a chip
-  → that tile ringed and scrolled into view (the caret side rides `EN_CHANGE`
-  plus the RichEdit subclass's post-dispatch hook, since RichEdit only notifies
-  what it is asked to). Acceptance:
+  click on a tile → the page selects that chip's node, and a caret inside a
+  chip → that tile ringed and scrolled into view (the caret side rides the
+  page's snapshots, which carry the caret). Acceptance:
   `test/win32/viewer-feedback-carousel.ps1`.
 
   **⇧⌘S** adds a screenshot from the keyboard while the composer has focus
@@ -802,22 +789,19 @@ ship, in `GhosttyAssets.zig`'s none-lane tests and
   Quote used to be hidden here (`window.__ghozttyHideQuote`, set by the
   injected blob) because there was nowhere to put the text; T635 built the
   composer and that flag is gone, so the shared `selection.js` now ships both
-  buttons on both platforms. What differs is only how identity survives an
-  edit: RichEdit has **no per-run user field** to hang a `feedbackQuoteID` on,
-  so a quote is recovered from the TEXT — a registry entry is live when its
-  passage still occupies a **complete run of lines** at or after the previous
-  quote's end (`src/apprt/win32/viewer_feedback_doc.zig`, pure and asserted in
-  the none lane). Same consequence as Mac's: delete the block and its metadata
-  leaves the report, quote the same passage twice and you get two quotes; plus
-  one Mac does not have — *editing* a quote's characters drops its context,
-  which is the honest answer once the text is no longer the passage the
-  context describes. The block is drawn with a wash (`CFM_BACKCOLOR`), a
-  paragraph indent (`PFM_STARTINDENT`) and a **hand-painted accent bar**,
-  because RichEdit's background colour paints tight line boxes with no bar —
-  the same limitation that makes Mac draw its own. The typing trap has a win32
-  spelling too: RichEdit carries character formatting forward from the
-  character before the caret, so the composer resets typing attributes to
-  plain **before** each `WM_CHAR`/paste/Enter that lands outside a quote.
+  buttons on both platforms. Identity survives an edit the way Mac's does: a
+  quote is a `<div class="q" data-qid="N">` on the composer's page (T935), so
+  deleting the block drops its metadata from the report, quoting the same
+  passage twice gives two quotes, and *editing* a quote's characters keeps its
+  context. The page reports its live blocks in every snapshot; between
+  snapshots, native carries the spans across its own splices
+  (`shiftSpans` in `src/apprt/win32/viewer_feedback_doc.zig`, pure and asserted
+  in the none lane). Until T1704 a quote was recovered by matching its passage
+  against the text, which dropped an edited quote's context the moment a
+  second quote or a picture arrived. The block is drawn by the page's CSS — a
+  wash, an indent and an accent bar — from the numbers `ViewerFeedbackBar`
+  pushes in, and text typed after a block never inherits its styling because
+  the block is a separate node.
 
   Each quote carries **referential context** so an agent can find what was
   being discussed (text alone is ambiguous — the same sentence can appear

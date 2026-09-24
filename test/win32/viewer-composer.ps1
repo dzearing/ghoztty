@@ -1,17 +1,16 @@
 # T934 acceptance: the feedback composer's WEB surface.
 #
 # The composer's text rect stopped being a RichEdit and became a second
-# `ICoreWebView2Controller` hosting our own contenteditable page (D43's answer).
-# This script is that surface's acceptance; `test\win32\viewer-feedback.ps1`
-# keeps proving the EDITING semantics against the RichEdit fallback it pins
-# itself to, because window messages cannot drive a Chromium window from the
-# background test desktop.
+# `ICoreWebView2Controller` hosting our own contenteditable page (D43's answer),
+# and since T1704 it is the only surface there is. This script is that
+# surface's acceptance; `test\win32\viewer-feedback.ps1` proves the EDITING
+# semantics on the same page through the DevTools driver (T1702/T1706).
 #
 # What is asserted:
 #
 #   A. opening the composer creates a WEB surface -- the pane says
-#      `viewer feedback composer surface=web`, not one of the `richedit(...)`
-#      degrades.
+#      `viewer feedback composer surface=web`, not one of the `none(...)`
+#      failures.
 #   B. the page LOADED: `viewer composer ready` means NavigateToString took the
 #      document, the engine parsed it, and its script ran far enough to post.
 #   C. the round trip WORKS in both directions: the host seeded the page from
@@ -72,10 +71,6 @@ if ($ExePath) { $exe = $ExePath }
 
 # Isolate the IPC endpoint (inherited through CreateProcessW).
 $env:GHOZTTY_PIPE_SUFFIX = "-fbwebtest$PID"
-# The DEFAULT surface, stated rather than assumed: this suite is about the web
-# composer, and a stale `richedit` left in the environment by another run would
-# turn every arm below into a confusing failure.
-$env:GHOZTTY_COMPOSER_SURFACE = 'web'
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 # T1702: the DevTools driver, armed before the launch below - the runtime reads
@@ -295,9 +290,9 @@ try {
 
     Assert (Wait-Log $errlog 'viewer feedback composer surface=web' 1) `
         'the composer chose the WEB surface (surface=web)'
-    $degraded = Measure-LogLine $errlog 'viewer feedback composer surface=richedit'
+    $degraded = Measure-LogLine $errlog 'viewer feedback composer surface=none'
     Assert ($degraded -eq 0) `
-        "...and never fell back to the RichEdit ($degraded degrade(s) logged)"
+        "...and never came up without one ($degraded failure(s) logged)"
 
     # --- B. the page loaded --------------------------------------------------
     Assert (Wait-Log $errlog 'viewer composer page loading bytes=\d+' 1) `

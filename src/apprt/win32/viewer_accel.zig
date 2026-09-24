@@ -363,9 +363,8 @@ pub fn composerChord(vk: u16, mods: input.Mods) ?ComposerChord {
         0x1B => if (bare) .close else null, // VK_ESCAPE
         0x53 => if (ctrl_shift) .snapshot else null, // 'S'
         // VK_TAB. Claimed here rather than left to the text surface because
-        // BOTH surfaces have to answer it the same way: the RichEdit fallback
-        // would swallow it, and the web composer's Chromium would move focus
-        // inside the page instead of onto the two action buttons.
+        // the web composer's Chromium would move focus inside the page
+        // instead of onto the two action buttons.
         0x09 => if (bare) .focus_next else if (shift_only) .focus_prev else null,
         else => null,
     };

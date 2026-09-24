@@ -202,12 +202,6 @@
             "unset": "unreachable",
             "note": "unset is the user's real Claude state directory."
         },
-        "GHOZTTY_COMPOSER_SURFACE": {
-            "class": "non-default",
-            "unset": "armed",
-            "unsetArm": "test\\win32\\viewer-composer.ps1::the composer chose the WEB surface",
-            "note": "viewer-feedback.ps1 pins the RichEdit fallback because window messages cannot reach a Chromium window off-desktop, so without an arm the shipped WebView2 composer would be the untested one."
-        },
         "GHOZTTY_DEBUG_MARKER": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

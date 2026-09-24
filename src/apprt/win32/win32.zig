@@ -1421,7 +1421,7 @@ pub const EM_GETCHARFORMAT: u32 = 0x043A; // WM_USER + 58
 pub const EM_GETPARAFORMAT: u32 = 0x043D; // WM_USER + 61
 /// The door to RichEdit's COM side (`IRichEditOle`, and through it the TOM's
 /// `ITextDocument`) — how programmatic formatting is kept OFF the undo stack
-/// (T644, `richedit_tom.zig`).
+/// (T644; its one caller, the composer's RichEdit, went in T1704).
 pub const EM_GETOLEINTERFACE: u32 = 0x043C; // WM_USER + 60
 /// Cap on the undo stack. 0 disables undo entirely; the composer leaves the
 /// default in place and only names the message so the intent is greppable.

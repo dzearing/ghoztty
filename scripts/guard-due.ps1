@@ -661,11 +661,14 @@ $GuardTable = @(
             'src\apprt\win32\window_active.zig'
         )
     },
-    # The feedback composer (T644): its undo behaviour, quote formatting and
-    # send path live in ViewerFeedbackBar and are proved only by this harness
-    # - the unit lanes see the pure modules but never a RichEdit. T644 itself
-    # arrived through this gap: arm J sat red with nothing tying a composer
-    # edit to a re-run.
+    # The feedback composer (T644): its typing, undo, quote and send paths
+    # live in ViewerFeedbackBar, the page it hosts and the pure document module,
+    # and are proved end to end only by this harness - the unit lanes see the
+    # pure modules but never a live page. T644 itself arrived through this gap:
+    # arm J sat red with nothing tying a composer edit to a re-run. Re-pointed
+    # by T1704 from the retired RichEdit (richedit_tom.zig) at the files that
+    # carry the behaviour now; the DevTools driver is here for the same reason
+    # it is on `viewer-composer` - it is what the typing arms type through.
     [pscustomobject]@{
         Name   = 'viewer-feedback'
         Script = 'test\win32\viewer-feedback.ps1'
@@ -673,8 +676,12 @@ $GuardTable = @(
         Covers = @(
             'test\win32\viewer-feedback.ps1',
             'src\apprt\win32\ViewerFeedbackBar.zig',
-            'src\apprt\win32\richedit_tom.zig',
-            'src\apprt\win32\viewer_feedback_doc.zig'
+            'src\apprt\win32\ViewerFeedbackWeb.zig',
+            'src\apprt\win32\viewer_feedback_page.zig',
+            'src\apprt\win32\viewer_feedback_doc.zig',
+            'src\viewer\composer.js',
+            'test\win32\lib\ComposerSurface.ps1',
+            'test\win32\lib\WebViewCdp.ps1'
         )
     },
     # The composer's SCREENSHOT capture (T647/T671/T670): the full-desktop
@@ -698,10 +705,9 @@ $GuardTable = @(
     },
     # The composer's WEB surface (T934): the second WebView2 controller that
     # replaced the RichEdit, its page, and the two-way message channel between
-    # them. Separate from `viewer-feedback` above because the two drive
-    # different surfaces - that suite pins itself to the RichEdit fallback,
-    # which is the only one window messages can reach from the background test
-    # desktop, and this one proves the surface users actually get.
+    # them. Separate from `viewer-feedback` above because the two prove
+    # different things on the same page - this one its lifecycle and channel,
+    # that one the editing a user does in it.
     [pscustomobject]@{
         Name   = 'viewer-composer'
         Script = 'test\win32\viewer-composer.ps1'

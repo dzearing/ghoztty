@@ -1,58 +1,31 @@
-# Which surface the viewer's feedback composer runs on, stated rather than
+# Which surface the viewer's feedback composer came up on, stated rather than
 # assumed (T1102).
 #
-# T934/T936 made a WebView2 page the composer's DEFAULT surface and kept the
-# RichEdit as a runtime fallback, reachable with GHOZTTY_COMPOSER_SURFACE. A
-# script that drives the composer through window messages -- Send-TestControlText,
-# Send-TestControlKey, Get-TestControlText -- can only reach the native control:
-# SendInput and CopyFromScreen are dead on the background test desktop (T233),
-# and a Chromium window is not addressable by WM_SETTEXT from another process.
+# Since T1704 there is one surface -- the WebView2 page -- and no fallback: the
+# hidden RichEdit and the GHOZTTY_COMPOSER_SURFACE switch that pinned scripts to
+# it are gone. What is left to ask is whether the composer came up at all. A
+# pane whose WebView2 cannot produce a second controller logs `surface=none(...)`
+# and takes no text, and a script that types into it would otherwise report the
+# composer "holds ''" -- a LOUD and MISLEADING failure that reads as a broken
+# feature. So every script that types into the composer opens with
 #
-# When such a script does NOT pin the surface it gets the web page, and the
-# RichEdit it reads is hidden and empty. That is not a quiet failure, it is a
-# LOUD and MISLEADING one: on 2026-08-22 four scripts reported the composer
-# "holds ''" and the report holding zero images, which reads as a broken feature
-# and is really the harness typing into a control nobody is looking at. (Worse:
-# EN_CHANGE on that dead control mirrors its text back over the pane's buffer,
-# so the write also takes the attached pictures out of the report.)
+#   Wait-ComposerSurface $errlog 'web'  - PROVE the page came up, in one assertion
 #
-# So there are two calls here and both matter:
-#
-#   Set-ComposerSurface 'richedit'   - ask for the surface this script can drive
-#   Wait-ComposerSurface $errlog ... - PROVE the app agreed, in one assertion
-#
-# The proof exists because asking is not getting: the env var is one of three
-# ways the app can end up on the RichEdit, and `richedit(controller-refused)`
-# after a WebView2 failure would otherwise be indistinguishable from the pin.
-#
-# T937 removes the fallback and the env var; when it does, the scripts that call
-# Set-ComposerSurface here are exactly the list that has to be re-pointed.
+# and names what the app said instead when it did not (Get-ComposerSurface).
 
 Set-StrictMode -Version Latest
 
-# Pin the composer surface for every ghoztty this script launches. Inherited
-# through CreateProcessW, so it must be set before the app starts.
-function Set-ComposerSurface {
-    param(
-        [Parameter(Mandatory = $true)]
-        [ValidateSet('richedit', 'web')]
-        [string]$Surface
-    )
-    $env:GHOZTTY_COMPOSER_SURFACE = $Surface
-}
-
 # True once the pane's stderr says the composer opened on $Want.
 #
-# The app logs `viewer feedback composer surface=<what>` from openComposer, with
-# `richedit(forced)` / `richedit(no-environment)` / `richedit(controller-refused)`
-# naming WHY it is on the control. Matching on the `richedit` stem accepts all
-# three, which is right for a script that only needs a native control -- what it
-# must never accept is `web`.
+# The app logs `viewer feedback composer surface=<what>` from openComposer:
+# `web`, or `none(no-environment)` / `none(controller-refused)` naming WHY the
+# composer has no text surface at all. Matching on the `none` stem accepts both
+# reasons.
 function Wait-ComposerSurface {
     param(
         [Parameter(Mandatory = $true)][string]$Log,
         [Parameter(Mandatory = $true)]
-        [ValidateSet('richedit', 'web')]
+        [ValidateSet('web', 'none')]
         [string]$Want,
         [int]$TimeoutMs = 15000
     )

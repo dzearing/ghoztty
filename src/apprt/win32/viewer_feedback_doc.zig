@@ -1,63 +1,29 @@
 //! The feedback composer's DOCUMENT: where a quoted passage goes when it is
-//! inserted, and which quotes are still in the report when it is sent (T641,
-//! the win32 half of Mac's `feedbackQuoteID` runs).
+//! inserted, which quotes are in the report, and how their places move when
+//! native edits the text (T641, the win32 half of Mac's `feedbackQuoteID`
+//! runs).
 //!
 //! Pure — text in, text out, no OS surface — so it is unit tested in the
 //! `-Dapp-runtime=none` lane like the rest of `apprt/win32`'s pure modules.
-//! `ViewerFeedbackBar` drives the RichEdit from what this decides, and
-//! `ViewerPane` owns the `Registry`.
+//! `ViewerFeedbackBar` splices from what this decides, and `ViewerPane` owns
+//! the `Registry` and the live spans.
 //!
-//! ## Since T935, identity is a NODE — and this is the bridge to it
-//!
-//! The composer's text surface is a web page now, so a quote IS a
-//! `<div class="q" data-qid="N">` and its identity is that attribute: deleting
-//! the block drops the metadata with it, and editing the passage keeps it,
-//! which is what the derivation below could never do. The page reports its live
-//! blocks in every snapshot, and `ViewerPane` keeps those as the truth the
-//! report is written from.
-//!
-//! What survives here, and why it is not dead code: the pane's buffer is PLAIN
-//! TEXT and outlives the page (a composer closed and reopened, a report cleared
-//! behind a send, the RichEdit fallback), so something has to say which runs of
-//! a restored buffer are quotes before the page can build them as nodes. That
-//! is `live` — run once at SEED time, not on every read. Everything below is
-//! written for the old world, in which it was the only answer; it is still
-//! correct, and it is now the on-ramp rather than the road.
-//!
-//! ## Identity is DERIVED, never stored
+//! ## Identity is a NODE (T935)
 //!
 //! Mac hangs a `feedbackQuoteID` attribute on the quote's text run, so deleting
-//! the run drops its metadata from the report. RichEdit has no per-run user
-//! field to hang an id on, and the two obvious substitutes are both worse than
-//! the problem: tracking offsets across edits means re-implementing marker
-//! maintenance the control will not tell us about, and walking `CHARFORMAT2`
-//! runs to find the tinted ones means binary-searching the control's own
-//! formatting on every serialize — neither of which can be unit tested without
-//! a window.
+//! the run drops its metadata from the report. The composer's page does the
+//! same with a `<div class="q" data-qid="N">`: deleting the block drops the
+//! metadata with it, and editing the passage KEEPS it. The page reports its
+//! live blocks in every snapshot, and `ViewerPane` keeps those spans as the
+//! truth the report is written from.
 //!
-//! So identity is recovered from the TEXT, which is the one thing both sides
-//! agree on: a registry entry is live when its passage still occupies a
-//! complete run of LINES in the composer, at or after the previous live
-//! quote's end. Matching in registry order against non-overlapping
-//! line-aligned occurrences is what makes the same passage quoted twice two
-//! quotes, and what makes a deleted block's metadata vanish with it — the same
-//! derive-from-storage rule the image carousel uses, expressed without a field
-//! RichEdit does not have.
-//!
-//! Line-aligned, not "appears anywhere", on purpose: a quote is inserted as its
-//! own block, so a passage the user happens to TYPE mid-sentence is not
-//! mistaken for the quote of it. The remaining ambiguity — retyping a passage
-//! as its own whole line — is harmless: the metadata it would attach is the
-//! metadata for that same text.
-//!
-//! ## Editing a quote
-//!
-//! Changing a quote's characters makes it stop matching, so its metadata drops
-//! while the text stays in the report. That is deliberate and is the honest
-//! answer for a control where the user CAN edit it: the referential context
-//! (heading, block selector, document offset) describes the passage as it was
-//! on the page, and once the text is not that passage any more, the context is
-//! no longer true of it.
+//! What native owes that arrangement is to keep the spans true across its OWN
+//! edits — a quote or a picture spliced into the buffer — until the page's next
+//! snapshot restates them. That is `shiftSpans`. Before T1704 this module
+//! instead RE-DERIVED every quote by matching its registered passage against
+//! the text (a design written for the RichEdit, which had no per-run field to
+//! hang an id on); that silently dropped the metadata of any quote the user had
+//! edited as soon as native touched the buffer, and it went with the RichEdit.
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -79,8 +45,7 @@ pub const Entry = struct {
     document_offset: ?u32 = null,
 };
 
-/// Where a live quote sits in the composer text, as a byte range over complete
-/// lines. `index` is into the registry's `entries`.
+/// Where a live quote sits in the composer text, as a byte range. `index` is into the registry's `entries`.
 pub const Span = struct {
     start: usize,
     end: usize,
@@ -88,9 +53,10 @@ pub const Span = struct {
 };
 
 /// Every quote inserted into this composer, in insertion order. Entries are
-/// never removed when the user deletes a block — `live` simply stops matching
-/// them, which is what keeps "what is in the report" a function of the text
-/// rather than of a side-channel someone has to remember to update.
+/// never removed when the user deletes a block — the page simply stops
+/// reporting a span for it, which is what keeps "what is in the report" a
+/// function of the document rather than of a side-channel someone has to
+/// remember to update.
 pub const Registry = struct {
     entries: std.ArrayListUnmanaged(Entry) = .empty,
     next_id: u32 = 1,
@@ -110,8 +76,9 @@ pub const Registry = struct {
     /// Copy one bridge message into the registry and return its id.
     ///
     /// The passage is normalised on the way in (see `normalize`) so the text
-    /// stored here is byte-identical to the text that lands in the composer —
-    /// which is the whole basis of `live`'s matching.
+    /// stored here is byte-identical to the text that lands in the composer,
+    /// and so the span `insertion` computes for it covers exactly the stored
+    /// passage.
     pub fn add(self: *Registry, alloc: Allocator, q: bridge.Quote) !u32 {
         const text = try normalize(alloc, q.text);
         errdefer alloc.free(text);
@@ -155,26 +122,10 @@ pub const Registry = struct {
         }
         return null;
     }
-
-    /// The quotes still present in `text`, in document order. See the header:
-    /// this is what the report's `quotes` array is built from, so a block the
-    /// user deleted is simply not here.
-    pub fn live(self: *const Registry, alloc: Allocator, text: []const u8) ![]Span {
-        var out: std.ArrayListUnmanaged(Span) = .empty;
-        errdefer out.deinit(alloc);
-        var from: usize = 0;
-        for (self.entries.items, 0..) |e, i| {
-            const at = findLineAligned(text, e.text, from) orelse continue;
-            try out.append(alloc, .{ .start = at, .end = at + e.text.len, .index = i });
-            from = at + e.text.len;
-        }
-        return out.toOwnedSlice(alloc);
-    }
 };
 
 /// Canonical form of a passage: CRLF and bare CR become LF (the composer's
-/// buffer speaks LF; RichEdit speaks CR, and `ViewerFeedbackBar` converts at
-/// the boundary), and surrounding whitespace goes. A passage that trimmed away
+/// buffer speaks LF), and surrounding whitespace goes. A passage that trimmed away
 /// to nothing is not a quote.
 pub fn normalize(alloc: Allocator, raw: []const u8) ![]u8 {
     var buf: std.ArrayListUnmanaged(u8) = .empty;
@@ -202,6 +153,10 @@ pub const Insertion = struct {
     at: usize,
     insert: []u8,
     caret_after: usize,
+    /// Where the passage itself sits in the document AFTER the insertion — the
+    /// quote's span, without the blank lines around it.
+    block_start: usize,
+    block_end: usize,
 
     pub fn deinit(self: Insertion, alloc: Allocator) void {
         alloc.free(self.insert);
@@ -233,11 +188,13 @@ pub fn insertion(
         .insert = try buf.toOwnedSlice(alloc),
         // Past the blank line under the block, whether those newlines came
         // from `trail` or were already in the text. Clamped, because a caret
-        // beyond the document is a caret RichEdit will refuse to place.
+        // beyond the document is not a place anything can put one.
         .caret_after = @min(
             caret + lead + passage.len + 2,
             text.len + lead + passage.len + trail,
         ),
+        .block_start = caret + lead,
+        .block_end = caret + lead + passage.len,
     };
 }
 
@@ -260,52 +217,51 @@ fn trailNewlines(after: []const u8) usize {
     return 2 - n;
 }
 
-/// The first occurrence of `needle` in `haystack` at or after `from` that
-/// occupies COMPLETE lines — see the header for why "anywhere" is the wrong
-/// rule. An empty needle never matches.
-pub fn findLineAligned(haystack: []const u8, needle: []const u8, from: usize) ?usize {
-    if (needle.len == 0 or needle.len > haystack.len) return null;
-    var i = @min(from, haystack.len);
-    while (std.mem.indexOfPos(u8, haystack, i, needle)) |at| : (i = at + 1) {
-        const starts = at == 0 or haystack[at - 1] == '\n';
-        const end = at + needle.len;
-        const ends = end == haystack.len or haystack[end] == '\n';
-        if (starts and ends) return at;
-    }
-    return null;
-}
-
-/// Whether `pos` is strictly inside one of `spans` — the question "does the
-/// character about to be typed here inherit quote styling?", which
-/// `ViewerFeedbackBar` asks before every keystroke.
+/// The spans `old` (ascending, over the text BEFORE the edit) moved across
+/// inserting `len` bytes at `at`, plus `quote` — the block the insertion is,
+/// when it is one, already in post-insert coordinates. Caller frees.
 ///
-/// The block's own END is deliberately NOT inside it: a caret sitting just
-/// past the last quoted character is on its way out of the quote, and text
-/// typed there belongs to the report, not to the passage.
-pub fn insideQuote(spans: []const Span, pos: usize) bool {
-    for (spans) |s| {
-        if (pos >= s.start and pos < s.end) return true;
-    }
-    return false;
-}
-
-/// Whether the LINE `pos` sits on overlaps a quote — the paragraph-level
-/// version of `insideQuote`, and a separate question on purpose.
+/// A span wholly before `at` stays; one at or after it moves by `len`. A span
+/// the insertion lands strictly INSIDE is the one real decision:
 ///
-/// Character formatting is per character, so the caret one past a quote's last
-/// character must type PLAIN. Paragraph formatting (the block's indent) is per
-/// paragraph, and that same caret is still inside the quote's LAST PARAGRAPH:
-/// resetting the indent from there would un-indent the whole block the user is
-/// typing at the end of.
-pub fn lineTouchesQuote(text: []const u8, spans: []const Span, pos_in: usize) bool {
-    const pos = @min(pos_in, text.len);
-    const start = if (std.mem.lastIndexOfScalar(u8, text[0..pos], '\n')) |at| at + 1 else 0;
-    const end = if (std.mem.indexOfScalarPos(u8, text, pos, '\n')) |at| at else text.len;
-    for (spans) |s| {
-        // Half-open ranges that touch at an endpoint do not overlap.
-        if (s.start < end and start < s.end) return true;
+/// - a picture chip (`quote` null) widens it, because a picture dropped into a
+///   quoted passage is still inside that quote;
+/// - a quote block drops it, because the new block splits the old passage in
+///   two and a single span can no longer say where it is. Its entry stays in
+///   the registry — the same thing that happens when the user deletes a block.
+///
+/// The result is ascending and non-overlapping, which is what
+/// `ViewerPane.feedbackSetQuoteSpans` requires of it.
+pub fn shiftSpans(
+    alloc: Allocator,
+    old: []const Span,
+    at: usize,
+    len: usize,
+    quote: ?Span,
+) ![]Span {
+    var out: std.ArrayListUnmanaged(Span) = .empty;
+    errdefer out.deinit(alloc);
+    try out.ensureTotalCapacity(alloc, old.len + 1);
+    var placed = quote == null;
+    for (old) |s| {
+        if (s.end <= at) {
+            out.appendAssumeCapacity(s);
+            continue;
+        }
+        // Everything from here on is at or after the insertion, so the new
+        // block belongs in front of it.
+        if (!placed) {
+            out.appendAssumeCapacity(quote.?);
+            placed = true;
+        }
+        if (s.start >= at) {
+            out.appendAssumeCapacity(.{ .start = s.start + len, .end = s.end + len, .index = s.index });
+        } else if (quote == null) {
+            out.appendAssumeCapacity(.{ .start = s.start, .end = s.end + len, .index = s.index });
+        }
     }
-    return false;
+    if (!placed) out.appendAssumeCapacity(quote.?);
+    return out.toOwnedSlice(alloc);
 }
 
 // -------------------------------------------------------------------------
@@ -406,125 +362,6 @@ fn quoteOf(text: []const u8) bridge.Quote {
     return .{ .text = text };
 }
 
-test "live: an inserted quote is found, and a deleted one is not" {
-    const alloc = testing.allocator;
-    var reg: Registry = .{};
-    defer reg.deinit(alloc);
-
-    const id = try reg.add(alloc, .{
-        .text = "the passage",
-        .heading_id = "intro",
-        .heading_text = "Intro",
-        .block_selector = "article > p:nth-of-type(2)",
-        .block_text = "the whole paragraph",
-        .offset_in_block = 12,
-        .document_offset = 345,
-    });
-    try testing.expectEqual(@as(u32, 1), id);
-
-    const doc = try applied(alloc, "", 0, reg.entries.items[0].text);
-    defer alloc.free(doc);
-
-    {
-        const spans = try reg.live(alloc, doc);
-        defer alloc.free(spans);
-        try testing.expectEqual(@as(usize, 1), spans.len);
-        try testing.expectEqualStrings(
-            "the passage",
-            doc[spans[0].start..spans[0].end],
-        );
-        // ...and the metadata rides with it, which is what the report writer
-        // reads.
-        const e = reg.entries.items[spans[0].index];
-        try testing.expectEqualStrings("intro", e.heading_id.?);
-        try testing.expectEqual(@as(?u32, 345), e.document_offset);
-    }
-
-    // The user selects the block and deletes it. The entry is still in the
-    // registry; it is simply not in the report any more.
-    {
-        const spans = try reg.live(alloc, "just my own words\n");
-        defer alloc.free(spans);
-        try testing.expectEqual(@as(usize, 0), spans.len);
-    }
-    try testing.expectEqual(@as(usize, 1), reg.entries.items.len);
-}
-
-test "live: typing around a quote does not disturb it" {
-    const alloc = testing.allocator;
-    var reg: Registry = .{};
-    defer reg.deinit(alloc);
-    _ = try reg.add(alloc, quoteOf("the passage"));
-
-    const doc = "this is wrong:\n\nthe passage\n\nbecause of X";
-    const spans = try reg.live(alloc, doc);
-    defer alloc.free(spans);
-    try testing.expectEqual(@as(usize, 1), spans.len);
-    try testing.expectEqualStrings("the passage", doc[spans[0].start..spans[0].end]);
-    // The text typed after the block is NOT part of the quote — the span ends
-    // at the passage, which is what keeps the report's `quotes` honest.
-    try testing.expectEqual(@as(usize, 16), spans[0].start);
-    try testing.expectEqual(@as(usize, 27), spans[0].end);
-}
-
-test "live: the same passage quoted twice is two quotes" {
-    const alloc = testing.allocator;
-    var reg: Registry = .{};
-    defer reg.deinit(alloc);
-    _ = try reg.add(alloc, quoteOf("same words"));
-    _ = try reg.add(alloc, quoteOf("same words"));
-
-    const doc = "same words\n\nsame words\n\n";
-    const spans = try reg.live(alloc, doc);
-    defer alloc.free(spans);
-    try testing.expectEqual(@as(usize, 2), spans.len);
-    // Non-overlapping, in document order: the second entry matches the SECOND
-    // occurrence, not the first one again.
-    try testing.expectEqual(@as(usize, 0), spans[0].start);
-    try testing.expectEqual(@as(usize, 12), spans[1].start);
-
-    // Delete one of them and exactly one quote survives.
-    const one = try reg.live(alloc, "same words\n\n");
-    defer alloc.free(one);
-    try testing.expectEqual(@as(usize, 1), one.len);
-}
-
-test "live: a passage the user merely TYPED mid-sentence is not a quote" {
-    const alloc = testing.allocator;
-    var reg: Registry = .{};
-    defer reg.deinit(alloc);
-    _ = try reg.add(alloc, quoteOf("the passage"));
-
-    // Line-aligned matching is the whole reason this is not a false positive.
-    const spans = try reg.live(alloc, "I typed the passage myself\n");
-    defer alloc.free(spans);
-    try testing.expectEqual(@as(usize, 0), spans.len);
-}
-
-test "live: editing a quote's text drops its metadata" {
-    const alloc = testing.allocator;
-    var reg: Registry = .{};
-    defer reg.deinit(alloc);
-    _ = try reg.add(alloc, quoteOf("the passage"));
-
-    const spans = try reg.live(alloc, "the pssage\n\n"); // one character gone
-    defer alloc.free(spans);
-    try testing.expectEqual(@as(usize, 0), spans.len);
-}
-
-test "live: a multi-line quote matches across its own newlines" {
-    const alloc = testing.allocator;
-    var reg: Registry = .{};
-    defer reg.deinit(alloc);
-    _ = try reg.add(alloc, quoteOf("line one\nline two"));
-
-    const doc = "line one\nline two\n\nmy comment";
-    const spans = try reg.live(alloc, doc);
-    defer alloc.free(spans);
-    try testing.expectEqual(@as(usize, 1), spans.len);
-    try testing.expectEqualStrings("line one\nline two", doc[spans[0].start..spans[0].end]);
-}
-
 test "add: an empty passage is refused rather than stored" {
     const alloc = testing.allocator;
     var reg: Registry = .{};
@@ -545,62 +382,108 @@ test "add: ids are never reused" {
 }
 
 test "add: a quote arriving with CRLF is stored the way it will be inserted" {
-    // The matching in `live` is byte equality against the composer's LF
-    // buffer, so a stored CR would make a quote that can never be found again.
+    // The composer's buffer speaks LF, so a stored CR would make the block's
+    // span (computed from the stored passage) a byte longer than the text the
+    // page actually shows.
     const alloc = testing.allocator;
     var reg: Registry = .{};
     defer reg.deinit(alloc);
     _ = try reg.add(alloc, quoteOf("first\r\nsecond"));
     try testing.expectEqualStrings("first\nsecond", reg.entries.items[0].text);
 
-    const doc = try applied(alloc, "", 0, reg.entries.items[0].text);
+    const ins = try insertion(alloc, "", 0, reg.entries.items[0].text);
+    defer ins.deinit(alloc);
+    try testing.expectEqualStrings("first\nsecond", ins.insert[ins.block_start..ins.block_end]);
+}
+
+test "insertion: the block span covers the passage and nothing around it" {
+    const alloc = testing.allocator;
+    const text = "already typed";
+    const ins = try insertion(alloc, text, 7, "quoted");
+    defer ins.deinit(alloc);
+    const got = try applied(alloc, text, 7, "quoted");
+    defer alloc.free(got);
+    try testing.expectEqualStrings("quoted", got[ins.block_start..ins.block_end]);
+    // Empty composer: no leading blank lines, so the span starts at 0.
+    const first = try insertion(alloc, "", 0, "p");
+    defer first.deinit(alloc);
+    try testing.expectEqual(@as(usize, 0), first.block_start);
+    try testing.expectEqual(@as(usize, 1), first.block_end);
+}
+
+test "shiftSpans: spans before stay, spans after move, the new block lands between" {
+    const alloc = testing.allocator;
+    // Quotes A=[0,1) and B=[3,4); 5 bytes inserted at 3, the new quote at
+    // [5,6).
+    const old = [_]Span{
+        .{ .start = 0, .end = 1, .index = 0 },
+        .{ .start = 3, .end = 4, .index = 1 },
+    };
+    const got = try shiftSpans(alloc, &old, 3, 5, .{ .start = 5, .end = 6, .index = 2 });
+    defer alloc.free(got);
+    try testing.expectEqual(@as(usize, 3), got.len);
+    try testing.expectEqual(Span{ .start = 0, .end = 1, .index = 0 }, got[0]);
+    try testing.expectEqual(Span{ .start = 5, .end = 6, .index = 2 }, got[1]);
+    try testing.expectEqual(Span{ .start = 8, .end = 9, .index = 1 }, got[2]);
+}
+
+test "shiftSpans: an EDITED quote keeps its place and its identity" {
+    // The regression the text matching had (T1704): the user changed a word in
+    // quote 0, so its text no longer equals the registered passage, and then a
+    // second quote arrived after it. The span is carried, not re-found.
+    const alloc = testing.allocator;
+    var reg: Registry = .{};
+    defer reg.deinit(alloc);
+    _ = try reg.add(alloc, quoteOf("the passage"));
+    _ = try reg.add(alloc, quoteOf("another"));
+
+    const edited = "the pasage\n\n"; // one character gone
+    const ins = try insertion(alloc, edited, edited.len, reg.entries.items[1].text);
+    defer ins.deinit(alloc);
+    const old = [_]Span{.{ .start = 0, .end = 10, .index = 0 }};
+    const got = try shiftSpans(alloc, &old, ins.at, ins.insert.len, .{
+        .start = ins.block_start,
+        .end = ins.block_end,
+        .index = 1,
+    });
+    defer alloc.free(got);
+    const doc = try applied(alloc, edited, edited.len, reg.entries.items[1].text);
     defer alloc.free(doc);
-    const spans = try reg.live(alloc, doc);
-    defer alloc.free(spans);
-    try testing.expectEqual(@as(usize, 1), spans.len);
+    try testing.expectEqual(@as(usize, 2), got.len);
+    try testing.expectEqualStrings("the pasage", doc[got[0].start..got[0].end]);
+    try testing.expectEqual(@as(usize, 0), got[0].index);
+    try testing.expectEqualStrings("another", doc[got[1].start..got[1].end]);
+    try testing.expectEqual(@as(usize, 1), got[1].index);
 }
 
-test "insideQuote: the caret just past a block is OUTSIDE it" {
-    // This is the "typing never inherits quote styling" rule, in its pure
-    // form: the character position the caret sits at after the block must not
-    // be reported as inside, or every keystroke after a quote would be styled
-    // as part of it.
-    const spans = [_]Span{.{ .start = 4, .end = 10, .index = 0 }};
-    try testing.expect(!insideQuote(&spans, 3));
-    try testing.expect(insideQuote(&spans, 4));
-    try testing.expect(insideQuote(&spans, 9));
-    try testing.expect(!insideQuote(&spans, 10));
-    try testing.expect(!insideQuote(&spans, 99));
-    try testing.expect(!insideQuote(&.{}, 0));
+test "shiftSpans: a picture inside a quote widens it, a quote inside one drops it" {
+    const alloc = testing.allocator;
+    const old = [_]Span{.{ .start = 2, .end = 10, .index = 0 }};
+
+    const chip = try shiftSpans(alloc, &old, 5, 12, null);
+    defer alloc.free(chip);
+    try testing.expectEqual(@as(usize, 1), chip.len);
+    try testing.expectEqual(Span{ .start = 2, .end = 22, .index = 0 }, chip[0]);
+
+    const quote = try shiftSpans(alloc, &old, 5, 9, .{ .start = 7, .end = 10, .index = 1 });
+    defer alloc.free(quote);
+    try testing.expectEqual(@as(usize, 1), quote.len);
+    try testing.expectEqual(@as(usize, 1), quote[0].index);
 }
 
-test "lineTouchesQuote: the caret at a block's end is still in its paragraph" {
-    // "abc\n\nquoted\n\ntail": the quote is [5,11).
-    const text = "abc\n\nquoted\n\ntail";
-    const spans = [_]Span{.{ .start = 5, .end = 11, .index = 0 }};
-
-    // Character-wise the caret at 11 is OUT of the quote (typing there is
-    // plain)...
-    try testing.expect(!insideQuote(&spans, 11));
-    // ...but it is still on the quote's own line, so the block keeps its
-    // indent rather than being flattened by a keystroke at its end.
-    try testing.expect(lineTouchesQuote(text, &spans, 11));
-    try testing.expect(lineTouchesQuote(text, &spans, 5));
-    // The blank line above and the tail below are not the quote's.
-    try testing.expect(!lineTouchesQuote(text, &spans, 4));
-    try testing.expect(!lineTouchesQuote(text, &spans, 13));
-    try testing.expect(!lineTouchesQuote(text, &.{}, 0));
-    // A position past the end is clamped rather than an out-of-bounds slice.
-    try testing.expect(!lineTouchesQuote(text, &spans, 999));
-}
-
-test "findLineAligned: the from-cursor is what keeps matches non-overlapping" {
-    const doc = "aa\nbb\naa\n";
-    try testing.expectEqual(@as(?usize, 0), findLineAligned(doc, "aa", 0));
-    try testing.expectEqual(@as(?usize, 6), findLineAligned(doc, "aa", 1));
-    try testing.expectEqual(@as(?usize, null), findLineAligned(doc, "aa", 7));
-    try testing.expectEqual(@as(?usize, null), findLineAligned(doc, "", 0));
-    try testing.expectEqual(@as(?usize, null), findLineAligned("a", "toolong", 0));
-    // A from past the end is clamped, not an out-of-bounds slice.
-    try testing.expectEqual(@as(?usize, null), findLineAligned(doc, "aa", 999));
+test "shiftSpans: an insertion right at a span's edges leaves the span whole" {
+    const alloc = testing.allocator;
+    const old = [_]Span{.{ .start = 4, .end = 8, .index = 0 }};
+    // At its end: the span is before the insertion and does not move.
+    const at_end = try shiftSpans(alloc, &old, 8, 3, null);
+    defer alloc.free(at_end);
+    try testing.expectEqual(Span{ .start = 4, .end = 8, .index = 0 }, at_end[0]);
+    // At its start: the span moves whole.
+    const at_start = try shiftSpans(alloc, &old, 4, 3, null);
+    defer alloc.free(at_start);
+    try testing.expectEqual(Span{ .start = 7, .end = 11, .index = 0 }, at_start[0]);
+    // Nothing old, a quote only.
+    const only = try shiftSpans(alloc, &.{}, 0, 3, .{ .start = 0, .end = 1, .index = 0 });
+    defer alloc.free(only);
+    try testing.expectEqual(@as(usize, 1), only.len);
 }

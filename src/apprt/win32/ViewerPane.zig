@@ -628,9 +628,9 @@ feedback_text: std.ArrayListUnmanaged(u8) = .empty,
 /// the quote's heading and block selector.
 ///
 /// Entries are never removed here. Which of them are still IN the report is
-/// derived from `feedback_text` on demand (`feedbackQuoteSpans`), which is
-/// what makes deleting a block drop its metadata without anything having to
-/// notice the deletion.
+/// `feedback_quote_spans` — the blocks the composer's page last reported —
+/// which is what makes deleting a block drop its metadata without anything
+/// having to notice the deletion.
 feedback_quotes: feedback_doc.Registry = .{},
 
 /// The find-in-page card (T1184). Created hidden alongside the nav bar and the
@@ -649,16 +649,17 @@ find_open: bool = false,
 find_query: [viewer_find.max_query]u8 = undefined,
 find_query_len: usize = 0,
 
-/// Where the live quote BLOCKS are, as the composer's page last reported them
-/// (T935). Null until a snapshot arrives, and dropped again by every write to
-/// `feedback_text` that did not come from the page.
+/// Where the live quote BLOCKS are (T935): as the composer's page last
+/// reported them, or as native carried them across its own splice
+/// (`ViewerFeedbackBar.spliceComposer`, T1704) until the page's next snapshot
+/// restates them. Null means no quotes — no snapshot has arrived, or a
+/// wholesale write to `feedback_text` replaced the text they described.
 ///
 /// This is the pane's answer to "which quotes is the report still carrying",
 /// and it is the DOM's answer rather than the text's: a quote is a node with
 /// its id on it, so deleting the block drops its metadata and editing the
-/// passage keeps it. `feedbackQuoteSpans` falls back to matching the text when
-/// this is null, which is the bridge for a buffer that outlived its page — see
-/// `viewer_feedback_doc.zig`'s header. Owned; freed in `deinit`.
+/// passage keeps it — see `viewer_feedback_doc.zig`'s header. Owned; freed in
+/// `deinit`.
 feedback_quote_spans: ?[]feedback_doc.Span = null,
 
 /// Every image pasted into the composer, PNG-encoded (T637). On the pane for
@@ -1637,14 +1638,15 @@ pub fn feedbackStatus(self: *const ViewerPane) ?[]const u8 {
     return self.feedback_status;
 }
 
-// The composer's text. The editing happens in a RichEdit (T635, D43's answer)
-// which is the storage WHILE the composer is open; this buffer is the copy
-// that outlives it, mirrored from `EN_CHANGE` and seeded back on open. That
-// split is what makes composer contents survive a close/reopen, which Mac is
-// explicit about and which a buffer kept in the child window could not do.
+// The composer's text. The editing happens in the composer's web page (T934,
+// D43's answer) which is the storage WHILE the composer is open; this buffer
+// is the copy that outlives it, mirrored from every snapshot the page pushes
+// and seeded back on open. That split is what makes composer contents survive
+// a close/reopen, which Mac is explicit about and which a buffer kept in the
+// child window could not do.
 //
-// Line endings here are LF. RichEdit speaks CR; `ViewerFeedbackBar` converts
-// in both directions so exactly one convention reaches the report writer.
+// Line endings here are LF, which is what the page reports and what reaches
+// the report writer.
 
 pub fn feedbackText(self: *const ViewerPane) []const u8 {
     return self.feedback_text.items;
@@ -1661,7 +1663,7 @@ pub fn feedbackSetText(self: *ViewerPane, alloc: Allocator, bytes: []const u8) v
     // it would quote the wrong run of the report. Dropped here rather than
     // updated, because the two writers each answer for what comes next: the
     // page re-publishes them from its own nodes in the same breath, and a
-    // native write re-derives them at seed time.
+    // native splice puts them back shifted past its insertion (T1704).
     if (self.feedback_quote_spans) |spans| alloc.free(spans);
     self.feedback_quote_spans = null;
     // T934: the composer's page holds a copy of this buffer, so a write from
@@ -2974,11 +2976,11 @@ fn acceptQuote(self: *ViewerPane, alloc: Allocator, q: bridge.Quote) void {
 /// the derivation could not be done at all (an allocation failure), which
 /// callers treat as "no quotes" rather than as a reason to stop.
 pub fn feedbackQuoteSpans(self: *const ViewerPane, alloc: Allocator) ?[]feedback_doc.Span {
-    // The page's own nodes when it has told us about them (T935), and matching
-    // the text when it has not. Duplicated rather than handed out, so a caller
-    // freeing its answer cannot free the pane's copy.
-    if (self.feedback_quote_spans) |spans| return alloc.dupe(feedback_doc.Span, spans) catch null;
-    return self.feedback_quotes.live(alloc, self.feedback_text.items) catch null;
+    // Duplicated rather than handed out, so a caller freeing its answer cannot
+    // free the pane's copy. No spans is an empty answer, not a null one: null
+    // is kept for the allocation failure callers already treat as "none".
+    const spans = self.feedback_quote_spans orelse &.{};
+    return alloc.dupe(feedback_doc.Span, spans) catch null;
 }
 
 /// Take the composer page's live quote blocks as the truth (T935).
@@ -8739,11 +8741,10 @@ test "host floor: a real controller on a real window, on this box" {
         pane.setFeedbackOpen(true);
         try testing.expect(pane.feedback_open);
 
-        // T934: the surface under everything below is the WEB composer, not
-        // the RichEdit fallback. Asserted rather than assumed, because every
-        // arm here would pass against the fallback too - and this test is the
-        // only place on the box that can tell them apart (an acceptance script
-        // cannot type into a Chromium window from the background desktop).
+        // T934: the surface under everything below is the WEB composer.
+        // Asserted rather than assumed: a composer that came up with no
+        // surface at all (T1704 removed the RichEdit it used to fall back to)
+        // fails every arm below, and this line is what says why.
         const composer = pane.feedback.?;
         try testing.expect(composer.web != null);
 
@@ -8767,18 +8768,10 @@ test "host floor: a real controller on a real window, on this box" {
         {
             // Straight at the surface, because the caret is what this arm is
             // about and the bar's own byte/unit conversion is the thing under
-            // test. Which surface that is moved in T934: the web composer's
-            // caret IS the last snapshot its page pushed, so putting 7 there is
-            // the same act as an `EM_EXSETSEL` on the RichEdit — a caret at
-            // UTF-16 unit 7, which is what a browser and a `W` control both
-            // count in.
-            const bar = pane.feedback.?;
-            if (bar.web) |wv| {
-                wv.caret = 7;
-            } else {
-                const cr: w32.CHARRANGE = .{ .cpMin = 7, .cpMax = 7 };
-                _ = w32.SendMessageW(bar.edit, w32.EM_EXSETSEL, 0, @bitCast(@intFromPtr(&cr)));
-            }
+            // test. The web composer's caret IS the last snapshot its page
+            // pushed, so putting 7 there is placing a caret at UTF-16 unit 7,
+            // which is what a browser counts in.
+            pane.feedback.?.web.?.caret = 7;
         }
 
         const driver = try selectionDriverJs(alloc, "ghoztty quoted this passage", "quote", true);
@@ -8833,19 +8826,21 @@ test "host floor: a real controller on a real window, on this box" {
 
         // T935: the quote is a NODE now, and this is the proof — the page was
         // seeded with the block's span, built a `<div class="q" data-qid>` for
-        // it, and reported that node back with its id on it. Nothing else can
-        // produce this: `feedback_quote_spans` is null until a snapshot fills
-        // it, and every native write empties it again, so a non-null value one
-        // round trip after the insertion is the DOM's own answer rather than
-        // the text-matching derivation's.
+        // it, and reported that node back with its id on it. The oracle is
+        // `page_quotes`, the block count out of the page's own snapshot, and
+        // not `feedback_quote_spans`: native carries the spans across its own
+        // splice (T1704), so a span list is non-null the instant the quote is
+        // inserted and proves nothing about the DOM. The seeded text held no
+        // quote, so a count of one is the page's answer.
         //
         // Why it matters beyond the mechanism: identity that lives on the node
         // is identity that survives the user EDITING the passage and vanishes
-        // when they delete the block, which is what the matching could never
-        // do (`viewer_feedback_doc.zig`'s header).
+        // when they delete the block, which text matching could never do
+        // (`viewer_feedback_doc.zig`'s header).
         try waitFor(&msg, 30, struct {
             fn ready(p: *ViewerPane) bool {
-                return p.feedback_quote_spans != null;
+                const bar = p.feedback orelse return false;
+                return bar.page_quotes == 1;
             }
         }.ready, &pane);
         {
@@ -8980,14 +8975,31 @@ test "host floor: a real controller on a real window, on this box" {
             try waitFor(&msg, 30, Selected.ready, &pane);
 
             // The user types under the quoted block, which is where quoting
-            // parked the caret.
-            const composed = try std.fmt.allocPrint(
-                alloc,
-                "{s}\n\nthis heading is wrong\n",
-                .{pane.feedbackText()},
+            // parked the caret — INTO THE PAGE, the way typing actually
+            // arrives. Not a native `feedbackSetText`: a wholesale native write
+            // replaces the text the quote spans describe, and since T1704
+            // nothing re-derives them by matching the passage, so it would
+            // file a report with no quote in it. The page's own snapshot is
+            // what carries both the sentence and the live block.
+            pane.feedback.?.web.?.executeScript(
+                \\(function () {
+                \\  var box = document.getElementById("c");
+                \\  var r = document.createRange();
+                \\  r.selectNodeContents(box);
+                \\  r.collapse(false);
+                \\  var sel = window.getSelection();
+                \\  sel.removeAllRanges();
+                \\  sel.addRange(r);
+                \\  document.execCommand("insertText", false, "this heading is wrong");
+                \\})()
             );
-            defer alloc.free(composed);
-            pane.feedbackSetText(alloc, composed);
+            try waitFor(&msg, 30, struct {
+                fn ready(p: *ViewerPane) bool {
+                    if (std.mem.indexOf(u8, p.feedbackText(), "this heading is wrong") == null) return false;
+                    const bar = p.feedback orelse return false;
+                    return bar.page_quotes == 1;
+                }
+            }.ready, &pane);
             try testing.expectEqual(@as(usize, 1), pane.feedbackQuoteCount(alloc));
 
             pane.sendFeedback(alloc);
@@ -9063,10 +9075,11 @@ test "host floor: a real controller on a real window, on this box" {
             try testing.expect(std.mem.startsWith(u8, pane.feedbackStatus().?, "Filed "));
         }
 
-        // ...and deleting a block takes its metadata out of the report without
-        // anything having to notice the deletion. (Done by rewriting the
-        // buffer, which is exactly what the control's change mirror does when
-        // a user selects the block and hits Delete.)
+        // ...and a wholesale rewrite of the buffer carries no quote at all:
+        // the spans described the text it replaced, and nothing re-derives
+        // them from the passage (T1704). (Deleting a block IN THE PAGE is the
+        // real path, and the T935 undo arm above proves the count drops with
+        // the node.)
         pane.feedbackSetText(alloc, "just my own words\n");
         try testing.expectEqual(@as(usize, 0), pane.feedbackQuoteCount(alloc));
 
@@ -9170,8 +9183,8 @@ test "host floor: a real controller on a real window, on this box" {
 
             // ...and it is a NODE, proven the only way that distinguishes it
             // from text: Backspace against its trailing edge takes the whole
-            // chip. On the RichEdit this needed `chipEndingAt` to widen the
-            // selection by hand first; here `contenteditable="false"` makes the
+            // chip. The RichEdit this replaced had to widen its selection over
+            // the chip by hand first; here `contenteditable="false"` makes the
             // engine treat the run as one character. A chip that was still text
             // would leave `[Image #1` behind — text that no longer parses, i.e.
             // a picture silently dropped from the report by one keystroke.
@@ -10220,7 +10233,7 @@ test "page messages land on the pane, in the pane's own memory" {
     try testing.expectEqual(@as(usize, 0), pane.feedbackQuoteCount(alloc));
 }
 
-test "T935: the page's quote blocks are the pane's truth, and a native write drops them" {
+test "T935: the page's quote blocks are the pane's truth, and a wholesale write drops them" {
     // The pane half of the identity flip, with no browser: what a snapshot
     // does to `feedbackQuoteSpans`, and what it takes to make the pane forget
     // it. The whole point is that the answer stops being a function of the
@@ -10233,17 +10246,17 @@ test "T935: the page's quote blocks are the pane's truth, and a native write dro
     _ = try pane.feedback_quotes.add(alloc, .{ .text = "second", .heading_text = "Beta" });
     pane.feedbackSetText(alloc, "quoted\n\nnotes\n\nquoted\n\nsecond");
 
-    // Derivation, the pre-T935 answer and still the seeding bridge: with no
-    // snapshot, the FIRST line-aligned occurrence of each passage wins.
+    // No snapshot yet: no quotes. The pre-T1704 answer here matched the
+    // passages against the text; that is gone, and with it any way for a
+    // passage that merely APPEARS in the buffer to become a quote.
     {
-        const derived = pane.feedbackQuoteSpans(alloc).?;
-        defer alloc.free(derived);
-        try testing.expectEqual(@as(usize, 2), derived.len);
-        try testing.expectEqual(@as(usize, 0), derived[0].start);
+        const none = pane.feedbackQuoteSpans(alloc).?;
+        defer alloc.free(none);
+        try testing.expectEqual(@as(usize, 0), none.len);
     }
 
     // Now the page speaks: its `quoted` block is the SECOND occurrence, which
-    // is a document the matching could not describe (it always picks the
+    // is a document text matching could not describe (it always picked the
     // first). This is the assertion that the DOM wins.
     pane.feedbackSetQuoteSpans(alloc, &.{
         .{ .start = 15, .end = 21, .index = 0 },
@@ -10283,18 +10296,13 @@ test "T935: the page's quote blocks are the pane's truth, and a native write dro
         try testing.expectEqual(@as(usize, 15), live[0].start);
     }
 
-    // A write from the NATIVE side invalidates them outright: the offsets
-    // describe a buffer that no longer exists, and quoting the wrong run of a
-    // report is worse than quoting none. The derivation takes over, which is
-    // what re-attaches the ids at the next seed.
+    // A wholesale write invalidates them outright: the offsets describe a
+    // buffer that no longer exists, and quoting the wrong run of a report is
+    // worse than quoting none. Nothing re-derives them from the text any more
+    // (T1704) - a native splice restores them itself, shifted.
     pane.feedbackSetText(alloc, "quoted\n\nrewritten\n\nsecond");
     try testing.expect(pane.feedback_quote_spans == null);
-    {
-        const derived = pane.feedbackQuoteSpans(alloc).?;
-        defer alloc.free(derived);
-        try testing.expectEqual(@as(usize, 2), derived.len);
-        try testing.expectEqual(@as(usize, 0), derived[0].start);
-    }
+    try testing.expectEqual(@as(usize, 0), pane.feedbackQuoteCount(alloc));
 }
 
 test "a page message that arrives after the pane is gone is dropped" {

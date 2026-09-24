@@ -4,17 +4,17 @@
 //! `NSTextAttachment` chips).
 //!
 //! Pure — bytes in, bytes out, no OS surface — so it is unit tested in the
-//! `-Dapp-runtime=none` lane like its siblings. `ViewerFeedbackBar` drives the
-//! RichEdit from what this decides, `ViewerPane` owns the `Store`, and
+//! `-Dapp-runtime=none` lane like its siblings. `ViewerFeedbackBar` splices
+//! chips into the composer from what this decides, `ViewerPane` owns the
+//! `Store`, and
 //! `viewer_feedback_report.zig` writes the files.
 //!
 //! ## The number is the identity, and it is in the TEXT
 //!
 //! Mac makes a chip one atomic `NSTextAttachment` — a single `U+FFFC` — and
 //! hangs the image off it, so deleting the character deletes the picture from
-//! the report. RichEdit has no such field (the same hole `viewer_feedback_doc`
-//! works around for quotes), so a chip here is literally the characters
-//! `[Image #3]` and the NUMBER is what ties it to a stored image.
+//! the report. The pane's buffer is plain text, so a chip here is literally the
+//! characters `[Image #3]` and the NUMBER is what ties it to a stored image.
 //!
 //! That makes the two rules Mac states fall out rather than have to be
 //! maintained:
@@ -31,12 +31,12 @@
 //! plain text, no link, no entry. And an entry is live at most ONCE: copying a
 //! chip does not attach the picture twice, because there is only one picture.
 //!
-//! ## Atomicity without an attachment character
+//! ## Atomicity
 //!
-//! `chipAt` is what makes a chip behave like one unit: Backspace next to
-//! `[Image #3]` selects the whole chip rather than eating the `]` and leaving
-//! `[Image #3` behind — which would be a chip that no longer parses, i.e. an
-//! image silently dropped from the report by a single keystroke.
+//! The composer's page holds a chip as one node, so Backspace takes the whole
+//! chip rather than eating the `]` and leaving `[Image #3` behind — which would
+//! be a chip that no longer parses, i.e. an image silently dropped from the
+//! report by a single keystroke (`viewer_feedback_page.zig`, T936).
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -201,38 +201,6 @@ pub fn nextChip(text: []const u8, from: usize) ?Chip {
         if (end == at or end >= text.len or text[end] != chip_suffix[0]) continue;
         const number = std.fmt.parseInt(u32, text[at..end], 10) catch continue;
         return .{ .start = start, .end = end + chip_suffix.len, .number = number };
-    }
-    return null;
-}
-
-/// The chip that `at` falls INSIDE — strictly between its ends, so a caret
-/// parked against a chip's outer edge is next to it, not in it.
-pub fn chipAt(text: []const u8, at: usize) ?Chip {
-    var from: usize = 0;
-    while (nextChip(text, from)) |c| {
-        if (c.start >= at) return null; // chips are found in order
-        if (at < c.end) return c;
-        from = c.end;
-    }
-    return null;
-}
-
-/// What a Backspace at `at` should swallow whole: the chip ending there, or —
-/// if the caret was walked into the middle of one with the arrow keys — the
-/// chip it is inside. Either way the answer is the WHOLE chip, which is the
-/// property that makes it behave like Mac's single attachment character.
-pub fn chipEndingAt(text: []const u8, at: usize) ?Chip {
-    if (at == 0) return null;
-    return chipAt(text, at - 1);
-}
-
-/// The chip starting exactly at `at` — what Delete should swallow whole.
-pub fn chipStartingAt(text: []const u8, at: usize) ?Chip {
-    var from: usize = 0;
-    while (nextChip(text, from)) |c| {
-        if (c.start == at) return c;
-        if (c.start > at) return null;
-        from = c.end;
     }
     return null;
 }
@@ -521,49 +489,6 @@ test "the store refuses what it cannot hold, and holds nothing on refusal" {
     defer alloc.free(big);
     try testing.expectError(AddError.TooLarge, store.add(alloc, big));
     try testing.expectEqual(@as(usize, 0), store.entries.items.len);
-}
-
-test "chipAt: a caret inside a chip finds the whole thing, outside finds none" {
-    const text = "ab [Image #12] cd";
-    const start: usize = 3;
-    const end: usize = 14;
-    try testing.expectEqualStrings("[Image #12]", text[start..end]);
-
-    // Strictly inside — every interior position, including just past the `[`.
-    var i = start + 1;
-    while (i < end) : (i += 1) {
-        const c = chipAt(text, i).?;
-        try testing.expectEqual(start, c.start);
-        try testing.expectEqual(end, c.end);
-        try testing.expectEqual(@as(u32, 12), c.number);
-    }
-    // The ends themselves are NEXT to the chip, not in it.
-    try testing.expect(chipAt(text, start) == null);
-    try testing.expect(chipAt(text, end) == null);
-    try testing.expect(chipAt(text, 0) == null);
-    try testing.expect(chipAt(text, text.len) == null);
-}
-
-test "chipEndingAt/chipStartingAt: Backspace and Delete swallow a chip whole" {
-    const text = "x [Image #1][Image #2] y";
-    // Backspace with the caret against the `]` of #1 takes all of #1.
-    const before = chipEndingAt(text, 12).?;
-    try testing.expectEqual(@as(u32, 1), before.number);
-    try testing.expectEqual(@as(usize, 2), before.start);
-    try testing.expectEqual(@as(usize, 12), before.end);
-
-    // Delete with the caret at the same spot takes all of #2, which starts
-    // there — the two chips are adjacent, which is the case that would
-    // otherwise leave `[Image #2` behind.
-    const after = chipStartingAt(text, 12).?;
-    try testing.expectEqual(@as(u32, 2), after.number);
-    try testing.expectEqual(@as(usize, 22), after.end);
-
-    // Nothing at the document ends, and nothing in the middle of plain text.
-    try testing.expect(chipEndingAt(text, 0) == null);
-    try testing.expect(chipStartingAt(text, text.len) == null);
-    try testing.expect(chipEndingAt(text, 1) == null);
-    try testing.expect(chipStartingAt(text, 1) == null);
 }
 
 test "insertion: a chip lands spaced from its neighbours, without stacking gaps" {
