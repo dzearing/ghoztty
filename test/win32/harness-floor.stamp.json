@@ -1,13 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-09-23T23:10:01-07:00",
-    "commit":  "888609609",
+    "generated":  "2026-09-23T23:41:34-07:00",
+    "commit":  "48a8b81de",
     "uncommitted":  [
-                        "test/win32/dark-menus.ps1",
-                        "test/win32/lib/TestDesktop.ps1",
-                        "test/win32/printclient-audit.ps1",
-                        "test/win32/test-desktop-harness.ps1"
+                        "test/win32/split-divider.ps1",
+                        "test/win32/tab-strip.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "cc4dd72fb07ebc34de67ce688e0eab7f091a7228e4baeba4f9f50d01212a0f0e",
@@ -336,7 +334,7 @@
                   "test/win32/soak-daemon.ps1":  "10a19e7d3a5b7b885afae8a3bb2a04bb92cdf20e8b17c974bb59e54f06be2470",
                   "test/win32/split-dim.ps1":  "a0d3d7e7816fc6a89ab6c2f285c2d19f2e2a550333765c2a3fabdb377c9e8b8b",
                   "test/win32/split-dim-viewer.ps1":  "454a52890b54b98bd41361b823291d51d54b6986180613e921fd0d185324dea9",
-                  "test/win32/split-divider.ps1":  "641f514cd8adf962026d07250232d86a19c1e29dcc0191bf334607c134981b65",
+                  "test/win32/split-divider.ps1":  "d65288528cab6f897660c3473b4c3a52e928ef1948637d3d2cdd4acff3d3abac",
                   "test/win32/split-inherit-cwd.ps1":  "f26f4a4f33220e2a2b13418a71da0a6e1feb2644eebce5ae09d8751e06a3b443",
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",
                   "test/win32/sprite-testdata.ps1":  "79914472fe57b285f38ca6e0740a22e4975c142ccd15fe554b9b3b0835033d21",
@@ -346,7 +344,7 @@
                   "test/win32/suite-run.ps1":  "e5937c1bc5b01432e73f7c22a3ebe2ecfba2fad903dc367fa42890e1ddf88bf8",
                   "test/win32/tab-color.ps1":  "af75bcd47eeb68cf93ee056b7aa4e14e147314ab8b4adc3a9c0eb27dfb43f967",
                   "test/win32/tab-overview-action.ps1":  "1e9d4753c755d9846699c726a1521ef343531e4c4887e0602488bd8cf5212382",
-                  "test/win32/tab-strip.ps1":  "08acaa113a4b48a8e3b0e72b086f98fc464be492ed60ca2d4545d9e8603f18e2",
+                  "test/win32/tab-strip.ps1":  "ddae0ab867cb6ecf11460cc99e7a78f541b0f44b8432c2248a1f5d2014e42bf4",
                   "test/win32/tab-strip-autohide.ps1":  "18a71e8d3baf08f01dac56de94897f7ac7d116d625eccc4dd4f5cf13971e153e",
                   "test/win32/tab-tooltip.ps1":  "7396f516bb309e6399469a48e3e41996df7e7ed6e138cd49f84418cce3a6145b",
                   "test/win32/target-staleness.ps1":  "25c28c99d39716155584ecda6f7a826dae310b3adaad3ae6dbb962c38f7f7d80",

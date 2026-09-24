@@ -656,12 +656,18 @@ if (-not $hoverLogged) {
 $hoverShot = Get-TestHoverCapture -Hwnd $top -X $d.X -Y $d.Y
 $hoverIsHot = Gap-Has $top $HOT_G $hoverShot
 $hoverIsRest = Gap-Has $top $REST_G $hoverShot
+# T946: the app also says whether the move altered a single pixel of the frame
+# (T845). Reading the gray alone infers "the hover took" from how the band
+# looks, which a capture of the wrong instant satisfies whenever the band
+# happens to be the right color; `changed` is the app's own before/after.
+$hoverChanged = if ($hoverShot) { [bool]$hoverShot.Changed } else { $null }
 Close-TestHoverCapture $hoverShot
 if ($null -eq $hoverIsHot -or $null -eq $hoverIsRest) {
     Write-Host "SKIP T233 (hover color): no usable hovered capture ($(Get-LastHoverCaptureError))"; $script:skipped++
 } else {
-    Assert ($hoverIsHot -eq $true) 'T233 hover: the hovered band is painted the HOVER gray'
-    Assert ($hoverIsRest -eq $false) 'T233 hover: ...and no longer the rest gray'
+    Assert ($hoverChanged -eq $true) "T946 hover: the hovered capture is a frame the move CHANGED (changed=$hoverChanged)"
+    Assert ($hoverIsHot -eq $true) "T233 hover: the hovered band is painted the HOVER gray (changed=$hoverChanged)"
+    Assert ($hoverIsRest -eq $false) "T233 hover: ...and no longer the rest gray (changed=$hoverChanged)"
 }
 
 # A drag is a HELD hover (design system section 5): the mark must not drop

@@ -1016,7 +1016,19 @@ try {
         $hotClose  = Probe-Fill $shotClose $cSqL $cCx $cSqT
         $coldPlus  = Probe-Fill $shotClose $pSqL $pCx $cSqT
         Write-Host ("INFO  hover fill: + rest=$(if($restPlus){$restPlus.Edge}) hot=$(if($hotPlus){$hotPlus.Edge}); " +
-                    "x rest=$(if($restClose){$restClose.Edge}) hot=$(if($hotClose){$hotClose.Edge})")
+                    "x rest=$(if($restClose){$restClose.Edge}) hot=$(if($hotClose){$hotClose.Edge}); " +
+                    "changed=$(if($shotPlus){$shotPlus.Changed})/$(if($shotClose){$shotClose.Changed})")
+        # T946: the fill probes compare against a separately-taken rest shot,
+        # which a capture of the wrong instant satisfies whenever the button
+        # happens to look right. `changed` is the app's own answer (T845): did
+        # the move alter a single pixel of the frame it photographed. Both
+        # buttons light a fill, so both must say yes - and the value is in the
+        # label, so a red line says whether the control stayed dark (changed
+        # true, fill missing) or the capture missed the hover (changed false).
+        Assert ($null -ne $shotPlus -and $shotPlus.Changed) `
+            "T946: the hovered capture of the + is a frame the move CHANGED (changed=$(if($shotPlus){$shotPlus.Changed}); $(Get-LastHoverCaptureError))"
+        Assert ($null -ne $shotClose -and $shotClose.Changed) `
+            "T946: the hovered capture of the close x is a frame the move CHANGED (changed=$(if($shotClose){$shotClose.Changed}))"
         # The "+" has lit a fill since long before T204, so it is the POSITIVE
         # CONTROL: under T204_NEUTERED it must still pass while the close "x"
         # below fails. That asymmetry is the whole claim of this section, and
