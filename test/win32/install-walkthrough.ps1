@@ -437,6 +437,17 @@ if (-not $hasMaintenancePrompt) {
     # /qr, because the prompt is gated on UILevel > 3 on purpose: the in-app
     # updater installs at /qb-! (UILevel 3) and a modal dialog inside an
     # unattended update would hang it forever.
+    #
+    # WHERE THE DIALOG APPEARS (T1302). msiexec runs on the test desktop, but
+    # the MaintenancePrompt custom action is launched by the Windows Installer
+    # SERVICE, and the service puts it on the INTERACTIVE desktop - it does not
+    # inherit the client's. The first runs looked for the dialog on the test
+    # desktop, found nothing, and failed D1-D3/D5 over a dialog that was on
+    # screen the whole time (a poller on the input desktop saw it, titled and
+    # visible). So the dialog is found and clicked through a handle bound to the
+    # interactive desktop. It is there for well under a second: BM_CLICK is a
+    # sent message, needs no foreground and injects no input.
+    $inputDesk = [GhozttyTestDesktop]::Create('install-walkthrough-input', $true)
     function Invoke-MaintenanceRun {
         param([Parameter(Mandatory = $true)][string]$Press)
         $log = Join-Path $work "d-maintenance-$($Press.ToLower()).log"
@@ -458,12 +469,12 @@ if (-not $hasMaintenancePrompt) {
         $target = [IntPtr]::Zero
         $dlg = [IntPtr]::Zero
         if ($promptPid -ne 0) {
-            $dlg = Wait-TestWindow -ProcessId $promptPid -Class 'GhozttyConfirmDialog' -TimeoutMs 30000
+            $dlg = Wait-TestWindow -ProcessId $promptPid -Class 'GhozttyConfirmDialog' -TimeoutMs 30000 -Desktop $inputDesk
             if ($dlg -ne [IntPtr]::Zero) {
                 # Read every caption BEFORE pressing anything: the press
                 # dismisses the dialog and a button read after it answers ''.
-                foreach ($btn in (Get-TestChildWindows -Window $dlg -Class 'Button')) {
-                    $cap = Get-TestControlText -Control ([IntPtr]$btn.Hwnd)
+                foreach ($btn in (Get-TestChildWindows -Window $dlg -Class 'Button' -Desktop $inputDesk)) {
+                    $cap = Get-TestControlText -Control ([IntPtr]$btn.Hwnd) -Desktop $inputDesk
                     $labels += $cap
                     if ($cap -eq $Press) { $target = [IntPtr]$btn.Hwnd }
                 }
@@ -471,7 +482,7 @@ if (-not $hasMaintenancePrompt) {
         }
         $pressed = $false
         if ($target -ne [IntPtr]::Zero) {
-            Send-TestControlClick -Control $target | Out-Null
+            Send-TestControlClick -Control $target -Desktop $inputDesk | Out-Null
             $pressed = $true
         }
         $code = $null

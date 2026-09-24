@@ -33551,3 +33551,18 @@ any unwired stand-down. `install-maintenance.ps1` (A23-A26, E16-E18, ALL PASS
 51, teeth ALL PASS) and `install-restart.ps1` (E6/E7, ALL PASS 65) cover it.
 The MSI itself compiles on CI (wixl needs Docker here). Clicking both on a real
 sandbox install is filed as T1729.
+
+## 2026-09-24 - T1302: the Repair / Cancel prompt watched under a real msiexec, and Cancel is broken
+
+`install-walkthrough.ps1` section D ran for the first time, on `win-v1.36.36`.
+The first two runs failed D1-D3/D5, and the fault was in the harness. The
+Windows Installer service launches the MaintenancePrompt custom action on the
+INTERACTIVE desktop, not on the test desktop that msiexec was started from. A
+poller on the input desktop saw the dialog on screen, titled correctly, both
+times. Section D now finds and clicks the dialog through a handle bound to the
+interactive desktop. With that fixed, the dialog appears, its buttons read
+Repair / Cancel, Repair ends at 0, and Cancel leaves the install alone. The one
+failure left is a product defect. The app exits 1602 on Cancel, but Windows
+Installer does not read an EXE action's exit code as a status. It shows Error
+1722 ("There is a problem with this Windows Installer package") and ends at
+1603. That is filed as T1730 (P1, M1), and D3 stays red until T1730 lands.
