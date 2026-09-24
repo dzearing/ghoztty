@@ -389,6 +389,39 @@ pub fn accentOn(surface: Rgb, accent: Rgb) Rgb {
     return color_math.contrastAdjustedTo(accent, surface, ui_contrast_target);
 }
 
+/// How far an accent-tinted block pulls its surface toward the accent, and how
+/// far its hairline edge does. Mac draws the composer's image chip as
+/// `controlAccentColor` at 0.16 alpha with a 0.45-alpha stroke; GDI has no
+/// alpha for flat fills and the page is handed opaque colors, so both are
+/// resolved here as mixes over the surface.
+pub const accent_wash: f64 = 0.14;
+pub const accent_edge: f64 = 0.45;
+
+/// An inline token tinted by the accent — the feedback composer's quote block
+/// and its `[Image #N]` chip (T986). One derivation for all three colors, so
+/// the wash the chip sits on is the wash its ink was clamped against.
+pub const AccentToken = struct {
+    /// The fill behind the token: the surface pulled `accent_wash` toward the
+    /// accent.
+    wash: Rgb,
+    /// The token's label, in the accent — Mac draws the chip's text in
+    /// `controlAccentColor`. Clamped to the 4.5:1 TEXT floor against `wash`,
+    /// not `accentOn`'s 3:1: this is words, and the 3:1 rule is for marks.
+    ink: Rgb,
+    /// A 1 px edge round the wash: the surface pulled `accent_edge` toward the
+    /// accent, Mac's stroke.
+    edge: Rgb,
+};
+
+pub fn accentTokenOn(surface: Rgb, accent: Rgb) AccentToken {
+    const wash = color_math.mix(surface, accent, accent_wash);
+    return .{
+        .wash = wash,
+        .ink = color_math.contrastAdjustedTo(accent, wash, color_math.contrast_target),
+        .edge = color_math.mix(surface, accent, accent_edge),
+    };
+}
+
 pub fn resolve(chrome_bg: Rgb, accent: Rgb) Palette {
     const bar = color_math.wash(chrome_bg, bar_wash);
     return .{
@@ -626,6 +659,41 @@ test "resolve: the accent survives as the user's color when it already clears 3:
     // Still well under the text floor — proof it stopped at the UI floor
     // instead of being dragged onto the text ramp.
     try testing.expect(ratio(p.accent, p.bar) < 4.5);
+}
+
+test "accentTokenOn: the chip's label reads as TEXT on its own wash, on every pill (T986)" {
+    // A sweep of pills from black to white against accents that are too dark,
+    // too light and mid-tone for them: the label is words, so it has to clear
+    // the 4.5:1 text floor against the wash it actually sits on, never merely
+    // the 3:1 a mark gets.
+    const accents = [_]Rgb{
+        .{ .r = 0x68, .g = 0x00, .b = 0x81 }, // this box's real accent
+        .{ .r = 0x00, .g = 0x78, .b = 0xD4 }, // Windows' default blue
+        .{ .r = 0xFF, .g = 0xD8, .b = 0x40 }, // a pale accent a light pill fights
+    };
+    var v: u16 = 0;
+    while (v <= 0xFF) : (v += 0x11) {
+        const c: u8 = @intCast(v);
+        const pill: Rgb = .{ .r = c, .g = c, .b = c };
+        for (accents) |accent| {
+            const t = accentTokenOn(pill, accent);
+            try testing.expect(ratio(t.ink, t.wash) >= color_math.contrast_target);
+            // The edge sits further toward the accent than the wash does, so
+            // it is a visible line round the fill and not a second fill.
+            try testing.expect(ratio(t.edge, pill) >= ratio(t.wash, pill));
+        }
+    }
+}
+
+test "accentTokenOn: the wash is the quote block's, and a readable accent is kept" {
+    const pill: Rgb = .{ .r = 0x1E, .g = 0x1E, .b = 0x1E };
+    // Windows 11's dark-mode accent tint, which clears the text floor unaided.
+    const bright: Rgb = .{ .r = 0x60, .g = 0xCD, .b = 0xFF };
+    const t = accentTokenOn(pill, bright);
+    try testing.expectEqual(color_math.mix(pill, bright, accent_wash), t.wash);
+    // Already clears 4.5:1 on the wash: the label IS the user's color.
+    try testing.expect(ratio(bright, t.wash) >= color_math.contrast_target);
+    try testing.expectEqual(bright, t.ink);
 }
 
 test "debugChromeBase: every background comes back visibly marked (T43)" {

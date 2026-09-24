@@ -104,6 +104,10 @@ body {
  *
  * The wash and the accent are the quote block's, handed down by the host from
  * the same derivation, so the composer has one accent colour rather than two.
+ * The label is drawn IN the accent and the wash has a hairline edge of it
+ * (T986), which is Mac's chip: accent text, 0.16 fill, 0.45 stroke. The ink is
+ * clamped to the text floor against the wash natively, so it is never the raw
+ * accent on a pill it cannot be read on.
  *
  * NO vertical padding, margin or border, for the quote block's exact reason:
  * the wrapped line count is measured as scrollHeight / lineHeight, and vertical
@@ -117,6 +121,11 @@ body {
   border: 0;
   border-radius: var(--i-radius, 4px);
   background: var(--q-bg, #242428);
+  color: var(--i-ink, inherit);
+  /* An inset shadow, not a border: a shadow never takes part in layout, so the
+     edge adds nothing to the line box the wrapped line count is measured
+     against. */
+  box-shadow: inset 0 0 0 1px var(--i-edge, transparent);
   /* The chip is atomic, so a caret cannot be inside it and a text cursor over
      it would promise otherwise. */
   cursor: default;

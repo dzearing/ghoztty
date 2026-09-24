@@ -600,6 +600,9 @@
     // The chip's own two numbers, and the cap it refuses a picture at.
     if (v.ipad) root.setProperty("--i-pad", v.ipad + "px");
     if (v.iradius) root.setProperty("--i-radius", v.iradius + "px");
+    // Its label and edge in the accent, Mac's chip (T986).
+    if (v.iink) root.setProperty("--i-ink", v.iink);
+    if (v.iedge) root.setProperty("--i-edge", v.iedge);
     if (typeof v.imgMax === "number") imgMax = v.imgMax;
     if (typeof v.text === "string") el.setAttribute("data-placeholder", v.text);
     // A scale change moves the line box, so the count the host is laying out

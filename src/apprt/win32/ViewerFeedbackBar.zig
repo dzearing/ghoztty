@@ -226,6 +226,10 @@ text_ref: u32 = 0x00FFFFFF,
 secondary_ref: u32 = 0x00AAAAAA,
 /// The wash behind a quoted block, and the bar down its left edge (T641).
 quote_rgb: color_math.Rgb = .{ .r = 0x24, .g = 0x24, .b = 0x28 },
+/// The image chip's label and edge (T986), from the same `accentTokenOn` as
+/// `quote_rgb`.
+chip_ink_rgb: color_math.Rgb = .{ .r = 0x60, .g = 0xCD, .b = 0xFF },
+chip_edge_rgb: color_math.Rgb = .{ .r = 0x2A, .g = 0x5A, .b = 0x7A },
 accent_ref: u32 = 0x00D47800,
 dark: bool = true,
 
@@ -417,7 +421,12 @@ pub fn applyTheme(self: *ViewerFeedbackBar) void {
     // the band, not re-derived per run.
     const accent = chrome_theme.accentOn(self.pill_rgb, system_colors.accentCached());
     self.accent_ref = w32.RGB(accent.r, accent.g, accent.b);
-    self.quote_rgb = color_math.mix(self.pill_rgb, accent, 0.14);
+    const token = chrome_theme.accentTokenOn(self.pill_rgb, accent);
+    self.quote_rgb = token.wash;
+    // The image chip sits on that same wash, labelled and edged in the accent
+    // the way Mac's chip is (T986).
+    self.chip_ink_rgb = token.ink;
+    self.chip_edge_rgb = token.edge;
 
     // The page paints the pill's interior, so the same derivations are handed
     // over as CSS custom properties - one source for the band's chrome and the
@@ -683,6 +692,8 @@ fn pushComposerVars(self: *ViewerFeedbackBar, force: bool) void {
     var sel_buf: [8]u8 = undefined;
     var qbg_buf: [8]u8 = undefined;
     var qac_buf: [8]u8 = undefined;
+    var iink_buf: [8]u8 = undefined;
+    var iedge_buf: [8]u8 = undefined;
 
     self.vars_scale = self.scale;
     self.vars_pill = self.pill_rgb;
@@ -709,6 +720,8 @@ fn pushComposerVars(self: *ViewerFeedbackBar, force: bool) void {
         // (T936).
         .image_pad_px = chip_pad_dip,
         .image_radius_px = chip_radius_dip,
+        .image_ink = hexRgb(&iink_buf, self.chip_ink_rgb),
+        .image_edge = hexRgb(&iedge_buf, self.chip_edge_rgb),
         .image_max_bytes = feedback_images.max_image_bytes,
     });
 }

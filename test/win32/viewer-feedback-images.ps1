@@ -4,6 +4,8 @@
 #
 #   A. A clipboard carrying a registered "PNG" pastes as an image: a
 #      `[Image #1]` chip appears in the composer and the pane reports it.
+#  A2. The chip looks like Mac's (T986): its label is painted in the accent
+#      ink the host pushed, not the body colour, and its wash has an edge.
 #   B. A chip deletes WHOLE. One Backspace against `[Image #1]` removes all of
 #      it, never leaving `[Image #1` behind -- which would look attached and
 #      silently not be, because the report is derived from the text.
@@ -357,6 +359,33 @@ try {
     Assert ($text -ceq $wantA) `
         ("the composer holds exactly an '[Image #1]' chip " +
          "(got '$(Show-Text $text)', want '$(Show-Text $wantA)')")
+
+    # --- A2. the chip LOOKS like Mac's (T986) ---------------------------------
+    # Mac draws the chip's label in the accent and strokes its wash with it.
+    # Read off the painted node's COMPUTED style, not the stylesheet: a
+    # property the host never pushed leaves the fallback in force (`inherit`,
+    # `transparent`) and the chip quietly keeps the body's colour, which is the
+    # failure this arm exists for. The wanted colour is resolved by the engine
+    # from the pushed `--i-ink`, so both sides are in the same notation.
+    $styleJs = "(function(){var i=document.querySelector('#c .i');if(!i)return '';" +
+        "var ink=getComputedStyle(document.documentElement).getPropertyValue('--i-ink').trim();" +
+        "var edge=getComputedStyle(document.documentElement).getPropertyValue('--i-edge').trim();" +
+        "var p=document.createElement('span');p.style.color=ink||'rgb(1, 2, 3)';document.body.appendChild(p);" +
+        "var want=getComputedStyle(p).color;p.remove();var cs=getComputedStyle(i);" +
+        "return JSON.stringify({ink:ink,edge:edge,want:want,color:cs.color," +
+        "fg:getComputedStyle(document.getElementById('c')).color,shadow:cs.boxShadow});})()"
+    $style = $null
+    try { $raw = Invoke-CdpEval $cdp $styleJs; if ($raw) { $style = $raw | ConvertFrom-Json } } catch { Write-Host "  $($_.Exception.Message)" }
+    Assert ($null -ne $style) 'the chip node is readable off the page'
+    if ($style) {
+        Assert ($style.ink -match '^#[0-9a-fA-F]{6}$') "the host pushed the chip's ink (--i-ink='$($style.ink)')"
+        Assert ($style.edge -match '^#[0-9a-fA-F]{6}$') "the host pushed the chip's edge (--i-edge='$($style.edge)')"
+        Assert ($style.color -eq $style.want) `
+            "the chip's label is painted in that ink (color='$($style.color)', want '$($style.want)')"
+        Assert ($style.color -ne $style.fg) `
+            "...which is not the body text's colour (label '$($style.color)', body '$($style.fg)')"
+        Assert ($style.shadow -match 'inset') "the chip's wash carries its 1 px edge (box-shadow='$($style.shadow)')"
+    }
 
     # --- B. a chip deletes WHOLE ---------------------------------------------
     # The caret sits just past the chip's trailing space. One Backspace takes

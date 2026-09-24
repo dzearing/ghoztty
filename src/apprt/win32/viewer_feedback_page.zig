@@ -130,6 +130,11 @@ pub const Vars = struct {
     /// source, which is D43's mitigation.
     image_pad_px: f32,
     image_radius_px: f32,
+    /// An image chip's label and its 1 px edge, as `#rrggbb` (T986). Mac draws
+    /// the chip's text in the accent and strokes its wash with it; both come
+    /// from `chrome_theme.accentTokenOn`, the same derivation as the wash.
+    image_ink: []const u8,
+    image_edge: []const u8,
     /// The most bytes one pasted or dropped picture may carry (T936) — the
     /// store's own `max_image_bytes`, handed over rather than restated in the
     /// script, so the page refuses a 200 MB drop where it is instead of
@@ -155,6 +160,8 @@ pub const Vars = struct {
             .qbarx = self.quote_bar_x_px,
             .ipad = self.image_pad_px,
             .iradius = self.image_radius_px,
+            .iink = self.image_ink,
+            .iedge = self.image_edge,
             .imgMax = self.image_max_bytes,
         }, .{});
     }
@@ -572,6 +579,8 @@ test "vars serialize to the property names the script reads" {
         .quote_bar_x_px = 5,
         .image_pad_px = 4,
         .image_radius_px = 4,
+        .image_ink = "#60cdff",
+        .image_edge = "#2a5a7a",
         .image_max_bytes = 32 * 1024 * 1024,
     };
     const out = try v.json(testing.allocator);
@@ -594,6 +603,8 @@ test "vars serialize to the property names the script reads" {
         "qbarx",
         "ipad",
         "iradius",
+        "iink",
+        "iedge",
         "imgMax",
     }) |key| {
         // In the message...

@@ -1,20 +1,19 @@
 {
     "guard":  "viewer-feedback",
     "script":  "test/win32/viewer-feedback.ps1",
-    "generated":  "2026-09-23T21:47:47-07:00",
-    "commit":  "32479ce2f",
+    "generated":  "2026-09-24T06:37:19-07:00",
+    "commit":  "d4e4abce7",
     "uncommitted":  [
-                        "src/apprt/win32/viewer_feedback_doc.zig",
+                        "src/apprt/win32/viewer_feedback_page.zig",
                         "src/apprt/win32/ViewerFeedbackBar.zig",
-                        "test/win32/lib/ComposerSurface.ps1",
-                        "test/win32/viewer-feedback.ps1"
+                        "src/viewer/composer.js"
                     ],
     "files":  {
                   "src/apprt/win32/viewer_feedback_doc.zig":  "f5c871e6e68e437dcb170794201619d59664e9e60077ef3453910b65f3e004e9",
-                  "src/apprt/win32/viewer_feedback_page.zig":  "ac36942837a410cfb0d4661bb78004aeef1168b41bb7d57deb745cb6e8c016b4",
-                  "src/apprt/win32/ViewerFeedbackBar.zig":  "a2178a127fbd271a3ded542ab2be93f38e73088c631f9f45c38fce7330dfaacb",
+                  "src/apprt/win32/viewer_feedback_page.zig":  "324df41e77b22446211df033d819adcf1b7a944be99be5b36bc06fd29c5fb9b0",
+                  "src/apprt/win32/ViewerFeedbackBar.zig":  "e865ec5186194225b16f90d3ae6d8c021fd31e1b40dc03bce631ca3a02d06b82",
                   "src/apprt/win32/ViewerFeedbackWeb.zig":  "bd420cf35aa02909c9632b2589b36b69ba0ac141a87add034ae7c0080af4f1f3",
-                  "src/viewer/composer.js":  "7687e37882abceae4f48be0df321818bee5e89eb66a9ff30e3479fc90ff2d74b",
+                  "src/viewer/composer.js":  "b781d638df032737136778023fe5e096d3922e79a31fd87868b5046cd64ee020",
                   "test/win32/lib/ComposerSurface.ps1":  "7edd6dccc01fa8654f186ad97e64fb13bd9199305aa0424aebfbe7537e39d287",
                   "test/win32/lib/WebViewCdp.ps1":  "694f3e4f7852950d38ca69bcd317b75b1797f364c7f41fa5c23ed3cb56abd5fe",
                   "test/win32/viewer-feedback.ps1":  "fa5765780089947c0a242fbcabc094ab72c7393fbe21370eaab86b2aa9bc5ec2"

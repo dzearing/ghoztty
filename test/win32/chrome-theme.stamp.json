@@ -1,13 +1,13 @@
 {
     "guard":  "chrome-theme",
     "script":  "test/win32/chrome-theme.ps1",
-    "generated":  "2026-09-23T13:19:19-07:00",
-    "commit":  "dba585bb6",
+    "generated":  "2026-09-24T06:42:07-07:00",
+    "commit":  "d4e4abce7",
     "uncommitted":  [
-                        "test/win32/chrome-theme.ps1"
+                        "src/apprt/win32/chrome_theme.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/chrome_theme.zig":  "f371f9852b1ef7afb754589edd3b34083a7cf8293796b88431f1ef3fd6a7bd11",
+                  "src/apprt/win32/chrome_theme.zig":  "e9922111d945b6279e8fc42adda3469ee52117b8682e4cb8297b997b91f068b1",
                   "src/apprt/win32/color_math.zig":  "144ee567f70e4bffa1fb09b174d8685dfd316da3aa519cfa414d6edef8ebddce",
                   "src/apprt/win32/paint_probe.zig":  "57034a948df080fec4abbddf1b0333e2ce5debdf1e61edef5c33a8ab63a5d3a2",
                   "src/apprt/win32/panel_theme.zig":  "caf0cd7e30f705d17e3590985e3fa51a7a3a32f90b619fd38e51b932a6c7a134",
