@@ -9,9 +9,13 @@
 #      silently not be, because the report is derived from the text.
 #   C. Chip numbers are STABLE. The next paste is #2 even though #1's number
 #      is now free, so a number always names the same picture.
-#   D. A clipboard carrying only a BITMAP (no "PNG" format) pastes too -- the
-#      Snipping Tool / Paint / Excel case, which goes through the DIB
-#      normalisation rather than the verbatim copy.
+#   D. A picture that is NOT a PNG pastes too, re-encoded to one -- the page
+#      runs it through a canvas rather than taking the bytes verbatim. (On the
+#      retired RichEdit surface this arm was a bitmap-only clipboard posted as
+#      WM_PASTE, i.e. the native DIB normalisation. The web surface never
+#      reaches that code: the engine turns a CF_DIB clipboard into an image
+#      file on the paste event, and a context-menu Paste fires the SAME paste
+#      event, so the page's re-encode is the path both now take.)
 #   E. Send files the images: the published folder holds `images/image-N.png`
 #      for every live chip and for no deleted one, the bytes on disk are the
 #      bytes that were pasted, `report.json`'s `images` array carries the
@@ -22,20 +26,19 @@
 # SendInput are dead (T233), so nothing here can look at a painted composer.
 # Three readable things stand in, and all three are the real thing:
 #
-#   - the RichEdit's own text (WM_GETTEXT), which is what the user sees;
+#   - the web composer's own document, read over the DevTools protocol
+#     (lib\WebViewCdp.ps1), which is what the user sees;
 #   - the pane's stderr, which reports every image it took
 #     (`image=#N bytes=B live=L`);
 #   - the report FOLDER on disk, which is the artifact the whole feature
 #     exists to produce.
 #
-# THE CLIPBOARD REACHES THE APP because the test desktop is a desktop, not a
-# window station (`WinSta0\<name>`), and the clipboard belongs to the station.
-# A separate station would need the app to set it, which is why this does not.
-#
-# Ctrl+V is sent with Send-TestViewerChord rather than Send-TestKeys: the
-# composer's interception asks the app's own GetKeyState for the modifier, and
-# only the attaching variant arranges that. The WM_PASTE arm (a context-menu
-# paste) is exercised by posting the message directly.
+# T1709: this drives the WEB composer users actually get, not the hidden
+# RichEdit fallback. Pictures go in through the page's own paste listener
+# (Send-CdpComposerImage -- the OS clipboard is no route in off-desktop, see
+# that helper), typing and Backspace are dispatched to the page, and the send
+# (Ctrl+Enter, a chord NATIVE owns) reaches the band as the chord the
+# controller's accelerator handler posts (WM_APP_COMPOSER_CHORD).
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
 #
@@ -57,18 +60,17 @@ if ($ExePath) { $exe = $ExePath }
 
 $env:GHOZTTY_PIPE_SUFFIX = "-fbimg$PID"
 
-# The chip oracle below is the RichEdit's own text, so this suite pins itself to
-# the RichEdit surface (T1102). See lib\ComposerSurface.ps1 for why asking is not
-# enough and the run also PROVES which surface it got.
+# The run PROVES it got the web surface (lib\ComposerSurface.ps1), and reads the
+# chips out of that page over one DevTools port armed before the launch.
 . (Join-Path $PSScriptRoot 'lib\ComposerSurface.ps1')
-Set-ComposerSurface 'richedit'
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+. (Join-Path $PSScriptRoot 'lib\WebViewCdp.ps1')
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
 # Show-Text: how a whole-text comparison prints what it actually found (T672).
 . (Join-Path $PSScriptRoot 'lib\ShowText.ps1')
 
-Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $script:pass = 0
@@ -212,8 +214,9 @@ function Invoke-FeedbackButton($view) {
     return (Send-TestMouse -Window $view.Top -Target $nb -X $x -Y $y)
 }
 
-# --- clipboard fixtures ------------------------------------------------------
-# Two shapes, because the composer reads two different ways.
+# --- picture fixtures --------------------------------------------------------
+# Two shapes, because the page takes a PNG verbatim and re-encodes anything
+# else.
 
 function New-TestBitmap([int]$W, [int]$H, [int]$Seed) {
     $bmp = New-Object System.Drawing.Bitmap $W, $H
@@ -230,31 +233,42 @@ function New-TestBitmap([int]$W, [int]$H, [int]$Seed) {
     return $bmp
 }
 
-# A registered "PNG" on the clipboard -- what every browser publishes, and the
-# path that copies the bytes VERBATIM. Returns the exact bytes so the file on
-# disk can be compared against them.
-function Set-ClipboardPng([int]$W, [int]$H, [int]$Seed) {
+function Get-ImageBytes([int]$W, [int]$H, [int]$Seed, $Format) {
     $bmp = New-TestBitmap $W $H $Seed
     $ms = New-Object System.IO.MemoryStream
-    $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+    $bmp.Save($ms, $Format)
     $bmp.Dispose()
-    $bytes = $ms.ToArray()
-    $do = New-Object System.Windows.Forms.DataObject
-    $do.SetData('PNG', $false, (New-Object System.IO.MemoryStream(, $bytes)))
-    [System.Windows.Forms.Clipboard]::SetDataObject($do, $true)
-    Start-Sleep -Milliseconds 250
     # The unary comma keeps this a byte[]: a bare `return $bytes` unrolls the
     # array into the pipeline and the caller gets an Object[] of boxed bytes.
+    return , $ms.ToArray()
+}
+
+# A PNG -- what every browser publishes, and the path that takes the bytes
+# VERBATIM. Pasted at the end of the document; returns the exact bytes so the
+# file on disk can be compared against them.
+function Send-Png($cdp, [int]$W, [int]$H, [int]$Seed) {
+    $bytes = Get-ImageBytes $W $H $Seed ([System.Drawing.Imaging.ImageFormat]::Png)
+    Send-CdpComposerImage -Conn $cdp -Bytes $bytes
     return , $bytes
 }
 
-# A plain bitmap -- CF_BITMAP + CF_DIB and no "PNG" at all, which is what
-# Snipping Tool, Paint and Excel put there.
-function Set-ClipboardBitmap([int]$W, [int]$H, [int]$Seed) {
-    $bmp = New-TestBitmap $W $H $Seed
-    [System.Windows.Forms.Clipboard]::SetImage($bmp)
-    $bmp.Dispose()
-    Start-Sleep -Milliseconds 250
+# A BMP -- not a PNG, so the page has to decode it and re-encode it through a
+# canvas before the store will take it. Returns the BMP bytes, so the run can
+# prove what reached disk is NOT them.
+function Send-Bmp($cdp, [int]$W, [int]$H, [int]$Seed) {
+    $bytes = Get-ImageBytes $W $H $Seed ([System.Drawing.Imaging.ImageFormat]::Bmp)
+    Send-CdpComposerImage -Conn $cdp -Bytes $bytes -Type 'image/bmp' -Name 'pasted.bmp'
+    return , $bytes
+}
+
+# A chord NATIVE owns, delivered the way the web surface delivers it: the
+# controller's accelerator handler posts WM_APP_COMPOSER_CHORD (WM_APP+2) to
+# the band, virtual key in wParam and input.Mods bits in lParam (ctrl=2).
+$script:ChordMsg = 0x8002
+$script:ModCtrl = 2
+function Send-ComposerChord($band, [int]$Vk, [int]$Mods = 0) {
+    return (Send-TestRawMessage -Window $band -Message $script:ChordMsg `
+            -WParam ([IntPtr]$Vk) -LParam ([IntPtr]$Mods))
 }
 
 # --- a THROWAWAY working tree, not this repo ---------------------------------
@@ -276,6 +290,8 @@ $queueDir = Join-Path $work 'temp\feedback\new'
 $viewFile = Join-Path $work 'README.md'
 
 Stop-RepoInstances
+$script:cdpPort = Enable-WebViewCdp
+$cdp = $null
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
 
@@ -309,8 +325,8 @@ try {
     Assert (Invoke-FeedbackButton $view) 'the revealed nav bar took a click at the feedback button'
     $s = Wait-FeedbackState $errlog $paneId $true
     Assert ($s -and $s.Open) "the pane reports the composer OPEN (state '$($s.Open)')"
-    Assert (Wait-ComposerSurface $errlog 'richedit') `
-        "...on the RichEdit surface this script can drive (got '$(Get-ComposerSurface $errlog)')"
+    Assert (Wait-ComposerSurface $errlog 'web') `
+        "...on the web surface users get (got '$(Get-ComposerSurface $errlog)')"
 
     $fb = $null
     for ($t = 0; $t -lt 20; $t++) {
@@ -321,27 +337,23 @@ try {
     Assert ($null -ne $fb) 'a GhozttyViewerFeedback child window exists'
     if (-not $fb) { throw 'no composer window' }
 
-    $rich = $null
-    foreach ($c in @(Get-TestChildWindows -Window $fb -Class $null)) {
-        if ([string]$c.Class -eq 'RichEdit50W') { $rich = [IntPtr]$c.Hwnd; break }
-    }
-    Assert ($null -ne $rich) 'the composer hosts its RichEdit50W text control'
-    if (-not $rich) { throw 'no text control in the composer' }
+    try { $cdp = Find-CdpComposer -Port $script:cdpPort } catch { Write-Host "  $($_.Exception.Message)" }
+    Assert ($null -ne $cdp) "the composer's page answers on the DevTools port"
+    if (-not $cdp) { throw 'no composer page to drive' }
 
-    # --- A. a "PNG" clipboard pastes as a chip -------------------------------
-    $png1 = Set-ClipboardPng 40 30 17
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key V -Modifiers Ctrl)
+    # --- A. a PNG pastes as a chip -------------------------------------------
+    $png1 = Send-Png $cdp 40 30 17
     $img = Wait-Image $errlog $paneId 1
     Assert ($img -and $img.Number -eq 1) "the first paste is image #1 (got '$($img.Number)')"
     Assert ($img -and $img.Bytes -eq $png1.Length) `
-        "...taken VERBATIM, byte for byte ($($img.Bytes) vs $($png1.Length) on the clipboard)"
+        "...taken VERBATIM, byte for byte ($($img.Bytes) vs $($png1.Length) pasted)"
     Assert ($img -and $img.Live -eq 1) "...and one image is live in the report ($($img.Live))"
 
     # Compared WHOLE, not by "an [Image #1] is in there somewhere": the composer
     # was empty, so a chip pasted at the caret is the entire text -- the chip and
     # the one trailing space that keeps it from fusing to what follows.
     $wantA = '[Image #1] '
-    $text = (Get-TestControlText $rich)
+    $text = (Wait-CdpComposerText $cdp $wantA)
     Assert ($text -ceq $wantA) `
         ("the composer holds exactly an '[Image #1]' chip " +
          "(got '$(Show-Text $text)', want '$(Show-Text $wantA)')")
@@ -349,53 +361,58 @@ try {
     # --- B. a chip deletes WHOLE ---------------------------------------------
     # The caret sits just past the chip's trailing space. One Backspace takes
     # the space; the next must take the entire chip, not its last character.
-    [void](Send-TestControlKey -Control $rich -Key Backspace)
-    Start-Sleep -Milliseconds 250
-    [void](Send-TestControlKey -Control $rich -Key Backspace)
-    Start-Sleep -Milliseconds 400
+    Set-CdpComposerFocus -Conn $cdp
+    Send-CdpKey $cdp Backspace
+    Send-CdpKey $cdp Backspace
     # Compared WHOLE, not by "no `[Image` left" (T672): an unguarded Backspace
     # eats one character and leaves `[Imag`, which does not match that needle
     # either while being exactly the corruption this arm exists to catch -- a
     # chip that still looks attached and silently drops its picture.
     $wantB = ''
-    $afterDelete = (Get-TestControlText $rich)
+    $afterDelete = (Wait-CdpComposerText $cdp $wantB)
     Assert ($afterDelete -ceq $wantB) `
         ("one Backspace removes the WHOLE chip, leaving no fragment " +
          "(got '$(Show-Text $afterDelete)', want '$(Show-Text $wantB)')")
 
     # --- C. the next number is 2, not the freed 1 ----------------------------
-    $png2 = Set-ClipboardPng 20 12 91
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key V -Modifiers Ctrl)
+    $png2 = Send-Png $cdp 20 12 91
     $img = Wait-Image $errlog $paneId 2
     Assert ($img -and $img.Number -eq 2) `
         "the next paste is #2 even though #1 was deleted (got '$($img.Number)')"
     Assert ($img -and $img.Live -eq 1) `
         "...and only IT is live -- the deleted one left the report ($($img.Live))"
 
-    # --- D. a bitmap-only clipboard, pasted through WM_PASTE -----------------
-    # No "PNG" format at all, so this is the DIB normalisation path; and the
-    # message is posted directly, which is the context-menu Paste route.
-    Set-ClipboardBitmap 24 16 200
-    [void](Send-TestRawMessage -Window $rich -Message 0x0302)
+    # --- D. a picture that is not a PNG is re-encoded to one -----------------
+    # A BMP, so the page cannot take the bytes verbatim: it decodes the picture
+    # and re-encodes it through a canvas. (See the header for why this replaced
+    # the RichEdit surface's bitmap-only-clipboard + WM_PASTE arm.)
+    $bmp3 = Send-Bmp $cdp 24 16 200
     $img = Wait-Image $errlog $paneId 3
     Assert ($img -and $img.Number -eq 3) `
-        "a BITMAP-only clipboard pastes too, as #3 (got '$($img.Number)')"
-    Assert ($img -and $img.Bytes -gt 0) "...encoded to $($img.Bytes) bytes of PNG"
+        "a BMP pastes too, as #3 (got '$($img.Number)')"
+    Assert ($img -and $img.Bytes -gt 0 -and $img.Bytes -ne $bmp3.Length) `
+        "...re-encoded to $($img.Bytes) bytes of PNG, not the $($bmp3.Length) BMP bytes pasted"
     Assert ($img -and $img.Live -eq 2) "...and two images are now live ($($img.Live))"
 
     # Whole text again: the deleted chip emptied the composer, so these two
     # pastes are all of it -- and a fragment of #2 left between them would be
     # invisible to a pair of substring needles.
     $wantD = '[Image #2] [Image #3] '
-    $text = (Get-TestControlText $rich)
+    $text = (Wait-CdpComposerText $cdp $wantD)
     Assert ($text -ceq $wantD) `
         ("the composer holds exactly the two surviving chips " +
          "(got '$(Show-Text $text)', want '$(Show-Text $wantD)')")
 
     # --- E. send files the pictures ------------------------------------------
-    [void](Send-TestControlText -Control $rich -Text 'look at these')
+    Send-CdpComposerText $cdp 'look at these'
+    $wantE = $wantD + 'look at these'
+    $text = (Wait-CdpComposerText $cdp $wantE)
+    Assert ($text -ceq $wantE) `
+        ("the typed words follow the chips (got '$(Show-Text $text)', want '$(Show-Text $wantE)')")
+    # The page reports its snapshot to the host on `input`; give that message
+    # its hop before the send reads the host's copy.
     Start-Sleep -Milliseconds 300
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key Enter -Modifiers Ctrl)
+    [void](Send-ComposerChord $fb 0x0D $script:ModCtrl)
 
     $folder = $null
     for ($t = 0; $t -lt 40; $t++) {
@@ -436,7 +453,12 @@ try {
     Assert ($two -and $two.pixelWidth -eq 20 -and $two.pixelHeight -eq 12) `
         "...and its pixel dimensions ($($two.pixelWidth)x$($two.pixelHeight), want 20x12)"
     Assert ($three -and $three.pixelWidth -eq 24 -and $three.pixelHeight -eq 16) `
-        "the normalised bitmap kept its size too ($($three.pixelWidth)x$($three.pixelHeight), want 24x16)"
+        "the re-encoded BMP kept its size too ($($three.pixelWidth)x$($three.pixelHeight), want 24x16)"
+    $three = [System.IO.File]::ReadAllBytes((Join-Path $imagesDir 'image-3.png'))
+    $sig = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+    $isPng = $three.Length -gt 8
+    for ($i = 0; $isPng -and $i -lt 8; $i++) { if ($three[$i] -ne $sig[$i]) { $isPng = $false } }
+    Assert $isPng '...and what reached disk is a real PNG (signature), not the BMP renamed'
 
     Assert ($report.body -match '!\[Image #2\]\(images/image-2\.png\)') `
         'the body links image 2 as a markdown image reference'
@@ -448,6 +470,8 @@ try {
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
 } finally {
+    Close-Cdp $cdp
+    Disable-WebViewCdp
     Remove-TestDesktop
     Stop-RepoInstances
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
