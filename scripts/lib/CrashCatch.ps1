@@ -150,6 +150,70 @@ $script:LANE_MARKERS = @{
     }
 }
 
+# The markers above are the FALLBACK since T952. The lane's own build writes
+# `<exe>.lane` beside the binary it linked (src/build/LaneStamp.zig), naming the
+# lane, the optimize mode and any -Dtest-filter, and binding itself to the
+# binary's exact size and mtime. A stamp is a fact where the markers are an
+# inference, so it is preferred; the markers still run beside it, both to catch
+# a stamp that contradicts the binary and to report table drift without letting
+# a renamed test stop the tooling. An older build in the cache has no stamp and
+# resolves by markers exactly as before.
+$script:LANE_STAMP_MAGIC = 'ghoztty-lane-stamp 1'
+
+function Read-LaneStamp {
+    <#
+    .SYNOPSIS
+        The lane stamp beside a test binary, or $null when there is none.
+    .OUTPUTS
+        Path, Valid, Problem, Lane, Exe, Optimize, Filters (string[]), Size,
+        MtimeNs -- the fields src/build/LaneStamp.zig writes. Valid is $false
+        (with Problem saying why) for a file that is there but is not a stamp.
+    #>
+    param([Parameter(Mandatory)][string]$ExePath)
+    $p = $ExePath + '.lane'
+    if (-not (Test-Path -LiteralPath $p)) { return $null }
+    $res = [pscustomobject]@{
+        Path = $p; Valid = $false; Problem = ''
+        Lane = ''; Exe = ''; Optimize = ''; Filters = @(); Size = $null; MtimeNs = $null
+    }
+    $lines = @()
+    try { $lines = @(Get-Content -LiteralPath $p -ErrorAction Stop) }
+    catch { $res.Problem = "unreadable: $($_.Exception.Message)"; return $res }
+    if ($lines.Count -eq 0 -or $lines[0] -ne $script:LANE_STAMP_MAGIC) {
+        $res.Problem = "not a lane stamp (first line is not '$($script:LANE_STAMP_MAGIC)')"
+        return $res
+    }
+    $kv = @{}
+    foreach ($l in $lines | Select-Object -Skip 1) {
+        $i = $l.IndexOf('=')
+        if ($i -gt 0) { $kv[$l.Substring(0, $i)] = $l.Substring($i + 1) }
+    }
+    foreach ($k in @('lane', 'exe', 'optimize', 'filters', 'size', 'mtime_ns')) {
+        if (-not $kv.ContainsKey($k)) { $res.Problem = "missing '$k='"; return $res }
+    }
+    [long]$size = 0
+    [decimal]$mt = 0
+    if (-not [long]::TryParse($kv['size'], [ref]$size) -or -not [decimal]::TryParse($kv['mtime_ns'], [ref]$mt)) {
+        $res.Problem = "size/mtime_ns are not numbers"
+        return $res
+    }
+    $res.Lane = $kv['lane']
+    $res.Exe = $kv['exe']
+    $res.Optimize = $kv['optimize']
+    $res.Filters = @($kv['filters'] -split '\|' | Where-Object { $_ })
+    $res.Size = $size
+    $res.MtimeNs = $mt
+    $res.Valid = $true
+    return $res
+}
+
+function Get-FileMtimeNs {
+    # The same number zig's File.stat().mtime reports on Windows: nanoseconds
+    # since the Unix epoch, at FILETIME (100 ns) resolution.
+    param([Parameter(Mandatory)]$Item)
+    return ([decimal]$Item.LastWriteTimeUtc.Ticks - [decimal]621355968000000000) * 100
+}
+
 # Verdicts are keyed on path+size+mtime, so re-resolving inside one run (the
 # soak asks twice, the harness asks per lane) does not re-read 96 MB each time.
 $script:LANE_MARKER_CACHE = @{}
@@ -200,10 +264,18 @@ function Get-BinaryLaneVerdict {
     <#
     .SYNOPSIS
         Is this exe the FULL test binary of that lane -- and if not, what is it?
+    .DESCRIPTION
+        The lane stamp decides when there is one (T952); the embedded test
+        names decide when there is not (T855), and cross-check the stamp when
+        there is.
     .OUTPUTS
         Ok, Reason, Path, CacheDir, Name, Lane, Missing (core markers absent),
         Foreign (other-lane markers present), Absent (own markers absent),
-        Checked ($false when nothing is known about that exe name).
+        Checked ($false when nothing is known about that exe name),
+        Source ('stamp' / 'markers' / 'none'), Stamp (Read-LaneStamp's object),
+        Contradiction ($true when the stamp and the binary disagree -- a loud
+        failure, never a candidate to skip past), MarkerDrift (marker-table
+        names a stamped full build does not carry: the table is out of date).
     #>
     param(
         [Parameter(Mandatory)][string]$Path,
@@ -225,14 +297,10 @@ function Get-BinaryLaneVerdict {
         Missing  = @()
         Foreign  = @()
         Absent   = @()
-    }
-    $spec = $null
-    if ($script:LANE_MARKERS.ContainsKey($Lane)) { $spec = $script:LANE_MARKERS[$Lane][$name] }
-    if (-not $spec) {
-        # Nothing known about this name: say so rather than pretending to check.
-        $res.Ok = $true
-        $res.Reason = "no lane signature for $name -- not checked"
-        return $res
+        Source   = 'none'
+        Stamp    = $null
+        Contradiction = $false
+        MarkerDrift = @()
     }
 
     $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
@@ -240,15 +308,69 @@ function Get-BinaryLaneVerdict {
         $res.Reason = 'the file is gone'
         return $res
     }
-    $key = '{0}|{1}|{2}|{3}' -f $Path, $item.Length, $item.LastWriteTimeUtc.Ticks, $Lane
+    $stampItem = Get-Item -LiteralPath ($Path + '.lane') -ErrorAction SilentlyContinue
+    $key = '{0}|{1}|{2}|{3}|{4}' -f $Path, $item.Length, $item.LastWriteTimeUtc.Ticks, $Lane,
+    $(if ($stampItem) { '{0}:{1}' -f $stampItem.Length, $stampItem.LastWriteTimeUtc.Ticks } else { '-' })
     if ($script:LANE_MARKER_CACHE.ContainsKey($key)) { return $script:LANE_MARKER_CACHE[$key] }
 
-    $needles = @($spec.Core) + @($spec.Only) + @($spec.NotThis)
-    $hit = Test-FileHasStrings -Path $Path -Needles $needles
-    $res.Checked = $true
-    $res.Missing = @($spec.Core | Where-Object { -not $hit[$_] })
-    $res.Absent = @($spec.Only | Where-Object { -not $hit[$_] })
-    $res.Foreign = @($spec.NotThis | Where-Object { $hit[$_] })
+    $spec = $null
+    if ($script:LANE_MARKERS.ContainsKey($Lane)) { $spec = $script:LANE_MARKERS[$Lane][$name] }
+    if ($spec) {
+        $needles = @($spec.Core) + @($spec.Only) + @($spec.NotThis)
+        $hit = Test-FileHasStrings -Path $Path -Needles $needles
+        $res.Checked = $true
+        $res.Missing = @($spec.Core | Where-Object { -not $hit[$_] })
+        $res.Absent = @($spec.Only | Where-Object { -not $hit[$_] })
+        $res.Foreign = @($spec.NotThis | Where-Object { $hit[$_] })
+    }
+
+    # ---- the stamp, when the lane's build left one (T952)
+    $stamp = Read-LaneStamp -ExePath $Path
+    if ($stamp) {
+        $res.Stamp = $stamp
+        $res.Source = 'stamp'
+        $res.Checked = $true
+        $contra = $null
+        if (-not $stamp.Valid) { $contra = "the lane stamp $($stamp.Path) is $($stamp.Problem)" }
+        elseif ($stamp.Exe -ne $name) { $contra = "the lane stamp names $($stamp.Exe), the binary is $name" }
+        elseif ($stamp.Size -ne $item.Length) { $contra = "the lane stamp says size=$($stamp.Size), the binary is $($item.Length) bytes" }
+        elseif ($stamp.MtimeNs -ne (Get-FileMtimeNs $item)) { $contra = "the lane stamp says mtime_ns=$($stamp.MtimeNs), the binary's is $(Get-FileMtimeNs $item)" }
+        elseif ($stamp.Lane -eq $Lane -and $res.Foreign.Count -gt 0) {
+            # Presence cannot come from a renamed test: the other lane's own
+            # tests really are in this binary, whatever the stamp says.
+            $contra = "the lane stamp says $($stamp.Lane), but the binary carries $($res.Foreign[0])"
+        }
+        if ($contra) {
+            $res.Contradiction = $true
+            $res.Reason = "CONTRADICTION: $contra -- neither can be trusted; rebuild the lane"
+        }
+        elseif ($stamp.Lane -ne $Lane) {
+            $res.OtherLane = $true
+            $res.Reason = "another lane's binary -- its lane stamp says lane=$($stamp.Lane)"
+        }
+        elseif ($stamp.Filters.Count -gt 0) {
+            $res.Reason = "a partial build -- its lane stamp records -Dtest-filter=$($stamp.Filters -join '|') (a -Dtest-filter build is not the lane)"
+        }
+        else {
+            $res.Ok = $true
+            $res.MarkerDrift = @($res.Missing) + @($res.Absent)
+            $res.Reason = "stamped: lane=$($stamp.Lane) optimize=$($stamp.Optimize), full build, bound to this binary's size and mtime"
+            if ($res.MarkerDrift.Count -gt 0) {
+                $res.Reason += ("; marker table drift -- {0} LANE_MARKERS name(s) not in it, e.g. {1}" -f `
+                        $res.MarkerDrift.Count, $res.MarkerDrift[0])
+            }
+        }
+        $script:LANE_MARKER_CACHE[$key] = $res
+        return $res
+    }
+
+    if (-not $spec) {
+        # Nothing known about this name: say so rather than pretending to check.
+        $res.Ok = $true
+        $res.Reason = "no lane signature for $name -- not checked"
+        return $res
+    }
+    $res.Source = 'markers'
 
     if ($res.Foreign.Count -gt 0) {
         $res.OtherLane = $true
@@ -338,8 +460,18 @@ function Resolve-LaneTestBinary {
                 break
             }
             $entry.Rejected += , [pscustomobject]@{ Path = $c.FullName; Reason = $v.Reason }
+            if ($v.Contradiction) {
+                # A stamp that disagrees with its binary is not a candidate to
+                # step past quietly (T952): something rewrote one of them, and
+                # an older candidate would be a preference over a failure.
+                $entry.Verdict = $v
+                break
+            }
         }
-        if (-not $entry.Ok -and $entry.Rejected.Count -gt 0) {
+        if (-not $entry.Ok -and $entry.Verdict -and $entry.Verdict.Contradiction) {
+            $entry.Reason = "no $name is resolved for the $Lane lane -- $($entry.Verdict.Path): $($entry.Verdict.Reason)"
+        }
+        elseif (-not $entry.Ok -and $entry.Rejected.Count -gt 0) {
             $entry.Reason = ("no $name under $root is the $Lane lane's full build ({0} candidate(s) read; newest is {1})" -f `
                     $entry.Rejected.Count, $entry.Rejected[0].Reason)
         }

@@ -29,6 +29,7 @@ pub const GhosttyWebdata = @import("GhosttyWebdata.zig");
 pub const GhosttyZig = @import("GhosttyZig.zig");
 pub const HelpStrings = @import("HelpStrings.zig");
 pub const InstallUnlock = @import("InstallUnlock.zig");
+pub const LaneStamp = @import("LaneStamp.zig");
 pub const PdbMsfFix = @import("PdbMsfFix.zig");
 pub const SharedDeps = @import("SharedDeps.zig");
 pub const UnicodeTables = @import("UnicodeTables.zig");

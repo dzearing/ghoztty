@@ -1,10 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-09-24T00:26:13-07:00",
-    "commit":  "9b90bd36b",
+    "generated":  "2026-09-24T01:10:52-07:00",
+    "commit":  "7b53a701c",
     "uncommitted":  [
-                        "test/win32/cli-unknown-flag.ps1"
+                        "scripts/lib/CrashCatch.ps1",
+                        "test/win32/crash-stacks.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -41,7 +42,7 @@
                   "scripts/lib/CacheHeal.ps1":  "24107ab128f345ad4934858fff6fcb15cdda440f2680449899d4b24127adbb1d",
                   "scripts/lib/CommitHeadroom.ps1":  "d0b9c51ed47e8c8fb890aaf75789ef824d5f6f4b4f906b942a6e9d0ad1873223",
                   "scripts/lib/CompilerCrash.ps1":  "3c0fd966fdd0fbb9daac57b22868ca7260351b812f6577b3dc43d0fedb83d09c",
-                  "scripts/lib/CrashCatch.ps1":  "d0310e59cdeb9f0b5343ab5992382de3cb67cff0db93e23a902848e2e50428ba",
+                  "scripts/lib/CrashCatch.ps1":  "0549bb476eec479d60cb18a51882599585c572e4101deedd71354d43769ec6f8",
                   "scripts/lib/CrashDiag.ps1":  "814fca92baea3b30962792aa3fa30110fe134deedfc910643ec709a7dc0a674d",
                   "scripts/lib/CrashDump.ps1":  "17d0900f709f2b500e444f9166c1c80a712cfe33ca3f54f8c59594b4efadb670",
                   "scripts/lib/DataBreak.ps1":  "ff02a5bfc30365086dc896181bded69169bf9a0cd082589c11afd04bf98cad7f",
@@ -161,7 +162,7 @@
                   "test/win32/crash-databreak.ps1":  "fc8413850cab470389fc3933a2320e065ea3ae37cc1d0f6af2e13bdc3125b22f",
                   "test/win32/crash-diagnostics.ps1":  "c09555c22faad0c3914229d756c7df9423369c0e13b2f32422e04d3eeaed8aca",
                   "test/win32/crash-first-chance.ps1":  "7436655aa57887f3a4fd32419dbde9d7669dca7d3d07727baaf85d6dd1fcfc03",
-                  "test/win32/crash-stacks.ps1":  "eac9ef821336811cfc06a00db2a142bd9c32ec1e6261242234612b469654192c",
+                  "test/win32/crash-stacks.ps1":  "c1b73b66a3afbebf2c7aa7d22dd69f96f956ea978dbc0f0d97ac0dad76371b99",
                   "test/win32/daily-publish.ps1":  "9a9c9c698f7eedc50927536a038397281e4c4471d56c4f2e9fffbf8fe61c7512",
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
                   "test/win32/dashboard-dom.ps1":  "34e4f9885499690ee161fda2d60842afdd46577fa37393f71cc0cc2e5c818b27",

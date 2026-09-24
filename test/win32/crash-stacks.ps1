@@ -560,6 +560,118 @@ Check 'crash-catch exits 2 rather than run the other lane' ($refuseCode -eq 2) "
 Check 'crash-catch says why it refused' ($refuseText -match 'REFUSED' -and $refuseText -match "another lane") `
     "tail: $($refuseText -replace '\s+', ' ')"
 
+# ------------------------------ 7c2. the lane's own stamp decides (T952)
+
+# The markers above are an inference from a hand-kept table. The lane's build
+# now writes `<exe>.lane` beside the binary (src/build/LaneStamp.zig), bound to
+# the binary's size and mtime, and the resolver prefers it. The stamp text here
+# is the format LaneStamp.zig's own unit test pins.
+function Set-FixtureTime {
+    param([string]$Path, [int]$MinutesAgo)
+    (Get-Item -LiteralPath $Path).LastWriteTime = (Get-Date).AddMinutes(-$MinutesAgo)
+}
+function New-LaneStamp {
+    param([string]$Exe, [string]$Lane, [string[]]$Filters = @(), [long]$SizeDelta = 0, [string]$ExeName = '')
+    $i = Get-Item -LiteralPath $Exe
+    $mt = ([decimal]$i.LastWriteTimeUtc.Ticks - [decimal]621355968000000000) * 100
+    @(
+        'ghoztty-lane-stamp 1',
+        "lane=$Lane",
+        "exe=$(if ($ExeName) { $ExeName } else { $i.Name })",
+        'optimize=Debug',
+        "filters=$($Filters -join '|')",
+        "size=$($i.Length + $SizeDelta)",
+        "mtime_ns=$mt"
+    ) | Set-Content -LiteralPath ($Exe + '.lane') -Encoding ASCII
+}
+
+# (a) A renamed test no longer stops the tooling. This win32 build carries
+# none of the win32-only marker names -- by markers alone it is "another
+# lane's binary" -- but its own build says it IS the win32 lane.
+$stampRepo = Join-Path $work 'stamprepo'
+$renamed = New-LaneFixture (Join-Path $stampRepo '.zig-cache\o\eeee5555') $coreMarkers
+Set-FixtureTime $renamed 5
+$vMarkersOnly = Get-BinaryLaneVerdict -Path $renamed -Lane win32
+Check 'unstamped, a renamed win32 test reads as another lane (the T855 limit)' `
+($vMarkersOnly.OtherLane -and $vMarkersOnly.Source -eq 'markers') $vMarkersOnly.Reason
+New-LaneStamp -Exe $renamed -Lane win32
+$rStamped = @(Resolve-LaneTestBinary -Lane win32 -Repo $stampRepo)
+Check 'stamped, the same binary resolves as the win32 lane' `
+($rStamped[0].Ok -and $rStamped[0].Path -eq $renamed -and $rStamped[0].Verdict.Source -eq 'stamp') `
+    "got '$($rStamped[0].Path)' -- $($rStamped[0].Reason)"
+Check 'the stamped verdict reports the marker table drift it papered over' `
+(@($rStamped[0].Verdict.MarkerDrift).Count -eq 3 -and $rStamped[0].Reason -match 'marker table drift') $rStamped[0].Reason
+$printedStamp = @()
+Write-LaneResolution -Resolution $rStamped -Prefix 'test:' -Writer { param($s) $script:printedStamp += $s }
+Check 'the resolution says it went by the stamp' ((($printedStamp -join ' ') -match 'stamped: lane=win32 optimize=Debug')) ($printedStamp -join ' / ')
+
+# (b) The stamp names the lane, so the OTHER lane refuses it on the stamp's word.
+$vOther = Get-BinaryLaneVerdict -Path $renamed -Lane none
+Check 'a win32-stamped binary is another lane to -Lane none' `
+($vOther.OtherLane -and -not $vOther.Ok -and $vOther.Reason -match 'lane stamp says lane=win32') $vOther.Reason
+
+# (c) A filtered build is partial by its own admission, even when every marker
+# name happens to survive the filter.
+$filtRepo = Join-Path $work 'stampfilt'
+$filtFull = New-LaneFixture (Join-Path $filtRepo '.zig-cache\o\ffff6666') ($coreMarkers + $win32Markers)
+Set-FixtureTime $filtFull 5
+New-LaneStamp -Exe $filtFull -Lane win32 -Filters @('Screen', 'Window')
+$vFilt = Get-BinaryLaneVerdict -Path $filtFull -Lane win32
+Check 'a stamped -Dtest-filter build is partial' `
+((-not $vFilt.Ok) -and -not $vFilt.OtherLane -and $vFilt.Reason -match 'partial build' -and $vFilt.Reason -match 'Screen\|Window') $vFilt.Reason
+
+# (d) A stamp that contradicts its binary is a LOUD failure -- resolution stops
+# there rather than stepping past it to an older build that would verify.
+$contraRepo = Join-Path $work 'stampcontra'
+$olderGood = New-LaneFixture (Join-Path $contraRepo '.zig-cache\o\1111aaaa') ($coreMarkers + $win32Markers)
+Set-FixtureTime $olderGood 30
+$newerBad = New-LaneFixture (Join-Path $contraRepo '.zig-cache\o\2222bbbb') ($coreMarkers + $win32Markers)
+Set-FixtureTime $newerBad 5
+New-LaneStamp -Exe $newerBad -Lane win32 -SizeDelta 17
+$rContra = @(Resolve-LaneTestBinary -Lane win32 -Repo $contraRepo)
+Check 'a stamp whose size disagrees with its binary refuses resolution' `
+((-not $rContra[0].Ok) -and $rContra[0].Reason -match 'CONTRADICTION' -and $rContra[0].Reason -match 'size=') $rContra[0].Reason
+Check 'the contradiction is not papered over by an older build' ($rContra[0].Path -ne $olderGood) "got '$($rContra[0].Path)'"
+Check 'Get-LaneTestBinary returns nothing over a contradiction' ((@(Get-LaneTestBinary -Lane win32 -Repo $contraRepo)).Count -eq 0)
+
+# The stamp says `none`, but the binary positively carries win32-only tests.
+# Presence cannot be a rename, so this is a contradiction, not a preference.
+$liarRepo = Join-Path $work 'stampliar'
+$liar = New-LaneFixture (Join-Path $liarRepo '.zig-cache\o\3333cccc') ($coreMarkers + $win32Markers)
+Set-FixtureTime $liar 5
+New-LaneStamp -Exe $liar -Lane none
+$vLiar = Get-BinaryLaneVerdict -Path $liar -Lane none
+Check 'a none stamp on a binary carrying win32 tests is a contradiction' `
+($vLiar.Contradiction -and -not $vLiar.Ok -and $vLiar.Reason -match 'apprt\.win32\.') $vLiar.Reason
+
+# A mtime that moved after stamping, and a file that is not a stamp at all.
+New-LaneStamp -Exe $liar -Lane win32
+Set-FixtureTime $liar 3
+$vMoved = Get-BinaryLaneVerdict -Path $liar -Lane win32
+Check 'a binary relinked after its stamp is a contradiction' ($vMoved.Contradiction -and $vMoved.Reason -match 'mtime_ns') $vMoved.Reason
+'lane=win32' | Set-Content -LiteralPath ($liar + '.lane') -Encoding ASCII
+$vJunk = Get-BinaryLaneVerdict -Path $liar -Lane win32
+Check 'a malformed stamp is a contradiction, not ignored' ($vJunk.Contradiction -and $vJunk.Reason -match 'not a lane stamp') $vJunk.Reason
+
+# (e) No stamp -- an older build still in the cache -- still resolves by markers.
+Check 'an unstamped build still resolves by its test names' `
+($rWin[0].Ok -and $rWin[0].Verdict.Source -eq 'markers') "source '$($rWin[0].Verdict.Source)'"
+
+# (f) The REAL lanes: when the build left a stamp, it must agree with the
+# binary AND the marker table must still describe it -- the drift the stamp
+# tolerates at run time is still a harness failure, so the table gets updated.
+foreach ($lane in @('none', 'win32', 'agent')) {
+    $real = @(Resolve-LaneTestBinary -Lane $lane -Repo $Repo)
+    $v = $real[0].Verdict
+    if (-not $real[0].Ok -or -not $v -or $v.Source -ne 'stamp') {
+        Write-Host "SKIP lane '$lane' newest resolvable binary has no lane stamp (built before T952; the next lane run writes one)"
+        $script:skipped++
+        continue
+    }
+    Check "lane '$lane' real binary resolves by its stamp" ($v.Stamp.Lane -eq $lane -and $v.Stamp.Filters.Count -eq 0) $v.Reason
+    Check "lane '$lane' marker table still matches the stamped build" (@($v.MarkerDrift).Count -eq 0) $v.Reason
+}
+
 # --------------------------- 7d. a dump is attributed to the build that died
 
 # `<exe>.<pid>.dmp` cannot say which lane crashed, but the dump records the

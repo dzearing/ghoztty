@@ -259,6 +259,13 @@ powershell -NoProfile -File scripts\crash-catch.ps1 -Lane agent -Attempts 6
 ```
 
 which runs the lane's built test binary directly (~20–110 s a go, no build).
+`none` and `win32` both link `ghostty-test.exe`, so "the lane's binary" is
+decided by the **lane stamp** the build writes beside it (`<exe>.lane`, from
+`src/build/LaneStamp.zig`: lane, optimize mode, any `-Dtest-filter`, bound to
+the binary's size and mtime — T952). A build older than the stamp falls back to
+the embedded test names in `LANE_MARKERS` (T855). A stamp that disagrees with
+its binary is a `CONTRADICTION` and refuses resolution outright; rebuild the
+lane.
 `cdb` needs no install and no elevation on this box — the Store WinDbg package
 ships a console `cdbX64.exe` under `%LOCALAPPDATA%\Microsoft\WindowsApps\`.
 Library: `scripts/lib/CrashCatch.ps1`, which documents the three cdb traps

@@ -11,6 +11,7 @@
 test {
     _ = @import("BuildTestSweep.zig");
     _ = @import("drive_check.zig");
+    _ = @import("LaneStamp.zig");
     _ = @import("pdb_msf_fix.zig");
     _ = @import("TestFilterGuard.zig");
     _ = @import("wasm_patch_growable_table.zig");

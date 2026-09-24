@@ -185,6 +185,8 @@ pub fn build(b: *std.Build) !void {
         );
         const agent_test_run = b.addRunArtifact(agent_test);
         pdb_msf_fix.attach(agent_test, agent_test_run);
+        // T952: say which lane built this binary, beside the binary.
+        buildpkg.LaneStamp.attach(agent_test, agent_test_run, "agent", test_filters);
         test_agent_filter_guard.add(agent_test_run);
         test_agent_step.dependOn(&agent_test_run.step);
 
@@ -584,6 +586,9 @@ pub fn build(b: *std.Build) !void {
         // Normal test running
         const test_run = b.addRunArtifact(test_exe);
         pdb_msf_fix.attach(test_exe, test_run);
+        // T952: `none` and `win32` both link ghostty-test.exe; the stamp is
+        // what tells the crash tooling which lane a given copy came from.
+        buildpkg.LaneStamp.attach(test_exe, test_run, @tagName(config.app_runtime), test_filters);
         test_filter_guard.add(test_run);
         test_step.dependOn(&test_run.step);
 

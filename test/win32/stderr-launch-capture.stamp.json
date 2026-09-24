@@ -1,13 +1,14 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-09-24T00:21:23-07:00",
-    "commit":  "9b90bd36b",
+    "generated":  "2026-09-24T01:05:58-07:00",
+    "commit":  "7b53a701c",
     "uncommitted":  [
-                        "test/win32/cli-unknown-flag.ps1"
+                        "docs/claude/testing.md",
+                        "test/win32/crash-stacks.ps1"
                     ],
     "files":  {
-                  "docs/claude/testing.md":  "30b6ae803ff1b3b7149358fd49ef8c9dc50405980f9812fd2ca5a8bcdd910a39",
+                  "docs/claude/testing.md":  "cdfc70b6d7c64ba1f59d9d57a498b592d9cca0246331a7207e1b23d20787d345",
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",
                   "test/win32/activity-monitor-probe-fail.ps1":  "94e258e9ba979ecf0416ba87f088e273d8326d6d37ce3404b3f111b4cba250e6",
@@ -93,7 +94,7 @@
                   "test/win32/crash-databreak.ps1":  "fc8413850cab470389fc3933a2320e065ea3ae37cc1d0f6af2e13bdc3125b22f",
                   "test/win32/crash-diagnostics.ps1":  "c09555c22faad0c3914229d756c7df9423369c0e13b2f32422e04d3eeaed8aca",
                   "test/win32/crash-first-chance.ps1":  "7436655aa57887f3a4fd32419dbde9d7669dca7d3d07727baaf85d6dd1fcfc03",
-                  "test/win32/crash-stacks.ps1":  "eac9ef821336811cfc06a00db2a142bd9c32ec1e6261242234612b469654192c",
+                  "test/win32/crash-stacks.ps1":  "c1b73b66a3afbebf2c7aa7d22dd69f96f956ea978dbc0f0d97ac0dad76371b99",
                   "test/win32/daily-publish.ps1":  "9a9c9c698f7eedc50927536a038397281e4c4471d56c4f2e9fffbf8fe61c7512",
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
                   "test/win32/dashboard-dom.ps1":  "34e4f9885499690ee161fda2d60842afdd46577fa37393f71cc0cc2e5c818b27",
