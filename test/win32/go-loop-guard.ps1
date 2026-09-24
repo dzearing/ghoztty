@@ -2477,6 +2477,55 @@ $ahIdle = Resolve-LoopStallVerdict -TurnAgeMinutes 46 -StaleMinutes 180 -Suspect
 Assert 'AH4 the same text on an idle pane is still caught, under the idle clock' `
     ($ahIdle.Stalled -and $ahIdle.Clock -eq 'composer-idle')
 
+# --- AI. a session waiting on its OWN background task is not stalled (T1711) --
+# WHY. On 2026-09-23 three turns (12:45, 16:05, 16:25) ended on purpose with a
+# harness running under run_in_background, waiting for its <task-notification>.
+# The pane read idle with 'keep going' in the composer, the composer-idle arm
+# fired at ~19m, and the nudge wiped the wait: the results landed in a session
+# that had already reset, and the next turn re-ran the whole harness.
+$aiWait = Resolve-LoopStallVerdict -TurnAgeMinutes 19.5 -StaleMinutes 180 -SuspectMinutes 45 `
+    -ComposerText 'keep going' -PaneState 'idle' -BackgroundPending 2
+Assert 'AI1 the measured 16:25 shape, with its tasks outstanding, is not a stall' `
+    (-not $aiWait.Stalled -and $aiWait.Why -match 'background')
+# Teeth: the SAME pane with nothing outstanding is still caught - the exemption
+# is the task count and nothing else.
+$aiBare = Resolve-LoopStallVerdict -TurnAgeMinutes 19.5 -StaleMinutes 180 -SuspectMinutes 45 `
+    -ComposerText 'keep going' -PaneState 'idle' -BackgroundPending 0
+Assert 'AI2 the same pane with no task outstanding is still stalled (composer-idle)' `
+    ($aiBare.Stalled -and $aiBare.Clock -eq 'composer-idle')
+$aiIdle = Resolve-LoopStallVerdict -TurnAgeMinutes 60 -StaleMinutes 180 -SuspectMinutes 45 `
+    -ComposerText '' -PaneState 'idle' -BackgroundPending 1
+Assert 'AI3 the idle arm defers to an outstanding task too' (-not $aiIdle.Stalled)
+# A task that never reports back must not hold the loop forever.
+$aiBack = Resolve-LoopStallVerdict -TurnAgeMinutes 200 -StaleMinutes 180 -SuspectMinutes 45 `
+    -ComposerText 'keep going' -PaneState 'idle' -BackgroundPending 3
+Assert 'AI4 past the backstop an outstanding task excuses nothing' `
+    ($aiBack.Stalled -and $aiBack.Clock -eq 'turn')
+
+# The transcript reader, on the real line shapes Claude Code writes: a
+# backgrounded command, a background agent, the notification that ends one, and
+# a line that only QUOTES a launch (escaped quotes - a turn grepping an older
+# transcript), which must not count.
+$aiLines = @(
+    '{"type":"user","toolUseResult":{"stdout":"","stderr":"","interrupted":false,"backgroundTaskId":"b03svkhsd"}}',
+    '{"type":"user","toolUseResult":{"isAsync":true,"status":"async_launched","agentId":"a28a9a7eb64579a1b"}}',
+    '{"type":"queue-operation","operation":"enqueue","content":"<task-notification>\n<task-id>a28a9a7eb64579a1b</task-id>\n<status>completed</status>"}',
+    '{"type":"user","message":{"content":[{"type":"tool_result","content":"{\"toolUseResult\":{\"backgroundTaskId\":\"bquoted01\"}}"}]}}'
+)
+$aiPend = @(Get-LoopPendingBackgroundTasksFromLines -Lines $aiLines)
+Assert 'AI5 only the un-notified launch is pending (agent notified, quoted launch ignored)' `
+    ($aiPend.Count -eq 1 -and $aiPend[0] -eq 'b03svkhsd')
+$aiDone = @(Get-LoopPendingBackgroundTasksFromLines -Lines ($aiLines +
+    '{"type":"user","message":{"role":"user","content":"<task-notification>\n<task-id>b03svkhsd</task-id>\n<status>killed</status>"}}'))
+Assert 'AI6 a notification of any status ends the wait' ($aiDone.Count -eq 0)
+$aiFile = Join-Path $env:TEMP "go-loop-guard-ai-$PID.jsonl"
+[System.IO.File]::WriteAllLines($aiFile, [string[]]$aiLines)
+$aiRead = @(Get-LoopPendingBackgroundTasks -TranscriptPath $aiFile)
+$aiMissing = @(Get-LoopPendingBackgroundTasks -TranscriptPath (Join-Path $env:TEMP 'no-such-transcript.jsonl'))
+Remove-Item $aiFile -Force -ErrorAction SilentlyContinue
+Assert 'AI7 the IO half reads a file to the same answer' ($aiRead.Count -eq 1 -and $aiRead[0] -eq 'b03svkhsd')
+Assert 'AI8 an unreadable transcript waits on nothing (the pre-T1711 behavior)' ($aiMissing.Count -eq 0)
+
 # --- the watchdog acts on it ---
 Remove-Item $lock, $state -Force -ErrorAction SilentlyContinue
 $bbProc = Start-Sleeper; $sleepers += $bbProc
@@ -2513,6 +2562,8 @@ Assert 'BB22 an unreadable composer does not count as unsent text' `
 # only evidence that the composer had been read as empty.
 Assert 'BB22b and the healthy line names the observation, not just the clocks' `
     ($r.Out -match 'healthy:.*composer=none session=unknown')
+Assert 'BB22c and how many of its own background tasks the session is waiting on (T1711)' `
+    ($r.Out -match 'healthy:.*session=unknown bg=\d+ probed=')
 
 # --- BB23-BB34. is the session WORKING, or merely present? (T1370) ---------
 #

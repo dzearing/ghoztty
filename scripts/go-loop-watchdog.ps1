@@ -690,11 +690,20 @@ function Invoke-Tick {
         # the log named the bar it chose but never the observation behind it, so
         # "the composer looked empty" and "the composer was never read" were the
         # same line. Both now appear on every decision (T1370).
+        # And whether the session is idle because it is WAITING (T1711): a turn
+        # that ended on run_in_background owes nobody a nudge until its own
+        # task reports back. `bg=` names the count so a held nudge is readable.
+        $bgPending = @()
+        try {
+            $bgTp = if ($lock -and ($lock.PSObject.Properties.Name -contains 'transcript')) { [string]$lock.transcript } else { '' }
+            $bgPending = @(Get-LoopPendingBackgroundTasks -TranscriptPath $bgTp)
+        } catch { Log "  note: the background-task probe failed: $($_.Exception.Message)" }
         $seen = ("composer=$(if ($pane.Composer) { 'pending' } else { 'none' }) " +
-                 "session=$($pane.Working) probed=$probed")
+                 "session=$($pane.Working) bg=$($bgPending.Count) probed=$probed")
         $verdict = Resolve-LoopStallVerdict -TurnAgeMinutes $turnAge `
             -StaleMinutes $TurnStaleMinutes -SuspectMinutes $TurnSuspectMinutes `
-            -ComposerText $pane.Composer -PaneState $pane.Working
+            -ComposerText $pane.Composer -PaneState $pane.Working `
+            -BackgroundPending $bgPending.Count
         if (-not $verdict.Stalled) {
             Log "healthy: pane=$($lock.pane_id) pid=$($lock.claude_pid) $clocks $seen remaining=$remaining"
             return 'none'

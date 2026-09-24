@@ -466,7 +466,8 @@ if (-not $turnStalled -and $alive -and -not $NoPaneProbe -and $pane -and
         Resolve-LoopStallVerdict -TurnAgeMinutes $turnAgeMin `
             -StaleMinutes $TurnStaleMinutes -SuspectMinutes $TurnSuspectMinutes `
             -ComposerText ([string]$paneState.Composer) `
-            -PaneState $(if ($paneState.Working) { [string]$paneState.Working } else { 'unknown' })
+            -PaneState $(if ($paneState.Working) { [string]$paneState.Working } else { 'unknown' }) `
+            -BackgroundPending @(Get-LoopPendingBackgroundTasks -TranscriptPath $transcript).Count
     } else { @{ Stalled = $false; Clock = 'none'; Why = '' } }
     # T1370's lesson, re-learned here: "the composer looked empty" and "the
     # composer was never read" must never be the same line. Read-PaneState

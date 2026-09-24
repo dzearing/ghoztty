@@ -1,10 +1,12 @@
 {
     "guard":  "go-loop",
     "script":  "test/win32/go-loop-guard.ps1",
-    "generated":  "2026-09-23T14:27:18-07:00",
-    "commit":  "8e29dbe13",
+    "generated":  "2026-09-23T16:42:41-07:00",
+    "commit":  "5985d37fc",
     "uncommitted":  [
-                        "scripts/go-loop-boot.ps1",
+                        "scripts/go-loop-health.ps1",
+                        "scripts/go-loop-watchdog.ps1",
+                        "scripts/loop-session.ps1",
                         "test/win32/go-loop-guard.ps1"
                     ],
     "files":  {
@@ -12,11 +14,11 @@
                   "scripts/githooks/pre-commit":  "daec7d5f82b46569ef65b60775e50f2dc971c8fa6dc21855d438c14e3dd52d92",
                   "scripts/go-loop-boot.ps1":  "4623179b0ff82e9621ba9c443c37970c9a98a5cf5a805f3cb140001db7bbc5fc",
                   "scripts/go-loop-exec.ps1":  "6c374684629689efb4f949b1304cbae83130796d2efd7161dd92cbd934564794",
-                  "scripts/go-loop-health.ps1":  "7f08cc6046c56ee514c46a1f96b755634302a7aaeefa16640d92ae34be756a82",
+                  "scripts/go-loop-health.ps1":  "4d7b11d344e52701d216ddcdcb616984a2b0429239b3c1bf9fb9b10412910c1a",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
-                  "scripts/go-loop-watchdog.ps1":  "38a6ad04360aaaeeff804386edaf8e82f5654fd927621bbaad90aca91cb345d1",
-                  "scripts/loop-session.ps1":  "f8d64e24c43f7595203611f6263afbeb52d3dba6e05794a625c6789abbcfe22d",
-                  "test/win32/go-loop-guard.ps1":  "ac1d50e52a2b846ab64e80cf0a018f719a7228a3b99cdb3dd49fe9e0d14852fb"
+                  "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
+                  "scripts/loop-session.ps1":  "d5ed7b2328d9d23758139ebaca1f1dd93a8ec045c58a7049d20cd6b307825843",
+                  "test/win32/go-loop-guard.ps1":  "96b483ba538394c1012f4225e39f10144c79ee4b5be335a65c0959f36100fb62"
               }
 }

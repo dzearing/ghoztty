@@ -1,15 +1,15 @@
 {
     "guard":  "go-loop-resume",
     "script":  "test/win32/go-loop-resume.ps1",
-    "generated":  "2026-09-23T05:00:09-07:00",
-    "commit":  "5db8058bb",
+    "generated":  "2026-09-23T16:45:12-07:00",
+    "commit":  "5985d37fc",
     "uncommitted":  [
                         "scripts/go-loop-watchdog.ps1"
                     ],
     "files":  {
                   "scripts/go-loop-exec.ps1":  "6c374684629689efb4f949b1304cbae83130796d2efd7161dd92cbd934564794",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
-                  "scripts/go-loop-watchdog.ps1":  "38a6ad04360aaaeeff804386edaf8e82f5654fd927621bbaad90aca91cb345d1",
+                  "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095"
               }
 }

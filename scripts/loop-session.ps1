@@ -218,7 +218,11 @@ function Resolve-LoopStallVerdict {
         # 'working' | 'idle' | 'unknown' from Get-PaneWorkingState. The default
         # is the blind one: a caller that cannot say must not be read as having
         # said 'idle'.
-        [ValidateSet('working', 'idle', 'unknown')][string]$PaneState = 'unknown'
+        [ValidateSet('working', 'idle', 'unknown')][string]$PaneState = 'unknown',
+        # Background tasks the session launched and has not yet been notified
+        # about (Get-LoopPendingBackgroundTasks). Any at all means the session
+        # is idle ON PURPOSE: its turn ended waiting for a <task-notification>.
+        [int]$BackgroundPending = 0
     )
     $age = if ([double]::IsInfinity($TurnAgeMinutes) -or [double]::IsNaN($TurnAgeMinutes)) {
         'an unknown time'
@@ -227,6 +231,20 @@ function Resolve-LoopStallVerdict {
     if ($TurnAgeMinutes -gt $StaleMinutes) {
         return @{ Stalled = $true; Clock = 'turn'
                   Why = "no turn has completed for $age (limit ${StaleMinutes}m)" }
+    }
+    # A SESSION WAITING ON ITS OWN BACKGROUND TASK IS NOT STALLED (T1711).
+    #
+    # Every arm below reads an idle pane as evidence, and a turn that launched a
+    # 15-minute harness with run_in_background and went quiet for the
+    # notification IS an idle pane - with Claude Code's prompt suggestion (a
+    # plain-text 'keep going' this probe cannot tell from typing) sitting in the
+    # composer. 2026-09-23: two turns in a row were nudged at ~19m that way; the
+    # nudge wiped the wait and the harness result landed in a dead session.
+    # Only the backstop above may overrule an outstanding task, so one that
+    # never reports back still cannot hold the loop longer than $StaleMinutes.
+    if ($BackgroundPending -gt 0) {
+        return @{ Stalled = $false; Clock = 'none'
+                  Why = "waiting on $BackgroundPending background task(s) of its own" }
     }
     $pending = Get-LoopComposerText $ComposerText
     if ($pending.Length -gt 60) { $pending = $pending.Substring(0, 60) + '...' }
@@ -414,6 +432,68 @@ function Read-LoopTranscriptTail {
         try { $out += ($l | ConvertFrom-Json) } catch { }
     }
     return $out
+}
+
+# --- background tasks the session is waiting on (T1711) ---------------------
+#
+# Pure: the ids of background tasks a transcript launched and never heard back
+# about. Claude Code records the launch in the tool result's `toolUseResult` -
+# `"backgroundTaskId":"<id>"` for a backgrounded Bash/PowerShell command,
+# `"isAsync":true ... "agentId":"<id>"` for a background agent - and the end as
+# a `<task-notification>` naming `<task-id><id></task-id>`, whatever its status
+# (completed, failed, killed).
+#
+# Matched on the RAW line, never a parsed one, for two reasons: PS 5.1's
+# ConvertFrom-Json over a multi-megabyte transcript every tick is seconds of
+# CPU, and a raw match can tell a real key from a quoted one. A transcript that
+# merely QUOTES a launch (a turn grepping an older transcript, like the one that
+# found this) carries it inside a JSON string, where the quotes are escaped
+# (\"backgroundTaskId\"), so the unescaped pattern cannot match it. A quoted
+# NOTIFICATION does match, and that is the safe direction: it can only clear a
+# wait, which hands the decision back to the arms that were there before.
+function Get-LoopPendingBackgroundTasksFromLines {
+    param([AllowEmptyCollection()][string[]]$Lines = @())
+    $launched = New-Object System.Collections.Generic.List[string]
+    $done = New-Object 'System.Collections.Generic.HashSet[string]'
+    foreach ($l in $Lines) {
+        if (-not $l) { continue }
+        if ($l.IndexOf('<task-id>') -ge 0) {
+            foreach ($m in [regex]::Matches($l, '<task-id>([A-Za-z0-9_-]+)</task-id>')) {
+                [void]$done.Add($m.Groups[1].Value)
+            }
+        }
+        if ($l.IndexOf('"backgroundTaskId":"') -ge 0) {
+            foreach ($m in [regex]::Matches($l, '"backgroundTaskId":"([A-Za-z0-9_-]+)"')) {
+                $launched.Add($m.Groups[1].Value)
+            }
+        }
+        if ($l.IndexOf('"isAsync":true') -ge 0) {
+            $m = [regex]::Match($l, '"agentId":"([A-Za-z0-9_-]+)"')
+            if ($m.Success) { $launched.Add($m.Groups[1].Value) }
+        }
+    }
+    $pending = @()
+    foreach ($id in $launched) {
+        if (-not $done.Contains($id) -and $pending -notcontains $id) { $pending += $id }
+    }
+    return $pending
+}
+
+# The IO half. Opened share-everything because Claude Code is appending to the
+# file while this reads it; a transcript that cannot be read answers "none
+# pending", which leaves the stall arms exactly as they were before T1711.
+function Get-LoopPendingBackgroundTasks {
+    param([string]$TranscriptPath = '')
+    if (-not $TranscriptPath -or -not (Test-Path -LiteralPath $TranscriptPath)) { return }
+    $lines = @()
+    try {
+        $fs = [System.IO.File]::Open($TranscriptPath, 'Open', 'Read', 'ReadWrite, Delete')
+        try {
+            $sr = New-Object System.IO.StreamReader($fs, [System.Text.Encoding]::UTF8)
+            $lines = $sr.ReadToEnd() -split "`n"
+        } finally { $fs.Dispose() }
+    } catch { return }
+    return (Get-LoopPendingBackgroundTasksFromLines -Lines $lines)
 }
 
 # What both supervisors call. Transcript first, pane as the fallback.

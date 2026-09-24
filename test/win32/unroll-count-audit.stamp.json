@@ -1,11 +1,13 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-09-23T16:10:30-07:00",
-    "commit":  "6eccc6868",
+    "generated":  "2026-09-23T17:05:09-07:00",
+    "commit":  "5985d37fc",
     "uncommitted":  [
-                        "test/win32/lib/WebViewCdp.ps1",
-                        "test/win32/viewer-feedback-alpha.ps1"
+                        "scripts/go-loop-health.ps1",
+                        "scripts/go-loop-watchdog.ps1",
+                        "scripts/loop-session.ps1",
+                        "test/win32/go-loop-guard.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -29,10 +31,10 @@
                   "scripts/git-commit-guard.ps1":  "61b9c30de6abd3fa3730d73f07fc310063251595191bc45655aa46853b1c9e2f",
                   "scripts/go-loop-boot.ps1":  "4623179b0ff82e9621ba9c443c37970c9a98a5cf5a805f3cb140001db7bbc5fc",
                   "scripts/go-loop-exec.ps1":  "6c374684629689efb4f949b1304cbae83130796d2efd7161dd92cbd934564794",
-                  "scripts/go-loop-health.ps1":  "7f08cc6046c56ee514c46a1f96b755634302a7aaeefa16640d92ae34be756a82",
+                  "scripts/go-loop-health.ps1":  "4d7b11d344e52701d216ddcdcb616984a2b0429239b3c1bf9fb9b10412910c1a",
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
-                  "scripts/go-loop-watchdog.ps1":  "38a6ad04360aaaeeff804386edaf8e82f5654fd927621bbaad90aca91cb345d1",
+                  "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
                   "scripts/guard-due.ps1":  "2b28264e70425d43d37835b265086cd0ccd703aa1a70603ab79e25b3a85fe823",
                   "scripts/harness-floor.ps1":  "cc4dd72fb07ebc34de67ce688e0eab7f091a7228e4baeba4f9f50d01212a0f0e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
@@ -54,7 +56,7 @@
                   "scripts/lib/LaneVerdict.ps1":  "bdb4b789b8f0f85521f01dcd2fb758be058ac9f5b5b39bb549d6d090d993e19c",
                   "scripts/lib/NativeArgv.ps1":  "49faad6cbe0907079281ac45a3e96f140fd6162f4c1729e82b145105137933b5",
                   "scripts/lib/WebViewLane.ps1":  "14ff86074a34aef73316a5c94032bf32bd42845d7e831170366034700898a579",
-                  "scripts/loop-session.ps1":  "f8d64e24c43f7595203611f6263afbeb52d3dba6e05794a625c6789abbcfe22d",
+                  "scripts/loop-session.ps1":  "d5ed7b2328d9d23758139ebaca1f1dd93a8ec045c58a7049d20cd6b307825843",
                   "scripts/msi-test-identity.ps1":  "375396ad262bf0cd1905b85707fa70f48604f9d8d79a14174311d968e428c2ac",
                   "scripts/parity-decisions.ps1":  "2475b9be8aa438a4f5b0cbe1f977253e14a669de074547c869246b83b44d5030",
                   "scripts/parity-sweep.ps1":  "2558a090ed2db1add4c101c99b74c469c6c4904ed1646f1dd4138c5bc0ca5046",
@@ -194,7 +196,7 @@
                   "test/win32/gate-negatives.ps1":  "337fc01f68d2977db0edc76d18b23856f3351862fd9faa5ca376c15eb0c8662b",
                   "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76",
                   "test/win32/gl-device-lost.ps1":  "3bb5067fd1c667f8b9d9d5d28e04acaae173beee1d78e68a79f673e159e462aa",
-                  "test/win32/go-loop-guard.ps1":  "ac1d50e52a2b846ab64e80cf0a018f719a7228a3b99cdb3dd49fe9e0d14852fb",
+                  "test/win32/go-loop-guard.ps1":  "96b483ba538394c1012f4225e39f10144c79ee4b5be335a65c0959f36100fb62",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "94068439b3fe8e2054c15a1349c5632be8640eb27fde266f0925181242f55269",

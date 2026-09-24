@@ -1,11 +1,10 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-09-23T16:02:51-07:00",
-    "commit":  "6eccc6868",
+    "generated":  "2026-09-23T16:57:18-07:00",
+    "commit":  "5985d37fc",
     "uncommitted":  [
-                        "test/win32/lib/WebViewCdp.ps1",
-                        "test/win32/viewer-feedback-alpha.ps1"
+                        "test/win32/go-loop-guard.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "1bbf0303655aa224fb7cf76038a0ccdf144a3f8e11007b64e9f68a2a385449a4",
@@ -126,7 +125,7 @@
                   "test/win32/gate-negatives.ps1":  "337fc01f68d2977db0edc76d18b23856f3351862fd9faa5ca376c15eb0c8662b",
                   "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76",
                   "test/win32/gl-device-lost.ps1":  "3bb5067fd1c667f8b9d9d5d28e04acaae173beee1d78e68a79f673e159e462aa",
-                  "test/win32/go-loop-guard.ps1":  "ac1d50e52a2b846ab64e80cf0a018f719a7228a3b99cdb3dd49fe9e0d14852fb",
+                  "test/win32/go-loop-guard.ps1":  "96b483ba538394c1012f4225e39f10144c79ee4b5be335a65c0959f36100fb62",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
                   "test/win32/guard-due.ps1":  "94068439b3fe8e2054c15a1349c5632be8640eb27fde266f0925181242f55269",
