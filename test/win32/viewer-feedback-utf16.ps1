@@ -20,24 +20,34 @@
 #      FAIL. Every arm here compares the WHOLE text for that reason: a
 #      substring needle is exactly what let a corrupted `[Imag` pass once.
 #   C. The caret ends up past the chip that was just inserted, at the position
-#      the insertion computed -- not 4 units past it, which is what a byte
-#      offset handed to EM_EXSETSEL would ask for.
+#      the insertion computed -- not 4 units past it, which is where a byte
+#      offset seeded back into the page as a caret would put it.
 #   D. Backspace against a chip that follows non-ASCII text still removes the
-#      WHOLE chip. This is the loud one: the chip lookup searches the pane's
-#      buffer at the caret, so an unconverted offset finds no chip at all, the
-#      control deletes one character, and `[Image #1` is left behind -- text
+#      WHOLE chip. The chip is only a chip if the host's seed named its span
+#      in the right UTF-16 units; a span that missed leaves plain text, one
+#      Backspace deletes one character, and `[Image #1` is left behind -- text
 #      that still looks attached and no longer parses, i.e. a picture silently
 #      dropped from the report.
 #   E. The report the send publishes carries the non-ASCII body intact.
 #
 # The quote half of the same bug is asserted in the win32 lane instead
-# (`ViewerPane.zig`, the T641 quote block): pressing the page's own Quote
-# button means running script IN the page, which this harness cannot do.
+# (`ViewerPane.zig`, the T641 quote block).
 #
 # ORACLES. This runs on the BACKGROUND test desktop, where CopyFromScreen and
 # SendInput are dead (T233). What stands in, and all of it is the real thing:
-# the RichEdit's own text (WM_GETTEXT), its own selection (EM_GETSEL), the
-# pane's stderr, and the report folder on disk.
+# the web composer's own document and caret, read over the DevTools protocol
+# (lib\WebViewCdp.ps1), the pane's stderr, and the report folder on disk.
+#
+# T1710: this drives the WEB composer users actually get, not the hidden
+# RichEdit fallback. The arithmetic it pins lives on the web surface too: the
+# page reports its caret in UTF-16 code units, the host converts it against its
+# UTF-8 buffer to decide where a pasted picture's chip goes, and seeds the
+# document back with the caret and the chip spans in UTF-16 again. Typing,
+# caret placement and Backspace go to the page; pictures go in through the
+# page's own paste listener (Send-CdpComposerImage); the send is the Ctrl+Enter
+# chord the web surface posts to the band. `-BreakUtf16` runs the same arms
+# against GHOZTTY_TEST_BREAK_UTF16=1 (the pre-T648 identity conversion) and
+# expects them RED - the proof that the re-pointed arms still have teeth.
 #
 # THIS FILE IS ASCII ONLY (PowerShell 5.1 reads a BOM-less UTF-8 script as
 # ANSI). Every non-ASCII character below is built from its code point.
@@ -47,7 +57,8 @@
 #   powershell -NoProfile -File test\win32\viewer-feedback-utf16.ps1
 param(
     [string]$ExePath,
-    [switch]$Interactive
+    [switch]$Interactive,
+    [switch]$BreakUtf16
 )
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
@@ -62,11 +73,15 @@ if ($ExePath) { $exe = $ExePath }
 
 $env:GHOZTTY_PIPE_SUFFIX = "-fbu16$PID"
 
-# This suite is ABOUT the RichEdit's UTF-16 caret arithmetic, so it pins itself
-# to that surface (T1102). See lib\ComposerSurface.ps1 for why asking is not
-# enough and the run also PROVES which surface it got.
+# The run PROVES it got the web surface (lib\ComposerSurface.ps1), and drives
+# that page over one DevTools port armed before the launch (T1710).
 . (Join-Path $PSScriptRoot 'lib\ComposerSurface.ps1')
-Set-ComposerSurface 'richedit'
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+. (Join-Path $PSScriptRoot 'lib\WebViewCdp.ps1')
+
+# The teeth check: read by the app once, at the first composer's creation.
+if ($BreakUtf16) { $env:GHOZTTY_TEST_BREAK_UTF16 = '1' }
+else { Remove-Item Env:\GHOZTTY_TEST_BREAK_UTF16 -ErrorAction SilentlyContinue }
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
@@ -76,7 +91,6 @@ Set-ComposerSurface 'richedit'
 # other composer suites since T672.
 . (Join-Path $PSScriptRoot 'lib\ShowText.ps1')
 
-Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $script:pass = 0
@@ -87,23 +101,32 @@ function Assert([bool]$cond, [string]$label) {
     else { $script:fail++; Write-Host "FAIL  $label" -ForegroundColor Red }
 }
 
-$EM_GETSEL = 0x00B0
-$EM_SETSEL = 0x00B1
-
-function Set-Caret([IntPtr]$Control, [int]$At) {
-    return (Invoke-TestMessage -Window $Control -Message $EM_SETSEL `
-            -WParam ([IntPtr]$At) -LParam ([IntPtr]$At))
+# Park the page's caret, then give its `selectionchange` snapshot the hop to
+# the host: a paste inserts at the caret the HOST last heard about.
+function Set-Caret($cdp, [int]$At) {
+    Set-CdpComposerCaret -Conn $cdp -At $At
+    Start-Sleep -Milliseconds 300
 }
 
-# EM_GETSEL with null pointers answers with start in the low word and end in
-# the high word -- no cross-process pointer needed, which EM_EXGETSEL would.
-function Get-Caret([IntPtr]$Control) {
-    $r = Invoke-TestMessage -Window $Control -Message $EM_GETSEL
-    if ($r -eq [int64]::MinValue) { return $null }
-    return [pscustomobject]@{
-        Start = [int]($r -band 0xFFFF)
-        End   = [int](($r -shr 16) -band 0xFFFF)
+# Wait for the page's caret to read `$Want`, and return what it last read.
+function Wait-Caret($cdp, [int]$Want) {
+    $got = -1
+    for ($t = 0; $t -lt 30; $t++) {
+        $got = Get-CdpComposerCaret $cdp
+        if ($got -eq $Want) { break }
+        Start-Sleep -Milliseconds 100
     }
+    return $got
+}
+
+# A chord NATIVE owns, delivered the way the web surface delivers it: the
+# controller's accelerator handler posts WM_APP_COMPOSER_CHORD (WM_APP+2) to
+# the band, virtual key in wParam and input.Mods bits in lParam (ctrl=2).
+$script:ChordMsg = 0x8002
+$script:ModCtrl = 2
+function Send-ComposerChord($band, [int]$Vk, [int]$Mods = 0) {
+    return (Send-TestRawMessage -Window $band -Message $script:ChordMsg `
+            -WParam ([IntPtr]$Vk) -LParam ([IntPtr]$Mods))
 }
 
 function Stop-RepoInstances {
@@ -251,16 +274,17 @@ function New-TestBitmap([int]$W, [int]$H, [int]$Seed) {
     return $bmp
 }
 
-function Set-ClipboardPng([int]$W, [int]$H, [int]$Seed) {
+# Paste a PNG at the page's caret (-KeepCaret: the caret was parked on
+# purpose) and return the exact bytes. The OS clipboard is no route in
+# off-desktop; the page's own paste listener is (lib\WebViewCdp.ps1).
+function Send-Png($cdp, [int]$W, [int]$H, [int]$Seed) {
     $bmp = New-TestBitmap $W $H $Seed
     $ms = New-Object System.IO.MemoryStream
     $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
     $bmp.Dispose()
     $bytes = $ms.ToArray()
-    $do = New-Object System.Windows.Forms.DataObject
-    $do.SetData('PNG', $false, (New-Object System.IO.MemoryStream(, $bytes)))
-    [System.Windows.Forms.Clipboard]::SetDataObject($do, $true)
-    Start-Sleep -Milliseconds 250
+    Send-CdpComposerImage -Conn $cdp -Bytes $bytes -KeepCaret
+    # The unary comma keeps this a byte[] rather than unrolling it.
     return , $bytes
 }
 
@@ -302,6 +326,8 @@ $queueDir = Join-Path $work 'temp\feedback\new'
 $viewFile = Join-Path $work 'README.md'
 
 Stop-RepoInstances
+$script:cdpPort = Enable-WebViewCdp
+$cdp = $null
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
 
@@ -335,8 +361,8 @@ try {
     Assert (Invoke-FeedbackButton $view) 'the revealed nav bar took a click at the feedback button'
     $s = Wait-FeedbackState $errlog $paneId $true
     Assert ($s -and $s.Open) "the pane reports the composer OPEN (state '$($s.Open)')"
-    Assert (Wait-ComposerSurface $errlog 'richedit') `
-        "...on the RichEdit surface this script's caret arithmetic is about (got '$(Get-ComposerSurface $errlog)')"
+    Assert (Wait-ComposerSurface $errlog 'web') `
+        "...on the web surface users get (got '$(Get-ComposerSurface $errlog)')"
 
     $fb = $null
     for ($t = 0; $t -lt 20; $t++) {
@@ -347,31 +373,27 @@ try {
     Assert ($null -ne $fb) 'a GhozttyViewerFeedback child window exists'
     if (-not $fb) { throw 'no composer window' }
 
-    $rich = $null
-    foreach ($c in @(Get-TestChildWindows -Window $fb -Class $null)) {
-        if ([string]$c.Class -eq 'RichEdit50W') { $rich = [IntPtr]$c.Hwnd; break }
-    }
-    Assert ($null -ne $rich) 'the composer hosts its RichEdit50W text control'
-    if (-not $rich) { throw 'no text control in the composer' }
+    try { $cdp = Find-CdpComposer -Port $script:cdpPort } catch { Write-Host "  $($_.Exception.Message)" }
+    Assert ($null -ne $cdp) "the composer's page answers on the DevTools port"
+    if (-not $cdp) { throw 'no composer page to drive' }
 
     # --- A. the composer takes non-ASCII typing ------------------------------
-    [void](Send-TestControlText -Control $rich -Text $seed)
-    Start-Sleep -Milliseconds 400
-    $typed = (Get-TestControlText $rich)
+    Send-CdpComposerText $cdp $seed
+    $typed = (Wait-CdpComposerText $cdp $seed)
     Assert ($typed -ceq $seed) `
         ("the composer holds the typed non-ASCII text, emoji included " +
          "(got '$(Show-Text $typed)', want '$(Show-Text $seed)')")
     Assert ($typed.Length -eq 9) `
         "...which is 9 UTF-16 code units and 14 UTF-8 bytes (got $($typed.Length) units)"
+    $at = Wait-Caret $cdp 9
+    Assert ($at -eq 9) "...with the page's caret after it, at unit 9 (got $at)"
 
     # --- B. a chip lands exactly at the caret --------------------------------
-    [void](Set-Caret $rich $caretUnit)
-    $sel = Get-Caret $rich
-    Assert ($sel -and $sel.Start -eq $caretUnit -and $sel.End -eq $caretUnit) `
-        "the caret is parked at unit $caretUnit, just before the emoji (got $($sel.Start)..$($sel.End))"
+    Set-Caret $cdp $caretUnit
+    $at = Get-CdpComposerCaret $cdp
+    Assert ($at -eq $caretUnit) "the caret is parked at unit $caretUnit, just before the emoji (got $at)"
 
-    $png1 = Set-ClipboardPng 40 30 17
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key V -Modifiers Ctrl)
+    $png1 = Send-Png $cdp 40 30 17
     $img = Wait-Image $errlog $paneId 1
     Assert ($img -and $img.Number -eq 1) "the paste is taken as image #1 (got '$($img.Number)')"
     Assert ($img -and $img.Bytes -eq $png1.Length) `
@@ -380,35 +402,38 @@ try {
     # The correct insertion carries NO leading space -- the caret sits right
     # after one -- and a trailing space, because the emoji follows. An
     # unconverted offset lands inside the third `e-acute`, sees a non-space byte
-    # behind it, and adds a second space.
+    # behind it, and adds a second space. The host seeds the result back into
+    # the page, so the page's document IS the host's answer.
     $wantB = ($EA.ToString() * 3) + ' ' + $chip + ' ' + $EMOJI + ' ' + 'YZ'
-    $afterPaste = (Get-TestControlText $rich)
+    $afterPaste = (Wait-CdpComposerText $cdp $wantB)
     Assert ($afterPaste -ceq $wantB) `
         ("the chip lands EXACTLY at the caret, with no doubled space " +
          "(got '$(Show-Text $afterPaste)', want '$(Show-Text $wantB)')")
 
     # --- C. the caret ends past the chip it just inserted --------------------
+    # The seed carries the caret back in UTF-16 units; a byte offset handed
+    # across would put it 4 units further on.
     $wantCaret = $wantB.IndexOf($chip) + $chip.Length + 1   # past the chip and its trailing space
-    $sel = Get-Caret $rich
-    Assert ($sel -and $sel.Start -eq $wantCaret) `
-        "the caret is left just past the inserted run, at unit $wantCaret (got $($sel.Start))"
+    $at = Wait-Caret $cdp $wantCaret
+    Assert ($at -eq $wantCaret) `
+        "the caret is left just past the inserted run, at unit $wantCaret (got $at)"
 
     # --- D. Backspace takes the WHOLE chip -----------------------------------
     # The caret goes to the chip's closing bracket, which is where a user
     # clicking at the end of a chip puts it.
     $chipEnd = $wantB.IndexOf($chip) + $chip.Length
-    [void](Set-Caret $rich $chipEnd)
-    $sel = Get-Caret $rich
-    Assert ($sel -and $sel.Start -eq $chipEnd) `
-        "the caret is at the chip's closing bracket, unit $chipEnd (got $($sel.Start))"
+    $parked = $true
+    try { Set-Caret $cdp $chipEnd } catch { $parked = $false; Write-Host "  $($_.Exception.Message)" }
+    $at = Get-CdpComposerCaret $cdp
+    Assert ($parked -and $at -eq $chipEnd) `
+        "the caret is at the chip's closing bracket, unit $chipEnd (got $at)"
 
-    [void](Send-TestControlKey -Control $rich -Key Backspace)
-    Start-Sleep -Milliseconds 500
-    # Compared WHOLE, not by "no `[Image` left": a chip lookup that missed
-    # deletes one character, and `[Imag` does not match that needle either
-    # while being exactly the corruption this arm exists to catch.
+    Send-CdpKey $cdp Backspace
+    # Compared WHOLE, not by "no `[Image` left": a chip that was only partly
+    # deleted leaves `[Imag`, which does not match that needle either while
+    # being exactly the corruption this arm exists to catch.
     $wantD = ($EA.ToString() * 3) + '  ' + $EMOJI + ' ' + 'YZ'
-    $afterDelete = (Get-TestControlText $rich)
+    $afterDelete = (Wait-CdpComposerText $cdp $wantD)
     Assert ($afterDelete -ceq $wantD) `
         ("one Backspace removes the WHOLE chip after non-ASCII text, leaving no " +
          "fragment (got '$(Show-Text $afterDelete)', want '$(Show-Text $wantD)')")
@@ -416,13 +441,19 @@ try {
     # --- E. the report carries the non-ASCII body ----------------------------
     # A second picture goes in first, so the send has an image to write as well
     # as the words -- the chip numbering is stable, so this one is #2.
-    [void](Set-Caret $rich $afterDelete.Length)
-    $png2 = Set-ClipboardPng 20 12 91
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key V -Modifiers Ctrl)
+    Set-Caret $cdp $afterDelete.Length
+    $png2 = Send-Png $cdp 20 12 91
     $img = Wait-Image $errlog $paneId 2
     Assert ($img -and $img.Number -eq 2) "a second paste is #2 (got '$($img.Number)')"
+    $wantE = $wantD + ' ' + '[Image #2]'
+    $text = (Wait-CdpComposerText $cdp $wantE)
+    Assert ($text.StartsWith($wantE)) `
+        ("...and its chip follows the text (got '$(Show-Text $text)', want '$(Show-Text $wantE)')")
 
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key Enter -Modifiers Ctrl)
+    # The page reports its snapshot to the host on `input`; give that message
+    # its hop before the send reads the host's copy.
+    Start-Sleep -Milliseconds 300
+    [void](Send-ComposerChord $fb 0x0D $script:ModCtrl)
     $folder = $null
     for ($t = 0; $t -lt 40; $t++) {
         $dirs = @(Get-ChildItem $queueDir -Directory -ErrorAction SilentlyContinue)
@@ -447,6 +478,9 @@ try {
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
 } finally {
+    Close-Cdp $cdp
+    Disable-WebViewCdp
+    Remove-Item Env:\GHOZTTY_TEST_BREAK_UTF16 -ErrorAction SilentlyContinue
     Remove-TestDesktop
     Stop-RepoInstances
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue

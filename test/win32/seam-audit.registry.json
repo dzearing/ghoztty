@@ -363,6 +363,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = startup succeeds, as in every other launch."
         },
+        "GHOZTTY_TEST_BREAK_UTF16": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the real byte <-> UTF-16 conversion, which every composer run including viewer-feedback-utf16.ps1's own default run uses; -BreakUtf16 is its teeth check (T1710)."
+        },
         "GHOZTTY_TRAY_FAIL": {
             "class": "fault",
             "unset": "shipped-elsewhere",

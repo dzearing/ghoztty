@@ -1,10 +1,12 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-23T20:08:52-07:00",
-    "commit":  "97c923db4",
+    "generated":  "2026-09-23T20:45:04-07:00",
+    "commit":  "bc08583d3",
     "uncommitted":  [
-                        "test/win32/viewer-feedback-images.ps1"
+                        "test/win32/lib/WebViewCdp.ps1",
+                        "test/win32/seam-audit.registry.json",
+                        "test/win32/viewer-feedback-utf16.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -662,7 +664,7 @@
                   "test/win32/lib/UnrollCountAudit.ps1":  "4ec16ee97c358c267e2e07003178429acb80142a0a9c54c1cb0d7cec08d27325",
                   "test/win32/lib/VerdictExitAudit.ps1":  "87d8cad08aa867a0cc2de896872e47d4abcd469850f4f5a897deb778a7aaf16f",
                   "test/win32/lib/VtText.ps1":  "e9a099093c681d1bbef2c78055e1ed4b29daf9b0d020a3e4c454509c9ee28f9a",
-                  "test/win32/lib/WebViewCdp.ps1":  "7c247a90ce36d20771ab456e0797514cfba38f53e1981fd24bdaf6f3ef48e804",
+                  "test/win32/lib/WebViewCdp.ps1":  "694f3e4f7852950d38ca69bcd317b75b1797f364c7f41fa5c23ed3cb56abd5fe",
                   "test/win32/lib/WindowComposite.ps1":  "d008709aee808b1e3d02f6da34d0bf910168df10bd5ab284e9037e706d9a74fa",
                   "test/win32/local-split-no-command-rerun.ps1":  "ee277b6308cdb172e153fe92d0624732f8b64743418134ce466da5534138fae2",
                   "test/win32/log-append.ps1":  "61e904625bdcce9ad697d8d8ea6065dcd15673388768a1b306cf72902d255b11",
@@ -730,7 +732,7 @@
                   "test/win32/restore-session-dup.ps1":  "3a98531e97ed32fef1cb9aca6439576ca54cc1221b6c3a5564e431b0fb612e28",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
                   "test/win32/seam-audit.ps1":  "b6df80f87a37af263b728e4ae4c0dcfcdeb93f9a87bd48df2340244cac110dad",
-                  "test/win32/seam-audit.registry.json":  "d2e5cf63b639ca2fc39dc5c0302461de7868f9fb5744a387e7a61a3d76e9e3a7",
+                  "test/win32/seam-audit.registry.json":  "9d25f84762b31535d8b01e7d32ebad743a1ee27b5a3e66e78e5c11a58f74f098",
                   "test/win32/send-keys-bracketed.ps1":  "3f04c907b40d40409069ee8fe9369820cd96c2c6644567ddfd70d8fdb41bec10",
                   "test/win32/send-keys-soak.ps1":  "2070fe3aa9921b15dcfb5164c655d5b4559fc68a27e4c9b6efae6055d20a6632",
                   "test/win32/session-close.ps1":  "bc90db94c85a72b761db89dbde0baf409845d5df67f23997b425b6d922455ed1",
@@ -807,7 +809,7 @@
                   "test/win32/viewer-feedback-capture.ps1":  "bd538fda121fe8cf7f9f4ddbe1a44efa4ce8b60a921b8ede857c89de1da0e156",
                   "test/win32/viewer-feedback-carousel.ps1":  "548d97334711993fbf274fb6284f7799b79cc1842aa1d51bcbdc2207364bea9c",
                   "test/win32/viewer-feedback-images.ps1":  "d81d8c30b61842a6ec299fe35b4bea62dc3461337ebf39fcd4bb78f4e865a9c2",
-                  "test/win32/viewer-feedback-utf16.ps1":  "0fc675f98d693d20c7f1db7510d3f60d0b284b2faa97ff52ca3954bcc058e88a",
+                  "test/win32/viewer-feedback-utf16.ps1":  "72ed5d9eb1904b5a150bca33040a823eb702d6b69a4f0f9dc75845ad7851465b",
                   "test/win32/viewer-find.ps1":  "1c91b74ae75373354a59c2c35607ba444781de367929bc0fbe758f95d7260c75",
                   "test/win32/viewer-html.ps1":  "f3291857ed898975b5e363bc9ac56beba7ca4564e5830cc414425a43ffaf9030",
                   "test/win32/viewer-image.ps1":  "c584b0496233252501de2a2464442480615529f1654427ee8f9d86644377e132",

@@ -1328,7 +1328,8 @@ rule each:
   (`utf16_offset.break_identity`), which is exactly the pre-T648 defect. It
   reds the four offset arms of `test\win32\viewer-feedback-utf16.ps1` (chip
   position, caret position, whole-chip Backspace, report body) and moves
-  nothing else.
+  nothing else. Since T1710 that script drives the web composer and takes
+  `-BreakUtf16` to set the variable for its own launch.
 - `GHOZTTY_TEST_BREAK_CHIP_RANGE=1` makes a chip's selection range stop one
   unit short (`ViewerFeedbackBar.chipRange`), i.e. a chip lookup that misses.
   It reds the whole-chip deletion arms of `viewer-feedback-images.ps1` (2) and

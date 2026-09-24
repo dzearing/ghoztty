@@ -365,6 +365,57 @@ function Get-CdpComposerText {
     return [string](Invoke-CdpEval $Conn $script:CdpComposerRead)
 }
 
+# The caret, in UTF-16 code units into Get-CdpComposerText's string: the same
+# walk, stopped at the selection's end (composer.js `caretOffset()`, which the
+# page keeps private). -1 when the selection is not in the box. The clone's
+# trailing <br> is content here, not a placeholder, exactly as the page counts
+# it (T1710).
+$script:CdpComposerCaretRead = @'
+(function(){var el=document.getElementById('c');var sel=getSelection();
+if(!sel||sel.rangeCount===0)return -1;var r=sel.getRangeAt(0);
+if(!el.contains(r.endContainer)&&r.endContainer!==el)return -1;
+var pre=document.createRange();pre.selectNodeContents(el);
+try{pre.setEnd(r.endContainer,r.endOffset);}catch(e){return -1;}
+var h=document.createElement('div');h.appendChild(pre.cloneContents());var s='';
+function num(n,a){if(!n.getAttribute)return 0;var v=parseInt(n.getAttribute(a)||'',10);return v>0?v:0;}
+function walk(node){for(var n=node.firstChild;n;n=n.nextSibling){
+if(n.nodeType===3){s+=n.data;}
+else if(n.nodeName==='BR'){s+='\n';}
+else if(n.nodeType===1&&num(n,'data-img')>0){s+=n.textContent;}
+else if(n.nodeType===1){if(s.length&&s.charAt(s.length-1)!=='\n')s+='\n';walk(n);}}}
+walk(h);return s.length;})()
+'@
+
+function Get-CdpComposerCaret {
+    param([Parameter(Mandatory = $true)]$Conn)
+    return [int](Invoke-CdpEval $Conn $script:CdpComposerCaretRead)
+}
+
+# Park a collapsed caret `$At` UTF-16 code units into the document, the way a
+# click would: the page's `selectionchange` listener then reports it to the
+# host, which is the caret a paste inserts at. Walks the box's TOP-LEVEL nodes
+# only - text runs and atomic image chips - so it serves a flat document (no
+# quoted blocks); a position at a chip's far edge lands after the chip node,
+# and one strictly inside a chip is refused, since the engine never puts a caret
+# there either (T1710).
+function Set-CdpComposerCaret {
+    param([Parameter(Mandatory = $true)]$Conn, [Parameter(Mandatory = $true)][int]$At)
+    $js = "(function(){var el=document.getElementById('c');el.focus();var left=$At;" +
+        "var r=document.createRange();var placed=false;" +
+        "for(var n=el.firstChild;n&&!placed;n=n.nextSibling){" +
+        "var len=(n.nodeType===3)?n.data.length:(n.nodeName==='BR'?1:n.textContent.length);" +
+        "if(n.nodeType===3&&left<=len){r.setStart(n,left);placed=true;}" +
+        "else if(n.nodeType!==3&&left===0){r.setStartBefore(n);placed=true;}" +
+        "else if(n.nodeType!==3&&left===len){r.setStartAfter(n);placed=true;}" +
+        "else if(left<len){return 'inside';}" +
+        "else{left-=len;}}" +
+        "if(!placed){if(left!==0)return 'past-end';r.selectNodeContents(el);r.collapse(false);}" +
+        "else{r.collapse(true);}" +
+        "var s=getSelection();s.removeAllRanges();s.addRange(r);return 'ok';})()"
+    $r = Invoke-CdpEval $Conn $js
+    if ($r -ne 'ok') { throw "CDP: could not park the caret at $At ($r)" }
+}
+
 # Wait until the box holds exactly `$Expected`, and return what it last held.
 function Wait-CdpComposerText {
     param([Parameter(Mandatory = $true)]$Conn, [string]$Expected, [int]$TimeoutMs = 3000)
