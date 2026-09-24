@@ -48,11 +48,20 @@
 #     send produced -- a watcher's view of the report rather than the pane's
 #     view of itself.
 #
-# KNOWN HARNESS LIMIT: a posted Ctrl+Enter needs the app's own GetKeyState to
-# see the modifier, which a plain PostMessage cannot arrange. Send-TestViewerChord
-# attaches to the app's input queue first, which is exactly why it is used for
-# G. The pure classification (plain Enter is a NEWLINE, never a send) is pinned
-# by unit tests in `viewer_accel.zig` -- this script asserts the wiring.
+# THE SURFACE. The composer's text box is a WebView2 page (T934), and this
+# script drives THAT page, not the RichEdit fallback it used to pin (T1706).
+# Typing, caret moves, selection, cut/paste and undo go in over the DevTools
+# protocol (lib\WebViewCdp.ps1), because a posted WM_CHAR does not reach a
+# Chromium renderer and there is no input desktop here. The page's own document
+# is read back the same way.
+#
+# The chords NATIVE owns -- Ctrl+Enter, Esc, Tab -- are not the page's: the
+# controller's AcceleratorKeyPressed claims them and posts
+# WM_APP_COMPOSER_CHORD (WM_APP+2, vk + Mods bits) to the band, which runs them
+# (ViewerFeedbackWeb.zig). A synthetic key cannot prove the first hop, because
+# native reads modifiers from GetKeyState; so these arms post that SECOND hop,
+# which is the band's real entry point for the web surface, and the pure
+# classification is pinned by unit tests in `viewer_accel.zig`.
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
 #
@@ -75,23 +84,18 @@ if ($ExePath) { $exe = $ExePath }
 # Isolate the IPC endpoint (inherited through CreateProcessW).
 $env:GHOZTTY_PIPE_SUFFIX = "-fbtest$PID"
 
-# WHICH SURFACE THIS SUITE DRIVES, and why it is pinned (T934).
-#
-# The composer's text surface is a WebView2 contenteditable since T934; the
-# RichEdit below it is the FALLBACK that still ships (a box with no working
-# environment still gets a composer) and is retired by T937. Every arm in this
-# file drives the surface with window messages -- Send-TestControlText,
-# Send-TestControlKey, Get-TestControlText -- which reach a native control and
-# cannot reach a Chromium window from the background test desktop, where
-# SendInput and CopyFromScreen are dead (T233).
-#
-# So this suite pins itself to the fallback and keeps proving the EDITING
-# semantics on a control it can actually drive, and the web surface's own
-# acceptance lives in `test\win32\viewer-composer.ps1` (its structure and
-# lifecycle) plus the in-process `host floor` test in `ViewerPane.zig`, which
-# drives a REAL controller end to end -- open, seed, quote, send, report on
-# disk. T937 removes the fallback and re-points these arms.
-$env:GHOZTTY_COMPOSER_SURFACE = 'richedit'
+# WHICH SURFACE THIS SUITE DRIVES: the web composer, the one users get (T1706).
+# Stated rather than assumed, so a stale `richedit` left in the environment by
+# another run cannot quietly move the suite back onto the fallback -- and arm C2
+# asserts the app agreed.
+. (Join-Path $PSScriptRoot 'lib\ComposerSurface.ps1')
+# ComposerSurface.ps1 turns on strict mode, and a dot-sourced file's strict mode
+# is the CALLER's; this script's helpers read properties of maybe-null results
+# on purpose (`$s.Open` on a state nobody logged yet), so it stays off here.
+Set-StrictMode -Off
+Set-ComposerSurface 'web'
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+. (Join-Path $PSScriptRoot 'lib\WebViewCdp.ps1')
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 # T1511: the shared scorer, and the dot-source is also what ARMS the run - a
@@ -181,10 +185,20 @@ function Get-ChromeChild($paneHwnd, [string]$Class) {
 # `-Class $null` is load-bearing: Get-TestChildWindows DEFAULTS to
 # 'GhozttyTerminal', so an unfiltered-looking call with no -Class silently
 # enumerates nothing (which is how this returned empty on its first run).
+#
+# The web composer's page is a Chrome_WidgetWin_0 too, a DESCENDANT of the pane
+# through the band (T1706), and it sits above the page's own. Every
+# Chrome_WidgetWin_0 under the band is therefore skipped, or the "page top"
+# would be the composer's text box.
 function Get-ContentTop($paneHwnd) {
+    $skip = @()
+    foreach ($b in @(Get-TestChildWindows -Window $paneHwnd -Class 'GhozttyViewerFeedback')) {
+        foreach ($c in @(Get-TestChildWindows -Window ([IntPtr]$b.Hwnd) -Class $null)) { $skip += [int64]$c.Hwnd }
+    }
     $best = $null
     foreach ($c in @(Get-TestChildWindows -Window $paneHwnd -Class $null)) {
         if ([string]$c.Class -ne 'Chrome_WidgetWin_0') { continue }
+        if ($skip -contains [int64]$c.Hwnd) { continue }
         if ($c.Height -le 0) { continue }
         if ($null -eq $best -or $c.Top -lt $best) { $best = [int]$c.Top }
     }
@@ -372,6 +386,71 @@ function Invoke-FeedbackButton($view) {
     return (Send-TestMouse -Window $view.Top -Target $nb -X $x -Y $y)
 }
 
+# --- the web composer's two input routes (T1706) ----------------------------
+
+# A chord NATIVE owns, delivered the way the web surface delivers it: the
+# controller's accelerator handler posts WM_APP_COMPOSER_CHORD (WM_APP+2) to
+# the band with the virtual key in wParam and input.Mods bits in lParam
+# (shift=1, ctrl=2, alt=4). See the header for why the first hop is not driven.
+$script:ChordMsg = 0x8002
+$script:ModShift = 1
+$script:ModCtrl = 2
+function Send-ComposerChord($band, [int]$Vk, [int]$Mods = 0) {
+    return (Send-TestRawMessage -Window $band -Message $script:ChordMsg `
+            -WParam ([IntPtr]$Vk) -LParam ([IntPtr]$Mods))
+}
+
+# A DevTools session on the composer's CURRENT page. Closing the composer
+# destroys its page and opening builds a new one, so every reopen needs a new
+# session; the pages already used are skipped, because a destroyed target can
+# still be listed for a moment after it goes.
+$script:cdpPort = 0
+$script:cdpSeen = @()
+function Connect-Composer {
+    $c = $null
+    try {
+        $c = Find-CdpComposer -Port $script:cdpPort -Exclude $script:cdpSeen
+    } catch {
+        Write-Host "      $($_.Exception.Message)"
+        return $null
+    }
+    $script:cdpSeen += $c.Url
+    return $c
+}
+
+# Empty the box the way a person does: select everything, delete it.
+function Clear-Composer($cdp) {
+    Set-CdpComposerFocus -Conn $cdp
+    Send-CdpKey $cdp 'a' -Ctrl
+    Send-CdpKey $cdp 'Delete'
+    $got = Wait-CdpComposerText $cdp ''
+    if ($got -ne '') { Show-ComposerDom $cdp 'after Ctrl+A, Delete' }
+    return $got
+}
+
+# The box's markup, printed when a read-back disagrees: the serialized text
+# alone cannot tell a <br> placeholder from a newline in a text node.
+function Show-ComposerDom($cdp, [string]$When) {
+    try {
+        $html = Invoke-CdpEval $cdp "JSON.stringify(document.getElementById('c').innerHTML)"
+        $geo = Invoke-CdpEval $cdp ("(function(){var e=document.getElementById('c');" +
+            "return e.scrollHeight+'/'+getComputedStyle(e).lineHeight;})()")
+        Write-Host "      the box $When`: $html (scrollHeight/lineHeight $geo)"
+    } catch {}
+}
+
+# The band's height once it satisfies `$Ok`, or its last height at the
+# deadline. The page reports its wrapped line count asynchronously, so a
+# single sample right after a keystroke races the relayout.
+function Wait-BandHeight($band, [scriptblock]$Ok, [int]$TimeoutMs = 3000) {
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+    while ($true) {
+        $h = (Get-TestWindowRect $band).Height
+        if ((& $Ok $h) -or (Get-Date) -ge $deadline) { return $h }
+        Start-Sleep -Milliseconds 100
+    }
+}
+
 # A THROWAWAY working tree, not this repo (T636).
 #
 # Since the report writer landed, arm G's Ctrl+Enter FILES a report into the
@@ -404,6 +483,9 @@ $stagingDir = Join-Path $work 'temp\feedback\.staging'
 $viewFile = Join-Path $work 'README.md'
 
 Stop-RepoInstances
+# Armed BEFORE launch: the runtime reads the switch when the app's browser
+# process starts, on the first viewer pane.
+$script:cdpPort = Enable-WebViewCdp
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
 
@@ -482,60 +564,45 @@ try {
     Assert ($null -ne $contentBefore -and $null -ne $contentOpen -and $contentOpen -gt $contentBefore) `
         "the page moved down for the composer ($contentBefore -> $contentOpen)"
 
-    # --- C2. the editing surface is a real text control (T635) ---------------
-    # The band paints the pill; the text lives in a RichEdit child filling the
-    # pill's text rect. Everything below types into THAT, which is also the
-    # check that it exists at all -- a missing Msftedit.dll leaves the pane
-    # with no composer, and this is where that shows up.
-    #
-    # Since T934 that control is the FALLBACK, pinned by the environment
-    # variable set at the top of this file -- so this arm also asserts that the
-    # pin WORKED. Without that assertion a suite that silently ran against the
-    # web surface would fail every typing arm below with no explanation.
-    $forced = $false
-    foreach ($line in (Get-Content $errlog -ErrorAction SilentlyContinue)) {
-        if ($line -match 'viewer feedback composer surface=richedit\(forced\)') { $forced = $true }
-    }
-    Assert $forced 'the suite pinned the composer to its RichEdit fallback (T934)'
-    $rich = $null
-    $richClass = '<none>'
-    foreach ($c in @(Get-TestChildWindows -Window $fb -Class $null)) {
-        $rich = [IntPtr]$c.Hwnd; $richClass = [string]$c.Class; break
-    }
-    Assert ($null -ne $rich -and $richClass -eq 'RichEdit50W') `
-        "the composer hosts a RichEdit50W text control (found '$richClass')"
-    if (-not $rich) { throw 'no text control in the composer' }
-    $richRect = Get-TestWindowRect $rich
-    Assert ($richRect -and $richRect.Width -gt 0 -and $richRect.Height -gt 0) `
-        "the text control is placed inside the pill ($($richRect.Width)x$($richRect.Height))"
-
-    # The empty composer's placeholder rides on EM_SETCUEBANNER, which RichEdit
-    # only understands from Msftedit 8 onwards. The app logs whether the
-    # control accepted it, because a cue banner is the one piece of this chrome
-    # nothing else can observe from outside the process.
-    $cue = $null; $painted = $null
-    foreach ($line in (Get-Content $errlog -ErrorAction SilentlyContinue)) {
-        if ($line -match 'composer created cue_banner=(\w+) painted_placeholder=(\w+)') {
-            $cue = $Matches[1]; $painted = $Matches[2]
+    # --- C2. the editing surface is the web page (T934, T1706) ---------------
+    # The band paints the pill; the text lives in a WebView2 page filling the
+    # pill's text rect. Everything below types into THAT, so this arm first
+    # proves the app put the composer on it -- a suite that silently landed on
+    # the RichEdit fallback would fail every typing arm with no explanation.
+    Assert (Wait-ComposerSurface $errlog 'web') `
+        "the composer opened on the web surface (got '$(Get-ComposerSurface $errlog)')"
+    $cv = $null
+    for ($t = 0; $t -lt 40; $t++) {
+        foreach ($c in @(Get-TestChildWindows -Window $fb -Class $null)) {
+            if ([string]$c.Class -eq 'Chrome_WidgetWin_0' -and $c.Width -gt 0) { $cv = $c; break }
         }
+        if ($cv) { break }
+        Start-Sleep -Milliseconds 250
     }
-    Assert (($cue -eq 'true') -or ($painted -eq 'true')) `
-        "the empty composer has a placeholder by one path or the other (cue=$cue painted=$painted)"
+    Assert ($null -ne $cv) "the composer's page is placed inside the pill ($($cv.Width)x$($cv.Height))"
+    $cdp = Connect-Composer
+    Assert ($null -ne $cdp) "the composer's page answers on the DevTools port ($($script:cdpPort))"
+    if (-not $cdp) { throw 'no composer page to type into' }
+
+    # The empty composer shows a placeholder: the page's box carries the cue
+    # text the host sent it, and the stylesheet paints it while the box is
+    # empty. Read from the page, since the painted cue is not observable here.
+    $cue = Invoke-CdpEval $cdp "document.getElementById('c').getAttribute('data-placeholder')"
+    Assert ([string]$cue -ne '') "the empty composer carries a placeholder ('$cue')"
+    Assert ((Get-CdpComposerText $cdp) -eq '') 'the composer opens empty'
 
     # --- D. the pill grows with content, and shrinks again -------------------
-    # Enter is pressed as a KEY, not typed as a CR: RichEdit breaks a paragraph
-    # from WM_KEYDOWN(VK_RETURN) and ignores a bare WM_CHAR 0x0D, so posting
-    # the character alone silently concatenates the lines. It is also the path
-    # a person takes, and it proves the main loop does not eat a bare Enter on
-    # its way to the control (only Ctrl+Enter is the composer's).
+    # Enter is pressed as a KEY into the page, the path a person takes: only
+    # Ctrl+Enter is the composer's, and a bare Enter must stay a newline.
     $h1 = (Get-TestWindowRect $fb).Height
-    [void](Send-TestControlText -Control $rich -Text 'one')
-    [void](Send-TestControlKey -Control $rich -Key Enter)
-    [void](Send-TestControlText -Control $rich -Text 'two')
-    [void](Send-TestControlKey -Control $rich -Key Enter)
-    [void](Send-TestControlText -Control $rich -Text 'three')
-    Start-Sleep -Milliseconds 400
-    $h3 = (Get-TestWindowRect $fb).Height
+    Send-CdpComposerText $cdp 'one'
+    Send-CdpKey $cdp 'Enter'
+    Send-CdpComposerText $cdp 'two'
+    Send-CdpKey $cdp 'Enter'
+    Send-CdpComposerText $cdp 'three'
+    $typed = Wait-CdpComposerText $cdp "one`ntwo`nthree"
+    Assert ($typed -ceq "one`ntwo`nthree") "three typed lines read back from the page ('$($typed -replace "`n", '\n')')"
+    $h3 = Wait-BandHeight $fb { param($h) $h -gt $h1 }
     Assert ($h3 -gt $h1) "three lines make the composer taller ($h1 -> $h3)"
 
     $contentTall = Get-ContentTop $view.Pane
@@ -544,19 +611,22 @@ try {
 
     # Backspace the last line away: the band must give the space BACK, which is
     # the half a "grows with content" implementation forgets.
-    for ($i = 0; $i -lt 6; $i++) { [void](Send-TestControlKey -Control $rich -Key Backspace) }
-    Start-Sleep -Milliseconds 400
-    $h2 = (Get-TestWindowRect $fb).Height
+    for ($i = 0; $i -lt 6; $i++) { Send-CdpKey $cdp 'Backspace' }
+    $twoLines = Wait-CdpComposerText $cdp "one`ntwo"
+    Assert ($twoLines -ceq "one`ntwo") "six Backspaces took the last line away ('$($twoLines -replace "`n", '\n')')"
+    if ($twoLines -cne "one`ntwo") { Show-ComposerDom $cdp 'after six Backspaces' }
+    $h2 = Wait-BandHeight $fb { param($h) $h -lt $h3 }
     Assert ($h2 -lt $h3) "deleting a line gives the space back ($h3 -> $h2)"
     $contentTwoLine = Get-ContentTop $view.Pane
     Assert ($null -ne $contentTwoLine -and $contentTwoLine -lt $contentTall) `
         "...and the page came back up with it ($contentTall -> $contentTwoLine)"
 
     # --- E/F. Escape closes; the text survives the round trip ----------------
-    # Escape is posted at the TEXT CONTROL, which is where focus really is: a
-    # multi-line RichEdit swallows both Escape and Ctrl+Enter itself, so the
-    # main loop intercepts them by the control's hwnd (App.zig, T635).
-    [void](Send-TestControlKey -Control $rich -Key Escape)
+    # Escape through the band's chord entry, which is where the web surface's
+    # accelerator handler sends it. Closing destroys the page, so the session
+    # on it goes too.
+    Close-Cdp $cdp; $cdp = $null
+    [void](Send-ComposerChord $fb 0x1B)
     $s = Wait-FeedbackState $errlog $paneId $false
     Assert ($s -and -not $s.Open) "Escape closes the composer (state '$($s.Open)')"
     Assert (-not (Test-TestWindowVisible $fb)) 'the composer window is hidden once closed'
@@ -575,8 +645,9 @@ try {
     Assert (Invoke-FeedbackButton $view) 're-clicking the feedback button reaches the pane'
     $s = Wait-FeedbackState $errlog $paneId $true
     Assert ($s -and $s.Open) 'the composer reopens'
-    Start-Sleep -Milliseconds 300
-    $hBack = (Get-TestWindowRect $fb).Height
+    # The new page is seeded from the pane's buffer and then reports its own
+    # line count, so the height settles a moment after the open.
+    $hBack = Wait-BandHeight $fb { param($h) $h -eq $h2 }
     Assert ($hBack -eq $h2) `
         "the reopened composer is still the size its TEXT makes it ($hBack vs $h2) -- state lives on the pane"
 
@@ -611,7 +682,7 @@ try {
         Set-Content -Path (Join-Path $draftDir 'dropped.log') -Encoding utf8 -Value 'the log they dragged in'
     }
 
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key Enter -Modifiers Ctrl)
+    [void](Send-ComposerChord $fb 0x0D $script:ModCtrl)
     $len = $null
     for ($t = 0; $t -lt 20; $t++) {
         $len = Get-LastSendLen $errlog $paneId
@@ -681,8 +752,6 @@ try {
         Start-Sleep -Milliseconds 250
     }
     Assert $filed 'the pane reports the report as filed'
-    Assert ((Get-TestControlText $rich) -eq '') `
-        "the composer is empty after a successful send (got '$(Get-TestControlText $rich)')"
     $sClosed = Wait-FeedbackState $errlog $paneId $false
     Assert ($sClosed -and -not $sClosed.Open) 'the composer closes itself behind the confirmation'
 
@@ -690,153 +759,135 @@ try {
     Assert (Invoke-FeedbackButton $view) 're-opening the composer after a send reaches the pane'
     $s = Wait-FeedbackState $errlog $paneId $true
     Assert ($s -and $s.Open) 'the composer is open again for the editing arms'
+    $cdp = Connect-Composer
+    Assert ($null -ne $cdp) 'the reopened composer has a page to type into'
+    if (-not $cdp) { throw 'no composer page after the send' }
+    # The send emptied the pane's BUFFER, not just a view of it: the page a
+    # reopen builds is seeded from that buffer, and it holds nothing.
+    $afterSend = Wait-CdpComposerText $cdp ''
+    Assert ($afterSend -eq '') "the composer is empty after a successful send (got '$afterSend')"
 
     # --- I. it edits like a text control: caret and selection (T635) ---------
     # The T634 surface could only append and backspace, so every check here is
-    # one it could not have passed. The oracle is the control's own text, read
-    # with WM_GETTEXT (GetWindowTextW across processes reads a cache the app
-    # never sees).
-    [void](Send-TestKeys -Window $view.Top -Target $rich -Key A -Modifiers Ctrl)
-    [void](Send-TestControlKey -Control $rich -Key Delete)
-    Start-Sleep -Milliseconds 250
-    [void](Send-TestControlText -Control $rich -Text 'bcd')
-    Start-Sleep -Milliseconds 250
-    Assert ((Get-TestControlText $rich) -eq 'bcd') `
-        "the control starts from a known state (got '$(Get-TestControlText $rich)')"
+    # one it could not have passed. The oracle is the page's own document.
+    Send-CdpComposerText $cdp 'bcd'
+    $start = Wait-CdpComposerText $cdp 'bcd'
+    Assert ($start -ceq 'bcd') "the composer starts from a known state (got '$start')"
 
     # Home, then type: an appending buffer would put the 'a' at the END.
-    [void](Send-TestControlKey -Control $rich -Key Home)
-    [void](Send-TestControlText -Control $rich -Text 'a')
-    Start-Sleep -Milliseconds 250
-    $caretText = Get-TestControlText $rich
-    Assert ($caretText -eq 'abcd') `
+    # `-KeepCaret`, because the driver otherwise puts the caret at the end.
+    Send-CdpKey $cdp 'Home'
+    Send-CdpComposerText $cdp 'a' -KeepCaret
+    $caretText = Wait-CdpComposerText $cdp 'abcd'
+    Assert ($caretText -ceq 'abcd') `
         "Home moves the caret and typing inserts there (got '$caretText', want 'abcd')"
 
     # Shift+Right twice selects 'ab'; typing replaces the SELECTION.
-    [void](Send-TestControlKey -Control $rich -Key Home)
-    [void](Send-TestKeys -Window $view.Top -Target $rich -Key Right -Modifiers Shift)
-    [void](Send-TestKeys -Window $view.Top -Target $rich -Key Right -Modifiers Shift)
-    [void](Send-TestControlText -Control $rich -Text 'Z')
-    Start-Sleep -Milliseconds 250
-    $selText = Get-TestControlText $rich
-    Assert ($selText -eq 'Zcd') `
+    Send-CdpKey $cdp 'Home'
+    Send-CdpKey $cdp 'ArrowRight' -Shift
+    Send-CdpKey $cdp 'ArrowRight' -Shift
+    Send-CdpComposerText $cdp 'Z' -KeepCaret
+    $selText = Wait-CdpComposerText $cdp 'Zcd'
+    Assert ($selText -ceq 'Zcd') `
         "a keyboard selection is replaced by what is typed over it (got '$selText', want 'Zcd')"
 
     # Word wrap: one long unbroken-by-newlines line still grows the pill,
-    # which only a control that wraps can do.
-    [void](Send-TestKeys -Window $view.Top -Target $rich -Key A -Modifiers Ctrl)
-    [void](Send-TestControlKey -Control $rich -Key Delete)
-    Start-Sleep -Milliseconds 250
-    $hEmpty = (Get-TestWindowRect $fb).Height
-    [void](Send-TestControlText -Control $rich -Text ('wrap ' * 60) -PerKeyMs 2)
-    Start-Sleep -Milliseconds 600
-    $hWrapped = (Get-TestWindowRect $fb).Height
+    # which only a surface that wraps can do.
+    Assert ((Clear-Composer $cdp) -eq '') 'Ctrl+A then Delete empties the composer'
+    $hEmpty = Wait-BandHeight $fb { param($h) $h -le $h1 }
+    Send-CdpComposerText $cdp ('wrap ' * 60)
+    $hWrapped = Wait-BandHeight $fb { param($h) $h -gt $hEmpty }
     Assert ($hWrapped -gt $hEmpty) `
         "a long line with no newlines in it wraps and grows the pill ($hEmpty -> $hWrapped)"
 
     # ...and the wrap FOLLOWS the pane. Narrowing the window re-wraps the same
-    # text onto more lines, which the composer only notices if it re-reads the
-    # control's line count after being moved (a layout pass is driven by that
-    # count, so the naive version leaves the pill a stale height until the next
-    # keystroke).
+    # text onto more lines, which the composer only notices if the page
+    # re-measures after being resized (a layout pass is driven by that count,
+    # so the naive version leaves the pill a stale height until the next
+    # keystroke; composer.js watches its box with a ResizeObserver for this).
     $winRect = Get-TestWindowRect $view.Top
     [void](Set-TestWindowSize -Window $view.Top -Width ([int]($winRect.Width * 0.6)) -Height $winRect.Height)
-    Start-Sleep -Milliseconds 900
-    $hNarrow = (Get-TestWindowRect $fb).Height
+    $hNarrow = Wait-BandHeight $fb { param($h) $h -gt $hWrapped }
     Assert ($hNarrow -gt $hWrapped) `
         "narrowing the pane re-wraps and the pill follows without a keystroke ($hWrapped -> $hNarrow)"
     [void](Set-TestWindowSize -Window $view.Top -Width $winRect.Width -Height $winRect.Height)
-    Start-Sleep -Milliseconds 900
-    $hWide = (Get-TestWindowRect $fb).Height
+    $hWide = Wait-BandHeight $fb { param($h) $h -eq $hWrapped }
     Assert ($hWide -eq $hWrapped) `
         "...and widening it back gives the height back ($hNarrow -> $hWide, want $hWrapped)"
 
     # --- J. the standard editing chords (T635) -------------------------------
-    [void](Send-TestKeys -Window $view.Top -Target $rich -Key A -Modifiers Ctrl)
-    [void](Send-TestControlKey -Control $rich -Key Delete)
-    Start-Sleep -Milliseconds 250
-    [void](Send-TestControlText -Control $rich -Text 'copyme')
-    Start-Sleep -Milliseconds 250
+    Assert ((Clear-Composer $cdp) -eq '') 'the composer is cleared for the editing chords'
+    Send-CdpComposerText $cdp 'copyme'
+    [void](Wait-CdpComposerText $cdp 'copyme')
 
-    # Shift+End selects the line, and Ctrl+X takes it. Deliberately NOT Ctrl+A
-    # here: a select-ALL in RichEdit runs through the end of the document and
-    # carries its final paragraph mark onto the clipboard, so pasting it back
-    # would add a newline that has nothing to do with whether the chords work.
-    # (Ctrl+A itself is covered above, where it clears the control.)
-    [void](Send-TestControlKey -Control $rich -Key Home)
-    [void](Send-TestKeys -Window $view.Top -Target $rich -Key End -Modifiers Shift)
-    [void](Send-TestKeys -Window $view.Top -Target $rich -Key X -Modifiers Ctrl)
-    Start-Sleep -Milliseconds 300
-    $afterCut = Get-TestControlText $rich
+    # Shift+End selects the line, and Ctrl+X takes it. These are the ENGINE's
+    # own editing commands, reached through the page like a keyboard would;
+    # the clipboard they use is the real one.
+    Send-CdpKey $cdp 'Home'
+    Send-CdpKey $cdp 'End' -Shift
+    Send-CdpKey $cdp 'x' -Ctrl
+    $afterCut = Wait-CdpComposerText $cdp ''
     Assert ($afterCut -eq '') "Shift+End then Ctrl+X cuts the line away (got '$afterCut')"
 
     # ...and Ctrl+V brings it back, twice, which proves the clipboard round
-    # trip rather than an undo that happens to look the same.
-    #
-    # Compared with line breaks stripped: a RichEdit selection that runs to the
-    # end of the document carries its final paragraph mark onto the clipboard,
-    # so each paste lands as "copyme" plus a break. That is the control's own
-    # documented behaviour (WordPad does it too), and this test is about
-    # whether the chords work, not about that mark.
-    function Flatten([string]$s) { return ($s -replace "`r`n", '' -replace "`r", '' -replace "`n", '') }
-    [void](Send-TestKeys -Window $view.Top -Target $rich -Key V -Modifiers Ctrl)
-    [void](Send-TestKeys -Window $view.Top -Target $rich -Key V -Modifiers Ctrl)
-    Start-Sleep -Milliseconds 400
-    $afterPaste = Flatten (Get-TestControlText $rich)
-    Assert ($afterPaste -eq 'copymecopyme') `
+    # trip rather than an undo that happens to look the same. A text paste is
+    # the engine's own (composer.js only takes a paste that carries a picture).
+    Send-CdpKey $cdp 'v' -Ctrl
+    Send-CdpKey $cdp 'v' -Ctrl
+    $afterPaste = Wait-CdpComposerText $cdp 'copymecopyme'
+    Assert ($afterPaste -ceq 'copymecopyme') `
         "Ctrl+V pastes what Ctrl+X took (got '$afterPaste', want 'copymecopyme')"
 
-    # Ctrl+Z undoes the last paste.
-    [void](Send-TestKeys -Window $view.Top -Target $rich -Key Z -Modifiers Ctrl)
-    Start-Sleep -Milliseconds 400
-    $afterUndo = Flatten (Get-TestControlText $rich)
-    Assert ($afterUndo -eq 'copyme') `
+    # Ctrl+Z undoes the last paste. The page takes the undo chords itself
+    # (T983) and asks the engine first, so these are its steps.
+    Send-CdpKey $cdp 'z' -Ctrl
+    $afterUndo = Wait-CdpComposerText $cdp 'copyme'
+    Assert ($afterUndo -ceq 'copyme') `
         "Ctrl+Z undoes the last edit (got '$afterUndo', want 'copyme')"
 
-    # ...and a second Ctrl+Z steps back again (the first paste) rather than
-    # idling on a formatting record that changes no text (T644).
-    [void](Send-TestKeys -Window $view.Top -Target $rich -Key Z -Modifiers Ctrl)
-    Start-Sleep -Milliseconds 400
-    $afterUndo2 = Flatten (Get-TestControlText $rich)
+    # ...and a second Ctrl+Z steps back again (the first paste).
+    Send-CdpKey $cdp 'z' -Ctrl
+    $afterUndo2 = Wait-CdpComposerText $cdp ''
     Assert ($afterUndo2 -eq '') `
         "a second Ctrl+Z undoes the first paste too (got '$afterUndo2', want '')"
 
-    # Typed text undoes as the WORD, not a letter and not nothing: the
-    # composer's per-keystroke plain-format reset must stay off the undo stack
-    # AND leave RichEdit's group-typing aggregation alone (T644) — a message
-    # sent between two keystrokes ends the group even when it is unrecorded.
-    [void](Send-TestControlText -Control $rich -Text 'undome')
-    Start-Sleep -Milliseconds 300
-    [void](Send-TestKeys -Window $view.Top -Target $rich -Key Z -Modifiers Ctrl)
-    Start-Sleep -Milliseconds 400
-    $afterTypeUndo = Flatten (Get-TestControlText $rich)
+    # Typed text undoes as the WORD, not a letter and not nothing (T644). Typed
+    # one KEY at a time, as a person types it, so the engine's grouping of
+    # consecutive keystrokes is what is under test rather than one insertion.
+    foreach ($ch in [char[]]'undome') { Send-CdpKey $cdp ([string]$ch) }
+    $typedWord = Wait-CdpComposerText $cdp 'undome'
+    Assert ($typedWord -ceq 'undome') "a word typed key by key lands (got '$typedWord')"
+    Send-CdpKey $cdp 'z' -Ctrl
+    $afterTypeUndo = Wait-CdpComposerText $cdp ''
     Assert ($afterTypeUndo -eq '') `
         "Ctrl+Z after typing a word removes the word (got '$afterTypeUndo', want '')"
 
     # Text back for the mirror check below, typed the ordinary way.
-    [void](Send-TestControlText -Control $rich -Text 'copyme')
-    Start-Sleep -Milliseconds 300
+    Send-CdpComposerText $cdp 'copyme'
+    [void](Wait-CdpComposerText $cdp 'copyme')
 
-    # The pane's own buffer tracked all of it. The oracle is the CONTROL's own
-    # text, canonicalised to LF the way the mirror does -- the invariant is
-    # "the buffer is what the control holds", not a hard-coded number, and it
-    # is what the report writer reads.
+    # The pane's own buffer tracked all of it. The oracle is the PAGE's own
+    # document, serialized the way it reports it -- the invariant is "the
+    # buffer is what the page holds", not a hard-coded number, and it is what
+    # the report writer reads.
     #
     # `buffer=`, not `bytes=`: since T636 a send also reports the RENDERED body
     # length, which is deliberately not the same number (it is trimmed, and
     # quoted lines carry a `> `). This arm is about the mirror, so it reads the
-    # raw buffer.
-    $ctlText = (Get-TestControlText $rich) -replace "`r`n", "`n" -replace "`r", "`n"
+    # raw buffer. Read BEFORE the send: a send closes the composer and its page.
+    $ctlText = Get-CdpComposerText $cdp
+    $ctlBytes = [System.Text.Encoding]::UTF8.GetByteCount($ctlText)
+    Close-Cdp $cdp; $cdp = $null
     $bufBefore = Get-LastSendBuffer $errlog $paneId
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key Enter -Modifiers Ctrl)
+    [void](Send-ComposerChord $fb 0x0D $script:ModCtrl)
     $bufAfter = $null
     for ($t = 0; $t -lt 20; $t++) {
         $bufAfter = Get-LastSendBuffer $errlog $paneId
         if ($bufAfter -ne $bufBefore) { break }
         Start-Sleep -Milliseconds 250
     }
-    Assert ($bufAfter -eq $ctlText.Length) `
-        "the pane's buffer mirrors the control through all of it (buffer=$bufAfter, control holds $($ctlText.Length))"
+    Assert ($bufAfter -eq $ctlBytes) `
+        "the pane's buffer mirrors the page through all of it (buffer=$bufAfter, page holds $ctlBytes)"
 
     # That probe was a REAL send (T636), so it filed a second report and the
     # composer is clearing and closing itself behind the confirmation. Wait it
@@ -850,13 +901,17 @@ try {
     # to press either one without a mouse.
     Assert (Invoke-FeedbackButton $view) 're-opening the composer for the keyboard arms'
     [void](Wait-FeedbackState $errlog $paneId $true)
-    # Both handles are the ones the earlier arms already resolved: the composer
-    # window and its control are created once and hidden/shown, not rebuilt per
-    # open. Re-derived rather than assumed only where the pane may have been
-    # torn down, which is not the case here.
+    # The band window is the one the earlier arms resolved: it is created once
+    # and hidden/shown. Its PAGE is rebuilt per open, hence a fresh session.
     # Text, so the send button is LIVE -- it is disabled while there is nothing
     # to send, and focus does not stop on a dead control.
-    [void](Send-TestControlText -Control $rich -Text 'tab me')
+    $cdp = Connect-Composer
+    Assert ($null -ne $cdp) 'the composer has a page for the keyboard arms'
+    if ($cdp) {
+        Send-CdpComposerText $cdp 'tab me'
+        [void](Wait-CdpComposerText $cdp 'tab me')
+        Close-Cdp $cdp; $cdp = $null
+    }
     Start-Sleep -Milliseconds 400
 
     $tips = Wait-FeedbackTips $errlog $paneId
@@ -873,11 +928,11 @@ try {
             'the send tip covers its HIT box too'
     }
 
-    # The walk. Tab is posted at the TEXT control for the first step (that is
-    # where focus really is) and at the BAND for the rest, because from there
-    # the band itself is the focused window -- the two actions are painted by
-    # it, not child controls of it.
-    [void](Send-TestControlKey -Control $rich -Key Tab)
+    # The walk. The first step is a Tab in the PAGE (where focus really is),
+    # which reaches the band as the chord the accelerator handler posts; the
+    # rest are posted at the BAND, because from there the band itself is the
+    # focused window -- the two actions are painted by it, not child controls.
+    [void](Send-ComposerChord $fb 0x09)
     Assert ((Wait-FeedbackFocus $errlog $paneId 'snapshot') -eq 'snapshot') `
         "Tab from the text reaches the '+' button (focus '$(Get-FeedbackFocus $errlog $paneId)')"
     [void](Send-TestControlKey -Control $fb -Key Tab)
@@ -887,10 +942,9 @@ try {
     Assert ((Wait-FeedbackFocus $errlog $paneId 'text') -eq 'text') `
         "...and back to the text, which is where a Tab off the end has to go (focus '$(Get-FeedbackFocus $errlog $paneId)')"
 
-    # Shift+Tab walks it backwards. Sent as a real chord (attached input queue)
-    # rather than a posted modifier: the app reads the shift state with
-    # GetKeyState, which a plain PostMessage cannot arrange.
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key Tab -Modifiers Shift)
+    # Shift+Tab from the text walks it backwards, again as the page's chord
+    # hop, which carries the shift in its own Mods bits.
+    [void](Send-ComposerChord $fb 0x09 $script:ModShift)
     Assert ((Wait-FeedbackFocus $errlog $paneId 'send') -eq 'send') `
         "shift+Tab from the text walks back to the send button (focus '$(Get-FeedbackFocus $errlog $paneId)')"
 
@@ -914,13 +968,15 @@ try {
     # walk again.
     Assert (Invoke-FeedbackButton $view) 're-opening the composer for the Enter arm'
     [void](Wait-FeedbackState $errlog $paneId $true)
-    # Both handles are the ones the earlier arms already resolved: the composer
-    # window and its control are created once and hidden/shown, not rebuilt per
-    # open. Re-derived rather than assumed only where the pane may have been
-    # torn down, which is not the case here.
-    [void](Send-TestControlText -Control $rich -Text 'enter me')
+    $cdp = Connect-Composer
+    Assert ($null -ne $cdp) 'the composer has a page for the Enter arm'
+    if ($cdp) {
+        Send-CdpComposerText $cdp 'enter me'
+        [void](Wait-CdpComposerText $cdp 'enter me')
+        Close-Cdp $cdp; $cdp = $null
+    }
     Start-Sleep -Milliseconds 400
-    [void](Send-TestControlKey -Control $rich -Key Tab)
+    [void](Send-ComposerChord $fb 0x09)
     [void](Wait-FeedbackFocus $errlog $paneId 'snapshot')
     [void](Send-TestControlKey -Control $fb -Key Tab)
     Assert ((Wait-FeedbackFocus $errlog $paneId 'send') -eq 'send') `
@@ -936,85 +992,75 @@ try {
     [void](Wait-FeedbackState $errlog $paneId $false)
 
     # --- K. an IME's composed text lands, and the mirror ends correct (T642) --
-    # T635's whole argument for a RichEdit is that IME comes from the OS. That
-    # claim went unproven for a month because this box has ONE input method
-    # installed (en-US 0409:00000409) and no way to add a Japanese one without
-    # elevation and a language download -- a system-wide change to the user's
-    # daily-driver machine that no acceptance run gets to make.
+    # The web surface gets IME from the engine: an input method drives a
+    # composition in the page (compositionstart/update, the underlined
+    # intermediate string) and then COMMITS its result. That is exactly what the
+    # DevTools protocol can drive without an IME installed -- this box has one
+    # input method (en-US) and adding a Japanese one needs elevation and a
+    # language download on the user's daily-driver machine -- so the arms below
+    # run a real composition through the engine: Input.imeSetComposition with
+    # the intermediate text, then Input.insertText with the result, which is the
+    # commit.
     #
-    # What CAN be driven without an IME, measured on this box, is the message
-    # an IME actually delivers its result with: RichEdit inserts the character
-    # from WM_IME_CHAR itself, inside a composition bracket or outside one,
-    # with no composition context to read. So the arms below post the real
-    # sequence -- WM_IME_STARTCOMPOSITION, the composed characters, then
-    # WM_IME_ENDCOMPOSITION -- and assert the two things this side of the
-    # boundary owns: the text reaches the control, and the pane's mirrored
-    # buffer is correct AFTER the composition ends rather than merely non-empty
-    # during it.
-    #
-    # What this canNOT prove, and where that check lives instead, is written
-    # down in docs/design/windows-parity-ime-manual.md: the candidate window,
-    # the underlined intermediate string (GCS_COMPSTR), and reconversion all
-    # need a real IME behind the control, because RichEdit reads them from the
-    # input context rather than from the message.
+    # Before T1706 this arm posted WM_IME_STARTCOMPOSITION / WM_IME_CHAR /
+    # WM_IME_ENDCOMPOSITION at the RichEdit fallback; those messages mean
+    # nothing to a Chromium window, and the page-side route replaces them. What
+    # still needs a real IME -- the candidate window, reconversion -- is the
+    # manual check in docs/design/windows-parity-ime-manual.md.
     Assert (Invoke-FeedbackButton $view) 're-opening the composer for the IME arms'
     [void](Wait-FeedbackState $errlog $paneId $true)
-    [void](Send-TestKeys -Window $view.Top -Target $rich -Key A -Modifiers Ctrl)
-    [void](Send-TestControlKey -Control $rich -Key Delete)
-    Start-Sleep -Milliseconds 250
+    $cdp = Connect-Composer
+    Assert ($null -ne $cdp) 'the composer has a page for the IME arms'
+    if (-not $cdp) { throw 'no composer page for the IME arms' }
+    Assert ((Clear-Composer $cdp) -eq '') 'the composer is empty before the composition'
 
     # ASCII source for a non-ASCII string: this file stays ASCII-only, because
     # PowerShell 5.1 reads a UTF-8 script as ANSI and would mojibake a literal.
     $imeChars = @(0x65E5, 0x672C, 0x8A9E)   # JA "nihongo"
     $imeText = -join ($imeChars | ForEach-Object { [char]$_ })
-
-    $WM_IME_STARTCOMPOSITION = 0x010D
-    $WM_IME_ENDCOMPOSITION = 0x010E
-    $WM_IME_CHAR = 0x0286
-
-    Assert (Send-TestRawMessage -Window $rich -Message $WM_IME_STARTCOMPOSITION) `
-        'the control accepted the start of an IME composition'
-    foreach ($c in $imeChars) {
-        [void](Send-TestRawMessage -Window $rich -Message $WM_IME_CHAR -WParam ([IntPtr][int]$c) -LParam ([IntPtr]1))
-    }
-    [void](Send-TestRawMessage -Window $rich -Message $WM_IME_ENDCOMPOSITION)
-    Start-Sleep -Milliseconds 500
-    $imeGot = Get-TestControlText $rich
-    Assert ($imeGot -eq $imeText) `
-        "a composed string lands in the composer (got $($imeGot.Length) char(s), want $($imeText.Length))"
-
-    # Typing continues normally afterwards, in the same field -- the failure
-    # this catches is a composition that ends leaving the control in a state
-    # where ordinary WM_CHAR stops inserting.
-    #
-    # End first, and that is a HARNESS artifact rather than a behaviour: a real
-    # WM_IME_ENDCOMPOSITION carries a result string RichEdit reads out of the
-    # input context and replaces the composition span with, leaving the caret
-    # after it. Ours finds an empty context, so the control collapses the
-    # selection back to where the composition STARTED and the next character
-    # would land in front of the composed text. Nothing on this side of the
-    # boundary can change that, and the caret's real resting place is one of
-    # the things docs/design/windows-parity-ime-manual.md checks by hand.
-    [void](Send-TestControlKey -Control $rich -Key End)
-    [void](Send-TestControlText -Control $rich -Text 'ok')
-    Start-Sleep -Milliseconds 300
-    $imeMixed = Get-TestControlText $rich
-    # Codepoints, not the string: this file is ASCII and a failure message that
-    # printed the text itself would arrive as mojibake in the transcript.
+    # Codepoints, not the string, in failure messages: a message that printed
+    # the text itself would arrive as mojibake in the transcript.
     function Show-Codepoints([string]$s) { return (([char[]]$s | ForEach-Object { '{0:X4}' -f [int]$_ }) -join ' ') }
-    Assert ($imeMixed -eq ($imeText + 'ok')) `
-        "ordinary typing continues after the composition ends (got '$(Show-Codepoints $imeMixed)', want '$(Show-Codepoints ($imeText + 'ok'))')"
 
-    # And the mirror. EN_CHANGE fires DURING an open composition, so the pane's
-    # buffer sees partial text on the way through; what has to be true is that
-    # it is right at the end. The oracle is the byte length the pane reports at
-    # send time, and it is deliberately compared against the UTF-8 encoding of
-    # what the control holds -- three CJK characters are nine bytes, so an
-    # arm that counted UTF-16 units would pass on ASCII and lie here.
-    $imeWantBytes = [System.Text.Encoding]::UTF8.GetByteCount(
-        ($imeMixed -replace "`r`n", "`n" -replace "`r", "`n"))
+    # The composition in flight: the intermediate reading, then the converted
+    # string, each replacing the last - the way an IME updates it.
+    $composeOk = $true
+    try {
+        Set-CdpComposerFocus -Conn $cdp
+        [void](Invoke-Cdp $cdp 'Input.imeSetComposition' @{ text = 'nihon'; selectionStart = 5; selectionEnd = 5 })
+        [void](Invoke-Cdp $cdp 'Input.imeSetComposition' @{ text = $imeText; selectionStart = 3; selectionEnd = 3 })
+        # The commit.
+        [void](Invoke-Cdp $cdp 'Input.insertText' @{ text = $imeText })
+    } catch {
+        $composeOk = $false
+        Write-Host "      $($_.Exception.Message)"
+    }
+    Assert $composeOk 'the page accepted a composition and its commit'
+    $imeGot = Wait-CdpComposerText $cdp $imeText
+    Assert ($imeGot -ceq $imeText) `
+        "a composed string lands in the composer (got '$(Show-Codepoints $imeGot)', want '$(Show-Codepoints $imeText)')"
+
+    # Typing continues normally afterwards, AT THE CARET the commit left - the
+    # failure this catches is a composition that ends leaving the caret where
+    # the composition STARTED, so the next letter lands in front of it.
+    # `-KeepCaret` so the driver does not move the caret itself; the RichEdit
+    # arm could not ask this question (its fake composition had no result
+    # string to leave the caret after).
+    Send-CdpComposerText $cdp 'ok' -KeepCaret
+    $imeMixed = Wait-CdpComposerText $cdp ($imeText + 'ok')
+    Assert ($imeMixed -ceq ($imeText + 'ok')) `
+        "typing continues after the commit, at its end (got '$(Show-Codepoints $imeMixed)', want '$(Show-Codepoints ($imeText + 'ok'))')"
+
+    # And the mirror. The page reports DURING a composition too, so the pane's
+    # buffer sees intermediate text on the way through; what has to be true is
+    # that it is right at the end. The oracle is the byte length the pane
+    # reports at send time against the UTF-8 encoding of what the page holds --
+    # three CJK characters are nine bytes, so an arm that counted UTF-16 units
+    # would pass on ASCII and lie here.
+    $imeWantBytes = [System.Text.Encoding]::UTF8.GetByteCount((Get-CdpComposerText $cdp))
+    Close-Cdp $cdp; $cdp = $null
     $bufBeforeIme = Get-LastSendBuffer $errlog $paneId
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key Enter -Modifiers Ctrl)
+    [void](Send-ComposerChord $fb 0x0D $script:ModCtrl)
     $bufAfterIme = $null
     for ($t = 0; $t -lt 20; $t++) {
         $bufAfterIme = Get-LastSendBuffer $errlog $paneId
@@ -1022,7 +1068,7 @@ try {
         Start-Sleep -Milliseconds 250
     }
     Assert ($bufAfterIme -eq $imeWantBytes) `
-        "the pane's buffer mirrors the composed text exactly (buffer=$bufAfterIme bytes, control holds $imeWantBytes)"
+        "the pane's buffer mirrors the composed text exactly (buffer=$bufAfterIme bytes, page holds $imeWantBytes)"
     [void](Wait-FeedbackState $errlog $paneId $false)
 
     # --- H. the chords are pane-scoped ---------------------------------------

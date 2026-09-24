@@ -137,8 +137,12 @@
   // as line breaks. It still emits a <br> in two cases: as the placeholder that
   // gives the caret somewhere to sit on a trailing empty line, and (on some
   // paste paths) as the break itself. Walking handles both, and the ONE rule
-  // that separates them is positional: a <br> that is the last node when the
-  // text already ends in a newline is the placeholder, not content.
+  // that separates them is positional: the box's LAST node, when it is a
+  // <br>, is the placeholder, not content. A trailing <br> at the end of a
+  // block starts no line of its own, so reading it as one puts a newline in
+  // the buffer the user cannot see - the engine leaves exactly that shape
+  // behind a deleted last line ("a\nb<br>") and in a box emptied with
+  // Ctrl+A, Delete (a lone "<br>"), T1714.
   // -----------------------------------------------------------------------
 
   function walk(node, out) {
@@ -146,8 +150,7 @@
       if (n.nodeType === 3) {
         out.s += n.data;
       } else if (n.nodeName === "BR") {
-        var last = !n.nextSibling && node === el;
-        if (last && out.s.charAt(out.s.length - 1) === "\n") continue;
+        if (!n.nextSibling && node === el) continue;
         out.s += "\n";
       } else if (isChip(n)) {
         // An image chip is INLINE and atomic: its text is the chip, it starts
@@ -304,8 +307,19 @@
     if (!(lh > 0)) return 1;
     // scrollHeight is the CONTENT height, so it keeps answering past the point
     // where the box itself stops growing - which is exactly what the caller
-    // needs, because native clamps to the layout's own cap.
-    var n = Math.round(el.scrollHeight / lh);
+    // needs, because native clamps to the layout's own cap. But it is never
+    // LESS than the box's own height, and the box fills a viewport the host
+    // sized from the previous count: measured in place, a pill that grew could
+    // never shrink again (T1714). So the box is measured at its content height
+    // - `height: auto` for the length of this read, then back, all inside one
+    // task so nothing paints in between - and its scroll position is put back,
+    // since the release scrolls it to the top.
+    var top = el.scrollTop;
+    el.style.height = "auto";
+    var h = el.scrollHeight;
+    el.style.height = "";
+    el.scrollTop = top;
+    var n = Math.round(h / lh);
     return n > 0 ? n : 1;
   }
 

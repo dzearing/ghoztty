@@ -346,7 +346,7 @@ function Send-CdpKey {
 # counts the trailing placeholder <br> the engine leaves after an Enter as a
 # second line break, and reads 'a\n\n' for a document the host holds as 'a\n'.
 # Rules, in composer.js's order: text nodes are their data; a <br> is a break
-# unless it is the box's last node after a break already (the placeholder); an
+# unless it is the box's last node (the caret placeholder, T1714); an
 # image chip ([data-img]) is its own label and no break; any other element is a
 # block that starts on a fresh line.
 $script:CdpComposerRead = @'
@@ -354,7 +354,7 @@ $script:CdpComposerRead = @'
 function num(n,a){if(!n.getAttribute)return 0;var v=parseInt(n.getAttribute(a)||'',10);return v>0?v:0;}
 function walk(node){for(var n=node.firstChild;n;n=n.nextSibling){
 if(n.nodeType===3){s+=n.data;}
-else if(n.nodeName==='BR'){if(!n.nextSibling&&node===el&&s.charAt(s.length-1)==='\n')continue;s+='\n';}
+else if(n.nodeName==='BR'){if(!n.nextSibling&&node===el)continue;s+='\n';}
 else if(n.nodeType===1&&num(n,'data-img')>0){s+=n.textContent;}
 else if(n.nodeType===1){if(s.length&&s.charAt(s.length-1)!=='\n')s+='\n';walk(n);}}}
 walk(el);return s;})()
