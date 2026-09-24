@@ -32,11 +32,17 @@
 #     client coordinates -- the geometry is there so this script can point a
 #     click at a tile rather than re-deriving its position from design-system
 #     constants and getting it subtly wrong at 1.25 scaling;
-#   - the RichEdit's own text (WM_GETTEXT), which is what the user sees.
+#   - the web composer's own document, read over the DevTools protocol
+#     (lib\WebViewCdp.ps1), which is what the user sees.
 #
-# Ctrl+V is sent with Send-TestViewerChord rather than Send-TestKeys: the
-# composer's interception asks the app's own GetKeyState for the modifier, and
-# only the attaching variant arranges that.
+# T1708: this drives the WEB composer users actually get, not the hidden
+# RichEdit fallback. Pictures go in through the page's own paste listener
+# (Send-CdpComposerImage -- the OS clipboard is no route in off-desktop), and
+# the keys that belong to the PAGE (Backspace beside a chip) are dispatched to
+# it. The Tab OUT of the page reaches the band as the chord the controller's
+# accelerator handler posts (WM_APP_COMPOSER_CHORD); the strip's own keys
+# (Home/End/Left/Enter) are the band's window messages, as before, because
+# while the strip holds focus the band is the focused window.
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
 #
@@ -58,11 +64,11 @@ if ($ExePath) { $exe = $ExePath }
 
 $env:GHOZTTY_PIPE_SUFFIX = "-fbcar$PID"
 
-# The chip oracle below is the RichEdit's own text, so this suite pins itself to
-# the RichEdit surface (T1102). See lib\ComposerSurface.ps1 for why asking is not
-# enough and the run also PROVES which surface it got.
+# The run PROVES it got the web surface (lib\ComposerSurface.ps1), and reads the
+# chips out of that page over one DevTools port armed before the launch.
 . (Join-Path $PSScriptRoot 'lib\ComposerSurface.ps1')
-Set-ComposerSurface 'richedit'
+. (Join-Path $PSScriptRoot 'lib\FreePort.ps1')
+. (Join-Path $PSScriptRoot 'lib\WebViewCdp.ps1')
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 
@@ -336,17 +342,28 @@ function New-TestBitmap([int]$W, [int]$H, [int]$Seed) {
     return $bmp
 }
 
-function Set-ClipboardPng([int]$W, [int]$H, [int]$Seed) {
+function Get-PngBytes([int]$W, [int]$H, [int]$Seed) {
     $bmp = New-TestBitmap $W $H $Seed
     $ms = New-Object System.IO.MemoryStream
     $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
     $bmp.Dispose()
-    $bytes = $ms.ToArray()
-    $do = New-Object System.Windows.Forms.DataObject
-    $do.SetData('PNG', $false, (New-Object System.IO.MemoryStream(, $bytes)))
-    [System.Windows.Forms.Clipboard]::SetDataObject($do, $true)
-    Start-Sleep -Milliseconds 250
-    return , $bytes
+    return , $ms.ToArray()
+}
+
+# Paste a picture at the end of the document, through the page's own paste
+# listener -- the path a real paste takes once the engine hands the page its
+# event.
+function Send-Picture($cdp, [int]$W, [int]$H, [int]$Seed) {
+    Send-CdpComposerImage -Conn $cdp -Bytes (Get-PngBytes $W $H $Seed)
+}
+
+# A chord NATIVE owns, delivered the way the web surface delivers it: the
+# controller's accelerator handler posts WM_APP_COMPOSER_CHORD (WM_APP+2) to
+# the band, virtual key in wParam and input.Mods bits in lParam.
+$script:ChordMsg = 0x8002
+function Send-ComposerChord($band, [int]$Vk, [int]$Mods = 0) {
+    return (Send-TestRawMessage -Window $band -Message $script:ChordMsg `
+            -WParam ([IntPtr]$Vk) -LParam ([IntPtr]$Mods))
 }
 
 # --- a THROWAWAY working tree, not this repo ---------------------------------
@@ -367,6 +384,8 @@ if (-not $workRoot) { Write-Host "SETUP FAIL: could not make a throwaway repo at
 $viewFile = Join-Path $work 'README.md'
 
 Stop-RepoInstances
+$script:cdpPort = Enable-WebViewCdp
+$cdp = $null
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
 
@@ -399,8 +418,8 @@ try {
 
     Assert (Invoke-FeedbackButton $view) 'the revealed nav bar took a click at the feedback button'
     Assert (Wait-FeedbackOpen $errlog $paneId) 'the pane reports the composer OPEN'
-    Assert (Wait-ComposerSurface $errlog 'richedit') `
-        "...on the RichEdit surface this script can drive (got '$(Get-ComposerSurface $errlog)')"
+    Assert (Wait-ComposerSurface $errlog 'web') `
+        "...on the web surface users get (got '$(Get-ComposerSurface $errlog)')"
 
     $fb = $null
     for ($t = 0; $t -lt 20; $t++) {
@@ -411,12 +430,9 @@ try {
     Assert ($null -ne $fb) 'a GhozttyViewerFeedback child window exists'
     if (-not $fb) { throw 'no composer window' }
 
-    $rich = $null
-    foreach ($c in @(Get-TestChildWindows -Window $fb -Class $null)) {
-        if ([string]$c.Class -eq 'RichEdit50W') { $rich = [IntPtr]$c.Hwnd; break }
-    }
-    Assert ($null -ne $rich) 'the composer hosts its RichEdit50W text control'
-    if (-not $rich) { throw 'no text control in the composer' }
+    try { $cdp = Find-CdpComposer -Port $script:cdpPort } catch { Write-Host "  $($_.Exception.Message)" }
+    Assert ($null -ne $cdp) "the composer's page answers on the DevTools port"
+    if (-not $cdp) { throw 'no composer page to drive' }
 
     # --- A. an empty composer has no strip -----------------------------------
     # The strip reports itself on every change, so "no report at all" is the
@@ -428,14 +444,12 @@ try {
     Assert ($emptyBarH -gt 0) "the composer band has a height to compare against ($emptyBarH)"
 
     # --- B. two pastes, two thumbnails ---------------------------------------
-    [void](Set-ClipboardPng 40 30 17)
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key V -Modifiers Ctrl)
+    Send-Picture $cdp 40 30 17
     Assert ($null -ne (Wait-Image $errlog $paneId 1)) 'the first paste attached image #1'
     $c1 = Wait-Carousel $errlog $paneId 1
     Assert ($c1 -and $c1.Tiles -eq 1) "the strip appears with one tile (got '$($c1.Tiles)')"
 
-    [void](Set-ClipboardPng 20 12 91)
-    [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key V -Modifiers Ctrl)
+    Send-Picture $cdp 20 12 91
     Assert ($null -ne (Wait-Image $errlog $paneId 2)) 'the second paste attached image #2'
     $geo = Wait-Carousel $errlog $paneId 2
     Assert ($geo -and $geo.Tiles -eq 2) "BOTH thumbnails are in the strip (got '$($geo.Tiles)')"
@@ -454,7 +468,7 @@ try {
     # the two pastes are the entire text -- each chip and the one trailing space
     # that keeps it from fusing to what follows.
     $wantB = '[Image #1] [Image #2] '
-    $text = (Get-TestControlText $rich)
+    $text = (Wait-CdpComposerText $cdp $wantB)
     Assert ($text -ceq $wantB) `
         ("the composer holds exactly the two chips " +
          "(got '$(Show-Text $text)', want '$(Show-Text $wantB)')")
@@ -486,15 +500,14 @@ try {
 
     # The range is a real selection in the control, not just a number in a log:
     # one Backspace over it removes the WHOLE chip.
-    [void](Send-TestControlKey -Control $rich -Key Backspace)
-    Start-Sleep -Milliseconds 500
+    Send-CdpKey $cdp Backspace
     # Compared WHOLE, not by "no `[Image #1]` left" (T672): that needle is
     # satisfied by `[Image #1` with only the closing bracket eaten, which is
     # precisely what a chip lookup that misses produces and precisely the
     # corruption this arm is named after. The click selects the chip and nothing
     # around it, so the space that followed #1 stays behind.
     $wantC = ' [Image #2] '
-    $afterDelete = (Get-TestControlText $rich)
+    $afterDelete = (Wait-CdpComposerText $cdp $wantC)
     Assert ($afterDelete -ceq $wantC) `
         ("one Backspace after the click removed the whole chip and left the " +
          "other alone (got '$(Show-Text $afterDelete)', want '$(Show-Text $wantC)')")
@@ -509,8 +522,7 @@ try {
         'the survivor is image #2 -- numbers are stable, never renumbered to #1'
 
     # --- E. emptying the composer empties the strip --------------------------
-    [void](Send-TestControlKey -Control $rich -Key Backspace)
-    Start-Sleep -Milliseconds 500
+    Send-CdpKey $cdp Backspace
     $c0 = Wait-Carousel $errlog $paneId 0
     Assert ($c0 -and $c0.Tiles -eq 0) `
         "deleting the last chip removes the strip entirely (got '$($c0.Tiles)')"
@@ -532,8 +544,7 @@ try {
     $pasted = 0
     while ($pasted -lt 16) {
         $pasted++
-        [void](Set-ClipboardPng 40 30 (100 + $pasted))
-        [void](Send-TestViewerChord -Window $view.Top -Target $rich -Key V -Modifiers Ctrl)
+        Send-Picture $cdp 40 30 (100 + $pasted)
         $c = Wait-Carousel $errlog $paneId $pasted
         if (-not $c -or $c.Tiles -ne $pasted) { break }
         if ($c.Max -gt 0 -and $pasted -ge 3) { break }
@@ -583,8 +594,9 @@ try {
     # --- G. the keyboard reaches a picture that is off the edge --------------
     # The gap T668 was filed for: every tile was mouse-only. Tab now stops on
     # the strip and the arrows walk it, which is the Windows model for a strip
-    # of like items.
-    [void](Send-TestControlKey -Control $rich -Key Tab)
+    # of like items. The Tab is pressed in the PAGE, where focus is, and
+    # reaches the band as the chord the accelerator handler posts.
+    [void](Send-ComposerChord $fb 0x09)
     $focusStop = Wait-Focus $errlog $paneId 'carousel'
     Assert ($focusStop -eq 'carousel') `
         "Tab from the text now stops on the strip of pictures (focus '$focusStop')"
@@ -620,7 +632,7 @@ try {
         "Enter on the focused tile selects that picture's chip (selected '$($c.Selected)')"
     Assert ($c.Focus -lt 0) `
         "...and hands the keyboard back to the text rather than leaving a ring behind (focus '$($c.Focus)')"
-    $afterEnter = (Get-TestControlText $rich)
+    $afterEnter = (Get-CdpComposerText $cdp)
     Assert ($afterEnter -match '\[Image #') "the report still holds its pictures after the walk"
 
     # --- H. a strip that FITS has no cue at either end -----------------------
@@ -638,6 +650,8 @@ try {
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'
     Assert (-not (Test-TestDesktopLeak -ProcessId $appPid)) 'GUI never became visible on the interactive desktop'
 } finally {
+    Close-Cdp $cdp
+    Disable-WebViewCdp
     Remove-TestDesktop
     Stop-RepoInstances
     Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue

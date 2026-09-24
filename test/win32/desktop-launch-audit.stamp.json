@@ -1,10 +1,10 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-09-23T19:14:49-07:00",
-    "commit":  "7a8b4cd22",
+    "generated":  "2026-09-23T19:38:53-07:00",
+    "commit":  "4df84fa8c",
     "uncommitted":  [
-                        "test/win32/go-loop-guard.ps1"
+                        "test/win32/viewer-feedback-carousel.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "ef54b501298cfda9306cfb958c1094db24ee30f355b25865656b3e2bc713bcd7",
@@ -323,7 +323,7 @@
                   "test/win32/viewer-feedback.ps1":  "7227ac8117f1966ec856996c6a347ec535ba2f51d5b47924c970fbecf43d30cb",
                   "test/win32/viewer-feedback-alpha.ps1":  "7e3ed8de4c1caf1382b53ab1fa99ce89b4a3d9239263be65c7bbf80de97f34c1",
                   "test/win32/viewer-feedback-capture.ps1":  "bd538fda121fe8cf7f9f4ddbe1a44efa4ce8b60a921b8ede857c89de1da0e156",
-                  "test/win32/viewer-feedback-carousel.ps1":  "1314ea54a3791488a2a4eb2b3957ed3ba407a3ebdaa0dbc0a823ff9764574155",
+                  "test/win32/viewer-feedback-carousel.ps1":  "548d97334711993fbf274fb6284f7799b79cc1842aa1d51bcbdc2207364bea9c",
                   "test/win32/viewer-feedback-images.ps1":  "94b4f8872030210fa2350ff841f37dc8550eb19ac120638753be2f429b402f2f",
                   "test/win32/viewer-feedback-utf16.ps1":  "0fc675f98d693d20c7f1db7510d3f60d0b284b2faa97ff52ca3954bcc058e88a",
                   "test/win32/viewer-find.ps1":  "1c91b74ae75373354a59c2c35607ba444781de367929bc0fbe758f95d7260c75",
