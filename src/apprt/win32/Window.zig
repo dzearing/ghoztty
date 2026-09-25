@@ -728,6 +728,11 @@ hero_divider_hover: bool = false,
 hero_divider_drag: bool = false,
 /// Wall-clock ms of the last throttled leaf resize during a divider drag.
 hero_drag_resize_ms: i64 = 0,
+/// How far from the band's center the drag was grabbed (T1422). The grab
+/// zone is wider than the band, so a press a few DIP off the line must not
+/// snap the divider under the pointer on the first move — Mac measures its
+/// drag from mouse-down against the ratio captured there for the same reason.
+hero_drag_grab_dx: i32 = 0,
 
 /// Selection snapshot-slide animation (T58 decision 5): while it runs,
 /// every hero-region HWND stays hidden and the region owner-paints the
@@ -4430,12 +4435,18 @@ fn heroInvalidateCarousel(self: *Window) void {
     self.heroInvalidateAnimRegions(false, true);
 }
 
-/// Is the point (client coords) inside the hero/carousel divider band?
-fn heroHitDivider(self: *Window, x: i32, y: i32) bool {
+/// Is the point (client coords) inside the hero/carousel divider's GRAB zone?
+/// That zone is wider than the drawn band (T1422, Mac 83e6359be): it reaches
+/// the split divider's grab half into the hero pane and the carousel, so its
+/// hero-side edge lies over the hero surface — which answers HTTRANSPARENT
+/// there (App.surfaceWndProc's WM_NCHITTEST) so the hit reaches this window.
+/// The cursor, the hover, the drag and the double-click all ask this one
+/// question, so the resize cursor can never promise a target that is not there.
+pub fn heroHitDivider(self: *Window, x: i32, y: i32) bool {
     if (self.tab_count == 0 or !self.tab_hero_active[self.active_tab]) return false;
     if (self.leafCount(self.active_tab) <= 1) return false;
     const split = HeroCarousel.splitRects(self, self.surfaceRect());
-    return split.divider.contains(x, y);
+    return hero_math.dividerGrab(split, split_geometry.grabHalfPx(self.scale)).contains(x, y);
 }
 
 /// Wheel over the carousel column (divider band included) scrolls the
@@ -4556,10 +4567,13 @@ fn heroInvalidateDivider(self: *Window) void {
     _ = w32.InvalidateRect(hwnd, &r, 0);
 }
 
-/// Begin a hero divider drag (mouse captured until WM_LBUTTONUP).
-fn heroStartDividerDrag(self: *Window) void {
+/// Begin a hero divider drag (mouse captured until WM_LBUTTONUP). `x` is the
+/// press, in client coords, anywhere in the grab zone.
+fn heroStartDividerDrag(self: *Window, x: i32) void {
     self.hero_divider_drag = true;
     self.hero_drag_resize_ms = 0;
+    const div = HeroCarousel.splitRects(self, self.surfaceRect()).divider;
+    self.hero_drag_grab_dx = x - @divTrunc(div.left + div.right, 2);
     if (self.hwnd) |h| _ = w32.SetCapture(h);
     self.heroInvalidateDivider();
 }
@@ -4574,9 +4588,10 @@ fn heroUpdateDividerDrag(self: *Window, x: i32) void {
     const rect = self.surfaceRect();
     const w: f32 = @floatFromInt(@max(rect.right - rect.left, 1));
     const band: f32 = @floatFromInt(HeroCarousel.splitRects(self, rect).divider.width());
-    // The cursor rides the band center; the carousel starts at the band's
-    // right edge.
-    const carousel_w: f32 = @as(f32, @floatFromInt(rect.right - x)) - band / 2.0;
+    // The band center rides the cursor, offset by where it was grabbed; the
+    // carousel starts at the band's right edge.
+    const center = x - self.hero_drag_grab_dx;
+    const carousel_w: f32 = @as(f32, @floatFromInt(rect.right - center)) - band / 2.0;
     self.tab_hero_ratio[tab] = hero_math.clampRatio(carousel_w / w);
 
     const now = std.time.milliTimestamp();
@@ -10665,7 +10680,7 @@ pub fn windowWndProc(
             const x: i32 = @as(i16, @truncate(lparam & 0xFFFF));
             const y: i32 = @as(i16, @truncate((lparam >> 16) & 0xFFFF));
             if (window.heroHitDivider(x, y)) {
-                window.heroStartDividerDrag();
+                window.heroStartDividerDrag(x);
                 return 0;
             }
             if (window.hitTestDivider(x, y)) |hit| {

@@ -33660,3 +33660,16 @@ PASS (15), negative control red; floor ALL LANES PASS; P1-P3 ALL PASS;
 remote-pill (19), harness floor and 21 due guard harnesses ALL PASS and
 stamped. Commit ccef8a1a1. Follow-up T1736: Mac pins an explicit
 `+new-remote-window --name=` as the pill name.
+
+## 2026-09-24 - T1422: the hero divider is grabbed like a split divider
+
+As filed (Mac 83e6359be: a hero divider grabbable only on its line) the defect
+did not reproduce - win32 already took the whole 6 DIP band. The remaining gap
+was width: Mac's handle is 9pt and reaches into both panes like the splitter;
+win32 stopped at the band. `hero_math.dividerGrab` now spans the band center
++/- `split_geometry.grabHalfPx`, `heroHitDivider` (cursor, hover, drag,
+double-click) asks it, the hero surface answers HTTRANSPARENT inside it, and
+the drag keeps its grab offset so an off-line press does not snap the divider.
+hero-mode.ps1 ALL PASS (82), negative control 3 FAILED on exactly the new
+checks; floor ALL LANES PASS; P1-P3 ALL PASS; 31 due guard harnesses ALL PASS
+and stamped. Viewer panes as the hero keep the documented T90a 12(b) gap.

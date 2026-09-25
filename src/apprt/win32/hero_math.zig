@@ -76,6 +76,22 @@ pub fn splitRects(content: Rect, ratio: f32, scale: f32) Split {
     };
 }
 
+/// The divider's GRAB zone (T1422): the band's center ± `grab_half`, which
+/// reaches past the drawn band into the hero pane and the carousel. Mac's
+/// hero divider is a 9pt handle over a 6pt band — "the same ~4pt-into-each-pane
+/// grab zone the regular splitter uses" (main 83e6359be) — so the caller passes
+/// `split_geometry.grabHalfPx`, the split divider's own half-width. Never
+/// narrower than the band and never outside the content it splits.
+pub fn dividerGrab(split: Split, grab_half: i32) Rect {
+    const center = @divTrunc(split.divider.left + split.divider.right, 2);
+    return .{
+        .left = @max(split.hero.left, @min(split.divider.left, center - grab_half)),
+        .top = split.divider.top,
+        .right = @min(split.carousel.right, @max(split.divider.right, center + grab_half + 1)),
+        .bottom = split.divider.bottom,
+    };
+}
+
 /// Tile dimensions inside a carousel column, honoring the hero pane's
 /// aspect ratio (hero_ar = hero width / hero height).
 pub const TileLayout = struct {
@@ -229,6 +245,57 @@ test "the hero divider's visible mark is a split divider's, and fits its band" {
         // in the painter can never produce a negative inset.
         try std.testing.expect(mark <= s.divider.width());
     }
+}
+
+test "the hero divider's grab zone is the split divider's, wider than its band (T1422)" {
+    // Mac 83e6359be: the hero divider showed a resize cursor across a band it
+    // could only be grabbed on the line of. The win32 grab zone is the drawn
+    // band plus the split divider's grab half into EACH neighbour, so the
+    // pointer does not have to find the mark.
+    const split_geometry = @import("split_geometry.zig");
+    const content: Rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 };
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0, 3.0 }) |scale| {
+        const s = splitRects(content, 0.25, scale);
+        const half = split_geometry.grabHalfPx(scale);
+        const g = dividerGrab(s, half);
+        const mark = split_geometry.bandPx(scale);
+        // Wider than both the painted mark and the band it sits in.
+        try std.testing.expect(g.width() > mark);
+        try std.testing.expect(g.width() > s.divider.width());
+        // Reaches into both neighbours, the same distance as a split divider's.
+        try std.testing.expect(g.left < s.hero.right);
+        try std.testing.expect(g.right > s.carousel.left);
+        try std.testing.expectEqual(@as(i32, 2 * half + 1), g.width());
+        // A few DIP off the line still grabs...
+        const center = @divTrunc(s.divider.left + s.divider.right, 2);
+        const off: i32 = @intFromFloat(@round(3.0 * scale));
+        try std.testing.expect(g.contains(center - off, 400));
+        try std.testing.expect(g.contains(center + off, 400));
+        // ...and just beyond the zone belongs to the pane on that side.
+        try std.testing.expect(!g.contains(g.left - 1, 400));
+        try std.testing.expect(!g.contains(g.right, 400));
+        try std.testing.expect(s.hero.contains(g.left - 1, 400));
+        try std.testing.expect(s.carousel.contains(g.right, 400));
+        // Full height, like the band.
+        try std.testing.expectEqual(s.divider.top, g.top);
+        try std.testing.expectEqual(s.divider.bottom, g.bottom);
+    }
+}
+
+test "the hero grab zone never leaves the content or undercuts the band" {
+    const tiny: Rect = .{ .left = 0, .top = 0, .right = 4, .bottom = 4 };
+    const s = splitRects(tiny, 0.6, 2.0);
+    const g = dividerGrab(s, 9);
+    try std.testing.expect(g.left >= tiny.left);
+    try std.testing.expect(g.right <= tiny.right);
+    try std.testing.expect(g.left <= s.divider.left);
+    try std.testing.expect(g.right >= s.divider.right);
+    // A zero half is just the band.
+    const wide: Rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 };
+    const w = splitRects(wide, 0.25, 1.0);
+    const g0 = dividerGrab(w, 0);
+    try std.testing.expectEqual(w.divider.left, g0.left);
+    try std.testing.expectEqual(w.divider.right, g0.right);
 }
 
 test "splitRects degenerate tiny content stays ordered" {

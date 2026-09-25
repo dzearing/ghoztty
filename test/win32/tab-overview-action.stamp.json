@@ -1,13 +1,13 @@
 {
     "guard":  "tab-overview-action",
     "script":  "test/win32/tab-overview-action.ps1",
-    "generated":  "2026-09-23T22:06:55-07:00",
-    "commit":  "32479ce2f",
+    "generated":  "2026-09-24T21:47:48-07:00",
+    "commit":  "fea4cec09",
     "uncommitted":  [
-                        "src/apprt/win32/viewer_accel.zig"
+                        "src/apprt/win32/hero_math.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/hero_math.zig":  "5aa97b9827f5aca6cf1217c0242480dc359b27fbee9e1d5374f9d30a7538d67f",
+                  "src/apprt/win32/hero_math.zig":  "0fe6e40d9970a894ce17974f9da7344b9429c0bb93de623e643b7cc9f3dff1e0",
                   "src/apprt/win32/viewer_accel.zig":  "739fa6e422c0f94fd17e68e02ce70c75da0c8dc3702bf2cc5217227fbaf4b9ce",
                   "test/win32/tab-overview-action.ps1":  "1e9d4753c755d9846699c726a1521ef343531e4c4887e0602488bd8cf5212382"
               }

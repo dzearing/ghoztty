@@ -283,6 +283,22 @@ function Get-ExpectedMarkPx([int]$dpi) {
 function Get-ExpectedGrabPx([int]$dpi) {
     [math]::Max([int][math]::Round(6.0 * $dpi / 96.0, [MidpointRounding]::AwayFromZero), 2)
 }
+# How far the divider's GRAB zone reaches into the hero pane (T1422): the
+# band's center minus `split_geometry.grabHalfPx` (4.5 DIP, floor 4), measured
+# from the hero pane's right edge - the same zone a split divider has.
+function Get-ExpectedGrabIntoHeroPx([int]$dpi) {
+    $half = [math]::Max([int][math]::Round(4.5 * $dpi / 96.0, [MidpointRounding]::AwayFromZero), 4)
+    $half - [math]::Floor((Get-ExpectedGrabPx $dpi) / 2)
+}
+$WM_NCHITTEST = 0x0084
+$HTTRANSPARENT = -1
+$HTCLIENT = 1
+# The pane's own WM_NCHITTEST answer at a SCREEN point (lparam is screen
+# coordinates for this message).
+function Get-PaneHitTest([IntPtr]$pane, [int]$x, [int]$y) {
+    $lp = [IntPtr](($y -shl 16) -bor ($x -band 0xFFFF))
+    return (Invoke-TestMessage -Window $pane -Message ([uint32]$WM_NCHITTEST) -WParam ([IntPtr]0) -LParam $lp)
+}
 
 # A horizontal line of "r,g,b" straight across the hero divider band, read off
 # a PrintWindow capture of the TOP-LEVEL window - which is exactly where
@@ -894,14 +910,38 @@ if ($null -ne $big4) {
         }
     }
 
-    # (e) Divider drag: press in the divider band, drag 150px left, release.
-    # The per-tab ratio grows and every leaf lands on the new hero rect.
+    # (d2) The divider's GRAB zone is wider than its band (T1422, Mac
+    # 83e6359be): it reaches into the hero pane, and the hero pane answers
+    # HTTRANSPARENT there so the press reaches the window that owns the drag.
+    # Just past the zone, and deep inside, the pane keeps its own clicks.
+    if ($null -ne $big5) {
+        $dpiG = Get-TestWindowDpi -Window $top
+        $into = Get-ExpectedGrabIntoHeroPx $dpiG
+        $midYG = [int](($big5.Top + $big5.Bottom) / 2)
+        Assert ($into -ge 1) "grab zone: reaches ${into}px into the hero pane at ${dpiG} dpi"
+        $sIn = To-Screen $top ($big5.Right - $into) $midYG
+        $sOut = To-Screen $top ($big5.Right - $into - 1) $midYG
+        $sDeep = To-Screen $top ([int]($big5.Left + $big5.Width / 2)) $midYG
+        $heroH = [IntPtr]$big5.Hwnd
+        Assert ((Get-PaneHitTest $heroH $sIn[0] $sIn[1]) -eq $HTTRANSPARENT) `
+            'T1422: the hero pane falls through (HTTRANSPARENT) inside the divider grab zone'
+        Assert ((Get-PaneHitTest $heroH $sOut[0] $sOut[1]) -eq $HTCLIENT) `
+            'T1422: one pixel past the grab zone the hero pane keeps its click (HTCLIENT)'
+        Assert ((Get-PaneHitTest $heroH $sDeep[0] $sDeep[1]) -eq $HTCLIENT) `
+            'T1422: the middle of the hero pane keeps its click (HTCLIENT)'
+    }
+
+    # (e) Divider drag: press in the divider GRAB zone - inside the hero pane's
+    # rect, off the drawn band entirely (T1422: before it, only the band was
+    # grabbable) - drag 150px left, release. The per-tab ratio grows and every
+    # leaf lands on the new hero rect, and the divider moves by the pointer's
+    # 150px rather than snapping its center to where it was grabbed.
     # heroUpdateDividerDrag reads the WM_MOUSEMOVE lparam only - no MK_LBUTTON,
     # no cursor - so a posted down / moves / up is the same input a real drag
     # delivers, and the two moves straddle the 80ms leaf-resize throttle.
     if ($null -ne $big5) {
         $midY = [int](($big5.Top + $big5.Bottom) / 2)
-        $divX = $big5.Right + 3
+        $divX = $big5.Right - (Get-ExpectedGrabIntoHeroPx (Get-TestWindowDpi -Window $top))
         $dragX = $divX - 150
         $sDown = To-Screen $top $divX $midY
         $sMove = To-Screen $top $dragX $midY
@@ -919,6 +959,9 @@ if ($null -ne $big4) {
         if ($visD.Count -eq 1) {
             $heroD = $visD[0]
             Assert ($heroD.Width -le ($big5.Width - 100)) "divider drag: hero narrowed (was $($big5.Width), now $($heroD.Width))"
+            $moved = $big5.Width - $heroD.Width
+            Assert ([math]::Abs($moved - 150) -le 2) `
+                "T1422: an off-line grab moves the divider with the pointer, no snap (moved ${moved}px for a 150px drag)"
             $hiddenD = @($dragged | Where-Object { -not $_.Visible })
             $allSized = ($hiddenD.Count -gt 0) -and -not ($hiddenD | Where-Object { -not (Same-Rect $_ $heroD) })
             Assert $allSized 'divider drag: all hidden leaves re-sized to the new hero rect'
