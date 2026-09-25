@@ -628,8 +628,9 @@ pub const IStream = extern struct {
 
 // ------------------------------------------ ICoreWebView2WebResourceRequest
 
-/// The request being intercepted. We read the URI and nothing else — the
-/// template only ever issues GETs for its own origin.
+/// The request being intercepted. We read the URI and, since T1580, the
+/// headers — a media element's `Range` is what makes a video seekable. The
+/// template itself only ever issues GETs for its own origin.
 pub const ICoreWebView2WebResourceRequest = extern struct {
     vtable: *const Vtbl,
 
@@ -643,7 +644,7 @@ pub const ICoreWebView2WebResourceRequest = extern struct {
         put_Method: *const anyopaque,
         get_Content: *const anyopaque,
         put_Content: *const anyopaque,
-        get_Headers: *const anyopaque,
+        get_Headers: *const fn (*ICoreWebView2WebResourceRequest, *?*ICoreWebView2HttpRequestHeaders) callconv(.winapi) HRESULT,
     };
 
     pub fn release(self: *ICoreWebView2WebResourceRequest) void {
@@ -654,6 +655,51 @@ pub const ICoreWebView2WebResourceRequest = extern struct {
     pub fn uriRaw(self: *ICoreWebView2WebResourceRequest) ?[*:0]u16 {
         var raw: ?[*:0]u16 = null;
         if (com.failed(self.vtable.get_Uri(self, &raw))) return null;
+        return raw;
+    }
+
+    /// The request's header collection. Caller owns the reference.
+    pub fn headers(self: *ICoreWebView2WebResourceRequest) ?*ICoreWebView2HttpRequestHeaders {
+        var out: ?*ICoreWebView2HttpRequestHeaders = null;
+        if (com.failed(self.vtable.get_Headers(self, &out))) return null;
+        return out;
+    }
+};
+
+// ------------------------------------------ ICoreWebView2HttpRequestHeaders
+
+/// The headers of an intercepted request (T1580). Read-only use: `Contains`
+/// then `GetHeader`, because `GetHeader` on an absent name is an error HRESULT
+/// and the common case — no `Range` at all — should not look like one.
+///
+/// Nine slots: `IUnknown`, then `GetHeader`, `GetHeaders`, `Contains`,
+/// `SetHeader`, `RemoveHeader`, `GetIterator`.
+pub const ICoreWebView2HttpRequestHeaders = extern struct {
+    vtable: *const Vtbl,
+
+    pub const Vtbl = extern struct {
+        QueryInterface: *const fn (*ICoreWebView2HttpRequestHeaders, *const GUID, *?*anyopaque) callconv(.winapi) HRESULT,
+        AddRef: *const fn (*ICoreWebView2HttpRequestHeaders) callconv(.winapi) u32,
+        Release: *const fn (*ICoreWebView2HttpRequestHeaders) callconv(.winapi) u32,
+        GetHeader: *const fn (*ICoreWebView2HttpRequestHeaders, [*:0]const u16, *?[*:0]u16) callconv(.winapi) HRESULT,
+        GetHeaders: *const anyopaque,
+        Contains: *const fn (*ICoreWebView2HttpRequestHeaders, [*:0]const u16, *i32) callconv(.winapi) HRESULT,
+        SetHeader: *const anyopaque,
+        RemoveHeader: *const anyopaque,
+        GetIterator: *const anyopaque,
+    };
+
+    pub fn release(self: *ICoreWebView2HttpRequestHeaders) void {
+        _ = self.vtable.Release(self);
+    }
+
+    /// The value of `name`, or null when the request does not carry it.
+    /// Caller frees a non-null result with `CoTaskMemFree`.
+    pub fn valueRaw(self: *ICoreWebView2HttpRequestHeaders, name: [*:0]const u16) ?[*:0]u16 {
+        var has: i32 = 0;
+        if (com.failed(self.vtable.Contains(self, name, &has)) or has == 0) return null;
+        var raw: ?[*:0]u16 = null;
+        if (com.failed(self.vtable.GetHeader(self, name, &raw))) return null;
         return raw;
     }
 };
@@ -1616,6 +1662,7 @@ test "vtable slot counts match the SDK's own layout" {
     try testing.expectEqual(6 * ptr, @sizeOf(ICoreWebView2WebMessageReceivedEventArgs.Vtbl));
     try testing.expectEqual(8 * ptr, @sizeOf(ICoreWebView2WebResourceRequestedEventArgs.Vtbl));
     try testing.expectEqual(10 * ptr, @sizeOf(ICoreWebView2WebResourceRequest.Vtbl));
+    try testing.expectEqual(9 * ptr, @sizeOf(ICoreWebView2HttpRequestHeaders.Vtbl));
     try testing.expectEqual(10 * ptr, @sizeOf(ICoreWebView2WebResourceResponse.Vtbl));
     try testing.expectEqual(6 * ptr, @sizeOf(ICoreWebView2NavigationCompletedEventArgs.Vtbl));
     try testing.expectEqual(14 * ptr, @sizeOf(IStream.Vtbl));
@@ -1720,6 +1767,11 @@ test "the slots we actually call sit where the header puts them" {
     try testing.expectEqual(3 * ptr, @offsetOf(ICoreWebView2WebResourceRequestedEventArgs.Vtbl, "get_Request"));
     try testing.expectEqual(5 * ptr, @offsetOf(ICoreWebView2WebResourceRequestedEventArgs.Vtbl, "put_Response"));
     try testing.expectEqual(3 * ptr, @offsetOf(ICoreWebView2WebResourceRequest.Vtbl, "get_Uri"));
+    // T1580: the headers getter is the request's last slot, and the two
+    // header reads are the collection's first and third.
+    try testing.expectEqual(9 * ptr, @offsetOf(ICoreWebView2WebResourceRequest.Vtbl, "get_Headers"));
+    try testing.expectEqual(3 * ptr, @offsetOf(ICoreWebView2HttpRequestHeaders.Vtbl, "GetHeader"));
+    try testing.expectEqual(5 * ptr, @offsetOf(ICoreWebView2HttpRequestHeaders.Vtbl, "Contains"));
     try testing.expectEqual(4 * ptr, @offsetOf(ICoreWebView2Environment.Vtbl, "CreateWebResourceResponse"));
 
     // Navigation-completed: only "did it load" is read, and it is slot 3.
@@ -1797,6 +1849,7 @@ test "every interface puts its vtable pointer first" {
     try testing.expectEqual(@as(usize, 0), @offsetOf(ICoreWebView2WebMessageReceivedEventArgs, "vtable"));
     try testing.expectEqual(@as(usize, 0), @offsetOf(ICoreWebView2WebResourceRequestedEventArgs, "vtable"));
     try testing.expectEqual(@as(usize, 0), @offsetOf(ICoreWebView2WebResourceRequest, "vtable"));
+    try testing.expectEqual(@as(usize, 0), @offsetOf(ICoreWebView2HttpRequestHeaders, "vtable"));
     try testing.expectEqual(@as(usize, 0), @offsetOf(ICoreWebView2WebResourceResponse, "vtable"));
     try testing.expectEqual(@as(usize, 0), @offsetOf(ICoreWebView2NavigationCompletedEventArgs, "vtable"));
     try testing.expectEqual(@as(usize, 0), @offsetOf(ICoreWebView2NavigationStartingEventArgs, "vtable"));

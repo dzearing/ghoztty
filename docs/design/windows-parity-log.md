@@ -33810,3 +33810,18 @@ from another process and both monitors here run at 120 dpi, so a debug-only
 both panes drop from 56 to 37 columns (read with `mode con` inside the shell)
 and return at 120. ALL PASS (19), and the negative control fails 4. Filed T1740
 to watch a real mixed-DPI drag.
+
+## 2026-09-25 - T1580: video and audio in a rendered page can seek
+
+The page host answered every request with the whole file and a `200`, so a
+`<video>` or `<audio>` in a `.html` pane could play but never seek, and a clip
+over the 32 MiB whole-file ceiling would not load at all. It now reads the
+request's `Range` header (new `ICoreWebView2HttpRequestHeaders` binding) and
+answers a `206` carrying only the slice asked for, capped at 8 MiB so the engine
+asks again. A range past the end gets a `416`, and every answer offers
+`Accept-Ranges: bytes`. The rules live in the new pure module `viewer_range.zig`
+(8 unit tests). Section K of `test/win32/viewer-html.ps1` covers them on the box,
+including a real `<audio>` element seeking by asking for
+`range=20971520-21168043`. ALL PASS (66). The filing said Mac had the same gap.
+It does not: Mac loads `.html` panes through `loadFileURL`, and WebKit already
+seeks there, so there is no Mac half.

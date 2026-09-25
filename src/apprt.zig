@@ -323,6 +323,11 @@ test {
     // no-OS-imports deal.
     _ = @import("apprt/win32/viewer_image.zig");
 
+    // Pure win32 viewer byte-range rules — which slice of a page resource a
+    // `Range` header asks for, and the headers that describe it, so a video
+    // in a rendered page can seek (T1580), same no-OS-imports deal.
+    _ = @import("apprt/win32/viewer_range.zig");
+
     // Pure win32 git-diff viewer logic — the `git-status:`/`git-diff:` spec,
     // the git invocations it shapes, the `-z` output parsing and the
     // `window.__viewer` diff calls (T463), same no-OS-imports deal.

@@ -17,6 +17,10 @@
 #     with the wasm arm proved by the engine actually compiling the module -
 #     and a negative control serving the same bytes under an untabled
 #     extension, which must be refused.
+#   - a page's media can seek (T1580): a Range request gets a 206 with exactly
+#     the bytes it named, a range past the end a 416, a multi-range request
+#     the whole file, and an open range on a file above the whole-file ceiling
+#     one capped chunk - and a real <audio> seeks by asking for a late range.
 #   - the read grant is the file's own directory and nothing above it: a page
 #     in `docs/` asking for `../app.css` is refused. That is the documented
 #     cost of narrow-by-default, and it is asserted so it cannot widen by
@@ -275,6 +279,82 @@ Set-Content -LiteralPath (Join-Path $mimeDir 'wasm-bad.txt') -Value 'bad' -Encod
 Set-Content -LiteralPath (Join-Path $mimeDir 'ctrl-ok.txt') -Value 'ok' -Encoding UTF8
 Set-Content -LiteralPath (Join-Path $mimeDir 'ctrl-bad.txt') -Value 'bad' -Encoding UTF8
 
+# --- T1580: a page's media can SEEK ------------------------------------------
+# A <video>/<audio> seeks by asking for a byte range. The oracle is the same as
+# T750's: the page reports each verdict by fetching `ok-<name>.txt` (served, and
+# so logged) or `bad-<name>.txt` / `got-<name>-<status>-<len>.txt` (absent, so
+# the log names them as not found). The ranged fetches drive the page host's
+# Range handling directly, with every status the task changed; the audio arm is
+# the real engine doing the same thing on its own.
+$rangeDir = Join-Path $site 'range'
+New-Item -ItemType Directory -Path $rangeDir | Out-Null
+$rangePath = Join-Path $rangeDir 'page.html'
+Set-Content -LiteralPath $rangePath -Encoding UTF8 -Value @'
+<!doctype html>
+<html><head><meta charset="utf-8"><title>T1580</title></head><body>
+<audio id="a" preload="auto" src="tone.wav"></audio>
+<script>
+async function check(name, url, range, want, first) {
+  try {
+    const opts = range ? { headers: { Range: range } } : {};
+    const r = await fetch(url, opts);
+    const body = new Uint8Array(await r.arrayBuffer());
+    const got = [r.status, r.headers.get("Content-Range") || "",
+                 r.headers.get("Accept-Ranges") || "", body.length].join("|");
+    const ok = got === want && (first === undefined || body[0] === first);
+    if (!ok) await fetch("got-" + name + "-" + r.status + "-" + body.length + ".txt");
+    await fetch((ok ? "ok-" : "bad-") + name + ".txt");
+  } catch (e) {
+    await fetch("bad-" + name + ".txt");
+  }
+}
+(async function () {
+  await check("whole", "small.bin", null, "200||bytes|1000");
+  await check("closed", "small.bin", "bytes=10-19", "206|bytes 10-19/1000|bytes|10", 10);
+  await check("suffix", "small.bin", "bytes=-5", "206|bytes 995-999/1000|bytes|5", 995 % 256);
+  await check("miss", "small.bin", "bytes=5000-", "416|bytes */1000|bytes|0");
+  // NEGATIVE CONTROL: a multi-range request is IGNORED, never half-honoured.
+  await check("multi", "small.bin", "bytes=0-1,5-6", "200||bytes|1000");
+  await check("capped", "big.bin", "bytes=0-", "206|bytes 0-8388607/41943040|bytes|8388608");
+  await check("tail", "big.bin", "bytes=41943030-", "206|bytes 41943030-41943039/41943040|bytes|10");
+  // Larger than the whole-file ceiling: seekable by range, never read whole.
+  await check("toobig", "big.bin", null, "404|||0");
+})();
+const a = document.getElementById("a");
+a.addEventListener("loadedmetadata", function () { a.currentTime = a.duration - 1; });
+a.addEventListener("seeked", function () { fetch("ok-seek.txt"); });
+a.addEventListener("error", function () { fetch("bad-seek.txt"); });
+</script>
+</body></html>
+'@
+# 1000 bytes whose value is their own offset mod 256, so a slice proves WHICH
+# bytes it carries and not just how many.
+$small = New-Object byte[] 1000
+for ($i = 0; $i -lt $small.Length; $i++) { $small[$i] = [byte]($i % 256) }
+[IO.File]::WriteAllBytes((Join-Path $rangeDir 'small.bin'), $small)
+# 40 MiB, above the 32 MiB whole-file ceiling. Zero-filled by SetLength, so it
+# costs no time to make.
+$fs = [IO.File]::Create((Join-Path $rangeDir 'big.bin'))
+$fs.SetLength(41943040)
+$fs.Close()
+# A real WAV the engine can decode: 16-bit stereo 44.1 kHz silence, ~2 minutes
+# (about 21 MB), so seeking near its end needs a byte range well past the first
+# capped chunk.
+$dataLen = 44100 * 4 * 120
+$fs = [IO.File]::Create((Join-Path $rangeDir 'tone.wav'))
+$bw = New-Object IO.BinaryWriter($fs)
+$bw.Write([Text.Encoding]::ASCII.GetBytes('RIFF')); $bw.Write([int](36 + $dataLen))
+$bw.Write([Text.Encoding]::ASCII.GetBytes('WAVEfmt ')); $bw.Write([int]16)
+$bw.Write([int16]1); $bw.Write([int16]2); $bw.Write([int]44100); $bw.Write([int](44100 * 4))
+$bw.Write([int16]4); $bw.Write([int16]16)
+$bw.Write([Text.Encoding]::ASCII.GetBytes('data')); $bw.Write([int]$dataLen)
+$bw.Flush()
+$fs.SetLength(44 + $dataLen)
+$bw.Close()
+foreach ($n in @('whole', 'closed', 'suffix', 'miss', 'multi', 'capped', 'tail', 'toobig', 'seek')) {
+    Set-Content -LiteralPath (Join-Path $rangeDir "ok-$n.txt") -Value 'ok' -Encoding UTF8
+}
+
 Stop-RepoInstances
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
@@ -463,6 +543,56 @@ try {
         "...because it was served the fallback type (got '$(Get-ServedMime 'tiny.wasmx')')"
     Assert (@(Get-Served $errlog $mimePane | Where-Object { $_.Rel -eq 'ctrl-ok.txt' }).Count -eq 0) `
         '...and the control never reported success'
+
+    # --- K. a page's media can seek (T1580) ----------------------------------
+    $r = Invoke-Verb @('+new-window', '--target=t1580', "--view=$rangePath")
+    Assert ($r.Code -eq 0) "+new-window --view=<page with ranged media>.html exits 0 (got $($r.Code))"
+    Assert ($null -ne (Wait-Win 't1580')) 'the range page window exists'
+    $rangeLeaf = Get-OnlyPane 't1580'
+    $rangePane = if ($rangeLeaf) { $rangeLeaf.id } else { $null }
+    Assert ($null -ne $rangePane) 'the range page window has exactly one pane'
+
+    function Get-Verdict([string]$Name) {
+        for ($t = 0; $t -lt 60; $t++) {
+            if (@(Get-Served $errlog $rangePane | Where-Object { $_.Rel -eq "ok-$Name.txt" }).Count -ge 1) { return 'ok' }
+            $txt = (Get-Content $errlog -ErrorAction SilentlyContinue | Out-String)
+            if ($txt -match "outside its grant: bad-$Name\.txt") {
+                $why = if ($txt -match "outside its grant: (got-$Name-\S+)") { $Matches[1] } else { 'no detail' }
+                return "bad ($why)"
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        return 'no verdict'
+    }
+
+    $v = Get-Verdict 'whole'
+    Assert ($v -eq 'ok') "a request with no Range gets the whole file, 200, offering Accept-Ranges ($v)"
+    $v = Get-Verdict 'closed'
+    Assert ($v -eq 'ok') "bytes=10-19 gets a 206 carrying exactly bytes 10..19 ($v)"
+    $v = Get-Verdict 'suffix'
+    Assert ($v -eq 'ok') "bytes=-5 gets the file's last five bytes ($v)"
+    $v = Get-Verdict 'miss'
+    Assert ($v -eq 'ok') "a range past the end is a 416 naming the size ($v)"
+    $v = Get-Verdict 'multi'
+    Assert ($v -eq 'ok') "a multi-range request is ignored and answered whole (negative control) ($v)"
+    $v = Get-Verdict 'capped'
+    Assert ($v -eq 'ok') "an open range on a 40 MiB file is capped at one 8 MiB chunk ($v)"
+    $v = Get-Verdict 'tail'
+    Assert ($v -eq 'ok') "...and its last bytes are reachable, past the whole-file ceiling ($v)"
+    $v = Get-Verdict 'toobig'
+    Assert ($v -eq 'ok') "...while asking for that file WHOLE is still refused ($v)"
+
+    # The real engine: an <audio> told to seek near its end must fetch a range
+    # beyond the first chunk, and then report `seeked`.
+    $v = Get-Verdict 'seek'
+    Assert ($v -eq 'ok') "an <audio> element seeked to its last second ($v)"
+    $late = $false
+    foreach ($line in (Get-Content $errlog -ErrorAction SilentlyContinue)) {
+        if ($line -match "viewer page pane=$([regex]::Escape($rangePane)) served=tone\.wav .* range=(\d+)-\d+/\d+ status=206" -and [long]$Matches[1] -ge 8388608) {
+            $late = $true; break
+        }
+    }
+    Assert $late '...by asking the page host for a byte range past the first chunk'
 
     # --- I. the app survived all of it ---------------------------------------
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'

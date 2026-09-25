@@ -59,6 +59,7 @@ const type_ramp = @import("type_ramp.zig");
 const error_card = @import("viewer_error_card.zig");
 const bridge = @import("viewer_bridge.zig");
 const content = @import("viewer_content.zig");
+const byte_range = @import("viewer_range.zig");
 const viewer_watcher = @import("viewer_watcher.zig");
 const viewer_accel = @import("viewer_accel.zig");
 const window_chord = @import("window_chord.zig");
@@ -4519,7 +4520,7 @@ fn onWebResourceRequested(
     // through to the bundled-assets tier — a page asking for `viewer.css` must
     // get its own or nothing, never ours.
     if (content.pageRequestPath(&path_buf, uri)) |rel| {
-        self.servePageResource(env, a, alloc, rel);
+        self.servePageResource(env, a, alloc, req, rel);
         return com.S_OK;
     }
 
@@ -4626,6 +4627,7 @@ fn servePageResource(
     env: *iface.ICoreWebView2Environment,
     a: *iface.ICoreWebView2WebResourceRequestedEventArgs,
     alloc: Allocator,
+    req: *iface.ICoreWebView2WebResourceRequest,
     rel: []const u8,
 ) void {
     const root = self.html_root orelse {
@@ -4644,8 +4646,60 @@ fn servePageResource(
     };
     defer alloc.free(resolved);
 
-    const bytes = std.fs.cwd().readFileAlloc(alloc, resolved, content.max_file_bytes) catch {
+    // A media element seeks by asking for a byte range (T1580). Only the
+    // slice it asked for is read, so a clip larger than the whole-file
+    // ceiling still plays: each `206` is capped, and the engine asks again.
+    const mime = content.mimeType(content.extension(rel));
+    var range_buf: [256]u8 = undefined;
+    const range = requestRange(req, &range_buf);
+    const file = std.fs.cwd().openFile(resolved, .{}) catch {
         log.warn("viewer page resource is unreadable: {s}", .{resolved});
+        self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
+        return;
+    };
+    defer file.close();
+    const size = (file.stat() catch {
+        log.warn("viewer page resource is unreadable: {s}", .{resolved});
+        self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
+        return;
+    }).size;
+    const answer = byte_range.plan(range, size, byte_range.max_chunk);
+    const extra = byte_range.headers(alloc, answer, size) catch return;
+    defer alloc.free(extra);
+
+    switch (answer) {
+        .unsatisfiable => {
+            log.info(
+                "viewer page pane={s} served={s} range={s} status=416 size={d}",
+                .{ self.paneId(), rel, range orelse "", size },
+            );
+            self.respondWith(env, a, alloc, "", mime, 416, range_not_satisfiable_reason, .no_store, extra);
+            return;
+        },
+        .partial => |span| {
+            const slice = alloc.alloc(u8, @intCast(span.len())) catch return;
+            defer alloc.free(slice);
+            const got = file.preadAll(slice, span.start) catch 0;
+            if (got != slice.len) {
+                // The file shrank under us: the size the plan was built on is
+                // no longer true, and a short body would contradict its own
+                // Content-Range. Refuse rather than answer with a lie.
+                log.warn("viewer page resource changed while reading: {s}", .{resolved});
+                self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
+                return;
+            }
+            log.info(
+                "viewer page pane={s} served={s} bytes={d} mime={s} range={d}-{d}/{d} status=206",
+                .{ self.paneId(), rel, slice.len, mime, span.start, span.end, size },
+            );
+            self.respondWith(env, a, alloc, slice, mime, 206, partial_content_reason, .no_store, extra);
+            return;
+        },
+        .whole => {},
+    }
+
+    const bytes = file.readToEndAlloc(alloc, content.max_file_bytes) catch {
+        log.warn("viewer page resource is unreadable or too large to serve whole: {s}", .{resolved});
         self.respond(env, a, alloc, "", "text/plain", 404, not_found_reason, .no_store);
         return;
     };
@@ -4658,12 +4712,27 @@ fn servePageResource(
     // (T750): a page brings its own fonts, media and wasm, and the failure a
     // missing table row produces is a correct-looking 200 carrying
     // `application/octet-stream`, which the engine then refuses to use.
-    const mime = content.mimeType(content.extension(rel));
     log.info(
         "viewer page pane={s} served={s} bytes={d} mime={s}",
         .{ self.paneId(), rel, bytes.len, mime },
     );
-    self.respond(env, a, alloc, bytes, mime, 200, ok_reason, .no_store);
+    self.respondWith(env, a, alloc, bytes, mime, 200, ok_reason, .no_store, extra);
+}
+
+const partial_content_reason = std.unicode.utf8ToUtf16LeStringLiteral("Partial Content");
+const range_not_satisfiable_reason = std.unicode.utf8ToUtf16LeStringLiteral("Range Not Satisfiable");
+
+/// The request's `Range` header as UTF-8 in `buf`, or null when it carries
+/// none. One that does not fit is treated as absent: the whole file is always
+/// a correct answer, just not a seekable one.
+fn requestRange(req: *iface.ICoreWebView2WebResourceRequest, buf: []u8) ?[]const u8 {
+    const hdrs = req.headers() orelse return null;
+    defer hdrs.release();
+    const raw = hdrs.valueRaw(std.unicode.utf8ToUtf16LeStringLiteral("Range")) orelse return null;
+    defer w32.CoTaskMemFree(@ptrCast(raw));
+    const n = utf16_text.toUtf8AllOrNothing(buf, std.mem.span(raw));
+    if (n == 0) return null;
+    return buf[0..n];
 }
 
 /// The 3-tier resolution (design §6, Mac's `ViewerSchemeHandler.resolve`):
@@ -4717,6 +4786,23 @@ fn respond(
     reason: [*:0]const u16,
     caching: Caching,
 ) void {
+    self.respondWith(env, args, alloc, bytes, mime, status, reason, caching, "");
+}
+
+/// `respond` plus `extra`: further header lines, each led by CRLF (the byte
+/// range headers of T1580).
+fn respondWith(
+    self: *ViewerPane,
+    env: *iface.ICoreWebView2Environment,
+    args: *iface.ICoreWebView2WebResourceRequestedEventArgs,
+    alloc: Allocator,
+    bytes: []const u8,
+    mime: []const u8,
+    status: i32,
+    reason: [*:0]const u16,
+    caching: Caching,
+    extra: []const u8,
+) void {
     _ = self;
     var stream_ptr: ?*anyopaque = null;
     if (com.failed(w32.CreateStreamOnHGlobal(null, 1, &stream_ptr))) return;
@@ -4726,12 +4812,13 @@ fn respond(
     if (!stream.rewind()) return;
 
     // The runtime parses a CRLF-joined header block, not a single header.
-    const headers = std.fmt.allocPrint(alloc, "Content-Type: {s}{s}", .{
+    const headers = std.fmt.allocPrint(alloc, "Content-Type: {s}{s}{s}", .{
         mime,
         switch (caching) {
             .default => "",
             .no_store => "\r\nCache-Control: no-store",
         },
+        extra,
     }) catch return;
     defer alloc.free(headers);
     const headers_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, headers) catch return;
