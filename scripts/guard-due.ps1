@@ -426,6 +426,22 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T1544: the moves above SURVIVE a restart. A relocation is only durable if
+    # its commit re-pushes the manifest (`markLayoutDirty`) and the restore
+    # rebuilds each window from its cross-run uuid, so the row names the
+    # relocation code, the manifest writer/reader, and the App that restores.
+    [pscustomobject]@{
+        Name   = 'rearrange-restore'
+        Script = 'test\win32\rearrange-restore.ps1'
+        Stamp  = 'test\win32\rearrange-restore.stamp.json'
+        Covers = @(
+            'test\win32\rearrange-restore.ps1',
+            'src\apprt\win32\pane_relocate.zig',
+            'src\apprt\win32\session_layout.zig',
+            'src\apprt\win32\App.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # Where a split starts (T760). The answer is assembled in `newSplitAt`
     # from three sources - a viewer parent's file directory, the agent's
     # GET_CWD, and the local process read - and the defect this guards was

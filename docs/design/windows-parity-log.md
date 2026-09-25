@@ -33753,3 +33753,17 @@ destination's showing tab. `pane_drop.hoveredTab` also takes `resolve`'s
 one-window-owns-the-point rule now, so a strip hidden behind another window's
 panes arms nothing (unit test extended). rearrange-window-drop.ps1 claim E -
 ALL PASS (58); -NegativeControl red on A and E.
+
+## 2026-09-25 - T1544: a pane moved into another window comes back there after a restart
+
+No defect: the claim held on the first run, and the task was an acceptance
+gap. New `test/win32/rearrange-restore.ps1` builds window-1 (two panes), dest
+and lone with agent sessions, drags a window-1 pane into dest, drags lone's
+only pane into dest (lone closes), pops that pane out into a window of its own
+at a fixed frame, kills the app with the agent left running, and relaunches.
+The oracle is the pane id, since every HWND is rebuilt: live `+list` grouping,
+the rewritten manifest's uuid and session id per pane, and `Test-PaneLive` on
+the moved panes. Three windows come back, none empty and none answering to
+lone; the popped window returns at its exact frame; every session re-attached.
+ALL PASS (38); `-NegativeControl` (restored where it started) is red. New
+guard row `rearrange-restore`.
