@@ -37,6 +37,7 @@ const Surface = @import("Surface.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const Window = @import("Window.zig");
 const session_disconnect = @import("session_disconnect.zig");
+const hero_snap_schedule = @import("hero_snap_schedule.zig");
 
 
 pub const Kind = enum { terminal, viewer };
@@ -260,14 +261,21 @@ pub fn heroSnapshot(self: *const PaneView) ?HeroSnapshot {
     }
 }
 
-/// Ask this pane for a fresh hero thumbnail sized to `w`x`h` device pixels.
-/// Both kinds are asynchronous and both self-throttle, so the carousel's
-/// heartbeat can call this unconditionally.
-pub fn heroSnapRequest(self: *PaneView, w: u32, h: u32) void {
-    switch (self.kind) {
-        .terminal => |s| s.heroSnapRequest(w, h),
-        .viewer => |v| v.heroSnapRequest(w, h),
-    }
+/// Ask this pane for a fresh hero thumbnail sized to `w`x`h` device pixels,
+/// if `sched` says one is due for its kind (T1423). Both kinds are
+/// asynchronous and both keep their own pacing state, so the carousel's
+/// heartbeat can call this on every tick. True when a capture was asked for.
+pub fn heroSnapRequest(
+    self: *PaneView,
+    w: u32,
+    h: u32,
+    sched: *const hero_snap_schedule.Scheduler,
+    now_ms: i64,
+) bool {
+    return switch (self.kind) {
+        .terminal => |s| s.heroSnapTick(w, h, sched, now_ms),
+        .viewer => |v| v.heroSnapRequest(w, h, sched, now_ms),
+    };
 }
 
 /// GUI thread, on `WM_APP_HERO_SNAP`: fold whatever the pane captured into its

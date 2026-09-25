@@ -496,6 +496,65 @@ for ($t = 0; $t -lt 5 -and -not $sigChanged; $t++) {
     if ($sig1.Sig -ne $sig2.Sig) { $sigChanged = $true }
 }
 Assert $sigChanged 'carousel thumbnails visibly update while a busy TUI runs in a hidden pane'
+
+# --- Phase 1b (T1423): interaction in the HERO pane pauses thumbnail capture --
+# A capture is a synchronous GPU readback on the pane's own renderer thread
+# (and, for a viewer, a full-page paint in the browser process), so one landing
+# on the hero pane mid-gesture is a dropped frame. The pacing holds every
+# capture while the user drives the window and takes a trailing one when it
+# settles. What is scored is the COUNT of captures asked for, from the
+# window's own counters in the debug log, not a picture: `requests=` on the
+# paused line and on the resumed line must match (nothing was asked for during
+# the gesture), the resumed line must report declined heartbeats, and a later
+# pause must show the counter moved again (captures resumed while quiet).
+# The gesture is a wheel posted to the HERO PANE's own window - the event the
+# carousel never sees, which is the Mac bug's exact shape - so a tap that only
+# watched the carousel would leave this red.
+if ($haveLog) {
+    function Get-HeroPacingLines {
+        return @(Select-String -Path $errlog -Pattern 'hero snap (paused \(interaction\)|resumed declined=\d+) requests=\d+' |
+            ForEach-Object { $_.Line })
+    }
+    function Invoke-HeroGesture([int]$count) {
+        $hx = [int]($big1.Left + 40); $hy = [int]($big1.Top + 40)
+        for ($g = 0; $g -lt $count; $g++) {
+            $d = if ($g % 2 -eq 0) { 120 } else { -120 }
+            [void](Send-TestMouse -Window $top -Target ([IntPtr]$big1.Hwnd) -X $hx -Y $hy -Action wheel -Delta $d)
+            Start-Sleep -Milliseconds 90
+        }
+    }
+    $mark = @(Get-HeroPacingLines).Count
+    Invoke-HeroGesture 16
+    Start-Sleep -Milliseconds 900
+    $new = @(Get-HeroPacingLines | Select-Object -Skip $mark)
+    $pausedLine = @($new | Where-Object { $_ -match 'paused' }) | Select-Object -First 1
+    $resumedLine = @($new | Where-Object { $_ -match 'resumed' }) | Select-Object -Last 1
+    Assert ($null -ne $pausedLine) 'pacing: a wheel in the hero pane paused thumbnail capture (log)'
+    Assert ($null -ne $resumedLine) 'pacing: capture resumed once the gesture settled (log)'
+    if ($pausedLine -and $resumedLine) {
+        $reqPaused = [int]([regex]::Match($pausedLine, 'requests=(\d+)').Groups[1].Value)
+        $reqResumed = [int]([regex]::Match($resumedLine, 'requests=(\d+)').Groups[1].Value)
+        $declined = [int]([regex]::Match($resumedLine, 'declined=(\d+)').Groups[1].Value)
+        Assert ($reqResumed -eq $reqPaused) `
+            "pacing: no capture was asked for during the gesture (requests $reqPaused -> $reqResumed)"
+        Assert ($declined -ge 5) `
+            "pacing: the heartbeat kept ticking through the gesture and declined ($declined ticks, floor 5)"
+        # Quiet for well over the terminal cadence, then a second gesture: its
+        # paused line proves captures were asked for in between.
+        Start-Sleep -Milliseconds 1500
+        $mark2 = @(Get-HeroPacingLines).Count
+        Invoke-HeroGesture 4
+        Start-Sleep -Milliseconds 700
+        $paused2 = @(Get-HeroPacingLines | Select-Object -Skip $mark2 | Where-Object { $_ -match 'paused' }) |
+            Select-Object -First 1
+        $reqPaused2 = if ($paused2) { [int]([regex]::Match($paused2, 'requests=(\d+)').Groups[1].Value) } else { -1 }
+        Assert ($reqPaused2 -gt $reqResumed) `
+            "pacing: captures resumed while quiet (requests $reqResumed -> $reqPaused2 before the next gesture)"
+    }
+} else {
+    Write-Host 'SKIP  pacing (T1423): release build, no debug log to count captures from'
+    $script:skipped++
+}
 Assert-ShotHasContent (Save-WindowShot $top (Join-Path $ShotDir 'ghoztty-hero-snap.png')) `
     'the phase-1 carousel shot'
 

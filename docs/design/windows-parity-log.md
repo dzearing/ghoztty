@@ -33673,3 +33673,24 @@ the drag keeps its grab offset so an off-line press does not snap the divider.
 hero-mode.ps1 ALL PASS (82), negative control 3 FAILED on exactly the new
 checks; floor ALL LANES PASS; P1-P3 ALL PASS; 31 due guard harnesses ALL PASS
 and stamped. Viewer panes as the hero keep the documented T90a 12(b) gap.
+
+## 2026-09-24 - T1423: hero thumbnails hold still while you work in the hero pane
+
+Mac bc89bb8f3 paced its carousel captures; win32 had the same shape, worse on
+the terminal side: the 150ms heartbeat asked EVERY leaf, the hero pane
+included, and a terminal capture is a synchronous `glReadPixels` on that
+pane's renderer thread between draw and present. New pure
+`hero_snap_schedule.zig` carries the Mac policy (300ms quiet period, terminal
+150ms / viewer 1s idle cadence, 5s stale-capture expiry, resize skips the
+cadence but not the quiet gate; 9 unit tests, every lane). Interaction is read
+off the App message loop for any window inside the top-level (keys, wheel,
+buttons, drags; drift excluded), plus a last-input-tick probe for WebView2
+input that never reaches our loop. Viewer in-flight guard now expires, with a
+per-capture generation so a late answer cannot clobber a newer one.
+hero-mode.ps1 ALL PASS (87) incl. new phase 1b (requests 34 -> 34 through a
+hero-pane wheel gesture, 19 declined ticks, 34 -> 64 once quiet); negative
+control with the tap disabled FAILS it. Floor ALL LANES PASS; P1-P3 ALL PASS.
+Frame-timing before/after could not be measured here: T1737 builds the probe.
+window-active-audit caught the probe's foreground check spelled as a raw
+`GetForegroundWindow()` compare (always "no" on the background test desktop);
+it now asks `w32.windowIsActive`.

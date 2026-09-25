@@ -59,6 +59,7 @@ const session_disconnect = @import("session_disconnect.zig");
 const provenance = @import("provenance.zig");
 const about_links = @import("about_links.zig");
 const color_math = @import("color_math.zig");
+const hero_snap_schedule = @import("hero_snap_schedule.zig");
 
 const log = std.log.scoped(.win32);
 
@@ -448,6 +449,10 @@ snap_dib_bits: ?[*]u8 = null,
 snap_dib_w: i32 = 0,
 snap_dib_h: i32 = 0,
 snap_dib_seq: u32 = 0,
+/// GUI-thread-only: when the carousel heartbeat last asked this pane for a
+/// thumbnail (T1423), or null for never. What `hero_snap_schedule` paces the
+/// next request against. `captureContent` deliberately does not stamp it.
+snap_tick_ms: ?i64 = null,
 
 /// Reference count for SplitTree ownership. Starts at 0 because the owning
 /// `PaneView` calls ref() to take initial ownership (before T90c the tree
@@ -1492,6 +1497,24 @@ pub fn heroSnapRequest(self: *Surface, w: u32, h: u32) void {
     }
     self.snap_requested.store(true, .release);
     self.core_surface.renderer_thread.wakeup.notify() catch {};
+}
+
+/// GUI thread, the carousel heartbeat (T1423): ask for a thumbnail only when
+/// `sched` says one is due. The capture itself is a synchronous GL readback on
+/// this pane's renderer thread, taken between drawing a frame and presenting
+/// it, so a request that lands while the user is typing into the hero pane
+/// holds back the very frame they are waiting for. True when it asked.
+pub fn heroSnapTick(
+    self: *Surface,
+    w: u32,
+    h: u32,
+    sched: *const hero_snap_schedule.Scheduler,
+    now_ms: i64,
+) bool {
+    if (!sched.shouldCapture(now_ms, .terminal, self.snap_tick_ms, null, false)) return false;
+    self.snap_tick_ms = now_ms;
+    self.heroSnapRequest(w, h);
+    return true;
 }
 
 /// Renderer thread: is a snapshot wanted? One atomic load when idle.

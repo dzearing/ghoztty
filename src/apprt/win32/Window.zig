@@ -133,6 +133,7 @@ const w32 = @import("win32.zig");
 const DarkMode = @import("DarkMode.zig");
 const HeroCarousel = @import("HeroCarousel.zig");
 const hero_math = @import("hero_math.zig");
+const hero_snap_schedule = @import("hero_snap_schedule.zig");
 const dim_math = @import("dim_math.zig");
 const split_geometry = @import("split_geometry.zig");
 const rearrange_header = @import("rearrange_header.zig");
@@ -726,6 +727,21 @@ hero_hover_tile: isize = -1,
 hero_divider_hover: bool = false,
 /// A divider drag is in progress (mouse captured).
 hero_divider_drag: bool = false,
+/// Thumbnail pacing (T1423): when the user last drove this window, fed by the
+/// App message loop (`heroNoteInteraction`) and by the foreign-input probe in
+/// `heroSnapTick`. Captures hold while it is recent.
+hero_snap_sched: hero_snap_schedule.Scheduler = .{},
+/// The foreign-input probe's previous sample: the session's last-input tick
+/// and the pointer position, so the next tick can tell a wheel/key/click that
+/// went to a WebView2 window from plain pointer drift.
+hero_snap_probe_input: u32 = 0,
+hero_snap_probe_pt: w32.POINT = .{ .x = 0, .y = 0 },
+/// Heartbeats that declined to capture because the window was busy, since the
+/// pause began; and captures asked for over the window's life. Both are what
+/// the debug-log oracle in `test\win32\hero-mode.ps1` scores (T1423).
+hero_snap_declined: u32 = 0,
+hero_snap_paused: bool = false,
+hero_snap_requests: u64 = 0,
 /// Wall-clock ms of the last throttled leaf resize during a divider drag.
 hero_drag_resize_ms: i64 = 0,
 /// How far from the band's center the drag was grabbed (T1422). The grab
@@ -4630,10 +4646,14 @@ fn heroEndDividerDrag(self: *Window) void {
     if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
 }
 
-/// 150ms heartbeat while hero mode is active: ask every leaf's renderer
-/// for a fresh thumbnail at the current tile size. Idle panes produce no
-/// new frame until their next wakeup re-presents the last target, so the
-/// steady-state cost of an unchanged pane is one atomic load per frame.
+/// 150ms heartbeat while hero mode is active: offer every leaf a thumbnail
+/// capture at the current tile size, and let `hero_snap_schedule` decide which
+/// ones take it (T1423). While the user is driving the window nothing
+/// captures — a terminal's capture is a synchronous GPU readback on its own
+/// renderer thread, a viewer's is a full-page paint in the browser process,
+/// and either one landing on the hero pane mid-gesture is a dropped frame. The
+/// heartbeat keeps ticking through the gesture and declines, so the first
+/// quiet tick is the trailing refresh.
 fn heroSnapTick(self: *Window) void {
     if (self.tab_count == 0 or !self.tab_hero_active[self.active_tab]) {
         if (self.hwnd) |h| _ = w32.KillTimer(h, HERO_SNAP_TIMER_ID);
@@ -4643,18 +4663,67 @@ fn heroSnapTick(self: *Window) void {
     // every renderer thread each tick for nothing (T53 bar).
     if (self.hwnd) |h| if (w32.IsIconic(h) != 0) return;
     const geo = HeroCarousel.geometry(self) orelse return;
+    const now = std.time.milliTimestamp();
+    self.heroProbeForeignInput(now);
+
+    if (!self.hero_snap_sched.isQuiet(now)) {
+        if (!self.hero_snap_paused) {
+            self.hero_snap_paused = true;
+            self.hero_snap_declined = 0;
+            log.debug("hero snap paused (interaction) requests={}", .{self.hero_snap_requests});
+        }
+        self.hero_snap_declined +|= 1;
+        return;
+    }
+    if (self.hero_snap_paused) {
+        self.hero_snap_paused = false;
+        log.debug("hero snap resumed declined={} requests={}", .{
+            self.hero_snap_declined,
+            self.hero_snap_requests,
+        });
+    }
+
     var it = self.tab_trees[self.active_tab].iterator();
     while (it.next()) |entry| {
-        // Every leaf kind, terminal and viewer alike (T397). Both requests
-        // self-throttle: a terminal's is one atomic store the renderer picks
-        // up on its next frame, and a viewer's is dropped outright unless its
-        // content or tile size actually moved (a WebView2 capture is a
-        // full-size PNG round trip, not a bitmap handoff).
-        entry.view.heroSnapRequest(
+        // Every leaf kind, terminal and viewer alike (T397); each keeps its
+        // own pacing state and asks only when its kind's cadence is due.
+        if (entry.view.heroSnapRequest(
             @intCast(@max(geo.layout.thumb_w, 1)),
             @intCast(@max(geo.layout.thumb_h, 1)),
-        );
+            &self.hero_snap_sched,
+            now,
+        )) self.hero_snap_requests +%= 1;
     }
+}
+
+/// The App message loop saw an interaction-type message (a key, a wheel, a
+/// click, a drag) for a window inside this one (T1423).
+pub fn heroNoteInteraction(self: *Window) void {
+    if (self.tab_count == 0 or !self.tab_hero_active[self.active_tab]) return;
+    self.hero_snap_sched.noteInteraction(std.time.milliTimestamp());
+}
+
+/// Input this process never receives: a wheel or a keystroke over a hero
+/// VIEWER goes to the browser process's windows. See
+/// `hero_snap_schedule.foreignInputIsInteraction` for the rule; this is the
+/// sampling half. The interaction is dated to when it happened, from the
+/// last-input tick, not to when this tick noticed it.
+fn heroProbeForeignInput(self: *Window, now: i64) void {
+    var lii: w32.LASTINPUTINFO = .{};
+    if (w32.GetLastInputInfo(&lii) == 0) return;
+    var pt: w32.POINT = .{ .x = 0, .y = 0 };
+    if (w32.GetCursorPos_(&pt) == 0) return;
+    const input_moved = lii.dwTime != self.hero_snap_probe_input;
+    const pointer_moved = pt.x != self.hero_snap_probe_pt.x or pt.y != self.hero_snap_probe_pt.y;
+    const had_sample = self.hero_snap_probe_input != 0;
+    self.hero_snap_probe_input = lii.dwTime;
+    self.hero_snap_probe_pt = pt;
+    if (!had_sample) return;
+    const fg = w32.windowIsActive(self.hwnd);
+    if (!hero_snap_schedule.foreignInputIsInteraction(input_moved, fg, pointer_moved)) return;
+    // Both ticks are the same 32-bit wrapping clock, so the difference is exact.
+    const ago: i64 = @intCast(w32.GetTickCount() -% lii.dwTime);
+    self.hero_snap_sched.noteInteraction(now - ago);
 }
 
 /// WM_APP_HERO_SNAP: a renderer thread finished a thumbnail capture.

@@ -104,6 +104,7 @@ const class_redraw = @import("class_redraw.zig");
 const resize_paint = @import("resize_paint.zig");
 const window_active = @import("window_active.zig");
 const translate_policy = @import("translate_policy.zig");
+const hero_snap_schedule = @import("hero_snap_schedule.zig");
 const w32 = @import("win32.zig");
 
 const build_config = @import("../../build_config.zig");
@@ -1959,6 +1960,23 @@ pub fn run(self: *App) !void {
             }
             if (ViewerFindBar.owningEdit(msg.hwnd.?)) |bar| {
                 if (msg.message == w32.WM_LBUTTONDOWN) bar.noteClickDown() else bar.noteClickUp();
+            }
+        }
+
+        // Hero thumbnail pacing (T1423): interaction ANYWHERE in a window —
+        // typing in the hero terminal, dragging the divider, wheeling the
+        // carousel — holds that window's thumbnail captures. Read here rather
+        // than in any one WndProc because the event that matters most goes
+        // to the hero pane's own child window, which the carousel never sees
+        // (the Mac bug's exact shape). One switch for every other message.
+        if (msg.hwnd != null and hero_snap_schedule.isInteractionMessage(msg.message, msg.wParam)) {
+            if (w32.GetAncestor(msg.hwnd.?, w32.GA_ROOT)) |root| {
+                for (self.windows.items) |win| {
+                    if (win.hwnd == root) {
+                        win.heroNoteInteraction();
+                        break;
+                    }
+                }
             }
         }
 

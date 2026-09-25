@@ -2370,6 +2370,16 @@ pub extern "kernel32" fn GetCurrentThreadId() callconv(.winapi) u32;
 
 pub extern "user32" fn GetForegroundWindow() callconv(.winapi) ?HWND;
 
+/// The session's last-input tick (a `GetTickCount` value). The only view this
+/// process has of input delivered to ANOTHER process's windows — WebView2's
+/// child windows belong to the browser process (T1423).
+pub const LASTINPUTINFO = extern struct {
+    cbSize: u32 = @sizeOf(LASTINPUTINFO),
+    dwTime: u32 = 0,
+};
+pub extern "user32" fn GetLastInputInfo(plii: *LASTINPUTINFO) callconv(.winapi) i32;
+pub extern "kernel32" fn GetTickCount() callconv(.winapi) u32;
+
 // Desktop objects. Only used to answer "am I on the INPUT desktop?" — a
 // process on a background desktop (CreateDesktopW, as the T211 acceptance
 // harness does) has no foreground window at all, so foreground-based guards

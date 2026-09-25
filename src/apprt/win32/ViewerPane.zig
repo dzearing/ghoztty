@@ -97,6 +97,7 @@ const utf16_text = @import("utf16_text.zig");
 const DimOverlay = @import("DimOverlay.zig").DimOverlay;
 const PaneView = @import("PaneView.zig");
 const Window = @import("Window.zig");
+const hero_snap_schedule = @import("hero_snap_schedule.zig");
 
 const log = std.log.scoped(.viewer_pane);
 
@@ -470,10 +471,21 @@ snap_dib: ?w32.HANDLE = null,
 snap_dib_w: i32 = 0,
 snap_dib_h: i32 = 0,
 
-/// A capture is outstanding: the runtime owes us exactly one completion, and
-/// starting a second would race two decodes onto the same fields. Mac's
-/// `HeroCarouselView` guards its `takeSnapshot` the same way.
-snap_in_flight: bool = false,
+/// When the outstanding capture started, or null when none is: the runtime
+/// owes us a completion, and starting a second would race two decodes onto
+/// the same fields. Mac's `HeroCarouselView` guards its `takeSnapshot` the
+/// same way. A timestamp rather than a flag since T1423, because
+/// `CapturePreview` answers only when the page paints — a wedged page used to
+/// latch the flag and freeze the tile for the life of the pane; now the guard
+/// expires after `hero_snap_schedule.stale_capture_timeout_ms`.
+snap_in_flight_since_ms: ?i64 = null,
+
+/// Generation of the newest capture started (T1423). Each capture's handler
+/// carries the generation it was started under, so the late answer to one
+/// that went stale and was superseded is recognised and dropped: it must not
+/// clear the NEWER capture's guard, nor decode the stream that capture is
+/// still writing into.
+snap_gen: u32 = 0,
 
 /// The stream the in-flight capture is writing into. Owned by the pane, not
 /// by the handler, so a pane that dies mid-capture still releases it.
@@ -4794,40 +4806,57 @@ fn pushRasterizationScale(self: *ViewerPane) void {
 const CapturePreviewHandler = com.CallbackOwning(
     iface.IID_CapturePreviewCompletedHandler,
     onCapturePreviewCompleted,
-    releasePendingToken,
+    releaseSnapCapture,
 );
 
-/// How long a viewer thumbnail is allowed to be stale before the heartbeat
-/// takes another (T397).
-///
-/// The terminal cadence — every 150ms, Mac's number — is wrong here and the
-/// reason is the transport, not taste. A terminal snapshot is a GL readback
-/// into a buffer the renderer thread already owns; a viewer snapshot is a
-/// full-page PNG *encoded* by the browser process and *decoded* by GDI+ on our
-/// GUI thread, so running it at 150ms would spend a chunk of every frame on a
-/// picture of a document that has not moved. Two seconds keeps a thumbnail
-/// that visibly tracks the page for well under 1% of the GUI thread. A size
-/// change or a fresh capture request jumps the queue regardless.
-const snap_min_interval_ms: i64 = 2000;
+/// One capture's context: the pane token every hop shares, plus the
+/// generation the capture was started under (T1423). Owned by the handler and
+/// freed with it, token reference included.
+const SnapCapture = struct {
+    pending: *Pending,
+    gen: u32,
+};
 
-/// Ask the browser for a thumbnail at `w`x`h` device pixels, if one is due.
+fn releaseSnapCapture(cap: *SnapCapture) void {
+    const p = cap.pending;
+    p.alloc.destroy(cap);
+    p.release();
+}
+
+/// Ask the browser for a thumbnail at `w`x`h` device pixels, if `sched` says
+/// one is due (T1423). True when a capture was started.
 ///
-/// Called from the carousel's 150ms heartbeat like a terminal's, and drops
-/// most of those calls on the floor: nothing to capture into without a
-/// controller, nothing to gain while one is already in flight, and nothing to
-/// see when the last one was asked for recently AND at this same size.
-pub fn heroSnapRequest(self: *ViewerPane, w: u32, h: u32) void {
-    if (w == 0 or h == 0) return;
-    if (self.snap_in_flight) return;
+/// Called from the carousel's 150ms heartbeat like a terminal's, and declines
+/// most of those calls: nothing to capture into without a controller, nothing
+/// to gain while one is already in flight, nothing while the user is driving
+/// the window, and nothing when the last one was asked for under a second ago
+/// at this same size. The transport is why a viewer's idle cadence is not the
+/// terminal's: a snapshot is a full-page PNG *painted and encoded* by the
+/// browser process (`CapturePreview` has no size parameter) and *decoded* by
+/// GDI+ on our GUI thread. The paint is what competed with a scroll in the
+/// hero pane, which is why `sched` holds every capture while the window is
+/// busy rather than merely spacing them out.
+pub fn heroSnapRequest(
+    self: *ViewerPane,
+    w: u32,
+    h: u32,
+    sched: *const hero_snap_schedule.Scheduler,
+    now: i64,
+) bool {
+    if (w == 0 or h == 0) return false;
     const want_w: i32 = @intCast(@min(w, @as(u32, std.math.maxInt(i32))));
     const want_h: i32 = @intCast(@min(h, @as(u32, std.math.maxInt(i32))));
 
-    const now = std.time.milliTimestamp();
     const resized = want_w != self.snap_w or want_h != self.snap_h;
-    if (!resized) {
-        const age = now - self.snap_asked_ms;
-        if (age >= 0 and age < snap_min_interval_ms) return;
-    }
+    // `snap_asked_ms == 0` is "never asked": the field predates the pacing
+    // module and zero is its unset value.
+    const last: ?i64 = if (self.snap_asked_ms == 0) null else self.snap_asked_ms;
+    if (!sched.shouldCapture(now, .viewer, last, self.snap_in_flight_since_ms, resized)) return false;
+    if (self.snap_in_flight_since_ms != null) log.warn(
+        "viewer thumbnail capture outstanding for {d}ms; presumed lost, asking again",
+        .{now - self.snap_in_flight_since_ms.?},
+    );
+    self.snap_in_flight_since_ms = null;
     self.snap_w = want_w;
     self.snap_h = want_h;
     // Stamped on the ATTEMPT, not on success. A capture that keeps failing —
@@ -4836,9 +4865,9 @@ pub fn heroSnapRequest(self: *ViewerPane, w: u32, h: u32) void {
     // says "recent") and re-ask on all seven ticks a second, forever.
     self.snap_asked_ms = now;
 
-    const c = self.controller orelse return;
-    const p = self.pending orelse return;
-    const web = c.coreWebView() orelse return;
+    const c = self.controller orelse return false;
+    const p = self.pending orelse return false;
+    const web = c.coreWebView() orelse return false;
     defer web.release();
 
     // The stream outlives this call — the runtime writes into it on its own
@@ -4846,13 +4875,20 @@ pub fn heroSnapRequest(self: *ViewerPane, w: u32, h: u32) void {
     // the completion handler already has to survive.
     self.releaseSnapStream();
     var stream_ptr: ?*anyopaque = null;
-    if (com.failed(w32.CreateStreamOnHGlobal(null, 1, &stream_ptr))) return;
-    const stream: *iface.IStream = @ptrCast(@alignCast(stream_ptr orelse return));
+    if (com.failed(w32.CreateStreamOnHGlobal(null, 1, &stream_ptr))) return false;
+    const stream: *iface.IStream = @ptrCast(@alignCast(stream_ptr orelse return false));
     self.snap_stream = stream;
 
-    const handler = CapturePreviewHandler.create(p.alloc, p) catch {
+    const gen = self.snap_gen +% 1;
+    const cap = p.alloc.create(SnapCapture) catch {
         self.releaseSnapStream();
-        return;
+        return false;
+    };
+    cap.* = .{ .pending = p, .gen = gen };
+    const handler = CapturePreviewHandler.create(p.alloc, cap) catch {
+        p.alloc.destroy(cap);
+        self.releaseSnapStream();
+        return false;
     };
     p.refs += 1;
     // Ours; the runtime takes its own. Releasing here frees it outright when
@@ -4866,14 +4902,22 @@ pub fn heroSnapRequest(self: *ViewerPane, w: u32, h: u32) void {
         // the handler outright (the call failed before any AddRef), and
         // `CallbackOwning`'s zero-hook gives the token reference back as it
         // goes. Releasing here too would decrement it twice.
-        return;
+        return false;
     }
-    self.snap_in_flight = true;
+    self.snap_in_flight_since_ms = now;
+    self.snap_gen = gen;
+    return true;
 }
 
-fn onCapturePreviewCompleted(p: *Pending, result: com.HRESULT) com.HRESULT {
-    const self = p.pane orelse return com.S_OK;
-    self.snap_in_flight = false;
+fn onCapturePreviewCompleted(cap: *SnapCapture, result: com.HRESULT) com.HRESULT {
+    const self = cap.pending.pane orelse return com.S_OK;
+    if (cap.gen != self.snap_gen) {
+        // The late answer to a capture that went stale and was superseded
+        // (T1423). Its stream is gone and the newer capture owns the guard.
+        log.debug("hero snap late completion dropped kind=viewer", .{});
+        return com.S_OK;
+    }
+    self.snap_in_flight_since_ms = null;
     defer self.releaseSnapStream();
 
     if (com.failed(result)) {

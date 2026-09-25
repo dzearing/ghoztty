@@ -64,6 +64,9 @@ test {
     // in every app-runtime lane (T59a).
     _ = @import("apprt/win32/hero_math.zig");
 
+    // Pure win32 hero-mode thumbnail pacing (T1423), same no-OS-imports deal.
+    _ = @import("apprt/win32/hero_snap_schedule.zig");
+
     // Pure win32 unfocused-split dim logic (T74), same no-OS-imports deal.
     _ = @import("apprt/win32/dim_math.zig");
 
