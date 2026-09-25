@@ -84,6 +84,7 @@ const RestoreAllRelay = @import("RestoreAllRelay.zig");
 const remote_connection = @import("../../remote/connection.zig");
 const relay_directory = @import("../../remote/relay_directory.zig");
 const relay_signin = @import("../../remote/relay_signin.zig");
+const relay_revoke_pending = @import("../../remote/relay_revoke_pending.zig");
 const w32 = @import("win32.zig");
 
 const log = std.log.scoped(.win32);
@@ -278,6 +279,13 @@ email: ?[]const u8 = null,
 /// on open: it is a build/environment fact, not something the dialog can
 /// change, and the account row hides its button entirely when it is false.
 sign_in_configured: bool = true,
+
+/// The signed-out row's "still connected to <account> — still removing it."
+/// sentence while a forced sign-out's revocation is still owed (T1426), or
+/// empty. Held in the dialog rather than an arena: it is re-read on every poll
+/// tick, and the record can come and go many times while the dialog is open.
+pending_revoke_buf: [256]u8 = undefined,
+pending_revoke_len: usize = 0,
 
 /// Where the agent's per-machine sharing flag lives (T547), resolved once on
 /// open from the local agent's own path rules; arena-owned. Null hides the
@@ -943,6 +951,7 @@ pub fn open(window: *Window) void {
     _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
 
     self.setHint(hint_text);
+    _ = self.syncPendingRevocation();
     self.refreshAccountRow();
     self.refilter("");
 
@@ -1073,6 +1082,11 @@ fn pollTick(self: *MachineChooser) void {
     // First, and unconditionally — this half is about the LOCAL agent, which is
     // there whether or not anybody is signed in to the relay.
     self.syncLiveStreams();
+    // Also local and account-independent: a revocation still owed can be
+    // finished by the app's retry loop or by the agent (T1427), and neither
+    // tells the dialog. One small file read per tick is how the line under
+    // Sign In goes away the moment the machine is actually off the account.
+    if (self.syncPendingRevocation()) self.refreshAccountRow();
     switch (chooser_refresh.tick(self.token != null, self.fetch_inflight)) {
         .skip_signed_out, .skip_inflight => {},
         .fetch => self.startFetch(true),
@@ -1348,20 +1362,31 @@ fn refreshAccountRow(self: *MachineChooser) void {
     const hide_button = signed_in or state == .unconfigured;
 
     // Empty in the signed-out state since T316 — Mac's signed-out row is the
-    // bordered button alone. Hidden rather than merely blank, so
+    // bordered button alone — unless a forced sign-out's revocation is still
+    // owed, when it is Mac's "still connected … still removing it" (T1426).
+    // Hidden rather than merely blank, so
     // `IsWindowVisible` is the honest answer for the acceptance script the same
     // way it is for the two controls below (a blank STATIC and a STATIC the app
     // failed to fill read identically through WM_GETTEXT).
-    const status = RelayAccountRow.statusText(self.email, busy, self.sign_in_configured);
+    const status = RelayAccountRow.statusText(self.email, busy, self.sign_in_configured, self.pendingNote());
     setText(self.account_status, status);
     _ = w32.ShowWindow(self.account_status, if (status.len == 0) w32.SW_HIDE else w32.SW_SHOW);
     setText(self.account_link, RelayAccountRow.buttonLabel(true, false));
     setText(self.account_btn, RelayAccountRow.buttonLabel(false, busy));
 
     // The email is the ramp's CAPTION role and the state sentence its BODY, so
-    // the STATIC's font follows the state the same way its rect does.
-    const status_font = if (signed_in) self.subtitle_font else self.font;
+    // the STATIC's font follows the state the same way its rect does. The
+    // still-connected note is a caption too (T1426), and the one text here that
+    // WRAPS: single-line centering and the path ellipsis come off while it is
+    // up, so the STATIC word-wraps it, right-aligned, into the two-line block
+    // `accountRow` sized for it.
+    const note = self.showingPendingNote(state);
+    const status_font = if (signed_in or note) self.subtitle_font else self.font;
     if (status_font) |f| _ = w32.SendMessageW(self.account_status, w32.WM_SETFONT, @intFromPtr(f), 1);
+    const single_line: usize = w32.SS_CENTERIMAGE | w32.SS_PATHELLIPSIS;
+    const style: usize = @bitCast(w32.GetWindowLongPtrW(self.account_status, w32.GWL_STYLE));
+    const want = if (note) style & ~single_line else style | single_line;
+    if (want != style) _ = w32.SetWindowLongPtrW(self.account_status, w32.GWL_STYLE, @bitCast(want));
 
     // Hand focus off BEFORE disabling or hiding the control that has it.
     // Disabling the focused control makes Windows drop the thread's keyboard
@@ -1414,6 +1439,38 @@ fn refreshAccountRow(self: *MachineChooser) void {
     }
 
     self.applyAccountRow(layout(self.window.scale, self.hint_lines));
+}
+
+/// The signed-out row's pending-revocation sentence, or "" (T1426).
+fn pendingNote(self: *const MachineChooser) []const u8 {
+    return self.pending_revoke_buf[0..self.pending_revoke_len];
+}
+
+/// Whether the account row's text IS the pending-revocation note right now —
+/// the one state `statusText` hands it back in (signed out, configured, idle).
+fn showingPendingNote(self: *const MachineChooser, state: chooser_layout.AccountState) bool {
+    return state == .signed_out and !RelayAccountRow.isRunning() and self.pendingNote().len > 0;
+}
+
+/// Re-read the pending-revocation record and recompose the row's sentence from
+/// it. Returns whether the sentence changed, so a poll tick that finds nothing
+/// new does not relayout the band. A record `usable` would discard is not a
+/// revocation anybody is still performing, so it says nothing.
+fn syncPendingRevocation(self: *MachineChooser) bool {
+    var next_buf: [256]u8 = undefined;
+    var next: []const u8 = "";
+    if (relay_revoke_pending.load(self.window.app.core_app.alloc)) |loaded_| {
+        var loaded = loaded_;
+        defer loaded.deinit();
+        const rec = loaded.value();
+        if (relay_revoke_pending.usable(rec)) {
+            next = RelayAccountRow.pendingRevocationText(&next_buf, rec.account_email);
+        }
+    }
+    if (std.mem.eql(u8, next, self.pendingNote())) return false;
+    @memcpy(self.pending_revoke_buf[0..next.len], next);
+    self.pending_revoke_len = next.len;
+    return true;
 }
 
 /// What the account row is showing right now. One derivation, so the labels,
@@ -1476,25 +1533,30 @@ fn measureAccount(self: *const MachineChooser, state: chooser_layout.AccountStat
         .signed_in => .{
             .email = self.measureWith(
                 self.subtitle_font,
-                RelayAccountRow.statusText(self.email, false, self.sign_in_configured),
+                RelayAccountRow.statusText(self.email, false, self.sign_in_configured, self.pendingNote()),
             ),
             .link = self.measureWith(self.font, RelayAccountRow.buttonLabel(true, false)),
             .share = share_w,
         },
-        .signed_out, .busy => .{
+        .signed_out, .busy => if (self.showingPendingNote(state)) .{
+            .button = self.measureWith(self.font, RelayAccountRow.buttonLabel(false, false)),
+            // T1426: one caption line's width; `accountRow` caps and wraps it.
+            .note = self.measureWith(self.subtitle_font, self.pendingNote()),
+            .share = share_w,
+        } else .{
             .button = self.measureWith(self.font, RelayAccountRow.buttonLabel(false, state == .busy)),
             // Measured since T602: the sentence's STATIC shares the band with
             // the painted identity, so "whatever is left" would erase it.
             .status = self.measureWith(
                 self.font,
-                RelayAccountRow.statusText(self.email, state == .busy, self.sign_in_configured),
+                RelayAccountRow.statusText(self.email, state == .busy, self.sign_in_configured, self.pendingNote()),
             ),
             .share = share_w,
         },
         .unconfigured => .{
             .status = self.measureWith(
                 self.font,
-                RelayAccountRow.statusText(self.email, false, self.sign_in_configured),
+                RelayAccountRow.statusText(self.email, false, self.sign_in_configured, self.pendingNote()),
             ),
             .share = share_w,
         },
@@ -1537,6 +1599,9 @@ pub fn onAccountResult(self: *MachineChooser, res: *const RelayAccountRow.Result
         if (res.kind == .sign_out) machine_cache.clear(self.window.app.core_app.alloc);
         self.reloadDevices();
     }
+    // A forced sign-out has just armed the record, and a sign-in may just have
+    // cancelled one — either way the row's sentence changes with this result.
+    _ = self.syncPendingRevocation();
     self.refreshAccountRow();
     if (res.message.len > 0) self.setHint(res.message);
 
@@ -3414,7 +3479,12 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
         w32.WM_CTLCOLORSTATIC, w32.WM_CTLCOLORBTN => {
             const hdc: w32.HDC = @ptrFromInt(wparam);
             const p = self.pal();
-            _ = w32.SetTextColor(hdc, rgb(p.label));
+            const ctl: ?w32.HWND = @ptrFromInt(@as(usize, @bitCast(lparam)));
+            // The still-connected note is Mac's `.foregroundStyle(.secondary)`
+            // caption (T1426): a status line, not a label.
+            const note = ctl == @as(?w32.HWND, self.account_status) and
+                self.showingPendingNote(self.accountState());
+            _ = w32.SetTextColor(hdc, rgb(if (note) p.secondary else p.label));
             // The status strip lives inside the master column, so it takes the
             // wash; everything else sits on the dialog surface.
             const on_wash = @as(?w32.HWND, self.hint) == @as(?w32.HWND, @ptrFromInt(@as(usize, @bitCast(lparam))));

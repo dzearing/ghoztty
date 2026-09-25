@@ -1,16 +1,12 @@
 {
     "guard":  "window-active-audit",
     "script":  "test/win32/window-active-audit.ps1",
-    "generated":  "2026-09-25T05:05:01-07:00",
-    "commit":  "aff179d3f",
+    "generated":  "2026-09-25T06:41:06-07:00",
+    "commit":  "352561ab1",
     "uncommitted":  [
-                        "src/apprt/win32/App.zig",
-                        "src/apprt/win32/hero_snap_schedule.zig",
-                        "src/apprt/win32/PaneView.zig",
-                        "src/apprt/win32/Surface.zig",
-                        "src/apprt/win32/ViewerPane.zig",
-                        "src/apprt/win32/win32.zig",
-                        "src/apprt/win32/Window.zig"
+                        "src/apprt/win32/chooser_layout.zig",
+                        "src/apprt/win32/MachineChooser.zig",
+                        "src/apprt/win32/RelayAccountRow.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -47,7 +43,7 @@
                   "src/apprt/win32/brush_cache.zig":  "6ca6b43b601eb13b29ace632ea449ab7e6c1a5e9133847d29c51f21a69483a78",
                   "src/apprt/win32/caption_layout.zig":  "66d3eded5ac783fe68c1dee896ac28188df4c5d79941371ad81773eb38797aa4",
                   "src/apprt/win32/chooser_cpu.zig":  "8aecf1253b878bcb951b7928f7244718e59f9ac10ae626dfb9ffddee6e7d06bd",
-                  "src/apprt/win32/chooser_layout.zig":  "f267fc63ee4b6e4e57b015c455779cb120bfd6e2f372bc45f03ba49f3a4cd21c",
+                  "src/apprt/win32/chooser_layout.zig":  "c8d963e6dc11ef1b7dacc59d17d6df14185402e55d04aa473cb0931be335c64d",
                   "src/apprt/win32/chooser_menu.zig":  "9bf2b649e019b931e31deefc684e09cdec2a49ba7f54d2adecb7edc3fd474cc1",
                   "src/apprt/win32/chooser_refresh.zig":  "d3e12f7c3193379910b5f1e0184652edd17615b78f2a27f30939ca9e5905d2da",
                   "src/apprt/win32/chooser_rows.zig":  "e5fd40c073ed0e2b6d667454bc30dbbbd991c1ac78701cd37056a075ac7e9027",
@@ -122,7 +118,7 @@
                   "src/apprt/win32/mac_layout_blob.zig":  "b11c4e10768421ba5d9e9b667823e8b7096bdbc2e19ffddbb00524ebdf6a2f67",
                   "src/apprt/win32/machine_cache.zig":  "cab3ce827634113b0d3373c65eee72f716ee08604ff72f4ea2dfc1a7dc5af954",
                   "src/apprt/win32/machine_pool.zig":  "dc9ea32cd4bb666bdcc86e392f62cfbbb52abca5520c63fe80c0c4994f0bc377",
-                  "src/apprt/win32/MachineChooser.zig":  "2383ec0728e8a807e1e0fbdc255804ef25451c22ea51ab382c187f64913c66f8",
+                  "src/apprt/win32/MachineChooser.zig":  "7962ff66dd50e44b685e18c747902f817687c9fc1d5f90703d230fe29d36cd07",
                   "src/apprt/win32/MachineConnectionPool.zig":  "8980bac75a5cee294d0c9bb840b4c757e9bcf93b6e229906e73fac9f5be3196b",
                   "src/apprt/win32/maintenance_ca.zig":  "98c11eb22a63fc3a3dc8b2e5f18e68873c144e10ecde1e4135e011ad064dac1a",
                   "src/apprt/win32/managed_file.zig":  "986e641e52cf1d8c2e807cd38dbfd6e62e660868d1063b2d6bee1acdb5ed50ac",
@@ -156,7 +152,7 @@
                   "src/apprt/win32/RegionSelector.zig":  "195e4cfd88e9ee9eed60b00f2b5c150b407b868e49d20a18d9f3f85fa4a3092a",
                   "src/apprt/win32/relaunch_guard.zig":  "5bf991bb0d216829f0a40da9c047d99e173a436f17cf9f34adda956756b1c663",
                   "src/apprt/win32/relay_signout.zig":  "994dc25858584da4db9520c7933cb40ddff6b1b9ed803117bf7a7867689114ed",
-                  "src/apprt/win32/RelayAccountRow.zig":  "cd754167f9aa9e54d94fe5663d1e3f4bda338b128521329d8d59e779c6c2843e",
+                  "src/apprt/win32/RelayAccountRow.zig":  "44a858c3aa0b29f6930601593ed836dc569164d6bafd3be6117f5980628daac0",
                   "src/apprt/win32/release_notes.zig":  "4e5a94cbf63564b30188a51688ff7c0151984aca13bf719ed9be07f811164081",
                   "src/apprt/win32/release_notes_bundle.zig":  "726d7ab4b5a19c6fdd840ae9af57452d287f1dce30c9d3737111425b4c2920ce",
                   "src/apprt/win32/remote_pill.zig":  "6997259de405ee7fecb4e29c179ba56380c4ce423cf48e09bba95f0a249e6286",

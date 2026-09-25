@@ -1,10 +1,10 @@
 {
     "guard":  "cleanslate",
     "script":  "test/win32/cleanslate-audit.ps1",
-    "generated":  "2026-09-25T04:52:16-07:00",
-    "commit":  "aff179d3f",
+    "generated":  "2026-09-25T06:31:26-07:00",
+    "commit":  "352561ab1",
     "uncommitted":  [
-                        "test/win32/hero-mode.ps1"
+                        "test/win32/relay-account.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -287,7 +287,7 @@
                   "test/win32/rearrange-window-drop.ps1":  "2bcb5775a4356286d3f975a87f5e7733a5d6d0c91d15618f065e3cf514cebe1d",
                   "test/win32/registration-sites.ps1":  "98cd7d949f693dee766dc37e1c8457d5bcdc0dee2144581b3c9a30e35de44146",
                   "test/win32/relaunch-guard.ps1":  "89e7e6c52462a0c0af5ff17f5d228f265e4166a41fefc02b5ac0b20068aa15e9",
-                  "test/win32/relay-account.ps1":  "49ea7b9524bb8055f0fa3e54a0abc724e14d74a7eda9ed035a67c08efcf712f7",
+                  "test/win32/relay-account.ps1":  "f6c483dbdaad4d45c833f069c13a7ce96e5dba887dbbe164c70c04be9e6683d1",
                   "test/win32/relay-signin-live.ps1":  "f35a640bd8f1bd3dfb8eec671e051d3c5d061026fd7609c62326d3cff96a02fe",
                   "test/win32/release-artifacts.ps1":  "13f74ae4a6bdd94b67d051c25ef8ffd2ae4bc5315a86b85f16e10d363789c4a5",
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",

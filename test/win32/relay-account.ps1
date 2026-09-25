@@ -1059,6 +1059,22 @@ try {
                             if (Test-Path $PendingRevoke) { $armed = $true; break }
                         }
                         Assert "the forced sign-out ARMED a pending revocation on disk" $armed
+
+                        # T1426: the signed-out row now SAYS the machine is
+                        # still connected, under the Sign In button, the way
+                        # Mac's chooser does (f3b1e5fb5). "still removing it"
+                        # is what tells it apart from the footer's sign-out
+                        # sentence, which also says "still connected".
+                        $noteSeen = $false; $st9 = $null
+                        foreach ($i in 1..20) {
+                            $st9 = Get-ChooserAccountStatusText -Chooser $ch9
+                            if ($st9 -match 'still removing it') { $noteSeen = $true; break }
+                            Start-Sleep -Milliseconds 250
+                        }
+                        if (-not $noteSeen) { "  (account row read: '$st9')" }
+                        Assert "the signed-out row says the machine is still connected (T1426)" $noteSeen
+                        Assert "and names the account it is still connected to (T1426)" (
+                            $st9 -match 'still connected to e2e@example\.com')
                         if ($armed) {
                             $rec = Get-Content $PendingRevoke -Raw
                             Assert "the record carries the device credential the retry needs" (
@@ -1094,6 +1110,18 @@ try {
                         Assert "a confirmed revocation clears the record" $cleared
                         Assert "and the local device credential goes with it" (
                             -not (Test-Path $RelayEnvPath))
+
+                        # T1426: and the line goes with the record, in the same
+                        # open dialog - nothing tells the chooser the retry
+                        # finished, so this is its poll tick (5s) noticing.
+                        $noteGone = $false; $st9e = $null
+                        foreach ($i in 1..40) {
+                            $st9e = Get-ChooserAccountStatusText -Chooser $ch9
+                            if ($st9e -notmatch 'still removing it') { $noteGone = $true; break }
+                            Start-Sleep -Milliseconds 250
+                        }
+                        if (-not $noteGone) { "  (account row still reads: '$st9e')" }
+                        Assert "the still-connected line clears once the revocation lands (T1426)" $noteGone
                     }
                 }
             }
@@ -1171,6 +1199,34 @@ try {
         $ch9c = Open-Chooser $g9c
         Assert "chooser opened (sign-in cancellation)" ($ch9c -ne [IntPtr]::Zero)
         if ($ch9c -ne [IntPtr]::Zero) {
+            # T1426: a chooser OPENED over an armed record says so from its
+            # first frame - the case where the sign-out happened in an earlier
+            # run and this dialog never saw it.
+            $st9c = Get-ChooserAccountStatusText -Chooser $ch9c
+            if ($st9c -notmatch 'still removing it') { "  (account row read: '$st9c')" }
+            Assert "a chooser opened over an owed revocation shows the line (T1426)" (
+                $st9c -match 'still connected to e2e@example\.com .* still removing it')
+            # And it is SET the way Mac sets it: a wrapped caption block capped
+            # at 280 of the chooser's 840, beside the button - at body size on
+            # one line the sentence is ~460 wide and pushed the selected
+            # machine's name out of the band. Taller than the one-line button
+            # means it wrapped; its left edge a fifth of the way in means the
+            # identity (mark + name) still has room.
+            $note9c = Get-ChooserStatic -Chooser $ch9c -Edge top
+            $btn9c = Get-ChooserAccountButton -Chooser $ch9c
+            $cr9c = Get-TestWindowRect -Window $ch9c -Client
+            if ($null -ne $note9c -and $null -ne $btn9c) {
+                "  (note $($note9c.Width)x$($note9c.Height) at $($note9c.Left); button h=$($btn9c.Height); chooser w=$($cr9c.Width))"
+                Assert "the note wraps to a block taller than the one-line button (T1426)" (
+                    $note9c.Height -gt $btn9c.Height)
+                Assert "the note is capped near Mac's 280 of 840 (T1426)" (
+                    $note9c.Width -le [int]($cr9c.Width * 0.34))
+                $winR9c = Get-TestWindowRect -Window $ch9c
+                Assert "the note leaves the machine's name its room (T1426)" (
+                    ($note9c.Left - $winR9c.Left) -ge [int]($cr9c.Width * 0.2))
+            } else {
+                Assert "the note and the account button can both be found (T1426)" $false
+            }
             $b9c = Get-ChooserAccountButton -Chooser $ch9c
             if ($null -ne $b9c) { Send-TestControlClick -Control $b9c.Hwnd | Out-Null }
             Assert "browser redirect delivered (9c)" (Complete-BrowserRedirect $errlog9c)
@@ -1182,6 +1238,16 @@ try {
             }
             Assert "signing in cancelled the pending revocation" $cancelled
             Assert "and did NOT take the machine's credential with it" (Test-Path $RelayEnvPath)
+            # Signed in, the row is the email again - Mac shows the line only
+            # under Sign In, and there is nothing left owed anyway.
+            $st9c2 = $null
+            foreach ($i in 1..20) {
+                $st9c2 = Get-ChooserAccountStatusText -Chooser $ch9c
+                if ($st9c2 -eq 'e2e@example.com') { break }
+                Start-Sleep -Milliseconds 250
+            }
+            Assert "signed back in, the row shows the email, not the line (T1426)" (
+                $st9c2 -eq 'e2e@example.com')
         }
         if ($g9c.App.Process -and -not $g9c.App.Process.HasExited) {
             Stop-Process -Id $g9c.Pid -Force -ErrorAction SilentlyContinue

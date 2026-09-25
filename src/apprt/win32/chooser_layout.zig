@@ -154,6 +154,9 @@ pub const AccountBand = struct {
     stack_gap: i32,
     /// Mac caps the email at 240 and middle-truncates the rest (2.4).
     email_max_w: i32,
+    /// Mac caps the signed-out row's "still connected" note at 280 and wraps
+    /// it (T1426, f3b1e5fb5's `.frame(maxWidth: 280)`).
+    note_max_w: i32,
     /// What a checkbox costs beyond its caption — the box glyph plus its
     /// built-in gap. The same 24 DIP allowance `ConfirmDialog` gives its
     /// accessory checkboxes, so the two checkbox surfaces agree.
@@ -331,6 +334,7 @@ pub fn layout(scale: f32, hint_lines: i32) Layout {
             .link_h = link_h,
             .stack_gap = stack_gap,
             .email_max_w = px(240, scale),
+            .note_max_w = px(280, scale),
             .check_glyph_w = px(24, scale),
         },
         .identity_glyph = identity_glyph,
@@ -421,6 +425,12 @@ pub const AccountText = struct {
     /// band with the painted identity: a control sized "whatever is left"
     /// would erase the identity under its background.
     status: i32 = 0,
+    /// The signed-out row's pending-revocation note (T1426), measured on ONE
+    /// line in the CAPTION role. Non-zero replaces `status`: the note is a
+    /// wrapped caption block of up to two lines capped at `note_max_w`, the
+    /// way Mac sets it under its Sign In button — at body size on one line it
+    /// is wide enough to push the selected machine's name out of the band.
+    note: i32 = 0,
     /// The "Share this machine" checkbox caption, in the BODY role (T547).
     /// 0 means the toggle is absent (no agent state dir to persist into) and
     /// the row packs exactly as it did before the toggle existed.
@@ -552,13 +562,30 @@ pub fn accountRow(l: Layout, state: AccountState, text: AccountText) AccountRow 
             // sized to its measured caption, right-aligned against the button.
             const status_right = @max(band.left, button.left - a.gap);
             const status_room = @max(0, status_right - band.left - reserved);
-            const status_w = @min(@max(text.status, 0), status_room);
-            const status_top = band.top + @divTrunc(band.height() - a.link_h, 2);
-            const status: Rect = .{
-                .left = status_right - status_w,
-                .top = status_top,
-                .right = status_right,
-                .bottom = status_top + a.link_h,
+            const status: Rect = if (text.note > 0) note: {
+                // T1426: a caption block, one line when it fits under the cap
+                // and two when it does not, centered on the band like the
+                // signed-in state's email/link stack.
+                const cap = @min(a.note_max_w, status_room);
+                const note_w = @min(text.note, cap);
+                const lines: i32 = if (text.note > cap) 2 else 1;
+                const note_h = lines * a.email_h + (lines - 1) * a.stack_gap;
+                const note_top = band.top + @divTrunc(band.height() - note_h, 2);
+                break :note .{
+                    .left = status_right - note_w,
+                    .top = note_top,
+                    .right = status_right,
+                    .bottom = note_top + note_h,
+                };
+            } else line: {
+                const status_w = @min(@max(text.status, 0), status_room);
+                const status_top = band.top + @divTrunc(band.height() - a.link_h, 2);
+                break :line .{
+                    .left = status_right - status_w,
+                    .top = status_top,
+                    .right = status_right,
+                    .bottom = status_top + a.link_h,
+                };
             };
             const share = shareAt(band, share_top, l.control_h, share_w, a.gap, status.left);
             const leading = if (share) |s| s.left else status.left;
@@ -1200,6 +1227,38 @@ test "accountRow: signed-out sentence and button share a center line (T311)" {
         // The bordered control is the surface's one control height.
         try testing.expectEqual(l.control_h, btn.height());
         try testing.expectEqual(l.cancel.height(), btn.height());
+    }
+}
+
+test "accountRow: the still-connected note wraps under a cap and leaves the identity room (T1426)" {
+    inline for (.{ @as(f32, 1.0), @as(f32, 1.25), @as(f32, 1.5), @as(f32, 2.0) }) |scale| {
+        const l = layout(scale, 1);
+        const a = l.account;
+        // The note as measured at caption size on one line (~395 DIP for a
+        // typical address) with the real button and share captions.
+        const one_line = px(395, scale);
+        const text: AccountText = .{ .button = px(138, scale), .note = one_line, .share = px(124, scale) };
+        const row = accountRow(l, .signed_out, text);
+        const btn = row.button.?;
+
+        // Capped at Mac's 280 and wrapped to two caption lines...
+        try testing.expectEqual(a.note_max_w, row.text.width());
+        try testing.expectEqual(2 * a.email_h + a.stack_gap, row.text.height());
+        // ...inside the band, beside the button, centered on its line.
+        try testing.expect(row.text.top >= a.band.top and row.text.bottom <= a.band.bottom);
+        try testing.expectEqual(btn.left - a.gap, row.text.right);
+        const text_mid = row.text.top + @divTrunc(row.text.height(), 2);
+        const btn_mid = btn.top + @divTrunc(btn.height(), 2);
+        try testing.expect(@abs(text_mid - btn_mid) <= 1);
+
+        // The point of the wrap: the selected machine's name keeps real room.
+        // One unwrapped body-size line of the same sentence left it ~15 DIP.
+        try testing.expect(row.identity_right - l.identity_title.left >= px(120, scale));
+
+        // A note that fits under the cap stays one line and sizes to itself.
+        const short = accountRow(l, .signed_out, .{ .button = px(138, scale), .note = px(200, scale) });
+        try testing.expectEqual(px(200, scale), short.text.width());
+        try testing.expectEqual(a.email_h, short.text.height());
     }
 }
 

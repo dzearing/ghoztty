@@ -238,11 +238,34 @@ pub const unconfigured_hint =
 /// the empty list reads "Not signed in — use Sign in with Google above to list
 /// your machines." A third copy in the band was the only text in the chooser
 /// with no Mac counterpart at all (T316).
-pub fn statusText(email: ?[]const u8, busy: bool, configured: bool) []const u8 {
+///
+/// The one exception is Mac's too (T1426, f3b1e5fb5): a sign-out the user
+/// forced past a failed revocation leaves this machine on the account until
+/// the queued revocation lands, and the signed-out row says so — `pending` is
+/// that sentence (`pendingRevocationText`), or "" when nothing is owed. Mac
+/// shows it only under a live Sign In button, so an unconfigured build keeps
+/// its setup pointer.
+pub fn statusText(email: ?[]const u8, busy: bool, configured: bool, pending: []const u8) []const u8 {
     if (busy) return "Finish signing in in your browser…";
-    const signed_out = if (configured) "" else unconfigured_status;
+    const signed_out = if (!configured) unconfigured_status else pending;
     const e = email orelse return signed_out;
     return if (e.len == 0) signed_out else e;
+}
+
+/// The signed-out row's sentence while a revocation is still owed (T1426):
+/// Mac's "This machine is still connected to <owner> — still removing it."
+/// `owner` is the account the record was armed for; a record without one (or
+/// an address too long for `buf`) names "your account" instead, which is still
+/// the fact the user needs. The remedy is in the sentence itself — Ghoztty is
+/// already doing the removing — so there is nothing for them to go and do.
+pub fn pendingRevocationText(buf: []u8, owner: []const u8) []const u8 {
+    const generic = "This machine is still connected to your account — still removing it.";
+    if (owner.len == 0) return generic;
+    return std.fmt.bufPrint(
+        buf,
+        "This machine is still connected to {s} — still removing it.",
+        .{owner},
+    ) catch generic;
 }
 
 /// The footer sentence for a finished sign-out (T1421). Pure, so every branch
@@ -316,34 +339,70 @@ test "buttonLabel: signed-in offers sign out, busy overrides both" {
 }
 
 test "statusText: email when signed in, and nothing at all when signed out (T316)" {
-    try testing.expectEqualStrings("me@example.com", statusText("me@example.com", false, true));
+    try testing.expectEqualStrings("me@example.com", statusText("me@example.com", false, true, ""));
     // Signed out is Mac's composition: the bordered button alone. The state is
     // named by the button's caption and by the footer hint, not a third time
     // here.
-    try testing.expectEqualStrings("", statusText(null, false, true));
-    try testing.expectEqualStrings("", statusText("", false, true));
+    try testing.expectEqualStrings("", statusText(null, false, true, ""));
+    try testing.expectEqualStrings("", statusText("", false, true, ""));
     // The browser-flow sentence stays — Mac shows one too (2.4).
-    try testing.expect(statusText("me@example.com", true, true).len > 0);
-    try testing.expect(statusText(null, true, true).len > 0);
+    try testing.expect(statusText("me@example.com", true, true, "").len > 0);
+    try testing.expect(statusText(null, true, true, "").len > 0);
 }
 
 test "statusText: an unconfigured build says so where signed-out says nothing (T747)" {
     // A drawn button IS the invitation, so the ordinary signed-out row needs no
     // words (T316); with no client id there is no button, and a row that said
     // nothing at all would be an empty band with no way out of it.
-    try testing.expectEqualStrings(unconfigured_status, statusText(null, false, false));
-    try testing.expectEqualStrings(unconfigured_status, statusText("", false, false));
+    try testing.expectEqualStrings(unconfigured_status, statusText(null, false, false, ""));
+    try testing.expectEqualStrings(unconfigured_status, statusText("", false, false, ""));
 
     // A stored account still shows its email — Sign Out needs no client id.
-    try testing.expectEqualStrings("me@example.com", statusText("me@example.com", false, false));
+    try testing.expectEqualStrings("me@example.com", statusText("me@example.com", false, false, ""));
     // And a sign-in in flight still describes itself.
-    try testing.expectEqualStrings(statusText(null, true, true), statusText(null, true, false));
+    try testing.expectEqualStrings(statusText(null, true, true, ""), statusText(null, true, false, ""));
 
     // The hint carries the remedy the one-line row has no room for, and names
     // both ways to supply an id plus the doc.
     try testing.expect(std.mem.indexOf(u8, unconfigured_hint, "relay-oidc-setup.md") != null);
     try testing.expect(std.mem.indexOf(u8, unconfigured_hint, "GHOSTTY_GOOGLE_CLIENT_ID") != null);
     try testing.expect(unconfigured_hint.len > unconfigured_status.len);
+}
+
+test "statusText: a revocation still owed is the one signed-out sentence (T1426)" {
+    var buf: [256]u8 = undefined;
+    const pending = pendingRevocationText(&buf, "me@example.com");
+    // Mac's sentence, word for word (f3b1e5fb5): who it is still connected
+    // to, and that the removing is already happening.
+    try testing.expectEqualStrings(
+        "This machine is still connected to me@example.com — still removing it.",
+        pending,
+    );
+    // Signed out with a revocation owed: the row says so.
+    try testing.expectEqualStrings(pending, statusText(null, false, true, pending));
+    try testing.expectEqualStrings(pending, statusText("", false, true, pending));
+    // Nothing owed: back to T316's silent row.
+    try testing.expectEqualStrings("", statusText(null, false, true, ""));
+    // Signed in, the email wins — Mac shows the line only under Sign In.
+    try testing.expectEqualStrings("me@example.com", statusText("me@example.com", false, true, pending));
+    // A sign-in in flight describes itself instead.
+    try testing.expectEqualStrings(statusText(null, true, true, ""), statusText(null, true, true, pending));
+    // An unconfigured build keeps its setup pointer: there is no Sign In
+    // button for the sentence to sit under.
+    try testing.expectEqualStrings(unconfigured_status, statusText(null, false, false, pending));
+}
+
+test "pendingRevocationText: no owner, or one too long, still names the fact (T1426)" {
+    var buf: [256]u8 = undefined;
+    const generic = pendingRevocationText(&buf, "");
+    try testing.expect(std.mem.indexOf(u8, generic, "your account") != null);
+    try testing.expect(std.mem.indexOf(u8, generic, "still removing it") != null);
+    var small: [16]u8 = undefined;
+    try testing.expectEqualStrings(generic, pendingRevocationText(&small, "me@example.com"));
+    // The footer's sign-out sentence and this one must not read alike: the
+    // acceptance script tells them apart by "still removing it".
+    const left = signOutMessage(.{ .was_signed_in = true, .machine = .left_enrolled });
+    try testing.expect(std.mem.indexOf(u8, left, "still removing it") == null);
 }
 
 test "signOutMessage: the four outcomes say four different things (T1421)" {
