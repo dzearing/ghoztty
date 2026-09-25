@@ -33877,3 +33877,16 @@ unchanged. The unroll-count audit also caught `Get-StrandedCommits` returning a
 bare array (a zero gap read as "unknown" in `-Status`); it returns an object
 now. Mac: no Mac publish loop exists to mirror; this is Windows release
 tooling only.
+
+## 2026-09-25 - T1606: the tab-tooltip guard watches what decides the title line
+
+The doubled folder line in the tab tooltip was already gone - ec17471fb (T1622)
+fixed it on 09-16, and `test\win32\tab-tooltip.ps1` is ALL PASS (29). The half
+left was the blind spot: the guard row covered only `tab_tooltip.zig`, so a
+change to what the title IS (the untitled-pane title-from-pwd rule in
+`src\termio\stream_handler.zig`) or whether it counts as ELIDED
+(`src\apprt\win32\tab_strip_layout.zig`) could turn the harness red while the
+row read CURRENT. Both files are now in its Covers list (Window.zig stays out
+as noise); `guard-due.ps1 check` read the row DUE naming both, and the re-run
+stamped 4 files. guard-due, body-complete, argv-hazard and unroll-count
+harnesses ALL PASS. Mac: guard-due is Windows harness tooling; no Mac analog.

@@ -2982,12 +2982,21 @@ $GuardTable = @(
     # harness to that family only - the show/theme plumbing sits in
     # Window.zig, which moves for a hundred non-tooltip reasons and is the
     # P1-P3 floor's problem, so gating this harness on it is noise.
+    #
+    # T1606: the tip's first line is decided by TWO inputs outside that file,
+    # and a change to either one turned this harness red on 2026-09-16 while
+    # the row read CURRENT from a month-old stamp. Both are narrow and slow to
+    # move, unlike Window.zig: stream_handler.zig holds the untitled-pane
+    # "title from pwd" rule (what the title IS), and tab_strip_layout.zig holds
+    # preferredWidth/layout (whether the title counts as ELIDED).
     [pscustomobject]@{
         Name   = 'tab-tooltip'
         Script = 'test\win32\tab-tooltip.ps1'
         Stamp  = 'test\win32\tab-tooltip.stamp.json'
         Covers = @(
             'src\apprt\win32\tab_tooltip.zig',
+            'src\apprt\win32\tab_strip_layout.zig',
+            'src\termio\stream_handler.zig',
             'test\win32\tab-tooltip.ps1'
         )
     },
