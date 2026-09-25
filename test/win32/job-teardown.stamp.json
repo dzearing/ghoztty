@@ -1,10 +1,11 @@
 {
     "guard":  "job-teardown",
     "script":  "test/win32/job-teardown.ps1",
-    "generated":  "2026-09-25T09:53:06-07:00",
-    "commit":  "0b87c172f",
+    "generated":  "2026-09-25T10:18:35-07:00",
+    "commit":  "d82c23109",
     "uncommitted":  [
-                        "test/win32/update-check.ps1"
+                        "test/win32/upgrade-no-fork.ps1",
+                        "test/win32/upgrade-staleness.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -365,9 +366,9 @@
                   "test/win32/update-graceful.ps1":  "8dd249a5f108c2f129a2673c857e68808115c8fd963d67ffaef7ab43a3c70944",
                   "test/win32/update-progress.ps1":  "eb5f961ca43ee0a2e75f3d00cc7c0f7d84cd908ef50c7c0cfa98dfb6dee96f42",
                   "test/win32/update-real-msi.ps1":  "0637cd0a218dbe97f9d49cb4ee6c9361886b07426d595d06918a4f2768d75317",
-                  "test/win32/upgrade-no-fork.ps1":  "76264704b07c6d8267edda9d19349210a5462999cc8321b7c6b4d1f5e09df56c",
+                  "test/win32/upgrade-no-fork.ps1":  "b94a032a02cd6af42056296e37448b9fcdfbcdc87247ef52cdf75e019a78e722",
                   "test/win32/upgrade-resume-readiness.ps1":  "03583ba1a96392547dd5fa2b663b25588141de6e5362db46b7b169d283472f34",
-                  "test/win32/upgrade-staleness.ps1":  "cb577b375e64ebed56aa661208fe105ea418f197ee5c30fac125a07f02f2f6d0",
+                  "test/win32/upgrade-staleness.ps1":  "063d56d56dcad33ff4d22debde34efe5722697d1b291750f5c7f4c0b8f61cc01",
                   "test/win32/upstream-remote.ps1":  "483ebecd3ff0e427c13addaa2c1afe0e2229e27778ad080d365e3868e7f6c2c4",
                   "test/win32/url-scheme.ps1":  "33fe6b3246d5e2ca17e5f68af88fac03d4eb50f8b2210c801fc7c2f0303909a6",
                   "test/win32/verdict-exit-audit.ps1":  "0a356320134c6a1f234067b806e439f64ba62573cd251f39c7adcf43ad51c91b",
