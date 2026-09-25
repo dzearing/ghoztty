@@ -33,6 +33,7 @@ const relay_dial = @import("../../remote/relay_dial.zig");
 const restart_manager = @import("restart_manager.zig");
 const exit_reason = @import("exit_reason.zig");
 const remote_connection = @import("../../remote/connection.zig");
+const relay_signin = @import("../../remote/relay_signin.zig");
 const RemoteReconnect = @import("RemoteReconnect.zig");
 
 /// The two remote transports a window can ride on: a direct TCP dial to the
@@ -77,6 +78,13 @@ pub const RemoteMachine = union(enum) {
         /// SIGNED OUT and went terminal on its first attempt, three seconds
         /// after the far agent died and without one dial reaching the relay.
         token: ?[]const u8 = null,
+        /// The machine's friendly name (T1418): what the account's device
+        /// directory calls it, else the hostname it reports — the name the
+        /// chooser listed it under. Null when nothing has named it yet, and
+        /// `displayName` then falls back to the device id. Refreshed in place
+        /// by `adoptRelayNames` whenever a listing lands, so a rename on the
+        /// relay reaches an open window rather than pinning the old name.
+        name: ?[]const u8 = null,
     },
 
     pub fn deinitFree(self: RemoteMachine, alloc: std.mem.Allocator) void {
@@ -86,22 +94,25 @@ pub const RemoteMachine = union(enum) {
                 alloc.free(r.base);
                 alloc.free(r.device);
                 if (r.token) |t| alloc.free(t);
+                if (r.name) |n| alloc.free(n);
             },
         }
     }
 
     /// How this machine is NAMED to the user (T1390): the hostname we dialed,
-    /// or the relay device id. Borrows this machine's strings, so it is only
-    /// valid while the window holds them.
+    /// or — for a relay machine — its friendly name, falling back to the device
+    /// id when nothing has named it (T1418). Borrows this machine's strings, so
+    /// it is only valid while the window holds them.
     ///
-    /// It is the same identity the connection pill's tooltip speaks of, and
-    /// deliberately not a prettier one: what the close confirmation has to
-    /// answer is "which box will keep running this", and a nickname that does
-    /// not match what the user typed answers a different question.
+    /// It is the ONE derivation: the pill, its tooltip and the close
+    /// confirmation all speak it, so a machine is named the same way in all
+    /// three. For a relay machine it is the name the user picked the machine
+    /// by in the chooser — the device id is a string nobody chose, which is
+    /// Mac's reason for preferring the account name too (`Machine.name`).
     pub fn displayName(self: RemoteMachine) []const u8 {
         return switch (self) {
             .tcp => |t| t.host,
-            .relay => |r| r.device,
+            .relay => |r| r.name orelse r.device,
         };
     }
 
@@ -162,6 +173,7 @@ const window_memory = @import("window_memory.zig");
 const pane_id = @import("pane_id.zig");
 const ProcessTree = @import("ProcessTree.zig");
 const host_defaults = @import("host_defaults.zig");
+const machine_cache = @import("machine_cache.zig");
 const commands = @import("commands.zig");
 const menu_bar = @import("menu_bar.zig");
 const update_badge = @import("update_badge.zig");
@@ -1913,12 +1925,17 @@ pub fn setRemoteMachine(self: *Window, machine: RemoteMachine) Allocator.Error!v
             errdefer alloc.free(base);
             const device = try alloc.dupe(u8, r.device);
             errdefer alloc.free(device);
+            // Duped like the rest: the caller's token is usually an arena
+            // string that dies with the dial that produced it (T1276).
+            const token = if (r.token) |t| try alloc.dupe(u8, t) else null;
+            errdefer if (token) |t| alloc.free(t);
             break :relay .{ .relay = .{
                 .base = base,
                 .device = device,
-                // Duped like the rest: the caller's token is usually an arena
-                // string that dies with the dial that produced it (T1276).
-                .token = if (r.token) |t| try alloc.dupe(u8, t) else null,
+                .token = token,
+                // A name the caller carried (T68's inheritance copies the
+                // parent window's) wins; otherwise ask what we already know.
+                .name = if (r.name) |n| try alloc.dupe(u8, n) else self.resolveRelayName(r.device),
             } };
         },
     };
@@ -1927,6 +1944,55 @@ pub fn setRemoteMachine(self: *Window, machine: RemoteMachine) Allocator.Error!v
     // measured at by `setRemoteDialed`, which runs first — the same "the two
     // belong together" shape that comment describes, one step further along.
     self.refreshRemotePill();
+}
+
+/// The friendly name for relay `device` as far as this window can tell at
+/// record time (T1418), owned by the app allocator, or null to fall back to
+/// the device id.
+///
+/// Mac's order: the account's name for the device (here, the remembered
+/// directory for the signed-in account — the list the chooser seeds from), then
+/// the hostname the agent reported in its HELLO. A window restored at startup
+/// or opened from the CLI has never seen a listing, and this is what names it
+/// before one lands; `adoptRelayNames` keeps it current afterwards.
+fn resolveRelayName(self: *const Window, device: []const u8) ?[]const u8 {
+    const alloc = self.app.core_app.alloc;
+    remembered: {
+        const account = relay_signin.signedInEmail(alloc);
+        defer if (account) |a| alloc.free(a);
+        return machine_cache.loadName(alloc, account orelse "", device) orelse break :remembered;
+    }
+    // `setRemoteDialed` runs before this, and a dial hands over a connection
+    // whose handshake has completed, so the HELLO field is settled.
+    const dialed = self.remote_dialed orelse return null;
+    const host = dialed.conn().peer_hostname orelse return null;
+    if (host.len == 0) return null;
+    return alloc.dupe(u8, host) catch null;
+}
+
+/// A directory listing landed (T1418): rename every open relay window it names,
+/// so the pill, its tooltip and the close confirmation follow a rename on the
+/// relay — and a window restored before any listing picks up the name as soon
+/// as the launch warm answers.
+///
+/// A machine the listing does not name, or names with nothing but blanks,
+/// keeps whatever it had: a listing is not evidence the old name was wrong.
+pub fn adoptRelayNames(app: *App, entries: []const machine_cache.Entry) void {
+    const alloc = app.core_app.alloc;
+    for (app.windows.items) |win| {
+        if (win.remote_machine == null) continue;
+        const relay = switch (win.remote_machine.?) {
+            .relay => |*r| r,
+            .tcp => continue,
+        };
+        const name = machine_cache.nameFor(entries, relay.device) orelse continue;
+        if (relay.name) |old| if (std.mem.eql(u8, old, name)) continue;
+        const owned = alloc.dupe(u8, name) catch continue;
+        if (relay.name) |old| alloc.free(old);
+        relay.name = owned;
+        log.info("remote machine renamed from directory device={s} name={s}", .{ relay.device, owned });
+        win.refreshRemotePill();
+    }
 }
 
 /// Remote inheritance for one new tab/split in a REMOTE window (T68, Mac

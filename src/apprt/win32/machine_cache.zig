@@ -137,6 +137,36 @@ pub fn save(alloc: Allocator, account: []const u8, entries: []const Entry) void 
     f.writeAll(json) catch {};
 }
 
+/// The name a relay window gives the machine `device` (T1418), from a directory
+/// listing or the remembered one: the account's friendly name, else the
+/// machine's own hostname, else null — and null is the caller's cue to fall
+/// back to the device id, which is Mac's order (`AppDelegate`'s
+/// `fallbackName ?? reportedHostname ?? device`). A blank name counts as none,
+/// so a pill can never be named by an empty string.
+///
+/// Pure; borrows `entries`.
+pub fn nameFor(entries: []const Entry, device: []const u8) ?[]const u8 {
+    for (entries) |e| {
+        if (!std.mem.eql(u8, e.id, device)) continue;
+        if (e.name.len > 0) return e.name;
+        if (e.hostname) |h| if (h.len > 0) return h;
+        return null;
+    }
+    return null;
+}
+
+/// `nameFor` against the REMEMBERED list for `account`, duped onto `alloc`.
+/// Null when there is no cache for this account or it does not know `device`.
+/// This is how a window that never saw a directory — restored at startup, or
+/// opened by `+new-remote-window --device=…` — is named before any listing
+/// lands.
+pub fn loadName(alloc: Allocator, account: []const u8, device: []const u8) ?[]u8 {
+    const cached = load(alloc, account) orelse return null;
+    defer cached.deinit();
+    const name = nameFor(cached.value.devices, device) orelse return null;
+    return alloc.dupe(u8, name) catch null;
+}
+
 /// Forget everything. Called on sign-out and on any 401 — see the account
 /// scoping note at the top of the file.
 pub fn clear(alloc: Allocator) void {
@@ -202,6 +232,23 @@ test "parse: an unknown field the relay adds later does not void the cache" {
     ).?;
     defer parsed.deinit();
     try testing.expectEqual(@as(usize, 1), parsed.value.devices.len);
+}
+
+test "nameFor: friendly name, then hostname, then null for the device id (T1418)" {
+    const entries = [_]Entry{
+        .{ .id = "d1", .name = "MaximusHome", .hostname = "maximus" },
+        .{ .id = "d2", .name = "", .hostname = "laptop.local" },
+        .{ .id = "d3", .name = "" },
+        .{ .id = "d4", .name = "", .hostname = "" },
+    };
+    try testing.expectEqualStrings("MaximusHome", nameFor(&entries, "d1").?);
+    try testing.expectEqualStrings("laptop.local", nameFor(&entries, "d2").?);
+    // Blank everywhere is "no name", never an empty pill.
+    try testing.expect(nameFor(&entries, "d3") == null);
+    try testing.expect(nameFor(&entries, "d4") == null);
+    // A machine the listing never mentioned.
+    try testing.expect(nameFor(&entries, "nope") == null);
+    try testing.expect(nameFor(&.{}, "d1") == null);
 }
 
 test "accountMatches: case folds, and the token bucket is not a wildcard" {

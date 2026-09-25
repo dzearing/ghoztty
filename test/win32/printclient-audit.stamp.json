@@ -1,10 +1,13 @@
 {
     "guard":  "printclient-audit",
     "script":  "test/win32/printclient-audit.ps1",
-    "generated":  "2026-09-24T19:08:11-07:00",
-    "commit":  "9fd648065",
+    "generated":  "2026-09-24T20:52:27-07:00",
+    "commit":  "7d3fb803e",
     "uncommitted":  [
-                        "src/apprt/win32/ViewerPane.zig"
+                        "src/apprt/win32/activity_machines.zig",
+                        "src/apprt/win32/machine_cache.zig",
+                        "src/apprt/win32/MachineChooser.zig",
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -14,7 +17,7 @@
                   "src/apprt/win32/activity_dial.zig":  "bfd8c3b58300d3e1233b469872e8e794b72a98ca4b8f19b44e919e5b84cd624e",
                   "src/apprt/win32/activity_input.zig":  "5fb3f9c29ebd7ca6eab584bfe22664ffa1fd1712619f9045399471d57551270e",
                   "src/apprt/win32/activity_layout.zig":  "708bc1330b883123ced380b38171e19c63b95d5d7484a112e8b2ea30370a74a7",
-                  "src/apprt/win32/activity_machines.zig":  "75c8cc24a2f66595d176dd773b57df67b034bc395c869046dba9dd3ff4561a47",
+                  "src/apprt/win32/activity_machines.zig":  "373b9038954b8276fd9681ab6b956a01867329216fa5d6c5474c7926de5bfc9e",
                   "src/apprt/win32/activity_paint.zig":  "30b847ffe79ed3c63c935d258e6ebba26b90e4fc167c4b56c3fbbcb1c7406250",
                   "src/apprt/win32/activity_panes.zig":  "165fa3bae018b2609be70d38cccc6d5dc2e9c696081dfd4376ddf85194944e7a",
                   "src/apprt/win32/activity_probe.zig":  "dcbc1f2ea24d2603f16258cb77dd04d11ddded12bde8049dc70baa70a867a101",
@@ -113,9 +116,9 @@
                   "src/apprt/win32/list_selection.zig":  "b7f5720b1a405deacf48309f6b34439b7148e73a19a876ef9c7f38faf5308913",
                   "src/apprt/win32/LocalAgent.zig":  "33f032263c54ff6a97fd0de53c6c5b2e14f0606760715a913b55bad19ce1b3d9",
                   "src/apprt/win32/mac_layout_blob.zig":  "b11c4e10768421ba5d9e9b667823e8b7096bdbc2e19ffddbb00524ebdf6a2f67",
-                  "src/apprt/win32/machine_cache.zig":  "f2dcf2058195c6601cb76ba993d8ed0fe14f46d2792fb101ebfe6b0dc7b6de2d",
+                  "src/apprt/win32/machine_cache.zig":  "cab3ce827634113b0d3373c65eee72f716ee08604ff72f4ea2dfc1a7dc5af954",
                   "src/apprt/win32/machine_pool.zig":  "dc9ea32cd4bb666bdcc86e392f62cfbbb52abca5520c63fe80c0c4994f0bc377",
-                  "src/apprt/win32/MachineChooser.zig":  "760dda366f3acec124c6a3a7c19fcaca00a7d6059a999d199077ca82ecab2056",
+                  "src/apprt/win32/MachineChooser.zig":  "2383ec0728e8a807e1e0fbdc255804ef25451c22ea51ab382c187f64913c66f8",
                   "src/apprt/win32/MachineConnectionPool.zig":  "8980bac75a5cee294d0c9bb840b4c757e9bcf93b6e229906e73fac9f5be3196b",
                   "src/apprt/win32/maintenance_ca.zig":  "98c11eb22a63fc3a3dc8b2e5f18e68873c144e10ecde1e4135e011ad064dac1a",
                   "src/apprt/win32/managed_file.zig":  "986e641e52cf1d8c2e807cd38dbfd6e62e660868d1063b2d6bee1acdb5ed50ac",
@@ -246,7 +249,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "d302801ea6f2120825122408c574254457bc9beb8939a8ad6c1078292b341dd8",
-                  "src/apprt/win32/Window.zig":  "ea398a17c78ed4d2fd3640b6607889a40f4e47e7de32a158534fd2ae722a1e16",
+                  "src/apprt/win32/Window.zig":  "f3bbc5dba76b8ade1a97773a2469864932502b1acf095d37315f31138921cffd",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
                   "src/apprt/win32/window_memory.zig":  "b4f2912a881c6380b205744d5516b50677557f483d1776e8edbaaa75a99e1269",

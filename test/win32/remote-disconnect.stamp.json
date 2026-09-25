@@ -1,8 +1,8 @@
 {
     "guard":  "remote-disconnect",
     "script":  "test/win32/remote-disconnect.ps1",
-    "generated":  "2026-09-24T18:39:27-07:00",
-    "commit":  "aeb63f862",
+    "generated":  "2026-09-24T20:52:21-07:00",
+    "commit":  "7d3fb803e",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
                     ],
@@ -10,7 +10,7 @@
                   "src/apprt/win32/ConfirmDialog.zig":  "be38073cf51268c2e5c719d698e3223d35a3a6db57ba4adedd3d633b5c29b983",
                   "src/apprt/win32/session_disconnect.zig":  "f02bda01605fe36830e32e1411762893663f18fdd7a5851a771670884c19f4d1",
                   "src/apprt/win32/Surface.zig":  "d90796044959d12f24b6f8325ac0d9b732d59dedbd9a2feb483cfc7006f06ac8",
-                  "src/apprt/win32/Window.zig":  "ea398a17c78ed4d2fd3640b6607889a40f4e47e7de32a158534fd2ae722a1e16",
+                  "src/apprt/win32/Window.zig":  "f3bbc5dba76b8ade1a97773a2469864932502b1acf095d37315f31138921cffd",
                   "test/win32/remote-disconnect.ps1":  "4386cea29967d897fd29e5c5aae282daec44f7971138dff2e181887a4dbbe65f"
               }
 }

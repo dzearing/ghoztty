@@ -1133,6 +1133,9 @@ pub fn onDevices(app: *App, res: *DirectoryProbe.Result) void {
             .hostname = d.hostname,
         };
         machine_cache.save(app.core_app.alloc, res.account, buf[0..n]);
+        // Open relay windows take the names too (T1418) — this is the path
+        // the LAUNCH warm lands on, so a restored window is renamed here.
+        Window.adoptRelayNames(app, buf[0..n]);
         log.info("chooser directory: fetched {d} machine(s) quiet={}", .{ n, res.quiet });
     }
 
@@ -1287,6 +1290,7 @@ fn fetchDevices(self: *MachineChooser, list_alloc: Allocator) []const u8 {
         .hostname = d.hostname,
     };
     machine_cache.save(list_alloc, self.accountKey(), buf[0..devs.len]);
+    Window.adoptRelayNames(self.window.app, buf[0..devs.len]);
     return if (devs.len == 0) "No enrolled machines for this account." else "";
 }
 

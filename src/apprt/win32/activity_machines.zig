@@ -53,6 +53,8 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 
 const ActivityMonitor = @import("ActivityMonitor.zig");
+const App = @import("App.zig");
+const Window = @import("Window.zig");
 const dial_mod = @import("activity_dial.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
 const borrow_mod = @import("activity_borrow.zig");
@@ -63,6 +65,7 @@ const relay_dial = @import("../../remote/relay_dial.zig");
 const relay_directory = @import("../../remote/relay_directory.zig");
 const remote_connection = @import("../../remote/connection.zig");
 const w32 = @import("win32.zig");
+const machine_cache = @import("machine_cache.zig");
 
 const Source = ActivityMonitor.Source;
 const WM_APP_ACTIVITY_MACHINES = ActivityMonitor.WM_APP_ACTIVITY_MACHINES;
@@ -271,6 +274,7 @@ pub fn onMachines(res: *MachineListResult) void {
     }
 
     const self = ActivityMonitor.open_wins[res.slot].?;
+    adoptNames(self.app, res.entries[0..res.count]);
     self.machine_count = @min(res.count, self.machines.len);
     for (self.machines[0..self.machine_count], res.entries[0..self.machine_count]) |*dst, src| {
         dst.* = src;
@@ -281,6 +285,23 @@ pub fn onMachines(res: *MachineListResult) void {
     // spans both lists.
     self.syncProbes();
     _ = w32.InvalidateRect(self.hwnd, null, 0);
+}
+
+/// Hand a landed directory's names to the open relay windows (T1418), the
+/// same as the chooser's listings do, so whichever of the two fetched last is
+/// what the pills say. A name that filled its fixed buffer may have been cut
+/// mid-character, and a clipped name is worse than the one a window already
+/// has, so those are left out.
+fn adoptNames(app: *App, entries: []const MachineEntry) void {
+    var buf: [max_machines]machine_cache.Entry = undefined;
+    var n: usize = 0;
+    for (entries) |*e| {
+        if (n == buf.len) break;
+        if (e.name_len >= max_source_label or e.id_len >= max_source_id) continue;
+        buf[n] = .{ .id = e.idSlice(), .name = e.nameSlice() };
+        n += 1;
+    }
+    Window.adoptRelayNames(app, buf[0..n]);
 }
 
 /// The summary a card paints. The ACTIVE card prefers what the panel actually
