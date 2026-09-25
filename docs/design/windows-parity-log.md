@@ -33890,3 +33890,12 @@ row read CURRENT. Both files are now in its Covers list (Window.zig stays out
 as noise); `guard-due.ps1 check` read the row DUE naming both, and the re-run
 stamped 4 files. guard-due, body-complete, argv-hazard and unroll-count
 harnesses ALL PASS. Mac: guard-due is Windows harness tooling; no Mac analog.
+
+## 2026-09-25 - T1607: tab tooltip doubled folder - already fixed, closed on evidence
+
+The card was filed 09-16 off a red `tab-tooltip.ps1` (sections A and E). The
+defect was fixed at the source the same day by ec17471fb (T1622), and T1606
+closed the guard blind spot that let the card sit. Re-ran
+`test/win32/tab-tooltip.ps1` on a fresh Debug build: A, E and G all green,
+ALL PASS (29). Closed against ec17471fb; no new code. Mac: the tooltip rule is
+win32 chrome with no Mac tab-tooltip analog to change.
