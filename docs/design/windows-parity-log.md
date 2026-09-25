@@ -33647,3 +33647,16 @@ legs, 3/3); harness-floor.ps1 acceptance ALL PASS (51); floor ALL LANES PASS;
 harness floor ALL PASS (29, 2 pending) and stamped; viewer-worktree-port,
 viewer-close, viewer-nav-pin, window-active-audit ALL PASS. The GoBack leg of
 the same test drops its navigation under the same load: T1735.
+
+## 2026-09-24 - T1418: the relay pill names the machine the way the chooser does
+
+A relay window's pill, tooltip and close confirmation said the device id. They
+now say the account's friendly name, else the machine's own HELLO hostname,
+else the id (Mac's order). The store is the chooser's existing remembered-machine
+cache (T711), so CLI-opened and restored windows are named before any listing,
+and every listing (chooser fetches incl. the launch warm, Activity Monitor
+carousel) renames open windows in place. New `remote-pill-relay-name.ps1` ALL
+PASS (15), negative control red; floor ALL LANES PASS; P1-P3 ALL PASS;
+remote-pill (19), harness floor and 21 due guard harnesses ALL PASS and
+stamped. Commit ccef8a1a1. Follow-up T1736: Mac pins an explicit
+`+new-remote-window --name=` as the pill name.
