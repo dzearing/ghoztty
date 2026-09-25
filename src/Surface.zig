@@ -34,6 +34,7 @@ const terminal = @import("terminal/main.zig");
 const configpkg = @import("config.zig");
 const build_config = @import("build_config.zig");
 const shell_integration = @import("termio/shell_integration.zig");
+const session_snapshot = @import("termio/session_snapshot.zig");
 const Duration = configpkg.Config.Duration;
 const input = @import("input.zig");
 const App = @import("App.zig");
@@ -2700,51 +2701,33 @@ fn lockWithin(mutex: *std.Thread.Mutex, timeout_ns: u64) bool {
 /// The body of `sessionSnapshot`, with the renderer mutex already held.
 fn sessionSnapshotLocked(self: *Surface, alloc: Allocator) !?SessionSnapshot {
     // Only agent-backed remote panes re-attach from the manifest.
-    const offset = self.io.remoteAppliedOffset() orelse return null;
+    const applied = self.io.remoteAppliedOffset() orelse return null;
+    const offset = applied -| @min(snapshotOffsetLagSeam(), applied -| 1);
     // Nothing applied yet ⇒ nothing worth snapshotting. A 0-offset restore would
     // make the agent replay from the start AND double-paint the snapshot, so the
     // ATTACH path only honors a snapshot when the offset is > 0; skip it here too.
     if (offset == 0) return null;
 
-    const t = &self.io.terminal;
-    const screen = t.screens.active;
-
-    // Bound the region to the last N rows (viewport + a little scrollback).
-    const br = screen.pages.getBottomRight(.screen) orelse return null;
-    const total = screen.pages.total_rows;
-    const tl = if (total <= session_snapshot_max_rows)
-        screen.pages.getTopLeft(.screen)
-    else
-        screen.pages.pin(.{ .screen = .{
-            .x = 0,
-            .y = @intCast(total - session_snapshot_max_rows),
-        } }) orelse screen.pages.getTopLeft(.screen);
-
     var builder: std.Io.Writer.Allocating = .init(alloc);
     defer builder.deinit();
 
-    // emit=.vt + Extra.all reconstructs the screen state as closely as possible:
-    // palette, differing modes (incl. alt-screen enter for TUIs), scrolling
+    // Palette, differing modes (incl. alt-screen enter for TUIs), scrolling
     // region, tabstops, pwd, per-cell SGR styles, hyperlinks, and a final cursor
-    // position. unwrap=false preserves the rendered row layout so it re-wraps
-    // naturally at the live width.
-    var formatter: terminal.formatter.TerminalFormatter = .init(t, .{
-        .emit = .vt,
-        .unwrap = false,
-        .trim = true,
-    });
-    formatter.content = .{ .selection = terminal.Selection.init(tl, br, false) };
-    formatter.extra = .all;
-    // …except the INPUT-REPORTING modes. This snapshot is a PICTURE, persisted to
-    // disk at quit and repainted at the next launch — and by then the pane's child
-    // may not be the program that asked for mouse reports. An agent restart in
-    // between relaunches every session as a plain login shell (session-relaunch =
+    // position — the last N rows (viewport + a little scrollback), with
+    // unwrap=false so the rendered row layout re-wraps naturally at the live
+    // width. The cursor has to come back EXACTLY where it was, because the
+    // agent's gap-fill continues writing from it (T1626): see
+    // `termio/session_snapshot.zig` for why the formatter alone got it wrong.
+    //
+    // input_modes=false: this snapshot is a PICTURE, persisted to disk at quit
+    // and repainted at the next launch — and by then the pane's child may not be
+    // the program that asked for mouse reports. An agent restart in between
+    // relaunches every session as a plain login shell (session-relaunch =
     // restore), and re-arming `?1003h`/`?1006h` over that shell makes it read
     // every pointer move as typed input. The live child's true mode state comes
     // from the agent's grid snapshot, which is built from that child's own output
     // and lands right after this repaint.
-    formatter.extra.input_modes = false;
-    formatter.format(&builder.writer) catch |err| {
+    session_snapshot.write(&builder.writer, &self.io.terminal, session_snapshot_max_rows, false) catch |err| {
         log.warn("error building session snapshot err={}", .{err});
         return null;
     };
@@ -2753,6 +2736,35 @@ fn sessionSnapshotLocked(self: *Surface, alloc: Allocator) !?SessionSnapshot {
         .data = try builder.toOwnedSlice(),
         .byte_offset = offset,
     };
+}
+
+/// T1626 test seam: `GHOZTTY_SNAPSHOT_OFFSET_LAG=<bytes>` records every session
+/// snapshot's offset that many bytes BELOW the position its grid reflects — the
+/// defect T1626 suspected, where the next attach's gap-fill replays output the
+/// restored screen already shows. The product never does this: the grid and
+/// the offset are read under one hold of the renderer mutex, so they describe
+/// the same instant. The seam exists so `test\win32\session-resume-offset.ps1`
+/// arm G can put the defect IN and prove its duplicate-line oracle sees it,
+/// which is what makes arm F's clean result evidence. Unset, empty or
+/// unparseable reads as 0, and the offset never drops below 1 (a 0 offset
+/// means "no snapshot" to the ATTACH path).
+fn snapshotOffsetLagSeam() u64 {
+    // maxInt = not read yet. Every pane's IO thread computes the same answer,
+    // but a plain global would still be a data race.
+    const S = struct {
+        var cached: std.atomic.Value(u64) = .init(std.math.maxInt(u64));
+    };
+    const have = S.cached.load(.monotonic);
+    if (have != std.math.maxInt(u64)) return have;
+    var buf: [32]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const lag: u64 = if (std.process.getEnvVarOwned(fba.allocator(), "GHOZTTY_SNAPSHOT_OFFSET_LAG")) |v|
+        std.fmt.parseInt(u64, std.mem.trim(u8, v, " "), 10) catch 0
+    else |_|
+        0;
+    if (lag > 0) log.warn("T1626 seam: GHOZTTY_SNAPSHOT_OFFSET_LAG={d} - snapshot offsets recorded below their grid", .{lag});
+    S.cached.store(lag, .monotonic);
+    return lag;
 }
 
 pub fn dumpText(

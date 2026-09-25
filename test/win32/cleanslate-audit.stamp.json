@@ -1,10 +1,10 @@
 {
     "guard":  "cleanslate",
     "script":  "test/win32/cleanslate-audit.ps1",
-    "generated":  "2026-09-25T15:03:02-07:00",
-    "commit":  "312002cc3",
+    "generated":  "2026-09-25T16:03:37-07:00",
+    "commit":  "4834bfa68",
     "uncommitted":  [
-                        "test/win32/tab-tooltip.ps1"
+                        "test/win32/session-resume-offset.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -320,7 +320,7 @@
                   "test/win32/session-relaunch.ps1":  "e314225e771031b4a342da253e10e0f2556f91281f9ace8551b526c325ff37a7",
                   "test/win32/session-relaunch-notify.ps1":  "4d99a3f10608f068460092ca36ad8fb2086708dd7516dbb838c6c900058133a5",
                   "test/win32/session-restore-maximized.ps1":  "5af0d5334fc5974b4bf643c69addfb503c6f35b8f161691c729ad704ffafddf7",
-                  "test/win32/session-resume-offset.ps1":  "846615b46537a08a777b2806b52e0b695a60d17958753d9e70597573a91fbc3d",
+                  "test/win32/session-resume-offset.ps1":  "6c0591c0924e67301a4fd88b4ea615aba24ae508bd5eff7e7d9cf133ed28c3da",
                   "test/win32/sessions-agent-build.ps1":  "4ddcd1913f07dfb9c177312382493b5a0e6f69d126ebec1ce3522c6908299eea",
                   "test/win32/session-snapshot-reattach.ps1":  "c7e335d7b8e77831bb94f7bbe30060a51008319defd354e567b830cc91f2297c",
                   "test/win32/sessions-running-cmd.ps1":  "0b2c67aa7bebd9981abd9b159546885aaf8856c249cd8df26ceb2bf5f6e59ec6",

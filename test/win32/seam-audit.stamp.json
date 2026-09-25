@@ -1,11 +1,12 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-25T15:06:05-07:00",
-    "commit":  "312002cc3",
+    "generated":  "2026-09-25T15:56:41-07:00",
+    "commit":  "4834bfa68",
     "uncommitted":  [
-                        "src/apprt/win32/tab_tooltip.zig",
-                        "test/win32/tab-tooltip.ps1"
+                        "src/termio/session_snapshot.zig",
+                        "test/win32/seam-audit.registry.json",
+                        "test/win32/session-resume-offset.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -437,6 +438,7 @@
                   "src/termio/restore_history.zig":  "17ffdfe2bf7e107fe11cf26eab4c79bc6f815f85ad38e9531a5a5daa464e9de2",
                   "src/termio/restore_park.zig":  "1e68d21a293216cfb5a003f0fa1cb494ba031fe4d7ac236b4f5ccd168e6f50bd",
                   "src/termio/session_notice.zig":  "63971c48177ef72d6360dbf28895963aa79ffbecad126e04626f70bd5dd707d2",
+                  "src/termio/session_snapshot.zig":  "56d52ad59d251119d099277757426629c73d1812bbd625358c1cae8a64316406",
                   "src/termio/shell_integration.zig":  "b3d9d289c3cfdcfc7f9e1b2719690c58485df095699713a9670e64934f5c0c64",
                   "src/termio/stream_handler.zig":  "fffa60db96f0b5a4eb7864fb57d279def56d75f805c90c6f9577a33cb164edb0",
                   "src/termio/Termio.zig":  "1cb6d55cd276a8f3e566c300336f0b5b474aa8b442f4c53a954e343ebeb58f3a",
@@ -741,7 +743,7 @@
                   "test/win32/restore-session-dup.ps1":  "3a98531e97ed32fef1cb9aca6439576ca54cc1221b6c3a5564e431b0fb612e28",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
                   "test/win32/seam-audit.ps1":  "b6df80f87a37af263b728e4ae4c0dcfcdeb93f9a87bd48df2340244cac110dad",
-                  "test/win32/seam-audit.registry.json":  "579396304af56d0741b05ee35861f25cf788f7fe8706282810a4bf366cc88b04",
+                  "test/win32/seam-audit.registry.json":  "6ce6afc9fcfe15c6265d2dd92ef00d7ada36e030ba1c8a973e75db54032988bf",
                   "test/win32/send-keys-bracketed.ps1":  "3f04c907b40d40409069ee8fe9369820cd96c2c6644567ddfd70d8fdb41bec10",
                   "test/win32/send-keys-soak.ps1":  "2070fe3aa9921b15dcfb5164c655d5b4559fc68a27e4c9b6efae6055d20a6632",
                   "test/win32/session-close.ps1":  "bc90db94c85a72b761db89dbde0baf409845d5df67f23997b425b6d922455ed1",
@@ -755,7 +757,7 @@
                   "test/win32/session-relaunch.ps1":  "e314225e771031b4a342da253e10e0f2556f91281f9ace8551b526c325ff37a7",
                   "test/win32/session-relaunch-notify.ps1":  "4d99a3f10608f068460092ca36ad8fb2086708dd7516dbb838c6c900058133a5",
                   "test/win32/session-restore-maximized.ps1":  "5af0d5334fc5974b4bf643c69addfb503c6f35b8f161691c729ad704ffafddf7",
-                  "test/win32/session-resume-offset.ps1":  "846615b46537a08a777b2806b52e0b695a60d17958753d9e70597573a91fbc3d",
+                  "test/win32/session-resume-offset.ps1":  "6c0591c0924e67301a4fd88b4ea615aba24ae508bd5eff7e7d9cf133ed28c3da",
                   "test/win32/sessions-agent-build.ps1":  "4ddcd1913f07dfb9c177312382493b5a0e6f69d126ebec1ce3522c6908299eea",
                   "test/win32/session-snapshot-reattach.ps1":  "c7e335d7b8e77831bb94f7bbe30060a51008319defd354e567b830cc91f2297c",
                   "test/win32/sessions-running-cmd.ps1":  "0b2c67aa7bebd9981abd9b159546885aaf8856c249cd8df26ceb2bf5f6e59ec6",

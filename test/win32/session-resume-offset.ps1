@@ -39,6 +39,22 @@
 #      non-repainting peer with the LABEL taken away
 #      (+ GHOSTTY_AGENT_SUPPRESS_CAPS=repaint_data). The overshoot MUST return
 #      and the clamp MUST fire.
+#   F. Mid-burst kill (T1626): the pane prints numbered lines, pauses long
+#      enough for the quiet refresh to capture its screen, then prints on - and
+#      the app is killed while that second half is still streaming. The next
+#      attach resumes from a position BELOW the head (the output after the
+#      capture), and the restored history must hold every line exactly once:
+#      no duplicated chunk where the snapshot meets the gap-fill, and no
+#      skipped one either (the T739 direction).
+#   G. The teeth for F: the same run with GHOZTTY_SNAPSHOT_OFFSET_LAG set,
+#      which records each snapshot's offset some bytes below the grid it
+#      describes - the defect T1626 suspected. The duplicate MUST appear.
+#
+# Arm F is why T1626 closed without a product change: the snapshot and its
+# offset are read under one hold of the renderer mutex, so an offset below the
+# head only ever means an OLDER picture plus a longer gap-fill, which meet
+# exactly. A lower resume offset is not a reprint; an offset lower than its
+# own picture would be, and G shows what that looks like.
 #
 # Arm C passing is worth reading carefully, because it says where the fix
 # actually lives. The accounting is client-side and anchor-authoritative, so on
@@ -72,7 +88,7 @@ param(
     # Debugging only: run a subset of the arms. A partial run cannot stamp the
     # guard (a skipped section never does), so this is for iterating on one arm,
     # never for reporting a verdict.
-    [string[]]$Arms = @('A', 'B', 'C', 'D', 'E'),
+    [string[]]$Arms = @('A', 'B', 'C', 'D', 'E', 'F', 'G'),
     [switch]$KeepRoot,
     [switch]$Interactive
 )
@@ -251,6 +267,145 @@ function Invoke-RestoreCycle($n, $arm) {
     return @{ up = $true; log = $log; attach = $att; pid = $app.Pid }
 }
 
+# ---- F/G: a kill in the middle of a burst (T1626) ---------------------------
+function Read-PaneText($pane, $lines, $tag) {
+    Run-CliArgs @('+read', "--name=$pane", "--lines=$lines") "$tmp\read-$tag.txt" 20 | Out-Null
+    return (Out-Text "$tmp\read-$tag.txt")
+}
+function Burst-Numbers($text) {
+    return @([regex]::Matches($text, '(?m)^F-(\d+)\s*$') | ForEach-Object { [int]$_.Groups[1].Value })
+}
+# Every place the sequence steps anywhere but +1. One descent is the design:
+# T666 parks the restored screen into scrollback and the agent's repaint shows
+# the current screen again below it, so the final screen's lines appear twice.
+# Anything else is a line printed twice (a descent) or a line lost (a jump).
+function Get-BurstBreaks($nums) {
+    $descents = @(); $jumps = @()
+    for ($k = 1; $k -lt $nums.Count; $k++) {
+        $a = $nums[$k - 1]; $b = $nums[$k]
+        if ($b -le $a) { $descents += "$a->$b" }
+        elseif ($b -ne $a + 1) { $jumps += "$a->$b" }
+    }
+    return @{ descents = $descents; jumps = $jumps }
+}
+
+$BurstSplit = 1500
+$BurstEnd = 6000
+$FinalScreenSlack = 200
+function Invoke-MidBurstArm($arm) {
+    if ($arm -eq 'F') {
+        Say "== F: kill mid-burst - the restored history holds every line exactly once"
+    } else {
+        Say "== G: teeth for F - a snapshot offset recorded below its own grid MUST reprint"
+        $env:GHOZTTY_SNAPSHOT_OFFSET_LAG = '240'
+    }
+    Stop-TestProcs
+    Remove-Item -Recurse -Force (Join-Path $tmp 'ghoztty') -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+
+    $log0 = Join-Path $tmp "app-$arm-0.err.txt"
+    # persistence: on (default) - the manifest this launch writes is the subject.
+    $app0 = Start-OnTestDesktop -Exe $Exe -Arguments @('--title=t1626') -StdErr $log0
+    $up0 = (Wait-TestWindow -ProcessId $app0.Pid -Class 'GhozttyWindow' -TimeoutMs 45000) -ne [IntPtr]::Zero
+    Assert "$arm.0 the first launch came up" $up0
+    if (-not $up0) { return }
+    $pane = Wait-PaneId "$arm-0" 45
+    Assert "$arm.0 the startup pane is addressable" ($null -ne $pane)
+    if (-not $pane) { return }
+    Assert "$arm.0 the pane is live" (Test-PaneLive -Exe $Exe -Target $pane -Tmp $tmp -Tag "$arm-live0")
+    Provoke-ManifestWrite $pane "$arm-0"
+    $base = @(Manifest-Offsets) | Measure-Object -Maximum | ForEach-Object Maximum
+    if ($null -eq $base) { $base = 0 }
+
+    # First half, a pause the quiet refresh captures, then a second half long
+    # enough to still be streaming when the app dies. Sent as a file: the
+    # command has spaces, and Start-Process does not quote its argv.
+    $cmd = "(for /l %i in (1,1,$BurstSplit) do @echo F-%i) & ping -n 6 127.0.0.1 >nul & (for /l %i in ($($BurstSplit + 1),1,$BurstEnd) do @echo F-%i)"
+    $keys = Join-Path $tmp "burst-$arm.txt"
+    [System.IO.File]::WriteAllText($keys, $cmd)
+    Run-CliArgs @('+send-keys', "--target=$pane", "--keys-file=$keys", 'Enter') "$tmp\burst-$arm.out" 15 | Out-Null
+
+    # 1. The pause capture: the manifest moves off the baseline while the pane
+    #    sits at the split. Nothing provokes it - this is the product's own
+    #    quiet refresh, the trigger a real session relies on.
+    $captured = $false
+    $deadline = (Get-Date).AddSeconds(25)
+    while ((Get-Date) -lt $deadline) {
+        $m = @(Manifest-Offsets) | Measure-Object -Maximum | ForEach-Object Maximum
+        if ($m -gt $base) { $captured = $true; break }
+        Start-Sleep -Milliseconds 200
+    }
+    Assert "$arm.1 the quiet refresh captured the screen during the pause" $captured
+    if (-not $captured) { return }
+    # 2. Kill as soon as the second half is visibly streaming.
+    $seen = 0
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline) {
+        $n = @(Burst-Numbers (Read-PaneText $pane 4 "$arm-poll"))
+        if ($n.Count -gt 0) { $seen = ($n | Measure-Object -Maximum).Maximum }
+        if ($seen -gt $BurstSplit) { break }
+        Start-Sleep -Milliseconds 100
+    }
+    Stop-AppOnly
+    # Kept for -KeepRoot: the snapshot the restore is about to paint, before the
+    # restored app's own captures overwrite it.
+    Copy-Item (Manifest-Path) (Join-Path $tmp "manifest-$arm-killed.json") -ErrorAction SilentlyContinue
+    Say "     killed with the pane at F-$seen (split $BurstSplit, end $BurstEnd)"
+    Assert "$arm.2 the app died MID-burst (second half started, not finished: F-$seen)" `
+        ($seen -gt $BurstSplit -and $seen -lt $BurstEnd)
+    # Let the agent's session finish the burst into its ring with nobody attached.
+    Start-Sleep -Seconds 4
+
+    $r = Invoke-RestoreCycle 1 $arm
+    Assert "$arm.3 the restored app came up" ($r.up)
+    if (-not $r.up) { return }
+    $att = $r.attach
+    Assert "$arm.3 the restored pane re-ATTACHED" ($null -ne $att)
+    if ($null -eq $att) { return }
+    Say "     requested=$($att.requested) head=$($att.head) resumed_at=$($att.resumed)"
+    # The scenario, not the verdict: the recorded position must be BEHIND the
+    # head, or the gap-fill this arm exists to watch never ran.
+    Assert "$arm.3 the resume offset is below the head, so a gap-fill ran ($($att.requested) < $($att.head))" `
+        ($att.requested -lt $att.head)
+    $pane = Wait-PaneId "$arm-1" 45
+    Assert "$arm.3 the restored pane is addressable" ($null -ne $pane)
+    if (-not $pane) { return }
+
+    $nums = @()
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        $nums = @(Burst-Numbers (Read-PaneText $pane 20000 "$arm-hist"))
+        if ($nums.Count -gt 0 -and ($nums | Measure-Object -Maximum).Maximum -ge $BurstEnd) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    $max = if ($nums.Count -gt 0) { ($nums | Measure-Object -Maximum).Maximum } else { 0 }
+    Assert "$arm.4 the restored pane reached the end of the burst (F-$max)" ($max -ge $BurstEnd)
+    $br = Get-BurstBreaks $nums
+    # A line printed twice ANYWHERE above the final screen. The final screen's
+    # own lines legitimately appear twice (the T666 park + repaint), so the
+    # last $FinalScreenSlack numbers are not counted.
+    $dups = @($nums | Where-Object { $_ -lt ($BurstEnd - $FinalScreenSlack) } |
+        Group-Object | Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+    # A number missing between the first restored line and the end: a line lost,
+    # or one glued onto the end of another (T1626's actual defect).
+    $missing = @()
+    if ($nums.Count -gt 0) {
+        $have = @{}; foreach ($v in $nums) { $have[$v] = $true }
+        for ($v = $nums[0]; $v -le $BurstEnd; $v++) { if (-not $have.ContainsKey($v)) { $missing += $v } }
+    }
+    Say "     restored F-$($nums[0])..F-$max, $($nums.Count) numbered lines; descents: $($br.descents -join ', '); jumps: $($br.jumps -join ', '); duplicated: $(($dups | Select-Object -First 8) -join ','); missing: $(($missing | Select-Object -First 8) -join ',')"
+    if ($arm -eq 'F') {
+        Assert "$arm.4 the restored history starts before the capture point (F-$($nums[0]) <= F-$BurstSplit)" `
+            ($nums.Count -gt 0 -and $nums[0] -le $BurstSplit)
+        Assert "$arm.4 no line was printed twice ($($dups.Count) duplicated)" ($dups.Count -eq 0)
+        Assert "$arm.4 every line is on a row of its own, none lost or glued to another ($($missing.Count) missing)" `
+            ($missing.Count -eq 0)
+    } else {
+        Assert "$arm.4 the lagged offset reprints lines the screen already showed ($($dups.Count) duplicated, want > 0)" `
+            ($dups.Count -gt 0)
+    }
+}
+
 Stop-TestProcs
 New-Item -ItemType Directory -Force $root | Out-Null
 $saved = @{
@@ -260,6 +415,7 @@ $saved = @{
     supp = $env:GHOSTTY_AGENT_SUPPRESS_CAPS
     seam = $env:GHOZTTY_RESUME_COUNT_BYTES
     qa   = $env:GHOSTTY_AGENT_QUIET_ATTACH
+    lag  = $env:GHOZTTY_SNAPSHOT_OFFSET_LAG
 }
 $env:GHOZTTY_PIPE_SUFFIX = "-resumeoffset$PID"
 
@@ -282,6 +438,8 @@ foreach ($arm in $Arms) {
     [Environment]::SetEnvironmentVariable('GHOSTTY_AGENT_SUPPRESS_CAPS', $null)
     [Environment]::SetEnvironmentVariable('GHOZTTY_RESUME_COUNT_BYTES', $null)
     [Environment]::SetEnvironmentVariable('GHOSTTY_AGENT_QUIET_ATTACH', $null)
+    [Environment]::SetEnvironmentVariable('GHOZTTY_SNAPSHOT_OFFSET_LAG', $null)
+    if ($arm -eq 'F' -or $arm -eq 'G') { Invoke-MidBurstArm $arm; continue }
     switch ($arm) {
         'A' { Say "== A: $Cycles kill/restore cycles of a quiet pane - the recorded offset IS the head" }
         'B' {
@@ -448,6 +606,7 @@ Complete-TestBody  # T1039: the run reached the end of its body
     $env:GHOSTTY_AGENT_SUPPRESS_CAPS = $saved.supp
     $env:GHOZTTY_RESUME_COUNT_BYTES = $saved.seam
     $env:GHOSTTY_AGENT_QUIET_ATTACH = $saved.qa
+    $env:GHOZTTY_SNAPSHOT_OFFSET_LAG = $saved.lag
     # -KeepRoot leaves the per-launch app logs behind: they are the only record
     # of what each attach decided, and a failing arm is unreadable without them.
     if ($KeepRoot) { Write-Host "  (kept: $root)" }
@@ -459,7 +618,7 @@ Complete-TestBody  # T1039: the run reached the end of its body
 # one of them, and a stamp written from a subset would record that this harness
 # has been run against the code as it stands when most of it never executed -
 # the same lie the freshness gate at the top refuses.
-$allArms = @('A', 'B', 'C', 'D', 'E')
+$allArms = @('A', 'B', 'C', 'D', 'E', 'F', 'G')
 $ranEveryArm = (@(Compare-Object $allArms @($Arms)).Count -eq 0)
 if ($script:failures -eq 0 -and $ranEveryArm) {
     $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)

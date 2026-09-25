@@ -33932,3 +33932,19 @@ the trimmed form. `test/win32/tab-tooltip.ps1` arms B and C assert the probed
 tip carries no trailing separator: ALL PASS (31). Mac: the tab tooltip is win32
 chrome standing in for the titlebar proxy icon, so there is no Mac tooltip text
 to change.
+## 2026-09-25 - T1626: a restored pane no longer glues its first new line onto the last restored one
+
+T1626 suspected a reprint: a manifest offset captured mid-stream sits below the
+agent's head, so the next attach replays those bytes. It does not reprint - the
+snapshot's grid and offset are one mutex hold, so a lower offset is an older
+picture plus a longer gap-fill, which meet exactly. The new arm F of
+`test/win32/session-resume-offset.ps1` (kill mid-burst, score the restored
+history line by line) proved that, and found the real defect beside it: the
+repaint left the CURSOR wrong, so the gap-fill's first line landed on the end of
+the last restored row (`F-1500 ... F-1501`). `TerminalFormatter` wrote the CUP
+before DECSTBM and the tab-stop restore, both of which move the cursor, and it
+trims trailing blank rows under a viewport-relative CUP. New
+`src/termio/session_snapshot.zig` formats in two passes, puts the trimmed rows
+back and writes the cursor last (origin-mode aware); 7 none-lane tests. Arm G
+(`GHOZTTY_SNAPSHOT_OFFSET_LAG` seam) is the teeth for the reprint oracle. Full
+harness ALL PASS (139). Mac: shared core, same fix; no Mac-side change needed.

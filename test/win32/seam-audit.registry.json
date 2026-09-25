@@ -352,6 +352,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the shipped resume accounting."
         },
+        "GHOZTTY_SNAPSHOT_OFFSET_LAG": {
+            "class": "fault",
+            "unset": "shipped-elsewhere",
+            "note": "T1626 arm G: records each session snapshot's offset below its grid so the reprint oracle is shown to fire. unset = the shipped offset, which arm F and every other restore test run."
+        },
         "GHOZTTY_STARTUP_FAIL": {
             "class": "fault",
             "unset": "shipped-elsewhere",
