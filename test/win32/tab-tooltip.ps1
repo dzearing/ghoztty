@@ -221,6 +221,7 @@ try {
         }
         $probe = Probe-TipText $top $m $errlog
         Assert ($probe -like "*$(Split-Path $dirB -Leaf)*") "B: tooltip text follows the cd ($probe)"
+        Assert ($probe -notmatch '[\\/]$') "B: the folder line has no stray trailing separator (T1623) ($probe)"
 
         # -------------------------------------------------------------------
         # C: right after a session-persistence restore. Kill the APP only -
@@ -249,6 +250,7 @@ try {
         Assert (Wait-PaneCwd (Split-Path $dirB -Leaf) 'c0' 45) 'C: the restored pane is still in the cd target'
         $probe = Probe-TipText $top2 $m2 $errlog2
         Assert ($probe -like "*$(Split-Path $dirB -Leaf)*") "C: tooltip text is right after the restore ($probe)"
+        Assert ($probe -notmatch '[\\/]$') "C: the folder line has no stray trailing separator (T1623) ($probe)"
 
         # -------------------------------------------------------------------
         # E (T556): an ELIDED tab title rides above the cwd as a first line.

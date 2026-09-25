@@ -33917,3 +33917,18 @@ is published), `Surface.remoteBringUpPending`, a new pure
 a `+split`: ALL PASS (48), verbs in 108-126 ms. With the wait stubbed out the
 same script scored 20 FAILURES. Contract is in `docs/claude/cli.md`. Mac:
 filed T1743 (seat mac, deps T553 - the Mac does not report `session_id` yet).
+
+## 2026-09-25 - T1623: the tab tooltip no longer ends the folder with a stray backslash
+
+The same folder used to read `~\...\tipB555\` on one hover and `~\...\tipB555`
+on the next, because the OS-read live cwd can carry a trailing separator that
+the OSC-7 cache and a viewer location do not. `tab_tooltip.zig` `tipText` now
+trims trailing separators before the `~` abbreviation, but only after a
+component: a root keeps its separator (`C:\` is not `C:`, `/` is not empty),
+and a URL is left alone, since a trailing slash can name a different resource.
+None lane pins the trimmed, home-with-slash, UNC, root and URL cases (29/29);
+the T1622 test that had pinned the old verbatim trailing separator now expects
+the trimmed form. `test/win32/tab-tooltip.ps1` arms B and C assert the probed
+tip carries no trailing separator: ALL PASS (31). Mac: the tab tooltip is win32
+chrome standing in for the titlebar proxy icon, so there is no Mac tooltip text
+to change.

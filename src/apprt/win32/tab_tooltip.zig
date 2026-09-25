@@ -164,8 +164,9 @@ pub fn elide(out: []u8, path: []const u8, max: usize) []const u8 {
 /// to `max_len`. Null for an empty location — an empty tooltip must not
 /// show, the way an empty pane reads as an answer, not an error (T181).
 /// `out.len >= max_len` is the caller's contract.
-pub fn tipText(out: []u8, location: []const u8, home: ?[]const u8) ?[]const u8 {
-    if (location.len == 0) return null;
+pub fn tipText(out: []u8, location_raw: []const u8, home: ?[]const u8) ?[]const u8 {
+    if (location_raw.len == 0) return null;
+    const location = trimLocationSep(location_raw);
     var scratch: [1024]u8 = undefined;
     const abbrev = if (location.len <= scratch.len)
         tildeHome(&scratch, location, home)
@@ -198,6 +199,19 @@ fn trimTrailingSeps(s: []const u8) []const u8 {
     var out = s;
     while (out.len > 0 and isSep(out[out.len - 1])) out = out[0 .. out.len - 1];
     return out;
+}
+
+/// The location line's spelling of a trailing separator (T1623): the live cwd
+/// read off the OS can end in one where the OSC-7 cache and a viewer location
+/// do not, so the same place read `~\x\` one hover and `~\x` the next. Trimmed
+/// only when a component precedes it — on a root the separator IS the path
+/// (`C:\` is not `C:`, `/` is not empty) — and never on a URL, where a
+/// trailing slash can name a different resource.
+fn trimLocationSep(s: []const u8) []const u8 {
+    if (std.mem.indexOf(u8, s, "://") != null) return s;
+    const t = trimTrailingSeps(s);
+    if (t.len == 0 or t[t.len - 1] == ':') return s;
+    return t;
 }
 
 /// Path equality for the "does the title say anything new" question: caseless
@@ -418,6 +432,26 @@ test "tipText: empty location is null, not an empty tooltip" {
     try testing.expectEqual(@as(?[]const u8, null), tipText(&buf, "", "C:\\Users\\David"));
 }
 
+test "tipText: a trailing separator is dropped after a component (T1623)" {
+    var buf: [128]u8 = undefined;
+    const home = "C:\\Users\\David";
+    try testing.expectEqualStrings("~\\git\\x", tipText(&buf, "C:\\Users\\David\\git\\x\\", home).?);
+    try testing.expectEqualStrings("~\\git\\x", tipText(&buf, "C:\\Users\\David\\git\\x", home).?);
+    try testing.expectEqualStrings("~/git/x", tipText(&buf, "C:\\Users\\David/git/x//", home).?);
+    try testing.expectEqualStrings("D:\\git", tipText(&buf, "D:\\git\\", home).?);
+    try testing.expectEqualStrings("~", tipText(&buf, "C:\\Users\\David\\", home).?);
+    try testing.expectEqualStrings("\\\\srv\\share", tipText(&buf, "\\\\srv\\share\\", home).?);
+}
+
+test "tipText: a root keeps its load-bearing separator (T1623)" {
+    var buf: [128]u8 = undefined;
+    const home = "C:\\Users\\David";
+    try testing.expectEqualStrings("C:\\", tipText(&buf, "C:\\", home).?);
+    try testing.expectEqualStrings("c:/", tipText(&buf, "c:/", home).?);
+    try testing.expectEqualStrings("/", tipText(&buf, "/", home).?);
+    try testing.expectEqualStrings("\\", tipText(&buf, "\\", null).?);
+}
+
 test "tipText: a viewer URL passes through untouched" {
     var buf: [128]u8 = undefined;
     try testing.expectEqualStrings(
@@ -475,11 +509,10 @@ test "tipTextTitled: a repeat is seen through a trailing separator and case" {
     var buf: [max_tip_len]u8 = undefined;
     // The live cwd read off the OS carries a trailing separator the shell's
     // title does not, and an MSYS-reported title differs in case and slash
-    // style — none of which makes it a different place. The location line is
-    // still the location VERBATIM (bar the `~`): trimming its trailing
-    // separator here would also turn a root `C:\` into `C:`.
+    // style — none of which makes it a different place. The location line
+    // drops that trailing separator too (T1623); a root keeps its own.
     try testing.expectEqualStrings(
-        "~\\git\\ghoztty\\",
+        "~\\git\\ghoztty",
         tipTextTitled(
             &buf,
             "c:/users/david/git/ghoztty",

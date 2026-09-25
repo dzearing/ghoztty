@@ -1,11 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-25T14:33:08-07:00",
-    "commit":  "c47077d82",
+    "generated":  "2026-09-25T15:02:22-07:00",
+    "commit":  "312002cc3",
     "uncommitted":  [
-                        "test/win32/ipc-command-keepalive.ps1",
-                        "test/win32/ipc-list-session-id.ps1"
+                        "test/win32/tab-tooltip.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -415,7 +414,7 @@
                   "test/win32/tab-overview-action.ps1":  "1e9d4753c755d9846699c726a1521ef343531e4c4887e0602488bd8cf5212382",
                   "test/win32/tab-strip.ps1":  "ddae0ab867cb6ecf11460cc99e7a78f541b0f44b8432c2248a1f5d2014e42bf4",
                   "test/win32/tab-strip-autohide.ps1":  "18a71e8d3baf08f01dac56de94897f7ac7d116d625eccc4dd4f5cf13971e153e",
-                  "test/win32/tab-tooltip.ps1":  "7396f516bb309e6399469a48e3e41996df7e7ed6e138cd49f84418cce3a6145b",
+                  "test/win32/tab-tooltip.ps1":  "cffe8c5852ced4356a060a07f0203df8c6dc75328fad5d2e8e978cbc7adb6783",
                   "test/win32/target-staleness.ps1":  "25c28c99d39716155584ecda6f7a826dae310b3adaad3ae6dbb962c38f7f7d80",
                   "test/win32/task-dashboard.ps1":  "c676c3f475745b47a7a661e6ee9d80631ae1951b6995d006d3e2dd52c95c2d0d",
                   "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3",
