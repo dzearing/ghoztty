@@ -3517,10 +3517,11 @@ pub const Connection = struct {
                 );
             },
             .meta => {
-                // Session metadata push. Two payloads are routed onto the pane's
+                // Session metadata push. Three payloads are routed onto the pane's
                 // inbound ring today — the live foreground pid (wp3 `tcgetpgrp`
-                // sampling) and whether anything is running under the shell
-                // (T356) — each signalled under the channel-table lock (the same
+                // sampling), whether anything is running under the shell
+                // (T356), and the working directory when it moves (T1583) —
+                // each signalled under the channel-table lock (the same
                 // `withChannel` discipline as `.exit`: the ring can't be freed
                 // mid-call, and an unknown/late channel is dropped silently).
                 // The pane's IO thread republishes both on the stable Remote
@@ -3548,6 +3549,17 @@ pub const Connection = struct {
                         }
                     };
                     _ = self.channels.withChannel(frame.channel, BusySig{ .has = has }, BusySig.apply);
+                }
+                // The session's working directory moved (T1583): the only way a
+                // pane whose shell reports no OSC 7 learns about a `cd`.
+                if (parsed.value.cwd) |cwd| {
+                    const CwdSig = struct {
+                        path: []const u8,
+                        fn apply(self_sig: @This(), ch: *ring.Channel) void {
+                            ch.signalCwd(self_sig.path);
+                        }
+                    };
+                    _ = self.channels.withChannel(frame.channel, CwdSig{ .path = cwd }, CwdSig.apply);
                 }
             },
             .detached => {
@@ -6206,6 +6218,48 @@ test "META foreground_pid: routed to the pane's ring; unknown channel dropped (w
 
     // The link stays healthy: input still round-trips after those frames.
     try testing.expectEqual(@as(i64, 7777), pane.ring.foregroundPid());
+    try testing.expect(a.err == null);
+    h.conn.closeChannel(pane);
+}
+
+test "META cwd: routed to the pane's ring so a moved directory reaches the pane (T1583)" {
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    const a = h.configure();
+    a.session_id = "sess-cwd";
+    try h.start();
+
+    const pane = try h.conn.openChannel(.{ .rows = 24, .cols = 80, .command = "cmd.exe" });
+    try test_util.waitEvent(&a.saw_request);
+
+    try h.ctrl_agent.sendJson(.meta, pane.id, protocol.Meta{ .cwd = "C:\\work\\moved" });
+    const RingWait = struct {
+        ring: *ring.Channel,
+        seen: u32 = 0,
+        out: [ring.Channel.max_cwd_len]u8 = undefined,
+        got: ?[]const u8 = null,
+        fn done(self: *@This()) bool {
+            if (self.ring.takeCwd(&self.seen, &self.out)) |c| self.got = c;
+            return self.got != null;
+        }
+    };
+    var rw: RingWait = .{ .ring = pane.ring };
+    try spinUntil(RingWait, &rw, RingWait.done);
+    try testing.expectEqualStrings("C:\\work\\moved", rw.got.?);
+
+    // A META carrying only other fields leaves the directory alone.
+    try h.ctrl_agent.sendJson(.meta, pane.id, protocol.Meta{ .foreground_pid = 55 });
+    const FgWait = struct {
+        ring: *ring.Channel,
+        fn done(self: *@This()) bool {
+            return self.ring.foregroundPid() == 55;
+        }
+    };
+    var fw: FgWait = .{ .ring = pane.ring };
+    try spinUntil(FgWait, &fw, FgWait.done);
+    try testing.expect(pane.ring.takeCwd(&rw.seen, &rw.out) == null);
+
     try testing.expect(a.err == null);
     h.conn.closeChannel(pane);
 }

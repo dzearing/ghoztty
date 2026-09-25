@@ -1163,34 +1163,7 @@ pub fn threadEnter(
     // the OSC 7 path in `stream_handler.zig`.
     if (attach_cwd) |cwd| {
         log.info("attach: applying agent-reported cwd={s}", .{cwd});
-        {
-            io.renderer_state.mutex.lock();
-            defer io.renderer_state.mutex.unlock();
-            io.terminal.setPwd(cwd) catch |err| {
-                log.warn("attach: error setting terminal pwd err={}", .{err});
-            };
-        }
-        if (apprt.surface.Message.WriteReq.init(alloc, cwd)) |req| {
-            const msg: apprt.surface.Message = .{ .pwd_change = req };
-            if (io.surface_mailbox.push(msg, .{ .instant = {} }) == 0) {
-                // The surface mailbox is the SHARED app mailbox, drained only
-                // by the GUI thread — which during a restore rebuild is busy
-                // building the other windows, so at bring-up it is routinely
-                // full (measured: 2 of 3 restored panes dropped here). Timed
-                // retries until it lands — unless this surface is being torn
-                // down (`shutdown` cancels before deinit joins this thread),
-                // in which case nobody cares, drop it. Mirrors
-                // `stream_handler.surfaceMessageWriter`.
-                while (io.surface_mailbox.push(msg, .{ .ns = 10 * std.time.ns_per_ms }) == 0) {
-                    if (self.canceller.isCancelled()) {
-                        req.deinit();
-                        break;
-                    }
-                }
-            }
-        } else |err| {
-            log.warn("attach: error creating pwd_change req err={}", .{err});
-        }
+        applyAgentCwd(io, alloc, &self.canceller, cwd);
     }
 
     // The async handle the demux thread notifies to wake THIS pane's IO thread.
@@ -1860,6 +1833,46 @@ fn publishProcessInfo(self: *Remote, pane: *const connection.Pane) void {
 /// non-blocking — it only notifies our async handle, which schedules `ringReady`
 /// to run on THIS pane's IO thread. `ctx` is the `ThreadData.remote` for this
 /// pane (a stable pointer for the thread's life).
+/// Make `cwd` the pane's working directory: the terminal's pwd (what
+/// `core_surface.pwd()` answers) and the surface's cached copy (what
+/// `+list --json` and session-layout capture actually read). Same two-step
+/// shape as the OSC 7 path in `stream_handler.zig`. Used for the directory an
+/// ATTACH / relaunch / OPEN resolved (T166, T752) and for every later move the
+/// agent pushes as `META{cwd}` (T1583). Runs on the pane's IO thread.
+fn applyAgentCwd(
+    io: *termio.Termio,
+    alloc: Allocator,
+    canceller: *const connection.RpcCanceller,
+    cwd: []const u8,
+) void {
+    {
+        io.renderer_state.mutex.lock();
+        defer io.renderer_state.mutex.unlock();
+        io.terminal.setPwd(cwd) catch |err| {
+            log.warn("agent cwd: error setting terminal pwd err={}", .{err});
+        };
+    }
+    const req = apprt.surface.Message.WriteReq.init(alloc, cwd) catch |err| {
+        log.warn("agent cwd: error creating pwd_change req err={}", .{err});
+        return;
+    };
+    const msg: apprt.surface.Message = .{ .pwd_change = req };
+    if (io.surface_mailbox.push(msg, .{ .instant = {} }) != 0) return;
+    // The surface mailbox is the SHARED app mailbox, drained only by the GUI
+    // thread — which during a restore rebuild is busy building the other
+    // windows, so at bring-up it is routinely full (measured: 2 of 3 restored
+    // panes dropped here). Timed retries until it lands — unless this surface
+    // is being torn down (`shutdown` cancels before deinit joins this thread),
+    // in which case nobody cares, drop it. Mirrors
+    // `stream_handler.surfaceMessageWriter`.
+    while (io.surface_mailbox.push(msg, .{ .ns = 10 * std.time.ns_per_ms }) == 0) {
+        if (canceller.isCancelled() or io.closing.load(.acquire)) {
+            req.deinit();
+            return;
+        }
+    }
+}
+
 fn wakeFromDemux(ctx: *anyopaque) void {
     const rd: *ThreadData = @ptrCast(@alignCast(ctx));
     rd.ring_async.notify() catch |err|
@@ -2356,6 +2369,28 @@ fn drainRing(td: *termio.Termio.ThreadData) void {
         rd.io.backend.remote.busy_state.store(@intFromEnum(busy), .release);
     }
 
+    // The session's working directory moved (T1583): the agent read it from
+    // the OS, which is the only source for a shell that reports no OSC 7 — a
+    // cross-machine cmd.exe has no shell integration and no pid on this box.
+    // Applied exactly like the ATTACH cwd, so `+list --json` and the
+    // session-layout record follow the user's `cd` instead of staying frozen
+    // on the directory the pane was opened in.
+    //
+    // A shell that DOES report OSC 7 outranks it: its claim is the shell's own
+    // idea of where it is, which the process cwd can disagree with — pwsh's
+    // `Set-Location` never moves it, and a WSL shell's host process never
+    // leaves the directory it was launched in. So once the stream has carried
+    // a pwd, pushes are consumed (the generation still advances) and dropped.
+    var cwd_buf: [inbound_ring.Channel.max_cwd_len]u8 = undefined;
+    if (ch.takeCwd(&rd.cwd_gen_seen, &cwd_buf)) |cwd| {
+        if (rd.io.terminal_stream.handler.seen_pwd) {
+            log.debug("agent pushed cwd={s}; shell reports OSC 7, keeping its value", .{cwd});
+        } else {
+            log.debug("agent pushed cwd={s}", .{cwd});
+            applyAgentCwd(rd.io, td.alloc, &rd.io.backend.remote.canceller, cwd);
+        }
+    }
+
     if (!rd.exited and ch.isExited()) {
         rd.exited = true;
         // Coerce the agent's i64 exit code to the surface message's u32. A negative
@@ -2423,6 +2458,10 @@ pub const ThreadData = struct {
     /// Only ever set on the snapshot attach path (`attach_offset > 0`) with a
     /// peer that promises the repaint. Touched only on the pane's IO thread.
     park_target: u64 = 0,
+
+    /// The last `META{cwd}` generation this pane applied (T1583; see
+    /// `Channel.takeCwd`). Touched only on the pane's IO thread.
+    cwd_gen_seen: u32 = 0,
 
     pub fn deinit(self: *ThreadData, alloc: Allocator) void {
         _ = alloc;

@@ -1455,6 +1455,13 @@ pub const Exit = struct {
 /// `META` (0x21). All fields optional; `listening_ports` powers auto-forward
 /// (§8.5) and the activity view (§9.3).
 pub const Meta = struct {
+    /// The session child's CURRENT working directory, pushed by the agent when
+    /// its periodic OS read sees it MOVE (T1583) — never as a baseline, since
+    /// ATTACHED already carries the recorded value. This is how a viewer on
+    /// another machine tracks a `cd` in a shell that reports no OSC 7.
+    /// Additive/optional both ways, no capability: absent (an older agent)
+    /// leaves the pane on its ATTACH/OPEN cwd as before, and an older client
+    /// ignores the field.
     cwd: ?[]const u8 = null,
     title: ?[]const u8 = null,
     listening_ports: ?[]const u16 = null,

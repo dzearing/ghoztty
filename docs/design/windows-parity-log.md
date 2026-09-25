@@ -33825,3 +33825,22 @@ including a real `<audio>` element seeking by asking for
 `range=20971520-21168043`. ALL PASS (66). The filing said Mac had the same gap.
 It does not: Mac loads `.html` panes through `loadFileURL`, and WebKit already
 seeks there, so there is no Mac half.
+
+## 2026-09-25 - T1583: a remote pane follows the user's `cd`
+
+A pane on another machine kept the directory it was opened in, because a
+cross-machine cmd.exe reports no OSC 7 and its process is not on this box. The
+agent already re-read every session's directory from the OS every ten seconds
+for the reboot floor (`refreshCwds`); when that value now MOVES for a bound
+session, it pushes `META{cwd}` on the session's channel (new `bridge_cwd`).
+Push-on-change only, never a baseline on bind, since ATTACHED already carries
+the value. Ungated: the refresh already ran, and `Meta.cwd` was always in the
+struct. On the client the control reader drops it into a mutex-guarded slot on
+the pane's ring (with a generation count), and the drain applies it through the
+same setPwd + `pwd_change` two-step the ATTACH cwd uses, now factored into
+`applyAgentCwd`. A shell that has reported OSC 7 keeps its own value: pwsh's
+`Set-Location` and a WSL shell never move their process's directory, so the OS
+reading would be the wrong one there. Unit tests on all three hops. Four lanes
+green, P1-P3 green, and the 11 harnesses the change made due are all green.
+Filed T1741 for an on-box end-to-end run. Mac: this is all shared core and agent
+code, so the Mac build gets the same behavior.

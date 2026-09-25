@@ -759,6 +759,12 @@ pub const Session = struct {
     /// makes `sampleDescendants` skip its process walk entirely when no attached
     /// peer would consume the answer.
     bridge_busy: ?*const fn (ctx: *anyopaque, channel: u128, has_descendants: bool) void = null,
+    /// Frames `META{cwd}` on the session's channel when `refreshCwds` sees the
+    /// child's working directory MOVE (T1583), so a viewer whose shell reports
+    /// no OSC 7 (a cross-machine cmd.exe) still learns where the user `cd`'d.
+    /// Same lifetime/locking rules as `bridge_data`. The path is borrowed for
+    /// the duration of the call only.
+    bridge_cwd: ?*const fn (ctx: *anyopaque, channel: u128, cwd: []const u8) void = null,
 
     /// The last foreground pid the sampling tick observed (0 = none yet).
     /// Guarded by the store mutex; reset to 0 on (re)bind so a fresh viewer gets
@@ -1835,7 +1841,9 @@ pub const SessionStore = struct {
     /// updated it again, so a session the user had `cd`'d out of came back — on a
     /// reboot or an agent upgrade — in the directory it STARTED in. `GET_CWD`
     /// already reads the live value on demand for new splits; this puts the same
-    /// answer where the reboot floor can find it.
+    /// answer where the reboot floor can find it. A move is also pushed to the
+    /// bound viewer as `META{cwd}` (T1583), which is the only way a viewer on
+    /// ANOTHER machine hears about a `cd` in a shell that reports no OSC 7.
     ///
     /// The OS query runs OUTSIDE `store.mutex`. Unlike `queryForegroundPid` it is
     /// explicitly NOT a cheap single syscall (macOS `proc_pidinfo`, a cross-process
@@ -1876,15 +1884,34 @@ pub const SessionStore = struct {
             defer self.table.alloc.free(cwd);
             if (cwd.len == 0) continue;
 
+            // Whom to tell (T1583): the bound viewer, when the value MOVED.
+            // Captured under the lock, called after it — the bridge takes the
+            // connection's writer lock (same collect-then-act rule as every
+            // other push). `cwd` stays alive until this iteration's defer.
+            var push_f: ?*const fn (ctx: *anyopaque, channel: u128, cwd: []const u8) void = null;
+            var push_ctx: ?*anyopaque = null;
+            var push_channel: u128 = 0;
+
             self.mutex.lock();
             if (self.table.getById(p.id)) |s| {
                 const same = if (s.cwd) |c| std.mem.eql(u8, c, cwd) else false;
                 if (!same) {
                     s.setCwd(cwd);
                     changed = true;
+                    // Pushed on CHANGE only, never as a baseline on (re)bind:
+                    // ATTACHED already carries `s.cwd`, and a re-push of an
+                    // unmoved OS cwd could overwrite a truer OSC 7 value (a WSL
+                    // shell's host process never changes directory at all).
+                    if (s.bound) {
+                        push_f = s.bridge_cwd;
+                        push_ctx = s.bridge_ctx;
+                        push_channel = s.channel;
+                    }
                 }
             }
             self.mutex.unlock();
+
+            if (push_f) |f| if (push_ctx) |ctx| f(ctx, push_channel, cwd);
         }
 
         // Only touch the disk when something actually moved. This runs on the

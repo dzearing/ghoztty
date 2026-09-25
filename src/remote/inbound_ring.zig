@@ -277,9 +277,27 @@ pub const Channel = struct {
     /// backend for GUI reads.
     busy_state: Atomic(u8) = .init(@intFromEnum(BusyState.unknown)),
 
+    /// The session's working directory as last pushed by the agent in
+    /// `META{cwd}` (T1583) — how a pane whose shell reports no OSC 7 hears
+    /// about a `cd`. A path is not atomic-sized, so it lives in an inline
+    /// buffer under `cwd_mutex`; `cwd_gen` bumps on every write so the
+    /// consumer can tell "new value" from "the one I already applied" without
+    /// taking the lock. Inline rather than allocated so the producer (the
+    /// control reader, on the connection's allocator) and the owner (the pane,
+    /// on its own) never have to agree on who frees it.
+    cwd_mutex: std.Thread.Mutex = .{},
+    cwd_buf: [max_cwd_len]u8 = undefined,
+    cwd_len: usize = 0,
+    cwd_gen: Atomic(u32) = .init(0),
+
     /// The tri-state carried by `busy_state`. `unknown` is the initial value and
     /// the answer for any agent too old to advertise `capability.session_busy`.
     pub const BusyState = enum(u8) { unknown = 0, idle = 1, busy = 2 };
+
+    /// Longest pushed path we keep. Anything longer is dropped whole — a
+    /// truncated directory is a WRONG directory, and the pane keeps its last
+    /// good value instead.
+    pub const max_cwd_len = 4096;
 
     pub const InitOptions = struct {
         capacity: usize = default_capacity,
@@ -394,6 +412,33 @@ pub const Channel = struct {
     /// none has arrived (an older agent, or a session not sampled yet).
     pub fn busyState(self: *const Channel) BusyState {
         return @enumFromInt(self.busy_state.load(.acquire));
+    }
+
+    /// Producer entry point (control reader, on `META{cwd}`): record the
+    /// session's new working directory and wake the consumer. An empty or
+    /// over-long path is ignored (see `max_cwd_len`).
+    pub fn signalCwd(self: *Channel, path: []const u8) void {
+        if (path.len == 0 or path.len > max_cwd_len) return;
+        {
+            self.cwd_mutex.lock();
+            defer self.cwd_mutex.unlock();
+            @memcpy(self.cwd_buf[0..path.len], path);
+            self.cwd_len = path.len;
+            _ = self.cwd_gen.fetchAdd(1, .release);
+        }
+        self.waker.wake();
+    }
+
+    /// Consumer entry point: if a directory newer than generation `seen.*` has
+    /// been pushed, copy it into `out`, advance `seen.*`, and return the copy.
+    /// Null when nothing new arrived (the common case: one atomic load).
+    pub fn takeCwd(self: *Channel, seen: *u32, out: *[max_cwd_len]u8) ?[]const u8 {
+        if (self.cwd_gen.load(.acquire) == seen.*) return null;
+        self.cwd_mutex.lock();
+        defer self.cwd_mutex.unlock();
+        seen.* = self.cwd_gen.load(.acquire);
+        @memcpy(out[0..self.cwd_len], self.cwd_buf[0..self.cwd_len]);
+        return out[0..self.cwd_len];
     }
 };
 
@@ -791,6 +836,48 @@ test "Channel: signalExit sets isExited, publishes code/runtime, and wakes" {
     try testing.expectEqual(@as(i64, 137), ch.exit_code);
     try testing.expectEqual(@as(u64, 4242), ch.runtime_ms);
     try testing.expect(flag.woke);
+}
+
+test "Channel: signalCwd hands each new directory to the consumer exactly once (T1583)" {
+    const alloc = testing.allocator;
+    const Flag = struct {
+        woke: bool = false,
+        fn wake(ctx: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.woke = true;
+        }
+    };
+    var flag: Flag = .{};
+    var ch = try Channel.init(alloc, 9, .{
+        .capacity = 64,
+        .waker = .{ .ctx = &flag, .wakeFn = Flag.wake },
+    });
+    defer ch.deinit(alloc);
+
+    var seen: u32 = 0;
+    var out: [Channel.max_cwd_len]u8 = undefined;
+
+    // Nothing pushed yet: nothing to take.
+    try testing.expect(ch.takeCwd(&seen, &out) == null);
+
+    ch.signalCwd("C:\\work\\a");
+    try testing.expect(flag.woke);
+    try testing.expectEqualStrings("C:\\work\\a", ch.takeCwd(&seen, &out).?);
+    // Taken once; the same value is not handed out again.
+    try testing.expect(ch.takeCwd(&seen, &out) == null);
+
+    // Two pushes between drains: the consumer sees only the latest.
+    ch.signalCwd("C:\\work\\b");
+    ch.signalCwd("C:\\work\\c");
+    try testing.expectEqualStrings("C:\\work\\c", ch.takeCwd(&seen, &out).?);
+
+    // Empty and over-long paths are dropped whole, never truncated.
+    flag.woke = false;
+    ch.signalCwd("");
+    var long: [Channel.max_cwd_len + 1]u8 = @splat('x');
+    ch.signalCwd(&long);
+    try testing.expect(!flag.woke);
+    try testing.expect(ch.takeCwd(&seen, &out) == null);
 }
 
 test "ChannelTable: withChannel delivers to a registered channel; unknown is graceful" {

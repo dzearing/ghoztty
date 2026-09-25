@@ -727,6 +727,7 @@ pub const Server = struct {
                 s.bridge_data = null;
                 s.bridge_exit = null;
                 s.bridge_busy = null;
+                s.bridge_cwd = null;
                 s.has_descendants = null;
                 s.bound = false;
                 s.unattached_since_ms = self.clock.now();
@@ -873,6 +874,17 @@ pub const Server = struct {
         const self: *Server = @ptrCast(@alignCast(ctx));
         self.sendJson(.meta, channel, protocol.Meta{
             .foreground_pid = fg_pid,
+        }) catch {};
+    }
+
+    /// Push the session's moved working directory as `META{cwd}` on its channel
+    /// (T1583; see `SessionStore.refreshCwds`). Ungated: `refreshCwds` runs for
+    /// the reboot floor regardless of who is attached, so the push costs one
+    /// frame per actual `cd`, and an older app ignores the field it never read.
+    fn bridgeCwd(ctx: *anyopaque, channel: u128, cwd: []const u8) void {
+        const self: *Server = @ptrCast(@alignCast(ctx));
+        self.sendJson(.meta, channel, protocol.Meta{
+            .cwd = cwd,
         }) catch {};
     }
 
@@ -1298,6 +1310,7 @@ pub const Server = struct {
         s.bridge_data = bridgeData;
         s.bridge_exit = bridgeExit;
         s.bridge_fgpid = bridgeFgPid;
+        s.bridge_cwd = bridgeCwd;
         // The busy bridge is the capability gate (T356): with it absent the store's
         // `sampleDescendants` skips its process-table walk entirely, so an agent
         // whose attached clients are all too old to understand
@@ -1656,6 +1669,7 @@ pub const Server = struct {
             s.bridge_data = null;
             s.bridge_exit = null;
             s.bridge_busy = null;
+            s.bridge_cwd = null;
             s.has_descendants = null;
             s.bound = false;
             s.unattached_since_ms = self.clock.now();
@@ -5082,6 +5096,56 @@ test "descendants sampling pushes META{has_descendants} on change only (T356)" {
         defer p.deinit();
         try testing.expectEqual(w, p.value.has_descendants.?);
     }
+}
+
+test "cwd refresh pushes META{cwd} to the bound viewer when the directory moves, and only then (T1583)" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{};
+    var fc: FakeChild = .{ .alloc = alloc };
+    defer fc.deinit();
+    var kids = [_]*FakeChild{&fc};
+    var sp: FakeSpawner = .{ .children = &kids };
+    var prng = std.Random.DefaultPrng.init(1583);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    // Ungated: a plain handshake (no new capability) still gets the push.
+    try h.client.handshake();
+    _ = try h.server.waitHandshake();
+
+    const o = try doOpen(&h, .{ .rows = 24, .cols = 80 });
+
+    // The user `cd`s: the next refresh sees the move and tells the viewer.
+    fc.fake_cwd = "C:\\work\\first";
+    h.server.store.refreshCwds();
+    const m1 = try h.client.waitControl(.meta);
+    try testing.expectEqual(o.channel, m1.channel);
+    var p1 = try protocol.parseJson(protocol.Meta, alloc, m1.payload);
+    defer p1.deinit();
+    try testing.expectEqualStrings("C:\\work\\first", p1.value.cwd.?);
+
+    // Nothing moved: the refresh must be silent. Proven by making an unrelated
+    // push the NEXT meta frame on the channel — a stray cwd re-push would have
+    // been read here instead.
+    h.server.store.refreshCwds();
+    fc.mutex.lock();
+    fc.fake_fg_pid = 4242;
+    fc.mutex.unlock();
+    h.server.store.sampleForegroundPids();
+    const m2 = try h.client.waitControl(.meta);
+    var p2 = try protocol.parseJson(protocol.Meta, alloc, m2.payload);
+    defer p2.deinit();
+    try testing.expect(p2.value.cwd == null);
+    try testing.expectEqual(@as(i64, 4242), p2.value.foreground_pid.?);
+
+    // A second `cd` is pushed too — the value tracks, it is not a one-shot.
+    fc.fake_cwd = "C:\\work\\second";
+    h.server.store.refreshCwds();
+    const m3 = try h.client.waitControl(.meta);
+    var p3 = try protocol.parseJson(protocol.Meta, alloc, m3.payload);
+    defer p3.deinit();
+    try testing.expectEqualStrings("C:\\work\\second", p3.value.cwd.?);
 }
 
 test "descendants sampling is silent for a peer without session_busy (T356)" {
