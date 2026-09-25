@@ -33767,3 +33767,15 @@ the moved panes. Three windows come back, none empty and none answering to
 lone; the popped window returns at its exact frame; every session re-attached.
 ALL PASS (38); `-NegativeControl` (restored where it started) is red. New
 guard row `rearrange-restore`.
+
+## 2026-09-25 - T1566: a swallowed update balloon no longer loses the offer (proved)
+
+Already fixed at the source by T1673 (654143980), five days after this card
+was filed: the menu dot, the "Install Update <ver>" row and the on-disk offer
+record all go up in `rememberUpdate`, before the balloon is tried. What was
+never shown is that they survive a balloon that fails, since every T1673
+scenario had a working tray. That is now scenario 13 (`autotraydead`) of
+`test/win32/update-check.ps1`: an automatic check with `GHOZTTY_TRAY_FAIL`
+raises the affordance, writes the record, and the next launch restores it with
+no feed. A new `update affordance up` log line lets the harness see the
+surface; the up-to-date scenario is its negative control. ALL PASS (54).

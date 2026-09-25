@@ -1,10 +1,11 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-25T09:13:24-07:00",
-    "commit":  "f7160279c",
+    "generated":  "2026-09-25T09:54:38-07:00",
+    "commit":  "0b87c172f",
     "uncommitted":  [
-                        "test/win32/rearrange-restore.ps1"
+                        "src/apprt/win32/App.zig",
+                        "test/win32/update-check.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -30,7 +31,7 @@
                   "src/apprt/win32/agent_upgrade.zig":  "32238c442c66a6ee5885c31c751f9fbf23f174c36bf852905eda7cd1ad3ea603",
                   "src/apprt/win32/AgentIntegration.zig":  "ce4bbfbbf2bc5159eab352bda4d83b4039616b94fc14f938274e3a97efdb945d",
                   "src/apprt/win32/AgentIntegrationsDialog.zig":  "bae8123be8ee78f13e7c5008ef66f2589e26eaf047e42163a3be94879952d92d",
-                  "src/apprt/win32/App.zig":  "7e073f3b5f96a6135fe469e86b17cb83e9d17b10ddcc80129188ba7b276d0f08",
+                  "src/apprt/win32/App.zig":  "e1af5f7f6b734833f9755277a3b63eea17503cca6a3aa8ad7fa573fd7cd38268",
                   "src/apprt/win32/banner_card.zig":  "8a8ae5c2bc901bfc594b23bb443f6d919bdc4756d9f42d7c9c102f5e05a13b90",
                   "src/apprt/win32/banner_layout.zig":  "9a4fef1af1553e28f590f3bd5efab4791d03bddea0122b0b53b2cf92cd80f195",
                   "src/apprt/win32/banner_link.zig":  "77bd381ab5cca8cf4a4d12d9e15971303d5d4e83ea600fe4576c9e5bf4a34c95",
@@ -791,7 +792,7 @@
                   "test/win32/title-jitter.ps1":  "cddd430bceb80810b24814bd1e3047534b578c8d87390827f105ac5915c198f0",
                   "test/win32/unroll-count-audit.ps1":  "4774094b99a4aa9506ac07fe3c4dce49704615fbadc469e41ee90a533401fa31",
                   "test/win32/update-apply.ps1":  "ed99645a2d9b0c9c005079cc3957df31bccc1b043e397f13315d6e4d1b4bb400",
-                  "test/win32/update-check.ps1":  "b881bc9de358a4526e91d737d5a28a0f10e113845d633fab1aea1b9b21aa6cc5",
+                  "test/win32/update-check.ps1":  "d69fbf0bc300944d001b45097799326c7cf1f1ef5ac6e9a421baa8ac3c660e5d",
                   "test/win32/update-failure-visible.ps1":  "1461a89d59acbfe5b8c66685cf50d786aa51c97e7d5bb64ae683ff6593773647",
                   "test/win32/update-graceful.ps1":  "8dd249a5f108c2f129a2673c857e68808115c8fd963d67ffaef7ab43a3c70944",
                   "test/win32/update-progress.ps1":  "eb5f961ca43ee0a2e75f3d00cc7c0f7d84cd908ef50c7c0cfa98dfb6dee96f42",

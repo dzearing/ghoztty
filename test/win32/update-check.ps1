@@ -41,6 +41,9 @@
 #      version this build has overtaken is dropped at launch, which is also
 #      what cleans up after a successful install
 #  12. a corrupt record costs the affordance and nothing else
+#  13. an AUTOMATIC offer survives a DEAD TRAY (T1566): the balloon is
+#      swallowed, and the menu affordance and the on-disk offer go up anyway,
+#      so the next launch still says an update is waiting
 param([string]$ExePath)
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
@@ -435,6 +438,31 @@ Assert ($log11 -notmatch 'restored pending update offer') 'retire: nothing is re
 $log12 = Run-Scenario 'persist-corrupt' ''
 Assert ($log12 -notmatch 'restored pending update offer') 'corrupt: an unparseable record restores nothing'
 Assert ($log12 -notmatch 'panic|Unhandled exception') 'corrupt: and the app comes up regardless'
+Remove-Item $offerPath -ErrorAction SilentlyContinue
+
+# -- 13. an AUTOMATIC offer survives a tray that refuses it (T1566) --------
+# Scenario 8 proved the MANUAL answer lands in a window when the tray is dead.
+# The automatic arm deliberately stays a balloon - an unsolicited offer should
+# not throw a modal at somebody mid-sentence - so what has to hold instead is
+# that a swallowed balloon costs the user nothing: the menu dot and its
+# "Install Update" row go up, and the offer is on disk for the next launch,
+# with the balloon never having been seen at all.
+$env:GHOZTTY_TRAY_FAIL = '1'
+try {
+    $log13a = Run-Scenario 'autotraydead' (New-Feed 'autotraydead.json' $feedNewer)
+} finally {
+    Remove-Item Env:GHOZTTY_TRAY_FAIL -ErrorAction SilentlyContinue
+}
+Assert ($log13a -match 'tray balloon suppressed by GHOZTTY_TRAY_FAIL') 'autotraydead: the balloon really was swallowed for this run'
+Assert ($log13a -notmatch 'scripted manual update check') 'autotraydead: this is the AUTOMATIC arm - nobody asked'
+Assert ($log13a -match 'update affordance up for win-v9\.9\.9') 'autotraydead: the in-app affordance went up with the balloon gone'
+Assert (Test-Path $offerPath) 'autotraydead: the offer was written to disk, not only to the balloon that was swallowed'
+# ...and it is still there tomorrow: a fresh launch, tray working, no feed.
+$log13b = Run-Scenario 'autotraydead-restore' ''
+Assert ($log13b -match 'restored pending update offer win-v9\.9\.9') 'autotraydead: the next launch still offers it with no check at all'
+# Negative control (T1133): without an offer, no affordance line is logged,
+# so the assertion above cannot be satisfied by a line that always prints.
+Assert ($log3 -notmatch 'update affordance up') 'autotraydead (negative control): an up-to-date check raises no affordance'
 Remove-Item $offerPath -ErrorAction SilentlyContinue
 
 

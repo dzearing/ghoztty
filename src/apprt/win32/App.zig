@@ -9405,6 +9405,11 @@ fn rememberUpdate(self: *App, found: *UpdateFound) void {
     self.update_pending = true;
     self.savePendingUpdate();
     self.refreshUpdateAffordance();
+    // Said here rather than after the balloon, because the balloon is allowed
+    // to fail and this is the surface that does not depend on it (T1566).
+    log.info("update affordance up for win-v{s} (menu dot + Install row, staged={})", .{
+        found.version, self.update_staged_msi != null,
+    });
 }
 
 /// Show a notification balloon that an update is available — the AUTOMATIC

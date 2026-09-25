@@ -1,11 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-25T09:09:42-07:00",
-    "commit":  "f7160279c",
+    "generated":  "2026-09-25T09:50:54-07:00",
+    "commit":  "0b87c172f",
     "uncommitted":  [
-                        "scripts/guard-due.ps1",
-                        "test/win32/rearrange-restore.ps1"
+                        "test/win32/update-check.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -430,7 +429,7 @@
                   "test/win32/title-jitter.ps1":  "cddd430bceb80810b24814bd1e3047534b578c8d87390827f105ac5915c198f0",
                   "test/win32/unroll-count-audit.ps1":  "4774094b99a4aa9506ac07fe3c4dce49704615fbadc469e41ee90a533401fa31",
                   "test/win32/update-apply.ps1":  "ed99645a2d9b0c9c005079cc3957df31bccc1b043e397f13315d6e4d1b4bb400",
-                  "test/win32/update-check.ps1":  "b881bc9de358a4526e91d737d5a28a0f10e113845d633fab1aea1b9b21aa6cc5",
+                  "test/win32/update-check.ps1":  "d69fbf0bc300944d001b45097799326c7cf1f1ef5ac6e9a421baa8ac3c660e5d",
                   "test/win32/update-failure-visible.ps1":  "1461a89d59acbfe5b8c66685cf50d786aa51c97e7d5bb64ae683ff6593773647",
                   "test/win32/update-graceful.ps1":  "8dd249a5f108c2f129a2673c857e68808115c8fd963d67ffaef7ab43a3c70944",
                   "test/win32/update-progress.ps1":  "eb5f961ca43ee0a2e75f3d00cc7c0f7d84cd908ef50c7c0cfa98dfb6dee96f42",
