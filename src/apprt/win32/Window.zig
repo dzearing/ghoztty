@@ -185,6 +185,7 @@ const tab_tooltip = @import("tab_tooltip.zig");
 const internal_os = @import("../../os/main.zig");
 
 const log = std.log.scoped(.win32);
+const window_broadcast = @import("window_broadcast.zig");
 
 /// Posted by a Surface's renderer thread when a hero-mode thumbnail
 /// snapshot is ready (wparam = the leaf's HWND; validated against the
@@ -199,6 +200,13 @@ pub const WM_APP_HERO_SNAP: u32 = w32.WM_APP + 6;
 /// TrackPopupMenuEx loop never runs nested inside a keyboard WndProc — the
 /// re-entrancy class T48 was.
 pub const WM_APP_OPEN_MENU: u32 = w32.WM_APP + 10;
+
+/// DEBUG BUILDS ONLY: run the `WM_DPICHANGED` path for the DPI in wparam
+/// (T1579). Windows refuses a `WM_DPICHANGED` sent from another process, and
+/// this box's monitors share one scale, so without it no acceptance script
+/// could ever change a window's DPI. `test\win32\dpi-change.ps1` sends it; a
+/// release build ignores it.
+pub const WM_APP_TEST_DPICHANGED: u32 = w32.WM_APP + 38;
 
 /// Hero-mode carousel thumbnail refresh period (Mac parity: 0.15s).
 const HERO_SNAP_INTERVAL_MS: u32 = 150;
@@ -4159,8 +4167,8 @@ fn adoptPane(view: *PaneView, dest: *Window) void {
     view.setParentWindow(dest);
     // The destination may be on a monitor with a different DPI, and a child
     // window is never sent `WM_DPICHANGED` - the same reason a window dragged
-    // between monitors re-reads it rather than waiting to be told.
-    if (view.surface()) |surf| surf.handleDpiChange();
+    // between monitors has it forwarded (T1579) rather than waiting to be told.
+    if (view.surface()) |surf| surf.handleDpiChange(null);
 }
 
 /// Repair the window a pane has just LEFT (T1538).
@@ -7176,6 +7184,66 @@ pub fn reportColorScheme(self: *Window) void {
             };
         }
     }
+}
+
+/// Forward a top-level-only message to every pane in every tab (T1579).
+///
+/// A terminal pane is a `WS_CHILD` and is never sent `WM_DPICHANGED` or the
+/// `WM_SETTINGCHANGE` broadcast; before this it heard them only through its
+/// search/palette popups, i.e. only while one was open. Hidden tabs included:
+/// they are on the new monitor too, and nothing re-reads the scale when a tab
+/// is shown. `dpi` is required for `.dpi_changed`. Returns how many panes
+/// were owed something, for the debug oracle.
+fn forwardToPanes(self: *Window, event: window_broadcast.Event, dpi: ?u32) usize {
+    var reached: usize = 0;
+    for (0..self.tab_count) |i| {
+        var it = self.tab_trees[i].iterator();
+        while (it.next()) |entry| {
+            if (entry.view.viewer()) |v| {
+                const action = window_broadcast.actionFor(event, .viewer);
+                if (action.rescale) {
+                    if (dpi) |d| v.setDpi(d);
+                }
+                if (action.any()) reached += 1;
+                continue;
+            }
+            const surface = entry.view.surface() orelse continue;
+            const action = window_broadcast.actionFor(event, .terminal);
+            if (action.rescale) surface.handleDpiChange(dpi);
+            if (action.reread_scrollbar) surface.handleSettingsChange();
+            if (action.any()) reached += 1;
+        }
+    }
+    return reached;
+}
+
+/// Adopt a new DPI for the whole window (T1579): the chrome's scale and fonts,
+/// every pane, and the size Windows suggests for the new monitor.
+fn handleDpiChanged(self: *Window, hwnd: w32.HWND, dpi: u32, suggested: ?*const w32.RECT) void {
+    self.scale = window_broadcast.scaleFromDpi(dpi);
+    self.createTabFont();
+    // Panes first, so the relayout the resize below causes sizes every grid
+    // with the new font rather than the old one.
+    const panes = self.forwardToPanes(.dpi_changed, dpi);
+    if (suggested) |r| {
+        _ = w32.SetWindowPos(
+            hwnd,
+            null,
+            r.left,
+            r.top,
+            r.right - r.left,
+            r.bottom - r.top,
+            w32.SWP_NOZORDER | w32.SWP_NOACTIVATE,
+        );
+    }
+    // Always relayout: the chrome's band height moved with the scale even when
+    // the outer size did not, and an unchanged size raises no WM_SIZE.
+    self.handleResize("dpi");
+    self.invalidateChrome();
+    // The oracle for dpi-change.ps1: a DPI change cannot be photographed on a
+    // box whose monitors share a scale, so the window states what it adopted
+    // and how many panes it told.
+    log.debug("window dpi changed dpi={} panes={}", .{ dpi, panes });
 }
 
 /// Highest-priority activity state across every pane in every tab
@@ -10519,6 +10587,10 @@ pub fn windowWndProc(
             // `window-theme = system`. The core no-ops when the scheme is
             // unchanged, so reacting to every setting change is safe.
             window.reportColorScheme();
+            // The scrollbar mode is a setting too, and a child terminal never
+            // hears the broadcast (T1579).
+            const panes = window.forwardToPanes(.setting_changed, null);
+            log.debug("window setting change forwarded panes={}", .{panes});
             applyChromeTheme(
                 hwnd,
                 window.app.config.@"window-theme",
@@ -10555,6 +10627,25 @@ pub fn windowWndProc(
                 window.invalidateChrome();
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+        w32.WM_DPICHANGED => {
+            // The window crossed onto a monitor with a different scale. Only
+            // the top-level window is told; every pane hears it from here
+            // (T1579). lparam is the size Windows suggests at the new DPI; a
+            // zero one (never sent by the OS) keeps the current size.
+            const dpi = window_broadcast.dpiFromWparam(wparam) orelse return 0;
+            const suggested: ?*const w32.RECT = if (lparam == 0)
+                null
+            else
+                @ptrFromInt(@as(usize, @bitCast(lparam)));
+            window.handleDpiChanged(hwnd, dpi, suggested);
+            return 0;
+        },
+        WM_APP_TEST_DPICHANGED => {
+            if (comptime builtin.mode != .Debug) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+            const dpi = window_broadcast.dpiFromWparam(wparam) orelse return 0;
+            window.handleDpiChanged(hwnd, dpi, null);
+            return 0;
         },
         w32.WM_DWMCOLORIZATIONCOLORCHANGED => {
             // The accent itself changed. DWM hands the new color in wparam,

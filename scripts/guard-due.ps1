@@ -2577,6 +2577,19 @@ $GuardTable = @(
             'test\win32\split-divider.ps1'
         )
     },
+    # T1579: a terminal pane is a child window and never hears WM_DPICHANGED
+    # or WM_SETTINGCHANGE; the top-level window forwards both. The unit tests
+    # own the rule for what each pane is owed; this row owns the claim that a
+    # DPI change actually changes the grid's font in every pane.
+    [pscustomobject]@{
+        Name   = 'dpi-change'
+        Script = 'test\win32\dpi-change.ps1'
+        Stamp  = 'test\win32\dpi-change.stamp.json'
+        Covers = @(
+            'src\apprt\win32\window_broadcast.zig',
+            'test\win32\dpi-change.ps1'
+        )
+    },
     # The composited capture (T778) is a SEAM, not a feature: `split-divider`'s
     # cross-pane scan and anything that follows it read the product through it,
     # and a composite that placed a pane a few pixels off - or stopped placing

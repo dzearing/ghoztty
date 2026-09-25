@@ -416,6 +416,11 @@ test {
     // no-OS-imports deal.
     _ = @import("apprt/win32/surface_window_role.zig");
 
+    // Pure win32 top-level -> pane forwarding rule — what each pane kind is
+    // owed when only the top-level window hears WM_DPICHANGED or
+    // WM_SETTINGCHANGE (T1579), same no-OS-imports deal.
+    _ = @import("apprt/win32/window_broadcast.zig");
+
     // Pure win32 activation reading — which proxy for "is this window the
     // active one" still carries information off the input desktop (T215),
     // same no-OS-imports deal.

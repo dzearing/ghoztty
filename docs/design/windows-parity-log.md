@@ -33793,3 +33793,20 @@ subsystem is not GUI (`upgrade-staleness.ps1` D18-D23 with a positive control;
 167 pass, 2 red with the refusal disabled). Then a ReleaseFast delivery:
 `AUDIT OK: 3 location(s) agree on +d82c23109`, `deliver=ok`. Filed T1739: the
 health line kept the morning's `wrong(7)` until `deliver-audit.ps1 -Force`.
+
+## 2026-09-25 - T1579: a monitor move re-scales the whole window, not just an open popup
+
+A terminal pane is a child window, and Windows tells only the top-level window
+about a DPI change or a settings broadcast. The top-level window had no
+`WM_DPICHANGED` arm at all and never passed `WM_SETTINGCHANGE` on, so a pane
+heard either one only through its search or palette popup. Even then the grid
+did not change: `Surface.handleDpiChange` rebuilt the popup fonts and never
+handed the core the new content scale. Now `Window.forwardToPanes` sends both to
+every pane in every tab (rule and unit tests in `window_broadcast.zig`), the
+window adopts the DPI for its own chrome and moves to the size Windows suggests,
+and the core gets `contentScaleCallback`. Windows refuses a `WM_DPICHANGED` sent
+from another process and both monitors here run at 120 dpi, so a debug-only
+`WM_APP+38` drives the same handler. `test/win32/dpi-change.ps1`: at 180 dpi
+both panes drop from 56 to 37 columns (read with `mode con` inside the shell)
+and return at 120. ALL PASS (19), and the negative control fails 4. Filed T1740
+to watch a real mixed-DPI drag.

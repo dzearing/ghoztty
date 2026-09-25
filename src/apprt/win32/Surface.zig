@@ -34,6 +34,7 @@ const resize_paint = @import("resize_paint.zig");
 const clipboard_open = @import("clipboard_open.zig");
 const utf16_text = @import("utf16_text.zig");
 const Scrollbar = @import("Scrollbar.zig").Scrollbar;
+const window_broadcast = @import("window_broadcast.zig");
 const DimOverlay = @import("DimOverlay.zig").DimOverlay;
 const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
 const ReadonlyBadge = @import("ReadonlyBadge.zig").ReadonlyBadge;
@@ -3755,9 +3756,28 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
     }
 }
 
-/// Handle WM_DPICHANGED.
-pub fn handleDpiChange(self: *Surface) void {
-    self.updateDpiScale();
+/// Adopt a new DPI: the core's font size, the popups' fonts and the
+/// scrollbar. `dpi` is the value a top-level `WM_DPICHANGED` carried, which
+/// the window forwards because this pane is a child and never hears it
+/// (T1579); null re-reads it from the terminal window (a popup's own
+/// `WM_DPICHANGED`, and a pane adopted into another window).
+pub fn handleDpiChange(self: *Surface, dpi: ?u32) void {
+    const old_scale = self.scale;
+    if (dpi) |d| {
+        self.scale = window_broadcast.scaleFromDpi(d);
+    } else {
+        self.updateDpiScale();
+    }
+
+    // The core sizes its font from the content scale, and nothing told it
+    // the scale moved: `getContentScale` is only read at creation. So a
+    // monitor move re-scaled the popups and left the grid's glyphs at the old
+    // monitor's size (T1579). The core no-ops an unchanged DPI.
+    if (self.scale != old_scale and self.core_surface_ready) {
+        self.core_surface.contentScaleCallback(.{ .x = self.scale, .y = self.scale }) catch |err| {
+            log.warn("content scale callback failed err={}", .{err});
+        };
+    }
 
     // Popup fonts were created at the previous DPI. Rebuild them at
     // the new scale so search-bar / palette text doesn't render
@@ -3825,6 +3845,24 @@ pub fn handleDpiChange(self: *Surface) void {
 
     // Notify the scrollbar of the new DPI.
     if (self.scrollbar) |sb| sb.onDpiChanged(@intFromFloat(self.scale * 96.0));
+}
+
+/// Re-read the scrollbar mode after a `WM_SETTINGCHANGE`, and re-flow the grid
+/// if it moved. Reached from the top-level window's forward (T1579) and from a
+/// popup's own copy of the broadcast; the second of the two is a no-op, since
+/// the mode has already been adopted.
+pub fn handleSettingsChange(self: *Surface) void {
+    const sb = self.scrollbar orelse return;
+    if (!sb.onSettingsChange()) return;
+    // Re-flow the grid to accommodate a mode change, posted to the TERMINAL
+    // window by name (T742): a broadcast reaches top-level windows, so the
+    // window that heard it is never this one.
+    if (self.hwnd) |surface_hwnd| {
+        const width: u32 = self.width;
+        const height: u32 = self.height;
+        const lp_size: isize = @intCast((@as(usize, height) << 16) | @as(usize, width));
+        _ = w32.PostMessageW(surface_hwnd, w32.WM_SIZE, 0, lp_size);
+    }
 }
 
 /// Handle WM_KEYDOWN / WM_SYSKEYDOWN / WM_KEYUP / WM_SYSKEYUP.

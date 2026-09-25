@@ -4789,6 +4789,17 @@ fn readScale(self: *ViewerPane) void {
     self.pushRasterizationScale();
 }
 
+/// Adopt the DPI the host window's `WM_DPICHANGED` carried (T1579). The
+/// bounds sync that DPI change causes re-reads it too; this covers the move
+/// that leaves the window's size unchanged and so syncs nothing.
+pub fn setDpi(self: *ViewerPane, dpi: u32) void {
+    if (dpi == 0) return;
+    const scale = @as(f32, @floatFromInt(dpi)) / 96.0;
+    if (scale == self.scale) return;
+    self.scale = scale;
+    self.pushRasterizationScale();
+}
+
 fn pushRasterizationScale(self: *ViewerPane) void {
     const c = self.controller orelse return;
     const c3 = c.queryV3() orelse return;

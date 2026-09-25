@@ -10774,23 +10774,12 @@ fn surfaceWndProc(
         },
 
         w32.WM_SETTINGCHANGE => {
-            if (surface.scrollbar) |sb| {
-                if (sb.onSettingsChange()) {
-                    // Re-flow the grid to accommodate a mode change.
-                    //
-                    // Correct for all three windows, but only because the
-                    // re-flow is posted to the TERMINAL window by name (T742):
-                    // a broadcast reaches top-level windows, which here means
-                    // the two POPUPS and never the child terminal, so posting
-                    // to `hwnd` sized the grid to whichever popup was open.
-                    if (surface.hwnd) |surface_hwnd| {
-                        const width: u32 = surface.width;
-                        const height: u32 = surface.height;
-                        const lp_size: isize = @intCast((@as(usize, height) << 16) | @as(usize, width));
-                        _ = w32.PostMessageW(surface_hwnd, w32.WM_SIZE, 0, lp_size);
-                    }
-                }
-            }
+            // A broadcast reaches top-level windows, which here means the two
+            // POPUPS and never the child terminal - the terminal hears this
+            // through its top-level window's forward (T1579), and this copy is
+            // then a no-op. Correct for all three windows because the re-flow
+            // is posted to the TERMINAL window by name (T742).
+            surface.handleSettingsChange();
 
             // Note: OS light/dark flips do NOT arrive here — a
             // WM_SETTINGCHANGE broadcast only reaches top-level windows.
@@ -10923,12 +10912,12 @@ fn surfaceWndProc(
         w32.WM_DPICHANGED => {
             // Correct for all three windows, and in practice it is the POPUPS
             // that deliver it: the terminal is a WS_CHILD and a child is never
-            // sent WM_DPICHANGED (the same reason `adoptPane` re-reads the
-            // scale by hand). `handleDpiChange` -> `updateDpiScale` reads the
-            // DPI of `Surface.hwnd`, never of the window the message arrived
-            // on, so whichever of the three is asking, the answer describes
-            // the terminal and the rebuilt popup fonts follow it (T742).
-            surface.handleDpiChange();
+            // sent WM_DPICHANGED - it hears the change through its top-level
+            // window's forward (T1579). A null DPI re-reads it from
+            // `Surface.hwnd`, never from the window the message arrived on, so
+            // whichever of the three is asking, the answer describes the
+            // terminal and the rebuilt popup fonts follow it (T742).
+            surface.handleDpiChange(null);
             return 0;
         },
 

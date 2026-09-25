@@ -1,11 +1,10 @@
 {
     "guard":  "cleanslate",
     "script":  "test/win32/cleanslate-audit.ps1",
-    "generated":  "2026-09-25T10:17:06-07:00",
-    "commit":  "d82c23109",
+    "generated":  "2026-09-25T10:55:40-07:00",
+    "commit":  "390336956",
     "uncommitted":  [
-                        "test/win32/upgrade-no-fork.ps1",
-                        "test/win32/upgrade-staleness.ps1"
+                        "test/win32/dpi-change.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -101,6 +100,7 @@
                   "test/win32/desktop-launch-audit.ps1":  "df0f8241a82fb625a5309378e3d96de7951876f8d2c394564e3f3326d8889a53",
                   "test/win32/divergence-inventory.ps1":  "938a7b36a7170b1e2d20f7670d0945e3163c7245fcf51cc2322a8837047d630c",
                   "test/win32/docs-routing.ps1":  "0df33f259fc8eb88f4eb186c8f0fb216bfe5e929d3e8e85e59a9b3cbd4b6d821",
+                  "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",
                   "test/win32/drag-perf.ps1":  "c9a8403c5c39980a8851c4f24ecc57613d1a50a29a2f748c80733ab19355a43f",
                   "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff",
                   "test/win32/fail-transcript.ps1":  "b64b16fd5433ae33842afa550ab62b9b8b845c755553bb4842af24132c3ae604",
