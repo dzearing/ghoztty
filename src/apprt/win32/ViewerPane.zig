@@ -8177,22 +8177,50 @@ test "host floor: a real controller on a real window, on this box" {
             }
         };
 
+        // Each leg clicks the link at a URL of its own (T1734). Chromium drops a
+        // click on a link whose previous navigation to that SAME URL was
+        // cancelled a moment ago: the script runs, the click lands, and no
+        // `NavigationStarting` is ever raised. On an idle box that window closes
+        // before the next leg; under load it does not, and the leg waited out
+        // its 30s with routed=5 (measured 3 of 3 with every core busy, green
+        // with a 3s pause in front of each click). A distinct query per leg
+        // takes the duplicate out of the question without a sleep, and the
+        // route is still the same off-site click.
+        const Click = struct {
+            fn at(a: Allocator, p: *ViewerPane, url: []const u8) !void {
+                const js = try std.fmt.allocPrint(
+                    a,
+                    "(function(){{var e=document.getElementById('ext');e.href='{s}';e.click();}})()",
+                    .{url},
+                );
+                defer a.free(js);
+                p.executeScript(a, js);
+            }
+        };
+
         // (4) Ctrl: a side pane, and the page stays put.
         mods_probe = &Leg.ctrl;
-        pane.executeScript(alloc, "document.getElementById('ext').click()");
+        const leg4_url = try std.fmt.allocPrint(alloc, "{s}?leg=4", .{page_url});
+        defer alloc.free(leg4_url);
+        try Click.at(alloc, &pane, leg4_url);
         try waitFor(&msg, 30, Leg.routed(6).ready, &pane);
-        const want_split = try std.fmt.allocPrint(alloc, "split:{s}", .{page_url});
-        defer alloc.free(want_split);
-        try testing.expectEqualStrings(want_split, sink.entries.items[5]);
+        const want_leg4 = try std.fmt.allocPrint(alloc, "split:{s}", .{leg4_url});
+        defer alloc.free(want_leg4);
+        try testing.expectEqualStrings(want_leg4, sink.entries.items[5]);
         try testing.expectEqual(content.Mode.html, pane.mode);
 
         // (5) Ctrl+Shift: a window of its own.
         mods_probe = &Leg.ctrlShift;
-        pane.executeScript(alloc, "document.getElementById('ext').click()");
+        const leg5_url = try std.fmt.allocPrint(alloc, "{s}?leg=5", .{page_url});
+        defer alloc.free(leg5_url);
+        try Click.at(alloc, &pane, leg5_url);
         try waitFor(&msg, 30, Leg.routed(7).ready, &pane);
-        const want_window = try std.fmt.allocPrint(alloc, "window:{s}", .{page_url});
+        const want_window = try std.fmt.allocPrint(alloc, "window:{s}", .{leg5_url});
         defer alloc.free(want_window);
         try testing.expectEqualStrings(want_window, sink.entries.items[6]);
+
+        const want_split = try std.fmt.allocPrint(alloc, "split:{s}", .{page_url});
+        defer alloc.free(want_split);
 
         // (6) The popup route: Ctrl on a user's request for an off-site window
         // is the same click, and goes to a side pane rather than being adopted.

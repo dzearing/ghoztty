@@ -140,6 +140,36 @@ try {
     Assert 'B17 a pending row is visible in the verdict, not hidden by the pass' (
         ($exLines -join "`n") -match 'PENDING\s+beta\.ps1 \(fail\) - tracked by T725') ''
 
+    # T1734: a red row says WHY - its FAIL lines, how it did alone, and where
+    # the transcript is - instead of the audit name alone.
+    $whyDir = Join-Path $work 'why'
+    New-Item -ItemType Directory -Force -Path $whyDir | Out-Null
+    Set-Content -LiteralPath (Join-Path $whyDir 'beta.log') -Encoding UTF8 -Value @(
+        '== B: something'
+        '  PASS B0 fine'
+        '  FAIL B1 the lane builds -- zig build test exited 1; failed test: ''x'''
+        '1 FAILURE(S) (1 assertions passed)'
+    )
+    $whyRow = [pscustomobject]@{ Name = 'beta.ps1'; Verdict = 'fail'; Log = 'beta.log'; Alone = 'pass' }
+    $why = Get-HarnessFloorVerdict -Audits $twoAudits -Pending $noPending -LogDir $whyDir `
+        -Rows @((New-Row 'alpha.ps1' 'pass'), $whyRow)
+    $whyRed = @($why.Red)[0]
+    Assert 'B18 a red row carries its FAIL line' (
+        @($whyRed.Fails).Count -eq 1 -and $whyRed.Fails[0] -match '^FAIL B1 the lane builds') ($whyRed.Fails -join ' | ')
+    $whyText = (@(Format-HarnessFloorVerdict -Verdict $why) -join "`n")
+    Assert 'B19 and the verdict prints it, the alone result and the log path' (
+        $whyText -match 'FAIL B1 the lane builds' -and $whyText -match 'alone: pass' -and
+        $whyText -match [regex]::Escape((Join-Path $whyDir 'beta.log'))) $whyText
+    $noLog = Get-HarnessFloorVerdict -Audits $twoAudits -Pending $noPending -LogDir $whyDir `
+        -Rows @((New-Row 'alpha.ps1' 'pass'), [pscustomobject]@{ Name = 'beta.ps1'; Verdict = 'fail'; Log = 'gone.log' })
+    Assert 'B20 a red row whose log is gone is still red, with no detail rather than a throw' (
+        -not $noLog.Ok -and @(@($noLog.Red)[0].Fails).Count -eq 0 -and -not @($noLog.Red)[0].LogPath) ''
+    $refused = Get-HarnessFloorVerdict -Audits $twoAudits -Pending $noPending -LogDir $whyDir `
+        -Rows @((New-Row 'alpha.ps1' 'pass'), [pscustomobject]@{
+                Name = 'beta.ps1'; Verdict = 'fail'; Log = 'gone.log'; Line = 'refused: the build is stale' })
+    Assert 'B21 a red row with no FAIL line falls back to its last line' (
+        @(@($refused.Red)[0].Fails) -contains 'refused: the build is stale') ''
+
     # ========================================================================
     ""
     "== C: the runner on the wire"
@@ -180,6 +210,12 @@ try {
     # A pending audit must be red in the plant too, or the scorer would call it
     # STALE and the section would be red for the wrong reason.
     foreach ($r in $redRows) { if ($pending.ContainsKey($r.Name)) { $r.Verdict = 'fail' } }
+    # The red row's transcript, beside the summary as suite-run leaves it, so C6b
+    # can prove the runner reads it from there (T1734).
+    $plantedRed = @($redRows | Where-Object { $_.Name -eq $firstName })[0]
+    $plantedRed | Add-Member -NotePropertyName Log -NotePropertyValue 'planted-red.log'
+    Set-Content -LiteralPath (Join-Path $plantDir 'planted-red.log') -Encoding UTF8 `
+        -Value @('  FAIL Z9 the planted assertion -- planted by harness-floor.ps1', '1 FAILURE(S)')
     ([pscustomobject]@{ schema = 'ghoztty-suite-run/1'; results = $redRows } | ConvertTo-Json -Depth 5) |
         Set-Content -LiteralPath $plant -Encoding UTF8
 
@@ -188,6 +224,8 @@ try {
     $scoreText = ($scoreOut | Out-String)
     Assert 'C5 the runner exits 1 on an unexcused red row' ($scoreCode -eq 1) "exit=$scoreCode"
     Assert 'C6 and names it' ($scoreText -match ("RED\s+" + [regex]::Escape($firstName))) ''
+    Assert 'C6b and prints the failing assertion out of the transcript beside the summary' (
+        $scoreText -match 'FAIL Z9 the planted assertion') ''
 
     $greenRows = @($names | ForEach-Object { New-Row $_ 'pass' })
     foreach ($r in $greenRows) { if ($pending.ContainsKey($r.Name)) { $r.Verdict = 'fail' } }

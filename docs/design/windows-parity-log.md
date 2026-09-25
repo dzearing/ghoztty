@@ -33630,3 +33630,20 @@ paths fixed. `remote-pill.ps1` section 6 ALL PASS (19) - connected and dropped
 tips shown, placed inside the window, no show without a hover; negative
 control exits 1; tab-tooltip ALL PASS (29); floor ALL LANES PASS; P1-P3 green.
 The caption buttons' own tips are T1733.
+
+## 2026-09-24 - T1734: the harness floor's load-only red, and a red row that says why
+
+test-reach-audit's B1 runs the whole win32 lane, and in the sweep that lane
+failed in the ViewerPane "host floor" test at the T926 Ctrl / Ctrl+Shift legs
+(routed stuck at 5, 30s timeout). Instrumented: the scripted click ran and
+landed, and WebView2 raised no NavigationStarting at all - Chromium drops a
+click on a link whose previous navigation to the SAME URL was cancelled a
+moment earlier. Reproduced 3/3 with 32 busy loops, green with a 3s pause; the
+fix clicks a distinct `?leg=N` URL per leg instead of sleeping. A red
+harness-floor row now prints its FAIL lines (or its last line when it refused
+before asserting), its alone result and its transcript path, and B1 names the
+failed zig test and the line in it. Fixed test green under saturation (T926
+legs, 3/3); harness-floor.ps1 acceptance ALL PASS (51); floor ALL LANES PASS;
+harness floor ALL PASS (29, 2 pending) and stamped; viewer-worktree-port,
+viewer-close, viewer-nav-pin, window-active-audit ALL PASS. The GoBack leg of
+the same test drops its navigation under the same load: T1735.

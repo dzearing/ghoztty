@@ -142,7 +142,8 @@ if (-not (Test-Path $summaryPath)) {
 $summary = Get-Content -LiteralPath $summaryPath -Raw | ConvertFrom-Json
 $rows = @($summary.results)
 
-$verdict = Get-HarnessFloorVerdict -Rows $rows -Audits $audits -Pending $pending
+$verdict = Get-HarnessFloorVerdict -Rows $rows -Audits $audits -Pending $pending `
+    -LogDir (Split-Path -Parent $summaryPath)
 
 Write-Host ''
 Write-Host '---- harness floor ----------------------------------------------------------'

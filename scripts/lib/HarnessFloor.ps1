@@ -103,7 +103,10 @@ function Get-HarnessFloorVerdict {
     param(
         [object[]]$Rows,
         [object[]]$Audits,
-        [hashtable]$Pending
+        [hashtable]$Pending,
+        # The suite-run output dir the rows' `Log` names are relative to. When
+        # given, a red row carries its own FAIL lines and log path (T1734).
+        [string]$LogDir
     )
 
     if (-not $Audits) { $Audits = Get-HarnessFloorAudits }
@@ -132,11 +135,18 @@ function Get-HarnessFloorVerdict {
             continue
         }
         if ($v -eq 'skip') { [void]$skipped.Add($name); continue }
+        $why = Get-HarnessFloorRowDetail -Row $byName[$name] -LogDir $LogDir
         if ($isPending) {
-            [void]$excused.Add([pscustomobject]@{ Name = $name; Verdict = $v; Task = $Pending[$name] })
+            [void]$excused.Add([pscustomobject]@{
+                    Name = $name; Verdict = $v; Task = $Pending[$name]
+                    Fails = $why.Fails; LogPath = $why.LogPath; Alone = $why.Alone
+                })
         }
         else {
-            [void]$red.Add([pscustomobject]@{ Name = $name; Verdict = $v })
+            [void]$red.Add([pscustomobject]@{
+                    Name = $name; Verdict = $v
+                    Fails = $why.Fails; LogPath = $why.LogPath; Alone = $why.Alone
+                })
         }
     }
 
@@ -161,17 +171,67 @@ function Get-HarnessFloorVerdict {
 
 <#
 .SYNOPSIS
+Why one red row is red: its FAIL lines, its log's full path, and how it did alone.
+
+.DESCRIPTION
+T1734. suite-run keeps every audit's transcript, but the floor's verdict named
+only the audit - so a member red in the sweep and green alone was reported as
+"1 FAILURE(S)" twice running with the failing assertion unread in a log the
+summary never pointed at. `Fails` is the first few `FAIL` lines of that
+transcript (the assertion and its message), `LogPath` is where the rest is, and
+`Alone` is suite-run's re-run-red-alone answer, which is what tells a
+load-dependent red from a real one. Every field degrades to empty rather than
+throwing: a missing log is itself visible as a red row with no detail.
+#>
+function Get-HarnessFloorRowDetail {
+    param(
+        $Row,
+        [string]$LogDir,
+        [int]$MaxFails = 3
+    )
+    $fails = @()
+    $logPath = $null
+    if ($Row -and $Row.Log -and $LogDir) {
+        $candidate = Join-Path $LogDir ([string]$Row.Log)
+        if (Test-Path -LiteralPath $candidate) {
+            $logPath = $candidate
+            $fails = @(Get-Content -LiteralPath $candidate -ErrorAction SilentlyContinue |
+                    Where-Object { $_ -match '^\s*FAIL\s' } |
+                    Select-Object -First $MaxFails |
+                    ForEach-Object { $_.Trim() })
+        }
+    }
+    # A script that refused before asserting anything (a stale build, a missing
+    # prerequisite) has no FAIL line; its last line is then the only reason.
+    if ($fails.Count -eq 0 -and $Row -and $Row.Line) { $fails = @(([string]$Row.Line).Trim()) }
+    $alone = $null
+    if ($Row -and $Row.Alone) { $alone = [string]$Row.Alone }
+    return [pscustomobject]@{ Fails = @($fails); LogPath = $logPath; Alone = $alone }
+}
+
+<#
+.SYNOPSIS
 The lines a harness-floor verdict prints, verdict line last.
 #>
 function Format-HarnessFloorVerdict {
     param([Parameter(Mandatory)]$Verdict)
 
     $out = New-Object System.Collections.ArrayList
+    # The why under each red row (T1734): its FAIL lines, whether it passed
+    # alone, and where the full transcript is.
+    $detail = {
+        param($r)
+        foreach ($f in @($r.Fails)) { if ($f) { [void]$out.Add("            $f") } }
+        if ($r.Alone) { [void]$out.Add("            alone: $($r.Alone)") }
+        if ($r.LogPath) { [void]$out.Add("            log: $($r.LogPath)") }
+    }
     foreach ($r in @($Verdict.Red)) {
         [void]$out.Add("  RED       $($r.Name) ($($r.Verdict))")
+        & $detail $r
     }
     foreach ($e in @($Verdict.Excused)) {
         [void]$out.Add("  PENDING   $($e.Name) ($($e.Verdict)) - tracked by $($e.Task)")
+        & $detail $e
     }
     foreach ($s in @($Verdict.Stale)) {
         [void]$out.Add("  STALE     $s is green now - drop it from `$HARNESS_FLOOR_PENDING")

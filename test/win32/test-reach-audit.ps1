@@ -43,6 +43,7 @@ param(
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestReachAudit.ps1')
+. (Join-Path $Repo 'scripts\lib\LaneVerdict.ps1')
 
 $script:failures = 0
 $script:passes = 0
@@ -91,8 +92,22 @@ foreach ($m in @('AgentIntegrationsDialog', 'ipc_agent_integration', 'provenance
 
 $buildLog = Join-Path $tmp 'lane.log'
 $lane = Resolve-WinTestBinary -Repo $Repo -LogPath $buildLog
+# A red lane names the test that failed and where, not only the log (T1734):
+# this row is read out of a sweep's summary, where the kept temp dir is one
+# path among forty and the reason has to travel in the message itself.
+$b1Why = "zig build test exited $($lane.ExitCode)"
+if ($lane.ExitCode -ne 0) {
+    $b1Detail = Get-LaneFailureDetail -LaneName 'win32' -LogPath $buildLog -MaxTraceLines 40
+    if ($b1Detail.FailedTest) { $b1Why += "; failed test: '$($b1Detail.FailedTest)'" }
+    # The test's own frame (the line inside the test that failed) over the
+    # trace's origin, which is usually a shared helper such as `waitFor`.
+    $b1Frames = @($b1Detail.Trace | Where-Object { $_ -match ':\d+:\d+: 0x' })
+    $b1At = @($b1Frames | Where-Object { $_ -match ' in test\.' }) | Select-Object -Last 1
+    if (-not $b1At) { $b1At = $b1Frames | Select-Object -First 1 }
+    if ($b1At) { $b1Why += "; at: $(([string]$b1At).Trim() -replace ':? 0x[0-9a-f]+ in .*$', '')" }
+}
 Assert 'B1 the win32 test lane builds and passes' ($lane.ExitCode -eq 0) `
-    "zig build test exited $($lane.ExitCode); log: $buildLog"
+    "$b1Why; log: $buildLog"
 Assert 'B2 the lane names the test binary it ran' `
     ($lane.ExePath -and (Test-Path -LiteralPath $lane.ExePath)) "path: $($lane.ExePath)"
 
