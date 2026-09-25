@@ -33899,3 +33899,21 @@ closed the guard blind spot that let the card sit. Re-ran
 `test/win32/tab-tooltip.ps1` on a fresh Debug build: A, E and G all green,
 ALL PASS (29). Closed against ec17471fb; no new code. Mac: the tooltip rule is
 win32 chrome with no Mac tab-tooltip analog to change.
+
+## 2026-09-25 - T1612: +new-window/+split answer once the new pane's session_id is readable
+
+A script that ran `+list --json` straight after `+new-window` used to read no
+`session_id` 11 cold starts in 15: the verb answered when the window existed
+and the agent OPEN landed 250-774 ms later. The verb now waits. The IPC
+listener thread (never the GUI thread) holds the one reply and polls readiness
+through the GUI thread on the same `WM_APP_IPC` message, so shutdown and the
+local-agent resolve pump serve the polls too. It is bounded at 3 s, and a failed
+OPEN settles at once, so the verb still answers or explains. The pieces:
+`termio.Remote.bringup_settled` (flipped as `threadEnter` returns, after the id
+is published), `Surface.remoteBringUpPending`, a new pure
+`ipc_session_await.zig` (none lane), and `IpcHandlers.sessionsSettled`.
+`test/win32/ipc-list-session-id.ps1` section 4 runs five COLD rounds and reads
+`+list` once each after the launching `+new-window`, a second `+new-window` and
+a `+split`: ALL PASS (48), verbs in 108-126 ms. With the wait stubbed out the
+same script scored 20 FAILURES. Contract is in `docs/claude/cli.md`. Mac:
+filed T1743 (seat mac, deps T553 - the Mac does not report `session_id` yet).

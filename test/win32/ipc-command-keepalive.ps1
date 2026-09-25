@@ -122,9 +122,9 @@ function Get-WindowLeaves($target) {
     @(Get-Leaves $win.tabs[0].splits)
 }
 
-# The session id of a window's FIRST pane, polled (T1609). `+new-window`
-# answers as soon as the window exists; the agent OPEN that binds the pane to a
-# session completes afterwards, so the id appears a few hundred ms later. An
+# The session id of a window's FIRST pane, polled (T1609). Since T1612
+# `+new-window` answers only once the pane's session is bound, so the first
+# poll normally has it; the poll stays because the wait is bounded, and an
 # empty return means it never appeared within $TimeoutSec - which for a
 # plain-ConPTY pane is never, and is how arm G scores red.
 function Wait-SessionId($Target, $TimeoutSec = 15) {

@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-25T13:35:17-07:00",
-    "commit":  "17b8923ef",
+    "generated":  "2026-09-25T14:33:08-07:00",
+    "commit":  "c47077d82",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "test/win32/ipc-command-keepalive.ps1",
+                        "test/win32/ipc-list-session-id.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -221,11 +222,11 @@
                   "test/win32/install-restart.ps1":  "a68bdefb06b2165f981e9d5b993bf789fae8c831086b7a606a25833236208063",
                   "test/win32/install-walkthrough.ps1":  "e913d1a8f4deb7dd67b4046b2cb977ab269237da788f8408adf1183e9ad375bf",
                   "test/win32/ipc-child-exited.ps1":  "d976a5172b4773f582972eedc3fa1b00bb1c03f5c33eeb5efc06e5d52542112b",
-                  "test/win32/ipc-command-keepalive.ps1":  "ba23f0c0d0ed404ef6999e9588e75002efa1bbec8b3756659920acbd5db3bd7a",
+                  "test/win32/ipc-command-keepalive.ps1":  "f21998c4653539d6ae50abeac807eed530329dc56344a49333e7dbe81e30aed0",
                   "test/win32/ipc-fake-server.ps1":  "d8a18c722615e1ca8582e804d794886cb7734a9eb084f87add9d411b285a689b",
                   "test/win32/ipc-floor-setup.ps1":  "36d11272495b125cd6bb2131ec1de28d185c8e5086994a8a929528bae2020ba1",
                   "test/win32/ipc-instance-addressability.ps1":  "c79c3315cb528318e4ba8532854be31dbba60b2bcef48e5995b3063970a57c30",
-                  "test/win32/ipc-list-session-id.ps1":  "81e92698662238317a06cef2f3c1faae7cd6232d1dc57788ea07a5ee4a36dc8a",
+                  "test/win32/ipc-list-session-id.ps1":  "191cea290a106a5b0610c258bc70a09453001d70108c243d991d42c69ac915c2",
                   "test/win32/ipc-machine-chooser.ps1":  "bbd575343ac0aa7e971f79bab1d59aed296ff72af2c400abcc93cbf335973d9f",
                   "test/win32/ipc-p1.ps1":  "a414e7de2771cec78fb8808095efa0240c43c77eb676d6294b8376253ef2f641",
                   "test/win32/ipc-p2.ps1":  "6c4936ffa14e56b5aaf8cb6da751fb423a2d13f3154e775f7e7692408cfe2ebf",

@@ -22,6 +22,7 @@ const DarkMode = @import("DarkMode.zig");
 const PathInstaller = @import("PathInstaller.zig");
 const IpcRegistry = @import("IpcRegistry.zig");
 const IpcServer = @import("IpcServer.zig");
+const IpcSessionAwait = @import("ipc_session_await.zig");
 const MachineChooser = @import("MachineChooser.zig");
 const SessionRoster = @import("SessionRoster.zig");
 const SessionCpuProbe = @import("SessionCpuProbe.zig");
@@ -590,6 +591,13 @@ ipc_server: ?IpcServer = null,
 /// `+split --name`). See IpcRegistry.zig; the App methods below adapt it
 /// to the live window list and app allocator.
 ipc_registry: IpcRegistry = .{},
+
+/// The panes the IPC request being dispatched RIGHT NOW created and whose
+/// agent session is still binding (T1612). Handlers add to it; the IPC server
+/// clears it before each dispatch and moves it into that request's `Pending`
+/// after, so the listener thread can hold the reply until the session ids are
+/// readable. GUI-thread only, like the dispatch itself.
+ipc_session_await: IpcSessionAwait = .{},
 
 /// What a relay SIGN-OUT closed, waiting for the sign-in that replays it
 /// (T713). Empty in every ordinary moment of the app's life — it fills for as

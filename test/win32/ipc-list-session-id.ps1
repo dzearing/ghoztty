@@ -133,8 +133,54 @@ Assert "viewer pane listed" ($null -ne $viewer)
 Assert "viewer has no session_id property" (
     $viewer -and ($null -eq $viewer.PSObject.Properties['session_id']))
 
-"== teardown"
 [void](Ghoz @('+close', '--target=t332w'))
+
+# T1612: the contract is that `+new-window` / `+split` answer once their new
+# pane's agent session is bound, so ONE `+list --json` straight after the verb
+# reads the `session_id` - no poll. Before the fix the verb answered as soon as
+# the window existed and the OPEN landed 250-774 ms later: 11 cold starts in 15
+# read no id on the first query. Every round here starts COLD (app and agent
+# both killed, so `+new-window` launches the app and the app spawns the agent),
+# which is the shape that measured the race - a warm agent hides it. Five
+# rounds at the old 11/15 miss rate pass by luck with p ~ (4/15)^5 ~ 0.1%.
+$rounds = 5
+for ($i = 1; $i -le $rounds; $i++) {
+    "== 4.${i}: cold start - one +list read right after +new-window and +split"
+    Stop-DebugGhoztty
+    # The launch itself (first verb): whatever path the app takes to open its
+    # first window, the id must be readable when the verb returns.
+    $r = Ghoz @('+new-window', "--target=t1612a$i")
+    Assert "4.$i launching +new-window exit 0" ($r.ExitCode -eq 0)
+    $a = @(Get-WindowLeaves "t1612a$i" | Where-Object { $_.type -eq 'terminal' })
+    Assert "4.$i the launch window's pane has a session_id on the first read" (
+        $a.Count -ge 1 -and -not [string]::IsNullOrEmpty($a[0].session_id))
+
+    # A second window into the now-running app: the IPC handler path, with the
+    # agent connection only just established.
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    $r = Ghoz @('+new-window', "--target=t1612b$i", '--command=echo t1612')
+    $sw.Stop()
+    Assert "4.$i +new-window exit 0" ($r.ExitCode -eq 0)
+    $b = @(Get-WindowLeaves "t1612b$i" | Where-Object { $_.type -eq 'terminal' })
+    Assert "4.$i +new-window's pane has a session_id on the first read (no poll)" (
+        $b.Count -ge 1 -and -not [string]::IsNullOrEmpty($b[0].session_id))
+    # Bounded: the wait is capped at 3 s (`ipc_session_await.budget_ms`), so a
+    # verb that takes much longer is the wait misbehaving, not the agent.
+    Assert "4.$i +new-window answered within its bound ($($sw.ElapsedMilliseconds) ms)" (
+        $sw.ElapsedMilliseconds -lt 8000)
+
+    $r = Ghoz @('+split', "--target=t1612b$i", "--name=t1612s$i", '--direction=right')
+    Assert "4.$i +split exit 0" ($r.ExitCode -eq 0)
+    $s = @(Get-WindowLeaves "t1612b$i" | Where-Object { $_.name -eq "t1612s$i" })
+    Assert "4.$i +split's new pane has a session_id on the first read (no poll)" (
+        $s.Count -ge 1 -and -not [string]::IsNullOrEmpty($s[0].session_id))
+    if ($s.Count -ge 1 -and $b.Count -ge 1) {
+        Assert "4.$i ... and it is its own session, not the parent's" (
+            $s[0].session_id -ne $b[0].session_id)
+    }
+}
+
+"== teardown"
 Stop-DebugGhoztty
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 Remove-TestDesktop | Out-Null

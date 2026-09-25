@@ -8,6 +8,7 @@ const Allocator = std.mem.Allocator;
 const windows = std.os.windows;
 
 const App = @import("App.zig");
+const IpcSessionAwait = @import("ipc_session_await.zig");
 const agent_recovery = @import("agent_recovery.zig");
 const ProcessTree = @import("ProcessTree.zig");
 const provenance = @import("provenance.zig");
@@ -437,6 +438,12 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         return try errorResponse(ctx.alloc, "failed to create window", .{});
     };
 
+    // T1612: answer once the first pane's agent session is bound, so the
+    // caller's next `+list --json` can read its `session_id`. A viewer or a
+    // plain local pane has nothing to bind and settles on the first poll.
+    if (viewer_open == null and window.tab_count > 0)
+        app.ipc_session_await.add(window.tab_active_pane[0].paneId());
+
     // T968: register the first pane — terminal or viewer — under `--name`,
     // so the next `--target=<name>` finds it.
     if (first_pane_name) |n| {
@@ -514,6 +521,7 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
             // (overwrites the auto-shifted inheritance newSplitAt applied).
             if (resolveColor(args.split_color)) |tint| s.applyBackgroundTint(tint, true);
             if (args.name) |n| if (s.pane_view) |pv| app.ipcRegister(n, .{ .pane = pv }) catch {};
+            if (s.pane_view) |pv| app.ipc_session_await.add(pv.paneId()); // T1612
         }
     }
 
@@ -789,10 +797,11 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         if (window.tab_count == 0)
             return try errorResponse(ctx.alloc, "no surface to split", .{});
         const at = window.tab_active_pane[window.active_tab];
-        _ = window.newSplitAt(at, direction, ratio) catch |err| {
+        const inherited = window.newSplitAt(at, direction, ratio) catch |err| {
             log.warn("IPC split --from-focused failed err={}", .{err});
             return try errorResponse(ctx.alloc, "failed to create split", .{});
         } orelse return try errorResponse(ctx.alloc, "failed to create split", .{});
+        if (inherited.pane_view) |pv| app.ipc_session_await.add(pv.paneId()); // T1612
         return try ctx.alloc.dupe(u8, "{\"success\":true}");
     }
 
@@ -965,7 +974,28 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         if (new_surface.pane_view) |pv| app.ipcRegister(name, .{ .pane = pv }) catch {};
     }
 
+    // T1612: answer once the new pane's agent session is bound (see
+    // `ipc_session_await.zig`), so `+list --json` right after reads it.
+    if (new_surface.pane_view) |pv| app.ipc_session_await.add(pv.paneId());
+
     return try ctx.alloc.dupe(u8, "{\"success\":true}");
+}
+
+/// T1612: whether every pane in `list` lets the reply go out — gone, a viewer,
+/// a plain local pane, or an agent-backed pane whose OPEN/ATTACH has finished
+/// (bound or failed). GUI thread only: it walks the live pane set.
+pub fn sessionsSettled(app: *App, list: *const IpcSessionAwait) bool {
+    for (0..list.n) |i| {
+        const entry = app.ipcLookup(list.get(i).id()) orelse continue;
+        const pane = switch (entry) {
+            .pane => |p| p,
+            .window => continue,
+        };
+        const surface = pane.surface() orelse continue;
+        if (!surface.core_surface_ready) return false;
+        if (surface.core_surface.remoteBringUpPending()) return false;
+    }
+    return true;
 }
 
 fn handleRead(ctx: Context, request: Request) Allocator.Error!?[]u8 {

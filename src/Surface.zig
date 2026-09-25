@@ -1600,6 +1600,17 @@ pub fn remoteSessionId(self: *const Surface) ?[]const u8 {
     };
 }
 
+/// True while this surface's remote pane is still being OPENed/ATTACHed — the
+/// window in which `remoteSessionId` is null for a pane that WILL have one.
+/// False for a local surface and for a remote one whose bring-up has finished,
+/// bound or not. Lock-free; safe from the GUI thread (T1612).
+pub fn remoteBringUpPending(self: *const Surface) bool {
+    return switch (self.io.backend) {
+        .remote => |*r| !r.bringup_settled.load(.acquire),
+        else => false,
+    };
+}
+
 /// The command this surface's remote pane was OPENed with, or null if it is a
 /// local surface or its remote pane uses the agent's default shell. The returned
 /// slice borrows the backend's arena (immutable after init) and must be used

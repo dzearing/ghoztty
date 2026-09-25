@@ -561,6 +561,10 @@ test {
     // aliases, T113), same no-OS-imports deal.
     _ = @import("apprt/win32/pane_id.zig");
 
+    // Pure win32 list of panes an IPC verb waits on for their agent session
+    // before answering (T1612), same no-OS-imports deal.
+    _ = @import("apprt/win32/ipc_session_await.zig");
+
     // Pure win32 session-layout manifest schema + JSON I/O (T89f1), same
     // no-OS-imports deal (LOCALAPPDATA path resolution degrades cleanly off
     // Windows / in the none lane).

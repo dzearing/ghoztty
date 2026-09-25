@@ -29,6 +29,7 @@ const windows = std.os.windows;
 
 const App = @import("App.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
+const IpcSessionAwait = @import("ipc_session_await.zig");
 const w32 = @import("win32.zig");
 const internal_os = @import("../../os/main.zig");
 const ipc_client = internal_os.ipc_client;
@@ -143,6 +144,22 @@ pub const Pending = struct {
     /// request up, so the listener can split its wait into queue latency
     /// (post → pickup) and handler time (pickup → done).
     gui_start: ?std.time.Instant = null,
+    /// T1612: the panes this request created whose agent session was still
+    /// binding when the handler returned. Filled by the GUI thread; the
+    /// listener holds the reply until they settle (`awaitSessions`).
+    session_await: IpcSessionAwait = .{},
+    /// Non-null makes this a readiness POLL rather than a request: the GUI
+    /// thread answers `check.ready` and dispatches nothing. Riding the same
+    /// message means every path that drains WM_APP_IPC (shutdown, the
+    /// local-agent resolve pump) already serves it, and never leaves a
+    /// listener parked on `done`.
+    session_check: ?*SessionCheck = null,
+};
+
+/// One readiness poll for `awaitSessions`.
+pub const SessionCheck = struct {
+    list: *const IpcSessionAwait,
+    ready: bool = false,
 };
 
 pub const BindError = error{
@@ -364,6 +381,35 @@ fn listen(self: *IpcServer, idx: usize) void {
     }
 }
 
+/// Hold a verb's reply until the panes it created have bound their agent
+/// session (T1612), so `+list --json` right after `+new-window`/`+split` reads
+/// the new pane's `session_id` instead of racing the OPEN. Runs on the
+/// LISTENER thread and polls through the GUI thread, which keeps pumping — the
+/// OPEN may need it. Bounded by `IpcSessionAwait.budget_ms`: past it the reply
+/// goes out anyway, exactly as it did before this wait existed, and says so in
+/// the log. A pane whose bring-up FAILED counts as settled, so a broken agent
+/// costs the poll interval, not the budget.
+fn awaitSessions(self: *IpcServer, list: *const IpcSessionAwait) void {
+    const hwnd = self.app.msg_hwnd orelse return;
+    var timer = std.time.Timer.start() catch return;
+    while (!self.shutdown.load(.acquire)) {
+        var check: SessionCheck = .{ .list = list };
+        var poll: Pending = .{ .server = self, .request_json = "", .session_check = &check };
+        if (w32.PostMessageW(hwnd, App.WM_APP_IPC, @intFromPtr(&poll), 0) == 0) return;
+        poll.done.wait();
+        if (check.ready) return;
+        const elapsed_ms = timer.read() / std.time.ns_per_ms;
+        if (elapsed_ms >= IpcSessionAwait.budget_ms) {
+            log.info(
+                "IPC reply sent before the new pane's session bound ({d} ms budget spent); +list will report session_id once it does",
+                .{IpcSessionAwait.budget_ms},
+            );
+            return;
+        }
+        std.Thread.sleep(IpcSessionAwait.poll_ms * std.time.ns_per_ms);
+    }
+}
+
 fn FlushAndDisconnect(pipe: windows.HANDLE) bool {
     _ = windows.kernel32.FlushFileBuffers(pipe);
     return DisconnectNamedPipe(pipe) != 0;
@@ -417,6 +463,8 @@ fn serveOne(self: *IpcServer, pipe: windows.HANDLE, accept_start: ?std.time.Inst
     const posted: ?std.time.Instant =
         if (self.perf) (std.time.Instant.now() catch null) else null;
     pending.done.wait();
+    if (pending.response != null and !pending.session_await.isEmpty())
+        self.awaitSessions(&pending.session_await);
     if (self.perf) self.logPerf(body, accept_start, connected, posted, pending.gui_start);
 
     const response = pending.response orelse {
@@ -497,8 +545,18 @@ fn writeFramed(self: *IpcServer, conn: ipc_client.Conn, json: []const u8) void {
 /// Never leaves `pending.done` unset — the listener thread waits on it.
 pub fn serveOnGuiThread(pending: *Pending) void {
     const self = pending.server;
-    if (self.perf) pending.gui_start = std.time.Instant.now() catch null;
     defer pending.done.set();
+    if (pending.session_check) |check| {
+        check.ready = IpcHandlers.sessionsSettled(self.app, check.list);
+        return;
+    }
+    if (self.perf) pending.gui_start = std.time.Instant.now() catch null;
+    // Saved and restored rather than cleared: a handler can pump WM_APP_IPC
+    // (the local-agent resolve does) and serve a second request inside its
+    // own dispatch, which must neither see nor clobber this one's panes.
+    const outer = self.app.ipc_session_await;
+    self.app.ipc_session_await.clear();
+    defer self.app.ipc_session_await = outer;
     pending.response = IpcHandlers.dispatch(
         .{ .app = self.app, .alloc = self.alloc },
         pending.request_json,
@@ -506,6 +564,7 @@ pub fn serveOnGuiThread(pending: *Pending) void {
         log.warn("IPC dispatch failed err={}", .{err});
         break :response null;
     };
+    pending.session_await = self.app.ipc_session_await;
 }
 
 /// Build an owner-only security descriptor via SDDL: protected DACL with a

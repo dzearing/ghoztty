@@ -187,6 +187,15 @@ canceller: connection.RpcCanceller = .{},
 live_session_id: std.atomic.Value(?[*]const u8) = .init(null),
 live_session_id_len: std.atomic.Value(usize) = .init(0),
 
+/// Set (release) the moment `threadEnter` returns — bound or failed — so the GUI
+/// thread can tell "OPEN still in flight" from "OPEN finished". A success
+/// publishes `live_session_id` BEFORE this flips, so a reader that sees it set
+/// and still no id knows the pane will not get one from this bring-up. What the
+/// IPC server's post-reply wait keys on (T1612): `+new-window`/`+split` answer
+/// once their new pane's session is bound, so a `+list --json` straight after
+/// reads its `session_id` instead of racing the OPEN.
+bringup_settled: std.atomic.Value(bool) = .init(false),
+
 /// Agent-reported process info for `getProcessInfo` (wp3): the child pid and
 /// PTY slave path from `OPENED`/`ATTACHED`/`RELAUNCHED`, published by the IO
 /// thread (`threadEnter` / relaunch) and read lock-free from the GUI thread
@@ -744,6 +753,8 @@ pub fn threadEnter(
     io: *termio.Termio,
     td: *termio.Termio.ThreadData,
 ) !void {
+    defer self.bringup_settled.store(true, .release);
+
     // Set true when the pane below came back via RELAUNCH (a dead-but-relaunchable
     // session respawned across an agent restart) rather than a live attach/open —
     // used after bring-up to print a "session restarted" divider (T12c).

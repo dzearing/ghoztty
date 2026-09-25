@@ -208,6 +208,19 @@ so a script can answer "which pane is this session open in" (and vice versa)
 without app logs. Absent for plain non-persistent panes and viewers. (win32
 server since T332; the Mac server half is T553.)
 
+**It is readable the moment the creating verb returns — no poll** (T1612).
+`+new-window` and `+split` answer only once their new pane's agent session is
+bound, so one `+list --json` straight after the verb carries the id. Before
+this the verb answered as soon as the window existed and the OPEN landed
+250-774 ms later, so a cold-start query read no id 11 times in 15. The wait is
+**bounded** (3 s, `ipc_session_await.budget_ms`) and a pane whose OPEN *failed*
+ends it at once, so the verb still answers or explains rather than blocking:
+past the budget the reply goes out as before (the app log says so), and a
+script that got no id then is looking at an agent that is not answering, not
+at a race. It holds only the one request's reply — the GUI keeps pumping and
+other IPC clients are served meanwhile. (win32 since T1612; the Mac server
+has to hold the same contract once T553 gives it the field.)
+
 The join answers in BOTH directions, and the two are not interchangeable:
 `+list --json`'s `session_id` goes pane -> session and needs the app running,
 while `+sessions --json`'s `pane_id` goes session -> pane and dials the agent
