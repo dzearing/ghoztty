@@ -2747,6 +2747,19 @@ fn setActiveTabVisible(self: *Window, visible: bool) void {
 }
 
 pub fn selectTabIndex(self: *Window, idx: usize) void {
+    self.showTabIndex(idx, true);
+}
+
+/// Switch tabs, optionally WITHOUT moving keyboard focus to the new tab's
+/// pane.
+///
+/// A pane drag's dwell over ANOTHER window's tab button (T1543) is the one
+/// caller that passes false: the drag holds the mouse capture in the window it
+/// started in, and a focus move into a different top-level would activate that
+/// window mid-gesture - raising it over the source and changing which window
+/// owns every point the drag is still resolving. The drop focuses the pane
+/// wherever it lands, so nothing is lost by leaving focus alone until then.
+fn showTabIndex(self: *Window, idx: usize, focus: bool) void {
     if (idx >= self.tab_count) return;
     self.cancelTabRename();
     // Hero animations/hover/drag are active-tab state — drop them before
@@ -2775,7 +2788,7 @@ pub fn selectTabIndex(self: *Window, idx: usize) void {
     // the whole-window resize was producing.
     self.layoutSplitsLive();
     self.reportResizePass("tabswitch");
-    if (pane.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
+    if (focus) if (pane.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
     self.updateWindowTitle();
 }
 
@@ -2945,6 +2958,11 @@ pub const RearrangeDrag = struct {
     /// tab the dwell timer will switch to when it fires (T1537). Null when the
     /// pointer is not on a tab button at all.
     dwell_tab: ?usize = null,
+
+    /// The window whose strip `dwell_tab` indexes (T1543). Null means this
+    /// one. Re-checked against `app.windows` when the dwell fires, for the
+    /// same reason `dest` is re-checked at commit.
+    dwell_window: ?*Window = null,
 
     /// What releasing right now would do, as of the last move.
     drop: ?Drop = null,
@@ -3373,10 +3391,8 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
     var cands: [MAX_DROP_WINDOWS + 1]pane_drop.Candidate = undefined;
     var cand_windows: [MAX_DROP_WINDOWS + 1]*Window = undefined;
     var n: usize = 0;
-    var own_idx: ?usize = null;
 
     if (dropCandidateFor(self, d.self_depth, &own_slots, &own_rects, &own_tabs)) |c| {
-        own_idx = n;
         cands[n] = c;
         cand_windows[n] = self;
         n += 1;
@@ -3480,34 +3496,53 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
     // fires while the hand is moving, which is exactly when the user is
     // waiting for it.
     //
-    // Only THIS window's strip arms it. Resting on another window's tab button
-    // would have to bring that window's tab up while the pointer is still
-    // held here, which reorders a window the user is not looking at; a drop on
-    // another window's strip already makes a tab there, which is the reachable
-    // half of the same intent.
-    const hovered: ?usize = blk: {
-        const own = own_idx orelse break :blk null;
-        const hit = pane_drop.hoveredTab(point, cands[own .. own + 1]) orelse break :blk null;
-        break :blk if (hit.index < self.tab_count) hit.index else null;
+    // Every window's strip arms it (T1543), not only this one's: resting on
+    // another window's tab button brings THAT tab up in that window, so a pane
+    // can be carried into a tab the other window was not showing. The pointer
+    // is over that window, so it is the one the user is looking at; the
+    // resolver hands the point to whichever window is in front there, so a
+    // strip hidden behind another window's panes arms nothing.
+    const hovered: ?DwellTarget = blk: {
+        const hit = pane_drop.hoveredTab(point, cands[0..n]) orelse break :blk null;
+        for (cands[0..n], 0..) |c, i| {
+            if (c.window != hit.window) continue;
+            const win = cand_windows[i];
+            if (hit.index >= win.tab_count) break :blk null;
+            break :blk .{ .window = win, .tab = hit.index };
+        }
+        break :blk null;
     };
     self.armTabDwell(d, hovered);
 }
 
-/// Point the dwell clock at `tab`, or stop it when there is no tab under the
-/// pointer. Idempotent while the pointer stays on the same tab.
-fn armTabDwell(self: *Window, d: *RearrangeDrag, tab: ?usize) void {
+/// A tab button a dwell can switch to: which window, and which of its tabs.
+const DwellTarget = struct {
+    window: *Window,
+    tab: usize,
+};
+
+/// Point the dwell clock at `target`, or stop it when there is no tab under
+/// the pointer. Idempotent while the pointer stays on the same tab.
+fn armTabDwell(self: *Window, d: *RearrangeDrag, target: ?DwellTarget) void {
     const hwnd = self.hwnd orelse return;
-    // The tab already showing is not somewhere to switch TO, so resting on it
-    // arms nothing — and the same applies once the dwell has fired.
-    const want: ?usize = if (tab) |t| (if (t == self.active_tab) null else t) else null;
+    // The tab a window is already showing is not somewhere to switch TO, so
+    // resting on it arms nothing — and the same applies once the dwell has
+    // fired.
+    const want: ?DwellTarget = if (target) |t|
+        (if (t.tab == t.window.active_tab) null else t)
+    else
+        null;
     if (want) |t| {
-        if (d.dwell_tab) |cur| if (cur == t) return;
-        d.dwell_tab = t;
+        const win: ?*Window = if (t.window == self) null else t.window;
+        if (d.dwell_tab) |cur| if (cur == t.tab and d.dwell_window == win) return;
+        d.dwell_tab = t.tab;
+        d.dwell_window = win;
         _ = w32.SetTimer(hwnd, TAB_DWELL_TIMER_ID, TAB_DWELL_MS, null);
         return;
     }
     if (d.dwell_tab == null) return;
     d.dwell_tab = null;
+    d.dwell_window = null;
     _ = w32.KillTimer(hwnd, TAB_DWELL_TIMER_ID);
 }
 
@@ -3516,11 +3551,20 @@ fn armTabDwell(self: *Window, d: *RearrangeDrag, tab: ?usize) void {
 fn onTabDwell(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     _ = w32.KillTimer(hwnd, TAB_DWELL_TIMER_ID);
+    var target_win: *Window = self;
     const tab = tab: {
         const d = if (self.rearrange_drag) |*p| p else return;
         const t = d.dwell_tab orelse return;
         d.dwell_tab = null;
-        if (!d.active or t >= self.tab_count or t == self.active_tab) return;
+        const other = d.dwell_window;
+        d.dwell_window = null;
+        if (other) |win| {
+            // Another window (T1543), re-validated rather than trusted from
+            // the move that armed the clock: it may have closed since.
+            if (!self.app.hasWindow(win) or win.closing or win.hwnd == null) return;
+            target_win = win;
+        }
+        if (!d.active or t >= target_win.tab_count or t == target_win.active_tab) return;
         // The switch invalidates everything the last move resolved: the panes
         // on screen are a different set. Drop the stale answer rather than
         // leaving a preview pointing at a pane that is no longer visible — the
@@ -3531,7 +3575,14 @@ fn onTabDwell(self: *Window) void {
         break :tab t;
     };
     self.hideDropPreview();
-    self.selectTabIndex(tab);
+    if (target_win == self) {
+        self.selectTabIndex(tab);
+    } else {
+        // Brought up WITHOUT focus: focusing a pane in another top-level
+        // would activate it mid-drag. The source tab here is untouched.
+        target_win.showTabIndex(tab, false);
+        target_win.invalidateTabBar();
+    }
 
     // Nothing above is allowed to assume the drag survived: a tab switch runs
     // a lot of window code, and anything in it that releases the capture sends

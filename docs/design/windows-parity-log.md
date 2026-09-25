@@ -33739,3 +33739,17 @@ screen. Seam-to-index arithmetic is `pane_relocate.tabReorderIndex` (4 tests).
 rearrange-tab-drop.ps1 claim C now asserts the no-op seam and new claim C2 the
 move (tab count 2, carried tab first and selected, same pane HWND) - ALL PASS
 (73); -NegativeControl red on C2.
+
+## 2026-09-25 - T1543: resting a dragged pane on another window's tab opens that tab
+
+The drag's dwell (rest on a tab button for 500ms to switch to it) only ever
+looked at the source window's strip, so a pane could reach another window's
+background tab only by moving it twice. The dwell now resolves against every
+window the drag can land in; the drag state names the window as well as the
+tab, and the switch in that window runs WITHOUT moving focus, since focusing a
+pane in another top-level would activate it while the source holds the mouse
+capture. The drop needed nothing: a cross-window drop already lands in the
+destination's showing tab. `pane_drop.hoveredTab` also takes `resolve`'s
+one-window-owns-the-point rule now, so a strip hidden behind another window's
+panes arms nothing (unit test extended). rearrange-window-drop.ps1 claim E -
+ALL PASS (58); -NegativeControl red on A and E.

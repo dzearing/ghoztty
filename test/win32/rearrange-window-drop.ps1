@@ -29,7 +29,7 @@
 # point over another window is simply out of range. That out-of-range client
 # point is the whole mechanism under test, not a way around one.
 #
-# Four claims, over three app runs (each starts from a known pair of windows,
+# Five claims, over four app runs (each starts from a known pair of windows,
 # so no claim inherits the previous one's layout):
 #   A) dragging a pane onto another window's pane PREVIEWS the drop over that
 #      window, and releasing moves the pane there - same HWND, still running
@@ -38,12 +38,16 @@
 #      taking the pane (or its session) with it
 #   D) the pop-out button on a pane header opens a NEW window holding that
 #      pane - again the same HWND
+#   E) resting the dragged pane on ANOTHER window's background tab button for
+#      the dwell brings that tab up there, leaves the source tab alone, and the
+#      drop lands in the tab it opened (T1543)
 #
 # A positive control (ctrl+k clear_screen, the T55 pattern) runs first, so an
 # injection failure aborts instead of reading as a T1538 regression.
 #
 # -NegativeControl inverts claim A to "the pane does not move" - the pre-T1538
-# behavior - and MUST fail; it is how a run proves the oracle discriminates.
+# behavior - and claim E to "the other window's tab never changes" (pre-T1543),
+# and MUST fail; it is how a run proves the oracle discriminates.
 #
 # Runs on the BACKGROUND test desktop, so it never takes the user's
 # foreground - asserted at the end, not assumed. Only touches ghoztty
@@ -138,6 +142,7 @@ function Start-Session([int]$Splits) {
             '--config-default-files=false',
             '--session-persistence=false',
             '--window-show-tab-bar=always',
+            '--keybind=ctrl+shift+f8=new_tab',
             '--keybind=ctrl+shift+f9=toggle_rearrange_mode')
     }
     if (-not $ExePath) { $sp.StdErr = $errlog }
@@ -183,7 +188,7 @@ function Add-Window($s, [int]$X, [int]$Y) {
 }
 
 # End a run's app DELIBERATELY (T527): the postmortem reporter treats a launch
-# that is gone and unmarked as a crash, and this script launches three times.
+# that is gone and unmarked as a crash, and this script launches four times.
 function Close-Session($s) {
     if ($s) {
         foreach ($r in $script:GhozttyTestDesktopLaunches) {
@@ -219,6 +224,32 @@ function Select-Window([IntPtr]$top) {
     $ok = Set-TestActiveWindow -Window $top
     Start-Sleep -Milliseconds 400
     return $ok
+}
+
+# One window's tab strip, in SCREEN coordinates, out of the product's own
+# published geometry (T231) - the `+list --json` window whose id is this HWND.
+# Selected is the index the strip marks as on screen.
+function Get-StripOf([IntPtr]$top) {
+    $json = & $exe +list --json 2>$null | Out-String
+    if (-not $json.Trim()) { return $null }
+    $data = $json | ConvertFrom-Json
+    if (-not $data.data) { return $null }
+    $w = @($data.data.windows | Where-Object { [string]$_.id -eq ([string][int64]$top) })[0]
+    if (-not $w -or -not $w.chrome -or -not $w.chrome.tab_strip) { return $null }
+    $client = Get-TestWindowRect -Window $top -Client
+    $tabs = @()
+    foreach ($t in @($w.chrome.tab_strip.tabs)) {
+        if ($null -eq $t) { $tabs += $null; continue }
+        $tabs += [pscustomobject]@{
+            Left = $client.Left + $t.left; Top = $client.Top + $t.top
+            Right = $client.Left + $t.right; Bottom = $client.Top + $t.bottom
+        }
+    }
+    $sel = -1
+    for ($i = 0; $i -lt @($w.tabs).Count; $i++) {
+        if (@($w.tabs)[$i].selected) { $sel = $i }
+    }
+    [pscustomobject]@{ Tabs = $tabs; TabCount = @($w.tabs).Count; Selected = $sel }
 }
 
 function Enter-RearrangeMode([IntPtr]$top) {
@@ -417,6 +448,90 @@ try {
     }
     $left = Get-PaneBoxes $a
     Assert ($left.Count -eq 1) "D: the original window kept its other pane (got $($left.Count))"
+
+    Close-Session $session
+    $session = $null
+
+    # ===================================================================
+    # RUN 4 - resting on ANOTHER window's background tab opens it, and the
+    #         drop lands in that tab (T1543)
+    # ===================================================================
+    $session = Start-Session -Splits 1
+    $a = $session.Top
+    $b = Add-Window $session 1000 40
+    # The pane the destination's FIRST tab holds, recorded before a second tab
+    # hides it: afterwards it is the only way to tell that tab's layout on
+    # screen from the new tab's.
+    $bFirst = Get-PaneBoxes $b
+    Assert (Select-Window $b) 'E: setup: the keyboard is in the destination window'
+    $f = [IntPtr](Get-TestFocusedWindow -Window $b)
+    [void](Send-TestKeys -Window $b -Target $f -Modifiers ctrl, shift -Key F8)
+    Start-Sleep -Milliseconds 1500
+    $bStrip = Get-StripOf $b
+    $bShown = Get-PaneBoxes $b
+    Assert ($null -ne $bStrip -and $bStrip.TabCount -eq 2) "E: setup: the destination has two tabs (got $(if ($bStrip) { $bStrip.TabCount } else { 'no strip' }))"
+    if ($null -eq $bStrip -or $bStrip.TabCount -ne 2 -or $bFirst.Count -ne 1 -or $bShown.Count -ne 1 -or $bShown[0].Hwnd -eq $bFirst[0].Hwnd) {
+        Write-TestAssertedNothing -Reason 'the destination never came up showing its SECOND tab over a first one'
+    }
+    $bgIndex = if ($bStrip.Selected -eq 0) { 1 } else { 0 }
+    $bgTab = $bStrip.Tabs[$bgIndex]
+    if (-not $bgTab) { Write-TestAssertedNothing -Reason 'the background tab has no button on the strip' }
+
+    Assert (Enter-RearrangeMode $a) 'E: rearrange mode on in the source window'
+    $srcBefore = Get-PaneBoxes $a
+    $aStripBefore = Get-StripOf $a
+    Assert ($srcBefore.Count -eq 2) "E: setup: the source window has two panes (got $($srcBefore.Count))"
+    if ($srcBefore.Count -ne 2) { Write-TestAssertedNothing -Reason 'the source split never came up' }
+    $dragged = $srcBefore[0]
+    $grabX = $dragged.Left + 60
+    $grabY = $dragged.Top - [int]($band / 2)
+    $tabX = [int](($bgTab.Left + $bgTab.Right) / 2)
+    $tabY = [int](($bgTab.Top + $bgTab.Bottom) / 2)
+    Write-Host "      dwelling on the destination's tab $bgIndex at $tabX,$tabY"
+
+    Assert (Move-Drag $a $grabX $grabY 'down') 'E: press on the source pane header delivered'
+    Assert (Move-Drag $a $tabX $tabY 'move') 'E: move onto the other window''s background tab delivered'
+    # Past the 500ms dwell. A second move on the same button must not restart
+    # the clock, which is what holding still under a real hand produces.
+    Start-Sleep -Milliseconds 300
+    [void](Move-Drag $a $tabX $tabY 'move')
+    Start-Sleep -Milliseconds 900
+
+    $bNow = Get-PaneBoxes $b
+    $switched = ($bNow.Count -eq 1 -and $bNow[0].Hwnd -eq $bFirst[0].Hwnd)
+    if ($NegativeControl) {
+        Assert (-not $switched) 'NEGATIVE: the other window''s tab never changed (pre-T1543 behavior)'
+    } else {
+        Assert $switched 'E: the dwell brought the OTHER window''s background tab up - its own pane is on screen'
+    }
+    $bStripNow = Get-StripOf $b
+    Assert ($bStripNow -and $bStripNow.Selected -eq $bgIndex) "E: and that window's strip marks the tab as selected (got $(if ($bStripNow) { $bStripNow.Selected } else { 'no strip' }))"
+    $srcMid = Get-PaneBoxes $a
+    Assert ($srcMid.Count -eq 2 -and (Test-HasPane $a $dragged.Hwnd)) 'E: the tab the drag started in is untouched until the drop'
+    $aStripMid = Get-StripOf $a
+    Assert ($aStripMid -and $aStripBefore -and $aStripMid.Selected -eq $aStripBefore.Selected) 'E: and the source window is still showing that tab'
+
+    # Now onto the pane that tab revealed: its right edge zone, as in claim A.
+    $target = $bNow[0]
+    $dropX = $target.Right - ($edge + 40)
+    $dropY = [int](($target.Top + $target.Bottom) / 2)
+    Assert (Move-Drag $a $dropX $dropY 'move') 'E: move onto the revealed pane delivered'
+    Start-Sleep -Milliseconds 500
+    Assert ($null -ne (Get-PreviewRect $session.Pid)) 'E: the drop into the tab the dwell opened is previewed'
+    Assert (Move-Drag $a $dropX $dropY 'up') 'E: release delivered'
+    Start-Sleep -Milliseconds 2000
+    Assert (-not ($session.App.Process -and $session.App.Process.HasExited)) 'E: no crash on the drop'
+
+    $bAfter = Get-PaneBoxes $b
+    Show-Boxes 'dest  ' $bAfter
+    if (-not $NegativeControl) {
+        Assert (Test-HasPane $b $dragged.Hwnd) 'E: the pane landed in the other window - the SAME handle, so its shell came with it'
+        Assert (Test-HasPane $b $bFirst[0].Hwnd) 'E: beside the pane of the tab the dwell opened, not in the tab that window had been showing'
+        Assert ($bAfter.Count -eq 2) "E: that tab now shows two panes (got $($bAfter.Count))"
+    }
+    $bStripAfter = Get-StripOf $b
+    Assert ($bStripAfter -and $bStripAfter.TabCount -eq 2) 'E: the destination still has its two tabs - a drop into a tab is not a new tab'
+    Assert ((Get-PaneBoxes $a).Count -eq 1) 'E: the source window kept its other pane'
 
     Close-Session $session
     $session = $null

@@ -1,10 +1,10 @@
 {
     "guard":  "job-teardown",
     "script":  "test/win32/job-teardown.ps1",
-    "generated":  "2026-09-25T07:48:11-07:00",
-    "commit":  "acd2850c6",
+    "generated":  "2026-09-25T08:39:41-07:00",
+    "commit":  "1d9e0e184",
     "uncommitted":  [
-                        "test/win32/rearrange-tab-drop.ps1"
+                        "test/win32/rearrange-window-drop.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -284,7 +284,7 @@
                   "test/win32/rearrange-session-drop.ps1":  "88994a4062d36266517b4b8fe6de0301ddb204b051e19e6cd94d446fe2128c34",
                   "test/win32/rearrange-tab-drop.ps1":  "f6ccf04b741d1260489040325f63279ca38a39c244a12a31589665a1bb6bc4df",
                   "test/win32/rearrange-viewer.ps1":  "863ec84196d1f42cff0e3fc681c5b153a4b81c467b5b42fb6a5fff0c7432c7ae",
-                  "test/win32/rearrange-window-drop.ps1":  "2bcb5775a4356286d3f975a87f5e7733a5d6d0c91d15618f065e3cf514cebe1d",
+                  "test/win32/rearrange-window-drop.ps1":  "29818672031f65a697eeaff755d85ebdddf0b5669049a348d9ea189875a6c80a",
                   "test/win32/registration-sites.ps1":  "98cd7d949f693dee766dc37e1c8457d5bcdc0dee2144581b3c9a30e35de44146",
                   "test/win32/relaunch-guard.ps1":  "89e7e6c52462a0c0af5ff17f5d228f265e4166a41fefc02b5ac0b20068aa15e9",
                   "test/win32/relay-account.ps1":  "f6c483dbdaad4d45c833f069c13a7ce96e5dba887dbbe164c70c04be9e6683d1",

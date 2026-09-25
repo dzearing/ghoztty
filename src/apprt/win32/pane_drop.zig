@@ -277,7 +277,13 @@ pub fn resolve(
 /// same point simultaneously means "release here to make a new tab" and "rest
 /// here to open that tab".
 pub fn hoveredTab(point: Point, candidates: []const Candidate) ?TabHit {
-    const candidate = frontmost(candidates, point, tabBarContains) orelse return null;
+    // The same ownership rule `resolve` applies (T1543): the frontmost window
+    // that covers the point AT ALL answers, so a strip lying under another
+    // window's panes names no tab. It used to pick the frontmost STRIP, which
+    // was harmless while only the drag's own window was ever asked - and
+    // would open a tab in a window the user cannot see once every window is.
+    const candidate = frontmost(candidates, point, windowHit) orelse return null;
+    if (!tabBarContains(candidate, point)) return null;
     for (candidate.tab_button_rects, 0..) |r, i| {
         if (r.contains(point)) return .{ .window = candidate.window, .index = i };
     }
@@ -762,6 +768,17 @@ test "the front window's PANES beat a strip behind them (T1538)" {
     const t = resolve(.{ .x = 500, .y = 400 }, &cands, dragged_id, m1).?;
     try testing.expect(t == .swap);
     try testing.expectEqual(@as(WindowRef, 7), t.swap.window);
+    // And the dwell agrees (T1543): resting over that hidden button opens
+    // nothing, since the user is looking at the front window's pane.
+    try testing.expect(hoveredTab(.{ .x = 60, .y = 400 }, &cands) == null);
+    // Uncovered, the same button in the back window IS a dwell target, and
+    // names that window rather than the front one.
+    var moved = cands;
+    moved[0].content_rect = .{ .left = 2000, .top = 0, .right = 3000, .bottom = 800 };
+    moved[0].pane_rects = &.{};
+    const hit = hoveredTab(.{ .x = 60, .y = 400 }, &moved).?;
+    try testing.expectEqual(@as(WindowRef, 8), hit.window);
+    try testing.expectEqual(@as(usize, 0), hit.index);
 }
 
 test "a point on a window's own chrome is a miss, not a new window" {
