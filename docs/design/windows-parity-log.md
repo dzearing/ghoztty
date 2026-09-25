@@ -33844,3 +33844,17 @@ reading would be the wrong one there. Unit tests on all three hops. Four lanes
 green, P1-P3 green, and the 11 harnesses the change made due are all green.
 Filed T1741 for an on-box end-to-end run. Mac: this is all shared core and agent
 code, so the Mac build gets the same behavior.
+
+## 2026-09-25 - T1586: a banner path stays text when the pane's folder is unknown
+
+A pane whose folder could not be read caches an empty string, and the banner
+parser joined `.\a.txt` onto it as `\a.txt` - a link to the root of the current
+drive. `banner_markdown.autolink` now treats an empty `cwd`/`home` exactly like
+a missing one (the T539 rule: nothing to resolve against means plain text), and
+a viewer opened from a banner link no longer takes an empty folder as its
+origin. Unit asserts in the T539 autolink test, with a negative control that
+goes red without the fix. Four lanes green; pane-banner.ps1 ALL PASS (149). The
+6k end-to-end assertion was not added: an empty cached folder cannot be
+produced deterministically from a script. Filed T1742 for the same shape at the
+palette viewer site. Mac: `SurfacePaneBanner.fileURL` already guards
+`!cwd.isEmpty` (line 1374), so this brings Windows to Mac's rule; no Mac work owed.

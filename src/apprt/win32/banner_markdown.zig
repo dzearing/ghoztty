@@ -819,14 +819,23 @@ fn autolink(
     return switch (prefix.kind) {
         .web, .absolute => .{ .target = try arena.dupe(u8, text), .end = end },
         .home => .{
-            .target = try joinPath(arena, paths.home orelse return null, text[prefix.len..]),
+            .target = try joinPath(arena, nonEmpty(paths.home) orelse return null, text[prefix.len..]),
             .end = end,
         },
         .relative => .{
-            .target = try joinPath(arena, paths.cwd orelse return null, text),
+            .target = try joinPath(arena, nonEmpty(paths.cwd) orelse return null, text),
             .end = end,
         },
     };
+}
+
+/// An empty context path is as absent as a null one (T1586). A pane that
+/// was asked for its cwd and had none caches `""` so it is not re-asked
+/// forever, and joining onto `""` yields `\a.txt` — the root of whatever
+/// drive is current, a link that points somewhere the text never meant.
+fn nonEmpty(path: ?[]const u8) ?[]const u8 {
+    const p = path orelse return null;
+    return if (p.len == 0) null else p;
 }
 
 /// Does `source` contain a bare autolink whose target depends on the pane's
@@ -1372,6 +1381,19 @@ test "autolink: home and cwd resolve, and stay text without them" {
     // nowhere (Mac's rule for a pane with no cwd).
     try testing.expect((try onlyLink(a, .{}, "./zig-out/bin/ghoztty.exe")) == null);
     try testing.expect((try onlyLink(a, .{}, "~/notes.md")) == null);
+
+    // An EMPTY context path is the same as none (T1586): a pane with no
+    // known folder caches "", and joining onto it would link `\a.txt` —
+    // the root of the current drive.
+    const empty: PathContext = .{ .cwd = "", .home = "" };
+    try testing.expect((try onlyLink(a, empty, ".\\a.txt")) == null);
+    try testing.expect((try onlyLink(a, empty, "../a.txt")) == null);
+    try testing.expect((try onlyLink(a, empty, "~/notes.md")) == null);
+    // Absolute forms still link with an empty context.
+    try testing.expectEqualStrings(
+        "D:\\out\\a.txt",
+        (try onlyLink(a, empty, "D:\\out\\a.txt")).?.link.?,
+    );
 }
 
 test "dependsOnCwd: only the dot-relative forms move with a cd (T758)" {

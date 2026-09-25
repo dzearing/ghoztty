@@ -2210,7 +2210,9 @@ pub const BannerOverlay = struct {
         const location = self.viewerLocation(url) orelse return;
         _ = surface.app.createWindow(.{ .viewer_open = .{
             .location = location,
-            .origin_directory = surface.pwd,
+            // A pane with no known folder caches "" (T1586); that is no
+            // origin at all, not the root of the current drive.
+            .origin_directory = if (surface.pwd) |p| (if (p.len > 0) p else null) else null,
         } }) catch |err| {
             log.warn("banner link: viewer window failed err={}", .{err});
         };
