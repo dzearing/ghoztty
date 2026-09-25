@@ -33694,3 +33694,18 @@ Frame-timing before/after could not be measured here: T1737 builds the probe.
 window-active-audit caught the probe's foreground check spelled as a raw
 `GetForegroundWindow()` compare (always "no" on the background test desktop);
 it now asks `w32.windowIsActive`.
+
+## 2026-09-25 - T1426: the chooser says when this machine is still connected to an account you signed out of
+
+Mac's f3b1e5fb5 line, ported. After a Sign Out Anyway the signed-out row now
+reads "This machine is still connected to <account> - still removing it."
+beside Sign in with Google, from the pending-revoke record; it is re-read on
+open, after every account result and on the 5s poll tick, because the app's
+retry loop and the agent can each finish the revocation without telling the
+dialog. Set as Mac sets it (caption, secondary colour, wrapped, capped at 280):
+at body size on one line it was ~460 px and left the machine name ~15 px.
+Unit tests in RelayAccountRow and chooser_layout; relay-account.ps1 sections
+9/9c grew 8 assertions (shows on sign-out, clears when the retry lands, shows
+on open over an armed record, gives way to the email on sign-in, wraps and
+leaves the identity its room) - ALL PASS. Floor ALL LANES PASS, harness floor
+PASS, chooser-controls/modeless/selection and window-active-audit ALL PASS.
