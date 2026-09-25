@@ -64,6 +64,7 @@ function AssertEq($name, $expected, $actual) {
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 
 . (Join-Path $Repo 'scripts\delivery-version.ps1')
+. (Join-Path $Repo 'scripts\delivery-manifest.ps1')   # Get-PeSubsystem (T1569)
 
 # T199: a stand-in INSTALL dir lives under $root, and the delivery script's job
 # ends by launching the app out of one. Arm the teardown so a run that dies
@@ -688,6 +689,51 @@ AssertEq "D15 so the run is a FAILURE despite a successful copy" 1 $dPostRun.Cod
 Assert "D16 and it does not claim success" (-not ($dLogText -match 'UPGRADE OK'))
 Assert "D17 nor propagate unverified bits to the other locations" `
     ($dLogText -match 'NOT PROPAGATED')
+
+# --- D18 a Debug staging exe never reaches a portable (T1569) ----------------
+# 2026-09-23: upgrade-no-fork.ps1 ran this script with a zig-out staging prefix
+# and without -NoExtraInstalls, and the default mirror list put a Debug exe into
+# BOTH real portables. The mirror here is a sandbox directory named explicitly,
+# so -NoExtraInstalls is deliberately absent: the refusal is what is under test.
+$dMirror = Join-Path $dRoot 'mirror'
+New-Item -ItemType Directory -Force $dMirror | Out-Null
+$mirrorExe = Join-Path $dMirror 'ghoztty.exe'
+Set-Content -LiteralPath $mirrorExe -Encoding ascii -Value $sentinel
+Remove-Item -LiteralPath $dLog -Force -ErrorAction SilentlyContinue
+$dDebugRun = Invoke-InSandboxTemp -TempDir $dRoot -Argv @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $upgrade,
+    '-Staging', $dStaging, '-InstallDir', $dInstall, '-WorkingDirectory', $Repo, '-ExtraInstallDirs', $dMirror,
+    '-ExpectedCommit', $exeCommit, '-NoResume', '-DelaySeconds', '0')
+$dLogText = Get-Content -LiteralPath $dLog -Raw -ErrorAction SilentlyContinue
+AssertEq "D18 the staged exe under test really is a Debug (console) build" 3 `
+    (Get-PeSubsystem -Path (Join-Path $dStaging 'bin\ghoztty.exe'))
+AssertEq "D19 the primary delivery still succeeds" 0 $dDebugRun.Code
+Assert "D20 the mirror step refuses it by name" `
+    ($dLogText -match 'NOT PROPAGATED - staging ghoztty\.exe has PE subsystem 3')
+# A bool, not AssertEq: on failure the "actual" is a 50 MB binary.
+Assert "D21 THE POINT: the portable's exe is untouched" `
+    ((Get-Item -LiteralPath $mirrorExe).Length -lt 100 -and
+     (Get-Content -LiteralPath $mirrorExe -Raw).Trim() -eq $sentinel)
+
+# --- D22 POSITIVE CONTROL: a GUI-subsystem exe IS mirrored -------------------
+# Same bytes with the subsystem WORD flipped to 2, which is the one thing the
+# gate reads - so a gate that refused everything would fail here.
+$dGuiStaging = Join-Path $dRoot 'staging-gui'
+New-Item -ItemType Directory -Force (Join-Path $dGuiStaging 'bin') | Out-Null
+$guiExe = Join-Path $dGuiStaging 'bin\ghoztty.exe'
+$bytes = [IO.File]::ReadAllBytes((Join-Path $dStaging 'bin\ghoztty.exe'))
+$peOff = [BitConverter]::ToInt32($bytes, 0x3C)
+$bytes[$peOff + 0x5C] = 2; $bytes[$peOff + 0x5D] = 0
+[IO.File]::WriteAllBytes($guiExe, $bytes)
+Set-Content -LiteralPath $mirrorExe -Encoding ascii -Value $sentinel
+Remove-Item -LiteralPath $dLog -Force -ErrorAction SilentlyContinue
+$null = Invoke-InSandboxTemp -TempDir $dRoot -Argv @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $upgrade,
+    '-Staging', $dGuiStaging, '-InstallDir', $dInstall, '-WorkingDirectory', $Repo, '-ExtraInstallDirs', $dMirror,
+    '-ExpectedCommit', $exeCommit, '-NoResume', '-DelaySeconds', '0')
+$dLogText = Get-Content -LiteralPath $dLog -Raw -ErrorAction SilentlyContinue
+Assert "D22 POSITIVE CONTROL: a release-subsystem exe is not refused" `
+    (-not ($dLogText -match 'NOT PROPAGATED - staging ghoztty\.exe'))
+AssertEq "D23 and it reached the portable" (Get-FileHash -LiteralPath $guiExe).Hash `
+    (Get-FileHash -LiteralPath $mirrorExe).Hash
 
 # ============================================================================
 "== E: the AGENT binary is read back too (T281)"

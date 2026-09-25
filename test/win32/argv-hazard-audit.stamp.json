@@ -1,10 +1,12 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-25T09:50:54-07:00",
-    "commit":  "0b87c172f",
+    "generated":  "2026-09-25T10:16:26-07:00",
+    "commit":  "d82c23109",
     "uncommitted":  [
-                        "test/win32/update-check.ps1"
+                        "scripts/upgrade-ghoztty-windows.ps1",
+                        "test/win32/upgrade-no-fork.ps1",
+                        "test/win32/upgrade-staleness.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -69,7 +71,7 @@
                   "scripts/t857-boost-ab.ps1":  "a0f1bd35f21fb689f306a5a100e9cccf37b0087bbcc29e98fce0dfc1b6638071",
                   "scripts/task-dashboard.ps1":  "616fa636356bdfa1dc07aafe573f5aaf3b9a421ee6bbdc4c4404367845564fd7",
                   "scripts/test-binary-soak.ps1":  "23542011c8cd2ebbf30a07f13f7cdc48b3fe41cc3511d07696d2b533a1b35927",
-                  "scripts/upgrade-ghoztty-windows.ps1":  "ab38adaaf6c2eb15e421e90e7b287ae7f98749ae3f62b2ea923185c084d66edc",
+                  "scripts/upgrade-ghoztty-windows.ps1":  "557ca160bdaa7d1c9804174029d1310c7be74745c9ec81de53c7d2d5f6c5ebe4",
                   "scripts/upstream-remote.ps1":  "1eaafbe08c8b98e9520b96cbba2db8799879864d2a5163f0e64277636793cfbc",
                   "scripts/verify-release-clean.ps1":  "ee41494c52f72b6d60caf4ee8750f3fc760ab4330481a7a16c4b4f1d8830c39b",
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
@@ -434,9 +436,9 @@
                   "test/win32/update-graceful.ps1":  "8dd249a5f108c2f129a2673c857e68808115c8fd963d67ffaef7ab43a3c70944",
                   "test/win32/update-progress.ps1":  "eb5f961ca43ee0a2e75f3d00cc7c0f7d84cd908ef50c7c0cfa98dfb6dee96f42",
                   "test/win32/update-real-msi.ps1":  "0637cd0a218dbe97f9d49cb4ee6c9361886b07426d595d06918a4f2768d75317",
-                  "test/win32/upgrade-no-fork.ps1":  "76264704b07c6d8267edda9d19349210a5462999cc8321b7c6b4d1f5e09df56c",
+                  "test/win32/upgrade-no-fork.ps1":  "b94a032a02cd6af42056296e37448b9fcdfbcdc87247ef52cdf75e019a78e722",
                   "test/win32/upgrade-resume-readiness.ps1":  "03583ba1a96392547dd5fa2b663b25588141de6e5362db46b7b169d283472f34",
-                  "test/win32/upgrade-staleness.ps1":  "cb577b375e64ebed56aa661208fe105ea418f197ee5c30fac125a07f02f2f6d0",
+                  "test/win32/upgrade-staleness.ps1":  "063d56d56dcad33ff4d22debde34efe5722697d1b291750f5c7f4c0b8f61cc01",
                   "test/win32/upstream-remote.ps1":  "483ebecd3ff0e427c13addaa2c1afe0e2229e27778ad080d365e3868e7f6c2c4",
                   "test/win32/url-scheme.ps1":  "33fe6b3246d5e2ca17e5f68af88fac03d4eb50f8b2210c801fc7c2f0303909a6",
                   "test/win32/verdict-exit-audit.ps1":  "0a356320134c6a1f234067b806e439f64ba62573cd251f39c7adcf43ad51c91b",

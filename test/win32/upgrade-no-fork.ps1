@@ -661,7 +661,10 @@ function Wait-Windows($tag, $count, $timeoutSec = 60) {
 function Invoke-Upgrade($tag, $extraArgs, $timeoutSec = 300) {
     $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $upgrade,
         '-Staging', $stagingDir, '-InstallDir', $installDir,
-        '-WorkingDirectory', $workDir, '-DelaySeconds', '1') + $extraArgs
+        '-WorkingDirectory', $workDir, '-DelaySeconds', '1',
+        # T1569: the default mirror list is the REAL Desktop and share portables,
+        # and without this every run here copied the Debug sandbox exe into both.
+        '-NoExtraInstalls') + $extraArgs
     $quoted = $a | ForEach-Object {
         $s = [string]$_
         if ($s -match '[\s&<>|]') { '"' + $s + '"' } else { $s }

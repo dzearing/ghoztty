@@ -162,6 +162,7 @@ function Log($m) { "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $m" | Add-Content 
 . (Join-Path $PSScriptRoot 'loop-session.ps1')
 . (Join-Path $PSScriptRoot 'delivery-version.ps1')
 . (Join-Path $PSScriptRoot 'install-ownership.ps1')
+. (Join-Path $PSScriptRoot 'delivery-manifest.ps1')
 
 # T1218/D85: this script may swap a dev install; it may not touch the user's.
 # Checked here, before anything is read or killed, and logged as well as printed
@@ -630,10 +631,20 @@ if ($AppOnly) {
 # staleness risk as this task's, with no automation at all. Best-effort by
 # design: a sleeping NAS or a running portable instance holding its exe open
 # must never fail (or slow) the delivery that already succeeded.
+#
+# T1569: and never a Debug build. A staging prefix whose ghoztty.exe links the
+# console subsystem is a zig-out copy (test\win32\upgrade-no-fork.ps1 builds one
+# for its sandbox), and on 2026-09-23 exactly that was mirrored into both
+# portables: a Debug exe beside the old release .com, with every line saying
+# the copy succeeded. The primary target may be a sandbox; these never are.
+$stagedSubsystem = Get-PeSubsystem -Path (Join-Path $Staging 'bin\ghoztty.exe')
 if ($script:deliveryFailure) {
     Log 'extra install locations: NOT PROPAGATED - the primary install did not verify, so there is nothing worth copying onward'
 } elseif ($NoExtraInstalls) {
     Log 'extra install locations: skipped by request (-NoExtraInstalls)'
+} elseif ($stagedSubsystem -ne (Get-ExpectedSubsystem -Name 'ghoztty.exe')) {
+    Log ("extra install locations: NOT PROPAGATED - staging ghoztty.exe has PE subsystem $stagedSubsystem, not 2 " +
+        '(a console-subsystem ghoztty.exe is a Debug build, and a portable install only ever gets a release) (T1569)')
 } else {
     foreach ($dir in $ExtraInstallDirs) {
         if (-not $dir) { continue }

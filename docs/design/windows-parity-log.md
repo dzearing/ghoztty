@@ -33779,3 +33779,17 @@ scenario had a working tray. That is now scenario 13 (`autotraydead`) of
 raises the affordance, writes the record, and the next launch restores it with
 no feed. A new `update affordance up` log line lets the harness see the
 surface; the up-to-date scenario is its negative control. ALL PASS (54).
+
+## 2026-09-25 - T1569: a test was putting Debug builds into both portables
+
+The Debug `ghoztty.exe` in the Desktop and share portables was not stale; it
+kept being rewritten. `test/win32/upgrade-no-fork.ps1` ran the upgrade script
+against a zig-out sandbox staging prefix without `-NoExtraInstalls`, and the
+script's default mirror list is the real portables: on 2026-09-23 15:50 both got
+the Debug exe and an agent while the `.com` (which the sandbox never stages)
+stayed at its 08-31 release. The test now passes `-NoExtraInstalls`, and
+`upgrade-ghoztty-windows.ps1` refuses to mirror any staging exe whose PE
+subsystem is not GUI (`upgrade-staleness.ps1` D18-D23 with a positive control;
+167 pass, 2 red with the refusal disabled). Then a ReleaseFast delivery:
+`AUDIT OK: 3 location(s) agree on +d82c23109`, `deliver=ok`. Filed T1739: the
+health line kept the morning's `wrong(7)` until `deliver-audit.ps1 -Force`.
