@@ -818,6 +818,16 @@ Concretely, in order, with no stops in between:
      `-Request` above stays the way to ask for anything else. Acceptance:
      section F of `test\win32\gate-negatives.ps1`.
 
+     **And a big enough gap files its own request** (T1588). Both routes above
+     are keyed on somebody having reported something; on 2026-09-25 a morning
+     with no report behind it had banked 37 commits behind a release that had
+     already gone out. So once `-StrandedThreshold` commits (30, about half a
+     working day) have landed behind a *published* release, the step 6.5 run
+     writes an ordinary request itself, reason `stranded threshold: ...`, and
+     honours it the same way. A normal day stays under it and still cuts one
+     release; a heavy day cuts a second. Acceptance: sections P and Q of
+     `test\win32\daily-publish.ps1`.
+
      **A pushed tag is not yet a release**, so the watermark records `tagged` and
      the next run reconciles it against `gh release view`: `published` if CI
      built it, `failed` if an hour passed and no release exists.

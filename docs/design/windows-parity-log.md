@@ -33858,3 +33858,22 @@ goes red without the fix. Four lanes green; pane-banner.ps1 ALL PASS (149). The
 produced deterministically from a script. Filed T1742 for the same shape at the
 palette viewer site. Mac: `SurfacePaneBanner.fileURL` already guards
 `!cwd.isEmpty` (line 1374), so this brings Windows to Mac's rule; no Mac work owed.
+
+## 2026-09-25 - T1588: a heavy day cuts a second release on its own
+
+Both early-publish routes (the hand-run `-Request`, and the request a user-report
+close files) were keyed on somebody reporting something; nothing looked at the
+size of the gap, which reached 37 commits by 13:00 today behind yesterday's
+release. `daily-publish.ps1` now takes `-StrandedThreshold` (30, about half a
+working day at ~50 commits/day) and, when the last publish is `published` and
+no request is pending, writes an ordinary request with reason `stranded
+threshold: N commits ...` before the due decision - so honouring, consuming and
+preserving it on a SKIP are the existing request path. `tagged` (CI building)
+and `failed` (T1369's retry) never fire it; `-Check` writes nothing. Sections P
+(pure, both sides) and Q (live) of `test/win32/daily-publish.ps1`: 188/188,
+negative control all red. Live `-Check` on the box: `DUE: requested: stranded
+threshold: 37 commits ...; publishing win-v1.36.38`. Health's `publish=ok+<n>`
+unchanged. The unroll-count audit also caught `Get-StrandedCommits` returning a
+bare array (a zero gap read as "unknown" in `-Status`); it returns an object
+now. Mac: no Mac publish loop exists to mirror; this is Windows release
+tooling only.

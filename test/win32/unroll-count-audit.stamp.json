@@ -1,10 +1,12 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-09-25T11:50:27-07:00",
-    "commit":  "ea05333fd",
+    "generated":  "2026-09-25T13:14:45-07:00",
+    "commit":  "5cc9d1951",
     "uncommitted":  [
-                        "test/win32/viewer-html.ps1"
+                        "scripts/daily-publish.ps1",
+                        "test/win32/daily-publish.ps1",
+                        "test/win32/unroll-count-audit.baseline.json"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -15,7 +17,7 @@
                   "scripts/control-char-scan.ps1":  "5d86caddd7c8b44be9b3148dd5994881a8f8fa8eb1a07d2fe5414b0dd6428ba8",
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
                   "scripts/crash-databreak.ps1":  "60428758a92aed0c48be4a57d5c83de90dca9866001a9aa94c9d7578459eae6c",
-                  "scripts/daily-publish.ps1":  "e2f455d11a00ac39b3db693f2d0d0ce3bc1d7d0f658c1b6ef4027d2e456aa747",
+                  "scripts/daily-publish.ps1":  "51c1e75bbb61bdcfdf8bed50f390f0d6f7228d22c5d311675290b36b157779bb",
                   "scripts/deliver-audit.ps1":  "5598626fd46a8b8da014508f9d26c8f423cebddb4c741aec4e5fbe6d882149ce",
                   "scripts/deliver-windows-build.ps1":  "95a8ca3b1ed3d0093181a8db090e7b106e11942bcdadaaa6bfaffd4c27bbd795",
                   "scripts/delivery-manifest.ps1":  "e985781584ffa1b524cf12bc0ed8b01cd952b8f18391e1a3fd2d229c15388a34",
@@ -162,7 +164,7 @@
                   "test/win32/crash-diagnostics.ps1":  "c09555c22faad0c3914229d756c7df9423369c0e13b2f32422e04d3eeaed8aca",
                   "test/win32/crash-first-chance.ps1":  "87ef370d66a61a2689c51f3d677589eab39e4ac1def7230cc320d4d72ef50a7e",
                   "test/win32/crash-stacks.ps1":  "c1b73b66a3afbebf2c7aa7d22dd69f96f956ea978dbc0f0d97ac0dad76371b99",
-                  "test/win32/daily-publish.ps1":  "9a9c9c698f7eedc50927536a038397281e4c4471d56c4f2e9fffbf8fe61c7512",
+                  "test/win32/daily-publish.ps1":  "5a7f6abd97076c8af486293b0a1f19a21aaceb7a314b457b4c8ec4e670675fdb",
                   "test/win32/dark-menus.ps1":  "944b48c2b49d5d2ca8148572da1dcc70a9628871b27246187b9a3982e2a34491",
                   "test/win32/dashboard-dom.ps1":  "34e4f9885499690ee161fda2d60842afdd46577fa37393f71cc0cc2e5c818b27",
                   "test/win32/deliver-windows-build.ps1":  "137ec598dafcdad2b79248b5d5761fa742d92b0965e012f15c1e05c394f52307",
@@ -428,7 +430,7 @@
                   "test/win32/thread-join-audit.ps1":  "636191df9344abe883a41479504bef2f67fae58e0fff5e609c3050ca793ce219",
                   "test/win32/title-font.ps1":  "946fd12880bb0433a535283fb6146fb7d2a8fd1b2d1f0f74e00fa7ce1720dcb8",
                   "test/win32/title-jitter.ps1":  "cddd430bceb80810b24814bd1e3047534b578c8d87390827f105ac5915c198f0",
-                  "test/win32/unroll-count-audit.baseline.json":  "64ef612eedf92acf45fe103cd8e72c49c444a4215daa081d75b2e51a4e54f459",
+                  "test/win32/unroll-count-audit.baseline.json":  "3cced1c48fd0826aed2ffb4aa58013e65b5e2991c6dd97ef2fab540cb1783793",
                   "test/win32/unroll-count-audit.ps1":  "4774094b99a4aa9506ac07fe3c4dce49704615fbadc469e41ee90a533401fa31",
                   "test/win32/update-apply.ps1":  "ed99645a2d9b0c9c005079cc3957df31bccc1b043e397f13315d6e4d1b4bb400",
                   "test/win32/update-check.ps1":  "d69fbf0bc300944d001b45097799326c7cf1f1ef5ac6e9a421baa8ac3c660e5d",

@@ -1,9 +1,8 @@
 {
     "note":  "Per-file counts of unroll-count-audit findings not yet fixed. May only go DOWN, and the run that lowers one rewrites this file with -UpdateBaseline. See docs/design/windows-parity-tasks/T1617.md.",
-    "generated":  "2026-09-20",
+    "generated":  "2026-09-25",
     "files":  {
                   "scripts\\agent-stamp-inputs.ps1":  1,
-                  "scripts\\daily-publish.ps1":  2,
                   "scripts\\lib\\DataBreak.ps1":  1,
                   "scripts\\parity-tasks.ps1":  2,
                   "scripts\\suite-run.ps1":  5,

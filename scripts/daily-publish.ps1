@@ -66,6 +66,14 @@
 # it (HEAD is already the published commit) is cleared rather than honoured, so
 # "ship it" can never mint an empty release.
 #
+# AND A SIZE RULE, because both of those requests are keyed on somebody having
+# reported something (T1588). A busy morning with no report behind it banked 37
+# commits behind a release that had already gone out. So a gap of
+# -StrandedThreshold commits behind a PUBLISHED release files the same request
+# itself, reason `stranded threshold: ...`, and the next lines treat it exactly
+# like a hand-filed one. Still not publish-per-commit: the threshold is half a
+# working day.
+#
 # WHAT IT NEVER DOES: touch the installed app. See scripts\install-ownership.ps1
 # and decision D85. Publishing is the only delivery path this repo has.
 #
@@ -168,6 +176,17 @@ param(
     # bounded by this and by the head having moved. 1 restores the pre-T1369
     # "one attempt consumes the day" behaviour.
     [int]$MaxAttemptsPerDay = 3,
+    # T1588. How many commits may pile up behind a PUBLISHED release before the
+    # gap itself files a publish request, the way a user report does (T1315).
+    # 30, because the loop lands roughly 50 commits on a working day - each task
+    # is a work commit plus its tracker close - so 30 is about half a day's work,
+    # or fifteen finished tasks nobody can install. A normal day stays under it
+    # and still cuts one release; a heavy day crosses it once, around midday,
+    # and cuts a second instead of banking the morning until the evening (on
+    # 2026-09-25 the gap had reached 37 by 13:00). Lower and the user is offered
+    # an update every couple of hours; higher and it only ever fires on the days
+    # the evening publish would have caught anyway. 0 disables it.
+    [int]$StrandedThreshold = 30,
     # Test seam. Empty = now.
     [string]$Now = '',
     # Decide and print, change nothing, publish nothing.
@@ -306,6 +325,39 @@ function Test-DailyPublishDue {
     # A watermark from the FUTURE is not a reason to refuse forever (a clock
     # change, a restored profile). It is also not today, so it does not block.
     return Verdict $true "first task-boundary push at/after ${HourLocal}:00 today (last publish: $(if ($last) { $last } else { 'never' }))"
+}
+
+# T1588: whether the size of the gap is itself a reason to publish. Every other
+# early publish is keyed on somebody having REPORTED a problem (-Request by hand,
+# or the request a user-report close files); nothing was keyed on how much work
+# was sitting behind the release, which reached 37 commits one morning. When this
+# says File, the caller writes an ordinary request, so everything downstream -
+# honouring it, consuming the watermark, clearing it - is the request path that
+# already exists, not a second one.
+function Test-StrandedThreshold {
+    param(
+        # Commits since the last publish's commit; -1 when it cannot be measured.
+        [int]$Count = -1,
+        [int]$Threshold = 30,
+        # The watermark's outcome and tag.
+        [string]$LastResult = '',
+        [string]$LastTag = '',
+        # A request already standing needs no second one.
+        [switch]$RequestPending
+    )
+    function Answer([bool]$file, [string]$why) { return [pscustomobject]@{ File = $file; Reason = $why } }
+    if ($Threshold -le 0) { return Answer $false 'stranded threshold disabled' }
+    if ($RequestPending) { return Answer $false 'a publish request is already pending' }
+    # Only a release that EXISTS strands anything. `tagged` is still building on
+    # CI - a second tag on top of it would race the first - and `failed` /
+    # `attempting` are owned by the T1369 retry rule, which already publishes on
+    # the next push that moved the head.
+    if ($LastResult -ne 'published') {
+        return Answer $false "the last publish is '$(if ($LastResult) { $LastResult } else { 'unknown' })', not published - the other rules own that state"
+    }
+    if ($Count -lt 0) { return Answer $false 'the stranded count could not be measured' }
+    if ($Count -lt $Threshold) { return Answer $false "$Count commit(s) stranded, under the threshold of $Threshold" }
+    return Answer $true "stranded threshold: $Count commits have landed since $(if ($LastTag) { $LastTag } else { 'the last release' }) (threshold $Threshold)"
 }
 
 # The version scheme, from the set of release tags that exist. See the header.
@@ -498,13 +550,19 @@ function Clear-Request([string]$why) {
 # What has landed since the release the user can actually install (T1294). The
 # number the health line reports and the list the morning digest names, so a
 # stranded fix is a thing somebody reads rather than a thing somebody hits.
+#
+# An object, not the bare array (T1588): a returned array unrolls, so an EMPTY
+# list arrived as $null and read as "unknown" - a gap of zero reported as
+# unmeasurable - and a one-line list arrived as a string. Known=$false is the
+# only "unknown"; Lines is always an array.
 function Get-StrandedCommits([string]$SinceCommit) {
-    if (-not $SinceCommit) { return $null }
+    $unknown = [pscustomobject]@{ Known = $false; Lines = @() }
+    if (-not $SinceCommit) { return $unknown }
     $ok = (Invoke-Probe { git cat-file -e "$SinceCommit^{commit}" }) -eq 0
-    if (-not $ok) { return $null }
+    if (-not $ok) { return $unknown }
     $lines = @(& git log --oneline "$SinceCommit..HEAD" 2>$null)
-    if ($LASTEXITCODE -ne 0) { return $null }
-    return @($lines | Where-Object { $_ })
+    if ($LASTEXITCODE -ne 0) { return $unknown }
+    return [pscustomobject]@{ Known = $true; Lines = @($lines | Where-Object { $_ }) }
 }
 
 # NOT `$now`: PowerShell variable names are case-insensitive, so that is the
@@ -548,13 +606,14 @@ if ($Status) {
     $req = Read-RequestFile
     Log "LAST PUBLISH: $(if ($mark.Date) { "$($mark.Date) $($mark.Tag) $($mark.Commit) ($($mark.Result), attempt $($mark.Attempts) of $MaxAttemptsPerDay that day)" } else { 'never' })"
     $stranded = Get-StrandedCommits $mark.Commit
-    if ($null -eq $stranded) {
+    $strandedLines = @($stranded.Lines)
+    if (-not $stranded.Known) {
         Log 'STRANDED: unknown (no published commit on this box to measure from)'
-    } elseif ($stranded.Count -eq 0) {
+    } elseif ($strandedLines.Count -eq 0) {
         Log 'STRANDED: none - the release carries everything on this branch'
     } else {
-        Log "STRANDED: $($stranded.Count) commit(s) have landed since $($mark.Tag) and are not in any release:"
-        foreach ($line in $stranded) { Log "  $line" }
+        Log "STRANDED: $($strandedLines.Count) commit(s) have landed since $($mark.Tag) and are not in any release:"
+        foreach ($line in $strandedLines) { Log "  $line" }
     }
     if ($req.Requested) { Log "REQUEST PENDING: $($req.Reason) (recorded $($req.At))" }
     exit 0
@@ -608,6 +667,36 @@ if ($mark.Result -eq 'tagged' -and $mark.Tag) {
 }
 
 $req = Read-RequestFile
+
+# T1588: a gap this big files its own request, before the due decision reads the
+# request, so the publish it triggers is the ordinary requested publish and says
+# in the log that the threshold is what fired it. Under -Check the request is
+# decided out loud and held in memory only - a check writes nothing.
+if (-not $req.Requested) {
+    $strandedNow = Get-StrandedCommits $mark.Commit
+    $strandedNowLines = @($strandedNow.Lines)
+    $t = Test-StrandedThreshold -Count $(if (-not $strandedNow.Known) { -1 } else { $strandedNowLines.Count }) `
+        -Threshold $StrandedThreshold -LastResult $mark.Result -LastTag $mark.Tag
+    if ($t.File) {
+        if (-not $Check) {
+            try {
+                $dir = Split-Path -Parent $RequestPath
+                if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+                $json = [ordered]@{
+                    at     = $nowDt.ToString('yyyy-MM-ddTHH:mm:ssK')
+                    reason = $t.Reason
+                    commit = $headHash
+                } | ConvertTo-Json -Compress
+                [IO.File]::WriteAllText($RequestPath, "$json`n", (New-Object Text.UTF8Encoding($false)))
+            } catch {
+                Log "WARNING: could not write the threshold request $RequestPath ($($_.Exception.Message))"
+            }
+        }
+        Log "REQUESTED: $($t.Reason)"
+        $req = [pscustomobject]@{ Requested = $true; At = $nowDt.ToString('yyyy-MM-ddTHH:mm:ssK'); Reason = $t.Reason; Commit = $headHash }
+    }
+}
+
 $d = Test-DailyPublishDue -Now $nowDt -LastDate $mark.Date -LastAt $mark.At `
     -HourLocal $HourLocal -StaleHours $StaleHours `
     -Requested:$req.Requested -RequestReason $req.Reason -HeadCommit $headHash -LastCommit $mark.Commit `

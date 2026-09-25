@@ -42,6 +42,9 @@
 #   L  the 2026-09-03 shape end to end: publish at T, fix at T+90m, shipped the
 #      same day - and the ordinary cadence unchanged around it.
 #   M  -Status: what shipped, and what has landed since.
+#   P  the stranded threshold (T1588), both sides of it, pure.
+#   Q  the stranded threshold end to end: under it nothing moves; at it the
+#      request is filed and honoured through the ordinary request path.
 #
 # Hermetic: a sandbox watermark under %TEMP%, a fake `docker`/`gh` on PATH, and
 # a sentinel publish script that records if it was ever run. No Docker, no
@@ -371,6 +374,24 @@ $k5 = Read-PublishRequest -Text "ship the installer fix`n"
 Assert 'K5 a bare line typed by hand is still honoured' $k5.Requested
 AssertEq 'K5 as its reason' 'ship the installer fix' $k5.Reason
 
+# ---- P. the stranded threshold (T1588) -----------------------------------
+"== P. the stranded threshold =="
+$p1 = Test-StrandedThreshold -Count 37 -Threshold 30 -LastResult 'published' -LastTag 'win-v1.36.37'
+Assert 'P1 a gap at or above the threshold files a request' $p1.File
+AssertMatch 'P1 naming the threshold as the reason' 'stranded threshold: 37 commits .*win-v1\.36\.37 \(threshold 30\)' $p1.Reason
+Assert 'P2 exactly AT the threshold files too' (Test-StrandedThreshold -Count 30 -Threshold 30 -LastResult 'published').File
+$p3 = Test-StrandedThreshold -Count 29 -Threshold 30 -LastResult 'published'
+Assert 'P3 one under the threshold changes nothing - an ordinary day still cuts one release' (-not $p3.File)
+Assert 'P4 a release still building on CI is not raced by a second tag' (-not (Test-StrandedThreshold -Count 99 -Threshold 30 -LastResult 'tagged').File)
+Assert 'P5 a failed day is the retry rule''s, not this one''s' (-not (Test-StrandedThreshold -Count 99 -Threshold 30 -LastResult 'failed').File)
+Assert 'P6 a standing request needs no second one' (-not (Test-StrandedThreshold -Count 99 -Threshold 30 -LastResult 'published' -RequestPending).File)
+Assert 'P7 an unmeasurable count files nothing' (-not (Test-StrandedThreshold -Count -1 -Threshold 30 -LastResult 'published').File)
+Assert 'P8 threshold 0 disables it' (-not (Test-StrandedThreshold -Count 999 -Threshold 0 -LastResult 'published').File)
+# The default is a named, reasoned constant rather than a number at a call site.
+$tp = (Get-Command -Name (Join-Path $Repo 'scripts\daily-publish.ps1')).Parameters['StrandedThreshold']
+Assert 'P9 the threshold is a named parameter of the publish script' ($null -ne $tp)
+AssertMatch 'P9 whose default is written down with its reasoning' '\[int\]\$StrandedThreshold = \d+' ([IO.File]::ReadAllText($publishDecider))
+
 # ---- live sections -------------------------------------------------------
 #
 # A sandbox with a fake `docker`/`gh` ahead of the real ones on PATH, and a
@@ -619,6 +640,51 @@ try {
     AssertEq 'O5 a published day is still one-a-day' 0 $o5.Exit
     AssertMatch 'O5 reading exactly as it always did' 'already published today' $o5.Text
     Assert 'O5 and nothing was published' (-not (Test-Path -LiteralPath $ranMarker))
+
+    "== Q. the stranded threshold, end to end (T1588) =="
+    # Yesterday's release is published; the branch has moved on. The sandbox
+    # HEAD does not move, so the watermark is pointed back N commits instead,
+    # and the threshold is passed small so the arm does not depend on how long
+    # the repo's history is.
+    Remove-Item -LiteralPath $ranMarker, $requestFile -Force -ErrorAction SilentlyContinue
+    function Set-PublishedAt([string]$rev) {
+        $c = (git -C $Repo rev-parse --short $rev).Trim()
+        [IO.File]::WriteAllText($watermark, "{`"date`":`"2026-09-24`",`"at`":`"2026-09-24T14:43:26-07:00`",`"tag`":`"win-v1.36.37`",`"commit`":`"$c`",`"result`":`"published`",`"attempts`":1}`n")
+    }
+    # Under: two commits behind, threshold 3, mid-morning. Nothing may happen.
+    Set-PublishedAt 'HEAD~2'
+    $q1 = Invoke-Decider -Extra @('-StrandedThreshold', '3') -DockerCode 1 -GhCode 0 -At '2026-09-25T10:00:00'
+    AssertEq 'Q1 a boundary under the threshold publishes nothing' 0 $q1.Exit
+    Assert 'Q1 and files no request' (-not (Test-Path -LiteralPath $requestFile))
+    Assert 'Q1 and runs no publish' (-not (Test-Path -LiteralPath $ranMarker))
+    Assert 'Q1 and does not mention the threshold' ($q1.Text -notmatch 'stranded threshold')
+
+    # -Check at the threshold decides out loud and writes nothing.
+    Set-PublishedAt 'HEAD~3'
+    $q2 = Invoke-Decider -Extra @('-StrandedThreshold', '3', '-Check') -DockerCode 1 -GhCode 0 -At '2026-09-25T10:00:00'
+    AssertEq 'Q2 -Check at the threshold says it would publish' 10 $q2.Exit
+    AssertMatch 'Q2 naming the threshold' 'requested: stranded threshold: 3 commits' $q2.Text
+    Assert 'Q2 and writes no request' (-not (Test-Path -LiteralPath $requestFile))
+
+    # At the threshold, for real: the request is filed and honoured in one run.
+    $q3 = Invoke-Decider -Extra @('-StrandedThreshold', '3') -DockerCode 1 -GhCode 0 -At '2026-09-25T10:00:00'
+    AssertEq 'Q3 a boundary at the threshold publishes' 10 $q3.Exit
+    Assert 'Q3 and the publisher ran' (Test-Path -LiteralPath $ranMarker)
+    AssertMatch 'Q3 with the threshold named as what fired it' 'REQUESTED: stranded threshold' $q3.Text
+    AssertMatch 'Q3 through the ordinary requested path' 'DUE: requested: stranded threshold' $q3.Text
+    Assert 'Q3 and the request was consumed like any other' (-not (Test-Path -LiteralPath $requestFile))
+    $q3Mark = Read-PublishWatermark -Text ([IO.File]::ReadAllText($watermark))
+    AssertEq 'Q3 and the watermark now names today' '2026-09-25' $q3Mark.Date
+    AssertEq 'Q3 at the head it published' ((git -C $Repo rev-parse --short HEAD).Trim()) $q3Mark.Commit
+    Remove-Item -LiteralPath $ranMarker -Force -ErrorAction SilentlyContinue
+
+    # A request the threshold filed that hit a SKIP is left standing, exactly
+    # like a hand-filed one, so the next push still ships it.
+    Set-PublishedAt 'HEAD~3'
+    $q4 = Invoke-Decider -Extra @('-StrandedThreshold', '3', '-Local') -DockerCode 1 -GhCode 0 -At '2026-09-25T10:00:00'
+    AssertEq 'Q4 a threshold publish that cannot run is a skip' 0 $q4.Exit
+    Assert 'Q4 and the request survives for the next push' (Test-Path -LiteralPath $requestFile)
+    Assert 'Q4 and nothing was published' (-not (Test-Path -LiteralPath $ranMarker))
     Complete-TestBody
 } finally {
     Remove-Item -LiteralPath $sandbox -Recurse -Force -ErrorAction SilentlyContinue
