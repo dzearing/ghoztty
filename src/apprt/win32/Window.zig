@@ -3351,7 +3351,13 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
             drop_highlight.thresholdPx(self.scale),
         )) return;
         d.active = true;
+        // The press has become a drag: mark the pane being carried (T1536).
+        self.repaintRearrangeHeaders();
     }
+    // Every move, not only the first: the capture means no `WM_SETCURSOR`
+    // arrives while the button is down, so nothing else would keep the
+    // pointer from drifting back to whatever the last window under it set.
+    self.applyDragCursor(rearrange_header.cursorFor(true, .none));
 
     // Every window the drop could land in, this one first (T1538). The
     // buffers are the caller's stack and the candidates borrow them, so they
@@ -3532,6 +3538,30 @@ fn onTabDwell(self: *Window) void {
     if (w32.GetCapture() != hwnd) _ = w32.SetCapture(hwnd);
 }
 
+/// The window property a live drag publishes its pointer on (T1536): the
+/// `IDC_*` id it asked for. The real cursor cannot be read off the background
+/// desktop the acceptance suite runs on (T228), so this is how
+/// `rearrange-drag.ps1` asks the question at all; it is removed when the drag
+/// ends, so its absence is the "no drag pointer" answer.
+const DRAG_CURSOR_PROP = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyDragCursor");
+
+/// Put up the drag pointer and publish which one it was.
+fn applyDragCursor(self: *Window, cursor: ?rearrange_header.Cursor) void {
+    const c = cursor orelse return;
+    if (w32.LoadCursorW(null, c.idc())) |hc| _ = w32.SetCursor(hc);
+    if (self.hwnd) |h| _ = w32.SetPropW(h, DRAG_CURSOR_PROP, @ptrFromInt(c.idc()));
+}
+
+/// Repaint every pane header now, outside the paint cycle — the same
+/// `GetDC` pass the hover uses, for a treatment that changed without the
+/// layout moving.
+fn repaintRearrangeHeaders(self: *Window) void {
+    const h = self.hwnd orelse return;
+    const hdc = w32.GetDC(h) orelse return;
+    self.paintRearrangeHeaders(hdc);
+    _ = w32.ReleaseDC(h, hdc);
+}
+
 /// End a pane drag. `commit` is false for a cancel (Escape, a lost capture,
 /// the mode going away underneath it).
 fn endRearrangeDrag(self: *Window, commit: bool) void {
@@ -3543,8 +3573,13 @@ fn endRearrangeDrag(self: *Window, commit: bool) void {
     self.hideDropPreview();
     if (self.hwnd) |h| {
         _ = w32.KillTimer(h, TAB_DWELL_TIMER_ID);
+        _ = w32.RemovePropW(h, DRAG_CURSOR_PROP);
         if (w32.GetCapture() == h) _ = w32.ReleaseCapture();
     }
+    // The carried pane's mark comes off with the drag (T1536). A commit
+    // re-lays the window anyway; a cancel leaves the panes where they were,
+    // so this repaint is the only thing that un-lights the header.
+    if (d.active) self.repaintRearrangeHeaders();
     if (!commit or !d.active) return;
     const drop = d.drop orelse return;
     self.commitRearrangeDrop(d.view, d.source_tab, drop, d.dest);
@@ -5575,10 +5610,18 @@ fn paintRearrangeHeader(
         (if (h.view == view) h.part else .none)
     else
         .none;
+    // The pane in the user's hand is marked for as long as the drag is live
+    // (T1536). Only an ACTIVE drag: an armed press that has not travelled is
+    // still a click, and lighting the header on every click would be a flash.
+    const carried = if (self.rearrange_drag) |d| d.active and d.view == view else false;
+    const look = rearrange_header.treatment(carried, hovered);
+    const band_rgb = if (look == .carried) pal.accent else pal.bar;
 
     // The band reads as chrome, so it is painted out of the chrome palette
-    // rather than the terminal's background — Mac's `.regularMaterial`.
-    if (w32.CreateSolidBrush(w32.RGB(pal.bar.r, pal.bar.g, pal.bar.b))) |brush| {
+    // rather than the terminal's background — Mac's `.regularMaterial`. The
+    // carried pane's band takes the accent instead, and everything drawn on
+    // it takes the ink that reads on the accent.
+    if (w32.CreateSolidBrush(w32.RGB(band_rgb.r, band_rgb.g, band_rgb.b))) |brush| {
         defer _ = w32.DeleteObject(@ptrCast(brush));
         var band = toWinRect(l.band);
         _ = w32.FillRect(hdc, &band, brush);
@@ -5602,7 +5645,11 @@ fn paintRearrangeHeader(
     // The grip. Mac fades it from 0.6 to full opacity while the header is
     // hovered; the chrome text ramp is this platform's version of that, so the
     // resting grip is secondary ink and a hovered one is primary.
-    const grip_rgb = if (hovered == .none) pal.text_secondary else pal.text;
+    const grip_rgb = switch (look) {
+        .resting => pal.text_secondary,
+        .hovered => pal.text,
+        .carried => pal.on_accent,
+    };
     icon_paint.glyph(
         hdc,
         ib,
@@ -5623,9 +5670,10 @@ fn paintRearrangeHeader(
                 };
                 const old_mode = w32.SetBkMode(hdc, w32.TRANSPARENT);
                 defer _ = w32.SetBkMode(hdc, old_mode);
+                const title_rgb = if (look == .carried) pal.on_accent else pal.text_secondary;
                 const old_color = w32.SetTextColor(
                     hdc,
-                    w32.RGB(pal.text_secondary.r, pal.text_secondary.g, pal.text_secondary.b),
+                    w32.RGB(title_rgb.r, title_rgb.g, title_rgb.b),
                 );
                 defer _ = w32.SetTextColor(hdc, old_color);
                 var tr = toWinRect(l.title);
@@ -5647,16 +5695,18 @@ fn paintRearrangeHeader(
     const btn_state: icon_button.State = if (!enabled)
         .normal
     else if (hovered == .button) .hover else .normal;
-    const btn_rgb = if (enabled) pal.text_secondary else disabledInk(pal);
+    const btn_rgb = if (look == .carried)
+        pal.on_accent
+    else if (enabled) pal.text_secondary else disabledInk(pal);
     paintIconButton(
         hdc,
         ib,
         toIconRect(l.button),
         .new_window,
         btn_state,
-        pal.bar.r,
-        pal.bar.g,
-        pal.bar.b,
+        band_rgb.r,
+        band_rgb.g,
+        band_rgb.b,
         w32.RGB(btn_rgb.r, btn_rgb.g, btn_rgb.b),
     );
 }
@@ -5737,13 +5787,7 @@ fn updateRearrangeHover(self: *Window, x: i32, y: i32) void {
     };
     if (same) return;
     self.rearrange_hover = next;
-    if (self.hwnd) |h| {
-        const hdc = w32.GetDC(h);
-        if (hdc) |dc| {
-            self.paintRearrangeHeaders(dc);
-            _ = w32.ReleaseDC(h, dc);
-        }
-    }
+    self.repaintRearrangeHeaders();
 }
 
 const DividerHit = struct {
@@ -10674,6 +10718,8 @@ pub fn windowWndProc(
             return 0;
         },
         w32.WM_DESTROY => {
+            // A property left on a destroyed window leaks its entry (T1536).
+            _ = w32.RemovePropW(hwnd, DRAG_CURSOR_PROP);
             _ = w32.SetWindowLongPtrW(hwnd, w32.GWLP_USERDATA, 0);
             window.onDestroy();
             return 0;
@@ -10941,6 +10987,17 @@ pub fn windowWndProc(
             var pt: w32.POINT = undefined;
             if (w32.GetCursorPos_(&pt) != 0) {
                 if (window.hwnd) |h| _ = w32.ScreenToClient(h, &pt);
+                // A live pane drag owns the pointer wherever it is (T1536).
+                // Normally the capture keeps this message away for the whole
+                // drag; this arm covers the moments it does not.
+                if (window.rearrange_drag) |d| {
+                    if (d.active) {
+                        if (rearrange_header.cursorFor(true, .none)) |c| {
+                            if (w32.LoadCursorW(null, c.idc())) |hc| _ = w32.SetCursor(hc);
+                        }
+                        return 1;
+                    }
+                }
                 if (window.heroHitDivider(pt.x, pt.y) or window.hero_divider_drag) {
                     if (w32.LoadCursorW(null, split_geometry.HERO_DIVIDER_CURSOR.idc())) |cursor| {
                         _ = w32.SetCursor(cursor);
@@ -10959,6 +11016,14 @@ pub fn windowWndProc(
                     if (w32.LoadCursorW(null, cursor_id)) |cursor| {
                         _ = w32.SetCursor(cursor);
                     }
+                    return 1;
+                }
+                // Over a pane header's grab surface: the pointer says the
+                // band moves before the user tries it — Mac's open hand
+                // (T1536). The pop-out button keeps the arrow.
+                const part: rearrange_header.Hit = if (window.hitTestRearrangeHeader(pt.x, pt.y)) |hit| hit.part else .none;
+                if (rearrange_header.cursorFor(false, part)) |c| {
+                    if (w32.LoadCursorW(null, c.idc())) |hc| _ = w32.SetCursor(hc);
                     return 1;
                 }
             }
@@ -10998,6 +11063,10 @@ test "T228: split_geometry's divider cursor ids ARE the OS's IDC_* values" {
     try std.testing.expectEqual(w32.IDC_SIZEWE, split_geometry.DividerCursor.size_we.idc());
     try std.testing.expectEqual(w32.IDC_SIZENS, split_geometry.DividerCursor.size_ns.idc());
     try std.testing.expectEqual(w32.IDC_SIZEWE, split_geometry.HERO_DIVIDER_CURSOR.idc());
+}
+
+test "T1536: rearrange_header's drag cursor id IS the OS's IDC_SIZEALL" {
+    try std.testing.expectEqual(w32.IDC_SIZEALL, rearrange_header.Cursor.move.idc());
 }
 
 test "T1524: rearrange mode forces the tab strip, and only while it is on" {

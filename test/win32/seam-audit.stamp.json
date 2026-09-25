@@ -1,13 +1,13 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-25T06:34:55-07:00",
-    "commit":  "352561ab1",
+    "generated":  "2026-09-25T07:19:29-07:00",
+    "commit":  "c354dad87",
     "uncommitted":  [
-                        "src/apprt/win32/chooser_layout.zig",
-                        "src/apprt/win32/MachineChooser.zig",
-                        "src/apprt/win32/RelayAccountRow.zig",
-                        "test/win32/relay-account.ps1"
+                        "src/apprt/win32/rearrange_header.zig",
+                        "src/apprt/win32/win32.zig",
+                        "src/apprt/win32/Window.zig",
+                        "test/win32/rearrange-drag.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -148,7 +148,7 @@
                   "src/apprt/win32/QuickTerminal.zig":  "78e8c52a60889d96114f5cf93f7c02331b1028124f9bc7d1833c576b3f646185",
                   "src/apprt/win32/readonly_badge.zig":  "f161d3725f3a0de8c790b19b7650c285ec1bc0426dd58795aab1ba2957fa3078",
                   "src/apprt/win32/ReadonlyBadge.zig":  "d5446f021cbf3137b41e2e9734cb045e137a408c0cfc577f4fa6f5e90c57bbac",
-                  "src/apprt/win32/rearrange_header.zig":  "a7e9096683da76ab98fbaeec68fffba20ca19dda944d93d50a9f783152a90cc2",
+                  "src/apprt/win32/rearrange_header.zig":  "53f6c66bc702db4b2afbd1bb2fe394f0e2c5fa44fc8d6cdc299a9335593731dc",
                   "src/apprt/win32/region_select.zig":  "52142410f42673a6df6cf22e10244c7bb5d9d7afd6a0158bc9380fa2bad4db95",
                   "src/apprt/win32/RegionSelector.zig":  "195e4cfd88e9ee9eed60b00f2b5c150b407b868e49d20a18d9f3f85fa4a3092a",
                   "src/apprt/win32/relaunch_guard.zig":  "5bf991bb0d216829f0a40da9c047d99e173a436f17cf9f34adda956756b1c663",
@@ -249,8 +249,8 @@
                   "src/apprt/win32/whats_new_seen.zig":  "48ce76465a617e7c7266a927be9af6554e2a94f2c41059077637bc1b3426a2fb",
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
-                  "src/apprt/win32/win32.zig":  "b86c7efbeef0d865683565ec3f5889022b7d7a43f0dabc178950f899a2dd67cf",
-                  "src/apprt/win32/Window.zig":  "3434a8457c47f2499687b757061592891b1e2c542b49009848afdff67e928019",
+                  "src/apprt/win32/win32.zig":  "9a9774b6cae1223a622ba282d250fc3460509c94603714ae7ce6472d4d3f6fc0",
+                  "src/apprt/win32/Window.zig":  "bdf34fa2780f64c94388eab7c363f30d5237c2ca699fc89513c159484301ce98",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
                   "src/apprt/win32/window_memory.zig":  "b4f2912a881c6380b205744d5516b50677557f483d1776e8edbaaa75a99e1269",
@@ -711,7 +711,7 @@
                   "test/win32/rdp-session.ps1":  "b1fdd6d61b7163a275ed0145df904c5ded06f0e800ae30c2140c7c16ebe61b54",
                   "test/win32/readonly-badge.ps1":  "be8e9c5793795ff3502b077f674c531a510b2755819fbe989237897e6076ae61",
                   "test/win32/rearrange-desktop-drop.ps1":  "28050df206eef9bcd4c121958224e0c29d05e6b8b4c34cea17b1955ede2b93d8",
-                  "test/win32/rearrange-drag.ps1":  "c022be12eda57b72286ea7b924652663ee18f666118d2c7b07067f824f195752",
+                  "test/win32/rearrange-drag.ps1":  "1063842cb41112418d0a9a359303fce718745bafe143ed674c7d71d4dc7f7d72",
                   "test/win32/rearrange-header.ps1":  "463b8aed8b2dcaea69f45bd6b58ea133334e2c03351a4421bc21cccbba9c65d2",
                   "test/win32/rearrange-mode-action.ps1":  "43028d8cb33fa4d29e5520c6e62b31469ebaa9469129d04d9d406f47d3a50cfc",
                   "test/win32/rearrange-session-drop.ps1":  "88994a4062d36266517b4b8fe6de0301ddb204b051e19e6cd94d446fe2128c34",

@@ -184,9 +184,88 @@ pub fn hitTest(l: Layout, x: i32, y: i32) Hit {
     return .drag;
 }
 
+/// The pointer a pane header asks for (T1536).
+///
+/// Mac shows `NSCursor.openHand` over the grab handle and `closedHand` for the
+/// whole drag (`SurfaceDragSource`). Windows has no hand pair — `IDC_HAND` is
+/// the LINK pointer, which would promise a click — so both states take the
+/// system's "this moves" pointer, `IDC_SIZEALL`: the one Windows itself shows
+/// when a window is being moved from the keyboard. The ids are carried as
+/// numbers so this stays OS-free; `Window.zig` pins them to `w32.IDC_*`.
+pub const Cursor = enum {
+    /// Four-headed move arrow (`IDC_SIZEALL`).
+    move,
+
+    pub fn idc(self: Cursor) usize {
+        return switch (self) {
+            .move => 32646,
+        };
+    }
+};
+
+/// Which pointer the header wants, or null to leave the stock arrow alone.
+///
+/// `dragging` is a drag that has passed the click threshold — an armed press
+/// that has not travelled is still a click and keeps whatever the hover said.
+/// The pop-out button is a button: it keeps the arrow, so the one control in
+/// the band that does NOT drag never wears the drag pointer.
+pub fn cursorFor(dragging: bool, hover: Hit) ?Cursor {
+    if (dragging) return .move;
+    return switch (hover) {
+        .drag => .move,
+        .button, .none => null,
+    };
+}
+
+/// How a header is painted (T1536).
+pub const Treatment = enum {
+    /// Chrome band, secondary grip.
+    resting,
+    /// The pointer is over it: the grip takes primary ink.
+    hovered,
+    /// This pane is the one being dragged. The band takes the accent, so in a
+    /// window of four panes the one in your hand is the one that is lit — it
+    /// answers "which pane am I moving" without the user having to remember
+    /// where they grabbed.
+    carried,
+};
+
+/// `carried` wins over hover: during a drag the pointer is somewhere else
+/// entirely, and the source must stay marked wherever it goes.
+pub fn treatment(carried: bool, hovered: Hit) Treatment {
+    if (carried) return .carried;
+    return if (hovered == .none) .resting else .hovered;
+}
+
 // -------------------------------------------------------------------------
 // Tests
 // -------------------------------------------------------------------------
+
+test "T1536: a live drag wears the move pointer wherever the pointer is" {
+    try testing.expectEqual(Cursor.move, cursorFor(true, .none).?);
+    try testing.expectEqual(Cursor.move, cursorFor(true, .drag).?);
+    // Even over a button: the gesture in progress is a move, not a click.
+    try testing.expectEqual(Cursor.move, cursorFor(true, .button).?);
+}
+
+test "T1536: at rest, only the drag surface offers the move pointer" {
+    try testing.expectEqual(Cursor.move, cursorFor(false, .drag).?);
+    try testing.expect(cursorFor(false, .button) == null);
+    try testing.expect(cursorFor(false, .none) == null);
+}
+
+test "T1536: Cursor.idc is the OS id, pinned by number" {
+    try testing.expectEqual(@as(usize, 32646), Cursor.move.idc());
+}
+
+test "T1536: the carried pane is marked, and the mark beats hover" {
+    try testing.expectEqual(Treatment.carried, treatment(true, .none));
+    try testing.expectEqual(Treatment.carried, treatment(true, .drag));
+    try testing.expectEqual(Treatment.carried, treatment(true, .button));
+    try testing.expectEqual(Treatment.hovered, treatment(false, .drag));
+    try testing.expectEqual(Treatment.hovered, treatment(false, .button));
+    try testing.expectEqual(Treatment.resting, treatment(false, .none));
+}
 
 const slot_1x: Rect = .{ .left = 100, .top = 50, .right = 900, .bottom = 650 };
 

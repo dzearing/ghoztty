@@ -33709,3 +33709,19 @@ Unit tests in RelayAccountRow and chooser_layout; relay-account.ps1 sections
 on open over an armed record, gives way to the email on sign-in, wraps and
 leaves the identity its room) - ALL PASS. Floor ALL LANES PASS, harness floor
 PASS, chooser-controls/modeless/selection and window-active-audit ALL PASS.
+
+## 2026-09-25 - T1536: a pane drag shows the move pointer and lights up the pane you are carrying
+
+The drag landed by T1531 now describes itself. The pointer is the Windows move
+arrow (`IDC_SIZEALL`) over a header's grab surface and for the whole of a live
+drag - Mac's open/closed hand, translated because `IDC_HAND` is the link
+pointer - and it is set on every move, since the drag's mouse capture keeps
+`WM_SETCURSOR` away. The carried pane's header is painted in the accent, with
+accent-contrast ink, from the moment the press becomes a drag until the drop or
+the cancel. Pure decisions in `rearrange_header.zig` (4 new tests; the id pinned
+to `w32.IDC_SIZEALL` in the win32 lane). The pointer cannot be read off the
+background test desktop, so the window publishes the one a drag asked for as the
+`GhozttyDragCursor` property. rearrange-drag.ps1 claims F (pointer) and G (mark,
+from WM_PRINTCLIENT pixels: accent 189,96,213 vs resting 57,61,68) ALL PASS (66);
+a build with both disabled fails exactly those two. Floor ALL LANES PASS,
+harness floor PASS, the ten GUI guards the change made due all green.

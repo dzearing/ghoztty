@@ -716,6 +716,20 @@ pub extern "user32" fn LoadCursorW(
     lpCursorName: usize,
 ) callconv(.winapi) ?HCURSOR;
 
+/// A named value on a window's property list, readable by any process that
+/// can see the window (T1536 publishes the drag cursor this way, because no
+/// test on a background desktop can read the real cursor).
+pub extern "user32" fn SetPropW(
+    hWnd: HWND,
+    lpString: [*:0]const u16,
+    hData: ?*anyopaque,
+) callconv(.winapi) i32;
+
+pub extern "user32" fn RemovePropW(
+    hWnd: HWND,
+    lpString: [*:0]const u16,
+) callconv(.winapi) ?*anyopaque;
+
 pub extern "user32" fn GetKeyState(
     nVirtKey: i32,
 ) callconv(.winapi) i16;

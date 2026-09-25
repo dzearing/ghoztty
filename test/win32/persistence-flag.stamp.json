@@ -1,10 +1,10 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-09-25T06:34:45-07:00",
-    "commit":  "352561ab1",
+    "generated":  "2026-09-25T07:19:21-07:00",
+    "commit":  "c354dad87",
     "uncommitted":  [
-                        "test/win32/relay-account.ps1"
+                        "test/win32/rearrange-drag.ps1"
                     ],
     "files":  {
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
@@ -222,7 +222,7 @@
                   "test/win32/rdp-session.ps1":  "b1fdd6d61b7163a275ed0145df904c5ded06f0e800ae30c2140c7c16ebe61b54",
                   "test/win32/readonly-badge.ps1":  "be8e9c5793795ff3502b077f674c531a510b2755819fbe989237897e6076ae61",
                   "test/win32/rearrange-desktop-drop.ps1":  "28050df206eef9bcd4c121958224e0c29d05e6b8b4c34cea17b1955ede2b93d8",
-                  "test/win32/rearrange-drag.ps1":  "c022be12eda57b72286ea7b924652663ee18f666118d2c7b07067f824f195752",
+                  "test/win32/rearrange-drag.ps1":  "1063842cb41112418d0a9a359303fce718745bafe143ed674c7d71d4dc7f7d72",
                   "test/win32/rearrange-header.ps1":  "463b8aed8b2dcaea69f45bd6b58ea133334e2c03351a4421bc21cccbba9c65d2",
                   "test/win32/rearrange-mode-action.ps1":  "43028d8cb33fa4d29e5520c6e62b31469ebaa9469129d04d9d406f47d3a50cfc",
                   "test/win32/rearrange-session-drop.ps1":  "88994a4062d36266517b4b8fe6de0301ddb204b051e19e6cd94d446fe2128c34",

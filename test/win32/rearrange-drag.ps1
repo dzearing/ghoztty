@@ -40,6 +40,18 @@
 # A positive control (ctrl+k clear_screen, the T55 pattern) runs first, so an
 # injection failure aborts instead of reading as a T1531 regression.
 #
+# T1536 adds two claims about the drag's SOURCE, scored inside the runs above:
+#   F) a live drag asks for the MOVE pointer (IDC_SIZEALL), and only a live
+#      one: not on a press that has not travelled, not after the release or
+#      the cancel. The real cursor cannot be read off the background desktop
+#      (T228), so the app publishes what it asked for as the window property
+#      `GhozttyDragCursor`, and this reads it with GetPropW.
+#   G) the pane being carried is MARKED: its header band is painted in a
+#      different color from the pane that stays put while the drag is live,
+#      and goes back to matching it after the release / the cancel. Read from
+#      a WM_PRINTCLIENT capture of the parent, which is the window that paints
+#      the headers - real pixels, not a flag.
+#
 # -NegativeControl inverts claim A to "the panes do not swap" - the pre-T1531
 # behavior - and MUST fail; it is how a run proves the oracle discriminates.
 #
@@ -109,6 +121,40 @@ function Get-PreviewRect([int]$AppPid) {
     $p = $w[0]
     [pscustomobject]@{
         Left = $p.Left; Top = $p.Top; Width = $p.Width; Height = $p.Height
+    }
+}
+
+# T1536: the pointer a live drag asked for, from the property the app
+# publishes on its top window. 0 when there is none - no drag, or a build that
+# predates T1536.
+if (-not ('RearrangeDragProp' -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public static class RearrangeDragProp {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr GetPropW(IntPtr hWnd, string lpString);
+}
+"@
+}
+function Get-DragCursorProp([IntPtr]$top) {
+    return [int64][RearrangeDragProp]::GetPropW($top, 'GhozttyDragCursor')
+}
+$IDC_SIZEALL = 32646
+
+# T1536: the header band color of each pane, as "r,g,b", sampled two rows
+# below the band's top edge - above the grip, the title and the button, which
+# are all vertically centred, and above the separator rule along the bottom.
+# The capture is WM_PRINTCLIENT (-Sync) of the PARENT, which paints the bands.
+function Get-HeaderColors([IntPtr]$top, $boxes, [int]$band) {
+    $shot = Get-TestWindowPixels -Window $top -Sync
+    try {
+        return , @($boxes | ForEach-Object {
+            $px = Get-TestPixel -Shot $shot -X ($_.Left + [int]($_.Width / 2)) -Y ($_.Top - $band + 2)
+            if ($null -eq $px) { '?' } else { '{0},{1},{2}' -f $px.R, $px.G, $px.B }
+        })
+    } finally {
+        Close-TestWindowPixels $shot
     }
 }
 
@@ -238,6 +284,10 @@ try {
     Assert (Send-TestMouse -Window $top -Target $top -X $grabX -Y $grabY -Action down) 'B: press on the header delivered'
     Start-Sleep -Milliseconds 200
     Assert ($null -eq (Get-PreviewRect $session.Pid)) 'B: a press alone previews nothing'
+    Assert ((Get-DragCursorProp $top) -eq 0) 'F: a press that has not travelled asks for no drag pointer'
+    $hcPress = Get-HeaderColors $top $before $band
+    Write-Host ("      header colors on a press: {0}" -f ($hcPress -join ' | '))
+    Assert ($hcPress[0] -eq $hcPress[1]) 'G: a press that has not travelled marks no pane'
     Assert (Send-TestMouse -Window $top -Target $top -X $grabX -Y $grabY -Action up) 'B: release delivered'
     Start-Sleep -Milliseconds 800
     $afterClick = Get-PaneBoxes $top
@@ -255,6 +305,7 @@ try {
     Assert ($null -ne (Get-PreviewRect $session.Pid)) 'D: the drop is previewed while the button is down'
     Assert (Send-Escape $session) 'D: Escape delivered'
     Assert ($null -eq (Get-PreviewRect $session.Pid)) 'D: Escape took the preview away'
+    Assert ((Get-DragCursorProp $top) -eq 0) 'F: the cancel took the drag pointer away'
     [void](Send-TestMouse -Window $top -Target $top -X $swapX -Y $swapY -Action up)
     Start-Sleep -Milliseconds 800
     $afterCancel = Get-PaneBoxes $top
@@ -271,6 +322,12 @@ try {
     Start-Sleep -Milliseconds 400
     $prev = Get-PreviewRect $session.Pid
     Assert ($null -ne $prev) 'A: the swap is previewed'
+    $cur = Get-DragCursorProp $top
+    Assert ($cur -eq $IDC_SIZEALL) "F: the live drag asks for the move pointer (IDC_SIZEALL=$IDC_SIZEALL, got $cur)"
+    $hcDrag = Get-HeaderColors $top $before $band
+    Write-Host ("      header colors mid-drag: carried={0} staying={1}" -f $hcDrag[0], $hcDrag[1])
+    Assert ($hcDrag[0] -ne $hcDrag[1]) 'G: the carried pane''s header is marked - a different color from the pane that stays'
+    Assert ($hcDrag[1] -eq $hcPress[1]) 'G: and the pane that stays keeps its resting header'
     if ($prev) {
         Write-Host ("      preview: x={0} y={1} w={2} h={3}" -f $prev.Left, $prev.Top, $prev.Width, $prev.Height)
         # A swap previews the WHOLE pane it would trade with - the pane's slot,
@@ -284,6 +341,14 @@ try {
     Start-Sleep -Milliseconds 1500
     Assert (-not ($session.App.Process -and $session.App.Process.HasExited)) 'A: no crash on the drop'
     Assert ($null -eq (Get-PreviewRect $session.Pid)) 'A: the preview goes away on release'
+    Assert ((Get-DragCursorProp $top) -eq 0) 'F: the release took the drag pointer away'
+    $afterRelease = Get-PaneBoxes $top
+    if ($afterRelease.Count -eq 2) {
+        $hcAfter = Get-HeaderColors $top $afterRelease $band
+        Write-Host ("      header colors after the drop: {0}" -f ($hcAfter -join ' | '))
+        Assert (($hcAfter[0] -eq $hcAfter[1]) -and ($hcAfter[0] -eq $hcPress[1])) `
+            'G: the mark comes off with the drop - both headers back at rest'
+    }
 
     $afterSwap = Get-PaneBoxes $top
     Show-Boxes 'after ' $afterSwap
