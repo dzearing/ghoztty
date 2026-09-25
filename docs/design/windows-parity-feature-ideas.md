@@ -387,3 +387,11 @@ as the digest that showed them.
 - See where a link goes before you click it (hover preview of a viewer link's destination)
 - Spell-check in the feedback box (Windows spell-checker underlines and fixes in the web composer)
 - A driver reset you do not see (keep the last good frame on screen while the drawing surface rebuilds)
+
+## 2026-09-25
+
+- Show me which of my shortcuts Windows takes first (new angle on the keybinding cheat sheet: mark OS-reserved bindings, offer an alternative)
+- Repair from inside the app (Help > Repair Ghoztty runs the installer repair and restores windows)
+- Know which machine a window is on in Alt+Tab (remote window titles lead with the machine name in the switcher and taskbar)
+- Repair tells you what it fixed (one line after a repair naming what was put back, or that nothing was)
+- A frame-rate readout in the Activity Monitor (per-pane drawing smoothness as a number)
