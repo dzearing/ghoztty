@@ -32,9 +32,10 @@
 #   A) dropping a pane on the strip PREVIEWS a caret there and then opens a new
 #      tab holding that pane - the same pane, still running
 #   B) the new tab lands at the INDEX that was under the pointer, not appended
-#   C) a pane that is its tab's only pane previews nothing and opens nothing -
-#      it is already a tab of its own, and a caret there would be a promise the
-#      release breaks
+#   C) a pane that is its tab's only pane is already a tab of its own, so a
+#      strip drop MOVES its tab instead (T1542): dropped where the tab already
+#      is, nothing is previewed and nothing changes; dropped ahead of the other
+#      tab, the caret shows and the tab moves there - same pane, no new tab
 #   D) resting on another tab's button for the dwell (500ms) SWITCHES to that
 #      tab mid-drag, and the drop then lands in that tab's layout - the pane
 #      crosses tabs without its shell noticing
@@ -411,15 +412,51 @@ try {
     $stripY = [int](($strip3.Top + $strip3.Bottom) / 2)
 
     # --- Claim C: a tab's only pane cannot new-tab itself ------------------
+    # The active tab is the LAST one, so the strip's empty run past it is the
+    # seam right after it: where the tab already is.
+    Assert ($strip3.Selected -eq 1) "C: the second tab is the one on screen (got $($strip3.Selected))"
     Assert (Send-TestMouse -Window $top -Target $top -X $grabX -Y $grabY -Action down -Client) 'C: press on the header delivered'
     Assert (Send-TestMouse -Window $top -Target $top -X $stripX -Y $stripY -Action move -Client) 'C: move onto the strip delivered'
     Start-Sleep -Milliseconds 400
     Assert ($null -eq (Get-PreviewRect $session.Pid)) `
-        'C: a pane that is already a tab of its own previews NOTHING on the strip'
+        'C: dropping a lone pane where its tab already is previews NOTHING'
     Assert (Send-TestMouse -Window $top -Target $top -X $stripX -Y $stripY -Action up -Client) 'C: release delivered'
     Start-Sleep -Milliseconds 1200
-    Assert ((Get-TabCount) -eq 2) 'C: and the release opened no tab'
+    $stripC = Get-Strip $top
+    Assert ($stripC.TabCount -eq 2) 'C: and the release opened no tab'
+    Assert ($stripC.Selected -eq 1) "C: and moved nothing - the tab is still second (got $($stripC.Selected))"
     Assert (@(Get-PaneBoxes $top).Count -eq 1) 'C: the pane is still where it was'
+
+    # --- Claim C2: dropped AHEAD of the other tab, the tab moves there -----
+    # T1542. The seam before tab 0 is somewhere the tab is not, so the gesture
+    # means "put this tab here": previewed with the same caret, and released as
+    # a MOVE of the whole tab - never a new tab around the same pane.
+    $tab0c = $stripC.Tabs[0]
+    if (-not $tab0c) { Write-TestAssertedNothing -Reason 'the strip published no rect for tab 0' }
+    $c2x = $tab0c.Left + [int](($tab0c.Right - $tab0c.Left) / 4)
+    $c2y = [int](($tab0c.Top + $tab0c.Bottom) / 2)
+    Assert (Send-TestMouse -Window $top -Target $top -X $grabX -Y $grabY -Action down -Client) 'C2: press on the header delivered'
+    Assert (Send-TestMouse -Window $top -Target $top -X $c2x -Y $c2y -Action move -Client) 'C2: move onto the seam before tab 0 delivered'
+    Start-Sleep -Milliseconds 300
+    $caretC2 = Get-PreviewRect $session.Pid
+    if ($NegativeControl) {
+        Assert ($null -eq $caretC2) 'NEGATIVE: a lone pane previews nothing on the strip (pre-T1542 behavior)'
+    } else {
+        Assert ($null -ne $caretC2) 'C2: the move is previewed'
+    }
+    if ($caretC2) {
+        Assert (Test-Near $caretC2.Left $tab0c.Left 6) 'C2: on the seam BEFORE tab 0, where the tab will go'
+    }
+    # Release before the 500ms dwell can switch tabs under us.
+    Assert (Send-TestMouse -Window $top -Target $top -X $c2x -Y $c2y -Action up -Client) 'C2: release delivered'
+    Start-Sleep -Milliseconds 1200
+    Assert (-not ($session.App.Process -and $session.App.Process.HasExited)) 'C2: no crash on the move'
+    $stripC2 = Get-Strip $top
+    Assert ($stripC2.TabCount -eq 2) "C2: still two tabs - the tab MOVED, none was opened (got $($stripC2.TabCount))"
+    Assert ($stripC2.Selected -eq 0) "C2: the carried tab is now FIRST, and on screen (got $($stripC2.Selected))"
+    $afterC2 = @(Get-PaneBoxes $top)
+    Assert ($afterC2.Count -eq 1 -and $afterC2[0].Hwnd -eq $only.Hwnd) `
+        'C2: and it holds the pane that was dragged - same window, same shell'
 
     # --- Claim D: resting on a tab button switches to it mid-drag ----------
     # Two tabs, one pane each. Pick the pane up, rest on the OTHER tab's

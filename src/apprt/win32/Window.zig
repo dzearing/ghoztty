@@ -3290,16 +3290,17 @@ fn newWindowFrameAt(self: *const Window, point: pane_drop.Point) ?drop_highlight
     return .{ .left = f.left, .top = f.top, .right = f.right, .bottom = f.bottom };
 }
 
-/// May a new-tab drop be HONOURED right now (T1537)?
+/// May a strip drop at `seam` be HONOURED right now (T1537)?
 ///
-/// Only when the dragged pane shares its tab with another: a pane that is its
-/// tab's whole tree is already a tab of its own, so "make it a tab" has
-/// nothing to do and removing it would empty the tab out from under it. The
-/// preview reads the same answer, so the caret is never drawn over a release
-/// that will do nothing.
-fn canNewTabDrop(self: *Window, source_tab: usize) bool {
+/// A pane that shares its tab with another is split off into a new tab. A pane
+/// that is its tab's whole tree is already a tab of its own, so the drop MOVES
+/// that tab to the seam instead (T1542) — honoured everywhere except the two
+/// seams that are where the tab already is. The preview reads the same answer,
+/// so the caret is never drawn over a release that will do nothing.
+fn canNewTabDrop(self: *Window, source_tab: usize, seam: usize) bool {
     if (source_tab >= self.tab_count) return false;
-    return self.leafCount(source_tab) > 1;
+    if (self.leafCount(source_tab) > 1) return true;
+    return pane_relocate.tabReorderIndex(source_tab, seam, self.tab_count) != null;
 }
 
 /// The strip's band and tab buttons in SCREEN coordinates, for the resolver.
@@ -3421,9 +3422,11 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
                 break :resolved;
             };
             const dest = cand_windows[i];
-            const can_new_tab = if (dest == self)
-                self.canNewTabDrop(d.source_tab)
-            else
+            const can_new_tab = if (dest == self) switch (t) {
+                .new_tab => |sp| self.canNewTabDrop(d.source_tab, sp.index),
+                // Only a strip drop reads this answer.
+                else => true,
+            } else
                 // The pane is arriving from somewhere else entirely, so "make
                 // it a tab here" always has something to do — even when it is
                 // the source window's only pane, which is a move that empties
@@ -3715,11 +3718,20 @@ fn commitNewTabDrop(
     at: SplitTree(PaneView).Node.Handle,
     index: usize,
 ) void {
-    // A pane that is its tab's whole tree is already a tab of its own.
-    // `canNewTabDrop` refuses this before the preview is drawn; the rule is
-    // restated where the mutation happens because `remove(.root)` would empty
-    // the tab out from under the pane it is moving.
-    if (at == .root) return;
+    // A pane that is its tab's whole tree is already a tab of its own, so the
+    // drop moves THAT TAB to the seam (T1542) rather than opening another -
+    // `remove(.root)` would empty the tab out from under the pane it is
+    // moving. The tab travels whole, so its title, colour, pin and session
+    // come with it.
+    if (at == .root) {
+        const to = pane_relocate.tabReorderIndex(source_tab, index, self.tab_count) orelse return;
+        // A dwell can have brought another tab up mid-drag. `moveTabTo` only
+        // renumbers, so the carried tab has to be the one on screen first, the
+        // way a new-tab drop leaves the tab it opened on screen.
+        if (self.active_tab != source_tab) self.selectTabIndex(source_tab);
+        self.moveTabTo(source_tab, to);
+        return;
+    }
     if (self.tab_count >= MAX_TABS) return;
     const alloc = self.app.core_app.alloc;
 

@@ -1,10 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-09-25T07:23:35-07:00",
-    "commit":  "c354dad87",
+    "generated":  "2026-09-25T07:53:39-07:00",
+    "commit":  "acd2850c6",
     "uncommitted":  [
-                        "test/win32/rearrange-drag.ps1"
+                        "test/win32/rearrange-tab-drop.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -351,7 +351,7 @@
                   "test/win32/rearrange-header.ps1":  "463b8aed8b2dcaea69f45bd6b58ea133334e2c03351a4421bc21cccbba9c65d2",
                   "test/win32/rearrange-mode-action.ps1":  "43028d8cb33fa4d29e5520c6e62b31469ebaa9469129d04d9d406f47d3a50cfc",
                   "test/win32/rearrange-session-drop.ps1":  "88994a4062d36266517b4b8fe6de0301ddb204b051e19e6cd94d446fe2128c34",
-                  "test/win32/rearrange-tab-drop.ps1":  "4fc28996cf30e581841adfc4462cfd320db16e3e5b1605c7cb0e8cb486b81ab8",
+                  "test/win32/rearrange-tab-drop.ps1":  "f6ccf04b741d1260489040325f63279ca38a39c244a12a31589665a1bb6bc4df",
                   "test/win32/rearrange-viewer.ps1":  "863ec84196d1f42cff0e3fc681c5b153a4b81c467b5b42fb6a5fff0c7432c7ae",
                   "test/win32/rearrange-window-drop.ps1":  "2bcb5775a4356286d3f975a87f5e7733a5d6d0c91d15618f065e3cf514cebe1d",
                   "test/win32/registration-sites.ps1":  "98cd7d949f693dee766dc37e1c8457d5bcdc0dee2144581b3c9a30e35de44146",

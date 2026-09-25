@@ -33725,3 +33725,17 @@ background test desktop, so the window publishes the one a drag asked for as the
 from WM_PRINTCLIENT pixels: accent 189,96,213 vs resting 57,61,68) ALL PASS (66);
 a build with both disabled fails exactly those two. Floor ALL LANES PASS,
 harness floor PASS, the ten GUI guards the change made due all green.
+
+## 2026-09-25 - T1542: dragging a tab's only pane onto the strip moves its tab
+
+A pane that is its tab's whole tree is already a tab of its own, so T1537
+refused every strip drop for it and the gesture did nothing. It now means "put
+this tab here": the caret is previewed on the seam and the release moves the
+whole tab (`moveTabTo`, the same slot move the tab-button drag uses, so title,
+colour, pin and session come with it). The two seams either side of the tab
+are where it already is, preview nothing and change nothing. A dwell that
+brought another tab up mid-drag is undone first so the moved tab is the one on
+screen. Seam-to-index arithmetic is `pane_relocate.tabReorderIndex` (4 tests).
+rearrange-tab-drop.ps1 claim C now asserts the no-op seam and new claim C2 the
+move (tab count 2, carried tab first and selected, same pane HWND) - ALL PASS
+(73); -NegativeControl red on C2.

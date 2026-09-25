@@ -48,6 +48,25 @@ pub fn popOutAllowed(leaves_in_tab: usize, tab_count: usize) bool {
     return leaves_in_tab > 1 or tab_count > 1;
 }
 
+/// Where a tab ends up when its ONLY pane is dropped on strip seam `seam`
+/// (T1542), or null when the drop leaves it where it already is.
+///
+/// A pane that is its tab's whole tree is already a tab of its own, so a
+/// strip drop cannot make it one — but the user pointed at a place in the
+/// strip, and moving the tab there is what the gesture means. `seam` is an
+/// INSERTION index (0 = before the first tab, `tab_count` = after the last),
+/// the way the resolver answers it; the result is the tab's final index once
+/// its own slot has been taken out. The two seams either side of the tab are
+/// both "right here", and answer null so the preview draws no promise the
+/// release would not keep.
+pub fn tabReorderIndex(source: usize, seam: usize, tab_count: usize) ?usize {
+    if (source >= tab_count) return null;
+    const s = @min(seam, tab_count);
+    const to = if (s > source) s - 1 else s;
+    if (to == source) return null;
+    return to;
+}
+
 /// A screen rectangle in physical pixels, win32 convention (`right`/`bottom`
 /// exclusive).
 pub const Rect = struct {
@@ -127,6 +146,32 @@ test "the last pane of a tab drops the tab when the window has others" {
 
 test "the last pane of the last tab closes the window" {
     try std.testing.expectEqual(SourceAftermath.close_window, sourceAftermath(1, 1));
+}
+
+test "a lone pane dropped on a seam ahead of its tab moves the tab left" {
+    // Three tabs, the last one dragged to the front.
+    try std.testing.expectEqual(@as(?usize, 0), tabReorderIndex(2, 0, 3));
+    try std.testing.expectEqual(@as(?usize, 1), tabReorderIndex(2, 1, 3));
+}
+
+test "a lone pane dropped on a seam past its tab moves the tab right" {
+    // The seam counts the tab's own slot, which the move takes out first.
+    try std.testing.expectEqual(@as(?usize, 2), tabReorderIndex(0, 3, 3));
+    try std.testing.expectEqual(@as(?usize, 1), tabReorderIndex(0, 2, 3));
+}
+
+test "the seams either side of the tab are where it already is" {
+    try std.testing.expectEqual(@as(?usize, null), tabReorderIndex(1, 1, 3));
+    try std.testing.expectEqual(@as(?usize, null), tabReorderIndex(1, 2, 3));
+    // A window with one tab has nowhere else to put it.
+    try std.testing.expectEqual(@as(?usize, null), tabReorderIndex(0, 0, 1));
+    try std.testing.expectEqual(@as(?usize, null), tabReorderIndex(0, 1, 1));
+}
+
+test "a seam past the strip's end is the end, and a stale source is refused" {
+    try std.testing.expectEqual(@as(?usize, 2), tabReorderIndex(0, 99, 3));
+    try std.testing.expectEqual(@as(?usize, null), tabReorderIndex(2, 99, 3));
+    try std.testing.expectEqual(@as(?usize, null), tabReorderIndex(3, 0, 3));
 }
 
 test "a window's last pane cannot pop out into a window of its own" {
