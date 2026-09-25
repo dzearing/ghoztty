@@ -33,6 +33,11 @@
 #   5. A LOCAL window has no pill at all. Same strip of band, plain chrome.
 #      A local window keeps its whole drag band, which is the other half of
 #      section 2's trade: only a window that HAS a machine gives up that width.
+#   6. HOVERING the pill shows a tooltip naming the machine (T1417): connected
+#      (6a, with its placement and a timer-without-hover negative) and dropped
+#      (6b). The text is remote_pill.tooltip's, read from the app's arm/show
+#      oracle lines, and the bubble is the app's own tooltips_class32 window.
+#      Run at the box's one DPI; the other scales are not exercised here.
 #
 # LIMITS, stated rather than glossed:
 #   * Section 4 posts the messages the OS would post. It proves the handler is
@@ -89,6 +94,8 @@ function Check([bool]$cond, [string]$msg) { if ($cond) { Ok $msg } else { Bad $m
 
 $HTOBJECT = 19
 $WM_NCHITTEST = 0x0084; $WM_NCLBUTTONDOWN = 0x00A1; $WM_NCLBUTTONUP = 0x00A2
+$WM_NCMOUSEMOVE = 0x00A0; $WM_NCMOUSELEAVE = 0x02A2; $WM_TIMER = 0x0113
+$TIP_TIMER = 0x5450  # Window.zig TAB_TIP_TIMER_ID: the one tooltip delay timer
 
 function PackPoint([int]$x, [int]$y) {
     return [IntPtr](([int64]($y -band 0xFFFF) -shl 16) -bor [int64]($x -band 0xFFFF))
@@ -210,6 +217,41 @@ try {
         return $l + (& $px 12.0)
     }
 
+    # The pill's tooltip (T1417), hovered and held. A posted WM_NCMOUSEMOVE's
+    # hover is cleared by the leave TrackMouseEvent queues within a frame here
+    # (no real cursor, T233), so the delay timer is posted IN THE SAME BREATH as
+    # the move and lands ahead of that leave - retried, because that narrows
+    # the race rather than closing it. Read back: the arm line (the text
+    # decided at hover time), the show line, and the tooltip window itself.
+    function TipLines([string]$pat) {
+        if (-not (Test-Path $applog)) { return @() }
+        return @(Get-Content $applog | Select-String -Pattern $pat | ForEach-Object { $_.Line })
+    }
+    function PillTip {
+        $trigBefore = @(TipLines 'pill tooltip text=').Count
+        $shownBefore = @(TipLines 'pill tooltip shown').Count
+        for ($try = 0; $try -lt 6; $try++) {
+            # A leave first, so the move below is a TRANSITION onto the pill.
+            Send-TestRawMessage -Window $remote -Message $WM_NCMOUSELEAVE | Out-Null
+            Start-Sleep -Milliseconds 150
+            Send-TestRawMessagePair -Window $remote `
+                -Message1 $WM_NCMOUSEMOVE -WParam1 ([IntPtr]$HTOBJECT) -LParam1 (PackPoint $sxFill $sy) `
+                -Message2 $WM_TIMER -WParam2 ([IntPtr]$TIP_TIMER) | Out-Null
+            Start-Sleep -Milliseconds 400
+            if (@(TipLines 'pill tooltip shown').Count -gt $shownBefore) { break }
+        }
+        $trig = @(TipLines 'pill tooltip text=')
+        $shown = @(TipLines 'pill tooltip shown')
+        $tips = @(Get-TestWindows -ProcessId $proc.Pid -Class 'tooltips_class32' -AllowHidden).Count
+        Send-TestRawMessage -Window $remote -Message $WM_NCMOUSELEAVE | Out-Null
+        Start-Sleep -Milliseconds 150
+        return [pscustomobject]@{
+            Trigger = $(if ($trig.Count -gt $trigBefore) { $trig[$trig.Count - 1] } else { '' })
+            Shown   = $(if ($shown.Count -gt $shownBefore) { $shown[$shown.Count - 1] } else { '' })
+            Tips    = $tips
+        }
+    }
+
     # --- 1. connected: a green dot -----------------------------------------
     $sxDot = DotX
     Write-Host "  pill leading edge found at screen x=$(PillLeft), dot at $sxDot"
@@ -248,6 +290,38 @@ try {
     # already stopped for the "..." beside it.
     Check ((HitAt $remote $sxFill $sy) -eq $HTOBJECT) `
         "a connected pill answers HTOBJECT - clicking it is a click, not a drag"
+
+    # --- 6a. hovering a connected pill names the machine in a tooltip -------
+    $tipC = PillTip
+    Check ($tipC.Trigger -match 'text=Connected to 127\.0\.0\.1$') `
+        "hovering the pill arms a tooltip naming the machine - $($tipC.Trigger)"
+    Check ($tipC.Shown -match 'text=Connected to 127\.0\.0\.1$') `
+        "and the delay SHOWS it, with remote_pill.tooltip's text - $($tipC.Shown)"
+    Check ($tipC.Tips -gt 0) "the bubble is a real tooltip window of the app's"
+    # Placement from the show line: a hidden comctl32 tip reports a 0x0
+    # window, and the hover's leave hides it at once on this desktop. The width
+    # has to be a bubble WITH TEXT in it (60 DIP is far short of the text): the
+    # first show of a freshly created control once came up blank - 14 px of
+    # bare padding - because creating the control emptied the text it had just
+    # been handed. This is the first show of this window's life, so it is the
+    # show that catches that.
+    if ($tipC.Shown -match 'x=(-?\d+) y=(-?\d+) w=(\d+)') {
+        $tx = [int]$Matches[1]; $ty = [int]$Matches[2]; $tw = [int]$Matches[3]
+        $rw = Get-TestWindowRect -Window $remote
+        Check (($tw -gt (& $px 60.0)) -and ($tx -ge $rw.Left) -and ($tx + $tw -le $rw.Right) -and ($ty -gt $sy)) `
+            "placed below the pill and inside the window (tip x=$tx..$($tx + $tw) y=$ty, window $($rw.Left)..$($rw.Right), pill y=$sy)"
+    } else {
+        Bad "the show line carries no placement - $($tipC.Shown)"
+    }
+    # The timer alone - no hover standing - must show nothing: the show is
+    # gated on the pointer being ON the pill, not on the delay elapsing.
+    $shownBefore = @(TipLines 'pill tooltip shown').Count
+    Send-TestRawMessage -Window $remote -Message $WM_NCMOUSELEAVE | Out-Null
+    Start-Sleep -Milliseconds 150
+    Send-TestRawMessage -Window $remote -Message $WM_TIMER -WParam ([IntPtr]$TIP_TIMER) | Out-Null
+    Start-Sleep -Milliseconds 400
+    Check (@(TipLines 'pill tooltip shown').Count -eq $shownBefore) `
+        "a tip timer with nothing hovered shows no pill tooltip"
 
     # --- 2b. clicking a connected pill opens the Activity Monitor -----------
     $panelsBefore = @(Get-TestWindows -ProcessId $proc.Pid -Class 'GhozttyActivityMonitor').Count
@@ -305,6 +379,13 @@ try {
         "a degraded pill STILL names the machine - $degradedLine"
     Check ($degradedLine -match 'label=127\.0\.0\.1 .*Reconnect') `
         "and the status follows the name rather than replacing it"
+
+    # --- 6b. a degraded pill's tooltip still names the machine --------------
+    # D93 gives the label to the STATUS while the link is in trouble, so the
+    # tooltip is where "which machine is this" is answered in full (T1417).
+    $tipD = PillTip
+    Check ($tipD.Shown -match 'text=Connection to 127\.0\.0\.1 lost') `
+        "a degraded pill's tooltip names the machine and says it was lost - $($tipD.Shown)"
 
     # --- 4. the button acts, and the window comes back ----------------------
     # Two arms, and the second is the one that matters to a user: the click has

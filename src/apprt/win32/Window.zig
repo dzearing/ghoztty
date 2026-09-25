@@ -203,6 +203,14 @@ const HERO_ANIM_TICK_MS: u32 = 16;
 /// value native tooltips use for their initial show.
 const TAB_TIP_TIMER_ID: usize = 0x5450; // 'TP'
 
+/// What the window's ONE tooltip control is currently describing (T1417).
+/// The tab strip and the caption band's connection pill share a single
+/// comctl32 control, one delay timer and one theme-reset path; this says which
+/// of them armed the timer, so the fire derives the right text and a stale
+/// leave from the OTHER region cannot cancel it. `tab` reads its index from
+/// `hover_tab`, `pill` its state from the reconnect ladder, both at fire time.
+const TipSubject = enum { none, tab, pill };
+
 /// Dwell timer for a rearrange drag resting on a tab button (T1537): armed
 /// when the pointer settles on a tab mid-drag, cancelled the moment it moves
 /// to a different tab or off the strip, and it SWITCHES to that tab when it
@@ -335,6 +343,10 @@ tab_tip_shown: bool = false,
 /// POINTER it was given rather than copying, so the buffer must live as
 /// long as the tool does — it lives here, on the window.
 tab_tip_text: [tab_tooltip.max_tip_len + 8]u16 = undefined,
+
+/// Which region armed or is showing the tooltip above (T1417): the tab strip
+/// or the caption's connection pill. `.none` while nothing is armed.
+tip_subject: TipSubject = .none,
 
 /// Whether each tab's painted title was ELIDED at the last strip paint —
 /// the laid-out tab was narrower than `preferredWidth` of its measured
@@ -1770,6 +1782,9 @@ fn captionPill(self: *const Window) caption_layout.Pill {
 /// `remote_pill_w`, so no other path can leave the cached width describing a
 /// label nobody is drawing.
 pub fn refreshRemotePill(self: *Window) void {
+    // Before the width check: the tip's attempt count moves on every rung, and
+    // a label that kept its width is no reason for the bubble to go stale.
+    self.pillTipRefresh();
     const want: i32 = blk: {
         if (!self.hasRemotePill()) break :blk 0;
         const m = remote_pill.Metrics.init(self.scale);
@@ -7276,6 +7291,7 @@ fn handleNcMouseMove(self: *Window, wparam: usize) void {
     const hovered = captionButtonFor(wparam);
     if (hovered == self.caption_hover) return;
     self.caption_hover = hovered;
+    self.pillTipOnHoverChange(hovered);
     self.invalidateCaption();
 }
 
@@ -7291,6 +7307,7 @@ fn handleNcMouseMove(self: *Window, wparam: usize) void {
 /// between the press and the release (T233's lesson, in a new place).
 fn handleNcMouseLeave(self: *Window) void {
     self.tracking_nc_mouse = false;
+    self.tipHideFor(.pill);
     if (self.caption_hover == null) return;
     self.caption_hover = null;
     self.invalidateCaption();
@@ -7314,6 +7331,9 @@ fn clearCaptionPress(self: *Window) void {
 fn handleNcLButtonDown(self: *Window, wparam: usize) bool {
     if (!self.customCaption()) return false;
     const btn = captionButtonFor(wparam) orelse return false;
+    // A press is an answer to "what is this" — the pill's tooltip (T1417)
+    // has nothing left to add, the same as a click on a tab.
+    self.tipHideFor(.pill);
 
     // A menu button opens on PRESS, not on release — every Windows menu bar
     // does, and so does the strip's own "≡", which this button duplicates.
@@ -9239,7 +9259,11 @@ fn makeSwatchBitmap(self: *Window, c: tab_color.TabColor) ?w32.HANDLE {
 /// Handle WM_MOUSELEAVE: reset all hover state and repaint.
 fn handleTabBarMouseLeave(self: *Window) void {
     self.tracking_mouse = false;
-    self.tabTipHide();
+    // Only a TAB tip: the pointer leaving the strip for the caption band posts
+    // this leave in the same breath as the band's first WM_NCMOUSEMOVE, and in
+    // either order — an unconditional hide here cancelled a pill tip the band
+    // had just armed (T1417).
+    self.tipHideFor(.tab);
     // T737: the pointer is off the window (or on a pane's child window), so
     // the strip is free to take any width its titles grew to want. This
     // repaints on the transition, which is where a deferred grow lands.
@@ -9406,6 +9430,7 @@ fn tabTipReset(self: *Window) void {
 /// state — "no tooltip and none scheduled" is the postcondition.
 fn tabTipHide(self: *Window) void {
     if (self.hwnd) |h| _ = w32.KillTimer(h, TAB_TIP_TIMER_ID);
+    self.tip_subject = .none;
     if (!self.tab_tip_shown) return;
     self.tab_tip_shown = false;
     const tip = self.tab_tip_hwnd orelse return;
@@ -9421,9 +9446,12 @@ fn tabTipHide(self: *Window) void {
 /// WM_MOUSELEAVE lands within a frame there (T233), so the TRIGGER is read
 /// from this line while the timing stays unobserved.
 fn tabTipOnHoverChange(self: *Window, new_hover: isize) void {
+    // Leaving the tabs for empty strip only drops a TAB tip; a pill tip
+    // belongs to the caption band's own hover and leave (T1417).
+    if (new_hover < 0) return self.tipHideFor(.tab);
     self.tabTipHide();
-    if (new_hover < 0) return;
     const hwnd = self.hwnd orelse return;
+    self.tip_subject = .tab;
     _ = w32.SetTimer(hwnd, TAB_TIP_TIMER_ID, w32.GetDoubleClickTime(), null);
     var buf: [tab_tooltip.max_tip_len + 8]u8 = undefined;
     if (self.tabTipTextFor(@intCast(new_hover), &buf)) |txt| {
@@ -9453,19 +9481,26 @@ fn tabTipOnHoverChange(self: *Window, new_hover: isize) void {
 fn tabTipTimerFire(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     _ = w32.KillTimer(hwnd, TAB_TIP_TIMER_ID);
+    switch (self.tip_subject) {
+        .none => return,
+        .pill => return self.pillTipShow(),
+        .tab => {},
+    }
     if (self.hover_tab < 0) return;
     const idx: usize = @intCast(self.hover_tab);
     if (idx >= self.tab_count) return;
 
     var buf: [tab_tooltip.max_tip_len + 8]u8 = undefined;
     const text = self.tabTipTextFor(idx, &buf) orelse return;
+    // The control before the text (T1417): creating it empties the buffer its
+    // tool points at, which blanked the first tip after every (re)creation —
+    // the first hover of a window's life, and the first after a theme reset.
+    const tip = self.tabTipEnsure() orelse return;
     const len16 = std.unicode.utf8ToUtf16Le(
         self.tab_tip_text[0 .. self.tab_tip_text.len - 1],
         text,
     ) catch return;
     self.tab_tip_text[len16] = 0;
-
-    const tip = self.tabTipEnsure() orelse return;
     var ti = self.tabTipToolInfo();
     _ = w32.SendMessageW(tip, w32.TTM_UPDATETIPTEXTW, 0, @bitCast(@intFromPtr(&ti)));
 
@@ -9478,12 +9513,129 @@ fn tabTipTimerFire(self: *Window) void {
         .y = self.tabBarHeight() + gap,
     };
     _ = w32.ClientToScreen(hwnd, &pt);
-    const pos: isize = @bitCast(@as(usize, @as(u16, @bitCast(@as(i16, @truncate(pt.x))))) |
-        (@as(usize, @as(u16, @bitCast(@as(i16, @truncate(pt.y))))) << 16));
-    _ = w32.SendMessageW(tip, w32.TTM_TRACKPOSITION, 0, pos);
+    trackTipAt(tip, pt.x, pt.y);
     _ = w32.SendMessageW(tip, w32.TTM_TRACKACTIVATE, 1, @bitCast(@intFromPtr(&ti)));
     self.tab_tip_shown = true;
     log.debug("tab tooltip shown tab={d}", .{idx});
+}
+
+/// Hide the tooltip only when `subject` is what it is about (T1417). The strip
+/// and the caption band report their leaves independently, and a leave from
+/// the region the pointer just LEFT must not cancel the tip the region it
+/// entered has armed.
+fn tipHideFor(self: *Window, subject: TipSubject) void {
+    if (self.tip_subject != subject) return;
+    self.tabTipHide();
+}
+
+// --- The connection pill's tooltip (T1417) ---------------------------------
+//
+// Hovering a remote window's connection pill says what it is: which machine,
+// and while the link is down, what the ladder is doing about it. The text is
+// `remote_pill.tooltip` — pure and none-lane tested — and the control is the
+// strip's (`tabTipEnsure`): one tooltip per window, so one theme reset path.
+// The band's hover arrives as WM_NCMOUSEMOVE (its pixels are client, its mouse
+// messages are not), so the trigger is `handleNcMouseMove` and the anchor is
+// the pill's laid-out rect rather than a pointer position.
+
+/// The pill tooltip's text, written into `out`.
+fn pillTipText(self: *const Window, out: []u8) []const u8 {
+    return remote_pill.tooltip(out, self.reconnect.ladder, self.machineDisplayName());
+}
+
+/// The caption hover moved to `hovered`: arm the shared delay when it landed
+/// on the pill, drop a pill tip when it left it. Also the debug oracle for
+/// `test\win32\remote-pill.ps1` section 6, for the reason `tabTipOnHoverChange`
+/// logs its own: the background test desktop cannot hold a hover across the
+/// show delay.
+fn pillTipOnHoverChange(self: *Window, hovered: ?caption_layout.Button) void {
+    if (hovered != .pill or !self.hasRemotePill()) return self.tipHideFor(.pill);
+    self.tabTipHide();
+    const hwnd = self.hwnd orelse return;
+    self.tip_subject = .pill;
+    _ = w32.SetTimer(hwnd, TAB_TIP_TIMER_ID, w32.GetDoubleClickTime(), null);
+    var buf: [tab_tooltip.max_tip_len]u8 = undefined;
+    log.debug("pill tooltip text={s}", .{self.pillTipText(&buf)});
+}
+
+/// Copy the pill's current tooltip text into the control's buffer. False when
+/// it does not fit, which `remote_pill`'s caps make unreachable in practice.
+fn pillTipLoadText(self: *Window) bool {
+    var buf: [tab_tooltip.max_tip_len]u8 = undefined;
+    const text = self.pillTipText(&buf);
+    if (text.len >= self.tab_tip_text.len) return false;
+    const len16 = std.unicode.utf8ToUtf16Le(
+        self.tab_tip_text[0 .. self.tab_tip_text.len - 1],
+        text,
+    ) catch return false;
+    self.tab_tip_text[len16] = 0;
+    return true;
+}
+
+/// The delay elapsed with the pointer still on the pill: show the tip just
+/// below the capsule, left-aligned to it, pulled back inside the window when
+/// the capsule sits too near the right edge for the bubble to fit — which,
+/// beside the caption buttons, is the usual case. Shown first and placed
+/// second, as `KeyStateIndicator.tipShow` does: track mode positions by the
+/// top-left corner, and only the control's own window rect, once it is up,
+/// reports the size that is actually on screen.
+fn pillTipShow(self: *Window) void {
+    if (self.caption_hover != .pill or !self.hasRemotePill()) return;
+    const hwnd = self.hwnd orelse return;
+    const l = self.captionLayout() orelse return;
+    if (l.pill.isEmpty()) return;
+
+    // The control FIRST: creating it empties the text buffer its tool points
+    // at, so text loaded before a first-ever show was wiped and the bubble
+    // came up blank (T1417).
+    const tip = self.tabTipEnsure() orelse return;
+    if (!self.pillTipLoadText()) return;
+    var ti = self.tabTipToolInfo();
+    _ = w32.SendMessageW(tip, w32.TTM_UPDATETIPTEXTW, 0, @bitCast(@intFromPtr(&ti)));
+
+    const gap: i32 = @intFromFloat(@round(4.0 * self.scale));
+    var pt = w32.POINT{ .x = l.pill.left, .y = l.pill.bottom + gap };
+    _ = w32.ClientToScreen(hwnd, &pt);
+    var client: w32.RECT = undefined;
+    var right_edge = w32.POINT{ .x = 0, .y = 0 };
+    if (w32.GetClientRect(hwnd, &client) != 0) {
+        right_edge.x = client.right;
+        _ = w32.ClientToScreen(hwnd, &right_edge);
+    }
+    trackTipAt(tip, pt.x, pt.y);
+    _ = w32.SendMessageW(tip, w32.TTM_TRACKACTIVATE, 1, @bitCast(@intFromPtr(&ti)));
+    self.tab_tip_shown = true;
+
+    var r: w32.RECT = undefined;
+    var x = pt.x;
+    var bw: i32 = 0;
+    if (w32.GetWindowRect(tip, &r) != 0) bw = r.right - r.left;
+    if (right_edge.x > 0 and x + bw > right_edge.x) {
+        x = right_edge.x - bw;
+        trackTipAt(tip, x, pt.y);
+    }
+    // The placement is logged because a hidden comctl32 tip reports a 0x0
+    // window, and on the test desktop the hover's leave hides it at once.
+    var buf: [tab_tooltip.max_tip_len]u8 = undefined;
+    log.debug("pill tooltip shown x={d} y={d} w={d} text={s}", .{ x, pt.y, bw, self.pillTipText(&buf) });
+}
+
+/// The ladder moved while the pill's tip is up: re-read the text, so the
+/// attempt count in the bubble is the one the pill is painting.
+fn pillTipRefresh(self: *Window) void {
+    if (self.tip_subject != .pill or !self.tab_tip_shown) return;
+    if (!self.hasRemotePill()) return self.tabTipHide();
+    const tip = self.tab_tip_hwnd orelse return;
+    if (!self.pillTipLoadText()) return;
+    var ti = self.tabTipToolInfo();
+    _ = w32.SendMessageW(tip, w32.TTM_UPDATETIPTEXTW, 0, @bitCast(@intFromPtr(&ti)));
+}
+
+/// `TTM_TRACKPOSITION` at a screen point, packed the way the message wants it.
+fn trackTipAt(tip: w32.HWND, x: i32, y: i32) void {
+    const pos: isize = @bitCast(@as(usize, @as(u16, @bitCast(@as(i16, @truncate(x))))) |
+        (@as(usize, @as(u16, @bitCast(@as(i16, @truncate(y))))) << 16));
+    _ = w32.SendMessageW(tip, w32.TTM_TRACKPOSITION, 0, pos);
 }
 
 /// Rename edit control child ID.

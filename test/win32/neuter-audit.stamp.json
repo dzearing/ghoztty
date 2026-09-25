@@ -1,12 +1,10 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-09-24T14:31:46-07:00",
-    "commit":  "866a86863",
+    "generated":  "2026-09-24T17:46:16-07:00",
+    "commit":  "aeb63f862",
     "uncommitted":  [
-                        "src/apprt/win32/install_ca.zig",
-                        "src/apprt/win32/install_maintenance.zig",
-                        "src/apprt/win32/maintenance_ca.zig"
+                        "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -248,7 +246,7 @@
                   "src/apprt/win32/WhatsNewNotesView.zig":  "29ab0aae70f2a786eed585a56c2e949bcae393ad48cdef7c9cc64c7a0cc834d8",
                   "src/apprt/win32/WhatsNewWindow.zig":  "60a5dcde676c94fb20e8854e25eefb9900f5b2bc49e8ccf76b06d67445628a54",
                   "src/apprt/win32/win32.zig":  "d302801ea6f2120825122408c574254457bc9beb8939a8ad6c1078292b341dd8",
-                  "src/apprt/win32/Window.zig":  "9e060604e4a57bd9471d9437bd9ab95f743d9de21cc1743202796bea436086d3",
+                  "src/apprt/win32/Window.zig":  "ea398a17c78ed4d2fd3640b6607889a40f4e47e7de32a158534fd2ae722a1e16",
                   "src/apprt/win32/window_active.zig":  "b562e1f1ca40c0271b82d533fe126939f5930e9f7021c41c9ce301534efb410c",
                   "src/apprt/win32/window_chord.zig":  "a2431ad0211e3cab9e2e508eab1608421dc92ef97ea3d58135403829f4c81151",
                   "src/apprt/win32/window_memory.zig":  "b4f2912a881c6380b205744d5516b50677557f483d1776e8edbaaa75a99e1269",

@@ -1848,6 +1848,18 @@ public class GhozttyTestDesktop {
         return (bool)Run(delegate() { return PostMessageW(h, msg, wp, lp); });
     }
 
+    // Post TWO messages back to back, from one worker-thread stack, so both are
+    // queued before the app's GUI thread wakes for the first. For a pair whose
+    // second half must be dispatched before anything the first half's handler
+    // posts - a hover that arms a delay timer, then the timer itself, with the
+    // leave TrackMouseEvent queues on a desktop with no real cursor landing
+    // behind both instead of between them (T1417).
+    public bool PostRawPair(IntPtr h, uint msg1, IntPtr wp1, IntPtr lp1, uint msg2, IntPtr wp2, IntPtr lp2) {
+        return (bool)Run(delegate() {
+            return PostMessageW(h, msg1, wp1, lp1) && PostMessageW(h, msg2, wp2, lp2);
+        });
+    }
+
     public bool SendControlKey(IntPtr ctl, ushort vk, ushort[] mods) {
         return (bool)Run(delegate() {
             var ks = new byte[256];
@@ -3779,6 +3791,28 @@ function Send-TestRawMessage {
         $Desktop
     )
     return (Resolve-TestDesktop $Desktop).PostRaw($Window, $Message, $WParam, $LParam)
+}
+
+<#
+Post TWO raw messages back to back, queued before the app wakes for the first
+(T1417). For a hover-then-its-delay-timer pair: posted separately, the leave
+that TrackMouseEvent queues on a desktop with no real cursor lands between them
+and the timer finds nothing hovered. Same verbatim -WParam/-LParam contract as
+Send-TestRawMessage. Narrows the race rather than closing it, so a caller
+retries.
+#>
+function Send-TestRawMessagePair {
+    param(
+        [Parameter(Mandatory = $true)][IntPtr]$Window,
+        [Parameter(Mandatory = $true)][uint32]$Message1,
+        [IntPtr]$WParam1 = [IntPtr]::Zero,
+        [IntPtr]$LParam1 = [IntPtr]::Zero,
+        [Parameter(Mandatory = $true)][uint32]$Message2,
+        [IntPtr]$WParam2 = [IntPtr]::Zero,
+        [IntPtr]$LParam2 = [IntPtr]::Zero,
+        $Desktop
+    )
+    return (Resolve-TestDesktop $Desktop).PostRawPair($Window, $Message1, $WParam1, $LParam1, $Message2, $WParam2, $LParam2)
 }
 
 <#

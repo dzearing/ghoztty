@@ -33617,3 +33617,16 @@ abbreviation. It now falls back to USERPROFILE (pure `composeWindowsHome`,
 three tests). Proof: with both variables stripped, the fixed build is ALL PASS
 (29), and a pre-fix build is red on arms A and G with the original
 `C:\Users\...` tip. Floor ALL LANES PASS.
+## 2026-09-24 - T1417: hovering the connection pill names the machine
+
+The pill's tooltip text had existed since T610 with nothing to show it. The
+strip's one comctl32 tooltip control now serves the caption band too: a
+`TipSubject` says which region armed the shared delay timer, and each region's
+leave only cancels its own tip (the strip's leave and the band's first move
+arrive in either order). Found on the way: `tabTipEnsure` emptied the tool's
+text buffer on creation AFTER both show paths had loaded it, so the first tip
+of a window's life (and the first after a theme reset) was a blank bubble; both
+paths fixed. `remote-pill.ps1` section 6 ALL PASS (19) - connected and dropped
+tips shown, placed inside the window, no show without a hover; negative
+control exits 1; tab-tooltip ALL PASS (29); floor ALL LANES PASS; P1-P3 green.
+The caption buttons' own tips are T1733.
