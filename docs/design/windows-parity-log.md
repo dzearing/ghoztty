@@ -34214,3 +34214,16 @@ cache and the capsule geometry; `chooser-help-tooltips.ps1` section G proves the
 logged count, the tooltip, a push moving it 2 -> 3, and a never-loaded negative
 control (ALL PASS, 61). Floor lanes and the harness lane green. Filed T1759
 (remote and clearing paths not driven on the box).
+
+## 2026-09-26 - T1746: machine chooser session cards get Mac's Show / Resume button
+
+Every live session card in the machine chooser now carries a small button
+beside its end "x", as Mac's rows do: **Show** when the session already has a
+window here (brings it forward, never a duplicate), **Resume** when it does not
+(opens it in a new window). Before this, opening a session needed a guessed
+double-click or Return. The button runs the same path as Return, has Mac's hover
+sentences, and is one measured width on every card so the columns line up.
+Unit tests for the layout (four scales), the label rule and the tooltip words;
+`chooser-resume.ps1` gained section 2b, which clicks both verbs against a real
+agent and reads the result back from it (ALL PASS, 46). Floor lanes green.
+Filed T1760 (drop the now-redundant "open" chip, as Mac did).

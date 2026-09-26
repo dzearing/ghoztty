@@ -577,6 +577,13 @@ pub const Metrics = struct {
     kill_hit_w: i32,
     /// Text column -> Kill button.
     kill_gap: i32,
+    /// The row's Show / Resume button (T1746): its text inset, its corner (the
+    /// 4 DIP small-control radius, never the card's 8), and the gap from its
+    /// painted edge to the Kill square's. Its height is the Kill square's, so
+    /// the two controls share one vertical frame (§2.1).
+    action_pad_x: i32,
+    action_radius: i32,
+    action_gap: i32,
     /// `CreateFontW` heights for the two roles used here.
     body_font_h: i32,
     caption_font_h: i32,
@@ -622,6 +629,9 @@ pub fn metrics(scale: f32) Metrics {
         .kill_w = icon.target,
         .kill_hit_w = icon.target + icon.hit_pad * 2,
         .kill_gap = px(8, scale),
+        .action_pad_x = px(8, scale),
+        .action_radius = px(4, scale),
+        .action_gap = px(4, scale),
         .body_font_h = body.height,
         .caption_font_h = caption.height,
     };
@@ -668,6 +678,11 @@ pub const RowLayout = struct {
     /// contributes one (design system §1.2).
     kill: Rect,
     kill_hit: Rect,
+    /// The Show / Resume button (T1746), painted box and hit box in one — a
+    /// text button is already bigger than any pointer needs. Zero-width until
+    /// `withAction` places it, so a layout that never asks for one reserves
+    /// nothing.
+    action: Rect = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
 };
 
 /// `show_cpu` reserves the meter column between the dot and the text (T462).
@@ -759,6 +774,42 @@ pub fn rowLayout(m: Metrics, x: i32, y: i32, w: i32, sublines: i32, show_cpu: bo
         .kill_hit = kill_hit,
     };
 }
+
+/// `l` with the row's Show / Resume button placed (T1746): immediately before
+/// the Kill square, on the same vertical frame, `text_w` wide plus its padding.
+/// The text column's right edge moves in to clear the button by the same gap it
+/// used to keep from Kill, so a long name ellipsizes before the button rather
+/// than under it.
+///
+/// `text_w` is the caller's MEASURED width of the widest label ("Resume"), so
+/// every card's button is one width whichever label it wears and the Kill
+/// column, the button column and the text's right edge are all the same x down
+/// the roster. `text_w <= 0` (nothing measured yet) places nothing.
+pub fn withAction(l: RowLayout, m: Metrics, text_w: i32) RowLayout {
+    if (text_w <= 0) return l;
+    var out = l;
+    const right = l.kill.left - m.action_gap;
+    const left = right - text_w - m.action_pad_x * 2;
+    out.action = .{ .left = left, .top = l.kill.top, .right = right, .bottom = l.kill.bottom };
+    const text_right = @max(left - m.kill_gap, l.title.left);
+    out.title.right = text_right;
+    out.cwd.right = @max(text_right, out.cwd.left);
+    out.argv.right = @max(text_right, out.argv.left);
+    return out;
+}
+
+/// The row's action verb (T1746), Mac's two labels
+/// (`MachineChooserView.swift` `sessionDetailRow`): **Show** for a session
+/// already open in one of our windows — clicking it focuses that window, never
+/// a duplicate — and **Resume** for one that is not. Null for a row with
+/// nothing to run: an exited session gets no button, only its Kill.
+pub fn actionLabel(s: Session, open_locally: bool) ?[]const u8 {
+    if (rowAction(s) == .none) return null;
+    return if (open_locally) show_label else resume_label;
+}
+
+pub const show_label = "Show";
+pub const resume_label = "Resume";
 
 /// A badge capsule of `text_w` measured pixels placed at `x` on the title's
 /// line box. Returns the capsule, so the caller can advance by its width plus
@@ -1481,5 +1532,70 @@ test "the cursor indicator is centered on the card, whatever its height (T828)" 
         try testing.expect(@abs((bar.top - card.top) - (card.bottom - bar.bottom)) <= 1);
         // And it never crowds the liveness dot column that follows it.
         try testing.expect(bar.right <= card.left + m.pad_x);
+    }
+}
+
+test "the Show / Resume button sits before Kill on its frame and pushes the text in (T1746)" {
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |scale| {
+        const m = metrics(scale);
+        const w = px(560, scale);
+        const text_w = px(44, scale);
+        for ([_]i32{ 0, 1, 2 }) |subs| {
+            const bare = rowLayout(m, 100, 40, w, subs, true);
+            const r = withAction(bare, m, text_w);
+
+            try testing.expectEqual(text_w + m.action_pad_x * 2, r.action.width());
+            // One vertical frame with the Kill square (§2.1).
+            try testing.expectEqual(r.kill.top, r.action.top);
+            try testing.expectEqual(r.kill.bottom, r.action.bottom);
+            // Gaps measured to PAINTED edges, and the button's box never
+            // overlaps Kill's more forgiving hit box (§1.2).
+            try testing.expectEqual(m.action_gap, r.kill.left - r.action.right);
+            try testing.expect(r.action.right <= r.kill_hit.left);
+            // The text column clears the button exactly as it used to clear Kill.
+            try testing.expectEqual(m.kill_gap, r.action.left - r.title.right);
+            if (subs > 0) try testing.expectEqual(r.title.right, r.cwd.right);
+            if (subs > 1) try testing.expectEqual(r.title.right, r.argv.right);
+            // Nothing else moves: the card, the dot, the meter, Kill.
+            try testing.expectEqual(bare.card, r.card);
+            try testing.expectEqual(bare.kill, r.kill);
+            try testing.expectEqual(bare.cpu, r.cpu);
+            try testing.expectEqual(bare.title.left, r.title.left);
+            try testing.expect(r.action.left > r.title.left);
+            try testing.expect(r.action.bottom <= r.card.bottom);
+        }
+    }
+}
+
+test "no measured label, no button, and nothing reserved (T1746)" {
+    const m = metrics(1.5);
+    const bare = rowLayout(m, 0, 0, 600, 1, false);
+    const r = withAction(bare, m, 0);
+    try testing.expectEqual(@as(i32, 0), r.action.width());
+    try testing.expectEqual(bare.title, r.title);
+}
+
+test "a card too narrow for its button keeps a non-negative text column (T1746)" {
+    const m = metrics(1.0);
+    const bare = rowLayout(m, 0, 0, 120, 2, true);
+    const r = withAction(bare, m, 60);
+    try testing.expect(r.title.right >= r.title.left);
+    try testing.expect(r.cwd.right >= r.cwd.left);
+    try testing.expect(r.argv.right >= r.argv.left);
+}
+
+test "Show for a session open here, Resume for one that is not, nothing for an exited one (T1746)" {
+    const live: Session = .{ .id = "a", .alive = true };
+    try testing.expectEqualStrings("Show", actionLabel(live, true).?);
+    try testing.expectEqualStrings("Resume", actionLabel(live, false).?);
+    const dead: Session = .{ .id = "b", .alive = false };
+    try testing.expect(actionLabel(dead, true) == null);
+    try testing.expect(actionLabel(dead, false) == null);
+}
+
+test "the button's spacing numbers are on the 4 DIP scale (T1746)" {
+    const m = metrics(1.0);
+    for ([_]i32{ m.action_pad_x, m.action_radius, m.action_gap }) |v| {
+        try testing.expect(v == 2 or v == 4 or v == 8 or v == 12 or v == 16 or v == 24);
     }
 }

@@ -337,6 +337,125 @@ try {
     $wasAttached = @($before | Where-Object { $_.id -eq $resumedId -and $_.attached }).Count
     Assert ($wasAttached -eq 0) 'and it was NOT attached a moment before (the resume is what bound it)'
 
+    # --- The row's own button: Show / Resume (T1746) ------------------------
+    Write-Host ''
+    Write-Host '2b. the card''s Show / Resume button does what Return does'
+    # Mac puts the row verb on a button: "Show" on a session already open here,
+    # "Resume" on one that is not. The session Return just resumed is now open
+    # here, and at least one orphan still is not - so both verbs are on screen
+    # in this one fixture. The button is owner-drawn, so the app says which
+    # verb a click ran (`action button <verb> id=...`) and the hover tooltip
+    # says which card a point is on; the agent is the independent oracle.
+    $remaining = @($orphanIds | Where-Object { $_ -ne $resumedId })
+    Assert ($remaining.Count -ge 1) "an orphan is left for the Resume button ($($remaining.Count))"
+
+    # Park the cursor on the target to learn its DISPLAYED row, then find that
+    # card's button line: row 0 is the geometry's own, and a lower card is
+    # located by hovering each candidate stride until the tooltip names that
+    # row - a wrong stride names a different row, or nothing.
+    function Get-CursorRow($log) {
+        $m = @(Select-String -Path $log -Pattern 'cursor on session id=[0-9a-fA-F]+ \(row (\d+) of' -ErrorAction SilentlyContinue)
+        if ($m.Count -eq 0) { return -1 }
+        return [int]$m[-1].Matches[0].Groups[1].Value
+    }
+    # A posted WM_MOUSEMOVE at a CLIENT point - the only way to hover on the
+    # background desktop (the chooser-help-tooltips.ps1 recipe).
+    function Move-ChooserPointer([IntPtr]$window, [int]$x, [int]$y) {
+        $lp = [IntPtr]((($y -band 0xFFFF) -shl 16) -bor ($x -band 0xFFFF))
+        [void](Send-TestRawMessage -Window $window -Message 0x0200 -LParam $lp)
+        Start-Sleep -Milliseconds 250
+    }
+    $tipPattern = 'chooser help tooltip target=session-action row=(\d+) text=(.*)$'
+    function Find-ActionY($chooser, $geo, $log, [int]$row) {
+        $cands = if ($row -eq 0) { @($geo.ActionY) } else { @($geo.CardStrides | ForEach-Object { $geo.ActionY + $_ * $row }) }
+        foreach ($y in $cands) {
+            # Off the button first, so landing on the same target again still
+            # derives a fresh line.
+            Move-ChooserPointer $chooser $geo.CardX $geo.CardY
+            $before = @(Select-String -Path $log -Pattern $tipPattern -ErrorAction SilentlyContinue).Count
+            Move-ChooserPointer $chooser $geo.ActionX $y
+            $waited = 0
+            while ($waited -lt 2000) {
+                $m = @(Select-String -Path $log -Pattern $tipPattern -ErrorAction SilentlyContinue)
+                if ($m.Count -gt $before) {
+                    $last = $m[-1].Matches[0]
+                    if ([int]$last.Groups[1].Value -eq $row) {
+                        return @{ Y = $y; Text = $last.Groups[2].Value.Trim() }
+                    }
+                    break
+                }
+                Start-Sleep -Milliseconds 100
+                $waited += 100
+            }
+        }
+        return $null
+    }
+
+    # Show: the session Return resumed a moment ago.
+    $chooser = Open-Chooser $g
+    Assert ($chooser -ne [IntPtr]::Zero) 'the chooser reopens for the button checks'
+    if ($chooser -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: no chooser for 2b'; exit 1 }
+    $filter = ConvertTo-TestHwnd (Get-ChooserFilterField -Chooser $chooser)
+    Wait-LogLine $errlog2 'chooser roster: loaded (\d+) session' 8000 | Out-Null
+    $client = Get-TestWindowRect -Window $chooser -Client
+    $rendered = @(Get-RenderedSessions)
+    $showLanded = Walk-CursorToId $chooser $filter $errlog2 @($resumedId) $rendered.Count
+    $showRow = Get-CursorRow $errlog2
+    Assert ($showLanded -eq $resumedId -and $showRow -ge 0) "the open session's card is on screen (row $showRow)"
+    $hit = Find-ActionY $chooser $geo $errlog2 $showRow
+    Assert ($null -ne $hit) "the open session's card has a button that answers the pointer (row $showRow)"
+    Assert ($hit -and $hit.Text -eq "Bring this session's window to the front") `
+        "an open session's button is Show, with Mac's words ('$($hit.Text)')"
+    if ($hit) {
+        $attachesBefore = Count-LogLines $errlog2 'resume session: attaching local session id='
+        $focusesBefore = Count-LogLines $errlog2 'session already open, focusing its pane'
+        Send-TestMouse -Window $chooser -X ($client.Left + $geo.ActionX) -Y ($client.Top + $hit.Y) `
+            -Button left -Action click | Out-Null
+        $verb = Wait-LogLine $errlog2 "chooser roster: action button \w+ id=$resumedId" 4000
+        Assert ($verb -match 'action button Show id=') "clicking it runs Show on that row ($verb)"
+        $waited = 0
+        while ($waited -lt 4000 -and (Count-LogLines $errlog2 'session already open, focusing its pane') -le $focusesBefore) {
+            Start-Sleep -Milliseconds 200
+            $waited += 200
+        }
+        Assert ((Count-LogLines $errlog2 'session already open, focusing its pane') -gt $focusesBefore) `
+            'Show focuses the window that already has the session'
+        Start-Sleep -Milliseconds 800
+        Assert ((Count-LogLines $errlog2 'resume session: attaching local session id=') -eq $attachesBefore) `
+            'and attaches nothing - no duplicate window'
+        Assert (-not (Test-TestWindowExists -Window $chooser)) 'the chooser dismissed onto it'
+    }
+
+    # Resume: a session that is still an orphan.
+    $chooser = Open-Chooser $g
+    Assert ($chooser -ne [IntPtr]::Zero) 'the chooser reopens for Resume'
+    if ($chooser -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: no chooser for 2b Resume'; exit 1 }
+    $filter = ConvertTo-TestHwnd (Get-ChooserFilterField -Chooser $chooser)
+    Wait-LogLine $errlog2 'chooser roster: loaded (\d+) session' 8000 | Out-Null
+    $client = Get-TestWindowRect -Window $chooser -Client
+    $rendered = @(Get-RenderedSessions)
+    $orphanLanded = Walk-CursorToId $chooser $filter $errlog2 $remaining $rendered.Count
+    $orphanRow = Get-CursorRow $errlog2
+    Assert ($null -ne $orphanLanded -and $orphanRow -ge 0) "an orphan's card is on screen ($orphanLanded, row $orphanRow)"
+    $hit = Find-ActionY $chooser $geo $errlog2 $orphanRow
+    Assert ($null -ne $hit) "the orphan's card has a button that answers the pointer (row $orphanRow)"
+    Assert ($hit -and $hit.Text -eq 'Resume this session in a new window') `
+        "a session with no window here gets Resume, with Mac's words ('$($hit.Text)')"
+    if ($hit -and $orphanLanded) {
+        $wasAttached = @(Get-Sessions | Where-Object { $_.id -eq $orphanLanded -and $_.attached }).Count
+        Send-TestMouse -Window $chooser -X ($client.Left + $geo.ActionX) -Y ($client.Top + $hit.Y) `
+            -Button left -Action click | Out-Null
+        $verb = Wait-LogLine $errlog2 "chooser roster: action button \w+ id=$orphanLanded" 4000
+        Assert ($verb -match 'action button Resume id=') "clicking it runs Resume on that row ($verb)"
+        $attach = Wait-LogLine $errlog2 "resume session: attaching local session id=$orphanLanded" 6000
+        Assert ($null -ne $attach) 'Resume attaches exactly that session, as Return does'
+        Start-Sleep -Seconds 2
+        Assert (-not (Test-TestWindowExists -Window $chooser)) 'the chooser dismissed onto the resumed window'
+        $row = @(Get-Sessions | Where-Object { $_.id -eq $orphanLanded })
+        Assert ($wasAttached -eq 0 -and $row.Count -eq 1 -and $row[0].attached) `
+            'the agent reports that session ATTACHED, and it was not before the click'
+    }
+
     # --- A finished session is NOT listed (D91/T1364) -----------------------
     Write-Host ''
     Write-Host '3. a session whose program has exited is not offered at all'

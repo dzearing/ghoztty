@@ -691,6 +691,20 @@ function Get-TestChooserRosterGeometry {
     return [pscustomobject]@{
         Left  = $left; Top = $top; Right = $right; Bottom = $bottom
         KillX = $killX; KillY = $killY
+        # The first card's Show / Resume button (T1746): it sits a 4 DIP gap
+        # before the Kill square on the same frame, and its width comes from
+        # text metrics - so the point is taken inside its TRAILING 8 DIP
+        # padding, which is the one part of it that is pure DIP.
+        ActionX = $right - $padX - $killW - (Get-TestChromeDip 4 $s) - (Get-TestChromeDip 4 $s)
+        ActionY = $killY
+        # One card's height for 0, 1 or 2 sublines, plus the 8 DIP row gap - the
+        # stride from one card's line to the next (`chooser_sessions.rowHeight`).
+        CardStrides = @(0, 1, 2 | ForEach-Object {
+            $h = [math]::Max(
+                (Get-TestChromeDip 8 $s) * 2 + $cardTitleH + $_ * ((Get-TestChromeDip 2 $s) + (Get-TestChromeDip 12 $s) + (Get-TestChromeDip 4 $s)),
+                (Get-TestChromeDip 8 $s) * 2 + $killW)
+            $h + (Get-TestChromeDip 8 $s)
+        })
         # A point INSIDE the first card's fill and clear of every mark: one
         # scale-step in from the card's left edge, on the title's line.
         CardX = $left + (Get-TestChromeDip 4 $s)

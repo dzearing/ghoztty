@@ -11,11 +11,10 @@
 //! Mac surfaces with NO Windows counterpart get no string here, on purpose — a
 //! sentence for a control that does not exist is dead text nobody can test by
 //! use (T1633 records each as n/a with its reason). The machine row's
-//! session-count capsule was one until T1745 gave the win32 rows the capsule;
-//! it has its sentence below (`sessionCount`). What is left:
-//!
-//! - a session row's "Show" / "Resume" buttons — a win32 session card IS the
-//!   resume affordance (double-click / Return), it has no per-row button.
+//! session-count capsule was one until T1745 gave the win32 rows the capsule,
+//! and a session row's "Show" / "Resume" button until T1746 gave the cards
+//! theirs; both have their sentences below (`sessionCount`, `show_session`,
+//! `resume_session`).
 
 const std = @import("std");
 const chooser_session_sort = @import("chooser_session_sort.zig");
@@ -34,6 +33,9 @@ pub const Target = union(enum) {
     cpu: usize,
     /// A roster row's End ("x") button. Index into the displayed rows.
     end_session: usize,
+    /// A roster row's Show / Resume button (T1746). Index into the displayed
+    /// rows; which of the two sentences it says is the row's, read at show time.
+    session_action: usize,
     /// A session-list column header (T602).
     sort_header: chooser_session_sort.Key,
     /// The detail pane's primary action.
@@ -62,7 +64,7 @@ pub const Target = union(enum) {
     pub fn isControl(self: Target) bool {
         return switch (self) {
             .new_window, .restore_all, .activity, .manage => true,
-            .cpu, .end_session, .sort_header, .account, .machine_status, .session_count => false,
+            .cpu, .end_session, .session_action, .sort_header, .account, .machine_status, .session_count => false,
         };
     }
 
@@ -82,6 +84,7 @@ pub const Target = union(enum) {
         return switch (self) {
             .cpu => "cpu",
             .end_session => "end-session",
+            .session_action => "session-action",
             .sort_header => "sort-header",
             .new_window => "new-window",
             .restore_all => "restore-all",
@@ -98,7 +101,7 @@ pub const Target = union(enum) {
     /// `sort-header key=cpu`, `new-window`.
     pub fn describe(self: Target, buf: []u8) []const u8 {
         return switch (self) {
-            .cpu, .end_session, .machine_status, .session_count => |i| std.fmt.bufPrint(
+            .cpu, .end_session, .session_action, .machine_status, .session_count => |i| std.fmt.bufPrint(
                 buf,
                 "{s} row={d}",
                 .{ self.kind(), i },
@@ -115,6 +118,14 @@ pub const Target = union(enum) {
 
 /// A session row's End button. Mac `MachineChooserView.swift:905`.
 pub const end_session = "End this session (terminates its process)";
+
+/// A session row's "Show" button — the session is already open in a window
+/// here. Mac `sessionDetailRow`'s `.help` (T1746).
+pub const show_session = "Bring this session's window to the front";
+
+/// A session row's "Resume" button — the session has no window here. Mac
+/// `sessionDetailRow`'s `.help` (T1746).
+pub const resume_session = "Resume this session in a new window";
 
 /// "Restore All". Mac `MachineChooserView.swift:560`.
 pub const restore_all = "Rebuild this machine's full window layout here";
@@ -371,4 +382,14 @@ test "statusColumnHit covers the dot's column and stops before the glyph" {
         try testing.expect(!statusColumnHit(m, m.glyph_col_x));
         try testing.expect(!statusColumnHit(m, m.glyph_x + @divTrunc(m.glyph_w, 2)));
     }
+}
+
+test "Show and Resume say Mac's words, and name their row (T1746)" {
+    try testing.expectEqualStrings("Bring this session's window to the front", show_session);
+    try testing.expectEqualStrings("Resume this session in a new window", resume_session);
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("session-action row=3", (Target{ .session_action = 3 }).describe(&buf));
+    try testing.expect(!(Target{ .session_action = 0 }).isControl());
+    try testing.expect(!(Target{ .session_action = 0 }).inMachineList());
+    try testing.expect(!(Target{ .session_action = 0 }).eql(.{ .end_session = 0 }));
 }

@@ -934,6 +934,13 @@ pub fn open(window: *Window) void {
     if (self.subtitle_font) |f| {
         _ = w32.SendMessageW(self.hint, w32.WM_SETFONT, @intFromPtr(f), 1);
     }
+    // The roster paints its Show / Resume button in this same caption font, so
+    // the slot is measured in it (T1746) — the widest label, so every card's
+    // button is one width whichever verb it wears.
+    self.roster.action_text_w = @max(
+        self.measureWith(self.subtitle_font, chooser_sessions.resume_label),
+        self.measureWith(self.subtitle_font, chooser_sessions.show_label),
+    );
     // The detail pane's machine name is Mac's `.title3` + `.semibold`: bigger
     // than the dialog font and heavier, so the pane has an obvious subject.
     self.title_font = w32.CreateFontW(
@@ -3549,6 +3556,7 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
         w32.WM_MOUSELEAVE => {
             self.dialog_tracking_leave = false;
             self.setKillHover(-1);
+            self.setActionHover(-1);
             // Only what the DIALOG paints loses its tip here: this leave also
             // fires when the pointer enters a child, and a button's or a
             // status dot's tip belongs to that child's own tracking.
@@ -3727,7 +3735,15 @@ fn dialogHelpAt(self: *MachineChooser, x: i32, y: i32) ?chooser_help.Target {
         const scale = self.window.scale;
         const hit = self.roster.killAt(view.rows, view.region, scale, x, y);
         self.setKillHover(if (hit) |i| @intCast(i) else -1);
-        if (hit) |i| return .{ .end_session = i };
+        if (hit) |i| {
+            self.setActionHover(-1);
+            return .{ .end_session = i };
+        }
+        // Show / Resume (T1746) sits beside Kill and never overlaps its hit
+        // box, so the two walks cannot both answer one point.
+        const act = self.roster.actionAt(view.rows, view.region, scale, x, y);
+        self.setActionHover(if (act) |i| @intCast(i) else -1);
+        if (act) |i| return .{ .session_action = i };
         // The meter's tooltip rides the same pointer walk (T812). Tested after
         // Kill for the same reason the click is: one point can answer both, and
         // the button is the more specific of the two - though in practice the
@@ -3736,9 +3752,16 @@ fn dialogHelpAt(self: *MachineChooser, x: i32, y: i32) ?chooser_help.Target {
         if (self.roster.headerKeyAt(view.rows, view.header, scale, x, y)) |k| return .{ .sort_header = k };
     } else {
         self.setKillHover(-1);
+        self.setActionHover(-1);
     }
     if (self.accountHelpHit(x, y)) return .account;
     return null;
+}
+
+fn setActionHover(self: *MachineChooser, index: i32) void {
+    if (self.roster.hover_action == index) return;
+    self.roster.hover_action = index;
+    self.refreshSessions();
 }
 
 fn setKillHover(self: *MachineChooser, index: i32) void {
@@ -3858,6 +3881,14 @@ fn helpTextFor(self: *MachineChooser, t: chooser_help.Target, out: []u8) ?[]cons
     return switch (t) {
         .cpu => |i| self.cpuTipTextFor(i, out),
         .end_session => chooser_help.end_session,
+        .session_action => |i| blk: {
+            var buf: [SessionRoster.max_rows]SessionRoster.VisibleRow = undefined;
+            const view = self.sessionView(&buf) orelse break :blk null;
+            if (i >= view.rows.len) break :blk null;
+            const row = view.rows[i];
+            if (chooser_sessions.actionLabel(row.session, row.open_locally) == null) break :blk null;
+            break :blk if (row.open_locally) chooser_help.show_session else chooser_help.resume_session;
+        },
         .sort_header => |k| chooser_help.sortHeader(out, self.roster.sort, k),
         .new_window => chooser_help.newWindow(out, self.detailTitle() orelse return null),
         .restore_all => chooser_help.restore_all,
@@ -4040,6 +4071,10 @@ fn helpAnchor(self: *MachineChooser, t: chooser_help.Target) ?w32.POINT {
             const l = self.rosterRowLayout(i) orelse return null;
             return toScreen(self.hwnd, l.kill.left, l.kill.bottom + gap);
         },
+        .session_action => |i| {
+            const l = self.rosterRowLayout(i) orelse return null;
+            return toScreen(self.hwnd, l.action.left, l.action.bottom + gap);
+        },
         .sort_header => |k| {
             var buf: [SessionRoster.max_rows]SessionRoster.VisibleRow = undefined;
             const view = self.sessionView(&buf) orelse return null;
@@ -4085,14 +4120,7 @@ fn rosterRowLayout(self: *MachineChooser, idx: usize) ?chooser_sessions.RowLayou
     var cy = view.region.top - self.roster.scroll;
     for (view.rows, 0..) |row, i| {
         const subs = chooser_sessions.sublineCount(row.session);
-        const l = chooser_sessions.rowLayout(
-            m,
-            view.region.left,
-            cy,
-            view.region.width(),
-            subs,
-            self.roster.cpu_column,
-        );
+        const l = self.roster.layoutRow(m, view.region.left, cy, view.region.width(), subs);
         if (i == idx) return l;
         cy = l.card.bottom + m.row_gap;
     }
@@ -4113,6 +4141,20 @@ fn onSessionClick(self: *MachineChooser, x: i32, y: i32) bool {
     }
     if (self.roster.killAt(view.rows, view.region, self.window.scale, x, y)) |idx| {
         self.confirmKill(view.rows[idx]);
+        return true;
+    }
+    // Show / Resume (T1746): exactly what Return on the row does — `resumeRow`
+    // already focuses a session that is open here instead of attaching a
+    // duplicate — so the button is the visible form of the keyboard verb, not a
+    // second path. The verb is logged first: an owner-drawn button has no HWND
+    // for a harness to read back.
+    if (self.roster.actionAt(view.rows, view.region, self.window.scale, x, y)) |idx| {
+        const row = view.rows[idx];
+        log.info("chooser roster: action button {s} id={s}", .{
+            chooser_sessions.actionLabel(row.session, row.open_locally) orelse "-",
+            row.session.id,
+        });
+        self.resumeRow(row);
         return true;
     }
     const idx = self.roster.rowAt(view.rows, view.region, self.window.scale, x, y) orelse
@@ -4166,6 +4208,8 @@ fn onSessionDoubleClick(self: *MachineChooser, x: i32, y: i32) bool {
     // A double click that landed on Kill is still a Kill (its confirmation runs
     // a nested pump, and the second click already opened it).
     if (self.roster.killAt(view.rows, view.region, self.window.scale, x, y) != null) return true;
+    // Likewise a double click on Show / Resume: the first click already ran it.
+    if (self.roster.actionAt(view.rows, view.region, self.window.scale, x, y) != null) return true;
     const idx = self.roster.rowAt(view.rows, view.region, self.window.scale, x, y) orelse
         return false;
     self.resumeRow(view.rows[idx]);
@@ -4622,6 +4666,7 @@ fn confirmKill(self: *MachineChooser, row: SessionRoster.VisibleRow) void {
     log.info("chooser roster: ending session id={s}", .{id});
     self.roster.markKilled(id);
     self.roster.hover_kill = -1;
+    self.roster.hover_action = -1;
     // The optimistic hide drops the subtitle's count; the row's capsule is the
     // same number (T1745).
     self.noteRowCount();

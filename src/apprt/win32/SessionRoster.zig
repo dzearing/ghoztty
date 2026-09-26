@@ -112,6 +112,14 @@ redialed: bool = false,
 scroll: i32 = 0,
 /// Index (into the VISIBLE rows) whose Kill button is under the pointer, or -1.
 hover_kill: i32 = -1,
+/// Index (into the VISIBLE rows) whose Show / Resume button is under the
+/// pointer, or -1 (T1746).
+hover_action: i32 = -1,
+/// The measured caption width of the widest action label ("Resume"), set by the
+/// chooser from the font the button is painted in. 0 until measured, which
+/// places no button — the layout module is text-free, so the width comes in
+/// from the one place that owns the font (the T235 rule).
+action_text_w: i32 = 0,
 /// How the displayed rows are ordered (T602). Loaded from the persisted
 /// preference when the chooser opens; saved when a column header is clicked.
 sort: chooser_session_sort.Order = chooser_session_sort.initial,
@@ -296,6 +304,7 @@ fn clear(self: *SessionRoster) void {
     self.state = .loading;
     self.scroll = 0;
     self.hover_kill = -1;
+    self.hover_action = -1;
     // The cursor belongs to the roster it was pointing at: a new machine's
     // rows are not the rows the user was walking (Mac clears `browseCursor`
     // on every highlight move, `MachineChooserView.swift:1328`).
@@ -1210,7 +1219,7 @@ pub fn paint(self: *const SessionRoster, ctx: PaintCtx, rows: []const VisibleRow
     var y = ctx.region.top - self.scroll;
     for (rows, 0..) |row, i| {
         const subs = chooser_sessions.sublineCount(row.session);
-        const l = chooser_sessions.rowLayout(m, ctx.region.left, y, ctx.region.width(), subs, self.cpu_column);
+        const l = self.layoutRow(m, ctx.region.left, y, ctx.region.width(), subs);
         y = l.card.bottom + m.row_gap;
         // Fully above or below the region: nothing to draw.
         if (l.card.bottom <= ctx.region.top or l.card.top >= ctx.region.bottom) continue;
@@ -1237,7 +1246,7 @@ pub fn headerZones(
     scale: f32,
 ) HeaderZones {
     const m = chooser_sessions.metrics(scale);
-    const l = chooser_sessions.rowLayout(m, header.left, header.top, header.width(), 0, self.cpu_column);
+    const l = self.layoutRow(m, header.left, header.top, header.width(), 0);
     return .{
         .cpu = if (self.cpu_column) .{
             .left = l.cpu.left,
@@ -1459,8 +1468,45 @@ fn paintRow(
     }
     if (old_sub) |o| _ = w32.SelectObject(hdc, o);
 
+    // Show / Resume (T1746), then Kill: Mac's trailing pair, in Mac's order.
+    if (chooser_sessions.actionLabel(row.session, row.open_locally)) |verb| {
+        if (l.action.width() > 0) drawAction(hdc, ctx, m, l.action, verb, self.hover_action == index, card_bg);
+    }
+
     // Kill: the app's one icon button, lit on hover like every other.
     drawKill(hdc, ctx, m, l.kill, hovered, card_bg);
+}
+
+/// The row's Show / Resume button (T1746). A labeled button has to read as a
+/// button at REST, where an icon button may sit bare: a word with no face is
+/// indistinguishable from the text around it. So its rest face is the §2.2
+/// hover shade of the card and its hover is the pressed shade - the same two
+/// deltas every control uses, one step firmer each, never a different hue.
+fn drawAction(
+    hdc: w32.HDC,
+    ctx: PaintCtx,
+    m: chooser_sessions.Metrics,
+    box: chooser_layout.Rect,
+    verb: []const u8,
+    hovered: bool,
+    card_bg: chooser_sessions.Rgb,
+) void {
+    const dark = chrome_theme.textOn(card_bg).r > 0x80;
+    const delta = icon_button.fillDelta(if (hovered) .pressed else .hover, dark);
+    const face: chooser_sessions.Rgb = .{
+        .r = icon_button.shadeChannel(card_bg.r, delta),
+        .g = icon_button.shadeChannel(card_bg.g, delta),
+        .b = icon_button.shadeChannel(card_bg.b, delta),
+    };
+    fillRound(hdc, box, m.action_radius, face);
+
+    const old = if (ctx.caption_font) |f| w32.SelectObject(hdc, f) else null;
+    defer if (old) |o| {
+        _ = w32.SelectObject(hdc, o);
+    };
+    _ = w32.SetTextColor(hdc, rgb(chrome_theme.textOn(face)));
+    var r = rect(box);
+    drawTextCentered(hdc, verb, &r);
 }
 
 /// One session's CPU meter: a track, its filled prefix, and the number after it
@@ -1624,6 +1670,50 @@ fn drawWith(hdc: w32.HDC, text: []const u8, r: *w32.RECT, flags: u32) void {
 // Hit testing (GUI thread)
 // ---------------------------------------------------------------------
 
+/// One card's layout as this roster draws it: the machine's CPU column and the
+/// row's Show / Resume button (T1746) both placed. Every paint and every hit
+/// test goes through here, so what is drawn and what answers the click cannot
+/// disagree about where the button is.
+pub fn layoutRow(
+    self: *const SessionRoster,
+    m: chooser_sessions.Metrics,
+    x: i32,
+    y: i32,
+    w: i32,
+    sublines: i32,
+) chooser_sessions.RowLayout {
+    const bare = chooser_sessions.rowLayout(m, x, y, w, sublines, self.cpu_column);
+    return chooser_sessions.withAction(bare, m, self.action_text_w);
+}
+
+/// The visible row whose Show / Resume button contains the client point, or
+/// null (T1746). A row with no verb (an exited session) has no button, so its
+/// slot answers nothing — the click falls through to the card.
+pub fn actionAt(
+    self: *const SessionRoster,
+    rows: []const VisibleRow,
+    region: chooser_layout.Rect,
+    scale: f32,
+    x: i32,
+    y: i32,
+) ?usize {
+    if (x < region.left or x >= region.right) return null;
+    if (y < region.top or y >= region.bottom) return null;
+
+    const m = chooser_sessions.metrics(scale);
+    var cy = region.top - self.scroll;
+    for (rows, 0..) |row, i| {
+        const subs = chooser_sessions.sublineCount(row.session);
+        const l = self.layoutRow(m, region.left, cy, region.width(), subs);
+        cy = l.card.bottom + m.row_gap;
+        if (chooser_sessions.actionLabel(row.session, row.open_locally) == null) continue;
+        if (l.action.width() <= 0) continue;
+        if (l.action.left <= x and x < l.action.right and
+            l.action.top <= y and y < l.action.bottom) return i;
+    }
+    return null;
+}
+
 /// The visible row whose Kill button contains the client point, or null. Gaps
 /// are measured to painted edges but CLICKS land on the hit box (§1.2), which
 /// is why this tests `kill_hit` and the painter draws `kill`.
@@ -1642,7 +1732,7 @@ pub fn killAt(
     var cy = region.top - self.scroll;
     for (rows, 0..) |row, i| {
         const subs = chooser_sessions.sublineCount(row.session);
-        const l = chooser_sessions.rowLayout(m, region.left, cy, region.width(), subs, self.cpu_column);
+        const l = self.layoutRow(m, region.left, cy, region.width(), subs);
         cy = l.card.bottom + m.row_gap;
         if (l.kill_hit.left <= x and x < l.kill_hit.right and
             l.kill_hit.top <= y and y < l.kill_hit.bottom) return i;
@@ -1668,7 +1758,7 @@ pub fn rowAt(
     var cy = region.top - self.scroll;
     for (rows, 0..) |row, i| {
         const subs = chooser_sessions.sublineCount(row.session);
-        const l = chooser_sessions.rowLayout(m, region.left, cy, region.width(), subs, self.cpu_column);
+        const l = self.layoutRow(m, region.left, cy, region.width(), subs);
         cy = l.card.bottom + m.row_gap;
         if (l.card.left <= x and x < l.card.right and
             l.card.top <= y and y < l.card.bottom) return i;
@@ -1701,7 +1791,7 @@ pub fn cpuAt(
     var cy = region.top - self.scroll;
     for (rows, 0..) |row, i| {
         const subs = chooser_sessions.sublineCount(row.session);
-        const l = chooser_sessions.rowLayout(m, region.left, cy, region.width(), subs, self.cpu_column);
+        const l = self.layoutRow(m, region.left, cy, region.width(), subs);
         cy = l.card.bottom + m.row_gap;
         if (row.cpu == null) continue;
         if (l.cpu.width() <= 0) continue;
