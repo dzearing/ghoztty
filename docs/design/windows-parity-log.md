@@ -34355,3 +34355,15 @@ reads are listed in `test/win32/self-spawn-audit.registry.json`. The new
 whose function also spawns, and on stale entries. Its guard row covers all of
 `src/`. Two LocalAgent tests now name the agent through
 `GHOSTTY_LOCAL_AGENT_BIN` instead of the test binary's directory.
+
+## 2026-09-26 — T981: every guard row's harness is now checked to stamp itself
+
+The card was mostly fixed already: agent-adopt got its stamping tail in
+39b03d125 (T1042), and a green run here reads `STAMPED agent-adopt`. What was
+left: the tail stamped even when section R (the real-install read-back)
+skipped, so it now stamps only on zero failures and zero R skips. And the sweep
+the card asked for is standing rather than one-off: section P of
+`test/win32/guard-due.ps1` reads every live row and fails if its harness never
+runs `update` for its own guard name. A sweep today found no other offender
+(parity-decisions and gate-negatives use the array spelling, which P5 pins).
+P3 is the negative control, the pre-T1042 agent-adopt.ps1 out of history.

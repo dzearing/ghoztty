@@ -1,10 +1,11 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-09-26T13:51:57-07:00",
-    "commit":  "9dbe3ddfb",
+    "generated":  "2026-09-26T14:39:25-07:00",
+    "commit":  "462681895",
     "uncommitted":  [
-                        "test/win32/self-spawn-audit.ps1"
+                        "test/win32/agent-adopt.ps1",
+                        "test/win32/guard-due.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -16,7 +17,7 @@
                   "test/win32/activity-selection.ps1":  "1f4bb378c0c200bb4c6900ef4ea7eb86f3611f524722cafaefecfc577ee051b5",
                   "test/win32/activity-state.ps1":  "209ae3df48c44fb7543ce13583d55b3204698531ed4a398075ca097164428c74",
                   "test/win32/activity-truncated.ps1":  "c8cd7bf4650037d2e2d4369d4b89d9faf0ab8e85c9e03a7ccc7fe26d7028098c",
-                  "test/win32/agent-adopt.ps1":  "ad623f859373a4440041eaa76c432687bd75384e9a7819a61a27ab0054d1efbd",
+                  "test/win32/agent-adopt.ps1":  "c7cc7e9ae3d3f72f0f7e413e609b489fafe8d50347ee79fa4333cea6f672913c",
                   "test/win32/agent-attach-refused.ps1":  "b4895179be0eca31e5afe9b9df2c6143848a2696add5ca355f1098a7ea23a341",
                   "test/win32/agent-autostart.ps1":  "a17c57c698a0eee06edafc0900045ad53885962d555675a63943099b9f6ae22d",
                   "test/win32/agent-first-answer.ps1":  "71579be7cba1b5c6c5f1db2a1f85376beb906fcab05e5dd5ec6133bf71b654b3",
@@ -132,7 +133,7 @@
                   "test/win32/go-loop-guard.ps1":  "107a9718639a72e0ba1c9e940b4a570fb28dde89d14293fcb7ce784055da8334",
                   "test/win32/go-loop-resume.ps1":  "cb842c3fd54701cbcfd77956a2542ca51d1f99a5d5ddd508f14b07fed656d095",
                   "test/win32/go-loop-uptime.ps1":  "2f3b0ddd2008e43ce3901790fe41aaba7fb18051b1b328feb5b8493780e8d56a",
-                  "test/win32/guard-due.ps1":  "020cd578115d4ad6db97ada114fa9fd65627993647ce13540159c39509ffe15c",
+                  "test/win32/guard-due.ps1":  "31a245c26f78ec95d949421d10106d50dbe48cc70d8a4fba9eab025de971645d",
                   "test/win32/gui-launch-command.ps1":  "f919dcf022ea99019000702d0029738ac91242a5ad464e8fab6c0731683c6c84",
                   "test/win32/gui-postmortem.ps1":  "5c63e9a8563ad9f82bb9c9888bbadbe650f41173508f0d124d83b840d4918077",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",

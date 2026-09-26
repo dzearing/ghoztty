@@ -302,10 +302,16 @@ try {
 # stamp, so it stayed DUE through every green run. A row that can only ever be
 # due is worse than no row - it is the constant red that teaches the next turn
 # to pass -NoGuardDue (found while working T1042).
-if ($script:failures -eq 0) {
+#
+# And only a run that looked at everything vouches for everything (T981): a run
+# whose section R skipped never read the real retirement back, so it scores but
+# does not stamp. This box adopted on 2026-08-31, so R asserts here.
+if ($script:failures -eq 0 -and $script:realSkipped -eq 0) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard agent-adopt -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+} elseif ($script:failures -eq 0) {
+    "  not stamped: section R skipped, so this run does not vouch for the retirement read-back"
 }
 
 # MinPass = the full-run assertion count: an abort mid-run must never score a

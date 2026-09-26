@@ -1023,6 +1023,42 @@ $rows
     Check 'O8 the shipped rdp-session row names T1256 as its known blocker' `
         ($realTableText -match "(?s)Name\s*=\s*'rdp-session'.*?KnownBlockedBy\s*=\s*'T1256'.*?Covers") ''
 
+    # --- P. every row's harness can clear its own row (T981) ---------------
+    # A row whose harness never runs `update -Guard <its name>` is due forever:
+    # a green run leaves it red, and the only way past is the -NoGuardDue hatch,
+    # which is how the hatch stops meaning anything. agent-adopt shipped that
+    # way and stayed due through every green run until T1042 added its tail.
+    # Read as text, both spellings: `update -Guard name` and the array form
+    # `'update', '-Guard', 'name'`. The name must end at a non-name character
+    # so `viewer-feedback` is not satisfied by `viewer-feedback-capture`.
+    Write-Host "`n-- P. every harness stamps its own row --"
+    function Test-HarnessStampsGuard([string]$text, [string]$name) {
+        $n = [regex]::Escape($name)
+        if ($text -notmatch '\bupdate\b') { return $false }
+        return ($text -match ("-Guard\s+'?" + $n + "(?![\w-])") -or
+                $text -match ("'-Guard',\s*'" + $n + "'"))
+    }
+    $liveRows = @([regex]::Matches($realTableText,
+        "Name\s*=\s*'([^']+)'\s*\r?\n\s*Script\s*=\s*'([^']+)'"))
+    $untailed = New-Object System.Collections.Generic.List[string]
+    foreach ($m in $liveRows) {
+        $rowName = $m.Groups[1].Value
+        $scriptPath = Join-Path $Repo $m.Groups[2].Value
+        $src = if (Test-Path -LiteralPath $scriptPath) { [System.IO.File]::ReadAllText($scriptPath) } else { '' }
+        if (-not (Test-HarnessStampsGuard $src $rowName)) { $untailed.Add("$rowName ($($m.Groups[2].Value))") }
+    }
+    Check 'P1 the sweep found the live rows (not an empty table scoring green)' ($liveRows.Count -ge 100) "rows=$($liveRows.Count)"
+    Check 'P2 every live row''s harness runs update for its own guard' ($untailed.Count -eq 0) ($untailed -join '; ')
+    # Negative controls: the check must be able to say no. agent-adopt as it
+    # stood before T1042 is the real instance, read out of history.
+    $preTail = (& git -C $Repo show '39b03d125^:test/win32/agent-adopt.ps1' 2>$null) -join "`n"
+    Check 'P3 negative control: pre-T1042 agent-adopt.ps1 is flagged as untailed' `
+        ($preTail.Length -gt 1000 -and -not (Test-HarnessStampsGuard $preTail 'agent-adopt')) "len=$($preTail.Length)"
+    Check 'P4 negative control: a tail for a longer name does not satisfy the shorter one' `
+        (-not (Test-HarnessStampsGuard "update -Guard viewer-feedback-capture -Repo x" 'viewer-feedback')) ''
+    Check 'P5 positive control: the array spelling is recognised' `
+        (Test-HarnessStampsGuard "@('-File', `$D, 'update', '-Guard', 'parity-decisions')" 'parity-decisions') ''
+
     Complete-TestBody  # T1039: the run reached the end of its body
 }
 finally {
@@ -1046,4 +1082,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -MinPass 66
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -MinPass 71
