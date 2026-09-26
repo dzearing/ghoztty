@@ -34327,3 +34327,16 @@ that sign-in writes, sign-out removes and renew rotates, was in no row at all.
 It is now covered by the relay-account row. Validation: `guard-due check`
 reported DUE after the edit, `relay-account.ps1` ALL PASS (159, no SKIP) and
 re-stamped 7 files, `guard-due.ps1` ALL PASS (113).
+
+## 2026-09-26 — T979: banner reads in the acceptance scripts no longer outrun the publish
+
+Audited every script that reads a pane banner out of `+list`. `+set-banner`
+is synchronous: its handler runs on the GUI thread and stores the text before
+replying, so a read after it cannot race. Most readers are either behind one of
+those or already polled. One real race was left, in `restore-session-dup.ps1`.
+Section C waited for the pane's OWN banner, which comes back with the manifest
+before the notice is published. It then scored "no notice in the slot" and read
+the scrollback once. It now settles on the notice's scrollback copy, bounded,
+and re-reads before scoring. B8's single scrollback read became a bounded poll
+too. Validation: `restore-session-dup.ps1` ALL PASS (17), plus the harness floor.
+The per-script verdicts are in the task file.

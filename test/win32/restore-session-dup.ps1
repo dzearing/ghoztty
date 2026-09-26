@@ -331,7 +331,17 @@ try {
     "  leaves: " + (($leaves | ForEach-Object { "$($_.window)[$($_.id.Substring(0, [Math]::Min(8, $_.id.Length)))] banner='$($_.banner)'" }) -join '; ')
     Assert "B7 the pane refused the session shows the restored-elsewhere banner" `
         ($loser.Count -eq 1 -and $loser[0].banner -match 'Session restored elsewhere')
-    $loserText = if ($loser.Count -eq 1) { Read-Tight $loser[0].id } else { '' }
+    # T979: the banner and the scrollback copy are two writes, so the first
+    # being up does not prove the second is - bounded poll, never a sleep.
+    $loserText = ''
+    if ($loser.Count -eq 1) {
+        $noticeDeadline = (Get-Date).AddSeconds(20)
+        do {
+            $loserText = Read-Tight $loser[0].id
+            if ($loserText.Contains('Nothingwasclosed;thisisafreshshell.')) { break }
+            Start-Sleep -Milliseconds 800
+        } while ((Get-Date) -lt $noticeDeadline)
+    }
     Assert "B8 ... and says so in its own scrollback, not only the banner" `
         ($loserText.Contains('Sessionrestoredelsewhere:') -and $loserText.Contains('Nothingwasclosed;thisisafreshshell.'))
     Assert "B9 ... and never with the agent-restart sentence, which would say the work was lost" `
@@ -361,11 +371,27 @@ try {
     $pairC = @($holder, 'dupsessC')
     $leavesC = @(Wait-LoserBanner -Windows $pairC -Sid $sid -Pattern ([regex]::Escape($own)))
     $loserC = @($leavesC | Where-Object { $_.sid -and $_.sid -ne $sid })
+    # T979: the pane's OWN banner comes back with the manifest, which can be a
+    # moment BEFORE the IO thread publishes the notice - so seeing it proves
+    # nothing about whether the notice has spoken yet, and C3's "no notice in
+    # the slot" and C4's scrollback read would both be scoring a pane that has
+    # not published. Settle on the notice's scrollback copy (bounded, so a
+    # missing notice still fails C4), then re-read the leaves C3 scores.
+    $loserCText = ''
+    if ($loserC.Count -eq 1) {
+        $noticeDeadline = (Get-Date).AddSeconds(40)
+        do {
+            $loserCText = Read-Tight $loserC[0].id
+            if ($loserCText.Contains('Sessionrestoredelsewhere:')) { break }
+            Start-Sleep -Milliseconds 800
+        } while ((Get-Date) -lt $noticeDeadline)
+        $leavesC = @(Wait-LoserBanner -Windows $pairC -Sid $sid -Pattern ([regex]::Escape($own)))
+        $loserC = @($leavesC | Where-Object { $_.sid -and $_.sid -ne $sid })
+    }
     "  leaves: " + (($leavesC | ForEach-Object { "$($_.window) banner='$($_.banner)'" }) -join '; ')
     Assert "C2 exactly one of the pair was refused the session" ($loserC.Count -eq 1)
     Assert "C3 the refused pane kept its OWN banner rather than the notice's" `
         ($loserC.Count -eq 1 -and $loserC[0].banner -match [regex]::Escape($own) -and $loserC[0].banner -notmatch 'restored elsewhere')
-    $loserCText = if ($loserC.Count -eq 1) { Read-Tight $loserC[0].id } else { '' }
     Assert "C4 ... and still carries the notice in its scrollback" `
         ($loserCText.Contains('Sessionrestoredelsewhere:'))
 
