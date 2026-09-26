@@ -1,0 +1,18 @@
+{
+    "guard":  "activity-help-tooltips",
+    "script":  "test/win32/activity-help-tooltips.ps1",
+    "generated":  "2026-09-25T18:42:23-07:00",
+    "commit":  "79e3d8165",
+    "uncommitted":  [
+                        "src/apprt/win32/activity_help.zig",
+                        "src/apprt/win32/activity_hover.zig",
+                        "src/apprt/win32/help_tooltip.zig",
+                        "test/win32/activity-help-tooltips.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/activity_help.zig":  "d953cfc58d9b9b5cd789fc08892e5dbfde14382b9b0479f9873d4261c921a9c5",
+                  "src/apprt/win32/activity_hover.zig":  "524b85c7a6a3de870d2434b15058e555b3b26b433b46e5cf4fe08f3d31ec6895",
+                  "src/apprt/win32/help_tooltip.zig":  "718f236b302de3de196c0d366baaf2dc129d6ef6cc975bcdbdb314cbb53586e0",
+                  "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b"
+              }
+}

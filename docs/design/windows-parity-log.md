@@ -33993,3 +33993,17 @@ module `tooltip_flags.zig` pins the values and proves the relay in process: one
 against 0x0001 (negative control run). Floor lanes are green, as are
 viewer-diff (65), viewer-feedback (107), viewer-worktree (42),
 chooser-help-tooltips (49) and every due guard.
+
+## 2026-09-25 - T1634: the Activity Monitor's control bar explains itself on hover
+
+Hovering the count, the "List truncated" badge, Show all, Kill or New Process
+now shows Mac's `.help()` words, so "4 of 321" says it is the Ghoztty-spawned
+subset and a capped table says it is capped. The chooser's comctl32 tooltip
+became `help_tooltip.zig`, generic over its child controls, and both the chooser
+and the panel now use it. `activity_help.zig` holds the words (none lane), and
+`activity_hover.zig` is the panel's state machine. It hit-tests only the drawn
+words of the badge and count, not the empty space around them. The CPU-unverified
+tip waits for T1549, which now has Mac's sentence ready. Filed T1748: Show all
+stays clickable when there is nothing to filter. New acceptance script
+`activity-help-tooltips.ps1` (ALL PASS, 26, with negatives). Floor lanes, P1-P3,
+the harness floor and every due guard are green.

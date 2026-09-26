@@ -531,6 +531,11 @@ test {
     // no-OS-imports deal.
     _ = @import("apprt/win32/activity_actions.zig");
 
+    // Pure win32 Activity Monitor hover-help text — Mac's `.help()` words for
+    // the control bar's badge, count, Show all, Kill and New Process (T1634),
+    // same no-OS-imports deal.
+    _ = @import("apprt/win32/activity_help.zig");
+
     // Pure win32 Activity Monitor machine-card model — the carousel's ordering,
     // per-card text, status dot and focus arithmetic (T296), same no-OS-imports
     // deal.

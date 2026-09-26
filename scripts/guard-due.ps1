@@ -3155,6 +3155,8 @@ $GuardTable = @(
             'src\apprt\win32\chooser_cpu.zig',
             # The meter's tooltip control moved here in T1633 (section G).
             'src\apprt\win32\chooser_tooltip.zig',
+            # ...and its plumbing into the shared control in T1634.
+            'src\apprt\win32\help_tooltip.zig',
             'test\win32\chooser-session-cpu.ps1'
         )
     },
@@ -3173,7 +3175,26 @@ $GuardTable = @(
         Covers = @(
             'src\apprt\win32\chooser_help.zig',
             'src\apprt\win32\chooser_tooltip.zig',
+            'src\apprt\win32\help_tooltip.zig',
             'test\win32\chooser-help-tooltips.ps1'
+        )
+    },
+    # The Activity Monitor control bar's HOVER HELP (T1634): Mac's `.help()`
+    # words on the count, the truncated-list badge, Show all, Kill and New
+    # Process, through the tooltip control the chooser shares. Silent by
+    # construction for the same reason as the row above, and no floor lane opens
+    # the panel. Coverage is the pure text module, the panel's hover state
+    # machine, the shared control and the harness; ActivityMonitor.zig is
+    # covered by the 'activity-monitor' row already.
+    [pscustomobject]@{
+        Name   = 'activity-help-tooltips'
+        Script = 'test\win32\activity-help-tooltips.ps1'
+        Stamp  = 'test\win32\activity-help-tooltips.stamp.json'
+        Covers = @(
+            'src\apprt\win32\activity_help.zig',
+            'src\apprt\win32\activity_hover.zig',
+            'src\apprt\win32\help_tooltip.zig',
+            'test\win32\activity-help-tooltips.ps1'
         )
     },
     # The chooser's session RESUME (T320/T620/T816): taking over a live session

@@ -69,6 +69,8 @@ const cards_mod = @import("activity_cards.zig");
 const borrow_mod = @import("activity_borrow.zig");
 const probe_mod = @import("activity_probe.zig");
 const actions = @import("activity_actions.zig");
+const activity_help = @import("activity_help.zig");
+const hover_help = @import("activity_hover.zig");
 const gauge = @import("trend_gauge.zig");
 const sample_gate = @import("sample_gate.zig");
 const utf16_text = @import("utf16_text.zig");
@@ -586,6 +588,10 @@ scroll: i32 = 0,
 hover_row: i32 = -1,
 /// True while a WM_MOUSELEAVE request is armed.
 tracking_leave: bool = false,
+/// The control bar's hover-help tooltip (T1634) - see `activity_hover.zig`.
+help_tip: hover_help.Tip = .{},
+/// The help surface under the pointer, or null.
+help_target: ?activity_help.Target = null,
 /// Thumb drag: the grab offset inside the thumb, or -1 when not dragging.
 thumb_drag_dy: i32 = -1,
 
@@ -907,6 +913,7 @@ pub fn close(self: *ActivityMonitor) void {
     self.closing = true;
 
     _ = w32.KillTimer(self.hwnd, SAMPLE_TIMER_ID);
+    hover_help.destroy(self);
 
     // The probes first (T298), and by the same rule as everything below:
     // unsubscribe before freeing, so no control-reader thread can be inside a
@@ -1161,6 +1168,10 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
                 self.syncProbes();
                 return 0;
             }
+            if (wparam == hover_help.TIMER_ID) {
+                hover_help.onTimer(self);
+                return 0;
+            }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
         WM_APP_ACTIVITY_SAMPLE => {
@@ -1226,10 +1237,19 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         },
         w32.WM_MOUSEMOVE => {
             self.onMouseMove(loWordSigned(lparam), hiWordSigned(lparam));
+            hover_help.onMouseMove(self, loWordSigned(lparam), hiWordSigned(lparam));
             return 0;
+        },
+        // A child control forwards this before its own cursor is set, so it is
+        // where the pointer ENTERING Show all / Kill / New Process is seen
+        // (T1634). The cursor itself stays DefWindowProc's call.
+        w32.WM_SETCURSOR => {
+            hover_help.onSetCursor(self, if (wparam == 0) null else @ptrFromInt(wparam));
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
         w32.WM_MOUSELEAVE => {
             self.tracking_leave = false;
+            hover_help.onMouseLeave(self);
             if (self.hover_row != -1) {
                 self.hover_row = -1;
                 _ = w32.InvalidateRect(hwnd, null, 0);

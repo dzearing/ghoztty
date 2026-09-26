@@ -1,14 +1,16 @@
 {
     "guard":  "chooser-session-cpu",
     "script":  "test/win32/chooser-session-cpu.ps1",
-    "generated":  "2026-09-25T18:26:57-07:00",
-    "commit":  "806905d53",
+    "generated":  "2026-09-25T19:01:26-07:00",
+    "commit":  "79e3d8165",
     "uncommitted":  [
-                        "src/apprt/win32/chooser_tooltip.zig"
+                        "src/apprt/win32/chooser_tooltip.zig",
+                        "src/apprt/win32/help_tooltip.zig"
                     ],
     "files":  {
                   "src/apprt/win32/chooser_cpu.zig":  "8aecf1253b878bcb951b7928f7244718e59f9ac10ae626dfb9ffddee6e7d06bd",
-                  "src/apprt/win32/chooser_tooltip.zig":  "f2606a92f961dd7fe699cce3d8f646ad01423c6b4d53ef2968c0505fc7e73342",
+                  "src/apprt/win32/chooser_tooltip.zig":  "8648ebc996620b8d7789254058438788e517f898daf717b5d2edecff35de91b2",
+                  "src/apprt/win32/help_tooltip.zig":  "718f236b302de3de196c0d366baaf2dc129d6ef6cc975bcdbdb314cbb53586e0",
                   "src/apprt/win32/SessionCpuProbe.zig":  "7df0891891508e68f8d022e8fa0245f3ac4e147a1db8f8f395b8e7e9f13e919f",
                   "test/win32/chooser-session-cpu.ps1":  "67360796401c0381e4a9f09603a7149d1db077b8cb6c6f04124f463ef168e194"
               }

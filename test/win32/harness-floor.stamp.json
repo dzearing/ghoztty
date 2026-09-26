@@ -1,15 +1,16 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-09-25T17:58:06-07:00",
-    "commit":  "99030094f",
+    "generated":  "2026-09-25T19:14:06-07:00",
+    "commit":  "79e3d8165",
     "uncommitted":  [
-                        "test/win32/chooser-help-tooltips.ps1"
+                        "test/win32/activity-help-tooltips.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
                   "scripts/lib/HarnessFloor.ps1":  "9806523e4e2aa42ca8e152eb03dc1b6d1f62f01236ed97b0f4b12cbe5b6e3af0",
                   "scripts/vt-escape-scan.ps1":  "a23758e33821d194e040b24ac5e9811b705f53c5fc0313633aa1478f11567ced",
+                  "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",
                   "test/win32/activity-monitor-probe-fail.ps1":  "94e258e9ba979ecf0416ba87f088e273d8326d6d37ce3404b3f111b4cba250e6",
