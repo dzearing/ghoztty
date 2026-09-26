@@ -34104,3 +34104,15 @@ user row built its `user:<title>` history key in its own stack buffer.
 command the user wrote always shows, even when the registry has a row for the
 same action. New arms O6 and O7 in `test/win32/palette-order.ps1` pass, and a
 build with the old cap and no dedupe fails both. Floor lanes are green.
+
+## 2026-09-26 - T1674: the update dot turns amber on a window nobody touches
+
+The dot's colour is worked out when the chrome paints, and the only thing that
+forced a paint on its own was a new offer. A re-check that found the same
+version stayed quiet and repainted nothing, so an idle window could stay green a
+day past the two-day line. The quiet arm now posts a refresh to the GUI thread
+(`refreshOutstandingOffer`), which repaints and logs the rung, and the paint
+logs each colour change it actually draws. New scenario 14 of
+`test/win32/update-check.ps1` seeds an offer 9 s short of the line and watches
+an untouched window go amber after a suppressed re-check: ALL PASS (59). With
+the refresh disabled the scenario fails twice and the window never paints amber.
