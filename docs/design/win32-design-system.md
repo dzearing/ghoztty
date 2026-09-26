@@ -339,8 +339,9 @@ Nothing else. A radius is a size signal — bigger surface, bigger radius — so
 own height, so its ends are semicircles at every scale rather than a rounded
 rect at some of them. It applies to the small mark-plus-label chips that report
 a state rather than offering a command: the chooser's session badges
-(`chooser_sessions`), and the remote connection pill in the caption band
-(`remote_pill`, T367). Their height is likewise derived and not picked — one
+(`chooser_sessions`), the machine list's per-row session-count capsule
+(`chooser_rows.countBadge`, T1745 — the same chip, asserted equal), and the
+remote connection pill in the caption band (`remote_pill`, T367). Their height is likewise derived and not picked — one
 caption line box plus the 4 DIP step — so the chip follows the type ramp
 instead of pinning a number that stops matching its text. A chip on the fixed
 scale would read as a small button, and these are chips first: the connection

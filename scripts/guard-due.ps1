@@ -3192,6 +3192,9 @@ $GuardTable = @(
             'src\apprt\win32\chooser_help.zig',
             'src\apprt\win32\chooser_tooltip.zig',
             'src\apprt\win32\help_tooltip.zig',
+            # The machine rows' session-count capsule and its tooltip (T1745,
+            # section G): the per-machine count cache nothing else runs.
+            'src\apprt\win32\chooser_row_counts.zig',
             'test\win32\chooser-help-tooltips.ps1'
         )
     },

@@ -11,6 +11,7 @@
 #     - the CPU / Name column headers "Sort by cpu" / "Sorted by name, ascending - click to reverse"
 #     - the signed-in email + monogram "Signed in as <email>"
 #     - a machine row's status dot     "Online" / "Offline" / "Checking status"
+#     - a machine row's count capsule  "N active session(s)" (T1745)
 #   real child buttons (a subclass tool comctl32 shows itself)
 #     - New Window    "Open a new window on <This PC | machine>"
 #     - Restore All   "Rebuild this machine's full window layout here"
@@ -37,6 +38,13 @@
 #   F  the CPU meter still says T812's words through the generalized plumbing
 #      (the full CPU suite is chooser-session-cpu.ps1; this is the smoke check
 #      that the shared state machine did not lose it)
+#   G  the machine rows' session-count capsule (T1745, Mac's `countBadge`):
+#      the Local row records the roster's LISTED count (`chooser row count
+#      key=local count=N`, the same number as the detail subtitle), its capsule
+#      says "N active sessions", and a session opened with the chooser up moves
+#      the count through a PUSHED roster. Negative control: the remembered
+#      machine, whose roster never loads, records no count and its row has no
+#      capsule to explain.
 #
 # WHY A LOG LINE IS AN ORACLE. Hover TIMING cannot be observed on the background
 # test desktop: no real cursor rests anywhere, so TrackMouseEvent posts a leave
@@ -363,6 +371,48 @@ try {
     Move-Pointer $listH ([int]($dotX * 5)) ($rowH + [int]($rowH / 2))
     Assert (Wait-HelpDropped 'machine-status row=1') 'E moving off the status dot drops its tooltip'
 
+    # --- G: the machine rows' session-count capsule (T1745) -----------------
+    # Mac's `countBadge`: each machine row carries its loaded session count in a
+    # capsule at the trailing edge, the SAME number the detail subtitle shows.
+    # The rows are owner-drawn, so the count is read from the app's own
+    # `chooser row count key=... count=N` line and held against the roster's
+    # `listing N session(s)` line from the same adoption.
+    Write-Host ''
+    Write-Host '2b. each machine row carries its session count (T1745)'
+    $countPat = 'chooser row count key=local count=(\d+)'
+    Assert (Wait-LogCount $countPat 1 10000) 'G the Local row recorded a session count'
+    $localCount = -1
+    $cl = @(Select-String -Path $errlog -Pattern $countPat -ErrorAction SilentlyContinue)
+    if ($cl.Count -gt 0 -and $cl[-1].Line -match $countPat) { $localCount = [int]$Matches[1] }
+    $listed = -1
+    $ll = @(Select-String -Path $errlog -Pattern 'chooser roster: listing (\d+) session' -ErrorAction SilentlyContinue)
+    if ($ll.Count -gt 0 -and $ll[-1].Line -match 'listing (\d+) session') { $listed = [int]$Matches[1] }
+    Assert ($localCount -ge 2) "G the Local row's count is the two live sessions ($localCount)"
+    Assert ($localCount -eq $listed) "G the capsule's count is the roster's listed count (capsule=$localCount listed=$listed)"
+
+    # The capsule's hit box: it ends `text_pad_right` (8 DIP) in from the row's
+    # right edge and is at least one caption chip (16 DIP) wide, so 12 DIP in
+    # is inside it at every scale.
+    $listClient = Get-TestWindowRect -Window $listH -Client
+    $capX = $listClient.Width - (Get-TestChromeDip 8 $scale) - (Get-TestChromeDip 4 $scale)
+    $sWord = if ($localCount -eq 1) { 'session' } else { 'sessions' }
+    Test-HelpHover 'G the Local row''s count capsule' 'session-count row=0' "$localCount active $sWord" `
+        { Move-Pointer $listH $capX ([int]($rowH / 2)) }
+    Move-Pointer $listH ([int]($dotX * 5)) ([int]($rowH / 2))
+    Assert (Wait-HelpDropped 'session-count row=0') 'E moving off the count capsule drops its tooltip'
+
+    # NEGATIVE CONTROL: the remembered machine's roster has never loaded (its
+    # relay refuses every dial), so its row has no count and no capsule - the
+    # same point on its row derives nothing, and no count was ever recorded.
+    $beforeCap = Get-LastLineNo 'chooser help tooltip target=session-count'
+    Move-Pointer $listH $capX ($rowH + [int]($rowH / 2))
+    Start-Sleep -Seconds 1
+    Assert ((Get-LastLineNo 'chooser help tooltip target=session-count') -eq $beforeCap) `
+        'E a machine whose roster never loaded has no capsule to explain'
+    Assert ((Count-LogLines 'chooser row count key=t1633-a count=') -eq 0) `
+        'E no count was recorded for the never-loaded machine'
+    Move-Pointer $listH ([int]($dotX * 5)) ([int]($rowH / 2))
+
     # --- F: the CPU meter still speaks through the shared plumbing ----------
     Write-Host ''
     Write-Host '3. the CPU meter (T812) still explains itself'
@@ -438,6 +488,37 @@ try {
     # The track tool the painted surfaces share, plus New Window, Restore All,
     # Activity and the management button.
     Assert ($best -eq 5) "D the chooser's tooltip carries the track tool + four button tools (tool counts: $($counts -join ','))"
+
+    # --- G: the count follows a PUSHED roster (T1745) ------------------------
+    # Back onto the Local row, then open one more session elsewhere with the
+    # chooser still up: the agent pushes the new roster (T710), and the Local
+    # row's capsule must move with it without anybody re-selecting anything.
+    Write-Host ''
+    Write-Host '6. the Local row''s count follows a roster push (T1745)'
+    [void](Send-TestControlKey -Control $chooser -Key Up)
+    Start-Sleep -Milliseconds 1500
+    $pushedBefore = Count-LogLines 'chooser roster: loaded \d+ session\(s\) target=local device=- pushed=1'
+    $countLineBefore = Get-LastLineNo 'chooser row count key=local count='
+    & $Exe +split --direction=down 2>$null | Out-Null
+    $want = $localCount + 1
+    $moved = -1
+    $waited = 0
+    while ($waited -lt 15000) {
+        $m = @(Select-String -Path $errlog -Pattern $countPat -ErrorAction SilentlyContinue)
+        if ($m.Count -gt 0 -and $m[-1].LineNumber -gt $countLineBefore -and $m[-1].Line -match $countPat) {
+            $moved = [int]$Matches[1]
+            if ($moved -eq $want) { break }
+        }
+        Start-Sleep -Milliseconds 250
+        $waited += 250
+    }
+    Assert ($moved -eq $want) "G the Local row's count moved with the new session (want $want, got $moved)"
+    Assert ((Count-LogLines 'chooser roster: loaded \d+ session\(s\) target=local device=- pushed=1') -gt $pushedBefore) `
+        'G the new count arrived on a PUSHED roster'
+    $want2 = "$want active sessions"
+    Test-HelpHover 'G the capsule''s words follow the pushed count' 'session-count row=0' $want2 `
+        { Move-Pointer $listH $capX ([int]($rowH / 2)) }
+    Move-Pointer $listH ([int]($dotX * 5)) ([int]($rowH / 2))
 
     Assert (Test-TestWindowResponsive -Window $chooser) 'the chooser still answers after the whole drive'
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'the app survived the whole drive'

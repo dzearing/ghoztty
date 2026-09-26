@@ -10,10 +10,10 @@
 //!
 //! Mac surfaces with NO Windows counterpart get no string here, on purpose — a
 //! sentence for a control that does not exist is dead text nobody can test by
-//! use (T1633 records each as n/a with its reason):
+//! use (T1633 records each as n/a with its reason). The machine row's
+//! session-count capsule was one until T1745 gave the win32 rows the capsule;
+//! it has its sentence below (`sessionCount`). What is left:
 //!
-//! - the machine row's session-count capsule (`countBadge`) — the win32 rows
-//!   carry no count badge;
 //! - a session row's "Show" / "Resume" buttons — a win32 session card IS the
 //!   resume affordance (double-click / Return), it has no per-row button.
 
@@ -48,6 +48,9 @@ pub const Target = union(enum) {
     account,
     /// A machine row's status dot. Index into the machine LIST.
     machine_status: usize,
+    /// A machine row's session-count capsule (T1745). Index into the machine
+    /// LIST.
+    session_count: usize,
 
     pub fn eql(a: Target, b: Target) bool {
         return std.meta.eql(a, b);
@@ -59,7 +62,18 @@ pub const Target = union(enum) {
     pub fn isControl(self: Target) bool {
         return switch (self) {
             .new_window, .restore_all, .activity, .manage => true,
-            .cpu, .end_session, .sort_header, .account, .machine_status => false,
+            .cpu, .end_session, .sort_header, .account, .machine_status, .session_count => false,
+        };
+    }
+
+    /// Whether this surface is painted inside the machine LISTBOX, whose own
+    /// mouse tracking owns its tip - so the list's leave drops it and the
+    /// dialog's leave (which also fires when the pointer enters the list) must
+    /// not.
+    pub fn inMachineList(self: Target) bool {
+        return switch (self) {
+            .machine_status, .session_count => true,
+            else => false,
         };
     }
 
@@ -75,6 +89,7 @@ pub const Target = union(enum) {
             .manage => "manage",
             .account => "account",
             .machine_status => "machine-status",
+            .session_count => "session-count",
         };
     }
 
@@ -83,7 +98,7 @@ pub const Target = union(enum) {
     /// `sort-header key=cpu`, `new-window`.
     pub fn describe(self: Target, buf: []u8) []const u8 {
         return switch (self) {
-            .cpu, .end_session, .machine_status => |i| std.fmt.bufPrint(
+            .cpu, .end_session, .machine_status, .session_count => |i| std.fmt.bufPrint(
                 buf,
                 "{s} row={d}",
                 .{ self.kind(), i },
@@ -152,6 +167,13 @@ pub fn sortHeader(
 /// same three words the win32 detail pane already uses for presence.
 pub fn machineStatus(presence: chooser_rows.Presence) []const u8 {
     return presence.label();
+}
+
+/// A machine row's session-count capsule. Mac `:247`,
+/// `"\(n) active session\(n == 1 ? "" : "s")"`.
+pub fn sessionCount(buf: []u8, n: usize) []const u8 {
+    const unit = if (n == 1) "session" else "sessions";
+    return std.fmt.bufPrint(buf, "{d} active {s}", .{ n, unit }) catch buf[0..0];
 }
 
 /// Whether a point `x` pixels from a machine row's left edge is on the row's
@@ -291,6 +313,31 @@ test "Target: only the real child controls are shown by comctl32" {
     try testing.expect(!(Target{ .sort_header = .name }).isControl());
     try testing.expect(!(Target{ .account = {} }).isControl());
     try testing.expect(!(Target{ .machine_status = 1 }).isControl());
+    try testing.expect(!(Target{ .session_count = 0 }).isControl());
+}
+
+test "Target: only the machine list's own surfaces belong to the list's tracking" {
+    try testing.expect((Target{ .machine_status = 1 }).inMachineList());
+    try testing.expect((Target{ .session_count = 0 }).inMachineList());
+    try testing.expect(!(Target{ .cpu = 0 }).inMachineList());
+    try testing.expect(!(Target{ .account = {} }).inMachineList());
+    try testing.expect(!(Target{ .new_window = {} }).inMachineList());
+}
+
+test "Target: a row's count capsule is not its status dot, nor another row's capsule" {
+    const a: Target = .{ .session_count = 0 };
+    try testing.expect(a.eql(.{ .session_count = 0 }));
+    try testing.expect(!a.eql(.{ .session_count = 1 }));
+    try testing.expect(!a.eql(.{ .machine_status = 0 }));
+}
+
+test "sessionCount is Mac's words, singular and plural" {
+    var buf: [max_len]u8 = undefined;
+    try testing.expectEqualStrings("1 active session", sessionCount(&buf, 1));
+    try testing.expectEqualStrings("2 active sessions", sessionCount(&buf, 2));
+    try testing.expectEqualStrings("12 active sessions", sessionCount(&buf, 12));
+    var tiny: [3]u8 = undefined;
+    try testing.expectEqualStrings("", sessionCount(&tiny, 2));
 }
 
 test "Target.describe is the oracle's one-token-run spelling" {
@@ -298,6 +345,7 @@ test "Target.describe is the oracle's one-token-run spelling" {
     try testing.expectEqualStrings("end-session row=2", (Target{ .end_session = 2 }).describe(&buf));
     try testing.expectEqualStrings("sort-header key=cpu", (Target{ .sort_header = .cpu }).describe(&buf));
     try testing.expectEqualStrings("machine-status row=1", (Target{ .machine_status = 1 }).describe(&buf));
+    try testing.expectEqualStrings("session-count row=0", (Target{ .session_count = 0 }).describe(&buf));
     try testing.expectEqualStrings("new-window", (Target{ .new_window = {} }).describe(&buf));
     try testing.expectEqualStrings("account", (Target{ .account = {} }).describe(&buf));
 }

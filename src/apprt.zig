@@ -491,6 +491,12 @@ test {
     // word for word (T1633), same no-OS-imports deal.
     _ = @import("apprt/win32/chooser_help.zig");
 
+    // Pure win32 machine-chooser per-machine session counts — what each machine
+    // row's count capsule says, keyed by machine and kept across selection
+    // changes the way Mac caches a roster per machine (T1745), same
+    // no-OS-imports deal.
+    _ = @import("apprt/win32/chooser_row_counts.zig");
+
     // Pure win32 machine connection-pool bookkeeping — endpoint keying, the
     // lease refcount and the re-dial policy behind one warm connection per
     // remote machine (T461), same no-OS-imports deal.

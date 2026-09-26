@@ -68,6 +68,7 @@ const chooser_menu = @import("chooser_menu.zig");
 const chooser_sessions = @import("chooser_sessions.zig");
 const chooser_cpu = @import("chooser_cpu.zig");
 const chooser_help = @import("chooser_help.zig");
+const chooser_row_counts = @import("chooser_row_counts.zig");
 const chooser_tooltip = @import("chooser_tooltip.zig");
 const dial_failure = @import("dial_failure.zig");
 const text_search = @import("text_search.zig");
@@ -334,6 +335,13 @@ id: u64,
 /// The selected machine's live sessions (T318). Only the Local row has one
 /// today; a remote machine's roster comes over its own transport in T319.
 roster: SessionRoster,
+
+/// Every machine's last LOADED session count, keyed by machine (T1745) - what
+/// each list row's count capsule shows. The roster above is only ever the
+/// selected machine's, so this is where a machine browsed earlier keeps its
+/// count after the selection moves on, the way Mac caches a roster per machine.
+/// Written by `noteRowCount` after every adoption; read by `drawRow`.
+row_counts: chooser_row_counts.Cache = .{},
 
 /// This chooser's borrow on the SELECTED remote machine's warm connection
 /// (T461), or null when the selection is Local, empty, or signed out. It follows
@@ -2144,14 +2152,78 @@ fn detailSubtitle(
     base: []const u8,
 ) []const u8 {
     _ = row;
-    if (self.roster.state != .loaded) return base;
-
-    var rows: [SessionRoster.max_rows]SessionRoster.VisibleRow = undefined;
-    const visible = self.roster.visible(self.window.app, &rows);
+    const n = self.rosterCount() orelse return base;
     var count_buf: [32]u8 = undefined;
-    const count = chooser_sessions.countLabel(&count_buf, visible.len);
+    const count = chooser_sessions.countLabel(&count_buf, n);
     if (base.len == 0) return std.fmt.bufPrint(buf, "{s}", .{count}) catch base;
     return std.fmt.bufPrint(buf, "{s} - {s}", .{ count, base }) catch base;
+}
+
+/// The selected machine's session count as the detail subtitle states it, or
+/// null until its roster has LOADED. ONE computation for both places the number
+/// is shown - the subtitle and the machine row's count capsule (T1745) - so the
+/// two can never disagree: Mac feeds both from `actionableCount(for:)`.
+fn rosterCount(self: *const MachineChooser) ?usize {
+    if (self.roster.state != .loaded) return null;
+    var rows: [SessionRoster.max_rows]SessionRoster.VisibleRow = undefined;
+    return self.roster.visible(self.window.app, &rows).len;
+}
+
+/// Record what the roster now says about the machine it is pointed at in the
+/// per-machine count cache (T1745), and repaint the list when that moved a
+/// capsule. Called after every adoption - fetched, pushed, a pool verdict, an
+/// optimistic kill - which are exactly the moments `rosterCount` can change.
+///
+/// Loaded records the count; a failure (`failed`, `unauthorized`,
+/// `incompatible`) clears it, because Mac hides the capsule on failure; loading
+/// leaves the last loaded count standing, as Mac's cached roster does.
+///
+/// Also the acceptance oracle: the rows are owner-drawn, so a script cannot
+/// read a capsule back, and says `chooser row count key=<local|device> count=N`
+/// / `... cleared` instead - only on a change, so a refetch that found the same
+/// number is silent.
+fn noteRowCount(self: *MachineChooser) void {
+    const key = chooser_row_counts.keyFor(self.roster.target) orelse return;
+    const change: chooser_row_counts.Change = switch (self.roster.state) {
+        .loaded => blk: {
+            const n = self.rosterCount() orelse return;
+            const c = self.row_counts.set(key, n);
+            if (c == .changed) log.info("chooser row count key={s} count={d}", .{ key.name(), n });
+            break :blk c;
+        },
+        .failed, .unauthorized, .incompatible => blk: {
+            const c = self.row_counts.clear(key);
+            if (c == .changed) log.info("chooser row count key={s} cleared", .{key.name()});
+            break :blk c;
+        },
+        .loading => .unchanged,
+    };
+    if (change == .changed) _ = w32.InvalidateRect(self.list, null, 0);
+}
+
+/// The count-cache key for list row `row`.
+fn rowKey(self: *const MachineChooser, row: Row) ?chooser_row_counts.Key {
+    return switch (row) {
+        .local => .local,
+        .device => |i| if (i < self.devices.len) .{ .device = self.devices[i].id } else null,
+    };
+}
+
+/// List row `idx`'s count capsule on a row `row_w` pixels wide, with the number
+/// it shows - or null when that row shows none (never loaded, failed, zero, or
+/// no room). The painter and the hover hit test both ask HERE, so what is drawn
+/// and what answers the pointer are one measurement.
+const RowBadge = struct { box: chooser_rows.CountBadge, n: usize };
+
+fn rowBadge(self: *const MachineChooser, idx: usize, row_w: i32) ?RowBadge {
+    if (idx >= self.row_count) return null;
+    const key = self.rowKey(self.rows[idx]) orelse return null;
+    const n = chooser_row_counts.shown(self.row_counts.get(key)) orelse return null;
+    var buf: [24]u8 = undefined;
+    const text_w = self.measureWith(self.subtitle_font, chooser_row_counts.text(&buf, n));
+    const m = chooser_rows.rowMetrics(self.window.scale);
+    const box = chooser_rows.countBadge(m, row_w, text_w) orelse return null;
+    return .{ .box = box, .n = n };
 }
 
 /// Paint the roster region for the selected row. Every row has one since T319 —
@@ -2210,6 +2282,8 @@ pub fn onSessions(app: *App, res: *SessionRoster.Result) void {
             // keeps `loaded` (showing the last known list beats blanking it),
             // and that stale list is the very symptom this recovers from.
             chooser.roster.retryDeadPool(app, res.dead_entry);
+            // T1745: the machine row's count capsule follows the same adoption.
+            chooser.noteRowCount();
             chooser.refreshSessions();
             // The session count in the identity subtitle lives in the band
             // (T602) and just changed with the roster.
@@ -2262,6 +2336,10 @@ fn syncRoster(self: *MachineChooser) void {
     };
     const cpu_moved = self.retargetStreams(conn);
     var changed = self.roster.show(self.window.app, self.id, target, remote);
+    // T1745: `show` can resolve a machine synchronously - no credential, or a
+    // fetch that could not start - and that failure hides its count capsule
+    // just as a landed one does.
+    self.noteRowCount();
     if (self.syncCpuColumn() or cpu_moved) changed = true;
     if (changed) self.refreshSessions();
 }
@@ -2347,6 +2425,9 @@ pub fn onRosterPush(app: *App, chooser_id: u64) void {
         // open shows, which is the only evidence a rename ever reaches the list.
         chooser.roster.logOrphans(app);
         chooser.roster.logListed(app);
+        // T1745: and so did the machine row's count capsule - this is how a
+        // session opened elsewhere moves the badge live.
+        chooser.noteRowCount();
         chooser.refreshSessions();
         // The session count in the identity subtitle (T602) is derived from the
         // roster, so it moved with it.
@@ -2436,6 +2517,9 @@ fn onPoolChange(
         self.push.forget();
     }
     if (self.syncCpuColumn()) changed = true;
+    // T1745: a pool verdict can fail the roster (unreachable, signed out,
+    // incompatible), which takes that machine's count capsule away.
+    self.noteRowCount();
     if (changed) self.refreshSessions();
 }
 
@@ -2919,7 +3003,14 @@ fn drawRow(self: *MachineChooser, dis: *const w32.DRAWITEMSTRUCT) void {
     drawGlyph(hdc, r, m, text.glyph, surface);
 
     _ = w32.SetBkMode(hdc, w32.TRANSPARENT);
-    const text_right = r.right - m.text_pad_right;
+    var text_right = r.right - m.text_pad_right;
+
+    // The session-count capsule at the trailing edge (T1745, Mac's
+    // `countBadge`). Before the text, because the text stops where it starts.
+    if (self.rowBadge(@intCast(idx), r.right - r.left)) |badge| {
+        text_right = r.left + badge.box.text_right;
+        self.drawCountBadge(hdc, r, badge, surface);
+    }
 
     var title_rect: w32.RECT = .{
         .left = r.left + m.text_x,
@@ -2942,6 +3033,55 @@ fn drawRow(self: *MachineChooser, dis: *const w32.DRAWITEMSTRUCT) void {
         drawTextUtf8(hdc, text.subtitle, &sub_rect);
         if (old) |o| _ = w32.SelectObject(hdc, o);
     }
+}
+
+/// Paint a row's count capsule: Mac's secondary-at-18% capsule holding the
+/// number in caption, centred.
+fn drawCountBadge(
+    self: *MachineChooser,
+    hdc: w32.HDC,
+    r: w32.RECT,
+    badge: RowBadge,
+    surface: chooser_rows.Rgb,
+) void {
+    const b = badge.box;
+    const fill = chooser_rows.countFill(surface);
+    const brush = w32.CreateSolidBrush(rgb(fill));
+    const pen = w32.CreatePen(w32.PS_SOLID, 1, rgb(fill));
+    if (brush != null and pen != null) {
+        const old_brush = w32.SelectObject(hdc, brush);
+        const old_pen = w32.SelectObject(hdc, pen);
+        _ = w32.RoundRect(
+            hdc,
+            r.left + b.left,
+            r.top + b.top,
+            r.left + b.right,
+            r.top + b.bottom,
+            b.radius * 2,
+            b.radius * 2,
+        );
+        _ = w32.SelectObject(hdc, old_brush);
+        _ = w32.SelectObject(hdc, old_pen);
+    }
+    if (brush) |x| _ = w32.DeleteObject(x);
+    if (pen) |x| _ = w32.DeleteObject(x);
+
+    var buf: [24]u8 = undefined;
+    var text_rect: w32.RECT = .{
+        .left = r.left + b.left,
+        .top = r.top + b.top,
+        .right = r.left + b.right,
+        .bottom = r.top + b.bottom,
+    };
+    const old = if (self.subtitle_font) |f| w32.SelectObject(hdc, f) else null;
+    _ = w32.SetTextColor(hdc, rgb(chooser_rows.countInk(surface)));
+    drawTextUtf8Aligned(
+        hdc,
+        chooser_row_counts.text(&buf, badge.n),
+        &text_rect,
+        w32.DT_CENTER | w32.DT_SINGLELINE | w32.DT_VCENTER | w32.DT_NOPREFIX,
+    );
+    if (old) |o| _ = w32.SelectObject(hdc, o);
 }
 
 /// One line of ellipsized, vertically centered UTF-8 text.
@@ -3102,15 +3242,16 @@ fn listWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(
             const row: i32 = if (outside) -1 else @intCast(hit & 0xFFFF);
             const valid = row >= 0 and @as(usize, @intCast(row)) < self.row_count;
             self.setHover(if (valid) row else -1);
-            // A machine row's status dot explains itself (T1633). The list
-            // owns this pointer, so the list decides the tip.
-            self.setHelpTarget(if (valid) self.statusDotAt(@intCast(row), loWordSigned(lparam)) else null);
+            // A machine row's status dot explains itself (T1633), and so does
+            // its session-count capsule (T1745). The list owns this pointer,
+            // so the list decides the tip.
+            self.setHelpTarget(if (valid) self.listHelpAt(@intCast(row), loWordSigned(lparam)) else null);
         },
         w32.WM_MOUSELEAVE => {
             self.tracking_leave = false;
             self.setHover(-1);
             if (self.help_target) |t| {
-                if (t == .machine_status) self.setHelpTarget(null);
+                if (t.inMachineList()) self.setHelpTarget(null);
             }
         },
         // T312: the selection WEAKENS when the list stops being the focused
@@ -3412,7 +3553,7 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
             // fires when the pointer enters a child, and a button's or a
             // status dot's tip belongs to that child's own tracking.
             if (self.help_target) |t| {
-                if (!t.isControl() and t != .machine_status) self.setHelpTarget(null);
+                if (!t.isControl() and !t.inMachineList()) self.setHelpTarget(null);
             }
             return 0;
         },
@@ -3625,6 +3766,23 @@ fn accountHelpHit(self: *MachineChooser, x: i32, y: i32) bool {
     return false;
 }
 
+/// The help target at list-client `x` on machine-list row `row`: its status
+/// dot, else its count capsule, else nothing.
+fn listHelpAt(self: *const MachineChooser, row: usize, x: i32) ?chooser_help.Target {
+    return self.statusDotAt(row, x) orelse self.countBadgeAt(row, x);
+}
+
+/// The count capsule's help target for machine-list row `row` at list-client
+/// `x`, or null - a row with no capsule has nothing to explain (T1745).
+fn countBadgeAt(self: *const MachineChooser, row: usize, x: i32) ?chooser_help.Target {
+    if (row >= self.row_count) return null;
+    var r: w32.RECT = undefined;
+    if (w32.SendMessageW(self.list, w32.LB_GETITEMRECT, row, @bitCast(@intFromPtr(&r))) < 0) return null;
+    const badge = self.rowBadge(row, r.right - r.left) orelse return null;
+    if (!chooser_rows.countBadgeHit(badge.box, x - r.left)) return null;
+    return .{ .session_count = row };
+}
+
 /// The status dot's help target for machine-list row `row` at list-client
 /// `x`, or null — the Local row has no dot, and neither does anything past it.
 fn statusDotAt(self: *const MachineChooser, row: usize, x: i32) ?chooser_help.Target {
@@ -3715,6 +3873,14 @@ fn helpTextFor(self: *MachineChooser, t: chooser_help.Target, out: []u8) ?[]cons
                 .local => null,
                 .device => |i| chooser_help.machineStatus(self.presence(i)),
             };
+        },
+        // The number on the capsule, read at the same place the capsule reads
+        // it - so the words and the painted number cannot disagree.
+        .session_count => |row| blk: {
+            if (row >= self.row_count) break :blk null;
+            const key = self.rowKey(self.rows[row]) orelse break :blk null;
+            const n = chooser_row_counts.shown(self.row_counts.get(key)) orelse break :blk null;
+            break :blk chooser_help.sessionCount(out, n);
         },
     };
 }
@@ -3897,6 +4063,13 @@ fn helpAnchor(self: *MachineChooser, t: chooser_help.Target) ?w32.POINT {
             const m = chooser_rows.rowMetrics(scale);
             const dot_left = r.left + m.status_cx - @divTrunc(m.dot_d, 2);
             return toScreen(self.list, dot_left, r.top + m.status_cy + @divTrunc(m.dot_d, 2) + gap);
+        },
+        .session_count => |row| {
+            if (row >= self.row_count) return null;
+            var r: w32.RECT = undefined;
+            if (w32.SendMessageW(self.list, w32.LB_GETITEMRECT, row, @bitCast(@intFromPtr(&r))) < 0) return null;
+            const badge = self.rowBadge(row, r.right - r.left) orelse return null;
+            return toScreen(self.list, r.left + badge.box.left, r.top + badge.box.bottom + gap);
         },
         .new_window, .restore_all, .activity, .manage => return null,
     }
@@ -4449,6 +4622,9 @@ fn confirmKill(self: *MachineChooser, row: SessionRoster.VisibleRow) void {
     log.info("chooser roster: ending session id={s}", .{id});
     self.roster.markKilled(id);
     self.roster.hover_kill = -1;
+    // The optimistic hide drops the subtitle's count; the row's capsule is the
+    // same number (T1745).
+    self.noteRowCount();
     self.refreshSessions();
     self.roster.fetch(window.app, self.id, id);
 }

@@ -34198,3 +34198,19 @@ of Mac's cmd+[ ] would fire when an AltGr layout types a bracket). Mac and
 Linux unchanged. Audited the other Windows-key defaults (super+ctrl+[ ],
 super+ctrl+shift+arrows, super+ctrl+shift+j): none is a documented Windows
 shortcut. New Windows unit test (negative control red first); floor lanes green.
+
+
+## 2026-09-26 - T1745: the machine chooser shows each machine's session count, as Mac does
+
+The chooser's machine list now carries Mac's `countBadge`: a small capsule at
+each row's trailing edge with that machine's active-session count, shown once
+its roster has loaded and hidden while loading, at zero, or after a failed load.
+The Windows chooser keeps one roster (the selected machine's), so a new
+per-machine cache (`chooser_row_counts.zig`) records the count after every
+adoption; a machine browsed earlier keeps its last count, as Mac's per-key
+roster cache does. The count and the detail subtitle now come from one function,
+so they cannot disagree. Hover says "N active session(s)". Unit tests for the
+cache and the capsule geometry; `chooser-help-tooltips.ps1` section G proves the
+logged count, the tooltip, a push moving it 2 -> 3, and a never-loaded negative
+control (ALL PASS, 61). Floor lanes and the harness lane green. Filed T1759
+(remote and clearing paths not driven on the box).

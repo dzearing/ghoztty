@@ -239,6 +239,15 @@ pub const RowMetrics = struct {
     /// sits, so the rim stays concentric with the pill instead of squaring off
     /// inside a rounded shape.
     focus_ring_radius: i32,
+    /// The session-count capsule at the row's trailing edge (T1745, Mac's
+    /// `countBadge`). A STATUS CHIP by design system §3.1's named exception, so
+    /// it is the session badges' chip exactly: one caption line plus `xs` above
+    /// and below (`count_h`), `sm` of padding either side of the number, and a
+    /// radius of half its height. `count_gap` is what the text column gives up
+    /// before it — `sm`, the default control-to-control gap.
+    count_h: i32,
+    count_pad_x: i32,
+    count_gap: i32,
 };
 
 fn px(v: f32, scale: f32) i32 {
@@ -335,7 +344,67 @@ pub fn rowMetrics(scale: f32) RowMetrics {
         .focus_ring_w = ring_w,
         .focus_path_inset = path_inset,
         .focus_ring_radius = @max(fill_radius - path_inset, 0),
+        .count_h = type_ramp.caption(scale).height + px(4, scale),
+        .count_pad_x = px(4, scale),
+        .count_gap = px(4, scale),
     };
+}
+
+/// Where a row's session-count capsule sits (T1745), relative to the row rect
+/// like every `RowMetrics` field.
+pub const CountBadge = struct {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+    /// Half the height: a capsule at every scale.
+    radius: i32,
+    /// Where the title and subtitle must now stop, so they ellipsize before the
+    /// capsule instead of running under it.
+    text_right: i32,
+
+    pub fn width(self: CountBadge) i32 {
+        return self.right - self.left;
+    }
+
+    pub fn height(self: CountBadge) i32 {
+        return self.bottom - self.top;
+    }
+};
+
+/// The capsule for a number `text_w` pixels wide on a row `row_w` pixels wide,
+/// or null when there is nothing to hold (no measured text) or no room for it
+/// right of the text column's left edge. Pure — tested.
+///
+/// It takes the text column's own trailing pad, so the row's right-hand rhythm
+/// is unchanged by it: the capsule ends where the text used to. It is centred on
+/// the ROW (Mac's HStack centres it against both lines), and never narrower than
+/// it is tall — a one-digit count is a round chip, not a squeezed oval, because
+/// a capsule's radius is half its height and a width under that is no capsule.
+pub fn countBadge(m: RowMetrics, row_w: i32, text_w: i32) ?CountBadge {
+    if (text_w <= 0) return null;
+    const w = @max(text_w + 2 * m.count_pad_x, m.count_h);
+    const right = row_w - m.text_pad_right;
+    const left = right - w;
+    const text_right = left - m.count_gap;
+    if (text_right <= m.text_x) return null;
+    const top = @divTrunc(m.height - m.count_h, 2);
+    return .{
+        .left = left,
+        .top = top,
+        .right = right,
+        .bottom = top + m.count_h,
+        .radius = @divTrunc(m.count_h, 2),
+        .text_right = text_right,
+    };
+}
+
+/// Whether a point `x` pixels from a row's left edge is on its count capsule —
+/// the tooltip's hit box. The capsule's own columns across the row's full
+/// height: a 16 DIP chip that only answered on its painted pixels would read as
+/// flicker (the T812 meter rule `statusColumnHit` follows too).
+pub fn countBadgeHit(b: CountBadge, x: i32) bool {
+    return x >= b.left and x < b.right;
 }
 
 /// Clamp a measured footer-hint line count to what the dialog will render. One
@@ -376,6 +445,20 @@ pub const online_green: Rgb = .{ .r = 0x34, .g = 0xC7, .b = 0x59 };
 /// enforced by search on whatever surface the caller actually paints on.
 pub fn secondaryOn(bg: Rgb) Rgb {
     return chrome_theme.textSecondaryOn(bg);
+}
+
+/// The count capsule's fill (T1745): Mac's `Color.secondary.opacity(0.18)`
+/// over the surface the row paints, with "secondary" resolved against that
+/// surface the way every de-emphasized mark here is.
+pub fn countFill(surface: Rgb) Rgb {
+    return blend(surface, secondaryOn(surface), 0.18);
+}
+
+/// The count capsule's number: Mac's `.secondary`, floored against the FILL
+/// it is drawn on rather than the row around it (§2.3: a color measured
+/// against one surface was never measured against the one under it).
+pub fn countInk(surface: Rgb) Rgb {
+    return secondaryOn(countFill(surface));
 }
 
 /// The online status dot, clamped to the 3:1 chrome floor (WCAG 1.4.11) — it
@@ -784,6 +867,94 @@ test "rowMetrics: the focus rim is §2.2's ring, in the pill's own coordinates" 
     const m = rowMetrics(1.0);
     try testing.expectEqual(@as(i32, 2), m.focus_ring_w);
     try testing.expectEqual(@as(i32, 2), m.focus_path_inset);
+}
+
+test "countBadge: inside the row, right of the text, on the text column's pad (T1745)" {
+    inline for (.{ @as(f32, 1.0), @as(f32, 1.25), @as(f32, 1.5), @as(f32, 2.0) }) |scale| {
+        const m = rowMetrics(scale);
+        const row_w = px(240, scale);
+        const b = countBadge(m, row_w, px(7, scale)).?;
+        // It ends where the text column used to, so the row's trailing rhythm
+        // is unchanged - and that is `sm` inside the pill's own edge.
+        try testing.expectEqual(row_w - m.text_pad_right, b.right);
+        try testing.expect(b.right <= row_w - m.fill_inset_x - px(4, scale));
+        // Right of the text column's left edge, with the gap the text gives up.
+        try testing.expect(b.left > m.text_x);
+        try testing.expectEqual(b.left - m.count_gap, b.text_right);
+        try testing.expect(b.text_right > m.text_x);
+        // Inside the pill vertically, and centred on the row within a pixel.
+        try testing.expect(b.top > m.fill_inset_y);
+        try testing.expect(b.bottom < m.height - m.fill_inset_y);
+        try testing.expect(@abs(b.top - (m.height - b.bottom)) <= 1);
+        // A capsule, never narrower than it is tall.
+        try testing.expectEqual(m.count_h, b.height());
+        try testing.expectEqual(@divTrunc(m.count_h, 2), b.radius);
+        try testing.expect(b.width() >= b.height());
+    }
+}
+
+test "countBadge: a wide number grows the capsule leftward and narrows the text" {
+    const m = rowMetrics(1.0);
+    const one = countBadge(m, 240, 7).?;
+    const many = countBadge(m, 240, 30).?;
+    try testing.expectEqual(one.right, many.right);
+    try testing.expect(many.left < one.left);
+    try testing.expect(many.text_right < one.text_right);
+    // Wide text is padded `sm` on both sides.
+    try testing.expectEqual(@as(i32, 30 + 2 * 4), many.width());
+}
+
+test "countBadge: nothing to hold or no room for it means no capsule" {
+    const m = rowMetrics(1.0);
+    try testing.expect(countBadge(m, 240, 0) == null);
+    try testing.expect(countBadge(m, 240, -3) == null);
+    // A row so narrow the capsule would reach the text column's left edge.
+    try testing.expect(countBadge(m, m.text_x + m.text_pad_right + 8, 7) == null);
+}
+
+test "countBadge: every number is on the scale and scales with DPI" {
+    const a = rowMetrics(1.0);
+    const b = rowMetrics(2.0);
+    try testing.expectEqual(@as(i32, 4), a.count_pad_x);
+    try testing.expectEqual(@as(i32, 4), a.count_gap);
+    // One caption line plus `xs` above and below.
+    try testing.expectEqual(type_ramp.caption(1.0).height + 4, a.count_h);
+    try testing.expectEqual(a.count_h * 2, b.count_h);
+    try testing.expectEqual(a.count_pad_x * 2, b.count_pad_x);
+    try testing.expectEqual(a.count_gap * 2, b.count_gap);
+    const ba = countBadge(a, 240, 7).?;
+    const bb = countBadge(b, 480, 14).?;
+    try testing.expectEqual(ba.width() * 2, bb.width());
+    try testing.expectEqual(ba.left * 2, bb.left);
+}
+
+test "countBadgeHit: the capsule's columns, and nothing either side" {
+    const m = rowMetrics(1.25);
+    const b = countBadge(m, 300, 9).?;
+    try testing.expect(countBadgeHit(b, b.left));
+    try testing.expect(countBadgeHit(b, b.right - 1));
+    try testing.expect(countBadgeHit(b, @divTrunc(b.left + b.right, 2)));
+    try testing.expect(!countBadgeHit(b, b.left - 1));
+    try testing.expect(!countBadgeHit(b, b.right));
+    try testing.expect(!countBadgeHit(b, m.text_x));
+}
+
+test "countFill / countInk: a visible tint, and the number clears the text floor ON it" {
+    var v: u16 = 0;
+    while (v <= 255) : (v += 8) {
+        const c: u8 = @intCast(v);
+        for ([_]Rgb{
+            .{ .r = c, .g = c, .b = c },
+            .{ .r = c, .g = @intCast(255 - v), .b = 0x40 },
+        }) |bg| {
+            const fill = countFill(bg);
+            try testing.expect(!fill.eql(bg));
+            try testing.expect(ratio(countInk(bg), fill) >= 4.4);
+        }
+    }
+    // Mac's 18% of secondary, not a second wash of its own.
+    const dark: Rgb = .{ .r = 0x20, .g = 0x20, .b = 0x20 };
+    try testing.expect(countFill(dark).eql(blend(dark, secondaryOn(dark), 0.18)));
 }
 
 test "selection tracks the accent it is given, and the washes follow luminance" {
