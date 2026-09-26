@@ -47,6 +47,7 @@ const context_menu = @import("context_menu.zig");
 const menu_activation = @import("menu_activation.zig");
 const commands = @import("commands.zig");
 const menu_label = @import("menu_label.zig");
+const type_ramp = @import("type_ramp.zig");
 const pane_id_mod = @import("pane_id.zig");
 const palette_jump = @import("palette_jump.zig");
 const palette_order = @import("palette_order.zig");
@@ -359,6 +360,11 @@ palette_font: ?*anyopaque = null,
 /// in paintPalette. Cached so we don't allocate a new HFONT on every
 /// keystroke-driven repaint.
 palette_paint_font: ?*anyopaque = null,
+/// The palette's two other paint fonts (T1754), cached and freed beside
+/// `palette_paint_font`: body-strong for an emphasized row's title, caption
+/// for the version badge beside it.
+palette_emph_font: ?*anyopaque = null,
+palette_badge_font: ?*anyopaque = null,
 /// Whether the command palette is currently visible.
 palette_active: bool = false,
 /// Currently selected item in the filtered palette list.
@@ -1135,10 +1141,7 @@ pub fn deinit(self: *Surface) void {
         _ = w32.DeleteObject(f);
         self.palette_font = null;
     }
-    if (self.palette_paint_font) |f| {
-        _ = w32.DeleteObject(f);
-        self.palette_paint_font = null;
-    }
+    self.freePalettePaintFonts();
     self.freePaletteJumpEntries();
 
     // Reap the child HWND, but not from this stack (T681). Calling
@@ -2745,7 +2748,13 @@ fn paletteEntryKey(
     idx: u16,
     buf: *[palette_order.max_key_len]u8,
 ) ?[]const u8 {
-    if (idx < palette_entries.len) return @tagName(palette_entries[idx].id);
+    if (idx < palette_entries.len) {
+        const entry = palette_entries[idx];
+        // The update rows are pinned above Recent and never join it (T1754);
+        // recording them would only spend a history slot.
+        if (commands.pinned(entry)) return null;
+        return @tagName(entry.id);
+    }
     if (idx >= JUMP_BASE) return null;
     const user = self.app.config.@"command-palette-entry".value.items;
     const uidx = idx - palette_entries.len;
@@ -3010,14 +3019,23 @@ fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
     var idxs: [MAX_PALETTE_ENTRIES]u16 = undefined;
     var items: [MAX_PALETTE_ENTRIES]palette_order.Item = undefined;
     var n: usize = 0;
+    // The pinned section (T1754), in registry order: Mac's `updateOptions`,
+    // listed above everything and never sorted in with it.
+    var pinned: [palette_entries.len]u16 = undefined;
+    var pinned_n: u16 = 0;
 
     // A conditional command is listed only while its target exists (T1676):
-    // "Install Available Update" is absent unless an offer is pending.
+    // the update rows are absent unless an offer is pending.
     const state: commands.State = .{ .update_pending = self.app.pendingUpdate() != null };
     for (palette_entries, 0..) |entry, i| {
         if (!commands.available(entry, state)) continue;
         if (filter.len != 0 and std.ascii.indexOfIgnoreCase(entry.name, filter) == null) continue;
         const idx: u16 = @intCast(i);
+        if (commands.pinned(entry)) {
+            pinned[pinned_n] = idx;
+            pinned_n += 1;
+            continue;
+        }
         idxs[n] = idx;
         items[n] = .{ .title = self.paletteEntryName(idx), .key = @tagName(entry.id) };
         n += 1;
@@ -3064,6 +3082,11 @@ fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
 
     const headers = filter.len == 0 and recent_n > 0;
     var count: u16 = 0;
+    // Mac's update section has no title: its rows simply come first.
+    for (pinned[0..pinned_n]) |idx| {
+        self.palette_filtered[count] = idx;
+        count += 1;
+    }
     if (headers) {
         self.palette_filtered[count] = PALETTE_HEADER_RECENT;
         count += 1;
@@ -3082,9 +3105,8 @@ fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
     }
 
     self.palette_count = count;
-    // The first row is a header when there are recents, and a header can
-    // never be the selection.
-    self.palette_selected = if (headers) 1 else 0;
+    // Never a header, and on an empty query not an update row either (T1754).
+    self.palette_selected = palette_order.firstSelection(pinned_n, headers, filter.len != 0, count);
     // Trigger repaint of the list area
     if (self.palette_hwnd) |popup| {
         _ = w32.InvalidateRect(popup, null, 1);
@@ -3212,6 +3234,10 @@ pub fn performCommand(self: *Surface, id: commands.Id) void {
         // nothing installable, which is the one case where re-checking is the
         // honest thing to do.
         .install_update => if (!self.app.offerUpdate()) self.app.startUpdateCheck(.manual),
+
+        // "Cancel or Skip Update" (T1754): put the offer away until the next
+        // one, as Mac's palette row does.
+        .dismiss_update => self.app.dismissUpdate(),
 
         // The Agent Integrations management window (T871): per-agent state
         // rows with Set Up / Update / Uninstall, probing off-thread. Mac's
@@ -3480,6 +3506,54 @@ pub fn panelPalette(self: *const Surface) panel_theme.Panel {
 /// lifetime and GUI-thread only, like every other `CachedBrush` here.
 var palette_bg_brush: brush_cache.CachedBrush = .{};
 
+/// Drop every cached palette paint font, so the next paint makes them again
+/// at the current scale (DPI change) or never (teardown).
+fn freePalettePaintFonts(self: *Surface) void {
+    inline for (.{ "palette_paint_font", "palette_emph_font", "palette_badge_font" }) |name| {
+        if (@field(self, name)) |f| {
+            _ = w32.DeleteObject(f);
+            @field(self, name) = null;
+        }
+    }
+}
+
+/// A cached palette font from the design system's type ramp, made on first
+/// use at the current scale.
+fn paletteRampFont(slot: *?*anyopaque, font: type_ramp.Font) ?*anyopaque {
+    if (slot.* == null) slot.* = w32.CreateFontW(
+        -font.height,
+        0,
+        0,
+        0,
+        font.weight,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        std.unicode.utf8ToUtf16LeStringLiteral(type_ramp.face),
+    );
+    return slot.*;
+}
+
+/// Whether a palette row is drawn set apart (T1754): only a registry command
+/// can be, and only the one offering the update is.
+fn paletteEntryEmphasis(idx: u16) bool {
+    return idx < palette_entries.len and palette_entries[idx].emphasis;
+}
+
+/// The pill beside a palette row's title (T1754) — Mac's `CommandOption.badge`,
+/// which is the pending version on the update row and nothing anywhere else.
+fn paletteEntryBadge(self: *const Surface, idx: u16) ?[]const u8 {
+    if (idx >= palette_entries.len) return null;
+    if (palette_entries[idx].id != .install_update) return null;
+    const pending = self.app.pendingUpdate() orelse return null;
+    return if (pending.version.len == 0) null else pending.version;
+}
+
 /// Paint the command palette list area.
 pub fn paintPalette(self: *Surface, hwnd: w32.HWND) void {
     var ps: w32.PAINTSTRUCT = undefined;
@@ -3589,12 +3663,36 @@ pub fn paintPaletteInto(self: *Surface, hdc: w32.HDC, hwnd: w32.HWND) void {
             }
         }
 
+        // The update row is set apart (T1754), Mac's `emphasis`: an accent
+        // outline at 30% while it is not the selection, and a strong title.
+        const emphasis = paletteEntryEmphasis(entry_idx);
+        if (emphasis and i != self.palette_selected) {
+            const inset: i32 = @intFromFloat(@round(4.0 * s));
+            const radius: i32 = @intFromFloat(@round(5.0 * s));
+            const pen = w32.CreatePen(w32.PS_SOLID, @max(1, @as(i32, @intFromFloat(@round(1.5 * s)))), system_colors.cr(color_math.mix(p.bg, p.accent, 0.3)));
+            if (pen) |pn| {
+                defer _ = w32.DeleteObject(pn);
+                const old_brush = w32.SelectObject(hdc, w32.GetStockObject(w32.NULL_BRUSH));
+                const old_pen = w32.SelectObject(hdc, pn);
+                _ = w32.RoundRect(hdc, inset, y + 1, client_rect.right - inset, y + item_height - 1, radius * 2, radius * 2);
+                _ = w32.SelectObject(hdc, old_pen);
+                _ = w32.SelectObject(hdc, old_brush);
+            }
+        }
+        if (emphasis) {
+            if (paletteRampFont(&self.palette_emph_font, type_ramp.bodyStrong(s))) |f| _ = w32.SelectObject(hdc, f);
+        }
+        defer if (emphasis) {
+            if (self.palette_paint_font) |f| _ = w32.SelectObject(hdc, f);
+        };
+
         // Draw action name
         const text_pad: i32 = @intFromFloat(@round(12.0 * s));
         const text_top_pad: i32 = @intFromFloat(@round(4.0 * s));
         const kb_area: i32 = @intFromFloat(@round(160.0 * s));
         const row_text = if (i == self.palette_selected) p.text_on_select else p.text;
         const row_dim = if (i == self.palette_selected) p.secondary_on_select else p.secondary;
+        const row_bg = if (i == self.palette_selected) p.select else p.bg;
         _ = w32.SetTextColor(hdc, system_colors.cr(row_text));
         var name_rect = w32.RECT{
             .left = text_pad,
@@ -3663,6 +3761,48 @@ pub fn paintPaletteInto(self: *Surface, hdc: w32.HDC, hwnd: w32.HWND) void {
                 .bottom = y + item_height,
             };
             _ = w32.DrawTextW(hdc, @ptrCast(&wkb_buf), @intCast(wkb_len), &kb_rect, 0x0002); // DT_RIGHT
+        }
+
+        // The version badge (T1754), Mac's accent capsule: accent text on a
+        // 15% accent wash, caption-sized, at the row's trailing edge. It sits
+        // in the keybind column, which a row carrying a badge never uses.
+        if (self.paletteEntryBadge(entry_idx)) |badge| {
+            const badge_font = paletteRampFont(&self.palette_badge_font, type_ramp.caption(s));
+            const prev = if (badge_font) |f| w32.SelectObject(hdc, f) else null;
+            defer if (prev) |pf| {
+                _ = w32.SelectObject(hdc, pf);
+            };
+            var wbadge_buf: [32]u16 = undefined;
+            const blen = @min(badge.len, wbadge_buf.len);
+            const wbadge_len = std.unicode.utf8ToUtf16Le(&wbadge_buf, badge[0..blen]) catch 0;
+            var meas = w32.RECT{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+            _ = w32.DrawTextW(hdc, @ptrCast(&wbadge_buf), @intCast(wbadge_len), &meas, 0x0420); // DT_CALCRECT | DT_SINGLELINE
+            const pad_x: i32 = @intFromFloat(@round(7.0 * s));
+            const pad_y: i32 = @intFromFloat(@round(3.0 * s));
+            const pill_w = (meas.right - meas.left) + 2 * pad_x;
+            const pill_h = (meas.bottom - meas.top) + 2 * pad_y;
+            const pill = w32.RECT{
+                .left = client_rect.right - text_pad - pill_w,
+                .top = y + @divTrunc(item_height - pill_h, 2),
+                .right = client_rect.right - text_pad,
+                .bottom = y + @divTrunc(item_height - pill_h, 2) + pill_h,
+            };
+            const fill = system_colors.cr(color_math.mix(row_bg, p.accent, 0.15));
+            if (w32.CreateSolidBrush(fill)) |br| {
+                defer _ = w32.DeleteObject(br);
+                const pen = w32.CreatePen(w32.PS_SOLID, 1, fill);
+                if (pen) |pn| {
+                    defer _ = w32.DeleteObject(pn);
+                    const old_brush = w32.SelectObject(hdc, br);
+                    const old_pen = w32.SelectObject(hdc, pn);
+                    _ = w32.RoundRect(hdc, pill.left, pill.top, pill.right, pill.bottom, pill_h, pill_h);
+                    _ = w32.SelectObject(hdc, old_pen);
+                    _ = w32.SelectObject(hdc, old_brush);
+                }
+            }
+            _ = w32.SetTextColor(hdc, system_colors.cr(p.accent));
+            var text_rect = pill;
+            _ = w32.DrawTextW(hdc, @ptrCast(&wbadge_buf), @intCast(wbadge_len), &text_rect, 0x0025); // DT_CENTER | DT_VCENTER | DT_SINGLELINE
         }
     }
 }
@@ -3836,10 +3976,7 @@ pub fn handleDpiChange(self: *Surface, dpi: ?u32) void {
         _ = w32.DeleteObject(old);
         self.palette_font = null;
     }
-    if (self.palette_paint_font) |old| {
-        _ = w32.DeleteObject(old);
-        self.palette_paint_font = null;
-    }
+    self.freePalettePaintFonts();
     if (self.search_edit) |edit| {
         self.search_font = w32.CreateFontW(
             -@as(i32, @intFromFloat(@round(16.0 * s))),

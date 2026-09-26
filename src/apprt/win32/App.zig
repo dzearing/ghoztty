@@ -9649,6 +9649,30 @@ fn openUpdateReleasePage(self: *App) void {
     self.openUrl(url);
 }
 
+/// Put the waiting offer away (T1754): the palette's "Cancel or Skip Update",
+/// Mac's `updateViewModel.state.cancel()` — which answers Sparkle's offer with
+/// `.dismiss`. That is "not now", not "never": the dot, the menu row and both
+/// palette rows go, and the release comes back the way any offer does — the
+/// next automatic check once today's re-notify window has run out (T1563), or
+/// at once from "Check for Updates…".
+///
+/// The durable record goes too, so a restart does not resurrect what the user
+/// just put away, and the staleness clock restarts with the next offer: the
+/// badge had been escalating toward "you are falling behind", and the user has
+/// now answered it. The version text stays, because the release-page link
+/// still reads it; nothing shows it while `update_pending` is false.
+pub fn dismissUpdate(self: *App) void {
+    if (!self.update_pending) return;
+    self.update_pending = false;
+    const alloc = self.core_app.alloc;
+    if (self.updateOfferPath(alloc)) |path| {
+        defer alloc.free(path);
+        std.fs.cwd().deleteFile(path) catch {};
+    }
+    self.refreshUpdateAffordance();
+    log.info("update: user dismissed the offer for win-v{s}", .{self.update_latest_ver orelse "?"});
+}
+
 /// Act on a click of the update balloon (T1178). Returns true when the click
 /// was handled as an offer to install — false means there is nothing
 /// installable and the caller should fall back to opening the release page,

@@ -281,6 +281,24 @@ pub fn scrollOffset(selected: u16, max_visible: i32) i32 {
     return if (sel >= max_visible) sel - max_visible + 1 else 0;
 }
 
+/// The row the palette selects when its list is rebuilt (T1754). `pinned` is
+/// how many rows the pinned section (the update rows) put at the very top,
+/// `headers` whether a "Recent" header follows them, `count` the total rows.
+///
+/// Typing selects the first match wherever it is — Mac's
+/// `onChange(of: query)` sets `selectedIndex = 0`, pinned rows included, so
+/// "upd" + Enter updates. An EMPTY query starts on the first ordinary command
+/// instead: Mac selects nothing at all there, and Windows has always opened
+/// on the top command, so the habit "open the palette, Enter repeats the last
+/// thing" survives an offer appearing above it rather than turning into an
+/// update dialog. The pinned rows are one Up away. With nothing but pinned
+/// rows the first of them is selected.
+pub fn firstSelection(pinned: u16, headers: bool, filtering: bool, count: u16) u16 {
+    if (filtering) return 0;
+    const first = pinned + @intFromBool(headers);
+    return if (first < count) first else 0;
+}
+
 /// Rows the list area can show at `client_height`, never negative.
 pub fn maxVisible(client_height: i32, list_top: i32, item_height: i32) i32 {
     if (item_height <= 0) return 0;
@@ -339,6 +357,27 @@ test "rowAtY: a scrolled list adds the scroll offset (T1671)" {
 test "rowAtY: a slot past the end of a short list is nothing" {
     try testing.expectEqual(@as(?u16, null), rowAtY(50 + 3 * 20, 50, 20, 5, 0, 3));
     try testing.expectEqual(@as(?u16, null), rowAtY(60, 50, 0, 5, 0, 3));
+}
+
+test "firstSelection: an empty query starts below the pinned rows (T1754)" {
+    // No offer, no recents: the top row, as before T1754.
+    try testing.expectEqual(@as(u16, 0), firstSelection(0, false, false, 40));
+    // No offer, recents: skip the "Recent" header.
+    try testing.expectEqual(@as(u16, 1), firstSelection(0, true, false, 40));
+    // Offer (two pinned rows), no recents: the first ordinary command.
+    try testing.expectEqual(@as(u16, 2), firstSelection(2, false, false, 40));
+    // Offer and recents: past both pinned rows and the header.
+    try testing.expectEqual(@as(u16, 3), firstSelection(2, true, false, 40));
+}
+
+test "firstSelection: typing selects the first match, pinned or not (T1754)" {
+    try testing.expectEqual(@as(u16, 0), firstSelection(2, false, true, 5));
+    try testing.expectEqual(@as(u16, 0), firstSelection(0, false, true, 5));
+}
+
+test "firstSelection: a list of nothing but pinned rows selects the first" {
+    try testing.expectEqual(@as(u16, 0), firstSelection(2, false, false, 2));
+    try testing.expectEqual(@as(u16, 0), firstSelection(0, false, false, 0));
 }
 
 test "maxVisible: never negative" {

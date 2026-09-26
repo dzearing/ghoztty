@@ -45,6 +45,10 @@ pub const Kind = enum {
     /// a network round trip that can fail in front of somebody who only wanted
     /// to install.
     install_update,
+    /// Put the waiting offer away (T1754) — Mac's "Cancel or Skip Update",
+    /// which answers Sparkle's offer with `.dismiss`: not now, ask again at the
+    /// next scheduled check. It forgets nothing about the release itself.
+    dismiss_update,
     /// Install the agent integrations for every detected agent (T870).
     claude,
     /// Open the documentation in the default browser (macOS "Ghoztty Help").
@@ -150,6 +154,7 @@ pub const Id = enum {
     // Appended, never inserted: an id's ordinal IS its win32 menu command id
     // (`menuCommandId`), so a new name goes on the end (T1673).
     install_update,
+    dismiss_update,
 };
 
 /// Where "Ghoztty Help" goes. The docs are the same for every platform, so
@@ -185,7 +190,20 @@ pub const Command = struct {
     /// Hidden rather than greyed: a palette is a search box over what you can
     /// do, and a row that matches and cannot run is noise in the results.
     when: Condition = .always,
+    /// Drawn set apart from the ordinary rows (T1754): Mac's
+    /// `CommandOption.emphasis` — a heavier title and an accent outline — which
+    /// its palette gives the one row offering the update.
+    emphasis: bool = false,
 };
+
+/// Whether `c` belongs to the palette's pinned section (T1754): Mac's
+/// `updateOptions`, a section of its own ABOVE "Recent" and "All Commands".
+/// Its rows keep registry order, never sort in with the rest and never enter
+/// Recent — Mac's update options carry no command identifier, so its history
+/// cannot record them either.
+pub fn pinned(c: Command) bool {
+    return c.when == .update_pending;
+}
 
 /// The app state a conditional command depends on (T1676).
 pub const Condition = enum {
@@ -300,12 +318,13 @@ pub const registry = [_]Command{
     .{ .id = .open_config, .name = "Open Config", .action = .open_config },
     .{ .id = .reload_config, .name = "Reload Config", .action = .reload_config },
     .{ .id = .check_for_updates, .name = "Check for Updates…", .action = .check_for_updates },
-    // T1673. The palette name is generic because the registry name is static
-    // and the version is not; the MENU row says the version, because that is
-    // where it is read at a glance.
-    // Listed only while an offer is pending (T1676) - Mac lists nothing
-    // update-related unless an update is installable.
-    .{ .id = .install_update, .name = "Install Available Update", .action = .new_window, .kind = .install_update, .when = .update_pending },
+    // T1673. Listed only while an offer is pending (T1676) - Mac lists nothing
+    // update-related unless an update is installable. The pair is Mac's
+    // `updateOptions` verbatim (T1754): its title says the whole operation,
+    // and the palette paints the pending version beside it as a badge, so the
+    // static name need not carry it.
+    .{ .id = .install_update, .name = "Update Ghoztty and Restart", .action = .new_window, .kind = .install_update, .when = .update_pending, .emphasis = true },
+    .{ .id = .dismiss_update, .name = "Cancel or Skip Update", .action = .new_window, .kind = .dismiss_update, .when = .update_pending },
     .{ .id = .help, .name = "Ghoztty Help", .action = .new_window, .kind = .help },
     .{ .id = .about, .name = "About Ghoztty", .action = .new_window, .kind = .about },
     // Mac lists this in the application menu directly under About
@@ -523,6 +542,7 @@ test "only the local kinds carry a placeholder action" {
         .viewer_open_url,
         .viewer_open_browser,
         .install_update,
+        .dismiss_update,
         => try std.testing.expectEqual(
             input.Binding.Action.new_window,
             c.action,
@@ -538,11 +558,32 @@ test "the viewer entries carry the Mac palette names verbatim (T396)" {
     try std.testing.expectEqualStrings("Viewer: Open Browser Pane", get(.viewer_open_browser).name);
 }
 
-test "install_update is listed only while an update is pending (T1676)" {
-    const c = get(.install_update);
-    try std.testing.expect(!available(c, .{}));
-    try std.testing.expect(!available(c, .{ .update_pending = false }));
-    try std.testing.expect(available(c, .{ .update_pending = true }));
+test "the update rows are listed only while an update is pending (T1676, T1754)" {
+    for ([_]Id{ .install_update, .dismiss_update }) |id| {
+        const c = get(id);
+        try std.testing.expect(!available(c, .{}));
+        try std.testing.expect(!available(c, .{ .update_pending = false }));
+        try std.testing.expect(available(c, .{ .update_pending = true }));
+    }
+}
+
+test "the update rows carry Mac's updateOptions titles and emphasis (T1754)" {
+    // TerminalCommandPalette.swift `updateOptions`: the install row is titled
+    // for the whole operation and emphasized; the dismiss row is plain.
+    try std.testing.expectEqualStrings("Update Ghoztty and Restart", get(.install_update).name);
+    try std.testing.expect(get(.install_update).emphasis);
+    try std.testing.expectEqualStrings("Cancel or Skip Update", get(.dismiss_update).name);
+    try std.testing.expect(!get(.dismiss_update).emphasis);
+    // Install first, dismiss beneath it: the pinned section keeps this order.
+    try std.testing.expect(index(.install_update) < index(.dismiss_update));
+}
+
+test "exactly the update rows are pinned, and only the install row is emphasized (T1754)" {
+    for (registry) |c| {
+        const is_update = c.id == .install_update or c.id == .dismiss_update;
+        try std.testing.expectEqual(is_update, pinned(c));
+        try std.testing.expectEqual(c.id == .install_update, c.emphasis);
+    }
 }
 
 test "every other command is listed regardless of app state (T1676)" {
@@ -550,7 +591,7 @@ test "every other command is listed regardless of app state (T1676)" {
     // an ordinary command would make it vanish from the palette for no
     // visible reason. Extend this list when a new conditional row lands.
     for (registry) |c| {
-        if (c.id == .install_update) continue;
+        if (c.id == .install_update or c.id == .dismiss_update) continue;
         try std.testing.expectEqual(Condition.always, c.when);
         try std.testing.expect(available(c, .{}));
         try std.testing.expect(available(c, .{ .update_pending = true }));

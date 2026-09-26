@@ -331,6 +331,13 @@ pub const omitted = [_]Omitted{
             "pending, and nothing at all when there is none — a permanently " ++
             "present row would be a row that is grayed out 364 days a year",
     },
+    .{
+        .cmd = .dismiss_update,
+        .why = "palette-only on macOS too (T1754): Mac's `Cancel or Skip " ++
+            "Update` lives in TerminalCommandPalette.swift `updateOptions` and " ++
+            "nowhere in MainMenu.xib; the menu's own way out of an offer is the " ++
+            "dialog's Later button",
+    },
 };
 
 // --- Lookup / dispatch ----------------------------------------------------

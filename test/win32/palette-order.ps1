@@ -34,10 +34,20 @@
 #   O7. a default the registry already carries is listed ONCE (T1752):
 #       filtering to "Change Window Title" leaves one row, so Down then Enter
 #       still runs the registry command rather than its duplicate.
-#   O8. "Install Available Update" is a row only while an update offer is
-#       pending (T1676): with no offer, filtering to it and pressing Enter runs
-#       nothing; with an offer seeded on disk, the same keystrokes run
-#       install_update and reach the install confirmation.
+#   O8. "Update Ghoztty and Restart" (Mac's title since T1754; T1676 named it
+#       "Install Available Update") is a row only while an update offer is
+#       pending: with no offer, filtering to it and pressing Enter runs
+#       nothing; with an offer seeded on disk, the same keystrokes reach the
+#       install confirmation - and are NOT recorded as recent (T1754: Mac's
+#       update rows carry no identifier, so they never join Recent).
+#   O10. The update rows are a pinned section ABOVE everything (T1754, Mac's
+#       `updateOptions`): with an offer and an empty query, Enter still runs the
+#       first ordinary command (O10a); one Up from there is "Cancel or Skip
+#       Update", which puts the offer away - the record leaves the disk and the
+#       install row is gone from a reopened palette (O10b); two Ups is the
+#       install row (O10c). O10d photographs the palette: the install row
+#       wears Mac's accent outline and a solid version pill, an ordinary row
+#       neither.
 #   O9. a command whose action Windows does not perform is not a row (T1753):
 #       of two config entries differing only in action, the text send runs and
 #       the undo is absent; the macOS-only default "Toggle Secure Input" is
@@ -410,8 +420,8 @@ if ($top7 -ne [IntPtr]::Zero) {
 }
 
 # ---------------------------------------------------------------------
-# O8: "Install Available Update" is listed only while an offer is pending
-# (T1676). The pending state is SEEDED through the on-disk offer record the app
+# O8: the install row is listed only while an offer is pending (T1676; titled
+# "Update Ghoztty and Restart" since T1754). The pending state is SEEDED through the on-disk offer record the app
 # restores at launch (T1673) - no feed, no network - with `staged=` naming a
 # package that exists, so running the row reaches the install confirmation
 # (the GhozttyConfirmDialog, which is never answered; teardown kills the app).
@@ -437,38 +447,171 @@ function Start-O8Palette([string]$Tag) {
     return (Open-Palette $t $p)
 }
 
-Write-Host '== O8a: with NO offer pending, "Install Available Update" is not a row'
+$installTitle = 'Update Ghoztty and Restart'
+function Set-O8Offer {
+    [IO.File]::WriteAllText($stagedMsi, 'not a real package; the confirmation is never answered')
+    $nowMs = [int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+    $offerDir = Split-Path $offerPath -Parent
+    if (-not (Test-Path $offerDir)) { New-Item -ItemType Directory -Force -Path $offerDir | Out-Null }
+    [IO.File]::WriteAllText($offerPath, "version=9.9.9`nfirst_offered_ms=$nowMs`nstaged=$stagedMsi`n")
+}
+
+Write-Host "== O8a: with NO offer pending, `"$installTitle`" is not a row"
 Remove-Item -LiteralPath $offerPath -Force -ErrorAction SilentlyContinue
 Assert (-not (Test-Path $offerPath)) 'O8a setup: no offer record on disk'
 $pal8a = Start-O8Palette 'o8a'
 Assert ($null -ne $pal8a) 'O8a the palette opened'
 if ($null -ne $pal8a) {
-    Assert (Send-TestControlText -Control $pal8a.Edit -Text 'Install Available Update') 'O8a typed "Install Available Update"'
+    Assert (Send-TestControlText -Control $pal8a.Edit -Text $installTitle) "O8a typed `"$installTitle`""
     Start-Sleep -Milliseconds 600
     Send-TestControlKey -Control $pal8a.Edit -Key Enter | Out-Null
     $ran8a = Wait-OnlyPaletteRun
     Assert ($ran8a.Count -eq 0) `
-        "O8a Enter ran nothing - the row is absent (got: $($ran8a -join ', '); pre-fix it ran install_update, which fell through to a manual check)"
+        "O8a Enter ran nothing - the row is absent (got: $($ran8a -join ', '); pre-T1676 it ran install_update, which fell through to a manual check)"
     Assert ((Count-TestWindowsOfClass 'GhozttyConfirmDialog') -eq 0) 'O8a no install confirmation opened'
 }
 
 Write-Host '== O8b: with an offer pending, the same keystrokes run it'
-[IO.File]::WriteAllText($stagedMsi, 'not a real package; the confirmation is never answered')
-$nowMs = [int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
-$offerDir = Split-Path $offerPath -Parent
-if (-not (Test-Path $offerDir)) { New-Item -ItemType Directory -Force -Path $offerDir | Out-Null }
-[IO.File]::WriteAllText($offerPath, "version=9.9.9`nfirst_offered_ms=$nowMs`nstaged=$stagedMsi`n")
+Set-O8Offer
 $pal8b = Start-O8Palette 'o8b'
 Assert ($null -ne $pal8b) 'O8b the palette opened'
 if ($null -ne $pal8b) {
-    Assert (Send-TestControlText -Control $pal8b.Edit -Text 'Install Available Update') 'O8b typed "Install Available Update"'
+    Assert (Send-TestControlText -Control $pal8b.Edit -Text $installTitle) "O8b typed `"$installTitle`""
     Start-Sleep -Milliseconds 600
     Send-TestControlKey -Control $pal8b.Edit -Key Enter | Out-Null
-    $ran8b = Wait-OnlyPaletteRun
-    Assert ($ran8b.Count -eq 1 -and [string]$ran8b[0] -eq 'install_update') `
-        "O8b Enter ran install_update (got: $($ran8b -join ', '))"
     $confirm = Wait-TestWindow -ProcessId $script:appPid -Class 'GhozttyConfirmDialog' -TimeoutMs 6000
     Assert ($confirm -ne [IntPtr]::Zero) 'O8b it reached the install confirmation (the offer, not a fresh check)'
+    $ran8b = @((Get-PaletteHistory).Keys)
+    Assert ($ran8b.Count -eq 0) `
+        "O8b the update row was NOT recorded as recent - Mac's update rows never join Recent (got: $($ran8b -join ', '))"
+}
+
+# ---------------------------------------------------------------------
+# O10: the pinned update section (T1754). Every arm seeds the same offer and
+# opens the palette with an EMPTY query and no history, so the list is
+# [install, dismiss, <ordinary commands alphabetically>] with the selection on
+# the first ordinary command.
+# ---------------------------------------------------------------------
+Write-Host '== O10a: with an offer and no query, Enter runs the first ORDINARY command'
+Set-O8Offer
+$pal10a = Start-O8Palette 'o10a'
+Assert ($null -ne $pal10a) 'O10a the palette opened'
+if ($null -ne $pal10a) {
+    Start-Sleep -Milliseconds 400
+    Send-TestControlKey -Control $pal10a.Edit -Key Enter | Out-Null
+    $ran10a = Wait-OnlyPaletteRun
+    # The update rows are never recorded, so a recorded key IS the proof that
+    # Enter ran an ordinary command. (No confirm-dialog check here: the first
+    # ordinary command alphabetically can be About, which is a ConfirmDialog.)
+    Assert ($ran10a.Count -eq 1) `
+        "O10a Enter ran one ordinary, recorded command - an offer appearing above the list does not capture a blind Enter (got: $($ran10a -join ', '))"
+    Assert (Test-Path $offerPath) 'O10a the offer is still on disk (Enter did not run the dismiss either)'
+}
+
+Write-Host '== O10b: one Up is "Cancel or Skip Update", which puts the offer away'
+Set-O8Offer
+$pal10b = Start-O8Palette 'o10b'
+Assert ($null -ne $pal10b) 'O10b the palette opened'
+if ($null -ne $pal10b) {
+    Start-Sleep -Milliseconds 400
+    Send-TestControlKey -Control $pal10b.Edit -Key Up | Out-Null
+    Start-Sleep -Milliseconds 200
+    Send-TestControlKey -Control $pal10b.Edit -Key Enter | Out-Null
+    $deadline = (Get-Date).AddSeconds(5)
+    while ((Get-Date) -lt $deadline -and (Test-Path $offerPath)) { Start-Sleep -Milliseconds 200 }
+    Assert (-not (Test-Path $offerPath)) 'O10b the offer record left the disk - the dismiss ran'
+    Assert ((Count-TestWindowsOfClass 'GhozttyConfirmDialog') -eq 0) 'O10b no install confirmation opened'
+    $ran10b = @((Get-PaletteHistory).Keys)
+    Assert ($ran10b.Count -eq 0) "O10b the dismiss row was not recorded as recent (got: $($ran10b -join ', '))"
+
+    # The same app, the same filter O8b ran: the row is gone now.
+    $top10b = Wait-TestWindow -ProcessId $script:appPid -Class 'GhozttyWindow'
+    $pane10b = Get-TestChildWindow -Window $top10b -Class 'GhozttyTerminal'
+    [void](Focus-TestWindow -Window $top10b -Child $pane10b)
+    $pal10b2 = Open-Palette $top10b $pane10b
+    Assert ($null -ne $pal10b2) 'O10b the palette reopened'
+    if ($null -ne $pal10b2) {
+        Assert (Send-TestControlText -Control $pal10b2.Edit -Text $installTitle) "O10b typed `"$installTitle`""
+        Start-Sleep -Milliseconds 600
+        Send-TestControlKey -Control $pal10b2.Edit -Key Enter | Out-Null
+        Start-Sleep -Milliseconds 1500
+        Assert ((Count-TestWindowsOfClass 'GhozttyConfirmDialog') -eq 0) `
+            'O10b after the dismiss the install row is gone (the same keystrokes that reached the confirmation in O8b)'
+    }
+}
+
+Write-Host '== O10c: two Ups is the install row, at the very top'
+Set-O8Offer
+$pal10c = Start-O8Palette 'o10c'
+Assert ($null -ne $pal10c) 'O10c the palette opened'
+if ($null -ne $pal10c) {
+    Start-Sleep -Milliseconds 400
+    Send-TestControlKey -Control $pal10c.Edit -Key Up | Out-Null
+    Send-TestControlKey -Control $pal10c.Edit -Key Up | Out-Null
+    Start-Sleep -Milliseconds 200
+    Send-TestControlKey -Control $pal10c.Edit -Key Enter | Out-Null
+    $confirm10c = Wait-TestWindow -ProcessId $script:appPid -Class 'GhozttyConfirmDialog' -TimeoutMs 6000
+    Assert ($confirm10c -ne [IntPtr]::Zero) 'O10c the top row is the install row - it reached the confirmation'
+    Assert (Test-Path $offerPath) 'O10c the offer is still on disk (it was the install, not the dismiss)'
+}
+
+# O10d: what the row LOOKS like. The palette paints into a caller's DC
+# (T563), so a synchronous capture is the real pixels. Two oracles per row,
+# each measured against an ordinary row in the same capture:
+#   - outline: the pixel just inside the row's left inset is NOT background on
+#     the install row (the 30% accent stroke) and IS background on row 3;
+#   - pill: the trailing band holds a SOLID non-background fill - a
+#     horizontal run of identical pixels far longer than any glyph stroke (a
+#     keybind hint's text never produces one) - on the install row and not on
+#     row 3.
+Write-Host '== O10d: the install row wears the accent outline and a solid version pill'
+Set-O8Offer
+$pal10d = Start-O8Palette 'o10d'
+Assert ($null -ne $pal10d) 'O10d the palette opened'
+if ($null -ne $pal10d) {
+    Start-Sleep -Milliseconds 600
+    $shot = Get-TestWindowPixels -Window $pal10d.Popup -Sync
+    try {
+        $png = Join-Path $env:TEMP "ghoztty-palette-order-o10d-$PID.png"
+        $shot.Bitmap.Save($png, [System.Drawing.Imaging.ImageFormat]::Png)
+        Write-Host "      capture: $png"
+        $s = (Get-TestWindowDpi -Window $pal10d.Popup) / 96.0
+        $listTop = [int][math]::Round(40.0 * $s)
+        $itemH = [int][math]::Round(28.0 * $s)
+        $inset = [int][math]::Round(4.0 * $s)
+        $bmp = $shot.Bitmap
+        $bg = $bmp.GetPixel($bmp.Width - 2, $bmp.Height - 2).ToArgb()
+        function Get-RowStats([int]$Row) {
+            $mid = $listTop + $Row * $itemH + [int]($itemH / 2)
+            # The stroke is 1.5 DIP wide at the inset; probe its centre.
+            $edge = $bmp.GetPixel($inset + [int][math]::Floor(0.5 * $s), $mid).ToArgb()
+            # The longest horizontal run of one non-background color in the
+            # row's trailing band.
+            $solid = 0
+            $x0 = $bmp.Width - [int][math]::Round(110.0 * $s)
+            for ($y = $listTop + $Row * $itemH + 3; $y -lt $listTop + ($Row + 1) * $itemH - 3; $y++) {
+                $run = 0
+                $prev = $bg
+                for ($x = $x0; $x -lt $bmp.Width - 2; $x++) {
+                    $c = $bmp.GetPixel($x, $y).ToArgb()
+                    if ($c -ne $bg -and $c -eq $prev) { $run++ } elseif ($c -ne $bg) { $run = 1 } else { $run = 0 }
+                    $prev = $c
+                    if ($run -gt $solid) { $solid = $run }
+                }
+            }
+            return [pscustomobject]@{ Edge = $edge; Solid = $solid }
+        }
+        $r0 = Get-RowStats 0
+        $r3 = Get-RowStats 3
+        Write-Host ("      row0 edge={0:X8} solid={1}; row3 edge={2:X8} solid={3}; bg={4:X8}" -f $r0.Edge, $r0.Solid, $r3.Edge, $r3.Solid, $bg)
+        Assert ($r3.Edge -eq $bg) 'O10d control: an ordinary row has no outline (its inset pixel is background)'
+        Assert ($r0.Edge -ne $bg) 'O10d the install row has the accent outline'
+        $pillMin = [int][math]::Round(24.0 * $s)
+        Assert ($r3.Solid -lt $pillMin) "O10d control: an ordinary row's trailing band has no solid fill (longest run $($r3.Solid) px, pill bar $pillMin)"
+        Assert ($r0.Solid -ge $pillMin) "O10d the install row carries a solid version pill (longest run $($r0.Solid) px, bar $pillMin)"
+    } finally {
+        Close-TestWindowPixels -Shot $shot
+    }
 }
 
 # ---------------------------------------------------------------------

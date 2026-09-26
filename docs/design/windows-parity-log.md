@@ -34254,3 +34254,20 @@ Mac. Validation: none-lane tests name each hidden default, and
 action (text runs, undo is absent) plus the secure-input default. A negative
 build without the filter fails O9b and O9c exactly. Floor lanes, harness floor,
 P1-P3 and the four Surface.zig guards are green.
+
+## 2026-09-26 — T1754: the palette's update row reads like Mac's, with Cancel or Skip beneath it
+
+While an update is waiting, the command palette now opens with Mac's
+`updateOptions` section above everything: "Update Ghoztty and Restart", with a
+bold title, a 30% accent outline and the pending version in an accent pill,
+then "Cancel or Skip Update". The second row dismisses the offer the way
+Sparkle's `.dismiss` does: the dot, the menu row and both palette rows go, the
+durable record is deleted, and the offer comes back at the next re-offer or
+manual check. Neither row joins Recent. An empty query still starts on the
+first ordinary command, so a blind Enter never opens an update dialog.
+Validation: none-lane tests (`commands`, `palette_order.firstSelection`,
+`menu_bar` coverage) and `palette-order.ps1` O8/O10, which covers order,
+dismiss, install and a pixel check of the outline and pill. ALL PASS
+(71 assertions), and all four floor lanes are green. The capture also showed
+every palette title ending in "…" painting blank, an old truncation bug filed
+as T1762.
