@@ -280,6 +280,52 @@ pub const Ledger = struct {
     }
 };
 
+/// How long a pooled link may sit DOWN before the pool stops waiting for it to
+/// heal and dials a replacement (T1636). The same number, for the same reason,
+/// as `agent_recovery.settle_ms`: the transport FSM enters `reconnecting` after
+/// three missed heartbeats and snaps back on the next authentic packet, so a
+/// down edge is not proof of anything — only a link that STAYS down is.
+pub const settle_ms: i64 = 5_000;
+
+/// Whether one pooled connection has been down long enough to condemn (T1636).
+///
+/// Why the pool needs this at all: a `Connection` never re-dials its own
+/// transport. When its socket drops, the reader thread exits and the link sits
+/// in `reconnecting` for good — `dead` is only ever entered by a server-sent
+/// DETACHED, which a vanished socket cannot send. The pool acted on `dead`
+/// alone, so a remote machine whose relay socket dropped kept a zombie entry
+/// forever, and every subscription riding it (the chooser's pushed roster, its
+/// CPU meter) stopped with nothing on screen saying so.
+///
+/// Fed from two places — the link-state edge and a periodic sweep — so the
+/// settle is measured from the edge when there is one and still resolves when
+/// no further edge ever comes (a dropped socket produces exactly one).
+pub const DownWatch = struct {
+    since_ms: ?i64 = null,
+
+    pub const Verdict = enum {
+        /// Live (`connected`/`degraded`): nothing to do, and any watch is over.
+        healthy,
+        /// Down, but not for `settle_ms` yet. Keep waiting.
+        watching,
+        /// Down for the whole settle window: replace it.
+        condemn,
+    };
+
+    pub fn observe(self: *DownWatch, down: bool, now_ms: i64) Verdict {
+        if (!down) {
+            self.since_ms = null;
+            return .healthy;
+        }
+        const since = self.since_ms orelse {
+            self.since_ms = now_ms;
+            return .watching;
+        };
+        if (now_ms - since < settle_ms) return .watching;
+        return .condemn;
+    }
+};
+
 // ---------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------
@@ -484,6 +530,38 @@ test "ensure never dials for a machine nobody holds" {
     try testing.expect(l.dialFailed("relay:r|dev", d.generation, 0));
     try testing.expect(l.release("relay:r|dev"));
     try testing.expectEqual(Decision.hold, l.ensure("relay:r|dev", 100_000).decision);
+}
+
+test "DownWatch: a link that STAYS down is condemned once the settle window has run" {
+    var w: DownWatch = .{};
+    try testing.expectEqual(DownWatch.Verdict.healthy, w.observe(false, 0));
+    // The down edge starts the watch; the window is measured from it.
+    try testing.expectEqual(DownWatch.Verdict.watching, w.observe(true, 1_000));
+    try testing.expectEqual(DownWatch.Verdict.watching, w.observe(true, 1_000 + settle_ms - 1));
+    try testing.expectEqual(DownWatch.Verdict.condemn, w.observe(true, 1_000 + settle_ms));
+    // And stays condemned for as long as nobody replaces it.
+    try testing.expectEqual(DownWatch.Verdict.condemn, w.observe(true, 1_000 + settle_ms * 10));
+}
+
+test "DownWatch: a link that heals inside the window is never condemned" {
+    var w: DownWatch = .{};
+    try testing.expectEqual(DownWatch.Verdict.watching, w.observe(true, 0));
+    try testing.expectEqual(DownWatch.Verdict.healthy, w.observe(false, settle_ms - 1));
+    // A second drop starts a FRESH window rather than inheriting the first one's
+    // age — two blips 5s apart are two blips, not one five-second outage.
+    try testing.expectEqual(DownWatch.Verdict.watching, w.observe(true, settle_ms + 10));
+    try testing.expectEqual(DownWatch.Verdict.watching, w.observe(true, settle_ms * 2));
+    try testing.expectEqual(DownWatch.Verdict.condemn, w.observe(true, settle_ms * 2 + 10));
+}
+
+test "DownWatch: repeated down observations do not restart the clock" {
+    // The edge AND the sweep both feed it; the second report of the same outage
+    // must not push the deadline out, or a link swept every 5s would never age.
+    var w: DownWatch = .{};
+    _ = w.observe(true, 0);
+    _ = w.observe(true, 2_000);
+    _ = w.observe(true, 4_000);
+    try testing.expectEqual(DownWatch.Verdict.condemn, w.observe(true, settle_ms));
 }
 
 test "capacity is reported, not silently ignored" {

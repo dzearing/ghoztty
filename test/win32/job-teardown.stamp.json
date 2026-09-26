@@ -1,10 +1,10 @@
 {
     "guard":  "job-teardown",
     "script":  "test/win32/job-teardown.ps1",
-    "generated":  "2026-09-25T19:04:21-07:00",
-    "commit":  "79e3d8165",
+    "generated":  "2026-09-25T19:50:11-07:00",
+    "commit":  "94e73e92c",
     "uncommitted":  [
-                        "test/win32/activity-help-tooltips.ps1"
+                        "test/win32/chooser-conn-pool.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -47,7 +47,7 @@
                   "test/win32/caller-anchor.ps1":  "81cb4dd79a7168195352d3006a6f8247c199237458b2a25a040567940e8c83b4",
                   "test/win32/caption-bar.ps1":  "35741eff2030b10da24130dcac8e8bfc7f7c9e73a853ddf25af11bda63d42d02",
                   "test/win32/chooser-close-chord.ps1":  "a3013aa41320b1c764f5a63df64068b651174f761e486dbddb52da672b3b711a",
-                  "test/win32/chooser-conn-pool.ps1":  "f9f574dd490ad406f5e76cf010dae9b21472641218f121449360c4f08d353fbd",
+                  "test/win32/chooser-conn-pool.ps1":  "f23b19a7b0bf62a2c635bf4a4503862db5a11da7ef3209b6392f832916e316d5",
                   "test/win32/chooser-controls.ps1":  "69a8d25a53eba9af41871bfebc202b015c83baebe4df8caa8a33ad7cb991a7d5",
                   "test/win32/chooser-help-tooltips.ps1":  "12d40267d01d5f8f6629319c532b4ef9f4d83ecb359ab544e474ba58fde11fe5",
                   "test/win32/chooser-kill-hover.ps1":  "c4d65e3d549b4be314cb58a4fd445b0d3d1981417ee9af1600bc551fb95e2ec5",

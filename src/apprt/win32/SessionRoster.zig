@@ -667,10 +667,11 @@ fn shouldRedial(self: *const SessionRoster, dead_entry: u64) bool {
 /// itself instead of showing a list known to be wrong until the user clicks
 /// somewhere else (T859).
 ///
-/// Why this is the roster's job and not the pool's: the pool learns a connection
-/// died from the link FSM, and a dropped socket only reaches `dead` after the
-/// heartbeat backoff has run out — minutes, on a link nothing else is using. The
-/// fetch knows in one RPC. So the borrower reports, the pool decides and dials,
+/// Why the roster reports rather than waiting for the pool: a dropped socket
+/// never reaches `dead` at all (only a DETACHED frame puts it there), and the
+/// pool's own `sweep` only condemns it once it has stayed down through the
+/// settle window and the next poll tick has looked (T1636). The fetch knows in
+/// one RPC. So the borrower reports, the pool decides and dials,
 /// and the roster refetches when the lease notification says the machine is warm
 /// again — the ordinary `onPoolChange` path, with nothing new in it.
 pub fn retryDeadPool(self: *SessionRoster, app: *App, dead_entry: u64) void {
@@ -726,6 +727,10 @@ pub fn onPoolChange(
         // repainting for here is a fetch that failed before it started.
         return self.state != before;
     }
+    // The connection is being REPLACED, not lost (T1636): the fresh one arrives
+    // through this same callback and refetches. Nothing to say yet — an error
+    // card now would flash for the second the dial takes.
+    if (failure == .redialing) return false;
     // No connection: report WHY, and only over a region that has nothing better
     // to show — a roster already on screen is more useful than an error card
     // about the socket it was fetched over.
@@ -733,7 +738,7 @@ pub fn onPoolChange(
     const next: chooser_sessions.State = switch (failure) {
         .unauthorized => .unauthorized,
         .incompatible => .incompatible,
-        .none, .offline => .failed,
+        .none, .offline, .redialing => .failed,
     };
     if (self.state == next) return false;
     self.state = next;

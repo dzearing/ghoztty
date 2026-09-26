@@ -59,6 +59,7 @@ const dial_failure = @import("dial_failure.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
 const tcp_dial = @import("../../remote/tcp_dial.zig");
 const remote_connection = @import("../../remote/connection.zig");
+const agent_recovery = @import("agent_recovery.zig");
 const w32 = @import("win32.zig");
 
 const log = std.log.scoped(.win32);
@@ -83,7 +84,15 @@ pub const max_leases: usize = 32;
 /// are different SENTENCES to the user — "couldn't reach it" sends them to the
 /// network when the answer is to sign in again, or to update one side (T628) —
 /// so the distinction is carried rather than flattened into "failed".
-pub const Failure = enum { none, offline, unauthorized, incompatible };
+///
+/// `redialing` is not a failure the user is told about at all (T1636): the
+/// connection a lease was handed is being REPLACED, so every handle to it must
+/// be dropped now. It is still valid for the length of the notification (a
+/// lease may unsubscribe through it) and freed right after — and a fresh
+/// connection (or a real failure) follows from the dial. It exists so a lease
+/// can let go of a doomed handle without the region painting an error card for
+/// the second the re-dial takes.
+pub const Failure = enum { none, offline, unauthorized, incompatible, redialing };
 
 /// The transport a pooled connection rides. Same two shapes as
 /// `Window.RemoteDialed`, declared here rather than imported so the pool does
@@ -123,6 +132,9 @@ pub const Entry = struct {
     /// reader thread.
     hwnd: w32.HWND,
     refs: std.atomic.Value(u32),
+    /// How long this link has been down, for `sweep` (T1636). GUI thread only:
+    /// the link callback posts, and the edge is stamped in `onLink`.
+    down: machine_pool.DownWatch = .{},
 
     pub fn conn(self: *Entry) *remote_connection.Connection {
         return self.transport.conn();
@@ -344,6 +356,7 @@ pub fn ensureConnected(self: *MachineConnectionPool, hwnd: w32.HWND, ep: machine
 /// not: it is being re-dialed, and the answer to "is it reachable" arrives from
 /// the dial a moment later (`onDialed` notifies either way). Saying `offline`
 /// first would flash an error card over a region that is about to be refetched.
+/// What they ARE told is `redialing`, because the handle they hold is freed here.
 pub fn redialNow(
     self: *MachineConnectionPool,
     hwnd: w32.HWND,
@@ -356,14 +369,66 @@ pub fn redialNow(
     const slot = self.ledger.find(k) orelse return false;
     const entry = self.entries[slot] orelse return false;
     if (entry.id != entry_id) return false;
-    const gen = self.ledger.generationOf(k) orelse return false;
-    const out = self.ledger.redial(k, gen);
-    if (out.decision != .dial) return false;
     log.info(
         "machine pool: a borrower proved the warm connection dead {s} entry={d}; redialing",
         .{ k, entry_id },
     );
+    return self.condemn(hwnd, slot);
+}
+
+/// Replace every pooled connection whose link has stayed down past the settle
+/// window (T1636). Called from whatever the leases already tick on — the
+/// chooser's 5s poll — because a dropped socket produces ONE state edge and
+/// then silence, so something has to come back and look.
+///
+/// Only `ready` slots with a live entry are considered; a slot mid-dial or
+/// cooling down holds no connection to condemn.
+pub fn sweep(self: *MachineConnectionPool, hwnd: w32.HWND) void {
+    if (comptime builtin.os.tag != .windows) return;
+    const now = std.time.milliTimestamp();
+    for (0..machine_pool.max_entries) |slot| {
+        const entry = self.entries[slot] orelse continue;
+        const state = entry.conn().state();
+        switch (entry.down.observe(agent_recovery.isDown(state), now)) {
+            .healthy, .watching => {},
+            .condemn => {
+                log.info(
+                    "machine pool: warm connection stayed {s} for {d}ms {s} entry={d}; redialing",
+                    .{ @tagName(state), machine_pool.settle_ms, self.ledger.keyOf(slot), entry.id },
+                );
+                _ = self.condemn(hwnd, slot);
+            },
+        }
+    }
+}
+
+/// Drop the connection in `slot` and dial its replacement NOW, keeping every
+/// lease (T859, T1636). Returns true when a dial was started.
+///
+/// The leases hear `redialing` BEFORE the free. They may be holding the handle
+/// with a subscription installed on it (the chooser's CPU meter and pushed
+/// roster), and a holder that learned of the replacement only when the NEW
+/// connection arrived would unsubscribe from the old one first — through a
+/// transport this function had already freed.
+fn condemn(self: *MachineConnectionPool, hwnd: w32.HWND, slot: usize) bool {
+    // By value: a lease released inside the notification below can drop the
+    // ledger slot, and with it the storage `keyOf` points into.
+    var kbuf: [machine_pool.max_key]u8 = undefined;
+    const live_key = self.ledger.keyOf(slot);
+    const k = kbuf[0..live_key.len];
+    @memcpy(k, live_key);
+
+    const gen = self.ledger.generationOf(k) orelse return false;
+    const out = self.ledger.redial(k, gen);
+    if (out.decision != .dial) return false;
+
+    self.notify(k, null, .redialing);
     self.freeEntry(slot);
+
+    // The last lease may have gone inside that notification, taking the slot
+    // (and the recipe the dial needs) with it. The ledger's generation is what
+    // says whether this dial still belongs to anybody.
+    if (self.ledger.generationOf(k) != out.generation) return false;
     self.startDial(hwnd, out.slot, out.generation);
     return true;
 }
@@ -676,14 +741,24 @@ pub fn onNotify(self: *MachineConnectionPool, wparam: usize, lparam: isize) void
     self.onLink(@intCast(wparam), state);
 }
 
-/// One connection's transport FSM moved. Only `dead` is acted on: the FSM enters
-/// `reconnecting` after a few missed heartbeats and snaps back on the next
-/// authentic packet, so treating a down EDGE as death would tear down working
-/// connections on a scheduler hiccup — the same reasoning as
-/// `agent_recovery.settle_ms`, without needing its settle window, because
-/// nothing here rebuilds windows: it just re-dials.
+/// One connection's transport FSM moved. Only `dead` is acted on AT ONCE: the
+/// FSM enters `reconnecting` after a few missed heartbeats and snaps back on the
+/// next authentic packet, so treating a down EDGE as death would tear down
+/// working connections on a scheduler hiccup — the reasoning behind
+/// `agent_recovery.settle_ms`.
+///
+/// Every other edge is still RECORDED, though (T1636): `reconnecting` is also
+/// what a dropped socket looks like, forever, and `sweep` condemns a link that
+/// stays there past the settle window. Stamping the edge here is what makes that
+/// window run from the drop rather than from whenever the next sweep happened to
+/// look.
 fn onLink(self: *MachineConnectionPool, entry_id: u64, state: remote_connection.LinkState.State) void {
-    if (state != .dead) return;
+    if (state != .dead) {
+        const slot = self.slotForEntry(entry_id) orelse return;
+        const entry = self.entries[slot] orelse return;
+        _ = entry.down.observe(agent_recovery.isDown(state), std.time.milliTimestamp());
+        return;
+    }
     const slot = self.slotForEntry(entry_id) orelse return;
     const k = self.ledger.keyOf(slot);
     const gen = self.ledger.generationOf(k) orelse return;

@@ -34007,3 +34007,22 @@ tip waits for T1549, which now has Mac's sentence ready. Filed T1748: Show all
 stays clickable when there is nothing to filter. New acceptance script
 `activity-help-tooltips.ps1` (ALL PASS, 26, with negatives). Floor lanes, P1-P3,
 the harness floor and every due guard are green.
+
+## 2026-09-25 - T1636: a remote machine's pushed session list recovers when its link drops
+
+The task assumed `Connection` reconnects in place. It never does: a dropped
+socket leaves the link in `reconnecting` for good, and only a DETACHED frame
+reaches `dead`. The local agent already recovered through T813. The remote pool,
+though, acted on `dead` alone, so a dropped relay socket left a zombie
+connection and the chooser's pushed roster froze with no warning. Now a pooled
+link that stays down for 5s is condemned. That happens through
+`machine_pool.DownWatch`, fed by the link edge and by a new
+`MachineConnectionPool.sweep` on the chooser's poll, and the pool then re-dials.
+The roster and CPU meter re-subscribe on the replacement, once each. The T859
+`redialNow` path now shares the same `condemn`, which tells leases (with a new
+`redialing` notice) while the old handle is still valid. That closes a
+use-after-free in which the probes unsubscribed through the already-freed
+connection. `chooser-conn-pool.ps1` has a new section H (ALL PASS, 38); with the
+sweep removed, all nine of its assertions go red. Filed T1749: the agent pushes
+a roster change only to the connection that made it, so another client's new
+session never reaches a remote chooser.

@@ -40,6 +40,11 @@
 #      The relay drops the live bridge without touching the agent, so the
 #      machine is fine and only the socket is gone - the state the pool used to
 #      sit on until the heartbeat backoff eventually declared the link dead.
+#   H  T1636: the same drop with NOBODY fetching. A dropped socket never
+#      reaches `dead`, so only the pool's own sweep can find it; it must
+#      replace the connection, and the pushed roster AND the CPU meter must
+#      come back on the replacement - exactly one subscription each, and a
+#      session started after the swap must still arrive as a push.
 #
 # T211/T217: runs on a BACKGROUND Win32 desktop and never takes the user's
 # foreground. T248: the repo's agent and app are killed at setup and the app is
@@ -298,8 +303,71 @@ try {
         'G and the pool dialed exactly once to recover'
     Assert (Test-TestWindowResponsive -Window $chooser) `
         'G the chooser is not wedged - the retry dial never parked its worker'
+    # --- H: a dropped socket nobody fetches over is still replaced (T1636) --
+    Write-Host ''
+    Write-Host '3b. a dropped pooled socket is replaced with NO fetch, and both streams come back'
+    # G's recovery needs a fetch to discover the death. The pushed roster makes
+    # fetches rare - the list is live, so nothing re-asks - and a dropped socket
+    # sits in `reconnecting` forever (only a DETACHED frame reaches `dead`), so
+    # before T1636 the pool never noticed and the pushed roster simply STOPPED,
+    # with the last list still on screen. Here nobody presses anything: the
+    # chooser's own poll has to find the corpse.
+    $subRosterBefore = Count-LogLines $errlog 'chooser roster: subscribed to the pushed roster'
+    $subCpuBefore = Count-LogLines $errlog 'chooser cpu: subscribed interval_hint='
+    $poolDialsBeforeH = Count-LogLines $errlog "machine pool: dialing relay:.*\|$DEV"
+    $sweptBefore = Count-LogLines $errlog 'machine pool: warm connection stayed \w+ for \d+ms'
+    $droppedBefore = Count-LogLines $relaylog "BRIDGE dropped device=$DEV"
+    # Both streams were live on the connection G installed - otherwise "they came
+    # back" below would be measuring a subscription that was never there.
+    Assert ($subRosterBefore -ge 1 -and $subCpuBefore -ge 1) `
+        "H setup: the roster ($subRosterBefore) and the meter ($subCpuBefore) were subscribed before the drop"
+
+    New-Item -ItemType File -Path $dropFile -Force | Out-Null
+    $droppedH = $false
+    for ($i = 0; $i -lt 40; $i++) {
+        if ((Count-LogLines $relaylog "BRIDGE dropped device=$DEV") -gt $droppedBefore) { $droppedH = $true; break }
+        Start-Sleep -Milliseconds 250
+    }
+    Assert $droppedH 'H the relay dropped the live bridge again (fixture control)'
+    $pushesAtDrop = Count-LogLines $errlog 'chooser roster: pushed \d+ session'
+
+    # Settle window (5s) + one poll tick (5s) + the dial: generous at 30s.
+    $swept = Wait-LogCount $errlog 'machine pool: warm connection stayed \w+ for \d+ms' ($sweptBefore + 1) 30000
+    Assert $swept 'H the pool condemned the connection that stayed down, with no fetch to prompt it'
+    $resubbed = Wait-LogCount $errlog 'chooser roster: subscribed to the pushed roster' ($subRosterBefore + 1) 20000
+    Assert $resubbed 'H the pushed roster was re-subscribed on the replacement connection'
+    $firstPush = Wait-LogCount $errlog 'chooser roster: pushed \d+ session' ($pushesAtDrop + 1) 10000
+    Assert $firstPush 'H and the agent pushed the roster over it'
+    $cpuBack = Wait-LogCount $errlog 'chooser cpu: subscribed interval_hint=' ($subCpuBefore + 1) 10000
+    Assert $cpuBack 'H the CPU meter was re-subscribed on the same replacement'
+    $cpuFramesAtResub = Count-LogLines $errlog 'chooser cpu: frame rows='
+    $cpuFrame = Wait-LogCount $errlog 'chooser cpu: frame rows=' ($cpuFramesAtResub + 1) 15000
+    Assert $cpuFrame 'H and CPU frames resumed without a selection change'
+
+    # NOT asserted here: a session started on the machine after the swap
+    # reaching the roster as a push. The agent only pushes a roster change to
+    # the connection that MADE it, so a session opened by another client (a
+    # second `+new-remote-window`, which dials its own socket) is never pushed
+    # to the chooser's pooled connection - with or without a drop. That is
+    # T1749, measured by this section's first draft; the stream's liveness here
+    # is shown by the subscribe-time push and the CPU frames above instead.
+
+    # Exactly once: one condemn, one pool dial, one subscription per stream -
+    # measured after a further settle + tick, so a second sweep that fired on
+    # the healthy replacement would have had time to show up here.
+    Start-Sleep -Seconds 12
+    Assert ((Count-LogLines $errlog 'machine pool: warm connection stayed \w+ for \d+ms') -eq ($sweptBefore + 1)) `
+        'H exactly one condemn for one drop'
+    Assert ((Count-LogLines $errlog "machine pool: dialing relay:.*\|$DEV") -eq ($poolDialsBeforeH + 1)) `
+        'H the pool dialed exactly once to replace it'
+    Assert ((Count-LogLines $errlog 'chooser roster: subscribed to the pushed roster') -eq ($subRosterBefore + 1)) `
+        'H one roster subscription on the replacement - no duplicate stream'
+    Assert ((Count-LogLines $errlog 'chooser cpu: subscribed interval_hint=') -eq ($subCpuBefore + 1)) `
+        'H one CPU subscription on the replacement - no doubled frame rate'
+    Assert (Test-TestWindowResponsive -Window $chooser) 'H the chooser is not wedged'
+
     # Re-baseline for the sections below, which measure deltas.
-    $afterRefetch = $dialsAfterHeal
+    $afterRefetch = Wait-RelaySettled $relaylog $DEV
     $loadsAfter = Count-LogLines $errlog "chooser roster: loaded \d+ session.*device=$DEV"
 
     # --- F: leaving the machine gives the socket back ----------------------

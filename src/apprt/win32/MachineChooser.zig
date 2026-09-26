@@ -1079,6 +1079,12 @@ fn pollTick(self: *MachineChooser) void {
     // First, and unconditionally — this half is about the LOCAL agent, which is
     // there whether or not anybody is signed in to the relay.
     self.syncLiveStreams();
+    // The REMOTE half of the same question (T1636): a pooled connection whose
+    // socket dropped sits in `reconnecting` for good and never notifies again,
+    // so the pushed roster riding it would stop without a word. The sweep
+    // replaces it once it has stayed down through the settle window, and the
+    // fresh connection re-subscribes both streams through `onPoolChange`.
+    if (self.window.app.msg_hwnd) |h| self.window.app.machine_pool.sweep(h);
     // Also local and account-independent: a revocation still owed can be
     // finished by the app's retry loop or by the agent (T1427), and neither
     // tells the dialog. One small file read per tick is how the line under
@@ -2413,8 +2419,18 @@ fn onPoolChange(
     // goes; a null one means the pool is about to FREE it, so the handler is
     // forgotten rather than unsubscribed — writing down a socket its owner has
     // already given up on is the one thing this ordering exists to avoid.
+    //
+    // `redialing` is the exception (T1636): the handle is still VALID for the
+    // length of this call and is freed right after it, so this is the last
+    // moment the handlers can come off it properly. They must — a condemned
+    // link can be merely stalled rather than gone, and a fetch still borrowing
+    // it keeps it alive, able to deliver into probes that no longer expect it.
+    // The replacement arrives here as a live connection a moment later.
     if (conn) |c| {
         if (self.retargetStreams(c)) changed = true;
+    } else if (failure == .redialing) {
+        self.cpu.stop();
+        self.push.stop();
     } else {
         self.cpu.forget();
         self.push.forget();
