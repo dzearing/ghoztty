@@ -630,6 +630,11 @@ test {
     // std, same no-OS-imports deal.
     _ = @import("apprt/win32/resolve_defer.zig");
 
+    // Pure win32 rule for the banner a window carries when it had to open
+    // without session persistence because the agent failed to start (T1693).
+    // Pure std, same no-OS-imports deal.
+    _ = @import("apprt/win32/persistence_notice.zig");
+
     // Pure win32 rule for when the launch's stand-in window may be closed
     // after a late session restore (T1003). Pure std.
     _ = @import("apprt/win32/restore_placeholder.zig");

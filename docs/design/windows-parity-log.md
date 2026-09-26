@@ -34149,3 +34149,19 @@ also took on the recorded pane id, so two panes shared one id and
 repeats, and the negative control is still red. All floor lanes pass, and so do
 the 12 due guard harnesses and the harness floor. The Mac half is filed as
 T1755.
+
+## 2026-09-26 - T1693: a window opened after the session agent failed to start now says it is not persisted
+
+If the session agent would not launch, or launched and never answered, the
+window that asked for it opened as a plain local shell. So did every window
+opened in the 15s cooldown after that. None of them said anything, and they
+were gone at the next restart. The first terminal pane of such a window now
+shows a "Not persisted" banner that says why ("did not respond" or "could not
+be started"). The banner is left out of the saved layout, so a later restore
+onto a healthy agent does not repeat it. A missing agent binary keeps its
+startup dialog (T1177). The rule lives in the new pure
+`persistence_notice.zig`. `LocalAgent.failedStartCause` is gated on the
+cooldown, so a failure that a late adoption has already ended is never
+reported. `resolve-window-persist.ps1` adds sections C and D plus a control
+(A4): ALL PASS (13). C4 goes red with the layout filter removed. All floor
+lanes, 20 due GUI harnesses and the harness floor are green. Mac half: T1756.

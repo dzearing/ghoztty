@@ -85,6 +85,7 @@ const window_placement = @import("window_placement.zig");
 const agent_recovery = @import("agent_recovery.zig");
 const restore_retry = @import("restore_retry.zig");
 const resolve_defer = @import("resolve_defer.zig");
+const persistence_notice = @import("persistence_notice.zig");
 const restore_placeholder = @import("restore_placeholder.zig");
 const RemoteReconnect = @import("RemoteReconnect.zig");
 const agent_upgrade = @import("agent_upgrade.zig");
@@ -2828,8 +2829,12 @@ fn captureLeaf(
         .ipc_name = if (ipc_name) |n| try arena.dupe(u8, n) else null,
         // T422: the banner's raw markdown source. App-side overlay state that
         // no PTY replay carries, so the manifest is its only way back.
+        //
+        // T1693: except the not-persisted notice. It describes THIS run's
+        // window; a window restored onto a healthy agent must not come back
+        // still claiming it will not survive a restart.
         .banner = if (surface.banner_text) |b|
-            (if (b.len > 0) try arena.dupe(u8, b) else null)
+            (if (b.len > 0 and !persistence_notice.isNotice(b)) try arena.dupe(u8, b) else null)
         else
             null,
         // Recorded unconditionally: it must survive even for a leaf with no
@@ -6207,6 +6212,20 @@ pub fn createEmptyWindow(self: *App, opts: Window.InitOptions) !*Window {
         false;
     if (!is_remote and self.config.@"session-persistence") {
         window.local_agent_conn = self.local_agent.sharedConnection();
+        // T1693: no connection because the agent FAILED to start (this resolve,
+        // or one in the cooldown before it) - the window's shells will not
+        // survive a restart, and its first pane says so instead of passing for
+        // a persisted one. Every other reason for null gets nothing here.
+        if (window.local_agent_conn == null) {
+            if (self.local_agent.failedStartCause()) |f| {
+                window.pending_persistence_notice =
+                    persistence_notice.bannerFor(persistence_notice.causeFromTag(@tagName(f)));
+                if (window.pending_persistence_notice != null) log.warn(
+                    "window opened without session persistence: the session agent {s}",
+                    .{@tagName(f)},
+                );
+            }
+        }
     }
 
     try self.windows.append(alloc, window);

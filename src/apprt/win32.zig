@@ -149,5 +149,6 @@ test {
     _ = @import("win32/provenance.zig");
     _ = @import("win32/restore_retry.zig");
     _ = @import("win32/resolve_defer.zig");
+    _ = @import("win32/persistence_notice.zig");
     _ = @import("win32/restore_placeholder.zig");
 }

@@ -39,6 +39,16 @@ crashes). It is **on by default** (disable with `session-persistence = off`).
 
   E2E: `test/win32/session-relaunch-notify.ps1`.
 
+**A window that opens without the agent says so** (T1693). When the shared
+resolve fails — the agent would not launch (`spawn_failed`) or never answered
+inside the deadline (`unresponsive`) — that window, and every window opened in
+the 15s cooldown after it, is a plain local shell that will not survive a
+restart. Its first terminal pane carries a fixed-literal "Not persisted" banner
+(`persistence_notice.zig`), which the layout capture leaves out so a restore onto
+a healthy agent never repeats it. A missing agent binary keeps its one app-wide
+startup dialog (T1177) instead. E2E: `test/win32/resolve-window-persist.ps1`
+sections C/D.
+
 **An agent that dies while the app stays up is recovered IN PLACE** (T145), and
 **a recovery that cannot reach an agent keeps trying** (T723). A dropped shared
 link is judged before it is acted on — only a link still down after

@@ -693,6 +693,14 @@ remote_machine: ?RemoteMachine = null,
 /// with `remote_dialed`.
 local_agent_conn: ?*remote_connection.Connection = null,
 
+/// The banner this window's first terminal pane is still owed because the
+/// window opened WITHOUT session persistence - the agent failed to start
+/// (T1693). A static literal from `persistence_notice`, set by
+/// `App.createEmptyWindow` and consumed by the first `addTab`, so it lands on
+/// the pane the user sees rather than on a split added later. Null for every
+/// window that got the agent, or never asked for it.
+pending_persistence_notice: ?[]const u8 = null,
+
 /// The window-level title pin (`+new-window --title`, `+rename`, the
 /// "Change Window Title" prompt) — mirrors the Mac windowTitleOverride.
 /// When set, the titlebar shows this over every tab/pane title until
@@ -2195,6 +2203,15 @@ pub fn addTab(self: *Window) !*Surface {
     };
 
     self.insertPaneAsTab(pane, tree);
+
+    // T1693: this window opened without the agent because the agent failed to
+    // start, and nothing else on screen would say so. Once, on the first
+    // terminal pane, and never over a banner something else already put there
+    // (an IPC `--banner`, a restored one): theirs is the more specific sentence.
+    if (self.pending_persistence_notice) |notice| {
+        self.pending_persistence_notice = null;
+        if (surface.banner_text == null) surface.setPaneBanner(notice);
+    }
     return surface;
 }
 

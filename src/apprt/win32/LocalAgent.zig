@@ -1135,6 +1135,19 @@ pub fn resolveFailure(self: *const LocalAgent) ?Failure {
     return self.resolve_failure;
 }
 
+/// Why a window that just got NO connection from `sharedConnection` got none,
+/// when the answer is "the agent failed to start" (T1693); null otherwise.
+///
+/// Gated on `last_failure_ms` rather than read from `resolve_failure` alone:
+/// that field is only cleared by a successful `sharedConnection`, so after a
+/// late adoption (T976) or an in-place recovery it can still name a failure
+/// that is over. `last_failure_ms` is cleared by every success path, and it is
+/// set exactly while the cooldown is the reason windows open without the agent.
+pub fn failedStartCause(self: *const LocalAgent) ?Failure {
+    if (self.last_failure_ms == null) return null;
+    return self.resolve_failure;
+}
+
 /// The protocol skew the last dial hit, or null. Read by the app to decide
 /// whether the mandatory-update path applies (T125).
 pub fn protocolSkew(self: *const LocalAgent) ?Skew {
