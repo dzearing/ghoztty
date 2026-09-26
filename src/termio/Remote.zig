@@ -495,11 +495,26 @@ pub const RelaunchPolicy = enum {
 /// output. A pane whose snapshot genuinely ends inside an alt-screen TUI is the
 /// residual gap; it is rarer than "every relaunched pane" and the cure is worse
 /// there.
+///
+/// One piece of state that is not a mode rides along: the shell-integration
+/// PROMPT the dead shell left open (T1698). A shell with OSC 133 marks its
+/// prompt `133;A … 133;B`, and a session that died at its prompt — which is
+/// nearly every session — ends the replay still inside that input region. Left
+/// open, the divider and every byte the respawned child prints are written as
+/// "prompt input", and the first resize that follows (a split settling the
+/// pane's width is enough) clears the whole region so the shell can redraw it:
+/// the dead prompt, the divider and the fresh banner are blanked together,
+/// which is how "--- session restarted ---" went missing. `133;D` ends the dead
+/// command, which returns the cursor to plain output and moves nothing.
 pub const replay_mode_reset =
     input_mode_reset ++
     "\x1b[?7h" ++ // DECAWM: autowrap back on (its default)
     "\x1b[?25h" ++ // DECTCEM: cursor visible again
-    "\x1b[0m"; // SGR: default text attributes
+    "\x1b[0m" ++ // SGR: default text attributes
+    semantic_prompt_close;
+
+/// OSC 133;D — "the command is finished". See `replay_mode_reset`.
+const semantic_prompt_close = "\x1b]133;D\x1b\\";
 
 /// The marker printed above a relaunched session's fresh output.
 ///
@@ -2798,6 +2813,53 @@ test "T1055 input_mode_reset is a prefix of replay_mode_reset (one list, not two
     // and this is the assertion that keeps it that way.
     try testing.expect(std.mem.startsWith(u8, replay_mode_reset, input_mode_reset));
     try testing.expect(replay_mode_reset.len > input_mode_reset.len);
+}
+
+/// Replay a relaunched pane into a terminal (T1698): the dead session's ring,
+/// which ends at the dead shell's OSC 133 prompt with its input region still
+/// open, then the divider, then `reset`, then the respawned shell's first
+/// output — before that shell has marked a prompt of its own — and then the
+/// resize that follows as a split settles the pane's width. Answers whether the
+/// divider is still anywhere in the pane, screen or scrollback.
+///
+/// The resize is the trigger: with `shell_redraws_prompt` on (the default) a
+/// resize whose cursor is not in plain output clears the whole prompt region it
+/// is in, from that region's start down, so the shell can redraw it. Whatever
+/// the dead shell left open decides where that region starts.
+fn relaunchDividerSurvives(reset: []const u8) !bool {
+    const alloc = std.testing.allocator;
+    var t = try terminal.Terminal.init(alloc, .{ .cols = 64, .rows = 20, .max_scrollback = 4096 });
+    defer t.deinit(alloc);
+    var s = t.vtStream();
+    defer s.deinit();
+
+    const prompt = "\x1b]133;A\x1b\\C:\\Users\\David>\x1b]133;B\x1b\\";
+    s.nextSlice(prompt ++ "echo hi\r\nhi\r\n\r\n" ++ prompt ++ "\r\n");
+    s.nextSlice(restart_divider);
+    s.nextSlice(reset);
+    s.nextSlice("Microsoft Windows [Version 10.0.26200.9550]\r\n" ++
+        "(c) Microsoft Corporation. All rights reserved.\r\n\r\n");
+    try t.resize(alloc, 31, 20);
+
+    const all = try t.screens.active.dumpStringAlloc(alloc, .{ .screen = .{} });
+    defer alloc.free(all);
+    return std.mem.indexOf(u8, all, "session restarted") != null;
+}
+
+test "T1698 the relaunch reset closes the dead shell's prompt so a resize keeps the divider" {
+    const testing = std.testing;
+
+    // Negative control: without the reset this is the reported pane. The
+    // replay leaves the dead shell's prompt open, a resize clears it "for the
+    // shell to redraw", and the divider goes with it.
+    try testing.expect(!try relaunchDividerSurvives(""));
+    // The modes alone do not help — it is the prompt, not a mode.
+    try testing.expect(!try relaunchDividerSurvives(input_mode_reset));
+
+    // The reset every replaying policy sends.
+    try testing.expect(try relaunchDividerSurvives(replay_mode_reset));
+    try testing.expect(try relaunchDividerSurvives(RelaunchPolicy.rerun.streamNotice()));
+    try testing.expect(try relaunchDividerSurvives(RelaunchPolicy.prompt.streamNotice()));
 }
 
 test "T824 only the replaying policies ask the agent to splice a mode reset" {

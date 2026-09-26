@@ -1197,12 +1197,10 @@ $GuardTable = @(
     # stay invisible until the user's next reboot silently started a brand-new
     # Claude Code session in every pane, which is the exact complaint that
     # produced T230. Only the DEFAULT-policy harness is gated: `rerun`/`prompt`
-    # are opt-ins nobody's reboot lands on by accident, and their harness
-    # (`session-relaunch.ps1`) is one more long GUI run per Remote.zig edit for a
-    # path the default never takes. That ungated harness is where T824's DECRQM
-    # oracle lives (section A: the replay re-arms the dead program's mouse
-    # tracking, and the reset must land behind it) - run it by hand when the
-    # RELAUNCH path in `termio\Remote.zig` changes.
+    # are opt-ins nobody's reboot lands on by accident, so their harness
+    # (`session-relaunch.ps1`, where T824's DECRQM oracle lives) has its own row
+    # below rather than a place in this one - since T1698, when "run it by hand"
+    # turned out to mean "nobody runs it".
     [pscustomobject]@{
         Name   = 'session-relaunch'
         Script = 'test\win32\session-relaunch-notify.ps1'
@@ -1239,6 +1237,24 @@ $GuardTable = @(
             # this makes due is not a per-turn cost.
             'src\remote\agent\holder_adopt.zig',
             'test\win32\session-relaunch-notify.ps1'
+        )
+    },
+    # T1698: the opt-in RELAUNCH policies (`rerun`/`prompt`), which the row above
+    # deliberately left to "run it by hand". Nobody did: the restart divider
+    # vanished on 2026-09-02 and the harness that says so sat red, unrun, for
+    # three weeks. What broke it was not a RELAUNCH edit at all but cmd.exe's
+    # prompt integration (the dead shell's OSC 133 prompt, replayed, left open),
+    # so the shell-integration source is covered as well as the replay path.
+    [pscustomobject]@{
+        Name   = 'session-relaunch-rerun'
+        Script = 'test\win32\session-relaunch.ps1'
+        Stamp  = 'test\win32\session-relaunch.stamp.json'
+        Covers = @(
+            'src\termio\Remote.zig',
+            'src\termio\restore_park.zig',
+            'src\termio\shell_integration.zig',
+            'src\remote\agent\ring_snapshot.zig',
+            'test\win32\session-relaunch.ps1'
         )
     },
     # T1048: the only harness that measures WHICH captured tree a rebuilt tab is

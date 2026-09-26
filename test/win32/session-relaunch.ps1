@@ -597,5 +597,16 @@ if ($null -ne $savedAgentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin }
 else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
 Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 
+# --- stamp (T1698) -----------------------------------------------------------
+# A green run records the content of every file this harness covers, so
+# scripts\guard-due.ps1 can say when it is due. Until this it had no row: the
+# divider assertions (A10/A11) sat red for three weeks because nothing ever made
+# anyone run it. Red leaves the stamp alone, so a failure stays due.
+if ($script:failures -eq 0) {
+    $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRoot 'scripts\guard-due.ps1') `
+        update -Guard session-relaunch-rerun -Repo $repoRoot 2>&1 | ForEach-Object { "  $_" }
+}
+
 if ($script:failures -eq 0) { "ALL PASS"; exit 0 }
 else { "$($script:failures) FAILURE(S)"; exit 1 }

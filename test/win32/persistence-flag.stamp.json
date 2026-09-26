@@ -1,10 +1,10 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-09-26T03:10:57-07:00",
-    "commit":  "9927ba0b3",
+    "generated":  "2026-09-26T04:31:06-07:00",
+    "commit":  "3aec7d77f",
     "uncommitted":  [
-                        "test/win32/resolve-window-persist.ps1"
+                        "test/win32/session-relaunch.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -264,7 +264,7 @@
                   "test/win32/session-persistence.ps1":  "f3c1e45d764a320f9f5a97979350697c1556fcc26a1b9ea71c1824abbd080a9c",
                   "test/win32/session-reattach.ps1":  "cb73635c3f3503ffc470a75e9a65ef39a5adb30496149ed22c92bfd360a4a1ea",
                   "test/win32/session-reattach-zombie.ps1":  "5dc30cdebcaf21553c17c3e13c3b08b3d4fc120fb487972407acb7377d51cf4a",
-                  "test/win32/session-relaunch.ps1":  "e314225e771031b4a342da253e10e0f2556f91281f9ace8551b526c325ff37a7",
+                  "test/win32/session-relaunch.ps1":  "270778ba1cce708e6a11defe083f23dd3bfd07ec553a3543e98aeb495971ee1f",
                   "test/win32/session-relaunch-notify.ps1":  "4d99a3f10608f068460092ca36ad8fb2086708dd7516dbb838c6c900058133a5",
                   "test/win32/session-restore-maximized.ps1":  "5af0d5334fc5974b4bf643c69addfb503c6f35b8f161691c729ad704ffafddf7",
                   "test/win32/session-resume-offset.ps1":  "6c0591c0924e67301a4fd88b4ea615aba24ae508bd5eff7e7d9cf133ed28c3da",

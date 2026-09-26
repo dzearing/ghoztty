@@ -1,18 +1,17 @@
 {
     "guard":  "session-relaunch",
     "script":  "test/win32/session-relaunch-notify.ps1",
-    "generated":  "2026-09-26T02:06:20-07:00",
-    "commit":  "b1d7eb0d2",
+    "generated":  "2026-09-26T04:26:42-07:00",
+    "commit":  "3aec7d77f",
     "uncommitted":  [
-                        "src/termio/Remote.zig",
-                        "src/termio/session_notice.zig"
+                        "src/termio/Remote.zig"
                     ],
     "files":  {
                   "src/apprt/win32/layout_refresh.zig":  "aa275cb7cdaeb39821a60fed42c57ea2928e5b024db5a523ef0e9aed24131f94",
                   "src/apprt/win32/session_layout.zig":  "419e049bd80014370aa9850cfc4bb791d1919926f954df93be9e744b46842dc7",
                   "src/remote/agent/holder_adopt.zig":  "adb3e1527e9670a07cacdafabfb85051dc9ded07400a3d0a7a0535a621472bc6",
                   "src/remote/pipe_stream.zig":  "6e75c5df447ba72acc87d0ae4110b86b9a1a782e382e10afb93ef44bb6c196f0",
-                  "src/termio/Remote.zig":  "3af91c7f268e751fe92f5eb25465f6dc4ad60247e30c532c984d362cc40d63f6",
+                  "src/termio/Remote.zig":  "76a0b808d00666579e48ae14f15d358b59b742a97243c0914a834650f5d5ca9b",
                   "src/termio/session_notice.zig":  "786dd7fd1f71ac8aef90d5034824c7be140f56e1aa336b6e5b25d40637dc12d2",
                   "test/win32/session-relaunch-notify.ps1":  "4d99a3f10608f068460092ca36ad8fb2086708dd7516dbb838c6c900058133a5"
               }

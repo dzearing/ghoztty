@@ -34165,3 +34165,24 @@ cooldown, so a failure that a late adoption has already ended is never
 reported. `resolve-window-persist.ps1` adds sections C and D plus a control
 (A4): ALL PASS (13). C4 goes red with the layout filter removed. All floor
 lanes, 20 due GUI harnesses and the harness floor are green. Mac half: T1756.
+
+
+## 2026-09-26 - T1698: a re-run pane keeps its "session restarted" line after the session manager restarts
+
+With session-relaunch=rerun, a pane that came back after an agent restart lost
+the dim divider between its old output and the fresh shell, together with the
+last prompt above it. It looked like a geometry problem and was not one: screen
+dumps taken inside the live app around the park, the width reflow and the
+resize showed the park and the history guard both doing their jobs. The
+replayed history of a cmd.exe pane ends at the dead shell's OSC 133 prompt, and
+cmd's integration (T512) never marks where output starts, so the terminal still
+thought it was inside that prompt. The divider and the new shell's banner were
+written as typed input, and the next resize (a split settling the pane's width)
+cleared the whole prompt region for the shell to redraw, from the dead prompt
+down. `replay_mode_reset`, which the agent splices in after the divider, now
+ends with OSC 133;D; it is shared core, so Mac remote panes get it too.
+`session-relaunch.ps1` is ALL PASS again (A10/A11 red since 2026-09-02) and has
+a guard row (`session-relaunch-rerun`, 76 s), since "run it by hand" meant
+nobody ran it. New unit test with negative controls. Floor lanes, P1-P3 and the
+due harnesses green. Filed T1757: the same clear may hit a cmd pane resized
+while a command is printing.
