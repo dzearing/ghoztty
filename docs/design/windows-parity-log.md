@@ -34317,3 +34317,13 @@ agent-backed pane. The debug build logs the rows on screen when each frame
 becomes showable. With the hold off, 6 of 7 frames showed empty (negative
 control). With it on, 0 of 7 did, ALL PASS (18). That oracle also rejected a
 first version that released on silence alone.
+
+## 2026-09-26 — T972: the relay-account guard now watches the account store
+
+T972 asked for a guard row over `relay-account.ps1`. Re-checked before building:
+the row and its stamping block had already landed with T316 (`9921a9dca`). One
+gap was left. `src/remote/relay_account.zig`, the DPAPI `account.dat` store
+that sign-in writes, sign-out removes and renew rotates, was in no row at all.
+It is now covered by the relay-account row. Validation: `guard-due check`
+reported DUE after the edit, `relay-account.ps1` ALL PASS (159, no SKIP) and
+re-stamped 7 files, `guard-due.ps1` ALL PASS (113).

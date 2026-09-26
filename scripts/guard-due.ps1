@@ -3321,6 +3321,11 @@ $GuardTable = @(
         Covers = @(
             'src\apprt\win32\RelayAccountRow.zig',
             'src\remote\relay_signin.zig',
+            # The account STORE itself (T972): the DPAPI account.dat a sign-in
+            # writes and a sign-out removes, the legacy pre-T93 reader and the
+            # renew-and-rotate seam. Sections 2, 3, 5 and 6 are the only
+            # end-to-end proof of it, and until T972 it sat in no row at all.
+            'src\remote\relay_account.zig',
             # The two records a sign-out leaves behind (T1424 pending
             # revocation, T1425 suspended enrollment). Their rules are unit
             # tested, but only section 9/10 of this harness proves the app
