@@ -37,8 +37,8 @@
 #      walk that fails intermittently and says nothing is what T342 was filed
 #      for.
 #
-# -NegativeControl inverts B's hidden-control assertion to expect Activity to be
-# MISSING while it is hidden, which MUST fail; it is how a run proves the lookup
+# -NegativeControl inverts B's hidden-control assertion to expect the management
+# button to be MISSING while it is hidden, which MUST fail; it is how a run proves the lookup
 # really does see through visibility rather than getting lucky.
 #
 # T218-era rules: runs on a BACKGROUND test desktop, so it never takes the
@@ -227,17 +227,20 @@ try {
     }
 
     # (5) HIDDEN controls are still found. The Local row is selected on open and
-    # offers neither Activity nor the management menu, so both exist and are
-    # hidden - which is the state a label lookup reports as "absent" and a
-    # visible-only geometry lookup reports as the wrong control.
-    $ab = Get-ChooserActivityButton -Chooser $chooser
+    # offers no management menu, so the menu button exists and is hidden -
+    # which is the state a label lookup reports as "absent" and a visible-only
+    # geometry lookup reports as the wrong control. (Activity was the hidden
+    # control here until T1747 put it on the Local row, as Mac does.)
+    $hm = Get-ChooserMenuButton -Chooser $chooser
     if ($NegativeControl) {
         $script:negReached = $true
-        Assert ($null -eq $ab) 'NEGATIVE CONTROL: Activity is not found while hidden (MUST FAIL)'
+        Assert ($null -eq $hm) 'NEGATIVE CONTROL: the management button is not found while hidden (MUST FAIL)'
     } else {
-        Assert ($null -ne $ab) 'Activity is FOUND while hidden'
+        Assert ($null -ne $hm) 'the management button is FOUND while hidden'
     }
-    if ($ab) { Assert (-not $ab.Visible) 'and reports itself hidden on the Local row' }
+    if ($hm) { Assert (-not $hm.Visible) 'and reports itself hidden on the Local row' }
+    $ab = Get-ChooserActivityButton -Chooser $chooser
+    Assert ($null -ne $ab -and $ab.Visible) 'Activity is visible on the Local row (T1747)'
     $ra = Get-ChooserRestoreAllButton -Chooser $chooser
     Assert ($null -ne $ra) 'Restore All is FOUND while hidden'
 

@@ -454,6 +454,14 @@ try {
         Leave-ToDialog $chooser
         Assert (Wait-HelpDropped 'restore-all') 'E moving off Restore All drops its tooltip'
     }
+    # T1747: the Local row offers Activity too, named for this machine.
+    $localActivity = Get-ChooserActivityButton -Chooser $chooser
+    Assert ($localActivity -and $localActivity.Visible) 'C Activity is on screen for the Local row (T1747)'
+    if ($localActivity -and $localActivity.Visible) {
+        Test-HelpHover 'C Activity on the Local row' 'activity' 'Open Activity Monitor for This PC' { Enter-Control $localActivity }
+        Leave-ToDialog $chooser
+        Assert (Wait-HelpDropped 'activity') 'E moving off Activity drops its tooltip'
+    }
 
     # --- C: onto the remembered machine --------------------------------------
     [void](Send-TestControlKey -Control $chooser -Key Down)

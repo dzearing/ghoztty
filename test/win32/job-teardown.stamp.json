@@ -1,11 +1,12 @@
 {
     "guard":  "job-teardown",
     "script":  "test/win32/job-teardown.ps1",
-    "generated":  "2026-09-26T06:16:55-07:00",
-    "commit":  "e38525e86",
+    "generated":  "2026-09-26T06:52:36-07:00",
+    "commit":  "b95c3a692",
     "uncommitted":  [
-                        "test/win32/chooser-resume.ps1",
-                        "test/win32/lib/ChromeGeometry.ps1"
+                        "test/win32/chooser-controls.ps1",
+                        "test/win32/chooser-help-tooltips.ps1",
+                        "test/win32/chooser-menu.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -50,11 +51,11 @@
                   "test/win32/caption-bar.ps1":  "35741eff2030b10da24130dcac8e8bfc7f7c9e73a853ddf25af11bda63d42d02",
                   "test/win32/chooser-close-chord.ps1":  "a3013aa41320b1c764f5a63df64068b651174f761e486dbddb52da672b3b711a",
                   "test/win32/chooser-conn-pool.ps1":  "8ecd1b4e377899562db11212958ba1b1ae592cabbd5dc03bebad90f81986e50c",
-                  "test/win32/chooser-controls.ps1":  "69a8d25a53eba9af41871bfebc202b015c83baebe4df8caa8a33ad7cb991a7d5",
-                  "test/win32/chooser-help-tooltips.ps1":  "68f8a011ea48df6f066b89ce14661633948381f1942396743536124c96b3058c",
+                  "test/win32/chooser-controls.ps1":  "5d9ebb39b2b5d5f59bbed4f5f6c3c2556bd66a6b912246d412f7ce854bdfb8d2",
+                  "test/win32/chooser-help-tooltips.ps1":  "8865de50451126ddf0efe72649284e02b5a538afd7f7bb8866b74a42918be91c",
                   "test/win32/chooser-kill-hover.ps1":  "c4d65e3d549b4be314cb58a4fd445b0d3d1981417ee9af1600bc551fb95e2ec5",
                   "test/win32/chooser-link-hover.ps1":  "48e4e10db2db05a12a32a073d57bd60e7e7b3f3297a4f1c58a5c897497dd5f48",
-                  "test/win32/chooser-menu.ps1":  "9b67ecc23bea9869b7aa2d1522a5f57fb5bcd7476e29c23132ea702b9a95507d",
+                  "test/win32/chooser-menu.ps1":  "7d38165be8267c14be58772d31d848a6d54eef9921a5a84d0fa6516de1bc9bf9",
                   "test/win32/chooser-modeless.ps1":  "663f862c81b149ae25e40cea0a05aff318dd82219924f9e8540d7ea9f9cbd2cf",
                   "test/win32/chooser-open-chord.ps1":  "fbf6f3281efd358cdd41d49c2bf630e95b559861f0776ea3eb93167adeb7c028",
                   "test/win32/chooser-orphan-badge.ps1":  "d07e967638da5c78a96489d0120173f14243069c56853790edec836fe88ae3dd",

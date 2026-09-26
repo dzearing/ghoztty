@@ -34227,3 +34227,16 @@ Unit tests for the layout (four scales), the label rule and the tooltip words;
 `chooser-resume.ps1` gained section 2b, which clicks both verbs against a real
 agent and reads the result back from it (ALL PASS, 46). Floor lanes green.
 Filed T1760 (drop the now-redundant "open" chip, as Mac did).
+
+## 2026-09-26 — T1747: This PC gets the chooser's Activity button
+
+The machine chooser now offers Activity on the local row, as Mac offers "See
+Activity" for This Mac; it closes the chooser and opens the local Activity
+Monitor directly, with no dial. The `...` menu stays remote-only (Mac still
+gates it). `compositionFor` unit test updated plus a local-row packing test;
+`chooser-menu.ps1` gained section 1a (click on Local: panel opens,
+`source=Local`, no dial), `chooser-help-tooltips.ps1` checks the "Open Activity
+Monitor for This PC" tip, and `chooser-controls.ps1`'s hidden-control lookup
+(and its negative control, still red on demand) moved to the management
+button. Floor lanes, P1-P3 and the harness floor green. Filed T1761 (Mac's
+caption is "See Activity", right-aligned apart from the other actions).

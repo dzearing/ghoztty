@@ -297,14 +297,38 @@ try {
     if ($mb) {
         Assert (-not $mb.Visible) 'management button is hidden while the Local row is selected'
     }
-    # T177: Activity is gated on the same thing the menu is (mac's single
-    # `if case .remote(let machine)`), so the Local row shows neither.
+    # T1747: Activity is offered on EVERY machine row, the Local one included -
+    # mac's `seeActivityButton(machine: nil, ...)` for This Mac. Only the menu
+    # stays remote-only.
     $ab = Get-ChooserActivityButton -Chooser $chooser
     Assert ($null -ne $ab) 'the detail header has an Activity button'
-    if ($ab) { Assert (-not $ab.Visible) 'Activity is hidden while the Local row is selected' }
+    if ($ab) { Assert ($ab.Visible) 'Activity is shown while the Local row is selected (T1747)' }
     $localRow = @(Get-ChooserActionRow -Chooser $chooser)
-    Assert ($localRow.Count -eq 1 -and $localRow[0].Text -eq 'New Window') `
-        "the Local row's action row is New Window alone (got: $(($localRow | ForEach-Object { $_.Text }) -join ', '))"
+    Assert ($localRow.Count -eq 2 -and $localRow[0].Text -eq 'New Window' -and $localRow[1].Text -eq 'Activity') `
+        "the Local row's action row is New Window, Activity (got: $(($localRow | ForEach-Object { $_.Text }) -join ', '))"
+
+    # --- (1a) T1747: Activity on the Local row dismisses the chooser and opens
+    # the LOCAL source directly - no dial (mac's `onActivityMonitor(nil)`).
+    if ($ab -and $ab.Visible) {
+        [void](Invoke-ChooserClick -Chooser $chooser -Control $ab)
+        $lpanel = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyActivityMonitor' -TimeoutMs 8000
+        Assert ($lpanel -ne [IntPtr]::Zero) 'Activity on the Local row opens an Activity Monitor panel'
+        Assert (-not (Test-TestWindowExists -Window $chooser)) 'the chooser dismissed itself first (Local row)'
+        Start-Sleep -Milliseconds 800
+        Assert (Select-String -Path $errlog -Pattern 'activity monitor: opening source=Local ' -Quiet) `
+            'the panel opened on the Local source'
+        Assert (-not (Select-String -Path $errlog -Pattern 'activity monitor: dialing source=Local' -Quiet)) `
+            'the Local source is opened without a dial'
+        foreach ($p in @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyActivityMonitor')) {
+            [void](Send-TestWindowClose -Window ([IntPtr]$p.Hwnd))
+        }
+        Start-Sleep -Milliseconds 500
+        [void](Send-TestKeys -Window $top -Target $surface -Modifiers ctrl, shift -Key N)
+        $chooser = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyMachineChooser' -TimeoutMs 4000
+        if ($chooser -eq [IntPtr]::Zero) { Write-Host 'SETUP FAIL: chooser did not re-open after the Local panel'; exit 1 }
+        Start-Sleep -Milliseconds 350
+        $list = [IntPtr](Get-ChooserList -Chooser $chooser).Hwnd
+    }
 
     # --- arrow onto the relay device row. The chooser reads raw WM_KEYDOWN
     # through App.run's routing (it is not a standard #32770), so a posted arrow

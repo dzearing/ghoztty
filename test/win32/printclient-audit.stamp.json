@@ -1,13 +1,10 @@
 {
     "guard":  "printclient-audit",
     "script":  "test/win32/printclient-audit.ps1",
-    "generated":  "2026-09-26T06:21:15-07:00",
-    "commit":  "e38525e86",
+    "generated":  "2026-09-26T06:54:02-07:00",
+    "commit":  "b95c3a692",
     "uncommitted":  [
-                        "src/apprt/win32/chooser_help.zig",
-                        "src/apprt/win32/chooser_sessions.zig",
-                        "src/apprt/win32/MachineChooser.zig",
-                        "src/apprt/win32/SessionRoster.zig"
+                        "src/apprt/win32/MachineChooser.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -126,7 +123,7 @@
                   "src/apprt/win32/mac_layout_blob.zig":  "b11c4e10768421ba5d9e9b667823e8b7096bdbc2e19ffddbb00524ebdf6a2f67",
                   "src/apprt/win32/machine_cache.zig":  "cab3ce827634113b0d3373c65eee72f716ee08604ff72f4ea2dfc1a7dc5af954",
                   "src/apprt/win32/machine_pool.zig":  "a5966fd74c9939733a6693e08567b9efedd963100c92b8503bda31789233229b",
-                  "src/apprt/win32/MachineChooser.zig":  "76bd95ed713adf18afa7b3d34f4388d6a033c0f003807661525c3009bb4af747",
+                  "src/apprt/win32/MachineChooser.zig":  "805e2fb84c6fafa3041116951d4787c0032a8aa2932439c5a6719e2c0a8d72cf",
                   "src/apprt/win32/MachineConnectionPool.zig":  "9169643d8995769ca4c2ca384123d1c0de560f92911078824b172b4df73c1b65",
                   "src/apprt/win32/maintenance_ca.zig":  "98c11eb22a63fc3a3dc8b2e5f18e68873c144e10ecde1e4135e011ad064dac1a",
                   "src/apprt/win32/managed_file.zig":  "986e641e52cf1d8c2e807cd38dbfd6e62e660868d1063b2d6bee1acdb5ed50ac",

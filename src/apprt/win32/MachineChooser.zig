@@ -781,8 +781,8 @@ pub fn open(window: *Window) void {
         return;
     };
     _ = w32.SetWindowTheme(self.restore_all_btn, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
-    // "Open Activity Monitor for <machine>" (474-481). Created hidden: the row
-    // that is selected when the chooser opens may not be a remote one, and
+    // "Open Activity Monitor for <machine>" (`seeActivityButton`). Created
+    // hidden: nothing is selected until the list is filled, and
     // `refreshDetail` is what decides.
     self.activity_btn = w32.CreateWindowExW(
         0,
@@ -1885,10 +1885,11 @@ fn layoutActions(self: *MachineChooser, l: Layout) void {
     }
 }
 
-/// Which optional actions the selected row offers. Mac gates BOTH Activity and
-/// the `…` menu on `if case .remote(let machine)` (MachineChooserView.swift:
-/// 474-491) — the Local row gets neither. Restore All is gated on the machine's
-/// live session COUNT instead (T335), which is why the roster is read here.
+/// Which optional actions the selected row offers. Mac gates the `…` menu on
+/// `if case .remote(let machine)` — the Local row has no management actions —
+/// but offers "See Activity" on EVERY machine row, This Mac included
+/// (`seeActivityButton`, T1747). Restore All is gated on the machine's live
+/// session COUNT instead (T335), which is why the roster is read here.
 fn actionComposition(self: *const MachineChooser) chooser_layout.Composition {
     return compositionFor(self.selectedRow(), self.roster.aliveCount());
 }
@@ -1905,7 +1906,9 @@ fn compositionFor(row: ?Row, alive: usize) chooser_layout.Composition {
         // rebuild takes. Until T336 this carried an `r == .local` clause,
         // because offering a button that cannot act is worse than no button.
         .restore_all = chooser_sessions.restoreAllAvailable(alive),
-        .activity = r != .local,
+        // Every machine has an Activity Monitor; the local one needs no dial.
+        // Until T1747 this was `r != .local`, Mac's earlier rule.
+        .activity = true,
         .menu = chooser_menu.hasMenu(menuState(r)),
     };
 }
@@ -2588,8 +2591,8 @@ fn refreshDetail(self: *MachineChooser) void {
 /// since the composition depends on both.
 fn applyActionComposition(self: *MachineChooser, l: Layout) void {
     // Hidden rather than greyed: Mac omits the menu on rows that have none,
-    // and a `…` that opens nothing is worse than no `…` at all. Activity is
-    // gated on the same thing Mac gates it on — the row being remote.
+    // and a `…` that opens nothing is worse than no `…` at all. Activity needs
+    // only a selection: the local machine has an Activity Monitor too (T1747).
     const comp = self.actionComposition();
     _ = w32.ShowWindow(self.restore_all_btn, if (comp.restore_all) w32.SW_SHOW else w32.SW_HIDE);
     _ = w32.ShowWindow(self.activity_btn, if (comp.activity) w32.SW_SHOW else w32.SW_HIDE);
@@ -4952,12 +4955,19 @@ fn openSelection(self: *MachineChooser) void {
 /// here: the chooser DISABLES its owner window while it is up, and a panel
 /// opened over a disabled owner would come up behind a dead window.
 ///
-/// The identity is copied out before the close — `close` frees the arena the
-/// device list is parsed into, and the panel keys its registry on the id.
+/// The local row opens the Local source directly, with no dial - Mac's
+/// `onActivityMonitor(nil)` (T1747). For a remote row the identity is copied
+/// out before the close — `close` frees the arena the device list is parsed
+/// into, and the panel keys its registry on the id.
 fn openActivityMonitor(self: *MachineChooser) void {
     const row = self.selectedRow() orelse return;
     const device_index = switch (row) {
-        .local => return, // Mac shows no Activity button on the local row
+        .local => {
+            const window = self.window;
+            self.close(true);
+            ActivityMonitor.openLocal(window);
+            return;
+        },
         .device => |i| i,
     };
     const dev = self.devices[device_index];
@@ -5200,11 +5210,11 @@ test "the Tab order is the paint order of the action run" {
     }
 }
 
-test "compositionFor: Activity and the menu appear together, on remote rows only" {
-    // Mac gates both on the same `if case .remote(let machine)`
-    // (MachineChooserView.swift:474-491).
+test "compositionFor: Activity on every machine row, the menu on remote rows only" {
+    // Mac offers "See Activity" for This Mac too (`seeActivityButton`, T1747)
+    // but still gates the `…` on `if case .remote(let machine)`.
     const local = compositionFor(.local, 0);
-    try testing.expect(!local.activity);
+    try testing.expect(local.activity);
     try testing.expect(!local.menu);
 
     const device = compositionFor(.{ .device = 0 }, 0);
@@ -5243,6 +5253,17 @@ test "the action row's own packing puts Activity between New Window and the menu
     try testing.expectEqual(@as(usize, 3), row.len);
     try testing.expect(row.rect(.primary).?.right <= row.rect(.activity).?.left);
     try testing.expect(row.rect(.activity).?.right <= row.rect(.menu).?.left);
+}
+
+test "the local row packs Activity after New Window, with no menu beside it" {
+    const l = layout(1.0, 1);
+    const row = chooser_layout.actionRow(l, compositionFor(.local, 0), .{
+        .primary = 70,
+        .activity = 44,
+    });
+    try testing.expectEqual(@as(usize, 2), row.len);
+    try testing.expect(row.rect(.primary).?.right <= row.rect(.activity).?.left);
+    try testing.expect(row.rect(.menu) == null);
 }
 
 test "the action row packs Restore All between New Window and Activity" {
