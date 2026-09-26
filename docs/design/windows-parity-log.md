@@ -34240,3 +34240,17 @@ Monitor for This PC" tip, and `chooser-controls.ps1`'s hidden-control lookup
 (and its negative control, still red on demand) moved to the management
 button. Floor lanes, P1-P3 and the harness floor green. Filed T1761 (Mac's
 caption is "See Activity", right-aligned apart from the other actions).
+
+## 2026-09-26 — T1753: the palette stops listing commands Windows cannot run
+
+The command palette no longer lists Ghostty commands that Windows acknowledges
+but does nothing with: Undo, Redo, Toggle Secure Input, Toggle Inspector, Show
+On-Screen Keyboard, and Show the GTK Inspector. This is Mac's `isSupported`
+filter, with the Windows list in `commands.unsupported_actions`. It differs
+from Mac's where the frontends differ: win32 performs window decorations and
+tab overview, so those stay. It applies to the user's own entries too, as on
+Mac. Validation: none-lane tests name each hidden default, and
+`palette-order.ps1` O9 checks two config entries that differ only in their
+action (text runs, undo is absent) plus the secure-input default. A negative
+build without the filter fails O9b and O9c exactly. Floor lanes, harness floor,
+P1-P3 and the four Surface.zig guards are green.

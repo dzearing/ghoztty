@@ -38,6 +38,10 @@
 #       pending (T1676): with no offer, filtering to it and pressing Enter runs
 #       nothing; with an offer seeded on disk, the same keystrokes run
 #       install_update and reach the install confirmation.
+#   O9. a command whose action Windows does not perform is not a row (T1753):
+#       of two config entries differing only in action, the text send runs and
+#       the undo is absent; the macOS-only default "Toggle Secure Input" is
+#       absent too.
 #
 # WHAT IT DOES NOT COVER. The section HEADERS ("Recent" / "All Commands") are
 # owner-drawn text and unreadable from a script; header placement, the
@@ -465,6 +469,70 @@ if ($null -ne $pal8b) {
         "O8b Enter ran install_update (got: $($ran8b -join ', '))"
     $confirm = Wait-TestWindow -ProcessId $script:appPid -Class 'GhozttyConfirmDialog' -TimeoutMs 6000
     Assert ($confirm -ne [IntPtr]::Zero) 'O8b it reached the install confirmation (the offer, not a fresh check)'
+}
+
+# ---------------------------------------------------------------------
+# O9: a command whose action Windows does not perform is not a row (T1753).
+# One launch carries two config entries that differ ONLY in their action - a
+# text send (performed) and undo (acknowledged and dropped on win32). The same
+# keystrokes are sent for each, so O9a is the positive control for O9b/O9c:
+# the only difference between a run and no run is whether the action is
+# supported. O9c is a Ghostty default, "Toggle Secure Input", which is
+# macOS-only and used to be a row that did nothing.
+# ---------------------------------------------------------------------
+$okTitle = 'ZzqT1753Text'
+$badTitle = 'ZzqT1753Undo'
+function Start-O9Palette([string]$Tag) {
+    Stop-DebugGhoztty
+    $script:appPid = 0
+    Clear-PaletteHistory
+    $log = Join-Path $env:TEMP "ghoztty-palette-order-$Tag-$PID.log"
+    $script:app = Start-OnTestDesktop -Exe $Exe -StdErr $log -Arguments @(
+        '--session-persistence=false',
+        "--command-palette-entry=title:$okTitle,action:text:x",
+        "--command-palette-entry=title:$badTitle,action:undo")
+    $script:appPid = $script:app.Pid
+    Start-Sleep -Seconds 3
+    if ($script:app.Process -and $script:app.Process.HasExited) { return $null }
+    $t = Wait-TestWindow -ProcessId $script:appPid -Class 'GhozttyWindow'
+    if ($t -eq [IntPtr]::Zero) { return $null }
+    $p = Get-TestChildWindow -Window $t -Class 'GhozttyTerminal'
+    if ($p -eq [IntPtr]::Zero) { return $null }
+    [void](Focus-TestWindow -Window $t -Child $p)
+    return (Open-Palette $t $p)
+}
+function Invoke-O9Filter($Pal, [string]$Text, [string]$Label) {
+    Assert (Send-TestControlText -Control $Pal.Edit -Text $Text) "$Label typed `"$Text`""
+    Start-Sleep -Milliseconds 600
+    Send-TestControlKey -Control $Pal.Edit -Key Enter | Out-Null
+    return (Wait-OnlyPaletteRun)
+}
+
+Write-Host '== O9a: a configured entry with a supported action runs (positive control)'
+$pal9a = Start-O9Palette 'o9a'
+Assert ($null -ne $pal9a) 'O9a the palette opened'
+if ($null -ne $pal9a) {
+    $ran9a = @(Invoke-O9Filter $pal9a $okTitle 'O9a')
+    Assert ($ran9a.Count -eq 1 -and [string]$ran9a[0] -eq "user:$okTitle") `
+        "O9a Enter ran the supported entry (got: $($ran9a -join ', '))"
+}
+
+Write-Host '== O9b: the same entry with an unsupported action (undo) is not a row'
+$pal9b = Start-O9Palette 'o9b'
+Assert ($null -ne $pal9b) 'O9b the palette opened'
+if ($null -ne $pal9b) {
+    $ran9b = @(Invoke-O9Filter $pal9b $badTitle 'O9b')
+    Assert ($ran9b.Count -eq 0) `
+        "O9b Enter ran nothing - the row is absent (got: $($ran9b -join ', '); pre-fix it ran user:$badTitle, which did nothing)"
+}
+
+Write-Host '== O9c: the macOS-only default "Toggle Secure Input" is not a row'
+$pal9c = Start-O9Palette 'o9c'
+Assert ($null -ne $pal9c) 'O9c the palette opened'
+if ($null -ne $pal9c) {
+    $ran9c = @(Invoke-O9Filter $pal9c 'Toggle Secure Input' 'O9c')
+    Assert ($ran9c.Count -eq 0) `
+        "O9c Enter ran nothing - the row is absent (got: $($ran9c -join ', '); pre-fix it ran user:Toggle Secure Input, which did nothing)"
 }
 
 Assert ($null -ne (Get-Process -Id $script:appPid -ErrorAction SilentlyContinue)) 'the app survived all arms'

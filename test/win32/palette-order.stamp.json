@@ -1,13 +1,13 @@
 {
     "guard":  "palette-order",
     "script":  "test/win32/palette-order.ps1",
-    "generated":  "2026-09-26T00:58:15-07:00",
-    "commit":  "b60b7fd15",
+    "generated":  "2026-09-26T07:32:46-07:00",
+    "commit":  "3742c8d7a",
     "uncommitted":  [
                         "test/win32/palette-order.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/palette_order.zig":  "629778880c525c94e80b6f9aba312e96243a3ea65011ff47c0916747e0a4fef6",
-                  "test/win32/palette-order.ps1":  "6f89f88d2005ea67beccf194d2023ce92b8be8dbf31c2312b21ba3ba8383fb30"
+                  "test/win32/palette-order.ps1":  "3c15d0e8810899b8c3d4b87b830817426d421551c62b36ede33152fa3ad25d11"
               }
 }

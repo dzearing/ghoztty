@@ -3024,7 +3024,8 @@ fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
     }
     // The config's command-palette-entry list: Ghostty's defaults, then the
     // user's own. A default the registry above already offers is skipped
-    // (T1752) — it would be the same command listed twice.
+    // (T1752) — it would be the same command listed twice — and so is any
+    // command whose action win32 acknowledges but does not perform (T1753).
     const user = self.app.config.@"command-palette-entry".value.items;
     const user_len = @min(user.len, MAX_USER_PALETTE_ENTRIES);
     if (user.len > MAX_USER_PALETTE_ENTRIES) {
@@ -3033,6 +3034,7 @@ fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
     for (user[0..user_len], 0..) |entry, i| {
         if (filter.len != 0 and std.ascii.indexOfIgnoreCase(entry.title, filter) == null) continue;
         if (commands.coversDefault(entry)) continue;
+        if (!commands.isSupported(entry)) continue;
         const idx: u16 = @intCast(palette_entries.len + i);
         idxs[n] = idx;
         // The history key is `user:<title>`; the Item matches it in place.

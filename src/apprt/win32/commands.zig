@@ -370,6 +370,79 @@ pub fn coversDefault(cmd: input.Command) bool {
     return false;
 }
 
+/// Binding actions the win32 apprt acknowledges and then does nothing with
+/// (T1753) — App.performAction's "don't apply on Windows" arm, reached through
+/// the core. A palette row running one of these is a row that does nothing, so
+/// it is not listed: Mac's `Ghostty.Command.isSupported` does the same with its
+/// own list (toggle_tab_overview, toggle_window_decorations,
+/// show_gtk_inspector), and the two lists differ exactly where the frontends
+/// do — win32 performs the first two, and has no secure input or undo manager.
+///
+/// Implementing one of these on Windows means removing it here, which the
+/// test below forces you to look at.
+pub const unsupported_actions = [_]input.Binding.Action.Key{
+    .toggle_secure_input, // macOS EnableSecureEventInput
+    .undo, // macOS NSUndoManager
+    .redo, // macOS NSUndoManager
+    .show_gtk_inspector, // GTK-only
+    .show_on_screen_keyboard, // GTK/mobile
+    .inspector, // the terminal inspector overlay is not built on win32
+};
+
+/// Whether a `command-palette-entry` runs an action the win32 apprt actually
+/// performs (T1753). Applied to every config entry, the user's own included,
+/// the way Mac filters its whole list: a command that cannot do anything here
+/// is not offered no matter who wrote it.
+pub fn isSupported(cmd: input.Command) bool {
+    const tag = std.meta.activeTag(cmd.action);
+    for (unsupported_actions) |k| if (k == tag) return false;
+    return true;
+}
+
+test "isSupported: each unsupported default is hidden, by name (T1753)" {
+    // Every default carrying an unsupported action, named, so a new Ghostty
+    // default for one of these (or a win32 implementation of one) shows up
+    // here as a changed list rather than as a silent palette row.
+    const expected = [_][]const u8{
+        "Redo",
+        "Show On-Screen Keyboard",
+        "Show the GTK Inspector",
+        "Toggle Inspector",
+        "Toggle Secure Input",
+        "Undo",
+    };
+    var hidden: [16][]const u8 = undefined;
+    var n: usize = 0;
+    for (input.command.defaults) |d| {
+        if (isSupported(d)) continue;
+        hidden[n] = d.title;
+        n += 1;
+    }
+    const titles = hidden[0..n];
+    std.mem.sortUnstable([]const u8, titles, {}, struct {
+        fn lt(_: void, a: []const u8, b: []const u8) bool {
+            return std.mem.lessThan(u8, a, b);
+        }
+    }.lt);
+    try std.testing.expectEqual(expected.len, titles.len);
+    for (expected, titles) |e, t| try std.testing.expectEqualStrings(e, t);
+}
+
+test "isSupported: every unsupported action has a default, and supported ones stay" {
+    for (unsupported_actions) |k| {
+        const found = for (input.command.defaults) |d| {
+            if (std.meta.activeTag(d.action) == k) break true;
+        } else false;
+        try std.testing.expect(found);
+    }
+    // Actions Mac hides but win32 performs stay listed.
+    try std.testing.expect(isSupported(.{ .action = .toggle_window_decorations, .title = "x" }));
+    try std.testing.expect(isSupported(.{ .action = .toggle_tab_overview, .title = "x" }));
+    try std.testing.expect(isSupported(.{ .action = .new_tab, .title = "x" }));
+    // A user's own command running an unsupported action is hidden too.
+    try std.testing.expect(!isSupported(.{ .action = .undo, .title = "My Undo" }));
+}
+
 test "coversDefault: a default the registry already offers is hidden (T1752)" {
     // Every default whose action has a binding row in the registry.
     var hidden: usize = 0;
