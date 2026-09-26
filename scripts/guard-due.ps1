@@ -3197,6 +3197,22 @@ $GuardTable = @(
             'test\win32\activity-help-tooltips.ps1'
         )
     },
+    # The Activity Monitor's "List truncated" badge (T1640): it must appear when
+    # the table was cut and only then. A local table never reaches the real cap,
+    # so this is the only harness that can show the badge PRESENT (through the
+    # debug-only row-cap seam in activity_sample.zig); the row above only ever
+    # sees it absent.
+    [pscustomobject]@{
+        Name   = 'activity-truncated'
+        Script = 'test\win32\activity-truncated.ps1'
+        Stamp  = 'test\win32\activity-truncated.stamp.json'
+        Covers = @(
+            'src\apprt\win32\activity_sample.zig',
+            'src\apprt\win32\activity_actions.zig',
+            'src\apprt\win32\activity_paint.zig',
+            'test\win32\activity-truncated.ps1'
+        )
+    },
     # The chooser's session RESUME (T320/T620/T816): taking over a live session
     # that has no window is the machine chooser's reason to list sessions at
     # all, and no other harness drives it - the P1-P3 floor never opens the

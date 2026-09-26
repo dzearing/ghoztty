@@ -245,7 +245,9 @@ pub fn rebuild(self: *ActivityMonitor) void {
         // has no text to read back, and "how many rows name a pane" is the one
         // number that says whether attribution actually ran against the live
         // window list rather than against an empty pane set.
-        "activity monitor: source={s} total={d} shown={d} needle=\"{s}\" show_all={} sort={s}/{s} selected={d} root={d} panes={d} attributed={d}",
+        // `truncated` is the T1640 oracle: whether the table the badge speaks
+        // for was cut, so a script can score the badge against the flag.
+        "activity monitor: source={s} total={d} shown={d} needle=\"{s}\" show_all={} sort={s}/{s} selected={d} root={d} panes={d} attributed={d} truncated={}",
         .{
             self.source.label(),
             snap.rows.len,
@@ -258,6 +260,7 @@ pub fn rebuild(self: *ActivityMonitor) void {
             snap.root_pid,
             self.pane_count,
             self.attributed_rows,
+            snap.truncated,
         },
     );
 }

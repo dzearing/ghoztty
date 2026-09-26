@@ -34042,3 +34042,19 @@ tests; reverting the broadcast turns the cross-connection one red.
 `chooser-conn-pool.ps1` section H now asserts the second window's session arrives
 by push with no refetch (ALL PASS, 41). Floor lanes, P1-P3, the harness floor and
 every due guard are green. Shared agent code, so Mac's session browser gets it too.
+## 2026-09-25 - T1640: the Activity Monitor's "List truncated" badge is now proven to appear only when the table was cut
+
+The task said the panel never rendered the snapshot's `truncated` flag. That was
+already wrong when it was filed. baf948c9a (T286) paints Mac's "List truncated"
+badge beside Show all, and T1634 gave it Mac's hover sentence. The filing grep
+only looked in `ActivityMonitor.zig`. What was genuinely missing was proof. A
+local table never reaches the 512-row cap, so no harness could ever see the badge
+present. This turn adds a debug-only `GHOZTTY_TEST_ACTIVITY_ROW_CAP` seam that
+lowers the Local sample limit (parse in `activity_actions.parseRowCap`, unit
+tested). The panel state line now carries `truncated=`. The new
+`test/win32/activity-truncated.ps1` checks two runs. Capped at 20 rows, it finds
+the badge with Mac's sentence. Uncapped (the negative control), the same walk
+finds nothing. ALL PASS, 14, with a new guard-due row. The seam is
+registered in the seam-audit registry as `tuning`. Mac shows no N-of-M count,
+so neither does Windows. Floor lanes, P1-P3, activity-pane-column, guard-due and
+the harness floor are green.

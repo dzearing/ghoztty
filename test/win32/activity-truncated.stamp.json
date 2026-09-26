@@ -1,0 +1,17 @@
+{
+    "guard":  "activity-truncated",
+    "script":  "test/win32/activity-truncated.ps1",
+    "generated":  "2026-09-25T20:55:48-07:00",
+    "commit":  "afd355dca",
+    "uncommitted":  [
+                        "src/apprt/win32/activity_actions.zig",
+                        "src/apprt/win32/activity_sample.zig",
+                        "test/win32/activity-truncated.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/activity_actions.zig":  "5f80de2b9778b8617c118db67fe75795b2296ca01d3b879845c73ca5b8d14981",
+                  "src/apprt/win32/activity_paint.zig":  "30b847ffe79ed3c63c935d258e6ebba26b90e4fc167c4b56c3fbbcb1c7406250",
+                  "src/apprt/win32/activity_sample.zig":  "cf2080d572c5584d77fba306e492b400bf1182009b585ca012bef568e8e30834",
+                  "test/win32/activity-truncated.ps1":  "c8cd7bf4650037d2e2d4369d4b89d9faf0ab8e85c9e03a7ccc7fe26d7028098c"
+              }
+}

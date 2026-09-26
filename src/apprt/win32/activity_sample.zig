@@ -40,6 +40,7 @@ const remote_connection = @import("../../remote/connection.zig");
 const remote_proc = @import("../../remote/agent/proc.zig");
 const remote_protocol = @import("../../remote/protocol.zig");
 const w32 = @import("win32.zig");
+const build_config = @import("../../build_config.zig");
 
 const Snapshot = ActivityMonitor.Snapshot;
 const WM_APP_ACTIVITY_SAMPLE = ActivityMonitor.WM_APP_ACTIVITY_SAMPLE;
@@ -213,7 +214,7 @@ pub fn buildSnapshot(self: *ActivityMonitor, alloc: Allocator) !*Snapshot {
     var procs: std.ArrayListUnmanaged(remote_protocol.Proc) = .empty;
     // The strings come from the arena, so there is nothing to free row by row —
     // retiring the snapshot retires them.
-    snap.truncated = try self.proc_sampler.?.sample(arena, &procs, max_rows);
+    snap.truncated = try self.proc_sampler.?.sample(arena, &procs, @intCast(localRowCap()));
 
     const rows = try arena.alloc(rows_mod.Row, procs.items.len);
     for (procs.items, 0..) |p, i| {
@@ -228,6 +229,42 @@ pub fn buildSnapshot(self: *ActivityMonitor, alloc: Allocator) !*Snapshot {
     }
     snap.rows = rows;
     return snap;
+}
+
+// ---------------------------------------------------------------------------
+// Test seam (T1640)
+//
+// The "List truncated" badge speaks only when the table was cut, and a local
+// table on an ordinary box never reaches `max_rows` — so without this, an
+// acceptance script can show the badge ABSENT and never PRESENT, which is half
+// a check.
+//
+//   GHOZTTY_TEST_ACTIVITY_ROW_CAP=<n>  a Local panel samples at most n rows
+//                                      (0 < n < max_rows), so the sampler
+//                                      reports the table as truncated.
+//
+// Debug builds only, read once, Local only: a remote table's cut is the agent's
+// to make, and a stray variable must never be able to shorten what a user sees.
+// ---------------------------------------------------------------------------
+
+var row_cap_seam: usize = max_rows;
+var row_cap_once = std.once(readRowCapSeam);
+
+fn readRowCapSeam() void {
+    if (comptime !build_config.is_debug) return;
+    const value = std.process.getEnvVarOwned(std.heap.page_allocator, "GHOZTTY_TEST_ACTIVITY_ROW_CAP") catch return;
+    defer std.heap.page_allocator.free(value);
+    if (actions.parseRowCap(value, max_rows)) |n| {
+        row_cap_seam = n;
+        log.warn("test seam active: GHOZTTY_TEST_ACTIVITY_ROW_CAP={d} (Local table capped)", .{n});
+    }
+}
+
+/// The row limit a LOCAL sample asks for: `max_rows`, unless the debug-only
+/// seam above lowers it.
+fn localRowCap() usize {
+    row_cap_once.call();
+    return row_cap_seam;
 }
 
 /// One poll against a REMOTE source, on the worker thread. Same shape as the

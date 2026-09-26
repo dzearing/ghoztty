@@ -362,6 +362,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = startup succeeds, as in every other launch."
         },
+        "GHOZTTY_TEST_ACTIVITY_ROW_CAP": {
+            "class": "tuning",
+            "unset": "shipped-elsewhere",
+            "note": "unset = the shipped 512-row cap, which every other Activity Monitor harness and activity-truncated.ps1's own section C run under (T1640); debug builds only."
+        },
         "GHOZTTY_TEST_BREAK_UTF16": {
             "class": "fault",
             "unset": "shipped-elsewhere",

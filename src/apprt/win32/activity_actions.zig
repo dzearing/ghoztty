@@ -266,6 +266,19 @@ pub fn badgeText(refresh_failed: bool, truncated: bool, total_rows: usize) ?[]co
     return null;
 }
 
+/// The `GHOZTTY_TEST_ACTIVITY_ROW_CAP` test seam's value, or null when it asks
+/// for nothing (T1640). The badge above only speaks when the table was cut, and
+/// a local table on a normal box never reaches the real cap — so an acceptance
+/// script that wants to see the badge has to lower the cap. Only a count
+/// strictly between zero and `max` lowers anything; garbage, zero and a value at
+/// or above the real cap are all "no seam", never a clamp, so a typo cannot
+/// silently empty the table.
+pub fn parseRowCap(value: []const u8, max: usize) ?usize {
+    const n = std.fmt.parseInt(usize, std.mem.trim(u8, value, " \t"), 10) catch return null;
+    if (n == 0 or n >= max) return null;
+    return n;
+}
+
 /// Drop selected pids that the newest snapshot no longer contains, in place.
 /// Returns the surviving count.
 ///
@@ -547,6 +560,17 @@ test "badgeText: a failed refresh outranks a truncated list" {
     // With nothing on screen the overlay says "Couldn't connect"; a badge over
     // an empty table would say it twice.
     try testing.expect(badgeText(true, false, 0) == null);
+}
+
+test "parseRowCap: only a count below the real cap lowers it" {
+    try testing.expectEqual(@as(?usize, 20), parseRowCap("20", 512));
+    try testing.expectEqual(@as(?usize, 511), parseRowCap(" 511 ", 512));
+    try testing.expect(parseRowCap("0", 512) == null);
+    try testing.expect(parseRowCap("512", 512) == null);
+    try testing.expect(parseRowCap("9999", 512) == null);
+    try testing.expect(parseRowCap("", 512) == null);
+    try testing.expect(parseRowCap("-5", 512) == null);
+    try testing.expect(parseRowCap("twenty", 512) == null);
 }
 
 test "pruneSelection: exited pids drop out and the anchor stays last" {

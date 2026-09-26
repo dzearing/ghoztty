@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-09-25T20:47:51-07:00",
-    "commit":  "c277ced7c",
+    "generated":  "2026-09-25T21:32:32-07:00",
+    "commit":  "afd355dca",
     "uncommitted":  [
-                        "test/win32/chooser-conn-pool.ps1"
+                        "test/win32/activity-truncated.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
@@ -18,6 +18,7 @@
                   "test/win32/activity-pane-column.ps1":  "0048768f928d269a2141a5206ad3b7c63771478f7aa46de7d4f424e64b8be4ea",
                   "test/win32/activity-selection.ps1":  "1f4bb378c0c200bb4c6900ef4ea7eb86f3611f524722cafaefecfc577ee051b5",
                   "test/win32/activity-state.ps1":  "209ae3df48c44fb7543ce13583d55b3204698531ed4a398075ca097164428c74",
+                  "test/win32/activity-truncated.ps1":  "c8cd7bf4650037d2e2d4369d4b89d9faf0ab8e85c9e03a7ccc7fe26d7028098c",
                   "test/win32/agent-adopt.ps1":  "ad623f859373a4440041eaa76c432687bd75384e9a7819a61a27ab0054d1efbd",
                   "test/win32/agent-attach-refused.ps1":  "b4895179be0eca31e5afe9b9df2c6143848a2696add5ca355f1098a7ea23a341",
                   "test/win32/agent-autostart.ps1":  "a17c57c698a0eee06edafc0900045ad53885962d555675a63943099b9f6ae22d",
