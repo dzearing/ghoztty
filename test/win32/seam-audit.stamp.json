@@ -1,13 +1,11 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-09-25T19:51:44-07:00",
-    "commit":  "94e73e92c",
+    "generated":  "2026-09-25T20:43:13-07:00",
+    "commit":  "c277ced7c",
     "uncommitted":  [
-                        "src/apprt/win32/machine_pool.zig",
-                        "src/apprt/win32/MachineChooser.zig",
-                        "src/apprt/win32/MachineConnectionPool.zig",
-                        "src/apprt/win32/SessionRoster.zig",
+                        "src/remote/agent/server.zig",
+                        "src/remote/agent/session.zig",
                         "test/win32/chooser-conn-pool.ps1"
                     ],
     "files":  {
@@ -378,8 +376,8 @@
                   "src/remote/agent/relay_perf.zig":  "b74d79c5fa170240818c28504aeac97e85b194fc24042d225a073a23573a2ca7",
                   "src/remote/agent/revoke_watch.zig":  "f9fcde81a20c06c12cb8f8b7876386ee8aa1055743cd78ec840ec86c8d207b90",
                   "src/remote/agent/ring_snapshot.zig":  "9beb3bc88d8050b9ffeb448d2d117485e85a8855fa01ebc7719f6c8cd1244166",
-                  "src/remote/agent/server.zig":  "5b7501326f01ba6bc9b6019ba8312557c82c20750abedb707a23067620a445b6",
-                  "src/remote/agent/session.zig":  "2774af4f447a32f5aa3634ba94363b8aa1b87e110106e32396c6486220dc5388",
+                  "src/remote/agent/server.zig":  "db3f36f83bdfcee9918a8cc5cdab0a9253cf72a27ffa4fc13cd8b0d8a0702e9d",
+                  "src/remote/agent/session.zig":  "48585cc1977a31949b2294a924d45b419c9100713684fe40723814b6064f218a",
                   "src/remote/agent/session_meta.zig":  "e49d5f38c06cea3ca899917c134b8ff70aa39cb8123083450c4852d2e6b39891",
                   "src/remote/agent/sharing.zig":  "271eaa812c1282a8bf90d0585a09677a752bfb1e05e9d09f076f4bc8aa81bab3",
                   "src/remote/agent/single_instance.zig":  "548fadbf211c0f0d628b2812b46382ff82b7105c040af8f33a6ae3de1ba54e63",
@@ -491,7 +489,7 @@
                   "test/win32/caller-anchor.ps1":  "81cb4dd79a7168195352d3006a6f8247c199237458b2a25a040567940e8c83b4",
                   "test/win32/caption-bar.ps1":  "35741eff2030b10da24130dcac8e8bfc7f7c9e73a853ddf25af11bda63d42d02",
                   "test/win32/chooser-close-chord.ps1":  "a3013aa41320b1c764f5a63df64068b651174f761e486dbddb52da672b3b711a",
-                  "test/win32/chooser-conn-pool.ps1":  "f23b19a7b0bf62a2c635bf4a4503862db5a11da7ef3209b6392f832916e316d5",
+                  "test/win32/chooser-conn-pool.ps1":  "8ecd1b4e377899562db11212958ba1b1ae592cabbd5dc03bebad90f81986e50c",
                   "test/win32/chooser-controls.ps1":  "69a8d25a53eba9af41871bfebc202b015c83baebe4df8caa8a33ad7cb991a7d5",
                   "test/win32/chooser-help-tooltips.ps1":  "12d40267d01d5f8f6629319c532b4ef9f4d83ecb359ab544e474ba58fde11fe5",
                   "test/win32/chooser-kill-hover.ps1":  "c4d65e3d549b4be314cb58a4fd445b0d3d1981417ee9af1600bc551fb95e2ec5",

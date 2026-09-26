@@ -1,11 +1,11 @@
 {
     "guard":  "thread-join",
     "script":  "test/win32/thread-join-audit.ps1",
-    "generated":  "2026-09-25T17:04:10-07:00",
-    "commit":  "a3ad3eced",
+    "generated":  "2026-09-25T20:46:49-07:00",
+    "commit":  "c277ced7c",
     "uncommitted":  [
-                        "src/remote/connection.zig",
-                        "src/remote/test_client.zig"
+                        "src/remote/agent/server.zig",
+                        "src/remote/agent/session.zig"
                     ],
     "files":  {
                   "src/datastruct/array_list_collection.zig":  "f14f6cc26a11eabdd35a36976dce1b3702a2c7f4771b60e339afd1015d4e58dd",
@@ -48,8 +48,8 @@
                   "src/remote/agent/relay_perf.zig":  "b74d79c5fa170240818c28504aeac97e85b194fc24042d225a073a23573a2ca7",
                   "src/remote/agent/revoke_watch.zig":  "f9fcde81a20c06c12cb8f8b7876386ee8aa1055743cd78ec840ec86c8d207b90",
                   "src/remote/agent/ring_snapshot.zig":  "9beb3bc88d8050b9ffeb448d2d117485e85a8855fa01ebc7719f6c8cd1244166",
-                  "src/remote/agent/server.zig":  "5b7501326f01ba6bc9b6019ba8312557c82c20750abedb707a23067620a445b6",
-                  "src/remote/agent/session.zig":  "2774af4f447a32f5aa3634ba94363b8aa1b87e110106e32396c6486220dc5388",
+                  "src/remote/agent/server.zig":  "db3f36f83bdfcee9918a8cc5cdab0a9253cf72a27ffa4fc13cd8b0d8a0702e9d",
+                  "src/remote/agent/session.zig":  "48585cc1977a31949b2294a924d45b419c9100713684fe40723814b6064f218a",
                   "src/remote/agent/session_meta.zig":  "e49d5f38c06cea3ca899917c134b8ff70aa39cb8123083450c4852d2e6b39891",
                   "src/remote/agent/sharing.zig":  "271eaa812c1282a8bf90d0585a09677a752bfb1e05e9d09f076f4bc8aa81bab3",
                   "src/remote/agent/single_instance.zig":  "548fadbf211c0f0d628b2812b46382ff82b7105c040af8f33a6ae3de1ba54e63",

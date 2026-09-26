@@ -34026,3 +34026,19 @@ connection. `chooser-conn-pool.ps1` has a new section H (ALL PASS, 38); with the
 sweep removed, all nine of its assertions go red. Filed T1749: the agent pushes
 a roster change only to the connection that made it, so another client's new
 session never reaches a remote chooser.
+
+## 2026-09-25 - T1749: a roster change now reaches every subscribed connection
+
+The agent kept its "roster changed" flag on the per-connection `Server`, so only
+the connection that made a change ever pushed it. A remote chooser's pooled
+connection therefore never heard about a session a second `+new-remote-window`
+opened, and nobody heard about an unattached shell exiting or the reaper. The
+roster is store state, so `SessionStore` now keeps an intrusive listener list
+(its own mutex, ordered after `store.mutex`). Each subscribed `Server` links on
+`SESSIONS_SUB` and unlinks on unsub/shutdown before its pump is joined. The store
+notifies on exit, idle reap, tombstone reap and the vanished sweep, and a dropping
+connection notifies that its sessions detached. No wire change. Three new agent
+tests; reverting the broadcast turns the cross-connection one red.
+`chooser-conn-pool.ps1` section H now asserts the second window's session arrives
+by push with no refetch (ALL PASS, 41). Floor lanes, P1-P3, the harness floor and
+every due guard are green. Shared agent code, so Mac's session browser gets it too.

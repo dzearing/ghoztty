@@ -390,6 +390,11 @@ pub const Server = struct {
     roster_cond: std.Thread.Condition = .{},
     roster_dirty: bool = false,
     roster_stop: bool = false,
+    /// This connection's slot in the store's roster listener list (T1749):
+    /// linked while subscribed, so a roster change made over ANY connection —
+    /// or by the store itself (an orphan exiting, the reaper) — wakes this
+    /// connection's pump. Unlinked before the pump is joined.
+    roster_listener: session.SessionStore.RosterListener = .{ .notify = rosterListenerNotify },
 
     /// Process-table sampler for `proc_list` (§9.3 process view). Unlike the metrics
     /// pump it needs no thread: `proc_list` is request/reply, sampled synchronously on
@@ -739,9 +744,14 @@ pub const Server = struct {
                 if (!s.alive and !s.relaunchable) tombstones.append(self.alloc, s.id) catch {};
             }
         }
+        const detached = self.bound_channels.items.len > 0;
         self.bound_channels.clearRetainingCapacity();
         self.store.mutex.unlock();
         for (tombstones.items) |id| self.store.reapUnboundTombstone(id);
+        // Every session this connection held just went attached → detached,
+        // which OTHER connections' choosers show (T1749). Our own pump is
+        // already stopped or about to be; the broadcast is for everyone else.
+        if (detached) self.store.notifyRosterChanged();
     }
 
     /// Free the server (must be shut down first). Frees per-connection state only;
@@ -751,6 +761,8 @@ pub const Server = struct {
         assert(self.control_thread == null and self.data_thread == null and self.writer_thread == null);
         assert(self.metrics_thread == null);
         assert(self.session_cpu_thread == null and self.roster_thread == null);
+        // A still-linked listener would leave the store notifying freed memory.
+        assert(!self.roster_listener.linked);
         self.proc_sampler.deinit();
         self.bound_channels.deinit(self.alloc);
         for (self.write_queue.items) |f| self.alloc.free(f.payload);
@@ -1098,7 +1110,10 @@ pub const Server = struct {
             .session_cpu_sub => self.handleSessionCpuSub(frame.payload),
             .session_cpu_unsub => self.handleSessionCpuUnsub(),
             .sessions_sub => self.handleSessionsSub(),
-            .sessions_unsub => self.sessions_push = false,
+            .sessions_unsub => {
+                self.sessions_push = false;
+                self.store.removeRosterListener(&self.roster_listener);
+            },
             .proc_list => self.handleProcList(frame.channel, frame.payload),
             .proc_kill => self.handleProcKill(frame.channel, frame.payload),
             .proc_spawn => self.handleProcSpawn(frame.channel, frame.payload),
@@ -1859,6 +1874,15 @@ pub const Server = struct {
                 self.roster_thread = std.Thread.spawn(.{}, rosterPumpLoop, .{self}) catch null;
             }
         }
+        // Hear about EVERY roster change, not only the ones this connection
+        // makes (T1749). Outside `roster_mutex`: the store takes its listener
+        // lock before ours, so taking it under ours would invert. Re-checked
+        // against shutdown after linking so a subscribe racing `shutdown` can
+        // never leave a dangling node in the store's list.
+        if (!self.pumps_closed.load(.acquire)) {
+            self.store.addRosterListener(&self.roster_listener);
+            if (self.pumps_closed.load(.acquire)) self.store.removeRosterListener(&self.roster_listener);
+        }
         // Send one immediately so the subscriber starts from truth rather than
         // waiting for the next change.
         self.sendRoster(protocol.control_channel);
@@ -1876,7 +1900,20 @@ pub const Server = struct {
     ///
     /// Coalescing falls out for free: a burst of changes sets one flag and the
     /// pump sends one roster.
+    ///
+    /// Broadcasts through the STORE (T1749): the roster is shared, so every
+    /// subscribed connection must hear a change this one made. Takes only the
+    /// store's listener lock and each listener's `roster_mutex` — never
+    /// `store.mutex` — so the safety argument above still holds.
     fn markRosterDirty(self: *Server) void {
+        self.store.notifyRosterChanged();
+    }
+
+    /// `RosterListener.notify` for this connection: flag the pump. Runs under
+    /// the store's listener lock (and possibly `store.mutex`), so it only sets
+    /// a flag and signals.
+    fn rosterListenerNotify(l: *session.SessionStore.RosterListener) void {
+        const self: *Server = @alignCast(@fieldParentPtr("roster_listener", l));
         if (!self.sessions_push) return;
         self.roster_mutex.lock();
         self.roster_dirty = true;
@@ -1906,6 +1943,10 @@ pub const Server = struct {
     /// Stop + join the roster pump. Idempotent; safe with no pump running. MUST
     /// NOT outlive the Server (joined in `shutdown`).
     fn stopRosterPump(self: *Server) void {
+        // Leave the store's list FIRST, so no other connection's change can
+        // notify a Server that is going away (T1749). After this returns no
+        // notify is running on us.
+        self.store.removeRosterListener(&self.roster_listener);
         self.roster_mutex.lock();
         self.roster_stop = true;
         self.roster_cond.signal();
@@ -4218,6 +4259,149 @@ test "SESSIONS_SUB pushes the roster immediately and again when it changes" {
         }
     };
     try testing.expect(waitUntil("the connection to unsubscribe", P.unsubscribed, .{h.server}));
+}
+
+/// What a pushed roster says about one session, or null when it is absent.
+const RosterRow = struct { alive: bool, attached: bool };
+
+/// Read control frames until a roster PUSH (a `sessions` frame on the control
+/// channel) arrives, and report `id`'s row in it. Blocks like `waitControl`, so
+/// a push that never comes is a stalled test — which the floor wrapper names.
+fn nextPushedRow(c: *MockClient, alloc: Allocator, id: []const u8) !?RosterRow {
+    while (true) {
+        const f = try c.waitControl(.sessions);
+        if (f.channel != protocol.control_channel) continue; // a LIST reply
+        var p = try protocol.parseJson(protocol.Sessions, alloc, f.payload);
+        defer p.deinit();
+        for (p.value.sessions) |s| {
+            if (std.mem.eql(u8, s.id, id)) return .{ .alive = s.alive, .attached = s.attached };
+        }
+        return null;
+    }
+}
+
+/// Subscribe `c` (already handshaken with `sessions_push`) and drain the
+/// immediate roster the subscribe sends.
+fn subscribeRoster(c: *MockClient) !void {
+    try c.sendControlJson(.sessions_sub, protocol.control_channel, struct {}{});
+    const first = try c.waitControl(.sessions);
+    try testing.expectEqual(protocol.control_channel, first.channel);
+}
+
+test "T1749: a session opened on one connection is pushed to a roster subscriber on ANOTHER" {
+    // The chooser's pooled connection (B) subscribes; `+new-remote-window`
+    // opens a session over a different connection (A). Before T1749 the dirty
+    // flag lived on A alone, so B never heard about it until a refetch.
+    const alloc = testing.allocator;
+    var clock: TestClock = .{};
+    var fc: FakeChild = .{ .alloc = alloc };
+    defer fc.deinit();
+    var kids = [_]*FakeChild{&fc};
+    var sp: FakeSpawner = .{ .children = &kids };
+    var prng = std.Random.DefaultPrng.init(1749);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    try h.client.handshake();
+    _ = try h.server.waitHandshake();
+
+    var b = try ReConn.init(&h, .raw);
+    defer b.deinit();
+    try b.server.start();
+    const caps = [_][]const u8{protocol.capability.sessions_push};
+    try b.client.handshakeCaps(&caps);
+    try testing.expect((try b.server.waitHandshake()).sessions_push);
+    try subscribeRoster(&b.client);
+
+    const o = try doOpen(&h, .{ .rows = 24, .cols = 80 });
+    // Skip any push that predates the open landing; the one that names the
+    // session is the proof. It must say alive + attached (A holds it).
+    while (true) {
+        if (try nextPushedRow(&b.client, alloc, &o.id)) |row| {
+            try testing.expect(row.alive);
+            try testing.expect(row.attached);
+            break;
+        }
+    }
+}
+
+test "T1749: another connection dropping, and its orphan exiting, both reach a roster subscriber" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{};
+    var fc: FakeChild = .{ .alloc = alloc };
+    defer fc.deinit();
+    var kids = [_]*FakeChild{&fc};
+    var sp: FakeSpawner = .{ .children = &kids };
+    var prng = std.Random.DefaultPrng.init(17492);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    try h.client.handshake();
+    _ = try h.server.waitHandshake();
+    const o = try doOpen(&h, .{ .rows = 24, .cols = 80 });
+
+    var b = try ReConn.init(&h, .raw);
+    defer b.deinit();
+    try b.server.start();
+    const caps = [_][]const u8{protocol.capability.sessions_push};
+    try b.client.handshakeCaps(&caps);
+    _ = try b.server.waitHandshake();
+    try subscribeRoster(&b.client);
+
+    // A drops (window closed on another machine): the session survives,
+    // detached, and B must be TOLD it is no longer attached.
+    h.server.shutdown();
+    while (true) {
+        const row = (try nextPushedRow(&b.client, alloc, &o.id)) orelse return error.SessionVanished;
+        if (!row.attached) {
+            try testing.expect(row.alive);
+            break;
+        }
+    }
+
+    // Its shell then exits with nobody bound. No connection made that change —
+    // the store did — and before T1749 it reached no subscriber at all.
+    fc.setExit(0);
+    h.store.onChildOutput(o.channel, "");
+    while (true) {
+        const row = (try nextPushedRow(&b.client, alloc, &o.id)) orelse break;
+        if (!row.alive) break;
+    }
+}
+
+test "T1749: an unsubscribed or shut-down connection leaves the store's listener list" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{};
+    var sp: FakeSpawner = .{ .children = &.{} };
+    var prng = std.Random.DefaultPrng.init(17493);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    const caps = [_][]const u8{protocol.capability.sessions_push};
+    try h.client.handshakeCaps(&caps);
+    _ = try h.server.waitHandshake();
+    try subscribeRoster(&h.client);
+    try testing.expect(h.server.roster_listener.linked);
+
+    try h.client.sendControlJson(.sessions_unsub, protocol.control_channel, struct {}{});
+    const P = struct {
+        fn unlinked(s: *Server) bool {
+            s.store.roster_listeners_mutex.lock();
+            defer s.store.roster_listeners_mutex.unlock();
+            return !s.roster_listener.linked and s.store.roster_listeners == null;
+        }
+    };
+    try testing.expect(waitUntil("the listener to unlink on unsub", P.unlinked, .{h.server}));
+
+    // Re-subscribe, then shut down without unsubscribing: shutdown must unlink
+    // (destroy asserts it), or the store would notify freed memory.
+    try subscribeRoster(&h.client);
+    try testing.expect(h.server.roster_listener.linked);
+    h.server.shutdown();
+    try testing.expect(P.unlinked(h.server));
 }
 
 test "sessions_push: an OLDER client that never advertises it leaves the stream off" {

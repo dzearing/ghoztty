@@ -1421,6 +1421,70 @@ pub const SessionStore = struct {
     reaper_cond: std.Thread.Condition = .{},
     reaper_stop: bool = false,
 
+    /// Every connection currently subscribed to the pushed roster (T1749).
+    ///
+    /// The roster is a property of the STORE, not of a connection, so a change
+    /// has to reach every subscriber — not just the connection whose request
+    /// caused it. Before this list the "roster changed" flag lived on the
+    /// per-connection `Server` and only that connection's pump heard it: a
+    /// session created over connection B never pushed to a chooser subscribed
+    /// on connection A. Locally that was invisible (every local pane shares one
+    /// warm connection); remotely the chooser's pooled connection missed every
+    /// session a `+new-remote-window` started until something refetched.
+    ///
+    /// Intrusive (the node lives in the subscriber), so registering can never
+    /// fail on allocation. Guarded by its OWN mutex rather than `mutex`, because
+    /// `notifyRosterChanged` is called with `mutex` held (the exit path inside
+    /// `onChildOutput`). LOCK ORDER: `mutex` → `roster_listeners_mutex` → the
+    /// listener's own lock. Nothing takes them in any other order.
+    roster_listeners_mutex: std.Thread.Mutex = .{},
+    roster_listeners: ?*RosterListener = null,
+
+    /// One roster subscriber, embedded in whatever wants to hear (the per-
+    /// connection `Server`). `notify` MUST be cheap and must not take
+    /// `SessionStore.mutex` — it runs under both store locks; set a flag and
+    /// signal a pump, never send inline.
+    pub const RosterListener = struct {
+        notify: *const fn (l: *RosterListener) void,
+        next: ?*RosterListener = null,
+        prev: ?*RosterListener = null,
+        linked: bool = false,
+    };
+
+    /// Subscribe `l` to roster changes. Idempotent.
+    pub fn addRosterListener(self: *SessionStore, l: *RosterListener) void {
+        self.roster_listeners_mutex.lock();
+        defer self.roster_listeners_mutex.unlock();
+        if (l.linked) return;
+        l.prev = null;
+        l.next = self.roster_listeners;
+        if (self.roster_listeners) |head| head.prev = l;
+        self.roster_listeners = l;
+        l.linked = true;
+    }
+
+    /// Unsubscribe `l`. Idempotent. Once this returns, `l.notify` is not running
+    /// and will never run again, so the owner may free it.
+    pub fn removeRosterListener(self: *SessionStore, l: *RosterListener) void {
+        self.roster_listeners_mutex.lock();
+        defer self.roster_listeners_mutex.unlock();
+        if (!l.linked) return;
+        if (l.prev) |p| p.next = l.next else self.roster_listeners = l.next;
+        if (l.next) |n| n.prev = l.prev;
+        l.next = null;
+        l.prev = null;
+        l.linked = false;
+    }
+
+    /// The roster changed: tell every subscriber. Safe to call holding `mutex`
+    /// (and is, from the exit path); never takes it.
+    pub fn notifyRosterChanged(self: *SessionStore) void {
+        self.roster_listeners_mutex.lock();
+        defer self.roster_listeners_mutex.unlock();
+        var cur = self.roster_listeners;
+        while (cur) |l| : (cur = l.next) l.notify(l);
+    }
+
     pub fn init(
         alloc: Allocator,
         rng: std.Random,
@@ -1474,6 +1538,9 @@ pub const SessionStore = struct {
         if (s.bound) {
             if (s.bridge_exit) |f| f(s.bridge_ctx.?, s.channel, code, runtime);
         }
+        // Alive → exited is a roster change whether or not anyone is bound
+        // (T1749): an orphan's exit used to reach no subscriber at all.
+        self.notifyRosterChanged();
     }
 
     /// Trampoline matching `session.Child` sink signature; bound via `child.attach`.
@@ -1829,7 +1896,10 @@ pub const SessionStore = struct {
         // Outside the lock: the bridge takes the connection's writer lock, and
         // `persistMeta` writes disk. Both follow `reapIdle`'s discipline.
         for (pushes.items) |p| p.f(p.ctx, p.channel, p.code, p.runtime_ms);
-        if (marked > 0) self.persistMeta();
+        if (marked > 0) {
+            self.persistMeta();
+            self.notifyRosterChanged();
+        }
         return marked;
     }
 
@@ -2017,7 +2087,10 @@ pub const SessionStore = struct {
         }
         // Refresh the on-disk metadata if the alive set actually shrank (§5.4,
         // T12). No-op when persistence is disabled or nothing was reaped.
-        if (unlinked.items.len > 0) self.persistMeta();
+        if (unlinked.items.len > 0) {
+            self.persistMeta();
+            self.notifyRosterChanged();
+        }
     }
 
     /// Reap a DEAD, UNBOUND, non-relaunchable tombstone IMMEDIATELY (not on the
@@ -2061,6 +2134,7 @@ pub const SessionStore = struct {
             // It may have been the last session a stored layout blob referenced —
             // reap orphaned blobs so dead topology doesn't accumulate.
             if (self.reapLayouts() > 0) self.persistLayouts();
+            self.notifyRosterChanged();
         }
     }
 

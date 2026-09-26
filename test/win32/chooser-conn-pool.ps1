@@ -344,13 +344,34 @@ try {
     $cpuFrame = Wait-LogCount $errlog 'chooser cpu: frame rows=' ($cpuFramesAtResub + 1) 15000
     Assert $cpuFrame 'H and CPU frames resumed without a selection change'
 
-    # NOT asserted here: a session started on the machine after the swap
-    # reaching the roster as a push. The agent only pushes a roster change to
-    # the connection that MADE it, so a session opened by another client (a
-    # second `+new-remote-window`, which dials its own socket) is never pushed
-    # to the chooser's pooled connection - with or without a drop. That is
-    # T1749, measured by this section's first draft; the stream's liveness here
-    # is shown by the subscribe-time push and the CPU frames above instead.
+    # A session started on the machine by ANOTHER client - a second
+    # `+new-remote-window`, which dials its own socket - must reach the
+    # chooser's pooled connection as a PUSH, with nobody refetching (T1749).
+    # Before the fix the agent told only the connection that made a change, so
+    # this list sat one session short until the next selection.
+    $lastPushed = -1
+    foreach ($m in (Get-Content $errlog | Select-String 'chooser roster: pushed (\d+) session')) {
+        $lastPushed = [int]$m.Matches[0].Groups[1].Value
+    }
+    Assert ($lastPushed -ge 1) "H setup: the replacement's roster push listed the first window's session ($lastPushed)"
+    $pushesBeforeSecond = Count-LogLines $errlog 'chooser roster: pushed \d+ session'
+    # A FETCH that landed; a push logs the same line with `pushed=1` after it.
+    $loadsBeforeSecond = Count-LogLines $errlog "chooser roster: loaded \d+ session.*device=$DEV(?! pushed=1)"
+    cmd /c "`"$Exe`" +new-remote-window --relay=http://127.0.0.1:$RelayPort --device=$DEV --token=$TOKEN > `"$tmp\open2.txt`" 2>&1"
+    $grew = $false
+    $deadline = (Get-Date).AddSeconds(15)
+    while (-not $grew -and (Get-Date) -lt $deadline) {
+        $pushes = @(Get-Content $errlog | Select-String 'chooser roster: pushed (\d+) session')
+        if ($pushes.Count -gt $pushesBeforeSecond) {
+            foreach ($m in $pushes[$pushesBeforeSecond..($pushes.Count - 1)]) {
+                if ([int]$m.Matches[0].Groups[1].Value -gt $lastPushed) { $grew = $true }
+            }
+        }
+        if (-not $grew) { Start-Sleep -Milliseconds 250 }
+    }
+    Assert $grew "H a session another client started was PUSHED to the chooser (was $lastPushed)"
+    Assert ((Count-LogLines $errlog "chooser roster: loaded \d+ session.*device=$DEV(?! pushed=1)") -eq $loadsBeforeSecond) `
+        'H and it arrived with no refetch - the push carried it, not a reload'
 
     # Exactly once: one condemn, one pool dial, one subscription per stream -
     # measured after a further settle + tick, so a second sweep that fired on
