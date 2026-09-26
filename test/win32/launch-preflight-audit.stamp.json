@@ -1,10 +1,10 @@
 {
     "guard":  "launch-preflight",
     "script":  "test/win32/launch-preflight-audit.ps1",
-    "generated":  "2026-09-26T10:24:28-07:00",
-    "commit":  "c92d8fba1",
+    "generated":  "2026-09-26T11:48:11-07:00",
+    "commit":  "5fa96ad2c",
     "uncommitted":  [
-                        "test/win32/agent-shell-integration.ps1"
+                        "test/win32/conpty-sync-hold.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -88,6 +88,7 @@
                   "test/win32/config-errors.ps1":  "1d64c1391b3f98388d3d4cdee2f6a23c4c30d952f005b977afb40b32625fe8c3",
                   "test/win32/confirm-dialogs.ps1":  "2c9006992673ec1ab476cf6a332bebe026939034ad9bb90ee07b0e5fcbf7afa8",
                   "test/win32/conformance.ps1":  "c2f6486404a9ccfa710968614aa1ae24ea7ccced0d4677ffc1bd42c853aa73da",
+                  "test/win32/conpty-sync-hold.ps1":  "eb749e220c886f4290cba05c0f4b4010e509e13eb3088b9fb8588be84e0cefd9",
                   "test/win32/context-menu.ps1":  "96cd8f69074d080153835cdd04ff18c1239ee835898eaea289cceb680caf12f4",
                   "test/win32/context-menu-real-input.ps1":  "9540c4d6dc06fe08e9db6e1a35fc3f281f4d47ca42bc5bf36bf964308344b387",
                   "test/win32/control-char-scan.ps1":  "7b6cdf8e7f672db0630aef5f181b4a15086b896c9926abf457078dba1179205c",

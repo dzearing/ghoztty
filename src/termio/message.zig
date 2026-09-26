@@ -67,6 +67,11 @@ pub const Message = union(enum) {
     /// period of time so that a bad actor can't hang the terminal.
     start_synchronized_output: void,
 
+    /// A ConPTY child closed a sync bracket that erased the screen, and the
+    /// stream handler kept synchronized output on. Start polling for the
+    /// moment the content has landed (T1763, `conpty_sync_hold`).
+    sync_hold: void,
+
     /// Enable or disable linefeed mode (mode 20).
     linefeed_mode: bool,
 

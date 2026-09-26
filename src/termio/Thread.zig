@@ -19,6 +19,7 @@ const crash = @import("../crash/main.zig");
 const internal_os = @import("../os/main.zig");
 const termio = @import("../termio.zig");
 const renderer = @import("../renderer.zig");
+const conpty_sync_hold = @import("conpty_sync_hold.zig");
 
 const Allocator = std.mem.Allocator;
 const log = std.log.scoped(.io_thread);
@@ -358,6 +359,7 @@ fn drainMailbox(
             },
             .jump_to_prompt => |v| try io.jumpToPrompt(v),
             .start_synchronized_output => self.startSynchronizedOutput(cb),
+            .sync_hold => self.armSyncHold(cb, conpty_sync_hold.idle_ns),
             .linefeed_mode => |v| self.flags.linefeed_mode = v,
             .focused => |v| try io.focusGained(data, v),
             .write_small => |v| try io.queueWrite(
@@ -398,6 +400,42 @@ fn startSynchronizedOutput(self: *Thread, cb: *CallbackData) void {
         cb,
         syncResetCallback,
     );
+}
+
+/// Poll a held ConPTY frame after `wait_ns` (T1763). Shares the sync-reset
+/// timer: a hold and an open bracket are never live at once (a new bracket
+/// ends the hold), and a hold is far shorter than the reset's safety limit.
+fn armSyncHold(self: *Thread, cb: *CallbackData, wait_ns: u64) void {
+    self.sync_reset.reset(
+        &self.loop,
+        &self.sync_reset_c,
+        &self.sync_reset_cancel_c,
+        @max(1, wait_ns / std.time.ns_per_ms),
+        CallbackData,
+        cb,
+        syncHoldCallback,
+    );
+}
+
+fn syncHoldCallback(
+    cb_: ?*CallbackData,
+    _: *xev.Loop,
+    _: *xev.Completion,
+    r: xev.Timer.RunError!void,
+) xev.CallbackAction {
+    _ = r catch |err| switch (err) {
+        // Replaced by a bracket's own reset timer: that path owns it now.
+        error.Canceled => return .disarm,
+        else => {
+            log.warn("error during sync hold callback err={}", .{err});
+            cb_.?.io.resetSynchronizedOutput();
+            return .disarm;
+        },
+    };
+
+    const cb = cb_ orelse return .disarm;
+    if (cb.io.pollSyncHold()) |wait_ns| cb.self.armSyncHold(cb, wait_ns);
+    return .disarm;
 }
 
 fn handleResize(self: *Thread, cb: *CallbackData, resize: renderer.Size) void {

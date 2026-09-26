@@ -34299,3 +34299,21 @@ on the Mac get it too. Validation: a none-lane unit test with its own negative
 control, and `agent-shell-integration.ps1` section D on a real cmd pane - output
 survives a split+close mid-command, while the same pane with the old prompt
 loses it (the defect reproduced on box). ALL PASS (35 assertions).
+
+## 2026-09-26 — T1763: resizing a Claude Code pane no longer flashes blank
+
+Resizing a pane running Claude Code made its contents blink: blank, then
+redrawn. Claude Code redraws inside a synchronized-output bracket, which should
+show as one frame, but ConPTY re-emits it as two writes: the erase in a bracket
+that closes at once, then conhost's own paint of the new rows outside it
+(measured with a scratch probe; the resize-quirk and passthrough flags change
+nothing on the in-box conhost). A new shared-core hold
+(`src/termio/conpty_sync_hold.zig`) keeps an erasing bracket from a ConPTY child
+open until text has been printed after it and output has gone quiet for 12ms
+(cap 150ms). Brackets that do not erase are untouched, and the check follows the
+pane's child, so it also covers a Mac window on a Windows agent (T1765, Mac seat).
+Validation: none-lane unit tests, plus `conpty-sync-hold.ps1` over a local and an
+agent-backed pane. The debug build logs the rows on screen when each frame
+becomes showable. With the hold off, 6 of 7 frames showed empty (negative
+control). With it on, 0 of 7 did, ALL PASS (18). That oracle also rejected a
+first version that released on silence alone.

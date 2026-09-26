@@ -1,0 +1,18 @@
+{
+    "guard":  "conpty-sync-hold",
+    "script":  "test/win32/conpty-sync-hold.ps1",
+    "generated":  "2026-09-26T11:37:23-07:00",
+    "commit":  "5fa96ad2c",
+    "uncommitted":  [
+                        "src/termio/conpty_sync_hold.zig",
+                        "src/termio/stream_handler.zig",
+                        "src/termio/Termio.zig",
+                        "test/win32/conpty-sync-hold.ps1"
+                    ],
+    "files":  {
+                  "src/termio/conpty_sync_hold.zig":  "3674f41c08c9257d82578e47c2761d03dcd72a59613d137bf61484fc1b35a0f1",
+                  "src/termio/stream_handler.zig":  "f4426909f86c1b03e535d7217515150cf6ad84f41473fa6af63309f7e7235fc9",
+                  "src/termio/Termio.zig":  "276ca314c429c21cb0ae0e39215d1a6ee3819176558f0cf9164b27d5f3c356b4",
+                  "test/win32/conpty-sync-hold.ps1":  "eb749e220c886f4290cba05c0f4b4010e509e13eb3088b9fb8588be84e0cefd9"
+              }
+}

@@ -202,6 +202,11 @@
             "unset": "unreachable",
             "note": "unset is the user's real Claude state directory."
         },
+        "GHOZTTY_CONPTY_SYNC_HOLD": {
+            "class": "non-default",
+            "unset": "shipped-elsewhere",
+            "note": "T1763. =0 turns the ConPTY sync hold OFF for conpty-sync-hold.ps1's negative control; unset = the hold on, which that script's default run and every other run exercise."
+        },
         "GHOZTTY_DEBUG_MARKER": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

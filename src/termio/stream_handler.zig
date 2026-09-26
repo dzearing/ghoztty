@@ -11,6 +11,8 @@ const renderer = @import("../renderer.zig");
 const termio = @import("../termio.zig");
 const terminal = @import("../terminal/main.zig");
 const terminfo = @import("../terminfo/main.zig");
+const conpty_sync_hold = @import("conpty_sync_hold.zig");
+const history_guard = @import("history_guard.zig");
 const posix = std.posix;
 
 const log = std.log.scoped(.io_handler);
@@ -94,6 +96,16 @@ pub const StreamHandler = struct {
     /// `reportPwd` for what the FIRST one means: any title set before it is
     /// startup noise from the shell image, not something a user asked for.
     seen_pwd: bool = false,
+
+    /// The backend whose child this stream comes from, so a sync bracket can
+    /// ask what kind of pty produced it (T1763). Null when the handler is
+    /// built without one, which reads as "not ConPTY" and changes nothing.
+    backend: ?*const termio.Backend = null,
+
+    /// A ConPTY child's clear-and-redraw arrives as an erase in a bracket
+    /// that closes at once, then the content outside it. This holds that
+    /// bracket open until the content lands. See `conpty_sync_hold`.
+    sync_hold: conpty_sync_hold.State = .{},
 
     pub const Stream = terminal.Stream(StreamHandler);
 
@@ -259,9 +271,13 @@ pub const StreamHandler = struct {
         switch (action) {
             .print => {
                 @branchHint(.likely);
+                self.sync_hold.printed();
                 try self.terminal.print(value.cp);
             },
-            .print_repeat => try self.terminal.printRepeat(value),
+            .print_repeat => {
+                self.sync_hold.printed();
+                try self.terminal.printRepeat(value);
+            },
             .bell => self.bell(),
             .backspace => self.terminal.backspace(),
             .horizontal_tab => self.horizontalTab(value),
@@ -298,11 +314,18 @@ pub const StreamHandler = struct {
             .erase_display_below => self.terminal.eraseDisplay(.below, value),
             .erase_display_above => self.terminal.eraseDisplay(.above, value),
             .erase_display_complete => {
+                self.sync_hold.erase(self.terminal.modes.get(.synchronized_output));
                 self.terminal.scrollViewport(.{ .bottom = {} });
                 self.terminal.eraseDisplay(.complete, value);
             },
-            .erase_display_scrollback => self.terminal.eraseDisplay(.scrollback, value),
-            .erase_display_scroll_complete => self.terminal.eraseDisplay(.scroll_complete, value),
+            .erase_display_scrollback => {
+                self.sync_hold.erase(self.terminal.modes.get(.synchronized_output));
+                self.terminal.eraseDisplay(.scrollback, value);
+            },
+            .erase_display_scroll_complete => {
+                self.sync_hold.erase(self.terminal.modes.get(.synchronized_output));
+                self.terminal.eraseDisplay(.scroll_complete, value);
+            },
             .erase_line_right => self.terminal.eraseLine(.right, value),
             .erase_line_left => self.terminal.eraseLine(.left, value),
             .erase_line_complete => self.terminal.eraseLine(.complete, value),
@@ -688,6 +711,21 @@ pub const StreamHandler = struct {
         } });
     }
 
+    /// Whether this pane's sync brackets need the ConPTY hold (T1763).
+    fn syncHoldEnabled(self: *const StreamHandler) bool {
+        const b = self.backend orelse return false;
+        return conpty_sync_hold.enabledFor(b.childPtyFlavor());
+    }
+
+    /// Whether this pane's child is on a ConPTY, hold or no hold. Only the
+    /// debug oracle asks: it logs the unheld path too, for the negative
+    /// control.
+    fn childIsConpty(self: *const StreamHandler) bool {
+        if (comptime builtin.mode != .Debug) return false;
+        const b = self.backend orelse return false;
+        return history_guard.enabledFor(b.childPtyFlavor());
+    }
+
     pub fn setMode(self: *StreamHandler, mode: terminal.Mode, enabled: bool) !void {
         // Note: this function doesn't need to grab the render state or
         // terminal locks because it is only called from process() which
@@ -798,7 +836,24 @@ pub const StreamHandler = struct {
             // We need to start a timer to prevent the emulator being hung
             // forever.
             .synchronized_output => {
-                if (enabled) self.messageWriter(.{ .start_synchronized_output = {} });
+                if (enabled) {
+                    self.sync_hold.begin();
+                    self.messageWriter(.{ .start_synchronized_output = {} });
+                } else hold: {
+                    const now = std.time.Instant.now() catch {
+                        self.sync_hold.cancel();
+                        break :hold;
+                    };
+                    if (self.sync_hold.end(self.syncHoldEnabled(), now)) {
+                        // The bracket erased the screen and its content is
+                        // still to come from conhost: keep the frame back
+                        // (T1763).
+                        self.terminal.modes.set(.synchronized_output, true);
+                        self.messageWriter(.{ .sync_hold = {} });
+                    } else if (self.sync_hold.last_end_erased and self.childIsConpty()) {
+                        conpty_sync_hold.logShown(self.terminal, "close", 0);
+                    }
+                }
             },
 
             .linefeed => {

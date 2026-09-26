@@ -3989,6 +3989,23 @@ $GuardTable = @(
             'test\win32\resize-flicker.ps1'
         )
     },
+    # The ConPTY sync hold (T1763): a ConPTY child's clear-and-redraw arrives
+    # as an erase in a bracket that closes at once and then conhost's paint, so
+    # the hold is what keeps a resized Claude Code pane from flashing blank.
+    # The policy lives in conpty_sync_hold.zig; the stream handler and Termio
+    # are where it is armed, fed and released, so an edit to any of the three
+    # is an edit to what the harness proves.
+    [pscustomobject]@{
+        Name   = 'conpty-sync-hold'
+        Script = 'test\win32\conpty-sync-hold.ps1'
+        Stamp  = 'test\win32\conpty-sync-hold.stamp.json'
+        Covers = @(
+            'src\termio\conpty_sync_hold.zig',
+            'src\termio\stream_handler.zig',
+            'src\termio\Termio.zig',
+            'test\win32\conpty-sync-hold.ps1'
+        )
+    },
     # The leak teardown (T199, T1127). `lib\HarnessLeak.ps1` is the only thing
     # standing between a harness that dies mid-run and a live app left on the
     # box, and since T1127 it is also what stops the ordinary scripts leaking

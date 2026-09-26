@@ -22,6 +22,7 @@ const configpkg = @import("../config.zig");
 const ProcessInfo = @import("../pty.zig").ProcessInfo;
 const session_notice = @import("session_notice.zig");
 const history_guard = @import("history_guard.zig");
+const conpty_sync_hold = @import("conpty_sync_hold.zig");
 
 const log = std.log.scoped(.io_exec);
 
@@ -335,6 +336,7 @@ pub fn init(self: *Termio, alloc: Allocator, opts: termio.Options) !void {
         .enquiry_response = opts.config.enquiry_response,
         .default_cursor_style = opts.config.cursor_style,
         .default_cursor_blink = opts.config.cursor_blink,
+        .backend = &self.backend,
     };
 
     const thread_enter_state = try ThreadEnterState.create(
@@ -615,6 +617,7 @@ pub fn resize(
         // Disable synchronized output mode so that we show changes
         // immediately for a resize. This is allowed by the spec.
         self.terminal.modes.set(.synchronized_output, false);
+        self.terminal_stream.handler.sync_hold.cancel();
 
         // T423: the reflow above may have dragged a session-interrupted notice
         // back out of the scrollback and into the active area.
@@ -728,7 +731,38 @@ pub fn resetSynchronizedOutput(self: *Termio) void {
     self.renderer_state.mutex.lock();
     defer self.renderer_state.mutex.unlock();
     self.terminal.modes.set(.synchronized_output, false);
+    self.terminal_stream.handler.sync_hold.cancel();
     self.renderer_wakeup.notify() catch {};
+}
+
+/// Ask a held ConPTY frame whether its content has landed (T1763). Returns
+/// how long to wait before asking again, or null when the hold is over — in
+/// which case synchronized output has been ended and a render requested.
+pub fn pollSyncHold(self: *Termio) ?u64 {
+    self.renderer_state.mutex.lock();
+    defer self.renderer_state.mutex.unlock();
+    const hold = &self.terminal_stream.handler.sync_hold;
+    const now = std.time.Instant.now() catch {
+        hold.cancel();
+        self.terminal.modes.set(.synchronized_output, false);
+        self.renderer_wakeup.notify() catch {};
+        return null;
+    };
+    const since_close = hold.sinceClose(now);
+    const v = hold.poll(now) orelse return null;
+    switch (v) {
+        .wait_ns => |ns| return ns,
+        .release => {
+            conpty_sync_hold.logShown(
+                &self.terminal,
+                if (since_close >= conpty_sync_hold.cap_ns) "cap" else "idle",
+                since_close / std.time.ns_per_ms,
+            );
+            self.terminal.modes.set(.synchronized_output, false);
+            self.renderer_wakeup.notify() catch {};
+            return null;
+        },
+    }
 }
 
 /// Clear the screen.
@@ -919,6 +953,13 @@ pub fn remoteAppliedOffset(self: *const Termio) ?u64 {
 fn processOutputLocked(self: *Termio, buf: []const u8) void {
     // Schedule a render. We can call this first because we have the lock.
     self.terminal_stream.handler.queueRender() catch unreachable;
+
+    // A held ConPTY frame releases once output goes quiet (T1763).
+    if (self.terminal_stream.handler.sync_hold.holding) {
+        if (std.time.Instant.now()) |now| {
+            self.terminal_stream.handler.sync_hold.output(now);
+        } else |_| {}
+    }
 
     // Whenever a character is typed, we ensure the cursor is in the
     // non-blink state so it is rendered if visible. If we're under

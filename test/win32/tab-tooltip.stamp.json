@@ -1,16 +1,15 @@
 {
     "guard":  "tab-tooltip",
     "script":  "test/win32/tab-tooltip.ps1",
-    "generated":  "2026-09-25T14:48:53-07:00",
-    "commit":  "312002cc3",
+    "generated":  "2026-09-26T11:38:29-07:00",
+    "commit":  "5fa96ad2c",
     "uncommitted":  [
-                        "src/apprt/win32/tab_tooltip.zig",
-                        "test/win32/tab-tooltip.ps1"
+                        "src/termio/stream_handler.zig"
                     ],
     "files":  {
                   "src/apprt/win32/tab_strip_layout.zig":  "f5b238a3c03773166e2d433f75c044eed2f29a1b0840e281ae71ae4261450aa3",
                   "src/apprt/win32/tab_tooltip.zig":  "42c5ad6f6afc6942b1d4a1cff933df09ffe80f58732287428202d6e82c19b347",
-                  "src/termio/stream_handler.zig":  "fffa60db96f0b5a4eb7864fb57d279def56d75f805c90c6f9577a33cb164edb0",
+                  "src/termio/stream_handler.zig":  "f4426909f86c1b03e535d7217515150cf6ad84f41473fa6af63309f7e7235fc9",
                   "test/win32/tab-tooltip.ps1":  "cffe8c5852ced4356a060a07f0203df8c6dc75328fad5d2e8e978cbc7adb6783"
               }
 }
