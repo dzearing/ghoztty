@@ -125,6 +125,39 @@ struct ViewerFeedbackQuoteTests {
         #expect(quotes[0]["blockText"] as? String == "the broken sentence here")
         #expect(quotes[0]["sourceLine"] as? Int == 7)
         #expect((json["body"] as? String)?.contains("> the broken sentence") == true)
+        // Untouched, so the report does not claim a second wording (T985).
+        #expect(quotes[0]["editedText"] == nil)
+    }
+
+    /// A quote the user reworded keeps the page's wording as `text` (what
+    /// `sourceLine` locates) and says what they changed it to (T985).
+    @Test func editedQuoteCarriesBothWordings() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("quote-edited-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let written = try ViewerFeedbackReport.write(
+            segments: [.quote(number: 1, text: "the sentence")],
+            images: [],
+            quotes: [ViewerFeedbackReport.Quote(
+                number: 1, text: "the broken sentence", sourceLine: 7,
+                editedText: "the sentence")],
+            worktree: ViewerWorktree(path: dir.path),
+            context: ViewerFeedbackReport.Context(source: "/a/b.md", sourceKind: "file"))
+
+        let json = try JSONSerialization.jsonObject(
+            with: Data(contentsOf: written.reportURL)) as! [String: Any]
+        let quotes = try #require(json["quotes"] as? [[String: Any]])
+        #expect(quotes[0]["text"] as? String == "the broken sentence")
+        #expect(quotes[0]["editedText"] as? String == "the sentence")
+        #expect(quotes[0]["sourceLine"] as? Int == 7)
+    }
+
+    @Test func editedTextIgnoresWhitespaceOnlyChanges() {
+        #expect(ViewerFeedbackModel.editedText(original: "a b", current: nil) == nil)
+        #expect(ViewerFeedbackModel.editedText(original: "a b", current: "a b") == nil)
+        #expect(ViewerFeedbackModel.editedText(original: "a b", current: " a b\n") == nil)
+        #expect(ViewerFeedbackModel.editedText(original: "a b", current: "a c\n") == "a c")
     }
 }
 

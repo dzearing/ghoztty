@@ -218,6 +218,20 @@ fn appendQuoted(alloc: Allocator, out: *std.ArrayListUnmanaged(u8), passage: []c
     }
 }
 
+/// What the user changed a quote to, or null when it still reads as quoted
+/// (T985). `current` is the quote block's text as it stands in the composer.
+///
+/// A quote's identity lives on its composer block (T935), so rewording the
+/// passage keeps its metadata — and the body, rendered from the composer, then
+/// carries a different wording from the `text` the page gave us. Without this
+/// the report showed two versions of one quote with nothing saying which was
+/// meant. Surrounding whitespace is not an edit. Borrows from `current`.
+pub fn editedText(original: []const u8, current: []const u8) ?[]const u8 {
+    const now = std.mem.trim(u8, current, " \t\r\n");
+    if (std.mem.eql(u8, now, std.mem.trim(u8, original, " \t\r\n"))) return null;
+    return now;
+}
+
 // -----------------------------------------------------------------------------
 // Source line
 // -----------------------------------------------------------------------------
@@ -338,6 +352,10 @@ pub const Quote = struct {
     offset_in_block: ?u32 = null,
     document_offset: ?u32 = null,
     source_line: ?u32 = null,
+    /// The passage as it now reads in the composer, when the user changed it
+    /// after quoting (see `editedText`). `text` stays the page's own wording,
+    /// because that is what `source_line` and `block_text` locate (T985).
+    edited_text: ?[]const u8 = null,
 };
 
 /// One image the report carries, on its way to `images/image-N.png` inside the
@@ -418,6 +436,7 @@ const PayloadQuote = struct {
     offsetInBlock: ?u32 = null,
     documentOffset: ?u32 = null,
     sourceLine: ?u32 = null,
+    editedText: ?[]const u8 = null,
 };
 
 const PayloadApp = struct {
@@ -474,6 +493,7 @@ pub fn serialize(
         .offsetInBlock = q.offset_in_block,
         .documentOffset = q.document_offset,
         .sourceLine = q.source_line,
+        .editedText = q.edited_text,
     };
 
     // Each path is formatted into a buffer that outlives the stringify below,
@@ -834,6 +854,15 @@ test "renderBody: two quotes, and the text between them is untouched" {
     try testing.expectEqualStrings("a\n\n> first\n\nb\n\n> second\n\nc", body);
 }
 
+test "editedText: an untouched quote is null, a reworded one is its new text" {
+    try testing.expectEqual(@as(?[]const u8, null), editedText("a b", "a b"));
+    // The block's own newlines and a stray space are not a rewording.
+    try testing.expectEqual(@as(?[]const u8, null), editedText("a b", "\n a b \r\n"));
+    try testing.expectEqualStrings("a c", editedText("a b", "a c\n").?);
+    // Emptied to whitespace is still an edit, and says so honestly.
+    try testing.expectEqualStrings("", editedText("a b", "  ").?);
+}
+
 test "sourceLine: a passage is found, and one that is not there is null" {
     const alloc = testing.allocator;
     const source =
@@ -1012,10 +1041,41 @@ test "serialize: every context block round-trips, and absent optionals are absen
     try testing.expectEqual(@as(i64, 12), q.get("offsetInBlock").?.integer);
     try testing.expectEqual(@as(i64, 345), q.get("documentOffset").?.integer);
     try testing.expectEqual(@as(i64, 7), q.get("sourceLine").?.integer);
+    // Untouched, so the report does not claim a second wording (T985).
+    try testing.expect(q.get("editedText") == null);
 
     // Present but empty — which is how a reader tells "no images" apart from
     // "written by a build that did not know about them".
     try testing.expectEqual(@as(usize, 0), root.get("images").?.array.items.len);
+}
+
+test "serialize: a reworded quote keeps the page's wording and names the edit" {
+    // T985: `text` is what the file holds, so it is what `sourceLine` found;
+    // `editedText` is the wording the body carries.
+    const alloc = testing.allocator;
+    const quotes = [_]Quote{.{
+        .number = 1,
+        .text = "the broken sentence",
+        .source_line = 7,
+        .edited_text = "the sentence",
+    }};
+    const json = try serialize(
+        alloc,
+        "20260926T000000Z-000001",
+        "2026-09-26T00:00:00Z",
+        "> the sentence",
+        sampleContext("D:\\repo"),
+        &quotes,
+        &.{},
+    );
+    defer alloc.free(json);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, alloc, json, .{});
+    defer parsed.deinit();
+    const q = parsed.value.object.get("quotes").?.array.items[0].object;
+    try testing.expectEqualStrings("the broken sentence", q.get("text").?.string);
+    try testing.expectEqualStrings("the sentence", q.get("editedText").?.string);
+    try testing.expectEqual(@as(i64, 7), q.get("sourceLine").?.integer);
 }
 
 test "serialize: an image's entry names the file the folder will hold" {

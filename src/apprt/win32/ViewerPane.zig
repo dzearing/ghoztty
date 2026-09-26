@@ -1500,6 +1500,13 @@ fn feedbackSnapshotParts(
             .block_text = e.block_text,
             .offset_in_block = e.offset_in_block,
             .document_offset = e.document_offset,
+            // The block as the user left it, when that is no longer the page's
+            // wording (T985). `text` stays the original: it is what the source
+            // file holds, so it is what `sourceLine` is resolved against.
+            .edited_text = if (sp.start <= sp.end and sp.end <= self.feedback_text.items.len)
+                feedback_report.editedText(e.text, self.feedback_text.items[sp.start..sp.end])
+            else
+                null,
         };
     }
 

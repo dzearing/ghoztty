@@ -77,6 +77,11 @@ enum ViewerFeedbackReport {
         var offsetInBlock: Int?
         var documentOffset: Int?
         var sourceLine: Int?
+        /// The passage as it now reads in the composer, when the user changed
+        /// it after quoting. Nil when it is untouched. `text` stays the page's
+        /// own wording, because that is what `sourceLine` and `blockText`
+        /// locate; the body carries this version (T985).
+        var editedText: String? = nil
     }
 
     /// A pasted image, already encoded.
@@ -428,7 +433,8 @@ enum ViewerFeedbackReport {
                     blockSelector: $0.blockSelector, blockText: $0.blockText,
                     offsetInBlock: $0.offsetInBlock,
                     documentOffset: $0.documentOffset,
-                    sourceLine: $0.sourceLine)
+                    sourceLine: $0.sourceLine,
+                    editedText: $0.editedText)
             },
             images: images.map {
                 PayloadImage(
@@ -478,6 +484,7 @@ enum ViewerFeedbackReport {
         let offsetInBlock: Int?
         let documentOffset: Int?
         let sourceLine: Int?
+        let editedText: String?
     }
 
     private struct PayloadApp: Codable {

@@ -139,6 +139,11 @@ struct ViewerFeedbackQuote: Identifiable, Equatable {
     /// 1-based line in the source file, resolved at send time when the passage
     /// can be located there. Nil for web pages and unlocatable passages.
     var sourceLine: Int?
+    /// The passage as it now reads in the composer, when the user edited it
+    /// after quoting; nil while it still reads as `text`. Kept current by
+    /// `syncQuotes`, so the report can say which wording the user meant
+    /// without losing the page's own (T985).
+    var editedText: String?
 
     init(number: Int, text: String) {
         self.id = UUID()
@@ -325,17 +330,39 @@ final class ViewerFeedbackModel: ObservableObject {
     /// deleting a quote block drops its references from the report too.
     private func syncQuotes() {
         var found: [ViewerFeedbackQuote] = []
-        var seen = Set<UUID>()
+        var current: [UUID: String] = [:]
         let full = NSRange(location: 0, length: textStorage.length)
-        textStorage.enumerateAttribute(.feedbackQuoteID, in: full) { value, _, _ in
+        textStorage.enumerateAttribute(.feedbackQuoteID, in: full) { value, range, _ in
             guard let raw = value as? String, let id = UUID(uuidString: raw),
-                  let quote = quotePool[id], !seen.contains(id)
+                  let quote = quotePool[id]
             else { return }
-            seen.insert(id)
-            found.append(quote)
+            // An edit can split one quote into several runs; its wording is
+            // all of them, in order.
+            let piece = textStorage.attributedSubstring(from: range).string
+            if current[id] == nil {
+                found.append(quote)
+                current[id] = piece
+            } else {
+                current[id]! += piece
+            }
+        }
+        found = found.map { quote in
+            var copy = quote
+            copy.editedText = Self.editedText(original: quote.text, current: current[quote.id])
+            return copy
         }
         guard found != quotes else { return }
         quotes = found
+    }
+
+    /// What the user changed a quote to, or nil when it still reads as quoted.
+    /// Surrounding whitespace is not an edit: the block's own newlines are
+    /// plain text, and a stray space is not a different wording.
+    nonisolated static func editedText(original: String, current: String?) -> String? {
+        guard let current else { return nil }
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != original.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        return trimmed
     }
 
     /// Next quote number (monotonic, never reused — same rule as chips).

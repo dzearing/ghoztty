@@ -245,6 +245,7 @@ fn fill(job: *Job, req: Request) !void {
             .block_text = try dupeOpt(aa, q.block_text),
             .offset_in_block = q.offset_in_block,
             .document_offset = q.document_offset,
+            .edited_text = try dupeOpt(aa, q.edited_text),
         };
     }
     job.quotes = quotes;

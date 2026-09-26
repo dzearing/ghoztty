@@ -34377,3 +34377,14 @@ CLI verbs. The gate was seen going red on those five files, then viewer-panes
 passed 195/195 and stamped. Audit of the other test-only rows: all are
 test-infrastructure harnesses or commented exclusions, so no follow-up task.
 No zig change, so the lanes and P1-P3 were not re-run.
+
+## 2026-09-26 — T985: a reworded feedback quote says which wording the user meant
+
+The report's `quotes[].text` stays the page's own wording (what `sourceLine`,
+`blockText` and the offsets locate); a new optional `editedText` is emitted only
+when the composer block no longer reads as `text`. Landed on both platforms:
+win32 (`viewer_feedback_report.editedText`, ViewerPane snapshot, Send copy) and
+Mac (`syncQuotes` tracks the current wording, Report/PayloadQuote carry it); both
+process-feedback SKILL.md copies document the field. Floor lanes all PASS,
+P1-P3 PASS, and the 12 due harnesses (viewer-*, hook-json, audits) ALL PASS.
+Mac build/test is T1766 (seat: mac).

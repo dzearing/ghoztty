@@ -1,15 +1,16 @@
 {
     "guard":  "feedback-user-report",
     "script":  "test/win32/feedback-user-report.ps1",
-    "generated":  "2026-09-23T22:09:39-07:00",
-    "commit":  "32479ce2f",
+    "generated":  "2026-09-26T15:38:27-07:00",
+    "commit":  "ceb3f04f6",
     "uncommitted":  [
-                        "docs/claude/viewers.md"
+                        "macos/Resources/Ghoztty/skills/process-feedback/SKILL.md",
+                        "src/apprt/win32/assets/ghoztty/skills/process-feedback/SKILL.md"
                     ],
     "files":  {
                   "docs/claude/viewers.md":  "8d7de46f4864a39dd2eee0876015c72b885c22d9a956ee0ba653faac75829bf1",
-                  "macos/Resources/Ghoztty/skills/process-feedback/SKILL.md":  "ce075937bf7ae0ec64d0d7d0d7b764c7c1641642a03e724f68459ca554c1e0aa",
-                  "src/apprt/win32/assets/ghoztty/skills/process-feedback/SKILL.md":  "ce075937bf7ae0ec64d0d7d0d7b764c7c1641642a03e724f68459ca554c1e0aa",
+                  "macos/Resources/Ghoztty/skills/process-feedback/SKILL.md":  "5b479555638407868bee2353ecbcb989b7647a58da57ea83f2fef8c6296b8393",
+                  "src/apprt/win32/assets/ghoztty/skills/process-feedback/SKILL.md":  "5b479555638407868bee2353ecbcb989b7647a58da57ea83f2fef8c6296b8393",
                   "src/apprt/win32/GhosttyAssets.zig":  "12570d8bb96b01067c724c01c178db7a18e827c409d8d1861ddda2aeccc8a0bc",
                   "test/win32/feedback-user-report.ps1":  "cfda91deffac1fe7971ef8c37c1cb1d4d275ee34ea7c83c87460d740508917fd"
               }

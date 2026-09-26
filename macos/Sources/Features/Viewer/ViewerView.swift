@@ -1552,7 +1552,8 @@ final class ViewerView: NSView, Codable, ObservableObject {
                 offsetInBlock: quote.offsetInBlock,
                 documentOffset: quote.documentOffset,
                 // Resolved against the source file at send time, not here.
-                sourceLine: nil)
+                sourceLine: nil,
+                editedText: quote.editedText)
         }
         var context = ViewerFeedbackReport.Context(
             source: location, sourceKind: isWebURL ? "web" : "file")
@@ -1701,9 +1702,12 @@ final class ViewerView: NSView, Codable, ObservableObject {
                     blockText: quote.blockText,
                     offsetInBlock: quote.offsetInBlock,
                     documentOffset: quote.documentOffset,
+                    // The ORIGINAL wording: that is what the file contains,
+                    // even when the user reworded the quote (T985).
                     sourceLine: sourceText.flatMap {
                         Self.lineNumber(of: quote.text, in: $0)
-                    })
+                    },
+                    editedText: quote.editedText)
             }
 
             let result = Result {

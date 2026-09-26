@@ -131,7 +131,7 @@ Fields worth using rather than skimming:
 | `source.selection` | What they had selected, i.e. what they were pointing at. |
 | `source.pageTitle`, `source.viewport` | Which page, at what size (layout bugs). |
 | `worktree.branch`, `worktree.commit` | The exact revision they saw. If HEAD has moved, check whether the problem still reproduces before fixing. |
-| `quotes[]` | Per quote: `headingText`, `blockSelector`, `blockText`, and for file viewers a 1-based `sourceLine` into the source file. This is the precise anchor — use it instead of grepping for the passage. |
+| `quotes[]` | Per quote: `headingText`, `blockSelector`, `blockText`, and for file viewers a 1-based `sourceLine` into the source file. This is the precise anchor — use it instead of grepping for the passage. `text` is always the page's own wording (what `sourceLine` locates); `editedText` appears only when the user reworded the quote in the composer, and is the wording they meant. |
 | `images[]` | Pixel dimensions; a 2x-scale screenshot's coordinates are half its pixel numbers. |
 
 A quote's `sourceLine` may be `null` — that means the resolver could not find
