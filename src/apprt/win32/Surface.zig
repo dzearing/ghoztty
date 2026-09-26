@@ -2648,9 +2648,12 @@ pub fn handleSearchKey(self: *Surface, vk: u16) bool {
 /// T57 while its keybind worked.
 const palette_entries = commands.registry;
 
-/// Cap on user-configured command-palette-entry commands shown in the
-/// palette (bounds the fixed-size palette_filtered index array).
-pub const MAX_USER_PALETTE_ENTRIES = 64;
+/// Cap on the config's command-palette-entry list the palette reads (bounds
+/// the fixed-size palette_filtered index array). That list starts as
+/// Ghostty's ~100 built-in defaults with the user's own appended after them,
+/// so this is NOT a cap on the user's commands alone: at 64 (before T1752)
+/// every command a user added fell past it and silently never showed.
+pub const MAX_USER_PALETTE_ENTRIES = 512;
 
 /// Palette indexes >= JUMP_BASE refer to the "Focus: <pane>" jump-entry
 /// snapshot (T555). The base is FIXED (past the largest possible user
@@ -2991,8 +2994,6 @@ fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
     // The surviving candidates, in index order, with what ordering needs.
     var idxs: [MAX_PALETTE_ENTRIES]u16 = undefined;
     var items: [MAX_PALETTE_ENTRIES]palette_order.Item = undefined;
-    // Backing store for the composed `user:` keys, one slot per user entry.
-    var key_bufs: [MAX_USER_PALETTE_ENTRIES][palette_order.max_key_len]u8 = undefined;
     var n: usize = 0;
 
     for (palette_entries, 0..) |entry, i| {
@@ -3002,16 +3003,27 @@ fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
         items[n] = .{ .title = self.paletteEntryName(idx), .key = @tagName(entry.id) };
         n += 1;
     }
-    // User-configured command-palette-entry commands.
+    // The config's command-palette-entry list: Ghostty's defaults, then the
+    // user's own. A default the registry above already offers is skipped
+    // (T1752) — it would be the same command listed twice.
     const user = self.app.config.@"command-palette-entry".value.items;
     const user_len = @min(user.len, MAX_USER_PALETTE_ENTRIES);
+    if (user.len > MAX_USER_PALETTE_ENTRIES) {
+        log.warn("command palette: showing {d} of {d} command-palette-entry commands", .{ user_len, user.len });
+    }
     for (user[0..user_len], 0..) |entry, i| {
         if (filter.len != 0 and std.ascii.indexOfIgnoreCase(entry.title, filter) == null) continue;
+        if (commands.coversDefault(entry)) continue;
         const idx: u16 = @intCast(palette_entries.len + i);
         idxs[n] = idx;
+        // The history key is `user:<title>`; the Item matches it in place.
+        // A title too long to key is not remembered (History.record rejects
+        // it), so it is given no key rather than a truncated one.
+        const keyable = palette_order.user_key_prefix.len + entry.title.len <= palette_order.max_key_len;
         items[n] = .{
             .title = entry.title,
-            .key = self.paletteEntryKey(idx, &key_bufs[i]),
+            .key = if (keyable) entry.title else null,
+            .user = true,
         };
         n += 1;
     }

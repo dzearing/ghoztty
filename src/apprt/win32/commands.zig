@@ -305,6 +305,74 @@ pub fn index(id: Id) usize {
     unreachable;
 }
 
+/// Whether a `command-palette-entry` from the config is one of Ghostty's
+/// built-in default commands that THIS registry already offers (T1752).
+///
+/// The config list is never just the user's: it starts as
+/// `input.command.defaults` (~100 commands), and the user's own entries are
+/// appended after them. Mac's palette IS that list, so every command appears
+/// once. The win32 palette shows the registry first and the config list
+/// below it, which listed each default the registry also carries twice —
+/// "Change Window Title…" beside "Change Window Title...", and so on. Such a
+/// default is hidden; the registry's row is the one that stays, since it
+/// carries the Windows name, the menu wiring and the recency key.
+///
+/// Only an entry EQUAL to a default is hidden — same title, description and
+/// action. A command the user wrote themselves always shows, even when it
+/// performs an action the registry already has: they asked for that row by
+/// name. A default the registry does NOT cover (a Ghostty command with no
+/// Windows counterpart in the list) shows too, the way it does on Mac.
+pub fn coversDefault(cmd: input.Command) bool {
+    const tag = std.meta.activeTag(cmd.action);
+    const covered = for (registry) |e| {
+        if (e.kind != .binding) continue;
+        if (std.meta.activeTag(e.action) != tag) continue;
+        if (e.action.hash() == cmd.action.hash()) break true;
+    } else false;
+    if (!covered) return false;
+    // Title first: a byte compare rules out nearly every default without
+    // hashing an action, and this runs per config entry per keystroke.
+    for (input.command.defaults) |d| {
+        if (!std.mem.eql(u8, d.title, cmd.title)) continue;
+        if (d.equal(cmd)) return true;
+    }
+    return false;
+}
+
+test "coversDefault: a default the registry already offers is hidden (T1752)" {
+    // Every default whose action has a binding row in the registry.
+    var hidden: usize = 0;
+    for (input.command.defaults) |d| {
+        if (coversDefault(d)) hidden += 1;
+    }
+    // The registry covers most of Ghostty's defaults; the bar is that it
+    // covers SOME (the duplication the task was filed for) and not all.
+    try std.testing.expect(hidden > 0);
+    try std.testing.expect(hidden < input.command.defaults.len);
+
+    // The specific pair T1671 saw adjacent in the palette.
+    const d = for (input.command.defaults) |c| {
+        if (c.action == .prompt_window_title) break c;
+    } else return error.TestUnexpectedResult;
+    try std.testing.expect(coversDefault(d));
+}
+
+test "coversDefault: a user's own command always shows, even for a covered action" {
+    // Same action as the registry's "New Tab", but the user's own title.
+    try std.testing.expect(!coversDefault(.{ .action = .new_tab, .title = "My New Tab" }));
+    // An action the registry has no binding row for.
+    try std.testing.expect(!coversDefault(.{ .action = .{ .text = "hello" }, .title = "Say hello" }));
+}
+
+test "coversDefault: a default with no registry counterpart still shows" {
+    // Some default must survive, or the config list would add nothing but
+    // the user's entries — which is fine, but Mac shows these, so do we.
+    const survivor = for (input.command.defaults) |c| {
+        if (!coversDefault(c)) break c;
+    } else return error.TestUnexpectedResult;
+    _ = survivor;
+}
+
 test "every Id appears exactly once in the registry" {
     inline for (@typeInfo(Id).@"enum".fields) |field| {
         const id: Id = @enumFromInt(field.value);

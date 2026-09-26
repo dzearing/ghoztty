@@ -34090,3 +34090,17 @@ Chasing a test fixture turned up T1752 (P1): entries a user adds in their config
 never reach the Windows palette. Ghostty's ~98 defaults fill the 64-entry cap,
 and an empty value resets the list instead of clearing it. The defaults also
 duplicate the palette's own rows. Floor lanes and the due guards are green.
+
+## 2026-09-25 - T1752: commands you add to the palette in your config now show on Windows, and built-ins are listed once
+
+The config's palette list always starts with Ghostty's ~100 default commands,
+and the user's own come after them. The Windows palette read only the first 64
+entries, so a user's entries never showed. The defaults that did show repeated
+rows the palette already had from its own command list. Now a default equal to
+one of Ghostty's that the registry already performs is skipped
+(`commands.coversDefault`), and the read cap is 512. The cap was 64 because each
+user row built its `user:<title>` history key in its own stack buffer.
+`palette_order.Item` now matches that key in place, so the buffer is gone. A
+command the user wrote always shows, even when the registry has a row for the
+same action. New arms O6 and O7 in `test/win32/palette-order.ps1` pass, and a
+build with the old cap and no dedupe fails both. Floor lanes are green.

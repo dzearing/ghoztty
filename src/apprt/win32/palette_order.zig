@@ -218,6 +218,20 @@ pub const Item = struct {
     /// "Focus: <pane>" jump entry, whose pane is gone by tomorrow. Mac's
     /// jump options carry no `commandIdentifier` for the same reason.
     key: ?[]const u8 = null,
+    /// `key` is a user command's bare TITLE, and its history key is
+    /// `user_key_prefix ++ key` (T1752). Matching the composed key in place
+    /// means the palette never has to build one per row: it used to, into a
+    /// fixed stack buffer per user entry, and that buffer is what capped the
+    /// palette at 64 config commands.
+    user: bool = false,
+
+    /// Whether this row's history key is `want`.
+    pub fn keyIs(self: Item, want: []const u8) bool {
+        const key = self.key orelse return false;
+        if (!self.user) return std.mem.eql(u8, key, want);
+        return std.mem.startsWith(u8, want, user_key_prefix) and
+            std.mem.eql(u8, want[user_key_prefix.len..], key);
+    }
 };
 
 /// Order `items` the way the palette shows them, writing indices into `out`
@@ -243,8 +257,7 @@ pub fn arrange(items: []const Item, history: *const History, out: []u16) usize {
     for (0..history.recentCount()) |r| {
         const want = history.recentKey(r);
         const found: ?usize = for (out[placed..n], placed..) |idx, j| {
-            const key = items[idx].key orelse continue;
-            if (std.mem.eql(u8, key, want)) break j;
+            if (items[idx].keyIs(want)) break j;
         } else null;
         const j = found orelse continue;
         const moved = out[j];
@@ -484,6 +497,28 @@ test "arrange: a keyless row never enters Recent" {
     try testing.expectEqual(@as(usize, 0), arrange(&items, &h, &out));
     try testing.expectEqualStrings("About Ghoztty", items[out[0]].title);
     try testing.expectEqualStrings("Focus: pwsh", items[out[1]].title);
+}
+
+test "arrange: a user row matches its prefixed key without composing it (T1752)" {
+    const items = [_]Item{
+        .{ .title = "About Ghoztty", .key = "about" },
+        .{ .title = "Deploy", .key = "Deploy", .user = true },
+        // A built-in whose id happens to equal the user title must NOT take
+        // the user command's recency, and vice versa.
+        .{ .title = "deploy builtin", .key = "Deploy" },
+    };
+    var h: History = .{};
+    h.record("user:Deploy", 1);
+    var out: [3]u16 = undefined;
+    try testing.expectEqual(@as(usize, 1), arrange(&items, &h, &out));
+    try testing.expectEqualStrings("Deploy", items[out[0]].title);
+    try testing.expect(items[out[0]].user);
+
+    // The bare title is not the user key.
+    var h2: History = .{};
+    h2.record("Deploy", 1);
+    try testing.expectEqual(@as(usize, 1), arrange(&items, &h2, &out));
+    try testing.expect(!items[out[0]].user);
 }
 
 test "arrange: an empty palette is a no-op" {

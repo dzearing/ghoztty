@@ -28,6 +28,12 @@
 #       launch the list is arrowed until row 5 is painted in the TOP slot and
 #       that slot is clicked - the store must name the same command, not
 #       row 0's (the pre-fix hit-test ignored the scroll).
+#   O6. a command-palette-entry added on the command line shows and runs
+#       (T1752): before, the palette read only the first 64 entries of a list
+#       that starts with Ghostty's ~100 defaults, so no user entry ever showed.
+#   O7. a default the registry already carries is listed ONCE (T1752):
+#       filtering to "Change Window Title" leaves one row, so Down then Enter
+#       still runs the registry command rather than its duplicate.
 #
 # WHAT IT DOES NOT COVER. The section HEADERS ("Recent" / "All Commands") are
 # owner-drawn text and unreadable from a script; header placement, the
@@ -249,9 +255,9 @@ if ($null -ne $pal2) {
 # hit-test took the visual slot as the absolute row, so launch B ran row 0,
 # a different command (every row carries a distinct key).
 #
-# Built-in rows rather than configured ones: the palette lists only the first
-# 64 configured entries and Ghostty's own defaults fill them, so an entry a
-# test adds is never shown (T1752). With the history cleared and no filter
+# Built-in rows rather than configured ones, so the arm does not depend on
+# the config list (O6/O7 cover that; before T1752 an entry a test added was
+# never shown at all). With the history cleared and no filter
 # there are no section headers, so rows are plain alphabetical order, and
 # row 5 is a title prompt - harmless to run.
 # ---------------------------------------------------------------------
@@ -323,6 +329,76 @@ if ($null -ne $palB -and $null -ne $wantKey) {
     Assert ($ranB.Count -eq 1) "O5b the click ran exactly one command (got: $($ranB -join ', '))"
     Assert ($ranB.Count -eq 1 -and [string]$ranB[0] -eq $wantKey) `
         "O5b the click ran the row painted in the top slot, $wantKey (got: $($ranB -join ', '); pre-fix it ran row 0)"
+}
+
+# ---------------------------------------------------------------------
+# O6 / O7: the config's own palette entries (T1752). The config list is
+# Ghostty's ~100 defaults with the user's appended after them, and the palette
+# used to read only its first 64 - so a user's entry NEVER showed. And every
+# default the registry also carries was listed twice.
+# ---------------------------------------------------------------------
+$probeTitle = 'ZzqT1752Probe'
+Write-Host "== O6: an entry added in the config shows up, and Enter runs it"
+Stop-DebugGhoztty
+$script:appPid = 0
+Clear-PaletteHistory
+$log6 = Join-Path $env:TEMP "ghoztty-palette-order-o6-$PID.log"
+$app = Start-OnTestDesktop -Exe $Exe -StdErr $log6 -Arguments @(
+    '--session-persistence=false',
+    "--command-palette-entry=title:$probeTitle,action:new_tab")
+$script:appPid = $app.Pid
+Start-Sleep -Seconds 3
+$top6 = Wait-TestWindow -ProcessId $script:appPid -Class 'GhozttyWindow'
+Assert ($top6 -ne [IntPtr]::Zero) 'O6 the window is up'
+if ($top6 -ne [IntPtr]::Zero) {
+    $pane6 = Get-TestChildWindow -Window $top6 -Class 'GhozttyTerminal'
+    [void](Focus-TestWindow -Window $top6 -Child $pane6)
+    Assert ((Get-FirstWindowTabCount) -eq 1) 'O6 setup: the window starts with one tab'
+    $pal6 = Open-Palette $top6 $pane6
+    Assert ($null -ne $pal6) 'O6 the palette opened'
+    if ($null -ne $pal6) {
+        Assert (Send-TestControlText -Control $pal6.Edit -Text $probeTitle) "O6 typed `"$probeTitle`" as the filter"
+        Start-Sleep -Milliseconds 600
+        Send-TestControlKey -Control $pal6.Edit -Key Enter | Out-Null
+        $deadline = (Get-Date).AddSeconds(8)
+        while ((Get-Date) -lt $deadline -and (Get-FirstWindowTabCount) -lt 2) { Start-Sleep -Milliseconds 400 }
+        Assert ((Get-FirstWindowTabCount) -eq 2) `
+            'O6 Enter ran the configured entry (new_tab) - pre-fix the filter matched no row at all'
+        $h6 = Get-PaletteHistory
+        Assert ($h6.ContainsKey("user:$probeTitle")) `
+            "O6 the run was recorded under the user key (got: $(($h6.Keys | Sort-Object) -join ', '))"
+    }
+}
+
+Write-Host '== O7: a default the registry already offers is listed once, as the registry row'
+Stop-DebugGhoztty
+$script:appPid = 0
+Clear-PaletteHistory
+$log7 = Join-Path $env:TEMP "ghoztty-palette-order-o7-$PID.log"
+$app = Start-OnTestDesktop -Exe $Exe -Arguments @('--session-persistence=false') -StdErr $log7
+$script:appPid = $app.Pid
+Start-Sleep -Seconds 3
+$top7 = Wait-TestWindow -ProcessId $script:appPid -Class 'GhozttyWindow'
+Assert ($top7 -ne [IntPtr]::Zero) 'O7 the window is up'
+if ($top7 -ne [IntPtr]::Zero) {
+    $pane7 = Get-TestChildWindow -Window $top7 -Class 'GhozttyTerminal'
+    [void](Focus-TestWindow -Window $top7 -Child $pane7)
+    $pal7 = Open-Palette $top7 $pane7
+    Assert ($null -ne $pal7) 'O7 the palette opened'
+    if ($null -ne $pal7) {
+        # Two rows matched this before, with the SAME title: the registry's
+        # command and Ghostty's default for the same action. Down moved the
+        # selection onto the second, and Enter ran the duplicate. With one row,
+        # Down has nowhere to go and Enter runs the registry command.
+        Assert (Send-TestControlText -Control $pal7.Edit -Text 'Change Window Title') 'O7 typed "Change Window Title"'
+        Start-Sleep -Milliseconds 600
+        Send-TestControlKey -Control $pal7.Edit -Key Down | Out-Null
+        Start-Sleep -Milliseconds 200
+        Send-TestControlKey -Control $pal7.Edit -Key Enter | Out-Null
+        $ran7 = Wait-OnlyPaletteRun
+        Assert ($ran7.Count -eq 1 -and [string]$ran7[0] -eq 'prompt_window_title') `
+            "O7 Enter ran the registry row prompt_window_title (got: $($ran7 -join ', '); pre-fix Down reached the duplicate, user:Change Window Title)"
+    }
 }
 
 Assert ($null -ne (Get-Process -Id $script:appPid -ErrorAction SilentlyContinue)) 'the app survived all arms'
