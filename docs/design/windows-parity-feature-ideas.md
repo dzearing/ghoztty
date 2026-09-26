@@ -395,3 +395,12 @@ as the digest that showed them.
 - Know which machine a window is on in Alt+Tab (remote window titles lead with the machine name in the switcher and taskbar)
 - Repair tells you what it fixed (one line after a repair naming what was put back, or that nothing was)
 - A frame-rate readout in the Activity Monitor (per-pane drawing smoothness as a number)
+
+## 2026-09-26
+
+- Hold Alt to see what every button does (key-tip style labels on every chrome control at once)
+- Your running sessions in the notification area (tray icon when no window is open, lists machines and live sessions, click to bring one back)
+- Save what you just ran as a palette command (name a recent command, it becomes a palette entry)
+- Change a shortcut from the palette row that shows it (new angle on the keybinding cheat sheet: rebind in place, with clash warning)
+- A palette that learns what you use (frequency ranking per kind of pane on the empty palette)
+- cmd.exe panes that know where each command starts and ends (full command marks for cmd: timing, jump to failure, copy last output)
