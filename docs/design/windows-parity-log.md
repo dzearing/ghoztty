@@ -34186,3 +34186,15 @@ a guard row (`session-relaunch-rerun`, 76 s), since "run it by hand" meant
 nobody ran it. New unit test with negative controls. Floor lanes, P1-P3 and the
 due harnesses green. Filed T1757: the same clear may hit a cmd pane resized
 while a command is printing.
+## 2026-09-26 - T1725: previous/next pane on Windows is ctrl+alt+page up/down, not the shell's win+shift+up/down
+
+The default previous/next-pane chord, win+shift+up/down, is Windows' own
+stretch/restore-window-vertically shortcut (documented; Windows-key chords are
+OS-reserved), so on a real keyboard it resized the window, and as the last
+binding for the action it was also what the palette and menus advertised. On
+Windows the defaults are now ctrl+alt+page_up/page_down (the pane sibling of
+ctrl+page up/down for tabs; page keys are AltGr-safe, a ctrl+alt+bracket mirror
+of Mac's cmd+[ ] would fire when an AltGr layout types a bracket). Mac and
+Linux unchanged. Audited the other Windows-key defaults (super+ctrl+[ ],
+super+ctrl+shift+arrows, super+ctrl+shift+j): none is a documented Windows
+shortcut. New Windows unit test (negative control red first); floor lanes green.

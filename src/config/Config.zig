@@ -7305,16 +7305,25 @@ pub const Keybinds = struct {
         // mirror would collide with the swap_split ctrl+shift+arrow
         // bindings — cmd+shift+arrows is the Mac shape, unchanged; hero
         // navigation gets Windows bindings with hero mode itself (T19).
-        try self.set.put(
-            alloc,
-            .{ .key = .{ .physical = .arrow_up }, .mods = .{ .super = true, .shift = true } },
-            .{ .goto_split = .previous },
-        );
-        try self.set.put(
-            alloc,
-            .{ .key = .{ .physical = .arrow_down }, .mods = .{ .super = true, .shift = true } },
-            .{ .goto_split = .next },
-        );
+        //
+        // Not on Windows (T1725): win+shift+up/down is the shell's own
+        // stretch/restore-window-vertically shortcut, taken before any app
+        // sees the key, so the chord could never work there - and being the
+        // last binding for the action it was also the one the palette and
+        // menus advertised. Windows gets ctrl+alt+page_up/page_down instead:
+        // the pane-level sibling of ctrl+page_up/page_down (previous/next
+        // tab), clear of the swap_split ctrl+shift+arrows, and a named key
+        // no AltGr layout turns into a printable character.
+        const hero_nav_prev: inputpkg.Binding.Trigger = if (comptime builtin.target.os.tag == .windows)
+            .{ .key = .{ .physical = .page_up }, .mods = .{ .ctrl = true, .alt = true } }
+        else
+            .{ .key = .{ .physical = .arrow_up }, .mods = .{ .super = true, .shift = true } };
+        const hero_nav_next: inputpkg.Binding.Trigger = if (comptime builtin.target.os.tag == .windows)
+            .{ .key = .{ .physical = .page_down }, .mods = .{ .ctrl = true, .alt = true } }
+        else
+            .{ .key = .{ .physical = .arrow_down }, .mods = .{ .super = true, .shift = true } };
+        try self.set.put(alloc, hero_nav_prev, .{ .goto_split = .previous });
+        try self.set.put(alloc, hero_nav_next, .{ .goto_split = .next });
 
         // Toggle hero mode
         try self.set.put(
@@ -10946,6 +10955,41 @@ test "default keybinds: windows ctrl clipboard mirrors are performable" {
         const leaf = entry.value_ptr.leaf;
         try testing.expectEqual(case[1], leaf.action);
         try testing.expect(leaf.flags.performable);
+    }
+}
+
+// T1725: the shell owns win+shift+up/down (stretch/restore the window
+// vertically), so a default there is a shortcut nobody can press. Windows
+// binds previous/next pane to ctrl+alt+page_up/page_down, and that is the
+// chord the reverse lookup - which the palette and menus display - returns.
+test "default keybinds: windows previous/next pane avoids the shell's win+shift+arrows" {
+    if (comptime builtin.target.os.tag != .windows) return error.SkipZigTest;
+
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var cfg = try Config.default(alloc);
+    defer cfg.deinit();
+
+    const cases = .{
+        .{ inputpkg.Key.page_up, inputpkg.Key.arrow_up, inputpkg.Binding.Action{ .goto_split = .previous } },
+        .{ inputpkg.Key.page_down, inputpkg.Key.arrow_down, inputpkg.Binding.Action{ .goto_split = .next } },
+    };
+    inline for (cases) |case| {
+        const trigger: inputpkg.Binding.Trigger = .{
+            .key = .{ .physical = case[0] },
+            .mods = .{ .ctrl = true, .alt = true },
+        };
+        const entry = cfg.keybind.set.get(trigger) orelse return error.TestExpectedBinding;
+        try testing.expectEqual(case[2], entry.value_ptr.leaf.action);
+
+        try testing.expect(cfg.keybind.set.get(.{
+            .key = .{ .physical = case[1] },
+            .mods = .{ .super = true, .shift = true },
+        }) == null);
+
+        const shown = cfg.keybind.set.getTrigger(case[2]) orelse return error.TestExpectedBinding;
+        try testing.expect(shown.equal(trigger));
     }
 }
 
