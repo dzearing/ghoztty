@@ -28,6 +28,7 @@ const Pty = @import("../../pty.zig").Pty;
 const winsize = @import("../../pty.zig").winsize;
 const CommandCore = @import("../../CommandCore.zig");
 const windows = @import("../../os/main.zig").windows;
+const self_exe = @import("../../os/main.zig").self_exe;
 // The shared `os/windows.zig` wrapper re-exports HANDLE/DWORD/INVALID_HANDLE_VALUE,
 // but not the std-handle constants or the raw ReadFile/WriteFile/GetStdHandle
 // stdio calls — those come straight from `std.os.windows` (same kernel32 the
@@ -498,7 +499,7 @@ fn runModeDump(alloc: std.mem.Allocator) !void {
     reader.* = .{ .out_pipe = pty.out_pipe, .stdout = stdout };
     const thread = try std.Thread.spawn(.{}, CaptureReader.run, .{reader});
 
-    const self_path = try std.fs.selfExePathAlloc(alloc);
+    const self_path = try self_exe.productExePathAlloc(alloc);
     defer alloc.free(self_path);
     const report_cmd = try std.fmt.allocPrint(
         alloc,
@@ -665,7 +666,7 @@ fn runCtrlcSelf(alloc: std.mem.Allocator) !void {
     reader.* = .{ .out_pipe = pty.out_pipe, .stdout = stdout };
     const thread = try std.Thread.spawn(.{}, CaptureReader.run, .{reader});
 
-    const self_path = try std.fs.selfExePathAlloc(alloc);
+    const self_path = try self_exe.productExePathAlloc(alloc);
     defer alloc.free(self_path);
     const report_cmd = try std.fmt.allocPrint(
         alloc,

@@ -1,10 +1,11 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-09-26T12:33:51-07:00",
-    "commit":  "2bcae85ee",
+    "generated":  "2026-09-26T13:52:45-07:00",
+    "commit":  "9dbe3ddfb",
     "uncommitted":  [
-                        "test/win32/restore-session-dup.ps1"
+                        "test/win32/lib/SelfSpawnAudit.ps1",
+                        "test/win32/self-spawn-audit.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "8c1deebc52e7f8ec94ce24ba781512d3bda5240759151c0822d763b410b799f4",
@@ -227,6 +228,7 @@
                   "test/win32/lib/PipeBridge.ps1":  "5ae297c7cf5206a4533f905501158607d360fe6e87308048a6838e3f3b35a4b1",
                   "test/win32/lib/SeamAudit.ps1":  "19f0e3f9a8997e0e0be583d86bd22958e149e08a570a303f306eddbd187458d5",
                   "test/win32/lib/SelectionBar.ps1":  "72285cfd82510cadc123387caf3af34cfde31867d48f58895bef17ebf29a1c01",
+                  "test/win32/lib/SelfSpawnAudit.ps1":  "97af60fbd58ea585cf651d137c4e35e0a1d3b35cea6a71bd3498117339d70999",
                   "test/win32/lib/SessionManifest.ps1":  "036a06be7a96044c6a5185dfa8e18f68ad0fdd22db8b8ee79db64a0d3cba635b",
                   "test/win32/lib/ShowText.ps1":  "1e9192fd782ebc9c5634c7a70a355a2c23a8b139e8629f7e345e312a14b32232",
                   "test/win32/lib/SkipAudit.ps1":  "4d3e05aa1ff62ab3ca6fcf8bf5d2d30de6ed0f469c9826c0aac1bf2085588d23",
@@ -312,6 +314,7 @@
                   "test/win32/restore-session-dup.ps1":  "0c4fb7893cd38780fc0c3615f509806bcd938b05feb2cf58cf7656a37429132e",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
                   "test/win32/seam-audit.ps1":  "b6df80f87a37af263b728e4ae4c0dcfcdeb93f9a87bd48df2340244cac110dad",
+                  "test/win32/self-spawn-audit.ps1":  "a4f014933c7929f28febc9bc55b9603180ce17c9827bc1f5a50ab6d0d4dc1dc7",
                   "test/win32/send-keys-bracketed.ps1":  "3f04c907b40d40409069ee8fe9369820cd96c2c6644567ddfd70d8fdb41bec10",
                   "test/win32/send-keys-soak.ps1":  "2070fe3aa9921b15dcfb5164c655d5b4559fc68a27e4c9b6efae6055d20a6632",
                   "test/win32/session-close.ps1":  "bc90db94c85a72b761db89dbde0baf409845d5df67f23997b425b6d922455ed1",

@@ -1,0 +1,19 @@
+{
+  "_comment": "T980. Every std.fs.selfExe*Path call outside src/os/self_exe.zig, keyed by file and enclosing function. A site that LAUNCHES the path does not belong here: route it through internal_os.self_exe.productExePath* / productExeDirPathAlloc, which refuse inside a test binary. use=read means the path is only read (a sibling resource, a log line, a location gate, an identity). use=spawn-ok is the escape hatch for a launch that must use the raw call, and needs a reason a reviewer would accept.",
+  "entries": [
+    { "file": "src\\Surface.zig", "fn": "appendLocalShellIntegrationEnv", "use": "read", "why": "exports the exe dir as GHOSTTY_BIN_DIR for the shell's environment" },
+    { "file": "src\\termio\\Exec.zig", "fn": "init", "use": "read", "why": "upstream: puts the exe dir on the shell's PATH / GHOSTTY_BIN_DIR" },
+    { "file": "src\\os\\resourcesdir.zig", "fn": "resourcesDir", "use": "read", "why": "locates the bundled resources directory beside the exe" },
+    { "file": "src\\os\\process_cwd.zig", "fn": "test \"cmdlineFromPid: own process names our own executable\"", "use": "read", "why": "test oracle: compares our own command line against our image name" },
+    { "file": "src\\apprt\\win32\\AgentIntegration.zig", "fn": "setupEnabled", "use": "read", "why": "location gate: is this the canonical per-user install?" },
+    { "file": "src\\apprt\\win32\\App.zig", "fn": "launchIdentity", "use": "read", "why": "names this build in the single-instance handoff notice" },
+    { "file": "src\\apprt\\win32\\install_location.zig", "fn": "isInstalledRelease", "use": "read", "why": "location gate: are we running from the installed release dir?" },
+    { "file": "src\\apprt\\win32\\install_prepare.zig", "fn": "runFromArgs", "use": "read", "why": "default install dir for the installer's prepare step; renames files, launches nothing" },
+    { "file": "src\\apprt\\win32\\install_restart.zig", "fn": "runFromArgs", "use": "read", "why": "default install dir whose windows the restart step enumerates" },
+    { "file": "src\\apprt\\win32\\LocalAgent.zig", "fn": "ensureAutostart", "use": "read", "why": "source-checkout gate before the Run key is written; the command itself comes from agentBinary (productExeDirPathAlloc)" },
+    { "file": "src\\apprt\\win32\\PathInstaller.zig", "fn": "ensureOnPath", "use": "read", "why": "the directory added to the user PATH, behind the canonical-install gate" },
+    { "file": "src\\apprt\\win32\\provenance.zig", "fn": "collect", "use": "read", "why": "reports the running image path in +version provenance" },
+    { "file": "src\\apprt\\win32\\update_install.zig", "fn": "runningInside", "use": "read", "why": "compares our image path against an install dir" },
+    { "file": "src\\remote\\agent\\adopt.zig", "fn": "runningFromSourceCheckout", "use": "read", "why": "location gate: is the running agent build output?" }
+  ]
+}

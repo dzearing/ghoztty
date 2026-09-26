@@ -53,6 +53,21 @@ pub fn productExePath(buf: *[std.fs.max_path_bytes]u8) ![]const u8 {
     return try std.fs.selfExePath(buf);
 }
 
+/// The product's install directory, for callers about to launch a SIBLING
+/// shipped beside us (`ghoztty-agent.exe`, `ghoztty.exe` from the `.com`
+/// twin). Allocated; caller frees.
+///
+/// Same rule as the functions above, for the same reason one step removed
+/// (T980): a test binary's directory is a `.zig-cache\o\<hash>` folder, so the
+/// sibling it names is whatever happens to sit in build output. Today nothing
+/// does and the spawn misses; the day a build step drops an exe there, the test
+/// suite launches it. A test that wants a sibling names it through the
+/// caller's own override (`GHOSTTY_LOCAL_AGENT_BIN`), never by location.
+pub fn productExeDirPathAlloc(alloc: Allocator) ![]u8 {
+    if (comptime builtin.is_test) return Error.SelfSpawnFromTestBinary;
+    return try std.fs.selfExeDirPathAlloc(alloc);
+}
+
 const testing = std.testing;
 
 test "productExePathAlloc: a test binary is never handed its own path to spawn" {
@@ -67,6 +82,13 @@ test "productExePathAlloc: a test binary is never handed its own path to spawn" 
 test "productExePath: the buffer form refuses on the same rule" {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     try testing.expectError(Error.SelfSpawnFromTestBinary, productExePath(&buf));
+}
+
+test "productExeDirPathAlloc: a test binary is never handed a directory to launch siblings from" {
+    try testing.expectError(
+        Error.SelfSpawnFromTestBinary,
+        productExeDirPathAlloc(testing.allocator),
+    );
 }
 
 test "the refusal is its own error, so a caller can tell it from a real failure" {

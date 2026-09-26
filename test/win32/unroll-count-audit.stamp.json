@@ -1,10 +1,12 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-09-26T12:41:01-07:00",
-    "commit":  "2bcae85ee",
+    "generated":  "2026-09-26T13:57:35-07:00",
+    "commit":  "9dbe3ddfb",
     "uncommitted":  [
-                        "test/win32/restore-session-dup.ps1"
+                        "scripts/guard-due.ps1",
+                        "test/win32/lib/SelfSpawnAudit.ps1",
+                        "test/win32/self-spawn-audit.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -32,7 +34,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "6ae1ba62fa1fee0bdafd730a8f56413013f08b08a85c9cc484e8b6b03d4d2ccc",
+                  "scripts/guard-due.ps1":  "cdeba2ad49fe09753c3dfaf4ca13ba94902d5611992f769798adcf5e8c3c4e6f",
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -295,6 +297,7 @@
                   "test/win32/lib/PipeBridge.ps1":  "5ae297c7cf5206a4533f905501158607d360fe6e87308048a6838e3f3b35a4b1",
                   "test/win32/lib/SeamAudit.ps1":  "19f0e3f9a8997e0e0be583d86bd22958e149e08a570a303f306eddbd187458d5",
                   "test/win32/lib/SelectionBar.ps1":  "72285cfd82510cadc123387caf3af34cfde31867d48f58895bef17ebf29a1c01",
+                  "test/win32/lib/SelfSpawnAudit.ps1":  "97af60fbd58ea585cf651d137c4e35e0a1d3b35cea6a71bd3498117339d70999",
                   "test/win32/lib/SessionManifest.ps1":  "036a06be7a96044c6a5185dfa8e18f68ad0fdd22db8b8ee79db64a0d3cba635b",
                   "test/win32/lib/ShowText.ps1":  "1e9192fd782ebc9c5634c7a70a355a2c23a8b139e8629f7e345e312a14b32232",
                   "test/win32/lib/SkipAudit.ps1":  "4d3e05aa1ff62ab3ca6fcf8bf5d2d30de6ed0f469c9826c0aac1bf2085588d23",
@@ -380,6 +383,7 @@
                   "test/win32/restore-session-dup.ps1":  "0c4fb7893cd38780fc0c3615f509806bcd938b05feb2cf58cf7656a37429132e",
                   "test/win32/scrollback-narrow.ps1":  "213e10d81e04ba6a098ccf8d5891f8f05f43edc9c098d7b201c5ae9c77e17662",
                   "test/win32/seam-audit.ps1":  "b6df80f87a37af263b728e4ae4c0dcfcdeb93f9a87bd48df2340244cac110dad",
+                  "test/win32/self-spawn-audit.ps1":  "a4f014933c7929f28febc9bc55b9603180ce17c9827bc1f5a50ab6d0d4dc1dc7",
                   "test/win32/send-keys-bracketed.ps1":  "3f04c907b40d40409069ee8fe9369820cd96c2c6644567ddfd70d8fdb41bec10",
                   "test/win32/send-keys-soak.ps1":  "2070fe3aa9921b15dcfb5164c655d5b4559fc68a27e4c9b6efae6055d20a6632",
                   "test/win32/session-close.ps1":  "bc90db94c85a72b761db89dbde0baf409845d5df67f23997b425b6d922455ed1",

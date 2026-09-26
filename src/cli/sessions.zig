@@ -7,6 +7,7 @@ const args = @import("args.zig");
 const diagnostics = @import("diagnostics.zig");
 const build_config = @import("../build_config.zig");
 const homedir = @import("../os/homedir.zig");
+const internal_os = @import("../os/main.zig");
 const tcp_dial = @import("../remote/tcp_dial.zig");
 const connection = @import("../remote/connection.zig");
 const agent_lineage = @import("../remote/agent_lineage.zig");
@@ -331,7 +332,7 @@ fn agentBinaryPath(alloc: Allocator) ![]const u8 {
     if (std.process.getEnvVarOwned(alloc, "GHOSTTY_LOCAL_AGENT_BIN")) |override| {
         if (override.len > 0) return override;
     } else |_| {}
-    const exe_dir = try std.fs.selfExeDirPathAlloc(alloc);
+    const exe_dir = try internal_os.self_exe.productExeDirPathAlloc(alloc);
     const name = if (comptime builtin.os.tag == .windows) "ghoztty-agent.exe" else "ghoztty-agent";
     const sep = if (comptime builtin.os.tag == .windows) "\\" else "/";
     return std.fmt.allocPrint(alloc, "{s}{s}{s}", .{ exe_dir, sep, name });

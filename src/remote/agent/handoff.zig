@@ -63,6 +63,7 @@ const Allocator = std.mem.Allocator;
 const agent_build = @import("../agent_build.zig");
 const agent_lineage = @import("../agent_lineage.zig");
 const pipe_stream = @import("../pipe_stream.zig");
+const internal_os = @import("../../os/main.zig");
 const session = @import("session.zig");
 
 const is_windows = builtin.os.tag == .windows;
@@ -415,7 +416,7 @@ const win = struct {
         }
 
         fn tick(self: *SupervisorImpl) void {
-            const exe = std.fs.selfExePathAlloc(self.alloc) catch return;
+            const exe = internal_os.self_exe.productExePathAlloc(self.alloc) catch return;
             defer self.alloc.free(exe);
             const candidate = candidatePath(exe, fileExists) orelse return;
 

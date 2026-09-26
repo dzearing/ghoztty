@@ -23,6 +23,7 @@ const pty_holder_child = @import("pty_holder_child.zig");
 const pipe_stream = @import("../pipe_stream.zig");
 const test_util = @import("../test_util.zig");
 const server = @import("server.zig");
+const internal_os = @import("../../os/main.zig");
 
 const is_windows = builtin.os.tag == .windows;
 const log = std.log.scoped(.pty_host_smoke);
@@ -273,7 +274,7 @@ const win = struct {
         const wd = try std.Thread.spawn(.{}, watchdog, .{});
         wd.detach();
 
-        const self_exe = try std.fs.selfExePathAlloc(alloc);
+        const self_exe = try internal_os.self_exe.productExePathAlloc(alloc);
         defer alloc.free(self_exe);
 
         try scenarioLifecycle(alloc, self_exe);

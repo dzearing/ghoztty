@@ -41,6 +41,7 @@ const Allocator = std.mem.Allocator;
 const tcp_dial = @import("../../remote/tcp_dial.zig");
 const connection = @import("../../remote/connection.zig");
 const agent_lineage = @import("../../remote/agent_lineage.zig");
+const internal_os = @import("../../os/main.zig");
 const build_config = @import("../../build_config.zig");
 const protocol = @import("../../remote/protocol.zig");
 const agent_recovery = @import("agent_recovery.zig");
@@ -1358,7 +1359,7 @@ fn agentBinary(self: *LocalAgent, arena: Allocator) ![]const u8 {
         defer self.alloc.free(override);
         if (override.len > 0) return arena.dupe(u8, override);
     } else |_| {}
-    const exe_dir = try std.fs.selfExeDirPathAlloc(arena);
+    const exe_dir = try internal_os.self_exe.productExeDirPathAlloc(arena);
     return std.fmt.allocPrint(arena, "{s}\\ghoztty-agent.exe", .{exe_dir});
 }
 
@@ -1382,9 +1383,14 @@ test "agentCommandLine quotes every token and pins the daemon flags" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var la = LocalAgent.init(std.testing.allocator);
+    // A test binary has no install dir to find a sibling agent in (T980), so the
+    // binary is named through the override - with a space, which is the case
+    // the quoting exists for.
+    try setEnvForTest("GHOSTTY_LOCAL_AGENT_BIN", "C:\\Program Files\\Ghoztty\\ghoztty-agent.exe");
+    defer setEnvForTest("GHOSTTY_LOCAL_AGENT_BIN", null) catch {};
     const cmd = try la.agentCommandLine(arena.allocator());
     try std.testing.expect(cmd.len > 0 and cmd[0] == '"' and cmd[cmd.len - 1] == '"');
-    try std.testing.expect(std.mem.indexOf(u8, cmd, "ghoztty-agent") != null);
+    try std.testing.expect(std.mem.startsWith(u8, cmd, "\"C:\\Program Files\\Ghoztty\\ghoztty-agent.exe\" "));
     try std.testing.expect(std.mem.indexOf(u8, cmd, "\"--listen-pipe=\\\\.\\pipe\\ghoztty-agent") != null);
     try std.testing.expect(std.mem.indexOf(u8, cmd, "\\port.json\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, cmd, "\\sessions.json\"") != null);
@@ -1480,6 +1486,8 @@ test "T167: the spawned agent command line carries the sandbox's own dir and pip
 
     try setEnvForTest(agent_lineage.env_var, "sbx1");
     defer setEnvForTest(agent_lineage.env_var, null) catch {};
+    try setEnvForTest("GHOSTTY_LOCAL_AGENT_BIN", "C:\\x\\ghoztty-agent.exe"); // no install dir in a test binary (T980)
+    defer setEnvForTest("GHOSTTY_LOCAL_AGENT_BIN", null) catch {};
     const cmd = try la.agentCommandLine(a);
     try std.testing.expect(std.mem.indexOf(u8, cmd, "-sbx1-") != null); // the pipe
     try std.testing.expect(std.mem.indexOf(u8, cmd, "-sbx1\\port.json") != null);

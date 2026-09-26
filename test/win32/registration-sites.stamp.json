@@ -1,18 +1,19 @@
 {
     "guard":  "registration-sites",
     "script":  "test/win32/registration-sites.ps1",
-    "generated":  "2026-09-26T02:54:00-07:00",
-    "commit":  "9927ba0b3",
+    "generated":  "2026-09-26T14:05:03-07:00",
+    "commit":  "9dbe3ddfb",
     "uncommitted":  [
-                        "src/apprt/win32/LocalAgent.zig"
+                        "src/apprt/win32/LocalAgent.zig",
+                        "src/apprt/win32/url_scheme.zig"
                     ],
     "files":  {
                   "docs/design/windows-registration-sites.md":  "95e9aaae8436008f53d65507726bd09f9c80df929b3efabd0c3029f307d3a3fc",
                   "src/apprt/win32/AgentIntegration.zig":  "ce4bbfbbf2bc5159eab352bda4d83b4039616b94fc14f938274e3a97efdb945d",
-                  "src/apprt/win32/LocalAgent.zig":  "6ef37ae1addd64214ab72d4b362d27fd9125b4a6716569c70c38e5207c7a427f",
+                  "src/apprt/win32/LocalAgent.zig":  "9b031b226a36297499d8cd23473f2212ab1d96d7a49e8b9a696ed095cef3ee68",
                   "src/apprt/win32/PathInstaller.zig":  "38c36f126fa32e45ff88601ec084155ad766db105344dca521f7101aee029e52",
                   "src/apprt/win32/source_checkout.zig":  "f7a91595696674da68899cbdf06a056d2f9f365b13a3d7d4cab69797ec49b4da",
-                  "src/apprt/win32/url_scheme.zig":  "cdf3560116d6ee4a3a9b8556e62c6c0a0145dbf5c573ae714a87908d176134d4",
+                  "src/apprt/win32/url_scheme.zig":  "a6fd72d2b47f6dec0572d3e7fa4240f2de2d9814146289236e1a64d530e9201d",
                   "src/os/source_checkout.zig":  "63291415bd09a9c53edbbe6fe55533f749abfbf35894df04a1448dd8e64f14e7",
                   "src/remote/agent/adopt.zig":  "4c168a5c270f708e5e3d1dbde9fa03cb0d96f47ee6f55fb5c499a4b5fc80d984",
                   "test/win32/registration-sites.ps1":  "98cd7d949f693dee766dc37e1c8457d5bcdc0dee2144581b3c9a30e35de44146"

@@ -7216,7 +7216,7 @@ pub fn runComShimGuiRespawn(alloc: Allocator) bool {
     const com_shim = @import("../../cli/com_shim.zig");
 
     var exe_buf: [std.fs.max_path_bytes]u8 = undefined;
-    const self_path = std.fs.selfExePath(&exe_buf) catch return false;
+    const self_path = internal_os.self_exe.productExePath(&exe_buf) catch return false;
     if (!com_shim.isComShim(self_path)) return false;
 
     const dir = std.fs.path.dirname(self_path) orelse return false;
@@ -9860,7 +9860,7 @@ pub fn restartIntoInstalledBuild(self: *App) void {
     defer arena_state.deinit();
     const arena = arena_state.allocator();
 
-    const exe = std.fs.selfExePathAlloc(arena) catch |err| {
+    const exe = internal_os.self_exe.productExePathAlloc(arena) catch |err| {
         log.err("restart into new build: cannot resolve own exe: {}", .{err});
         return;
     };

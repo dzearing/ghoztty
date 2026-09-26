@@ -146,7 +146,10 @@ fn register(arena: std.mem.Allocator) !void {
         return;
     }
 
-    const exe = try std.fs.selfExePathAlloc(arena);
+    // The registered command is a launch the shell performs later, so it asks
+    // for the PRODUCT exe: a test binary registering itself as the link
+    // handler would hand every ghoztty:// click to a copy of its suite (T980).
+    const exe = try internal_os.self_exe.productExePathAlloc(arena);
 
     // Location gate (T1124). A release build is the one that answers the user's
     // links, so a release build that is really build OUTPUT — `zig-out-release`

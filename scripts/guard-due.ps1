@@ -4234,6 +4234,27 @@ $GuardTable = @(
         )
     },
 
+    # T980 - the self-spawn sweep. A test binary's selfExePath is the test
+    # RUNNER, so a new site that launches "our own exe" starts a detached copy
+    # of the suite (T933). The whole of `src\` is covered, depth by depth,
+    # because the fifth site can arrive anywhere; the run is a few seconds of
+    # text scanning.
+    [pscustomobject]@{
+        Name   = 'self-spawn'
+        Script = 'test\win32\self-spawn-audit.ps1'
+        Stamp  = 'test\win32\self-spawn-audit.stamp.json'
+        Covers = @(
+            'test\win32\self-spawn-audit.ps1',
+            'test\win32\lib\SelfSpawnAudit.ps1',
+            'test\win32\self-spawn-audit.registry.json',
+            'src\*.zig',
+            'src\*\*.zig',
+            'src\*\*\*.zig',
+            'src\*\*\*\*.zig',
+            'src\*\*\*\*\*.zig'
+        )
+    },
+
     # T725 - the harness FLOOR: the whole family of audits above, run as one
     # command (`scripts\harness-floor.ps1`, or `floor-lane.ps1 -Lane harness`).
     # Several of its members had no row of their own and therefore no trigger at

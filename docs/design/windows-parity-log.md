@@ -34340,3 +34340,18 @@ the scrollback once. It now settles on the notice's scrollback copy, bounded,
 and re-reads before scoring. B8's single scrollback read became a bounded poll
 too. Validation: `restore-session-dup.ps1` ALL PASS (17), plus the harness floor.
 The per-script verdicts are in the task file.
+
+## 2026-09-26 — T980: a new self-spawn site can no longer land unnoticed
+
+Inside a test binary "our own exe" is the test runner, so launching it starts a
+detached copy of the suite (T933). Audited all 23 raw `selfExe*Path` calls
+under `src/`. Seven launched the path and now go through `self_exe.zig`: the
+relaunch into a new build, the `.com` twin's respawn, the link-handler
+registration, the agent handoff supervisor, and three smoke self-spawns. The
+two sibling-agent spawns (`LocalAgent.agentBinary`, `+sessions`'s agent probe)
+use a new `productExeDirPathAlloc`, which also refuses in a test build. The 14
+reads are listed in `test/win32/self-spawn-audit.registry.json`. The new
+`self-spawn-audit.ps1` fails on any unregistered site, on a registered read
+whose function also spawns, and on stale entries. Its guard row covers all of
+`src/`. Two LocalAgent tests now name the agent through
+`GHOSTTY_LOCAL_AGENT_BIN` instead of the test binary's directory.
