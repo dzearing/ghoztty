@@ -14,7 +14,7 @@ pub const Shell = enum {
     bash,
     /// cmd.exe (T512). It has no rcfile or profile to dot-source, so its
     /// integration is carried entirely by an injected `PROMPT` — see
-    /// `setupCmd`. That buys OSC 2/7/133;A/133;B but not 133;C/D.
+    /// `setupCmd`. That buys OSC 7/133;A/133;I but not 133;C/D.
     cmd,
     elvish,
     fish,
@@ -1209,9 +1209,11 @@ const cmd_prompt_mark = "$E]133;A$E\\";
 ///               untitled-window rule, makes the tab title follow the
 ///               directory: a strip of cmd tabs stops being a row of
 ///               identical labels
-///   * OSC 133;A / 133;B — prompt start and prompt end, so prompt jumping
-///               works. There is no hook for 133;C/D (command start and exit
-///               status), and cmd offers no way to get one.
+///   * OSC 133;A / 133;I — prompt start, and input that ends with its line,
+///               so prompt jumping works and a command's output is known to
+///               be output (T1757). There is no hook for 133;C/D (command
+///               start and exit status), and cmd offers no way to get one;
+///               133;I is what stands in for 133;C.
 ///
 /// Deliberately NOT OSC 2, which every other integration here sends. cmd's
 /// `title` command is the documented way a user names a window, and an OSC 2
@@ -1260,7 +1262,16 @@ fn setupCmd(
     // accepts `localhost` unconditionally. The `kitty-shell-cwd` scheme takes
     // the path raw, which is what lets `$P`'s native `D:\dir` spelling through
     // unescaped — stream_handler's reportPwd normalizes it back.
-    const prompt = try std.fmt.allocPrint(alloc, "{s}$E]7;kitty-shell-cwd://localhost/$P$E\\{s}$E]133;B$E\\", .{
+    //
+    // The prompt ends in 133;I rather than 133;B: "input starts here and ends
+    // at the end of the line" (T1757). cmd has no hook to send 133;C when a
+    // command starts, so with 133;B the terminal would believe it was still
+    // reading typed input for the whole of the command's run - and a resize
+    // in that state clears the prompt region, from the prompt down, for the
+    // shell to redraw: the command's output with it. cmd's input is one
+    // logical line (a soft wrap does not end it), so the newline Enter echoes
+    // is exactly where output begins.
+    const prompt = try std.fmt.allocPrint(alloc, "{s}$E]7;kitty-shell-cwd://localhost/$P$E\\{s}$E]133;I$E\\", .{
         cmd_prompt_mark,
         user_prompt,
     });
@@ -1351,7 +1362,7 @@ test "cmd wraps the user's prompt" {
 
     const prompt = env.get("PROMPT").?;
     try testing.expect(std.mem.startsWith(u8, prompt, "$E]133;A$E\\"));
-    try testing.expect(std.mem.endsWith(u8, prompt, "$E]133;B$E\\"));
+    try testing.expect(std.mem.endsWith(u8, prompt, "$E]133;I$E\\"));
     // The user's own prompt survives, unmodified and in one piece.
     try testing.expect(std.mem.indexOf(u8, prompt, "[mine]$P$G") != null);
     try testing.expect(std.mem.indexOf(u8, prompt, "$E]7;kitty-shell-cwd://localhost/$P$E\\") != null);
@@ -1360,6 +1371,84 @@ test "cmd wraps the user's prompt" {
     // to survive, and the terminal titles an untitled window from the pwd for
     // us. An OSC 2 here would overwrite `title foo` at the very next prompt.
     try testing.expect(std.mem.indexOf(u8, prompt, "]2;") == null);
+}
+
+/// Render a cmd `PROMPT` the way cmd itself does at prompt time, for the codes
+/// our integration and the default prompt use: `$E` (ESC), `$P` (the working
+/// directory), `$G` (`>`) and `$$`. Test-only.
+fn renderCmdPrompt(alloc: Allocator, prompt: []const u8, cwd: []const u8) ![]u8 {
+    var out: std.ArrayList(u8) = .empty;
+    var i: usize = 0;
+    while (i < prompt.len) : (i += 1) {
+        if (prompt[i] != '$' or i + 1 == prompt.len) {
+            try out.append(alloc, prompt[i]);
+            continue;
+        }
+        i += 1;
+        switch (std.ascii.toUpper(prompt[i])) {
+            'E' => try out.append(alloc, 0x1b),
+            'P' => try out.appendSlice(alloc, cwd),
+            'G' => try out.append(alloc, '>'),
+            '$' => try out.append(alloc, '$'),
+            else => return error.UnsupportedPromptCode,
+        }
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+/// A cmd pane (T1757): the integration's rendered prompt, a command typed and
+/// entered, and a command that has printed a screenful and is STILL RUNNING —
+/// no next prompt yet — when the pane is resized (a divider drag, a split, a
+/// maximize). Answers whether the command's first line of output is still in
+/// the pane, screen or scrollback.
+///
+/// With `shell_redraws_prompt` on (the default), a resize whose cursor is not in
+/// plain output clears the whole prompt region from its start down, so the
+/// shell can redraw it. So everything hinges on whether the terminal knows the
+/// command's output is output.
+fn cmdOutputSurvivesResize(prompt: []const u8) !bool {
+    const terminal = @import("../terminal/main.zig");
+    const alloc = std.testing.allocator;
+    var t = try terminal.Terminal.init(alloc, .{ .cols = 80, .rows = 24, .max_scrollback = 10_000 });
+    defer t.deinit(alloc);
+    var s = t.vtStream();
+    defer s.deinit();
+
+    const rendered = try renderCmdPrompt(alloc, prompt, "C:\\Users\\David");
+    defer alloc.free(rendered);
+    s.nextSlice(rendered);
+    s.nextSlice("build.bat\r\n");
+    for (0..60) |n| {
+        var buf: [32]u8 = undefined;
+        s.nextSlice(try std.fmt.bufPrint(&buf, "out-{d:0>3} compiling\r\n", .{n}));
+    }
+    try t.resize(alloc, 40, 24);
+
+    const all = try t.screens.active.dumpStringAlloc(alloc, .{ .screen = .{} });
+    defer alloc.free(all);
+    return std.mem.indexOf(u8, all, "out-000") != null;
+}
+
+test "T1757 a resize mid-command keeps a cmd command's output" {
+    const testing = std.testing;
+    var arena = ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    var env = EnvMap.init(alloc);
+    defer env.deinit();
+    _ = (try setupCmd(alloc, .{ .shell = "cmd" }, &env)).?;
+    const prompt = env.get("PROMPT").?;
+
+    // The integration as it ships.
+    try testing.expect(try cmdOutputSurvivesResize(prompt));
+
+    // Negative control: the same prompt ending in a plain 133;B (the T512
+    // shape) leaves the input region open for the command's whole run, and the
+    // resize wipes the output as "prompt the shell will redraw".
+    const end = std.mem.lastIndexOf(u8, prompt, "$E]133;").?;
+    const open_ended = try std.fmt.allocPrint(alloc, "{s}$E]133;B$E\\", .{prompt[0..end]});
+    try testing.expect(!try cmdOutputSurvivesResize(open_ended));
 }
 
 test "cmd defaults, gating and idempotence" {
@@ -1374,7 +1463,7 @@ test "cmd defaults, gating and idempotence" {
         defer env.deinit();
         _ = (try setupCmd(alloc, .{ .shell = "cmd" }, &env)).?;
         const prompt = env.get("PROMPT").?;
-        try testing.expect(std.mem.indexOf(u8, prompt, "$P$G$E]133;B") != null);
+        try testing.expect(std.mem.indexOf(u8, prompt, "$P$G$E]133;I") != null);
     }
 
     // Running it twice does not stack a second copy (a nested cmd inherits

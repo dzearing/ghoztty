@@ -34285,3 +34285,17 @@ test the byte at the cut. Validation: two none-lane unit tests, and
 `palette-order.ps1` O11 (ellipsis row carries glyph ink, bracketed by an ASCII
 positive control and an empty-row negative control), ALL PASS (78 assertions).
 All four floor lanes are green.
+
+## 2026-09-26 — T1757: a resize no longer blanks a running cmd command's output
+
+Resizing a Command Prompt pane while a command was still running - a divider
+drag, a new split, a maximize - could wipe everything that command had already
+printed. cmd's prompt integration ended in OSC 133;B ("input until the next
+mark"), and with no hook for 133;C the next mark was the next prompt, so the
+terminal treated the whole run as typed input and cleared it on resize for the
+shell to redraw. The prompt now ends in OSC 133;I (input ends with its line), so
+Enter's newline is where output begins. Shared integration, so remote cmd panes
+on the Mac get it too. Validation: a none-lane unit test with its own negative
+control, and `agent-shell-integration.ps1` section D on a real cmd pane - output
+survives a split+close mid-command, while the same pane with the old prompt
+loses it (the defect reproduced on box). ALL PASS (35 assertions).

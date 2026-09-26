@@ -23,7 +23,7 @@
 #   B  (T512) default pane (no --shell): spawns plain cmd.exe. Its argv stays
 #      bare — cmd has no profile to dot-source, so a rewrite would be the old
 #      defect — and its integration arrives instead as an injected PROMPT
-#      whose `$E` renders ESC at every prompt (OSC 7 + OSC 133;A/133;B). The
+#      whose `$E` renders ESC at every prompt (OSC 7 + OSC 133;A/133;I). The
 #      user-visible payoff is a tab title that follows `cd` rather than saying
 #      "cmd" forever — carried by OSC 7, deliberately not by an OSC 2, so
 #      cmd's own `title` command still works.
@@ -248,8 +248,8 @@ while ((Get-Date) -lt $deadline -and -not $promptSeen) {
     if ($promptText -match 'PROMPT=.*133;A') { $promptSeen = $true }
 }
 Assert "B5 the injected PROMPT reached the cmd pane" $promptSeen
-Assert "B6 it emits OSC 133;A / 133;B prompt marks" `
-    ($promptText -match '133;A' -and $promptText -match '133;B')
+Assert "B6 it emits OSC 133;A / 133;I prompt marks (133;I: input ends at its line, T1757)" `
+    ($promptText -match '133;A' -and $promptText -match '133;I')
 Assert "B7 it emits OSC 7 cwd reporting" ($promptText -match 'kitty-shell-cwd://localhost/')
 Assert "B8 the user's own prompt survives inside it (append, not replace)" `
     ($promptText -match 'PROMPT=\$E\]133;A.*\$P\$G')
@@ -310,6 +310,92 @@ Assert "B12 and the prompt does not overwrite it on the next render" $stillStuck
 $paneB2 = Pane-In (Get-Tree 'bpwd') 't151def'
 Assert "B13 +list reports the cd'd directory for the cmd pane" `
     ($null -ne $paneB2 -and (Norm $paneB2.working_directory) -eq (Norm $titleDir))
+
+# ============================================================================
+"== D: a resize while a cmd command is still printing keeps its output (T1757)"
+# ============================================================================
+# cmd has no hook for 133;C (command started), so its prompt used to end in
+# 133;B and the terminal believed every line a running command printed was
+# typed input. A resize in that state clears the prompt region, from the
+# prompt down, for the shell to redraw - and conhost only repaints what is on
+# screen, so the command's earlier output was simply gone. The prompt now ends
+# in 133;I (input ends with its line), so the Enter's newline is where output
+# starts. This drives the real ConPTY byte stream, which is the part a unit
+# test cannot: it proves the Enter really arrives as a newline. DN is the
+# negative control - the same pane with its prompt put back to the T512 shape
+# must LOSE the output, or D4 is not measuring anything.
+$batD = Join-Path $root 't1757.bat'
+Set-Content -Path $batD -Encoding ascii -Value @(
+    '@for /L %%i in (1,1,120) do @echo T1757-%1-%%i',
+    '@timeout /t 20 /nobreak >nul'
+)
+# +send-keys reads backslash escapes in its text (`\t` is a tab), so the
+# path goes over with every backslash doubled.
+$batKeys = $batD.Replace('\', '\\')
+
+# Run the batch (which prints 120 marked lines, then holds the command open),
+# resize the pane twice while it is still running - +split narrows it the way a
+# divider drag or a maximize would, closing the side pane widens it back and
+# hands the window's focus (what `+read --name` resolves through) back to the
+# pane under test - and report what the pane holds before and after.
+function Invoke-ResizeMidCommand($tag) {
+    $r = @{ Printed = $false; Before = ''; After = ''; Split = $null; Close = $null }
+    Run-Cli "+send-keys --target=t151def --when-idle --idle-timeout=40 `"call $batKeys $tag`" Enter" "$root\sk-$tag.txt" 60 | Out-Null
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline -and -not $r.Printed) {
+        Start-Sleep -Milliseconds 700
+        Run-Cli '+read --name=t151def --lines=600' "$root\read-$tag-0.txt" 20 | Out-Null
+        $r.Before = Out-Text "$root\read-$tag-0.txt"
+        if ($r.Before -match "(?m)^T1757-$tag-120\s*$") { $r.Printed = $true }
+    }
+    if (-not $r.Printed) {
+        # Write-Host, not the pipeline: anything emitted here would be returned.
+        Write-Host "  DIAG ${tag}: send-keys said: $((Out-Text "$root\sk-$tag.txt").Trim())"
+        ($r.Before -split '\r?\n' | Select-Object -Last 10) | ForEach-Object { Write-Host "    | $_" }
+        return $r
+    }
+    $r.Split = Run-Cli "+split --target=t151def --direction=right --name=t1757$tag" "$root\split-$tag.txt" 30
+    Start-Sleep -Seconds 2
+    $r.Close = Run-Cli "+close --target=t1757$tag" "$root\close-$tag.txt" 30
+    Start-Sleep -Seconds 2
+    Run-Cli '+read --name=t151def --lines=600' "$root\read-$tag-1.txt" 20 | Out-Null
+    $r.After = Out-Text "$root\read-$tag-1.txt"
+    # Hold until the batch has finished and cmd is back at its prompt. A
+    # silent `timeout` reads as idle to --when-idle, so without this the next
+    # keystrokes land in the middle of it.
+    $deadline = (Get-Date).AddSeconds(40)
+    while ((Get-Date) -lt $deadline) {
+        Run-Cli '+read --name=t151def --lines=3' "$root\read-$tag-2.txt" 20 | Out-Null
+        $tail = @((Out-Text "$root\read-$tag-2.txt") -split '\r?\n' | Where-Object { $_.Trim() })
+        if ($tail.Count -gt 0 -and $tail[-1] -match '^[A-Za-z]:\\.*>\s*$') { break }
+        Start-Sleep -Milliseconds 800
+    }
+    return $r
+}
+
+$fix = Invoke-ResizeMidCommand 'fix'
+Assert "D1 the command printed all 120 lines and is still running" $fix.Printed
+Assert "D2 its first line is in the pane before the resize" ($fix.Before -match '(?m)^T1757-fix-1\s*$')
+Assert "D3 +split narrowed, and +close widened, the running pane (exit 0)" `
+    ($fix.Split -eq 0 -and $fix.Close -eq 0)
+Assert "D4 the command's first line survived the resizes" ($fix.After -match '(?m)^T1757-fix-1\s*$')
+Assert "D5 and so did its last" ($fix.After -match '(?m)^T1757-fix-120\s*$')
+if ($fix.Printed -and -not ($fix.After -match '(?m)^T1757-fix-1\s*$')) {
+    $linesD = @($fix.After -split '\r?\n')
+    "  DIAG after the resize the pane reads $($linesD.Count) lines; tail:"
+    ($linesD | Select-Object -Last 10) | ForEach-Object { "    | $_" }
+}
+
+# Negative control: put this pane's prompt back to the T512 shape (133;B, input
+# never ends) and the same run must lose its output - the command's first line
+# goes with the resize. `$E\` is doubled for the same send-keys reason as above.
+Run-Cli '+send-keys --target=t151def --when-idle --idle-timeout=40 "set PROMPT=$E]133;A$E\\$P$G$E]133;B$E\\" Enter' "$root\sk-negprompt.txt" 60 | Out-Null
+$neg = Invoke-ResizeMidCommand 'neg'
+Assert "DN1 negative control: the old prompt's run printed and was resized" `
+    ($neg.Printed -and $neg.Split -eq 0 -and $neg.Close -eq 0)
+Assert "DN2 negative control: with the T512 prompt the resize DOES lose the output" `
+    ($neg.Printed -and $neg.Before -match '(?m)^T1757-neg-1\s*$' -and
+     -not ($neg.After -match '(?m)^T1757-neg-1\s*$'))
 
 # ============================================================================
 "== C: --shell=<full git-bash path, spaces and all> gets the --posix rewrite (T513/T862)"
