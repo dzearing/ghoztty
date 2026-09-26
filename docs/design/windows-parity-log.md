@@ -33979,3 +33979,17 @@ Also filed: T1744, because `TTF_SUBCLASS` in `win32.zig` holds `TTF_IDISHWND`'s
 value, and T1747, because the local row has no Activity button. New acceptance
 script `chooser-help-tooltips.ps1` (ALL PASS, 49), with a demonstrated
 negative. Floor lanes, P1-P3, the harness floor and every due guard are green.
+
+## 2026-09-25 - T1744: the viewer's nav-bar and composer buttons now actually show their tooltips
+
+`TTF_SUBCLASS` in `win32.zig` held 0x0001, which is `TTF_IDISHWND` in
+commctrl.h (the right value is 0x0010). So every viewer nav-bar and feedback
+composer tip was registered as a window tool pointing at a window that does not
+exist. Nothing was subclassed, and no tip could show. The existing oracles only
+read the registration, so they stayed green. Fixed the constant, added
+`TTF_IDISHWND`, and removed the chooser's local workaround. The new win32-lane
+module `tooltip_flags.zig` pins the values and proves the relay in process: one
+`WM_MOUSEMOVE` sent only to the owner makes the tool current. That test fails
+against 0x0001 (negative control run). Floor lanes are green, as are
+viewer-diff (65), viewer-feedback (107), viewer-worktree (42),
+chooser-help-tooltips (49) and every due guard.

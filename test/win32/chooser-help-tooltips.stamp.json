@@ -1,16 +1,14 @@
 {
     "guard":  "chooser-help-tooltips",
     "script":  "test/win32/chooser-help-tooltips.ps1",
-    "generated":  "2026-09-25T17:31:27-07:00",
-    "commit":  "99030094f",
+    "generated":  "2026-09-25T18:23:15-07:00",
+    "commit":  "806905d53",
     "uncommitted":  [
-                        "src/apprt/win32/chooser_help.zig",
-                        "src/apprt/win32/chooser_tooltip.zig",
-                        "test/win32/chooser-help-tooltips.ps1"
+                        "src/apprt/win32/chooser_tooltip.zig"
                     ],
     "files":  {
                   "src/apprt/win32/chooser_help.zig":  "952df6a90f3d235ae70bbb8a288670441ba01f6c6b1d1e0d44053526d18f4791",
-                  "src/apprt/win32/chooser_tooltip.zig":  "e25cdad7e2342c628a974539692c71b4086592a9c5c601c5bb11edb3562aeb33",
+                  "src/apprt/win32/chooser_tooltip.zig":  "f2606a92f961dd7fe699cce3d8f646ad01423c6b4d53ef2968c0505fc7e73342",
                   "test/win32/chooser-help-tooltips.ps1":  "12d40267d01d5f8f6629319c532b4ef9f4d83ecb359ab544e474ba58fde11fe5"
               }
 }

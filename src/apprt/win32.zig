@@ -36,6 +36,10 @@ test {
     // arithmetic is unit-tested here; the line it prints is scored on the box
     // by test\win32\chrome-theme.ps1 section G.
     _ = @import("win32/paint_probe.zig");
+    // T1744: the tooltip flag values, and an in-process proof that a
+    // `TTF_SUBCLASS` tool is actually relayed. The wrong value shipped for a
+    // month because every oracle read the registration, never the relay.
+    _ = @import("win32/tooltip_flags.zig");
     // The split tree's leaf type and the viewer leaf it makes room for
     // (T90c). ViewerPane has no constructor caller until T90d, and the same
     // rule as system_colors applies: a module no lane compiles is a module

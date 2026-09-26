@@ -2147,10 +2147,21 @@ pub const TOOLTIPS_CLASS = std.unicode.utf8ToUtf16LeStringLiteral("tooltips_clas
 pub const TTS_ALWAYSTIP: u32 = 0x01;
 pub const TTS_NOPREFIX: u32 = 0x02;
 
+/// `uId` is the tool's own HWND rather than an id in the owner's tool space,
+/// and `rect` is ignored: the tool is that whole window. The machine chooser's
+/// action buttons (T1633).
+pub const TTF_IDISHWND: u32 = 0x0001;
 /// The tool's owner window is SUBCLASSED so comctl32 relays its own mouse
 /// messages — the viewer nav bar's feedback tooltip (T633), which wants the
 /// system's delay and placement rather than a hand-driven one.
-pub const TTF_SUBCLASS: u32 = 0x0001;
+///
+/// 0x0010, commctrl.h's value. Until T1744 this said 0x0001, which is
+/// `TTF_IDISHWND`: every "subclass" tool was really a window tool keyed on a
+/// small integer no window has, nothing was subclassed, and the viewer's
+/// nav-bar and composer tips were registered, counted and never shown.
+/// `tooltip_flags.zig` holds the value to the header AND proves a tool
+/// registered with it is actually relayed.
+pub const TTF_SUBCLASS: u32 = 0x0010;
 pub const TTF_TRACK: u32 = 0x0020;
 pub const TTF_ABSOLUTE: u32 = 0x0080;
 

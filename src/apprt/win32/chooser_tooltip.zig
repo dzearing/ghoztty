@@ -24,11 +24,10 @@ const std = @import("std");
 const w32 = @import("win32.zig");
 const chooser_help = @import("chooser_help.zig");
 
-/// commctrl.h's own values. Stated here rather than taken from `win32.zig`,
-/// whose `TTF_SUBCLASS` is 0x0001 — that is `TTF_IDISHWND`'s value, and a tool
-/// registered with it is never subclassed at all (filed alongside T1633).
-const TTF_IDISHWND: u32 = 0x0001;
-const TTF_SUBCLASS: u32 = 0x0010;
+/// commctrl.h's values, from the one place that states them (T1744 corrected
+/// `win32.zig`'s `TTF_SUBCLASS`, which this file used to work around).
+const TTF_IDISHWND = w32.TTF_IDISHWND;
+const TTF_SUBCLASS = w32.TTF_SUBCLASS;
 
 /// The track tool's id in this control's tool space. Subclass tools are keyed
 /// by their button's HWND (`TTF_IDISHWND`), which can never be 1.
