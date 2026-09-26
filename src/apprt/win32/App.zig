@@ -11064,15 +11064,7 @@ fn surfaceWndProc(
         w32.WM_LBUTTONDOWN => {
             if (is_palette_popup) {
                 const y: i32 = @intCast(@as(i16, @truncate((lparam >> 16) & 0xFFFF)));
-                const sc = surface.scale;
-                const list_top: i32 = @intFromFloat(@round(Surface.PALETTE_LIST_TOP * sc));
-                const item_height: i32 = @intFromFloat(@round(Surface.PALETTE_ITEM_HEIGHT * sc));
-                if (y >= list_top) {
-                    const clicked = @divTrunc(y - list_top, item_height);
-                    if (clicked >= 0 and clicked < surface.palette_count) {
-                        surface.clickPaletteRow(@intCast(clicked));
-                    }
-                }
+                if (surface.paletteRowAtY(hwnd, y)) |row| surface.clickPaletteRow(row);
                 return 0;
             }
             // Mouse input below is in the TERMINAL's client coordinates and

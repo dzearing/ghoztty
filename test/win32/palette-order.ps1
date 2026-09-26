@@ -23,6 +23,11 @@
 #       result neither registry order nor alphabetical order can produce.
 #   O4. the recording is durable: that run stamped New Tab with a FRESHER
 #       timestamp than the seed.
+#   O5. a click on a SCROLLED list runs the row painted under the pointer
+#       (T1671): Enter on row 5 in one launch names its command; in a second
+#       launch the list is arrowed until row 5 is painted in the TOP slot and
+#       that slot is clicked - the store must name the same command, not
+#       row 0's (the pre-fix hit-test ignored the scroll).
 #
 # WHAT IT DOES NOT COVER. The section HEADERS ("Recent" / "All Commands") are
 # owner-drawn text and unreadable from a script; header placement, the
@@ -233,6 +238,91 @@ if ($null -ne $pal2) {
     Assert ($after.ContainsKey('new_tab') -and $after['new_tab'] -ge ($now - 60)) `
         "O4 new_tab carries a fresher timestamp than the seed (seed=$($now - 60), stored=$($after['new_tab']))"
     Assert ($after.ContainsKey('new_remote_window')) 'O4 the older entry survived the rewrite'
+}
+
+# ---------------------------------------------------------------------
+# O5: a click on a SCROLLED list runs the row painted under the pointer
+# (T1671). The oracle is the keyboard: launch A arrows to row N and presses
+# Enter, which names row N's command in the store. Launch B arrows PAST the
+# last visible row - so the list scrolls and row N is painted in the TOP slot
+# - and clicks that slot. Both must name the same command. The pre-fix
+# hit-test took the visual slot as the absolute row, so launch B ran row 0,
+# a different command (every row carries a distinct key).
+#
+# Built-in rows rather than configured ones: the palette lists only the first
+# 64 configured entries and Ghostty's own defaults fill them, so an entry a
+# test adds is never shown (T1752). With the history cleared and no filter
+# there are no section headers, so rows are plain alphabetical order, and
+# row 5 is a title prompt - harmless to run.
+# ---------------------------------------------------------------------
+function Start-O5Palette([string]$Tag) {
+    Stop-DebugGhoztty
+    $script:appPid = 0
+    Clear-PaletteHistory
+    $log = Join-Path $env:TEMP "ghoztty-palette-order-$Tag-$PID.log"
+    $script:app = Start-OnTestDesktop -Exe $Exe -Arguments @('--session-persistence=false') -StdErr $log
+    $script:appPid = $script:app.Pid
+    Start-Sleep -Seconds 3
+    if ($script:app.Process -and $script:app.Process.HasExited) { return $null }
+    $t = Wait-TestWindow -ProcessId $script:appPid -Class 'GhozttyWindow'
+    if ($t -eq [IntPtr]::Zero) { return $null }
+    $p = Get-TestChildWindow -Window $t -Class 'GhozttyTerminal'
+    if ($p -eq [IntPtr]::Zero) { return $null }
+    [void](Focus-TestWindow -Window $t -Child $p)
+    return (Open-Palette $t $p)
+}
+
+function Wait-OnlyPaletteRun {
+    $deadline = (Get-Date).AddSeconds(5)
+    $keys = @()
+    while ((Get-Date) -lt $deadline) {
+        $keys = @((Get-PaletteHistory).Keys)
+        if ($keys.Count -gt 0) { break }
+        Start-Sleep -Milliseconds 250
+    }
+    return , $keys
+}
+
+$o5Row = 5
+Write-Host "== O5a: Enter on row $o5Row names the command the click must run"
+$palA = Start-O5Palette 'o5a'
+Assert ($null -ne $palA) 'O5a the palette opened'
+$wantKey = $null
+if ($null -ne $palA) {
+    foreach ($k in 1..$o5Row) { Send-TestControlKey -Control $palA.Edit -Key Down | Out-Null }
+    Start-Sleep -Milliseconds 300
+    Send-TestControlKey -Control $palA.Edit -Key Enter | Out-Null
+    $ranA = Wait-OnlyPaletteRun
+    Assert ($ranA.Count -eq 1) "O5a Enter ran exactly one command (got: $($ranA -join ', '))"
+    if ($ranA.Count -eq 1) { $wantKey = [string]$ranA[0] }
+}
+
+Write-Host "== O5b: scrolled so row $o5Row is the TOP slot, a click there runs it"
+$palB = Start-O5Palette 'o5b'
+Assert ($null -ne $palB) 'O5b the palette opened'
+if ($null -ne $palB -and $null -ne $wantKey) {
+    # The popup's own geometry, the way paintPaletteInto derives it.
+    $cr = Get-TestWindowRect -Window $palB.Popup -Client
+    $s = (Get-TestWindowDpi -Window $palB.Popup) / 96.0
+    $listTop = [int][math]::Round(40.0 * $s)
+    $itemH = [int][math]::Round(28.0 * $s)
+    $maxVis = [int][math]::Floor(($cr.Height - $listTop) / $itemH)
+    Write-Host "      popup client $($cr.Width)x$($cr.Height) scale=$s -> $maxVis visible rows"
+    Assert ($maxVis -ge 2) "O5b setup: the popup shows a list ($maxVis rows)"
+
+    # Selecting row (maxVis + o5Row - 1) scrolls the list by exactly o5Row,
+    # which puts row o5Row in the top slot.
+    $downs = $maxVis + $o5Row - 1
+    foreach ($k in 1..$downs) { Send-TestControlKey -Control $palB.Edit -Key Down | Out-Null }
+    Start-Sleep -Milliseconds 400
+
+    $x = $cr.Left + [int]($cr.Width / 2)
+    $y = $cr.Top + $listTop + [int]($itemH / 2)
+    [void](Send-TestMouse -Window $palB.Popup -X $x -Y $y)
+    $ranB = Wait-OnlyPaletteRun
+    Assert ($ranB.Count -eq 1) "O5b the click ran exactly one command (got: $($ranB -join ', '))"
+    Assert ($ranB.Count -eq 1 -and [string]$ranB[0] -eq $wantKey) `
+        "O5b the click ran the row painted in the top slot, $wantKey (got: $($ranB -join ', '); pre-fix it ran row 0)"
 }
 
 Assert ($null -ne (Get-Process -Id $script:appPid -ErrorAction SilentlyContinue)) 'the app survived all arms'

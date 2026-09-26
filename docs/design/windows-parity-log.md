@@ -34074,3 +34074,19 @@ evaluates. It went red on the pre-fix exe and green on the fixed one. The
 contract is in docs/claude/cli.md. Mac has the same gap and it is filed as T1750
 (seat mac). T1751 covers a C/I send-keys flake seen in the same harness.
 Floor lanes, P1-P3 and the due guards are green.
+
+## 2026-09-25 - T1671: clicking a command-palette row runs the command under the pointer, even after the list scrolled
+
+The palette's click handler took the row slot you clicked as the command's
+position in the list, so once arrowing down had scrolled the list, a click ran
+the command that used to sit in that slot, several rows up. The scroll now has
+one derivation, `palette_order.scrollOffset` (with `maxVisible` and `rowAtY`,
+unit tested in the none lane), and both the painter and the new
+`Surface.paletteRowAtY` hit-test go through it. Arm O5 of
+`test/win32/palette-order.ps1` pressed Enter on row 5 in one launch. In a second
+launch it scrolled until row 5 was the top slot and clicked that slot. Both ran
+the same command. With the old math put back, the click ran `about` (row 0).
+Chasing a test fixture turned up T1752 (P1): entries a user adds in their config
+never reach the Windows palette. Ghostty's ~98 defaults fill the 64-entry cap,
+and an empty value resets the list instead of clearing it. The defaults also
+duplicate the palette's own rows. Floor lanes and the due guards are green.

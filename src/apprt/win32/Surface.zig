@@ -3091,6 +3091,20 @@ fn movePaletteSelection(self: *Surface, delta: i32) void {
     }
 }
 
+/// The absolute palette row painted under popup client `y`, or null for no
+/// row. Maps through the list's scroll (T1671): before it, the click took
+/// the VISUAL row as the absolute one, so once the list had scrolled a click
+/// ran the command `scroll_offset` rows further down.
+pub fn paletteRowAtY(self: *const Surface, hwnd: w32.HWND, y: i32) ?u16 {
+    var client_rect: w32.RECT = undefined;
+    if (w32.GetClientRect(hwnd, &client_rect) == 0) return null;
+    const s = self.scale;
+    const item_height: i32 = @intFromFloat(@round(PALETTE_ITEM_HEIGHT * s));
+    const list_top: i32 = @intFromFloat(@round(PALETTE_LIST_TOP * s));
+    const max_visible = palette_order.maxVisible(client_rect.bottom, list_top, item_height);
+    return palette_order.rowAtY(y, list_top, item_height, max_visible, self.palette_selected, self.palette_count);
+}
+
 /// A click on a palette row (App.zig's `WM_LBUTTONDOWN`): a header row is
 /// not a command, so clicking one changes nothing at all.
 pub fn clickPaletteRow(self: *Surface, row: u16) void {
@@ -3488,14 +3502,12 @@ pub fn paintPaletteInto(self: *Surface, hdc: w32.HDC, hwnd: w32.HWND) void {
 
     const item_height: i32 = @intFromFloat(@round(PALETTE_ITEM_HEIGHT * s));
     const list_top: i32 = @intFromFloat(@round(PALETTE_LIST_TOP * s));
-    const max_visible = @divTrunc(client_rect.bottom - list_top, item_height);
+    const max_visible = palette_order.maxVisible(client_rect.bottom, list_top, item_height);
     if (max_visible <= 0) return; // popup too small to render any items
 
-    // Calculate scroll offset to keep selected item visible
-    var scroll_offset: i32 = 0;
-    if (self.palette_selected >= max_visible) {
-        scroll_offset = self.palette_selected - @as(u16, @intCast(max_visible)) + 1;
-    }
+    // Scroll to keep the selection visible — the same derivation the click
+    // hit-test maps back through (`paletteRowAtY`, T1671).
+    const scroll_offset = palette_order.scrollOffset(self.palette_selected, max_visible);
 
     var i: u16 = 0;
     while (i < self.palette_count) : (i += 1) {

@@ -256,11 +256,83 @@ pub fn arrange(items: []const Item, history: *const History, out: []u16) usize {
     return placed;
 }
 
+/// How many rows the list is scrolled by (T1671): the list stays at the top
+/// until the selection would fall off the bottom, then scrolls just enough to
+/// keep it on the last visible row. The ONE derivation of the scroll —
+/// `paintPaletteInto` draws with it and the popup's click hit-test maps a Y
+/// back through it, so a click can never pick a different row than the one
+/// painted under the pointer.
+pub fn scrollOffset(selected: u16, max_visible: i32) i32 {
+    if (max_visible <= 0) return 0;
+    const sel: i32 = selected;
+    return if (sel >= max_visible) sel - max_visible + 1 else 0;
+}
+
+/// Rows the list area can show at `client_height`, never negative.
+pub fn maxVisible(client_height: i32, list_top: i32, item_height: i32) i32 {
+    if (item_height <= 0) return 0;
+    return @max(0, @divTrunc(client_height - list_top, item_height));
+}
+
+/// The ABSOLUTE row (an index into the filtered list) painted under client
+/// `y`, or null when `y` is above the list, below the last visible row, or
+/// past the end of the list.
+pub fn rowAtY(
+    y: i32,
+    list_top: i32,
+    item_height: i32,
+    max_visible: i32,
+    selected: u16,
+    count: u16,
+) ?u16 {
+    if (item_height <= 0 or y < list_top) return null;
+    const visual = @divTrunc(y - list_top, item_height);
+    if (visual >= max_visible) return null;
+    const row = visual + scrollOffset(selected, max_visible);
+    if (row >= count) return null;
+    return @intCast(row);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 const testing = std.testing;
+
+test "scrollOffset: unscrolled until the selection passes the last visible row" {
+    try testing.expectEqual(@as(i32, 0), scrollOffset(0, 5));
+    try testing.expectEqual(@as(i32, 0), scrollOffset(4, 5));
+    try testing.expectEqual(@as(i32, 1), scrollOffset(5, 5));
+    try testing.expectEqual(@as(i32, 15), scrollOffset(19, 5));
+    try testing.expectEqual(@as(i32, 0), scrollOffset(19, 0));
+}
+
+test "rowAtY: an unscrolled list maps the visual row straight through" {
+    // list_top 50, rows 20 tall, 5 visible, 30 rows, selection on row 1.
+    try testing.expectEqual(@as(?u16, 0), rowAtY(50, 50, 20, 5, 1, 30));
+    try testing.expectEqual(@as(?u16, 2), rowAtY(95, 50, 20, 5, 1, 30));
+    try testing.expectEqual(@as(?u16, null), rowAtY(49, 50, 20, 5, 1, 30));
+}
+
+test "rowAtY: a scrolled list adds the scroll offset (T1671)" {
+    // Selection on row 12 of 30 with 5 visible: rows 8..12 are painted, so
+    // the top visible slot is row 8 and the bottom one is the selection.
+    try testing.expectEqual(@as(?u16, 8), rowAtY(50, 50, 20, 5, 12, 30));
+    try testing.expectEqual(@as(?u16, 12), rowAtY(50 + 4 * 20, 50, 20, 5, 12, 30));
+    // Below the last visible row is nothing, even though row 13 exists.
+    try testing.expectEqual(@as(?u16, null), rowAtY(50 + 5 * 20, 50, 20, 5, 12, 30));
+}
+
+test "rowAtY: a slot past the end of a short list is nothing" {
+    try testing.expectEqual(@as(?u16, null), rowAtY(50 + 3 * 20, 50, 20, 5, 0, 3));
+    try testing.expectEqual(@as(?u16, null), rowAtY(60, 50, 0, 5, 0, 3));
+}
+
+test "maxVisible: never negative" {
+    try testing.expectEqual(@as(i32, 5), maxVisible(150, 50, 20));
+    try testing.expectEqual(@as(i32, 0), maxVisible(30, 50, 20));
+    try testing.expectEqual(@as(i32, 0), maxVisible(150, 50, 0));
+}
 
 test "titleOrder: case-insensitive" {
     try testing.expectEqual(std.math.Order.lt, titleOrder("about ghoztty", "New Tab"));
