@@ -166,6 +166,25 @@ fn wrapCommandArgv(
     return verb_args.wrapShellCommandArgv(arena, shell, command);
 }
 
+/// The exec-path (no session-persistence agent) argv for `-e`/`--command`/
+/// `--shell`; see `verb_args.localExecArgv`. T1665: `--shell` alone opens that
+/// shell here too, as it always did on the agent path.
+fn execArgv(
+    ctx: Context,
+    arena: Allocator,
+    e_args: []const [:0]const u8,
+    command: ?[]const u8,
+    shell_flag: ?[]const u8,
+) Allocator.Error!?[]const [:0]const u8 {
+    return verb_args.localExecArgv(
+        arena,
+        e_args,
+        command,
+        shell_flag,
+        ctx.app.config.@"command-shell" orelse "cmd.exe",
+    );
+}
+
 /// The LOCAL-agent half of `wrapCommandArgv` (T468): the same per-flavor
 /// keep-alive invocation, sent to the agent as `OPEN.argv` so it execs it
 /// verbatim instead of synthesizing `<shell> /c <cmd>` — which exits the moment
@@ -417,12 +436,7 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
             .env = env.items,
         };
     } else .{
-        .command_argv = if (args.e_args.len > 0)
-            args.e_args
-        else if (args.command) |cmd|
-            try wrapCommandArgv(ctx, arena, args.shell, cmd)
-        else
-            null,
+        .command_argv = try execArgv(ctx, arena, args.e_args, args.command, args.shell),
         .working_directory = args.working_directory,
         .env = env.items,
     };
@@ -884,6 +898,8 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // `--command`/`--working-directory` are REMOTE-native (never wrapped by
     // the local shell table — the agent applies its own shell's convention);
     // a `-e` argv is joined into one command line for the agent's shell.
+    // `--shell` alone counts as an explicit value (T1665: it used to take the
+    // inherit shortcut below and be dropped without a word).
     // With no explicit values we pass NO overrides at all, so newSplitAt's
     // inheritance (parent pane's command + cwd) applies, like the Mac.
     const remote_command: ?[]const u8 = if (args.e_args.len > 0)
@@ -905,7 +921,7 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // with nothing explicit the branches break to a null baton and
     // `buildRemoteInherit` does this itself.
     const split_cwd: ?[]const u8 = nonEmpty(args.working_directory) orelse inherited: {
-        if (remote_command == null) break :inherited null;
+        if (remote_command == null and nonEmpty(args.shell) == null) break :inherited null;
         const parent = at.surface() orelse break :inherited null;
         const conn: *remote_connection.Connection = if (window.remote_dialed) |d|
             d.conn()
@@ -917,7 +933,8 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     };
 
     const overrides: ?Surface.Overrides = if (window.remote_dialed) |dialed| ov: {
-        if (remote_command == null and nonEmpty(args.working_directory) == null)
+        if (remote_command == null and nonEmpty(args.working_directory) == null and
+            nonEmpty(args.shell) == null)
             break :ov null; // full inheritance in newSplitAt
         break :ov .{
             .remote = .{
@@ -935,7 +952,8 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         // `buildRemoteInherit` injects the agent and inherits the split-parent
         // pane's cwd; otherwise a `.remote{local_agent}` override carrying the
         // agent-native command + the name env.
-        if (remote_command == null and nonEmpty(args.working_directory) == null)
+        if (remote_command == null and nonEmpty(args.working_directory) == null and
+            nonEmpty(args.shell) == null)
             break :ov null;
         break :ov .{
             .remote = .{
@@ -949,12 +967,7 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
             .env = env.items,
         };
     } else .{
-        .command_argv = if (args.e_args.len > 0)
-            args.e_args
-        else if (command) |cmd|
-            try wrapCommandArgv(ctx, arena, args.shell, cmd)
-        else
-            null,
+        .command_argv = try execArgv(ctx, arena, args.e_args, command, args.shell),
         .working_directory = args.working_directory,
         .env = env.items,
     };

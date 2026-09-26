@@ -1,12 +1,10 @@
 {
     "guard":  "window-active-audit",
     "script":  "test/win32/window-active-audit.ps1",
-    "generated":  "2026-09-25T21:33:28-07:00",
-    "commit":  "afd355dca",
+    "generated":  "2026-09-25T22:11:05-07:00",
+    "commit":  "5f299718d",
     "uncommitted":  [
-                        "src/apprt/win32/activity_actions.zig",
-                        "src/apprt/win32/activity_sample.zig",
-                        "src/apprt/win32/activity_view.zig"
+                        "src/apprt/win32/IpcHandlers.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -107,7 +105,7 @@
                   "src/apprt/win32/ipc_hover.zig":  "07bbf74a9a035867d9843abcdf41c7c968b561c5868d6821ea149e613eced8be",
                   "src/apprt/win32/ipc_session_await.zig":  "1da78151a2f721f464a27e2637fbadc77488a217366ecfb46e77be722379e95b",
                   "src/apprt/win32/ipc_whats_new.zig":  "35f9a55aca347095990a162cba08e95edf95b3ff9440b04c9dd58370a58e1d10",
-                  "src/apprt/win32/IpcHandlers.zig":  "d9e2c7115a4b37a80005f7356c366c47b7acd19cecdd6b6a1e37fe042f16ed1b",
+                  "src/apprt/win32/IpcHandlers.zig":  "2f771b316fcf8a22681a328181e5d2041cc9e9a30389fa3eff3bac68e54595b4",
                   "src/apprt/win32/IpcRegistry.zig":  "5ebe2322ff50416cd1b825989ab10e1d4563955f497a445e3e00ea7f4c42fef6",
                   "src/apprt/win32/IpcServer.zig":  "b715a91554afc1b6ba8d998c61d9c7a6dfd051cadcbaddc0afd148f445c434cf",
                   "src/apprt/win32/job_escape.zig":  "060f58a8a8739baf8246aaca8cf5d4a0e6113bfa69e981fdc2282ea8a060cb7e",

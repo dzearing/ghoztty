@@ -34058,3 +34058,19 @@ finds nothing. ALL PASS, 14, with a new guard-due row. The seam is
 registered in the seam-audit registry as `tuning`. Mac shows no N-of-M count,
 so neither does Windows. Floor lanes, P1-P3, activity-pane-column, guard-due and
 the harness floor are green.
+
+## 2026-09-25 - T1665: `--shell=` with no `--command` now opens that shell on every path
+
+With `session-persistence` off, the plain exec path read `--shell` only to wrap
+a `--command`, so `+new-window --shell=powershell.exe` quietly opened cmd.exe.
+Tracing it turned up a sibling on the default agent path: `+split --shell=`
+alone took the "nothing explicit, inherit" shortcut and was dropped the same
+way. The three exec call sites now share one pure rule,
+`apprt.ipc.args.localExecArgv` (`-e` verbatim, else a wrapped `--command`, else
+the bare `--shell`, else the config default), which is unit tested. `handleSplit`
+now counts `--shell` as an explicit value. Arm K of
+`test/win32/ipc-command-keepalive.ps1` types an expression only PowerShell
+evaluates. It went red on the pre-fix exe and green on the fixed one. The
+contract is in docs/claude/cli.md. Mac has the same gap and it is filed as T1750
+(seat mac). T1751 covers a C/I send-keys flake seen in the same harness.
+Floor lanes, P1-P3 and the due guards are green.

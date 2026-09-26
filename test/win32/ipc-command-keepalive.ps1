@@ -67,6 +67,13 @@
 #      carries NO session_id after the same wait arm G gets. That is arm G
 #      being watched score red for the reason it exists - "persistence is off"
 #      - rather than being trusted to.
+#   K  T1665: `--shell=` with NO `--command` opens THAT shell. With
+#      `session-persistence` off the exec path only ever read `--shell` to wrap
+#      a command, so `+new-window --shell=powershell.exe` quietly opened cmd.exe;
+#      and on the agent path `+split --shell=` alone took the "nothing explicit,
+#      inherit" shortcut and was dropped the same way. Probed by typing an
+#      expression only PowerShell evaluates (cmd echoes it back as an error), so
+#      the pane's shell is measured rather than inferred from its title.
 #   H  `-e` is NOT keep-alived. `-e` means "exec exactly this"; widening the
 #      wrap to it would be a different defect, so the tombstone line is the
 #      CORRECT outcome there.
@@ -137,6 +144,21 @@ function Wait-SessionId($Target, $TimeoutSec = 15) {
         Start-Sleep -Milliseconds 250
     }
     return ''
+}
+
+# T1665: is the shell in this pane PowerShell? Types an expression only
+# PowerShell evaluates to the marker: the command line holds 'KA','SHOK' apart,
+# so KASHOK on screen is OUTPUT - cmd.exe never prints it. (A "cmd said 'is not
+# recognized'" check was tried and dropped: in a narrow split the error wraps,
+# and it passed over a cmd pane on the pre-fix build.)
+function Test-PaneIsPowerShell($Label, $Pane) {
+    Invoke-Ghoztty "+send-keys --target=$Pane `"[string]::Concat('KA','SHOK')`" Enter" "$tmp\keys-sh.txt" | Out-Null
+    $tail = Wait-Read $Pane 'KASHOK\s*[\r\n]'
+    Assert "$Label the pane runs the --shell it asked for (PowerShell evaluated the probe)" (
+        $tail -match 'KASHOK\s*[\r\n]')
+    if ($tail -notmatch 'KASHOK\s*[\r\n]') {
+        "    pane tail:"; ($tail -split "`n" | Select-Object -Last 8) | ForEach-Object { "      $_" }
+    }
 }
 
 # Poll a pane until `$Pattern` shows up, then return the whole tail. Polling
@@ -328,6 +350,14 @@ try {
         $echoTail -notmatch '\\"KAQ')
 
     # ------------------------------------------------------------------
+    "== K: +split --shell= alone, persistence on (T1665)"
+    # ------------------------------------------------------------------
+    # The agent-backed first pane always honoured a bare --shell; its +split
+    # sibling did not, because --shell alone took the inherit shortcut.
+    Invoke-Ghoztty "+split --target=kacmd --name=kashsplit --direction=down --shell=powershell.exe" "$tmp\split-sh.txt" | Out-Null
+    Test-PaneIsPowerShell 'K +split (persistence on)' 'kashsplit'
+
+    # ------------------------------------------------------------------
     "== H: control - -e is NOT keep-alived (it means 'exec exactly this')"
     # ------------------------------------------------------------------
     Invoke-Ghoztty "+new-window --target=kaexec -e cmd /c `"echo KAMARKEREXEC`"" "$tmp\new-exec.txt" | Out-Null
@@ -369,6 +399,17 @@ try {
                     $tail2 -match 'KAMARKERNOAGENT')
                 AssertAlways "G2 ... and carries NO session_id, so arm G can score red" (
                     [string]::IsNullOrEmpty((Wait-SessionId 'kanoagent')))
+            }
+
+            # T1665 arm K, the exec path: --shell with no --command.
+            "== K: --shell= alone, persistence OFF (T1665)"
+            Invoke-Ghoztty "+new-window --target=kanoshell --shell=powershell.exe" "$tmp\new-noshell.txt" | Out-Null
+            $leaves3 = @(Get-WindowLeaves 'kanoshell')
+            AssertAlways "K +list reports the persistence-off --shell pane" ($leaves3.Count -eq 1)
+            if ($leaves3.Count -eq 1) {
+                Test-PaneIsPowerShell 'K +new-window (persistence off)' $leaves3[0].id
+                Invoke-Ghoztty "+split --target=kanoshell --name=kanoshsplit --direction=right --shell=powershell.exe" "$tmp\split-noshell.txt" | Out-Null
+                Test-PaneIsPowerShell 'K +split (persistence off)' 'kanoshsplit'
             }
         }
     } finally {

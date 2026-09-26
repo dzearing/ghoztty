@@ -608,6 +608,37 @@ pub fn wrapShellCommandArgv(
     return argv.items;
 }
 
+/// The argv a LOCAL exec pane (no session-persistence agent) spawns for a verb
+/// that may carry `-e`, `--command` and `--shell` (T1665), or null for the
+/// config's default command:
+///
+///   -e <argv…>         -> the argv verbatim (`-e` means "exec exactly this")
+///   --command=<cmd>    -> `wrapShellCommandArgv(<shell>, cmd)`, where <shell> is
+///                         `--shell` else `default_shell`
+///   --shell=<s> alone  -> `<s>`, interactive — the same bare `<shell>` the
+///                         agent spawns for an OPEN carrying a shell and no
+///                         command, so persistence on and off open one shell
+///   none of them       -> null
+///
+/// The third row is the fix: it used to fall through to null, so with
+/// `session-persistence = false` a `--shell=pwsh` pane silently opened the
+/// default shell. An empty `--shell=` is "not given", as on the agent path.
+pub fn localExecArgv(
+    arena: Allocator,
+    e_args: []const [:0]const u8,
+    command: ?[]const u8,
+    shell_flag: ?[]const u8,
+    default_shell: []const u8,
+) Allocator.Error!?[]const [:0]const u8 {
+    if (e_args.len > 0) return e_args;
+    const shell: ?[]const u8 = if (shell_flag) |s| (if (s.len > 0) s else null) else null;
+    if (command) |cmd| return try wrapShellCommandArgv(arena, shell orelse default_shell, cmd);
+    const s = shell orelse return null;
+    const argv = try arena.alloc([:0]const u8, 1);
+    argv[0] = try arena.dupeZ(u8, s);
+    return argv;
+}
+
 /// The `+send-keys` argument that says "these bytes are final" (T661).
 ///
 /// The CLI resolves every keypress to the byte a terminal sends for it before
@@ -1218,6 +1249,35 @@ test "wrapShellCommandArgv: every flavor branch" {
         try testing.expectEqual(case.expect.len, argv.len);
         for (case.expect, argv) |want, got| try testing.expectEqualStrings(want, got);
     }
+}
+
+test "localExecArgv: --shell alone opens that shell (T1665)" {
+    var arena = testArena();
+    defer arena.deinit();
+    const alloc = arena.allocator();
+
+    // The defect: a shell with no command used to produce null (default shell).
+    const alone = (try localExecArgv(alloc, &.{}, null, "pwsh", "cmd.exe")).?;
+    try testing.expectEqual(@as(usize, 1), alone.len);
+    try testing.expectEqualStrings("pwsh", alone[0]);
+
+    // Nothing asked for: the config's default command stands.
+    try testing.expect((try localExecArgv(alloc, &.{}, null, null, "cmd.exe")) == null);
+    // An empty `--shell=` is "not given".
+    try testing.expect((try localExecArgv(alloc, &.{}, null, "", "cmd.exe")) == null);
+
+    // --command wraps in --shell, else in the default shell.
+    const wrapped = (try localExecArgv(alloc, &.{}, "echo hi", "pwsh", "cmd.exe")).?;
+    try testing.expectEqualStrings("pwsh", wrapped[0]);
+    try testing.expectEqualStrings("-NoExit", wrapped[1]);
+    const dflt = (try localExecArgv(alloc, &.{}, "echo hi", "", "cmd.exe")).?;
+    try testing.expectEqualStrings("cmd.exe", dflt[0]);
+    try testing.expectEqualStrings("/K", dflt[1]);
+
+    // -e wins over both, verbatim.
+    const e: []const [:0]const u8 = &.{ "ping", "-n", "1" };
+    const exec = (try localExecArgv(alloc, e, "echo hi", "pwsh", "cmd.exe")).?;
+    try testing.expectEqual(e.ptr, exec.ptr);
 }
 
 test "cmdShellArgs: a quoted path survives the round trip through CRT quoting" {

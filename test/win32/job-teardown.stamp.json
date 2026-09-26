@@ -1,10 +1,10 @@
 {
     "guard":  "job-teardown",
     "script":  "test/win32/job-teardown.ps1",
-    "generated":  "2026-09-25T21:16:31-07:00",
-    "commit":  "afd355dca",
+    "generated":  "2026-09-25T22:01:05-07:00",
+    "commit":  "5f299718d",
     "uncommitted":  [
-                        "test/win32/activity-truncated.ps1"
+                        "test/win32/ipc-command-keepalive.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -155,7 +155,7 @@
                   "test/win32/install-restart.ps1":  "a68bdefb06b2165f981e9d5b993bf789fae8c831086b7a606a25833236208063",
                   "test/win32/install-walkthrough.ps1":  "e913d1a8f4deb7dd67b4046b2cb977ab269237da788f8408adf1183e9ad375bf",
                   "test/win32/ipc-child-exited.ps1":  "d976a5172b4773f582972eedc3fa1b00bb1c03f5c33eeb5efc06e5d52542112b",
-                  "test/win32/ipc-command-keepalive.ps1":  "f21998c4653539d6ae50abeac807eed530329dc56344a49333e7dbe81e30aed0",
+                  "test/win32/ipc-command-keepalive.ps1":  "323e4bf749e4088eb5b1e82337f75ec0f87bc4c0cc9ccdad00679e416a7dc786",
                   "test/win32/ipc-fake-server.ps1":  "d8a18c722615e1ca8582e804d794886cb7734a9eb084f87add9d411b285a689b",
                   "test/win32/ipc-floor-setup.ps1":  "36d11272495b125cd6bb2131ec1de28d185c8e5086994a8a929528bae2020ba1",
                   "test/win32/ipc-instance-addressability.ps1":  "c79c3315cb528318e4ba8532854be31dbba60b2bcef48e5995b3063970a57c30",
