@@ -1,10 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-09-25T15:57:06-07:00",
-    "commit":  "4834bfa68",
+    "generated":  "2026-09-25T17:57:29-07:00",
+    "commit":  "99030094f",
     "uncommitted":  [
-                        "test/win32/session-resume-offset.ps1"
+                        "scripts/guard-due.ps1",
+                        "test/win32/chooser-help-tooltips.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -32,7 +33,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "1b450e907ee0c797f3e89c8d80bbac077e606b3fc42f4ee1356fe7495e6df84b",
+                  "scripts/guard-due.ps1":  "22fd8a8804190c279b711ae32366d8fd08cedb361797eda4118abc7bad30b470",
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -117,6 +118,7 @@
                   "test/win32/chooser-close-chord.ps1":  "a3013aa41320b1c764f5a63df64068b651174f761e486dbddb52da672b3b711a",
                   "test/win32/chooser-conn-pool.ps1":  "f9f574dd490ad406f5e76cf010dae9b21472641218f121449360c4f08d353fbd",
                   "test/win32/chooser-controls.ps1":  "69a8d25a53eba9af41871bfebc202b015c83baebe4df8caa8a33ad7cb991a7d5",
+                  "test/win32/chooser-help-tooltips.ps1":  "12d40267d01d5f8f6629319c532b4ef9f4d83ecb359ab544e474ba58fde11fe5",
                   "test/win32/chooser-kill-hover.ps1":  "c4d65e3d549b4be314cb58a4fd445b0d3d1981417ee9af1600bc551fb95e2ec5",
                   "test/win32/chooser-link-hover.ps1":  "48e4e10db2db05a12a32a073d57bd60e7e7b3f3297a4f1c58a5c897497dd5f48",
                   "test/win32/chooser-menu.ps1":  "9b67ecc23bea9869b7aa2d1522a5f57fb5bcd7476e29c23132ea702b9a95507d",

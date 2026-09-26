@@ -67,6 +67,8 @@ const chooser_layout = @import("chooser_layout.zig");
 const chooser_menu = @import("chooser_menu.zig");
 const chooser_sessions = @import("chooser_sessions.zig");
 const chooser_cpu = @import("chooser_cpu.zig");
+const chooser_help = @import("chooser_help.zig");
+const chooser_tooltip = @import("chooser_tooltip.zig");
 const dial_failure = @import("dial_failure.zig");
 const text_search = @import("text_search.zig");
 const utf16_text = @import("utf16_text.zig");
@@ -248,18 +250,13 @@ link_tracking_leave: bool = false,
 /// (T588). One is armed per entry rather than per mouse-move.
 dialog_tracking_leave: bool = false,
 
-/// The CPU meter's hover tooltip (T812): a native comctl32 track-mode tooltip,
-/// created on first show and destroyed with the dialog. Null until then — a
-/// chooser nobody hovers a meter in never makes one.
-cpu_tip_hwnd: ?w32.HWND = null,
-/// Whether the CPU tooltip is currently activated (visible).
-cpu_tip_shown: bool = false,
-/// The roster row whose meter the pointer is on, or -1. Drives the show delay
-/// the way `hover_row` drives the list wash.
-cpu_tip_row: i32 = -1,
-/// UTF-16 text handed to the tooltip control. The control keeps the POINTER, so
-/// this buffer outlives every message that names it.
-cpu_tip_text: [chooser_cpu.max_help_len + 8]u16 = undefined,
+/// The dialog's hover-help tooltip (T812's CPU tip, generalized in T1633): ONE
+/// native comctl32 control, created on first use and destroyed with the
+/// dialog — see `chooser_tooltip.zig`.
+help_tip: chooser_tooltip.HelpTip = .{},
+/// The surface under the pointer that has help text, or null. Drives the show
+/// delay the way `hover_row` drives the list wash; a CPU meter is `.cpu`.
+help_target: ?chooser_help.Target = null,
 /// Wrapped line count the footer hint is currently laid out for. The dialog
 /// re-lays-out (and resizes) when a new hint needs a different number.
 hint_lines: i32 = 1,
@@ -3087,11 +3084,18 @@ fn listWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(
             // High word non-zero ⇒ the point is outside the client area.
             const outside = (@as(usize, @bitCast(hit)) >> 16) & 0xFFFF != 0;
             const row: i32 = if (outside) -1 else @intCast(hit & 0xFFFF);
-            self.setHover(if (row >= 0 and @as(usize, @intCast(row)) < self.row_count) row else -1);
+            const valid = row >= 0 and @as(usize, @intCast(row)) < self.row_count;
+            self.setHover(if (valid) row else -1);
+            // A machine row's status dot explains itself (T1633). The list
+            // owns this pointer, so the list decides the tip.
+            self.setHelpTarget(if (valid) self.statusDotAt(@intCast(row), loWordSigned(lparam)) else null);
         },
         w32.WM_MOUSELEAVE => {
             self.tracking_leave = false;
             self.setHover(-1);
+            if (self.help_target) |t| {
+                if (t == .machine_status) self.setHelpTarget(null);
+            }
         },
         // T312: the selection WEAKENS when the list stops being the focused
         // control, so a focus change repaints more than the caret row's rim.
@@ -3315,8 +3319,8 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
                 self.pollTick();
                 return 0;
             }
-            if (wparam == CPU_TIP_TIMER_ID) {
-                self.cpuTipTimerFire();
+            if (wparam == HELP_TIP_TIMER_ID) {
+                self.helpTipTimerFire();
                 return 0;
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -3339,6 +3343,10 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
         // hand cursor is set at the one place that already knows.
         w32.WM_SETCURSOR => {
             const over: ?w32.HWND = @ptrFromInt(wparam);
+            // The action buttons' hover help rides the same forward (T1633):
+            // entering one names it here, before comctl32's show delay can
+            // elapse, so its tool is worded for the current selection.
+            self.onSetCursorHelp(over);
             const hot = over == @as(?w32.HWND, self.account_link) and
                 w32.IsWindowVisible(self.account_link) != 0;
             self.setLinkHot(hot);
@@ -3378,13 +3386,18 @@ fn dialogWndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callcon
                 };
                 if (w32.TrackMouseEvent(&tme) != 0) self.dialog_tracking_leave = true;
             }
-            self.onSessionHover(loWordSigned(lparam), hiWordSigned(lparam));
+            self.onDialogHover(loWordSigned(lparam), hiWordSigned(lparam));
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
         w32.WM_MOUSELEAVE => {
             self.dialog_tracking_leave = false;
             self.setKillHover(-1);
-            self.cpuTipOnHoverChange(-1);
+            // Only what the DIALOG paints loses its tip here: this leave also
+            // fires when the pointer enters a child, and a button's or a
+            // status dot's tip belongs to that child's own tracking.
+            if (self.help_target) |t| {
+                if (!t.isControl() and t != .machine_status) self.setHelpTarget(null);
+            }
             return 0;
         },
         w32.WM_LBUTTONDOWN => {
@@ -3541,24 +3554,34 @@ fn clampRosterScroll(self: *MachineChooser) void {
     _ = self.roster.clampScrollTo(view.rows, view.region, self.window.scale);
 }
 
-fn onSessionHover(self: *MachineChooser, x: i32, y: i32) void {
+/// The pointer moved over the dialog's own surface. Everything painted here
+/// that answers the pointer is resolved in one walk — the roster (its Kill
+/// hover and its tips) and the account's email and monogram — so the hover
+/// wash and the tooltip can never disagree about what is under the pointer.
+fn onDialogHover(self: *MachineChooser, x: i32, y: i32) void {
+    self.setHelpTarget(self.dialogHelpAt(x, y));
+}
+
+/// What the dialog surface answers at client point (x, y), updating the Kill
+/// hover on the way (the two ride one roster walk).
+fn dialogHelpAt(self: *MachineChooser, x: i32, y: i32) ?chooser_help.Target {
     var buf: [SessionRoster.max_rows]SessionRoster.VisibleRow = undefined;
-    const view = self.sessionView(&buf) orelse {
+    if (self.sessionView(&buf)) |view| {
+        const scale = self.window.scale;
+        const hit = self.roster.killAt(view.rows, view.region, scale, x, y);
+        self.setKillHover(if (hit) |i| @intCast(i) else -1);
+        if (hit) |i| return .{ .end_session = i };
+        // The meter's tooltip rides the same pointer walk (T812). Tested after
+        // Kill for the same reason the click is: one point can answer both, and
+        // the button is the more specific of the two - though in practice the
+        // two sit at opposite ends of a card and never overlap.
+        if (self.roster.cpuAt(view.rows, view.region, scale, x, y)) |i| return .{ .cpu = i };
+        if (self.roster.headerKeyAt(view.rows, view.header, scale, x, y)) |k| return .{ .sort_header = k };
+    } else {
         self.setKillHover(-1);
-        self.cpuTipOnHoverChange(-1);
-        return;
-    };
-    const hit = self.roster.killAt(view.rows, view.region, self.window.scale, x, y);
-    self.setKillHover(if (hit) |i| @intCast(i) else -1);
-    // The meter's tooltip rides the same pointer walk (T812). Tested after
-    // Kill for the same reason the click is: one point can answer both, and
-    // the button is the more specific of the two - though in practice the two
-    // sit at opposite ends of a card and never overlap.
-    const on_meter = if (hit != null)
-        null
-    else
-        self.roster.cpuAt(view.rows, view.region, self.window.scale, x, y);
-    self.cpuTipOnHoverChange(if (on_meter) |i| @intCast(i) else -1);
+    }
+    if (self.accountHelpHit(x, y)) return .account;
+    return null;
 }
 
 fn setKillHover(self: *MachineChooser, index: i32) void {
@@ -3567,24 +3590,131 @@ fn setKillHover(self: *MachineChooser, index: i32) void {
     self.refreshSessions();
 }
 
+fn rectHas(r: chooser_layout.Rect, x: i32, y: i32) bool {
+    return r.left <= x and x < r.right and r.top <= y and y < r.bottom;
+}
+
+/// Whether (x, y) is on the signed-in account's email or monogram. Mac puts
+/// "Signed in as <email>" on the email (`MachineChooserView.swift:1284`); the
+/// monogram is the same identity mark beside it, and the email is the one
+/// here that gets middle-truncated, so both answer. The band is tested first
+/// so an ordinary move pays no text measurement.
+fn accountHelpHit(self: *MachineChooser, x: i32, y: i32) bool {
+    if (self.email == null or self.accountState() != .signed_in) return false;
+    const l = layout(self.window.scale, self.hint_lines);
+    if (!rectHas(l.account.band, x, y)) return false;
+    const row = chooser_layout.accountRow(l, .signed_in, self.measureAccount(.signed_in));
+    if (rectHas(row.text, x, y)) return true;
+    if (row.avatar) |a| return rectHas(a, x, y);
+    return false;
+}
+
+/// The status dot's help target for machine-list row `row` at list-client
+/// `x`, or null — the Local row has no dot, and neither does anything past it.
+fn statusDotAt(self: *const MachineChooser, row: usize, x: i32) ?chooser_help.Target {
+    if (row >= self.row_count) return null;
+    if (self.rows[row] == .local) return null;
+    var r: w32.RECT = undefined;
+    if (w32.SendMessageW(self.list, w32.LB_GETITEMRECT, row, @bitCast(@intFromPtr(&r))) < 0) return null;
+    const m = chooser_rows.rowMetrics(self.window.scale);
+    if (!chooser_help.statusColumnHit(m, x - r.left)) return null;
+    return .{ .machine_status = row };
+}
+
 // ---------------------------------------------------------------------
-// The CPU meter's hover explanation (T812)
+// Hover help (T812 for the CPU meter, generalized in T1633)
 // ---------------------------------------------------------------------
 //
-// Mac's `cpuMeterHelp` on a `.help()` modifier; here the same words on a
-// native track-mode tooltip, on the `Window.zig` tab-tooltip pattern - a show
-// delay armed by the hover the roster already tracks, and a comctl32 control
-// the system draws itself (design system: a native tooltip inherits the OS
-// styling and is left alone, never owner-drawn). Text derivation is pure
-// (`chooser_cpu.helpText`, none-lane tested); this block is only the plumbing.
+// Mac's `.help()` modifiers; here the same words on ONE native comctl32
+// tooltip (`chooser_tooltip.zig`). A painted surface gets a show delay armed by
+// the hover this dialog already tracks and a track-mode tip placed by hand; a
+// real child button gets a subclass tool whose showing is comctl32's own. Text
+// derivation is pure (`chooser_help`, `chooser_cpu.helpText`, none-lane
+// tested); this block is the state machine and the placement.
 
-/// The CPU tooltip's show delay, on this dialog's own timer id space (the poll
-/// is 1) - so it is not a `msg_timer` id.
-const CPU_TIP_TIMER_ID: usize = 2;
+/// The help tooltip's show delay, on this dialog's own timer id space (the
+/// poll is 1) - so it is not a `msg_timer` id.
+const HELP_TIP_TIMER_ID: usize = 2;
 
-/// The text for roster row `idx`, or null when it has no reading to explain.
-/// Re-derived at show time rather than frozen at hover time, so the number in
-/// the tip is the number on the meter.
+/// The action buttons that carry a subclass tool, and their targets.
+fn controlFor(t: chooser_help.Target) ?chooser_tooltip.Control {
+    return switch (t) {
+        .new_window => .new_window,
+        .restore_all => .restore_all,
+        .activity => .activity,
+        .manage => .manage,
+        else => null,
+    };
+}
+
+fn controlHwnd(self: *const MachineChooser, c: chooser_tooltip.Control) w32.HWND {
+    return switch (c) {
+        .new_window => self.primary_btn,
+        .restore_all => self.restore_all_btn,
+        .activity => self.activity_btn,
+        .manage => self.menu_btn,
+    };
+}
+
+/// `WM_SETCURSOR` names the window under the pointer, and a child button
+/// forwards it here - so entering an action button, and moving off one onto
+/// anything else in the dialog, are both seen at this one place. (Leaving a
+/// button straight out of the window is comctl32's to notice: its subclass
+/// tool sees the button's own messages.)
+fn onSetCursorHelp(self: *MachineChooser, over: ?w32.HWND) void {
+    const h = over orelse return;
+    const target: ?chooser_help.Target =
+        if (h == self.primary_btn) .new_window else if (h == self.restore_all_btn) .restore_all else if (h == self.activity_btn) .activity else if (h == self.menu_btn) .manage else null;
+    if (target) |t| {
+        self.setHelpTarget(t);
+        return;
+    }
+    // Over anything else: a button's tip is over. A painted surface's tip is
+    // left to the `WM_MOUSEMOVE` that follows, which knows the point.
+    if (self.help_target) |cur| {
+        if (cur.isControl()) self.setHelpTarget(null);
+    }
+}
+
+/// The text for `t`, or null when there is nothing to explain right now (no
+/// reading on a meter, no selection, the Local row's absent "..."). Derived
+/// at show time as well as hover time, so the words are always the current
+/// ones - the number in the CPU tip is the number on the meter.
+fn helpTextFor(self: *MachineChooser, t: chooser_help.Target, out: []u8) ?[]const u8 {
+    return switch (t) {
+        .cpu => |i| self.cpuTipTextFor(i, out),
+        .end_session => chooser_help.end_session,
+        .sort_header => |k| chooser_help.sortHeader(out, self.roster.sort, k),
+        .new_window => chooser_help.newWindow(out, self.detailTitle() orelse return null),
+        .restore_all => chooser_help.restore_all,
+        .activity => chooser_help.activity(out, self.detailTitle() orelse return null),
+        .manage => switch (self.selectedRow() orelse return null) {
+            .local => null,
+            .device => |i| chooser_help.manage(out, self.devices[i].name),
+        },
+        .account => chooser_help.signedIn(out, self.email orelse return null),
+        .machine_status => |row| blk: {
+            if (row >= self.row_count) break :blk null;
+            break :blk switch (self.rows[row]) {
+                .local => null,
+                .device => |i| chooser_help.machineStatus(self.presence(i)),
+            };
+        },
+    };
+}
+
+/// The detail pane's title for the selected row - Mac's `detailTitle`: "This
+/// PC" for the local machine (the win32 name for Mac's "This Mac"), the
+/// device's name otherwise.
+fn detailTitle(self: *const MachineChooser) ?[]const u8 {
+    return switch (self.selectedRow() orelse return null) {
+        .local => chooser_rows.localDetail().title,
+        .device => |i| self.devices[i].name,
+    };
+}
+
+/// The text for roster row `idx`'s CPU meter, or null when it has no reading
+/// to explain.
 fn cpuTipTextFor(self: *MachineChooser, idx: usize, out: []u8) ?[]const u8 {
     var buf: [SessionRoster.max_rows]SessionRoster.VisibleRow = undefined;
     const view = self.sessionView(&buf) orelse return null;
@@ -3593,170 +3723,172 @@ fn cpuTipTextFor(self: *MachineChooser, idx: usize, out: []u8) ?[]const u8 {
     return chooser_cpu.helpText(out, pct, self.cpu.intervalMs());
 }
 
-/// The TOOLINFOW naming this dialog's single CPU tool. Rebuilt per call - the
-/// control identifies the tool by (hwnd, uId); everything else rides along.
-fn cpuTipToolInfo(self: *MachineChooser) w32.TOOLINFOW {
-    return .{
-        .cbSize = @sizeOf(w32.TOOLINFOW),
-        .uFlags = w32.TTF_TRACK | w32.TTF_ABSOLUTE,
-        .hwnd = self.hwnd,
-        .uId = 1,
-        .rect = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
-        .hinst = null,
-        .lpszText = @ptrCast(&self.cpu_tip_text),
-        .lParam = 0,
-        .lpReserved = null,
-    };
-}
-
 /// Create the tooltip control on first use, on the dialog's own theme answer.
-/// The chooser is closed and rebuilt on a theme change, so unlike the window's
-/// tab tip this one needs no mid-life reset.
-fn cpuTipEnsure(self: *MachineChooser) ?w32.HWND {
-    if (self.cpu_tip_hwnd) |h| return h;
-    const hwnd = self.hwnd;
-
-    var icc = w32.INITCOMMONCONTROLSEX{
-        .dwSize = @sizeOf(w32.INITCOMMONCONTROLSEX),
-        .dwICC = w32.ICC_TAB_CLASSES,
-    };
-    _ = w32.InitCommonControlsEx(&icc);
-
-    const tip = w32.CreateWindowExW(
-        w32.WS_EX_TOPMOST | w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE,
-        w32.TOOLTIPS_CLASS,
-        std.unicode.utf8ToUtf16LeStringLiteral(""),
-        w32.WS_POPUP | w32.TTS_ALWAYSTIP | w32.TTS_NOPREFIX,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        w32.CW_USEDEFAULT,
-        hwnd,
-        null,
-        self.window.app.hinstance,
-        null,
-    ) orelse return null;
-
+fn helpTipEnsure(self: *MachineChooser) ?w32.HWND {
     const tip_bg = self.window.app.config.background;
-    if (chrome_theme.isDark(
+    const dark = chrome_theme.isDark(
         self.window.app.config.@"window-theme",
         .{ .r = tip_bg.r, .g = tip_bg.g, .b = tip_bg.b },
         Window.systemUsesLightTheme(),
-    )) {
-        _ = w32.SetWindowTheme(
-            tip,
-            std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"),
-            null,
-        );
+    );
+    return self.help_tip.ensure(self.hwnd, self.window.app.hinstance, dark);
+}
+
+/// Hide the tooltip, cancel any pending show and destroy the control. Called
+/// when the dialog goes away; the next chooser makes its own on the theme it
+/// opens under.
+fn helpTipDestroy(self: *MachineChooser) void {
+    _ = w32.KillTimer(self.hwnd, HELP_TIP_TIMER_ID);
+    self.help_target = null;
+    self.help_tip.destroy(self.hwnd);
+}
+
+/// The pointer moved onto a different help surface (or off them all): hide
+/// the tip, and arm a fresh delay when a painted surface is under the pointer,
+/// or re-word a button's own tool when it is a button.
+///
+/// Also the debug oracle, logged at HOVER time because the background test
+/// desktop cannot hold a hover across the show delay (T233) - the trigger is
+/// read from these lines while the timing stays unobserved:
+///
+/// - `chooser cpu tooltip row=<i> text=<text>` / `chooser cpu tooltip dropped`
+///   for a CPU meter, EXACTLY as T812 wrote them (`chooser-session-cpu.ps1`
+///   greps both);
+/// - `chooser help tooltip target=<kind ...> text=<text>` for every other
+///   surface, and `chooser help tooltip dropped target=<kind ...>` when the
+///   pointer leaves one for nothing (`chooser-help-tooltips.ps1`).
+fn setHelpTarget(self: *MachineChooser, new: ?chooser_help.Target) void {
+    const old = self.help_target;
+    if (old == null and new == null) return;
+    if (old != null and new != null and old.?.eql(new.?)) return;
+    self.help_target = new;
+    _ = w32.KillTimer(self.hwnd, HELP_TIP_TIMER_ID);
+    self.help_tip.hide(self.hwnd);
+
+    if (old) |o| logHelpDrop(o, new);
+    const t = new orelse return;
+
+    var buf: [chooser_help.max_len]u8 = undefined;
+    const text = self.helpTextFor(t, &buf);
+    logHelpHover(t, text);
+
+    if (controlFor(t)) |c| {
+        // comctl32 shows this one: keep the tool's words current, nothing more.
+        const tip = self.helpTipEnsure() orelse return;
+        self.help_tip.setControlText(self.hwnd, tip, c, self.controlHwnd(c), text orelse "");
+        return;
     }
-
-    self.cpu_tip_text[0] = 0;
-    var ti = self.cpuTipToolInfo();
-    _ = w32.SendMessageW(tip, w32.TTM_ADDTOOLW, 0, @bitCast(@intFromPtr(&ti)));
-    // A max width is what makes a newline break lines - the throttling line
-    // under the units line. Without one the control renders both on one line.
-    _ = w32.SendMessageW(tip, w32.TTM_SETMAXTIPWIDTH, 0, 0x7FFF);
-    self.cpu_tip_hwnd = tip;
-    return tip;
+    _ = w32.SetTimer(self.hwnd, HELP_TIP_TIMER_ID, w32.GetDoubleClickTime(), null);
 }
 
-/// Hide the tooltip and cancel any pending show. Safe from any state - "no
-/// tooltip and none scheduled" is the postcondition.
-fn cpuTipHide(self: *MachineChooser) void {
-    _ = w32.KillTimer(self.hwnd, CPU_TIP_TIMER_ID);
-    if (!self.cpu_tip_shown) return;
-    self.cpu_tip_shown = false;
-    const tip = self.cpu_tip_hwnd orelse return;
-    var ti = self.cpuTipToolInfo();
-    _ = w32.SendMessageW(tip, w32.TTM_TRACKACTIVATE, 0, @bitCast(@intFromPtr(&ti)));
-}
-
-/// Destroy the control. Called when the dialog goes away; the next chooser
-/// makes its own on the theme it opens under.
-fn cpuTipDestroy(self: *MachineChooser) void {
-    self.cpuTipHide();
-    self.cpu_tip_row = -1;
-    const tip = self.cpu_tip_hwnd orelse return;
-    self.cpu_tip_hwnd = null;
-    _ = w32.DestroyWindow(tip);
-}
-
-/// The pointer moved onto a different meter (or off them): hide the tip, and
-/// arm a fresh delay when a meter is under the pointer. Also the debug oracle
-/// for `test\win32\chooser-cpu-tooltip.ps1` - the derived text is logged at
-/// HOVER time, because the background test desktop cannot hold a hover across
-/// the show delay (T233), so the trigger is read from this line while the
-/// timing stays unobserved.
-fn cpuTipOnHoverChange(self: *MachineChooser, new_row: i32) void {
-    if (self.cpu_tip_row == new_row) return;
-    self.cpu_tip_row = new_row;
-    self.cpuTipHide();
-    if (new_row < 0) {
-        // Said out loud rather than returned quietly: "the tip was DROPPED" is
-        // half of what the acceptance script scores, and a silent exit here
-        // would be indistinguishable from a hover that never arrived.
+/// Say that `old`'s tip went away. Said out loud rather than returned quietly:
+/// "the tip was DROPPED" is half of what the acceptance scripts score, and a
+/// silent exit would be indistinguishable from a hover that never arrived.
+fn logHelpDrop(old: chooser_help.Target, new: ?chooser_help.Target) void {
+    if (old == .cpu) {
+        // T812's line, T812's rule: one meter to another is a move, not a drop.
+        if (new) |n| {
+            if (n == .cpu) return;
+        }
         log.debug("chooser cpu tooltip dropped", .{});
         return;
     }
-    _ = w32.SetTimer(self.hwnd, CPU_TIP_TIMER_ID, w32.GetDoubleClickTime(), null);
+    // Moving straight to another surface is announced by that surface's own
+    // line; only "onto nothing" is a drop.
+    if (new != null) return;
+    var d: [64]u8 = undefined;
+    log.debug("chooser help tooltip dropped target={s}", .{old.describe(&d)});
+}
 
-    var buf: [chooser_cpu.max_help_len + 8]u8 = undefined;
-    if (self.cpuTipTextFor(@intCast(new_row), &buf)) |txt| {
-        // The oracle stays ONE line: the throttled tip's newline is logged as
-        // a literal backslash-n so a grep of this line cannot be split in two.
-        var esc: [2 * (chooser_cpu.max_help_len + 8)]u8 = undefined;
-        var n: usize = 0;
-        for (txt) |c| {
-            if (c == '\n') {
-                esc[n] = '\\';
-                esc[n + 1] = 'n';
-                n += 2;
-            } else {
-                esc[n] = c;
-                n += 1;
-            }
-        }
-        log.debug("chooser cpu tooltip row={d} text={s}", .{ new_row, esc[0..n] });
-    } else {
-        log.debug("chooser cpu tooltip row={d} text=<none>", .{new_row});
+fn logHelpHover(t: chooser_help.Target, text: ?[]const u8) void {
+    // The oracle stays ONE line: the throttled CPU tip's newline is logged as a
+    // literal backslash-n so a grep of this line cannot be split in two.
+    var esc: [2 * chooser_help.max_len]u8 = undefined;
+    const shown: []const u8 = if (text) |s| chooser_help.escapeNewlines(&esc, s) else "<none>";
+    switch (t) {
+        .cpu => |i| log.debug("chooser cpu tooltip row={d} text={s}", .{ i, shown }),
+        else => {
+            var d: [64]u8 = undefined;
+            log.debug("chooser help tooltip target={s} text={s}", .{ t.describe(&d), shown });
+        },
     }
 }
 
-/// The show delay elapsed with the pointer still on a meter: place the tip just
-/// under the meter's column and activate it.
-fn cpuTipTimerFire(self: *MachineChooser) void {
-    const hwnd = self.hwnd;
-    _ = w32.KillTimer(hwnd, CPU_TIP_TIMER_ID);
-    if (self.cpu_tip_row < 0) return;
-    const idx: usize = @intCast(self.cpu_tip_row);
+/// The show delay elapsed with the pointer still on a painted surface: place
+/// the tip just under it and activate it. A button's tip is comctl32's own and
+/// never reaches here.
+fn helpTipTimerFire(self: *MachineChooser) void {
+    _ = w32.KillTimer(self.hwnd, HELP_TIP_TIMER_ID);
+    const t = self.help_target orelse return;
+    if (t.isControl()) return;
 
-    var buf: [chooser_cpu.max_help_len + 8]u8 = undefined;
-    const text = self.cpuTipTextFor(idx, &buf) orelse return;
-    const len16 = std.unicode.utf8ToUtf16Le(
-        self.cpu_tip_text[0 .. self.cpu_tip_text.len - 1],
-        text,
-    ) catch return;
-    self.cpu_tip_text[len16] = 0;
-
-    const tip = self.cpuTipEnsure() orelse return;
-    var ti = self.cpuTipToolInfo();
-    _ = w32.SendMessageW(tip, w32.TTM_UPDATETIPTEXTW, 0, @bitCast(@intFromPtr(&ti)));
-
-    const at = self.cpuTipAnchor(idx) orelse return;
-    var pt = w32.POINT{ .x = at.x, .y = at.y };
-    _ = w32.ClientToScreen(hwnd, &pt);
-    const pos: isize = @bitCast(@as(usize, @as(u16, @bitCast(@as(i16, @truncate(pt.x))))) |
-        (@as(usize, @as(u16, @bitCast(@as(i16, @truncate(pt.y))))) << 16));
-    _ = w32.SendMessageW(tip, w32.TTM_TRACKPOSITION, 0, pos);
-    _ = w32.SendMessageW(tip, w32.TTM_TRACKACTIVATE, 1, @bitCast(@intFromPtr(&ti)));
-    self.cpu_tip_shown = true;
-    log.debug("chooser cpu tooltip shown row={d}", .{idx});
+    var buf: [chooser_help.max_len]u8 = undefined;
+    const text = self.helpTextFor(t, &buf) orelse return;
+    if (text.len == 0) return;
+    const tip = self.helpTipEnsure() orelse return;
+    const at = self.helpAnchor(t) orelse return;
+    if (!self.help_tip.showTrack(self.hwnd, tip, text, at)) return;
+    switch (t) {
+        .cpu => |i| log.debug("chooser cpu tooltip shown row={d}", .{i}),
+        else => {
+            var d: [64]u8 = undefined;
+            log.debug("chooser help tooltip shown target={s}", .{t.describe(&d)});
+        },
+    }
 }
 
-/// Where the tip's top-left sits in client coordinates: under the meter's own
-/// column, at its left edge, with the design system's 4 DIP clearance - the
-/// reading position for a label about that meter.
-fn cpuTipAnchor(self: *MachineChooser, idx: usize) ?struct { x: i32, y: i32 } {
+fn toScreen(hwnd: w32.HWND, x: i32, y: i32) w32.POINT {
+    var pt = w32.POINT{ .x = x, .y = y };
+    _ = w32.ClientToScreen(hwnd, &pt);
+    return pt;
+}
+
+/// Where a painted surface's tip puts its top-left, in SCREEN coordinates:
+/// under the surface, at its leading edge, with the design system's 4 DIP
+/// clearance - the reading position for a label about that thing.
+fn helpAnchor(self: *MachineChooser, t: chooser_help.Target) ?w32.POINT {
+    const scale = self.window.scale;
+    const gap: i32 = @intFromFloat(@round(4.0 * scale));
+    switch (t) {
+        .cpu => |i| {
+            const l = self.rosterRowLayout(i) orelse return null;
+            return toScreen(self.hwnd, l.cpu.left, l.cpu.bottom + gap);
+        },
+        .end_session => |i| {
+            const l = self.rosterRowLayout(i) orelse return null;
+            return toScreen(self.hwnd, l.kill.left, l.kill.bottom + gap);
+        },
+        .sort_header => |k| {
+            var buf: [SessionRoster.max_rows]SessionRoster.VisibleRow = undefined;
+            const view = self.sessionView(&buf) orelse return null;
+            const zones = self.roster.headerZones(view.header, scale);
+            const zone = switch (k) {
+                .cpu => zones.cpu orelse return null,
+                .name => zones.name,
+            };
+            return toScreen(self.hwnd, zone.left, zone.bottom + gap);
+        },
+        .account => {
+            const l = layout(scale, self.hint_lines);
+            const row = chooser_layout.accountRow(l, .signed_in, self.measureAccount(.signed_in));
+            const bottom = if (row.avatar) |a| @max(a.bottom, row.text.bottom) else row.text.bottom;
+            return toScreen(self.hwnd, row.text.left, bottom + gap);
+        },
+        .machine_status => |row| {
+            if (row >= self.row_count) return null;
+            var r: w32.RECT = undefined;
+            if (w32.SendMessageW(self.list, w32.LB_GETITEMRECT, row, @bitCast(@intFromPtr(&r))) < 0) return null;
+            const m = chooser_rows.rowMetrics(scale);
+            const dot_left = r.left + m.status_cx - @divTrunc(m.dot_d, 2);
+            return toScreen(self.list, dot_left, r.top + m.status_cy + @divTrunc(m.dot_d, 2) + gap);
+        },
+        .new_window, .restore_all, .activity, .manage => return null,
+    }
+}
+
+/// Roster row `idx`'s card layout as currently displayed, or null when it is
+/// not on screen.
+fn rosterRowLayout(self: *MachineChooser, idx: usize) ?chooser_sessions.RowLayout {
     var buf: [SessionRoster.max_rows]SessionRoster.VisibleRow = undefined;
     const view = self.sessionView(&buf) orelse return null;
     if (idx >= view.rows.len) return null;
@@ -3772,11 +3904,8 @@ fn cpuTipAnchor(self: *MachineChooser, idx: usize) ?struct { x: i32, y: i32 } {
             subs,
             self.roster.cpu_column,
         );
+        if (i == idx) return l;
         cy = l.card.bottom + m.row_gap;
-        if (i == idx) {
-            const gap: i32 = @intFromFloat(@round(4.0 * self.window.scale));
-            return .{ .x = l.cpu.left, .y = l.cpu.bottom + gap };
-        }
     }
     return null;
 }
@@ -4673,10 +4802,10 @@ fn close(self: *MachineChooser, refocus_owner: bool) void {
         self.poll_armed = false;
     }
 
-    // The CPU tooltip is a POPUP, not a child, so `DestroyWindow` on the dialog
-    // does not take it: an un-destroyed one would outlive the chooser as a
-    // floating strip of text over the desktop (T812).
-    self.cpuTipDestroy();
+    // The help tooltip is a POPUP, not a child, so `DestroyWindow` on the
+    // dialog does not take it: an un-destroyed one would outlive the chooser as
+    // a floating strip of text over the desktop (T812).
+    self.helpTipDestroy();
 
     // Put the link's own proc back before the dialog's userdata goes, else the
     // subclass loses its way to `self` and would answer the teardown's button

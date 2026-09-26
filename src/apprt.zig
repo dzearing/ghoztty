@@ -486,6 +486,11 @@ test {
     // store one pushed frame lands in (T462), same no-OS-imports deal.
     _ = @import("apprt/win32/chooser_cpu.zig");
 
+    // Pure win32 machine-chooser hover help — which surface is under the
+    // pointer and the sentence each one answers with, Mac's `.help()` text
+    // word for word (T1633), same no-OS-imports deal.
+    _ = @import("apprt/win32/chooser_help.zig");
+
     // Pure win32 machine connection-pool bookkeeping — endpoint keying, the
     // lease refcount and the re-dial policy behind one warm connection per
     // remote machine (T461), same no-OS-imports deal.

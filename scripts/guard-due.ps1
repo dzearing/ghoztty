@@ -3153,7 +3153,27 @@ $GuardTable = @(
         Covers = @(
             'src\apprt\win32\SessionCpuProbe.zig',
             'src\apprt\win32\chooser_cpu.zig',
+            # The meter's tooltip control moved here in T1633 (section G).
+            'src\apprt\win32\chooser_tooltip.zig',
             'test\win32\chooser-session-cpu.ps1'
+        )
+    },
+    # The chooser's HOVER HELP (T1633): Mac's `.help()` text on every surface
+    # the win32 chooser has - the End button, the column headers, the account,
+    # a machine's status dot and the four action buttons - through the one
+    # native tooltip control T812 introduced. The failure is silent by
+    # construction (a tooltip that stopped appearing leaves nothing on screen to
+    # notice), and no floor lane opens the chooser. Coverage is the pure text
+    # module, the tooltip plumbing and the harness; MachineChooser.zig is
+    # deliberately not here (see the `chooser-resume` row for that call).
+    [pscustomobject]@{
+        Name   = 'chooser-help-tooltips'
+        Script = 'test\win32\chooser-help-tooltips.ps1'
+        Stamp  = 'test\win32\chooser-help-tooltips.stamp.json'
+        Covers = @(
+            'src\apprt\win32\chooser_help.zig',
+            'src\apprt\win32\chooser_tooltip.zig',
+            'test\win32\chooser-help-tooltips.ps1'
         )
     },
     # The chooser's session RESUME (T320/T620/T816): taking over a live session

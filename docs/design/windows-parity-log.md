@@ -33964,3 +33964,18 @@ when the last subscriber is gone. There is no wire change. `unsubscribeMetrics`
 now takes the `ctx`; the callers updated are the win32 panel, dial and probe
 code, the embedded C API (same signature for Swift) and test_client. Five new
 tests; floor lanes and every due harness ALL PASS.
+
+## 2026-09-25 - T1633: the machine chooser explains its controls on hover, like Mac
+
+Before this, the CPU meter was the only thing in the win32 chooser with hover
+text. Now End, the sort headers, the signed-in account, a machine's status dot,
+New Window, Restore All, Activity and Manage ("...") each show Mac's `.help()`
+wording. T812's CPU tip was generalised into one dialog tooltip. Owner-drawn
+surfaces use a track tip placed after the show delay, and the four real buttons
+use a subclassed tool. All text comes from the new pure `chooser_help.zig`
+(13 none-lane tests). Mac's session-count badge and the Show/Resume row buttons
+have no win32 control yet, so they are marked n/a and filed as T1745/T1746.
+Also filed: T1744, because `TTF_SUBCLASS` in `win32.zig` holds `TTF_IDISHWND`'s
+value, and T1747, because the local row has no Activity button. New acceptance
+script `chooser-help-tooltips.ps1` (ALL PASS, 49), with a demonstrated
+negative. Floor lanes, P1-P3, the harness floor and every due guard are green.
