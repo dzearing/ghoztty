@@ -337,6 +337,11 @@ pill_font: ?*anyopaque = null,
 /// DPI scale factor (DPI / 96.0).
 scale: f32 = 1.0,
 
+/// The rung the update badge was last painted at, so a change of colour is
+/// logged once rather than on every repaint (T1674). Null until a badge has
+/// been painted in this window.
+painted_update_urgency: ?update_badge.Urgency = null,
+
 /// Hit-test rectangles for each tab in the tab bar. Zero-initialized
 /// so input handlers that read it before the first paint (e.g., a
 /// synthetic WM_LBUTTONDOWN during startup) get a no-match instead of
@@ -8194,6 +8199,13 @@ fn paintUpdateDot(
 
     const m = update_badge.Metrics.init(self.scale);
     const ink = update_badge.dotColor(band, pending.urgency);
+    if (self.painted_update_urgency != pending.urgency) {
+        // The colour the user can actually see changed. Logged at the paint,
+        // not at the decision, because the defect this watches for (T1674) is
+        // a rung that was due and never reached the screen.
+        log.info("update badge painted {t} for win-v{s}", .{ pending.urgency, pending.version });
+        self.painted_update_urgency = pending.urgency;
+    }
 
     // The band-colored moat first, then the dot inside it.
     fillEllipse(mem_dc, .{

@@ -44,6 +44,9 @@
 #  13. an AUTOMATIC offer survives a DEAD TRAY (T1566): the balloon is
 #      swallowed, and the menu affordance and the on-disk offer go up anyway,
 #      so the next launch still says an update is waiting
+#  14. the badge's colour ESCALATES on a window nobody touches (T1674): a
+#      suppressed re-check repaints, so crossing the two-day line mid-run turns
+#      the dot amber with no input at all
 param([string]$ExePath)
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
@@ -463,6 +466,34 @@ Assert ($log13b -match 'restored pending update offer win-v9\.9\.9') 'autotrayde
 # Negative control (T1133): without an offer, no affordance line is logged,
 # so the assertion above cannot be satisfied by a line that always prints.
 Assert ($log3 -notmatch 'update affordance up') 'autotraydead (negative control): an up-to-date check raises no affordance'
+Remove-Item $offerPath -ErrorAction SilentlyContinue
+
+# -- 14. the escalation reaches a window NOBODY TOUCHES (T1674) ------------
+# The badge's colour is decided at paint time, and the only thing that forced a
+# paint on its own was a NEW offer. A re-check that finds the same version is
+# suppressed (scenario 6), so an idle window could wear green for a day past the
+# two-day amber line. The suppressed arm now repaints.
+#
+# Staged so the line is crossed MID-RUN with no input at all: the record says
+# the offer went out two days ago less $marginMs, the launch check paints the
+# badge green, and a suppressed re-check after the line must repaint it amber.
+$marginMs = 9000
+$staleAfterMs = [int64]2 * 24 * 60 * 60 * 1000
+$first14 = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() - $staleAfterMs + $marginMs
+[IO.File]::WriteAllText($offerPath, "version=9.9.9`nfirst_offered_ms=$first14`n")
+$env:GHOZTTY_UPDATE_RECHECK_MS = '3000'
+try {
+    $log14 = Run-Scenario 'idle-escalation' (New-Feed 'idle.json' $feedNewer) 20
+} finally {
+    Remove-Item Env:GHOZTTY_UPDATE_RECHECK_MS -ErrorAction SilentlyContinue
+}
+Assert ($log14 -match 'update badge painted available for win-v9\.9\.9') 'idle: the badge first went up green, inside the two-day line'
+Assert ($log14 -match 'win-v9\.9\.9 already offered; not re-notifying') 'idle: the re-checks were the SUPPRESSED kind - nothing new was offered'
+$refreshAt = $log14.IndexOf('update affordance refreshed for win-v9.9.9 (urgency=stale)')
+$amberAt = $log14.IndexOf('update badge painted stale for win-v9.9.9')
+Assert ($refreshAt -ge 0) 'idle: a suppressed re-check past the line refreshed the badge at the new rung'
+Assert ($amberAt -gt $refreshAt -and $refreshAt -ge 0) 'idle: and the amber dot was PAINTED after that refresh, with nobody touching the window'
+Assert (([regex]::Matches($log14, 'showing update balloon for win-v9\.9\.9')).Count -le 1) 'idle: the refresh repainted without re-announcing the offer'
 Remove-Item $offerPath -ErrorAction SilentlyContinue
 
 

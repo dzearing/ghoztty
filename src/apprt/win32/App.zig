@@ -8775,8 +8775,14 @@ const UPDATE_URL = "https://api.github.com/repos/dzearing/ghoztty/releases?per_p
 /// balloon (T1565).
 /// wparam == 0 carries manual-check feedback instead: lparam 0 = up to
 /// date, 1 = check failed, 2 = a download failed (only posted for checks the
-/// user asked for, or for a download the user consented to).
+/// user asked for, or for a download the user consented to) — or
+/// `update_refresh_code`, which is not feedback at all (T1674).
 const WM_APP_UPDATE_AVAILABLE: u32 = w32.WM_APP + 2;
+
+/// wparam == 0 lparam for "an automatic check re-found the offer already on
+/// screen": nothing to say, but the badge is repainted so its colour catches up
+/// with how long the offer has been outstanding (T1674).
+const update_refresh_code: isize = 4;
 
 /// What a completed update check hands the GUI thread. Heap-allocated and
 /// handed over by pointer rather than assembled from wparam/lparam widths:
@@ -9098,6 +9104,18 @@ fn refreshUpdateAffordance(self: *App) void {
     }
 }
 
+/// An automatic check found the offer that is already on screen (T1674).
+/// Repaint so the badge's rung is recomputed against `now`, and say which rung
+/// that is — the log line is how an idle window's escalation is observable at
+/// all, since nothing else about this path is visible until the colour moves.
+fn refreshOutstandingOffer(self: *App) void {
+    const pending = self.pendingUpdate() orelse return;
+    self.refreshUpdateAffordance();
+    log.info("update affordance refreshed for win-v{s} (urgency={t})", .{
+        pending.version, pending.urgency,
+    });
+}
+
 /// Read the persisted "last checked at" timestamp; return true if
 /// it's missing/stale. Updates the file with the current timestamp on
 /// the way out so a successful return throttles the next call.
@@ -9255,6 +9273,12 @@ fn runUpdateCheck(
     if (decision == .suppress) {
         log.info("update check: win-v{s} already offered; not re-notifying", .{release.version});
         release.deinit(alloc);
+        // Quiet is not the same as idle (T1674). The badge's colour is decided
+        // at paint time from how long the offer has been outstanding, and until
+        // now only a NEW offer forced a paint - so a window nobody touched could
+        // wear yesterday's green a day past the amber line. The check already
+        // knows the offer is still out; a repaint is all that knowledge costs.
+        postUpdateFeedback(app, update_refresh_code);
         return .suppressed;
     }
 
@@ -11584,8 +11608,10 @@ fn msgWndProc(
         // consented to finished, so it installs without asking twice;
         // lparam 3 = a manual check found it, answered in a window (T1565).
         // wparam == 0 is feedback (lparam 0 = up to date, 1 = check failed,
-        // 2 = download failed).
-        if (wparam != 0) {
+        // 2 = download failed), or a silent badge refresh (T1674).
+        if (wparam == 0 and lparam == update_refresh_code) {
+            app.refreshOutstandingOffer();
+        } else if (wparam != 0) {
             const found: *UpdateFound = @ptrFromInt(wparam);
             defer found.destroy(app.core_app.alloc);
             if (lparam == 3) {
