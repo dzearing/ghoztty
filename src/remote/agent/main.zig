@@ -2314,33 +2314,14 @@ fn serveOne(
     srv.shutdown();
 }
 
-/// This machine's hostname for HELLO display, or null if unavailable. On Windows
-/// we ask for the DNS hostname (preserves case, matches `hostname` output) rather
-/// than %COMPUTERNAME% (uppercased NetBIOS name).
-fn hostName(out: []u8) ?[]const u8 {
-    if (comptime builtin.os.tag == .windows) {
-        var wbuf: [256]u16 = undefined;
-        var size: u32 = wbuf.len;
-        // 1 == ComputerNameDnsHostname
-        if (win32.GetComputerNameExW(1, &wbuf, &size) == 0) return null;
-        const n = std.unicode.utf16LeToUtf8(out, wbuf[0..size]) catch return null;
-        return if (n == 0) null else out[0..n];
-    } else {
-        var buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
-        const name = std.posix.gethostname(&buf) catch return null;
-        if (name.len == 0 or name.len > out.len) return null;
-        @memcpy(out[0..name.len], name);
-        return out[0..name.len];
-    }
-}
-
-const win32 = if (builtin.os.tag == .windows) struct {
-    extern "kernel32" fn GetComputerNameExW(
-        NameType: c_int,
-        lpBuffer: [*]u16,
-        nSize: *u32,
-    ) callconv(.winapi) std.os.windows.BOOL;
-} else struct {};
+/// This machine's hostname for HELLO display, or null if unavailable.
+///
+/// T991: this was a second copy of `enroll.hostName` that read 256 UTF-16
+/// units into the callers' 256-byte buffers with the unbounded
+/// `utf16LeToUtf8` — a non-ASCII DNS name long enough panicked the agent at
+/// startup. One implementation now, all-or-nothing, so the name the HELLO
+/// advertises and the name enrollment registers cannot drift apart.
+const hostName = enroll.hostName;
 
 // -----------------------------------------------------------------------------
 // Relay daemon (`--relay <url>`): single binary, no Go sidecar, no localhost
@@ -3077,6 +3058,10 @@ test {
     // skipped in silence - the same shape `test-reach-audit.ps1` guards for the
     // win32 modules.
     _ = @import("../test_util.zig");
+    // The bounded UTF-16 conversion the agent's readers share with the app
+    // (T991): run its own tests in this lane too, since this binary depends on
+    // it and the app lanes are not the agent's floor.
+    _ = @import("../../apprt/win32/utf16_text.zig");
 }
 
 test "decideRelayCred: env token wins over relay.env" {

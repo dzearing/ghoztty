@@ -42,6 +42,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const process_cwd = @import("../../os/process_cwd.zig");
+const utf16_text = @import("../../apprt/win32/utf16_text.zig");
 
 /// The outcome of a foreground-command query. See the module doc for the
 /// tri-state contract (`.cmd` record / `.none` clear / null keep).
@@ -126,10 +127,12 @@ pub fn queryWindows(alloc: Allocator, shell_pid: u32) ?FgQuery {
         if (entry.th32ParentProcessID != shell_pid) continue;
         if (entry.th32ProcessID == shell_pid) continue;
 
-        // Basename to UTF-8 in a stack buffer (260 WCHARs fits in 780 bytes).
+        // Basename to UTF-8 in a stack buffer (260 WCHARs x 3 bytes = 780,
+        // so it always fits). Through the bounded helper anyway (T991): the
+        // measurement lives in one place instead of in this comment.
         var name_buf: [780]u8 = undefined;
         const name_w = std.mem.sliceTo(&entry.szExeFile, 0);
-        const name_len = std.unicode.utf16LeToUtf8(&name_buf, name_w) catch 0;
+        const name_len = utf16_text.toUtf8AllOrNothing(&name_buf, name_w);
         if (isExcluded(name_buf[0..name_len])) continue;
 
         // Creation time for the most-recent tie-break; a denied handle keeps

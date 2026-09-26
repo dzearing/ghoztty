@@ -36,6 +36,7 @@ const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const http_client = @import("../http_client.zig");
 const atomic_write = @import("atomic_write.zig");
+const utf16_text = @import("../../apprt/win32/utf16_text.zig");
 
 /// How much the poll interval grows on a `slow_down` answer (RFC 8628 §3.5).
 pub const slow_down_bump_s: u32 = 5;
@@ -382,9 +383,9 @@ pub fn loadDeviceToken(alloc: Allocator) ?[]u8 {
 /// elsewhere. Null when it cannot be read, or when it will not fit in `out`.
 ///
 /// All or nothing (T990): half a host name is a different machine, and a
-/// truncated one would enroll this box under a name nobody recognises. The
-/// conversion runs into a buffer that cannot be short and is copied out only
-/// when the whole thing fits.
+/// truncated one would enroll this box under a name nobody recognises, so a
+/// name that does not fit whole in `out` answers null (T991: through the shared
+/// bounded helper rather than a hand-sized scratch buffer).
 ///
 /// It lives here because enrollment is what needs it: the browser flow names
 /// the machine with it (`ShareMachineRow`), and the sign-in restore falls back
@@ -395,13 +396,8 @@ pub fn hostName(out: []u8) ?[]const u8 {
         var size: u32 = wbuf.len;
         // 1 == ComputerNameDnsHostname
         if (kernel32.GetComputerNameExW(1, &wbuf, &size) == 0) return null;
-        // Four bytes per UTF-16 unit is the worst case, so this can never be
-        // the short destination `utf16LeToUtf8` panics on.
-        var scratch: [4 * 256]u8 = undefined;
-        const n = std.unicode.utf16LeToUtf8(&scratch, wbuf[0..size]) catch return null;
-        if (n == 0 or n > out.len) return null;
-        @memcpy(out[0..n], scratch[0..n]);
-        return out[0..n];
+        const n = utf16_text.toUtf8AllOrNothing(out, wbuf[0..size]);
+        return if (n == 0) null else out[0..n];
     } else {
         var buf: [std.posix.HOST_NAME_MAX]u8 = undefined;
         const name = std.posix.gethostname(&buf) catch return null;

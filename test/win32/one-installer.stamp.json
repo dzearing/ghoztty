@@ -1,8 +1,8 @@
 {
     "guard":  "one-installer",
     "script":  "test/win32/one-installer.ps1",
-    "generated":  "2026-09-16T20:53:38-07:00",
-    "commit":  "c861914a3",
+    "generated":  "2026-09-26T16:25:52-07:00",
+    "commit":  "4c7734665",
     "uncommitted":  [
                         "src/remote/agent/main.zig"
                     ],
@@ -15,7 +15,7 @@
                   "relay/deploy/publish-agent.sh":  "2d81df89a033ae30f4a6d693d5e60dd74c5cecaf165ea20b8b81f866e20f4b8c",
                   "relay/deploy/www/index.html":  "760ea43a1e910c1009620fd798003f76e7d1886e126e909f60cb4760dccbbf9f",
                   "relay/README.md":  "bee8ff05a3755a987e080f8c344d18f5ed26ef74f28638bf282a3e3c5c5ff92c",
-                  "src/remote/agent/main.zig":  "b4df057ca5c509800646a2ee588037a186e93e666902f51270a96b9066b7df6f",
+                  "src/remote/agent/main.zig":  "ed3cbd83c3ff29c2a442fa4bf52648bd0d35d2da28894ebb0ecf111d3ed1aa64",
                   "test/win32/one-installer.ps1":  "e8f2855cab4c267362f75fe7d78b810375ebc6fd253a31ab70c43579b3cea76e"
               }
 }

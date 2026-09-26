@@ -104,6 +104,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 const agent_lineage = @import("../agent_lineage.zig");
+const utf16_text = @import("../../apprt/win32/utf16_text.zig");
 
 /// Exit code used when another daemon instance already holds the lock.
 /// 183 == Windows ERROR_ALREADY_EXISTS, reused verbatim on POSIX so the code
@@ -357,7 +358,9 @@ fn windowsUserId(buf: []u8) ?[]const u8 {
         const s = sid_w orelse break :sid;
         defer _ = win32.LocalFree(s);
 
-        const n = std.unicode.utf16LeToUtf8(buf, std.mem.span(s)) catch break :sid;
+        // All or nothing (T991): a truncated SID names a different user's
+        // mutex. 0 = did not fit or malformed; fall through to the username.
+        const n = utf16_text.toUtf8AllOrNothing(buf, std.mem.span(s));
         if (n == 0) break :sid;
         return buf[0..n];
     }
@@ -368,7 +371,7 @@ fn windowsUserId(buf: []u8) ?[]const u8 {
     var len: u32 = name_w.len;
     if (win32.GetUserNameW(&name_w, &len) == 0) return null;
     if (len <= 1) return null; // len includes the terminating NUL
-    const n = std.unicode.utf16LeToUtf8(buf, name_w[0 .. len - 1]) catch return null;
+    const n = utf16_text.toUtf8AllOrNothing(buf, name_w[0 .. len - 1]);
     if (n == 0) return null;
     return buf[0..n];
 }
@@ -805,8 +808,9 @@ fn checkPidImage(pid: i32) ImageCheck {
             var buf16: [1024]u16 = undefined;
             var size: u32 = buf16.len;
             if (win32.QueryFullProcessImageNameW(h, 0, &buf16, &size) == 0) return .unavailable;
-            var buf8: [3072]u8 = undefined;
-            const n = std.unicode.utf16LeToUtf8(&buf8, buf16[0..size]) catch return .unavailable;
+            var buf8: [3072]u8 = undefined; // 1024 units x 3 bytes: always fits
+            const n = utf16_text.toUtf8AllOrNothing(&buf8, buf16[0..size]);
+            if (n == 0) return .unavailable;
             return if (imageLooksLikeAgent(buf8[0..n])) .confirmed_agent else .confirmed_other;
         },
         .linux => {

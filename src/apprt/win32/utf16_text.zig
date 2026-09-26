@@ -29,6 +29,15 @@
 //!
 //! No OS imports, so it runs in every app-runtime test lane — same deal as
 //! `text_search.zig` and `activity_rows.zig`.
+//!
+//! ## Shared with the agent (T991)
+//!
+//! `ghoztty-agent` imports this file too (`src/remote/agent/`: holder pipe
+//! enumeration, the host name, the single-instance user id, process image
+//! names), and its lane runs these tests. It stays here rather than moving to
+//! `src/os/` because it is pure and the agent already reaches into
+//! `apprt/win32/` for `job_spawn.zig`; what matters is that there is ONE
+//! implementation of the bounds rule, not two that can drift.
 
 const std = @import("std");
 const testing = std.testing;

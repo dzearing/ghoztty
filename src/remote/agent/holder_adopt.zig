@@ -63,6 +63,8 @@ const pty_host = @import("pty_host.zig");
 const pty_holder_child = @import("pty_holder_child.zig");
 const pipe_stream = @import("../pipe_stream.zig");
 const session = @import("session.zig");
+// One bounded UTF-16 conversion for both binaries (T991); pure, no OS imports.
+const utf16_text = @import("../../apprt/win32/utf16_text.zig");
 
 const is_windows = builtin.os.tag == .windows;
 const log = std.log.scoped(.holder_adopt);
@@ -371,6 +373,24 @@ pub fn isHolderPipe(prefix: []const u8, bare: []const u8) bool {
     return proto.validSessionId(bare[prefix.len..]);
 }
 
+/// One `FindFirstFileW`/`FindNextFileW` entry → the bare holder pipe name in
+/// `buf`, or null when the entry is not one of ours.
+///
+/// The pipe namespace is everybody's: any process on the box can bind a
+/// 256-unit name, and 256 three-byte characters are 768 bytes. The plain
+/// `std.unicode.utf16LeToUtf8` this used to call does not bounds-check its
+/// destination (T991), so a stranger's long non-ASCII pipe name panicked the
+/// agent — and every persistent session with it — on its next sweep. All or
+/// nothing (T990 semantics): a name that does not fit in `buf` is far longer
+/// than any holder name, so it is not ours, and half a name must never be
+/// matched as if it were.
+pub fn holderFromEnumerated(buf: []u8, prefix: []const u8, wide: []const u16) ?[]const u8 {
+    const n = utf16_text.toUtf8AllOrNothing(buf, wide);
+    if (n == 0) return null;
+    const bare = stripPipeRoot(buf[0..n]);
+    return if (isHolderPipe(prefix, bare)) bare else null;
+}
+
 // -----------------------------------------------------------------------------
 // Windows pipe-namespace enumeration
 // -----------------------------------------------------------------------------
@@ -399,14 +419,11 @@ fn enumeratePipes(alloc: Allocator, prefix: []const u8) !std.ArrayList([]u8) {
     var name_buf: [512]u8 = undefined;
     while (true) {
         const w = std.mem.sliceTo(&data.cFileName, 0);
-        if (std.unicode.utf16LeToUtf8(&name_buf, w)) |n| {
-            const bare = stripPipeRoot(name_buf[0..n]);
-            if (isHolderPipe(prefix, bare)) {
-                const full = try std.fmt.allocPrint(alloc, "\\\\.\\pipe\\{s}", .{bare});
-                errdefer alloc.free(full);
-                try out.append(alloc, full);
-            }
-        } else |_| {}
+        if (holderFromEnumerated(&name_buf, prefix, w)) |bare| {
+            const full = try std.fmt.allocPrint(alloc, "\\\\.\\pipe\\{s}", .{bare});
+            errdefer alloc.free(full);
+            try out.append(alloc, full);
+        }
         if (FindNextFileW(h, &data) == 0) break;
     }
     return out;
@@ -438,6 +455,27 @@ test "stripPipeRoot: the enumerated form and the recorded form meet in the middl
 test "samePipe: case never decides whether a session lives" {
     try testing.expect(samePipe("\\\\.\\pipe\\ghoztty-pty-host-Dave-aa", "\\\\.\\PIPE\\ghoztty-pty-host-dave-AA"));
     try testing.expect(!samePipe("\\\\.\\pipe\\a", "\\\\.\\pipe\\b"));
+}
+
+test "holderFromEnumerated: a stranger's long non-ASCII pipe name is skipped, not a panic" {
+    // T991: 260 three-byte units need 780 bytes; the sweep reads into 512.
+    // The old `utf16LeToUtf8` wrote past `name_buf` here and took the agent
+    // down with every session it hosts.
+    const prefix = "ghoztty-pty-host-debug-dave-";
+    var long: [260]u16 = @splat(0x65E5); // 日
+    var buf: [512]u8 = undefined;
+    try testing.expect(holderFromEnumerated(&buf, prefix, &long) == null);
+
+    // Long ASCII past the destination: also skipped rather than truncated
+    // into something that might match.
+    var long_ascii: [600]u16 = @splat('a');
+    try testing.expect(holderFromEnumerated(&buf, prefix, &long_ascii) == null);
+
+    // A real holder still comes through, root stripped.
+    const id = "0123456789abcdef0123456789abcdef";
+    const wide = std.unicode.utf8ToUtf16LeStringLiteral(prefix ++ id);
+    const got = holderFromEnumerated(&buf, prefix, wide) orelse return error.TestExpectedHolder;
+    try testing.expectEqualStrings(prefix ++ id, got);
 }
 
 test "isHolderPipe: only OUR family, and only with a real session id" {

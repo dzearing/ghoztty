@@ -1,10 +1,13 @@
 {
     "guard":  "machine-chooser",
     "script":  "test/win32/machine-chooser.ps1",
-    "generated":  "2026-08-21T22:27:01-07:00",
-    "commit":  "56e310ef0",
+    "generated":  "2026-09-26T16:24:06-07:00",
+    "commit":  "4c7734665",
+    "uncommitted":  [
+                        "src/apprt/win32/utf16_text.zig"
+                    ],
     "files":  {
-                  "src/apprt/win32/utf16_text.zig":  "2141ce10840f08eabacb889f0ad6c103e67287931a2e743d7f91ba7217b5e7d4",
+                  "src/apprt/win32/utf16_text.zig":  "34d7ef72beeb4a19d5517504bc40e80841e645eb5ddd2a66e7f2337180bbd2b0",
                   "test/win32/machine-chooser.ps1":  "c69e331b19e83e300b5f0c22860220ea1d2de144d587db1ee4ae4e797ce6b79e"
               }
 }

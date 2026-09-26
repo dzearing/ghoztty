@@ -1,12 +1,10 @@
 {
     "guard":  "printclient-audit",
     "script":  "test/win32/printclient-audit.ps1",
-    "generated":  "2026-09-26T15:38:26-07:00",
-    "commit":  "ceb3f04f6",
+    "generated":  "2026-09-26T16:26:02-07:00",
+    "commit":  "4c7734665",
     "uncommitted":  [
-                        "src/apprt/win32/viewer_feedback_report.zig",
-                        "src/apprt/win32/ViewerFeedbackSend.zig",
-                        "src/apprt/win32/ViewerPane.zig"
+                        "src/apprt/win32/utf16_text.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -218,7 +216,7 @@
                   "src/apprt/win32/UpdateProgress.zig":  "206bb573d91ef28ad2300624102f1fafafead120541afbf46cfae3d499f3c598",
                   "src/apprt/win32/url_scheme.zig":  "a6fd72d2b47f6dec0572d3e7fa4240f2de2d9814146289236e1a64d530e9201d",
                   "src/apprt/win32/utf16_offset.zig":  "9d6f49b0fa83c777a5cb47fd57e262f8f1785cacafb4b8baebd0dface0e2478e",
-                  "src/apprt/win32/utf16_text.zig":  "2141ce10840f08eabacb889f0ad6c103e67287931a2e743d7f91ba7217b5e7d4",
+                  "src/apprt/win32/utf16_text.zig":  "34d7ef72beeb4a19d5517504bc40e80841e645eb5ddd2a66e7f2337180bbd2b0",
                   "src/apprt/win32/viewer_accel.zig":  "739fa6e422c0f94fd17e68e02ce70c75da0c8dc3702bf2cc5217227fbaf4b9ce",
                   "src/apprt/win32/viewer_bridge.zig":  "4d7a66e66a15d74cd6e92acab42d57e056e250229a2404d1e3b680615448d640",
                   "src/apprt/win32/viewer_content.zig":  "a221b7d62a68561c5f126a95994446a462f0e2b465edcb7815ee15ec6635c9e1",
