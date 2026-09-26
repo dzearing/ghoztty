@@ -1,8 +1,8 @@
 {
     "guard":  "test-wait-oracle",
     "script":  "test/win32/test-wait-oracle.ps1",
-    "generated":  "2026-09-25T12:30:57-07:00",
-    "commit":  "fc3a8bb90",
+    "generated":  "2026-09-25T17:04:13-07:00",
+    "commit":  "a3ad3eced",
     "uncommitted":  [
                         "src/remote/connection.zig"
                     ],
@@ -48,7 +48,7 @@
                   "src/cli/view_arg.zig":  "e743f118fc97e7c676b7fc40e2448b0285439e956a8131bdb03bc5faa0697cbf",
                   "src/remote/agent/pty_child.zig":  "1d9d4d196fea32debc50b029f3af2cc7de262347a16a32f429c78fe754d24c1c",
                   "src/remote/agent/test_util.zig":  "93a64a05d6f8bb7aee6b54e60564c856e64bc2215fb4397c4544faf58f347d83",
-                  "src/remote/connection.zig":  "4118385b0960b0dd6d11fa33dea18ec3179401232111a283534a99e84d02d59d",
+                  "src/remote/connection.zig":  "8ff9747bbc292d4b123cc7c89675512c203a98631da69953632344038a56fba8",
                   "src/remote/test_util.zig":  "a645a6fe87547061970dfa2ddeefcbc0c6e36b008e1333d992f31cb8b50d07db",
                   "test/win32/lib/TestWaitAudit.ps1":  "632b1d2adad0400247dd7d51c7f9ebad0e2c47ca9a7afe5cbdca2cd09318be3d",
                   "test/win32/test-wait-oracle.ps1":  "63ccef37878450ba45a00998c1d19974c42da08ece7b4160305becb11549ec3d"

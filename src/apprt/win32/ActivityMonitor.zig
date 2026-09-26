@@ -924,7 +924,7 @@ pub fn close(self: *ActivityMonitor) void {
     //      connection belongs to a remote window whose session must survive
     //      this panel closing.
     if (self.remote_conn) |rc| {
-        rc.conn.unsubscribeMetrics();
+        rc.conn.unsubscribeMetrics(self);
         // Owned: cut the transport BEFORE the join. `shutdown` runs
         // `failPendingRpcs`, so a worker parked on an unresponsive agent
         // returns at once instead of holding the GUI for the whole

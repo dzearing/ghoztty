@@ -33948,3 +33948,19 @@ trims trailing blank rows under a viewport-relative CUP. New
 back and writes the cursor last (origin-mode aware); 7 none-lane tests. Arm G
 (`GHOZTTY_SNAPSHOT_OFFSET_LAG` seam) is the teeth for the reprint oracle. Full
 harness ALL PASS (139). Mac: shared core, same fix; no Mac-side change needed.
+
+## 2026-09-25 - T1632: two Activity Monitor panels on one machine no longer steal each other's CPU reading
+
+`Connection` had one metrics handler slot. When two windows on the same remote
+machine each opened the Activity Monitor, both borrowed that window's link: the
+second subscribe overwrote the first panel's handler, so its host-CPU gauge went
+flat, and whichever panel closed first sent METRICS_UNSUB and stopped the
+stream under the other. The slot is now a fan-out of up to 16 subscribers keyed
+by `ctx`. Each pushed frame goes to every subscriber, and each subscriber is
+looked up again before its call, so one removed from another handler on the
+reader thread is skipped. The agent is asked for the smallest interval any
+subscriber wants and re-armed when that subscriber leaves. UNSUB goes out only
+when the last subscriber is gone. There is no wire change. `unsubscribeMetrics`
+now takes the `ctx`; the callers updated are the win32 panel, dial and probe
+code, the embedded C API (same signature for Swift) and test_client. Five new
+tests; floor lanes and every due harness ALL PASS.

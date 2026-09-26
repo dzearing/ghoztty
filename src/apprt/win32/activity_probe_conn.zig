@@ -36,9 +36,9 @@
 //! Four rules make that a budget rather than a leak, and `activity_probe.zig`
 //! owns every one of them as pure policy:
 //!
-//! - **A probe owns its connection.** Never the panel's, never a window's:
-//!   `Connection` has ONE `metrics_handler` slot, so a second subscriber
-//!   clobbers the first rather than multiplexing with it.
+//! - **A probe owns its connection.** Never the panel's, never a window's.
+//!   Since T1632 the metrics stream multiplexes, so sharing would no longer
+//!   clobber anyone; owning it is what Mac does and keeps teardown uniform.
 //! - **The active source is not probed.** Its card is the panel's own live
 //!   connection; a probe would be a second link to the machine you are looking
 //!   at. Mac excludes it the same way.
@@ -86,12 +86,12 @@ const open_wins = &ActivityMonitor.open_wins;
 // This is the same thing with Windows' transports.
 //
 // One rule keeps the whole design honest: **a probe OWNS the connection it
-// uses.** It never rides a window's connection, and never the panel's own,
-// because `Connection` has exactly ONE `metrics_handler` slot (connection.zig
-// :859-865) — a second subscriber does not multiplex, it CLOBBERS the first,
-// and then unsubscribing on one path silences the other. Dialing our own is
-// also what Mac does, and it makes teardown one uniform sequence per probe:
-// unsubscribe (no further callback can fire), then free.
+// uses.** It never rides a window's connection, and never the panel's own.
+// That used to be forced — `Connection` had exactly ONE metrics handler slot,
+// so a second subscriber clobbered the first. T1632 made the stream a
+// fan-out, so it is now a choice: dialing our own is what Mac does, and it
+// makes teardown one uniform sequence per probe: unsubscribe (no further
+// callback can fire into `p`), then free.
 //
 // The active source is deliberately not probed: its card is fed by the panel's
 // own live connection, so a probe would be a second connection to the machine
@@ -586,7 +586,7 @@ pub fn onProbeMetrics(ctx: *anyopaque, host: remote_protocol.HostMetrics) void {
 pub fn dropProbeLink(self: *ActivityMonitor, p: *Probe) void {
     const link = p.link orelse return;
     p.link = null;
-    link.conn().unsubscribeMetrics();
+    link.conn().unsubscribeMetrics(p);
     link.deinitDestroy(self.app.core_app.alloc);
     self.probe_mutex.lock();
     p.last_ms = 0;

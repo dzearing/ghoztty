@@ -241,7 +241,9 @@ fn runMetrics(_: Allocator, conn: *connection.Connection, count: u32) !void {
     MetricsSink.instance = .{ .want = @max(count, 1) };
 
     // Subscribe (push every ~500ms so a few frames arrive quickly).
-    try conn.subscribeMetrics(500, undefined, MetricsSink.onMetrics);
+    // The ctx is the subscription's identity (T1632), so it must be a real
+    // address even though the sink reads its singleton rather than the ctx.
+    try conn.subscribeMetrics(500, &MetricsSink.instance, MetricsSink.onMetrics);
     diag("metrics: subscribed (interval=500ms), waiting for {d} frame(s)...\n", .{MetricsSink.instance.want});
 
     // Wait (bounded) for the requested number of pushes.
@@ -252,9 +254,9 @@ fn runMetrics(_: Allocator, conn: *connection.Connection, count: u32) !void {
         });
     };
 
-    // Unsubscribe so the agent's pump stops (clears the handler slot under the
-    // write mutex), then give the unsub frame a moment to flush.
-    conn.unsubscribeMetrics();
+    // Unsubscribe so the agent's pump stops (this was the only subscriber),
+    // then give the unsub frame a moment to flush.
+    conn.unsubscribeMetrics(&MetricsSink.instance);
     std.Thread.sleep(100 * std.time.ns_per_ms);
     diag("metrics: done (received {d} frame(s))\n", .{MetricsSink.instance.received});
 }

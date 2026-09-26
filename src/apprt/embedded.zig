@@ -815,8 +815,8 @@ pub const RemoteConnectionHandle = struct {
         // teardown so no metrics callback can fire mid-teardown (clearing the
         // handler slot under the connection's write mutex). The subsequent
         // shutdown joins the control reader, after which no callback can fire.
-        if (self.metrics_cb != null) {
-            if (self.conn()) |c| c.unsubscribeMetrics();
+        if (self.metrics_cb) |*m| {
+            if (self.conn()) |c| c.unsubscribeMetrics(m);
             self.metrics_cb = null;
         }
         // Same for the link-state observer (WP-D1): the transport shutdown below
@@ -3166,7 +3166,12 @@ pub const CAPI = struct {
     export fn ghostty_remote_connection_metrics_unsubscribe(
         handle: *RemoteConnectionHandle,
     ) void {
-        if (handle.conn()) |conn| conn.unsubscribeMetrics();
+        // The trampoline's address is the subscription's identity (T1632):
+        // the connection's metrics stream is shared, so this removes only
+        // this handle's subscriber.
+        if (handle.metrics_cb) |*m| {
+            if (handle.conn()) |conn| conn.unsubscribeMetrics(m);
+        }
         handle.metrics_cb = null;
     }
 

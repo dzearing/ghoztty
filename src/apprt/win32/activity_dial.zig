@@ -357,7 +357,7 @@ pub fn releaseBorrowed(conn: *remote_connection.Connection) void {
         if (rc.owned() or rc.conn != conn) continue;
 
         log.info("activity monitor: borrowed connection is going away source={s}", .{self.source.label()});
-        rc.conn.unsubscribeMetrics();
+        rc.conn.unsubscribeMetrics(self);
         rc.conn.shutdown();
         if (self.worker) |t| {
             t.join();
@@ -412,7 +412,7 @@ pub fn rebindBorrowed(
         );
         // No further callback can fire from the old transport once this
         // returns (`connection.zig`'s unsubscribe contract).
-        rc.conn.unsubscribeMetrics();
+        rc.conn.unsubscribeMetrics(self);
 
         // Anything the parked worker parks describes the retired transport.
         self.source_gen +%= 1;
@@ -451,7 +451,7 @@ pub fn teardownSource(self: *ActivityMonitor) void {
     };
     // Unsubscribe FIRST: `unsubscribeMetrics` returning is the guarantee that no
     // further callback can fire (`connection.zig:1148-1162`).
-    rc.conn.unsubscribeMetrics();
+    rc.conn.unsubscribeMetrics(self);
 
     if (rc.owned()) {
         // Cut the transport before the join so a worker parked on an

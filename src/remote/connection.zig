@@ -117,18 +117,33 @@ const StreamId = enum { control, data };
 /// and is valid ONLY for the duration of the call — copy it out to retain it.
 pub const ControlHandler = *const fn (ctx: *anyopaque, conn: *Connection, frame: protocol.Frame) void;
 
-/// A dedicated handler for the pushed host-metrics stream (§9.3). Registered by
+/// A handler for the pushed host-metrics stream (§9.3). Registered by
 /// `subscribeMetrics`, invoked by the control reader for every inbound `.metrics`
-/// frame, and cleared by `unsubscribeMetrics`. It is a SEPARATE slot from
-/// `ControlHandler` so the metrics subscriber never clobbers an unrelated control
-/// handler (and vice versa).
+/// frame, and removed by `unsubscribeMetrics`. The stream is MULTIPLEXED
+/// (T1632): several subscribers, keyed by their `ctx`, each receive every
+/// pushed frame, so two Activity Monitor panels on one link no longer clobber
+/// each other. It is separate from `ControlHandler` so a metrics subscriber
+/// never clobbers an unrelated control handler (and vice versa).
 ///
 /// IMPORTANT (threading): the handler fires on the connection's control-reader
 /// thread, NOT the caller's thread. The caller MUST call `unsubscribeMetrics`
-/// (which clears the slot under the write mutex) before freeing any context the
-/// handler captures, or the reader could invoke a dangling pointer. `host` is a
-/// by-value snapshot (no borrowed storage), so it is safe to copy out.
+/// with the same `ctx` before freeing it, or the reader could invoke a dangling
+/// pointer. `host` is a by-value snapshot (no borrowed storage), so it is safe
+/// to copy out.
 pub const MetricsHandler = *const fn (ctx: *anyopaque, host: protocol.HostMetrics) void;
+
+/// Most metrics subscribers one connection carries at once. A subscriber is an
+/// Activity Monitor panel (or a C-API handle), so this is far above anything a
+/// user can open against one machine; past it `subscribeMetrics` fails loudly
+/// rather than evicting someone.
+pub const max_metrics_subscribers = 16;
+
+/// One entry in a connection's metrics fan-out.
+const MetricsSubscriber = struct {
+    ctx: *anyopaque,
+    handler: MetricsHandler,
+    interval_ms: u32,
+};
 
 /// Callback for one pushed per-session CPU sample. `rows` BORROWS the decoded
 /// arena and is valid only for the duration of the call — copy anything you keep.
@@ -1082,13 +1097,17 @@ pub const Connection = struct {
     ctrl_handler: ?ControlHandler = null,
     ctrl_handler_ctx: *anyopaque = undefined,
 
-    /// Dedicated handler slot for the pushed host-metrics stream (§9.3), separate
-    /// from `ctrl_handler` so the two never clobber each other. Set by
-    /// `subscribeMetrics`, read on the control-reader hot path, cleared by
-    /// `unsubscribeMetrics` — all stores/loads ordered by `write_mutex` exactly
-    /// like `ctrl_handler` (publish discipline; see `setControlHandler`).
-    metrics_handler: ?MetricsHandler = null,
-    metrics_handler_ctx: *anyopaque = undefined,
+    /// Subscribers to the pushed host-metrics stream (§9.3), separate from
+    /// `ctrl_handler` so the two never clobber each other. A fan-out rather than
+    /// a slot (T1632): a single slot let a second panel on the same link
+    /// overwrite the first's handler, and the first to close stopped the stream
+    /// under the other. Added by `subscribeMetrics`, read on the control-reader
+    /// hot path, removed by `unsubscribeMetrics` — all guarded by `write_mutex`.
+    metrics_subs: [max_metrics_subscribers]MetricsSubscriber = undefined,
+    metrics_sub_count: usize = 0,
+    /// The interval the agent was last asked for (the smallest any subscriber
+    /// wants), or 0 when unsubscribed. Guarded by `write_mutex`.
+    metrics_sent_interval_ms: u32 = 0,
     session_cpu_handler: ?SessionCpuHandler = null,
     session_cpu_handler_ctx: *anyopaque = undefined,
     sessions_handler: ?SessionsHandler = null,
@@ -1503,63 +1522,152 @@ pub const Connection = struct {
 
     // --- Host-metrics subscription (§9.3, activity monitor) ------------------
 
-    /// Subscribe to the agent's pushed host-metrics stream. Publishes the
-    /// dedicated `metrics_handler` slot (under `write_mutex`, same publish
-    /// discipline as `setControlHandler`) and sends `METRICS_SUB{interval_ms}`;
-    /// the agent then pushes a `.metrics` frame on the control channel every
-    /// `interval_ms` until `unsubscribeMetrics`.
+    /// Subscribe `ctx` to the agent's pushed host-metrics stream. The stream is
+    /// shared (T1632): every subscriber receives every pushed frame, and the
+    /// agent is asked for the SMALLEST interval any subscriber wants — the agent
+    /// keeps one pump per connection, and a `METRICS_SUB` while it runs just
+    /// re-arms that pump's interval. Subscribing a `ctx` that is already
+    /// subscribed replaces its handler and interval (a re-subscribe).
     ///
     /// The handler fires on the control-reader thread (see `MetricsHandler`). The
-    /// caller MUST call `unsubscribeMetrics` before freeing `ctx`.
+    /// caller MUST call `unsubscribeMetrics(ctx)` before freeing `ctx`.
+    /// `error.TooManySubscribers` past `max_metrics_subscribers`.
     pub fn subscribeMetrics(
         self: *Connection,
         interval_ms: u32,
         ctx: *anyopaque,
         handler: MetricsHandler,
     ) !void {
-        // Publish the handler slot BEFORE sending the subscription so the first
-        // pushed frame is never dropped for lack of a handler.
+        self.write_mutex.lock();
+        defer self.write_mutex.unlock();
+
+        // Publish the subscriber BEFORE the subscription is queued so the first
+        // pushed frame is never dropped for lack of a handler. ctx, handler and
+        // interval go in one critical section — the reader observes them
+        // through the same lock, so it can never pair a new handler with an old
+        // ctx.
+        const entry: MetricsSubscriber = .{ .ctx = ctx, .handler = handler, .interval_ms = interval_ms };
+        if (self.metricsSubIndex(ctx)) |i| {
+            self.metrics_subs[i] = entry;
+        } else {
+            if (self.metrics_sub_count == max_metrics_subscribers) return error.TooManySubscribers;
+            self.metrics_subs[self.metrics_sub_count] = entry;
+            self.metrics_sub_count += 1;
+        }
+
+        // Always (re)send, even when the effective interval did not move: a
+        // re-subscribe after the agent restarted its pump must still arm it,
+        // and a duplicate METRICS_SUB is an idempotent interval update.
+        errdefer _ = self.removeMetricsSub(ctx);
+        try self.enqueueMetricsSubLocked(self.metricsEffectiveInterval());
+    }
+
+    /// Unsubscribe `ctx` from the pushed host-metrics stream. Removes it from
+    /// the fan-out under `write_mutex` and then DRAINS: if a dispatch is already
+    /// inside a metrics handler, this waits for it to return (T814). Both halves
+    /// are needed for the guarantee callers rely on — the removal stops new
+    /// calls into `ctx`, the drain sees off the one already running — so on
+    /// return `ctx` may be freed.
+    ///
+    /// The stream itself is only stopped (`METRICS_UNSUB`) when the LAST
+    /// subscriber leaves; while others remain, the agent is re-armed at the
+    /// smallest interval they still want (T1632 — before this, the first panel
+    /// to close stopped the stream under every other one on the link).
+    ///
+    /// Safe to call with a `ctx` that is not subscribed (nothing to remove, no
+    /// frame sent), and safe to call FROM a handler (a self-unsubscribe does not
+    /// wait for itself). Queued frames are best-effort — on a closing connection
+    /// they are simply dropped.
+    pub fn unsubscribeMetrics(self: *Connection, ctx: *anyopaque) void {
+        self.write_mutex.lock();
+        defer self.write_mutex.unlock();
+
+        if (self.removeMetricsSub(ctx)) {
+            if (self.metrics_sub_count == 0) {
+                self.metrics_sent_interval_ms = 0;
+                const json = protocol.encodeJson(self.alloc, protocol.MetricsUnsub{}) catch null;
+                if (json) |j| self.enqueueOwnedLocked(.control, .metrics_unsub, protocol.control_channel, j) catch {};
+            } else {
+                const want = self.metricsEffectiveInterval();
+                if (want != self.metrics_sent_interval_ms) self.enqueueMetricsSubLocked(want) catch {};
+            }
+        }
+        self.drainPush(.metrics);
+    }
+
+    /// How many metrics subscribers the connection carries. For tests and
+    /// diagnostics.
+    pub fn metricsSubscriberCount(self: *Connection) usize {
+        self.write_mutex.lock();
+        defer self.write_mutex.unlock();
+        return self.metrics_sub_count;
+    }
+
+    /// Index of `ctx` in the fan-out. `write_mutex` held.
+    fn metricsSubIndex(self: *Connection, ctx: *anyopaque) ?usize {
+        for (self.metrics_subs[0..self.metrics_sub_count], 0..) |s, i| {
+            if (s.ctx == ctx) return i;
+        }
+        return null;
+    }
+
+    /// Remove `ctx` from the fan-out, preserving the others' order. Returns
+    /// whether it was there. `write_mutex` held.
+    fn removeMetricsSub(self: *Connection, ctx: *anyopaque) bool {
+        const i = self.metricsSubIndex(ctx) orelse return false;
+        const n = self.metrics_sub_count;
+        std.mem.copyForwards(MetricsSubscriber, self.metrics_subs[i .. n - 1], self.metrics_subs[i + 1 .. n]);
+        self.metrics_sub_count = n - 1;
+        return true;
+    }
+
+    /// The interval to ask the agent for: the smallest any subscriber wants.
+    /// `write_mutex` held, at least one subscriber.
+    fn metricsEffectiveInterval(self: *Connection) u32 {
+        var want: u32 = std.math.maxInt(u32);
+        for (self.metrics_subs[0..self.metrics_sub_count]) |s| want = @min(want, s.interval_ms);
+        return want;
+    }
+
+    /// Deliver one pushed sample to every subscriber. Runs on the control reader.
+    ///
+    /// The in-flight mark is held across the WHOLE fan-out, which is what makes
+    /// an `unsubscribeMetrics` from another thread wait for this call instead of
+    /// returning over the top of it (T814). Each subscriber is re-looked-up
+    /// under the lock just before its call, because a handler may unsubscribe a
+    /// DIFFERENT subscriber from this same thread — that unsubscribe cannot wait
+    /// (it would wait on itself), so skipping the removed entry is the only
+    /// thing standing between it and a call into freed memory.
+    fn dispatchMetrics(self: *Connection, host: protocol.HostMetrics) void {
+        var ctxs: [max_metrics_subscribers]*anyopaque = undefined;
+        var n: usize = 0;
         {
             self.write_mutex.lock();
             defer self.write_mutex.unlock();
-            // Both fields under the lock the reader observes them through: the
-            // reader reads ctx AND handler in one critical section, so storing
-            // ctx outside it left a window where a re-subscribe's new handler
-            // could be paired with the old ctx.
-            self.metrics_handler_ctx = ctx;
-            self.metrics_handler = handler;
+            n = self.metrics_sub_count;
+            if (n == 0) return;
+            for (self.metrics_subs[0..n], 0..) |s, i| ctxs[i] = s.ctx;
+            self.pushEnter(.metrics);
         }
+        defer self.pushLeave(.metrics);
 
-        const sub: protocol.MetricsSub = .{ .interval_ms = interval_ms };
-        const json = try protocol.encodeJson(self.alloc, sub);
-        defer self.alloc.free(json);
-        try self.writeControl(.metrics_sub, protocol.control_channel, json);
+        for (ctxs[0..n]) |ctx| {
+            const handler = blk: {
+                self.write_mutex.lock();
+                defer self.write_mutex.unlock();
+                const i = self.metricsSubIndex(ctx) orelse break :blk null;
+                break :blk self.metrics_subs[i].handler;
+            };
+            if (handler) |h| h(ctx, host);
+        }
     }
 
-    /// Unsubscribe from the pushed host-metrics stream. Sends `METRICS_UNSUB{}`
-    /// (best-effort — a send failure on a closing connection is ignored), clears
-    /// the `metrics_handler` slot under `write_mutex` and then DRAINS: if a
-    /// dispatch is already inside the handler, this waits for it to return
-    /// (T814). Both halves are needed for the guarantee callers rely on — the
-    /// null stops new dispatches, the drain sees off the one already running —
-    /// so on return `ctx` may be freed. Safe to call when not subscribed (the
-    /// unsub send is harmless and the slot is already null), and safe to call
-    /// FROM the handler (a self-unsubscribe does not wait for itself).
-    pub fn unsubscribeMetrics(self: *Connection) void {
-        const json = protocol.encodeJson(self.alloc, protocol.MetricsUnsub{}) catch null;
-        if (json) |j| {
-            defer self.alloc.free(j);
-            self.writeControl(.metrics_unsub, protocol.control_channel, j) catch {};
-        }
-
-        // Clear the handler slot under the same lock the reader's publish/observe
-        // is ordered by, so a concurrent control-reader either sees the handler
-        // (before this) or null (after) — never a torn value, and never a stale
-        // handler after we return.
-        self.write_mutex.lock();
-        defer self.write_mutex.unlock();
-        self.metrics_handler = null;
-        self.drainPush(.metrics);
+    /// Queue `METRICS_SUB{interval_ms}` and record it as the interval the agent
+    /// was asked for. `write_mutex` held.
+    fn enqueueMetricsSubLocked(self: *Connection, interval_ms: u32) !void {
+        const json = try protocol.encodeJson(self.alloc, protocol.MetricsSub{ .interval_ms = interval_ms });
+        try self.enqueueOwnedLocked(.control, .metrics_sub, protocol.control_channel, json);
+        self.metrics_sent_interval_ms = interval_ms;
     }
 
     /// Subscribe to the pushed session ROSTER. The agent sends a `sessions`
@@ -1746,15 +1854,28 @@ pub const Connection = struct {
         payload: []const u8,
     ) !void {
         const owned = try self.alloc.dupe(u8, payload);
-        errdefer self.alloc.free(owned);
 
         self.write_mutex.lock();
         defer self.write_mutex.unlock();
+        try self.enqueueOwnedLocked(stream, ftype, channel, owned);
+    }
+
+    /// Queue a frame whose payload the queue now OWNS (freed by the writer, or
+    /// here on drop/failure). `write_mutex` held — for callers that must make a
+    /// state change and its frame one atomic step (the metrics fan-out).
+    fn enqueueOwnedLocked(
+        self: *Connection,
+        stream: StreamId,
+        ftype: protocol.FrameType,
+        channel: u128,
+        owned: []u8,
+    ) !void {
         if (self.closed) {
             // Drop: nothing will ever send it. Free here, not in the writer.
             self.alloc.free(owned);
             return;
         }
+        errdefer self.alloc.free(owned);
         try self.write_queue.append(self.alloc, .{
             .stream = stream,
             .ftype = ftype,
@@ -3569,26 +3690,13 @@ pub const Connection = struct {
             },
             .metrics => {
                 // Pushed host-metrics sample (§9.3). Decode and hand the by-value
-                // snapshot to the dedicated metrics handler if one is registered.
-                // Decode failures are dropped silently (hostile-input discipline,
-                // mirroring `.pong`). This is additive: the user `ctrl_handler`
-                // still observes the frame afterward in `controlReaderLoop`.
+                // snapshot to EVERY metrics subscriber (T1632). Decode failures
+                // are dropped silently (hostile-input discipline, mirroring
+                // `.pong`). This is additive: the user `ctrl_handler` still
+                // observes the frame afterward in `controlReaderLoop`.
                 var parsed = protocol.parseJson(protocol.Metrics, self.alloc, frame.payload) catch return;
                 defer parsed.deinit();
-                // Read the slot under the same lock its publish is ordered by, so
-                // we never observe a torn pointer vs. subscribe/unsubscribe.
-                self.write_mutex.lock();
-                const handler = self.metrics_handler;
-                const ctx = self.metrics_handler_ctx;
-                if (handler != null) self.pushEnter(.metrics);
-                self.write_mutex.unlock();
-                if (handler) |h| {
-                    // The in-flight mark is what makes `unsubscribeMetrics`
-                    // WAIT for this call instead of returning over the top of
-                    // it (T814) — `ctx` is freed the instant it returns.
-                    defer self.pushLeave(.metrics);
-                    h(ctx, parsed.value.host);
-                }
+                self.dispatchMetrics(parsed.value.host);
             },
             .session_cpu => {
                 // Pushed per-session CPU roll-up. Same discipline as `.metrics`:
@@ -5714,6 +5822,11 @@ const LifecycleAgent = struct {
     metrics_push_count: u32 = 2,
     saw_metrics_sub: std.atomic.Value(bool) = .{ .raw = false },
     saw_metrics_unsub: std.atomic.Value(bool) = .{ .raw = false },
+    /// How many METRICS_SUB / METRICS_UNSUB frames arrived, and the interval the
+    /// last METRICS_SUB asked for — the fan-out's wire-level evidence (T1632).
+    metrics_sub_frames: std.atomic.Value(u32) = .{ .raw = 0 },
+    metrics_unsub_frames: std.atomic.Value(u32) = .{ .raw = 0 },
+    last_metrics_interval_ms: std.atomic.Value(u32) = .{ .raw = 0 },
     saw_proc_list: std.atomic.Value(bool) = .{ .raw = false },
 
     // RELAUNCH reply config (T12c). A RELAUNCH gets RELAUNCHED on the SAME
@@ -5911,6 +6024,13 @@ const LifecycleAgent = struct {
                 },
                 .metrics_sub => {
                     self.saw_metrics_sub.store(true, .monotonic);
+                    // Interval BEFORE the count: a test waits on the count and
+                    // then reads the interval, so the reverse order races.
+                    if (protocol.parseJson(protocol.MetricsSub, self.alloc, frame.payload)) |parsed| {
+                        defer parsed.deinit();
+                        self.last_metrics_interval_ms.store(parsed.value.interval_ms, .release);
+                    } else |_| {}
+                    _ = self.metrics_sub_frames.fetchAdd(1, .release);
                     // Push `metrics_push_count` metrics frames on the control
                     // channel (first cpu_pct=0, then a non-zero delta), as the real
                     // agent's per-connection push pump does.
@@ -5931,6 +6051,7 @@ const LifecycleAgent = struct {
                 },
                 .metrics_unsub => {
                     self.saw_metrics_unsub.store(true, .monotonic);
+                    _ = self.metrics_unsub_frames.fetchAdd(1, .monotonic);
                 },
                 .proc_list => {
                     // Reply PROC_SNAPSHOT on the SAME request channel (same-channel
@@ -6470,7 +6591,7 @@ test "subscribeMetrics: handler receives decodable HostMetrics pushes" {
     try testing.expectEqual(@as(?u64, 3600), last.uptime_s);
     try testing.expectEqual(@as(?f32, 1.5), last.load1);
 
-    h.conn.unsubscribeMetrics();
+    h.conn.unsubscribeMetrics(&rec);
     try testing.expect(a.err == null);
 }
 
@@ -6530,10 +6651,10 @@ test "unsubscribeMetrics: clears the handler slot (no callback after)" {
     try h.conn.subscribeMetrics(500, &rec, MetricsRec.handler);
     rec.enough.timedWait(2 * std.time.ns_per_s) catch {};
 
-    // Unsubscribe: the slot is cleared under the write mutex, so no later push
-    // can re-enter `rec` (which is about to leave scope).
-    h.conn.unsubscribeMetrics();
-    try testing.expect(h.conn.metrics_handler == null);
+    // Unsubscribe: the subscriber is removed under the write mutex, so no later
+    // push can re-enter `rec` (which is about to leave scope).
+    h.conn.unsubscribeMetrics(&rec);
+    try testing.expectEqual(@as(usize, 0), h.conn.metricsSubscriberCount());
 
     // The agent recorded the unsub. On the wall-clock budget (T472), so a
     // loaded box cannot turn a slow round trip into a failure.
@@ -6541,9 +6662,9 @@ test "unsubscribeMetrics: clears the handler slot (no callback after)" {
     while (!a.saw_metrics_unsub.load(.monotonic)) deadline.yield() catch break;
     try testing.expect(a.saw_metrics_unsub.load(.monotonic));
 
-    // A second unsubscribe is a harmless no-op (slot already null).
-    h.conn.unsubscribeMetrics();
-    try testing.expect(h.conn.metrics_handler == null);
+    // A second unsubscribe is a harmless no-op (nothing to remove, no frame).
+    h.conn.unsubscribeMetrics(&rec);
+    try testing.expectEqual(@as(usize, 0), h.conn.metricsSubscriberCount());
     try testing.expect(a.err == null);
 }
 
@@ -6581,9 +6702,9 @@ test "T814: unsubscribeMetrics waits for a handler that is already running" {
     try h.conn.subscribeMetrics(500, &rec, SlowMetricsRec.handler);
     try rec.entered.timedWait(5 * std.time.ns_per_s);
 
-    h.conn.unsubscribeMetrics();
+    h.conn.unsubscribeMetrics(&rec);
     try testing.expect(rec.finished.load(.acquire));
-    try testing.expect(h.conn.metrics_handler == null);
+    try testing.expectEqual(@as(usize, 0), h.conn.metricsSubscriberCount());
     try testing.expect(a.err == null);
 }
 
@@ -6596,7 +6717,7 @@ const SelfUnsubRec = struct {
     fn handler(ctx: *anyopaque, host: protocol.HostMetrics) void {
         _ = host;
         const self: *SelfUnsubRec = @ptrCast(@alignCast(ctx));
-        self.conn.unsubscribeMetrics();
+        self.conn.unsubscribeMetrics(self);
         self.returned.set();
     }
 };
@@ -6613,8 +6734,176 @@ test "T814: a handler may unsubscribe itself without deadlocking" {
     try h.conn.subscribeMetrics(500, &rec, SelfUnsubRec.handler);
     try rec.returned.timedWait(5 * std.time.ns_per_s);
 
-    h.conn.unsubscribeMetrics();
-    try testing.expect(h.conn.metrics_handler == null);
+    h.conn.unsubscribeMetrics(&rec);
+    try testing.expectEqual(@as(usize, 0), h.conn.metricsSubscriberCount());
+    try testing.expect(a.err == null);
+}
+
+test "T1632: two subscribers on one connection both receive every push" {
+    // The defect: a single handler slot, so the second panel's subscribe
+    // overwrote the first's handler and the first panel's host-CPU gauge went
+    // flat. Before the fan-out `a1.count` stays at 1 here.
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    const a = h.configure();
+    a.metrics_push_count = 1; // one push per METRICS_SUB the agent sees
+    try h.start();
+
+    var first: MetricsRec = .{ .want = 1 };
+    try h.conn.subscribeMetrics(1000, &first, MetricsRec.handler);
+    try first.enough.timedWait(5 * std.time.ns_per_s);
+
+    first.mutex.lock();
+    first.want = 2;
+    first.enough.reset();
+    first.mutex.unlock();
+
+    var second: MetricsRec = .{ .want = 1 };
+    try h.conn.subscribeMetrics(500, &second, MetricsRec.handler);
+    try second.enough.timedWait(5 * std.time.ns_per_s);
+    // The push the second subscribe triggered reached the FIRST panel too.
+    try first.enough.timedWait(5 * std.time.ns_per_s);
+    try testing.expectEqual(@as(usize, 2), h.conn.metricsSubscriberCount());
+
+    // The agent runs one pump per connection, so it is asked for the fastest
+    // cadence any subscriber wants.
+    try testing.expectEqual(@as(u32, 2), a.metrics_sub_frames.load(.acquire));
+    try testing.expectEqual(@as(u32, 500), a.last_metrics_interval_ms.load(.monotonic));
+
+    h.conn.unsubscribeMetrics(&second);
+    h.conn.unsubscribeMetrics(&first);
+    try testing.expect(a.err == null);
+}
+
+test "T1632: the first panel to close leaves the stream running for the other" {
+    // The other half of the defect: unsubscribe used to send METRICS_UNSUB
+    // unconditionally, stopping the agent's pump under every other subscriber.
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    const a = h.configure();
+    a.metrics_push_count = 1;
+    try h.start();
+
+    var slow: MetricsRec = .{ .want = 1 };
+    var fast: MetricsRec = .{ .want = 1 };
+    try h.conn.subscribeMetrics(1000, &slow, MetricsRec.handler);
+    try h.conn.subscribeMetrics(250, &fast, MetricsRec.handler);
+    try fast.enough.timedWait(5 * std.time.ns_per_s);
+
+    slow.mutex.lock();
+    const before = slow.count;
+    slow.want = before + 1;
+    slow.enough.reset();
+    slow.mutex.unlock();
+
+    // Closing the fast panel: no METRICS_UNSUB, and the agent is re-armed at
+    // the cadence the remaining panel asked for.
+    h.conn.unsubscribeMetrics(&fast);
+    try testing.expectEqual(@as(usize, 1), h.conn.metricsSubscriberCount());
+    var deadline = test_util.Deadline.start("the agent to be re-armed at the remaining interval");
+    while (a.metrics_sub_frames.load(.acquire) < 3) deadline.yield() catch break;
+    try testing.expectEqual(@as(u32, 3), a.metrics_sub_frames.load(.acquire));
+    try testing.expectEqual(@as(u32, 1000), a.last_metrics_interval_ms.load(.monotonic));
+    try testing.expectEqual(@as(u32, 0), a.metrics_unsub_frames.load(.monotonic));
+
+    // ...and the remaining panel still receives pushes.
+    try slow.enough.timedWait(5 * std.time.ns_per_s);
+
+    // The LAST one out stops the stream, exactly once.
+    h.conn.unsubscribeMetrics(&slow);
+    var deadline2 = test_util.Deadline.start("the agent to record the last metrics unsubscribe");
+    while (a.metrics_unsub_frames.load(.monotonic) < 1) deadline2.yield() catch break;
+    try testing.expectEqual(@as(u32, 1), a.metrics_unsub_frames.load(.monotonic));
+    try testing.expectEqual(@as(usize, 0), h.conn.metricsSubscriberCount());
+    try testing.expect(a.err == null);
+}
+
+test "T1632: a re-subscribe replaces the entry instead of adding a second one" {
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    const a = h.configure();
+    a.metrics_push_count = 0;
+    try h.start();
+
+    var rec: MetricsRec = .{};
+    try h.conn.subscribeMetrics(1000, &rec, MetricsRec.handler);
+    try h.conn.subscribeMetrics(200, &rec, MetricsRec.handler);
+    try testing.expectEqual(@as(usize, 1), h.conn.metricsSubscriberCount());
+    h.conn.unsubscribeMetrics(&rec);
+    try testing.expectEqual(@as(usize, 0), h.conn.metricsSubscriberCount());
+    try testing.expect(a.err == null);
+}
+
+test "T1632: past the subscriber cap, subscribe fails rather than evicting anyone" {
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    const a = h.configure();
+    a.metrics_push_count = 0;
+    try h.start();
+
+    var recs: [max_metrics_subscribers + 1]MetricsRec = @splat(.{});
+    for (recs[0..max_metrics_subscribers]) |*r| try h.conn.subscribeMetrics(500, r, MetricsRec.handler);
+    try testing.expectError(
+        error.TooManySubscribers,
+        h.conn.subscribeMetrics(500, &recs[max_metrics_subscribers], MetricsRec.handler),
+    );
+    try testing.expectEqual(@as(usize, max_metrics_subscribers), h.conn.metricsSubscriberCount());
+    for (&recs) |*r| h.conn.unsubscribeMetrics(r);
+    try testing.expectEqual(@as(usize, 0), h.conn.metricsSubscriberCount());
+    try testing.expect(a.err == null);
+}
+
+/// A handler that unsubscribes a DIFFERENT subscriber once armed — from the
+/// control-reader thread, where the unsubscribe cannot wait for the dispatch.
+const CrossUnsubRec = struct {
+    conn: *Connection = undefined,
+    victim: std.atomic.Value(?*anyopaque) = .{ .raw = null },
+    seen: std.Thread.ResetEvent = .{},
+    fired: std.Thread.ResetEvent = .{},
+
+    fn handler(ctx: *anyopaque, host: protocol.HostMetrics) void {
+        _ = host;
+        const self: *CrossUnsubRec = @ptrCast(@alignCast(ctx));
+        self.seen.set();
+        const v = self.victim.load(.acquire) orelse return;
+        self.conn.unsubscribeMetrics(v);
+        self.fired.set();
+    }
+};
+
+test "T1632: a subscriber removed mid-fan-out is never called for that frame" {
+    // The reader-thread unsubscribe returns without draining (it would wait on
+    // itself), so the fan-out must re-check each subscriber before calling it
+    // or it calls into a context the caller has already been told it may free.
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    const a = h.configure();
+    a.metrics_push_count = 1;
+    try h.start();
+
+    var killer: CrossUnsubRec = .{ .conn = h.conn };
+    var victim: MetricsRec = .{ .want = 1 };
+    try h.conn.subscribeMetrics(500, &killer, CrossUnsubRec.handler);
+    // Arm only after the killer's own push has been handled, so the push that
+    // does the removing is the one the victim's subscribe triggers.
+    try killer.seen.timedWait(5 * std.time.ns_per_s);
+    killer.victim.store(&victim, .release);
+    // Fan-out order is subscription order: killer runs first, removes victim.
+    try h.conn.subscribeMetrics(500, &victim, MetricsRec.handler);
+    try killer.fired.timedWait(5 * std.time.ns_per_s);
+
+    // Unsubscribing from THIS thread drains, so the fan-out has finished.
+    killer.victim.store(null, .release);
+    h.conn.unsubscribeMetrics(&killer);
+    victim.mutex.lock();
+    const n = victim.count;
+    victim.mutex.unlock();
+    try testing.expectEqual(@as(u32, 0), n);
     try testing.expect(a.err == null);
 }
 
@@ -6666,7 +6955,7 @@ test "T814: every push kind drains, and each waits only on its own" {
 
         // A DIFFERENT kind's unsubscribe must not be held up by this dispatch:
         // a metrics unsubscribe has no business waiting on a roster push.
-        h.conn.unsubscribeMetrics();
+        h.conn.unsubscribeMetrics(&fake);
         try testing.expect(!fake.finished.load(.acquire));
 
         fake.release.set();
