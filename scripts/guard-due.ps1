@@ -465,13 +465,28 @@ $GuardTable = @(
     # browser, and it is not in the P1-P3 floor. The zig-side guard
     # (ViewerPane's is_test refusal) is exercised by the win32 lane every
     # floor run and is deliberately NOT covered here.
+    #
+    # It is also the ACCEPTANCE for the pane itself (T984): building a viewer
+    # from `--view`, the verbs that refuse one, `+reload`, and the `view:` /
+    # `"type"` rows `+list` prints for it. Until T984 the row named only the
+    # script and the leak lib, so T934's substantive ViewerPane.zig rewrite
+    # never made it due and the run was done from memory. The sources are the
+    # pane, the content it renders (the missing-file error lives there), the
+    # IPC handlers that build/refuse/reload it, and the two CLI verbs whose
+    # output the script reads. Unlike the Surface.zig exclusions further down
+    # (window-name-env, gui-launch-command), these files ARE the subject.
     [pscustomobject]@{
         Name   = 'viewer-panes'
         Script = 'test\win32\viewer-panes.ps1'
         Stamp  = 'test\win32\viewer-panes.stamp.json'
         Covers = @(
             'test\win32\viewer-panes.ps1',
-            'test\win32\lib\BrowserLeak.ps1'
+            'test\win32\lib\BrowserLeak.ps1',
+            'src\apprt\win32\ViewerPane.zig',
+            'src\apprt\win32\viewer_content.zig',
+            'src\apprt\win32\IpcHandlers.zig',
+            'src\cli\list.zig',
+            'src\cli\reload.zig'
         )
     },
     # The viewer's ERROR CARD (T381): the only thing that photographs the card a
