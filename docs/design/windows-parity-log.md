@@ -34388,3 +34388,16 @@ Mac (`syncQuotes` tracks the current wording, Report/PayloadQuote carry it); bot
 process-feedback SKILL.md copies document the field. Floor lanes all PASS,
 P1-P3 PASS, and the 12 due harnesses (viewer-*, hook-json, audits) ALL PASS.
 Mac build/test is T1766 (seat: mac).
+
+## 2026-09-26 — T991: the agent's fixed-buffer UTF-16 readers are bounded
+
+All seven fixed-destination `utf16LeToUtf8` sites in `src/remote/agent/` now
+call `utf16_text.toUtf8AllOrNothing` (each reads an identity: SID, user name,
+host name, pipe name, image path). The reachable crash was the holder sweep,
+which read every pipe name on the box into 512 bytes, so a stranger's long
+non-ASCII pipe name could panic the agent; it is now the pure, unit-tested
+`holderFromEnumerated`. `main.hostName` was a duplicate of `enroll.hostName` and
+now aliases it. The helper stays in `apprt/win32/` and the agent imports it
+(precedent: `handoff.zig` -> `job_spawn.zig`); the agent lane runs its tests.
+Floor lanes all PASS, P1-P3 PASS, 14 due harnesses ALL PASS. Same shape in the
+OpenGL loader filed as T1767.
