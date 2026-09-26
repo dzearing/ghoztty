@@ -34,6 +34,10 @@
 #   O7. a default the registry already carries is listed ONCE (T1752):
 #       filtering to "Change Window Title" leaves one row, so Down then Enter
 #       still runs the registry command rather than its duplicate.
+#   O8. "Install Available Update" is a row only while an update offer is
+#       pending (T1676): with no offer, filtering to it and pressing Enter runs
+#       nothing; with an offer seeded on disk, the same keystrokes run
+#       install_update and reach the install confirmation.
 #
 # WHAT IT DOES NOT COVER. The section HEADERS ("Recent" / "All Commands") are
 # owner-drawn text and unreadable from a script; header placement, the
@@ -401,6 +405,68 @@ if ($top7 -ne [IntPtr]::Zero) {
     }
 }
 
+# ---------------------------------------------------------------------
+# O8: "Install Available Update" is listed only while an offer is pending
+# (T1676). The pending state is SEEDED through the on-disk offer record the app
+# restores at launch (T1673) - no feed, no network - with `staged=` naming a
+# package that exists, so running the row reaches the install confirmation
+# (the GhozttyConfirmDialog, which is never answered; teardown kills the app).
+# O8a and O8b send the SAME keystrokes, so O8b is O8a's positive control: the
+# only difference between a run and no run is the record.
+# ---------------------------------------------------------------------
+$offerPath = Join-Path $env:LOCALAPPDATA 'ghoztty\update-offer-debug.txt'
+$stagedMsi = Join-Path $env:TEMP "ghoztty-palette-order-t1676-$PID.msi"
+function Start-O8Palette([string]$Tag) {
+    Stop-DebugGhoztty
+    $script:appPid = 0
+    Clear-PaletteHistory
+    $log = Join-Path $env:TEMP "ghoztty-palette-order-$Tag-$PID.log"
+    $script:app = Start-OnTestDesktop -Exe $Exe -Arguments @('--session-persistence=false') -StdErr $log
+    $script:appPid = $script:app.Pid
+    Start-Sleep -Seconds 3
+    if ($script:app.Process -and $script:app.Process.HasExited) { return $null }
+    $t = Wait-TestWindow -ProcessId $script:appPid -Class 'GhozttyWindow'
+    if ($t -eq [IntPtr]::Zero) { return $null }
+    $p = Get-TestChildWindow -Window $t -Class 'GhozttyTerminal'
+    if ($p -eq [IntPtr]::Zero) { return $null }
+    [void](Focus-TestWindow -Window $t -Child $p)
+    return (Open-Palette $t $p)
+}
+
+Write-Host '== O8a: with NO offer pending, "Install Available Update" is not a row'
+Remove-Item -LiteralPath $offerPath -Force -ErrorAction SilentlyContinue
+Assert (-not (Test-Path $offerPath)) 'O8a setup: no offer record on disk'
+$pal8a = Start-O8Palette 'o8a'
+Assert ($null -ne $pal8a) 'O8a the palette opened'
+if ($null -ne $pal8a) {
+    Assert (Send-TestControlText -Control $pal8a.Edit -Text 'Install Available Update') 'O8a typed "Install Available Update"'
+    Start-Sleep -Milliseconds 600
+    Send-TestControlKey -Control $pal8a.Edit -Key Enter | Out-Null
+    $ran8a = Wait-OnlyPaletteRun
+    Assert ($ran8a.Count -eq 0) `
+        "O8a Enter ran nothing - the row is absent (got: $($ran8a -join ', '); pre-fix it ran install_update, which fell through to a manual check)"
+    Assert ((Count-TestWindowsOfClass 'GhozttyConfirmDialog') -eq 0) 'O8a no install confirmation opened'
+}
+
+Write-Host '== O8b: with an offer pending, the same keystrokes run it'
+[IO.File]::WriteAllText($stagedMsi, 'not a real package; the confirmation is never answered')
+$nowMs = [int64]([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+$offerDir = Split-Path $offerPath -Parent
+if (-not (Test-Path $offerDir)) { New-Item -ItemType Directory -Force -Path $offerDir | Out-Null }
+[IO.File]::WriteAllText($offerPath, "version=9.9.9`nfirst_offered_ms=$nowMs`nstaged=$stagedMsi`n")
+$pal8b = Start-O8Palette 'o8b'
+Assert ($null -ne $pal8b) 'O8b the palette opened'
+if ($null -ne $pal8b) {
+    Assert (Send-TestControlText -Control $pal8b.Edit -Text 'Install Available Update') 'O8b typed "Install Available Update"'
+    Start-Sleep -Milliseconds 600
+    Send-TestControlKey -Control $pal8b.Edit -Key Enter | Out-Null
+    $ran8b = Wait-OnlyPaletteRun
+    Assert ($ran8b.Count -eq 1 -and [string]$ran8b[0] -eq 'install_update') `
+        "O8b Enter ran install_update (got: $($ran8b -join ', '))"
+    $confirm = Wait-TestWindow -ProcessId $script:appPid -Class 'GhozttyConfirmDialog' -TimeoutMs 6000
+    Assert ($confirm -ne [IntPtr]::Zero) 'O8b it reached the install confirmation (the offer, not a fresh check)'
+}
+
 Assert ($null -ne (Get-Process -Id $script:appPid -ErrorAction SilentlyContinue)) 'the app survived all arms'
 
 } catch {
@@ -413,6 +479,10 @@ Assert ($null -ne (Get-Process -Id $script:appPid -ErrorAction SilentlyContinue)
     Remove-TestDesktop
     Stop-DebugGhoztty
     Clear-PaletteHistory
+    # O8's seeded offer must not outlive the run: a leftover record would put
+    # the update dot on every later debug launch.
+    if ($offerPath) { Remove-Item -LiteralPath $offerPath -Force -ErrorAction SilentlyContinue }
+    if ($stagedMsi) { Remove-Item -LiteralPath $stagedMsi -Force -ErrorAction SilentlyContinue }
 }
 
 $fgSeen = @(Stop-TestForegroundWatch)

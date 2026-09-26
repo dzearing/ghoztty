@@ -34116,3 +34116,19 @@ logs each colour change it actually draws. New scenario 14 of
 `test/win32/update-check.ps1` seeds an offer 9 s short of the line and watches
 an untouched window go amber after a suppressed re-check: ALL PASS (59). With
 the refresh disabled the scenario fails twice and the window never paints amber.
+
+## 2026-09-26 - T1676: the palette offers Install Available Update only when there is one
+
+The command palette listed "Install Available Update" every day, including the
+ones with nothing to install. Choosing it then only ran an update check. Mac
+lists no update rows unless an update can be installed, and Windows now matches
+that. Each registry command carries a `when:` condition, `always` by default.
+`install_update` is `update_pending`, and `commands.available` is the pure check
+the palette filter calls with `App.pendingUpdate()`. That is the same state
+behind the menu's `Install Update <ver>` row and the update dot. New arm O8 in
+`test/win32/palette-order.ps1` checks both cases with the same keystrokes. With
+no offer, Enter runs nothing. With an offer seeded on disk, Enter reaches the
+install confirmation. Results: palette-order ALL PASS (44), menu-bar ALL PASS
+(81), all floor lanes green. The negative control (check disabled) fails O8a.
+Mac's other differences (row title, badge, Cancel or Skip Update) are filed as
+T1754.

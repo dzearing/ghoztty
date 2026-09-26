@@ -2996,7 +2996,11 @@ fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
     var items: [MAX_PALETTE_ENTRIES]palette_order.Item = undefined;
     var n: usize = 0;
 
+    // A conditional command is listed only while its target exists (T1676):
+    // "Install Available Update" is absent unless an offer is pending.
+    const state: commands.State = .{ .update_pending = self.app.pendingUpdate() != null };
     for (palette_entries, 0..) |entry, i| {
+        if (!commands.available(entry, state)) continue;
         if (filter.len != 0 and std.ascii.indexOfIgnoreCase(entry.name, filter) == null) continue;
         const idx: u16 = @intCast(i);
         idxs[n] = idx;

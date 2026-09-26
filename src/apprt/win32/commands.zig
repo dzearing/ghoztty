@@ -178,7 +178,36 @@ pub const Command = struct {
     /// sessions)" when session-persistence is on, to signal that quitting
     /// detaches persistent sessions for re-attach rather than ending them.
     quit_keep: bool = false,
+    /// When the palette offers this command (T1676). Almost everything is
+    /// always there; a command whose target may not exist is listed only
+    /// while it does, the way Mac's `updateOptions` returns nothing unless
+    /// `updateViewModel.state.isInstallable` (TerminalCommandPalette.swift).
+    /// Hidden rather than greyed: a palette is a search box over what you can
+    /// do, and a row that matches and cannot run is noise in the results.
+    when: Condition = .always,
 };
+
+/// The app state a conditional command depends on (T1676).
+pub const Condition = enum {
+    always,
+    /// Only while an update offer is pending — the same state that puts the
+    /// dot on the menu button and the `Install Update <ver>` row on its popup.
+    update_pending,
+};
+
+/// What the palette knows about the app when it builds its rows. Kept to
+/// plain values so `available` is a pure function the none lane can test.
+pub const State = struct {
+    update_pending: bool = false,
+};
+
+/// Whether the palette should list `c` right now.
+pub fn available(c: Command, state: State) bool {
+    return switch (c.when) {
+        .always => true,
+        .update_pending => state.update_pending,
+    };
+}
 
 /// Every command, in command-palette display order.
 ///
@@ -274,7 +303,9 @@ pub const registry = [_]Command{
     // T1673. The palette name is generic because the registry name is static
     // and the version is not; the MENU row says the version, because that is
     // where it is read at a glance.
-    .{ .id = .install_update, .name = "Install Available Update", .action = .new_window, .kind = .install_update },
+    // Listed only while an offer is pending (T1676) - Mac lists nothing
+    // update-related unless an update is installable.
+    .{ .id = .install_update, .name = "Install Available Update", .action = .new_window, .kind = .install_update, .when = .update_pending },
     .{ .id = .help, .name = "Ghoztty Help", .action = .new_window, .kind = .help },
     .{ .id = .about, .name = "About Ghoztty", .action = .new_window, .kind = .about },
     // Mac lists this in the application menu directly under About
@@ -432,6 +463,25 @@ test "the viewer entries carry the Mac palette names verbatim (T396)" {
     try std.testing.expectEqualStrings("Viewer: Open File in Pane…", get(.viewer_open_file).name);
     try std.testing.expectEqualStrings("Viewer: Open URL in Pane…", get(.viewer_open_url).name);
     try std.testing.expectEqualStrings("Viewer: Open Browser Pane", get(.viewer_open_browser).name);
+}
+
+test "install_update is listed only while an update is pending (T1676)" {
+    const c = get(.install_update);
+    try std.testing.expect(!available(c, .{}));
+    try std.testing.expect(!available(c, .{ .update_pending = false }));
+    try std.testing.expect(available(c, .{ .update_pending = true }));
+}
+
+test "every other command is listed regardless of app state (T1676)" {
+    // A condition is a deliberate per-command decision; one that crept onto
+    // an ordinary command would make it vanish from the palette for no
+    // visible reason. Extend this list when a new conditional row lands.
+    for (registry) |c| {
+        if (c.id == .install_update) continue;
+        try std.testing.expectEqual(Condition.always, c.when);
+        try std.testing.expect(available(c, .{}));
+        try std.testing.expect(available(c, .{ .update_pending = true }));
+    }
 }
 
 test "quit is the only quit_keep command" {
