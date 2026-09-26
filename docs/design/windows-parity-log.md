@@ -34271,3 +34271,17 @@ dismiss, install and a pixel check of the outline and pill. ALL PASS
 (71 assertions), and all four floor lanes are green. The capture also showed
 every palette title ending in "…" painting blank, an old truncation bug filed
 as T1762.
+
+## 2026-09-26 — T1762: palette titles ending in "…" paint again
+
+The four palette commands whose names end in an ellipsis (Change Pane/Tab/
+Window Title…, Check for Updates…) drew as blank rows with only a keybind
+hint. The paint path's buffer cap stripped trailing UTF-8 continuation bytes
+unconditionally, testing the byte before the cut instead of the byte at it, so
+a complete three-byte "…" became a lone lead byte and conversion failed. The
+cap is now `palette_order.titlePrefix`, which only backs up when the cap cuts
+through a codepoint. The other ten cut sites in `src/` were checked and already
+test the byte at the cut. Validation: two none-lane unit tests, and
+`palette-order.ps1` O11 (ellipsis row carries glyph ink, bracketed by an ASCII
+positive control and an empty-row negative control), ALL PASS (78 assertions).
+All four floor lanes are green.

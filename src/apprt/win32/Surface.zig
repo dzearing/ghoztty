@@ -3704,9 +3704,8 @@ pub fn paintPaletteInto(self: *Surface, hdc: w32.HDC, hwnd: w32.HWND) void {
         // User-configured palette titles are arbitrary length; cap to the
         // buffer (N UTF-8 bytes ≤ N UTF-16 units) on a codepoint boundary so
         // a long title truncates instead of overflowing the stack buffer.
-        var name_len = @min(entry_name.len, wname_buf.len);
-        while (name_len > 0 and entry_name[name_len - 1] & 0xC0 == 0x80) name_len -= 1;
-        const wname_len = std.unicode.utf8ToUtf16Le(&wname_buf, entry_name[0..name_len]) catch 0;
+        const name_fit = palette_order.titlePrefix(entry_name, wname_buf.len);
+        const wname_len = std.unicode.utf8ToUtf16Le(&wname_buf, name_fit) catch 0;
         _ = w32.DrawTextW(hdc, @ptrCast(&wname_buf), @intCast(wname_len), &name_rect, 0);
 
         // Dimmed trailing subtitle (T555): a jump entry's abbreviated cwd,

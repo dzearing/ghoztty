@@ -324,6 +324,20 @@ pub fn rowAtY(
     return @intCast(row);
 }
 
+/// The longest prefix of a palette title that fits `cap` bytes without
+/// splitting a UTF-8 sequence (T1762). The byte to test is the one AT the
+/// cut: a continuation byte there means the cut landed inside a codepoint.
+/// Testing the byte BEFORE the cut instead stripped the tail of every title
+/// that merely ended in a multi-byte codepoint — "Change Window Title…" lost
+/// two of its ellipsis's three bytes, failed UTF-16 conversion, and painted
+/// as a blank row.
+pub fn titlePrefix(title: []const u8, cap: usize) []const u8 {
+    if (title.len <= cap) return title;
+    var end = cap;
+    while (end > 0 and title[end] & 0xC0 == 0x80) end -= 1;
+    return title[0..end];
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -336,6 +350,26 @@ test "scrollOffset: unscrolled until the selection passes the last visible row" 
     try testing.expectEqual(@as(i32, 1), scrollOffset(5, 5));
     try testing.expectEqual(@as(i32, 15), scrollOffset(19, 5));
     try testing.expectEqual(@as(i32, 0), scrollOffset(19, 0));
+}
+
+test "titlePrefix: a title ending in a multi-byte codepoint survives intact (T1762)" {
+    const title = "Change Window Title\u{2026}";
+    try testing.expectEqualStrings(title, titlePrefix(title, 128));
+    // Exactly at the cap is still whole.
+    try testing.expectEqualStrings(title, titlePrefix(title, title.len));
+    // And it converts, which is what the paint path needs.
+    var wbuf: [128]u16 = undefined;
+    const n = try std.unicode.utf8ToUtf16Le(&wbuf, titlePrefix(title, 128));
+    try testing.expectEqual(@as(u16, 0x2026), wbuf[n - 1]);
+}
+
+test "titlePrefix: a cut inside a codepoint drops the whole codepoint" {
+    const title = "ab\u{2026}cd"; // a b E2 80 A6 c d
+    try testing.expectEqualStrings("ab", titlePrefix(title, 3));
+    try testing.expectEqualStrings("ab", titlePrefix(title, 4));
+    try testing.expectEqualStrings("ab\u{2026}", titlePrefix(title, 5));
+    try testing.expectEqualStrings("a", titlePrefix(title, 1));
+    try testing.expectEqualStrings("", titlePrefix(title, 0));
 }
 
 test "rowAtY: an unscrolled list maps the visual row straight through" {

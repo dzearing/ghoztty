@@ -52,6 +52,9 @@
 #       of two config entries differing only in action, the text send runs and
 #       the undo is absent; the macOS-only default "Toggle Secure Input" is
 #       absent too.
+#   O11. a title ending in "..." (U+2026) paints its text (T1762): the
+#       filtered "Change Window Title..." row carries glyph ink, bracketed by an
+#       ASCII positive control and an empty-row negative control.
 #
 # WHAT IT DOES NOT COVER. The section HEADERS ("Recent" / "All Commands") are
 # owner-drawn text and unreadable from a script; header placement, the
@@ -676,6 +679,71 @@ if ($null -ne $pal9c) {
     $ran9c = @(Invoke-O9Filter $pal9c 'Toggle Secure Input' 'O9c')
     Assert ($ran9c.Count -eq 0) `
         "O9c Enter ran nothing - the row is absent (got: $($ran9c -join ', '); pre-fix it ran user:Toggle Secure Input, which did nothing)"
+}
+
+# ---------------------------------------------------------------------
+# O11: a title that ENDS in a multi-byte character paints (T1762). The paint
+# path capped each title to its buffer by stripping trailing UTF-8
+# continuation bytes unconditionally, so every title ending in "..." (U+2026,
+# three bytes) lost two of them, failed conversion and painted as a blank row
+# beside its keybind hint. Oracle: in the filtered list, count the pixels in
+# the row's TITLE band (text inset to the keybind area) that differ from the
+# band's own dominant color. Glyphs produce dozens; an unpainted row none.
+#   O11a positive control: an ASCII title paints.
+#   O11b "Change Window Title..." paints - pre-fix this row was blank.
+#   O11c negative control: the empty row under the single match counts ~0, so
+#        the oracle can score red.
+# ---------------------------------------------------------------------
+function Get-TitleInk($Pal, [int]$Row, [string]$Tag) {
+    $shot = Get-TestWindowPixels -Window $Pal.Popup -Sync
+    try {
+        $png = Join-Path $env:TEMP "ghoztty-palette-order-$Tag-$PID.png"
+        $shot.Bitmap.Save($png, [System.Drawing.Imaging.ImageFormat]::Png)
+        Write-Host "      capture: $png"
+        $s = (Get-TestWindowDpi -Window $Pal.Popup) / 96.0
+        $listTop = [int][math]::Round(40.0 * $s)
+        $itemH = [int][math]::Round(28.0 * $s)
+        $bmp = $shot.Bitmap
+        $x0 = [int][math]::Round(12.0 * $s)
+        $x1 = $bmp.Width - [int][math]::Round(160.0 * $s)
+        $y0 = $listTop + $Row * $itemH + 3
+        $y1 = $listTop + ($Row + 1) * $itemH - 3
+        $counts = @{}
+        for ($y = $y0; $y -lt $y1; $y++) {
+            for ($x = $x0; $x -lt $x1; $x++) {
+                $c = $bmp.GetPixel($x, $y).ToArgb()
+                if ($counts.ContainsKey($c)) { $counts[$c]++ } else { $counts[$c] = 1 }
+            }
+        }
+        $total = ($x1 - $x0) * ($y1 - $y0)
+        $dominant = ($counts.Values | Measure-Object -Maximum).Maximum
+        return [int]($total - $dominant)
+    } finally {
+        Close-TestWindowPixels -Shot $shot
+    }
+}
+$inkMin = 40
+
+Write-Host '== O11a: an ASCII title paints (positive control for the ink oracle)'
+$pal11a = Start-O9Palette 'o11a'
+Assert ($null -ne $pal11a) 'O11a the palette opened'
+if ($null -ne $pal11a) {
+    Assert (Send-TestControlText -Control $pal11a.Edit -Text $okTitle) "O11a typed `"$okTitle`""
+    Start-Sleep -Milliseconds 600
+    $ink11a = Get-TitleInk $pal11a 0 'o11a'
+    Assert ($ink11a -ge $inkMin) "O11a the ASCII title row carries ink ($ink11a px, bar $inkMin)"
+}
+
+Write-Host '== O11b: "Change Window Title..." (ends in U+2026) paints its title'
+$pal11b = Start-O9Palette 'o11b'
+Assert ($null -ne $pal11b) 'O11b the palette opened'
+if ($null -ne $pal11b) {
+    Assert (Send-TestControlText -Control $pal11b.Edit -Text 'Change Window Title') 'O11b typed "Change Window Title"'
+    Start-Sleep -Milliseconds 600
+    $ink11b = Get-TitleInk $pal11b 0 'o11b'
+    Assert ($ink11b -ge $inkMin) "O11b the ellipsis title row carries ink ($ink11b px, bar $inkMin; pre-fix it painted blank)"
+    $ink11c = Get-TitleInk $pal11b 1 'o11c'
+    Assert ($ink11c -lt $inkMin) "O11c negative control: the empty row below the single match has no ink ($ink11c px)"
 }
 
 Assert ($null -ne (Get-Process -Id $script:appPid -ErrorAction SilentlyContinue)) 'the app survived all arms'
