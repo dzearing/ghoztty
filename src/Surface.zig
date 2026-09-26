@@ -143,6 +143,11 @@ pub const RemoteBackend = struct {
     /// banner) leaves the slot empty, so the notice may use it and stays visible
     /// without the user scrolling.
     pane_banner_restored: bool = false,
+
+    /// True ⇒ this restored leaf's session was already handed to another pane
+    /// by the same restore pass (T1684), so it OPENs a fresh shell — and says
+    /// why (T1687). Forwarded to `termio.Remote.Config`.
+    session_restored_elsewhere: bool = false,
 };
 
 /// Unique ID used to identify this surface for IPC purposes. It is
@@ -1211,6 +1216,9 @@ pub fn init(
                     // session-interrupted notice stays in the scrollback
                     // instead of also claiming the banner slot.
                     .pane_banner_restored = rb.pane_banner_restored,
+                    // T1687: the fresh shell a duplicate-session restore got
+                    // instead says so.
+                    .session_restored_elsewhere = rb.session_restored_elsewhere,
                 });
                 break :backend .{ .remote = io_remote };
             }

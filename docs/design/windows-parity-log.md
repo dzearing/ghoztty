@@ -34132,3 +34132,20 @@ install confirmation. Results: palette-order ALL PASS (44), menu-bar ALL PASS
 (81), all floor lanes green. The negative control (check disabled) fails O8a.
 Mac's other differences (row title, badge, Cancel or Skip Update) are filed as
 T1754.
+
+## 2026-09-26 - T1687: a pane whose session went to another pane on restore now says so
+
+When a restore finds one session named twice, T1684 gives it to one pane and
+opens a fresh shell in the other. Until now that second pane came up looking
+like any new terminal. It now shows "Session restored elsewhere: this pane's
+session is already open in another pane ... Nothing was closed; this is a
+fresh shell." The notice appears in the pane's banner, unless the pane brought
+its own banner back (T422), and in its scrollback (T423). It is a new
+`session_notice.Reason` using the existing session-interrupted machinery,
+flagged from `restoreAttachOverride`. Found along the way: the refused pane
+also took on the recorded pane id, so two panes shared one id and
+`+read`/`--target` reached whichever came first. It now gets a fresh id.
+`restore-session-dup.ps1` adds B7-B11 and section C: ALL PASS (17), 3/3
+repeats, and the negative control is still red. All floor lanes pass, and so do
+the 12 due guard harnesses and the harness floor. The Mac half is filed as
+T1755.

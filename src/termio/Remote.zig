@@ -252,6 +252,9 @@ applied_bytes: std.atomic.Value(u64) = .init(0),
 /// `Config.pane_banner_restored`.
 pane_banner_restored: bool = false,
 
+/// T1687: see `Config.session_restored_elsewhere`.
+session_restored_elsewhere: bool = false,
+
 /// The message to paint into the pane when bring-up failed for a reason we
 /// actually know — a refused OPEN (T469, `open_failed_notice`) or an ATTACH
 /// that yielded no pane (T657, `attach_failed_notice`). Empty ⇒ nothing better
@@ -368,6 +371,14 @@ pub const Config = struct {
     /// that last case the slot really is empty, so the notice may use it and
     /// stays visible without the user scrolling back for it.
     pane_banner_restored: bool = false,
+
+    /// True ⇒ this OPEN is a restored leaf whose recorded session the same
+    /// restore pass already handed to another pane (T1684), so the pane is on a
+    /// fresh shell for a reason the user cannot see. Bring-up then paints the
+    /// `restored_elsewhere` notice under the same carrier and banner-slot rules
+    /// as the session-interrupted one (T1687). Meaningless on an ATTACH, and
+    /// false on every other path.
+    session_restored_elsewhere: bool = false,
 };
 
 /// Which working directory an OPEN should carry (T144).
@@ -591,6 +602,7 @@ pub fn init(alloc: Allocator, cfg: Config) !Remote {
         // the gap-fill. No snapshot ⇒ offset 0 ⇒ full-ring replay.
         .attach_offset = if (restore_snapshot != null) cfg.restore_offset else 0,
         .pane_banner_restored = cfg.pane_banner_restored,
+        .session_restored_elsewhere = cfg.session_restored_elsewhere,
         .arena = arena,
     };
 }
@@ -766,6 +778,9 @@ pub fn threadEnter(
     // is too old to report one. Drives the notice printed after bring-up.
     var notice_command: ?[]const u8 = null;
     var did_notify = false;
+    // Which sentence the notice says (T1687). Only the restored-elsewhere OPEN
+    // below changes it.
+    var notice_reason: session_notice.Reason = .agent_restarted;
     // True when the AGENT is new enough to splice `RelaunchPolicy.streamNotice()`
     // into the replay stream itself. When it is, the client injects nothing of its
     // own; when it isn't (older agent), the client injects the same bytes after
@@ -1112,7 +1127,7 @@ pub fn threadEnter(
         // place and then recorded nothing, so the next restore lost it again.
         if (self.working_directory) |cwd| attach_cwd = cwd;
         var refusal: protocol.RefusalCopy = .{};
-        break :pane self.conn.openChannelRefusable(open, &self.canceller, &refusal) catch |err| {
+        const p = self.conn.openChannelRefusable(open, &self.canceller, &refusal) catch |err| {
             // The agent told us WHY it will not open this pane (T469). Keep the
             // sentence for the failure paint below — the error itself carries no
             // payload, and without this the pane would come up blank and then
@@ -1120,6 +1135,17 @@ pub fn threadEnter(
             if (err == error.OpenRefused) self.recordOpenRefusal(refusal);
             return err;
         };
+        // T1687: the restore gave this pane's session to another pane (T1684)
+        // and this OPEN is the fresh shell it got instead. Every other reason a
+        // restored pane comes up on a shell it did not have says so; this one
+        // used to be a log line only, so the pane the user expected their work
+        // in was silently a different one.
+        if (self.session_restored_elsewhere) {
+            did_notify = true;
+            notice_reason = .restored_elsewhere;
+            log.info("restored session is held by another pane; opened a fresh shell and said so", .{});
+        }
+        break :pane p;
     };
     // On any failure after this point we DETACH the pane (keep-alive teardown,
     // §3.3) so the remote session survives for a later re-attach.
@@ -1279,7 +1305,7 @@ pub fn threadEnter(
         // notice to be: inline, above the shell content, in the console logging.
         // `Termio.holdNoticeAboveLocked` is what keeps it there afterwards.
         var notice_buf: [session_notice.max_len]u8 = undefined;
-        const notice = session_notice.format(&notice_buf, notice_command);
+        const notice = session_notice.formatFor(&notice_buf, notice_reason, notice_command);
         @call(.always_inline, termio.Termio.processOutput, .{ io, notice });
         io.armNoticeFold();
 
@@ -1292,7 +1318,7 @@ pub fn threadEnter(
         // copy T423 made durable.
         if (!self.pane_banner_restored) {
             var banner_buf: [session_notice.max_len]u8 = undefined;
-            const banner = session_notice.formatBanner(&banner_buf, notice_command);
+            const banner = session_notice.formatBannerFor(&banner_buf, notice_reason, notice_command);
             @call(.always_inline, termio.Termio.processOutput, .{ io, banner });
         }
     } else if (did_relaunch and !relaunch_replayed) {

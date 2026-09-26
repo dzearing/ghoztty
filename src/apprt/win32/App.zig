@@ -4499,6 +4499,11 @@ fn restoreAttachOverride(
     // positively-gone one — this pane OPENs a fresh shell — because attaching
     // it twice would not show the shell in two places, it would move it, and
     // leave the first pane a frozen picture the user can still type into.
+    //
+    // T1687: and the pane SAYS so. `taken` tells the backend this OPEN is not
+    // an ordinary fresh pane, so it paints the restored-elsewhere notice the
+    // way a gone session paints the session-interrupted one.
+    var taken = false;
     const sid: ?[]const u8 = blk: {
         const candidate = leafAttachSessionId(leaf, attach) orelse break :blk null;
         if (self.claimRestoreSession(candidate)) break :blk candidate;
@@ -4507,6 +4512,7 @@ fn restoreAttachOverride(
                 "opening a fresh shell here instead of taking it",
             .{candidate},
         );
+        taken = true;
         break :blk null;
     };
     // T109: the recorded screen goes with the SESSION we are re-attaching to.
@@ -4519,7 +4525,13 @@ fn restoreAttachOverride(
         // to still holds it in `$GHOZTTY_PANE_ID`; generating a fresh one here
         // would silently break every pane's ability to name itself across an
         // app restart — the exact class of breakage T112 hit with pids.
-        .pane_id = leaf.pane_id,
+        //
+        // T1687: except when the session went to ANOTHER pane. The process
+        // holding this id is over there, and so is the pane that adopts it, so
+        // adopting it here too would give two panes one id - every
+        // `--target=<id>` and `+read --name=<id>` would reach whichever the
+        // registry found first. This pane's fresh shell gets a fresh id.
+        .pane_id = if (taken) null else leaf.pane_id,
         .remote = .{
             .connection = conn,
             .local_agent = tr.local_agent,
@@ -4530,9 +4542,11 @@ fn restoreAttachOverride(
             // T422: `restoreLeafPresentation` puts this banner back on the GUI
             // thread; telling the backend keeps the session-interrupted notice
             // from claiming the same slot from the IO thread moments later.
-            // Independent of `sid` — the notice only ever fires on the path
-            // where the recorded session is GONE.
+            // Independent of `sid` — the notice only ever fires on the paths
+            // where the pane is NOT on its recorded session: gone (T230), or
+            // taken by another pane (T1687).
             .pane_banner_restored = if (leaf.banner) |b| b.len > 0 else false,
+            .session_restored_elsewhere = taken,
         },
     };
 }

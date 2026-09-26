@@ -423,6 +423,12 @@ remote_restore_offset: u64 = 0,
 /// `remoteBackend()`; false for every non-restore path.
 remote_pane_banner_restored: bool = false,
 
+/// T1687: this restored leaf's session went to another pane in the same
+/// restore pass (T1684), so it OPENs fresh and paints the restored-elsewhere
+/// notice. Set from `Overrides.Remote.session_restored_elsewhere` at init and
+/// read once by `remoteBackend()`; false for every other path.
+remote_session_restored_elsewhere: bool = false,
+
 /// Hero-mode thumbnail snapshot pipeline (T58 design / T59a). The renderer
 /// thread captures its own presented frame (blit of the offscreen render
 /// target — never an HWND capture, which can't see hidden panes) into
@@ -574,6 +580,12 @@ pub const Overrides = struct {
         /// slot — a pane's own banner outranks a sentence that is identical
         /// in every pane. False ⇒ the slot is empty and the notice may use it.
         pane_banner_restored: bool = false,
+
+        /// T1687: the restore pass refused this leaf its recorded session
+        /// because another pane already took it (T1684). `session_id` is null
+        /// (the pane OPENs a fresh shell) and the backend paints a notice
+        /// saying why, instead of the pane passing for an ordinary new one.
+        session_restored_elsewhere: bool = false,
     };
 };
 
@@ -825,6 +837,9 @@ fn initOnce(
             // T422: this pane's own banner is coming back, so the
             // session-interrupted notice must not overwrite it.
             self.remote_pane_banner_restored = r.pane_banner_restored;
+            // T1687: a fresh shell standing in for a session another pane
+            // holds says so.
+            self.remote_session_restored_elsewhere = r.session_restored_elsewhere;
             // An explicit remote command travels through the same surface
             // config seam Exec uses; the core only forwards it into the
             // agent OPEN when `wait-after-command` marks it as explicitly
@@ -5520,6 +5535,8 @@ pub fn remoteBackend(self: *Surface) ?CoreSurface.RemoteBackend {
         // T422: the restore already put this pane's sticky banner back, so a
         // dead-tombstone ATTACH keeps the notice to its in-stream copy.
         .pane_banner_restored = self.remote_pane_banner_restored,
+        // T1687: see `remote_session_restored_elsewhere`.
+        .session_restored_elsewhere = self.remote_session_restored_elsewhere,
         // T468: the keep-alive invocation of `--command`, for the LOCAL agent
         // only. An empty argv is treated as none — an OPEN carrying a zero-arg
         // argv would leave the agent nothing to exec at all.

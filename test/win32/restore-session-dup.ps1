@@ -31,7 +31,12 @@
 #      killed (the agent keeps the session), and the relaunch is asserted:
 #      exactly one pane holds the recorded session, the duplicate window is back
 #      with a shell of its OWN, no restored pane is left session-less, and no
-#      two panes report one shell pid.
+#      two panes report one shell pid. And (T1687) the pane that was refused
+#      the session SAYS so - a restored-elsewhere notice in its banner slot and
+#      its scrollback - while the pane that kept it says nothing.
+#   C. The same duplicate with each pane bringing its own banner back: the
+#      refused pane keeps ITS banner (T422) and the notice stays in the
+#      scrollback only.
 #
 # `-NegativeControl` inverts section B's central assertion, so a run can be seen
 # scoring RED against the state it exists to refuse (go.md step 3).
@@ -153,6 +158,96 @@ function Wait-Panes {
     return @(Get-Panes)
 }
 
+# Every terminal leaf as a real object - {window, id, sid, banner} - for the
+# arms that need a leaf's pane id and banner (T1687). Walked rather than
+# regex-sliced: the banner is free text and may contain anything the slicer
+# above keys on. Viewer leaves carry no `pid` and are skipped.
+function Get-Leaves {
+    $raw = (Ghoz @('+list', '--json')).Output
+    $out = New-Object System.Collections.ArrayList
+    try { $doc = $raw | ConvertFrom-Json } catch { return @() }
+    $walk = {
+        param($node, $window)
+        if ($null -eq $node) { return }
+        if ($node -is [System.Array]) { foreach ($n in $node) { & $walk $n $window }; return }
+        if ($node -isnot [System.Management.Automation.PSCustomObject]) { return }
+        $names = $node.PSObject.Properties.Name
+        if ($names -contains 'target') { $window = [string]$node.target }
+        if ($names -contains 'pid' -and $names -contains 'session_id') {
+            [void]$out.Add([pscustomobject]@{
+                window = $window
+                id     = [string]$node.id
+                sid    = $node.session_id
+                banner = [string]$node.banner
+            })
+        }
+        foreach ($p in $node.PSObject.Properties) {
+            if ($p.Value -is [System.Array] -or $p.Value -is [System.Management.Automation.PSCustomObject]) {
+                & $walk $p.Value $window
+            }
+        }
+    }
+    & $walk $doc ''
+    return $out.ToArray()
+}
+
+# The pane's own scrollback, whitespace squeezed out: a notice WRAPS in a narrow
+# pane, so the raw text never holds the sentence verbatim.
+function Read-Tight([string]$PaneId) {
+    $r = Ghoz @('+read', "--name=$PaneId", '--lines=400')
+    return (([string]$r.Output) -replace "`0", '') -replace '\s', ''
+}
+
+# Poll until the leaf in `$Window` that does NOT hold `$Sid` shows a banner
+# matching `$Pattern`, and hand back what was last seen. The notice banner is
+# published from the pane's IO thread after bring-up (T977), so "the window is
+# back" and "its banner is up" are different moments.
+function Wait-LoserBanner([string[]]$Windows, [string]$Sid, [string]$Pattern, [int]$TimeoutSec = 40) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    do {
+        $leaves = @(Get-Leaves | Where-Object { $Windows -contains $_.window })
+        $loser = @($leaves | Where-Object { $_.sid -and $_.sid -ne $Sid })
+        if ($loser.Count -ge 1 -and $loser[0].banner -match $Pattern) { break }
+        Start-Sleep -Milliseconds 800
+    } while ((Get-Date) -lt $deadline)
+    return $leaves
+}
+
+# Write a SECOND window into the manifest, under its own key, naming the SAME
+# session as the window that records `$Sid` - the state the carried-window merge
+# used to be able to write. `$Banner`, when given, is put on every leaf of BOTH
+# windows, so the restore brings each pane's own banner back (T422).
+function Write-DupManifest([string]$Sid, [string]$DupId, [string]$DupName, [string]$Banner) {
+    $doc = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+    $orig = @($doc.windows | Where-Object { ($_ | ConvertTo-Json -Depth 30) -match [regex]::Escape($Sid) })
+    if ($orig.Count -lt 1) { return 0 }
+    $dup = ($orig[0] | ConvertTo-Json -Depth 30) | ConvertFrom-Json
+    $dup.id = $DupId
+    foreach ($pair in @(@('uuid', "uuid-$DupId"), @('ipc_name', $DupName))) {
+        if ($dup.PSObject.Properties.Name -contains $pair[0]) { $dup.($pair[0]) = $pair[1] }
+        else { $dup | Add-Member -NotePropertyName $pair[0] -NotePropertyValue $pair[1] }
+    }
+    if ($Banner) {
+        foreach ($w in @($orig[0], $dup)) {
+            foreach ($tab in @($w.tabs)) {
+                foreach ($node in @($tab.nodes)) {
+                    if (-not $node.leaf) { continue }
+                    if ($node.leaf.PSObject.Properties.Name -contains 'banner') { $node.leaf.banner = $Banner }
+                    else { $node.leaf | Add-Member -NotePropertyName banner -NotePropertyValue $Banner }
+                }
+            }
+        }
+    }
+    $doc.windows = @($doc.windows) + @($dup)
+    # No Set-Content here: PS 5.1's utf8 writes a BOM, and the manifest reader
+    # parses JSON from byte zero.
+    [System.IO.File]::WriteAllText(
+        $manifest,
+        ($doc | ConvertTo-Json -Depth 40),
+        (New-Object System.Text.UTF8Encoding($false)))
+    return $orig.Count
+}
+
 function Show-Panes($panes) {
     return (($panes | ForEach-Object { "$($_.window)=$(if ($_.sid) { $_.sid } else { '<none>' })" }) -join ', ')
 }
@@ -197,27 +292,10 @@ try {
 
     "== B: the same session named by TWO manifest windows"
     Stop-App
-    $doc = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
-    $orig = @($doc.windows | Where-Object { ($_ | ConvertTo-Json -Depth 30) -match [regex]::Escape($sid) })
-    Assert "B1 the manifest records the session under test" ($orig.Count -ge 1)
-    if ($orig.Count -lt 1) { throw "the manifest does not name $sid" }
-
-    # A SECOND window, its own key, naming the SAME session - the state the
-    # carried-window merge used to be able to write.
-    $dup = ($orig[0] | ConvertTo-Json -Depth 30) | ConvertFrom-Json
-    $dup.id = 'dup-window'
-    foreach ($pair in @(@('uuid', 'uuid-dup-window'), @('ipc_name', 'dupsessB'))) {
-        if ($dup.PSObject.Properties.Name -contains $pair[0]) { $dup.($pair[0]) = $pair[1] }
-        else { $dup | Add-Member -NotePropertyName $pair[0] -NotePropertyValue $pair[1] }
-    }
-    $doc.windows = @($doc.windows) + @($dup)
-    # No Set-Content here: PS 5.1's utf8 writes a BOM, and the manifest reader
-    # parses JSON from byte zero.
-    [System.IO.File]::WriteAllText(
-        $manifest,
-        ($doc | ConvertTo-Json -Depth 40),
-        (New-Object System.Text.UTF8Encoding($false)))
-    "  manifest now describes $((@($doc.windows)).Count) window(s), two of them naming $sid"
+    $named = Write-DupManifest -Sid $sid -DupId 'dup-window' -DupName 'dupsessB'
+    Assert "B1 the manifest records the session under test" ($named -ge 1)
+    if ($named -lt 1) { throw "the manifest does not name $sid" }
+    "  manifest now names $sid in two windows (dupsessA, dupsessB)"
 
     # Relaunch. The restore replays both windows; only one of them may take the
     # session.
@@ -241,6 +319,55 @@ try {
     # And the panes really are different shells, not one pid reported twice.
     $pids = @($panes | Where-Object { $_.pid } | ForEach-Object { $_.pid })
     Assert "B6 no two panes report the same shell pid" ($pids.Count -eq (@($pids | Sort-Object -Unique)).Count)
+
+    # T1687: the pane that got a fresh shell SAYS so. Before, it came up looking
+    # like any new terminal, so the pane the user expected their work in was
+    # silently a different one. Neither window had a banner of its own, so the
+    # notice may take the slot (T422) as well as the scrollback (T423).
+    $pair = @('dupsessA', 'dupsessB')
+    $leaves = @(Wait-LoserBanner -Windows $pair -Sid $sid -Pattern 'Session restored elsewhere')
+    $loser = @($leaves | Where-Object { $_.sid -and $_.sid -ne $sid })
+    $winner = @($leaves | Where-Object { $_.sid -eq $sid })
+    "  leaves: " + (($leaves | ForEach-Object { "$($_.window)[$($_.id.Substring(0, [Math]::Min(8, $_.id.Length)))] banner='$($_.banner)'" }) -join '; ')
+    Assert "B7 the pane refused the session shows the restored-elsewhere banner" `
+        ($loser.Count -eq 1 -and $loser[0].banner -match 'Session restored elsewhere')
+    $loserText = if ($loser.Count -eq 1) { Read-Tight $loser[0].id } else { '' }
+    Assert "B8 ... and says so in its own scrollback, not only the banner" `
+        ($loserText.Contains('Sessionrestoredelsewhere:') -and $loserText.Contains('Nothingwasclosed;thisisafreshshell.'))
+    Assert "B9 ... and never with the agent-restart sentence, which would say the work was lost" `
+        ($loser.Count -eq 1 -and $loser[0].banner -notmatch 'Session interrupted' -and -not $loserText.Contains('Sessioninterrupted'))
+    $winnerText = if ($winner.Count -eq 1) { Read-Tight $winner[0].id } else { 'unread' }
+    Assert "B10 the pane that kept the session shows no such notice" `
+        ($winner.Count -eq 1 -and $winner[0].banner -notmatch 'restored elsewhere' -and -not $winnerText.Contains('Sessionrestoredelsewhere'))
+    # The refused pane is a different shell, so it is a different pane: adopting
+    # the recorded id gave both panes one id, and every `--target=<id>` then
+    # reached whichever the registry found first (measured: B8 read the WINNER's
+    # scrollback until the refused pane stopped adopting it).
+    $ids = @($leaves | ForEach-Object { $_.id })
+    Assert "B11 the two panes have different pane ids" `
+        ($ids.Count -eq 2 -and (@($ids | Sort-Object -Unique)).Count -eq 2)
+    $holder = if ($winner.Count -eq 1) { $winner[0].window } else { 'dupsessA' }
+
+    "== C: a pane that brings its OWN banner back keeps it (T422)"
+    # Same duplicate, but both windows now carry a banner of their own. The
+    # notice's banner copy yields the slot to it; the scrollback copy stays.
+    Stop-App
+    $own = 'T1687-own-banner'
+    $named = Write-DupManifest -Sid $sid -DupId 'dup-window-c' -DupName 'dupsessC' -Banner $own
+    Assert "C1 the manifest records the session under test again" ($named -ge 1)
+    if ($named -lt 1) { throw "the manifest no longer names $sid" }
+    [void](Ghoz @('+new-window', '--target=dupsessProbe2'))
+    [void](Wait-Panes -Want 3 -TimeoutSec 90 -Ignore @('dupsessProbe', 'dupsessProbe2') -Require 'dupsessC')
+    $pairC = @($holder, 'dupsessC')
+    $leavesC = @(Wait-LoserBanner -Windows $pairC -Sid $sid -Pattern ([regex]::Escape($own)))
+    $loserC = @($leavesC | Where-Object { $_.sid -and $_.sid -ne $sid })
+    "  leaves: " + (($leavesC | ForEach-Object { "$($_.window) banner='$($_.banner)'" }) -join '; ')
+    Assert "C2 exactly one of the pair was refused the session" ($loserC.Count -eq 1)
+    Assert "C3 the refused pane kept its OWN banner rather than the notice's" `
+        ($loserC.Count -eq 1 -and $loserC[0].banner -match [regex]::Escape($own) -and $loserC[0].banner -notmatch 'restored elsewhere')
+    $loserCText = if ($loserC.Count -eq 1) { Read-Tight $loserC[0].id } else { '' }
+    Assert "C4 ... and still carries the notice in its scrollback" `
+        ($loserCText.Contains('Sessionrestoredelsewhere:'))
 
 } catch {
     "  FAIL setup: $_"

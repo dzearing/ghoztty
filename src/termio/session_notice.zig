@@ -64,7 +64,35 @@ pub const max_len: usize = 512 + max_command_len * 2;
 /// buffer yields as much of the notice as fits (never a partial escape
 /// sequence, never a panic) because a truncated notice still beats no pane.
 pub fn format(buf: []u8, command: ?[]const u8) []const u8 {
+    return formatFor(buf, .agent_restarted, command);
+}
+
+/// Why a restored pane is on a fresh shell instead of the session it recorded.
+/// Each reason is its own sentence in the same `Label:` voice (T424), carried
+/// by the same two carriers under the same banner-slot rule (T422).
+pub const Reason = enum {
+    /// The agent restarted and the recorded session is a tombstone whose
+    /// command we refused to re-run (T230). The original case.
+    agent_restarted,
+    /// The restore found this session named twice and gave it to another pane
+    /// (T1684); a session can be shown in one place only, so this pane opened
+    /// a shell of its own. The original is ALIVE - that is the whole
+    /// difference from `agent_restarted`, and the wording must not imply it
+    /// was lost (T1687).
+    restored_elsewhere,
+};
+
+/// `format` for any `Reason`. `command` is only rendered for
+/// `.agent_restarted`: a session restored elsewhere is still running its
+/// command, so there is no "previous command" to hand back.
+pub fn formatFor(buf: []u8, reason: Reason, command: ?[]const u8) []const u8 {
     var w: Writer = .{ .buf = buf };
+
+    if (reason == .restored_elsewhere) {
+        w.put("\r\n\x1b[2mSession restored elsewhere: this pane's session is already open in another pane, and a session can only be shown in one place.\x1b[0m\r\n");
+        w.put("\x1b[2m    Nothing was closed; this is a fresh shell.\x1b[0m\r\n");
+        return w.written();
+    }
 
     w.put("\r\n\x1b[2mSession interrupted: the background terminal process was restarted, so this session was closed.\x1b[0m\r\n");
 
@@ -190,7 +218,16 @@ pub fn holdAbove(t: *terminal.Terminal, pin: *terminal.Pin) void {
 /// every one of them — and a pane that had no banner still gets the notice on
 /// screen for free. See `termio.Remote.Config.pane_banner_restored`.
 pub fn formatBanner(buf: []u8, command: ?[]const u8) []const u8 {
+    return formatBannerFor(buf, .agent_restarted, command);
+}
+
+/// `formatBanner` for any `Reason`; see `formatFor`.
+pub fn formatBannerFor(buf: []u8, reason: Reason, command: ?[]const u8) []const u8 {
     var w: Writer = .{ .buf = buf };
+    if (reason == .restored_elsewhere) {
+        w.put("\x1b]7778;**Session restored elsewhere:** this pane's session is already open in another pane, and a session can only be shown in one place. Nothing was closed; this is a fresh shell.\x07");
+        return w.written();
+    }
     w.put("\x1b]7778;**Session interrupted:** the background terminal process was restarted, so this session was closed. Nothing was re-run; this is a fresh shell.");
     if (sanitizedCommand(command)) |cmd| {
         var cmd_buf: [max_command_len + 3]u8 = undefined;
@@ -429,6 +466,49 @@ test "formatBanner: a command cannot break out of its code span or inject OSC" {
     try testing.expectEqual(@as(usize, 1), bel); // only the terminator
     try testing.expectEqual(@as(usize, 1), esc); // only the introducer
     try testing.expect(std.mem.indexOf(u8, out, "\\`\\*\\*x\\*\\*\\[a\\](b)\\`") != null);
+}
+
+test "formatFor: restored elsewhere names what happened and says nothing was closed" {
+    // T1687: the session is ALIVE in another pane. The wording must say so and
+    // must not borrow the restart sentence, which would tell the user their
+    // work was lost when it is one window over.
+    const testing = std.testing;
+    var buf: [max_len]u8 = undefined;
+    var banner_buf: [max_len]u8 = undefined;
+
+    for ([_][]const u8{
+        formatFor(&buf, .restored_elsewhere, "ignored"),
+        formatBannerFor(&banner_buf, .restored_elsewhere, "ignored"),
+    }) |out| {
+        try testing.expect(std.mem.indexOf(u8, out, "Session restored elsewhere:") != null);
+        try testing.expect(std.mem.indexOf(u8, out, "already open in another pane") != null);
+        try testing.expect(std.mem.indexOf(u8, out, "Nothing was closed; this is a fresh shell.") != null);
+        try testing.expect(std.mem.indexOf(u8, out, "Session interrupted") == null);
+        try testing.expect(std.mem.indexOf(u8, out, "restarted") == null);
+        // The session still runs its command, so there is none to hand back.
+        try testing.expect(std.mem.indexOf(u8, out, "Previous command") == null);
+        try testing.expect(std.mem.indexOf(u8, out, "ignored") == null);
+        // T424's voice: a colon, never a dash.
+        try testing.expect(std.mem.indexOf(u8, out, "\u{2014}") == null);
+        try testing.expect(std.mem.indexOf(u8, out, "\u{2013}") == null);
+    }
+
+    const banner = formatBannerFor(&banner_buf, .restored_elsewhere, null);
+    try testing.expect(std.mem.startsWith(u8, banner, "\x1b]7778;"));
+    try testing.expect(std.mem.endsWith(u8, banner, "\x07"));
+    var bel: usize = 0;
+    for (banner) |c| if (c == 0x07) {
+        bel += 1;
+    };
+    try testing.expectEqual(@as(usize, 1), bel);
+}
+
+test "formatFor: agent_restarted is byte-identical to format" {
+    const testing = std.testing;
+    var a: [max_len]u8 = undefined;
+    var b: [max_len]u8 = undefined;
+    try testing.expectEqualStrings(format(&a, "zig build"), formatFor(&b, .agent_restarted, "zig build"));
+    try testing.expectEqualStrings(formatBanner(&a, null), formatBannerFor(&b, .agent_restarted, null));
 }
 
 test "foldIntoScrollback: the notice lands above the viewport, not on it" {
