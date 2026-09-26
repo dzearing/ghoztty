@@ -34367,3 +34367,13 @@ the card asked for is standing rather than one-off: section P of
 runs `update` for its own guard name. A sweep today found no other offender
 (parity-decisions and gate-negatives use the array spelling, which P5 pins).
 P3 is the negative control, the pre-T1042 agent-adopt.ps1 out of history.
+
+## 2026-09-26 — T984: a viewer pane edit makes its acceptance harness due
+
+The viewer-panes guard row covered only the script and its leak lib, so
+T934's ViewerPane.zig rewrite never made the harness due. It now also covers
+ViewerPane.zig, viewer_content.zig, IpcHandlers.zig, and the +list / +reload
+CLI verbs. The gate was seen going red on those five files, then viewer-panes
+passed 195/195 and stamped. Audit of the other test-only rows: all are
+test-infrastructure harnesses or commented exclusions, so no follow-up task.
+No zig change, so the lanes and P1-P3 were not re-run.
