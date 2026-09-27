@@ -191,7 +191,7 @@ function Measure-Startup($tag, $extraArgs = @(), $windowTimeoutSec = 60) {
             # A window that lists no pane yet is still mid-construction, and the
             # question this measures is when the startup's windows EXIST — so
             # settle on the first list that reports a real pane.
-            $wins = @(Windows-Of $tree)
+            $wins = (Windows-Of $tree)
             $leaves = (All-Leaves $tree).Count
             if ($wins.Count -ge 1 -and $leaves -ge 1) {
                 $tWindow = [int]$sw.ElapsedMilliseconds

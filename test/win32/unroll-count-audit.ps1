@@ -47,6 +47,18 @@
          real index, and the files this run FIXED have to be at zero - the
          assertion the fix owed, checked rather than remembered.
 
+    T1004 added the same unroll seen from the other side, both held at ZERO by
+    D7 (they were driven there in the run that added them):
+
+      * `comma-rewrapped` - `@(Helper ...)` around a helper that returns with
+        the comma idiom. The wrap nests it: `.Count` reads 1 over two results
+        and 1 over none, and `[0]` is the whole array. T974 died on it.
+      * `empty-as-null` - `[Parameter(Mandatory)][AllowEmptyCollection()]`
+        without `[AllowNull()]`. An empty collection returned from a function
+        binds as $null and is refused; T982/T1000 aborted a floor run on it.
+
+    B7-B9 measure both on this interpreter.
+
     `-TeethCheck` proves C and D can fail: it plants each unwrapped shape into a
     throwaway tree and requires the assertions to score red. Run it after any
     change to the analyzer.
@@ -243,6 +255,82 @@ $n = (Get-TestWindows -ProcessId 1).Count
 Assert 'A16 and shadowing one name does not excuse the rest of the file' (
     @(Get-FixtureFindings $shadowOther).Count -eq 1)
 
+# --- T1004: the two shapes seen from the other side ------------------------
+
+$rewrap = @'
+function Get-Leaves($t) { return , @($t.leaves) }
+$n = @(Get-Leaves $x).Count
+$first = @(Get-Leaves $x)[0]
+'@
+$f = @(Get-FixtureFindings $rewrap)
+AssertEq 'A17 an @() around a comma-protected helper is reported, per site' 2 $f.Count
+Assert 'A18 and named as comma-rewrapped, with the helper' (
+    $f.Count -eq 2 -and @($f | Where-Object { $_.Kind -eq 'comma-rewrapped' -and $_.Name -eq 'Get-Leaves' }).Count -eq 2)
+
+$mixedBranch = @'
+function Get-Hits($x) {
+    if (-not $x) { return , @() }
+    return $x.hits
+}
+$h = @(Get-Hits $y)
+'@
+$f = @(Get-FixtureFindings $mixedBranch)
+Assert 'A19 ONE comma branch is enough - the empty branch is where the phantom 1 lives' (
+    $f.Count -eq 1 -and $f[0].Kind -eq 'comma-rewrapped')
+
+$bareComma = @'
+function Get-Leaves($t) { return , @($t.leaves) }
+$n = (Get-Leaves $x).Count
+$l = Get-Leaves $x
+foreach ($leaf in (Get-Leaves $x)) { $leaf }
+'@
+AssertEq 'A20 a comma helper read bare is the correct shape and yields nothing' 0 `
+    @(Get-FixtureFindings $bareComma).Count
+
+$sharedComma = @'
+$n = @(Get-SharedLeaves $x).Count
+'@
+$f = @(Get-UnrollCountFindings -Path 'fixture.ps1' -Text ($sharedComma -split "`n") -Index @{} `
+        -CommaIndex @{ 'get-sharedleaves' = 'lib\Shared.ps1' })
+Assert 'A21 a dot-sourced comma helper (the comma index) is reported too' (
+    $f.Count -eq 1 -and $f[0].Kind -eq 'comma-rewrapped')
+
+$shadowComma = @'
+function Get-SharedLeaves($t) { return @($t.leaves) }
+$n = @(Get-SharedLeaves $x).Count
+'@
+$f = @(Get-UnrollCountFindings -Path 'fixture.ps1' -Text ($shadowComma -split "`n") -Index @{} `
+        -CommaIndex @{ 'get-sharedleaves' = 'lib\Shared.ps1' })
+AssertEq 'A22 a local NON-comma definition shadows the comma index' 0 $f.Count
+
+$emptyAsNull = @'
+function Get-Pids {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Tree)
+}
+function Get-Pids2 {
+    param([Parameter(Mandatory = $true)][AllowNull()][AllowEmptyCollection()][object[]]$Tree)
+}
+function Get-Pids3 {
+    param([Parameter(Mandatory = $false)][AllowEmptyCollection()][object[]]$Tree)
+}
+function Get-Pids4 {
+    param([Parameter(Mandatory)][string[]]$ExeNames)
+}
+'@
+$f = @(Get-FixtureFindings $emptyAsNull)
+AssertEq 'A23 only Mandatory + AllowEmptyCollection without AllowNull is reported' 1 $f.Count
+Assert 'A24 and named as empty-as-null, with the parameter, at its line' (
+    $f.Count -eq 1 -and $f[0].Kind -eq 'empty-as-null' -and $f[0].Name -eq 'Tree' -and $f[0].Line -eq 2)
+
+$emptyWaived = @'
+function Get-Pids {
+    # count-audit: every caller passes a literal array, never a helper's return
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Tree)
+}
+'@
+AssertEq 'A25 the same stated-reason marker exempts an empty-as-null site' 0 `
+    @(Get-FixtureFindings $emptyWaived).Count
+
 # ===========================================================================
 Write-Host ''
 Write-Host '== B: negative control - the trap is real on THIS interpreter'
@@ -268,7 +356,26 @@ AssertEq 'B3 the wrap at the point of use is what fixes it' 1 @(Get-OneRecord).C
 # audits red on 2026-09-16 by "fixing" them.
 function Get-CommaWrapped { return , @([pscustomobject]@{ a = 1 }, [pscustomobject]@{ a = 2 }) }
 AssertEq 'B5 a comma-protected return counts correctly unwrapped' 2 (Get-CommaWrapped).Count
+# count-audit: the comma-rewrapped defect on purpose - B6 measures what it answers
 AssertEq 'B6 and wrapping THAT call is the new defect, not the fix' 1 @(Get-CommaWrapped).Count
+function Get-CommaNone { return , @() }
+# count-audit: the comma-rewrapped defect on purpose - B7 measures the empty case
+AssertEq 'B7 and over an EMPTY result the rewrap still reads 1 - a phantom element' 1 @(Get-CommaNone).Count
+
+# The empty-as-null measurement (T1004): what T982/T1000 died on. An empty
+# collection returned from a function arrives as $null, so [AllowEmptyCollection()]
+# alone refuses it and only [AllowNull()] lets it through.
+function Get-NoRows { $l = New-Object System.Collections.ArrayList; return $l }
+# count-audit: the empty-as-null defect on purpose - B8 measures that it refuses
+function Use-EmptyOnly { param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Tree) 'bound' }
+function Use-NullToo { param([Parameter(Mandatory)][AllowNull()][AllowEmptyCollection()][object[]]$Tree) 'bound' }
+$refused = $null
+try { $null = Use-EmptyOnly -Tree (Get-NoRows) } catch { $refused = $_.Exception.Message }
+Assert "B8 an empty return binds as null and AllowEmptyCollection alone refuses it ($refused)" (
+    "$refused" -match 'because it is null')
+$bound = $null
+try { $bound = Use-NullToo -Tree (Get-NoRows) } catch { $bound = $_.Exception.Message }
+AssertEq 'B9 and AllowNull is what lets it through' 'bound' $bound
 
 # The assertion shape the defect actually wears: two vacuous counts compared.
 # count-audit: the defect shape on purpose - B4 measures that it passes
@@ -360,6 +467,17 @@ Assert "D3 the index found the repo's array-returning helpers ($($index.Count))"
 Assert 'D4 and the shared window helpers are among them' (
     $index.ContainsKey('get-testwindows') -and $index.ContainsKey('get-testchildwindows'))
 
+# T1004's two kinds were driven to zero in the run that added them, so they are
+# held at zero outright rather than per file: there is no backlog to ratchet.
+$commaIndex = Get-UnrollCommaIndex -Roots $Roots
+Assert "D6 the comma index found the dot-sourced comma helpers ($($commaIndex.Count))" (
+    $commaIndex.Count -ge 5)
+$t1004 = @($sweep | Where-Object { $_.Kind -eq 'comma-rewrapped' -or $_.Kind -eq 'empty-as-null' })
+foreach ($x in $t1004) {
+    Write-Host "      $(Get-UnrollCountRelativePath -Path $x.Path -Repo $Repo):$($x.Line) $($x.Kind): $($x.Detail)" -ForegroundColor Red
+}
+AssertEq 'D7 no @() nests a comma-protected helper, and no Mandatory collection refuses an empty return' 0 $t1004.Count
+
 $kinds = @($sweep | ForEach-Object { $_.Kind } | Sort-Object -Unique)
 Assert "D5 every finding is one of the declared kinds ($($kinds -join ', '))" (
     @($kinds | Where-Object { (Get-UnrollCountHardKinds) -notcontains $_ }).Count -eq 0)
@@ -397,6 +515,22 @@ if ($TeethCheck) {
     $t = @(Get-UnrollCountFindings -Path $victim -Text $wounded -Index $index)
     Assert 'T4 a re-wounded fixed file is reported again' (
         @($t | Where-Object { $_.Kind -eq 'unwrapped-call' }).Count -ge 1)
+
+    # D7's teeth (T1004): put the @() back on a site this task fixed, and take
+    # the AllowNull back off the parameter it fixed.
+    $victim = Join-Path $Repo 'test\win32\agent-recovery.ps1'
+    $text = @(Get-Content -LiteralPath $victim)
+    $wounded = @($text | ForEach-Object { $_ -replace '\(Viewer-Leaves \$treeH\)', '@(Viewer-Leaves $treeH)' })
+    Assert 'T5 the fixture actually re-planted a comma rewrap' ((($text -join "`n") -ne ($wounded -join "`n")))
+    $t = @(Get-UnrollCountFindings -Path $victim -Text $wounded -Index $index -CommaIndex $commaIndex)
+    AssertEq 'T6 and D7 would see it' 1 @($t | Where-Object { $_.Kind -eq 'comma-rewrapped' }).Count
+
+    $victim = Join-Path $Repo 'test\win32\lib\CleanSlateAudit.ps1'
+    $text = @(Get-Content -LiteralPath $victim)
+    $wounded = @($text | ForEach-Object { $_.Replace('[AllowNull()][AllowEmptyCollection()]', '[AllowEmptyCollection()]') })
+    Assert 'T7 the fixture actually stripped the AllowNull' ((($text -join "`n") -ne ($wounded -join "`n")))
+    $t = @(Get-UnrollCountFindings -Path $victim -Text $wounded -Index $index -CommaIndex $commaIndex)
+    AssertEq 'T8 and D7 would see it' 1 @($t | Where-Object { $_.Kind -eq 'empty-as-null' }).Count
 }
 
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

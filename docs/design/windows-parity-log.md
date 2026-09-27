@@ -34500,3 +34500,17 @@ screen (`session_layout.shownHere`: a live window's uuid, or a session a live
 pane shows). `restore-late-agent.ps1` phase E: ALL PASS (36); floor lanes,
 P1-P3 and every due guard green. Filed T1772 (the recovered `window-1` comes
 back under a minted name because the stand-in window held it).
+## 2026-09-26 — T1004: the unroll audit now catches a list wrapped twice and an empty list refused as null
+
+T794's unroll-count audit grew two kinds. `comma-rewrapped`: an `@()` around a
+helper that already returns with the comma idiom nests it, so `.Count` reads 1
+over two results and over none - 26 such sites in 11 scripts, several of them
+assertions that could never fail (`agent-recovery-tabs.ps1` A4 "exactly one
+agent", `agent-recovery.ps1`'s viewer counts, `rearrange-viewer.ps1`'s focus
+checks, `seam-audit.ps1`'s teeth). `empty-as-null`: a Mandatory parameter with
+`[AllowEmptyCollection()]` but no `[AllowNull()]` refuses an empty return,
+which binds as `$null` (the T982/T1000 floor abort) - one site left,
+`CleanSlateAudit.ps1`. All fixed; D7 holds both kinds at zero and `-TeethCheck`
+re-plants each. `unroll-count-audit.ps1` ALL PASS (45; teeth 53); every touched
+acceptance script re-run green except `agent-recovery.ps1` I3/I4, which fail
+identically on the unmodified HEAD script - filed as T1773. Harness floor PASS.

@@ -162,7 +162,7 @@ function All-Leaves($m) {
 # The first leaf that recorded a WP-D3 pair, or $null.
 function First-Snapshot-Leaf($m) {
     if ($null -eq $m) { return $null }
-    foreach ($leaf in @(All-Leaves $m)) {
+    foreach ($leaf in (All-Leaves $m)) {
         if ($leaf.screen_snapshot -and $leaf.screen_snapshot_offset) { return $leaf }
     }
     return $null

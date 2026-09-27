@@ -212,7 +212,7 @@ $inventory = Get-SeamInventory -Root $Repo
 Write-Host "     seams found: $(@($inventory).Count)"
 Assert 'C2 the sweep looked at both trees and found a real population' (@($inventory).Count -ge 50)
 
-$findings = @(Test-SeamRegistry -Root $Repo -Inventory $inventory -Registry $registry)
+$findings = (Test-SeamRegistry -Root $Repo -Inventory $inventory -Registry $registry)
 foreach ($f in $findings) { Write-Host "     $($f.Kind): $($f.Seam) - $($f.Detail)" -ForegroundColor Yellow }
 
 AssertEq 'C3 every seam the sweep finds is registered' 0 (@($findings | Where-Object { $_.Kind -eq 'unregistered' }).Count)
@@ -264,16 +264,16 @@ if ($TeethCheck) {
     }
 
     $dropped = $realSeams.Clone(); $dropped.Remove('GHOZTTY_PIPE_SUFFIX')
-    $t1 = @(Test-SeamRegistry -Root $Repo -Inventory $inventory -Registry (Write-Teeth $dropped $ceiling))
+    $t1 = (Test-SeamRegistry -Root $Repo -Inventory $inventory -Registry (Write-Teeth $dropped $ceiling))
     Assert 'T1 dropping a real seam from the registry is caught' (@($t1 | Where-Object { $_.Kind -eq 'unregistered' }).Count -eq 1)
 
     $invented = $realSeams.Clone(); $invented['GHOZTTY_NOT_A_REAL_SEAM'] = [pscustomobject]@{ class = 'tuning'; unset = 'shipped-elsewhere'; note = 'x' }
-    $t2 = @(Test-SeamRegistry -Root $Repo -Inventory $inventory -Registry (Write-Teeth $invented $ceiling))
+    $t2 = (Test-SeamRegistry -Root $Repo -Inventory $inventory -Registry (Write-Teeth $invented $ceiling))
     Assert 'T2 an invented entry is caught as stale' (@($t2 | Where-Object { $_.Kind -eq 'stale' }).Count -eq 1)
 
     $brokenArm = $realSeams.Clone()
     $brokenArm['GHOSTTY_GOOGLE_CLIENT_ID'] = [pscustomobject]@{ class = 'enable'; unset = 'armed'; unsetArm = 'test\win32\relay-account.ps1::a marker nobody wrote'; note = 'x' }
-    $t3 = @(Test-SeamRegistry -Root $Repo -Inventory $inventory -Registry (Write-Teeth $brokenArm $ceiling))
+    $t3 = (Test-SeamRegistry -Root $Repo -Inventory $inventory -Registry (Write-Teeth $brokenArm $ceiling))
     Assert 'T3 an arm whose marker is gone is caught' (@($t3 | Where-Object { $_.Kind -eq 'arm-broken' }).Count -eq 1)
 
     $extraGap = $realSeams.Clone()

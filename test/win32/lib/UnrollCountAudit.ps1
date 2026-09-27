@@ -56,6 +56,24 @@
 # comment is not a count, and the wrap can be spelled `@(...)`, `[array](...)`
 # or `[object[]](...)`.
 #
+# TWO MORE KINDS, the same unroll seen from the other side (T1004):
+#
+#   * `comma-rewrapped` - `@(Helper ...)` where `Helper` returns with the comma
+#     idiom (`return , $x`) in any branch. The comma already protects the
+#     return, so the `@()` NESTS it: `@(CommaTwo).Count` answers 1, and so does
+#     `@(CommaEmpty).Count` - a count that cannot fail, and a `[0]` that is the
+#     whole inner array. T974 died on this. Fix: drop the `@()`.
+#   * `empty-as-null` - a `[Parameter(Mandatory)]` parameter that carries
+#     `[AllowEmptyCollection()]` but not `[AllowNull()]`. The author said "an
+#     empty set is fine", but an empty collection returned from a function
+#     unrolls to NOTHING and binds as $null, which Mandatory refuses:
+#     "Cannot bind argument to parameter 'Tree' because it is null" aborted a
+#     whole floor run (T982/T1000). Fix: add `[AllowNull()]`.
+#
+#   A Mandatory collection parameter with NEITHER permission is deliberately not
+#   a finding: that refusal is the author's stated intent (argument lists, a
+#   non-empty set of image names), and the error it raises names itself.
+#
 # EXEMPTION, narrow and stated: `# count-audit: <reason>` on the finding's line
 # or the line above it - the same state-your-intent convention the
 # `# persistence:`, `# exitcode-audit:`, `# skip-audit:`, `# verdict-audit:` and
@@ -100,6 +118,42 @@ $script:UNROLL_COLLECTION_COMMANDS = @(
 # means a harmless `@()` is asked for. Both are cheap, and the rule's fix is
 # correct either way - which is why this stays a shape test rather than an
 # attempt at type inference.
+function Get-UnrollOutputPipelines($FunctionAst) {
+    $outs = New-Object System.Collections.ArrayList
+    $body = $FunctionAst.Body
+    if ($null -eq $body) { return , $outs.ToArray() }
+    foreach ($n in @($body.FindAll({ param($x)
+                    $x -is [System.Management.Automation.Language.ReturnStatementAst] }, $true))) {
+        if ($n.Pipeline) { [void]$outs.Add($n.Pipeline) }
+    }
+    if ($body.EndBlock) {
+        foreach ($st in @($body.EndBlock.Statements)) {
+            if ($st -is [System.Management.Automation.Language.PipelineAst]) { [void]$outs.Add($st) }
+        }
+    }
+    return , $outs.ToArray()
+}
+
+# Does ANY output of this function use the comma idiom (`return , $x`, or a bare
+# `, $x` as an end-block statement)? One branch is enough to make an `@()` at the
+# call site nest - the empty branch of a mixed helper is exactly where a count
+# reads 1 over nothing.
+function Test-UnrollCommaReturning($FunctionAst) {
+    foreach ($o in (Get-UnrollOutputPipelines $FunctionAst)) {
+        if (-not ($o -is [System.Management.Automation.Language.PipelineAst])) { continue }
+        $elements = @($o.PipelineElements)
+        if ($elements.Count -eq 0) { continue }
+        $first = $elements[0]
+        if (-not ($first -is [System.Management.Automation.Language.CommandExpressionAst])) { continue }
+        $ex = $first.Expression
+        if ($ex -is [System.Management.Automation.Language.ArrayLiteralAst] -and
+            @($ex.Elements).Count -eq 1) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Test-UnrollArrayReturning($FunctionAst) {
     $body = $FunctionAst.Body
     if ($null -eq $body) { return $false }
@@ -118,17 +172,7 @@ function Test-UnrollArrayReturning($FunctionAst) {
         }
     }
 
-    $outs = New-Object System.Collections.ArrayList
-    foreach ($n in $nodes) {
-        if ($n -is [System.Management.Automation.Language.ReturnStatementAst] -and $n.Pipeline) {
-            [void]$outs.Add($n.Pipeline)
-        }
-    }
-    if ($body.EndBlock) {
-        foreach ($st in @($body.EndBlock.Statements)) {
-            if ($st -is [System.Management.Automation.Language.PipelineAst]) { [void]$outs.Add($st) }
-        }
-    }
+    $outs = Get-UnrollOutputPipelines $FunctionAst
 
     # THE COMMA IDIOM COMES FIRST, because it inverts the answer. `return , @(...)`
     # wraps the array in a one-element outer array, which is how this suite has
@@ -139,18 +183,8 @@ function Test-UnrollArrayReturning($FunctionAst) {
     # outer wrapper. So a helper that protects any of its outputs this way is out
     # of the index entirely - there is nothing here to fix, and the mechanical
     # `@()` pass that ignored this turned four green audits red (2026-09-16).
-    foreach ($o in $outs) {
-        if (-not ($o -is [System.Management.Automation.Language.PipelineAst])) { continue }
-        $elements = @($o.PipelineElements)
-        if ($elements.Count -eq 0) { continue }
-        $first = $elements[0]
-        if (-not ($first -is [System.Management.Automation.Language.CommandExpressionAst])) { continue }
-        $ex = $first.Expression
-        if ($ex -is [System.Management.Automation.Language.ArrayLiteralAst] -and
-            @($ex.Elements).Count -eq 1) {
-            return $false
-        }
-    }
+    # (That new defect is the `comma-rewrapped` kind, below.)
+    if (Test-UnrollCommaReturning $FunctionAst) { return $false }
 
     foreach ($o in $outs) {
         if (-not ($o -is [System.Management.Automation.Language.PipelineAst])) { continue }
@@ -218,6 +252,31 @@ function Get-UnrollCountIndex {
     return $index
 }
 
+# The index of comma-returning helpers: name (lowered) -> file. Read from the
+# `lib` directories under the roots ONLY, because those are what a script
+# dot-sources; a helper defined in some other acceptance script is that script's
+# own, and ten scripts define a `Get-Leaves` of their own with different shapes.
+# A file's local definition overrides this (see Get-UnrollCountFindings).
+function Get-UnrollCommaIndex {
+    param([string[]]$Roots)
+    $index = @{}
+    foreach ($root in @($Roots)) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($f in @(Get-ChildItem -LiteralPath $root -Filter *.ps1 -File -Recurse)) {
+            if ((Split-Path -Leaf $f.DirectoryName) -ne 'lib') { continue }
+            $parsed = Get-UnrollCountAst -Path $f.FullName
+            if ($parsed.Errors.Count -gt 0) { continue }
+            foreach ($n in @($parsed.Ast.FindAll({ param($x)
+                            $x -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))) {
+                if (-not (Test-UnrollCommaReturning $n)) { continue }
+                $name = $n.Name.ToLower()
+                if (-not $index.ContainsKey($name)) { $index[$name] = $f.Name }
+            }
+        }
+    }
+    return $index
+}
+
 # Does a `# count-audit: <reason>` marker cover this line? The finding's own line
 # or the one above it, and the reason has to be there - a bare marker waives
 # nothing, the way `# thread-join-audit:` works.
@@ -267,11 +326,13 @@ function Get-UnrollCountFindings {
     param(
         [string]$Path,
         [string[]]$Text,
-        [hashtable]$Index
+        [hashtable]$Index,
+        [hashtable]$CommaIndex
     )
     $findings = New-Object System.Collections.ArrayList
     $lines = if ($null -ne $Text) { @($Text) } else { @(Get-Content -LiteralPath $Path) }
     if ($null -eq $Index) { $Index = @{} }
+    if ($null -eq $CommaIndex) { $CommaIndex = @{} }
 
     $parsed = Get-UnrollCountAst -Path $Path -Text $Text
     if ($parsed.Errors.Count -gt 0) {
@@ -300,6 +361,59 @@ function Get-UnrollCountFindings {
         } elseif ($localIndex.ContainsKey($key)) {
             $localIndex.Remove($key)
         }
+    }
+
+    # The same shadowing for the comma index: a local definition decides.
+    $localComma = @{}
+    foreach ($k in $CommaIndex.Keys) { $localComma[$k] = $CommaIndex[$k] }
+    foreach ($n in $all) {
+        if (-not ($n -is [System.Management.Automation.Language.FunctionDefinitionAst])) { continue }
+        $key = $n.Name.ToLower()
+        if (Test-UnrollCommaReturning $n) { $localComma[$key] = '(local)' }
+        elseif ($localComma.ContainsKey($key)) { $localComma.Remove($key) }
+    }
+
+    # --- kind 3: @(CommaHelper ...) ------------------------------------------
+    foreach ($n in $all) {
+        if (-not ($n -is [System.Management.Automation.Language.ArrayExpressionAst])) { continue }
+        $st = @($n.SubExpression.Statements)
+        if ($st.Count -ne 1) { continue }
+        if (-not ($st[0] -is [System.Management.Automation.Language.PipelineAst])) { continue }
+        $els = @($st[0].PipelineElements)
+        if ($els.Count -ne 1) { continue }
+        if (-not ($els[0] -is [System.Management.Automation.Language.CommandAst])) { continue }
+        $cn = $els[0].GetCommandName()
+        if (-not $cn -or -not $localComma.ContainsKey($cn.ToLower())) { continue }
+        $line = $n.Extent.StartLineNumber
+        if (Test-UnrollExempt $lines $line) { continue }
+        [void]$findings.Add([pscustomobject]@{
+                Path = $Path; Line = $line; Kind = 'comma-rewrapped'; Name = $cn
+                Detail = "$($n.Extent.Text.Split("`n")[0].Trim()) - $cn already returns with the comma idiom, so this @() NESTS it (.Count reads 1, [0] is the whole array); drop the @()"
+            })
+    }
+
+    # --- kind 4: Mandatory + AllowEmptyCollection without AllowNull ----------
+    foreach ($n in $all) {
+        if (-not ($n -is [System.Management.Automation.Language.ParameterAst])) { continue }
+        $mandatory = $false; $allowEmpty = $false; $allowNull = $false
+        foreach ($a in @($n.Attributes)) {
+            $an = $a.TypeName.Name
+            if ($an -eq 'Parameter' -and $a -is [System.Management.Automation.Language.AttributeAst]) {
+                foreach ($na in @($a.NamedArguments)) {
+                    if ($na.ArgumentName -ne 'Mandatory') { continue }
+                    if ($na.ExpressionOmitted -or $na.Argument.Extent.Text -notmatch '^\$false$|^0$') { $mandatory = $true }
+                }
+            }
+            elseif ($an -eq 'AllowEmptyCollection') { $allowEmpty = $true }
+            elseif ($an -eq 'AllowNull') { $allowNull = $true }
+        }
+        if (-not ($mandatory -and $allowEmpty -and -not $allowNull)) { continue }
+        $line = $n.Extent.StartLineNumber
+        if (Test-UnrollExempt $lines $line) { continue }
+        [void]$findings.Add([pscustomobject]@{
+                Path = $Path; Line = $line; Kind = 'empty-as-null'; Name = "$($n.Name.VariablePath.UserPath)"
+                Detail = "$($n.Name.Extent.Text) is Mandatory and allows an empty collection but not `$null - an empty collection returned from a function arrives as `$null and is refused; add [AllowNull()]"
+            })
     }
 
     $members = New-Object System.Collections.ArrayList
@@ -377,7 +491,9 @@ function Get-UnrollCountFindings {
 
 # Every kind is the defect. There is no advisory kind here: the fix is one
 # `@()` and it is correct whatever the helper turns out to return.
-function Get-UnrollCountHardKinds { return @('unwrapped-call', 'unwrapped-var', 'parse-error') }
+function Get-UnrollCountHardKinds {
+    return @('unwrapped-call', 'unwrapped-var', 'comma-rewrapped', 'empty-as-null', 'parse-error')
+}
 
 function Get-UnrollCountRelativePath([string]$Path, [string]$Repo) {
     $full = (Resolve-Path -LiteralPath $Path -ErrorAction SilentlyContinue)
@@ -390,13 +506,14 @@ function Get-UnrollCountRelativePath([string]$Path, [string]$Repo) {
 
 # Sweep every *.ps1 under the roots, with one shared index.
 function Get-UnrollCountSweep {
-    param([string[]]$Roots, [hashtable]$Index)
+    param([string[]]$Roots, [hashtable]$Index, [hashtable]$CommaIndex)
     if ($null -eq $Index) { $Index = Get-UnrollCountIndex -Roots $Roots }
+    if ($null -eq $CommaIndex) { $CommaIndex = Get-UnrollCommaIndex -Roots $Roots }
     $all = New-Object System.Collections.ArrayList
     foreach ($root in @($Roots)) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
         foreach ($f in @(Get-ChildItem -LiteralPath $root -Filter *.ps1 -File -Recurse)) {
-            foreach ($x in @(Get-UnrollCountFindings -Path $f.FullName -Index $Index)) { [void]$all.Add($x) }
+            foreach ($x in @(Get-UnrollCountFindings -Path $f.FullName -Index $Index -CommaIndex $CommaIndex)) { [void]$all.Add($x) }
         }
     }
     return $all

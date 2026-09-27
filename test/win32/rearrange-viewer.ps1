@@ -314,7 +314,7 @@ try {
     $vBefore = Get-LeafNamed 'rvw' 'rv1'
     Assert ($vBefore.type -eq 'viewer') 'A: the pane the layout names really is a viewer BEFORE the rearrange'
     Assert (-not [string]::IsNullOrEmpty($vBefore.url)) "A: and it carries a url (got '$($vBefore.url)')"
-    $focusBefore = @(Get-FocusedNames 'rvw')
+    $focusBefore = (Get-FocusedNames 'rvw')
     Assert ($focusBefore.Count -eq 1 -and $focusBefore[0] -eq 'rvt2') `
         "A: the pane created last holds focus, so the focus assertion below can move (got '$($focusBefore -join ',')')"
     $pidT0Before = (Get-LeafNamed 'rvw' $t0name).pid
@@ -354,7 +354,7 @@ try {
             "A: and it is the same shell (pid $pidT2Before -> $($t2After.pid))"
         Assert ((Read-Pane 'rvt2') -match 'RVWMARKTWO') 'A: its scrollback survived the swap too'
 
-        $focusAfter = @(Get-FocusedNames 'rvw')
+        $focusAfter = (Get-FocusedNames 'rvw')
         Assert ($focusAfter.Count -eq 1 -and $focusAfter[0] -eq 'rvt2') `
             "A: focus stayed on the pane that had it (got '$($focusAfter -join ',')')"
 
@@ -375,7 +375,7 @@ try {
     Assert ((Get-LeafCount 'rvw') -eq 1) "B: the window is down to one pane (got $(Get-LeafCount 'rvw'))"
     Assert ((Get-Shape (Get-Splits 'rvw')) -eq 'L:rv1') `
         "B: and that pane is the viewer (got $(Get-Shape (Get-Splits 'rvw')))"
-    $focusB = @(Get-FocusedNames 'rvw')
+    $focusB = (Get-FocusedNames 'rvw')
     Assert ($focusB.Count -eq 1 -and $focusB[0] -eq 'rv1') `
         "B: the surviving viewer is the focused pane, so the window has an active pane (got '$($focusB -join ',')')"
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'B: the app survived a window of nothing but a viewer'

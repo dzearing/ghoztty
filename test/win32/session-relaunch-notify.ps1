@@ -1029,7 +1029,7 @@ $titleE = $false
 $deadline = (Get-Date).AddSeconds(20)
 while ((Get-Date) -lt $deadline) {
     $tree = Get-List 'e-title'
-    $wins = @(Windows-Of $tree)
+    $wins = (Windows-Of $tree)
     if (@($wins | Where-Object { [string]$_.title -match [regex]::Escape($WIN_TITLE) }).Count -ge 1) {
         $titleE = $true; break
     }

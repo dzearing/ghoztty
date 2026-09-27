@@ -350,7 +350,7 @@ if ($NegativeControl) {
 $mD = Wait-Manifest $tmp {
     param($m) @($m.windows).Count -eq 2 -and (All-Sids $m).Count -eq 3
 } 30
-$sidsD = if ($null -ne $mD) { @(All-Sids $mD) } else { @() }
+$sidsD = if ($null -ne $mD) { (All-Sids $mD) } else { @() }
 if (-not $NegativeControl) {
     Assert "D1 the manifest went from ABSENT back to two windows" (
         $null -ne $mD -and @($mD.windows).Count -eq 2)
@@ -367,7 +367,7 @@ if ($script:failures -gt 0) {
     $mDiag = Read-Manifest $tmp
     if ($null -eq $mDiag) { "== DIAG: no readable manifest at $dp" }
     else {
-        "== DIAG: manifest has $(@($mDiag.windows).Count) window(s), sids=$(@(All-Sids $mDiag) -join ' ')"
+        "== DIAG: manifest has $(@($mDiag.windows).Count) window(s), sids=$((All-Sids $mDiag) -join ' ')"
     }
     "== DIAG: session ids before=$($idsA -join ' ') after=$($idsC -join ' ')"
     "== DIAG: full manifest preserved at $dp"

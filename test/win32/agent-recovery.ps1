@@ -456,7 +456,7 @@ while ((Get-Date) -lt $deadline) {
     if ((Viewer-Leaves $treeA).Count -eq 1) { break }
     Start-Sleep -Milliseconds 500
 }
-$viewerA = @(Viewer-Leaves $treeA)[0]
+$viewerA = (Viewer-Leaves $treeA)[0]
 Assert "A2b a viewer pane joined the tab" ($null -ne $viewerA)
 Assert "A2c the tab now holds 2 terminals and 1 viewer" (
     (Terminal-Leaves $treeA).Count -eq 2 -and (Viewer-Leaves $treeA).Count -eq 1)
@@ -586,7 +586,7 @@ Assert "E7 recovery REPLACED every terminal surface (the control for G)" (
 # viewer draws a fresh random id (`ViewerPane.create`). Sections C and E already
 # established that recovery genuinely ran and rebuilt the terminals on new
 # children, so an untouched viewer here is a spared pane, not a skipped test.
-$viewerE = @(Viewer-Leaves $treeE)
+$viewerE = (Viewer-Leaves $treeE)
 Assert "F1 the viewer pane is still in the tab" ($viewerE.Count -eq 1)
 Assert "F2 it kept its stable pane id - it was never re-created" (
     $viewerE.Count -eq 1 -and $viewerE[0].id -eq $viewerA.id)
@@ -691,7 +691,7 @@ Assert "G13 the pane is still responsive after the blip" (
     Test-PaneResponsive $tmp 't145b' 'g' 30)
 
 $treeG = Get-List $tmp 'g' 12
-$viewerG = @(Viewer-Leaves $treeG)
+$viewerG = (Viewer-Leaves $treeG)
 Assert "G14 the viewer pane is untouched by the blip" (
     $viewerG.Count -eq 1 -and $viewerG[0].id -eq $viewerA.id)
 Assert "G15 the topology is unchanged: 2 terminals in one window" (
@@ -755,7 +755,7 @@ Assert "H8 the pane is responsive again after the rebuild" (
 $treeH = Get-List $tmp 'h' 12
 Assert "H9 the topology survived: one window, 2 terminals, the viewer intact" (
     (Windows-Of $treeH).Count -eq 1 -and (Terminal-Leaves $treeH).Count -eq 2 -and
-    @(Viewer-Leaves $treeH).Count -eq 1)
+    (Viewer-Leaves $treeH).Count -eq 1)
 
 # ============================================================================
 "== I: T723 - a wedge held past the RE-DIAL aborts recovery, and a retry saves it"
@@ -860,7 +860,7 @@ Assert "I10 the pane is a WORKING pane, not a picture of one" (
 $treeI = Get-List $tmp 'i' 12
 Assert "I11 the topology survived: one window, 2 terminals, the viewer intact" (
     (Windows-Of $treeI).Count -eq 1 -and (Terminal-Leaves $treeI).Count -eq 2 -and
-    @(Viewer-Leaves $treeI).Count -eq 1)
+    (Viewer-Leaves $treeI).Count -eq 1)
 
 # And the give-up notice must NOT be showing: it is for a recovery that ran out
 # of retries, and this one succeeded. A pane wearing "your shell is frozen" over
@@ -907,7 +907,7 @@ Assert "J6 the app pid never changed" (
 $treeJ = Get-List $tmp 'j' 12
 Assert "J7 the topology survived: one window, 2 terminals, the viewer intact" (
     (Windows-Of $treeJ).Count -eq 1 -and (Terminal-Leaves $treeJ).Count -eq 2 -and
-    @(Viewer-Leaves $treeJ).Count -eq 1)
+    (Viewer-Leaves $treeJ).Count -eq 1)
 
 # ============================================================================
 "== K: T764 - a pane opened DURING a wedge falls back to exec, it does not inherit the stuck link"

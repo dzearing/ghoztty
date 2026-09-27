@@ -126,7 +126,7 @@ function All-Leaves($tree) {
 function Wait-PaneCwd($needle, $tag, $timeoutSec = 30) {
     $deadline = (Get-Date).AddSeconds($timeoutSec)
     while ((Get-Date) -lt $deadline) {
-        $leaves = @(All-Leaves (Get-List $tag))
+        $leaves = (All-Leaves (Get-List $tag))
         foreach ($l in $leaves) {
             if ($l.working_directory -like "*$needle*") { return $true }
         }
@@ -202,7 +202,7 @@ try {
         # B: it follows a cd. cmd.exe never reports OSC 7, so a text that
         # follows proves the livePwd (T185) half, not just the cache.
         # -------------------------------------------------------------------
-        $leaves = @(All-Leaves (Get-List 'b0'))
+        $leaves = (All-Leaves (Get-List 'b0'))
         Assert ($leaves.Count -ge 1) 'B: a pane to cd in'
         $pane = $leaves[0].id
         Write-Host "INFO  pane=$pane pid=$($leaves[0].pid) cwd=$($leaves[0].working_directory)"
@@ -216,7 +216,7 @@ try {
             Run-CliArgs @('+read', "--name=$pane", '--lines=30') "$root\read-b.txt" 12 | Out-Null
             Write-Host 'INFO  pane tail after cd:'
             (Out-Text "$root\read-b.txt") -split "`n" | Select-Object -Last 6 | ForEach-Object { Write-Host "  | $_" }
-            $l2 = @(All-Leaves (Get-List 'b2'))
+            $l2 = (All-Leaves (Get-List 'b2'))
             if ($l2.Count -ge 1) { Write-Host "INFO  post-cd leaf pid=$($l2[0].pid) cwd=$($l2[0].working_directory)" }
         }
         $probe = Probe-TipText $top $m $errlog
@@ -268,7 +268,7 @@ try {
         # suppression would carry that assertion on its own even if the
         # elision verdict were stuck at "elided". One assertion per rule.
         # -------------------------------------------------------------------
-        $leavesE0 = @(All-Leaves (Get-List 'e00'))
+        $leavesE0 = (All-Leaves (Get-List 'e00'))
         $paneE0 = $leavesE0[0].id
         $fitTitle = 'T556-fits-555'
         Run-CliArgs @('+send-keys', "--target=$paneE0", 'title', 'Space', $fitTitle, 'Enter') "$root\title-fit.txt" 12 | Out-Null
@@ -287,7 +287,7 @@ try {
         # cmd's `title` builtin sets the console title, which ConPTY forwards
         # as a title change - the same path any shell retitle takes.
         $longTitle = 'T556-elided-title-' + ('x' * 72)   # 90 chars, < the 96-byte tip clamp
-        $leavesE = @(All-Leaves (Get-List 'e0'))
+        $leavesE = (All-Leaves (Get-List 'e0'))
         $paneE = $leavesE[0].id
         Run-CliArgs @('+send-keys', "--target=$paneE", 'title', 'Space', $longTitle, 'Enter') "$root\title.txt" 12 | Out-Null
         # The retitle propagates async (shell -> ConPTY -> tab strip repaint);

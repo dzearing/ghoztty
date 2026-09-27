@@ -70,7 +70,10 @@ function Get-CleanSlateFindings {
     then count as one phantom finding and a green sweep would go red for nothing
     (PS 5.1).
     #>
-    param([Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$Text)
+    # AllowNull as well as AllowEmptyCollection (T1004): an empty file read by
+    # Get-Content arrives as $null, not as @(), and the empty permission alone
+    # refuses it.
+    param([Parameter(Mandatory = $true)][AllowNull()][AllowEmptyCollection()][AllowEmptyString()][string[]]$Text)
 
     $findings = @()
     for ($i = 0; $i -lt $Text.Count; $i++) {

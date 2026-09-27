@@ -425,7 +425,7 @@ try {
     $stripC = Get-Strip $top
     Assert ($stripC.TabCount -eq 2) 'C: and the release opened no tab'
     Assert ($stripC.Selected -eq 1) "C: and moved nothing - the tab is still second (got $($stripC.Selected))"
-    Assert (@(Get-PaneBoxes $top).Count -eq 1) 'C: the pane is still where it was'
+    Assert ((Get-PaneBoxes $top).Count -eq 1) 'C: the pane is still where it was'
 
     # --- Claim C2: dropped AHEAD of the other tab, the tab moves there -----
     # T1542. The seam before tab 0 is somewhere the tab is not, so the gesture
@@ -454,7 +454,7 @@ try {
     $stripC2 = Get-Strip $top
     Assert ($stripC2.TabCount -eq 2) "C2: still two tabs - the tab MOVED, none was opened (got $($stripC2.TabCount))"
     Assert ($stripC2.Selected -eq 0) "C2: the carried tab is now FIRST, and on screen (got $($stripC2.Selected))"
-    $afterC2 = @(Get-PaneBoxes $top)
+    $afterC2 = (Get-PaneBoxes $top)
     Assert ($afterC2.Count -eq 1 -and $afterC2[0].Hwnd -eq $only.Hwnd) `
         'C2: and it holds the pane that was dragged - same window, same shell'
 

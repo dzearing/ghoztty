@@ -294,7 +294,7 @@ try {
     Assert ($distinct.Count -eq 3 -and -not ($basePids -contains 0)) `
         'A3 each tab has its own live shell pid (oracle control)'
 
-    $agents = @(Get-RunAgents)
+    $agents = (Get-RunAgents)
     Assert ($agents.Count -eq 1) "A4 exactly one agent belongs to this run (got $($agents.Count))"
     if ($agents.Count -lt 1) { throw 'setup: no agent for this run' }
     $agentPid = [int]$agents[0].ProcessId

@@ -233,10 +233,10 @@ function Test-SeamRegistry {
         }
     }
 
-    # `return , @()` hands an `@()` call site ONE null element, which reads as a
-    # phantom finding - the same PS 5.1 trap T794 is about, in the other
-    # direction. An empty result is spelled empty.
-    if ($findings.Count -eq 0) { return @() }
+    # Comma-protected on EVERY path, and therefore never `@()`-wrapped at a call
+    # site (T1004): the wrap would nest it - `.Count` reads 1 over any number of
+    # findings, and 1 over none. Call sites read it bare; the unroll audit's
+    # `comma-rewrapped` kind is what holds them to that.
     return , $findings.ToArray()
 }
 
