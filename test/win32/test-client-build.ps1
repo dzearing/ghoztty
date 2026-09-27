@@ -133,8 +133,13 @@ Write-Host 'E. every script that needs the client resolves it through the helper
 # The discriminator is the zig-out PATH, not the image name: cleanslate-audit
 # and lib\FakeAgentRelay mention `remote-test-client.exe` as a process name and
 # in prose, and neither one launches it.
+#
+# build-locked-artifact.ps1 (T722) is not a consumer: the client's BUILD is its
+# subject - it runs `zig build remote-test-client` itself, with the install
+# guard on and off, so routing it through the helper would skip the very
+# install it measures.
 $consumers = Get-ChildItem (Join-Path $PSScriptRoot '*.ps1') -File |
-    Where-Object { $_.Name -ne 'test-client-build.ps1' } |
+    Where-Object { $_.Name -ne 'test-client-build.ps1' -and $_.Name -ne 'build-locked-artifact.ps1' } |
     Where-Object { (Get-Content $_.FullName -Raw) -match 'zig-out\\bin\\remote-test-client\.exe' }
 
 Assert "E1 found the client's consumers ($($consumers.Count))" ($consumers.Count -ge 6)

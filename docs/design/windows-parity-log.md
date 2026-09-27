@@ -34469,3 +34469,21 @@ runs, so it is the first thing after a reboot - deletes those entries through
 after a detected reboot: ~150ms over the live bucket, zero false positives.
 Section G of `test\win32\build-cache.ps1` (16 new arms): ALL PASS (92),
 negative control red; floor-lane-cache-heal ALL PASS (85).
+
+## 2026-09-26 — T1001: pane survival is now measured across a real agent upgrade
+
+Arm M of `session-relaunch-notify.ps1` proved panes survive a KILLED session
+manager; nothing proved the same across the graceful handoff to a newer build,
+which is the shape every user meets. `test\win32\agent-handoff.ps1` now opens a
+second, commanded pane running a long-lived `ping` before the handoff (A9-A11)
+and after it asserts arm M's claims: the same `ping` process is still running
+(C6), both panes are still listed (C7), no banner or scrollback carries the
+interrupted notice (C8/C9), and both panes keep their session ids (C10).
+`-BreakHolders` reaps the holders as the predecessor retires: C1/C2/C3/C6/C10
+go red. C8/C9 stay green there - a holder dying under a live manager is
+replaced by a fresh shell with no notice at all, filed as T1771.
+ALL PASS (37); teeth run 5 red as documented.
+Also: `test-client-build.ps1` E2 had been red since T722 (it counted
+`build-locked-artifact.ps1`, whose SUBJECT is the client's build, as a consumer
+that must use the helper); it now excludes that script with the reason.
+ALL PASS (21).

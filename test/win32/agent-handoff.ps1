@@ -23,6 +23,14 @@
 #      one is serving, and it is running the CANONICAL binary.
 #   C. Nothing was lost. Same shell pid, same holder process, the marker from
 #      section A still in the scrollback, and the pane answers fresh input.
+#      T1001 carries session-relaunch-notify's arm M across THIS path too: arm M
+#      measures the guarantee against a KILLED manager (the crash shape), and
+#      the shape it exists for is this one - a graceful stand-down and a
+#      DIFFERENT build adopting holders the previous one created. So a second,
+#      commanded pane runs a long-lived recorded program, and C6-C10 assert it
+#      is the same process afterwards, that no pane claims an interruption in
+#      its banner or its own scrollback, and that the panes keep their session
+#      ids.
 #   D. ROLLBACK. The same handoff with a successor that starts and dies at once.
 #      The ORIGINAL agent must still be serving and its pane must still work - the
 #      "never neither" property. (The stand-in is `ping.exe`: it answers
@@ -38,6 +46,16 @@
 # demand - and exactly those seven go red, which is what makes them teeth-checked
 # rather than decorative.
 #
+# `-BreakHolders` (T1001) is the teeth check for the survival arms: it takes
+# the holders down the moment the predecessor has retired, which is the
+# regression they exist for - a stand-down that reaps its holders on the way
+# out. Measured under it (2026-09-26): C1, C2, C3, C6 and C10 go red. C8 and C9
+# stay GREEN there and are controls, not claims: a holder reaped under a LIVE
+# successor is replaced by a fresh session with no interrupted notice at all
+# (T1771 asks whether that silence is right) - so only the session id and the
+# program's own process can tell a survivor from a replacement on this path.
+# The run exits 1 by design and nothing is stamped.
+#
 # Hermetic: a per-run $env:LOCALAPPDATA, a private IPC endpoint (lib\Isolation),
 # a per-run COPY of the agent under test (never the installed one), and only
 # processes whose ExecutablePath is under that per-run directory - or the exe
@@ -47,7 +65,8 @@
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
     [string]$AgentExe = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe',
-    [switch]$NegativeControl
+    [switch]$NegativeControl,
+    [switch]$BreakHolders
 )
 
 $ErrorActionPreference = 'Continue'
@@ -115,6 +134,19 @@ function Test-Alive([int]$procId) {
     if ($procId -le 0) { return $false }
     return $null -ne (Get-Process -Id $procId -ErrorAction SilentlyContinue)
 }
+# T1001: the commanded pane's recorded program. Its count is unique per run, so
+# a ping left over from another run (or another harness's marker range) can
+# neither satisfy nor spoil "the same process is still running".
+$MARK_CMD = 5600 + ($PID % 89)
+$CMD_REC = "ping -n $MARK_CMD 127.0.0.1"
+function Get-MarkerPingPids {
+    return , @(Get-CimInstance Win32_Process -Filter "Name='PING.EXE'" |
+        Where-Object { $_.CommandLine -like "*-n $MARK_CMD *" } |
+        ForEach-Object { [int]$_.ProcessId } | Sort-Object)
+}
+function Stop-MarkerPings {
+    foreach ($p in (Get-MarkerPingPids)) { Stop-Process -Id $p -Force -ErrorAction SilentlyContinue }
+}
 function Stop-AppAndAgent {
     foreach ($p in (Get-TestApps)) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
     foreach ($p in (Get-TestAgents)) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
@@ -123,6 +155,7 @@ function Stop-AppAndAgent {
 function Stop-Everything {
     Stop-AppAndAgent
     foreach ($p in (Get-TestHolders)) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+    Stop-MarkerPings
     Start-Sleep -Milliseconds 500
 }
 function Wait-NewAgent($excludePids, $timeoutSec = 45) {
@@ -356,6 +389,38 @@ try {
     }
     Assert 'A8 the pane is LIVE and the marker is in its scrollback' $sawMarker
 
+    # T1001: the commanded pane - a long-lived recorded program that must still
+    # be running, as the same process, once the newer build has taken over. Its
+    # own window, and `--command=` carries its own quotes because Run-Cli splits
+    # on whitespace and the test desktop rejoins unquoted tokens with spaces.
+    $cmdPane = 't1001c'
+    Run-CliArgs @('+new-window', '--target=t1001w', "--name=$cmdPane", "--command=`"$CMD_REC`"") "$tmp\newwin-cmd.txt" 25 | Out-Null
+    $pingPidsA = @()
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        $pingPidsA = Get-MarkerPingPids
+        if ($pingPidsA.Count -ge 1) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    Assert "A9 the commanded pane is running '$CMD_REC'" ($pingPidsA.Count -ge 1)
+
+    # Session ids BEFORE, so "the same session" is a comparison rather than a
+    # vibe - for every pane, not just the one A4 named.
+    $sidA = @{}
+    $leavesA = @()
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        $leavesA = @((All-Leaves (Get-Tree 'a9')) | Where-Object { $_.name -eq $pane -or $_.name -eq $cmdPane })
+        if ($leavesA.Count -eq 2 -and @($leavesA | Where-Object { -not $_.session_id }).Count -eq 0) { break }
+        Start-Sleep -Milliseconds 600
+    }
+    foreach ($lf in $leavesA) { $sidA[[string]$lf.name] = [string]$lf.session_id }
+    Assert "A10 both panes are agent-backed ('$($sidA[$pane])', '$($sidA[$cmdPane])')" (
+        [string]$sidA[$pane] -ne '' -and [string]$sidA[$cmdPane] -ne '')
+    # Re-snapshot: the commanded pane brought a holder of its own, and C2 counts.
+    $holdersA = Get-TestHolders
+    Assert "A11 both sessions are holder-backed ($($holdersA.Count) holders)" ($holdersA.Count -ge 2)
+
     # ========================================================================
     Say "== B: the handoff - the agent adopts the newer build on its own"
     # ========================================================================
@@ -379,6 +444,12 @@ try {
     }
     if ($NegativeControl) { $oldGone = -not $oldGone }
     Assert 'B2 the predecessor exited (it retired only AFTER the successor was up)' $oldGone
+
+    if ($BreakHolders) {
+        Say '  TEETH CHECK (-BreakHolders): reaping the holders as the predecessor retires - C1/C2/C3/C6/C10 MUST go red'
+        foreach ($h in $holdersA) { Stop-Process -Id $h.ProcessId -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Seconds 2
+    }
 
     $fromCanonical = ($null -ne $agentB -and [string]$agentB.ExecutablePath -eq $canonicalAgent)
     if ($NegativeControl) { $fromCanonical = -not $fromCanonical }
@@ -445,6 +516,41 @@ try {
         Say "    diagnostic: pane tail -> $($diagTxt.Substring([Math]::Max(0, $diagTxt.Length - 260)))"
         Say "    diagnostic: agent report -> $((Get-AgentReport 'cdiag' | ConvertTo-Json -Compress))"
     }
+
+    # ---- T1001: arm M's assertions, across a genuine upgrade ----------------
+    # THE assertion for the commanded pane: the user's program never stopped. A
+    # re-execute would show the same marker under a brand new pid.
+    $pingPidsC = Get-MarkerPingPids
+    $survived = @($pingPidsC | Where-Object { $pingPidsA -contains $_ })
+    Assert "C6 the recorded command is STILL RUNNING as the same process (before: $($pingPidsA -join ',') / after: $($pingPidsC -join ','))" (
+        $pingPidsA.Count -ge 1 -and $survived.Count -eq $pingPidsA.Count)
+
+    $leavesC = @()
+    $deadline = (Get-Date).AddSeconds(45)
+    while ((Get-Date) -lt $deadline) {
+        $leavesC = @((All-Leaves (Get-Tree 'c6')) | Where-Object { $_.name -eq $pane -or $_.name -eq $cmdPane })
+        if ($leavesC.Count -eq 2) { break }
+        Start-Sleep -Milliseconds 600
+    }
+    Assert "C7 both panes are still listed after the upgrade ($($leavesC.Count))" ($leavesC.Count -eq 2)
+
+    # Nothing told the user otherwise - neither the banner (a native overlay a
+    # screen clear cannot reach) nor the pane's own scrollback.
+    $bannersC = @($leavesC | ForEach-Object { [string]$_.banner }) -join ' | '
+    Assert "C8 no pane banner claims the session was interrupted (banners: '$bannersC')" (
+        $bannersC -notmatch 'Session interrupted')
+    $noticed = @()
+    foreach ($name in @($pane, $cmdPane)) {
+        if ((Read-PaneText $name "c9-$name") -match 'sessioninterrupted') { $noticed += $name }
+    }
+    Assert "C9 no pane scrollback carries the interrupted notice ($($noticed -join ',') did)" ($noticed.Count -eq 0)
+
+    $sidC = @{}
+    foreach ($lf in $leavesC) { $sidC[[string]$lf.name] = [string]$lf.session_id }
+    $sameSid = ([string]$sidA[$pane] -ne '' -and [string]$sidA[$cmdPane] -ne '' -and
+        $sidC[$pane] -eq $sidA[$pane] -and $sidC[$cmdPane] -eq $sidA[$cmdPane])
+    Assert "C10 both panes are on the SAME session ('$($sidA[$pane])' -> '$($sidC[$pane])', '$($sidA[$cmdPane])' -> '$($sidC[$cmdPane])')" $sameSid
+    Stop-MarkerPings
 
     # ========================================================================
     Say "== D: rollback - a successor that dies leaves the ORIGINAL agent serving"
@@ -520,7 +626,7 @@ try {
 }
 
 # --- stamp (T783) -----------------------------------------------------------
-if ($script:failures -eq 0 -and -not $NegativeControl) {
+if ($script:failures -eq 0 -and -not $NegativeControl -and -not $BreakHolders) {
     $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard agent-handoff -Repo $repo 2>&1 | ForEach-Object { "  $_" }
