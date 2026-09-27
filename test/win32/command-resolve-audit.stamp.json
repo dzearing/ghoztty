@@ -1,13 +1,11 @@
 {
     "guard":  "command-resolve",
     "script":  "test/win32/command-resolve-audit.ps1",
-    "generated":  "2026-09-27T02:43:56-07:00",
-    "commit":  "22586f30f",
+    "generated":  "2026-09-27T04:28:23-07:00",
+    "commit":  "51270018b",
     "uncommitted":  [
-                        "test/win32/chooser-close-chord.ps1",
-                        "test/win32/color-contrast.ps1",
-                        "test/win32/guard-due.ps1",
-                        "test/win32/tab-strip.ps1"
+                        "test/win32/lib/TestDesktop.ps1",
+                        "test/win32/translucent-window.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -236,7 +234,7 @@
                   "test/win32/lib/SkipAudit.ps1":  "4d3e05aa1ff62ab3ca6fcf8bf5d2d30de6ed0f469c9826c0aac1bf2085588d23",
                   "test/win32/lib/StderrCaptureAudit.ps1":  "69d0a25615d35acc06bf6c1471016186163ae1881ae70a12461425546ac4b7d8",
                   "test/win32/lib/TestClient.ps1":  "2540c6af1c32c497f17c0e4fe04fc49480072ef7b54d464b12d0bd252897a3c5",
-                  "test/win32/lib/TestDesktop.ps1":  "6d3d18833e9b554686b88dd9d9bfd8d0d0c4b86af09d08ae3133e41f9c8e18a4",
+                  "test/win32/lib/TestDesktop.ps1":  "954356344128ad224f765c791b6d4678a66c4ecdd9628f921eebd9290e3afe6e",
                   "test/win32/lib/TestReachAudit.ps1":  "3b2fb64aee74f3451127f4f9776141f5781dd210a6fdf0019410485664f0a840",
                   "test/win32/lib/TestScore.ps1":  "1bc571121b1b60ce5d9b63a0e1c8ebf23f6da575f8e9f7dab1a410cbc2888acc",
                   "test/win32/lib/TestWaitAudit.ps1":  "632b1d2adad0400247dd7d51c7f9ebad0e2c47ca9a7afe5cbdca2cd09318be3d",
@@ -369,6 +367,7 @@
                   "test/win32/thread-join-audit.ps1":  "636191df9344abe883a41479504bef2f67fae58e0fff5e609c3050ca793ce219",
                   "test/win32/title-font.ps1":  "946fd12880bb0433a535283fb6146fb7d2a8fd1b2d1f0f74e00fa7ce1720dcb8",
                   "test/win32/title-jitter.ps1":  "cddd430bceb80810b24814bd1e3047534b578c8d87390827f105ac5915c198f0",
+                  "test/win32/translucent-window.ps1":  "eba06c72df9125b51d640a2be2beb4000ab627b5fed0b935bf5f65ac28af5406",
                   "test/win32/unroll-count-audit.ps1":  "5a15b517652ed920fc273667422c7f8219aaff8bab3e9368b9b052d2c640f859",
                   "test/win32/update-apply.ps1":  "ed99645a2d9b0c9c005079cc3957df31bccc1b043e397f13315d6e4d1b4bb400",
                   "test/win32/update-check.ps1":  "ef98ba03b9b8710d071b0e193cbd8b0865f74e29ae009cd14c02b73cf1cb4370",

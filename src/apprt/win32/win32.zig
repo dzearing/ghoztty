@@ -418,6 +418,8 @@ pub const HWND_MESSAGE: ?HWND = @ptrFromInt(@as(usize, @bitCast(@as(isize, -3)))
 pub const PFD_DRAW_TO_WINDOW: u32 = 0x00000004;
 pub const PFD_SUPPORT_OPENGL: u32 = 0x00000020;
 pub const PFD_DOUBLEBUFFER: u32 = 0x00000001;
+/// The pixel format composes with DWM, alpha channel included (T1787).
+pub const PFD_SUPPORT_COMPOSITION: u32 = 0x00008000;
 pub const PFD_TYPE_RGBA: u8 = 0;
 
 // CreateWindowEx defaults
@@ -1921,6 +1923,23 @@ pub extern "uxtheme" fn SetWindowTheme(
     pszSubIdList: ?[*:0]const u16,
 ) callconv(.winapi) i32;
 
+/// `DWM_BLURBEHIND` (T1787). With `fEnable` and an EMPTY `hRgnBlur`, DWM
+/// composes the window by the alpha channel of its pixels and blurs nothing -
+/// the documented switch from whole-window opacity to per-pixel alpha.
+pub const DWM_BLURBEHIND = extern struct {
+    dwFlags: u32,
+    fEnable: i32,
+    hRgnBlur: ?*anyopaque,
+    fTransitionOnMaximized: i32,
+};
+pub const DWM_BB_ENABLE: u32 = 0x1;
+pub const DWM_BB_BLURREGION: u32 = 0x2;
+
+pub extern "dwmapi" fn DwmEnableBlurBehindWindow(
+    hwnd: HWND,
+    pBlurBehind: *const DWM_BLURBEHIND,
+) callconv(.winapi) i32;
+
 pub extern "dwmapi" fn DwmSetWindowAttribute(
     hwnd: HWND,
     dwAttribute: u32,
@@ -1961,6 +1980,10 @@ pub extern "gdi32" fn DeleteDC(hdc: HDC) callconv(.winapi) i32;
 /// read can otherwise see the surface as it was before them.
 pub extern "gdi32" fn GdiFlush() callconv(.winapi) i32;
 pub extern "gdi32" fn BitBlt(hdcDest: HDC, x: i32, y: i32, cx: i32, cy: i32, hdcSrc: HDC, x1: i32, y1: i32, rop: u32) callconv(.winapi) i32;
+/// Bounding box of a DC's clip region, in logical units (T1787: how big the
+/// alpha-correct chrome buffer has to be for this paint).
+pub extern "gdi32" fn GetClipBox(hdc: HDC, lprect: *RECT) callconv(.winapi) i32;
+pub extern "gdi32" fn SetViewportOrgEx(hdc: HDC, x: i32, y: i32, lppt: ?*POINT) callconv(.winapi) i32;
 // DrawTextW is exported by user32.dll, not gdi32.dll. The previous
 // declaration on gdi32 worked only because user32 was linked anyway.
 pub extern "user32" fn DrawTextW(hdc: HDC, lpchText: [*]const u16, cchText: i32, lprc: *RECT, format: u32) callconv(.winapi) i32;
@@ -1999,6 +2022,7 @@ pub const HALFTONE: i32 = 4;
 // BLENDFUNCTION is defined below (UpdateLayeredWindow section).
 pub extern "msimg32" fn AlphaBlend(hdcDest: HDC, xoriginDest: i32, yoriginDest: i32, wDest: i32, hDest: i32, hdcSrc: HDC, xoriginSrc: i32, yoriginSrc: i32, wSrc: i32, hSrc: i32, ftn: BLENDFUNCTION) callconv(.winapi) i32;
 pub extern "gdi32" fn CreateRoundRectRgn(x1: i32, y1: i32, x2: i32, y2: i32, w: i32, h: i32) callconv(.winapi) ?*anyopaque;
+pub extern "gdi32" fn CreateRectRgn(x1: i32, y1: i32, x2: i32, y2: i32) callconv(.winapi) ?*anyopaque;
 /// Clip a WINDOW to a region (the viewer TOC card's rounded corners in its
 /// floating overlay mode, T160). The system takes ownership of the region on
 /// success — the caller must NOT delete it afterwards.

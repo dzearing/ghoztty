@@ -2699,6 +2699,21 @@ $GuardTable = @(
             'test\win32\window-composite.ps1'
         )
     },
+    # Per-pixel alpha (T1787): a translucent window shows the desktop through
+    # the terminal background while text and chrome stay opaque. The rule that
+    # keeps GDI chrome from painting invisible is `chrome_alpha`; a change to
+    # it that let untouched pixels overwrite the caption, or painted pixels stay
+    # transparent, compiles and unit-tests green and is only visible in DWM's
+    # composite - which is what this harness reads, on the input desktop.
+    [pscustomobject]@{
+        Name   = 'translucent-window'
+        Script = 'test\win32\translucent-window.ps1'
+        Stamp  = 'test\win32\translucent-window.stamp.json'
+        Covers = @(
+            'src\apprt\win32\chrome_alpha.zig',
+            'test\win32\translucent-window.ps1'
+        )
+    },
     # The hovered-frame capture is the ONLY way any script can photograph a
     # hover fill off the background desktop (T282), and it is a seam nothing
     # else exercises: four scripts consume it, none of them would fail

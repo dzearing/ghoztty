@@ -1,0 +1,14 @@
+{
+    "guard":  "translucent-window",
+    "script":  "test/win32/translucent-window.ps1",
+    "generated":  "2026-09-27T04:22:21-07:00",
+    "commit":  "51270018b",
+    "uncommitted":  [
+                        "src/apprt/win32/chrome_alpha.zig",
+                        "test/win32/translucent-window.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/chrome_alpha.zig":  "db604d0c0f153c5e3256382db7885cd701a23fbe0d9875b5771e7c2f37f2e994",
+                  "test/win32/translucent-window.ps1":  "eba06c72df9125b51d640a2be2beb4000ab627b5fed0b935bf5f65ac28af5406"
+              }
+}

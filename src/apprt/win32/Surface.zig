@@ -1171,7 +1171,7 @@ fn setupPixelFormat(self: *Surface) !void {
     const pfd = w32.PIXELFORMATDESCRIPTOR{
         .nSize = @sizeOf(w32.PIXELFORMATDESCRIPTOR),
         .nVersion = 1,
-        .dwFlags = w32.PFD_DRAW_TO_WINDOW | w32.PFD_SUPPORT_OPENGL | w32.PFD_DOUBLEBUFFER,
+        .dwFlags = w32.PFD_DRAW_TO_WINDOW | w32.PFD_SUPPORT_OPENGL | w32.PFD_DOUBLEBUFFER | w32.PFD_SUPPORT_COMPOSITION,
         .iPixelType = w32.PFD_TYPE_RGBA,
         .cColorBits = 32,
         .cRedBits = 0,

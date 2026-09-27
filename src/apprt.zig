@@ -70,6 +70,10 @@ test {
     // Pure win32 unfocused-split dim logic (T74), same no-OS-imports deal.
     _ = @import("apprt/win32/dim_math.zig");
 
+    // Pure win32 alpha-correct chrome rule for per-pixel-alpha windows
+    // (T1787), same no-OS-imports deal.
+    _ = @import("apprt/win32/chrome_alpha.zig");
+
     // Pure win32 split-tree leaf reference counting (T371): the arithmetic
     // `PaneView` and `Surface` share, including the underflow rule that keeps
     // a pane the tree never accepted from leaking everything underneath. The

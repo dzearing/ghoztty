@@ -1098,6 +1098,21 @@ pub fn createHostWindow(
     if (self.pending) |p| self.ensureNav(p.alloc, hinstance, hwnd);
 }
 
+/// Make the host - and every GDI-painted window inside it (nav bar, find bar,
+/// TOC, feedback bar, the placeholder and error cards) - compose fully opaque
+/// inside a per-pixel-alpha top-level (T1787).
+///
+/// That top-level is composed by the alpha channel of its pixels, and GDI
+/// writes alpha 0, so without this the viewer's chrome paints invisible - the
+/// desktop shows through the nav bar with only its glyphs left. A LAYERED
+/// child gets its own surface, composed opaque (`Window.composeOpaqueLayer`).
+/// One style bit here covers every present and future GDI child of the host,
+/// which rewriting each painter could not promise.
+pub fn composeOpaque(self: *ViewerPane) void {
+    const hwnd = self.hwnd orelse return;
+    Window.composeOpaqueLayer(hwnd, "viewer host");
+}
+
 /// Create the nav bar once both halves exist: the host window to parent it
 /// and an allocator to own it. Called from whichever of `createHostWindow` /
 /// `start` runs second — the two orders are both live (PaneView starts the

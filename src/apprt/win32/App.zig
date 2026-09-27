@@ -7590,9 +7590,7 @@ pub fn performAction(
                 .app => false,
                 .surface => |cs| blk: {
                     if (self.config.@"background-opacity" >= 1.0) break :blk false;
-                    const h = cs.rt_surface.parent_window.hwnd orelse break :blk false;
-                    const ex = w32.GetWindowLongW(h, w32.GWL_EXSTYLE);
-                    break :blk (ex & w32.WS_EX_LAYERED) == 0;
+                    break :blk !cs.rt_surface.parent_window.translucent;
                 },
             };
 
@@ -8012,28 +8010,11 @@ pub fn performAction(
             switch (target) {
                 .app => {},
                 .surface => |core_surface| {
-                    if (core_surface.rt_surface.parent_window.hwnd) |h| {
-                        const current_ex = w32.GetWindowLongW(h, w32.GWL_EXSTYLE);
-                        if (current_ex & w32.WS_EX_LAYERED != 0) {
-                            // Remove layered style (restore full opacity).
-                            // Clearing WS_EX_LAYERED is not repainted
-                            // automatically — without an explicit redraw the
-                            // window stays translucent until the next
-                            // repaint (e.g. a later focus change).
-                            _ = w32.SetWindowLongW(h, w32.GWL_EXSTYLE, current_ex & ~w32.WS_EX_LAYERED);
-                            _ = w32.RedrawWindow(
-                                h,
-                                null,
-                                null,
-                                w32.RDW_ERASE | w32.RDW_INVALIDATE | w32.RDW_FRAME | w32.RDW_ALLCHILDREN,
-                            );
-                        } else {
-                            // Apply opacity from config
-                            _ = w32.SetWindowLongW(h, w32.GWL_EXSTYLE, current_ex | w32.WS_EX_LAYERED);
-                            const alpha: u8 = @intFromFloat(@round(self.config.@"background-opacity" * 255.0));
-                            _ = w32.SetLayeredWindowAttributes(h, 0, alpha, w32.LWA_ALPHA);
-                        }
-                    }
+                    // Per-pixel alpha on and off (T1787). Mac toggles only a
+                    // window whose config is translucent in the first place.
+                    if (self.config.@"background-opacity" >= 1.0) return true;
+                    const window = core_surface.rt_surface.parent_window;
+                    window.setTranslucent(!window.translucent);
                 },
             }
             return true;

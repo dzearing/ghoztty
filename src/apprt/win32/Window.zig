@@ -135,6 +135,7 @@ const HeroCarousel = @import("HeroCarousel.zig");
 const hero_math = @import("hero_math.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
 const dim_math = @import("dim_math.zig");
+const chrome_alpha = @import("chrome_alpha.zig");
 const split_geometry = @import("split_geometry.zig");
 const rearrange_header = @import("rearrange_header.zig");
 const pane_drop = @import("pane_drop.zig");
@@ -262,6 +263,12 @@ app: *App,
 
 /// The top-level window handle.
 hwnd: ?w32.HWND = null,
+
+/// DWM is composing this window by per-pixel alpha (T1787): the terminal
+/// background shows through at `background-opacity` while text stays opaque.
+/// Off for an opaque config and for a window toggled opaque with
+/// `toggle_background_opacity`. Only `setTranslucent` moves it.
+translucent: bool = false,
 
 /// Tab split trees owned by this window (fixed-capacity inline array).
 tab_count: usize = 0,
@@ -989,11 +996,143 @@ fn applyChromeTheme(hwnd: w32.HWND, theme: anytype, bg: anytype) void {
     );
 }
 
+/// Make the window translucent the way Mac's `background-opacity` is (T1787):
+/// DWM composes it by the ALPHA of its pixels, so the terminal background -
+/// which the renderer writes at `background-opacity`, premultiplied - shows the
+/// desktop through while glyphs, the cursor and the chrome stay fully opaque.
+///
+/// This replaced whole-window `WS_EX_LAYERED` + `LWA_ALPHA`, which faded text
+/// with the background and, measured in T1016, defeated every DWM blur.
+///
+/// The switch is `DwmEnableBlurBehindWindow` with an EMPTY blur region: the
+/// documented way to ask DWM to honour a window's alpha channel, which blurs
+/// nothing by itself. The pane children are WGL windows whose pixel format
+/// asks for composition (`PFD_SUPPORT_COMPOSITION`, `Surface.setupPixelFormat`);
+/// the GDI chrome goes through `paintAlphaCorrect`, because GDI writes alpha 0
+/// and would otherwise paint the caption and tab strip invisible.
+pub fn setTranslucent(self: *Window, enabled: bool) void {
+    const hwnd = self.hwnd orelse return;
+    const rgn = w32.CreateRectRgn(0, 0, -1, -1);
+    defer if (rgn) |r| {
+        _ = w32.DeleteObject(r);
+    };
+    // The region goes with enabling only: DWM refuses a blur region on a
+    // DISABLE with E_INVALIDARG (measured), which left the window translucent.
+    const bb = w32.DWM_BLURBEHIND{
+        .dwFlags = if (enabled) w32.DWM_BB_ENABLE | w32.DWM_BB_BLURREGION else w32.DWM_BB_ENABLE,
+        .fEnable = if (enabled) 1 else 0,
+        .hRgnBlur = if (enabled) rgn else null,
+        .fTransitionOnMaximized = 0,
+    };
+    const hr = w32.DwmEnableBlurBehindWindow(hwnd, &bb);
+    if (hr < 0) {
+        // DWM did not change anything, so neither does the flag: the chrome
+        // keeps painting for the mode the window is actually in.
+        log.warn("per-pixel alpha {s} refused hr=0x{x}; window stays translucent={}", .{
+            if (enabled) "enable" else "disable",
+            @as(u32, @bitCast(hr)),
+            self.translucent,
+        });
+        return;
+    }
+    self.translucent = enabled;
+    log.info("window translucent={}", .{enabled});
+    // Chrome paints differently in the two modes, and the children's alpha
+    // starts or stops mattering: repaint all of it now rather than at the
+    // next unrelated invalidation.
+    _ = w32.RedrawWindow(
+        hwnd,
+        null,
+        null,
+        w32.RDW_ERASE | w32.RDW_INVALIDATE | w32.RDW_FRAME | w32.RDW_ALLCHILDREN,
+    );
+}
+
+/// Compose a GDI-painted CHILD window fully opaque inside a per-pixel-alpha
+/// top-level (T1787) - the viewer host, the inline tab-rename box.
+///
+/// A child paints into its top-level's surface by default, and GDI writes
+/// alpha 0 there, so on a translucent window it would show the desktop
+/// through with only its ink left. A LAYERED child (Windows 8+, which the
+/// manifest declares) gets a surface of its own, and one with a constant
+/// alpha of 255 is composed opaque whatever alpha its pixels carry. Harmless
+/// on an opaque window, so it follows the config rather than the toggle.
+pub fn composeOpaqueLayer(hwnd: w32.HWND, what: []const u8) void {
+    const ex = w32.GetWindowLongW(hwnd, w32.GWL_EXSTYLE);
+    _ = w32.SetWindowLongW(hwnd, w32.GWL_EXSTYLE, ex | @as(i32, @bitCast(w32.WS_EX_LAYERED)));
+    if (w32.SetLayeredWindowAttributes(hwnd, 0, 255, w32.LWA_ALPHA) == 0) {
+        log.warn("{s} could not be made an opaque layer; it may show the desktop through", .{what});
+    }
+}
+
+/// Paint `painter`'s GDI chrome into `hdc` with correct alpha (T1787).
+///
+/// An opaque window ignores alpha, so it paints straight through. A
+/// translucent one paints into a 32bpp buffer the size of the DC's clip box,
+/// pre-filled with the terminal background at `background-opacity`; whatever
+/// the painter touched is made opaque and the rest transparent
+/// (`chrome_alpha`), and the buffer is alpha-blended over the same clip.
+/// `WS_CLIPCHILDREN` keeps that blend off the panes.
+fn paintAlphaCorrect(
+    self: *Window,
+    hdc: w32.HDC,
+    comptime painter: fn (*Window, w32.HDC) void,
+) void {
+    if (!self.translucent) return painter(self, hdc);
+
+    var box: w32.RECT = undefined;
+    if (w32.GetClipBox(hdc, &box) == 0) return; // ERROR
+    const w = box.right - box.left;
+    const h = box.bottom - box.top;
+    if (w <= 0 or h <= 0) return;
+
+    const mem_dc = w32.CreateCompatibleDC(hdc) orelse return painter(self, hdc);
+    defer _ = w32.DeleteDC(mem_dc);
+    var bits: ?*anyopaque = null;
+    const bmi = w32.BITMAPINFO{
+        .bmiHeader = .{
+            .biWidth = w,
+            .biHeight = -h, // top-down
+            .biPlanes = 1,
+            .biBitCount = 32,
+            .biCompression = w32.BI_RGB,
+        },
+    };
+    const bmp = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse
+        return painter(self, hdc);
+    const old_bmp = w32.SelectObject(mem_dc, bmp);
+    defer {
+        _ = w32.SelectObject(mem_dc, old_bmp);
+        _ = w32.DeleteObject(bmp);
+    }
+    const p = bits orelse return;
+    const pixels = @as([*]u32, @ptrCast(@alignCast(p)))[0..@intCast(w * h)];
+
+    const bg = self.app.config.background;
+    const fill = chrome_alpha.marker(bg.r, bg.g, bg.b, self.app.config.@"background-opacity");
+    @memset(pixels, fill);
+
+    // The painters work in client coordinates; shift so the clip box's
+    // corner lands on the buffer's (0, 0).
+    _ = w32.SetViewportOrgEx(mem_dc, -box.left, -box.top, null);
+    painter(self, mem_dc);
+    // GDI batches; its writes must be in the bits before they are read.
+    _ = w32.GdiFlush();
+    chrome_alpha.resolve(pixels, fill);
+
+    // Source-over, not a copy: an unpainted pixel is 0 and leaves the window
+    // as it was, so a pass that paints only some bands cannot erase others.
+    _ = w32.AlphaBlend(hdc, box.left, box.top, w, h, mem_dc, box.left, box.top, w, h, .{});
+}
+
 /// Called from App.config_change so the title bar tracks live config
 /// reloads (background color in particular).
 /// Enable/disable the DWM accent blur behind the window (background-blur).
-/// Visible where the window is translucent (background-opacity < 1): the
-/// desktop behind shows blurred instead of sharp, the acrylic-ish look.
+///
+/// Measured in T1016 on the old whole-window-alpha window: it blurred nothing,
+/// only lightened the view. On a per-pixel-alpha window (T1787) the accent
+/// blur does blur what is behind; moving it to the documented Win11 acrylic
+/// backdrop is T1788.
 fn applyBackgroundBlur(hwnd: w32.HWND, enabled: bool) void {
     var policy: w32.ACCENT_POLICY = .{
         .AccentState = if (enabled) w32.ACCENT_ENABLE_BLURBEHIND else w32.ACCENT_DISABLED,
@@ -1348,10 +1487,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     // Skip when force_opaque (parent window was toggled to opaque via
     // toggle_background_opacity — inherit that state for the new window).
     if (app.config.@"background-opacity" < 1.0 and !options.force_opaque) {
-        const current_ex = w32.GetWindowLongW(hwnd, w32.GWL_EXSTYLE);
-        _ = w32.SetWindowLongW(hwnd, w32.GWL_EXSTYLE, current_ex | w32.WS_EX_LAYERED);
-        const alpha: u8 = @intFromFloat(@round(app.config.@"background-opacity" * 255.0));
-        _ = w32.SetLayeredWindowAttributes(hwnd, 0, alpha, w32.LWA_ALPHA);
+        self.setTranslucent(true);
     }
     if (app.config.@"background-blur".enabled()) {
         applyBackgroundBlur(hwnd, true);
@@ -2282,6 +2418,9 @@ fn createViewerPane(self: *Window, open: ViewerPane.Open) !*ViewerPane {
         viewer.popup = req;
     }
     try viewer.createHostWindow(self.app.hinstance, hwnd, self.surfaceRect());
+    // A translucent-capable window composes by per-pixel alpha, and the
+    // viewer's chrome is GDI, which writes alpha 0 (T1787).
+    if (self.app.config.@"background-opacity" < 1.0) viewer.composeOpaque();
     // Before `start`, so the location is already recorded when the controller
     // arrives and `adoptController` replays it. A viewer that is told where to
     // go only after its browser process is up would race its own creation.
@@ -3642,7 +3781,7 @@ fn applyDragCursor(self: *Window, cursor: ?rearrange_header.Cursor) void {
 fn repaintRearrangeHeaders(self: *Window) void {
     const h = self.hwnd orelse return;
     const hdc = w32.GetDC(h) orelse return;
-    self.paintRearrangeHeaders(hdc);
+    self.paintAlphaCorrect(hdc, paintRearrangeHeaders);
     _ = w32.ReleaseDC(h, hdc);
 }
 
@@ -4222,13 +4361,12 @@ fn collapseAfterRelocation(self: *Window, source_tab: usize, fallback: *PaneView
 
 /// Has this window been toggled OPAQUE against a translucent config?
 ///
-/// Read off the live ex-style rather than remembered, exactly the way the
-/// `new_window` action derives it (`toggle_background_opacity` is what moves
-/// the bit), so the two answers cannot drift.
+/// Read off `translucent`, exactly the way the `new_window` action derives
+/// it (`toggle_background_opacity` is what moves it), so the two answers
+/// cannot drift.
 fn isForcedOpaque(self: *const Window) bool {
     if (self.app.config.@"background-opacity" >= 1.0) return false;
-    const h = self.hwnd orelse return false;
-    return (w32.GetWindowLongW(h, w32.GWL_EXSTYLE) & w32.WS_EX_LAYERED) == 0;
+    return !self.translucent;
 }
 
 /// Bring the window a pane was just dropped into to the front.
@@ -5268,10 +5406,7 @@ pub fn layoutSplits(self: *Window) void {
         var paint_timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
         const hdc = w32.GetDC(hwnd);
         if (hdc) |dc| {
-            self.paintDividers(dc);
-            // Same moved-band argument, one level in: a pane that just slid
-            // takes its header band with it (T1530).
-            self.paintRearrangeHeaders(dc);
+            self.paintAlphaCorrect(dc, paintMovedBands);
             _ = w32.ReleaseDC(hwnd, dc);
         }
         if (paint_timer) |*t| self.frame_paint_us +|= t.read() / std.time.ns_per_us;
@@ -5540,6 +5675,15 @@ pub fn dividerConfiguredColor(self: *Window) color_math.Rgb {
     if (self.app.config.@"split-divider-color") |c| return .{ .r = c.r, .g = c.g, .b = c.b };
     const bg = self.app.config.background;
     return split_geometry.fallbackColor(.{ .r = bg.r, .g = bg.g, .b = bg.b });
+}
+
+/// The post-layout `GetDC` pass: the bands a layout can MOVE (see the call
+/// site in `layoutSplits`). One painter so `paintAlphaCorrect` wraps both.
+fn paintMovedBands(self: *Window, hdc: w32.HDC) void {
+    self.paintDividers(hdc);
+    // Same moved-band argument, one level in: a pane that just slid
+    // takes its header band with it (T1530).
+    self.paintRearrangeHeaders(hdc);
 }
 
 /// Paint divider lines between split panes in the active tab.
@@ -8166,7 +8310,12 @@ fn paintWindow(self: *Window) void {
 
 /// Every owner-painted pixel of the window chrome, into whichever DC it is
 /// handed — the paint cycle's own, or a caller's under WM_PRINTCLIENT.
+/// Alpha-correct on a translucent window (T1787).
 fn paintChromeInto(self: *Window, hdc_screen: w32.HDC) void {
+    self.paintAlphaCorrect(hdc_screen, paintChromeRaw);
+}
+
+fn paintChromeRaw(self: *Window, hdc_screen: w32.HDC) void {
     self.paintCaption(hdc_screen);
     self.paintTabBar(hdc_screen);
     // Dividers are part of the paint cycle (T155). BeginPaint clips to the
@@ -10090,6 +10239,9 @@ pub fn startTabRename(self: *Window, tab_idx: usize) void {
         self.app.hinstance,
         null,
     ) orelse return;
+
+    // A GDI child of a per-pixel-alpha window (T1787).
+    if (self.app.config.@"background-opacity" < 1.0) composeOpaqueLayer(edit, "tab rename box");
 
     // Apply dark theme
     const dark_mode: u32 = 1;
