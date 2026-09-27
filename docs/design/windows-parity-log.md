@@ -34609,3 +34609,15 @@ acrylic/Mica. A per-pixel-alpha control window blurs (accent 1.13, acrylic
 CGS blur; Mica samples wallpaper only. Call: acrylic backdrop with accent
 fallback. Filed T1787 (P1: whole-window alpha fades text and defeats blur) and
 T1788 (wire acrylic, deps T1787). No product code change.
+
+## 2026-09-27 — T1787: translucent windows keep text and chrome opaque (per-pixel alpha)
+
+Replaced whole-window LWA_ALPHA with DwmEnableBlurBehindWindow(empty region) +
+PFD_SUPPORT_COMPOSITION; the renderer's premultiplied alpha now reaches DWM, so
+only the background is see-through. GDI chrome goes through paintAlphaCorrect
+(chrome_alpha.zig: painted -> opaque, untouched -> transparent, source-over
+blend - a plain blit let the divider pass erase the caption); the viewer host
+and tab-rename box are opaque layered children. New input-desktop harness
+translucent-window.ps1 (checker-vs-blue see-through oracle) ALL PASS 11, 5 FAIL
+on the pre-fix build. Floor lanes, harness floor, 22 due guards, P1-P3 green.
+Filed T1789 (reload ignores opacity), T1790 (toggled-opaque bg premultiplied).
