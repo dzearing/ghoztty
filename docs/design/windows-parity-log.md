@@ -34586,3 +34586,15 @@ git only after the guard has staged. git-commit-guard now re-encodes UTF-16 like
 the UTF-8 BOM, refuses NUL-without-BOM, and refuses a leading-whitespace/format
 subject before staging for both -MessageFile and -Message. go-loop-guard
 W39f-W39n: ALL PASS (430); neutered guard -> 9 red.
+
+## 2026-09-27 — T1015: every shared test library now has a harness that runs it
+
+Of 60 files in test/win32/lib, 41 already had rows naming them and 12 were run
+by harness-floor members; six were covered only by the corpus-sweep wildcards
+(which read a library without running it). New rows tab-strip (ChromeGeometry),
+color-contrast (paint-blocks), chooser-close-chord (PaneIdle); PipeBridge,
+SelectionBar and SessionManifest joined chooser-resume-remote,
+viewer-toc-emphasis and session-relaunch. ShowText is a stated exemption.
+`guard-due.ps1 uncovered` now prints LIB COVERAGE (explicit Covers or floor
+dot-source only; wildcards never count): 0 of 60. guard-due ALL PASS 128 with
+Q9/Q10 negatives; all six harnesses green and stamped; floor PASS; go-loop-guard 430.

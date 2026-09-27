@@ -1588,6 +1588,17 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
 }
 
+# --- stamp (T783, row added by T1015) --------------------------------------
+# This is the acceptance for lib\ChromeGeometry.ps1 as well as for the strip:
+# it is the widest consumer of that file (the derived metrics, DIP rounding,
+# the published regions and the measured extents), so an edit to the helper
+# that stopped modelling the app would fail here first. Only a clean run with
+# nothing skipped stamps, and a -NegativeControl run never does.
+if ($script:fail -eq 0 -and -not $script:skipped -and -not $NegativeControl) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard tab-strip -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
+}
+
 Write-Host ''
 if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions$(if ($script:skipped) { ", $script:skipped SKIPPED" }))" }
 else { Write-Host "$script:fail FAILED / $script:pass passed" -ForegroundColor Red; exit 1 }

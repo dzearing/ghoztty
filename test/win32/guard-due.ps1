@@ -1080,11 +1080,22 @@ $rows
     # A helper under lib\ and a stamp are not harnesses and must not be counted.
     Set-QFile 'test\win32\lib\q-helper.ps1' "# fixture`n"
     Set-QFile 'test\win32\q-covered.stamp.json' "{}`n"
+    # T1015: the four library buckets. q-helper is named EXPLICITLY by q-row;
+    # q-floorlib is dot-sourced by a floor member; q-wild is covered only by a
+    # wildcard and named in a floor member's COMMENT, neither of which runs it;
+    # q-libexempt is the stated-reason exemption.
+    foreach ($n in @('q-floorlib.ps1', 'q-wild.ps1', 'q-libexempt.ps1')) { Set-QFile "test\win32\lib\$n" "# fixture`n" }
+    Set-QFile 'test\win32\q-floor.ps1' (
+        ". (Join-Path `$PSScriptRoot 'lib\q-floorlib.ps1')`n" +
+        "# the scan below looks for lib\q-wild.ps1 but never loads it`n")
     Set-QFile 'scripts\lib\HarnessFloor.ps1' (
         "`$script:HARNESS_FLOOR_AUDITS = @([pscustomobject]@{ Name = 'q-floor.ps1'; Why = 'fixture' })`n" +
         "function Get-HarnessFloorAudits { return @(`$script:HARNESS_FLOOR_AUDITS) }`n")
-    function Set-QTable([string[]]$exemptScripts) {
+    function Set-QTable([string[]]$exemptScripts,
+        [string[]]$libExempt = @('test\win32\lib\q-wild.ps1', 'test\win32\lib\q-libexempt.ps1')) {
         $ex = ($exemptScripts | ForEach-Object {
+                "    [pscustomobject]@{ Script = '" + $_ + "'; Why = 'fixture reason' }" }) -join "`n"
+        $lex = ($libExempt | ForEach-Object {
                 "    [pscustomobject]@{ Script = '" + $_ + "'; Why = 'fixture reason' }" }) -join "`n"
         $table = @"
 `$GuardTable = @(
@@ -1093,12 +1104,17 @@ $rows
         Script = 'test\win32\q-covered.ps1'
         Stamp  = 'test\win32\q-covered.stamp.json'
         Covers = @(
-            'test\win32\q-covered.ps1'
+            'test\win32\q-covered.ps1',
+            'test\win32\lib\q-helper.ps1',
+            'test\win32\lib\q-w*.ps1'
         )
     }
 )
 `$UncoveredExempt = @(
 $ex
+)
+`$LibUncoveredExempt = @(
+$lex
 )
 
 "@
@@ -1146,7 +1162,28 @@ $ex
     $qj = $null; try { $qj = $rj.Text | ConvertFrom-Json } catch { $qj = $null }
     Check 'Q7 -Json carries the same buckets' `
         ($null -ne $qj -and $qj.total -eq 4 -and $qj.row -eq 1 -and $qj.floor -eq 1 -and $qj.exempt -eq 1 -and
-         @($qj.uncovered).Count -eq 1 -and @($qj.uncovered)[0] -eq 'test\win32\q-bare.ps1') $rj.Text
+         @($qj.uncovered).Count -eq 1 -and @($qj.uncovered)[0] -eq 'test\win32\q-bare.ps1' -and
+         $qj.libs.total -eq 4 -and @($qj.libs.uncovered).Count -eq 0) $rj.Text
+
+    # T1015: the shared libraries get the same question. The negative control
+    # is q-wild: a wildcard in a row's Covers and a mention in a floor member's
+    # comment are exactly how TestDesktop.ps1 looked covered while nothing ran
+    # it (T303), so neither may count.
+    Set-QTable @('test\win32\q-exempt.ps1', 'test\win32\q-bare.ps1') @('test\win32\lib\q-libexempt.ps1')
+    $rq = Invoke-QDue
+    Check 'Q9 a library covered only by a wildcard or a comment is uncovered, and the gap exits 1' `
+        ($rq.Exit -eq 1 -and
+         $rq.Text -match 'LIB COVERAGE 1 of 4 shared test libraries have no behavioral row \(1 by row, 1 by harness-floor, 1 exempt\)' -and
+         $rq.Text -match 'uncovered-lib test\\win32\\lib\\q-wild\.ps1' -and
+         @([regex]::Matches($rq.Text, '(?m)^\s+uncovered-lib ')).Count -eq 1 -and
+         $rq.Text -match 'remedy: name the library explicitly') "exit=$($rq.Exit): $($rq.Text)"
+    Set-QTable @('test\win32\q-exempt.ps1', 'test\win32\q-bare.ps1') @(
+        'test\win32\lib\q-wild.ps1', 'test\win32\lib\q-libexempt.ps1', 'test\win32\lib\q-gone.ps1', 'test\win32\lib\q-helper.ps1')
+    $rq = Invoke-QDue
+    Check 'Q10 a library exemption that is missing, or whose library has a row, is STALE in its own table' `
+        ($rq.Exit -eq 1 -and
+         $rq.Text -match 'EXEMPT STALE test\\win32\\lib\\q-gone\.ps1: no such library - drop it from \$LibUncoveredExempt' -and
+         $rq.Text -match 'EXEMPT STALE test\\win32\\lib\\q-helper\.ps1: it has a row now \(q-row\) - drop it from \$LibUncoveredExempt') "exit=$($rq.Exit): $($rq.Text)"
 
     # The live table: the report runs, sees the real suite, and every shipped
     # exemption is still true. The gap itself is NOT asserted to be zero - it is
@@ -1154,7 +1191,7 @@ $ex
     $outQ = @(& powershell.exe @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Due, 'uncovered', '-Repo', $Repo) 2>&1) -join "`n"
     $liveTotal = if ($outQ -match 'GUARD COVERAGE \d+ of (\d+) harnesses') { [int]$Matches[1] } else { 0 }
     Check 'Q8 the live report counts the real suite and no shipped exemption is stale' `
-        ($liveTotal -ge 300 -and $outQ -notmatch 'EXEMPT STALE') `
+        ($liveTotal -ge 300 -and $outQ -match 'LIB COVERAGE \d+ of \d+ shared test libraries' -and $outQ -notmatch 'EXEMPT STALE') `
         ((@($outQ -split "`n" | Select-Object -First 1) + @($outQ -split "`n" | Where-Object { $_ -match 'STALE' })) -join '; ')
 
     Complete-TestBody  # T1039: the run reached the end of its body
@@ -1181,4 +1218,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -MinPass 79
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -MinPass 81

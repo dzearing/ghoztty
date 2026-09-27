@@ -271,4 +271,14 @@ Remove-Item $step1, $step2 -ErrorAction SilentlyContinue
 
 Write-Host ''
 Complete-TestBody  # T1039: the run reached the end of its body
+
+# --- stamp (T783, row added by T1015) --------------------------------------
+# lib\paint-blocks.ps1 is this script's fixture and nothing else loads it, so
+# this is the only run that can notice an edit there stopped painting the
+# class under test. A red run leaves the stamp alone.
+if ($script:fail -eq 0) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard color-contrast -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
+}
+
 Write-TestVerdict -Pass $script:pass -Fail $script:fail

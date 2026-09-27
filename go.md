@@ -193,7 +193,10 @@ Concretely, in order, with no stops in between:
      the code it scores obliges nobody to re-run it. A rising number means new
      harnesses are landing without rows; an `EXEMPT STALE` line is fixed the
      same day. The number is worked down by adding rows, never by exempting a
-     harness because nobody wrote its row.
+     harness because nobody wrote its row. The `LIB COVERAGE` line below it
+     (T1015) asks the same of the shared libraries in `test\win32\lib\`; it
+     reached 0 on 2026-09-27, so any non-zero there is a new library that
+     landed without a row that runs it.
    - **Main intake** (user, 2026-08-07: "reduce the lag of the windows
      client to virtually hours rather than days"; daily for now): `git fetch
      origin main`, then evaluate every commit new since the last intake and

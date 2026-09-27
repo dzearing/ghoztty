@@ -79,6 +79,12 @@
   exemption has gone stale, and is never wired into a gate - the number is the
   deliverable, read at daily triage (go.md step 0.6).
 
+  Since T1015 it asks the same of the shared test libraries (test\win32\lib),
+  as a second `LIB COVERAGE` line: a library is covered when a row names it
+  EXPLICITLY or a harness-floor member dot-sources it, never by a wildcard,
+  because the wildcard rows are corpus sweeps that read a library without
+  running it ($LibUncoveredExempt holds the stated-reason exceptions).
+
   Acceptance: test\win32\guard-due.ps1.
 
 .EXAMPLE
@@ -706,7 +712,12 @@ $GuardTable = @(
         Covers = @(
             'test\win32\viewer-toc-emphasis.ps1',
             'src\apprt\win32\ViewerTOCPanel.zig',
-            'src\apprt\win32\window_active.zig'
+            'src\apprt\win32\window_active.zig',
+            # T1015: Find-SaturatedBar IS the emphasis assertion here - a helper
+            # that stopped finding the bar would read a correct panel as broken,
+            # or one that matched anything saturated would read a broken one as
+            # correct.
+            'test\win32\lib\SelectionBar.ps1'
         )
     },
     # The feedback composer (T644): its typing, undo, quote and send paths
@@ -1242,6 +1253,10 @@ $GuardTable = @(
             # their entire layout, because the app's own timed-out dial was the
             # thing that wedged the agent it had just spawned.
             'src\remote\pipe_stream.zig',
+            # T1015: how this harness reads the manifest it scores (Wait-Manifest,
+            # the leaf and snapshot-offset readers). A reader that misparsed the
+            # file would score a correct restore against the wrong leaves.
+            'test\win32\lib\SessionManifest.ps1',
             # T922: what a restored pane can possibly SHOW is decided before the
             # kill, by the manifest. The writer and the refresh policy are
             # therefore part of this harness's subject - arm A15 is scored on a
@@ -2703,6 +2718,46 @@ $GuardTable = @(
             'test\win32\hover-capture.ps1'
         )
     },
+    # T1015: lib\ChromeGeometry.ps1 is the one place a script learns where the
+    # win32 chrome is (T257), and twelve GUI scripts index their pixel probes
+    # with it. Nothing ran it on an edit: the corpus sweeps cover it by
+    # wildcard and read its text. tab-strip.ps1 is its widest consumer - the
+    # derived metrics, DIP rounding, the published regions and the measured
+    # extents - so a helper that stopped modelling the app fails here first.
+    # NARROW on purpose: the strip's Zig modules are not here, because the row
+    # is about the helper and a twelve-minute run per layout edit is noise.
+    [pscustomobject]@{
+        Name   = 'tab-strip'
+        Script = 'test\win32\tab-strip.ps1'
+        Stamp  = 'test\win32\tab-strip.stamp.json'
+        Covers = @(
+            'test\win32\lib\ChromeGeometry.ps1',
+            'test\win32\tab-strip.ps1'
+        )
+    },
+    # T1015: lib\paint-blocks.ps1 is color-contrast.ps1's fixture - it paints
+    # the whole pane one color class at a time - and nothing else loads it.
+    [pscustomobject]@{
+        Name   = 'color-contrast'
+        Script = 'test\win32\color-contrast.ps1'
+        Stamp  = 'test\win32\color-contrast.stamp.json'
+        Covers = @(
+            'test\win32\lib\paint-blocks.ps1',
+            'test\win32\color-contrast.ps1'
+        )
+    },
+    # T1015: lib\PaneIdle.ps1 (pane-shell idle waits, the close-confirm dialog)
+    # is called by this harness alone - readonly-badge.ps1 dot-sources it and
+    # calls nothing in it, so it is not a consumer.
+    [pscustomobject]@{
+        Name   = 'chooser-close-chord'
+        Script = 'test\win32\chooser-close-chord.ps1'
+        Stamp  = 'test\win32\chooser-close-chord.stamp.json'
+        Covers = @(
+            'test\win32\lib\PaneIdle.ps1',
+            'test\win32\chooser-close-chord.ps1'
+        )
+    },
     # The loop's own continuation mechanism, and a harness with a history of
     # crying wolf (T483): its section B once flaked 1-in-3, so an edit to it
     # that nobody re-runs is exactly the "trusted from memory" gap T783 closes.
@@ -3335,7 +3390,10 @@ $GuardTable = @(
             'src\apprt\win32\chooser_sessions.zig',
             'src\apprt\win32\host_defaults.zig',
             'test\win32\chooser-resume-remote.ps1',
-            'test\win32\lib\ChooserCursor.ps1'
+            'test\win32\lib\ChooserCursor.ps1',
+            # T1015: the pipe bridge that stands the local agent up as the
+            # "remote" machine this harness resumes from.
+            'test\win32\lib\PipeBridge.ps1'
         )
     },
     # The chooser's ORPHAN MARK (T520/T1106): the "not in any window" count and,
@@ -4427,6 +4485,45 @@ $UncoveredExempt = @(
     [pscustomobject]@{ Script = 'test\win32\ipc-p3.ps1'; Why = 'standing P3 floor, run every turn (go.md step 3)' }
 )
 
+# ---------------------------------------------------------------------------
+# Shared test libraries that deliberately have NO behavioral row (T1015).
+#
+# `uncovered` asks the same question of test\win32\lib\*.ps1 that it asks of
+# the harnesses: when this file changes, is some harness that actually RUNS it
+# obliged to run again? A library answers yes when a row names it EXPLICITLY in
+# its Covers, or when a harness-floor member loads it (the `harness-floor` row
+# runs every member). A WILDCARD does not count - `test\win32\lib\*.ps1` is in
+# the covers of the corpus sweeps (verdict-exit, stderr-capture, seam-audit,
+# harness-floor, ...), which read a library's text without executing it, and
+# T303 found TestDesktop.ps1 sitting behind exactly that for weeks: named by
+# ten rows, run by none.
+#
+# The rows that answer for the libraries a single harness is not about, and
+# why each was chosen (keep this list honest when a row moves):
+#   PaneIdle.ps1         -> chooser-close-chord     (its only caller; readonly-badge loads it unused)
+#   PipeBridge.ps1       -> chooser-resume-remote   (the bridged "remote" agent)
+#   SelectionBar.ps1     -> viewer-toc-emphasis     (Find-SaturatedBar is the assertion)
+#   SessionManifest.ps1  -> session-relaunch        (session-relaunch-notify's manifest reads)
+#   ChromeGeometry.ps1   -> tab-strip               (the widest consumer: metrics, DIP rounding,
+#                                                    published regions and measured extents)
+#   paint-blocks.ps1     -> color-contrast          (its only consumer; a fixture, not a helper)
+# and by the floor rather than a row: PaneLiveness.ps1 (persistence-flag.ps1
+# asserts through Test-PaneLive), JobTeardown.ps1, VtText.ps1, TestScore.ps1
+# and every *Audit.ps1 whose audit is a floor member.
+#
+# An entry below is a CLAIM that the library needs no row, checked the same
+# way $UncoveredExempt is: a name that does not exist, or one that has since
+# grown an explicit row, is reported STALE.
+# ---------------------------------------------------------------------------
+$LibUncoveredExempt = @(
+    # A failure-message formatter. The composer scripts compare raw strings
+    # with -ceq and call Show-Text only to RENDER the mismatch, so no edit here
+    # can turn a red assertion green; the worst it can do is throw on a failure
+    # path, which unwinds the body before Complete-TestBody and is scored red
+    # by the T1039 completion marker anyway.
+    [pscustomobject]@{ Script = 'test\win32\lib\ShowText.ps1'; Why = 'renders a failure message only; cannot flip a verdict (T1015)' }
+)
+
 function Get-RepoRelative([string]$full) {
     $rel = $full.Substring($Repo.Length).TrimStart('\', '/')
     return $rel.Replace('\', '/')
@@ -5160,21 +5257,89 @@ switch ($Action) {
             else { $gap += $s }
         }
 
+        # --- the shared libraries (T1015) -----------------------------------
+        # Covered by a row only when a row names the file EXPLICITLY: a
+        # wildcard is how the static corpus sweeps cover everything, and none
+        # of them executes a library (see $LibUncoveredExempt's header).
+        $libRows = @{}
+        foreach ($row in $GuardTable) {
+            foreach ($p in @($row.Covers)) {
+                $pp = ([string]$p).Replace('/', '\')
+                if ($pp -match '[\*\?]') { continue }
+                $pk = $pp.ToLowerInvariant()
+                if (-not $libRows.ContainsKey($pk)) { $libRows[$pk] = $row.Name }
+            }
+        }
+        # Covered by the floor when a member script DOT-SOURCES it - the
+        # `harness-floor` row runs every member, so the library is executed. A
+        # line that merely names the file does not count: several members are
+        # static audits whose tables mention libraries they never load
+        # (persistence-flag.ps1 names PaneLiveness.ps1 as a pattern to scan for).
+        $floorLibs = @{}
+        foreach ($m in @($floor.Keys)) {
+            $mp = Join-Path $Repo $m
+            if (-not (Test-Path -LiteralPath $mp)) { continue }
+            $mt = [System.IO.File]::ReadAllText($mp)
+            foreach ($lm in [regex]::Matches($mt, '(?im)^[ \t]*\.[ \t]+[^\r\n#]*?lib[\\/]([\w.-]+\.ps1)')) {
+                $floorLibs[('test\win32\lib\' + $lm.Groups[1].Value).ToLowerInvariant()] = $true
+            }
+        }
+        $libExempt = @{}
+        # Absent in a spliced fixture copy that declares no library exemptions.
+        # Read the variable itself, not `Get-Variable -ValueOnly`: that writes
+        # the whole array as ONE pipeline object, so two exemptions arrive as a
+        # single $e whose .Script is an array.
+        $libExemptList = if (Get-Variable -Name LibUncoveredExempt -Scope Script -ErrorAction SilentlyContinue) { $LibUncoveredExempt } else { @() }
+        foreach ($e in @($libExemptList | Where-Object { $_ })) {
+            $key = ([string]$e.Script).ToLowerInvariant()
+            if (-not (Test-Path -LiteralPath (Join-Path $Repo $e.Script))) {
+                $stale += [pscustomobject]@{ Script = $e.Script; Why = 'no such library'; Table = 'LibUncoveredExempt' }
+            } elseif ($libRows.ContainsKey($key)) {
+                $stale += [pscustomobject]@{ Script = $e.Script; Why = ("it has a row now ({0})" -f $libRows[$key]); Table = 'LibUncoveredExempt' }
+            } else {
+                $libExempt[$key] = [string]$e.Why
+            }
+        }
+        $libs = @(Get-ChildItem -Path (Join-Path $Repo 'test\win32\lib\*.ps1') -File -ErrorAction SilentlyContinue |
+                Sort-Object Name | ForEach-Object { 'test\win32\lib\' + $_.Name })
+        $lRow = 0; $lFloor = 0; $lExempt = 0
+        $libGap = @()
+        foreach ($s in $libs) {
+            $k = $s.ToLowerInvariant()
+            if ($libRows.ContainsKey($k)) { $lRow++ }
+            elseif ($floorLibs.ContainsKey($k)) { $lFloor++ }
+            elseif ($libExempt.ContainsKey($k)) { $lExempt++ }
+            else { $libGap += $s }
+        }
+
         if ($Json) {
             ConvertTo-Json -Depth 4 -InputObject ([ordered]@{
                     total = $all.Count; row = $nRow; floor = $nFloor; exempt = $nExempt
                     uncovered = @($gap); stale = @($stale)
+                    libs = [ordered]@{
+                        total = $libs.Count; row = $lRow; floor = $lFloor; exempt = $lExempt
+                        uncovered = @($libGap)
+                    }
                 })
         } else {
             "GUARD COVERAGE {0} of {1} harnesses have no row ({2} by row, {3} by harness-floor, {4} exempt)" -f `
                 $gap.Count, $all.Count, $nRow, $nFloor, $nExempt
+            "LIB COVERAGE {0} of {1} shared test libraries have no behavioral row ({2} by row, {3} by harness-floor, {4} exempt)" -f `
+                $libGap.Count, $libs.Count, $lRow, $lFloor, $lExempt
             foreach ($s in $gap) { "  uncovered {0}" -f $s }
-            foreach ($s in $stale) { "  EXEMPT STALE {0}: {1} - drop it from `$UncoveredExempt in scripts\guard-due.ps1" -f $s.Script, $s.Why }
+            foreach ($s in $libGap) { "  uncovered-lib {0}" -f $s }
+            foreach ($s in $stale) {
+                $tbl = if ($s.PSObject.Properties['Table']) { $s.Table } else { 'UncoveredExempt' }
+                "  EXEMPT STALE {0}: {1} - drop it from `${2} in scripts\guard-due.ps1" -f $s.Script, $s.Why, $tbl
+            }
             if ($gap.Count -gt 0) {
                 "  remedy: give the harness a row (and an ``update -Guard <name>`` tail), or add it to `$UncoveredExempt with the reason it needs none"
             }
+            if ($libGap.Count -gt 0) {
+                "  remedy: name the library explicitly in the Covers of a row whose harness runs it, or add it to `$LibUncoveredExempt with the reason it needs none"
+            }
         }
-        exit ([int](($gap.Count + $stale.Count) -gt 0))
+        exit ([int](($gap.Count + $libGap.Count + $stale.Count) -gt 0))
     }
 
     'check' {

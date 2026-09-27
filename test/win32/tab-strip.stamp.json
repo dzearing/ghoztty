@@ -1,0 +1,13 @@
+{
+    "guard":  "tab-strip",
+    "script":  "test/win32/tab-strip.ps1",
+    "generated":  "2026-09-27T02:33:23-07:00",
+    "commit":  "22586f30f",
+    "uncommitted":  [
+                        "test/win32/tab-strip.ps1"
+                    ],
+    "files":  {
+                  "test/win32/lib/ChromeGeometry.ps1":  "a79352d6e286a3395ef9809bc217c50761afeedfd09178d4385af99a0036fa6b",
+                  "test/win32/tab-strip.ps1":  "69f262dc40f53ab1fe759518fb4ffeaa30d0691aa81aa7d70167130aa8e23ea1"
+              }
+}

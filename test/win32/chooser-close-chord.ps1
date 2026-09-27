@@ -259,6 +259,15 @@ try {
     Remove-TestDesktop
 }
 
+# --- stamp (T783, row added by T1015) --------------------------------------
+# The acceptance for lib\PaneIdle.ps1 too: this is the script that actually
+# calls it (pane-shell idle waits and the close-confirm dialog), so an edit
+# there that stopped waiting would surface here. -NegativeControl never stamps.
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard chooser-close-chord -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $_" }
+}
+
 Write-Host ''
 if ($script:fail -eq 0) { Write-Host "ALL PASS ($script:pass assertions)" }
 else { Write-Host "$script:fail FAILURE(S) ($script:pass passed)" -ForegroundColor Red }

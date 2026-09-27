@@ -1,0 +1,13 @@
+{
+    "guard":  "chooser-close-chord",
+    "script":  "test/win32/chooser-close-chord.ps1",
+    "generated":  "2026-09-27T02:29:52-07:00",
+    "commit":  "22586f30f",
+    "uncommitted":  [
+                        "test/win32/chooser-close-chord.ps1"
+                    ],
+    "files":  {
+                  "test/win32/chooser-close-chord.ps1":  "915f4d2ed48cee38183a7055c05ad94e38d0eded192cb087bdf2ebf20cbb5955",
+                  "test/win32/lib/PaneIdle.ps1":  "1011bc73bcc58cda253193e9e8c7843d302ced045ae00771bf1506938e980a9e"
+              }
+}
