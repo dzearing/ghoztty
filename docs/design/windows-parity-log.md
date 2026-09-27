@@ -34565,3 +34565,13 @@ SkipAudit.ps1 put `harness-floor` DUE (guard-due exit 1, the file named) and
 restoring the bytes cleared it (exit 0); `skip-visibility.ps1 -TeethCheck` is
 ALL PASS. The audit is still red-pending against T1123, which owns converting
 the violators. No code change.
+
+## 2026-09-27 — T1013: split into one task per mega file (T1775-T1785)
+
+Re-measured at pickup, the five files it named had grown by a third
+(ViewerPane 11,770, App 12,013, Window 11,340, Surface 5,691, MachineChooser
+5,406), and six more had crossed ~1,200 lines of code before their tests
+(BannerOverlay, ViewerFeedbackBar, IpcHandlers, SessionRoster, ViewerTOCPanel,
+ConfirmDialog). Following the task's own instruction, each file is now its own
+child carrying the T299 method, largest first; the parent is skipped(split).
+win32.zig and webview2_iface.zig stay out as binding surfaces. No code change.
