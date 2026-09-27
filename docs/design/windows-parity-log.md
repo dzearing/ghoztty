@@ -34555,3 +34555,13 @@ activity-selection.ps1 section E pins the bit hidden (rim gone with no focus
 change), clicks (no rim), then posts Home (bit cleared, rim back); C/D now pin
 it shown. ALL PASS (91); floor ALL LANES PASS; due activity harnesses and
 source audits re-run green.
+
+## 2026-09-27 — T1010: closed as already fixed by bdf71d1bb (T725)
+
+The skip-visibility audit got its standing trigger when T725 made it a member
+of the harness floor, whose guard row covers every `test/win32/*.ps1` and
+`lib/*.ps1`. Re-verified rather than assumed: appending a comment to
+SkipAudit.ps1 put `harness-floor` DUE (guard-due exit 1, the file named) and
+restoring the bytes cleared it (exit 0); `skip-visibility.ps1 -TeethCheck` is
+ALL PASS. The audit is still red-pending against T1123, which owns converting
+the violators. No code change.
