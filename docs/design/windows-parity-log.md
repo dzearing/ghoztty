@@ -34514,3 +34514,14 @@ which binds as `$null` (the T982/T1000 floor abort) - one site left,
 re-plants each. `unroll-count-audit.ps1` ALL PASS (45; teeth 53); every touched
 acceptance script re-run green except `agent-recovery.ps1` I3/I4, which fail
 identically on the unmodified HEAD script - filed as T1773. Harness floor PASS.
+## 2026-09-26 — T1005: editing the floor wrapper now obliges its own contract harness
+
+`scripts\floor-lane.ps1` joins the `lane-leak-sweep` guard row, so a wrapper
+edit makes `floor-lane-leak-sweep.ps1` due - the harness whose end-to-end,
+wiring and self-sampling arms (9, 10, 15-16) are the only proof of the
+wrapper's own contract, and which T982's mid-run abort sat in front of with
+nothing obliging a re-run. Chose the full row over a thin arm-subset row: three
+other rows already gate every wrapper edit, the harness runs in 46s, and a
+subset would stamp a weaker proof under a second name. Gate shown red on the
+new cover, then leak-sweep ALL PASS (65) plus the guard-due, body-complete,
+argv-hazard and unroll-count audits the edit made due; `guard-due check` exit 0.

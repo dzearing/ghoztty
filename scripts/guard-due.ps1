@@ -2347,16 +2347,25 @@ $GuardTable = @(
     },
     # The leaked-test-binary sweep (T837) is measurement first: its whole job is
     # to make a rare leak COUNTABLE, and a detector that has quietly stopped
-    # matching reports the same "leaked test binaries: 0" as a clean run. Same
-    # rule as the rows above -- the library and this harness are covered,
-    # scripts\floor-lane.ps1 is not, so a stall-detector edit does not gate on
-    # it; the wiring arm proves the wiring instead.
+    # matching reports the same "leaked test binaries: 0" as a clean run.
+    #
+    # Unlike the library-only rows above, this one DOES cover
+    # scripts\floor-lane.ps1 (T1005). Its arms are the only ones that prove the
+    # WRAPPER's own contract - arm 9 runs a lane end to end through it, arm 10
+    # checks its wiring, arms 15-16 prove its watchdog survives its own sampling
+    # - and T982 was a defect in exactly that file (the run aborting on an empty
+    # process-tree sample) that nothing obliged anyone to re-run these arms
+    # over. The "noise" argument that kept the file out no longer holds: the
+    # stall-sampling, releasesafe and build-cache rows already gate every edit
+    # to it, so the marginal cost is one more ~2 minute run, and a thin row over
+    # a subset of arms would stamp a weaker proof under a second name.
     [pscustomobject]@{
         Name   = 'lane-leak-sweep'
         Script = 'test\win32\floor-lane-leak-sweep.ps1'
         Stamp  = 'test\win32\floor-lane-leak-sweep.stamp.json'
         Covers = @(
             'scripts\lib\LaneLeak.ps1',
+            'scripts\floor-lane.ps1',
             'test\win32\floor-lane-leak-sweep.ps1'
         )
     },
@@ -3995,8 +4004,8 @@ $GuardTable = @(
             # where a build is told to scratch on the repo drive instead, and
             # F16-F25 assert exactly that - so an edit to any of them can un-wire
             # the fix while every other harness stays green. `floor-lane.ps1` is
-            # here for its ENVIRONMENT lines only, which is a narrower thing than
-            # the stall/heal/leak rows T1005 keeps it out of.
+            # here for its ENVIRONMENT lines only; the heal row still leaves it
+            # out, and the leak-sweep row covers it for its contract arms (T1005).
             'scripts\floor-lane.ps1',
             'test\win32\lib\BuildFresh.ps1',
             'scripts\publish-windows-release.ps1',
