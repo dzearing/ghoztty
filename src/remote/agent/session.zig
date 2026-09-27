@@ -240,6 +240,13 @@ pub const Child = struct {
         /// Called OUTSIDE the store lock: it writes a frame on the holder pipe.
         /// Null for every child that is not holder-backed.
         releaseTo: ?*const fn (ctx: *anyopaque, offset: u64) void = null,
+        /// Optional: whether the exit `tryWait` just reported was the child's
+        /// HOST vanishing rather than the program exiting (T1771). Only a
+        /// holder-backed child can tell the two apart: its shell lives in a
+        /// separate `--pty-host` process, and when that process is killed the
+        /// shell goes with it (its job) without ever sending an exit of its own.
+        /// Everything else answers false, which keeps today's plain exit.
+        lost: ?*const fn (ctx: *anyopaque) bool = null,
     };
 
     /// Hand the child its owning channel + output sink (see `VTable.attach`).
@@ -317,6 +324,13 @@ pub const Child = struct {
     pub fn releaseTo(self: Child, offset: u64) void {
         const f = self.vtable.releaseTo orelse return;
         f(self.ctx, offset);
+    }
+
+    /// Whether the reported exit was the child's host vanishing (see
+    /// `VTable.lost`). False for every child that is not holder-backed.
+    pub fn wasLost(self: Child) bool {
+        const f = self.vtable.lost orelse return false;
+        return f(self.ctx);
     }
 };
 
@@ -941,6 +955,37 @@ pub const Session = struct {
         self.last_activity_ms = now_ms;
     }
 
+    /// Mark a session whose shell was taken by its HOST dying, not by its own
+    /// exit (T1771): a relaunchable tombstone, exactly what `abandonHolder`
+    /// leaves when a later agent finds the same holder gone.
+    ///
+    /// The two shapes used to disagree. A holder found dead at adoption became a
+    /// tombstone, so the pane that re-attached to it said "Session interrupted"
+    /// and named what was lost. A holder killed while this agent owned it read as
+    /// an ordinary exit, so the re-attaching pane found nothing to attach to and
+    /// quietly opened a fresh shell: the user's program was gone and nothing
+    /// said so. Same loss, and now the same answer.
+    ///
+    /// The holder handle is forgotten (it is gone, and nothing should dial it
+    /// again), and the child stays installed for the caller to terminate, as with
+    /// `markExited`. Idempotent.
+    pub fn markLost(self: *Session, now_ms: i64) void {
+        if (!self.alive) return;
+        self.alive = false;
+        self.relaunchable = true;
+        self.exit_code = null;
+        self.unclaimed_restarts = 0;
+        self.last_activity_ms = now_ms;
+        if (self.holder_pipe) |p| self.alloc.free(p);
+        if (self.holder_stamp) |st| self.alloc.free(st);
+        self.holder_pipe = null;
+        self.holder_stamp = null;
+        self.holder_pid = 0;
+        self.holder_offset = 0;
+        self.holder_snapshot_offset = 0;
+        SessionStore.appendRestartDivider(self);
+    }
+
     pub fn setSignal(self: *Session, name: []const u8) Allocator.Error!void {
         if (self.last_signal) |s| self.alloc.free(s);
         self.last_signal = try self.alloc.dupe(u8, name);
@@ -1552,6 +1597,18 @@ pub const SessionStore = struct {
         }
         // Reap-check: emit EXIT (after the final DATA already bridged) on exit.
         const code = s.child.tryWait() orelse return;
+        // The holder died under an UNBOUND session (T1771): no pane is watching,
+        // so there is nobody to send an exit to - and the pane that re-attaches
+        // later must be told its program was lost, not handed nothing to attach
+        // to. A tombstone is what makes that re-attach say "Session interrupted".
+        // A BOUND pane still gets the exit below: a tombstone nobody claims would
+        // sit in the chooser as a Resume row for a pane that has already closed.
+        if (!s.bound and s.child.wasLost()) {
+            s.markLost(now_ms);
+            std.log.warn("session {s}: its holder died, not its shell; kept as an interrupted session", .{s.idStr()});
+            self.notifyRosterChanged();
+            return;
+        }
         s.markExited(code, now_ms);
         const runtime: u64 = @intCast(@max(0, now_ms - s.created_ms));
         if (s.bound) {
@@ -3129,6 +3186,9 @@ const FakeChild = struct {
     /// released at all", which are the two outcomes that matter.
     released_to: ?u64 = null,
     releases: usize = 0,
+    /// What `lost` answers (T1771): true models a holder-backed child whose
+    /// holder died, so the exit `tryWait` reports was not the program's own.
+    fake_lost: bool = false,
     alloc: Allocator,
 
     fn child(self: *FakeChild) Child {
@@ -3144,7 +3204,12 @@ const FakeChild = struct {
         .queryForegroundCommand = qfg,
         .deliveredOffset = dof,
         .releaseTo = rel,
+        .lost = lst,
     };
+    fn lst(ctx: *anyopaque) bool {
+        const self: *FakeChild = @ptrCast(@alignCast(ctx));
+        return self.fake_lost;
+    }
     fn dof(ctx: *anyopaque) ?u64 {
         const self: *FakeChild = @ptrCast(@alignCast(ctx));
         return self.fake_holder_offset;
@@ -4473,6 +4538,95 @@ test "agent restart renumbers a session's byte stream to base 0: the id survives
         try testing.expect(s.out_offset.value < run1_offset);
         try testing.expectEqual(@as(u64, retained + reboot_divider.len), s.out_offset.value);
     }
+}
+
+// -----------------------------------------------------------------------------
+// T1771 — a holder that dies under a live agent interrupts, it does not exit
+// -----------------------------------------------------------------------------
+
+test "T1771 an unbound session whose holder died becomes an interrupted tombstone, not an exit" {
+    // The reported shape: the holder is killed while no pane is attached (an
+    // agent handoff, an app restart). Before the fix this was `markExited`, so
+    // the re-attaching pane found a finished session and silently opened a
+    // fresh shell. It must instead be the tombstone a re-attach turns into
+    // "Session interrupted" - the same thing a holder found gone at adoption is.
+    const alloc = testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0x1771);
+    var clock: MutClock = .{ .ms = 500 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    defer store.deinit();
+
+    var fake: FakeChild = .{ .alloc = alloc };
+    defer fake.deinit();
+    const s = try store.table.create(fake.child(), 4242, 24, 80, 1 << 16, 500);
+    s.pinned = true;
+    s.setArgv("ping -n 5000 127.0.0.1");
+    s.setHolder("\\\\.\\pipe\\ghoztty-pty-host-x-1771", 777, "stamp-1");
+    store.onChildOutput(s.channel, "before the holder died\r\n");
+
+    fake.exit_code = 1;
+    fake.fake_lost = true;
+    clock.ms = 900;
+    store.onChildOutput(s.channel, "");
+
+    try testing.expect(!s.alive);
+    try testing.expect(s.relaunchable); // ATTACH answers dead(relaunchable)
+    try testing.expect(s.exit_code == null); // not an exit
+    try testing.expectEqualStrings("ping -n 5000 127.0.0.1", s.argv.?); // the notice names it
+    // The holder is gone: nothing may dial it again, and no stale handle may be
+    // persisted for a later agent to try.
+    try testing.expect(s.holder_pipe == null);
+    try testing.expectEqual(@as(u32, 0), s.holder_pid);
+    // The boundary is marked for a `rerun` replay, exactly once.
+    try testing.expect(s.ring.endsWith(reboot_divider));
+    // Idempotent: a second reap nudge changes nothing.
+    store.onChildOutput(s.channel, "");
+    try testing.expect(s.relaunchable and s.exit_code == null);
+    // And it survives the tombstone reaper, which only takes finished sessions.
+    store.reapUnboundTombstone(s.id);
+    try testing.expect(store.table.getById(s.id) != null);
+}
+
+test "T1771 a holder exit that is the shell's own, or reaches a bound pane, stays a plain exit" {
+    const alloc = testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0x1772);
+    var clock: MutClock = .{ .ms = 500 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    defer store.deinit();
+
+    // The shell ran `exit`: its holder reported the exit, nothing was lost.
+    var own: FakeChild = .{ .alloc = alloc };
+    defer own.deinit();
+    const a = try store.table.create(own.child(), 4243, 24, 80, 1 << 16, 500);
+    a.setHolder("\\\\.\\pipe\\ghoztty-pty-host-x-own", 778, "stamp-1");
+    own.exit_code = 0;
+    store.onChildOutput(a.channel, "");
+    try testing.expect(!a.alive and !a.relaunchable);
+    try testing.expectEqual(@as(?i64, 0), a.exit_code);
+
+    // The holder died under a pane that is WATCHING: that pane is told the
+    // session ended (an EXIT frame), so it is not also left behind as a Resume
+    // row nobody will claim.
+    const Exits = struct {
+        var count: usize = 0;
+        fn onExit(_: *anyopaque, _: u128, _: i64, _: u64) void {
+            count += 1;
+        }
+    };
+    var ctx: u8 = 0;
+    var bound: FakeChild = .{ .alloc = alloc };
+    defer bound.deinit();
+    const b = try store.table.create(bound.child(), 4244, 24, 80, 1 << 16, 500);
+    b.setHolder("\\\\.\\pipe\\ghoztty-pty-host-x-bound", 779, "stamp-1");
+    b.bound = true;
+    b.bridge_ctx = &ctx;
+    b.bridge_exit = Exits.onExit;
+    bound.exit_code = 1;
+    bound.fake_lost = true;
+    store.onChildOutput(b.channel, "");
+    try testing.expect(!b.alive and !b.relaunchable);
+    try testing.expectEqual(@as(?i64, 1), b.exit_code);
+    try testing.expectEqual(@as(usize, 1), Exits.count);
 }
 
 // -----------------------------------------------------------------------------

@@ -345,6 +345,10 @@ const win = struct {
         reaped: bool = false,
         /// The reader gave up: no live holder to talk to any more.
         lost: bool = false,
+        /// The exit `tryWait` reported was synthesized from `lost`, not sent by
+        /// the holder (T1771) — the shell was taken by its host dying, so the
+        /// session is interrupted rather than finished. See `lostFn`.
+        lost_exit: bool = false,
         /// `terminate` ran (also tells the reader to stop redialing).
         closed: bool = false,
 
@@ -364,6 +368,7 @@ const win = struct {
             .queryForegroundCommand = queryForegroundCommandFn,
             .deliveredOffset = deliveredOffsetFn,
             .releaseTo = releaseToFn,
+            .lost = lostFn,
         };
 
         /// Where this child's output stream stands, in the HOLDER's offset space
@@ -690,10 +695,22 @@ const win = struct {
                 if (code == still_active) code = 1;
                 self.reaped = true;
                 self.exited = true;
+                self.lost_exit = true;
                 self.exit_code = @intCast(code);
                 return self.exit_code;
             }
             return null;
+        }
+
+        /// Whether the exit just reported was the holder dying rather than the
+        /// shell exiting (T1771). An exit the holder SENT sets `exited` before
+        /// the pipe breaks, and `tryWait` answers from it first, so a shell that
+        /// ran `exit` never reads as lost even though its holder then goes away.
+        fn lostFn(ctx: *anyopaque) bool {
+            const self: *HolderChild = @ptrCast(@alignCast(ctx));
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            return self.lost_exit;
         }
 
         // --- OS queries, asked of the SHELL (not the holder) ------------------

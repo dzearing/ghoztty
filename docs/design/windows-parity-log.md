@@ -34642,3 +34642,17 @@ Caption "Activity" -> "See Activity". Unit tests reworked in chooser_layout /
 MachineChooser; chooser-menu.ps1 now asserts the separation (gap 427 on the
 Local row, 382 vs 10 on a remote row) and chooser-controls.ps1 the caption.
 Floor lanes and harness floor green.
+
+## 2026-09-27 — T1771: a holder killed under a live agent now reads as interrupted
+
+A `--pty-host` holder that died while its agent owned it was recorded as an
+ordinary shell exit, so the pane that re-attached (after a handoff, a restart)
+found a finished session and quietly opened a fresh shell. The agent now tells
+the two apart (`Child.wasLost`, set only when the exit was synthesized from the
+lost link) and turns an UNBOUND lost session into the same relaunchable
+tombstone a holder found gone at adoption becomes (`Session.markLost`); the
+re-attach then paints "Session interrupted" in the banner and scrollback and
+names the command it did not re-run. RELAUNCH terminates the child it replaces.
+Bound panes keep the plain exit, filed as T1793. Unit tests in session.zig;
+`agent-handoff.ps1 -BreakHolders` now turns C8/C9 red with the notice; floor
+lanes, holder/agent harnesses and the harness floor green.

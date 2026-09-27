@@ -2205,7 +2205,13 @@ pub const Server = struct {
             return;
         }
         const rs = s2.?;
-        rs.child = spawned.child; // replace the inert deadChild placeholder
+        // Usually the inert deadChild placeholder, which needs no teardown. A
+        // session whose holder died under this agent (T1771) still carries the
+        // lost holder child, whose handles and reader thread are released
+        // after the unlock below (`terminate` joins, so never under the lock).
+        const replaced = rs.child;
+        defer replaced.terminate();
+        rs.child = spawned.child;
         rs.pid = spawned.pid;
         rs.alive = true;
         rs.relaunchable = false;

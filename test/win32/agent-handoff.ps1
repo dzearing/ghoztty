@@ -49,12 +49,14 @@
 # `-BreakHolders` (T1001) is the teeth check for the survival arms: it takes
 # the holders down the moment the predecessor has retired, which is the
 # regression they exist for - a stand-down that reaps its holders on the way
-# out. Measured under it (2026-09-26): C1, C2, C3, C6 and C10 go red. C8 and C9
-# stay GREEN there and are controls, not claims: a holder reaped under a LIVE
-# successor is replaced by a fresh session with no interrupted notice at all
-# (T1771 asks whether that silence is right) - so only the session id and the
-# program's own process can tell a survivor from a replacement on this path.
-# The run exits 1 by design and nothing is stamped.
+# out. Measured under it (2026-09-27): C1, C2, C6, C8, C9 and C10 go red. C8 and
+# C9 are red because a holder reaped under a LIVE successor now leaves an
+# interrupted session (T1771), so the pane that re-attaches says "Session
+# interrupted" in its banner and its scrollback and names the command it did not
+# re-run - before T1771 it was silently replaced by a fresh shell and both arms
+# stayed green. C3 stays green: that pane paints the lost session's last screen
+# above the notice (T922), so the marker is still there to read. The run exits 1
+# by design and nothing is stamped.
 #
 # Hermetic: a per-run $env:LOCALAPPDATA, a private IPC endpoint (lib\Isolation),
 # a per-run COPY of the agent under test (never the installed one), and only
