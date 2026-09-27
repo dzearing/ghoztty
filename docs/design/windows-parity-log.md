@@ -34440,3 +34440,17 @@ and session-relaunch read the pair through the new `test/win32/lib/RingSnapshot.
 which shows appends happen on a live agent) and pass, including kill-and-restore.
 All four zig lanes, P1-P3, and the harness floor pass. P1's first run hit a
 cold-launch SETUP timeout that passed on re-run, filed as T1769.
+
+## 2026-09-26 — T998: a torn build cache heals on every build path
+
+The T494 heal (recognize a half-written cache entry, delete exactly it, re-run
+once) lived in floor-lane's lane policy, so the staging build, the harnesses'
+rebuild, the test-client build and a hand-typed `zig build` all reported a
+torn cache as red code. `scripts\lib\CacheHeal.ps1` now carries the decision
+(`Invoke-TornCacheRepair`) and a healed zig runner (`Invoke-ZigBuildHealed`);
+floor-lane, launch-upgrade, BuildFresh and TestClient call it, and the new
+`scripts\zig-build.ps1` is the hand-run build with the heal plus the cache/temp
+environment. Arms 27-31 of floor-lane-cache-heal drive it end to end with a
+stand-in zig (heal, source-error negative, wrapper, wiring): ALL PASS (85). Harness floor
+and the other due guards pass; test-client-build E2 is red on a pre-existing
+false positive from T722's build-locked-artifact.ps1, filed as T1770.
