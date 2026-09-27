@@ -47,6 +47,18 @@
       Get-TornPackage           global cache -> fetched packages that look
                                 half-extracted, asked WITHOUT a failing build
       Invoke-CacheHeal          delete the named entries, loudly
+      Invoke-TornCacheRepair    red build log -> detect + corroborate + heal,
+                                and say whether a retry is warranted (T998)
+      Invoke-ZigBuildHealed     run one zig command, and on a red result that
+                                a torn cache explains, heal and re-run ONCE
+
+    The last two exist because the policy used to live in floor-lane.ps1
+    alone (T998), so only the four floor lanes ever got the recognize-delete-
+    retry treatment. The staging build in launch-upgrade.ps1, the acceptance
+    harnesses' own rebuild (test\win32\lib\BuildFresh.ps1, TestClient.ps1) and
+    a hand-run build (scripts\zig-build.ps1) hit exactly the same half-written
+    entry and reported it as red code. Every build path now calls one of these
+    two, so the diagnosis is paid once, here.
 
     A THIRD shape is a torn FETCHED PACKAGE rather than a torn generated file
     (T1436). On 2026-09-07 every build and all four floor lanes died at once on
@@ -472,6 +484,119 @@ function Invoke-CacheHeal {
         }
     }
     return $healed
+}
+
+function Invoke-TornCacheRepair {
+    <#
+    .SYNOPSIS
+        A red build's log -> heal whatever torn cache entry it blames, and say
+        whether one retry is warranted. Returns the number of entries blamed.
+    .DESCRIPTION
+        The whole T494 decision in one call, so no build path re-implements it
+        (T998). Zero means the log blames no cache entry: the failure is the
+        code's, and the caller must report it as such without a retry. Anything
+        above zero means a retry is warranted even when the delete itself was a
+        SKIP (another process healed the entry first) or FAILED (the retry then
+        fails again and its verdict is final, which is the cost ceiling T494
+        set). The caller owns the "at most once" rule; this function is
+        stateless.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$LogPath,
+        [Parameter(Mandatory)][string]$RepoPath,
+        [string]$GlobalCacheDir,
+        # Who is healing, for the one summary line: 'LANE win32', 'staging build'.
+        [string]$Label = 'build'
+    )
+    $torn = @(Get-TornCacheEntry -LogPath $LogPath -RepoPath $RepoPath -GlobalCacheDir $GlobalCacheDir)
+    if ($torn.Count -eq 0) { return 0 }
+    $warn = @(Get-CacheCorruptionWarning -LogPath $LogPath)
+    if ($warn.Count -gt 0) {
+        Write-Host "CACHE HEAL corroboration: $($warn.Count) invalid-timestamp warning(s) in the same log"
+    }
+    $removed = Invoke-CacheHeal -Entries $torn
+    Write-Host "$Label healed $removed torn cache entr(y/ies); re-running once (a second FAIL is final)"
+    return $torn.Count
+}
+
+function Invoke-ZigBuildHealed {
+    <#
+    .SYNOPSIS
+        Run one zig command from $RepoPath; if it fails on a torn cache entry,
+        heal it and run the command exactly once more.
+    .DESCRIPTION
+        For the build paths that are not floor lanes (T998): the acceptance
+        harnesses' rebuild, the remote test client, and scripts\zig-build.ps1.
+        The launch-upgrade staging build keeps its own cmd.exe redirection and
+        calls Invoke-TornCacheRepair directly, for the reason its comment gives.
+
+        Output is captured as strings (never ErrorRecords -- the `2>&1` formatter
+        is host-dependent, lib\StderrCaptureAudit) and, with -Stream, echoed as
+        it arrives so a long build is not silent. A red first run's output is
+        written to a log file because that is the shape the detector reads; the
+        path is returned so a caller can point at the evidence.
+
+        -ZigExe exists for the acceptance harness, which drives the heal end to
+        end with a stand-in that fails while a planted torn entry exists.
+    .OUTPUTS
+        ExitCode (the FINAL run's), Output (the final run's, as one string),
+        Healed (bool: a heal fired and the command was re-run), FirstLog (the red
+        first run's log when a heal fired, else $null).
+    #>
+    param(
+        [Parameter(Mandatory)][string[]]$Arguments,
+        [Parameter(Mandatory)][string]$RepoPath,
+        [string]$GlobalCacheDir,
+        [string]$ZigExe = 'zig',
+        [string]$Label = 'build',
+        [switch]$Stream
+    )
+    $ErrorActionPreference = 'Continue'
+    if (-not $GlobalCacheDir) { $GlobalCacheDir = $env:ZIG_GLOBAL_CACHE_DIR }
+
+    $runOnce = {
+        $lines = New-Object System.Collections.Generic.List[string]
+        $code = 1
+        Push-Location -LiteralPath $RepoPath
+        try {
+            & $ZigExe @Arguments 2>&1 | ForEach-Object {
+                $s = $_.ToString()
+                if ($Stream) { Write-Host $s }
+                $lines.Add($s)
+            }
+            $code = $LASTEXITCODE
+        }
+        catch {
+            $lines.Add("could not run ${ZigExe}: $($_.Exception.Message)")
+            $code = 1
+        }
+        finally { Pop-Location }
+        if ($null -eq $code) { $code = 1 }
+        return [pscustomobject]@{ ExitCode = [int]$code; Lines = $lines.ToArray() }
+    }
+
+    $r = & $runOnce
+    $result = [pscustomobject]@{
+        ExitCode = $r.ExitCode
+        Output   = ($r.Lines -join "`r`n")
+        Healed   = $false
+        FirstLog = $null
+    }
+    if ($r.ExitCode -eq 0) { return $result }
+
+    $log = Join-Path ([System.IO.Path]::GetTempPath()) ("zig-build-heal-{0}-{1}.log" -f $PID, ([guid]::NewGuid().ToString('N').Substring(0, 8)))
+    try { [System.IO.File]::WriteAllLines($log, [string[]]$r.Lines) } catch { return $result }
+    $blamed = Invoke-TornCacheRepair -LogPath $log -RepoPath $RepoPath -GlobalCacheDir $GlobalCacheDir -Label $Label
+    if ($blamed -eq 0) {
+        Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue
+        return $result
+    }
+    $r2 = & $runOnce
+    $result.ExitCode = $r2.ExitCode
+    $result.Output = ($r2.Lines -join "`r`n")
+    $result.Healed = $true
+    $result.FirstLog = $log
+    return $result
 }
 
 function Set-CacheHealFailedMarker {

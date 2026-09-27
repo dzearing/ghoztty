@@ -36,6 +36,9 @@
 # values constantly and a StrictMode throw would read as a product failure).
 Set-StrictMode -Off
 
+# Invoke-ZigBuildHealed: the on-demand build heals a torn cache entry (T998).
+. (Join-Path (Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent) 'scripts\lib\CacheHeal.ps1')
+
 # The one command a human would type. Every message that mentions the missing
 # binary quotes THIS, so a precondition failure is always actionable.
 function Get-RemoteTestClientBuildCommand {
@@ -70,13 +73,15 @@ function Invoke-RemoteTestClientBuild {
     $ok = $false
     Push-Location $Repo
     try {
-        # Stringify each record before Out-String: `2>&1` puts ErrorRecords on
-        # the pipeline and the formatter is host-dependent (lib\StderrCaptureAudit).
-        $out = (& zig build remote-test-client -Doptimize=Debug 2>&1 |
-            ForEach-Object { $_.ToString() } | Out-String)
-        $ok = ($LASTEXITCODE -eq 0)
+        # T998: through the shared heal, so a torn cache entry is healed and
+        # the build re-run once instead of failing the harness as red code.
+        # (It stringifies every record, as lib\StderrCaptureAudit requires.)
+        $b = Invoke-ZigBuildHealed -Arguments @('build', 'remote-test-client', '-Doptimize=Debug') `
+            -RepoPath $Repo -GlobalCacheDir $env:ZIG_GLOBAL_CACHE_DIR -Label 'TestClient build'
+        $out = $b.Output
+        $ok = ($b.ExitCode -eq 0)
         if (-not $ok) {
-            Write-Host "  TestClient: the build FAILED (zig exit $LASTEXITCODE). Run it by hand: $cmd"
+            Write-Host "  TestClient: the build FAILED (zig exit $($b.ExitCode)). Run it by hand: $cmd"
             foreach ($line in ($out -split "`r?`n" | Where-Object { $_ -match 'error' } | Select-Object -Last 10)) {
                 Write-Host "    $line"
             }

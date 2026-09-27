@@ -2229,6 +2229,9 @@ $GuardTable = @(
             # An edit to the hard delete with nothing re-run is exactly how the
             # heal came to be a no-op against the real torn package.
             'scripts\lib\HardDelete.ps1',
+            # T998: the hand-run build is nothing BUT the heal wrapper, and
+            # this harness drives it end to end with a stand-in zig.
+            'scripts\zig-build.ps1',
             'test\win32\floor-lane-cache-heal.ps1'
         )
     },

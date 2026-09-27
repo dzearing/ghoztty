@@ -985,16 +985,14 @@ function Invoke-CacheHealPolicy {
     $out = @{ Result = $Result; Healed = $AlreadyHealed }
     if ($Result -ne 'FAIL' -or $AlreadyHealed -or -not $LogPath) { return $out }
 
-    $torn = @(Get-TornCacheEntry -LogPath $LogPath -RepoPath $RepoPath -GlobalCacheDir $GlobalCacheDir)
-    if ($torn.Count -eq 0) { return $out }
+    # The detect/corroborate/heal half is shared with every other build path
+    # since T998 (scripts\lib\CacheHeal.ps1); what stays here is the lane's
+    # retry policy.
+    $blamed = Invoke-TornCacheRepair -LogPath $LogPath -RepoPath $RepoPath `
+        -GlobalCacheDir $GlobalCacheDir -Label "LANE $Name"
+    if ($blamed -eq 0) { return $out }
 
     $out.Healed = $true
-    $warn = @(Get-CacheCorruptionWarning -LogPath $LogPath)
-    if ($warn.Count -gt 0) {
-        Write-Host "CACHE HEAL corroboration: $($warn.Count) invalid-timestamp warning(s) in the same log"
-    }
-    $removed = Invoke-CacheHeal -Entries $torn
-    Write-Host "LANE $Name healed $removed torn cache entr(y/ies); re-running once (a second FAIL is final)"
     $out.Result = & $Rerun
     return $out
 }

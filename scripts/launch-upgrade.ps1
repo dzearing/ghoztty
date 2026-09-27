@@ -106,6 +106,8 @@ function Fail-Launch([string]$msg, [int]$code) {
 }
 
 . (Join-Path $PSScriptRoot 'lib\BuildCache.ps1')
+# Invoke-TornCacheRepair: the staging build heals a torn cache entry (T998).
+. (Join-Path $PSScriptRoot 'lib\CacheHeal.ps1')
 . (Join-Path $PSScriptRoot 'delivery-version.ps1')
 . (Join-Path $PSScriptRoot 'install-ownership.ps1')
 
@@ -211,13 +213,31 @@ if (-not $SkipBuild) {
     }
     # cmd.exe redirection, not PowerShell's: zig writes a lot and this keeps the
     # transcript out of the caller's stdout while still capturing everything.
-    $bp = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `
-        -WorkingDirectory $Repo `
-        -ArgumentList "/c `"zig $($buildArgs -join ' ') > `"$buildLog`" 2>&1`""
-    $null = $bp.Handle
-    if (-not $bp.WaitForExit($BuildTimeoutSeconds * 1000)) {
-        try { $bp.Kill() } catch {}
-        Fail-Launch "staging build did not finish within ${BuildTimeoutSeconds}s; see $buildLog. The installed release was NOT upgraded." 3
+    $runStagingBuild = {
+        param([string]$Log)
+        $p = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `
+            -WorkingDirectory $Repo `
+            -ArgumentList "/c `"zig $($buildArgs -join ' ') > `"$Log`" 2>&1`""
+        $null = $p.Handle
+        if (-not $p.WaitForExit($BuildTimeoutSeconds * 1000)) {
+            try { $p.Kill() } catch {}
+            Fail-Launch "staging build did not finish within ${BuildTimeoutSeconds}s; see $Log. The installed release was NOT upgraded." 3
+        }
+        return $p
+    }
+    $bp = & $runStagingBuild $buildLog
+    # T998: a torn cache entry fails this build exactly the way it fails a
+    # floor lane, and until now only the lanes recognized it -- so a delivery
+    # died as red code. Same policy: heal what the log blames, re-run ONCE, and
+    # the second verdict is final. The first log stays as the evidence.
+    if ($bp.ExitCode -ne 0) {
+        $blamed = Invoke-TornCacheRepair -LogPath $buildLog -RepoPath $Repo `
+            -GlobalCacheDir $env:ZIG_GLOBAL_CACHE_DIR -Label 'staging build'
+        if ($blamed -gt 0) {
+            $buildLog = Join-Path (Split-Path -Parent $buildLog) "ghoztty-staging-build-$buildStamp-retry.log"
+            Write-Host "re-running the staging build (log: $buildLog)"
+            $bp = & $runStagingBuild $buildLog
+        }
     }
     if ($bp.ExitCode -ne 0) {
         Write-Host "staging build FAILED (exit $($bp.ExitCode)); see $buildLog"

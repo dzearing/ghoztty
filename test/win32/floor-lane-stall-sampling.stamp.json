@@ -1,13 +1,13 @@
 {
     "guard":  "lane-stall-sampling",
     "script":  "test/win32/floor-lane-stall-sampling.ps1",
-    "generated":  "2026-09-24T02:51:12-07:00",
-    "commit":  "e4364e21b",
+    "generated":  "2026-09-26T19:26:54-07:00",
+    "commit":  "a7a18ffc2",
     "uncommitted":  [
                         "scripts/floor-lane.ps1"
                     ],
     "files":  {
-                  "scripts/floor-lane.ps1":  "411e8787cb6161d99b9decf24b472f8a9c9b4cf15514a08f4a1b723a6730cddf",
+                  "scripts/floor-lane.ps1":  "6c13b5ee1015186e76fc30c11b9fa818b15de41ba07eb44d5383e5ce0538e19d",
                   "test/win32/floor-lane-stall-sampling.ps1":  "1ffd9b4a466850f44fd49712ad9c82cf8a8e89ead999cea40903eb3ce0306418"
               }
 }

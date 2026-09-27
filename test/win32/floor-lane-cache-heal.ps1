@@ -156,7 +156,8 @@ try {
     $src = Get-Content (Join-Path $RepoRoot 'scripts\floor-lane.ps1') -Raw
     Check 'floor-lane dot-sources CacheHeal.ps1' ($src -match 'CacheHeal\.ps1') ''
     Check 'floor-lane heals at most once per lane' ($src -match 'healedThisLane') ''
-    Check 'floor-lane re-runs after a heal' ($src -match 'Get-TornCacheEntry') ''
+    # T998: the detect/heal half moved into the shared library.
+    Check 'floor-lane re-runs after a heal' ($src -match 'Invoke-TornCacheRepair') ''
 
     # -- 10: Test-CacheFileIntact knows the shapes a half-written file takes
     $probeDir = Join-Path $Sandbox 'probe'
@@ -464,6 +465,113 @@ try {
     Check 'Clear-BuildCache removes a cache holding a ._. file' `
         ($cleared.Removed -and -not (Test-Path -LiteralPath $ClearCache)) `
         "removed=$($cleared.Removed) err=$($cleared.Error)"
+
+    # =====================================================================
+    # T998: every build path heals, not only the floor lanes. The policy
+    # lived in floor-lane.ps1's lane loop, so the delivery's staging build,
+    # the harnesses' own rebuild and a hand-run `zig build` met the same torn
+    # entry with no recognition and reported red code. Arms 27-31 drive the
+    # shared functions and the hand-run wrapper end to end with a stand-in
+    # zig that fails while a planted torn entry exists and passes once it is
+    # gone -- so a pass is proof of heal-and-re-run, not of a green build.
+    # =====================================================================
+    $T998Cache = Join-Path $Sandbox 't998-cache'
+    $t998Entry = Join-Path $T998Cache "c\$Hash"
+    $t998File = Join-Path $t998Entry 'options.zig'
+    $runCount = Join-Path $Sandbox 't998-runs.txt'
+    $argsSeen = Join-Path $Sandbox 't998-args.txt'
+    $fakeZig = Join-Path $Sandbox 'fake-zig.ps1'
+    @(
+        "Add-Content -Path '$runCount' -Value 'run'"
+        "Set-Content -Path '$argsSeen' -Value (`$args -join ' ')"
+        "if (Test-Path '$t998File') {"
+        "  Write-Host `"${t998File}:1:1: error: expected type expression, found 'invalid token'`""
+        "  exit 1"
+        "}"
+        "Write-Host 'rebuilt clean'"
+        "exit 0"
+    ) | Set-Content -Path $fakeZig -Encoding Ascii
+    $fakeSrcErr = Join-Path $Sandbox 'fake-zig-source-error.ps1'
+    @(
+        "Add-Content -Path '$runCount' -Value 'run'"
+        "Write-Host 'src\Surface.zig:12:5: error: use of undeclared identifier ''oops'''"
+        "exit 1"
+    ) | Set-Content -Path $fakeSrcErr -Encoding Ascii
+    $fakePrefix = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File')
+    function Reset-T998 {
+        New-Item -ItemType Directory -Path $t998Entry -Force | Out-Null
+        [System.IO.File]::WriteAllBytes($t998File, (New-Object byte[] 2036))
+        if (Test-Path $runCount) { Remove-Item -LiteralPath $runCount -Force }
+    }
+    function Get-T998Runs { if (Test-Path $runCount) { @(Get-Content $runCount).Count } else { 0 } }
+
+    # -- 27: Invoke-TornCacheRepair is the lane policy's detect/heal half,
+    # callable from anywhere: blames and deletes the entry, names who healed.
+    Reset-T998
+    $log = New-Log @("${t998File}:1:1: error: expected type expression, found 'invalid token'")
+    $rep = @(Invoke-TornCacheRepair -LogPath $log -RepoPath $FakeRepo -GlobalCacheDir $T998Cache -Label 'unit build' 6>&1)
+    $repOut = ($rep | ForEach-Object { $_.ToString() }) -join "`n"
+    $repN = @($rep | Where-Object { $_ -is [int] })
+    Check 'T998 repair blames one entry and asks for a retry' ($repN.Count -eq 1 -and $repN[0] -eq 1) "$($repN -join ',')`n$repOut"
+    Check 'T998 repair deletes the torn entry' (-not (Test-Path $t998Entry)) $repOut
+    Check 'T998 repair names who healed' ($repOut -match 'unit build healed 1 torn cache entr') $repOut
+    $log = New-Log @("src\Surface.zig:12:5: error: use of undeclared identifier 'oops'")
+    $rep0 = @(Invoke-TornCacheRepair -LogPath $log -RepoPath $FakeRepo -GlobalCacheDir $T998Cache 6>&1)
+    $rep0N = @($rep0 | Where-Object { $_ -is [int] })
+    Check 'T998 repair of a source error blames nothing (no retry)' ($rep0N.Count -eq 1 -and $rep0N[0] -eq 0) "$($rep0N -join ',')"
+
+    # -- 28: Invoke-ZigBuildHealed, end to end: red on the torn entry, healed,
+    # re-run once, green.
+    Reset-T998
+    $hb = Invoke-ZigBuildHealed -Arguments ($fakePrefix + @($fakeZig, 'build')) -RepoPath $FakeRepo `
+        -GlobalCacheDir $T998Cache -ZigExe 'powershell' -Label 'unit build' 6>$null
+    Check 'T998 healed build re-runs to green' ($hb.ExitCode -eq 0 -and $hb.Healed) "exit=$($hb.ExitCode) healed=$($hb.Healed) out=$($hb.Output)"
+    Check 'T998 healed build ran exactly twice' ((Get-T998Runs) -eq 2) "runs=$(Get-T998Runs)"
+    Check 'T998 healed build keeps the red run as evidence' `
+        ($hb.FirstLog -and (Test-Path $hb.FirstLog) -and ((Get-Content $hb.FirstLog -Raw) -match 'invalid token')) "log=$($hb.FirstLog)"
+    Check 'T998 healed build output is the re-run''s' ($hb.Output -match 'rebuilt clean') $hb.Output
+
+    # -- 29: the negative. A genuine source error is NOT retried: one run,
+    # the red exit code, nothing healed.
+    Reset-T998
+    $hn = Invoke-ZigBuildHealed -Arguments ($fakePrefix + @($fakeSrcErr, 'build')) -RepoPath $FakeRepo `
+        -GlobalCacheDir $T998Cache -ZigExe 'powershell' 6>$null
+    Check 'T998 a source error stays red and unhealed' ($hn.ExitCode -eq 1 -and -not $hn.Healed) "exit=$($hn.ExitCode) healed=$($hn.Healed)"
+    Check 'T998 a source error runs exactly once' ((Get-T998Runs) -eq 1) "runs=$(Get-T998Runs)"
+    Check 'T998 and leaves unrelated cache entries alone' (Test-Path $t998File) ''
+
+    # -- 30: scripts\zig-build.ps1, the hand-run path, end to end through a
+    # real child process; and the `-D...` flags reach zig untouched, which is
+    # the reason the wrapper has no param block.
+    Reset-T998
+    $zbOut = & powershell -NoProfile -ExecutionPolicy Bypass -Command (
+        "`$env:ZIG_GLOBAL_CACHE_DIR = '$T998Cache'; " +
+        "`$env:GHOZTTY_BUILD_TEMP = '$(Join-Path $Sandbox 't998-temp')'; " +
+        "`$env:GHOZTTY_ZIG_BUILD_EXE = 'powershell'; " +
+        "`$env:GHOZTTY_ZIG_BUILD_PREFIX = '$(($fakePrefix + @($fakeZig)) -join '|')'; " +
+        "& '$(Join-Path $RepoRoot 'scripts\zig-build.ps1')' -Dapp-runtime=win32 -Doptimize=Debug; exit `$LASTEXITCODE") 2>&1 |
+        ForEach-Object { $_.ToString() } | Out-String
+    $zbExit = $LASTEXITCODE
+    Check 'T998 zig-build.ps1 heals and exits 0' ($zbExit -eq 0 -and -not (Test-Path $t998Entry)) "exit=$zbExit`n$zbOut"
+    Check 'T998 zig-build.ps1 says it healed and re-ran' ($zbOut -match 'zig-build: healed a torn cache entry and re-ran; the re-run PASSED') $zbOut
+    Check 'T998 zig-build.ps1 streams zig''s own output' ($zbOut -match 'invalid token' -and $zbOut -match 'rebuilt clean') $zbOut
+    $seen = if (Test-Path $argsSeen) { (Get-Content $argsSeen -Raw).Trim() } else { '' }
+    Check 'T998 zig-build.ps1 forwards -D flags verbatim' ($seen -eq 'build -Dapp-runtime=win32 -Doptimize=Debug') "saw '$seen'"
+
+    # -- 31: the wiring. Every other build path calls the shared heal.
+    foreach ($w in @(
+            @{ File = 'scripts\launch-upgrade.ps1'; Fn = 'Invoke-TornCacheRepair' },
+            @{ File = 'scripts\floor-lane.ps1'; Fn = 'Invoke-TornCacheRepair' },
+            @{ File = 'test\win32\lib\BuildFresh.ps1'; Fn = 'Invoke-ZigBuildHealed' },
+            @{ File = 'test\win32\lib\TestClient.ps1'; Fn = 'Invoke-ZigBuildHealed' })) {
+        $wp = Join-Path $RepoRoot $w.File
+        $werr = $null
+        [void][System.Management.Automation.Language.Parser]::ParseFile($wp, [ref]$null, [ref]$werr)
+        $wsrc = Get-Content $wp -Raw
+        Check "T998 $($w.File) parses, loads CacheHeal.ps1 and calls $($w.Fn)" `
+            ($werr.Count -eq 0 -and $wsrc -match 'CacheHeal\.ps1' -and $wsrc -match [regex]::Escape($w.Fn)) `
+            "parse errors=$($werr.Count)"
+    }
 
     Complete-TestBody  # T1039: the run reached the end of its body
 }

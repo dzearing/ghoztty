@@ -84,6 +84,8 @@ $script:GhozttyFreshExcludedDirs = @('\src\apprt\gtk\')
 # global-cache rule it mirrors, so this file asks for it instead of keeping a
 # second copy that would be free to disagree.
 . (Join-Path (Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent) 'scripts\lib\BuildCache.ps1')
+# Invoke-ZigBuildHealed: the rebuild heals a torn cache entry (T998).
+. (Join-Path (Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent) 'scripts\lib\CacheHeal.ps1')
 
 function Get-GhozttyRepoRootForFresh {
     <#
@@ -258,13 +260,15 @@ function Invoke-GhozttyDebugBuild {
     $prevTemp = Push-BuildTempEnv -RepoPath $root
     Push-Location $root
     try {
-        # Stringify each record before Out-String: `2>&1` puts ErrorRecords on
-        # the pipeline and the formatter is host-dependent (lib\StderrCaptureAudit).
-        $out = (& zig build -Dapp-runtime=win32 -Doptimize=Debug 2>&1 |
-            ForEach-Object { $_.ToString() } | Out-String)
-        $ok = ($LASTEXITCODE -eq 0)
+        # T998: through the shared heal, so a torn cache entry is healed and
+        # the build re-run once instead of failing the harness as red code.
+        # (It stringifies every record, as lib\StderrCaptureAudit requires.)
+        $b = Invoke-ZigBuildHealed -Arguments @('build', '-Dapp-runtime=win32', '-Doptimize=Debug') `
+            -RepoPath $root -GlobalCacheDir $env:ZIG_GLOBAL_CACHE_DIR -Label 'BuildFresh rebuild'
+        $out = $b.Output
+        $ok = ($b.ExitCode -eq 0)
         if (-not $ok) {
-            Write-Host "  BuildFresh: the rebuild FAILED (zig exit $LASTEXITCODE)."
+            Write-Host "  BuildFresh: the rebuild FAILED (zig exit $($b.ExitCode))."
             foreach ($line in ($out -split "`r?`n" | Where-Object { $_ -match 'error' } | Select-Object -Last 10)) {
                 Write-Host "    $line"
             }

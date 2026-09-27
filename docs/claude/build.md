@@ -37,6 +37,17 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
 .\zig-out\bin\ghoztty.exe
 ```
 
+- **Prefer `scripts\zig-build.ps1` for a hand-run build** (T998):
+  `powershell -NoProfile -File scripts\zig-build.ps1 -Dapp-runtime=win32 -Doptimize=Debug`
+  forwards every argument to `zig build`, sets the cache and temp variables
+  below for you, and — the reason it exists — recognizes a **torn cache entry**
+  (a half-written file under `.zig-cache\<bucket>\<hash>\` or a half-extracted
+  package, usually after a crash or reboot mid-build), deletes exactly that
+  entry, loudly, and builds once more. A bare `zig build` reports the same torn
+  entry as a compile error in your change. The floor lanes, the delivery's
+  staging build and the acceptance harnesses' own rebuild all take the same heal
+  (`scripts\lib\CacheHeal.ps1`), so a `CACHE HEAL:` line in any of their output
+  means the first red run was the cache, not the code.
 - **`ZIG_GLOBAL_CACHE_DIR` must sit on the same drive as the repo.** Across
   drives, `std.fs.path.relative` returns an absolute path and zig 0.15.2's build
   runner panics in `convertPathArg` (`assert(!isAbsolute(child_cwd_rel))` in std
