@@ -404,3 +404,12 @@ as the digest that showed them.
 - Change a shortcut from the palette row that shows it (new angle on the keybinding cheat sheet: rebind in place, with clash warning)
 - A palette that learns what you use (frequency ranking per kind of pane on the empty palette)
 - cmd.exe panes that know where each command starts and ends (full command marks for cmd: timing, jump to failure, copy last output)
+
+## 2026-09-27
+
+- Paste a screenshot, get a file (clipboard image saved to a file, its path typed into the pane)
+- Resizing keeps you on the line you were reading (scrolled-up view anchored across split/divider/monitor changes)
+- Text that stays readable over a see-through window (faint text edge over busy wallpaper when translucent)
+- Peek through the window (hold a chord to fade the window almost clear)
+- "Did you mean +split?" (closest-match suggestion for a mistyped CLI verb or flag)
+- Restore big scrollbacks without the wait (last screen first, older history filled in behind)
