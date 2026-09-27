@@ -1,17 +1,14 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-09-27T02:56:44-07:00",
-    "commit":  "22586f30f",
+    "generated":  "2026-09-27T03:21:41-07:00",
+    "commit":  "26e34212b",
     "uncommitted":  [
-                        "scripts/guard-due.ps1",
-                        "test/win32/chooser-close-chord.ps1",
-                        "test/win32/color-contrast.ps1",
-                        "test/win32/guard-due.ps1",
-                        "test/win32/tab-strip.ps1"
+                        "scripts/blur-backdrop-probe.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
+                  "scripts/blur-backdrop-probe.ps1":  "161435ffccf4a2e759d1f24887ced73c4c7c44da9d473a24eccbd977dc4cc38f",
                   "scripts/build-cache.ps1":  "14d6a476c9a306803a9310c9476f3e312fd42627debe1bcb6ef36e0611aed18b",
                   "scripts/check-release-parity.ps1":  "716c462a0a4d5059fe2b6d922001fa3374d78346ebb3c0b857634503f35b9abb",
                   "scripts/ci-status.ps1":  "c273364f2c71a956e9d63876b8a0b9218388503f0a1ae7853617649403911286",

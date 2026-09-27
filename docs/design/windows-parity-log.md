@@ -34598,3 +34598,14 @@ viewer-toc-emphasis and session-relaunch. ShowText is a stated exemption.
 `guard-due.ps1 uncovered` now prints LIB COVERAGE (explicit Covers or floor
 dot-source only; wildcards never count): 0 of 60. guard-due ALL PASS 128 with
 Q9/Q10 negatives; all six harnesses green and stamped; floor PASS; go-loop-guard 430.
+
+## 2026-09-27 — T1016: background-blur measured - it blurs nothing today; acrylic is the target
+
+Probed a live debug window over a sharp checker (new scripts/blur-backdrop-probe.ps1,
+input desktop, mechanisms applied from outside the app). On the shipped
+LWA_ALPHA window no mechanism blurs: hf 12.62 no-blur, 12.66 accent, 12.62
+acrylic/Mica. A per-pixel-alpha control window blurs (accent 1.13, acrylic
+0.00), so the capture is sound. Acrylic blurs other windows behind, like Mac's
+CGS blur; Mica samples wallpaper only. Call: acrylic backdrop with accent
+fallback. Filed T1787 (P1: whole-window alpha fades text and defeats blur) and
+T1788 (wire acrylic, deps T1787). No product code change.
