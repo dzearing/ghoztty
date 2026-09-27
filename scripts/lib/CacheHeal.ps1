@@ -198,16 +198,95 @@ function Test-CacheFileIntact {
         that licenses a delete.
     #>
     param([Parameter(Mandatory)][string]$Path)
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
-    try { $info = Get-Item -LiteralPath $Path -ErrorAction Stop } catch { return $true }
-    if ($info.Length -eq 0) { return $false }
+    return ($null -eq (Get-CacheFileDefect -Path $Path))
+}
+
+function Get-CacheFileDefect {
+    <#
+    .SYNOPSIS
+        Which torn shape a cached file has, or $null when it looks whole.
+    .DESCRIPTION
+        The reasoned form of Test-CacheFileIntact (which is defined as "this
+        returns $null"), so a sweep can say WHY it deleted something rather
+        than only that it did: 'missing', 'empty', 'nul-bytes' or
+        'no-trailing-newline'. $null whenever the file cannot be judged.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return 'missing' }
+    try { $info = Get-Item -LiteralPath $Path -ErrorAction Stop } catch { return $null }
+    if ($info.Length -eq 0) { return 'empty' }
     # Generated sources are kilobytes. Anything huge is not something whose
     # bytes we should be judging, so leave it alone.
-    if ($info.Length -gt 8MB) { return $true }
-    try { $bytes = [System.IO.File]::ReadAllBytes($Path) } catch { return $true }
-    foreach ($b in $bytes) { if ($b -eq 0) { return $false } }
-    if ($bytes[$bytes.Length - 1] -ne 10) { return $false }
-    return $true
+    if ($info.Length -gt 8MB) { return $null }
+    try { $bytes = [System.IO.File]::ReadAllBytes($Path) } catch { return $null }
+    if ([Array]::IndexOf($bytes, [byte]0) -ge 0) { return 'nul-bytes' }
+    if ($bytes[$bytes.Length - 1] -ne 10) { return 'no-trailing-newline' }
+    return $null
+}
+
+function Get-TornGeneratedEntry {
+    <#
+    .SYNOPSIS
+        Generated-source cache entries (`<cache>\c\<hash>\`) holding a torn
+        file, asked of the cache itself rather than of a red build (T999).
+    .DESCRIPTION
+        Both torn-cache incidents (2026-08-05, 2026-08-18) followed a hard
+        reboot: NTFS handed back an options.zig whose tail was zeros or simply
+        missing, and nothing looked until a lane went red minutes later with a
+        compile error that read as broken code. Get-TornCacheEntry catches that
+        AFTER the fact from the build log; this is the same judgement
+        (Get-CacheFileDefect) made BEFORE any build, so the first build after a
+        reboot starts from a cache somebody has looked at.
+
+        Only the `c` bucket is scanned. It is where zig writes the generated
+        SOURCES (build_options' options.zig, both observed tears), every file
+        in it is text that ends in a newline, and it is small - a few hundred
+        files - so reading all of it costs milliseconds. `o\` holds binaries,
+        where NUL bytes are normal, and `p\` has its own smoke alarm
+        (Get-TornPackage).
+
+        A file written in the last -MinAgeSeconds is skipped: a torn file left
+        by a shutdown is by definition older than the boot that followed it,
+        and a file that recent could be one another window's build is writing
+        right now. Missing one costs nothing that Get-TornCacheEntry does not
+        already cover; a false positive costs regenerating one entry.
+    .OUTPUTS
+        One object per torn entry: Entry (the hash directory), File, Reason
+        ('torn-generated'), Detail (the defect), Line (evidence for
+        Invoke-CacheHeal's `blamed by:` line).
+    #>
+    param(
+        [Parameter(Mandatory)][string]$CacheDir,
+        [int]$MinAgeSeconds = 120,
+        [int]$MaxReported = 50
+    )
+    $out = @()
+    $cdir = Join-Path $CacheDir 'c'
+    if (-not (Test-Path -LiteralPath $cdir -PathType Container)) { return $out }
+    $cutoff = [DateTime]::UtcNow.AddSeconds(-$MinAgeSeconds)
+    $dirs = @()
+    try { $dirs = @([System.IO.Directory]::EnumerateDirectories($cdir)) } catch { return $out }
+    foreach ($d in $dirs) {
+        if ((Split-Path -Leaf $d) -notmatch '^[0-9a-fA-F]{16,64}$') { continue }
+        $files = @()
+        try { $files = @([System.IO.Directory]::EnumerateFiles($d, '*', [System.IO.SearchOption]::AllDirectories)) }
+        catch { continue }
+        foreach ($f in $files) {
+            try { if ([System.IO.File]::GetLastWriteTimeUtc($f) -gt $cutoff) { continue } } catch { continue }
+            $defect = Get-CacheFileDefect -Path $f
+            if (-not $defect) { continue }
+            $out += [pscustomobject]@{
+                Entry  = $d
+                File   = $f
+                Reason = 'torn-generated'
+                Detail = $defect
+                Line   = "cache scan: $f is $defect"
+            }
+            break
+        }
+        if ($out.Count -ge $MaxReported) { break }
+    }
+    return $out
 }
 
 function Test-PackageEntryName {

@@ -34454,3 +34454,18 @@ environment. Arms 27-31 of floor-lane-cache-heal drive it end to end with a
 stand-in zig (heal, source-error negative, wrapper, wiring): ALL PASS (85). Harness floor
 and the other due guards pass; test-client-build E2 is red on a pre-existing
 false positive from T722's build-locked-artifact.ps1, filed as T1770.
+
+## 2026-09-26 — T999: the start-of-turn cache check now finds and removes half-written compiler files
+
+Both torn-cache incidents followed a hard reboot and were found only when a
+lane went red minutes later. `scripts\lib\CacheHeal.ps1` gains
+`Get-CacheFileDefect` (the reasoned form of `Test-CacheFileIntact`) and
+`Get-TornGeneratedEntry`, which reads every generated source under
+`c\<hash>\` of both caches for the shapes a reboot leaves (empty, NUL bytes,
+no trailing newline), skipping anything written in the last two minutes so a
+concurrent build is never raced. `build-cache.ps1 sweep` - which the claim
+runs, so it is the first thing after a reboot - deletes those entries through
+`Invoke-CacheHeal`; `check` only names them. Run every claim rather than only
+after a detected reboot: ~150ms over the live bucket, zero false positives.
+Section G of `test\win32\build-cache.ps1` (16 new arms): ALL PASS (92),
+negative control red; floor-lane-cache-heal ALL PASS (85).

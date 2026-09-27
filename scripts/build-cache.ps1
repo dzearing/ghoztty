@@ -24,6 +24,13 @@
     report counted it as an entry like any other. Scanning for that costs ~90ms
     over 1,500 packages and is described in scripts\lib\CacheHeal.ps1.
 
+    They also read every generated source under `c\<hash>\` for the shapes a
+    hard reboot leaves (empty, NUL bytes, no trailing newline) (T999). Both
+    torn-cache incidents followed an unclean shutdown and were found only when
+    a lane went red minutes later; `sweep` - which the claim runs, so it is the
+    first thing after a reboot - deletes such an entry so the next build
+    regenerates it, and `check` names it.
+
     Clearing is WHOLE, never by age: pruning `o\` alone leaves Zig's manifests
     in `h\` claiming outputs that no longer exist, and the next build fails
     with `failed to spawn build runner ... FileNotFound`. See
@@ -92,6 +99,14 @@ $tempState = Get-SystemTempState -RepoPath $Repo
 $torn = @()
 foreach ($dir in $CacheDir) { $torn += @(Get-TornPackage -GlobalCacheDir $dir) }
 
+# T999: the generated SOURCES a hard reboot tears (both observed incidents
+# were an options.zig under `c\<hash>\` whose tail was zeros or missing).
+# Unlike a package these are cheap to regenerate and certain to break the next
+# build, so `sweep` - the claim, the first thing to run after a reboot -
+# deletes them; `check` only names them.
+$tornGen = @()
+foreach ($dir in $CacheDir) { $tornGen += @(Get-TornGeneratedEntry -CacheDir $dir) }
+
 $cleared = @()
 $didClear = $false
 
@@ -112,6 +127,12 @@ if ($didClear) {
     }
 }
 
+# A whole clear already removed them; otherwise the sweep repairs them here.
+$tornGenHealed = 0
+if (-not $didClear -and $Action -eq 'sweep' -and $tornGen.Count -gt 0) {
+    $tornGenHealed = Invoke-CacheHeal -Entries $tornGen
+}
+
 if ($Json) {
     ([ordered]@{
         action  = $Action
@@ -122,6 +143,8 @@ if ($Json) {
         entries = $state.Entries
         caches  = @($state.Caches)
         tornPackages = @($torn)
+        tornGenerated = @($tornGen | ForEach-Object { [ordered]@{ entry = $_.Entry; file = $_.File; defect = $_.Detail } })
+        tornGeneratedHealed = $tornGenHealed
         systemTemp = ([ordered]@{
             path       = $tempState.Path
             drive      = $tempState.Drive
@@ -164,6 +187,14 @@ if (-not $didClear -and $torn.Count -gt 0) {
         Write-Host "    $($t.Reason): $($t.Entry) - $($t.Detail)"
     }
     Write-Host "    delete the named director(y/ies); the next build re-fetches them"
+}
+
+if (-not $didClear -and $tornGen.Count -gt 0) {
+    $verb = if ($Action -eq 'sweep') { "deleted $tornGenHealed of them; the next build regenerates them" } else { 'delete the named entries (build-cache.ps1 sweep does); the next build regenerates them' }
+    Write-Host "  BUILD CACHE TORN: $($tornGen.Count) generated source(s) look half-written - $verb"
+    foreach ($t in ($tornGen | Select-Object -First 5)) {
+        Write-Host "    $($t.Detail): $($t.File)"
+    }
 }
 
 # T1431. The cache numbers above are about the REPO drive; zig's C/C++ compile

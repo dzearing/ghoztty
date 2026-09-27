@@ -39,6 +39,12 @@
          cannot stop a build at all, and the drive %TEMP% is really on is
          measured and named so the box state is visible before a turn spends its
          context on a fake compile error.
+      G. Torn generated sources (T999). Both torn-cache incidents followed a
+         hard reboot and left an options.zig under `c\<hash>\` empty, full of
+         NULs or cut short. The scan names exactly those shapes, skips a file
+         young enough to be mid-write, `check` reports without deleting,
+         `sweep` (the claim) deletes only the torn entries, and the live repo
+         cache reads clean so the rule costs a healthy box nothing.
 
     Launches no GUI and touches no real cache: every section works on throwaway
     directories under $TEMP. Section D runs the real `floor-lane.ps1` but only
@@ -385,6 +391,84 @@ Assert 'F24 and the build shell really answers with it for TMP' `
     ($probe -match ('TMPIS-' + [regex]::Escape($wantTemp)))
 Assert 'F25 and for TEMP' `
     ($probe -match ('TEMPIS-' + [regex]::Escape($wantTemp)))
+
+# ===========================================================================
+Write-Host ''
+Write-Host '== G: a torn generated source is found before a build trips on it (T999)'
+# ===========================================================================
+
+. (Join-Path $repo 'scripts\lib\CacheHeal.ps1')
+
+# A `c\<hash>\options.zig` in each shape a hard reboot has left on this box,
+# plus a whole one, all aged past the in-flight window.
+function New-TornFixture([string]$name) {
+    $root = Join-Path $tmp $name
+    $old = (Get-Date).AddHours(-1)
+    $shapes = [ordered]@{
+        '00000000000000000000000000000001' = [byte[]]@()                                # empty
+        '00000000000000000000000000000002' = [byte[]](@(0) * 2036)                      # T494: 2036 NULs
+        '00000000000000000000000000000003' = [Text.Encoding]::ASCII.GetBytes('pub const app_version')  # T973: cut short
+        '00000000000000000000000000000004' = [Text.Encoding]::ASCII.GetBytes("pub const x = 1;`n")     # whole
+    }
+    foreach ($h in $shapes.Keys) {
+        $d = Join-Path $root "c\$h"
+        New-Item -ItemType Directory -Force $d | Out-Null
+        $f = Join-Path $d 'options.zig'
+        [IO.File]::WriteAllBytes($f, $shapes[$h])
+        (Get-Item -LiteralPath $f).LastWriteTime = $old
+    }
+    New-Item -ItemType Directory -Force (Join-Path $root 'o') | Out-Null
+    return $root
+}
+
+$gen = New-TornFixture 'gen-cache'
+$found = @(Get-TornGeneratedEntry -CacheDir $gen)
+AssertEq 'G1 the scan names exactly the three torn entries' 3 $found.Count
+$defects = (@($found | ForEach-Object { $_.Detail }) | Sort-Object) -join ','
+AssertEq 'G2 and says which shape each one has' 'empty,no-trailing-newline,nul-bytes' $defects
+Assert 'G3 and never names the whole one' (-not ($found | Where-Object { $_.Entry -match '0004$' }))
+
+# The in-flight window: a torn-looking file written seconds ago may be a
+# concurrent build mid-write, and deleting under it would break that build.
+$fresh = Join-Path $gen 'c\00000000000000000000000000000005'
+New-Item -ItemType Directory -Force $fresh | Out-Null
+[IO.File]::WriteAllBytes((Join-Path $fresh 'options.zig'), [byte[]]@())
+AssertEq 'G4 a file written just now is left alone' 3 @(Get-TornGeneratedEntry -CacheDir $gen).Count
+AssertEq 'G5 but is judged once it is past the window' 4 @(Get-TornGeneratedEntry -CacheDir $gen -MinAgeSeconds 0).Count
+Remove-Item -Recurse -Force $fresh
+
+# `check` names, never deletes.
+$r = Invoke-Sweeper @('check', '-Repo', $tmp, '-CacheDir', $gen, '-MinFreeGB', '0', '-MaxEntries', '1000')
+AssertEq 'G6 check exits 0' 0 $r.Code
+Assert 'G7 check reports the torn sources' ($r.Out -match 'BUILD CACHE TORN: 3 generated source')
+Assert 'G8 and deletes nothing' (Test-Path -LiteralPath (Join-Path $gen 'c\00000000000000000000000000000002'))
+
+# `sweep` - what the claim runs - repairs them, and only them.
+$r = Invoke-Sweeper @('sweep', '-Repo', $tmp, '-CacheDir', $gen, '-MinFreeGB', '0', '-MaxEntries', '1000')
+AssertEq 'G9 sweep exits 0' 0 $r.Code
+Assert 'G10 sweep says it deleted all three' ($r.Out -match 'deleted 3 of them')
+Assert 'G11 with a loud CACHE HEAL line naming the defect' ($r.Out -match 'CACHE HEAL: deleting torn cache entry' -and $r.Out -match 'is nul-bytes')
+$left = @(Get-ChildItem -LiteralPath (Join-Path $gen 'c') -Directory | ForEach-Object { $_.Name })
+$leftOk = ($left.Count -eq 1 -and $left[0] -match '0004$')
+if ($NegativeControl) { $leftOk = -not $leftOk }
+Assert 'G12 the torn entries are gone and the whole one survives' $leftOk
+$r = Invoke-Sweeper @('sweep', '-Repo', $tmp, '-CacheDir', $gen, '-MinFreeGB', '0', '-MaxEntries', '1000')
+Assert 'G13 a second sweep finds nothing to do' ($r.Out -notmatch 'BUILD CACHE TORN')
+
+# Positive control on the live cache: the rule must not fire on a healthy
+# box, or every claim would throw away generated sources and pay the rebuild.
+$liveCache = Join-Path $repo '.zig-cache'
+if (Test-Path -LiteralPath (Join-Path $liveCache 'c')) {
+    $live = @(Get-TornGeneratedEntry -CacheDir $liveCache)
+    AssertEq 'G14 the real repo cache reads clean (no false positives)' 0 $live.Count
+}
+else { Write-Host '  (G14 skipped: no repo cache c\ bucket to measure)' }
+
+# Wiring: the claim runs the sweeper, and the sweeper asks this question.
+$sweeper = Get-Content -LiteralPath $cacheScript -Raw
+Assert 'G15 the sweeper runs the generated-source scan' ($sweeper -match 'Get-TornGeneratedEntry')
+$claim = Get-Content -LiteralPath (Join-Path $repo 'scripts\go-loop-exec.ps1') -Raw
+Assert 'G16 and the claim runs the sweeper in sweep mode' ($claim -match 'cacheScript sweep')
 
 Write-Host ''
 if ($NegativeControl -and -not $script:negReached) {

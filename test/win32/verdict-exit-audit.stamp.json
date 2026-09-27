@@ -1,12 +1,10 @@
 {
     "guard":  "verdict-exit",
     "script":  "test/win32/verdict-exit-audit.ps1",
-    "generated":  "2026-09-26T19:21:05-07:00",
-    "commit":  "a7a18ffc2",
+    "generated":  "2026-09-26T20:01:13-07:00",
+    "commit":  "72ca3f150",
     "uncommitted":  [
-                        "test/win32/floor-lane-cache-heal.ps1",
-                        "test/win32/lib/BuildFresh.ps1",
-                        "test/win32/lib/TestClient.ps1"
+                        "test/win32/build-cache.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -43,7 +41,7 @@
                   "test/win32/auto-launch-cwd.ps1":  "eec10c5396d125e017edde1280851d1fce687337742a64ca5f34da9eee36bec3",
                   "test/win32/banner-resize-repaint.ps1":  "499fac53076f7641063f8ce3dab59a859ee9a947ce44ca6f2b05b08767c677f8",
                   "test/win32/body-complete-audit.ps1":  "ad5462f3989f2efbd5f3447b4fa9dd0cf5d56d69a89d7730816c7ad2baf4fc4f",
-                  "test/win32/build-cache.ps1":  "3f99acf99163823a5b1393a03cbad8fab16f78837408b66744a02de777fede7e",
+                  "test/win32/build-cache.ps1":  "69ab9348d80343993a44e2f1a56e81056866346c044b4760cb691d8ab279547c",
                   "test/win32/build-fresh-guard.ps1":  "e36978f198eeb153e1b4739e06c9b31619d699d3335c596c8e27bc858e41b2df",
                   "test/win32/build-locked-artifact.ps1":  "784c4ad8c2b8b76f5ef94d9ce470f6ba8baa7c22af6a8ede174d48a26181846e",
                   "test/win32/build-mode-guard.ps1":  "aafbc4694d3ff39714a34cc9554e02e47e601ef0e9148a67453269257bba9d1f",
