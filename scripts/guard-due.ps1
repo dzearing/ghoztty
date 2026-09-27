@@ -72,16 +72,24 @@
       FAILS, because that is the gate with teeth, and the remedy (run the
       harness, or fix what it caught) is the work this exists to cause.
 
+  THE OTHER QUESTION (T996). `check` can only speak for harnesses that HAVE a
+  row. `uncovered` asks the inverse: which top-level test\win32\*.ps1 has none,
+  and is not a harness-floor member or a stated exemption ($UncoveredExempt).
+  It prints the count and the list, exits 1 while either is non-empty or an
+  exemption has gone stale, and is never wired into a gate - the number is the
+  deliverable, read at daily triage (go.md step 0.6).
+
   Acceptance: test\win32\guard-due.ps1.
 
 .EXAMPLE
+  powershell -NoProfile -File scripts\guard-due.ps1 uncovered
   powershell -NoProfile -File scripts\guard-due.ps1
   powershell -NoProfile -File scripts\guard-due.ps1 check -Json
   powershell -NoProfile -File scripts\guard-due.ps1 update -Guard go-loop
 #>
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('check', 'update', 'list', 'stamp-ci')]
+    [ValidateSet('check', 'update', 'list', 'stamp-ci', 'uncovered')]
     [string]$Action = 'check',
 
     # Limit to one harness by name. Omitted => every row in the table.
@@ -4382,6 +4390,27 @@ $GuardTable = @(
     }
 )
 
+# ---------------------------------------------------------------------------
+# Harnesses that deliberately have NO row above (T996), each with the reason.
+# `uncovered` lists every top-level test\win32\*.ps1 that is neither a row's
+# Script, a harness-floor member (scripts\lib\HarnessFloor.ps1 - the
+# `harness-floor` row runs them all), nor named here, so the coverage gap is a
+# number rather than a series of surprises (T884, T967, T972, T981, T993 were
+# each found by accident, one harness at a time).
+#
+# An entry here is a CLAIM that the harness needs no row, and `uncovered`
+# checks it: an entry naming a script that does not exist, or one that has
+# since grown a row, is reported STALE. Missing a row is not a reason - "nobody
+# has written it yet" belongs in the uncovered list, where it is counted.
+# ---------------------------------------------------------------------------
+$UncoveredExempt = @(
+    # The standing floor (go.md step 3): run by hand on every turn, so a stamp
+    # could only ever say what the turn already did.
+    [pscustomobject]@{ Script = 'test\win32\ipc-p1.ps1'; Why = 'standing P1 floor, run every turn (go.md step 3)' }
+    [pscustomobject]@{ Script = 'test\win32\ipc-p2.ps1'; Why = 'standing P2 floor, run every turn (go.md step 3)' }
+    [pscustomobject]@{ Script = 'test\win32\ipc-p3.ps1'; Why = 'standing P3 floor, run every turn (go.md step 3)' }
+)
+
 function Get-RepoRelative([string]$full) {
     $rel = $full.Substring($Repo.Length).TrimStart('\', '/')
     return $rel.Replace('\', '/')
@@ -5069,6 +5098,67 @@ switch ($Action) {
             }
         }
         exit ([int]($failed -gt 0))
+    }
+
+    'uncovered' {
+        # T996. Always the whole table: a harness is covered if ANY row names
+        # it, so -Guard would answer a narrower question than the one asked.
+        $rowScripts = @{}
+        foreach ($row in $GuardTable) { $rowScripts[([string]$row.Script).ToLowerInvariant()] = $row.Name }
+
+        # Harness-floor members are covered by the `harness-floor` row, whose
+        # run executes every one of them. Read from the repo being audited, so
+        # a fixture tree answers for itself.
+        $floor = @{}
+        $floorLib = Join-Path $Repo 'scripts\lib\HarnessFloor.ps1'
+        if (Test-Path -LiteralPath $floorLib) {
+            . $floorLib
+            foreach ($a in @(Get-HarnessFloorAudits)) {
+                $floor[('test\win32\' + [string]$a.Name).ToLowerInvariant()] = $true
+            }
+        }
+
+        $exempt = @{}
+        $stale = @()
+        # $null in a spliced fixture copy that declares no exemptions.
+        foreach ($e in @($UncoveredExempt | Where-Object { $_ })) {
+            $key = ([string]$e.Script).ToLowerInvariant()
+            if (-not (Test-Path -LiteralPath (Join-Path $Repo $e.Script))) {
+                $stale += [pscustomobject]@{ Script = $e.Script; Why = 'no such script' }
+            } elseif ($rowScripts.ContainsKey($key)) {
+                $stale += [pscustomobject]@{ Script = $e.Script; Why = ("it has a row now ({0})" -f $rowScripts[$key]) }
+            } else {
+                $exempt[$key] = [string]$e.Why
+            }
+        }
+
+        $all = @(Get-ChildItem -Path (Join-Path $Repo 'test\win32\*.ps1') -File -ErrorAction SilentlyContinue |
+                Sort-Object Name | ForEach-Object { 'test\win32\' + $_.Name })
+        $nRow = 0; $nFloor = 0; $nExempt = 0
+        $gap = @()
+        foreach ($s in $all) {
+            $k = $s.ToLowerInvariant()
+            if ($rowScripts.ContainsKey($k)) { $nRow++ }
+            elseif ($floor.ContainsKey($k)) { $nFloor++ }
+            elseif ($exempt.ContainsKey($k)) { $nExempt++ }
+            else { $gap += $s }
+        }
+
+        if ($Json) {
+            ConvertTo-Json -Depth 4 -InputObject ([ordered]@{
+                    total = $all.Count; row = $nRow; floor = $nFloor; exempt = $nExempt
+                    uncovered = @($gap); stale = @($stale)
+                })
+        } else {
+            "GUARD COVERAGE {0} of {1} harnesses have no row ({2} by row, {3} by harness-floor, {4} exempt)" -f `
+                $gap.Count, $all.Count, $nRow, $nFloor, $nExempt
+            foreach ($s in $gap) { "  uncovered {0}" -f $s }
+            foreach ($s in $stale) { "  EXEMPT STALE {0}: {1} - drop it from `$UncoveredExempt in scripts\guard-due.ps1" -f $s.Script, $s.Why }
+            if ($gap.Count -gt 0) {
+                "  remedy: give the harness a row (and an ``update -Guard <name>`` tail), or add it to `$UncoveredExempt with the reason it needs none"
+            }
+        }
+        exit ([int](($gap.Count + $stale.Count) -gt 0))
     }
 
     'check' {

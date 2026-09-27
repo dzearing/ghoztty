@@ -186,6 +186,14 @@ Concretely, in order, with no stops in between:
      something else already fixed in passing. Verify before closing; the report
      is a prompt, not a verdict. Anything closed this way names the commit that
      actually fixed it and lands the validation the card was owed.
+   - **Guard coverage** (T996): run
+     `scripts\guard-due.ps1 uncovered` and put its `GUARD COVERAGE <n> of
+     <total>` number in `## Task triage`, with the delta since yesterday. It
+     lists every acceptance harness that no guard-due row covers, so editing
+     the code it scores obliges nobody to re-run it. A rising number means new
+     harnesses are landing without rows; an `EXEMPT STALE` line is fixed the
+     same day. The number is worked down by adding rows, never by exempting a
+     harness because nobody wrote its row.
    - **Main intake** (user, 2026-08-07: "reduce the lag of the windows
      client to virtually hours rather than days"; daily for now): `git fetch
      origin main`, then evaluate every commit new since the last intake and

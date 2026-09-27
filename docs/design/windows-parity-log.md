@@ -34411,3 +34411,14 @@ now stamps on a clean green run only, behind a body-completion marker so an
 early unwind cannot reach the stamp, and never under `-NegativeControl`. The
 gate was seen DUE first; the run went ALL PASS (33) and stamped; the negative
 control went red without restamping; harness floor PASS.
+
+## 2026-09-26 — T996: the harnesses with no guard row are now a number
+
+`scripts/guard-due.ps1 uncovered` sorts every top-level `test/win32/*.ps1` into
+has-a-row, harness-floor member, stated exemption (`$UncoveredExempt`, each with
+its reason; the P1-P3 floor today) or uncovered, and prints `GUARD COVERAGE 126
+of 352`. A stale exemption (script gone, or it has since grown a row) is named.
+Wired into no gate on purpose; go.md step 0.6 reads the number at daily triage
+and `docs/claude/testing.md` documents it. Section Q of
+`test/win32/guard-due.ps1` (8 arms, including both stale shapes and the exit-0
+all-clear) ALL PASS 126 and stamped. The backlog itself is T1768.

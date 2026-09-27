@@ -855,6 +855,25 @@ Four consequences it was built for:
   provenance, so the `GUARD CURRENT` line says the proof came from CI rather
   than from here. There is no hatch past the content check: a stamp taken from a
   run that built other bytes is the exact lie this mechanism exists to prevent.
+- **A harness with no row is counted, not found by accident** (T996). `check`
+  can only speak for harnesses that have a row, so the gap used to surface one
+  harness at a time (T884, T967, T972, T981, T993). `uncovered` asks the
+  inverse:
+
+  ```
+  powershell -NoProfile -File scripts\guard-due.ps1 uncovered
+  ```
+
+  It sorts every top-level `test\win32\*.ps1` into *has a row*, *harness-floor
+  member* (the `harness-floor` row runs them all), *stated exemption*
+  (`$UncoveredExempt`, each with its reason — the P1–P3 floor today), or
+  **uncovered**, and prints `GUARD COVERAGE <n> of <total> harnesses have no
+  row`. An exemption is a claim and is checked: one naming a script that is gone,
+  or one that has since grown a row, reads `EXEMPT STALE`. "Nobody has written
+  the row yet" is not an exemption; it stays in the count. It is deliberately
+  wired into no gate — the number is read at daily triage (go.md step 0.6) and
+  worked down by adding rows. When you add a harness, give it a row in the same
+  change and the number does not move.
 
 It never runs a harness (that would put a multi-minute GUI-launching script
 inside whatever called it) and never decides one PASSES — only that one has not

@@ -1059,6 +1059,104 @@ $rows
     Check 'P5 positive control: the array spelling is recognised' `
         (Test-HarnessStampsGuard "@('-File', `$D, 'update', '-Guard', 'parity-decisions')" 'parity-decisions') ''
 
+    # --- Q. the harnesses with NO row are a number (T996) -------------------
+    # `check` can only speak for rows that exist, so a harness nobody gave a row
+    # was found one at a time, by accident (T884, T967, T972, T981, T993).
+    # `uncovered` enumerates test\win32\*.ps1 against the row Scripts, the
+    # harness-floor members and a stated-reason exemption list. Driven against
+    # a spliced copy whose table and exemptions are fixture-sized, with a
+    # fixture HarnessFloor.ps1, so every bucket is exercised by name.
+    Write-Host "`n-- Q. uncovered harnesses --"
+
+    $QFixture = Join-Path $env:TEMP ("ghoztty-guard-q-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    foreach ($d in @('scripts\lib', 'test\win32\lib')) {
+        New-Item -ItemType Directory -Force -Path (Join-Path $QFixture $d) | Out-Null
+    }
+    function Set-QFile([string]$rel, [string]$text) {
+        [System.IO.File]::WriteAllText((Join-Path $QFixture $rel), ($text -replace "`r`n", "`n"),
+            (New-Object System.Text.UTF8Encoding($false)))
+    }
+    foreach ($n in @('q-covered.ps1', 'q-floor.ps1', 'q-exempt.ps1', 'q-bare.ps1')) { Set-QFile "test\win32\$n" "# fixture`n" }
+    # A helper under lib\ and a stamp are not harnesses and must not be counted.
+    Set-QFile 'test\win32\lib\q-helper.ps1' "# fixture`n"
+    Set-QFile 'test\win32\q-covered.stamp.json' "{}`n"
+    Set-QFile 'scripts\lib\HarnessFloor.ps1' (
+        "`$script:HARNESS_FLOOR_AUDITS = @([pscustomobject]@{ Name = 'q-floor.ps1'; Why = 'fixture' })`n" +
+        "function Get-HarnessFloorAudits { return @(`$script:HARNESS_FLOOR_AUDITS) }`n")
+    function Set-QTable([string[]]$exemptScripts) {
+        $ex = ($exemptScripts | ForEach-Object {
+                "    [pscustomobject]@{ Script = '" + $_ + "'; Why = 'fixture reason' }" }) -join "`n"
+        $table = @"
+`$GuardTable = @(
+    [pscustomobject]@{
+        Name   = 'q-row'
+        Script = 'test\win32\q-covered.ps1'
+        Stamp  = 'test\win32\q-covered.stamp.json'
+        Covers = @(
+            'test\win32\q-covered.ps1'
+        )
+    }
+)
+`$UncoveredExempt = @(
+$ex
+)
+
+"@
+        [System.IO.File]::WriteAllText((Join-Path $QFixture 'scripts\guard-due.ps1'),
+            ($realDue.Substring(0, $tabStart) + $table + $realDue.Substring($tabEnd)),
+            (New-Object System.Text.UTF8Encoding($false)))
+    }
+    function Invoke-QDue([switch]$Json) {
+        $a = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+            (Join-Path $QFixture 'scripts\guard-due.ps1'), 'uncovered', '-Repo', $QFixture)
+        if ($Json) { $a += '-Json' }
+        $out = & powershell.exe @a 2>&1
+        return [pscustomobject]@{ Exit = $LASTEXITCODE; Text = (@($out) -join "`n") }
+    }
+
+    Set-QTable @('test\win32\q-exempt.ps1')
+    $rq = Invoke-QDue
+    Check 'Q1 the count line sorts every harness into its bucket' `
+        ($rq.Text -match 'GUARD COVERAGE 1 of 4 harnesses have no row \(1 by row, 1 by harness-floor, 1 exempt\)') $rq.Text
+    Check 'Q2 it names the uncovered harness and only that one' `
+        ($rq.Text -match 'uncovered test\\win32\\q-bare\.ps1' -and
+         @([regex]::Matches($rq.Text, '(?m)^\s+uncovered ')).Count -eq 1) $rq.Text
+    Check 'Q3 a gap exits 1 and names the remedy' `
+        ($rq.Exit -eq 1 -and $rq.Text -match 'remedy: give the harness a row') "exit=$($rq.Exit): $($rq.Text)"
+
+    # The negative controls for the exemption list: an exemption is a claim,
+    # and a claim that has stopped being true must say so.
+    Set-QTable @('test\win32\q-exempt.ps1', 'test\win32\q-bare.ps1', 'test\win32\q-gone.ps1')
+    $rq = Invoke-QDue
+    Check 'Q4 an exemption naming a script that does not exist is STALE and exits 1' `
+        ($rq.Exit -eq 1 -and $rq.Text -match 'EXEMPT STALE test\\win32\\q-gone\.ps1: no such script') "exit=$($rq.Exit): $($rq.Text)"
+    Set-QTable @('test\win32\q-exempt.ps1', 'test\win32\q-bare.ps1', 'test\win32\q-covered.ps1')
+    $rq = Invoke-QDue
+    Check 'Q5 an exemption for a harness that has a row is STALE and names the row' `
+        ($rq.Exit -eq 1 -and $rq.Text -match 'EXEMPT STALE test\\win32\\q-covered\.ps1: it has a row now \(q-row\)') "exit=$($rq.Exit): $($rq.Text)"
+
+    # And the all-clear, so the exit code is shown to be able to say both things.
+    Set-QTable @('test\win32\q-exempt.ps1', 'test\win32\q-bare.ps1')
+    $rq = Invoke-QDue
+    Check 'Q6 with every harness accounted for it reports 0 and exits 0' `
+        ($rq.Exit -eq 0 -and $rq.Text -match 'GUARD COVERAGE 0 of 4 harnesses have no row \(1 by row, 1 by harness-floor, 2 exempt\)' -and
+         $rq.Text -notmatch 'STALE|remedy') "exit=$($rq.Exit): $($rq.Text)"
+    Set-QTable @('test\win32\q-exempt.ps1')
+    $rj = Invoke-QDue -Json
+    $qj = $null; try { $qj = $rj.Text | ConvertFrom-Json } catch { $qj = $null }
+    Check 'Q7 -Json carries the same buckets' `
+        ($null -ne $qj -and $qj.total -eq 4 -and $qj.row -eq 1 -and $qj.floor -eq 1 -and $qj.exempt -eq 1 -and
+         @($qj.uncovered).Count -eq 1 -and @($qj.uncovered)[0] -eq 'test\win32\q-bare.ps1') $rj.Text
+
+    # The live table: the report runs, sees the real suite, and every shipped
+    # exemption is still true. The gap itself is NOT asserted to be zero - it is
+    # the number this exists to make readable, and it is worked down by rows.
+    $outQ = @(& powershell.exe @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Due, 'uncovered', '-Repo', $Repo) 2>&1) -join "`n"
+    $liveTotal = if ($outQ -match 'GUARD COVERAGE \d+ of (\d+) harnesses') { [int]$Matches[1] } else { 0 }
+    Check 'Q8 the live report counts the real suite and no shipped exemption is stale' `
+        ($liveTotal -ge 300 -and $outQ -notmatch 'EXEMPT STALE') `
+        ((@($outQ -split "`n" | Select-Object -First 1) + @($outQ -split "`n" | Where-Object { $_ -match 'STALE' })) -join '; ')
+
     Complete-TestBody  # T1039: the run reached the end of its body
 }
 finally {
@@ -1069,6 +1167,7 @@ finally {
     if ($TabFixture) { Remove-Item -LiteralPath $TabFixture -Recurse -Force -ErrorAction SilentlyContinue }
     if ($UpFixture) { Remove-Item -LiteralPath $UpFixture -Recurse -Force -ErrorAction SilentlyContinue }
     if ($KbFixture) { Remove-Item -LiteralPath $KbFixture -Recurse -Force -ErrorAction SilentlyContinue }
+    if ($QFixture) { Remove-Item -LiteralPath $QFixture -Recurse -Force -ErrorAction SilentlyContinue }
 }
 
 # --- stamp (T921) ----------------------------------------------------------
@@ -1082,4 +1181,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -MinPass 71
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -MinPass 79
