@@ -34575,3 +34575,14 @@ Re-measured at pickup, the five files it named had grown by a third
 ConfirmDialog). Following the task's own instruction, each file is now its own
 child carrying the T299 method, largest first; the parent is skipped(split).
 win32.zig and webview2_iface.zig stay out as binding surfaces. No code change.
+
+## 2026-09-27 — T1014: commit guard refuses subjects git would keep malformed
+
+The BOM half had already landed in passing (64617ec49 strips it, T1245 refuses
+an empty file). Probing git found the rest: blank leading lines are stripped by
+git and stay allowed, but a subject that starts with whitespace or an invisible
+character is kept verbatim, and a UTF-16 file (PS 5.1 `Out-File`/`>`) fails in
+git only after the guard has staged. git-commit-guard now re-encodes UTF-16 like
+the UTF-8 BOM, refuses NUL-without-BOM, and refuses a leading-whitespace/format
+subject before staging for both -MessageFile and -Message. go-loop-guard
+W39f-W39n: ALL PASS (430); neutered guard -> 9 red.

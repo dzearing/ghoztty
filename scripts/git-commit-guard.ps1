@@ -419,15 +419,57 @@ switch ($Action) {
             # normalised rather than refused - the message is right, only its
             # first three bytes are not - and it is said out loud so the shape
             # is learnable. Cost of learning it the other way: 2d9959fd6.
+            #
+            # T1014: the same goes for a UTF-16 file, which is what PS 5.1's
+            # bare `Out-File` and `>` write. git refuses that one outright
+            # ("a NUL byte in commit log message") - but only AFTER this script
+            # has staged into the shared index, so it is decoded here, before
+            # anything is touched. ReadAllText honours all three BOMs, so the
+            # UTF-16 text is already in $mfText; only the bytes are rewritten.
             $mfBytes = $null
             try { $mfBytes = [System.IO.File]::ReadAllBytes($mfResolved) } catch { $mfBytes = $null }
+            $bomKind = $null
             if ($mfBytes -and $mfBytes.Length -ge 3 -and
                 $mfBytes[0] -eq 0xEF -and $mfBytes[1] -eq 0xBB -and $mfBytes[2] -eq 0xBF) {
+                $bomKind = 'UTF-8'
+            } elseif ($mfBytes -and $mfBytes.Length -ge 2 -and
+                      (($mfBytes[0] -eq 0xFF -and $mfBytes[1] -eq 0xFE) -or
+                       ($mfBytes[0] -eq 0xFE -and $mfBytes[1] -eq 0xFF))) {
+                $bomKind = 'UTF-16'
+            }
+            if ($bomKind) {
                 $mfNoBom = Join-Path ([System.IO.Path]::GetTempPath()) "ghoztty-commit-nobom-$PID.txt"
-                [System.IO.File]::WriteAllBytes($mfNoBom, $mfBytes[3..($mfBytes.Length - 1)])
+                [System.IO.File]::WriteAllText($mfNoBom, $mfText, (New-Object System.Text.UTF8Encoding $false))
                 if (-not $Quiet) {
-                    "note: stripped a UTF-8 BOM from $MessageFile (Set-Content -Encoding utf8 writes one; git would have put it in the subject)"
+                    if ($bomKind -eq 'UTF-8') {
+                        "note: stripped a UTF-8 BOM from $MessageFile (Set-Content -Encoding utf8 writes one; git would have put it in the subject)"
+                    } else {
+                        "note: re-encoded $MessageFile from UTF-16 to UTF-8 (Out-File and > write UTF-16 in PowerShell 5.1; git would have refused it after staging)"
+                    }
                 }
+            } elseif ($mfBytes -and ([Array]::IndexOf($mfBytes, [byte]0) -ge 0)) {
+                Fail ("MESSAGE FILE NOT TEXT: $mfResolved contains a NUL byte and no byte-order mark" + [Environment]::NewLine +
+                      "  git refuses NUL bytes in a message. Write it with [System.IO.File]::WriteAllText(<path>, <text>); nothing was committed.") 2
+            }
+        }
+
+        # T1014: git's cleanup drops leading BLANK lines, but not leading
+        # whitespace or an invisible format character on the subject itself.
+        # "  chore(tracker): ..." then fails the dashboard's
+        # startsWith('chore(tracker)') test and counts as work on every task
+        # file it touched, and once it is pushed it is permanent. The subject
+        # is the first non-blank line, the same line git will keep.
+        $subjSource = if ($MessageFile) { $mfText } else { $Message }
+        $subject = @($subjSource -split "`r?`n" | Where-Object { $_.Trim() }) | Select-Object -First 1
+        if ($subject) {
+            $c0 = $subject[0]
+            if ([char]::IsWhiteSpace($c0) -or
+                [System.Globalization.CharUnicodeInfo]::GetUnicodeCategory($c0) -eq [System.Globalization.UnicodeCategory]::Format) {
+                $what = if ([char]::IsWhiteSpace($c0)) { 'whitespace' } else { ('an invisible character U+{0:X4}' -f [int]$c0) }
+                $src = if ($MessageFile) { $mfResolved } else { '-Message' }
+                Fail ("SUBJECT STARTS WITH ${what}: $src" + [Environment]::NewLine +
+                      "  git keeps it in the subject, where it is permanent after a push and breaks prefix checks like chore(tracker)." + [Environment]::NewLine +
+                      "  Start the first line at column 0; nothing was committed.") 2
             }
         }
         $lp = Get-LockPath

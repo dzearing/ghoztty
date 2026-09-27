@@ -1793,6 +1793,51 @@ Assert 'W39c and the subject starts at the first REAL character' `
 Assert 'W39d the strip is said out loud rather than done silently' ($r.Out -match 'stripped a UTF-8 BOM')
 Assert 'W39e the original message file is still consumed (T1245 unchanged)' (-not (Test-Path $msgPath))
 
+# T1014: the rest of the subject hazards, each caught BEFORE the shared index is
+# touched. A UTF-16 file is what PS 5.1's bare Out-File and `>` write; git
+# refuses it with "NUL byte", but only after the guard has staged. Normalised
+# the same way as the UTF-8 BOM.
+Set-Content -Path (Join-Path $wRepo 'msg-utf16.txt') -Value 'work behind a UTF-16 message'
+'chore(tracker): a subject written by Out-File' | Out-File -FilePath $msgPath
+$u16Bytes = [System.IO.File]::ReadAllBytes($msgPath)
+Assert 'W39f the fixture really is UTF-16 (the trap this asserts against)' `
+    ($u16Bytes.Length -ge 2 -and $u16Bytes[0] -eq 0xFF -and $u16Bytes[1] -eq 0xFE)
+$r = CG @('commit', '-Paths', 'msg-utf16.txt', '-MessageFile', $msgPath)
+Assert 'W39g a UTF-16 message file commits, with the subject intact' `
+    ($r.Code -eq 0 -and $r.Out -match 'COMMITTED' -and
+     (& git -C $wRepo log -1 --pretty=%s 2>$null) -eq 'chore(tracker): a subject written by Out-File')
+Assert 'W39h the re-encode is said out loud' ($r.Out -match 're-encoded .* from UTF-16')
+
+# A subject that starts with whitespace or an invisible character survives git's
+# cleanup (which only drops blank LINES), so it is permanent after a push and
+# defeats the dashboard's startsWith('chore(tracker)') test. Refused.
+Set-Content -Path (Join-Path $wRepo 'msg-indent.txt') -Value 'x'
+$headBefore = WHead
+[System.IO.File]::WriteAllText($msgPath, "`r`n  chore(tracker): indented subject`n", (New-Object System.Text.UTF8Encoding $false))
+$r = CG @('commit', '-Paths', 'msg-indent.txt', '-MessageFile', $msgPath)
+Assert 'W39i a subject that starts with whitespace is REFUSED, file named' `
+    ($r.Code -eq 2 -and $r.Out -match 'SUBJECT STARTS WITH whitespace' -and $r.Out -match 'msg\.txt')
+Assert 'W39j nothing was committed or staged over it' `
+    ((WHead) -eq $headBefore -and -not (@(& git -C $wRepo diff --cached --name-only 2>$null) -contains 'msg-indent.txt'))
+# A doubled BOM: the first is normalised away, the second is a U+FEFF in the text.
+[System.IO.File]::WriteAllBytes($msgPath, [byte[]](@(0xEF,0xBB,0xBF,0xEF,0xBB,0xBF) + [System.Text.Encoding]::ASCII.GetBytes("doubled`n")))
+$r = CG @('commit', '-Paths', 'msg-indent.txt', '-MessageFile', $msgPath)
+Assert 'W39k a subject behind an invisible U+FEFF is REFUSED' `
+    ($r.Code -eq 2 -and $r.Out -match 'U\+FEFF' -and (WHead) -eq $headBefore)
+$r = CG @('commit', '-Paths', 'msg-indent.txt', '-Message', "`tinline subject")
+Assert 'W39l -Message gets the same subject check' ($r.Code -eq 2 -and $r.Out -match 'SUBJECT STARTS WITH whitespace')
+# NUL bytes with no BOM: not text this script can decode. Refused before staging.
+[System.IO.File]::WriteAllBytes($msgPath, [byte[]](0x61,0x00,0x62,0x0A))
+$r = CG @('commit', '-Paths', 'msg-indent.txt', '-MessageFile', $msgPath)
+Assert 'W39m a BOM-less file with a NUL byte is REFUSED before staging' `
+    ($r.Code -eq 2 -and $r.Out -match 'MESSAGE FILE NOT TEXT' -and (WHead) -eq $headBefore -and
+     -not (@(& git -C $wRepo diff --cached --name-only 2>$null) -contains 'msg-indent.txt'))
+# Negative control: leading BLANK lines are git's to strip, not a refusal.
+[System.IO.File]::WriteAllText($msgPath, "`n`nfix: blank lines above are fine`n", (New-Object System.Text.UTF8Encoding $false))
+$r = CG @('commit', '-Paths', 'msg-indent.txt', '-MessageFile', $msgPath)
+Assert 'W39n leading blank lines still commit (the check is not firing on everything)' `
+    ($r.Code -eq 0 -and (& git -C $wRepo log -1 --pretty=%s 2>$null) -eq 'fix: blank lines above are fine')
+
 # The 2026-09-01 shape end to end: a second turn commits with the same path and
 # never writes it. Before this it inherited the first turn's subject; now it is
 # the missing-file refusal, which is a stop rather than a wrong feed item.
