@@ -36,6 +36,14 @@
 # it back and the table is the focused region). Each section asserts the state it
 # claims, from the row's own paint, before it measures anything else.
 #
+# Since T1009 the rim ALSO answers to Windows' `UISF_HIDEFOCUS` (a mouse-driven
+# panel draws none until the keyboard is used), so C/D pin that bit SHOWN with
+# WM_CHANGEUISTATE, and section E pins it hidden and walks it back:
+#
+#   E. hiding focus visuals drops the rim at once, a pointer click then selects
+#      and emphasizes the row with NO rim, and one keyboard navigation brings
+#      the rim back.
+#
 # THE ORACLE reads the row one LINE at a time - the modal colour of a horizontal
 # strip - and never scans for "coloured pixels": cell text is drawn with subpixel
 # antialiasing whose fringes are as saturated as any accent, so a chroma scan
@@ -79,6 +87,18 @@ $PANEL_BG_HEX = Format-Rgb $PANEL_BG
 # pasted as colours: move a weight in the Zig and this script moves with it.
 $SELECTION_WASH_UNFOCUSED = 0.10
 $SELECTION_WASH_FOCUSED = 0.16
+
+# Windows' UI-state mechanism (T1009), spelled as chooser-selection.ps1 does.
+$WM_CHANGEUISTATE = 0x0127
+$WM_QUERYUISTATE = 0x0129
+$UIS_SET = 1
+$UIS_CLEAR = 2
+$UISF_HIDEFOCUS = 0x1
+
+# MAKEWPARAM(action, flags) - the action is the low word, the flags the high.
+function UiStateWParam([int]$action, [int]$flags) {
+    return [IntPtr]($action -bor ($flags -shl 16))
+}
 
 $script:pass = 0
 $script:fail = 0
@@ -399,6 +419,13 @@ try {
 
     Write-Host ''
     Write-Host 'C/D. driving the table emphasizes the row and spends the accent on the mark alone'
+    # C/D claim the rim, so they pin Windows' focus-visual bit SHOWN first
+    # (T1009): a pointer click alone draws no rim, and which state the harness's
+    # posted input leaves behind is not something to inherit (T988's rule).
+    $null = Invoke-TestMessage -Window $panel -Message $WM_CHANGEUISTATE `
+        -WParam (UiStateWParam $UIS_CLEAR $UISF_HIDEFOCUS)
+    $ui = [int](Invoke-TestMessage -Window $panel -Message $WM_QUERYUISTATE)
+    Assert (($ui -band $UISF_HIDEFOCUS) -eq 0) "C focus visuals are pinned SHOWN (ui state 0x$('{0:X}' -f $ui))"
     $before = Count-PanelLines
     Send-TestMouse -Window $panel -X ($client.Left + 40) -Y ($rowY + 4) -Button left -Action click | Out-Null
     $st = Wait-PanelState $before
@@ -442,6 +469,48 @@ try {
         Assert ((Get-Contrast $focused.Fill $PANEL_BG) -gt (Get-Contrast $unfocused.Fill $PANEL_BG)) `
             'the focused selection is the heavier of the two'
     }
+
+    # E. Windows' UI-state rule (T1009). The chooser reads it as ODS_NOFOCUSRECT;
+    # the panel is custom-painted, so it has to ask. Three claims, each pinned
+    # from the bit itself: hiding focus visuals takes the rim away AT ONCE (the
+    # WM_UPDATEUISTATE repaint, with no focus change to lean on); a pointer click
+    # on the row then selects and emphasizes it with NO rim; and the first
+    # keyboard navigation brings the rim back for good.
+    Write-Host ''
+    Write-Host 'E. a pointer-driven table draws no focus ring until the keyboard is used'
+    $null = Invoke-TestMessage -Window $panel -Message $WM_CHANGEUISTATE `
+        -WParam (UiStateWParam $UIS_SET $UISF_HIDEFOCUS)
+    $ui = [int](Invoke-TestMessage -Window $panel -Message $WM_QUERYUISTATE)
+    Assert (($ui -band $UISF_HIDEFOCUS) -ne 0) "E focus visuals are pinned HIDDEN (ui state 0x$('{0:X}' -f $ui))"
+    Assert ((Get-TestFocusedWindow -Window $panel) -ne $filterEdit) 'E the table still holds the keyboard'
+    Start-Sleep -Milliseconds 300
+
+    $shotE1 = Get-TestWindowPixels -Window $panel -Sync
+    try {
+        $null = Measure-Row $shotE1 'E1 hidden, no click' $SELECTION_WASH_FOCUSED $true $false
+    } finally { Close-TestWindowPixels -Shot $shotE1 }
+
+    $before = Count-PanelLines
+    Send-TestMouse -Window $panel -X ($client.Left + 40) -Y ($rowY + 4) -Button left -Action click | Out-Null
+    $st = Wait-PanelState $before
+    Assert ($null -ne $st -and $st.Selected -eq 1) "E2 the click still selects the row (selected=$(if ($st) { $st.Selected } else { 'none' }))"
+    $ui = [int](Invoke-TestMessage -Window $panel -Message $WM_QUERYUISTATE)
+    Assert (($ui -band $UISF_HIDEFOCUS) -ne 0) "E2 a pointer click leaves focus visuals hidden (ui state 0x$('{0:X}' -f $ui))"
+    $shotE2 = Get-TestWindowPixels -Window $panel -Sync
+    try {
+        $null = Measure-Row $shotE2 'E2 clicked' $SELECTION_WASH_FOCUSED $true $false
+    } finally { Close-TestWindowPixels -Shot $shotE2 }
+
+    # Home on a one-row table moves nothing, so the only thing that can bring the
+    # rim back is the panel telling Windows the keyboard is in use.
+    Send-TestControlKey -Control $panel -Key Home | Out-Null
+    Start-Sleep -Milliseconds 400
+    $ui = [int](Invoke-TestMessage -Window $panel -Message $WM_QUERYUISTATE)
+    Assert (($ui -band $UISF_HIDEFOCUS) -eq 0) "E3 a keyboard navigation shows focus visuals again (ui state 0x$('{0:X}' -f $ui))"
+    $shotE3 = Get-TestWindowPixels -Window $panel -Sync
+    try {
+        $null = Measure-Row $shotE3 'E3 keyboard' $SELECTION_WASH_FOCUSED $true $true
+    } finally { Close-TestWindowPixels -Shot $shotE3 }
 
     Assert (-not (Test-TestDesktopLeak -ProcessId $app.Pid)) 'the run never took the interactive desktop'
 } catch {

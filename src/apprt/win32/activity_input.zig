@@ -412,6 +412,44 @@ pub fn ensureCaret(self: *ActivityMonitor) void {
     self.caret_pid = self.pidAt(self.scroll) orelse 0;
 }
 
+/// Whether a focus RING may be drawn right now (T1009): the panel holds the
+/// keyboard AND Windows is not hiding focus visuals because the user has only
+/// used the pointer so far. Emphasis (the heavier selection fill) still follows
+/// `panel_focused` alone — only the rim is a keyboard cue.
+pub fn ringVisible(panel_focused: bool, focus_hidden: bool) bool {
+    return panel_focused and !focus_hidden;
+}
+
+pub fn focusRingVisible(self: *const ActivityMonitor) bool {
+    return ringVisible(self.panel_focused, self.focus_hidden);
+}
+
+/// Re-read `UISF_HIDEFOCUS` from the window (T1009). Returns true when it moved,
+/// so the caller knows a repaint is owed.
+pub fn refreshUiState(self: *ActivityMonitor) bool {
+    const state: usize = @bitCast(w32.SendMessageW(self.hwnd, w32.WM_QUERYUISTATE, 0, 0));
+    const hidden = (state & w32.UISF_HIDEFOCUS) != 0;
+    if (hidden == self.focus_hidden) return false;
+    self.focus_hidden = hidden;
+    log.info("activity monitor: focus visuals {s}", .{if (hidden) "hidden" else "shown"});
+    return true;
+}
+
+/// The user drove the panel with the keyboard: from now on its focus rings are
+/// shown, exactly as a native list does it. The panel's keys are consumed in the
+/// app's message loop before DefWindowProc could see them, so Windows never
+/// learns about the navigation unless the panel says so itself. DefWindowProc
+/// answers with WM_UPDATEUISTATE, which is where the repaint happens.
+fn noteKeyboardUse(self: *ActivityMonitor) void {
+    if (!self.focus_hidden) return;
+    _ = w32.SendMessageW(
+        self.hwnd,
+        w32.WM_CHANGEUISTATE,
+        w32.uiStateWParam(w32.UIS_CLEAR, w32.UISF_HIDEFOCUS),
+        0,
+    );
+}
+
 /// Keyboard, routed from the app's message loop. Returns true when consumed.
 ///
 /// Escape always closes. Everything else is routed by the focus stop (T289):
@@ -426,6 +464,9 @@ pub fn handleKey(self: *ActivityMonitor, vk: u16) bool {
         self.close();
         return true;
     }
+
+    // Any other key is keyboard use, and shows focus from here on (T1009).
+    noteKeyboardUse(self);
 
     // Adopt whatever the mouse did to Win32 focus before reading it.
     syncFocus(self);
@@ -614,6 +655,19 @@ pub fn onFilterChanged(self: *ActivityMonitor) void {
 // ---------------------------------------------------------------------
 
 const testing = std.testing;
+
+test "ringVisible: a ring needs the keyboard AND Windows showing focus (T1009)" {
+    try std.testing.expect(ringVisible(true, false));
+    // Clicked with the mouse: focused, but Windows is hiding focus visuals.
+    try std.testing.expect(!ringVisible(true, true));
+    try std.testing.expect(!ringVisible(false, false));
+    try std.testing.expect(!ringVisible(false, true));
+}
+
+test "uiStateWParam: action in the low word, flags in the high (T1009)" {
+    try std.testing.expectEqual(@as(usize, 0x0001_0002), w32.uiStateWParam(w32.UIS_CLEAR, w32.UISF_HIDEFOCUS));
+    try std.testing.expectEqual(@as(usize, 0x0003_0003), w32.uiStateWParam(w32.UIS_INITIALIZE, w32.UISF_HIDEFOCUS | w32.UISF_HIDEACCEL));
+}
 
 test "nextFocus: the cycle is a ring, and backwards undoes forwards" {
     for (0..focus_count) |i| {

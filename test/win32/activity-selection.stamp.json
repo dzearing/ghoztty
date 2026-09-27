@@ -1,14 +1,15 @@
 {
     "guard":  "activity-selection",
     "script":  "test/win32/activity-selection.ps1",
-    "generated":  "2026-09-25T18:59:12-07:00",
-    "commit":  "79e3d8165",
+    "generated":  "2026-09-27T00:32:57-07:00",
+    "commit":  "f5d354f81",
     "uncommitted":  [
-                        "src/apprt/win32/ActivityMonitor.zig"
+                        "src/apprt/win32/ActivityMonitor.zig",
+                        "test/win32/activity-selection.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/ActivityMonitor.zig":  "b23b18bf37ebc7940087ffd8cb80482a7f03f3563fba0078b8e1b280c67c0c93",
+                  "src/apprt/win32/ActivityMonitor.zig":  "89cd92f9b79ca9a44e4aefb9b980e7c608133515437b73e7d6e0eb3aed9f431e",
                   "src/apprt/win32/list_selection.zig":  "b7f5720b1a405deacf48309f6b34439b7148e73a19a876ef9c7f38faf5308913",
-                  "test/win32/activity-selection.ps1":  "1f4bb378c0c200bb4c6900ef4ea7eb86f3611f524722cafaefecfc577ee051b5"
+                  "test/win32/activity-selection.ps1":  "6be58d0331efeb7233e29992b223c929f677f0dda0a5dff30c06f2ad19570955"
               }
 }

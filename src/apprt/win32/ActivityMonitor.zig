@@ -192,6 +192,8 @@ pub const handleKey = input_mod.handleKey;
 pub const caretIndex = input_mod.caretIndex;
 pub const ensureCaret = input_mod.ensureCaret;
 pub const moveFocus = input_mod.moveFocus;
+pub const focusRingVisible = input_mod.focusRingVisible;
+pub const refreshUiState = input_mod.refreshUiState;
 pub const noteFocus = input_mod.noteFocus;
 pub const logHeaderCursor = input_mod.logHeaderCursor;
 pub const syncFocus = input_mod.syncFocus;
@@ -607,6 +609,13 @@ focus: Focusable = .filter,
 /// the ring must disappear when the panel is deactivated, and a painter that
 /// asked `GetFocus` would be asking about whichever window is active instead.
 panel_focused: bool = false,
+/// Windows' `UISF_HIDEFOCUS` for this window (T1009): focus rings stay hidden
+/// until the user navigates by keyboard, and are shown from then on. The
+/// machine chooser gets this for free as `ODS_NOFOCUSRECT`; the panel's table
+/// and carousel are custom-painted, so the panel asks with WM_QUERYUISTATE and
+/// re-asks on every WM_UPDATEUISTATE. Starts false — a caller that does not know
+/// must show focus (`list_selection.RowState.focus_visible`).
+focus_hidden: bool = false,
 /// The table's CARET — the row the arrow keys move from, and the row the focus
 /// ring goes on. Distinct from the selection (T289): Windows list views draw
 /// focus on the caret row separately from the selection fill, so tabbing into
@@ -861,6 +870,15 @@ fn openInner(window: *Window, src: Source, borrow: ?*remote_connection.Connectio
 
     _ = w32.ShowWindow(hwnd, w32.SW_SHOW);
     _ = w32.SetForegroundWindow(hwnd);
+    // Start the focus-visual state the way a dialog does (T1009): opened from
+    // the keyboard, rings show; opened with a click, they wait for the keyboard.
+    _ = w32.SendMessageW(
+        hwnd,
+        w32.WM_CHANGEUISTATE,
+        w32.uiStateWParam(w32.UIS_INITIALIZE, w32.UISF_HIDEFOCUS | w32.UISF_HIDEACCEL),
+        0,
+    );
+    _ = self.refreshUiState();
     self.moveFocus(.filter);
 
     // Wire the source's data plane BEFORE the first poll: a remote panel that
@@ -1226,6 +1244,15 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             self.panel_focused = false;
             _ = w32.InvalidateRect(hwnd, null, 0);
             return 0;
+        },
+        // Windows changed whether focus visuals show (T1009) — the user's first
+        // keyboard navigation, or anybody's WM_CHANGEUISTATE. DefWindowProc
+        // records the new state and passes it to the children first; the panel
+        // then re-reads it and repaints NOW, not at the next focus change.
+        w32.WM_UPDATEUISTATE => {
+            const r = w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+            if (self.refreshUiState()) _ = w32.InvalidateRect(hwnd, null, 0);
+            return r;
         },
         w32.WM_LBUTTONUP => {
             if (self.thumb_drag_dy >= 0) {

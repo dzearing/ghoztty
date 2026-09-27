@@ -34540,3 +34540,18 @@ unverified on Mac, filed as T1774 (seat: mac). New none-lane parse tests + a
 host-floor arm (quote, type, close, reopen, Ctrl+Z x2, Ctrl+Y) and a
 journal-null assertion after send; the arm goes red with the restore disabled.
 Floor ALL LANES PASS; due viewer harnesses and audits re-run.
+
+## 2026-09-27 — T1009: the activity monitor draws no focus ring on a mouse click
+
+The table's caret rim and the carousel's card rim were drawn whenever the panel
+held focus, with no regard to Windows' UISF_HIDEFOCUS state - so a click showed
+a ring the machine chooser (which reads ODS_NOFOCUSRECT) correctly withholds.
+The panel is custom-painted, so it now asks: UIS_INITIALIZE after showing,
+WM_QUERYUISTATE on every WM_UPDATEUISTATE (repainting at once), and
+WM_CHANGEUISTATE UIS_CLEAR from handleKey, since the app loop consumes the
+panel's keys before DefWindowProc could notice keyboard navigation. Selection
+emphasis still follows keyboard focus; only the rim is gated.
+activity-selection.ps1 section E pins the bit hidden (rim gone with no focus
+change), clicks (no rim), then posts Home (bit cleared, rim back); C/D now pin
+it shown. ALL PASS (91); floor ALL LANES PASS; due activity harnesses and
+source audits re-run green.

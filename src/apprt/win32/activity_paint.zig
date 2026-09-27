@@ -122,7 +122,8 @@ pub fn paintCarousel(self: *ActivityMonitor, hdc: w32.HDC, l: layout_mod.Layout)
         // The ring means "the keyboard is HERE" (§2.2), so it is drawn only
         // while the carousel really holds focus — a ring parked on a card
         // while the caret sits in the filter box says the opposite.
-        const carousel_focused = self.panel_focused and self.focus == .carousel;
+        // ...and only once Windows is showing focus visuals at all (T1009).
+        const carousel_focused = self.focusRingVisible() and self.focus == .carousel;
         paintCard(self, hdc, r, card, is_active, carousel_focused and idx == self.card_focus, idx == self.card_hover);
     }
 }
@@ -476,7 +477,9 @@ pub fn paintTable(self: *ActivityMonitor, hdc: w32.HDC, l: layout_mod.Layout) vo
 /// defect this task exists to fix, and "there are no rows" is not an excuse to
 /// reproduce it.
 pub fn paintTableFocus(self: *ActivityMonitor, hdc: w32.HDC, l: layout_mod.Layout) void {
-    if (!self.panel_focused or self.focus != .table) return;
+    // Windows' rule, not only ours (T1009): a pointer-driven panel shows no ring
+    // until the keyboard is used, the way the machine chooser's rows behave.
+    if (!self.focusRingVisible() or self.focus != .table) return;
 
     // The HEADER's cursor takes the ring while it is up (T567). One focus stop
     // draws ONE indicator: a rim on a heading AND a rim on the caret row would

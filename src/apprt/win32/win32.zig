@@ -1331,6 +1331,26 @@ pub const ODS_FOCUS: u32 = 0x0010;
 /// control in `itemState` so its painter can honour it (T828).
 pub const ODS_NOFOCUSRECT: u32 = 0x0200;
 
+// The UI-state mechanism itself, for a CUSTOM-painted surface that gets no
+// `itemState` to read it from (T1009). A top-level window's state is changed
+// with WM_CHANGEUISTATE (DefWindowProc turns that into WM_UPDATEUISTATE for the
+// window and its children) and read back with WM_QUERYUISTATE.
+pub const WM_CHANGEUISTATE: u32 = 0x0127;
+pub const WM_UPDATEUISTATE: u32 = 0x0128;
+pub const WM_QUERYUISTATE: u32 = 0x0129;
+pub const UIS_SET: u16 = 1;
+pub const UIS_CLEAR: u16 = 2;
+/// Let the system decide from the LAST INPUT EVENT: keyboard clears the hide
+/// bits, mouse sets them. What a dialog does when it is created.
+pub const UIS_INITIALIZE: u16 = 3;
+pub const UISF_HIDEFOCUS: u16 = 0x1;
+pub const UISF_HIDEACCEL: u16 = 0x2;
+
+/// MAKEWPARAM(action, flags) for WM_CHANGEUISTATE / WM_UPDATEUISTATE.
+pub fn uiStateWParam(action: u16, flags: u16) usize {
+    return @as(usize, action) | (@as(usize, flags) << 16);
+}
+
 pub const MEASUREITEMSTRUCT = extern struct {
     CtlType: u32,
     CtlID: u32,
