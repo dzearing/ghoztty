@@ -35,6 +35,36 @@
 //! watermark (connection.zig `prepareRelaunchPane`), so a non-zero base would
 //! just manufacture a phantom gap.
 //!
+//! ## Append journal (`<rings_dir>/<session-id-hex>.ringlog`, T997)
+//!
+//! Rewriting the whole ring on every pass made the disk write proportional to
+//! the RING, not to what arrived: a quiet pane that printed one prompt in 30
+//! seconds rewrote its full 2 MB, and a busy one under the volume trigger wrote
+//! `ring / threshold` (4x at the defaults, 32x at a 16 MB ring) of what it
+//! printed. So the `.ring` file above is now the BASE, and the passes between
+//! two rewrites of it append only their new bytes to a journal beside it:
+//!
+//!   magic       : 4 bytes  "GRJ1"
+//!   base_end    : u64 LE   stream offset one past the base's last byte
+//!   base_crc    : u32 LE   CRC-32 of the base's ring bytes
+//!   records...  : start u64, len u32, cols u16, rows u16, crc u32, then `len`
+//!                 bytes; `crc` covers the first 16 header bytes and the payload
+//!
+//! The header BINDS the journal to one exact base: a journal left beside some
+//! other base (an older agent that knows nothing of journals rewrote the
+//! `.ring` after a rollback; a crash between the base publish and the journal
+//! reset) fails the check and is ignored, so it can never splice foreign bytes
+//! onto a snapshot. The `.ring` layout itself is unchanged, which is what lets
+//! an older agent still read it — it just misses the journal's tail.
+//!
+//! `load` replays records in order while each one is intact and continues the
+//! stream: a record that starts before the current end has its already-covered
+//! prefix dropped (a repeat is harmless), and the first torn, corrupt or gapped
+//! record ends the replay — everything before it is still good. The writer
+//! (`session.zig snapshotRings`) folds the journal back into a fresh base once it
+//! holds about a ring's worth, so steady state writes at most twice what the
+//! pane printed and the pair on disk never exceeds two rings.
+//!
 //! ## Layering / crash safety
 //!
 //! Depends only on `std` + `atomic_write` (like `session_meta`), so it
@@ -104,12 +134,147 @@ pub fn writeAtomic(
     try atomic_write.writeChunks(alloc, path, &.{ &header, bytes }, .{});
 }
 
-/// Load + parse the snapshot at `path`. Returns null when the file is ABSENT (a
+/// Journal magic (T997). See the module doc for the layout.
+pub const journal_magic = "GRJ1";
+/// Journal header: magic(4) + base_end(8) + base_crc(4).
+pub const journal_header_len: usize = journal_magic.len + 8 + 4;
+/// Record header: start(8) + len(4) + cols(2) + rows(2) + crc(4).
+pub const record_header_len: usize = 8 + 4 + 2 + 2 + 4;
+
+/// The journal that extends the base at `base_path` (`<id>.ring` → `<id>.ringlog`).
+/// Caller frees.
+pub fn journalPathFor(alloc: Allocator, base_path: []const u8) ![]u8 {
+    return std.fmt.allocPrint(alloc, "{s}log", .{base_path});
+}
+
+/// The CRC-32 a journal header records for the base it extends.
+pub fn baseCrc(bytes: []const u8) u32 {
+    return std.hash.Crc32.hash(bytes);
+}
+
+/// Start an EMPTY journal bound to the base that was just published (whose ring
+/// bytes end at stream offset `base_end` and hash to `base_crc`). Atomic, like
+/// the base, so a crash leaves either the previous journal — which then fails
+/// the binding check against the new base and is ignored — or this one. Returns
+/// the journal's length, which is where the first record goes.
+pub fn resetJournal(alloc: Allocator, journal_path: []const u8, base_end: u64, base_crc: u32) !u64 {
+    var header: [journal_header_len]u8 = undefined;
+    @memcpy(header[0..journal_magic.len], journal_magic);
+    std.mem.writeInt(u64, header[journal_magic.len..][0..8], base_end, .little);
+    std.mem.writeInt(u32, header[journal_magic.len + 8 ..][0..4], base_crc, .little);
+    try atomic_write.writeChunks(alloc, journal_path, &.{&header}, .{});
+    return journal_header_len;
+}
+
+/// Append one record — `bytes`, which begin at stream offset `start` and were
+/// drawn at `cols`x`rows` — at file offset `at_len`, the journal length the
+/// caller last saw, and cut the file there so a torn tail from a failed earlier
+/// write can never sit between two good records. Synced before returning,
+/// because the caller then tells the holder it may forget these bytes. Returns
+/// the new length. The journal must already exist (`resetJournal`); a missing
+/// one is `error.FileNotFound`, and the caller answers any error by rewriting
+/// the base instead.
+pub fn appendRecord(
+    journal_path: []const u8,
+    at_len: u64,
+    start: u64,
+    cols: u16,
+    rows: u16,
+    bytes: []const u8,
+) !u64 {
+    if (bytes.len > std.math.maxInt(u32)) return error.RecordTooLarge;
+    var hdr: [record_header_len]u8 = undefined;
+    std.mem.writeInt(u64, hdr[0..8], start, .little);
+    std.mem.writeInt(u32, hdr[8..12], @intCast(bytes.len), .little);
+    std.mem.writeInt(u16, hdr[12..14], cols, .little);
+    std.mem.writeInt(u16, hdr[14..16], rows, .little);
+    var crc = std.hash.Crc32.init();
+    crc.update(hdr[0..16]);
+    crc.update(bytes);
+    std.mem.writeInt(u32, hdr[16..20], crc.final(), .little);
+
+    var file = try std.fs.cwd().openFile(journal_path, .{ .mode = .read_write });
+    defer file.close();
+    try file.pwriteAll(&hdr, at_len);
+    try file.pwriteAll(bytes, at_len + record_header_len);
+    const new_len = at_len + record_header_len + bytes.len;
+    try file.setEndPos(new_len);
+    try file.sync();
+    return new_len;
+}
+
+/// Load + parse the snapshot at `path`, extended by its journal (T997) when one
+/// is present and bound to it. Returns null when the file is ABSENT (a
 /// session with no snapshot yet — normal, non-error) or when it is corrupt /
 /// mis-magic / mis-sized (best-effort: a bad snapshot must never stop a session
 /// from relaunching — the pane just comes back without pre-restart scrollback).
 /// Caller `free`s a non-null result.
 pub fn load(alloc: Allocator, path: []const u8) !?Loaded {
+    var base = (try loadBase(alloc, path)) orelse return null;
+    errdefer base.free(alloc);
+    const jpath = try journalPathFor(alloc, path);
+    defer alloc.free(jpath);
+    try extendFromJournal(alloc, jpath, &base);
+    return base;
+}
+
+/// Replay the journal at `journal_path` onto `base` in place (T997). Best-effort
+/// like the rest of the loader: an absent, unbound or damaged journal leaves the
+/// base as it was, and a damaged record ends the replay at the last good one.
+fn extendFromJournal(alloc: Allocator, journal_path: []const u8, base: *Loaded) !void {
+    const raw = std.fs.cwd().readFileAlloc(alloc, journal_path, max_file_bytes) catch |err| switch (err) {
+        error.OutOfMemory => return err,
+        else => return, // absent, unreadable or oversized: the base stands alone
+    };
+    defer alloc.free(raw);
+
+    if (raw.len < journal_header_len) return;
+    if (!std.mem.eql(u8, raw[0..journal_magic.len], journal_magic)) return;
+    const bound_end = std.mem.readInt(u64, raw[journal_magic.len..][0..8], .little);
+    const bound_crc = std.mem.readInt(u32, raw[journal_magic.len + 8 ..][0..4], .little);
+    var end = base.base_offset +% base.bytes.len;
+    if (bound_end != end or bound_crc != baseCrc(base.bytes)) return; // someone else's base
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(alloc);
+    var cols = base.cols;
+    var rows = base.rows;
+    var pos: usize = journal_header_len;
+    while (raw.len - pos >= record_header_len) {
+        const hdr = raw[pos..][0..record_header_len];
+        const start = std.mem.readInt(u64, hdr[0..8], .little);
+        const len: usize = std.mem.readInt(u32, hdr[8..12], .little);
+        if (raw.len - pos - record_header_len < len) break; // torn tail
+        const payload = raw[pos + record_header_len ..][0..len];
+        var crc = std.hash.Crc32.init();
+        crc.update(hdr[0..16]);
+        crc.update(payload);
+        if (crc.final() != std.mem.readInt(u32, hdr[16..20], .little)) break; // corrupt
+        if (start > end) break; // a gap: the bytes in between are gone
+        const covered = end - start;
+        if (covered < len) {
+            if (out.items.len == 0) try out.appendSlice(alloc, base.bytes);
+            try out.appendSlice(alloc, payload[@intCast(covered)..]);
+            end = start + len;
+        }
+        const rc = std.mem.readInt(u16, hdr[12..14], .little);
+        const rr = std.mem.readInt(u16, hdr[14..16], .little);
+        if (rc != 0) {
+            cols = rc;
+            rows = rr;
+        }
+        pos += record_header_len + len;
+    }
+    if (out.items.len == 0) return; // nothing new beyond the base
+    const merged = try out.toOwnedSlice(alloc);
+    alloc.free(base.bytes);
+    base.bytes = merged;
+    base.cols = cols;
+    base.rows = rows;
+}
+
+/// The `.ring` file alone — the pre-T997 loader, unchanged.
+fn loadBase(alloc: Allocator, path: []const u8) !?Loaded {
     const raw = std.fs.cwd().readFileAlloc(alloc, path, max_file_bytes) catch |err| switch (err) {
         error.FileNotFound => return null,
         else => return err,
@@ -144,12 +309,15 @@ pub fn load(alloc: Allocator, path: []const u8) !?Loaded {
     return null; // unknown magic → treat as absent
 }
 
-/// Best-effort delete of a session's snapshot file (on CLOSE / reap). Missing
-/// file is not an error.
+/// Best-effort delete of a session's snapshot file and its journal (on CLOSE /
+/// reap). Missing files are not an error.
 pub fn delete(alloc: Allocator, dir: []const u8, id_str: []const u8) void {
     const path = pathFor(alloc, dir, id_str) catch return;
     defer alloc.free(path);
     std.fs.cwd().deleteFile(path) catch {};
+    const jpath = journalPathFor(alloc, path) catch return;
+    defer alloc.free(jpath);
+    std.fs.cwd().deleteFile(jpath) catch {};
 }
 
 // =============================================================================
@@ -282,4 +450,176 @@ test "corrupt files load as null (wrong magic, short header, length mismatch)" {
         try std.fs.cwd().writeFile(.{ .sub_path = p, .data = &buf });
         try testing.expect((try load(alloc, p)) == null);
     }
+}
+
+// -----------------------------------------------------------------------------
+// Journal (T997)
+// -----------------------------------------------------------------------------
+
+/// Test helper: a base + fresh journal under a tmp dir. Caller frees both paths.
+fn testPair(alloc: Allocator, dir_path: []const u8, id: []const u8, base_offset: u64, bytes: []const u8) !struct { base: []u8, journal: []u8, len: u64 } {
+    const base = try pathFor(alloc, dir_path, id);
+    errdefer alloc.free(base);
+    const journal = try journalPathFor(alloc, base);
+    errdefer alloc.free(journal);
+    try writeAtomic(alloc, base, base_offset, 80, 24, bytes);
+    const len = try resetJournal(alloc, journal, base_offset + bytes.len, baseCrc(bytes));
+    return .{ .base = base, .journal = journal, .len = len };
+}
+
+test "journal records extend the base on load, and the newest geometry wins (T997)" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const p = try testPair(alloc, dir_path, "0000000000000000000000000000000a", 100, "base-");
+    defer alloc.free(p.base);
+    defer alloc.free(p.journal);
+
+    // An empty journal changes nothing.
+    {
+        var l = (try load(alloc, p.base)).?;
+        defer l.free(alloc);
+        try testing.expectEqualStrings("base-", l.bytes);
+        try testing.expectEqual(@as(u16, 80), l.cols);
+    }
+
+    var len = try appendRecord(p.journal, p.len, 105, 80, 24, "one-");
+    len = try appendRecord(p.journal, len, 109, 132, 50, "two");
+    try testing.expectEqual(p.len + 2 * record_header_len + 7, len);
+
+    var l = (try load(alloc, p.base)).?;
+    defer l.free(alloc);
+    try testing.expectEqualStrings("base-one-two", l.bytes);
+    try testing.expectEqual(@as(u64, 100), l.base_offset);
+    try testing.expectEqual(@as(u16, 132), l.cols);
+    try testing.expectEqual(@as(u16, 50), l.rows);
+
+    // The base file itself was never rewritten by the appends.
+    var b = (try loadBase(alloc, p.base)).?;
+    defer b.free(alloc);
+    try testing.expectEqualStrings("base-", b.bytes);
+
+    // delete takes the journal with it.
+    delete(alloc, dir_path, "0000000000000000000000000000000a");
+    try testing.expectError(error.FileNotFound, std.fs.cwd().access(p.journal, .{}));
+}
+
+test "a torn or corrupt record ends the replay at the last good one (T997)" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const p = try testPair(alloc, dir_path, "0000000000000000000000000000000b", 0, "AB");
+    defer alloc.free(p.base);
+    defer alloc.free(p.journal);
+
+    const l1 = try appendRecord(p.journal, p.len, 2, 80, 24, "CD");
+    const l2 = try appendRecord(p.journal, l1, 4, 80, 24, "EFGH");
+
+    // Torn: the second record's payload is cut short.
+    {
+        var f = try std.fs.cwd().openFile(p.journal, .{ .mode = .read_write });
+        defer f.close();
+        try f.setEndPos(l2 - 1);
+    }
+    {
+        var l = (try load(alloc, p.base)).?;
+        defer l.free(alloc);
+        try testing.expectEqualStrings("ABCD", l.bytes);
+    }
+
+    // Corrupt: the full record is back but one payload byte is flipped.
+    _ = try appendRecord(p.journal, l1, 4, 80, 24, "EFGH");
+    {
+        var f = try std.fs.cwd().openFile(p.journal, .{ .mode = .read_write });
+        defer f.close();
+        try f.pwriteAll("X", l1 + record_header_len);
+    }
+    {
+        var l = (try load(alloc, p.base)).?;
+        defer l.free(alloc);
+        try testing.expectEqualStrings("ABCD", l.bytes);
+    }
+
+    // Appending at a tracked offset cuts whatever was past it, so a later good
+    // record is never stranded behind a torn one.
+    const l3 = try appendRecord(p.journal, l1, 4, 80, 24, "ef");
+    {
+        var l = (try load(alloc, p.base)).?;
+        defer l.free(alloc);
+        try testing.expectEqualStrings("ABCDef", l.bytes);
+    }
+    try testing.expectEqual(l1 + record_header_len + 2, l3);
+}
+
+test "overlapping records drop their covered prefix; a gap stops the replay (T997)" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const p = try testPair(alloc, dir_path, "0000000000000000000000000000000c", 10, "abc");
+    defer alloc.free(p.base);
+    defer alloc.free(p.journal);
+
+    var len = try appendRecord(p.journal, p.len, 13, 80, 24, "de"); // 13..15
+    len = try appendRecord(p.journal, len, 12, 80, 24, "cdef"); // repeats c,d,e; adds f
+    len = try appendRecord(p.journal, len, 14, 80, 24, "e"); // wholly covered
+    len = try appendRecord(p.journal, len, 20, 80, 24, "zz"); // gap at 16..20
+    len = try appendRecord(p.journal, len, 16, 80, 24, "g"); // after the gap: ignored
+
+    var l = (try load(alloc, p.base)).?;
+    defer l.free(alloc);
+    try testing.expectEqualStrings("abcdef", l.bytes);
+}
+
+test "a journal bound to a different base is ignored (T997)" {
+    // The rollback shape: an older agent, which knows nothing of journals,
+    // rewrites the base; the journal beside it now describes bytes that are not
+    // in front of it and must not be spliced on.
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const p = try testPair(alloc, dir_path, "0000000000000000000000000000000d", 0, "xyz");
+    defer alloc.free(p.base);
+    defer alloc.free(p.journal);
+    _ = try appendRecord(p.journal, p.len, 3, 80, 24, "TAIL");
+
+    // Same length, different bytes: the end offset still matches, the CRC does not.
+    try writeAtomic(alloc, p.base, 0, 80, 24, "XYZ");
+    {
+        var l = (try load(alloc, p.base)).?;
+        defer l.free(alloc);
+        try testing.expectEqualStrings("XYZ", l.bytes);
+    }
+    // Different end offset.
+    try writeAtomic(alloc, p.base, 5, 80, 24, "xyz");
+    {
+        var l = (try load(alloc, p.base)).?;
+        defer l.free(alloc);
+        try testing.expectEqualStrings("xyz", l.bytes);
+    }
+    // A journal with a foreign magic is ignored too.
+    try std.fs.cwd().writeFile(.{ .sub_path = p.journal, .data = "NOPE\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" });
+    {
+        var l = (try load(alloc, p.base)).?;
+        defer l.free(alloc);
+        try testing.expectEqualStrings("xyz", l.bytes);
+    }
+}
+
+test "appending to a missing journal fails rather than creating one (T997)" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const j = try std.fs.path.join(alloc, &.{ dir_path, "absent.ringlog" });
+    defer alloc.free(j);
+    try testing.expectError(error.FileNotFound, appendRecord(j, journal_header_len, 0, 80, 24, "x"));
 }

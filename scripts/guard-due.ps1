@@ -926,6 +926,7 @@ $GuardTable = @(
         Stamp  = 'test\win32\holder-durable.stamp.json'
         Covers = @(
             'test\win32\holder-durable.ps1',
+            'test\win32\lib\RingSnapshot.ps1',
             'src\remote\agent\ring_snapshot.zig'
         )
     },
@@ -941,6 +942,8 @@ $GuardTable = @(
         Stamp  = 'test\win32\holder-volume.stamp.json'
         Covers = @(
             'test\win32\holder-volume.ps1',
+            'test\win32\lib\RingSnapshot.ps1',
+            'src\remote\agent\ring_snapshot.zig',
             'src\remote\agent\session.zig',
             'src\remote\agent\pty_holder_child.zig'
         )
@@ -1277,6 +1280,7 @@ $GuardTable = @(
             'src\termio\restore_park.zig',
             'src\termio\shell_integration.zig',
             'src\remote\agent\ring_snapshot.zig',
+            'test\win32\lib\RingSnapshot.ps1',
             'test\win32\session-relaunch.ps1'
         )
     },

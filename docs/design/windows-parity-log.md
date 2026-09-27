@@ -34422,3 +34422,21 @@ Wired into no gate on purpose; go.md step 0.6 reads the number at daily triage
 and `docs/claude/testing.md` documents it. Section Q of
 `test/win32/guard-due.ps1` (8 arms, including both stale shapes and the exit-0
 all-clear) ALL PASS 126 and stamped. The backlog itself is T1768.
+
+## 2026-09-26 — T997: a scrollback save writes what arrived, not the whole ring
+
+Ring snapshots were rewritten whole on every pass: a quiet pane rewrote its
+2 MB for one prompt every 30 s, and a busy one under the T969 volume trigger
+wrote ring/threshold (4x at the defaults, 32x at a 16 MB ring) of what it
+printed. The `.ring` file stays the unchanged GRS2 base, so a rolled-back agent
+still reads it; a new `<id>.ringlog` journal beside it takes each pass's new
+bytes, bound to its base by end offset + CRC-32, with a CRC per record. The load
+replays records until the first torn/corrupt/gapped one. The writer appends only
+when this process wrote the pair, and folds the journal back into a fresh base
+at a ring's worth, so writes are at most 2x and disk use at most two rings.
+Unit tests in `ring_snapshot.zig` and `session.zig`. holder-durable, holder-volume
+and session-relaunch read the pair through the new `test/win32/lib/RingSnapshot.ps1`
+(before that fix they went red on A7/A5 because the marker was in the journal,
+which shows appends happen on a live agent) and pass, including kill-and-restore.
+All four zig lanes, P1-P3, and the harness floor pass. P1's first run hit a
+cold-launch SETUP timeout that passed on re-run, filed as T1769.

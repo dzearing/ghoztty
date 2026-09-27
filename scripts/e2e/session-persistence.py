@@ -331,11 +331,13 @@ def wait_rings_flushed(want, timeout=5.0):
     return n
 
 def clear_ring_files():
+    # Each base takes its append journal (`.ringlog`, T997) with it.
     for f in ring_files():
-        try:
-            os.remove(f)
-        except FileNotFoundError:
-            pass
+        for p in (f, f + "log"):
+            try:
+                os.remove(p)
+            except FileNotFoundError:
+                pass
 
 # Popen handles for every app we launched, kept so we can reap them. Without this
 # a cleanly-exited app lingers as a ZOMBIE (defunct) child of this script until we

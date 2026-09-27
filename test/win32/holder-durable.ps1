@@ -173,13 +173,15 @@ function Get-Tree([string]$tmp, [string]$tag) {
 # Every ring snapshot under the per-run state dir, read as bytes. Found by
 # extension rather than re-derived from a path, so a state-dir move cannot
 # silently turn this into a test of nothing.
+# Each one is read as the base plus its journal (T997), which is where most
+# snapshot passes now put their bytes.
+. (Join-Path $PSScriptRoot 'lib\RingSnapshot.ps1')
 function Get-RingFiles([string]$root) {
-    return , @(Get-ChildItem -Path $root -Filter '*.ring' -Recurse -File -ErrorAction SilentlyContinue)
+    return (Get-RingSnapshotFiles $root)
 }
 function Ring-Has([string]$root, [string]$needle) {
     foreach ($f in (Get-RingFiles $root)) {
-        $txt = ''
-        try { $txt = [IO.File]::ReadAllText($f.FullName, [Text.Encoding]::ASCII) } catch { continue }
+        $txt = Read-RingSnapshotText $f.FullName
         if ($txt -match [regex]::Escape($needle)) { return $true }
     }
     return $false

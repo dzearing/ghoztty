@@ -235,25 +235,27 @@ function Get-Tree([string]$tmp, [string]$tag) {
 # Every ring snapshot under the per-run state dir, read as bytes. Found by
 # extension rather than re-derived from a path, so a state-dir move cannot
 # silently turn this into a test of nothing.
+# Each one is read as the base plus its journal (T997), which is where most
+# snapshot passes now put their bytes.
+. (Join-Path $PSScriptRoot 'lib\RingSnapshot.ps1')
 function Get-RingFiles([string]$root) {
-    return , @(Get-ChildItem -Path $root -Filter '*.ring' -Recurse -File -ErrorAction SilentlyContinue)
+    return (Get-RingSnapshotFiles $root)
 }
 function Ring-Has([string]$root, [string]$needle) {
     foreach ($f in (Get-RingFiles $root)) {
-        $txt = ''
-        try { $txt = [IO.File]::ReadAllText($f.FullName, [Text.Encoding]::ASCII) } catch { continue }
+        $txt = Read-RingSnapshotText $f.FullName
         if ($txt -match [regex]::Escape($needle)) { return $true }
     }
     return $false
 }
-# The length of ONE session's snapshot file - the observable this harness sizes
+# The length of ONE session's snapshot (base + journal, T997) - the observable this harness sizes
 # its flood against (T1116). It is the ring as the agent holds it, so its growth
 # across the flood is the real byte volume the ConPTY produced, and its ceiling
 # is the ring capacity. 0 when the session has never been snapshotted.
 function Ring-LenFor([string]$root, [string]$sessionId) {
     if (-not $sessionId) { return 0 }
     foreach ($f in (Get-RingFiles $root)) {
-        if ($f.BaseName -eq $sessionId) { return [int]$f.Length }
+        if ($f.BaseName -eq $sessionId) { return (Read-RingSnapshotBytes $f.FullName).Length }
     }
     return 0
 }

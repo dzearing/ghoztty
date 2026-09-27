@@ -622,6 +622,18 @@ pub const Session = struct {
     /// preloaded ring's tail so a just-loaded dead session isn't flagged dirty.
     last_snapshot_offset: u64 = 0,
 
+    /// Stream offset the on-disk snapshot pair (`.ring` base + `.ringlog`
+    /// journal) ends at, as far as THIS process wrote it (T997) — the point the
+    /// next pass can append from instead of rewriting the whole ring. Null when
+    /// unknown: nothing written yet by this agent, a preloaded ring renumbered
+    /// away from the file's offsets, or a write that failed. Null makes the next
+    /// pass rewrite the base, which is always correct. Only `snapshotRings`
+    /// touches it (under `snapshot_mutex` and the store lock).
+    snap_disk_end: ?u64 = null,
+    /// Length of the journal file that `snap_disk_end` describes, i.e. where the
+    /// next record goes (T997).
+    snap_journal_len: u64 = 0,
+
     /// Streaming gate. When false (client sent `FLOW{pause}` or `DETACH`), child
     /// output is buffered in the ring but NOT framed onto the wire until resumed
     /// (§4.3/§4.4). A `bool` gate is sufficient for v1 (§3.4).
@@ -1390,12 +1402,19 @@ pub const SessionStore = struct {
     vanish_sweep_enabled: bool = true,
 
     /// Floor between two snapshot passes made by the reaper, in milliseconds
-    /// (T969). A snapshot rewrites each dirty ring WHOLE, so without a floor a
-    /// pane printing at MB/s would turn the volume trigger into a disk hammer;
-    /// with it the write amplification is bounded by
-    /// `ring size / max(threshold, rate x floor)`. The periodic 30-tick pass is
-    /// far outside this floor and is unaffected by it.
+    /// (T969). Since T997 a pass appends only a ring's NEW bytes to its journal,
+    /// so the floor no longer bounds write amplification (that is at most 2x,
+    /// set by the journal's fold-back size); what it still bounds is how many
+    /// fsyncs a pane printing at MB/s can cost per second. The periodic 30-tick
+    /// pass is far outside this floor and is unaffected by it.
     snapshot_volume_min_interval_ms: i64 = 1000,
+
+    /// Serializes whole `snapshotRings` passes (T997). The reaper, a viewer
+    /// disconnect, and the shutdown handlers can all run one at once; appending
+    /// to a journal at a tracked offset is only sound with one writer per file.
+    /// Never held together with anything but the store `mutex`, which is taken
+    /// INSIDE it.
+    snapshot_mutex: std.Thread.Mutex = .{},
 
     /// Wall-clock (`nowFn`) of the last snapshot pass the reaper ran, for the
     /// floor above. Touched only from the reaper thread.
@@ -2441,6 +2460,35 @@ pub const SessionStore = struct {
         appendRestartDivider(s);
     }
 
+    /// Whether a snapshot pass may APPEND to a session's journal rather than
+    /// rewrite its base (T997), as a pure function so the boundaries are unit
+    /// tested rather than inferred from file sizes.
+    ///
+    ///   `disk_end`      where the on-disk pair ends (`snap_disk_end`)
+    ///   `at`            the session's output offset now
+    ///   `ring_base`/`ring_tail`  the ring's retained range
+    ///   `journal_len`   the journal's current length
+    ///   `capacity`      the ring's configured size, which is the journal's
+    ///                   payload budget before it is folded into a fresh base
+    ///
+    /// No when the ring lost unsaved bytes (`disk_end` behind `ring_base`, so an
+    /// append would leave a hole), when the offsets disagree, or when the
+    /// journal would outgrow a ring's worth — the fold-back that keeps the
+    /// write at most 2x the output and the pair at most two rings on disk.
+    pub fn appendFits(
+        disk_end: u64,
+        at: u64,
+        ring_base: u64,
+        ring_tail: u64,
+        journal_len: u64,
+        capacity: usize,
+    ) bool {
+        if (at != ring_tail) return false;
+        if (disk_end < ring_base or disk_end > at) return false;
+        const grown = journal_len + ring_snapshot.record_header_len + (at - disk_end);
+        return grown <= ring_snapshot.journal_header_len + capacity;
+    }
+
     /// The volume trigger's decision (T969), as a pure function: no store, no
     /// clock, no disk — so the threshold and the floor can be unit tested for the
     /// thing that actually matters, which is that they fire at the boundary and
@@ -2510,9 +2558,17 @@ pub const SessionStore = struct {
     /// re-lock, copy just THAT ring into a single reused buffer, release the lock,
     /// and write the file outside it — so at most one ring (not all 256) is copied
     /// at once and no OS I/O ever runs under the lock (which serializes child output).
+    ///
+    /// Append, not rewrite (T997): a session whose on-disk pair this process
+    /// wrote (`snap_disk_end`) and whose unsaved bytes are all still in the ring
+    /// gets just those bytes appended to its journal. The base is rewritten
+    /// whole only when that is not possible, or once the journal has grown to
+    /// about a ring's worth — which caps the disk write at 2x the output.
     pub fn snapshotRings(self: *SessionStore) void {
         const dir = self.rings_dir orelse return;
         const alloc = self.table.alloc;
+        self.snapshot_mutex.lock();
+        defer self.snapshot_mutex.unlock();
 
         // Phase 1: collect dirty alive session ids under the lock.
         var ids: std.ArrayList(u128) = .empty;
@@ -2544,15 +2600,25 @@ pub const SessionStore = struct {
                 self.mutex.unlock();
                 continue;
             }
-            const need = s.ring.len;
+            const at = s.out_offset.value;
+            // Append when this process knows what the files hold and every byte
+            // since then is still in the ring; otherwise rewrite the base (T997).
+            const append_from: ?u64 = if (s.snap_disk_end) |end|
+                if (appendFits(end, at, s.ring.base_offset, s.ring.tailOffset(), s.snap_journal_len, s.ring.capacity)) end else null
+            else
+                null;
+            const journal_len = s.snap_journal_len;
+            const need: usize = if (append_from) |from| @intCast(at - from) else s.ring.len;
             buf.ensureTotalCapacity(alloc, need) catch {
                 self.mutex.unlock();
                 continue;
             };
             buf.items.len = need;
-            const n = s.ring.copyRetained(buf.items);
+            const n = if (append_from) |from|
+                s.ring.slice(from, at, buf.items).?
+            else
+                s.ring.copyRetained(buf.items);
             const base = s.ring.base_offset;
-            const at = s.out_offset.value;
             // Capture the width these bytes were drawn at so replay can render at
             // it and then reflow to the live pane width (§5.4 smear fix).
             const cap_cols = s.cols;
@@ -2566,16 +2632,45 @@ pub const SessionStore = struct {
             // Write OUTSIDE the lock.
             const path = ring_snapshot.pathFor(alloc, dir, id_str_buf[0..]) catch continue;
             defer alloc.free(path);
-            ring_snapshot.writeAtomic(alloc, path, base, cap_cols, cap_rows, buf.items[0..n]) catch |err| {
-                std.log.warn("ring_snapshot: write {s} failed: {s}", .{ path, @errorName(err) });
-                continue;
-            };
+            const jpath = ring_snapshot.journalPathFor(alloc, path) catch continue;
+            defer alloc.free(jpath);
+            // What the pair on disk describes after this write: `at` and the
+            // journal length, or null when the journal could not be started (the
+            // base alone is then complete, and the next pass rewrites it again).
+            var new_journal_len: ?u64 = null;
+            if (append_from) |from| {
+                new_journal_len = ring_snapshot.appendRecord(jpath, journal_len, from, cap_cols, cap_rows, buf.items[0..n]) catch |err| blk: {
+                    std.log.warn("ring_snapshot: append {s} failed: {s}", .{ jpath, @errorName(err) });
+                    break :blk null;
+                };
+                if (new_journal_len == null) {
+                    // The journal is in an unknown state; say so and retry as a
+                    // full rewrite on the next pass. The bytes are still dirty.
+                    self.mutex.lock();
+                    if (self.table.getById(id)) |s2| s2.snap_disk_end = null;
+                    self.mutex.unlock();
+                    continue;
+                }
+            } else {
+                ring_snapshot.writeAtomic(alloc, path, base, cap_cols, cap_rows, buf.items[0..n]) catch |err| {
+                    std.log.warn("ring_snapshot: write {s} failed: {s}", .{ path, @errorName(err) });
+                    continue;
+                };
+                new_journal_len = ring_snapshot.resetJournal(alloc, jpath, base + n, ring_snapshot.baseCrc(buf.items[0..n])) catch |err| blk: {
+                    std.log.warn("ring_snapshot: journal reset {s} failed: {s}", .{ jpath, @errorName(err) });
+                    break :blk null;
+                };
+            }
             // Mark clean only after a successful write, and only if no newer output
             // arrived in the meantime (else leave it dirty so the next pass retries).
             self.mutex.lock();
             var release_child: ?Child = null;
             if (self.table.getById(id)) |s2| {
                 if (s2.last_snapshot_offset < at) s2.last_snapshot_offset = at;
+                if (new_journal_len) |jl| {
+                    s2.snap_disk_end = if (append_from != null) at else base + n;
+                    s2.snap_journal_len = jl;
+                } else s2.snap_disk_end = null;
                 // Advance the adoption watermark with the file that was just
                 // written. Monotonic, like `last_snapshot_offset`: a later pass
                 // that raced ahead must not be walked backwards.
@@ -4789,4 +4884,162 @@ test "abandonHolder: keeping the pipe is what stops the orphan sweep killing a h
         alloc.free(pipes);
     }
     try testing.expectEqual(@as(usize, 1), pipes.len);
+}
+
+test "appendFits: append while the journal has room and nothing was evicted (T997)" {
+    const fits = SessionStore.appendFits;
+    const h = ring_snapshot.journal_header_len;
+    const r = ring_snapshot.record_header_len;
+    // The ordinary case: 100 new bytes after a fresh journal.
+    try testing.expect(fits(1000, 1100, 0, 1100, h, 4096));
+    // Exactly at the fold-back budget, and one byte over it.
+    try testing.expect(fits(0, 100, 0, 100, h + 4096 - 100 - r, 4096));
+    try testing.expect(!fits(0, 101, 0, 101, h + 4096 - 100 - r, 4096));
+    // The ring evicted bytes that never reached disk: an append would leave a hole.
+    try testing.expect(!fits(500, 5000, 501, 5000, h, 4096));
+    // Offsets that disagree are never appended to.
+    try testing.expect(!fits(1000, 1100, 0, 1099, h, 4096)); // ring tail != at
+    try testing.expect(!fits(1200, 1100, 0, 1100, h, 4096)); // disk ahead of output
+}
+
+test "snapshotRings appends new output to the journal instead of rewriting the base (T997)" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const rings = try std.fs.path.join(alloc, &.{ dir_path, "rings" });
+    defer alloc.free(rings);
+
+    var prng = std.Random.DefaultPrng.init(0x0997);
+    var clock: MutClock = .{ .ms = 500 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    store.rings_dir = rings;
+    defer store.deinit();
+
+    var fake: FakeChild = .{ .alloc = alloc };
+    defer fake.deinit();
+    const cap: usize = 1024;
+    const s = try store.table.create(fake.child(), 4242, 24, 80, cap, 500);
+
+    const bp = try ring_snapshot.pathFor(alloc, rings, s.id_str[0..]);
+    defer alloc.free(bp);
+    const jp = try ring_snapshot.journalPathFor(alloc, bp);
+    defer alloc.free(jp);
+    const size = struct {
+        fn of(p: []const u8) !u64 {
+            const st = try std.fs.cwd().statFile(p);
+            return st.size;
+        }
+    }.of;
+
+    // What the whole stream looks like, so every load can be checked against it.
+    var stream: std.ArrayList(u8) = .empty;
+    defer stream.deinit(alloc);
+
+    // First pass: nothing on disk yet, so the base is written whole.
+    store.onChildOutput(s.channel, "a" ** 300);
+    try stream.appendSlice(alloc, "a" ** 300);
+    store.snapshotRings();
+    const base_size = try size(bp);
+    try testing.expectEqual(@as(u64, ring_snapshot.header_len + 300), base_size);
+    try testing.expectEqual(@as(u64, ring_snapshot.journal_header_len), try size(jp));
+
+    // Small follow-ups append: the base is untouched and the journal grows by
+    // the new bytes plus one record header each — the write is the delta.
+    store.onChildOutput(s.channel, "b" ** 40);
+    try stream.appendSlice(alloc, "b" ** 40);
+    store.snapshotRings();
+    store.onChildOutput(s.channel, "c" ** 60);
+    try stream.appendSlice(alloc, "c" ** 60);
+    store.snapshotRings();
+    try testing.expectEqual(base_size, try size(bp));
+    try testing.expectEqual(
+        @as(u64, ring_snapshot.journal_header_len + 2 * ring_snapshot.record_header_len + 100),
+        try size(jp),
+    );
+    {
+        var l = (try ring_snapshot.load(alloc, bp)).?;
+        defer l.free(alloc);
+        try testing.expectEqualStrings(stream.items, l.bytes);
+    }
+    try testing.expectEqual(s.out_offset.value, s.last_snapshot_offset);
+
+    // A clean ring writes nothing at all.
+    store.snapshotRings();
+    try testing.expectEqual(base_size, try size(bp));
+
+    // Past a ring's worth of journal the pair is folded into a fresh base, which
+    // holds exactly what the ring holds (the oldest bytes evicted), with an
+    // empty journal bound to it.
+    var i: usize = 0;
+    while (i < 12) : (i += 1) {
+        store.onChildOutput(s.channel, "d" ** 90);
+        try stream.appendSlice(alloc, "d" ** 90);
+        store.snapshotRings();
+        try testing.expect(try size(jp) <= ring_snapshot.journal_header_len + cap);
+    }
+    {
+        var l = (try ring_snapshot.load(alloc, bp)).?;
+        defer l.free(alloc);
+        // The load may carry more than the ring (base + journal); its tail is
+        // the stream's tail, and the ring's worth of it is exact.
+        try testing.expect(l.bytes.len >= cap);
+        try testing.expectEqualStrings(stream.items[stream.items.len - cap ..], l.bytes[l.bytes.len - cap ..]);
+        try testing.expectEqual(s.out_offset.value, l.base_offset + l.bytes.len);
+    }
+
+    // Output that outruns the ring between two passes loses unsaved bytes from
+    // it, so the pass rewrites the base rather than appending across a hole.
+    store.onChildOutput(s.channel, "e" ** 2000);
+    try stream.appendSlice(alloc, "e" ** 2000);
+    store.snapshotRings();
+    try testing.expectEqual(@as(u64, ring_snapshot.header_len + cap), try size(bp));
+    try testing.expectEqual(@as(u64, ring_snapshot.journal_header_len), try size(jp));
+    {
+        var l = (try ring_snapshot.load(alloc, bp)).?;
+        defer l.free(alloc);
+        try testing.expectEqualStrings(stream.items[stream.items.len - cap ..], l.bytes);
+    }
+}
+
+test "a journal that vanished makes the next pass rewrite the base (T997)" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const rings = try std.fs.path.join(alloc, &.{ dir_path, "rings" });
+    defer alloc.free(rings);
+
+    var prng = std.Random.DefaultPrng.init(0x1997);
+    var clock: MutClock = .{ .ms = 500 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    store.rings_dir = rings;
+    defer store.deinit();
+
+    var fake: FakeChild = .{ .alloc = alloc };
+    defer fake.deinit();
+    const s = try store.table.create(fake.child(), 4242, 24, 80, 1024, 500);
+    const bp = try ring_snapshot.pathFor(alloc, rings, s.id_str[0..]);
+    defer alloc.free(bp);
+    const jp = try ring_snapshot.journalPathFor(alloc, bp);
+    defer alloc.free(jp);
+
+    store.onChildOutput(s.channel, "first-");
+    store.snapshotRings();
+    try std.fs.cwd().deleteFile(jp);
+
+    // The append fails; the bytes stay dirty and nothing is claimed durable.
+    store.onChildOutput(s.channel, "second");
+    store.snapshotRings();
+    try testing.expect(s.out_offset.value != s.last_snapshot_offset);
+    try testing.expect(s.snap_disk_end == null);
+
+    // The retry rewrites the base, which carries everything.
+    store.snapshotRings();
+    try testing.expectEqual(s.out_offset.value, s.last_snapshot_offset);
+    var l = (try ring_snapshot.load(alloc, bp)).?;
+    defer l.free(alloc);
+    try testing.expectEqualStrings("first-second", l.bytes);
 }

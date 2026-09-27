@@ -51,6 +51,7 @@ param(
 # test never wants the caller pane's endpoint.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\RingSnapshot.ps1')
 if (-not $UserDesktop) { $script:td = New-TestDesktop }
 
 $ErrorActionPreference = 'Continue'
@@ -225,10 +226,10 @@ function Wait-RingFresh($tmp, $sid, $afterTime, $timeoutSec = 45) {
     $p = Ring-Path $tmp $sid
     $deadline = (Get-Date).AddSeconds($timeoutSec)
     while ((Get-Date) -lt $deadline) {
-        if (Test-Path $p) {
-            $mt = (Get-Item $p).LastWriteTime
-            if ($mt -gt $afterTime) { return $true }
-        }
+        # The base or its journal (T997): a pass that only appended leaves the
+        # .ring itself untouched.
+        $mt = Get-RingSnapshotWriteTime $p
+        if ($null -ne $mt -and $mt -gt $afterTime) { return $true }
         Start-Sleep -Milliseconds 1000
     }
     return $false
