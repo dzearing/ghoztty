@@ -83,6 +83,10 @@ pub const Layout = struct {
     action_row: Rect,
     /// Gap between two action buttons (Mac's `HStack(spacing: 8)`, 456).
     action_gap: i32,
+    /// The least room between the open actions and the trailing inspect group
+    /// (Mac's `Spacer(minLength: 12)` in `detailActionBar`, T1761). The free
+    /// space normally sits there; this is only what survives a crowded row.
+    action_spacer_min: i32,
     /// The session list's column-header line (T602): one caption line box
     /// between the action row and the roster, where the clickable CPU / Name
     /// headers sit. OUTSIDE the scrolled region, so the headers stay put while
@@ -367,6 +371,7 @@ pub fn layout(scale: f32, hint_lines: i32) Layout {
         // footer's Cancel so a short label still reads as a real button. Every
         // number is on the design system's 4 DIP scale (§1).
         .action_gap = px(8, scale),
+        .action_spacer_min = px(12, scale),
         .action_min_btn_w = px(96, scale),
         .action_btn_pad = px(12, scale),
         .control_h = control_h,
@@ -678,8 +683,11 @@ pub const ActionRow = struct {
     }
 };
 
-/// Pack the action row left to right at a consistent gap, each labeled button
-/// sized to its own caption. Pure — unit-tested.
+/// Pack the action row: the open actions (New Window, Restore All) left to
+/// right from the leading edge, the inspect actions (See Activity, the `...`
+/// menu) flush against the trailing edge, each group at a consistent gap and
+/// each labeled button sized to its own caption (Mac's `detailActionBar`,
+/// T1761). Pure — unit-tested.
 ///
 /// Everything stays inside `l.action_row`: if the captions are wide enough to
 /// overflow the band (long labels at a large font), the labeled buttons give up
@@ -716,9 +724,24 @@ pub fn actionRow(l: Layout, comp: Composition, text: ActionText) ActionRow {
     // borderless ellipsis menu, 456-492).
     if (comp.menu) add(&row, &widths, &labeled, .menu, h, false);
 
+    // Where the trailing group starts: everything from here on is pushed to the
+    // band's trailing edge (Mac's `Spacer(minLength: 12)` before See Activity
+    // and the `…` menu, T1761). Neither of them opens a window, and "grouping
+    // it with the buttons that do invites misclicks".
+    var split: usize = row.len;
+    for (row.kinds[0..row.len], 0..) |k, i| {
+        if (k == .activity or k == .menu) {
+            split = i;
+            break;
+        }
+    }
+    const has_trailing = split < row.len;
+
     // Shed overflow from the labeled buttons only — the square glyph button has
-    // no slack to give and stops being square the moment it is squeezed.
-    const gaps = l.action_gap * @as(i32, @intCast(row.len - 1));
+    // no slack to give and stops being square the moment it is squeezed. The
+    // spacer's minimum stands in for the one gap it replaces.
+    var gaps = l.action_gap * @as(i32, @intCast(row.len - 1));
+    if (has_trailing) gaps += l.action_spacer_min - l.action_gap;
     var total: i32 = gaps;
     for (widths[0..row.len]) |w| total += w;
     const floor_w = @divTrunc(l.action_min_btn_w, 2);
@@ -756,8 +779,20 @@ pub fn actionRow(l: Layout, comp: Composition, text: ActionText) ActionRow {
         }
     }
 
+    // The trailing group, packed right to left from the band's trailing edge.
+    // When even the spacer's minimum does not fit (the last-resort overflow),
+    // it falls back into the leading run instead, so nothing overlaps.
+    var trailing_w: i32 = 0;
+    for (split..row.len) |i| trailing_w += widths[i];
+    if (has_trailing) trailing_w += l.action_gap * @as(i32, @intCast(row.len - split - 1));
+    var leading_right = band.left;
+    for (0..split) |i| leading_right += widths[i];
+    leading_right += l.action_gap * @as(i32, @intCast(split - 1));
+    const trailing_fits = leading_right + l.action_spacer_min + trailing_w <= band.right;
+
     var x = band.left;
     for (0..row.len) |i| {
+        if (i == split and trailing_fits) x = band.right - trailing_w;
         const right = @min(band.right, x + widths[i]);
         row.rects[i] = .{
             .left = @min(x, band.right),
@@ -765,7 +800,7 @@ pub fn actionRow(l: Layout, comp: Composition, text: ActionText) ActionRow {
             .right = right,
             .bottom = band.bottom,
         };
-        x = right + l.action_gap;
+        x = right + (if (i + 1 == split) l.action_spacer_min else l.action_gap);
     }
     return row;
 }
@@ -866,16 +901,17 @@ test "layout: the hint line count is clamped like the strip that renders it" {
     try testing.expect(capped.list.height() >= chooser_rows.rowMetrics(1.0).height * 5);
 }
 
-test "layout: the management menu button sits beside the primary action" {
+test "layout: the management menu button sits flush with the row's trailing edge" {
     const l = layout(1.0, 1);
     const row = actionRow(l, .{ .menu = true }, .{ .primary = 70 });
     const primary = row.rect(.primary).?;
     const menu = row.rect(.menu).?;
-    // Same row, to its trailing side, with a gap.
+    // Same row, pushed past the spacer to the trailing edge (T1761: Mac's
+    // `Spacer(minLength: 12)` precedes it, with no Spacer after).
     try testing.expectEqual(primary.top, menu.top);
     try testing.expectEqual(primary.bottom, menu.bottom);
-    try testing.expect(menu.left >= primary.right);
-    try testing.expect(menu.left - primary.right <= 12);
+    try testing.expect(menu.left - primary.right >= l.action_spacer_min);
+    try testing.expectEqual(l.action_row.right, menu.right);
     // Square, and inside the detail pane.
     try testing.expectEqual(menu.height(), menu.width());
     try testing.expect(menu.left > l.master.right);
@@ -982,7 +1018,7 @@ test "layout: extra hint lines never move the detail pane's roster" {
 
 // --- action row (T177) ------------------------------------------------
 
-test "actionRow: packs left to right at a consistent gap, in Mac's order" {
+test "actionRow: open actions lead, inspect actions trail, in Mac's order (T1761)" {
     const l = layout(1.0, 1);
     const row = actionRow(
         l,
@@ -995,15 +1031,43 @@ test "actionRow: packs left to right at a consistent gap, in Mac's order" {
     try testing.expectEqual(Action.activity, row.kinds[2]);
     try testing.expectEqual(Action.menu, row.kinds[3]);
 
-    // One leading edge, one gap, one baseline.
-    try testing.expectEqual(l.action_row.left, row.rects[0].left);
+    // One baseline; the open actions from the leading edge, the inspect
+    // actions flush against the trailing edge, each group at one gap.
     for (row.rects[0..row.len]) |r| {
         try testing.expectEqual(l.action_row.top, r.top);
         try testing.expectEqual(l.action_row.bottom, r.bottom);
         try testing.expect(r.right <= l.action_row.right);
     }
+    try testing.expectEqual(l.action_row.left, row.rects[0].left);
+    try testing.expectEqual(l.action_gap, row.rects[1].left - row.rects[0].right);
+    try testing.expectEqual(l.action_gap, row.rects[3].left - row.rects[2].right);
+    try testing.expectEqual(l.action_row.right, row.rects[3].right);
+    // The free space sits between the groups, never less than the spacer.
+    try testing.expect(row.rects[2].left - row.rects[1].right >= l.action_spacer_min);
+}
+
+test "actionRow: See Activity alone still sits at the trailing edge (T1761)" {
+    // The local row has no `...` menu, and Mac's lone Spacer still pushes the
+    // inspect action flush right rather than beside New Window.
+    const l = layout(1.0, 1);
+    const row = actionRow(l, .{ .activity = true }, .{ .primary = 70, .activity = 70 });
+    try testing.expectEqual(l.action_row.left, row.rect(.primary).?.left);
+    try testing.expectEqual(l.action_row.right, row.rect(.activity).?.right);
+}
+
+test "actionRow: a crowded row keeps the spacer's minimum and never overlaps" {
+    const l = layout(1.0, 1);
+    // Wide enough to overflow: the labeled buttons shed down, and the groups
+    // end up exactly the spacer's minimum apart.
+    const row = actionRow(
+        l,
+        .{ .restore_all = true, .activity = true, .menu = true },
+        .{ .primary = 200, .restore_all = 200, .activity = 200 },
+    );
+    try testing.expectEqual(l.action_spacer_min, row.rect(.activity).?.left - row.rect(.restore_all).?.right);
+    try testing.expectEqual(l.action_row.right, row.rect(.menu).?.right);
     for (1..row.len) |i| {
-        try testing.expectEqual(l.action_gap, row.rects[i].left - row.rects[i - 1].right);
+        try testing.expect(row.rects[i].left >= row.rects[i - 1].right);
     }
 }
 
@@ -1024,10 +1088,12 @@ test "actionRow: composition follows what the row offers" {
     try testing.expectEqual(@as(usize, 3), remote.len);
     try testing.expect(remote.rect(.activity) != null);
     try testing.expect(remote.rect(.menu) != null);
-    // Adding Restore All (T146) shifts what follows it, and nothing else.
+    // Adding Restore All (T146) grows the leading run into the free space and
+    // moves nothing: the trailing group is anchored to the other edge (T1761).
     const with_all = actionRow(l, .{ .restore_all = true, .activity = true, .menu = true }, t);
     try testing.expectEqual(remote.rect(.primary).?.left, with_all.rect(.primary).?.left);
-    try testing.expect(with_all.rect(.activity).?.left > remote.rect(.activity).?.left);
+    try testing.expectEqual(remote.rect(.activity).?.left, with_all.rect(.activity).?.left);
+    try testing.expectEqual(remote.rect(.menu).?.left, with_all.rect(.menu).?.left);
 }
 
 test "actionRow: each labeled button is its own caption plus padding" {
@@ -1061,6 +1127,7 @@ test "actionRow: every number is on the 4 DIP spacing scale" {
     // Design system §1: no value outside 2/4/8/12/16/24 at 1.0.
     const l = layout(1.0, 1);
     try testing.expectEqual(@as(i32, 8), l.action_gap);
+    try testing.expectEqual(@as(i32, 12), l.action_spacer_min);
     try testing.expectEqual(@as(i32, 12), l.action_btn_pad);
     // ...and the glyph button is the standard 28 DIP square (§2.1), which is
     // also the row's height, so the run has ONE baseline.
@@ -1077,7 +1144,9 @@ test "actionRow: scales with DPI" {
             try testing.expect(r.left >= l.action_row.left);
             try testing.expect(r.right <= l.action_row.right);
         }
-        try testing.expectEqual(l.action_gap, row.rects[1].left - row.rects[0].right);
+        try testing.expectEqual(l.action_gap, row.rects[2].left - row.rects[1].right);
+        try testing.expect(row.rects[1].left - row.rects[0].right >= l.action_spacer_min);
+        try testing.expectEqual(l.action_row.right, row.rects[2].right);
         try testing.expectEqual(row.rects[2].height(), row.rects[2].width());
     }
 }
@@ -1413,6 +1482,7 @@ test "layout: every gap is on the 4 DIP spacing scale (T310)" {
         .{ .name = "session header -> roster", .v = l.sessions.top - l.session_header.bottom },
         .{ .name = "detail right margin", .v = l.detail.right - l.action_row.right },
         .{ .name = "action gap", .v = l.action_gap },
+        .{ .name = "action spacer minimum", .v = l.action_spacer_min },
         .{ .name = "action button padding", .v = l.action_btn_pad },
         .{ .name = "footer rule -> cancel", .v = l.cancel.top - l.footer_divider_y },
         .{ .name = "cancel -> client bottom", .v = l.client_h - l.cancel.bottom },

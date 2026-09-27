@@ -34631,3 +34631,14 @@ Windows still lists rows other viewers hold - filed T1791 for Mac's
 chooser-sessions.ps1: name-band pixel scan (8 px on the pre-fix build, 0 now)
 plus the log line; its post-kill refetch assertion was reading a pushed
 pre-kill load and now waits for the load after the kill. ALL PASS 21.
+
+## 2026-09-27 — T1761: chooser's See Activity button sits apart, at the right
+
+The action row now packs in two groups like Mac's `detailActionBar`: New Window
+and Restore All from the leading edge, See Activity and the `...` menu flush
+against the trailing edge, with Mac's 12 DIP spacer minimum between them
+(`Layout.action_spacer_min`); a row too crowded for that falls back to one run.
+Caption "Activity" -> "See Activity". Unit tests reworked in chooser_layout /
+MachineChooser; chooser-menu.ps1 now asserts the separation (gap 427 on the
+Local row, 382 vs 10 on a remote row) and chooser-controls.ps1 the caption.
+Floor lanes and harness floor green.

@@ -304,8 +304,15 @@ try {
     Assert ($null -ne $ab) 'the detail header has an Activity button'
     if ($ab) { Assert ($ab.Visible) 'Activity is shown while the Local row is selected (T1747)' }
     $localRow = @(Get-ChooserActionRow -Chooser $chooser)
-    Assert ($localRow.Count -eq 2 -and $localRow[0].Text -eq 'New Window' -and $localRow[1].Text -eq 'Activity') `
-        "the Local row's action row is New Window, Activity (got: $(($localRow | ForEach-Object { $_.Text }) -join ', '))"
+    Assert ($localRow.Count -eq 2 -and $localRow[0].Text -eq 'New Window' -and $localRow[1].Text -eq 'See Activity') `
+        "the Local row's action row is New Window, See Activity (got: $(($localRow | ForEach-Object { $_.Text }) -join ', '))"
+    # T1761: with no menu beside it, See Activity is still pushed away from New
+    # Window to the trailing edge (mac's lone `Spacer(minLength: 12)`), so the
+    # gap between them is far wider than the 8 DIP gap inside a group.
+    if ($localRow.Count -eq 2) {
+        $lgap = $localRow[1].Left - $localRow[0].Right
+        Assert ($lgap -gt 100) "See Activity sits apart from New Window on the Local row (gap $lgap)"
+    }
 
     # --- (1a) T1747: Activity on the Local row dismisses the chooser and opens
     # the LOCAL source directly - no dial (mac's `onActivityMonitor(nil)`).
@@ -338,28 +345,26 @@ try {
     $mb = Get-ChooserMenuButton -Chooser $chooser
     Assert ($null -ne $mb -and $mb.Visible) 'management button appears on a relay device row'
 
-    # --- (1b) T177: the row's COMPOSITION and its PACKING on a remote row.
-    # mac's detail header is [New Window] [Activity] [...] at one spacing
-    # (MachineChooserView.swift:456-491); the win32 row is packed as a run, so
-    # what is asserted is the order, one shared baseline, and one gap - not
-    # three fixed slots.
+    # --- (1b) T177/T1761: the row's COMPOSITION and its PACKING on a remote
+    # row. mac's detail header is [New Window] <Spacer> [See Activity] [...]
+    # (`detailActionBar`): the open action leads, the inspect actions sit
+    # together at the trailing edge. What is asserted is the order, the wide
+    # separation, and one gap inside the trailing group - not fixed slots.
     $row = @(Get-ChooserActionRow -Chooser $chooser)
     Assert ($row.Count -eq 3) "a remote row packs three actions (got $($row.Count): $(($row | ForEach-Object { $_.Text }) -join ', '))"
     if ($row.Count -eq 3) {
         Assert ($row[0].Text -eq 'New Window') "New Window leads the run (got '$($row[0].Text)')"
-        Assert ($row[1].Text -eq 'Activity') "Activity follows it (got '$($row[1].Text)')"
+        Assert ($row[1].Text -eq 'See Activity') "See Activity follows it (got '$($row[1].Text)')"
         Assert (($row[2].Right - $row[2].Left) -eq ($row[2].Bottom - $row[2].Top)) `
             'the management glyph button trails the run, and is square'
         $gap1 = $row[1].Left - $row[0].Right
         $gap2 = $row[2].Left - $row[1].Right
-        Assert ($gap1 -eq $gap2) "one gap across the run (got $gap1 and $gap2)"
-        Assert ($gap1 -gt 0) "the buttons do not touch (gap $gap1)"
-        # Sized to its own caption, not to the widest: Activity is the shorter
-        # word, so its button cannot be as wide as New Window's.
-        Assert (($row[1].Right - $row[1].Left) -lt ($row[0].Right - $row[0].Left)) `
-            'each button is sized to its own caption'
+        Assert ($gap2 -gt 0) "the trailing buttons do not touch (gap $gap2)"
+        Assert ($gap1 -gt (4 * $gap2)) "See Activity is set apart from New Window (gap $gap1 vs $gap2 inside the group)"
+        # (Per-caption sizing is unit-tested in chooser_layout.zig: both
+        # captions fall under the 96 DIP floor here, so widths cannot tell.)
         $crect = Get-TestWindowRect -Window $chooser
-        $inside = ($row | Where-Object { $_.Right -gt ($crect.Right - $crect.Left - $gap1) }).Count
+        $inside = ($row | Where-Object { $_.Right -gt ($crect.Right - $crect.Left - $gap2) }).Count
         Assert ($inside -eq 0) 'the whole run stays inside the detail pane'
     }
 

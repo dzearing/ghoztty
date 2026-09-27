@@ -215,8 +215,8 @@ try {
         "the footer button is labeled 'Cancel' (got '$(if ($named['cancel']) { $named['cancel'].Text })')"
     Assert ($named['restoreAll'] -and $named['restoreAll'].Text -eq 'Restore All') `
         "the restore-all button is labeled 'Restore All' (got '$(if ($named['restoreAll']) { $named['restoreAll'].Text })')"
-    Assert ($named['activity'] -and $named['activity'].Text -eq 'Activity') `
-        "the activity button is labeled 'Activity' (got '$(if ($named['activity']) { $named['activity'].Text })')"
+    Assert ($named['activity'] -and $named['activity'].Text -eq 'See Activity') `
+        "the activity button is labeled 'See Activity', Mac's caption (T1761) (got '$(if ($named['activity']) { $named['activity'].Text })')"
 
     # (4) the SHAPE rule two private copies used as their locator: the
     # management button is square. An assertion now, not a premise.

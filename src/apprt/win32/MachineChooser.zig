@@ -108,7 +108,9 @@ const SHARE_ID: u16 = 107;
 /// The action row's captions. Measured (not assumed) to size their buttons, so
 /// they live where both the creation and the measurement can see them.
 const PRIMARY_LABEL = "New Window";
-const ACTIVITY_LABEL = "Activity";
+/// Mac's `seeActivityButton` caption (T1761): the verb says it inspects rather
+/// than opens, which is also why it sits apart from the buttons that open.
+const ACTIVITY_LABEL = "See Activity";
 const RESTORE_ALL_LABEL = "Restore All";
 
 /// `Host Settings…` needs the per-host defaults store, which T174 built
@@ -5281,15 +5283,17 @@ test "the action row packs Restore All between New Window and Activity" {
     try testing.expect(row.rect(.restore_all).?.right <= row.rect(.activity).?.left);
     try testing.expect(row.rect(.activity).?.right <= row.rect(.menu).?.left);
 
-    // Dropping it closes the gap rather than leaving a hole — the reason the
-    // row is packed as a RUN and re-packed on every selection change.
+    // Dropping it leaves no hole beside New Window and does not move the
+    // trailing See Activity / menu group, which is anchored to the far edge
+    // (T1761) - the row is still re-packed on every selection change.
     const without = chooser_layout.actionRow(l, .{ .activity = true, .menu = true }, .{
         .primary = 70,
         .restore_all = 66,
         .activity = 44,
     });
     try testing.expectEqual(@as(usize, 3), without.len);
-    try testing.expectEqual(row.rect(.restore_all).?.left, without.rect(.activity).?.left);
+    try testing.expectEqual(row.rect(.activity).?.left, without.rect(.activity).?.left);
+    try testing.expectEqual(l.action_row.right, without.rect(.menu).?.right);
 }
 
 test "menuState: the Local row has no menu, a device row gets the relay menu" {
