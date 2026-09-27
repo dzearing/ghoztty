@@ -34525,3 +34525,18 @@ other rows already gate every wrapper edit, the harness runs in 46s, and a
 subset would stamp a weaker proof under a second name. Gate shown red on the
 new cover, then leak-sweep ALL PASS (65) plus the guard-due, body-complete,
 argv-hazard and unroll-count audits the edit made due; `guard-due check` exit 0.
+## 2026-09-27 — T1006: the feedback composer's undo history survives a close and reopen
+
+The page that journals quote/chip insertions (T983) is destroyed on every close,
+so its history died with it. The page now posts `{t:"journal", undo, redo,
+after}` on every change, `ViewerFeedbackBar.journal` keeps it verbatim, and
+`composerReady` hands it back to the next page straight after its first seed.
+`after` (+ a text/quote key) lets a reopened page turn typing the old engine
+knew about into one undo step ahead of the quote, instead of losing it with the
+quote. Native writes that are not insertions (the post-send clear) drop it.
+Chose the bar-owned journal over "make the loss legible": Mac's NSTextView
+undo is not scoped to the pill, so parity is that history is still there -
+unverified on Mac, filed as T1774 (seat: mac). New none-lane parse tests + a
+host-floor arm (quote, type, close, reopen, Ctrl+Z x2, Ctrl+Y) and a
+journal-null assertion after send; the arm goes red with the restore disabled.
+Floor ALL LANES PASS; due viewer harnesses and audits re-run.

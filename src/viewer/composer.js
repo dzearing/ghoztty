@@ -367,6 +367,7 @@
     // cleared behind a send, a native write), and the journal goes with it: an
     // undo that resurrected a report the user already sent would be worse than
     // no undo at all.
+    var had = undoStack.length > 0 || redoStack.length > 0;
     if (undoable) {
       journalPush(undoStack, checkpoint());
       redoStack.length = 0;
@@ -380,6 +381,9 @@
     placeCaret(at);
     el.scrollTop = el.scrollHeight;
     report(true);
+    // A fresh page's first seed had nothing to clear, and says nothing: the
+    // host is about to hand it the journal it kept (T1006).
+    if (undoable || had) journalChanged();
   }
 
   // The spans the host may act on: positive ids, inside the text, non-empty,
@@ -579,6 +583,63 @@
     var entry = from.pop();
     journalPush(to, checkpoint());
     journalRestore(entry);
+    journalChanged();
+  }
+
+  // -----------------------------------------------------------------------
+  // The journal outlives the page (T1006)
+  //
+  // This page is created when the pill opens and destroyed when it closes,
+  // while the report text lives on in the host. So the journal is posted up
+  // every time it changes, the host keeps the latest one, and a fresh page is
+  // handed it back straight after its first seed.
+  // -----------------------------------------------------------------------
+
+  // The text and the quote blocks, as one comparable string: what "the same
+  // document" means across two pages, whose markup for it can differ.
+  function docKey() {
+    var r = readAll();
+    return r.s + "|" + quoteKey(r.quotes);
+  }
+
+  function journalChanged() {
+    var after = null;
+    if (undoStack.length || redoStack.length) {
+      // Where the newest journalled step LEFT the document. Typing after it
+      // is the engine's to undo, and the engine's record of it dies with this
+      // page; the next page uses this to tell whether there was any.
+      after = checkpoint();
+      after.key = docKey();
+    }
+    post({ t: "journal", undo: undoStack, redo: redoStack, after: after });
+  }
+
+  function checkpoints(list) {
+    var out = [];
+    if (!list || !list.length) return out;
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      if (!e || typeof e.html !== "string") continue;
+      out.push({ html: e.html, caret: typeof e.caret === "number" ? e.caret : -1 });
+    }
+    return out.slice(-JOURNAL_MAX);
+  }
+
+  function adoptJournal(m) {
+    undoStack = checkpoints(m.undo);
+    redoStack = checkpoints(m.redo);
+    var a = m.after;
+    if (a && typeof a.html === "string" && a.key !== docKey()) {
+      // The user typed after the last journalled step, and the engine that
+      // could undo that typing went with the old page. One step takes the
+      // whole run back to where the journal left off — the way a run of
+      // typing is one undo on the Mac — so the quote before it is still one
+      // more Ctrl+Z away rather than lost along with the typing.
+      journalPush(undoStack, { html: a.html, caret: typeof a.caret === "number" ? a.caret : -1 });
+      // ...and redo would replay a history that no longer leads here.
+      redoStack.length = 0;
+    }
+    journalChanged();
   }
 
   function applyVars(v) {
@@ -626,6 +687,7 @@
       else if (m.t === "vars") applyVars(m);
       else if (m.t === "focus") el.focus();
       else if (m.t === "pick") pick(m.n | 0);
+      else if (m.t === "journal") adoptJournal(m);
     });
   }
 

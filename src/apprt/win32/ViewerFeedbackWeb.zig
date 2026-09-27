@@ -374,6 +374,10 @@ fn apply(self: *ViewerFeedbackWeb, message: page.Message) void {
         // the user just did, and dropping it because a seed happened to be in
         // flight would be a paste that silently did nothing.
         .image => |img| self.bar.composerImage(img),
+        // Not generation-guarded either: the journal is not a measurement of
+        // the document, and the page posts it AFTER the seed that changed it,
+        // so the last one to arrive is always the page's current history.
+        .journal => |j| self.bar.composerJournal(j),
     }
 }
 
@@ -431,6 +435,12 @@ pub fn seed(
         undoable,
     ) catch return;
     defer self.alloc.free(json);
+    self.post(json);
+}
+
+/// Hand a fresh page the undo journal an earlier one reported (T1006). `json`
+/// is that `journal` message verbatim; see `page.Journal`.
+pub fn restoreJournal(self: *ViewerFeedbackWeb, json: []const u8) void {
     self.post(json);
 }
 

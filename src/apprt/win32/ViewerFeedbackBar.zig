@@ -125,6 +125,14 @@ suppress_sync: bool = false,
 /// FIRST echo is the only proof from outside the process that the whole round
 /// trip works, so it is logged; see `composerState`.
 echoed: bool = false,
+/// The page's undo journal as it last reported it, kept HERE because the page
+/// does not outlive a close and the report text does (T1006). A `journal`
+/// message verbatim — the same JSON goes back down to a fresh page, which is
+/// all native ever does with it. Null when there is nothing to undo, and
+/// dropped by every native write that is not an insertion, for the reason the
+/// page drops its own copy: an undo must never resurrect a report that was
+/// already sent.
+journal: ?[]u8 = null,
 /// The scale and pill colour the page's CSS custom properties were last built
 /// from. Pushing them is cheap but not free — the page re-measures its wrapped
 /// line count on every push — so it happens when they MOVE, not on every
@@ -347,6 +355,7 @@ pub fn destroy(self: *ViewerFeedbackBar) void {
     _ = w32.DestroyWindow(self.hwnd);
     if (self.caption_font) |f| _ = w32.DeleteObject(@ptrCast(f));
     self.dropThumbs();
+    self.dropJournal();
     self.alloc.destroy(self);
 }
 
@@ -506,6 +515,25 @@ fn closeComposer(self: *ViewerFeedbackBar) void {
 pub fn composerReady(self: *ViewerFeedbackBar) void {
     self.pushComposerVars(true);
     self.seedPage(null, false);
+    // ...and then give it back its history (T1006). After the seed, because a
+    // seed that is not an edit clears the page's journal; the page applies
+    // the two in the order they were posted.
+    if (self.journal) |j| {
+        if (self.web) |wv| wv.restoreJournal(j);
+    }
+}
+
+/// The page's undo journal changed. Kept verbatim so a page created after the
+/// next close can be handed it back (T1006); an empty one is the same as none.
+pub fn composerJournal(self: *ViewerFeedbackBar, j: composer_page.Journal) void {
+    self.dropJournal();
+    if (j.empty) return;
+    self.journal = self.alloc.dupe(u8, j.json) catch null;
+}
+
+fn dropJournal(self: *ViewerFeedbackBar) void {
+    if (self.journal) |j| self.alloc.free(j);
+    self.journal = null;
 }
 
 /// Make the page equal the pane's buffer, with the caret at byte offset
@@ -662,6 +690,10 @@ fn publishQuoteSpans(
 /// that fights the user's typing.
 pub fn composerSync(self: *ViewerFeedbackBar) void {
     if (self.suppress_sync) return;
+    // Whatever the history described is not the document any more — and with
+    // the composer closed there is no page to clear its own copy, so this is
+    // the only place the stale one can go (T1006).
+    self.dropJournal();
     if (self.web == null) return;
     self.seedPage(null, false);
 }
@@ -1061,6 +1093,10 @@ fn spliceComposer(
     self.suppress_sync = false;
     if (shifted) |s| self.pane.feedbackSetQuoteSpans(self.alloc, s);
 
+    // With no page there is nobody to journal this insertion, so a kept
+    // history would skip over it: its first undo would take this edit AND the
+    // one it was recorded for (T1006).
+    if (self.web == null) self.dropJournal();
     self.seedPage(caret_after, true);
     // The band's height follows the page's next snapshot, which the seed above
     // is about to produce; all this owes is the repaint of the chrome around

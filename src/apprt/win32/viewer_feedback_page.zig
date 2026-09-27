@@ -246,6 +246,25 @@ pub const Message = union(enum) {
     focus: bool,
     /// A picture the user pasted or dropped into the box (T936).
     image: Image,
+    /// The undo journal changed (T1006).
+    journal: Journal,
+};
+
+/// The page's structural-undo journal (T983), as it posts it after every change.
+///
+/// It lives on the page and the page does not outlive a close, while the report
+/// text does — so a quote inserted before a close could not be undone after the
+/// reopen, and Ctrl+Z simply stopped working with nothing saying why. The page
+/// posts the journal up whenever it changes; native keeps it and posts the SAME
+/// message back down to the next page, which adopts it. Native never reads the
+/// entries: they are the page's own checkpoints (markup + caret), and the only
+/// things this side acts on are "is it well formed" and "is it empty".
+pub const Journal = struct {
+    /// The whole message, re-serialized — which is also the message that goes
+    /// back down, `t` included.
+    json: []const u8,
+    /// Nothing to undo or redo: the same as having no journal at all.
+    empty: bool,
 };
 
 /// A picture arriving from the page's own clipboard and drag-and-drop events.
@@ -365,7 +384,41 @@ fn parseMessage(aa: Allocator, json_text: []const u8) ?Message {
         } };
     }
     if (std.mem.eql(u8, kind, "image")) return imageMessage(aa, obj);
+    if (std.mem.eql(u8, kind, "journal")) return journalMessage(aa, doc, obj);
     return null;
+}
+
+/// The `journal` message: both stacks must be arrays of checkpoints — an
+/// object whose `html` is a string — or the whole message is dropped. Kept
+/// strict because native hands it to the NEXT page verbatim, and a page that
+/// adopts a malformed history would restore garbage on a keystroke.
+fn journalMessage(aa: Allocator, doc: std.json.Value, obj: std.json.ObjectMap) ?Message {
+    var entries: usize = 0;
+    for ([_][]const u8{ "undo", "redo" }) |name| {
+        const list = switch (obj.get(name) orelse return null) {
+            .array => |a| a,
+            else => return null,
+        };
+        for (list.items) |item| if (!isCheckpoint(item)) return null;
+        entries += list.items.len;
+    }
+    if (obj.get("after")) |after| switch (after) {
+        .null => {},
+        else => if (!isCheckpoint(after)) return null,
+    };
+    const json = std.json.Stringify.valueAlloc(aa, doc, .{}) catch return null;
+    return .{ .journal = .{ .json = json, .empty = entries == 0 } };
+}
+
+fn isCheckpoint(v: std.json.Value) bool {
+    const o = switch (v) {
+        .object => |o| o,
+        else => return false,
+    };
+    return switch (o.get("html") orelse return false) {
+        .string => true,
+        else => false,
+    };
 }
 
 /// The `image` message: base64 in, PNG bytes out — or a named problem.
@@ -721,6 +774,66 @@ test "the page takes the undo chords itself" {
     try testing.expect(std.mem.indexOf(u8, js, "\"undo\" : \"redo\"") != null);
     try testing.expect(std.mem.indexOf(u8, js, "undoStack") != null);
     try testing.expect(std.mem.indexOf(u8, js, "redoStack") != null);
+}
+
+// ---------------------------------------------------------------------
+// The journal outlives the page (T1006)
+// ---------------------------------------------------------------------
+
+test "a journal round-trips as the message that goes back down" {
+    const payload =
+        \\{"t":"journal","undo":[{"html":"a<div class=\"q\" data-qid=\"2\">b</div>","caret":3}],"redo":[],"after":{"html":"x","caret":-1,"key":"x|"}}
+    ;
+    const p = parse(testing.allocator, payload) orelse return error.NotParsed;
+    defer p.deinit();
+    const j = switch (p.message) {
+        .journal => |j| j,
+        else => return error.WrongMessage,
+    };
+    try testing.expect(!j.empty);
+    // What native keeps is what the next page gets, so it must parse back to
+    // the same journal - markup, caret and `t` intact.
+    const again = parse(testing.allocator, j.json) orelse return error.NotParsed;
+    defer again.deinit();
+    try testing.expectEqualStrings(j.json, again.message.journal.json);
+    try testing.expect(std.mem.indexOf(u8, j.json, "\"t\":\"journal\"") != null);
+    try testing.expect(std.mem.indexOf(u8, j.json, "data-qid") != null);
+}
+
+test "a journal with nothing in either stack is empty" {
+    for ([_][]const u8{
+        "{\"t\":\"journal\",\"undo\":[],\"redo\":[]}",
+        "{\"t\":\"journal\",\"undo\":[],\"redo\":[],\"after\":null}",
+    }) |payload| {
+        const p = parse(testing.allocator, payload) orelse return error.NotParsed;
+        defer p.deinit();
+        try testing.expect(p.message.journal.empty);
+    }
+}
+
+test "a malformed journal is dropped, never handed to the next page" {
+    // Native passes the journal on verbatim, so anything a page could not
+    // restore from has to stop here rather than be replayed on a keystroke.
+    for ([_][]const u8{
+        "{\"t\":\"journal\"}",
+        "{\"t\":\"journal\",\"undo\":[]}",
+        "{\"t\":\"journal\",\"undo\":{},\"redo\":[]}",
+        "{\"t\":\"journal\",\"undo\":[\"<b>x</b>\"],\"redo\":[]}",
+        "{\"t\":\"journal\",\"undo\":[{\"caret\":1}],\"redo\":[]}",
+        "{\"t\":\"journal\",\"undo\":[],\"redo\":[{\"html\":7}]}",
+        "{\"t\":\"journal\",\"undo\":[],\"redo\":[],\"after\":\"x\"}",
+    }) |payload| {
+        try testing.expect(parse(testing.allocator, payload) == null);
+    }
+}
+
+test "the page posts its journal and adopts one handed back" {
+    // Both halves, or the history still dies with the page: the page must
+    // report every change, and must take the message back when a fresh page
+    // is seeded.
+    try testing.expect(std.mem.indexOf(u8, js, "t: \"journal\"") != null);
+    try testing.expect(std.mem.indexOf(u8, js, "m.t === \"journal\"") != null);
+    try testing.expect(std.mem.indexOf(u8, js, "adoptJournal") != null);
 }
 
 test "a pasted picture arrives as bytes" {

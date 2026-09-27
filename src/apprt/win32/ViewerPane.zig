@@ -9114,6 +9114,75 @@ test "host floor: a real controller on a real window, on this box" {
                 pane.feedbackText()[back[0].start..back[0].end],
             );
             try testing.expectEqual(entry.id, pane.feedback_quotes.entries.items[back[0].index].id);
+
+            // --------------------------------------------------------------
+            // T1006: the history survives a close and a reopen
+            // --------------------------------------------------------------
+            //
+            // The page that journalled the quote is destroyed on close, and a
+            // fresh one is built from the buffer on reopen. Type after the
+            // quote first, so the reopen also has to account for typing the
+            // old page's engine knew how to undo and the new one never saw.
+            const quoted = pane.feedbackText();
+            const with_quote = try alloc.dupe(u8, quoted);
+            defer alloc.free(with_quote);
+            composer.web.?.executeScript(
+                \\(function () {
+                \\  var box = document.getElementById("c");
+                \\  var r = document.createRange();
+                \\  r.selectNodeContents(box);
+                \\  r.collapse(false);
+                \\  var sel = window.getSelection();
+                \\  sel.removeAllRanges();
+                \\  sel.addRange(r);
+                \\  document.execCommand("insertText", false, " typed after");
+                \\})()
+            );
+            try waitFor(&msg, 30, struct {
+                fn ready(p: *ViewerPane) bool {
+                    return std.mem.endsWith(u8, p.feedbackText(), " typed after");
+                }
+            }.ready, &pane);
+            try testing.expect(composer.journal != null);
+
+            pane.setFeedbackOpen(false);
+            try testing.expect(composer.web == null);
+            // Native kept the history the page no longer exists to hold.
+            try testing.expect(composer.journal != null);
+            pane.setFeedbackOpen(true);
+            try testing.expect(composer.web != null);
+            try waitFor(&msg, 30, struct {
+                fn ready(p: *ViewerPane) bool {
+                    const bar = p.feedback orelse return false;
+                    return bar.echoed and bar.page_quotes == 1;
+                }
+            }.ready, &pane);
+
+            // First Ctrl+Z: the typing goes, as one step, and the quote stays.
+            const WithQuote = struct {
+                var want: []const u8 = "";
+                fn ready(p: *ViewerPane) bool {
+                    const spans = p.feedback_quote_spans orelse return false;
+                    return spans.len == 1 and std.mem.eql(u8, p.feedbackText(), want);
+                }
+            };
+            WithQuote.want = with_quote;
+            composer.web.?.executeScript(undo_js);
+            try waitFor(&msg, 30, WithQuote.ready, &pane);
+
+            // Second: the quote the CLOSED page inserted comes back out.
+            composer.web.?.executeScript(undo_js);
+            try waitFor(&msg, 30, Undone.ready, &pane);
+            try testing.expectEqual(@as(usize, 0), pane.feedbackQuoteCount(alloc));
+            log.warn("undo after reopen: back to {d} bytes, {d} live quote(s)", .{
+                pane.feedbackText().len,
+                pane.feedbackQuoteCount(alloc),
+            });
+
+            // ...and redo puts the quote back, with its id, for the arms below.
+            composer.web.?.executeScript(redo_js);
+            try waitFor(&msg, 30, WithQuote.ready, &pane);
+            try testing.expectEqual(entry.id, pane.feedback_quotes.entries.items[pane.feedback_quote_spans.?[0].index].id);
         }
 
         // ------------------------------------------------------------------
@@ -9203,6 +9272,10 @@ test "host floor: a real controller on a real window, on this box" {
                 stem = stem_buf[0..e.name.len];
             }
             try testing.expectEqual(@as(usize, 1), folders);
+            // T1006: the history that survives a close does NOT survive a
+            // send — an undo that brought a filed report back would be worse
+            // than no undo at all.
+            try testing.expect(pane.feedback.?.journal == null);
 
             const report_path = try std.fmt.allocPrint(
                 alloc,
