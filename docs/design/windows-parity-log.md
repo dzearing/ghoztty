@@ -34487,3 +34487,16 @@ Also: `test-client-build.ps1` E2 had been red since T722 (it counted
 `build-locked-artifact.ps1`, whose SUBJECT is the client's build, as a consumer
 that must use the helper); it now excludes that script with the reason.
 ALL PASS (21).
+
+## 2026-09-26 — T1002: windows only the session manager remembers come back when it arrives late
+
+A crash that lost the local manifest, followed by a launch that could not reach
+the agent, used to leave the user with one blank window until the NEXT launch:
+the deferred restore (T976) only ever rebuilt carried manifest entries, and
+there were none. The launch now records that it never read the agent's layout
+store (`restore_agent_unasked`), `restore_retry.shouldArm` arms on that alone,
+and the deferred pass adds every agent-only window that is not already on this
+screen (`session_layout.shownHere`: a live window's uuid, or a session a live
+pane shows). `restore-late-agent.ps1` phase E: ALL PASS (36); floor lanes,
+P1-P3 and every due guard green. Filed T1772 (the recovered `window-1` comes
+back under a minted name because the stand-in window held it).

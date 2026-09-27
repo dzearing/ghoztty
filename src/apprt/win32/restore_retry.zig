@@ -65,8 +65,16 @@ pub fn budgetMs() u64 {
 /// is to know about those windows (they are held by another running instance,
 /// or their build failed), and neither is cured by waiting for an agent that
 /// is already there.
-pub fn shouldArm(pending: usize, adjudicated: bool) bool {
-    return pending > 0 and !adjudicated;
+///
+/// `unasked` is true when the launch never reached the agent at all, so it
+/// never pulled the agent's layout blobs (T1002). A window that exists ONLY
+/// there — the crash-orphaned window T194 recovers — was then never offered,
+/// and it is not in `pending` because nothing on this side knows its key. That
+/// is unfinished work even with `pending` at zero: it is the headline T194
+/// shape (a crash left the manifest empty) meeting a late agent.
+pub fn shouldArm(pending: usize, adjudicated: bool, unasked: bool) bool {
+    if (adjudicated) return false;
+    return pending > 0 or unasked;
 }
 
 /// What one retry tick should do.
@@ -83,9 +91,11 @@ pub const Verdict = enum {
 };
 
 /// The tick decision. `attempt` is the 0-based index of the retry that is
-/// about to be armed, i.e. how many have already been spent.
-pub fn evaluate(pending: usize, agent_up: bool, attempt: usize) Verdict {
-    if (pending == 0) return .stand_down;
+/// about to be armed, i.e. how many have already been spent. `unasked` is
+/// `shouldArm`'s: the agent's own layout store has not been read yet, so there
+/// is something to wait for even when no manifest window was carried.
+pub fn evaluate(pending: usize, unasked: bool, agent_up: bool, attempt: usize) Verdict {
+    if (pending == 0 and !unasked) return .stand_down;
     if (agent_up) return .restore;
     if (retryDelayMs(attempt) == null) return .exhausted;
     return .retry;
@@ -123,36 +133,50 @@ test "shouldArm: only an unadjudicated launch with something left to restore" {
     const testing = std.testing;
 
     // The T976 case: windows carried because no agent answered.
-    try testing.expect(shouldArm(3, false));
+    try testing.expect(shouldArm(3, false, true));
+    try testing.expect(shouldArm(3, false, false));
 
-    // Nothing carried ⇒ the launch restored everything it was offered.
-    try testing.expect(!shouldArm(0, false));
+    // Nothing carried, and the agent's store WAS read ⇒ the launch restored
+    // everything it was offered.
+    try testing.expect(!shouldArm(0, false, false));
+
+    // T1002: nothing carried, but the launch never reached the agent, so the
+    // windows only the agent remembers were never offered. That is the
+    // crash-with-an-empty-manifest shape, and it is the one worth waiting for.
+    try testing.expect(shouldArm(0, false, true));
 
     // The agent answered and the probe landed: those windows are held by
     // another instance or failed to build, and no amount of waiting changes
     // either. Arming here would re-probe a healthy agent 16 times for nothing.
-    try testing.expect(!shouldArm(3, true));
-    try testing.expect(!shouldArm(0, true));
+    try testing.expect(!shouldArm(3, true, false));
+    try testing.expect(!shouldArm(0, true, false));
 }
 
 test "evaluate: the agent arriving wins over the schedule, and an empty set stands down" {
     const testing = std.testing;
 
     // Agent up ⇒ restore, whatever the attempt count says.
-    try testing.expectEqual(Verdict.restore, evaluate(2, true, 0));
-    try testing.expectEqual(Verdict.restore, evaluate(2, true, retry_delays_ms.len - 1));
+    try testing.expectEqual(Verdict.restore, evaluate(2, false, true, 0));
+    try testing.expectEqual(Verdict.restore, evaluate(2, false, true, retry_delays_ms.len - 1));
 
     // Still down, room left ⇒ keep waiting.
-    try testing.expectEqual(Verdict.retry, evaluate(2, false, 0));
-    try testing.expectEqual(Verdict.retry, evaluate(2, false, retry_delays_ms.len - 1));
+    try testing.expectEqual(Verdict.retry, evaluate(2, false, false, 0));
+    try testing.expectEqual(Verdict.retry, evaluate(2, false, false, retry_delays_ms.len - 1));
 
     // Still down, schedule spent ⇒ give up (the carried entries survive to the
     // next launch; that is the pre-T976 behaviour, reached later instead of
     // immediately).
-    try testing.expectEqual(Verdict.exhausted, evaluate(2, false, retry_delays_ms.len));
+    try testing.expectEqual(Verdict.exhausted, evaluate(2, false, false, retry_delays_ms.len));
 
     // Nothing pending is never a complaint, in either link state.
-    try testing.expectEqual(Verdict.stand_down, evaluate(0, false, 0));
-    try testing.expectEqual(Verdict.stand_down, evaluate(0, true, 0));
-    try testing.expectEqual(Verdict.stand_down, evaluate(0, false, retry_delays_ms.len));
+    try testing.expectEqual(Verdict.stand_down, evaluate(0, false, false, 0));
+    try testing.expectEqual(Verdict.stand_down, evaluate(0, false, true, 0));
+    try testing.expectEqual(Verdict.stand_down, evaluate(0, false, false, retry_delays_ms.len));
+
+    // T1002: an unread agent store is something to wait for on its own — an
+    // empty carried set with the agent never asked still restores on arrival,
+    // retries while it is absent, and gives up when the schedule runs out.
+    try testing.expectEqual(Verdict.restore, evaluate(0, true, true, 3));
+    try testing.expectEqual(Verdict.retry, evaluate(0, true, false, 0));
+    try testing.expectEqual(Verdict.exhausted, evaluate(0, true, false, retry_delays_ms.len));
 }

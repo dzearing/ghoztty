@@ -589,6 +589,12 @@ pub const Reconciled = struct {
     /// outer slice is allocated, and the caller frees it.
     windows: []const Window,
     adopted: usize,
+
+    /// The agent-only entries — the ones `reconcile` ADOPTED — which are the
+    /// tail of `windows` by construction.
+    pub fn adoptedWindows(self: Reconciled) []const Window {
+        return self.windows[self.windows.len - self.adopted ..];
+    }
 };
 
 /// Union the app-local manifest with the layouts the AGENT holds (T194, Mac's
@@ -644,6 +650,32 @@ pub fn reconcile(
     }
 
     return .{ .windows = try out.toOwnedSlice(alloc), .adopted = adopted };
+}
+
+/// Whether an agent-held window is ALREADY on this instance's screen (T1002),
+/// so rebuilding it would put the same window up twice.
+///
+/// Asked by the DEFERRED restore about the windows only the agent remembers.
+/// The launch pass never has to ask: it runs before any window of this process
+/// exists. The deferred pass runs up to a minute later, by which time this
+/// process has a startup window, anything the user opened since, and a blob in
+/// the agent's store for each of them (`pushLayoutBlobs` mirrors every live
+/// window under its uuid). Two ways the agent's copy can be one of ours:
+///
+///   * its KEY is a live window's `layout_uuid` — our own mirror, read back;
+///   * it names a SESSION a live pane of ours is showing — the same shell under
+///     another key, which the agent would hand to whichever pane attached last
+///     (T703), taking it from the one the user is looking at (T1684).
+///
+/// Either one means "leave it alone". Neither is a verdict about the window's
+/// future, so the caller does not carry it forward either.
+pub fn shownHere(
+    win: Window,
+    live_keys: *const std.StringHashMapUnmanaged(void),
+    live_sessions: *const std.StringHashMapUnmanaged(void),
+) bool {
+    if (live_keys.contains(windowKey(win))) return true;
+    return sessionsClaimed(live_sessions, win);
 }
 
 /// Record every session id `win` references as spoken for.
@@ -1309,6 +1341,65 @@ test "reconcile: an empty local manifest recovers the agent's whole set" {
     defer alloc.free(r.windows);
     try testing.expectEqual(@as(usize, 2), r.windows.len);
     try testing.expectEqual(@as(usize, 2), r.adopted);
+}
+
+test "reconcile: adoptedWindows is exactly the agent-only tail" {
+    const alloc = testing.allocator;
+    var ln: [1]Node = undefined;
+    var lt: [1]Tab = undefined;
+    var an: [1]Node = undefined;
+    var at: [1]Tab = undefined;
+    var bn: [1]Node = undefined;
+    var bt: [1]Tab = undefined;
+    const local = [_]Window{reconcileWindow("window-1", "uuid-local", "sess-a", &ln, &lt)};
+    const agent = [_]Window{
+        // Same key as the local one: a mirror, not an adoption.
+        reconcileWindow("window-1", "uuid-local", "sess-a", &an, &at),
+        reconcileWindow("window-9", "uuid-orphan", "sess-b", &bn, &bt),
+    };
+
+    const r = try reconcile(alloc, &local, &agent);
+    defer alloc.free(r.windows);
+    const adopted = r.adoptedWindows();
+    try testing.expectEqual(@as(usize, 1), adopted.len);
+    try testing.expectEqualStrings("uuid-orphan", adopted[0].uuid.?);
+
+    // Nothing adopted ⇒ an empty tail, never an out-of-range slice.
+    const r2 = try reconcile(alloc, &local, &.{});
+    defer alloc.free(r2.windows);
+    try testing.expectEqual(@as(usize, 0), r2.adoptedWindows().len);
+}
+
+test "shownHere: a live key or a live session makes an agent window ours already" {
+    const alloc = testing.allocator;
+    var n0: [1]Node = undefined;
+    var t0: [1]Tab = undefined;
+    var n1: [1]Node = undefined;
+    var t1: [1]Tab = undefined;
+    var n2: [1]Node = undefined;
+    var t2: [1]Tab = undefined;
+    const mirror = reconcileWindow("window-1", "uuid-live", "sess-x", &n0, &t0);
+    const same_shell = reconcileWindow("window-7", "uuid-other", "sess-live", &n1, &t1);
+    const orphan = reconcileWindow("window-9", "uuid-orphan", "sess-orphan", &n2, &t2);
+
+    var keys: std.StringHashMapUnmanaged(void) = .empty;
+    defer keys.deinit(alloc);
+    var sessions: std.StringHashMapUnmanaged(void) = .empty;
+    defer sessions.deinit(alloc);
+
+    // Nothing on screen: nothing is ours, including the would-be duplicates.
+    try testing.expect(!shownHere(mirror, &keys, &sessions));
+    try testing.expect(!shownHere(same_shell, &keys, &sessions));
+
+    try keys.put(alloc, "uuid-live", {});
+    try sessions.put(alloc, "sess-live", {});
+
+    // Our own mirror read back, by key.
+    try testing.expect(shownHere(mirror, &keys, &sessions));
+    // A different key naming a shell a live pane is showing.
+    try testing.expect(shownHere(same_shell, &keys, &sessions));
+    // The crash orphan the deferred pass exists to bring back.
+    try testing.expect(!shownHere(orphan, &keys, &sessions));
 }
 
 test "reconcile: LOCAL wins on a key collision" {

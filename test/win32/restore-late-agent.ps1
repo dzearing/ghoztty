@@ -32,6 +32,10 @@
 #      window, untouched, is closed once the real ones are back (C5/C6).
 #   D. The same blackout again, but the blank window is typed into first. It
 #      must survive the restore (D5) - the control that keeps C5 honest.
+#   E. T1002: the app CRASHES and its manifest is lost, so only the agent's
+#      layout store remembers the windows; the next launch cannot reach the
+#      agent either. When the agent arrives, those windows come back into the
+#      same process (E3/E4), live (E5), and nothing comes back twice (E6/E7).
 #
 # Hermetic: per-run LOCALAPPDATA, per-run agent binary override, a private IPC
 # pipe suffix, and it only ever kills ghoztty processes launched from this
@@ -336,6 +340,74 @@ try {
     $keptD = @($blankD | Where-Object { $nowD -contains $_ })
     Assert ($blankD.Count -ge 1 -and $keptD.Count -eq $blankD.Count) `
         "D5 the blank window that was typed into is still open (want: $($blankD -join ', '); all: $($nowD -join ', '))"
+
+    # ---- E: a window ONLY the agent remembers (T1002) -----------------------
+    # The app crashes, and the crash takes the local manifest with it; the agent
+    # alone still holds a layout for every window. The next launch cannot reach
+    # the agent either. Before T1002 that launch had no key naming those windows,
+    # so the deferred pass had nothing to wait for and they came back only on the
+    # launch after. Now the late agent is ASKED what it holds, and every window
+    # it holds that is not already on this screen is rebuilt in this process.
+    Say '== E: crash, lose the manifest, relaunch agentless, then start the agent'
+    # Give the layout push for D's final topology room to reach the agent's
+    # store before the crash.
+    Start-Sleep -Seconds 3
+    Stop-Process -Id $lateD.Pid -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 800
+    Remove-Item -Force (Manifest-Path $tmp) -ErrorAction SilentlyContinue
+    Assert (-not (Test-Path (Manifest-Path $tmp))) `
+        'E0 the crash left no local manifest (setup control: only the agent remembers)'
+    Stop-Process -Id $script:lateAgent.Id -Force -ErrorAction SilentlyContinue
+    $script:lateAgent = $null
+    Stop-RepoInstances
+
+    # persistence: on (default) - the arm is ABOUT persistence: the agent's
+    # layout store is the only record left, and the flag would disable it.
+    $lateE = Start-OnTestDesktop -Exe $exe
+    if ((Wait-TestWindow -ProcessId $lateE.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
+        Say 'SETUP FAIL: the third agentless app has no GhozttyWindow'
+    }
+    Start-Sleep -Seconds 6
+    $blackoutE = @(Get-Targets)
+    Assert ($blackoutE.Count -eq 1 -and ($blackoutE -notcontains 'solo')) `
+        "E1 the agentless launch had nothing to restore from - one blank window only (got: $($blackoutE -join ', '))"
+    $mE = Read-Manifest $tmp
+    Assert (@(Manifest-Names $mE) -notcontains 'solo') `
+        "E2 the local manifest does not know the orphaned windows (negative control; has: $((Manifest-Names $mE) -join ', '))"
+
+    $script:lateAgent = Start-Process -FilePath $agent -PassThru -WindowStyle Hidden `
+        -RedirectStandardOutput (Join-Path $root 'late-agent-e-out.txt') `
+        -RedirectStandardError (Join-Path $root 'late-agent-e-err.txt') `
+        -ArgumentList $agentArgs
+    $null = $script:lateAgent.Handle
+    $afterE = @(Wait-Targets @('solo', 'window-2') 60)
+    Assert (($afterE -contains 'solo') -and ($afterE -contains 'window-2')) `
+        "E3 the windows only the agent remembered came back once it arrived (got: $($afterE -join ', '))"
+    $ghostsE = @(Get-CimInstance Win32_Process -Filter "Name='ghoztty.exe'" |
+        Where-Object { $_.ExecutablePath -like (Join-Path $repo 'zig-out*') } |
+        ForEach-Object { [int]$_.ProcessId })
+    Assert ($ghostsE -contains [int]$lateE.Pid) `
+        "E4 they landed in the SAME app process (pid $($lateE.Pid); live: $($ghostsE -join ', '))"
+    Assert (Test-PaneLive -Exe $exe -Target 'solo' -Tmp $root -Tag 'ORPHAN') `
+        'E5 an orphan-restored window is LIVE: input reaches its child and output returns'
+
+    # No duplicates: the launch's own blank window has a blob in the agent's
+    # store by now, and a pass that rebuilt it would show one window too many.
+    # What SHOULD come back is D's three agent-backed windows. D's typed-in
+    # blank window is not one of them: it opened with no agent, so its shell was
+    # a local one that died with the crash, and nothing holds it to restore.
+    # (`window-1` itself returns under a freshly minted name - E's stand-in
+    # window already held the name, and a window nobody could read in advance
+    # cannot have it reserved. That is T1772's, not this task's.)
+    Start-Sleep -Seconds 4
+    $nowE = @(Get-Targets)
+    $dupesE = @(Get-Duplicates $nowE)
+    Assert ($dupesE.Count -eq 0) `
+        "E6 every window has a target name nobody else holds (dupes: $($dupesE -join ', '); all: $($nowE -join ', '))"
+    Assert ($nowE.Count -eq $want.Count) `
+        "E7 exactly the agent-backed windows are back - none twice, the stand-in put away (want $($want.Count); got: $($nowE -join ', '))"
+    $mE2 = Wait-Manifest $tmp { param($mm) (@(Manifest-Names $mm) -contains 'solo') } 20
+    Assert ($null -ne $mE2) 'E8 the recovered windows were adopted back into the local manifest'
 
 } catch {
     # T1511: this try is not the whole body - the foreground-leak check below

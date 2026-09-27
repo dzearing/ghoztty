@@ -651,6 +651,13 @@ restore_retry_attempts: usize = 0,
 /// True while `RESTORE_RETRY_TIMER_ID` is armed (T976).
 restore_retry_armed: bool = false,
 
+/// The launch restore could not reach the local agent, so it never read the
+/// agent's layout blobs (T1002). A window that lives ONLY there — T194's
+/// crash-orphaned window — was never offered, and no carried key names it, so
+/// this flag is what tells the deferred pass to go and ask. Cleared once the
+/// deferred pass has asked, or has given up.
+restore_agent_unasked: bool = false,
+
 /// The blank window this launch opened because its restore could not finish
 /// (T1003), kept only while the deferred pass is still pending. When that pass
 /// rebuilds the real windows, this one is closed if nobody has used it
@@ -3937,6 +3944,7 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
         "session-restore: no local agent; restoring only windows that need none",
         .{},
     );
+    if (!deferred) self.restore_agent_unasked = conn == null;
 
     // T194: ALWAYS ask the agent what it holds, even with a healthy manifest —
     // that is the whole point, since the case worth recovering is exactly the
@@ -3954,7 +3962,13 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
         return false;
     };
     defer gpa.free(union_set.windows);
-    if (union_set.windows.len == 0) return false;
+    if (union_set.windows.len == 0) {
+        // T1002: an empty union is not a finished restore when the agent was
+        // never asked — the crash that emptied the manifest is exactly the case
+        // whose windows exist only in the agent's store.
+        if (!deferred) self.armDeferredRestore(union_set.windows, false);
+        return false;
+    }
     if (union_set.adopted > 0) {
         log.info(
             "session-restore: recovered {d} crash-orphaned window(s) from the agent " ++
@@ -3962,6 +3976,19 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
             .{ union_set.adopted, local_windows.len },
         );
     }
+
+    // What this pass will try to build. The launch pass offers everything; the
+    // deferred pass narrows to what an earlier pass left unfinished (T976) plus,
+    // when the launch never reached the agent, the windows only the agent holds
+    // that are not already on screen here (T1002). Narrowing HERE, before the
+    // probe, also keeps the attach-flag settle below from waiting on our own
+    // live panes: every window this process shows reads as held.
+    var deferred_set: std.ArrayList(session_layout.Window) = .empty;
+    defer deferred_set.deinit(gpa);
+    const pass_windows: []const session_layout.Window = if (only) |keys| blk: {
+        self.collectDeferredWindows(union_set, keys, &deferred_set);
+        break :blk deferred_set.items;
+    } else union_set.windows;
 
     // Probe the roster. A null set ⇒ the probe failed (UNKNOWN — attempt every
     // leaf); a present set holds every session we can ATTACH: alive (same-PID
@@ -3988,7 +4015,7 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
     // window alone, and carry it to the next launch.
     if (conn) |c| {
         var waited: u64 = 0;
-        while (anyRestoreWindowHeld(union_set.windows, probe.heldSet()) and
+        while (anyRestoreWindowHeld(pass_windows, probe.heldSet()) and
             waited < restore_attach_settle_budget_ns)
         {
             std.Thread.sleep(restore_attach_settle_interval_ns);
@@ -4003,7 +4030,7 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
             "session-restore: waited {d}ms for attach flags to settle; {s}",
             .{
                 waited / std.time.ns_per_ms,
-                if (anyRestoreWindowHeld(union_set.windows, probe.heldSet()))
+                if (anyRestoreWindowHeld(pass_windows, probe.heldSet()))
                     "a running instance still holds them"
                 else
                     "they cleared (the holder was gone)",
@@ -4048,19 +4075,21 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
     defer self.endRestoreClaims();
 
     var restored: usize = 0;
-    for (union_set.windows) |win| {
+    for (pass_windows) |win| {
         // T188: a window boundary is the natural yield point — nothing of this
         // one is half-built, and each window costs an ATTACH per pane. A caller
         // that lands mid-restore sees the windows built so far, which is a
         // truthful partial answer; before this it saw no answer at all.
         gui_pump.pump();
-        // T976: the deferred pass rebuilds ONLY what an earlier pass carried.
-        // A skip here is not a drop — the window is either already on screen or
-        // was never this pass's to consider — so it must not be carried either,
-        // or the retry would keep re-adjudicating windows it will never build.
-        if (only) |keys| {
-            if (!containsKey(keys, session_layout.windowKey(win))) continue;
-        }
+        // Carrying keeps a MANIFEST entry alive through the next rewrite, so it
+        // only means anything for a window the manifest holds. A window the
+        // deferred pass found only in the agent's store (T1002) has no entry to
+        // keep, and carrying its key would only make the "could not give back"
+        // count report windows the next launch finds in the agent anyway.
+        const carryable = if (only) |keys|
+            containsKey(keys, session_layout.windowKey(win))
+        else
+            true;
         if (!restoreWindowHasAttachableLeaf(win, attach_ptr)) {
             // T851: two drops that look identical here and mean opposite
             // things. "Every session is gone" is an adjudication and the
@@ -4073,7 +4102,7 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
                 "session-restore: '{s}' is open in another running instance; leaving it there",
                 .{win.id},
             );
-            if (held or !positively_adjudicated) self.carryUnrestoredWindow(win);
+            if (carryable and (held or !positively_adjudicated)) self.carryUnrestoredWindow(win);
             continue;
         }
         const tr: RestoreTransport = if (conn) |c| .local(c) else .agentless();
@@ -4082,49 +4111,13 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
             // A build failure is never an adjudication: keep the entry so the
             // next launch can try again (Mac keeps entries on any non-dead
             // failure too).
-            self.carryUnrestoredWindow(win);
+            if (carryable) self.carryUnrestoredWindow(win);
             continue;
         };
         restored += 1;
         collectAttachedLeaves(win, attach_ptr, &attached_ids, &attached_panes);
     }
-    if (self.carried_layout_windows.count() > 0) {
-        // T976: "for the next launch" is the LAST resort, not the first. When
-        // the reason those windows are still here is an agent that had not come
-        // up within `spawn_deadline_ms` — not an adjudication that their
-        // sessions are gone — the restore is unfinished rather than decided, so
-        // arm the deferred pass and finish it when the agent arrives.
-        if (!deferred and restore_retry.shouldArm(
-            self.carried_layout_windows.count(),
-            positively_adjudicated,
-        )) {
-            log.info(
-                "session-restore: {d} window(s) still need the local agent; " ++
-                    "retrying for up to {d}s before deferring them to the next launch",
-                .{ self.carried_layout_windows.count(), restore_retry.budgetMs() / 1000 },
-            );
-            // Hold their `window-N` names against the blank startup window this
-            // launch is about to open (T121's counter, from the other side).
-            // The counter restarts at zero every run and only ever moves
-            // FORWARD, so a startup window that mints `window-1` first makes the
-            // carried `window-1` unreachable when the deferred pass finally
-            // rebuilds it: the incumbent wins the registration, and every
-            // `--target=window-1` a script was written against lands on a blank
-            // terminal instead. Reserving now costs nothing and keeps each name
-            // for its owner.
-            for (union_set.windows) |w| {
-                const name = w.ipc_name orelse continue;
-                if (self.carried_layout_windows.contains(session_layout.windowKey(w)))
-                    self.ipcReserveWindowName(name);
-            }
-            self.armRestoreRetry();
-        } else if (!deferred) {
-            log.info(
-                "session-restore: keeping {d} unrestored manifest window(s) for the next launch",
-                .{self.carried_layout_windows.count()},
-            );
-        }
-    }
+    if (!deferred) self.armDeferredRestore(union_set.windows, positively_adjudicated);
     if (restored == 0) return false;
     log.info("session-restore: restored {d} window(s)", .{restored});
 
@@ -4168,6 +4161,110 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
     // IS the adopt; the message loop `run` is about to enter fires it.
     if (union_set.adopted > 0) self.markLayoutDirty();
     return true;
+}
+
+/// Decide, at the end of the LAUNCH pass, whether the restore is finished or
+/// only waiting on the agent (T976, T1002). `windows` is the pass's union set,
+/// for the name reservation; `adjudicated` is its `positively_adjudicated`.
+fn armDeferredRestore(
+    self: *App,
+    windows: []const session_layout.Window,
+    adjudicated: bool,
+) void {
+    const pending = self.carried_layout_windows.count();
+    // T976: "for the next launch" is the LAST resort, not the first. When the
+    // reason those windows are still here is an agent that had not come up
+    // within `spawn_deadline_ms` — not an adjudication that their sessions are
+    // gone — the restore is unfinished rather than decided, so arm the deferred
+    // pass and finish it when the agent arrives. T1002: the same holds with
+    // nothing carried at all, when the agent was never asked what IT holds.
+    if (!restore_retry.shouldArm(pending, adjudicated, self.restore_agent_unasked)) {
+        if (pending > 0) log.info(
+            "session-restore: keeping {d} unrestored manifest window(s) for the next launch",
+            .{pending},
+        );
+        return;
+    }
+    log.info(
+        "session-restore: {d} window(s) still need the local agent{s}; " ++
+            "retrying for up to {d}s before deferring them to the next launch",
+        .{
+            pending,
+            if (self.restore_agent_unasked) " and its own layouts are unread" else "",
+            restore_retry.budgetMs() / 1000,
+        },
+    );
+    // Hold their `window-N` names against the blank startup window this launch
+    // is about to open (T121's counter, from the other side). The counter
+    // restarts at zero every run and only ever moves FORWARD, so a startup
+    // window that mints `window-1` first makes the carried `window-1`
+    // unreachable when the deferred pass finally rebuilds it: the incumbent
+    // wins the registration, and every `--target=window-1` a script was written
+    // against lands on a blank terminal instead. Reserving now costs nothing
+    // and keeps each name for its owner. (A window only the agent knows cannot
+    // be reserved for: its name is in the store nobody could read yet.)
+    for (windows) |w| {
+        const name = w.ipc_name orelse continue;
+        if (self.carried_layout_windows.contains(session_layout.windowKey(w)))
+            self.ipcReserveWindowName(name);
+    }
+    self.armRestoreRetry();
+}
+
+/// The DEFERRED pass's window set (T976, T1002), appended to `out`: every
+/// window of `union_set` whose key an earlier pass carried, plus — when the
+/// launch never reached the agent — every window only the agent holds that is
+/// not already on this instance's screen (`session_layout.shownHere`). `out`
+/// borrows from `union_set`. GUI thread.
+fn collectDeferredWindows(
+    self: *App,
+    union_set: session_layout.Reconciled,
+    carried: []const []const u8,
+    out: *std.ArrayList(session_layout.Window),
+) void {
+    const gpa = self.core_app.alloc;
+    for (union_set.windows) |win| {
+        if (!containsKey(carried, session_layout.windowKey(win))) continue;
+        out.append(gpa, win) catch continue;
+    }
+    if (!self.restore_agent_unasked) return;
+
+    // What is on screen right now. Keys borrow each Window's `layout_uuid` and
+    // ids borrow each pane's termio; both outlive this function, which is the
+    // only place the sets are read.
+    var live_keys: std.StringHashMapUnmanaged(void) = .empty;
+    defer live_keys.deinit(gpa);
+    var live_sessions: std.StringHashMapUnmanaged(void) = .empty;
+    defer live_sessions.deinit(gpa);
+    for (self.windows.items) |w| {
+        live_keys.put(gpa, w.layoutUuid(), {}) catch {};
+        for (0..w.tab_count) |t| {
+            var it = w.tab_trees[t].iterator();
+            while (it.next()) |entry| {
+                const surface = entry.view.surface() orelse continue;
+                if (!surface.core_surface_ready) continue;
+                const sid = surface.core_surface.remoteSessionId() orelse continue;
+                live_sessions.put(gpa, sid, {}) catch {};
+            }
+        }
+    }
+
+    var late: usize = 0;
+    var shown: usize = 0;
+    for (union_set.adoptedWindows()) |win| {
+        if (containsKey(carried, session_layout.windowKey(win))) continue;
+        if (session_layout.shownHere(win, &live_keys, &live_sessions)) {
+            shown += 1;
+            continue;
+        }
+        out.append(gpa, win) catch continue;
+        late += 1;
+    }
+    log.info(
+        "session-restore: the agent holds {d} window(s) the launch could not ask about " ++
+            "({d} already on screen here, left alone)",
+        .{ late, shown },
+    );
 }
 
 /// Whether `key` is one of `keys`. Linear on purpose: the deferred restore's
@@ -4230,17 +4327,20 @@ fn tickRestoreRetry(self: *App) void {
 
     switch (restore_retry.evaluate(
         self.carried_layout_windows.count(),
+        self.restore_agent_unasked,
         agent_up,
         self.restore_retry_attempts,
     )) {
         .stand_down => {
             self.restore_placeholder_window = null;
+            self.restore_agent_unasked = false;
             self.cancelRestoreRetry();
             return;
         },
         .exhausted => {
             // The stand-in window is now simply the user's terminal.
             self.restore_placeholder_window = null;
+            self.restore_agent_unasked = false;
             self.reportRestoreDeferred();
             self.cancelRestoreRetry();
             return;
@@ -4257,8 +4357,11 @@ fn tickRestoreRetry(self: *App) void {
     const gpa = self.core_app.alloc;
     log.info(
         "session-restore: the local agent came up after the launch; completing " ++
-            "the restore of {d} window(s)",
-        .{self.carried_layout_windows.count()},
+            "the restore of {d} carried window(s){s}",
+        .{
+            self.carried_layout_windows.count(),
+            if (self.restore_agent_unasked) " and reading its own layouts" else "",
+        },
     );
 
     // Snapshot the carried keys, because the pass below empties the map and
@@ -4280,13 +4383,15 @@ fn tickRestoreRetry(self: *App) void {
             continue;
         };
     }
-    if (keys.items.len == 0) {
+    if (keys.items.len == 0 and !self.restore_agent_unasked) {
         self.restore_placeholder_window = null;
         self.cancelRestoreRetry();
         return;
     }
 
     const restored = self.restorePass(keys.items);
+    // Asked now, whatever the answer was: the pass runs once (see below).
+    self.restore_agent_unasked = false;
     self.retireRestorePlaceholder(restored);
 
     // The manifest must learn what just happened either way: a rebuilt window
