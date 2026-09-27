@@ -34621,3 +34621,13 @@ and tab-rename box are opaque layered children. New input-desktop harness
 translucent-window.ps1 (checker-vs-blue see-through oracle) ALL PASS 11, 5 FAIL
 on the pre-fix build. Floor lanes, harness floor, 22 due guards, P1-P3 green.
 Filed T1789 (reload ignores opacity), T1790 (toggled-opaque bg premultiplied).
+
+## 2026-09-27 — T1760: chooser session cards drop the redundant "open" chip
+
+chooser_sessions.badges no longer paints `open` for a row held by one of our
+panes (Mac dropped it: the Show button says it). `attached` stays, because
+Windows still lists rows other viewers hold - filed T1791 for Mac's
+`actionable` filter. New per-row log oracle `row id= open= badges=`.
+chooser-sessions.ps1: name-band pixel scan (8 px on the pre-fix build, 0 now)
+plus the log line; its post-kill refetch assertion was reading a pushed
+pre-kill load and now waits for the load after the kill. ALL PASS 21.

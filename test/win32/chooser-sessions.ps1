@@ -210,21 +210,44 @@ try {
         Assert ($script:cardLum -gt $script:bgLum) `
             "the first card's fill is lighter than the pane behind it ($($script:cardLum) vs $($script:bgLum))"
 
-        # The `open` badge: every session in this fixture IS open in one of the
-        # app's own panes, so each card must carry the GREEN badge and not the
-        # neutral `attached` one. Scanned rather than measured - a badge sits
-        # after the label, whose width comes from text metrics and therefore
-        # cannot be re-derived here (T256). Any strongly green pixel on the
-        # first card's title line is the badge; run 2 (no cards at all) is the
-        # negative control for it.
+        # Green on the first card's title line: the liveness dot is drawn in
+        # the `good` tone, so a live card MUST show some. This is the positive
+        # control for the scan below; run 2 (no cards at all) is its negative.
         $green = 0
         for ($x = $geo.Left; $x -lt $geo.Right; $x += 2) {
             $p = Get-TestPixel -Shot $shot -X ($client.Left + $x) -Y ($client.Top + $geo.CardY)
             if ($p -and $p.G -gt ($p.R + 20) -and $p.G -gt ($p.B + 20)) { $green++ }
         }
         $script:greenRun1 = $green
-        Assert ($green -gt 0) "the open badge is drawn on a session open in our own pane ($green px)"
+        Assert ($green -gt 0) "the live card's green liveness dot is seen, so the scan works ($green px)"
+
+        # No `open` chip (T1760). Every session in this fixture IS open in one
+        # of the app's own panes, and Mac dropped that chip because the row's
+        # Show button already says so. It used to sit right after the label,
+        # in the name column - from the column's own left edge to well clear of
+        # the Show button, whose width comes from text metrics (T256). The
+        # label ink is never green there, so any green in this band is a chip.
+        $bandLeft = $geo.NameHeaderX
+        $bandRight = $geo.ActionX - (Get-TestChromeDip 90 $scale)
+        $chip = 0
+        for ($x = $bandLeft; $x -lt $bandRight; $x += 2) {
+            $p = Get-TestPixel -Shot $shot -X ($client.Left + $x) -Y ($client.Top + $geo.CardY)
+            if ($p -and $p.G -gt ($p.R + 20) -and $p.G -gt ($p.B + 20)) { $chip++ }
+        }
+        Assert ($bandRight -gt $bandLeft + 40) "the name band is wide enough to hold a chip ($bandLeft..$bandRight)"
+        Assert ($chip -eq 0) "no green open chip is painted after the label (T1760; $chip px)"
     } finally { Close-TestWindowPixels -Shot $shot }
+
+    # The same fact from the painter's own badge run, row by row (T1760): an
+    # open row wears no chip at all - neither `open` nor `attached`.
+    $rowLines = @(Select-String -Path $errlog -Pattern 'chooser roster: row id=(\S+) open=(\w+) badges=(.*)$' -ErrorAction SilentlyContinue)
+    $openRows = @($rowLines | Where-Object { $_.Matches[0].Groups[2].Value -eq 'true' })
+    Assert ($openRows.Count -ge 1) "the roster names its open rows' badges ($($openRows.Count) line(s))"
+    # Only the openness chips are asserted absent: a shell still starting up
+    # can legitimately read `busy`, which is an exception worth its chip.
+    $chipped = @($openRows | Where-Object { $_.Matches[0].Groups[3].Value -match '(^|,)(open|attached)(,|$)' })
+    Assert ($chipped.Count -eq 0) `
+        "no open row wears an open or attached chip ($(@($chipped | ForEach-Object { $_.Matches[0].Groups[3].Value }) -join '; '))"
 
     # --- Kill --------------------------------------------------------------
     Write-Host ''
@@ -233,6 +256,11 @@ try {
     # ScreenToClient's for the posted lparam), so the client-space geometry is
     # offset by the client origin here rather than passed raw.
     $cr = Get-TestWindowRect -Window $chooser -Client
+    # How many roster loads have landed BEFORE the kill. The refetch is the
+    # next one after this, not "the second one ever": since the agent pushes
+    # its roster, a pushed load can arrive between the first fetch and the kill
+    # and still read the pre-kill count (T1760 found the assertion reading it).
+    $loadsBeforeKill = @(Select-String -Path $errlog -Pattern 'chooser roster: loaded \d+ session' -ErrorAction SilentlyContinue).Count
     Send-TestMouse -Window $chooser -X ($cr.Left + $geo.KillX) -Y ($cr.Top + $geo.KillY) `
         -Button left -Action click | Out-Null
     $confirm = Wait-TestWindow -ProcessId $g.Pid -Class 'GhozttyConfirmDialog' -TimeoutMs 3000
@@ -264,7 +292,7 @@ try {
         $confirmLine = Wait-LogLine $errlog 'chooser roster: close session confirmed=' 8000
         Assert ($null -ne $confirmLine -and $confirmLine -match 'confirmed=true') `
             'the agent confirmed the close (T96)'
-        $reload = Wait-LogCount $errlog 'chooser roster: loaded \d+ session' 2 10000
+        $reload = Wait-LogCount $errlog 'chooser roster: loaded \d+ session' ($loadsBeforeKill + 1) 10000
         Assert ($null -ne $reload) 'the roster refetched itself after the kill'
         $reloaded = -1
         if ($reload -match 'loaded (\d+) session') { $reloaded = [int]$Matches[1] }

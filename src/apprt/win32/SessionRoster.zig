@@ -980,6 +980,21 @@ pub fn logListed(self: *const SessionRoster, app: *App) void {
     }
     log.info("chooser roster: listing {d} session(s), {d} exited hidden", .{ listed, hidden });
 
+    // Which chips each listed row wears (T1760), from the same `badges` call
+    // the painter makes. Owner-drawn again: the only other way to see a chip is
+    // a pixel scan, and the liveness dot shares the `open` chip's green.
+    for (shown) |r| {
+        var bbuf: [2]chooser_sessions.Badge = undefined;
+        var ebuf: [32]u8 = undefined;
+        var tbuf: [64]u8 = undefined;
+        const run = chooser_sessions.badges(&bbuf, &ebuf, r.session, r.open_locally, r.orphan);
+        log.info("chooser roster: row id={s} open={} badges={s}", .{
+            r.session.id,
+            r.open_locally,
+            chooser_sessions.badgeList(&tbuf, run),
+        });
+    }
+
     // The rows one of OUR OWN PANES holds, by the NAME they show (T710). The
     // label ladder resolves at paint time out of borrowed titles, so there is
     // nothing to read back afterwards and no HWND to read it from — and the

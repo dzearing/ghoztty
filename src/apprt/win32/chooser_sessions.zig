@@ -264,11 +264,16 @@ pub fn orphaned(s: Session, open_locally: bool, local_target: bool) bool {
 /// - Alive: `busy` / `needs input`, and NOTHING for idle — the default needs no
 ///   noise.
 /// - Dead: the exit label (which is why `exit_buf` is a parameter).
-/// - Then `open` when the session is open in one of our panes, else `attached`
-///   when some other viewer holds it, else `not in any window` when the caller
-///   says the row is `orphaned` (T520) — a live local session nothing shows.
-///   Deliberately no `pinned` badge: every persistent local session is pinned,
-///   so it is noise, not signal.
+/// - Then, for a session NOT open in one of our panes: `attached` when some
+///   other viewer holds it, else `not in any window` when the caller says the
+///   row is `orphaned` (T520) — a live local session nothing shows.
+///
+/// Deliberately no `open` chip (T1760) and no `pinned` one. A chip marks the
+/// EXCEPTION (`MachineChooserView.swift:856-866`): every persistent local
+/// session is pinned, and since T1746 the row's own Show / Resume button already
+/// says whether it is on screen, so `open` sat on nearly every row to repeat it.
+/// `attached` stays because this list still offers rows another viewer holds,
+/// which Mac's `actionable` filter drops; on Windows that row IS the exception.
 ///
 /// The dead arm is a BACKSTOP as of T1364, not a state the user meets:
 /// `isConnectable` keeps exited sessions out of the list entirely, so nothing
@@ -291,10 +296,7 @@ pub fn badges(out: []Badge, exit_buf: []u8, s: Session, open_locally: bool, orph
     }
 
     if (open_locally) {
-        if (n < out.len) {
-            out[n] = .{ .text = "open", .tone = .good };
-            n += 1;
-        }
+        // On screen here: the Show button says so, and nothing else needs to.
     } else if (s.attached) {
         if (n < out.len) {
             out[n] = .{ .text = "attached", .tone = .neutral };
@@ -306,6 +308,24 @@ pub fn badges(out: []Badge, exit_buf: []u8, s: Session, open_locally: bool, orph
     }
 
     return out[0..n];
+}
+
+/// A badge run spelled for the roster's log oracle (T1760): the texts joined by
+/// commas, or `none`. The rows are owner-drawn, so this is the only way a script
+/// can read which chips a row wears. Truncates to `buf` rather than failing.
+pub fn badgeList(buf: []u8, run: []const Badge) []const u8 {
+    if (run.len == 0) return "none";
+    var n: usize = 0;
+    for (run, 0..) |b, i| {
+        if (i > 0 and n < buf.len) {
+            buf[n] = ',';
+            n += 1;
+        }
+        const take = @min(b.text.len, buf.len - n);
+        @memcpy(buf[n..][0..take], b.text[0..take]);
+        n += take;
+    }
+    return buf[0..n];
 }
 
 /// The T520 mark's wording, shared with the roster's log oracle so the badge
@@ -1034,16 +1054,19 @@ test "badges: idle is unbadged, busy and needs_input are not" {
     try testing.expectEqual(Tone.danger, needs[0].tone);
 }
 
-test "badges: open beats attached, and a dead row leads with its exit label" {
+test "badges: a row open here wears no openness chip, and a dead row leads with its exit label" {
     var out: [2]Badge = undefined;
     var ebuf: [32]u8 = undefined;
 
-    // Open in one of our panes AND attached: "open" is what the user cares
-    // about, so "attached" is not also shown.
+    // Open in one of our panes AND attached (T1760): the Show button already
+    // says it is on screen, so neither `open` nor `attached` is drawn.
     const open = badges(&out, &ebuf, .{ .alive = true, .attached = true }, true, false);
-    try testing.expectEqual(@as(usize, 1), open.len);
-    try testing.expectEqualStrings("open", open[0].text);
-    try testing.expectEqual(Tone.good, open[0].tone);
+    try testing.expectEqual(@as(usize, 0), open.len);
+
+    // Open and busy: only the exception is badged.
+    const busy_open = badges(&out, &ebuf, .{ .alive = true, .attached = true, .activity = "busy" }, true, false);
+    try testing.expectEqual(@as(usize, 1), busy_open.len);
+    try testing.expectEqualStrings("busy", busy_open[0].text);
 
     const elsewhere = badges(&out, &ebuf, .{ .alive = true, .attached = true }, false, false);
     try testing.expectEqualStrings("attached", elsewhere[0].text);
@@ -1095,9 +1118,10 @@ test "badges: an orphaned row reads 'not in any window', and open/attached beat 
     try testing.expectEqualStrings("busy", busy[0].text);
     try testing.expectEqualStrings(orphan_text, busy[1].text);
 
-    // The openness slot is one slot: open and attached still win it.
+    // The openness slot is one slot: a row open here leaves it empty, and
+    // attached still wins it over the orphan mark.
     const open = badges(&out, &ebuf, .{ .alive = true }, true, false);
-    try testing.expectEqualStrings("open", open[0].text);
+    try testing.expectEqual(@as(usize, 0), open.len);
     const attached = badges(&out, &ebuf, .{ .alive = true, .attached = true }, false, false);
     try testing.expectEqualStrings("attached", attached[0].text);
 }
@@ -1397,10 +1421,23 @@ test "no row wears an affordance badge - the tombstone rows are gone (T1364)" {
     try testing.expectEqual(@as(usize, 0), live.len);
 
     // The badge run at its widest is now two: state + openness.
-    const busy_open = badges(&out, &exit_buf, .{ .alive = true, .activity = "busy" }, true, false);
-    try testing.expectEqual(@as(usize, 2), busy_open.len);
-    try testing.expectEqualStrings("busy", busy_open[0].text);
-    try testing.expectEqualStrings("open", busy_open[1].text);
+    const busy_held = badges(&out, &exit_buf, .{ .alive = true, .activity = "busy", .attached = true }, false, false);
+    try testing.expectEqual(@as(usize, 2), busy_held.len);
+    try testing.expectEqualStrings("busy", busy_held[0].text);
+    try testing.expectEqualStrings("attached", busy_held[1].text);
+}
+
+test "badgeList spells a badge run for the roster's log oracle (T1760)" {
+    var buf: [64]u8 = undefined;
+    try testing.expectEqualStrings("none", badgeList(&buf, &.{}));
+    try testing.expectEqualStrings("busy", badgeList(&buf, &.{.{ .text = "busy", .tone = .warn }}));
+    try testing.expectEqualStrings(
+        "busy,not in any window",
+        badgeList(&buf, &.{ .{ .text = "busy", .tone = .warn }, .{ .text = orphan_text, .tone = .warn } }),
+    );
+    // A buffer too small keeps what fits rather than failing the log line.
+    var tiny: [6]u8 = undefined;
+    try testing.expectEqualStrings("busy,n", badgeList(&tiny, &.{ .{ .text = "busy", .tone = .warn }, .{ .text = "needs input", .tone = .danger } }));
 }
 
 test "resumeTarget names the machine the roster is pointed at" {
