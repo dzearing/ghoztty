@@ -1,10 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-09-26T15:07:28-07:00",
-    "commit":  "94fd30c75",
+    "generated":  "2026-09-26T16:43:06-07:00",
+    "commit":  "611cd9ce0",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/guard-due.ps1",
+                        "test/win32/clipboard-paste.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -32,7 +33,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "0e48ef51edbb5f21bb6b5346615cb72d39454689f6378ab100776fbbdc3f9239",
+                  "scripts/guard-due.ps1":  "c7ef561cbf6cf4dc10c215778e582d4951cc69d65cdab09bf36f83281cefdb9e",
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -145,7 +146,7 @@
                   "test/win32/cleanslate-audit.ps1":  "cb6bcd4aa4122ce79eec0f10213acc3ed0906e4b68d836df4ebcc89b13080244",
                   "test/win32/cli-argv-fidelity.ps1":  "c51d36e42d332a1085d12418098befe48a46aa119badb5173be35727cc598221",
                   "test/win32/cli-launch-cwd.ps1":  "4a377618f1c5954fa3459d6e1582cee72aa72a86b7346be41f96dc7aacc5b1a0",
-                  "test/win32/clipboard-paste.ps1":  "67efee510ca4a568e9f637be63f6dc1eba023242f3ffbf6e9733388420ee8325",
+                  "test/win32/clipboard-paste.ps1":  "b931eeb01938913c1b2d91fdbe7819c2a5b67c7de99db9712bd475226fd8c5fd",
                   "test/win32/clipboard-retry.ps1":  "43b4fe9e1b843df6e073bcec780f8b10a2051e948566c99a6c776d2e13992208",
                   "test/win32/cli-shim-redirect.ps1":  "d9270707fa5daba04008292352c21cfb3aa71a688528a10a3db2319484e5f3bb",
                   "test/win32/cli-unknown-flag.ps1":  "5e26d47c22c6a6225b99523219a32941dd7d389219312c4a235c9f239f6d3387",

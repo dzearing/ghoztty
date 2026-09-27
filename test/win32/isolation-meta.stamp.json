@@ -1,11 +1,10 @@
 {
     "guard":  "isolation-meta",
     "script":  "test/win32/isolation-meta.ps1",
-    "generated":  "2026-09-26T14:36:58-07:00",
-    "commit":  "462681895",
+    "generated":  "2026-09-26T16:46:25-07:00",
+    "commit":  "611cd9ce0",
     "uncommitted":  [
-                        "test/win32/agent-adopt.ps1",
-                        "test/win32/guard-due.ps1"
+                        "test/win32/clipboard-paste.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -77,7 +76,7 @@
                   "test/win32/cleanslate-audit.ps1":  "cb6bcd4aa4122ce79eec0f10213acc3ed0906e4b68d836df4ebcc89b13080244",
                   "test/win32/cli-argv-fidelity.ps1":  "c51d36e42d332a1085d12418098befe48a46aa119badb5173be35727cc598221",
                   "test/win32/cli-launch-cwd.ps1":  "4a377618f1c5954fa3459d6e1582cee72aa72a86b7346be41f96dc7aacc5b1a0",
-                  "test/win32/clipboard-paste.ps1":  "67efee510ca4a568e9f637be63f6dc1eba023242f3ffbf6e9733388420ee8325",
+                  "test/win32/clipboard-paste.ps1":  "b931eeb01938913c1b2d91fdbe7819c2a5b67c7de99db9712bd475226fd8c5fd",
                   "test/win32/clipboard-retry.ps1":  "43b4fe9e1b843df6e073bcec780f8b10a2051e948566c99a6c776d2e13992208",
                   "test/win32/cli-shim-redirect.ps1":  "d9270707fa5daba04008292352c21cfb3aa71a688528a10a3db2319484e5f3bb",
                   "test/win32/cli-unknown-flag.ps1":  "5e26d47c22c6a6225b99523219a32941dd7d389219312c4a235c9f239f6d3387",

@@ -34401,3 +34401,13 @@ now aliases it. The helper stays in `apprt/win32/` and the agent imports it
 (precedent: `handoff.zig` -> `job_spawn.zig`); the agent lane runs its tests.
 Floor lanes all PASS, P1-P3 PASS, 14 due harnesses ALL PASS. Same shape in the
 OpenGL loader filed as T1767.
+
+## 2026-09-26 — T993: the paste harness is now due when the paste code changes
+
+`scripts/guard-due.ps1` gains a `clipboard-paste` row covering the paste read
+(`Surface.zig` clipboardRequest over `clipboard_open.zig`), the Windows chord
+mirror block in `Config.zig`, and the script itself. `test/win32/clipboard-paste.ps1`
+now stamps on a clean green run only, behind a body-completion marker so an
+early unwind cannot reach the stamp, and never under `-NegativeControl`. The
+gate was seen DUE first; the run went ALL PASS (33) and stamped; the negative
+control went red without restamping; harness floor PASS.

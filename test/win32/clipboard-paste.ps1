@@ -376,6 +376,10 @@ Assert ($copied -match 'ZQ_COPY_TOKEN') "H: ctrl+insert with a selection copies 
 
 Assert (-not ($app.Process -and $app.Process.HasExited)) 'no crash at end of run'
 
+# The last statement of the body (T993): the stamp below is written only for a
+# run that got all the way here, so a throw that unwinds the try cannot fall
+# through to a green verdict and mark the paste path as proven.
+$script:bodyDone = $true
 } finally {
     # Read the launched pids BEFORE cleanup: Remove-TestDesktop empties the
     # live pid list as it kills, and an emptied list makes the leak assertion
@@ -393,6 +397,16 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($fgSeen.Count -gt 0) 'the foreground watcher actually sampled (negative control)'
     $leaked = @($script:launched | Where-Object { $fgSeen -contains $_ })
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
+}
+
+if (-not $script:bodyDone) { Assert $false 'the run reached the end of its body (it unwound early)' }
+
+# A clean green run stamps the covered files (T783/T993) so scripts\guard-due.ps1
+# can answer "has this harness been run against the paste code as it now
+# stands?". Only a green, finished run stamps, so a red one stays due.
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard clipboard-paste -Repo $repo 2>&1 | ForEach-Object { "  $($_.ToString())" }
 }
 
 Write-Host ''

@@ -1312,6 +1312,26 @@ $GuardTable = @(
             'test\win32\clipboard-retry.ps1'
         )
     },
+    # The paste chords themselves (T993): the only harness that proves ctrl+v
+    # and shift+insert PASTE when the clipboard holds text and FALL THROUGH to
+    # the pane as a raw key when it does not (T154/T156), and that ctrl+insert
+    # copies or falls through the same way (T522). It had no row, so T947
+    # rewrote the paste read and the gate stayed silent. Covers the read
+    # (Surface.zig's clipboardRequest, over the retried open) and the Windows
+    # mirror block in Config.zig that makes those chords performable. Surface.zig
+    # is here - as it is for close-confirm and remote-disconnect - because the
+    # read this harness exists to prove lives in it and nowhere else.
+    [pscustomobject]@{
+        Name   = 'clipboard-paste'
+        Script = 'test\win32\clipboard-paste.ps1'
+        Stamp  = 'test\win32\clipboard-paste.stamp.json'
+        Covers = @(
+            'src\apprt\win32\Surface.zig',
+            'src\apprt\win32\clipboard_open.zig',
+            'src\config\Config.zig',
+            'test\win32\clipboard-paste.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'upgrade-no-fork'
         Script = 'test\win32\upgrade-no-fork.ps1'
