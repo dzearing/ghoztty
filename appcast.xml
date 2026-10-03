@@ -502,5 +502,27 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.36.0/Ghoztty-1.36.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="KAhVaU1iAMBbSqC0ZW/Dji+5SGt3j7US6zuUB+0qfuZnhhLqigTO2fU06F6OgjmbKYS1DSzy7QC1n1JMWBzbBg==" length="25952748" />
         </item>
+        <item>
+            <title>Version 1.37.0</title>
+            <sparkle:version>1.37.0</sparkle:version>
+            <sparkle:shortVersionString>1.37.0</sparkle:shortVersionString>
+            <pubDate>Sat, 03 Oct 2026 20:00:54 +0000</pubDate>
+            <description>{
+  "version": "1.37.0",
+  "sections": [
+    {
+      "title": "Viewer panes",
+      "items": [
+        { "title": "Keyboard shortcuts work from a viewer pane", "text": "While a viewer pane had focus, most of your keybindings silently did nothing: Ghoztty dispatches them through the focused terminal, so only chords that happened to also be a menu shortcut survived, and WebKit claimed every Command chord before that. Cmd+Shift+. (rearrange mode), Cmd+1…9, tab navigation, and custom bindings now all work. Anything the pane itself doesn't claim — the page, a text field, the feedback composer get first refusal — falls through to Ghoztty. Typing and text navigation in the address bar, find field, and diff filter are untouched." },
+        { "title": "Reveal in Finder", "text": "A folder button beside Home opens the containing folder with the file selected. It appears only while the pane is showing a local file — a markdown doc, code, an HTML page, or an image — since a website or a diff has nothing to reveal, and it follows wherever the pane has navigated rather than where it was opened." },
+        { "title": "Cmd-C copies the image in an image pane", "text": "It previously had no copy handler at all." },
+        { "title": "A reveal on a path that no longer exists opens the nearest folder that does", "text": "A file deleted under its own pane, or a banner link to a missing path, used to be a dead click." }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.37.0/Ghoztty-1.37.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="NO4Fymamu0sCWLEX2aAbhT3DM19Xf0t4jOCiFhOjGmWfpTZKp9pvysG1igXpCfXIzndAcQynbZQqrClB+WJiBw==" length="25973327" />
+        </item>
     </channel>
 </rss>
