@@ -6562,7 +6562,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
 /// Returns true if performing the given action result in closing
 /// the surface. This is used to determine if our self pointer is
 /// still valid after performing some binding action.
-fn closingAction(action: input.Binding.Action) bool {
+pub fn closingAction(action: input.Binding.Action) bool {
     return switch (action) {
         .close_surface,
         .close_window,

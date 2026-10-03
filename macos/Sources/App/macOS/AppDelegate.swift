@@ -2229,6 +2229,14 @@ extension AppDelegate {
     @MainActor func performGhosttyBindingMenuKeyEquivalent(with event: NSEvent) -> Bool {
         menuShortcutManager.performGhosttyBindingMenuKeyEquivalent(with: event)
     }
+
+    @MainActor func hasGhosttyBindingMenuItem(forAction action: String) -> Bool {
+        menuShortcutManager.hasMenuItem(forAction: action)
+    }
+
+    @MainActor func performGhosttyBindingMenuItem(forAction action: String) -> Bool {
+        menuShortcutManager.performGhosttyBindingMenuItem(forAction: action)
+    }
 }
 
 // MARK: Floating Windows
