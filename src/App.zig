@@ -384,6 +384,75 @@ pub fn keyEvent(
     return true;
 }
 
+/// The root-set binding `event` triggers, if any. Key sequences (leaders)
+/// are not bindings in their own right and return null; so does a release.
+pub fn bindingForEvent(
+    config: *const configpkg.Config,
+    event: input.KeyEvent,
+) ?input.Binding.Set.GenericLeaf {
+    if (event.action == .release) return null;
+    const entry = config.keybind.set.getEvent(event) orelse return null;
+    return switch (entry.value_ptr.*) {
+        .leader => null,
+        inline .leaf, .leaf_chained => |leaf| leaf.generic(),
+    };
+}
+
+/// Perform the binding `event` triggers on behalf of a focused pane that is
+/// NOT a terminal (a macOS viewer pane), with the same flag semantics as
+/// `Surface.maybeHandleBinding` — except that the key is never encoded as
+/// terminal input, because the pane the user is looking at is not a
+/// terminal. `surface` is a terminal in the same window that surface-scoped
+/// actions are performed through (it only names the window or pane); with
+/// null, only app-scoped actions are performed.
+///
+/// The caller decides WHICH bindings may come here (`Action.requires`):
+/// this performs whatever it is handed, so a `text:` binding sent with a
+/// surface would type into that surface.
+///
+/// Returns whether any action was performed.
+pub fn performBindingForNonTerminal(
+    self: *App,
+    rt_app: *apprt.App,
+    surface: ?*Surface,
+    event: input.KeyEvent,
+) bool {
+    const leaf = bindingForEvent(&rt_app.config, event) orelse return false;
+    const actions = leaf.actionsSlice();
+
+    // Global and all-surface bindings act on every surface no matter which
+    // one has focus, exactly as a terminal performs them.
+    if (leaf.flags.global or leaf.flags.all) {
+        self.performAllChainedAction(rt_app, actions);
+        return true;
+    }
+
+    var performed = false;
+    for (actions) |action| {
+        if (action.scoped(.app)) |app_action| {
+            self.performAction(rt_app, app_action) catch |err| {
+                log.warn("error performing app binding action={t} err={}", .{ action, err });
+                continue;
+            };
+            performed = true;
+            continue;
+        }
+
+        const s = surface orelse continue;
+        const v = s.performBindingAction(action) catch |err| {
+            log.warn("error performing binding action={t} err={}", .{ action, err });
+            continue;
+        };
+        performed = performed or v;
+
+        // A closing action may have freed the surface; nothing after it
+        // may touch it (Surface.maybeHandleBinding stops here too).
+        if (v and Surface.closingAction(action)) break;
+    }
+
+    return performed;
+}
+
 /// Call to notify Ghostty that the color scheme for the app has changed.
 /// "Color scheme" in this case refers to system themes such as "light/dark".
 pub fn colorSchemeEvent(

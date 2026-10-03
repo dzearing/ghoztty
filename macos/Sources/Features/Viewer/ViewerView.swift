@@ -3237,7 +3237,25 @@ final class ViewerView: NSView, Codable, ObservableObject {
         if paneHoldsFocus, let chord = Self.paneChord(for: event), handle(chord) {
             return true
         }
-        return super.performKeyEquivalent(with: event)
+        // Everything inside the pane gets the next claim: the web page (WebKit
+        // takes every Command chord here to offer it to the page, and re-sends
+        // the ones the page leaves alone — on that second pass it declines), a
+        // focused text field, the feedback composer.
+        if super.performKeyEquivalent(with: event) { return true }
+        // Nothing in this pane wanted the chord: hand it to Ghoztty's bindings,
+        // which a focused terminal would have dispatched itself. Without this
+        // it reached Ghoztty only by happening to be a menu key equivalent.
+        // Done HERE rather than by relaxing `SurfaceView`'s focus gate or the
+        // app-level key monitor's main-window guard, because this is the one
+        // place that knows (a) the pane, not a terminal, has focus and (b)
+        // nothing in the pane claimed the key — both are what make forwarding
+        // safe. Only the focused pane forwards: this method is offered to every
+        // view in the window.
+        guard paneHoldsFocus else { return false }
+        return ViewerKeyFallback.perform(
+            event,
+            in: window?.windowController as? BaseTerminalController,
+            textInputFocused: window?.firstResponder is NSText)
     }
 
     /// A chord that belongs to a focused viewer pane rather than to the app.

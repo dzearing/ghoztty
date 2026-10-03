@@ -854,6 +854,50 @@ ghoztty +close --target=doc
     and they do their global thing again; Cmd+Shift+R ("Change Window Title"),
     Cmd+Shift+D (split down), and Ctrl+Cmd+F (Toggle Full Screen) are never
     affected.
+  - **Every other chord falls back to Ghoztty's keybindings**
+    (`ViewerKeyFallback`): a chord neither the pane's own handling above nor
+    anything inside the pane claims is dispatched as a focused terminal would
+    dispatch it — Cmd+Shift+. (rearrange), Cmd+1…9, Cmd+Shift+[ / ], and any
+    custom binding. It used to die, because config keybindings are dispatched
+    by the focused *terminal* (`SurfaceView.performKeyEquivalent`), so from a
+    viewer only the chords that happened to also be a menu key equivalent
+    worked (and rearrange's is not one: its trigger is the physical `period`
+    key, which a menu key equivalent cannot express).
+    - **The pane keeps first claim.** The fallback runs at the end of
+      `ViewerView.performKeyEquivalent`, after the chords above and after
+      `super` — so a **web page** gets the chord first (WebKit takes every
+      Command chord to offer it to the page and re-sends only the ones the page
+      leaves alone; a site's own Cmd-K stays the site's), and so do the
+      feedback composer and the text fields.
+    - **Typing stays typing.** While a text field has the caret (address bar,
+      diff filter, find field, composer), only Command chords are forwarded,
+      and never the text system's own: Cmd-arrows, Cmd-Home/End/PageUp/Down,
+      Cmd-Backspace/Delete. Cmd-Z/Shift-Z go through the Undo/Redo menu items
+      to the field's own undo stack, as before.
+    - **Terminal-only bindings are never forwarded.** The core classifies
+      every action, exhaustively (`Binding.Action.requires`): `app`, `window`
+      (the surface only names the window — tabs, fullscreen, rearrange,
+      palette), `pane` (acts on the focused pane — split, close, zoom, hero,
+      goto_split), or `terminal` (`text:`/`csi:`/`esc:`, copy/paste, font
+      size, scrolling, search, key tables). A `terminal` action would have to
+      be performed through some other terminal in the window — typing into a
+      shell the user is not looking at — so it is not. (`global:`/`all:`
+      bindings act on every surface wherever focus is, and are forwarded.)
+    - **How it is dispatched**, mirroring a terminal's own order: the
+      binding's **menu item** first (the menu flashes, and the menu's handlers
+      are the ones that already know a viewer can be the focused pane), found
+      by ACTION rather than key equivalent, so rearrange's key-equivalent-less
+      item is still found; else through libghostty with **no key sent to any
+      terminal** (`ghostty_app_key_binding_perform`): app actions directly,
+      window actions through a terminal in the same window. A `pane` action
+      with no menu item is not forwarded — a terminal standing in would act on
+      ITS pane, not the viewer. A window of nothing but viewers has no terminal
+      to name it, so from there only app actions and menu-backed bindings reach
+      Ghoztty. A `performable:` binding that could not perform acts as if
+      unbound, as in a terminal; `unconsumed:` (which in a terminal ALSO sends
+      the key to the program running there) has no program to pass it to, so
+      it behaves like a plain binding rather than letting the key fall on to
+      the menu and perform twice.
 - `--view=about:blank` opens a **blank browser pane**. The command palette's
   "Viewer: Open Browser Pane" does the same interactively and puts the caret
   straight in the address field — the equivalent of `+split --view=<url>` for
@@ -955,6 +999,9 @@ every other file mode shows, rather than a second one written for images.
   Animated GIFs animate. The matte is `windowBackgroundColor`, a dynamic color,
   so light/dark follows the window the way every other viewer mode's background
   does.
+- **Cmd+C copies the picture** (the image itself plus its file URL), as
+  Preview does with nothing selected — the only thing a copy can mean in a
+  pane with no text.
 - **What an image pane does NOT have**, and why that is stated rather than
   faked: **find** (declined — see Find in page), **text selection**, and
   **quoting**. There is no text. **Feedback capture still works** — the

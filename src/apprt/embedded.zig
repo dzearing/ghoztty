@@ -2092,6 +2092,82 @@ pub const CAPI = struct {
         };
     }
 
+    /// Sync with ghostty_binding_info_s
+    const BindingInfo = extern struct {
+        flags: input.Binding.Flags.C = 0,
+        requires: input.Binding.Action.Requires = .app,
+        action: String = .empty,
+    };
+
+    /// Describe the root-set binding `event` triggers, for an embedder whose
+    /// focused pane is not a terminal. `requires` is the most demanding
+    /// `Action.requires` across the binding's actions. `action` is the
+    /// formatted action for a single-action binding (empty for a chain), so
+    /// the embedder can find a native control for it; free it with
+    /// `ghostty_string_free`. Returns false when `event` is not a binding.
+    export fn ghostty_config_key_binding(
+        config: *Config,
+        event: KeyEvent,
+        info: *BindingInfo,
+    ) bool {
+        const core_event = event.keyEvent().core() orelse return false;
+        const leaf = CoreApp.bindingForEvent(config, core_event) orelse return false;
+        const actions = leaf.actionsSlice();
+
+        var requires: input.Binding.Action.Requires = .app;
+        for (actions) |action| {
+            const r = action.requires();
+            if (@intFromEnum(r) > @intFromEnum(requires)) requires = r;
+        }
+
+        const action: String = if (actions.len == 1) formatAction(actions[0]) else .empty;
+
+        info.* = .{
+            .flags = leaf.flags.cval(),
+            .requires = requires,
+            .action = action,
+        };
+        return true;
+    }
+
+    /// The canonical spelling of an action string (parse, then format) — the
+    /// spelling `ghostty_config_key_binding` reports. Empty if `str` does not
+    /// parse. Free with `ghostty_string_free`.
+    export fn ghostty_binding_action_canonical(
+        str: [*]const u8,
+        len: usize,
+    ) String {
+        const action = input.Binding.Action.parse(str[0..len]) catch return .empty;
+        return formatAction(action);
+    }
+
+    fn formatAction(action: input.Binding.Action) String {
+        var buf: std.Io.Writer.Allocating = .init(global.alloc);
+        defer buf.deinit();
+        action.format(&buf.writer) catch return .empty;
+        const copy = global.alloc.dupeZ(u8, buf.written()) catch return .empty;
+        return .fromSlice(copy);
+    }
+
+    /// Perform the binding `event` triggers WITHOUT a focused terminal: the
+    /// key is never sent to any terminal as input. `surface` (nullable) is a
+    /// terminal in the same window that surface-scoped actions are performed
+    /// through. The caller must only send bindings whose `requires` allows
+    /// it (see `ghostty_config_key_binding`). Returns whether any action was
+    /// performed.
+    export fn ghostty_app_key_binding_perform(
+        app: *App,
+        surface: ?*Surface,
+        event: KeyEvent,
+    ) bool {
+        const core_event = event.keyEvent().core() orelse return false;
+        return app.core_app.performBindingForNonTerminal(
+            app,
+            if (surface) |s| &s.core_surface else null,
+            core_event,
+        );
+    }
+
     /// Returns true if the given key event would trigger a binding
     /// if it were sent to the surface right now. The "right now"
     /// is important because things like trigger sequences are only

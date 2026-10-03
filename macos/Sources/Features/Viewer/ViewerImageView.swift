@@ -273,6 +273,20 @@ final class ViewerImageSurface: NSView {
         return true
     }
 
+    /// Cmd-C: copy the picture, as Preview does with nothing selected. An
+    /// image pane has no text, so this is the only thing a copy can mean —
+    /// without it the chord reached no `copy:` handler and did nothing.
+    /// Reached through `ViewerView`'s editing-chord routing, which sends
+    /// `copy:` down the focused element's responder chain. Writes the image
+    /// itself (for pasting into a document or chat) and the file URL (for
+    /// pasting into Finder or a terminal).
+    @objc func copy(_ sender: Any?) {
+        guard let image = imageView.image, let url else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([image, url as NSURL])
+    }
+
     /// Re-read the file after a save (live reload) or an explicit `+reload`.
     ///
     /// Zoom and scroll position survive a reload of the SAME image size — the
