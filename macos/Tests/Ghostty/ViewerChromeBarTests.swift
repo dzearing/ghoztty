@@ -266,8 +266,9 @@ struct ViewerChromeControlsTests {
     @Test func fileViewerBarHasEditableAddressAndFourNavButtons() async throws {
         let (_, host) = await mountBar(location: try makeMarkdownFile())
         #expect(editableFields(in: host).count == 1)
-        // back, forward, reload, home
-        #expect(buttonCount(in: host) == 4)
+        // back, forward, reload, home — plus Reveal in Finder, since a file
+        // viewer has a file to reveal (see ViewerRevealInFinderTests).
+        #expect(buttonCount(in: host) == 5)
     }
 
     @Test func webViewerBarHasTheSameControls() async throws {

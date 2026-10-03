@@ -188,7 +188,7 @@ Banner text supports a small markdown subset: `**bold**`, `*italic*` or `_italic
 | **URL** | default browser | side pane | new Ghoztty window |
 | **file path** | reveal in Finder | side pane | open with default app |
 
-A URL goes to the real browser by default because Ghoztty's `WKWebView` keeps its own cookie store with no relationship to Safari/Chrome — anything behind a login renders logged-out in a viewer pane, and OAuth sign-in never completes. A file path is only *revealed*, never opened, so a click can't launch whatever app claims the extension. The right-click menu offers all of them (its first item is by contract the left-click default) plus Copy Link / Copy Path.
+A URL goes to the real browser by default because Ghoztty's `WKWebView` keeps its own cookie store with no relationship to Safari/Chrome — anything behind a login renders logged-out in a viewer pane, and OAuth sign-in never completes. A file path is only *revealed*, never opened, so a click can't launch whatever app claims the extension. A path that does not exist (autolinking has no filesystem check) reveals the nearest ancestor folder that does, since selecting a missing path in Finder does nothing visible. The right-click menu offers all of them (its first item is by contract the left-click default) plus Copy Link / Copy Path.
 
 **This table is not banner-only.** It is `BannerLinkOpener`, and **viewer panes use the
 same one** — for the links a viewer hands out (see Viewer Panes → Links) and for the
@@ -820,7 +820,18 @@ ghoztty +close --target=doc
   the file↔web boundary — going Back from a website re-renders the file.
   **Home** returns to the location the pane was originally opened with, which
   is remembered separately from where the user has navigated to (and both
-  survive a session restore). Clicking into the address field selects the whole
+  survive a session restore).
+  Beside Home, a **folder button** reveals the file the pane is showing in
+  Finder — its folder opens with the file **selected** — and is present only
+  while the pane IS showing a local file (markdown, code, an HTML page, an
+  image). A website or a diff has no single file to reveal, so it gets no
+  button rather than one that cannot do anything. It follows the pane's
+  *current* location (`ViewerView.fileURL`, derived from the live mode), so it
+  comes and goes as the address bar, links, and Back/Forward move the pane. It
+  is the same action, symbol, and wording as **Reveal in Finder** on a file
+  link's right-click menu, through the same `BannerLinkOpener.revealInFinder`
+  — including its answer for a file deleted under the pane: the nearest
+  folder that still exists opens instead of a dead click. Clicking into the address field selects the whole
   address; clicking again inside it just moves the caret.
 - **Keyboard** (pane-scoped: live only while keyboard focus is inside a
   viewer pane — its page, its nav bar, its find bar, or its feedback composer

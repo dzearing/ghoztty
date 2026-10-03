@@ -157,8 +157,41 @@ struct BannerLinkOpener {
 
     /// Left-click default for a file path: select it in Finder rather than
     /// opening it, so a click never launches an editor the user didn't ask for.
+    /// Also the viewer nav bar's folder button, for the file the pane shows.
     func revealInFinder(_ url: URL) {
-        NSWorkspace.shared.activateFileViewerSelecting([url])
+        switch Self.revealTarget(for: url) {
+        case .select(let file):
+            NSWorkspace.shared.activateFileViewerSelecting([file])
+        case .openFolder(let folder):
+            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder.path)
+        }
+    }
+
+    /// What Finder is asked to show for a reveal.
+    enum RevealTarget: Equatable {
+        /// The file exists: open its folder with it selected.
+        case select(URL)
+        /// It does not: open the nearest folder that still does.
+        case openFolder(URL)
+    }
+
+    /// Where a reveal of `url` lands. A path that no longer exists is ordinary
+    /// — a viewed file deleted or moved under its pane, a banner path the
+    /// autolinker matched by its sigil alone — and `activateFileViewerSelecting`
+    /// on a missing path does nothing visible, which reads as a broken button.
+    /// The nearest surviving ancestor directory is the most useful honest
+    /// answer: it is where the file was, or as close as the disk still gets.
+    static func revealTarget(
+        for url: URL,
+        exists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
+    ) -> RevealTarget {
+        let file = url.standardizedFileURL
+        if exists(file) { return .select(file) }
+        var folder = file.deletingLastPathComponent()
+        while folder.path != "/", !exists(folder) {
+            folder = folder.deletingLastPathComponent()
+        }
+        return .openFolder(folder)
     }
 
     /// Hand the link to the system — the default browser for a web URL, the

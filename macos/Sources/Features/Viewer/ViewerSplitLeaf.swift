@@ -131,6 +131,33 @@ struct WebChromeBar: View {
             }
             .help("Home — back to \(viewerView.homeLocation)")
 
+            // Reveal in Finder, beside Home: both answer "where does this
+            // pane's content live", and the pair stays a fixed group that the
+            // address field's slack never separates. Trailing would have put
+            // it next to feedback, whose presence is decided by something else
+            // entirely (a worktree), so the end of the row would reshuffle as
+            // the two came and went independently.
+            //
+            // Present only while the pane shows a local file. A website or a
+            // diff has no single file to reveal, and a button that could do
+            // nothing would be a lie — the rule the feedback button follows.
+            // `fileURL` is derived from the pane's CURRENT mode, so this
+            // follows the address bar, link clicks, and Back/Forward rather
+            // than where the pane was opened.
+            //
+            // Same symbol and wording as the "Reveal in Finder" item on a file
+            // link's right-click menu, and the same code path
+            // (`BannerLinkOpener.revealInFinder`), so the two cannot drift.
+            if let file = viewerView.fileURL {
+                Button(action: { viewerView.revealFileInFinder() }) {
+                    Image(systemName: "folder")
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .help("Reveal in Finder — \(file.path)")
+                .accessibilityLabel("Reveal in Finder")
+            }
+
             // Diff controls, in the same 24pt squares as the rest of the bar.
             // They live HERE rather than in a second toolbar because this bar
             // is always open anyway, so a separate strip would be a second
