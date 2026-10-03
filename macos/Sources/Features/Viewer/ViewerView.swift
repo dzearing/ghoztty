@@ -90,7 +90,13 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// site — there are six of them, and a new one that forgot would leave an
     /// image painted over a website, or a blank template where a picture
     /// should be.
+    ///
+    /// The nav bar reads it too (the diff controls, the Reveal in Finder
+    /// button), so a change is announced to observers explicitly rather than
+    /// left to ride on whichever `@Published` field the navigation site
+    /// happens to touch next.
     private(set) var mode: Mode {
+        willSet { objectWillChange.send() }
         didSet { updateImageSurface() }
     }
 
@@ -890,6 +896,19 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// Return to the location this pane was opened with (the home button).
     func goHome() {
         openLocation(homeLocation)
+    }
+
+    /// Show the file this pane is displaying in Finder, selected (the folder
+    /// button). Follows the pane's CURRENT location — `fileURL` is derived
+    /// from the live mode — so a pane that navigated to another file reveals
+    /// that one, and a pane showing a website or a diff has nothing to reveal.
+    ///
+    /// Routed through `BannerLinkOpener` so the button and the "Reveal in
+    /// Finder" item on a link's right-click menu are one behavior, including
+    /// what happens when the file has since been deleted.
+    func revealFileInFinder() {
+        guard let fileURL else { return }
+        BannerLinkOpener(anchor: self).revealInFinder(fileURL)
     }
 
     /// A typed address that names a local file rather than a website: an
