@@ -22,14 +22,38 @@
 //! pane repaints exactly and is **never blank**, even when the paint predates the
 //! ring.
 //!
+//! ## The reboot history (`historyAlloc`)
+//!
+//! The same emulator is also what the **reboot floor** restores from. A reboot
+//! kills every child, so the restored pane can only ever show what the session
+//! LOOKED like — and the raw ring is a poor record of that. It is a byte window
+//! into a live program's stream: it starts mid-sequence, it is a few minutes of a
+//! TUI's in-place redraws (2 MB of Claude Code is ~700 frames of spinner), it
+//! carries every query the program sent (`CSI c`, `CSI ? 2026 $ p`, `CSI ? u` …)
+//! and every mode it set (mouse tracking, kitty keyboard, synchronized output),
+//! and it is drawn with cursor motion that only lands at the original geometry.
+//! Replayed into a fresh pane it answers dead queries into the NEW shell's stdin,
+//! floods the viewer's IO mailbox, re-arms the dead program's input modes, and
+//! smears — the reported "garbled, wrong width, unresponsive" restore.
+//!
+//! What a restore wants is the BUFFER: the scrollback and screen the user was
+//! looking at. This emulator holds exactly that (it has scrollback, bounded by
+//! `history_scrollback_bytes`), and `historyAlloc` serializes it as CONTENT ONLY —
+//! text, colors, hyperlinks, soft wraps left unwrapped so the viewer reflows them
+//! — with no modes, no cursor addressing, no queries. The agent writes it to disk
+//! next to the ring (`ring_snapshot.writeHistoryAtomic`) and replays it instead of
+//! the raw bytes after a restart. `historyFromRaw` builds the same thing from a
+//! raw ring alone (a snapshot written by an older agent) by running it through a
+//! scratch emulator, so even pre-upgrade files restore cleanly.
+//!
 //! ## Cost
 //!
-//! One `terminal.Terminal` per session with `max_scrollback = 0` (we only ever
-//! need the visible screen; the ring owns scrollback replay), plus VT parsing of
-//! each output chunk — the same work the GUI already does per pane, done once in
-//! the daemon instead. Idle sessions cost nothing. The emulator is `readonly`
-//! (the `stream_terminal` handler ignores clipboard/DA/DSR/etc.), so it never
-//! writes back to the pty or has any side effect beyond updating its own grid.
+//! One `terminal.Terminal` per session with `history_scrollback_bytes` of
+//! scrollback, plus VT parsing of each output chunk — the same work the GUI
+//! already does per pane, done once in the daemon instead. Idle sessions cost
+//! nothing; scrollback pages are allocated as they fill. The emulator is
+//! `readonly` (the `stream_terminal` handler ignores clipboard/DA/DSR/etc.), so it
+//! never writes back to the pty or has any side effect beyond updating its grid.
 //!
 //! ## Threading
 //!
@@ -66,6 +90,20 @@ fn clampDim(v: u16) u16 {
     return std.math.clamp(v, 1, 1000);
 }
 
+/// Scrollback budget (bytes of page memory, `Terminal.Options.max_scrollback`)
+/// each session's emulator keeps for the reboot history. ~2,000 rows at a
+/// 215-column pane. Bounded because the agent holds one per live session for as
+/// long as it runs; pages are only allocated as scrollback actually fills, so an
+/// idle or short-lived session costs a fraction of it.
+pub const history_scrollback_bytes: usize = 4 * 1024 * 1024;
+
+/// Width/height a `historyFromRaw` conversion uses when the raw ring did not
+/// record the geometry it was drawn at (a legacy width-less GRS1 snapshot).
+/// The history it produces is unwrapped, so the viewer re-wraps it at its own
+/// width anyway; the scratch size only decides where absolute cursor moves land.
+const unknown_cols: u16 = 80;
+const unknown_rows: u16 = 24;
+
 pub const GridEmulator = struct {
     alloc: Allocator,
     term: terminal.Terminal,
@@ -80,9 +118,10 @@ pub const GridEmulator = struct {
         self.term = try terminal.Terminal.init(alloc, .{
             .rows = clampDim(rows),
             .cols = clampDim(cols),
-            // We only ever serialize the visible screen; the session's raw ring
-            // owns scrollback replay. No emulator scrollback keeps memory minimal.
-            .max_scrollback = 0,
+            // The ATTACH repaint (`snapshotAlloc`) only ever serializes the
+            // visible screen, but the reboot history (`historyAlloc`) is the
+            // scrollback the user was looking at, so keep a bounded amount.
+            .max_scrollback = history_scrollback_bytes,
         });
         errdefer self.term.deinit(alloc);
         // initAlloc so OSC parsing (e.g. OSC 7 pwd, hyperlinks) can allocate; the
@@ -153,7 +192,25 @@ pub const GridEmulator = struct {
             w.writeAll("\x1b[H\x1b[2J") catch return error.OutOfMemory;
         }
 
-        var tf = formatter.TerminalFormatter.init(&self.term, .{ .emit = .vt });
+        // unwrap: a soft-wrapped row is emitted as the continuation it is, not
+        // as a row ending in CRLF, so the viewer keeps it as ONE logical line it
+        // can reflow when the pane is resized later. (The repaint is drawn at
+        // the attaching viewer's own width, so the picture is identical either
+        // way; only the wrap flag — and so every later resize — differs.)
+        // semantic_prompts: the viewer must know which repainted rows are the
+        // shell's prompt, or its next resize blanks output it mistakes for one.
+        var tf = formatter.TerminalFormatter.init(&self.term, .{ .emit = .vt, .unwrap = true, .semantic_prompts = true });
+        // The VISIBLE screen only. The emulator keeps scrollback for the reboot
+        // history; a re-attaching viewer already has (or is being replayed) its
+        // own, and repainting ours in front of it would duplicate every line.
+        const screen = self.term.screens.active;
+        if (screen.pages.getBottomRight(.active)) |br| {
+            tf.content = .{ .selection = terminal.Selection.init(
+                screen.pages.getTopLeft(.active),
+                br,
+                false,
+            ) };
+        }
         tf.extra = .{
             .palette = false,
             .modes = true,
@@ -167,7 +224,92 @@ pub const GridEmulator = struct {
 
         return buf.toOwnedSlice();
     }
+
+    /// Serialize the session's HISTORY — the scrollback and screen it was showing
+    /// — as content-only VT for the reboot floor (see the module doc). Owned by
+    /// `gpa`; empty when there is nothing on screen.
+    pub fn historyAlloc(self: *GridEmulator, gpa: Allocator) Allocator.Error![]u8 {
+        return historyOf(&self.term, gpa);
+    }
 };
+
+/// Build the reboot history from a RAW ring snapshot (a byte window of the
+/// session's output) by replaying it through a scratch emulator at the geometry
+/// it was drawn at, then serializing that emulator like `historyAlloc`. This is
+/// how a snapshot written by an agent that predates the history file still
+/// restores as clean content instead of being replayed raw. `cols`/`rows` of 0
+/// mean "unknown" (a legacy GRS1 file). Owned by `gpa`.
+pub fn historyFromRaw(gpa: Allocator, bytes: []const u8, cols: u16, rows: u16) Allocator.Error![]u8 {
+    const emu = try GridEmulator.create(
+        gpa,
+        if (rows == 0) unknown_rows else rows,
+        if (cols == 0) unknown_cols else cols,
+    );
+    defer emu.destroy();
+    emu.feed(bytes);
+    return emu.historyAlloc(gpa);
+}
+
+/// The shared serializer behind `historyAlloc`/`historyFromRaw`.
+///
+/// What it emits, and why each piece is (or is not) there:
+///   - The PRIMARY screen, all of it (scrollback + active rows): that is the
+///     buffer a shell — or an inline TUI like Claude Code's default renderer —
+///     was showing.
+///   - The ALTERNATE screen's rows after it, when the program was on the alt
+///     screen: the last frame of a full-screen TUI is what the user last saw, so
+///     it becomes ordinary lines at the bottom of the restored history. The
+///     restored pane itself stays on the PRIMARY screen — the program that owned
+///     the alt screen is dead, and the fresh shell must not land inside its
+///     frame.
+///   - Shell-integration marks (OSC 133 `P`/`I` — `formatter.Options
+///     .semantic_prompts`), so the restored prompt rows are known as prompts:
+///     a resize with the new shell at its prompt otherwise blanks restored
+///     output back to the last prompt the terminal DID see. The history ends
+///     in output state (`I` + the final CRLF), so the divider, notice and new
+///     shell below it are never mistaken for the dead shell's prompt.
+///   - Text, SGR styles and hyperlinks only. No modes, no cursor position, no
+///     scroll region, no tabstops, no keyboard state, no palette: every one of
+///     those is an agreement with a process that no longer exists.
+///   - Soft wraps UNWRAPPED, so a long line stays one logical line and the viewer
+///     re-wraps it at whatever width the restored pane has (`unwrap = false` would
+///     freeze every wrapped row at the capture width).
+///   - A trailing SGR reset + hyperlink close + CRLF, so whatever follows (the
+///     restart divider, the notice, the new shell's prompt) starts in a clean
+///     style on its own line.
+fn historyOf(term: *terminal.Terminal, gpa: Allocator) Allocator.Error![]u8 {
+    var buf: std.Io.Writer.Allocating = .init(gpa);
+    defer buf.deinit();
+    const w = &buf.writer;
+
+    const opts: formatter.Options = .{ .emit = .vt, .unwrap = true, .trim = true, .semantic_prompts = true };
+
+    if (term.screens.get(.primary)) |primary| {
+        var sf = formatter.ScreenFormatter.init(primary, opts);
+        sf.extra = .none;
+        sf.format(w) catch return error.OutOfMemory;
+    }
+
+    if (term.screens.active_key == .alternate) alt: {
+        const alt = term.screens.get(.alternate) orelse break :alt;
+        var frame: std.Io.Writer.Allocating = .init(gpa);
+        defer frame.deinit();
+        var sf = formatter.ScreenFormatter.init(alt, opts);
+        sf.extra = .none;
+        sf.format(&frame.writer) catch return error.OutOfMemory;
+        const bytes = frame.written();
+        if (bytes.len > 0) {
+            // Close whatever style the primary content ended in, and start the
+            // frame on a fresh line below it.
+            if (buf.written().len > 0) w.writeAll("\x1b[0m\r\n") catch return error.OutOfMemory;
+            w.writeAll(bytes) catch return error.OutOfMemory;
+        }
+    }
+
+    if (buf.written().len == 0) return buf.toOwnedSlice();
+    w.writeAll("\x1b[0m\x1b]8;;\x1b\\\x1b]133;I\x1b\\\r\n") catch return error.OutOfMemory;
+    return buf.toOwnedSlice();
+}
 
 const testing = std.testing;
 
@@ -244,4 +386,166 @@ test "GridEmulator: ensureSize reflows to the attach geometry" {
     const snap = try emu.snapshotAlloc(alloc);
     defer alloc.free(snap);
     try testing.expect(std.mem.indexOf(u8, snap, "resize me") != null);
+}
+
+test "GridEmulator: the attach snapshot is the VISIBLE screen only, never the scrollback" {
+    // The emulator keeps scrollback for the reboot history; the attach repaint
+    // must not drag it along or every re-attach would duplicate history the
+    // viewer already has.
+    const alloc = testing.allocator;
+    const emu = try GridEmulator.create(alloc, 3, 20);
+    defer emu.destroy();
+    emu.feed("old-1\r\nold-2\r\nold-3\r\nnew-1\r\nnew-2");
+
+    const snap = try emu.snapshotAlloc(alloc);
+    defer alloc.free(snap);
+    try testing.expect(std.mem.indexOf(u8, snap, "new-2") != null);
+    try testing.expect(std.mem.indexOf(u8, snap, "old-1") == null);
+    try testing.expect(std.mem.indexOf(u8, snap, "old-2") == null);
+}
+
+/// Every byte a history must never contain: a query the terminal would answer
+/// into the NEW shell's stdin, or a mode/keyboard/cursor-addressing sequence
+/// that belonged to the dead program.
+fn expectContentOnly(hist: []const u8) !void {
+    const forbidden = [_][]const u8{
+        "\x1b[?", // any DEC private mode set/reset/query (mouse, 2026, 1049, 25 …)
+        "\x1b[>", // kitty push / modifyOtherKeys / XTVERSION query
+        "\x1b[<", // kitty pop
+        "\x1b[=", // kitty set
+        "\x1b[c", // DA1 query
+        "$p", // DECRQM query
+        "\x1b[6n", // CPR query
+        "\x1b[r", // scroll region
+    };
+    for (forbidden) |f| {
+        if (std.mem.indexOf(u8, hist, f) != null) {
+            std.debug.print("history contains forbidden sequence {any}\n", .{f});
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
+test "historyAlloc: scrollback + screen, content only, ends on a fresh line" {
+    const alloc = testing.allocator;
+    const emu = try GridEmulator.create(alloc, 3, 20);
+    defer emu.destroy();
+    // A TUI-ish stream: modes, queries, kitty keyboard, colors, scrolling text.
+    emu.feed("\x1b[?1003h\x1b[?1006h\x1b[?2004h\x1b[>1u\x1b[>4;2m\x1b[c\x1b[?2026$p");
+    emu.feed("line-1\r\nline-2\r\n\x1b[31mred-3\x1b[0m\r\nline-4\r\nline-5");
+
+    const hist = try emu.historyAlloc(alloc);
+    defer alloc.free(hist);
+
+    // Scrollback (rows that scrolled off a 3-row screen) AND the screen.
+    for ([_][]const u8{ "line-1", "line-2", "red-3", "line-4", "line-5" }) |want| {
+        try testing.expect(std.mem.indexOf(u8, hist, want) != null);
+    }
+    // In order.
+    try testing.expect(std.mem.indexOf(u8, hist, "line-1").? < std.mem.indexOf(u8, hist, "line-5").?);
+    // Styles survive.
+    try testing.expect(std.mem.indexOf(u8, hist, "31m") != null or std.mem.indexOf(u8, hist, "38;5;1m") != null);
+    try expectContentOnly(hist);
+    // Ends reset and on a new line, so the divider/notice/prompt land below it.
+    try testing.expect(std.mem.endsWith(u8, hist, "\r\n"));
+}
+
+test "historyAlloc: soft wraps stay unwrapped so the viewer can reflow them" {
+    const alloc = testing.allocator;
+    const emu = try GridEmulator.create(alloc, 5, 10);
+    defer emu.destroy();
+    // 25 characters on a 10-column screen: three rows, ONE logical line.
+    emu.feed("abcdefghijklmnopqrstuvwxy\r\nnext");
+
+    const hist = try emu.historyAlloc(alloc);
+    defer alloc.free(hist);
+    try testing.expect(std.mem.indexOf(u8, hist, "abcdefghijklmnopqrstuvwxy") != null);
+}
+
+test "historyAlloc: a session on the alt screen keeps the primary AND its last frame" {
+    const alloc = testing.allocator;
+    const emu = try GridEmulator.create(alloc, 5, 30);
+    defer emu.destroy();
+    emu.feed("$ claude\r\n");
+    emu.feed("\x1b[?1049h\x1b[2J\x1b[H");
+    var i: usize = 0;
+    while (i < 50) : (i += 1) emu.feed("\x1b[H\x1b[2Jframe-old\x1b[5;1Hstatus-old");
+    emu.feed("\x1b[H\x1b[2JFRAME-FINAL\x1b[5;1HSTATUS-FINAL");
+
+    const hist = try emu.historyAlloc(alloc);
+    defer alloc.free(hist);
+    const prompt = std.mem.indexOf(u8, hist, "$ claude").?;
+    const frame = std.mem.indexOf(u8, hist, "FRAME-FINAL").?;
+    const status = std.mem.indexOf(u8, hist, "STATUS-FINAL").?;
+    try testing.expect(prompt < frame and frame < status);
+    try testing.expect(std.mem.indexOf(u8, hist, "frame-old") == null);
+    try expectContentOnly(hist);
+}
+
+test "historyAlloc: nothing on screen yields nothing" {
+    const alloc = testing.allocator;
+    const emu = try GridEmulator.create(alloc, 5, 30);
+    defer emu.destroy();
+    emu.feed("\x1b[?1003h\x1b[c");
+    const hist = try emu.historyAlloc(alloc);
+    defer alloc.free(hist);
+    try testing.expectEqual(@as(usize, 0), hist.len);
+}
+
+test "historyFromRaw: a raw Claude-Code-shaped ring converts to clean content" {
+    // The shape of the user's real rings: the window starts MID-sequence, the
+    // stream is synchronized-output frames redrawn in place with relative cursor
+    // motion, interleaved with queries and kitty keyboard pushes — and its
+    // `?1049h` (for the full-screen renderer) scrolled out of the window long ago.
+    const alloc = testing.allocator;
+    var raw: std.ArrayList(u8) = .empty;
+    defer raw.deinit(alloc);
+    try raw.appendSlice(alloc, "8;2;109;181;110mtail of a cut sequence\r\n");
+    try raw.appendSlice(alloc, "\x1b[<u\x1b[>1u\x1b[>4;2m\x1b[?1004h\x1b[?2004h");
+    try raw.appendSlice(alloc, "conversation line A\r\nconversation line B\r\n");
+    // The dynamic region the frames below redraw in place (two rows).
+    try raw.appendSlice(alloc, "> prompt box\r\nstatus spinner\r\n");
+    var i: usize = 0;
+    while (i < 200) : (i += 1) {
+        try raw.appendSlice(alloc, "\x1b[?2026h\x1b[?25l\r\x1b[2A\x1b[2K> prompt box\r\n\x1b[2Kstatus spinner\r\n\x1b[?25h\x1b[?2026l\x1b[c\x1b[?2026$p\x1b[>0q");
+    }
+    try raw.appendSlice(alloc, "\x1b[?2026h\r\x1b[2A\x1b[2K> FINAL prompt\r\n\x1b[2KFINAL status\r\n\x1b[?2026l");
+
+    const hist = try historyFromRaw(alloc, raw.items, 40, 10);
+    defer alloc.free(hist);
+    try testing.expect(std.mem.indexOf(u8, hist, "conversation line A") != null);
+    try testing.expect(std.mem.indexOf(u8, hist, "FINAL prompt") != null);
+    try testing.expect(std.mem.indexOf(u8, hist, "FINAL status") != null);
+    // In-place redraws collapse to their final frame — no stack of spinners.
+    try testing.expect(std.mem.indexOf(u8, hist, "status spinner") == null);
+    try expectContentOnly(hist);
+}
+
+test "historyFromRaw: unknown geometry (legacy GRS1) still converts" {
+    const alloc = testing.allocator;
+    const hist = try historyFromRaw(alloc, "hello\r\nworld", 0, 0);
+    defer alloc.free(hist);
+    try testing.expect(std.mem.indexOf(u8, hist, "hello") != null);
+    try testing.expect(std.mem.indexOf(u8, hist, "world") != null);
+}
+
+test "GridEmulator: the attach snapshot keeps soft wraps reflowable" {
+    const alloc = testing.allocator;
+    const emu = try GridEmulator.create(alloc, 5, 10);
+    defer emu.destroy();
+    emu.feed("abcdefghijklmnopqrstuvwxy");
+    const snap = try emu.snapshotAlloc(alloc);
+    defer alloc.free(snap);
+
+    // Paint it into a viewer at the same width, then widen the viewer: the line
+    // must reflow back to one row, which it can only do if it arrived soft-wrapped.
+    var t: terminal.Terminal = try .init(alloc, .{ .cols = 10, .rows = 5 });
+    defer t.deinit(alloc);
+    var s: stream_terminal.Stream = .initAlloc(alloc, .init(&t));
+    defer s.deinit();
+    s.nextSlice(snap);
+    try t.resize(alloc, 40, 5);
+    const text = try t.plainString(alloc);
+    defer alloc.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "abcdefghijklmnopqrstuvwxy") != null);
 }

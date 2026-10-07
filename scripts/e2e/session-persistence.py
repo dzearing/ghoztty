@@ -522,6 +522,13 @@ def struct_of(node, name2n):
 # stable fallback identity.
 _NAME_TO_N = {}
 
+# (window target, leaf index in split order) -> marker index. The last fallback
+# identity: an IN-PLACE recovery (--agent-only) rebuilds each window's split tree
+# with NEW leaves (new names), and under `restore` a relaunched pane re-prints no
+# marker — so a split pane can have neither. Its window and its position in the
+# rebuilt (identical) topology are what stay the same.
+_POS_TO_N = {}
+
 def snapshot():
     """Capture the full live state keyed by pane-marker index (stable across restore)."""
     windows = all_windows()
@@ -529,14 +536,19 @@ def snapshot():
     name2n, n2pid, n2tick, n2text = {}, {}, {}, {}
     n2name, n2cwd = {}, {}
     for w in windows:
-        for tab in w["tabs"]:
-            for name in leaf_names_of(tab["splits"]):
+        wkey = w.get("target") or w.get("name") or w.get("id")
+        for ti, tab in enumerate(w["tabs"]):
+            for li, name in enumerate(leaf_names_of(tab["splits"])):
+                pos = (wkey, ti, li)
                 text = read_pane(name)
                 n, pid = parse_marker(text)
                 if n is None:
                     n = _NAME_TO_N.get(name)   # marker-less `restore` pane
+                if n is None:
+                    n = _POS_TO_N.get(pos)     # renamed by an in-place rebuild
                 else:
                     _NAME_TO_N[name] = n
+                    _POS_TO_N.setdefault(pos, n)
                 name2n[name] = n
                 if n is not None:
                     n2pid[n] = pid
@@ -1914,6 +1926,471 @@ def run_fallback_check(args):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Reboot restore of TUI panes (the user's real case: every pane is Claude Code)
+# ---------------------------------------------------------------------------
+TUI_STREAM = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tui-stream.py")
+STREAM_DIR = os.path.join(tempfile.gettempdir(), "ghoztty-e2e", "streams")
+# A wide, tall window so the generated frames' 80-column layout is never re-wrapped.
+# And an explicit default working directory that is NEITHER the harness's cwd
+# (which an app-spawned agent inherits) NOR `/` (where a launchd-restarted agent
+# sits), so the bare window's restored cwd can only be right if the app forwarded
+# its own default to the agent.
+# Inheritance is off so the bare window gets that default rather than copying
+# the focused window's directory (which an inherited window does correctly).
+TUI_LAUNCH_ARGS = ["--window-width=140", "--window-height=40", f"--working-directory={HOME}",
+                   "--window-inherit-working-directory=false"]
+
+def raw_ipc(action, arguments):
+    """Send one IPC request straight to the debug app's socket (4-byte big-endian
+    length + JSON, the framing `src/cli/*.zig` uses), bypassing the CLI. Needed
+    for a window with NO working directory: `ghoztty +new-window` always fills in
+    the caller's cwd, so only a direct request reproduces what a GUI Cmd-N (no
+    parent pane to inherit from) hands the app."""
+    import socket
+    import struct
+    path = os.path.join(tempfile.gettempdir(), f"ghostty-debug-{os.getuid()}.sock")
+    body = json.dumps({"action": action, "arguments": arguments}).encode()
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(15)
+        sock.connect(path)
+        sock.sendall(struct.pack(">I", len(body)) + body)
+        hdr = b""
+        while len(hdr) < 4:
+            chunk = sock.recv(4 - len(hdr))
+            if not chunk:
+                raise E2EError(f"raw IPC {action}: connection closed")
+            hdr += chunk
+        (n,) = struct.unpack(">I", hdr)
+        resp = b""
+        while len(resp) < n:
+            chunk = sock.recv(n - len(resp))
+            if not chunk:
+                break
+            resp += chunk
+    out = json.loads(resp or b"{}")
+    if not out.get("success"):
+        raise E2EError(f"raw IPC {action} {arguments} failed: {out.get('error')}")
+    return out
+
+def window_leaf(target):
+    """The single leaf of the window registered as `target` (window names are
+    persisted in the layout manifest, so they survive the restore)."""
+    for w in all_windows():
+        names = {w.get("name"), w.get("target"), w.get("id")}
+        if target in names:
+            leaves = [nm for tab in w["tabs"] for nm in leaf_names_of(tab["splits"])]
+            return leaves[0] if leaves else None
+    return None
+
+def wait_text(name, needle, timeout):
+    """Poll a pane until `needle` is on it; return seconds waited, or None."""
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        if needle in read_pane(name, 20000):
+            return time.time() - t0
+        time.sleep(0.25)
+    return None
+
+def app_log_lines():
+    try:
+        with open(APP_LOG, "rb") as f:
+            return f.read().decode("utf-8", "replace").splitlines()
+    except FileNotFoundError:
+        return []
+
+AGENT_LOG = os.path.join(AGENT_DIR, "agent.log")
+
+def agent_log_from(offset):
+    """The debug agent's log text written since byte `offset` (from the start if
+    the file was replaced/truncated in between)."""
+    try:
+        with open(AGENT_LOG, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            end = f.tell()
+            f.seek(offset if offset <= end else 0)
+            return f.read().decode("utf-8", "replace")
+    except FileNotFoundError:
+        return ""
+
+def agent_log_size():
+    try:
+        return os.path.getsize(AGENT_LOG)
+    except FileNotFoundError:
+        return 0
+
+# The embedded apprt's construction placeholder (800x600 px) in cells. A pane
+# that announces it to the agent makes a live program re-render at 49 columns.
+PLACEHOLDER_RESIZE = "rows=17 cols=49"
+
+def wait_rings_rewritten_since(t, want, timeout=6.0):
+    """Wait until `want` ring snapshots were written at/after wall time `t` —
+    i.e. by the checkpoint the agent runs when a viewer disconnects — so their
+    end offset is the agent's head at that moment, not an older checkpoint's."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        fresh = [f for f in ring_files() if os.path.getmtime(f) >= t - 0.05]
+        if len(fresh) >= want:
+            return True
+        time.sleep(0.1)
+    vlog(f"ring snapshots not all rewritten within {timeout}s")
+    return False
+
+def offsets_ahead_of_agent():
+    """(session id, persisted offset, agent head) for every manifest leaf whose
+    persisted re-attach offset (`screenSnapshotOffset`) is beyond the agent's
+    stream head — the end of the ring snapshot the agent wrote when the viewer
+    disconnected. Must always be empty."""
+    import struct
+    try:
+        with open(MANIFEST) as f:
+            manifest = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+    bad = []
+    def walk(o):
+        if isinstance(o, dict):
+            sid, off = o.get("sessionID"), o.get("screenSnapshotOffset")
+            if sid and off:
+                path = os.path.join(RINGS_DIR, f"{sid}.ring")
+                try:
+                    with open(path, "rb") as rf:
+                        hdr = rf.read(24)
+                    if hdr[:4] == b"GRS2":
+                        base, _c, _r, n = struct.unpack("<QHHQ", hdr[4:24])
+                        if off > base + n:
+                            bad.append((sid, off, base + n))
+                except FileNotFoundError:
+                    pass
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+    walk(manifest)
+    return bad
+
+def await_live_ticks(pre, timeout=6.0):
+    """Snapshot the restored panes once every pane's tick has moved PAST its
+    pre-kill value — i.e. live output is flowing again — or at the timeout,
+    whatever is there. Right after a crash restore a pane can show a slightly
+    older frame for a moment (its persisted screen snapshot) before the agent's
+    catch-up lands; what must never happen is that it stays there."""
+    deadline = time.time() + timeout
+    cur = snapshot()
+    while time.time() < deadline:
+        if all((cur["tick"].get(n) or -1) > (pre["tick"].get(n) or -1) for n in EXPECTED_MARKERS):
+            return cur
+        time.sleep(0.3)
+        cur = snapshot()
+    return cur
+
+def run_restore_resize_check(args):
+    """Restored SHELL output must re-wrap on resize like output that was never
+    restored. For each way a pane comes back — app quit, app crash, reboot — a
+    shell prints two 300-character lines in a pane narrowed by a split, the app
+    restarts, and the pane is widened (split closed) and narrowed again. Both
+    lines must still read as one 300-character line each.
+
+    Two restore bugs this guards: the restored rows used to be serialized with
+    hard line breaks at the old width (nothing to re-wrap), and without their
+    shell-integration prompt marks — so the first resize, with the shell at its
+    prompt, blanked the restored output back to an older prompt.
+
+    The window is 200 columns so even the split pane (100) is wider than a long
+    prompt: a prompt that WRAPS is redrawn by zsh on a resize using its old
+    row count, which clobbers the line above it with or without a restore."""
+    failures = []
+    LAUNCH_ARGS.extend(["--window-width=200", "--window-height=40"])
+
+    def leaves(target):
+        for w in all_windows():
+            if target in {w.get("name"), w.get("target")}:
+                return [nm for tab in w["tabs"] for nm in leaf_names_of(tab["splits"])]
+        return []
+
+    def intact(label):
+        nm = leaves("rr")[0]
+        text = read_pane(nm, 400)
+        runs = [len(m) for m in re.findall(r"X+|Y+", text)]
+        ok = re.search(r"X{300}", text) and re.search(r"Y{300}", text)
+        if not ok:
+            failures.append(f"{label}: output did not re-wrap as two 300-char lines (runs {runs})")
+            log(f"    ✗ {label}: runs {runs}")
+        else:
+            log(f"    ✓ {label}")
+
+    for mode in ("quit", "crash", "reboot"):
+        log(f"[restore-resize] {mode}")
+        full_reset()
+        launch_app(); wait_app_ready(); time.sleep(2)
+        initial = all_leaf_names()
+        retry_cli(["+new-window", "--target=rr", f"--working-directory={ROOT}"], "new-window rr")
+        for nm in initial:
+            cli_ok(["+close", f"--target={nm}"])
+        time.sleep(1.5)
+        retry_cli(["+split", "--target=rr", "--direction=right", "--name=rrs"], "split")
+        time.sleep(1.5)
+        nm = leaves("rr")[0]
+        for ch in "XY":
+            m = type_and_await(nm, f"python3 -c \"print('{ch}'*300)\"\n", re.compile(rf"{ch}{{300}}"))
+            if m is None:
+                failures.append(f"{mode}: could not print the {ch} line")
+        time.sleep(2)
+
+        pids = app_pids()
+        if mode == "quit":
+            graceful_quit(pids)
+        else:
+            kill_pids(pids, signal.SIGKILL)
+            wait_gone(pids, 5)
+        if mode == "reboot":
+            wait_rings_flushed(2)
+            settle_past_throttle(time.time())  # this fresh agent was just spawned
+            before = launchagent_pid() or agent_pid()
+            kill_pids([before], signal.SIGKILL)
+            if wait_agent_restarted(before)[0] is None:
+                failures.append("reboot: launchd did not restart the agent")
+        launch_app(); wait_app_ready(); time.sleep(3)
+        if mode == "reboot":
+            wait_text(leaves("rr")[0], RESTORE_NOTICE, 20)
+        intact(f"{mode}: restored")
+        cli_ok(["+close", "--target=rrs"])  # 100 -> 200 columns
+        time.sleep(1.5)
+        intact(f"{mode}: widened")
+        retry_cli(["+split", "--target=" + leaves("rr")[0], "--direction=right", "--name=rrs"], "narrow")
+        time.sleep(1.5)                     # 200 -> 100 columns
+        intact(f"{mode}: narrowed again")
+
+    log("=" * 70)
+    if failures:
+        log(f"RESULT: FAIL — {len(failures)} assertion(s)")
+        return 1
+    log("RESULT: PASS — restored shell output re-wraps on resize after quit, crash and reboot")
+    return 0
+
+def run_reboot_tui_check(args):
+    """REBOOT restore of panes running a TUI — the case every one of the user's
+    panes is in, and the one `--agent-restart` (a plain `echo` loop) never
+    exercised. Three windows:
+
+      * tuiA — Claude Code's INLINE renderer: a long conversation on the primary
+        screen under a constantly-redrawn prompt box, several MB of raw output
+        (many times the agent's 2 MB ring), queries + kitty keyboard + 2026
+        frames throughout. Its command `cd`s into a subdirectory first, so the
+        restored shell's cwd proves the agent re-sampled the LIVE cwd rather
+        than the directory the session started in.
+      * tuiB — the FULL-SCREEN renderer: alt screen + any-event mouse tracking,
+        with the `?1049h` long gone from the ring window.
+      * bare — a window opened with NO working directory at all (a raw IPC
+        request, i.e. what a GUI Cmd-N with no parent pane sends; the CLI would
+        fill in its own cwd). It must start, and come back, in the app's default
+        directory — not wherever the agent process happened to be (`/` for a
+        launchd-started agent).
+
+    After SIGKILLing app + agent (launchd restarts the agent) and relaunching
+    the app, each TUI pane must show: its pre-reboot buffer (every conversation
+    line once, in order; the final frame), the `session was lost` notice below
+    it, and a LIVE shell under that which answers within seconds, in the right
+    directory, with mouse tracking / kitty keyboard / synchronized output all
+    off. And the app log must show no termio mailbox overflow — the
+    "unresponsive pane" mechanism."""
+    failures = []
+    def check(cond, msg):
+        if not cond:
+            failures.append(msg)
+            log(f"    ✗ {msg}")
+
+    os.makedirs(STREAM_DIR, exist_ok=True)
+    a_bin = os.path.join(STREAM_DIR, "tui-inline.bin")
+    b_bin = os.path.join(STREAM_DIR, "tui-fullscreen.bin")
+    subprocess.run([sys.executable, TUI_STREAM, "--mode=inline", "--tag=A", f"--out={a_bin}"], check=True)
+    subprocess.run([sys.executable, TUI_STREAM, "--mode=fullscreen", "--tag=B", f"--out={b_bin}"], check=True)
+    n_convo = 120  # tui-stream.py's default --convo
+    log(f"[build] streams: inline {os.path.getsize(a_bin)} B, fullscreen {os.path.getsize(b_bin)} B")
+
+    LAUNCH_ARGS.extend(TUI_LAUNCH_ARGS)
+    agent_log_mark = agent_log_size()
+    # The panes' directories, to prove afterwards that no reply was EXECUTED: a
+    # reply typed into a shell can do more than print junk — the old raw replay's
+    # XTVERSION answer (`ESC P >|ghostty 1.x …`) made zsh run `>|ghostty` and
+    # create an empty file named `ghostty` in each restored pane's cwd.
+    watched_dirs = (ROOT, CWD_B, HOME)
+    listing_before = {d: set(os.listdir(d)) for d in watched_dirs}
+    launch_app()
+    wait_app_ready()
+    time.sleep(2)
+    initial = all_leaf_names()
+
+    cwd_a = os.path.join(ROOT, "scripts", "e2e")  # where tuiA's shell `cd`s to
+    tui = lambda path: f"stty raw -echo; cat {path}; exec sleep 999999"
+    retry_cli(["+new-window", "--target=tuiA", f"--working-directory={ROOT}",
+               f"--command=cd scripts/e2e && {tui(a_bin)}"], "new-window tuiA")
+    retry_cli(["+new-window", "--target=tuiB", f"--working-directory={CWD_B}",
+               f"--command={tui(b_bin)}"], "new-window tuiB")
+    raw_ipc("new-window", ["--target=bare"])
+    deadline = time.time() + 15
+    while time.time() < deadline and any(nm in all_leaf_names() for nm in initial):
+        for nm in initial:
+            cli_ok(["+close", f"--target={nm}"])
+        time.sleep(0.5)
+
+    names = {t: window_leaf(t) for t in ("tuiA", "tuiB", "bare")}
+    if not all(names.values()):
+        log(f"FATAL: windows did not come up: {names}")
+        return 2
+    # Live phase: the panes must FINISH their streams (and the app must keep up —
+    # this is also the live-gap-fill flood the mailbox-pressure drain exists for).
+    t_live = time.time()
+    for t, needle in (("tuiA", "FINAL-A"), ("tuiB", "FINAL-B")):
+        w = wait_text(names[t], needle, 120)
+        check(w is not None, f"{t}: stream never finished rendering live (no {needle} in 120s)")
+    log(f"[build] both streams rendered live in {time.time() - t_live:.1f}s")
+    # LIVE integrity, before any reboot: the pane must hold exactly what the
+    # program drew. The stream is ~25x the viewer's inbound ring, so it is
+    # delivered under flow control; bytes lost to a pause (or dropped past the
+    # ring's free space) put every later relative-cursor redraw on the wrong
+    # rows — duplicated and missing lines, the "repeated text" report.
+    live_a = read_pane(names["tuiA"], 100000)
+    live_seen = [int(x) for x in re.findall(r"CONVO-A-(\d{4})", live_a)]
+    check(live_seen == list(range(n_convo)),
+          f"tuiA LIVE: conversation lines lost/duplicated before any reboot "
+          f"(got {len(live_seen)}; first {live_seen[:3]}, last {live_seen[-3:]})")
+    check(live_a.count("> thinking") <= 1,
+          f"tuiA LIVE: {live_a.count('> thinking')} prompt-box frames left behind (misplaced redraws)")
+    bare_shell = probe_shell(names["bare"], 99)
+    log(f"[build] bare window shell: pid={bare_shell[0]} cwd={bare_shell[1]}")
+    check(bare_shell[1] == HOME,
+          f"bare: a window with no directory started in {bare_shell[1]!r}, not the app default {HOME!r}")
+    if bare_shell[0] is None:
+        diag = run_cli(["+send-keys", "--target=" + names["bare"], "echo DIAG\n"])
+        vlog(f"bare send-keys: {diag}")
+        time.sleep(2)
+        vlog("bare pane text:\n" + read_pane(names["bare"], 40))
+    # Give the agent's checkpoint a moment of real time on the live sessions.
+    time.sleep(2)
+
+    # ---- Reboot: kill the app, let the disconnect checkpoint land, kill the agent.
+    log("[reboot] SIGKILL app, wait for the disconnect checkpoint, SIGKILL agent")
+    pids = app_pids()
+    kill_pids(pids, signal.SIGKILL)
+    wait_gone(pids, 5)
+    wait_rings_flushed(3)
+    time.sleep(1)
+    settle_past_throttle(None)
+    agent_before = launchagent_pid() or agent_pid()
+    if agent_before is None:
+        log("FATAL: no agent to kill")
+        return 2
+    kill_pids([agent_before], signal.SIGKILL)
+    agent_after, secs = wait_agent_restarted(agent_before)
+    check(agent_after is not None, "launchd did not restart the agent")
+    log(f"    ↻ agent {agent_before} -> {agent_after}")
+
+    log_mark = len(app_log_lines())
+    t0 = time.time()
+    launch_app()
+    wait_app_ready()
+
+    restored = {}
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        restored = {t: window_leaf(t) for t in ("tuiA", "tuiB", "bare")}
+        if all(restored.values()):
+            break
+        time.sleep(0.3)
+    check(all(restored.values()), f"windows not restored: {restored}")
+
+    for t in ("tuiA", "tuiB", "bare"):
+        nm = restored.get(t)
+        if not nm:
+            continue
+        w = wait_text(nm, RESTORE_NOTICE, 20)
+        check(w is not None, f"{t}: no '{RESTORE_NOTICE}' notice within 20s of relaunch")
+        if w is not None:
+            log(f"[{t}] notice after {time.time() - t0:.1f}s")
+
+    # Responsiveness + cwd: a live shell under the notice, answering quickly.
+    # tuiA's command `cd`d before running the TUI: only a LIVE re-sample of the
+    # shell's cwd finds it there. bare had no directory at all: the app's default.
+    want_cwd = {"tuiA": cwd_a, "tuiB": CWD_B, "bare": HOME}
+    for t in ("tuiA", "tuiB", "bare"):
+        nm = restored.get(t)
+        if not nm:
+            continue
+        t1 = time.time()
+        pid, cwd = probe_shell(nm, t)
+        took = time.time() - t1
+        check(pid is not None, f"{t}: restored shell never answered an echo (unresponsive pane)")
+        check(pid is None or took < 8.0, f"{t}: shell took {took:.1f}s to answer (sluggish pane)")
+        check(cwd == want_cwd[t], f"{t}: restored shell cwd {cwd!r} != {want_cwd[t]!r}")
+        log(f"[{t}] shell pid={pid} cwd={cwd} answered in {took:.1f}s")
+
+        got = probe_modes(nm, (1000, 1002, 1003, 1004, 1006, 2004, 2026, 25))
+        check(bool(got), f"{t}: no DECRQM answer")
+        for m in (1000, 1002, 1003, 1004, 1006, 2004, 2026):
+            check(got.get(m, "reset") == "reset", f"{t}: mode ?{m} is {got.get(m)} after restore")
+        check(got.get(25, "set") == "set", f"{t}: cursor hidden after restore")
+        tag = f"K{next_probe_tag()}"
+        m = type_and_await(nm, f"python3 {VT_PROBE} --tag={tag} kitty\n",
+                           re.compile(rf"{tag} KITTY = (\S+)"))
+        check(m is not None and m.group(1) == "0",
+              f"{t}: kitty keyboard flags {m.group(1) if m else 'no-reply'} after restore (want 0)")
+
+    # Content: the BUFFER, not the raw stream.
+    text_a = read_pane(restored.get("tuiA") or "", 100000)
+    notice_at = text_a.find(RESTORE_NOTICE)
+    pre_a = text_a[:notice_at] if notice_at >= 0 else text_a
+    seen = [int(x) for x in re.findall(r"CONVO-A-(\d{4})", pre_a)]
+    check(seen == list(range(n_convo)),
+          f"tuiA: conversation lines not all present once, in order "
+          f"(got {len(seen)} lines, first {seen[:3]}, last {seen[-3:]}; want 0..{n_convo - 1})")
+    check("FINAL-A" in pre_a, "tuiA: final prompt-box frame missing above the notice")
+    check(pre_a.count("thinking") <= 1,
+          f"tuiA: {pre_a.count('thinking')} stale prompt-box frames in the restored buffer (smear)")
+
+    text_b = read_pane(restored.get("tuiB") or "", 100000)
+    notice_at = text_b.find(RESTORE_NOTICE)
+    pre_b = text_b[:notice_at] if notice_at >= 0 else text_b
+    check("BEFORE-TUI-B" in pre_b, "tuiB: the primary screen under the full-screen app was lost")
+    check("FINAL-B" in pre_b, "tuiB: the full-screen app's last frame is missing")
+    stale = len(re.findall(r"frame \d+ row \d+", pre_b))
+    check(stale == 0, f"tuiB: {stale} stale frame rows replayed (smear)")
+
+    # Replies to the dead program's queries must never reach the new shell.
+    for t, text in (("tuiA", text_a), ("tuiB", text_b)):
+        after = text[text.find(RESTORE_NOTICE):] if RESTORE_NOTICE in text else ""
+        for junk in ("62;", "$y", "?2026;", "ghostty 1", "?0u", "?1u"):
+            check(junk not in after, f"{t}: query reply {junk!r} was typed into the restored shell")
+
+    # The "unresponsive" mechanism: the IO thread waiting on (then dropping)
+    # messages from its own full mailbox.
+    new_log = app_log_lines()[log_mark:]
+    drops = sum(1 for ln in new_log if "mailbox full" in ln)
+    check(drops == 0, f"{drops} 'termio mailbox full' drops after relaunch")
+
+    for d in watched_dirs:
+        appeared = set(os.listdir(d)) - listing_before[d]
+        # Only names a reply could produce; the user's own HOME may legitimately
+        # gain unrelated files during a long run.
+        suspicious = {f for f in appeared if f.startswith("ghostty") or f.startswith("1;")
+                      or f.startswith("62;") or f.startswith("?")}
+        check(not suspicious,
+              f"a terminal reply was executed by a restored shell: new {sorted(suspicious)} in {d}")
+
+    # No pane ever told the agent the placeholder geometry — not when it was
+    # opened, not when it re-attached or relaunched. (The windows are 140x40.)
+    placeholder = agent_log_from(agent_log_mark).count(PLACEHOLDER_RESIZE)
+    check(placeholder == 0,
+          f"{placeholder} RESIZE {PLACEHOLDER_RESIZE} (the pre-layout placeholder) reached the agent")
+
+    log("=" * 70)
+    if failures:
+        log(f"RESULT: FAIL — {len(failures)} assertion(s)")
+        return 1
+    log("RESULT: PASS — TUI panes restored as buffer + notice + live shell in the right cwd")
+    return 0
+
 def main():
     global VERBOSE, RELAUNCH_POLICY
     ap = argparse.ArgumentParser()
@@ -1937,6 +2414,13 @@ def main():
                     help="WP-D3: relaunch->interactive time must stay near the "
                          "empty-ring baseline even with a >2MB ring (structured "
                          "snapshot + delta replay), under graceful quit")
+    ap.add_argument("--restore-resize", action="store_true", dest="restore_resize",
+                    help="restored shell output must re-wrap when the pane is resized, "
+                         "after an app quit, an app crash and a reboot")
+    ap.add_argument("--reboot-tui", action="store_true", dest="reboot_tui",
+                    help="reboot restore of panes running a Claude-Code-shaped TUI "
+                         "(inline + full-screen) and a bare window: buffer, notice, "
+                         "live shell in the right cwd, no mode leaks, no mailbox drops")
     ap.add_argument("--fallback", action="store_true",
                     help="agent-unavailable fallback (T19): default-on config with the local "
                          "agent forced unspawnable; assert windows open as usable exec surfaces "
@@ -1994,6 +2478,31 @@ def main():
                     kill_pids(ap2, signal.SIGKILL)
                     wait_gone(ap2, 4)
                 launchagent_bootout()
+
+    if args.restore_resize:
+        log("=" * 70)
+        log("Ghoztty session-persistence E2E — restored output re-wraps on resize")
+        log("=" * 70)
+        try:
+            return run_restore_resize_check(args)
+        finally:
+            if not args.keep:
+                full_reset()
+
+    if args.reboot_tui:
+        log("=" * 70)
+        log("Ghoztty session-persistence E2E — REBOOT restore of TUI panes")
+        log("=" * 70)
+        full_reset()
+        try:
+            return run_reboot_tui_check(args)
+        finally:
+            if not args.keep:
+                ap2 = app_pids()
+                if ap2:
+                    kill_pids(ap2, signal.SIGKILL)
+                    wait_gone(ap2, 4)
+                full_reset()
 
     if args.fallback:
         log("=" * 70)
@@ -2092,6 +2601,16 @@ def main():
         t_gone = time.time()
         term_secs = t_gone - t_term
 
+        # No persisted re-attach offset may be AHEAD of the agent's stream. The
+        # viewer used to count the agent's synthetic repaint as stream bytes, so
+        # each restart pushed its offset further ahead until a re-attach
+        # discarded the child's real output — a pane frozen after a restart.
+        wait_rings_rewritten_since(t_term, EXPECTED_LEAVES)
+        for sid, off, end in offsets_ahead_of_agent():
+            all_failures.append(f"cycle {cycle}: session {sid[:8]} persisted offset {off} "
+                                f"is ahead of the agent's stream head {end}")
+            log(f"    ✗ session {sid[:8]} persisted offset {off} > agent head {end}")
+
         upgrade = None
         if args.upgrade:
             old_ino, new_ino = swap_in_upgrade(cycle)
@@ -2110,7 +2629,7 @@ def main():
         gap = time.time() - t_gone
 
         agent_after = agent_pid()
-        cur = snapshot()
+        cur = await_live_ticks(pre)
 
         failures = []
         assert_cycle(baseline, cur, pre, gap, agent_before, agent_after, failures, upgrade)

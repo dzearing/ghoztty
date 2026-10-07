@@ -125,6 +125,20 @@ pub const Mailbox = union(enum) {
 
     /// Notify that there are new messages. This may be a noop depending
     /// on the writer type.
+    /// True when the queue is at least half full. The remote backend parses
+    /// output ON the IO thread that also drains this mailbox, so replies the
+    /// parse generates (DA1, DECRQM, kitty `CSI ? u`, color reports, the
+    /// synchronized-output timer …) can only be delivered once it returns to its
+    /// loop; if it keeps parsing past a full queue, `send` waits 50 ms per message
+    /// and then DROPS it — measured at ~3,600 drops (~3 min of a frozen pane) for
+    /// one replay of a 2 MB Claude Code ring. Checking this between small slices
+    /// lets that drain yield first.
+    pub fn underPressure(self: *Mailbox) bool {
+        return switch (self.*) {
+            .spsc => |*v| v.queue.count() * 2 >= Queue.max_len,
+        };
+    }
+
     pub fn notify(self: *Mailbox) void {
         switch (self.*) {
             .spsc => |*v| v.wakeup.notify() catch |err| {

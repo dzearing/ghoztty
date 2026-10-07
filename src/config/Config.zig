@@ -1250,11 +1250,40 @@ command: ?Command = null,
 /// degrades to `rerun` — the agent respawns from its own recorded metadata —
 /// which is exactly the previous behavior, never a broken pane.
 ///
-/// The working directory is the one the session was OPENed with, recorded by the
-/// agent; a shell that later `cd`ed elsewhere comes back where it started, and a
-/// session opened with no working directory at all comes back in the agent's own
-/// cwd. Both also require an agent new enough to record it.
+/// The working directory is the shell's last known one: the agent records where
+/// the session started and re-samples the live directory at every checkpoint (a
+/// 30 s tick, a viewer disconnecting, logout), so a shell that `cd`ed comes back
+/// where it was. Requires an agent new enough to record it.
 @"session-relaunch": SessionRelaunch = .restore,
+
+/// Run Claude Code in its fullscreen renderer in local panes (macOS).
+///
+/// Claude Code has two renderers. Its classic one writes the conversation into
+/// the terminal's scrollback, laid out row by row at the width it had at the
+/// time, so scrolling up after a resize shows text at the OLD width — only the
+/// bottom of the screen is redrawn. The fullscreen renderer keeps the
+/// conversation itself and re-lays it out on every resize, so the whole history
+/// re-wraps, and it renders noticeably faster.
+///
+/// When `true` (the default), Ghoztty sets `CLAUDE_CODE_NO_FLICKER=1` in local
+/// panes and session-persistence panes — unless you have already decided:
+///
+///   * `CLAUDE_CODE_NO_FLICKER` is already set in the environment, or
+///   * your Claude Code settings (`$CLAUDE_CONFIG_DIR/settings.json`, else
+///     `~/.claude/settings.json`) set `tui` — `/tui default` or `/tui fullscreen`
+///     records exactly that, and is always respected, or
+///   * you set the variable yourself with the `env` option, which wins.
+///
+/// Never applied to panes on another machine: Claude Code itself turns the
+/// fullscreen renderer off where it renders poorly (Windows over a remote
+/// connection), and forcing it there would override that.
+///
+/// The trade-off: in fullscreen mode the conversation lives inside Claude Code,
+/// not in the terminal's scrollback — scroll and select inside Claude, and after
+/// a reboot only Claude's last screen is restored (`claude --resume` brings the
+/// conversation back). Set to `false` to leave the renderer entirely to Claude
+/// Code's own defaults.
+@"claude-code-fullscreen": bool = true,
 
 /// Controls when command finished notifications are sent. There are
 /// three options:
