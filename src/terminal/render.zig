@@ -6,6 +6,7 @@ const fastmem = @import("../fastmem.zig");
 const lib = @import("lib.zig");
 const color = @import("color.zig");
 const cursor = @import("cursor.zig");
+const hard_wrap = @import("hard_wrap.zig");
 const highlight = @import("highlight.zig");
 const point = @import("point.zig");
 const size = @import("size.zig");
@@ -746,14 +747,12 @@ pub const RenderState = struct {
     pub fn string(
         self: *const RenderState,
         writer: *std.Io.Writer,
-        map: ?struct {
-            alloc: Allocator,
-            map: *StringMap,
-        },
+        opts: StringOptions,
     ) (Allocator.Error || std.Io.Writer.Error)!void {
         const row_slice = self.row_data.slice();
         const row_rows = row_slice.items(.raw);
         const row_cells = row_slice.items(.cells);
+        const map = opts.map;
 
         for (
             0..,
@@ -761,10 +760,35 @@ pub const RenderState = struct {
             row_cells,
         ) |y, row, cells| {
             const cells_slice = cells.slice();
+            const raw_cells = cells_slice.items(.raw);
+
+            // Rows a TUI hard-wrapped join like soft-wrapped ones: the
+            // seam's glue instead of a newline, without the continuation's
+            // re-indentation or the padding before the seam.
+            const seam: ?hard_wrap.Seam = if (opts.seams) |s| s[y] else null;
+            const join_next = if (opts.seams) |s| y + 1 < s.len and s[y + 1] != null else false;
+            const start_x: usize = if (seam) |sm| start: {
+                const glue = sm.glue.bytes();
+                try writer.writeAll(glue);
+                if (map) |m| try m.map.appendNTimes(m.alloc, .{
+                    .x = @intCast(sm.skip),
+                    .y = @intCast(y),
+                }, glue.len);
+                break :start sm.skip;
+            } else 0;
+            const end_x: usize = if (join_next) end: {
+                var end = raw_cells.len;
+                while (end > start_x) : (end -= 1) switch (raw_cells[end - 1].codepoint()) {
+                    0, ' ' => if (raw_cells[end - 1].wide != .spacer_tail) continue else break,
+                    else => break,
+                };
+                break :end end;
+            } else raw_cells.len;
+
             for (
-                0..,
-                cells_slice.items(.raw),
-                cells_slice.items(.grapheme),
+                start_x..,
+                raw_cells[start_x..end_x],
+                cells_slice.items(.grapheme)[start_x..end_x],
             ) |x, cell, graphemes| {
                 var len: usize = std.unicode.utf8CodepointSequenceLength(cell.codepoint()) catch
                     return error.WriteFailed;
@@ -783,7 +807,7 @@ pub const RenderState = struct {
                 }, len);
             }
 
-            if (!row.wrap) {
+            if (!row.wrap and !join_next) {
                 try writer.writeAll("\n");
                 if (map) |m| try m.map.append(m.alloc, .{
                     .x = @intCast(cells_slice.len),
@@ -792,6 +816,20 @@ pub const RenderState = struct {
             }
         }
     }
+
+    pub const StringOptions = struct {
+        /// If set, filled with the cell each byte of the string came from.
+        map: ?struct {
+            alloc: Allocator,
+            map: *StringMap,
+        } = null,
+
+        /// If set, `seams[y]` joins row y to row y - 1 where a TUI
+        /// hard-wrapped it (see hard_wrap.zig), one entry per row. These
+        /// must be computed from the terminal (`hard_wrap.seams` over the
+        /// rows' pins) while it matches this render state.
+        seams: ?[]const ?hard_wrap.Seam = null,
+    };
 
     /// A set of coordinates representing cells.
     pub const CellSet = std.AutoArrayHashMapUnmanaged(point.Coordinate, void);
@@ -1316,7 +1354,7 @@ test "string" {
     var w = std.Io.Writer.Allocating.init(alloc);
     defer w.deinit();
 
-    try state.string(&w.writer, null);
+    try state.string(&w.writer, .{});
 
     const result = try w.toOwnedSlice();
     defer alloc.free(result);
