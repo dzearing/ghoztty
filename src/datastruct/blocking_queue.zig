@@ -169,6 +169,18 @@ pub fn BlockingQueue(
             return self.closed;
         }
 
+        /// The number of queued values right now (a snapshot; it can change as
+        /// soon as the lock is released). For a producer that is ALSO the
+        /// consumer and must stop producing before it fills its own queue.
+        pub fn count(self: *Self) Size {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+            return self.len;
+        }
+
+        /// The fixed capacity of the queue.
+        pub const max_len: Size = bounds;
+
         /// Pop a value from the queue without blocking.
         pub fn pop(self: *Self) ?T {
             self.mutex.lock();

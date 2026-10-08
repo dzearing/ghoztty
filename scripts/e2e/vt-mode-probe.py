@@ -12,6 +12,13 @@ to ask the emulator: `CSI ? <n> $ p` → `CSI ? <n> ; <v> $ y`, v = 1 set, 2 res
 
     python3 vt-mode-probe.py 1000 1002 1003 1006 2004
     python3 vt-mode-probe.py --tag=7 1003        # tag every line, for repeat runs
+    python3 vt-mode-probe.py kitty 1003          # also the kitty keyboard flags
+
+`kitty` asks for the kitty keyboard protocol flags (`CSI ? u` → `CSI ? <flags> u`)
+and prints `KITTY = <flags>`. They are not a DEC mode, so DECRQM cannot see them,
+and they matter just as much: a dead TUI's pushed flags make the terminal encode
+Ctrl-C, Escape and every modified key as `CSI … u`, which a plain shell does not
+understand.
 
 A `--tag` is echoed on every output line. A caller that probes the SAME pane more
 than once needs it: the earlier run's answers are still in the scrollback (and, on
@@ -68,12 +75,40 @@ def probe(fd, mode, timeout=2.0):
     return int(m.group(2))
 
 
+# Kitty keyboard flags report: CSI ? <flags> u
+_KITTY_REPLY = re.compile(rb"\x1b\[\?(\d+)u")
+
+
+def probe_kitty(fd, timeout=2.0):
+    """Return the current kitty keyboard flags, or None if the terminal never
+    answered. Same raw-mode read as `probe`."""
+    saved = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        os.write(fd, b"\x1b[?u")
+        buf = b""
+        while len(buf) < 64:
+            if not select.select([fd], [], [], timeout)[0]:
+                break
+            chunk = os.read(fd, 32)
+            if not chunk:
+                break
+            buf += chunk
+            if buf.endswith(b"u"):
+                break
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+    m = _KITTY_REPLY.search(buf)
+    return int(m.group(1)) if m else None
+
+
 def main():
     args = sys.argv[1:]
     tag = ""
     if args and args[0].startswith("--tag="):
         tag = args.pop(0)[len("--tag="):] + " "
-    modes = [int(a) for a in args] or [1000, 1002, 1003, 1006, 2004]
+    kitty = "kitty" in args
+    modes = [int(a) for a in args if a != "kitty"] or ([] if kitty else [1000, 1002, 1003, 1006, 2004])
     try:
         fd = os.open("/dev/tty", os.O_RDWR)
     except OSError as e:
@@ -84,6 +119,9 @@ def main():
             v = probe(fd, mode)
             state = _VALUES.get(v, "no-reply") if v is not None else "no-reply"
             print(f"{tag}MODE {mode} = {state}")
+        if kitty:
+            flags = probe_kitty(fd)
+            print(f"{tag}KITTY = {'no-reply' if flags is None else flags}")
     finally:
         os.close(fd)
     print(f"{tag}VT-PROBE-DONE")

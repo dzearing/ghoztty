@@ -42,6 +42,25 @@
 //! tmp-in-the-same-dir + fsync + rename pattern as `session_meta.writeAtomic`:
 //! a future agent start never observes a torn snapshot.
 
+//!
+//! ## The history file (`<rings_dir>/<session-id-hex>.hist`)
+//!
+//! Written in the same pass as the ring, it is what a reboot ACTUALLY restores:
+//! the session's emulator serialized as content-only VT (scrollback + screen, no
+//! modes, no queries — see `grid_snapshot.zig`'s module doc for why the raw ring
+//! is the wrong thing to replay into a fresh pane). A separate file rather than a
+//! new ring magic so an older agent reading this directory after a downgrade
+//! still finds the GRS2 ring it understands and simply ignores the history.
+//!
+//!   magic       : 4 bytes  "GHS1"
+//!   end_offset  : u64 LE   stream offset the history reflects (the ring's tail
+//!                          when both were written — how a loader tells a matched
+//!                          pair from a history left behind by a failed write)
+//!   cols        : u16 LE   pty width at snapshot time
+//!   rows        : u16 LE   pty height at snapshot time
+//!   byte_len    : u64 LE   number of history bytes that follow
+//!   bytes       : byte_len content-only VT bytes
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -93,6 +112,19 @@ pub fn writeAtomic(
     rows: u16,
     bytes: []const u8,
 ) !void {
+    var header: [header_len]u8 = undefined;
+    @memcpy(header[0..magic.len], magic);
+    std.mem.writeInt(u64, header[magic.len..][0..8], base_offset, .little);
+    std.mem.writeInt(u16, header[magic.len + 8 ..][0..2], cols, .little);
+    std.mem.writeInt(u16, header[magic.len + 10 ..][0..2], rows, .little);
+    std.mem.writeInt(u64, header[magic.len + 12 ..][0..8], @intCast(bytes.len), .little);
+    try writeFileAtomic(alloc, path, &header, bytes);
+}
+
+/// The shared tmp + fsync + rename writer behind `writeAtomic` and
+/// `writeHistoryAtomic`: header and body in two writes (the body can be large),
+/// creating parent dirs as needed.
+fn writeFileAtomic(alloc: Allocator, path: []const u8, header: []const u8, bytes: []const u8) !void {
     if (std.fs.path.dirname(path)) |dir| try std.fs.cwd().makePath(dir);
 
     const tmp_path = try std.fmt.allocPrint(alloc, "{s}.tmp", .{path});
@@ -103,20 +135,76 @@ pub fn writeAtomic(
         errdefer std.fs.cwd().deleteFile(tmp_path) catch {};
         const file = try std.fs.cwd().createFile(tmp_path, .{ .truncate = true });
         defer file.close();
-
-        var header: [header_len]u8 = undefined;
-        @memcpy(header[0..magic.len], magic);
-        std.mem.writeInt(u64, header[magic.len..][0..8], base_offset, .little);
-        std.mem.writeInt(u16, header[magic.len + 8 ..][0..2], cols, .little);
-        std.mem.writeInt(u16, header[magic.len + 10 ..][0..2], rows, .little);
-        std.mem.writeInt(u64, header[magic.len + 12 ..][0..8], @intCast(bytes.len), .little);
-        try file.writeAll(&header);
+        try file.writeAll(header);
         try file.writeAll(bytes);
         // Durable before the rename publishes it.
         try file.sync();
     }
     errdefer std.fs.cwd().deleteFile(tmp_path) catch {};
     try std.fs.cwd().rename(tmp_path, path);
+}
+
+/// History file magic (see the module doc).
+pub const hist_magic = "GHS1";
+/// magic(4) + end_offset(8) + cols(2) + rows(2) + byte_len(8).
+pub const hist_header_len: usize = hist_magic.len + 8 + 2 + 2 + 8;
+
+/// A parsed history file. `bytes` is owned by `alloc`; free via `free`.
+pub const History = struct {
+    end_offset: u64,
+    cols: u16,
+    rows: u16,
+    bytes: []u8,
+
+    pub fn free(self: History, alloc: Allocator) void {
+        alloc.free(self.bytes);
+    }
+};
+
+/// Build the `<dir>/<id_str>.hist` path. Caller frees.
+pub fn historyPathFor(alloc: Allocator, dir: []const u8, id_str: []const u8) ![]u8 {
+    return std.fmt.allocPrint(alloc, "{s}/{s}.hist", .{ dir, id_str });
+}
+
+/// Atomically write a history file (same crash-safety as `writeAtomic`).
+pub fn writeHistoryAtomic(
+    alloc: Allocator,
+    path: []const u8,
+    end_offset: u64,
+    cols: u16,
+    rows: u16,
+    bytes: []const u8,
+) !void {
+    var header: [hist_header_len]u8 = undefined;
+    @memcpy(header[0..hist_magic.len], hist_magic);
+    std.mem.writeInt(u64, header[hist_magic.len..][0..8], end_offset, .little);
+    std.mem.writeInt(u16, header[hist_magic.len + 8 ..][0..2], cols, .little);
+    std.mem.writeInt(u16, header[hist_magic.len + 10 ..][0..2], rows, .little);
+    std.mem.writeInt(u64, header[hist_magic.len + 12 ..][0..8], @intCast(bytes.len), .little);
+    try writeFileAtomic(alloc, path, &header, bytes);
+}
+
+/// Load a history file. Null when absent or corrupt (best-effort, like `load`:
+/// the caller falls back to converting the raw ring).
+pub fn loadHistory(alloc: Allocator, path: []const u8) !?History {
+    const raw = std.fs.cwd().readFileAlloc(alloc, path, max_file_bytes) catch |err| switch (err) {
+        error.FileNotFound => return null,
+        else => return err,
+    };
+    defer alloc.free(raw);
+    if (raw.len < hist_header_len) return null;
+    if (!std.mem.eql(u8, raw[0..hist_magic.len], hist_magic)) return null;
+    const end_offset = std.mem.readInt(u64, raw[hist_magic.len..][0..8], .little);
+    const cols = std.mem.readInt(u16, raw[hist_magic.len + 8 ..][0..2], .little);
+    const rows = std.mem.readInt(u16, raw[hist_magic.len + 10 ..][0..2], .little);
+    const byte_len = std.mem.readInt(u64, raw[hist_magic.len + 12 ..][0..8], .little);
+    if (byte_len != raw.len - hist_header_len) return null;
+    return .{
+        .end_offset = end_offset,
+        .cols = cols,
+        .rows = rows,
+        .bytes = try alloc.dupe(u8, raw[hist_header_len..]),
+    };
 }
 
 /// Load + parse the snapshot at `path`. Returns null when the file is ABSENT (a
@@ -159,12 +247,14 @@ pub fn load(alloc: Allocator, path: []const u8) !?Loaded {
     return null; // unknown magic → treat as absent
 }
 
-/// Best-effort delete of a session's snapshot file (on CLOSE / reap). Missing
-/// file is not an error.
+/// Best-effort delete of a session's snapshot files — the ring AND its history
+/// (on CLOSE / reap). Missing files are not an error.
 pub fn delete(alloc: Allocator, dir: []const u8, id_str: []const u8) void {
-    const path = pathFor(alloc, dir, id_str) catch return;
-    defer alloc.free(path);
-    std.fs.cwd().deleteFile(path) catch {};
+    for ([_]*const fn (Allocator, []const u8, []const u8) anyerror![]u8{ pathFor, historyPathFor }) |f| {
+        const path = f(alloc, dir, id_str) catch continue;
+        defer alloc.free(path);
+        std.fs.cwd().deleteFile(path) catch {};
+    }
 }
 
 // =============================================================================
@@ -289,4 +379,48 @@ test "corrupt files load as null (wrong magic, short header, length mismatch)" {
         try std.fs.cwd().writeFile(.{ .sub_path = p, .data = &buf });
         try testing.expect((try load(alloc, p)) == null);
     }
+}
+
+test "history file: round-trip, corrupt loads null, delete removes ring AND history" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const rings_dir = try std.fs.path.join(alloc, &.{ dir_path, "rings" });
+    defer alloc.free(rings_dir);
+    const id = "0123456789abcdef0123456789abcdef";
+    const hpath = try historyPathFor(alloc, rings_dir, id);
+    defer alloc.free(hpath);
+    const rpath = try pathFor(alloc, rings_dir, id);
+    defer alloc.free(rpath);
+
+    try testing.expect((try loadHistory(alloc, hpath)) == null);
+
+    const body = "line one\r\n\x1b[31mred\x1b[0m\r\n";
+    try writeHistoryAtomic(alloc, hpath, 4242, 215, 50, body);
+    try writeAtomic(alloc, rpath, 0, 215, 50, "raw");
+    var h = (try loadHistory(alloc, hpath)).?;
+    defer h.free(alloc);
+    try testing.expectEqual(@as(u64, 4242), h.end_offset);
+    try testing.expectEqual(@as(u16, 215), h.cols);
+    try testing.expectEqual(@as(u16, 50), h.rows);
+    try testing.expectEqualStrings(body, h.bytes);
+
+    // A ring file is not a history file (and vice versa): magics differ.
+    try testing.expect((try loadHistory(alloc, rpath)) == null);
+    try testing.expect((try load(alloc, hpath)) == null);
+
+    // Length mismatch → null.
+    {
+        const f = try std.fs.cwd().createFile(hpath, .{ .truncate = false });
+        defer f.close();
+        try f.seekFromEnd(0);
+        try f.writeAll("extra");
+    }
+    try testing.expect((try loadHistory(alloc, hpath)) == null);
+
+    delete(alloc, rings_dir, id);
+    try testing.expectError(error.FileNotFound, std.fs.cwd().statFile(hpath));
+    try testing.expectError(error.FileNotFound, std.fs.cwd().statFile(rpath));
 }

@@ -212,6 +212,13 @@ const Command = CommandCore.DefaultCommand;
 /// Scratch read size for the master-fd reader loop.
 const read_buf_size: usize = 64 * 1024;
 
+/// Most input a child may have queued (accepted from the viewer but not yet
+/// written to its pty) before more is dropped. Input only backs up when the
+/// program in the pane is not reading its terminal at all; past this point
+/// nothing it eventually reads would be meaningful anyway, and an unbounded
+/// queue would be memory the user can grow by pasting into a stuck pane.
+const max_input_backlog: usize = 4 * 1024 * 1024;
+
 /// A pty-backed child process. Heap-allocated and owned by the `PtySpawner`; freed
 /// in `terminate` (idempotent). Implements the `session.Child` vtable.
 pub const PtyChild = struct {
@@ -241,6 +248,26 @@ pub const PtyChild = struct {
     /// Set once `terminate` has run; makes it idempotent and tells the reader to
     /// stop (it also unblocks on master EOF when the slave side is gone).
     closed: bool = false,
+
+    /// Viewer input waiting to be written to the pty, and the thread that
+    /// writes it (POSIX). A pty write BLOCKS once the program in the pane stops
+    /// reading its terminal and the line discipline's input queue is full — a
+    /// TUI busy computing, a script that never reads stdin, a stopped job. The
+    /// write used to happen on the connection's ONE data-reader thread, so a
+    /// single such pane froze typing in EVERY pane on the connection (for the
+    /// local agent: every window) until it drained. Measured: a pane running
+    /// `sleep` after a TUI, plus the terminal's own replies to that TUI's
+    /// queries, wedged all input indefinitely. Now `writeFn` only queues, and
+    /// each child's writer blocks on its own pty alone. Guarded by
+    /// `input_mutex`; `input_cond` wakes the writer.
+    input: std.ArrayListUnmanaged(u8) = .empty,
+    input_head: usize = 0,
+    input_mutex: std.Thread.Mutex = .{},
+    input_cond: std.Thread.Condition = .{},
+    input_stop: bool = false,
+    /// Input dropped past `max_input_backlog` (diagnostics; logged once).
+    input_dropped: usize = 0,
+    writer: ?std.Thread = null,
 
     /// Build a `session.Child` handle over this struct.
     pub fn child(self: *PtyChild) session.Child {
@@ -339,7 +366,86 @@ pub const PtyChild = struct {
                 return error.BrokenPipe;
             return @intCast(written);
         }
-        return posix.write(self.pty.master, bytes);
+        // POSIX: queue for this child's own writer thread (see `input`). Never
+        // blocks the caller — the connection's data reader, shared by every pane.
+        if (bytes.len == 0) return 0;
+        self.input_mutex.lock();
+        defer self.input_mutex.unlock();
+        if (self.input_stop) return error.BrokenPipe;
+        if (self.writer == null) {
+            self.writer = std.Thread.spawn(.{}, writerLoop, .{self}) catch |err| {
+                // No thread: fall back to the old direct (blocking) write rather
+                // than losing the keystroke.
+                log.warn("failed to spawn pty writer thread: {}; writing inline", .{err});
+                self.input_mutex.unlock();
+                defer self.input_mutex.lock();
+                return posix.write(self.pty.master, bytes);
+            };
+        }
+        const queued = self.input.items.len - self.input_head;
+        const take = @min(bytes.len, max_input_backlog -| queued);
+        if (take < bytes.len) {
+            if (self.input_dropped == 0) log.warn(
+                "pty input backlog full ({d} bytes queued; the program in this pane is not reading its terminal); dropping input",
+                .{queued},
+            );
+            self.input_dropped += bytes.len - take;
+        }
+        if (take > 0) {
+            self.input.appendSlice(self.alloc, bytes[0..take]) catch return error.OutOfMemory;
+            self.input_cond.signal();
+        }
+        // Report everything accepted: dropped input is gone by design, and a
+        // short count would only make `Child.writeAll` spin on a full queue.
+        return bytes.len;
+    }
+
+    /// Drain `input` into the pty master, blocking only this child (POSIX).
+    /// Exits when `terminate` sets `input_stop` (after the pty is torn down, a
+    /// write in flight fails with EIO instead of blocking forever).
+    fn writerLoop(self: *PtyChild) void {
+        var chunk: [16 * 1024]u8 = undefined;
+        while (true) {
+            self.input_mutex.lock();
+            while (self.input.items.len == self.input_head and !self.input_stop) {
+                self.input_cond.wait(&self.input_mutex);
+            }
+            if (self.input_stop) {
+                self.input_mutex.unlock();
+                return;
+            }
+            const pending = self.input.items[self.input_head..];
+            const n = @min(pending.len, chunk.len);
+            @memcpy(chunk[0..n], pending[0..n]);
+            self.input_mutex.unlock();
+
+            var off: usize = 0;
+            while (off < n) {
+                const w = posix.write(self.pty.master, chunk[off..n]) catch |err| {
+                    // The pty is gone (child exited / torn down): nothing more
+                    // can be delivered. Park until terminate stops us.
+                    log.debug("pty input write failed: {}", .{err});
+                    self.input_mutex.lock();
+                    self.input.clearRetainingCapacity();
+                    self.input_head = 0;
+                    while (!self.input_stop) self.input_cond.wait(&self.input_mutex);
+                    self.input_mutex.unlock();
+                    return;
+                };
+                if (w == 0) break;
+                off += w;
+            }
+
+            self.input_mutex.lock();
+            self.input_head += n;
+            if (self.input_head == self.input.items.len) {
+                self.input.clearRetainingCapacity();
+                self.input_head = 0;
+                // A one-off huge paste should not pin its buffer for the pane's life.
+                if (self.input.capacity > 1024 * 1024) self.input.clearAndFree(self.alloc);
+            }
+            self.input_mutex.unlock();
+        }
     }
 
     // --- resize: TIOCSWINSZ ----------------------------------------------------
@@ -533,6 +639,14 @@ pub const PtyChild = struct {
         //   - Windows: `pty.deinit` calls `ClosePseudoConsole`, which is what gives
         //     the reader's blocked `ReadFile(out_pipe)` its EOF. Closing it AFTER
         //     the join would deadlock (see `conpty_smoke.zig`'s teardown note).
+        // Stop the input writer BEFORE the pty goes away: a writer waiting for
+        // input wakes and exits; one blocked mid-write is released by the hangup
+        // below (its write fails), then sees the flag.
+        self.input_mutex.lock();
+        self.input_stop = true;
+        self.input_cond.signal();
+        self.input_mutex.unlock();
+
         self.pty.deinit();
 
         // Join the reader (now unblocked by EOF). Ensure it was at least allowed to
@@ -542,6 +656,11 @@ pub const PtyChild = struct {
             t.join();
             self.reader = null;
         }
+        if (self.writer) |t| {
+            t.join();
+            self.writer = null;
+        }
+        self.input.deinit(self.alloc);
 
         // Reap the child to avoid a zombie (best-effort; ignore if already reaped).
         self.mutex.lock();
@@ -1280,6 +1399,36 @@ test "PtyChild: real pty spawn → input echoes back → exit/tombstone" {
     // terminate is idempotent + frees the child (and joins the reader).
     pc.child().terminate();
     terminated = true;
+}
+
+test "PtyChild: a child that never reads stdin cannot block the writer — or terminate" {
+    // The "every pane froze" bug: input was written to the pty on the shared
+    // connection thread, and a program that is not reading its terminal fills
+    // the line discipline's input queue, after which the write blocks forever.
+    if (is_windows) return error.SkipZigTest; // POSIX writer thread only
+    const alloc = testing.allocator;
+    var spawner = try PtySpawner.init(alloc);
+    defer spawner.deinit();
+
+    // `sleep` never reads its terminal; raw mode so nothing is consumed by
+    // canonical line editing either.
+    const pc = try spawner.spawnChild(.{ .rows = 24, .cols = 80, .command = "stty raw -echo; exec sleep 600" });
+    var capture: CaptureSink = .{ .alloc = alloc };
+    defer capture.deinit();
+    pc.child().attach(&capture, CaptureSink.sink, 0x5151);
+
+    // Far more than any pty input queue holds. Every write returns at once.
+    const chunk = [_]u8{'x'} ** 4096;
+    var timer = try std.time.Timer.start();
+    var i: usize = 0;
+    while (i < 256) : (i += 1) try pc.child().writeAll(&chunk); // 1 MiB
+    try testing.expect(timer.read() < 2 * std.time.ns_per_s);
+
+    // And tearing the child down with input still queued (its writer blocked
+    // mid-write) completes instead of hanging on the join.
+    timer.reset();
+    pc.child().terminate();
+    try testing.expect(timer.read() < 5 * std.time.ns_per_s);
 }
 
 test "PtyChild: SIGNAL terminates the child via its process group" {

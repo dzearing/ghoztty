@@ -89,6 +89,23 @@ pub const Options = struct {
     /// screen contents as it is rendered on the page in the given size.
     unwrap: bool = false,
 
+    /// VT only: also emit the shell-integration (OSC 133) semantics of the
+    /// content — which rows begin a prompt, and which cells are prompt, input
+    /// or command output — so a terminal that replays the output rebuilds them.
+    ///
+    /// Without them a restored screen is "all output", and the terminal's
+    /// resize logic (`Screen.resize` with `prompt_redraw`) — which, with the
+    /// cursor at a prompt, blanks everything from the current prompt's first
+    /// row down so the shell can redraw it — walks up past the unmarked
+    /// restored prompt to an OLDER marked one and blanks the real output in
+    /// between. Seen as restored shell output vanishing on the first resize.
+    ///
+    /// Emitted only as side-effect-free OSC 133 actions: `P` (prompt start, no
+    /// fresh-line) and `I` (input until end of line). Never `A` (it can insert
+    /// a newline), `C` or `D` (they signal command start/finish, which drive
+    /// command notifications), so replaying the output starts no "command".
+    semantic_prompts: bool = false,
+
     /// Trim trailing whitespace on lines with other text. Trailing blank
     /// lines are always trimmed. This only affects trailing whitespace
     /// on rows that have at least one other cell with text. Whitespace
@@ -678,6 +695,22 @@ pub const ScreenFormatter = struct {
             const cursor = &self.screen.cursor;
             // CUP is 1-indexed
             try writer.print("\x1b[{d};{d}H", .{ cursor.y + 1, cursor.x + 1 });
+
+            // …and leave the cursor in the semantic state it was in, so a
+            // shell sitting at its prompt is still "at its prompt" (see
+            // `Options.semantic_prompts`). Output needs nothing: the content
+            // above ends in output wherever the source cursor is in output.
+            if (self.opts.semantic_prompts) switch (cursor.semantic_content) {
+                .prompt => try writer.writeAll(if (cursor.page_row.semantic_prompt == .prompt_continuation)
+                    "\x1b]133;P;k=s\x1b\\"
+                else
+                    "\x1b]133;P;k=i\x1b\\"),
+                .input => try writer.writeAll(if (cursor.semantic_content_clear_eol)
+                    "\x1b]133;I\x1b\\"
+                else
+                    "\x1b]133;B\x1b\\"),
+                .output => {},
+            };
         }
 
         // If we have a pin_map, we need to count how many bytes the extras
@@ -868,6 +901,9 @@ pub const PageFormatter = struct {
     pub const TrailingState = struct {
         rows: usize = 0,
         cells: usize = 0,
+        /// With `Options.semantic_prompts`: the semantic content the REPLAYING
+        /// terminal's cursor is in after what has been emitted so far.
+        semantic: Cell.SemanticContent = .output,
 
         pub const empty: TrailingState = .{ .rows = 0, .cells = 0 };
     };
@@ -895,12 +931,57 @@ pub const PageFormatter = struct {
         _ = try self.formatWithState(writer);
     }
 
+    /// Bring the replaying terminal's semantic state to `cell`'s
+    /// (`Options.semantic_prompts`). `sem` is that terminal's current state.
+    fn writeSemantic(
+        writer: *std.Io.Writer,
+        row: *const Row,
+        cell: *const Cell,
+        sem: *Cell.SemanticContent,
+        row_prompt_marked: *bool,
+    ) std.Io.Writer.Error!void {
+        switch (cell.semantic_content) {
+            .prompt => {
+                // A row the source marked as a primary prompt gets its own
+                // mark; a continuation row is marked by the newline itself
+                // while the terminal is in prompt state, so it only needs one
+                // when coming from another state.
+                const need = sem.* != .prompt or
+                    (!row_prompt_marked.* and row.semantic_prompt == .prompt);
+                if (!need) return;
+                try writer.writeAll(if (row.semantic_prompt == .prompt_continuation)
+                    "\x1b]133;P;k=s\x1b\\"
+                else
+                    "\x1b]133;P;k=i\x1b\\");
+                sem.* = .prompt;
+                row_prompt_marked.* = true;
+            },
+            .input => {
+                if (sem.* == .input) return;
+                try writer.writeAll("\x1b]133;I\x1b\\");
+                sem.* = .input;
+            },
+            .output => {
+                // No side-effect-free way to say "output" mid-line (`C` starts
+                // a command). Leaving a prompt goes through input-until-EOL,
+                // which the next newline turns into output; already in input
+                // means that newline is coming anyway.
+                if (sem.* != .prompt) return;
+                try writer.writeAll("\x1b]133;I\x1b\\");
+                sem.* = .input;
+            },
+        }
+    }
+
     pub fn formatWithState(
         self: PageFormatter,
         writer: *std.Io.Writer,
     ) std.Io.Writer.Error!TrailingState {
         var blank_rows: usize = 0;
         var blank_cells: usize = 0;
+        // Semantic state of the replaying terminal (`Options.semantic_prompts`),
+        // carried across pages like the blank counts.
+        var sem: Cell.SemanticContent = if (self.trailing_state) |st| st.semantic else .output;
 
         // Continue our prior trailing state if we have it, but only if we're
         // starting from the beginning (start_y and start_x are both 0).
@@ -915,15 +996,15 @@ pub const PageFormatter = struct {
         // Setup our starting column and perform some validation for overflows.
         // Note: start_x only applies to the first row, end_x only applies to the last row.
         const start_x: size.CellCountInt = self.start_x;
-        if (start_x >= self.page.size.cols) return .{ .rows = blank_rows, .cells = blank_cells };
+        if (start_x >= self.page.size.cols) return .{ .rows = blank_rows, .cells = blank_cells, .semantic = sem };
         const end_x_unclamped: size.CellCountInt = self.end_x orelse self.page.size.cols - 1;
         var end_x = @min(end_x_unclamped, self.page.size.cols - 1);
 
         // Setup our starting row and perform some validation for overflows.
         const start_y: size.CellCountInt = self.start_y;
-        if (start_y >= self.page.size.rows) return .{ .rows = blank_rows, .cells = blank_cells };
+        if (start_y >= self.page.size.rows) return .{ .rows = blank_rows, .cells = blank_cells, .semantic = sem };
         const end_y_unclamped: size.CellCountInt = self.end_y orelse self.page.size.rows - 1;
-        if (start_y > end_y_unclamped) return .{ .rows = blank_rows, .cells = blank_cells };
+        if (start_y > end_y_unclamped) return .{ .rows = blank_rows, .cells = blank_cells, .semantic = sem };
         var end_y = @min(end_y_unclamped, self.page.size.rows - 1);
 
         // Edge case: if our end x/y falls on a spacer head AND we're unwrapping,
@@ -951,7 +1032,7 @@ pub const PageFormatter = struct {
 
         // If we only have a single row, validate that start_x <= end_x
         if (start_y == end_y and start_x > end_x) {
-            return .{ .rows = blank_rows, .cells = blank_cells };
+            return .{ .rows = blank_rows, .cells = blank_cells, .semantic = sem };
         }
 
         // Wrap HTML output in monospace font styling
@@ -1028,6 +1109,8 @@ pub const PageFormatter = struct {
             const y: size.CellCountInt = @intCast(y_usize);
             const row: *Row = self.page.getRow(y);
             const cells: []const Cell = self.page.getCells(row);
+            // Whether this row's own prompt mark has been emitted yet.
+            var row_prompt_marked = false;
 
             // Determine the x range for this row
             // - First row: start_x to end of row (or end_x if single row)
@@ -1094,6 +1177,9 @@ pub const PageFormatter = struct {
                 };
 
                 for (0..blank_rows) |_| try writer.writeAll(sequence);
+                // Every input we emit is `I` (input until end of line): the
+                // replaying terminal drops back to output at this newline.
+                if (sem == .input) sem = .output;
 
                 // \r and \n map to the row that ends with this newline.
                 // If we're continuing (trailing state) then this will be
@@ -1169,6 +1255,14 @@ pub const PageFormatter = struct {
                         blank_cells += 1;
                         continue;
                     }
+                }
+
+                // Shell-integration semantics, before anything of this cell
+                // (including the blanks leading up to it) is written.
+                // (Not mapped in `point_map`: no caller that tracks points
+                // enables semantic output.)
+                if (self.opts.semantic_prompts and self.opts.emit == .vt) {
+                    try writeSemantic(writer, row, cell, &sem, &row_prompt_marked);
                 }
 
                 // This cell is not blank. If we have accumulated blank cells
@@ -1379,7 +1473,7 @@ pub const PageFormatter = struct {
             }
         }
 
-        return .{ .rows = blank_rows, .cells = blank_cells };
+        return .{ .rows = blank_rows, .cells = blank_cells, .semantic = sem };
     }
 
     fn writeCell(
