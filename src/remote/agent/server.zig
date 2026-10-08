@@ -424,10 +424,10 @@ pub const Server = struct {
         self.detachAll();
         // Reboot scrollback (T13, §5.4): a viewer disconnecting is the moment its
         // sessions become vulnerable to a subsequent reboot (the agent could be
-        // killed before the next periodic snapshot). Flush dirty rings to disk now
-        // so a restart can replay the scrollback up to this instant. No-op when
-        // ring snapshots are disabled or nothing is dirty; best-effort.
-        self.store.snapshotRings();
+        // killed before the next periodic snapshot). Checkpoint now — dirty rings
+        // + history to disk, live cwds into the metadata — so a restart restores
+        // the sessions as of this instant. Best-effort; no-op when nothing moved.
+        self.store.checkpoint();
         // Stop + join the metrics pump BEFORE the streams close path completes: it
         // is a per-connection thread that frames onto our writer, so it must never
         // outlive the Server (the just-fixed UAF class). Signalling stop wakes its
@@ -920,6 +920,67 @@ pub const Server = struct {
         s.winch_on_next_resize = true;
         const snapshot_at = s.snapshotOffset();
 
+        // Gap-fill / CATCH-UP (§7.3) + grid snapshot (FIX 2). Replay everything the
+        // client missed while it was gone; then, when the peer negotiated
+        // `grid_snapshot`, append a self-contained VT repaint of the CURRENT
+        // visible screen so the pane is exact and NEVER blank — even when the paint
+        // predates the ring (deep scrollback evicted, or a full-screen app whose
+        // `?1049h` enter-alt scrolled out). Live DATA then resumes from offset > S.
+        //
+        // Everything is computed BEFORE the ATTACHED reply so the reply can say how
+        // many bytes it is (`Attached.replay_len`) — all under the store lock, so
+        // no live output can slip in between.
+        const want_snapshot = if (self.negotiated) |n| n.grid_snapshot else |_| false;
+
+        // On the ALTERNATE screen the raw ring tail is alt-screen paint written
+        // WITHOUT its (evicted) `?1049h` enter — replaying it onto the client's
+        // primary screen is exactly what smeared/blanked the pane. With a snapshot
+        // in hand we SKIP that replay for alt sessions and let the snapshot (which
+        // re-enters alt and repaints) stand alone. A primary session still gets its
+        // raw replay for scrollback continuity, with the snapshot then repainting
+        // the visible rows over it. Without a snapshot we keep today's replay for
+        // both (an older/ring-only peer).
+        const skip_replay = want_snapshot and s.gridOnAltScreen();
+
+        var marker_buf: [96]u8 = undefined;
+        var marker: []const u8 = "";
+        var gap: ?[]u8 = null;
+        defer if (gap) |g| self.alloc.free(g);
+        var gap_from: u64 = att.last_byte_offset;
+        var gap_n: usize = 0;
+        if (att.last_byte_offset < snapshot_at) {
+            const base = s.ring.base_offset;
+            if (gap_from < base) {
+                // The exact resume point was evicted. Emit a marker for the
+                // genuinely-lost deep scrollback ABOVE the visible screen, then
+                // replay from the oldest byte we still have.
+                marker = std.fmt.bufPrint(
+                    &marker_buf,
+                    "\r\n[ghoztty: {d} bytes of scrollback lost during disconnect]\r\n",
+                    .{base - att.last_byte_offset},
+                ) catch "";
+                gap_from = base;
+            }
+            if (!skip_replay) {
+                const want: usize = @intCast(snapshot_at - gap_from);
+                if (want > 0) {
+                    if (self.alloc.alloc(u8, want)) |tmp| {
+                        gap = tmp;
+                        gap_n = s.ring.slice(gap_from, snapshot_at, tmp) orelse 0;
+                    } else |_| {}
+                }
+            }
+        }
+
+        // Grid snapshot: a clean repaint of the visible screen AT offset S, sent as
+        // ordinary DATA (plain VT — no new opcode) at the live continuation point so
+        // the client renders it right before live output resumes. `gridSnapshotAlloc`
+        // returns null for a session that produced no output (no emulator yet), in
+        // which case the ring replay above already stands alone.
+        const snap: ?[]u8 = if (want_snapshot) s.gridSnapshotAlloc(self.alloc) else null;
+        defer if (snap) |b| self.alloc.free(b);
+        const snap_len: usize = if (snap) |b| b.len else 0;
+
         self.sendJson(.attached, s.channel, protocol.Attached{
             .status = .alive,
             .rows = s.rows,
@@ -933,66 +994,14 @@ pub const Server = struct {
             // store lock, so borrowing the session's strings is safe.
             .pid = s.pid,
             .tty = if (s.tty) |t| t else null,
+            .replay_len = marker.len + gap_n + snap_len,
         }) catch {};
 
-        // Gap-fill / CATCH-UP (§7.3) + grid snapshot (FIX 2). Replay everything the
-        // client missed while it was gone; then, when the peer negotiated
-        // `grid_snapshot`, append a self-contained VT repaint of the CURRENT
-        // visible screen so the pane is exact and NEVER blank — even when the paint
-        // predates the ring (deep scrollback evicted, or a full-screen app whose
-        // `?1049h` enter-alt scrolled out). Live DATA then resumes from offset > S.
-        const want_snapshot = if (self.negotiated) |n| n.grid_snapshot else |_| false;
-
-        // On the ALTERNATE screen the raw ring tail is alt-screen paint written
-        // WITHOUT its (evicted) `?1049h` enter — replaying it onto the client's
-        // primary screen is exactly what smeared/blanked the pane. With a snapshot
-        // in hand we SKIP that replay for alt sessions and let the snapshot (which
-        // re-enters alt and repaints) stand alone. A primary session still gets its
-        // raw replay for scrollback continuity, with the snapshot then repainting
-        // the visible rows over it. Without a snapshot we keep today's replay for
-        // both (an older/ring-only peer).
-        const skip_replay = want_snapshot and s.gridOnAltScreen();
-
-        if (att.last_byte_offset < snapshot_at) {
-            const base = s.ring.base_offset;
-            var replay_from = att.last_byte_offset;
-            if (replay_from < base) {
-                // The exact resume point was evicted. Emit a marker for the
-                // genuinely-lost deep scrollback ABOVE the visible screen, then
-                // replay from the oldest byte we still have.
-                const lost = base - att.last_byte_offset;
-                var marker_buf: [96]u8 = undefined;
-                const marker = std.fmt.bufPrint(
-                    &marker_buf,
-                    "\r\n[ghoztty: {d} bytes of scrollback lost during disconnect]\r\n",
-                    .{lost},
-                ) catch "";
-                if (marker.len > 0) self.sendData(s.channel, att.last_byte_offset, marker) catch {};
-                replay_from = base;
-            }
-            if (!skip_replay) {
-                const want: usize = @intCast(snapshot_at - replay_from);
-                if (want > 0) {
-                    const tmp = self.alloc.alloc(u8, want) catch return;
-                    defer self.alloc.free(tmp);
-                    if (s.ring.slice(replay_from, snapshot_at, tmp)) |n| {
-                        self.sendData(s.channel, replay_from, tmp[0..n]) catch {};
-                    }
-                }
-            }
-        }
-
-        // Grid snapshot: a clean repaint of the visible screen AT offset S, sent as
-        // ordinary DATA (plain VT — no new opcode) at the live continuation point so
-        // the client renders it right before live output resumes. `gridSnapshotAlloc`
-        // returns null for a session that produced no output (no emulator yet), in
-        // which case the ring replay above already stands alone.
-        if (want_snapshot) {
-            if (s.gridSnapshotAlloc(self.alloc)) |snap| {
-                defer self.alloc.free(snap);
-                if (snap.len > 0) self.sendData(s.channel, snapshot_at, snap) catch {};
-            }
-        }
+        if (marker.len > 0) self.sendData(s.channel, att.last_byte_offset, marker) catch {};
+        if (gap) |g| if (gap_n > 0) self.sendData(s.channel, gap_from, g[0..gap_n]) catch {};
+        if (snap) |b| if (b.len > 0) self.sendData(s.channel, snapshot_at, b) catch {};
+        // This viewer now has everything up to S; live output continues from there.
+        s.sent_offset = snapshot_at;
     }
 
     fn handleResize(self: *Server, channel: u128, payload: []const u8) void {
@@ -1612,6 +1621,16 @@ pub const Server = struct {
                 replay_n = rs.ring.copyRetained(rb);
             } else |_| {}
         }
+        // The replay (restored history + divider + notice) is what this pane now
+        // SHOWS above the fresh shell, so the session's emulator must hold it too —
+        // it is where the next checkpoint's history comes from, and a second
+        // reboot must not forget everything from before the first. Fed at the
+        // relaunch geometry, before the child's first byte, exactly like a viewer.
+        rs.rows = req.rows;
+        rs.cols = req.cols;
+        if (replay_buf) |rb| rs.feedEmulator(rb[0..replay_n]);
+        // The replay below delivers everything up to the current tail.
+        rs.sent_offset = rs.out_offset.value;
         self.store.mutex.unlock();
 
         // Replay the preloaded scrollback + divider first (outside the lock), so
@@ -1667,9 +1686,51 @@ pub const Server = struct {
         if (s.bridge_ctx != @as(?*anyopaque, self)) return;
         switch (flow.op) {
             .pause => s.streaming = false,
-            .@"resume" => s.streaming = true,
+            .@"resume" => {
+                s.streaming = true;
+                self.catchUpLocked(s);
+            },
             .credit => {}, // v2; ignored in v1
         }
+    }
+
+    /// Send the bound viewer everything the session produced while its stream
+    /// was paused — `(sent_offset, out_offset]`, straight from the ring — so a
+    /// resume picks up exactly where delivery stopped. Caller holds the store
+    /// lock, which is what orders this DATA before any live output (the live
+    /// path frames under the same lock).
+    ///
+    /// Without it a pause LOST that output for good: the bytes were ringed but
+    /// never framed, and the next DATA the viewer saw started later in the
+    /// stream. Claude Code draws with relative cursor motion, so a viewer that
+    /// missed even one frame put every later redraw on the wrong rows — garbled
+    /// and duplicated text — or, when the burst was the last thing printed (a
+    /// restored shell's first prompt), showed nothing at all.
+    ///
+    /// If the ring already evicted part of the gap (more than its capacity was
+    /// printed during the pause), say so with the same marker an attach gap-fill
+    /// uses, then send what is left.
+    fn catchUpLocked(self: *Server, s: *session.Session) void {
+        const end = s.out_offset.value;
+        if (s.sent_offset >= end) return;
+        var from = s.sent_offset;
+        const base = s.ring.base_offset;
+        if (from < base) {
+            var marker_buf: [96]u8 = undefined;
+            const marker = std.fmt.bufPrint(
+                &marker_buf,
+                "\r\n[ghoztty: {d} bytes of output lost while paused]\r\n",
+                .{base - from},
+            ) catch "";
+            if (marker.len > 0) self.sendData(s.channel, from, marker) catch {};
+            from = base;
+        }
+        const want: usize = @intCast(end - from);
+        const tmp = self.alloc.alloc(u8, want) catch return; // retried on the next resume
+        defer self.alloc.free(tmp);
+        const n = s.ring.slice(from, end, tmp) orelse return;
+        self.sendData(s.channel, from, tmp[0..n]) catch return;
+        s.sent_offset = end;
     }
 
     // --- Host metrics push (§9.3) --------------------------------------------
@@ -3351,6 +3412,63 @@ test "ATTACH with grid_snapshot negotiated replays a visible-screen repaint (FIX
     try testing.expect(std.mem.indexOf(u8, dp.bytes, "SNAPSHOT-ME") != null);
 }
 
+test "ATTACH reports replay_len = exactly the DATA bytes sent before live output" {
+    // The viewer anchors its persisted stream offset on this. The grid snapshot
+    // is synthetic (no stream offsets), so without it the viewer over-counted
+    // one repaint per restart until its offset passed the agent's head.
+    const alloc = testing.allocator;
+    var clock: TestClock = .{ .ms = 100 };
+    var fc: FakeChild = .{ .alloc = alloc };
+    defer fc.deinit();
+    var kids = [_]*FakeChild{&fc};
+    var sp: FakeSpawner = .{ .children = &kids };
+    var prng = std.Random.DefaultPrng.init(17);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    try h.client.handshakeCaps(&.{
+        protocol.capability.close_session,
+        protocol.capability.grid_snapshot,
+    });
+    _ = try h.server.waitHandshake();
+
+    const o = try doOpen(&h, .{ .rows = 24, .cols = 80 });
+    h.server.onChildOutput(o.channel, "line-1\r\n");
+    h.server.onChildOutput(o.channel, "line-2\r\n");
+    _ = try h.client.nextData();
+    _ = try h.client.nextData();
+
+    // Resume from offset 8: the gap-fill is "line-2\r\n", then the repaint.
+    var id_buf: [32]u8 = o.id;
+    try h.client.sendControlJson(.attach, protocol.control_channel, protocol.Attach{
+        .session_id = id_buf[0..],
+        .rows = 24,
+        .cols = 80,
+        .last_byte_offset = 8,
+    });
+    const af = try h.client.waitControl(.attached);
+    var ap = try protocol.parseJson(protocol.Attached, alloc, af.payload);
+    defer ap.deinit();
+    const s = ap.value.snapshot_at_offset;
+    try testing.expectEqual(@as(u64, 16), s);
+    const want = ap.value.replay_len orelse return error.NoReplayLen;
+
+    var got: u64 = 0;
+    while (got < want) {
+        const d = (try h.client.nextData()) orelse return error.ShortReplay;
+        got += (try protocol.DataPayload.decode(d.payload)).bytes.len;
+    }
+    try testing.expectEqual(want, got);
+
+    // The very next DATA is live output, at the agent's head.
+    h.server.onChildOutput(o.channel, "live");
+    const d = (try h.client.nextData()).?;
+    const dp = try protocol.DataPayload.decode(d.payload);
+    try testing.expectEqual(s, dp.byte_offset);
+    try testing.expectEqualSlices(u8, "live", dp.bytes);
+}
+
 test "ATTACH without grid_snapshot falls back to raw ring replay (skew safety, FIX 2)" {
     const alloc = testing.allocator;
     var clock: TestClock = .{ .ms = 100 };
@@ -3796,7 +3914,10 @@ test "RELAUNCH: reboot ring snapshot is replayed (scrollback + divider) before l
     }
 
     const rec_id = "abcabcabcabcabcabcabcabcabcabcab";
-    const scrollback = "PANE=3 PID=4242\r\ntick-3-0\r\ntick-3-1\r\n";
+    // A raw ring the way a dead TUI leaves it: content interleaved with modes and
+    // queries the restored pane must never see (they would re-arm mouse tracking
+    // and answer into the fresh shell's stdin).
+    const scrollback = "\x1b[?1003h\x1b[>1uPANE=3 PID=4242\r\ntick-3-0\r\n\x1b[ctick-3-1\r\n";
     {
         const recs = [_]@import("session_meta.zig").Record{.{ .id = rec_id, .argv = "sleep 600", .pinned = true, .created_ms = 50 }};
         const body = try @import("session_meta.zig").serialize(alloc, &recs);
@@ -3834,12 +3955,20 @@ test "RELAUNCH: reboot ring snapshot is replayed (scrollback + divider) before l
     try testing.expect(rp.value.ok and rp.value.found);
     try testing.expect(rp.value.replayed); // scrollback was replayed
 
-    // First DATA frame: the replayed scrollback + divider at offset 0.
+    // First DATA frame: the replayed scrollback + divider at offset 0. The ring
+    // is replayed as its HISTORY (content only), never raw.
     const d0 = (try h.client.nextData()).?;
     const dp0 = try protocol.DataPayload.decode(d0.payload);
     try testing.expectEqual(@as(u64, 0), dp0.byte_offset);
-    const want = scrollback ++ session.reboot_divider;
+    const history = try @import("grid_snapshot.zig").historyFromRaw(alloc, scrollback, 80, 24);
+    defer alloc.free(history);
+    const want = try std.mem.concat(alloc, u8, &.{ history, session.reboot_divider });
+    defer alloc.free(want);
     try testing.expectEqualSlices(u8, want, dp0.bytes);
+    try testing.expect(std.mem.startsWith(u8, dp0.bytes, "PANE=3 PID=4242\r\ntick-3-0\r\ntick-3-1"));
+    try testing.expect(std.mem.indexOf(u8, dp0.bytes, "\x1b[?1003h") == null);
+    try testing.expect(std.mem.indexOf(u8, dp0.bytes, "\x1b[c") == null);
+    try testing.expect(std.mem.indexOf(u8, dp0.bytes, "\x1b[>1u") == null);
 
     // Live output continues immediately AFTER the replayed content (no offset hole).
     h.server.onChildOutput(channel, "fresh-prompt$ ");
@@ -3941,8 +4070,8 @@ test "FLOW pause halts streaming; resume continues from buffered offset" {
     }
     h.server.onChildOutput(o.channel, "PAUSED"); // ringed at offset 0, not sent
 
-    // Resume → subsequent output streams live (the buffered bytes recover via
-    // attach gap-fill in production; here we assert the gate releases).
+    // Resume → the agent first sends what the viewer missed while paused, then
+    // output streams live again, contiguous with it.
     try h.client.sendControlRaw(.flow, protocol.control_channel, blk: {
         const fl: protocol.Flow = .{ .channel = o.channel, .op = .@"resume" };
         var buf: [protocol.Flow.encoded_len]u8 = undefined;
@@ -3959,9 +4088,15 @@ test "FLOW pause halts streaming; resume continues from buffered offset" {
     }
     h.server.onChildOutput(o.channel, "LIVE"); // streams at offset 6
 
+    // The paused output is NOT lost: it arrives first, at its own offset…
+    const d0 = try h.client.nextData();
+    const dp0 = try protocol.DataPayload.decode(d0.?.payload);
+    try testing.expectEqual(@as(u64, 0), dp0.byte_offset);
+    try testing.expectEqualSlices(u8, "PAUSED", dp0.bytes);
+    // …and live output continues right after it, no gap, no repeat.
     const d = try h.client.nextData();
     const dp = try protocol.DataPayload.decode(d.?.payload);
-    try testing.expectEqual(@as(u64, 6), dp.byte_offset); // offset advanced past PAUSED
+    try testing.expectEqual(@as(u64, 6), dp.byte_offset);
     try testing.expectEqualSlices(u8, "LIVE", dp.bytes);
 }
 

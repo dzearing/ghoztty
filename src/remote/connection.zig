@@ -567,6 +567,9 @@ pub const AttachOutcome = struct {
     /// The byte offset the agent's replay anchor was captured at (§7.3; the
     /// gap-fill replay covers `[last_byte_offset, snapshot_at_offset)`).
     snapshot_at_offset: u64,
+    /// `Attached.replay_len`: bytes of DATA the agent sends for this attach before
+    /// live output. Null from an older agent.
+    replay_len: ?u64 = null,
     /// The session already had an attached bridge (§5.3). When true with
     /// `force=false`, the caller may retry `attachChannel(..., force=true)` to steal.
     attached_elsewhere: bool,
@@ -1980,6 +1983,7 @@ pub const Connection = struct {
             .pane = null,
             .status = a.status,
             .snapshot_at_offset = a.snapshot_at_offset,
+            .replay_len = a.replay_len,
             .attached_elsewhere = a.attached_elsewhere,
             .exit_code = a.exit_code,
             .relaunchable = a.relaunchable,
@@ -2002,6 +2006,7 @@ pub const Connection = struct {
             return outcome; // value return: no errdefer fires
         }
 
+        const resume_from = @min(last_byte_offset, a.snapshot_at_offset);
         const sid = try self.alloc.dupe(u8, session_id);
         errdefer self.alloc.free(sid);
         const pane_tty: ?[]u8 = if (a.tty) |t| try self.alloc.dupe(u8, t) else null;
@@ -2025,8 +2030,15 @@ pub const Connection = struct {
             // entire replay and every reconnect/restore attach came up BLANK
             // (the WP-D1 wedged-window bug). A fresh attach (offset 0) keeps
             // everything; a resumed surface drops only the bytes it already has.
-            .discard_below = if (last_byte_offset > 0) last_byte_offset - 1 else 0,
-            .resync_active = last_byte_offset > 0,
+            //
+            // …but never past the agent's own head. A `last_byte_offset` AHEAD
+            // of `snapshot_at_offset` is a viewer whose persisted offset had
+            // over-counted (see `Attached.replay_len`): no byte it "already has"
+            // beyond S exists, and a watermark there threw away the child's real
+            // output until the stream caught up — the pane that froze after an
+            // app restart.
+            .discard_below = if (resume_from > 0) resume_from - 1 else 0,
+            .resync_active = resume_from > 0,
         };
         try self.trackPane(pane);
         keep_channel = true; // the pane now owns the registered ring
@@ -5125,7 +5137,7 @@ test "attachChannel: resumed attach — byte-accurate resync discard anchored at
     defer h.destroy();
     const a = h.configure();
     a.attach_status = .alive;
-    a.snapshot_at_offset = 10;
+    a.snapshot_at_offset = 20;
     a.tty = "/dev/ttys020";
     try h.start();
 
@@ -5135,7 +5147,7 @@ test "attachChannel: resumed attach — byte-accurate resync discard anchored at
     var outcome = try h.conn.attachChannel("session-xyz", 24, 80, 11, false);
     defer outcome.deinit();
     try testing.expectEqual(protocol.Attached.AttachStatus.alive, outcome.status);
-    try testing.expectEqual(@as(u64, 10), outcome.snapshot_at_offset);
+    try testing.expectEqual(@as(u64, 20), outcome.snapshot_at_offset);
     try testing.expect(!outcome.attached_elsewhere);
     const pane = outcome.pane orelse return error.NoPane;
     try testing.expectEqualStrings("/home/me", outcome.cwd.?);
@@ -5164,6 +5176,38 @@ test "attachChannel: resumed attach — byte-accurate resync discard anchored at
     try testing.expectEqualStrings(expected, got.items);
 
     try testing.expect(a.err == null);
+    h.conn.closeChannel(pane);
+}
+
+test "attachChannel: a resume offset AHEAD of the agent's head never discards live output" {
+    // The frozen-after-restart bug: the viewer's persisted offset had
+    // over-counted past the agent's head (S). A watermark at that offset threw
+    // away the child's real output — which arrives at offsets >= S — until the
+    // stream caught up. The watermark must clamp to S.
+    const alloc = testing.allocator;
+    const h = try LifecycleHarness.create(alloc);
+    defer h.destroy();
+    const a = h.configure();
+    a.attach_status = .alive;
+    a.snapshot_at_offset = 467;
+    try h.start();
+
+    var outcome = try h.conn.attachChannel("session-xyz", 24, 80, 662, false);
+    defer outcome.deinit();
+    const pane = outcome.pane orelse return error.NoPane;
+    h.agent.saw_request.wait();
+    const ch = pane.id;
+
+    // The grid snapshot at S, then live output just past it — all below the
+    // viewer's (bogus) 662, all of it real.
+    try agentSendData(&h.data_agent, ch, 467, "SNAP");
+    try agentSendData(&h.data_agent, ch, 467, "tick-12");
+    try agentSendData(&h.data_agent, ch, 474, "tick-13");
+    const expected = "SNAPtick-12tick-13";
+    var got: std.ArrayList(u8) = .empty;
+    defer got.deinit(alloc);
+    try drainChannel(pane.ring, &got, alloc, expected.len);
+    try testing.expectEqualStrings(expected, got.items);
     h.conn.closeChannel(pane);
 }
 

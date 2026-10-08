@@ -149,6 +149,9 @@ arena: std.heap.ArenaAllocator,
 /// deinitialized only after the IO thread has joined).
 canceller: connection.RpcCanceller = .{},
 
+/// See `Config.size_pending`.
+size_pending: bool = false,
+
 /// The LIVE agent session id, published once `threadEnter` resolves the pane
 /// (OPEN-new learns it from the agent's OPENED; ATTACH already knows it). Stored
 /// here on the STABLE backend (`Termio.backend.remote`) so the GUI thread can
@@ -196,10 +199,17 @@ restore_snapshot: ?[]const u8 = null,
 /// The absolute agent-stream byte offset the terminal has applied. Seeded from
 /// the restore offset in `init`; advanced by `drainRing` (via
 /// `Termio.processOutputTracked`) as replayed/live bytes are fed to the parser.
-/// `appliedOffset()` = `attach_offset + applied_bytes`. Persisted on quit as the
-/// next restore's `last_byte_offset`.
+/// `appliedOffset()` = `attach_offset + applied_bytes`, less `replay_debt`.
+/// Persisted on quit as the next restore's `last_byte_offset`.
 attach_offset: u64 = 0,
 applied_bytes: std.atomic.Value(u64) = .init(0),
+
+/// Bytes of the agent's ATTACH reply (`Attached.replay_len`) that the count must
+/// not advance over: after an attach re-anchors `attach_offset` to the agent's
+/// head S, the reply's gap-fill and synthetic repaint drain through
+/// `applied_bytes` like anything else, and S already accounts for all of them.
+/// 0 = nothing owed. See `anchorAppliedOffset`.
+replay_debt: u64 = 0,
 
 /// Configuration for a remote backend. Mirrors the subset of `Exec.Config` that
 /// makes sense for a remote pane: there is no env/shell-integration/resources-dir
@@ -281,6 +291,11 @@ pub const Config = struct {
     /// behavior). `restore_snapshot` is borrowed; `init` dupes it into the arena.
     restore_snapshot: ?[]const u8 = null,
     restore_offset: u64 = 0,
+
+    /// The apprt has not reported the surface's real size yet (see
+    /// `Surface.RemoteBackend.size_pending`); bring-up waits for it
+    /// (`awaitRealSize`) before OPEN/ATTACH.
+    size_pending: bool = false,
 };
 
 /// What a restored pane does when its ATTACH target comes back as a
@@ -349,12 +364,17 @@ const session_lost_notice =
 ///   - `\x1b[r` (DECSTBM): resetting the scroll region homes the cursor too.
 ///
 /// Each would move the fresh shell's first prompt on top of the restored output.
-/// A pane whose snapshot genuinely ends inside an alt-screen TUI is the residual
-/// gap; it is rarer than "every restored pane" and the cure is worse there.
+/// They are not needed against a current agent: it no longer replays the raw
+/// ring at all but the session's HISTORY — content serialized from its emulator,
+/// which by construction leaves the pane on the primary screen with the default
+/// origin and scroll region (`agent/grid_snapshot.zig` `historyAlloc`). This
+/// reset is the defense for the one raw replay left: an agent that predates the
+/// history, still running across an app upgrade.
 const replay_mode_reset =
     input_mode_reset ++
     "\x1b[?7h" ++ // DECAWM: autowrap back on (its default)
     "\x1b[?25h" ++ // DECTCEM: cursor visible again
+    "\x1b[?2026l" ++ // synchronized output: a replay cut mid-frame must not freeze rendering
     "\x1b[0m"; // SGR: default text attributes
 
 /// The INPUT-REPORTING modes — the subset of `replay_mode_reset` that is an
@@ -371,7 +391,11 @@ const replay_mode_reset =
 /// exactly how a mode gets missed, which is why there is one.
 ///
 /// Same discipline as its parent: mode state only, nothing that moves the cursor
-/// or erases (see the doc above and the structural test).
+/// or erases (see the doc above and the structural test). "Mode" here includes
+/// the two keyboard-encoding states that are not DEC modes — the kitty keyboard
+/// flag stack and modifyOtherKeys — because they are exactly the same kind of
+/// agreement: they change what a keypress sends, for the benefit of a program
+/// that may no longer be there.
 const input_mode_reset =
     "\x1b[?9l" ++ // X10 mouse reporting
     "\x1b[?1000l" ++ // normal button-press mouse tracking
@@ -386,7 +410,15 @@ const input_mode_reset =
     "\x1b[?2031l" ++ // color-scheme change reports (DSR on light/dark switch)
     "\x1b[?2048l" ++ // in-band size reports (DSR on every resize)
     "\x1b[?1l" ++ // DECCKM: normal (not application) cursor keys
-    "\x1b>"; // DECKPNM: normal (not application) keypad
+    "\x1b>" ++ // DECKPNM: normal (not application) keypad
+    // Kitty keyboard protocol: pop the WHOLE flag stack (a pop count past the
+    // stack depth clears it). Claude Code pushes `CSI > 1 u`/`CSI > 5 u`; left
+    // pushed, the terminal encodes Ctrl-C, Escape and every modified key as
+    // `CSI … u`, which a plain shell does not understand — Ctrl-C stops working.
+    "\x1b[<99u" ++
+    // xterm modifyOtherKeys back to off (`CSI > 4 m`): Claude Code sets
+    // `CSI > 4 ; 2 m`, with the same effect on Ctrl/Alt chords.
+    "\x1b[>4m";
 
 /// The bytes we ask the AGENT to splice into the replay stream for this policy
 /// (`protocol.Relaunch.notice`) — the only slot that is reliably between the
@@ -504,6 +536,7 @@ pub fn init(alloc: Allocator, cfg: Config) !Remote {
         .relaunch_policy = cfg.relaunch_policy,
         .login_shell = login_shell,
         .restore_snapshot = restore_snapshot,
+        .size_pending = cfg.size_pending,
         // The offset is only meaningful WITH a snapshot: attaching at offset>0
         // without painting the prior content would leave the screen blank above
         // the gap-fill. No snapshot ⇒ offset 0 ⇒ full-ring replay.
@@ -516,7 +549,11 @@ pub fn init(alloc: Allocator, cfg: Config) !Remote {
 /// the offset we attached at plus everything drained since. Persisted on quit
 /// so the next re-attach replays only the gap. Lock-free.
 pub fn appliedOffset(self: *const Remote) u64 {
-    return self.attach_offset + self.applied_bytes.load(.monotonic);
+    const applied = self.applied_bytes.load(.monotonic);
+    // Still draining the attach reply: the agent's head S is the honest answer
+    // (a quit this early at worst re-requests the part of the gap not yet shown).
+    if (applied < self.replay_debt) return self.attach_offset;
+    return self.attach_offset + (applied - self.replay_debt);
 }
 
 pub fn deinit(self: *Remote) void {
@@ -621,9 +658,19 @@ pub fn threadEnter(
     var replay_cols: u16 = 0;
     var replay_rows: u16 = 0;
 
+    // The offset our persisted screen snapshot reflects — what we ATTACH at.
+    // Captured before the attach re-anchors `attach_offset` to the agent's
+    // stream (`anchorAppliedOffset`), because it decides below whether that
+    // snapshot gets painted.
+    const resumed_at = self.attach_offset;
+
     // Open a new session or attach to an existing one to obtain our pane.
     const pane: *connection.Pane = if (self.session_id) |sid| pane: {
         // ATTACH: re-attach to an existing agent session (§3.3 / §7.3).
+        //
+        // ATTACH resizes the session's pty to the geometry it carries, so it must
+        // carry the pane's REAL size. See `awaitRealSize`.
+        if (self.size_pending) self.awaitRealSize(io);
         const rows: u16 = @intCast(@min(self.grid_size.rows, std.math.maxInt(u16)));
         const cols: u16 = @intCast(@min(self.grid_size.columns, std.math.maxInt(u16)));
         var outcome = try self.conn.attachChannelCancellable(
@@ -655,7 +702,10 @@ pub fn threadEnter(
             outcome = try self.conn.attachChannelCancellable(sid, rows, cols, self.attach_offset, true, &self.canceller);
         }
         defer outcome.deinit();
-        if (outcome.pane) |p| break :pane p;
+        if (outcome.pane) |p| {
+            self.anchorAppliedOffset(outcome.snapshot_at_offset, outcome.replay_len);
+            break :pane p;
+        }
 
         // No live pane. A DEAD-but-relaunchable tombstone means the AGENT itself
         // restarted (a reboot or an agent upgrade) and materialized this session
@@ -699,6 +749,9 @@ pub fn threadEnter(
                     "relaunched dead session pid={} ok={} found={} replayed={}",
                     .{ r.pid, r.ok, r.found, r.replayed },
                 );
+                // A relaunch is a FRESH stream from offset 0 (the replay included):
+                // the persisted snapshot's offset described the dead one.
+                self.attach_offset = 0;
                 did_relaunch = true;
                 relaunch_replayed = r.replayed;
                 replay_cols = r.replay_cols;
@@ -725,6 +778,8 @@ pub fn threadEnter(
                 log.warn("prepare relaunch pane failed err={}", .{err});
                 return error.RemoteAttachFailed;
             };
+            // Whatever relaunch the user consents to starts a fresh stream at 0.
+            self.attach_offset = 0;
             self.awaiting_relaunch = true;
             log.info("dead relaunchable session under prompt policy; awaiting user keystroke to relaunch", .{});
             break :pane p;
@@ -740,7 +795,11 @@ pub fn threadEnter(
         );
         return error.RemoteAttachFailed;
     } else pane: {
-        // OPEN-new: start a brand-new remote session (§3.3 open-new).
+        // OPEN-new: start a brand-new remote session (§3.3 open-new). Spawn it at
+        // the pane's real size too: a `--command` pane's program (a `/wt`
+        // window's Claude Code) otherwise draws its first frame at 49×17 and is
+        // resized under it a moment later.
+        if (self.size_pending) self.awaitRealSize(io);
         const open: protocol.Open = .{
             .command = self.command,
             .cwd = self.working_directory,
@@ -856,8 +915,11 @@ pub fn threadEnter(
     // prompts stack (the visible "spam"). Rendered at the capture width every
     // redraw self-erases to one prompt; the trailing reflow re-wraps that single
     // logical line to the live width. Guarded to the relaunch-replayed case with a
-    // known capture width that actually differs from the live grid (0 = an older
-    // agent or a legacy GRS1 snapshot → fall back to today's live-width replay).
+    // known capture width that actually differs from the live grid. A current
+    // agent sends 0 — it replays a content history that re-wraps at any width —
+    // so this only runs for a RAW replay (an older agent, or a history conversion
+    // that failed), and it is only exact when the drain right below consumes that
+    // whole replay; see the note after the drain.
     const live_cols: u16 = @intCast(@min(self.grid_size.columns, std.math.maxInt(u16)));
     const live_rows: u16 = @intCast(@min(self.grid_size.rows, std.math.maxInt(u16)));
     const reflow_replay = relaunch_replayed and replay_cols != 0 and replay_cols != live_cols;
@@ -867,12 +929,12 @@ pub fn threadEnter(
     // sized frame BEFORE the agent's delta replay lands on top. Applied only on
     // the normal live re-attach path (not a relaunch / awaiting-relaunch, which
     // stream a fresh shell and print their own divider) and only when we
-    // attached at a real offset (`attach_offset > 0`), so the snapshot and the
-    // agent's `(attach_offset, S]` gap-fill meet exactly with no double-paint.
+    // attached at a real offset (`resumed_at > 0`), so the snapshot and the
+    // agent's `(resumed_at, S]` gap-fill meet exactly with no double-paint.
     // This is our OWN clean VT repaint (palette+modes+styles+cursor+bounded
     // scrollback), NOT the agent's raw in-place-redraw ring, so it reflows to
     // the live width without smearing and parses in well under a frame.
-    if (!did_relaunch and !self.awaiting_relaunch and self.attach_offset > 0) {
+    if (!did_relaunch and !self.awaiting_relaunch and resumed_at > 0) {
         if (self.restore_snapshot) |snap| {
             if (snap.len > 0) {
                 @call(.always_inline, termio.Termio.processOutput, .{ io, snap });
@@ -912,14 +974,17 @@ pub fn threadEnter(
     // agent pty) then continues to land at the live width.
     if (reflow_replay) io.reflowLocalGrid(live_cols, live_rows);
 
-    // The replayed reboot-scrollback has now landed IN FULL: the agent queues
-    // every replay DATA frame ahead of `RELAUNCHED` on the same channel, and the
-    // demux thread pushes them into the ring in order before it wakes the waiter
-    // this `threadEnter` was parked on — so the drain above saw all of them.
+    // The drain above is not guaranteed to have consumed the whole replay:
+    // `drainRing` bounds its work per wake (and yields to a filling mailbox), so
+    // a large replay finishes in later drains. That is why a current agent
+    // carries the notice and mode reset IN the stream (`agent_owns_notice`),
+    // where order holds whatever the size, and replays content that needs no
+    // geometry switch (`replay_cols == 0`). What follows is the fallback for an
+    // agent too old to splice — correct only when its replay was small.
     //
-    // Which means this is the first point at which we can undo what the replay
-    // did to the terminal's MODE state (`replay_mode_reset`) — before the drain
-    // the replay's own `ESC[?1003h` would just turn mouse tracking back on. It is
+    // It is the first point at which we can undo what the replay did to the
+    // terminal's MODE state (`replay_mode_reset`) — before the drain the
+    // replay's own `ESC[?1003h` would just turn mouse tracking back on. It is
     // also the only correct place for `.restore`'s notice: printed earlier it
     // would sit above the restored scrollback and scroll straight out of view.
     //
@@ -933,6 +998,77 @@ pub fn threadEnter(
             @call(.always_inline, termio.Termio.processOutput, .{ io, session_lost_notice });
         }
     }
+}
+
+/// Re-anchor the applied-offset count (`attach_offset` + `applied_bytes`) on a
+/// successful ATTACH so it tracks the AGENT's stream offsets, not merely the
+/// bytes this viewer has parsed.
+///
+/// Those are not the same thing: the agent's reply includes synthetic DATA — the
+/// grid-snapshot repaint and a scrollback-lost marker — that occupies no offsets
+/// in its stream. Counting it pushed the offset persisted for the next re-attach
+/// one repaint further ahead on every app restart, until it passed the agent's
+/// head; that re-attach then discarded the child's real output until the stream
+/// caught up (measured: persisted 662 against an agent head of 467 — a pane
+/// frozen for as long as its program stayed quiet).
+///
+/// With `replay_len` (a current agent) the count is exact: the base becomes S and
+/// the reply's `replay_len` bytes are owed (`replay_debt`), so once they have
+/// drained the count equals S and moves in lockstep with the agent after that —
+/// even when the repaint alone is larger than S. Without it (an older agent) the base is clamped to S, which
+/// at least keeps it from ever running ahead by more than one repaint.
+fn anchorAppliedOffset(self: *Remote, snapshot_at: u64, replay_len: ?u64) void {
+    // `applied_bytes` is still 0 here: nothing has been drained for this pane.
+    if (replay_len) |n| {
+        self.attach_offset = snapshot_at;
+        self.replay_debt = n;
+    } else {
+        self.attach_offset = @min(self.attach_offset, snapshot_at);
+        self.replay_debt = 0;
+    }
+}
+
+/// Wait (bounded) for the GUI to report this surface's real size, and adopt it
+/// as the bring-up geometry.
+///
+/// A surface is constructed at a placeholder size (800×600 px in the embedded
+/// apprt: 49×17 cells) and the IO thread starts before the view is laid out, so
+/// `threadEnter` used to OPEN/ATTACH — and send its "authoritative" RESIZE — at
+/// 49×17, with the real size following a moment later. For a new pane that
+/// means its program starts at the wrong size; for a re-attach it is worse: the agent applies it to a LIVE program's pty, so on every app
+/// restart or update each pane's program got a SIGWINCH to 49×17 and then
+/// another back. Claude Code re-renders on each: a 49-column copy of its screen
+/// lands in the scrollback (the "content laid out at the wrong width"), followed
+/// by a full-width one (duplicated text). Measured: thousands of `RESIZE 17×49`
+/// in one agent log, and the user's own ring snapshots recorded at 49×17.
+///
+/// `Termio.size_reported` says the GUI has laid the view out; the size itself is
+/// in `Termio.pending_resize` (the latest-wins slot the GUI thread fills), which
+/// we only PEEK — the IO loop applies it normally right after bring-up, which
+/// then matches what the agent already has. (Construction ALSO queues a resize,
+/// at the placeholder, which is why the pending slot alone proves nothing.) A
+/// view that is never laid out (hidden) costs the bound and proceeds as before.
+fn awaitRealSize(self: *Remote, io: *termio.Termio) void {
+    const deadline_ns: u64 = 1500 * std.time.ns_per_ms;
+    var timer = std.time.Timer.start() catch return;
+    while (timer.read() < deadline_ns) {
+        if (self.canceller.isCancelled()) return;
+        if (io.size_reported.load(.acquire)) {
+            // The resize the report queued (or, if the real size happens to
+            // equal the placeholder, the one construction queued — the same).
+            if (io.peekPendingResize()) |size| {
+                self.grid_size = size.grid();
+                self.screen_size = size.screen;
+                // Our own grid too: everything bring-up paints (the restore
+                // snapshot, the agent's replay and repaint) carries absolute
+                // cursor positions for THIS size.
+                io.adoptSizeLocal(size);
+            }
+            return;
+        }
+        std.Thread.sleep(2 * std.time.ns_per_ms);
+    }
+    log.info("re-attach: no real surface size within the wait; attaching at the placeholder", .{});
 }
 
 pub fn threadExit(self: *Remote, td: *termio.Termio.ThreadData) void {
@@ -1237,6 +1373,12 @@ fn ringReady(
     return .rearm;
 }
 
+/// How much `drainRing` parses between mailbox-pressure checks. Small enough
+/// that one slice of real program output cannot fill half the 64-slot mailbox
+/// (Claude Code emits at most a handful of messages per KiB); the per-slice cost
+/// is one uncontended lock.
+const slice_bytes = 1024;
+
 /// Drain the pane's inbound ring fully into the terminal. Called on the pane's IO
 /// thread (from `ringReady` or once eagerly in `threadEnter`). For each chunk:
 ///   1. pop from the ring (SPSC consumer side),
@@ -1258,10 +1400,22 @@ fn drainRing(td: *termio.Termio.ThreadData) void {
     // that also wedged the GUI thread when Surface.deinit joined us. Bail
     // after a bounded number of chunks and re-notify so the loop runs our
     // mailbox drain between bursts.
-    var buf: [16 * 1024]u8 = undefined;
+    //
+    // A byte cap alone is not enough: 512 KiB of Claude Code output holds
+    // thousands of `?2026h` (each posts a sync-output timer message) and
+    // hundreds of queries, so the mailbox overflows long before the cap and
+    // every overflowing message costs `Mailbox.send` a 50 ms wait and then a
+    // drop — minutes of a frozen, unresponsive pane. So the drain also works in
+    // small slices and yields as soon as the mailbox is half full.
+    var buf: [slice_bytes]u8 = undefined;
     var chunks: usize = 0;
-    const max_chunks_per_wake = 32;
+    const max_chunks_per_wake = (512 * 1024) / slice_bytes;
     while (chunks < max_chunks_per_wake) : (chunks += 1) {
+        if (rd.io.mailbox.underPressure()) {
+            rd.ring_async.notify() catch |err|
+                log.warn("error re-notifying ring async err={}", .{err});
+            return;
+        }
         const res = ch.pop(&buf);
         if (res.read == 0) break;
 
@@ -1380,6 +1534,35 @@ fn testRemote(
     r.argv = argv;
     r.login_shell = login_shell;
     return r;
+}
+
+test "anchorAppliedOffset: the persisted offset tracks the agent's stream, not bytes parsed" {
+    // Persisted 662 against an agent head of 467 is what froze panes after an
+    // app restart: the grid-snapshot repaint (synthetic, no stream offsets) was
+    // being counted. With `replay_len` the count after the reply equals S.
+    var r: Remote = undefined;
+    r.applied_bytes = .init(0);
+    r.replay_debt = 0;
+
+    // Viewer resumed at 400; agent head S=467; reply = 67 gap + 2000 repaint.
+    r.attach_offset = 400;
+    r.anchorAppliedOffset(467, 67 + 2000);
+    try testing.expectEqual(@as(u64, 467), r.appliedOffset()); // mid-reply: S
+    _ = r.applied_bytes.fetchAdd(67 + 2000, .monotonic); // the reply drains
+    try testing.expectEqual(@as(u64, 467), r.appliedOffset());
+    _ = r.applied_bytes.fetchAdd(13, .monotonic); // one live tick
+    try testing.expectEqual(@as(u64, 480), r.appliedOffset());
+
+    // An older agent (no replay_len) with a viewer already ahead of it: the base
+    // clamps to S, so it can never run away.
+    r.attach_offset = 662;
+    r.applied_bytes = .init(0);
+    r.anchorAppliedOffset(467, null);
+    try testing.expectEqual(@as(u64, 467), r.appliedOffset());
+    // …and a viewer behind the agent keeps its own resume point.
+    r.attach_offset = 400;
+    r.anchorAppliedOffset(467, null);
+    try testing.expectEqual(@as(u64, 400), r.appliedOffset());
 }
 
 test "relaunch: the restart divider is byte-identical to the agent's" {
@@ -1562,10 +1745,17 @@ test "replay_mode_reset: touches nothing but mode state" {
                 // `ESC >` (DECKPNM) is the only ESC dispatch we allow.
                 .esc_dispatch => |esc| try testing.expectEqual(@as(u8, '>'), esc.final),
                 .csi_dispatch => |csi| {
-                    // 'h'/'l' = set/reset mode, 'm' = SGR. Anything else — 'J'
-                    // (erase), 'H' (cursor position), 'r' (scroll region), 'c'
-                    // — is out of bounds for a mode reset.
-                    try testing.expect(csi.final == 'h' or csi.final == 'l' or csi.final == 'm');
+                    // 'h'/'l' = set/reset mode, 'm' = SGR (or, with '>',
+                    // modifyOtherKeys), 'u' with '<' = kitty keyboard pop.
+                    // Anything else — 'J' (erase), 'H' (cursor position), 'r'
+                    // (scroll region), 'c' — is out of bounds for a mode reset.
+                    // A bare 'u' (no intermediate) is DECRC — it MOVES the cursor.
+                    const ok = switch (csi.final) {
+                        'h', 'l', 'm' => true,
+                        'u' => csi.intermediates.len == 1 and csi.intermediates[0] == '<',
+                        else => false,
+                    };
+                    try testing.expect(ok);
                 },
                 // No printable text, no C0 control (a stray \n would scroll).
                 else => {
@@ -1582,6 +1772,32 @@ test "replay_mode_reset: touches nothing but mode state" {
     for ([_][]const u8{ "?1049", "?1047", "?47", "?6l", "\x1b[r", "\x1bc" }) |forbidden| {
         try testing.expect(std.mem.indexOf(u8, replay_mode_reset, forbidden) == null);
     }
+}
+
+test "input_mode_reset: clears the keyboard encodings a dead TUI pushed" {
+    // Every one of the user's panes runs Claude Code, which pushes kitty keyboard
+    // flags and sets modifyOtherKeys. Replayed into a restored pane and left
+    // there, Ctrl-C reaches the new shell as `CSI 99 ; 5 u` — the "unresponsive"
+    // pane. Assert against a REAL terminal, through the real parser.
+    const alloc = testing.allocator;
+    var t: terminal.Terminal = try .init(alloc, .{ .cols = 80, .rows = 24 });
+    defer t.deinit(alloc);
+    var s: terminal.TerminalStream = .initAlloc(alloc, .init(&t));
+    defer s.deinit();
+
+    s.nextSlice("\x1b[>1u\x1b[>5u\x1b[>4;2m");
+    try testing.expect(t.screens.active.kitty_keyboard.current().int() != 0);
+    try testing.expect(t.flags.modify_other_keys_2);
+
+    s.nextSlice(input_mode_reset);
+    try testing.expectEqual(@as(u5, 0), t.screens.active.kitty_keyboard.current().int());
+    try testing.expect(!t.flags.modify_other_keys_2);
+}
+
+test "replay_mode_reset: ends synchronized output (a frame cut mid-replay)" {
+    var applied = try parseModeSequence(replay_mode_reset);
+    defer applied.deinit();
+    try testing.expect(applied.get(.synchronized_output).? == false);
 }
 
 /// Parse a pure set/reset-mode sequence into the final state of each mode it

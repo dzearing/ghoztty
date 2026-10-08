@@ -109,6 +109,13 @@ pub const RemoteBackend = struct {
     /// is borrowed for the construction call only (duped by `termio.Remote.init`).
     restore_snapshot: ?[]const u8 = null,
     restore_offset: u64 = 0,
+
+    /// True while the apprt has not yet reported the surface's real size — the
+    /// surface is still at its construction placeholder (800×600 px in the
+    /// embedded apprt, i.e. 49×17 cells), because the view has not been laid out.
+    /// A re-attach waits briefly for the real size rather than announcing the
+    /// placeholder to a LIVE program (see `termio.Remote.awaitRealSize`).
+    size_pending: bool = false,
 };
 
 /// Unique ID used to identify this surface for IPC purposes. It is
@@ -897,6 +904,15 @@ pub fn init(
         try env.put("GHOZTTY_WINDOW_NAME", surface_id_str);
         try env.put("GHOZTTY_PANE_NAME", surface_id_str);
 
+        // Claude Code's fullscreen renderer by default (`claude-code-fullscreen`).
+        // Decided once here for both backends; a remote backend only applies it
+        // to the LOCAL agent (below).
+        const claude_fullscreen = config.@"claude-code-fullscreen" and
+            claudeFullscreenWanted(alloc, &env);
+        if (claude_fullscreen and rt_surface.remoteBackend() == null) {
+            try env.put(claude_fullscreen_env, "1");
+        }
+
         // The working directory we'd hand to either backend.
         const working_directory: ?[]const u8 =
             if (config.@"working-directory") |wd| wd.value() else null;
@@ -1007,6 +1023,13 @@ pub fn init(
                 const forwarded_argv: ?[]const []const u8 =
                     if (remote_command == null) integ_argv else null;
 
+                // Claude Code's fullscreen renderer — local agent only: a
+                // cross-machine pane's Claude decides for itself (it turns the
+                // renderer off where it renders poorly, e.g. Windows remotes).
+                if (claude_fullscreen and rb.local_shell_integration) {
+                    try remote_env.append(alloc, .{ .key = claude_fullscreen_env, .value = "1" });
+                }
+
                 // User/apprt env overrides applied LAST (they win over the
                 // integration env above, mirroring exec's `env_override`).
                 {
@@ -1027,11 +1050,29 @@ pub fn init(
                 // querying the parent remote pane's actual cwd. A fresh remote
                 // window (no parent, no explicit remote cwd) forwards null and the
                 // agent starts the session in its own default cwd.
+                //
+                // The LOCAL agent (session persistence) is the exception: it runs
+                // on this machine, so the local default is exactly right — and
+                // "the agent's own cwd" is not a default at all there. A
+                // launchd-started agent sits in `/`, so a pane opened with no
+                // explicit directory (a bare `+new-window`) started its shell in
+                // `/`, recorded nothing, and a reboot brought it back in `/`. Hand
+                // it the same directory an exec pane would get: the configured
+                // one, or — for `inherit`, which an exec child gets by simply
+                // inheriting this process's cwd — this process's cwd, explicitly.
+                const own_cwd: ?[]u8 = if (rb.working_directory == null and
+                    rb.local_shell_integration and working_directory == null)
+                    std.process.getCwdAlloc(alloc) catch null
+                else
+                    null;
+                defer if (own_cwd) |c| alloc.free(c); // `Remote.init` dupes it
+                const remote_cwd: ?[]const u8 = rb.working_directory orelse
+                    if (rb.local_shell_integration) working_directory orelse own_cwd else null;
                 const io_remote = try termio.Remote.init(alloc, .{
                     .conn = rb.connection,
                     .session_id = rb.session_id,
                     .command = remote_command,
-                    .working_directory = rb.working_directory,
+                    .working_directory = remote_cwd,
                     .shell = rb.shell,
                     .term = config.term,
                     .env = remote_env.items,
@@ -1069,6 +1110,7 @@ pub fn init(
                     // visually-correct re-attach (null/0 ⇒ full-ring replay).
                     .restore_snapshot = rb.restore_snapshot,
                     .restore_offset = rb.restore_offset,
+                    .size_pending = rb.size_pending,
                 });
                 break :backend .{ .remote = io_remote };
             }
@@ -2440,6 +2482,77 @@ pub const Text = struct {
 /// selection state.
 ///
 /// The returned value contains allocated data and must be deinitialized.
+/// The Claude Code variable that selects its fullscreen renderer
+/// (`claude-code-fullscreen`).
+const claude_fullscreen_env = "CLAUDE_CODE_NO_FLICKER";
+
+/// Whether to default this pane's Claude Code to its fullscreen renderer: only
+/// when the user has not already made the choice themselves — the variable is
+/// not already in the pane's environment, and their Claude Code settings do not
+/// set `tui` (what `/tui default|fullscreen` records). Claude gives the variable
+/// precedence over that setting, so setting it blindly would override someone
+/// who deliberately chose the classic renderer.
+fn claudeFullscreenWanted(alloc: Allocator, env: *const std.process.EnvMap) bool {
+    if (env.get(claude_fullscreen_env) != null) return false;
+    return !claudeSettingsChooseRenderer(alloc, env);
+}
+
+/// True when the user's Claude Code settings file sets `tui`. Settings live in
+/// `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`. A missing
+/// or unreadable file means no choice was made.
+fn claudeSettingsChooseRenderer(alloc: Allocator, env: *const std.process.EnvMap) bool {
+    const path = if (env.get("CLAUDE_CONFIG_DIR")) |dir|
+        std.fs.path.join(alloc, &.{ dir, "settings.json" }) catch return false
+    else if (env.get("HOME")) |home|
+        std.fs.path.join(alloc, &.{ home, ".claude", "settings.json" }) catch return false
+    else
+        return false;
+    defer alloc.free(path);
+    const bytes = std.fs.cwd().readFileAlloc(alloc, path, 4 * 1024 * 1024) catch return false;
+    defer alloc.free(bytes);
+    return claudeSettingsSetTui(alloc, bytes);
+}
+
+/// Parse half of `claudeSettingsChooseRenderer`, separate so it is testable.
+fn claudeSettingsSetTui(alloc: Allocator, bytes: []const u8) bool {
+    const parsed = std.json.parseFromSlice(
+        struct { tui: ?[]const u8 = null },
+        alloc,
+        bytes,
+        .{ .ignore_unknown_fields = true },
+    ) catch return false;
+    defer parsed.deinit();
+    return parsed.value.tui != null;
+}
+
+test "claudeFullscreenWanted: an explicit choice — env or /tui — is never overridden" {
+    const alloc = std.testing.allocator;
+    try std.testing.expect(claudeSettingsSetTui(alloc, "{\"tui\":\"default\",\"model\":\"x\"}"));
+    try std.testing.expect(claudeSettingsSetTui(alloc, "{\"tui\":\"fullscreen\"}"));
+    try std.testing.expect(!claudeSettingsSetTui(alloc, "{\"model\":\"x\",\"hooks\":{}}"));
+    try std.testing.expect(!claudeSettingsSetTui(alloc, "not json"));
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir);
+    var env = std.process.EnvMap.init(alloc);
+    defer env.deinit();
+    try env.put("CLAUDE_CONFIG_DIR", dir);
+
+    // No settings file: no choice made → default to fullscreen.
+    try std.testing.expect(claudeFullscreenWanted(alloc, &env));
+    // `/tui default` recorded → respected.
+    try tmp.dir.writeFile(.{ .sub_path = "settings.json", .data = "{\"tui\":\"default\"}" });
+    try std.testing.expect(!claudeFullscreenWanted(alloc, &env));
+    // Settings without `tui` → default to fullscreen again.
+    try tmp.dir.writeFile(.{ .sub_path = "settings.json", .data = "{\"model\":\"opus\"}" });
+    try std.testing.expect(claudeFullscreenWanted(alloc, &env));
+    // The variable already in the environment (even "0") → respected.
+    try env.put(claude_fullscreen_env, "0");
+    try std.testing.expect(!claudeFullscreenWanted(alloc, &env));
+}
+
 /// A WP-D3 session snapshot: a structured VT repaint of the pane's current
 /// screen plus the absolute agent-stream byte offset it reflects. Persisted on
 /// quit and replayed on re-attach for a fast, visually-correct restore.
@@ -2495,18 +2608,44 @@ pub fn sessionSnapshot(self: *Surface, alloc: Allocator) !?SessionSnapshot {
 
     var builder: std.Io.Writer.Allocating = .init(alloc);
     defer builder.deinit();
+    formatSessionSnapshot(t, terminal.Selection.init(tl, br, false), &builder.writer) catch |err| {
+        log.warn("error building session snapshot err={}", .{err});
+        return null;
+    };
 
+    return .{
+        .data = try builder.toOwnedSlice(),
+        .byte_offset = offset,
+    };
+}
+
+/// The serialization behind `sessionSnapshot`, separated so it is testable
+/// without a live surface.
+fn formatSessionSnapshot(
+    t: *const terminal.Terminal,
+    sel: terminal.Selection,
+    w: *std.Io.Writer,
+) std.Io.Writer.Error!void {
     // emit=.vt + Extra.all reconstructs the screen state as closely as possible:
     // palette, differing modes (incl. alt-screen enter for TUIs), scrolling
     // region, tabstops, pwd, per-cell SGR styles, hyperlinks, and a final cursor
-    // position. unwrap=false preserves the rendered row layout so it re-wraps
-    // naturally at the live width.
+    // position.
+    //
+    // unwrap=true: a soft-wrapped line is emitted as ONE logical line, so the
+    // restored terminal wraps it itself — at whatever width the pane has now,
+    // and again on every later resize. With unwrap=false every wrapped row was
+    // followed by a hard CRLF, so after each app restart / update re-attach the
+    // restored scrollback was frozen at the old width: widen the pane and
+    // scrolling up showed lines still broken where the OLD width broke them.
     var formatter: terminal.formatter.TerminalFormatter = .init(t, .{
         .emit = .vt,
-        .unwrap = false,
+        .unwrap = true,
         .trim = true,
+        // Keep which rows are prompts, or the first resize after the restore
+        // blanks restored output (see `Options.semantic_prompts`).
+        .semantic_prompts = true,
     });
-    formatter.content = .{ .selection = terminal.Selection.init(tl, br, false) };
+    formatter.content = .{ .selection = sel };
     formatter.extra = .all;
     // …except the INPUT-REPORTING modes. This snapshot is a PICTURE, persisted to
     // disk at quit and repainted at the next launch — and by then the pane's child
@@ -2517,15 +2656,88 @@ pub fn sessionSnapshot(self: *Surface, alloc: Allocator) !?SessionSnapshot {
     // from the agent's grid snapshot, which is built from that child's own output
     // and lands right after this repaint.
     formatter.extra.input_modes = false;
-    formatter.format(&builder.writer) catch |err| {
-        log.warn("error building session snapshot err={}", .{err});
-        return null;
-    };
+    try formatter.format(w);
+}
 
-    return .{
-        .data = try builder.toOwnedSlice(),
-        .byte_offset = offset,
-    };
+test "formatSessionSnapshot: restored output survives the first resize at a prompt" {
+    // "Restore, then resize: shell output is gone." On resize with the cursor at
+    // a prompt, the terminal blanks from the current prompt's first row down
+    // (the shell redraws it). A repaint without prompt marks left the CURRENT
+    // prompt unmarked, so that walk went up to an older marked prompt and
+    // blanked the real output in between.
+    const alloc = std.testing.allocator;
+    const shell_line =
+        "\x1b]133;A\x1b\\$ \x1b]133;B\x1b\\";
+    var src: terminal.Terminal = try .init(alloc, .{ .cols = 40, .rows = 10 });
+    defer src.deinit(alloc);
+    {
+        var s: terminal.TerminalStream = .initAlloc(alloc, .init(&src));
+        defer s.deinit();
+        s.nextSlice(shell_line ++ "make\r\n\x1b]133;C\x1b\\");
+        s.nextSlice("OUTPUT-LINE-ONE\r\nOUTPUT-LINE-TWO\r\n");
+        s.nextSlice("\x1b]133;D;0\x1b\\" ++ shell_line);
+    }
+    const screen = src.screens.active;
+    const sel = terminal.Selection.init(
+        screen.pages.getTopLeft(.screen),
+        screen.pages.getBottomRight(.screen).?,
+        false,
+    );
+    var buf: std.Io.Writer.Allocating = .init(alloc);
+    defer buf.deinit();
+    try formatSessionSnapshot(&src, sel, &buf.writer);
+
+    // The restoring terminal had already seen an OLDER prompt (an earlier
+    // replay), then gets the repaint.
+    var dst: terminal.Terminal = try .init(alloc, .{ .cols = 40, .rows = 10 });
+    defer dst.deinit(alloc);
+    {
+        var s: terminal.TerminalStream = .initAlloc(alloc, .init(&dst));
+        defer s.deinit();
+        s.nextSlice(shell_line ++ "\x1b[H\x1b[2J");
+        s.nextSlice(buf.written());
+    }
+    try dst.resize(alloc, 30, 10);
+    const text = try dst.plainString(alloc);
+    defer alloc.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "OUTPUT-LINE-ONE") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "OUTPUT-LINE-TWO") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "make") != null);
+}
+
+test "formatSessionSnapshot: soft-wrapped lines survive a restore as reflowable lines" {
+    // The re-attach half of "scrolling up after a resize shows the wrong width".
+    const alloc = std.testing.allocator;
+    var src: terminal.Terminal = try .init(alloc, .{ .cols = 10, .rows = 5 });
+    defer src.deinit(alloc);
+    {
+        var s: terminal.TerminalStream = .initAlloc(alloc, .init(&src));
+        defer s.deinit();
+        // 25 characters at 10 columns: three ROWS, one logical line.
+        s.nextSlice("abcdefghijklmnopqrstuvwxy\r\nnext line");
+    }
+
+    const screen = src.screens.active;
+    const sel = terminal.Selection.init(
+        screen.pages.getTopLeft(.screen),
+        screen.pages.getBottomRight(.screen).?,
+        false,
+    );
+    var buf: std.Io.Writer.Allocating = .init(alloc);
+    defer buf.deinit();
+    try formatSessionSnapshot(&src, sel, &buf.writer);
+
+    // Restore into a WIDER pane: the long line must come back as one row.
+    var dst: terminal.Terminal = try .init(alloc, .{ .cols = 40, .rows = 5 });
+    defer dst.deinit(alloc);
+    {
+        var s: terminal.TerminalStream = .initAlloc(alloc, .init(&dst));
+        defer s.deinit();
+        s.nextSlice(buf.written());
+    }
+    const text = try dst.plainString(alloc);
+    defer alloc.free(text);
+    try std.testing.expect(std.mem.indexOf(u8, text, "abcdefghijklmnopqrstuvwxy") != null);
 }
 
 /// `reflow` undoes TUI hard wraps and margins (see
@@ -3082,6 +3294,12 @@ pub fn sizeCallback(self: *Surface, size: apprt.SurfaceSize) !void {
     // Crash metadata in case we crash in here
     crash.sentry.thread_state = self.crashThreadState();
     defer crash.sentry.thread_state = null;
+
+    // The apprt has laid the view out; from here on the size is real, not the
+    // construction placeholder. Published on the way OUT (after the resize below
+    // has queued the size), so a reader that sees the flag also finds that size
+    // in `pending_resize`.
+    defer self.io.size_reported.store(true, .release);
 
     const new_screen_size: rendererpkg.ScreenSize = .{
         .width = size.width,

@@ -858,6 +858,9 @@ pub const Surface = struct {
     core_surface: CoreSurface,
     content_scale: apprt.ContentScale,
     size: apprt.SurfaceSize,
+    /// False until the host reports the view's real size (`updateSize`).
+    /// Until then `size` is the 800×600 construction placeholder.
+    size_reported: bool = false,
     cursor_pos: apprt.CursorPos,
     inspector: ?*Inspector = null,
 
@@ -1017,6 +1020,7 @@ pub const Surface = struct {
                 .y = @floatCast(opts.scale_factor),
             },
             .size = .{ .width = 800, .height = 600 },
+            .size_reported = false,
             .cursor_pos = .{ .x = -1, .y = -1 },
             // Remote backend handle (remote-machines design §3.2). Recorded
             // before `core_surface.init` so `remoteBackend()` can branch the
@@ -1364,6 +1368,10 @@ pub const Surface = struct {
     }
 
     pub fn updateSize(self: *Surface, width: u32, height: u32) void {
+        // The view has been laid out: whatever the size is now, it is real (even
+        // if it happens to equal the construction placeholder).
+        self.size_reported = true;
+
         // Runtimes sometimes generate superfluous resize events even
         // if the size did not actually change (SwiftUI). We check
         // that the size actually changed from what we last recorded
@@ -1576,6 +1584,7 @@ pub const Surface = struct {
             else
                 null,
             .restore_offset = self.remote_restore_offset,
+            .size_pending = !self.size_reported,
         };
     }
 

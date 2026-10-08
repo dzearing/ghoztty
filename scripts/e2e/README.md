@@ -37,6 +37,14 @@ What it does:
    - pre-gap scrollback line replayed after restore
    - kill→interactive gap < 10s
    - the local agent PID is unchanged (agent owned the PTYs across the swap)
+   - live output RESUMES: each pane's tick passes its pre-kill value within 6 s
+     (right after a crash restore a pane may show a slightly older persisted
+     frame for a moment; what fails is a pane that stays there)
+   - no persisted re-attach offset (`screenSnapshotOffset`) is ahead of the
+     agent's stream head (the end of the ring the agent wrote at the
+     disconnect). An over-counted offset made the next re-attach discard real
+     output — the pane that froze after an app restart; 1.37.0's code fails this
+     by ~2x on the second cycle.
 
 Panes are identified across restore by their `PANE=<n>` marker, not by IPC name,
 so unnamed panes that get fresh auto-registered names on restore are handled.
@@ -184,6 +192,64 @@ KeepAlive job never lingers on the machine after a run. Because launchd owns the
 agent, `--agent-restart` (and any run after it) relies on that bootout — a bare
 `SIGKILL` of a `KeepAlive` agent would be undone by launchd instantly.
 
+## `session-persistence.py --reboot-tui` — reboot restore of TUI panes
+
+```
+scripts/e2e/session-persistence.py --reboot-tui [--keep] [--verbose]
+```
+
+`--agent-restart` panes run an `echo` loop; every pane a real user restores is
+running Claude Code, which is what broke. This mode reproduces that case with
+`tui-stream.py`, a generator of Claude-Code-shaped output measured from real ring
+snapshots: synchronized-output frames redrawn in place with relative cursor
+motion, queries the terminal answers (`CSI c`, `CSI ? 2026 $ p`, `CSI > 0 q`,
+`CSI ? u`), kitty keyboard pushes and modifyOtherKeys, 24-bit color — several MB
+per pane, many times the agent's 2 MB ring.
+
+Three windows:
+
+- **tuiA** — the inline renderer: 120 `CONVO-A-nnnn` conversation lines under a
+  constantly redrawn prompt box. Its command `cd`s into a subdirectory first.
+- **tuiB** — the full-screen renderer: `BEFORE-TUI-B` on the primary screen,
+  then the alt screen + any-event mouse tracking, with the `?1049h` long gone
+  from the ring window.
+- **bare** — a window opened with NO working directory (a raw IPC request,
+  bypassing the CLI, which would supply its own cwd).
+
+Asserted LIVE, before any reboot: every conversation line present exactly once
+and one prompt box (no lost or misplaced output under flow control), and the bare
+window started in the app's default directory. Then app + agent are SIGKILLed,
+launchd restarts the agent, and the app is relaunched. Asserted per pane: the
+`session was lost` notice within 20 s; a live shell under it answering an echo in
+< 8 s, in the right cwd (tuiA: the directory it `cd`'d to — only a live re-sample
+finds it); mouse/focus/paste/2026 modes off, cursor visible, kitty keyboard flags
+0 (`vt-mode-probe.py kitty`); tuiA's buffer holds all 120 lines once, in order,
+plus its final prompt box and no stale frames; tuiB's holds the primary screen
+AND the app's last frame and no stale frames; no query reply typed into any
+restored shell. Globally: no `termio mailbox full` drops in the app log after
+relaunch, and no `RESIZE rows=17 cols=49` (the pre-layout placeholder) ever
+reaching the agent.
+
+Run against the pre-fix build (1.37.0's code) it fails 14 assertions — every
+symptom the user reported. The bare/cwd expectations need
+`--window-inherit-working-directory=false` (passed by the mode), since an
+inheriting window correctly copies the focused window's directory.
+
+## `session-persistence.py --restore-resize` — restored output re-wraps
+
+```
+scripts/e2e/session-persistence.py --restore-resize
+```
+
+For each of app quit, app crash and reboot: a shell prints two 300-character
+lines in a split (100-column) pane, the app restarts, the pane is widened (split
+closed, 200 columns) and narrowed again; both lines must still read as one
+300-character line each. Fails without the restore paths' `unwrap = true` (lines
+frozen at the old width) or without their prompt marks (the first resize blanks
+the restored output back to an older prompt). The window is 200 columns so the
+pane is never narrower than a long prompt: zsh redraws a WRAPPED prompt with its
+old row count and clobbers the line above, restore or no restore.
+
 ## `session-persistence.py --agent-only` — in-place recovery (task T12e)
 
 ```
@@ -211,6 +277,12 @@ in-place invariant: the app process is unchanged** (it did not relaunch). The
 local machine pill stays hidden throughout — recovery looks like the panes just
 restarted in place. Measured recovery ~2.5–3.7 s. Same launchd-throttle settling
 and LaunchAgent cleanliness as `--agent-restart` above.
+
+Panes are identified across the rebuild by marker, then by name, then by
+**position** (window + leaf order): the in-place rebuild gives split panes new
+leaf names, and under `restore` a relaunched pane re-prints no marker, so a split
+pane can have neither (this mode had been failing on exactly that since
+`restore` became the default, with every pane in fact recovered).
 
 The per-window remote reconnect ladder (WP-D1) is intentionally **not** used for
 local windows: it re-dials the loopback machine over TCP (the local transport is
