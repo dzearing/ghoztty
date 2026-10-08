@@ -2144,6 +2144,9 @@ fn mouseRefreshLinks(
                 const str = try self.io.terminal.screens.active.selectionString(alloc, .{
                     .sel = link.selection,
                     .trim = false,
+                    // A link matched across a TUI hard wrap (see
+                    // linkAtPin) reads back whole only when reflowed.
+                    .reflow = true,
                 });
                 break :link .{
                     .{ .url = str },
@@ -2525,14 +2528,18 @@ pub fn sessionSnapshot(self: *Surface, alloc: Allocator) !?SessionSnapshot {
     };
 }
 
+/// `reflow` undoes TUI hard wraps and margins (see
+/// terminal.formatter.Options.reflow): right for text handed to the user
+/// as the selection, wrong for reading the screen as it is laid out.
 pub fn dumpText(
     self: *Surface,
     alloc: Allocator,
     sel: terminal.Selection,
+    reflow: bool,
 ) !Text {
     self.renderer_state.mutex.lock();
     defer self.renderer_state.mutex.unlock();
-    return try self.dumpTextLocked(alloc, sel);
+    return try self.dumpTextLocked(alloc, sel, reflow);
 }
 
 /// Same as `dumpText` but assumes the renderer state mutex is already
@@ -2541,11 +2548,13 @@ pub fn dumpTextLocked(
     self: *Surface,
     alloc: Allocator,
     sel: terminal.Selection,
+    reflow: bool,
 ) !Text {
     // Read out the text
     const text = try self.io.terminal.screens.active.selectionString(alloc, .{
         .sel = sel,
         .trim = false,
+        .reflow = reflow,
     });
     errdefer alloc.free(text);
 
@@ -2661,7 +2670,9 @@ pub fn hasSelection(self: *const Surface) bool {
     return self.io.terminal.screens.active.selection != null;
 }
 
-/// Returns the selected text. This is allocated.
+/// Returns the selected text exactly as laid out on screen. This is
+/// allocated. It is deliberately NOT reflowed: its caller searches the
+/// screen for it, and the screen holds the hard-wrapped form.
 pub fn selectionString(self: *Surface, alloc: Allocator) !?[:0]const u8 {
     self.renderer_state.mutex.lock();
     defer self.renderer_state.mutex.unlock();
@@ -2846,6 +2857,9 @@ fn copySelectionToClipboards(
     const opts: terminal.formatter.Options = .{
         .emit = .plain, // We'll override this below
         .unwrap = true,
+        // Copied text leaves the terminal, so undo the layout a TUI
+        // imposed on it: its left margin and its own hard wraps.
+        .reflow = true,
         .trim = self.config.clipboard_trim_trailing_spaces,
         .codepoint_map = self.config.clipboard_codepoint_map.map.list,
         .background = self.io.terminal.colors.background.get(),
@@ -4996,12 +5010,17 @@ fn linkAtPin(
         // Respect semantic prompt boundaries so link/path matching doesn't
         // merge shell prompt content with the text beside it.
         .semantic_prompt_boundary = true,
+        // A URL a TUI broke across rows is still one URL.
+        .hard_wraps = true,
     }) orelse return null;
 
+    // Reflowed, so a URL broken across a TUI hard wrap reads back whole:
+    // the seam joins it with nothing and the re-indentation is dropped.
     var strmap: terminal.StringMap = undefined;
     self.alloc.free(try screen.selectionString(self.alloc, .{
         .sel = line,
         .trim = false,
+        .reflow = true,
         .map = &strmap,
     }));
     defer strmap.deinit(self.alloc);
@@ -5019,6 +5038,10 @@ fn linkAtPin(
             defer match.deinit();
             const sel = match.selection();
             if (!sel.contains(screen, mouse_pin)) continue;
+
+            // A match across a hard wrap spans the continuation row's
+            // margin without containing it.
+            if (!match.covers(mouse_pin)) continue;
             return .{
                 .action = link.action,
                 .selection = sel,
@@ -5059,6 +5082,7 @@ fn processLinks(self: *Surface, pos: apprt.CursorPos) !bool {
             const str = try self.io.terminal.screens.active.selectionString(self.alloc, .{
                 .sel = link.selection,
                 .trim = false,
+                .reflow = true,
             });
             defer self.alloc.free(str);
 
@@ -5928,6 +5952,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
                         break :url_text (self.io.terminal.screens.active.selectionString(self.alloc, .{
                             .sel = link_info.selection,
                             .trim = self.config.clipboard_trim_trailing_spaces,
+                            .reflow = true,
                         })) catch |err| {
                             log.err("error reading url string err={}", .{err});
                             return false;

@@ -1155,6 +1155,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             // Data we extract out of the critical area.
             const Critical = struct {
                 links: terminal.RenderState.CellSet,
+                seams: ?[]const ?terminal.hard_wrap.Seam,
                 mouse: renderer.State.Mouse,
                 preedit: ?renderer.State.Preedit,
                 scrollbar: terminal.Scrollbar,
@@ -1262,6 +1263,28 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     };
                 };
 
+                // The TUI hard wraps of the viewport rows, so regex link
+                // matching (below, outside the lock) sees a URL a TUI broke
+                // across rows as one link. This reads the pages, so it has
+                // to happen here, while they match the render state.
+                const seams: ?[]const ?terminal.hard_wrap.Seam = seams: {
+                    // Skip the work when no regex link can highlight this
+                    // frame, by the same conditions renderCellMap applies.
+                    const mouse = state.mouse;
+                    const needed = for (self.config.links.links) |entry| switch (entry.highlight) {
+                        .always => break true,
+                        .always_mods => |v| if (mouse.mods.equal(v)) break true,
+                        .hover => if (mouse.point != null) break true,
+                        .hover_mods => |v| if (mouse.point != null and mouse.mods.equal(v)) break true,
+                    } else false;
+                    if (!needed) break :seams null;
+                    const pins = self.terminal_state.row_data.items(.pin);
+                    if (pins.len == 0) break :seams null;
+                    const out = arena_alloc.alloc(?terminal.hard_wrap.Seam, pins.len) catch break :seams null;
+                    terminal.hard_wrap.seams(arena_alloc, pins[0], out) catch break :seams null;
+                    break :seams out;
+                };
+
                 const overlay_features: []const Overlay.Feature = overlay: {
                     const insp = state.inspector orelse break :overlay &.{};
                     const renderer_info = insp.rendererInfo();
@@ -1272,6 +1295,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                 break :critical .{
                     .links = links,
+                    .seams = seams,
                     .mouse = state.mouse,
                     .preedit = preedit,
                     .scrollbar = scrollbar,
@@ -1285,6 +1309,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 arena_alloc,
                 &critical.links,
                 &self.terminal_state,
+                critical.seams,
                 state.mouse.point,
                 state.mouse.mods,
             ) catch |err| {

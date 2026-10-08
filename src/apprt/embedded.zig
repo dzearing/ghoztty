@@ -2362,8 +2362,10 @@ pub const CAPI = struct {
         // If we don't have a selection, do nothing.
         const core_sel = core_surface.io.terminal.screens.active.selection orelse return false;
 
-        // Read the text from the selection.
-        return readTextLocked(surface, core_sel, result);
+        // Read the text from the selection. This is the selection as the
+        // user means it (Services, accessibility, Look Up), so it gets the
+        // same reflow a copy does.
+        return readTextLocked(surface, core_sel, true, result);
     }
 
     /// Read some arbitrary text from the surface.
@@ -2383,12 +2385,15 @@ pub const CAPI = struct {
             surface.core_surface.renderer_state.terminal.screens.active,
         ) orelse return false;
 
-        return readTextLocked(surface, core_sel, result);
+        // Arbitrary screen reads (`+read`, the IPC text APIs) want the
+        // screen exactly as laid out.
+        return readTextLocked(surface, core_sel, false, result);
     }
 
     fn readTextLocked(
         surface: *Surface,
         core_sel: terminal.Selection,
+        reflow: bool,
         result: *Text,
     ) bool {
         const core_surface = &surface.core_surface;
@@ -2397,6 +2402,7 @@ pub const CAPI = struct {
         const text = core_surface.dumpTextLocked(
             global.alloc,
             core_sel,
+            reflow,
         ) catch |err| {
             log.warn("error reading text err={}", .{err});
             return false;
@@ -4380,7 +4386,7 @@ pub const CAPI = struct {
             };
 
             // Read the selection
-            return readTextLocked(ptr, sel, result);
+            return readTextLocked(ptr, sel, false, result);
         }
 
         export fn ghostty_inspector_metal_init(ptr: *Inspector, device: objc.c.id) bool {

@@ -15,6 +15,7 @@ const Selection = @import("Selection.zig");
 const PageList = @import("PageList.zig");
 const StringMap = @import("StringMap.zig");
 const ScreenFormatter = @import("formatter.zig").ScreenFormatter;
+const hard_wrap = @import("hard_wrap.zig");
 const osc = @import("osc.zig");
 const pagepkg = @import("page.zig");
 const point = @import("point.zig");
@@ -2442,6 +2443,12 @@ pub const SelectionString = struct {
     /// If true, trim whitespace around the selection.
     trim: bool = true,
 
+    /// If true, undo a TUI's own text layout: rejoin rows the program
+    /// hard-wrapped itself and strip the shared left margin. This is the
+    /// clean form for text leaving the terminal (the clipboard) and for
+    /// matching links a TUI broke across rows. See formatter.Options.reflow.
+    reflow: bool = false,
+
     /// If non-null, a stringmap will be written here. This will use
     /// the same allocator as the call to selectionString. The string will
     /// be duplicated here and in the return value so both must be freed.
@@ -2473,6 +2480,7 @@ pub fn selectionString(
             .emit = .plain,
             .unwrap = true,
             .trim = opts.trim,
+            .reflow = opts.reflow,
         },
     );
     formatter.content = .{ .selection = opts.sel };
@@ -2518,6 +2526,12 @@ pub const SelectLine = struct {
     /// state changing a boundary. State changing is ANY state
     /// change.
     semantic_prompt_boundary: bool = true,
+
+    /// If true, also follow rows a TUI hard-wrapped itself (see
+    /// hard_wrap.zig), the way soft wraps are always followed. Link
+    /// matching uses this so a URL a TUI broke across rows is one URL;
+    /// format the result with `reflow` to read it back whole.
+    hard_wraps: bool = false,
 };
 
 /// Select the line under the given point. This will select across soft-wrapped
@@ -2539,7 +2553,7 @@ pub fn selectLine(self: *const Screen, opts: SelectLine) ?Selection {
     };
 
     // The real start of the row is the first row in the soft-wrap.
-    const start_pin: Pin = start_pin: {
+    var start_pin: Pin = start_pin: {
         var it = opts.pin.rowIterator(.left_up, null);
         var it_prev: Pin = it.next().?; // skip self
 
@@ -2595,7 +2609,7 @@ pub fn selectLine(self: *const Screen, opts: SelectLine) ?Selection {
     };
 
     // The real end of the row is the final row in the soft-wrap.
-    const end_pin: Pin = end_pin: {
+    var end_pin: Pin = end_pin: {
         var it = opts.pin.rowIterator(.right_down, null);
         while (it.next()) |p| {
             const row = p.rowAndCell().row;
@@ -2638,6 +2652,18 @@ pub fn selectLine(self: *const Screen, opts: SelectLine) ?Selection {
 
         return null;
     };
+
+    // Follow TUI hard wraps outward, only from a line edge: a line that a
+    // semantic prompt boundary cut short stays cut.
+    if (opts.hard_wraps) {
+        const last_x = end_pin.node.data.size.cols - 1;
+        const extended = hard_wrap.extend(start_pin, end_pin);
+        if (start_pin.x == 0) start_pin = extended.top;
+        if (end_pin.x == last_x) {
+            end_pin = extended.bottom;
+            end_pin.x = last_x;
+        }
+    }
 
     // Go forward from the start to find the first non-whitespace character.
     const start: Pin = start: {
@@ -7755,6 +7781,36 @@ test "Screen: selectLine across soft-wrap" {
     }
 }
 
+test "Screen: selectLine across TUI hard wraps" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    // A real 100-column Claude Code render: one URL broken over three rows,
+    // each continuation re-indented by two columns.
+    var s = try init(alloc, .{ .cols = 100, .rows = 5, .max_scrollback = 0 });
+    defer s.deinit();
+    try s.testWriteString(
+        \\  A very long URL that must wrap: https://github.com/dzearing/ghoztty/blob/main/src/terminal/formatt
+        \\  er.zig?plain=1&query=this-is-a-deliberately-long-query-string-that-keeps-going-and-going-past-the-
+        \\  right-edge-of-the-pane-for-testing#L1234-L1300 and some trailing text after it.
+    );
+    const pin = s.pages.pin(.{ .active = .{ .x = 50, .y = 1 } }).?;
+
+    // Without hard_wraps, just the hovered row.
+    {
+        const sel = s.selectLine(.{ .pin = pin, .whitespace = null }).?;
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 0, .y = 1 } }, s.pages.pointFromPin(.screen, sel.start()).?);
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 99, .y = 1 } }, s.pages.pointFromPin(.screen, sel.end()).?);
+    }
+
+    // With it, all three rows.
+    {
+        const sel = s.selectLine(.{ .pin = pin, .whitespace = null, .hard_wraps = true }).?;
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 0, .y = 0 } }, s.pages.pointFromPin(.screen, sel.start()).?);
+        try testing.expectEqual(point.Point{ .screen = .{ .x = 99, .y = 2 } }, s.pages.pointFromPin(.screen, sel.end()).?);
+    }
+}
+
 test "Screen: selectLine across full soft-wrap" {
     const testing = std.testing;
     const alloc = testing.allocator;
@@ -9260,6 +9316,621 @@ test "Screen: selectionString multi-page" {
         defer alloc.free(contents);
         const expected = "123456789\n!@#$%^&*(\n123";
         try testing.expectEqualStrings(expected, contents);
+    }
+}
+
+fn testReflowScreen(alloc: Allocator, cols: size.CellCountInt, text: []const u8) !Screen {
+    var rows: size.CellCountInt = 2;
+    for (text) |c| {
+        if (c == '\n') rows += 1;
+    }
+    var s = try init(alloc, .{ .cols = cols, .rows = rows, .max_scrollback = 0 });
+    errdefer s.deinit();
+    try s.testWriteString(text);
+    return s;
+}
+
+/// Formats everything written to the screen.
+fn testReflowAll(s: *Screen, alloc: Allocator, reflow: bool) ![:0]const u8 {
+    return try s.selectionString(alloc, .{
+        .sel = Selection.init(
+            s.pages.getTopLeft(.screen),
+            s.pages.getBottomRight(.screen).?,
+            false,
+        ),
+        .trim = true,
+        .reflow = reflow,
+    });
+}
+
+test "Screen: selectionString reflow Claude Code response" {
+    // A real 100-column Claude Code render (captured with +read): a
+    // wrapped paragraph, a URL broken mid-token across three rows, nested
+    // lists with hanging indents, a quote, a code block whose long comment
+    // Claude Code wrapped itself, and a table.
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var s = try testReflowScreen(alloc, 100,
+        \\⏺ This is a deliberately long paragraph of ordinary prose that should be hard-wrapped by Claude
+        \\  Code's own renderer at the pane's right edge, so that the copy transform has a real example to
+        \\  rejoin, with words that land near the boundary and a few longer words like internationalization
+        \\  and incomprehensibilities to vary where the break falls on each row of the rendered output here.
+        \\
+        \\  A very long URL that must wrap: https://github.com/dzearing/ghoztty/blob/main/src/terminal/formatt
+        \\  er.zig?plain=1&query=this-is-a-deliberately-long-query-string-that-keeps-going-and-going-past-the-
+        \\  right-edge-of-the-pane-for-testing#L1234-L1300 and some trailing text after it.
+        \\
+        \\  - A list item that is long enough to wrap onto a second row so that we can observe the hanging
+        \\    indent Claude Code uses for list continuation lines in the rendered output, padding padding
+        \\    padding.
+        \\  - Second item, short.
+        \\    - Nested item that is also long enough to wrap onto a second row so the nested hanging
+        \\      indentation is visible in the grid, more padding words here to reach the edge.
+        \\  1. Numbered item that is long enough to wrap onto a second row so that we can observe the numbered
+        \\     hanging indent Claude Code uses here.
+        \\
+        \\  ▎ A blockquote that is long enough to wrap onto a second row so we can see how Claude Code renders
+        \\  ▎ quote continuation lines in the grid, more words.
+        \\
+        \\  zig
+        \\  const x = foo(bar, baz);
+        \\      return x;
+        \\  // a very long code line that definitely exceeds the width of the pane so we can see whether
+        \\  Claude Code wraps code lines itself or lets the terminal soft-wrap them instead of hard wrapping
+        \\
+        \\  ┌───────────────────────────────────────────────────────────────────────────────────┬─────────┐
+        \\  │                                     Column A                                      │ Column  │
+        \\  │                                                                                   │    B    │
+        \\  ├───────────────────────────────────────────────────────────────────────────────────┼─────────┤
+        \\  │ a cell with some fairly long text that might wrap inside the table renderer if    │ b       │
+        \\  │ the pane is narrow enough to force it                                             │         │
+        \\  └───────────────────────────────────────────────────────────────────────────────────┴─────────┘
+        \\
+        \\  Short line one.
+        \\  Short line two.
+    );
+    defer s.deinit();
+
+    const contents = try testReflowAll(&s, alloc, true);
+    defer alloc.free(contents);
+    try testing.expectEqualStrings(
+        \\⏺ This is a deliberately long paragraph of ordinary prose that should be hard-wrapped by Claude Code's own renderer at the pane's right edge, so that the copy transform has a real example to rejoin, with words that land near the boundary and a few longer words like internationalization and incomprehensibilities to vary where the break falls on each row of the rendered output here.
+        \\
+        \\A very long URL that must wrap: https://github.com/dzearing/ghoztty/blob/main/src/terminal/formatter.zig?plain=1&query=this-is-a-deliberately-long-query-string-that-keeps-going-and-going-past-the-right-edge-of-the-pane-for-testing#L1234-L1300 and some trailing text after it.
+        \\
+        \\- A list item that is long enough to wrap onto a second row so that we can observe the hanging indent Claude Code uses for list continuation lines in the rendered output, padding padding padding.
+        \\- Second item, short.
+        \\  - Nested item that is also long enough to wrap onto a second row so the nested hanging indentation is visible in the grid, more padding words here to reach the edge.
+        \\1. Numbered item that is long enough to wrap onto a second row so that we can observe the numbered hanging indent Claude Code uses here.
+        \\
+        \\▎ A blockquote that is long enough to wrap onto a second row so we can see how Claude Code renders
+        \\▎ quote continuation lines in the grid, more words.
+        \\
+        \\zig
+        \\const x = foo(bar, baz);
+        \\    return x;
+        \\// a very long code line that definitely exceeds the width of the pane so we can see whether Claude Code wraps code lines itself or lets the terminal soft-wrap them instead of hard wrapping
+        \\
+        \\┌───────────────────────────────────────────────────────────────────────────────────┬─────────┐
+        \\│                                     Column A                                      │ Column  │
+        \\│                                                                                   │    B    │
+        \\├───────────────────────────────────────────────────────────────────────────────────┼─────────┤
+        \\│ a cell with some fairly long text that might wrap inside the table renderer if    │ b       │
+        \\│ the pane is narrow enough to force it                                             │         │
+        \\└───────────────────────────────────────────────────────────────────────────────────┴─────────┘
+        \\
+        \\Short line one.
+        \\Short line two.
+    , contents);
+}
+
+test "Screen: selectionString reflow 200 columns with URL" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var s = try testReflowScreen(alloc, 200,
+        \\⏺ This is a deliberately long paragraph of ordinary prose that should be hard-wrapped by Claude Code's own renderer at the pane's right edge, so that the copy transform has a real example to rejoin,
+        \\  with words that land near the boundary and a few longer words like internationalization and incomprehensibilities to vary where the break falls on each row of the rendered output here.
+        \\
+        \\  A very long URL that must wrap: https://github.com/dzearing/ghoztty/blob/main/src/terminal/formatter.zig?plain=1&query=this-is-a-deliberately-long-query-string-that-keeps-going-and-going-past-the-ri
+        \\  ght-edge-of-the-pane-for-testing#L1234-L1300 and some trailing text after it.
+    );
+    defer s.deinit();
+
+    const contents = try testReflowAll(&s, alloc, true);
+    defer alloc.free(contents);
+    try testing.expectEqualStrings(
+        \\⏺ This is a deliberately long paragraph of ordinary prose that should be hard-wrapped by Claude Code's own renderer at the pane's right edge, so that the copy transform has a real example to rejoin, with words that land near the boundary and a few longer words like internationalization and incomprehensibilities to vary where the break falls on each row of the rendered output here.
+        \\
+        \\A very long URL that must wrap: https://github.com/dzearing/ghoztty/blob/main/src/terminal/formatter.zig?plain=1&query=this-is-a-deliberately-long-query-string-that-keeps-going-and-going-past-the-right-edge-of-the-pane-for-testing#L1234-L1300 and some trailing text after it.
+    , contents);
+}
+
+test "Screen: selectionString reflow input box path with trim off" {
+    // Claude Code's prompt box pads every row with spaces and breaks a long
+    // path one column short of the edge. Even untrimmed, the padding before
+    // a seam must not land inside the rejoined path.
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var s = try testReflowScreen(alloc, 100,
+        \\❯ Print the contents of /private/tmp/claude-501/-Users-dzearing-git-ghoztty-copy-cleanup/faf212a3-b 
+        \\  879-4ed3-a237-c28a7a89e0d6/scratchpad/sample.md as your reply, rendered as markdown exactly as    
+        \\  written. No code block around it, no commentary.                                                  
+    );
+    defer s.deinit();
+
+    const contents = try s.selectionString(alloc, .{
+        .sel = Selection.init(
+            s.pages.getTopLeft(.screen),
+            s.pages.pin(.{ .screen = .{ .x = 99, .y = 2 } }).?,
+            false,
+        ),
+        .trim = false,
+        .reflow = true,
+    });
+    defer alloc.free(contents);
+    try testing.expectEqualStrings(
+        \\❯ Print the contents of /private/tmp/claude-501/-Users-dzearing-git-ghoztty-copy-cleanup/faf212a3-b879-4ed3-a237-c28a7a89e0d6/scratchpad/sample.md as your reply, rendered as markdown exactly as written. No code block around it, no commentary.                                                  
+    , contents);
+}
+
+test "Screen: selectionString reflow selection starting mid-line" {
+    // The first row's own indentation is outside the selection, so it must
+    // not force the margin to zero, and nothing is stripped from it.
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var s = try testReflowScreen(alloc, 100,
+        \\⏺ This is a deliberately long paragraph of ordinary prose that should be hard-wrapped by Claude
+        \\  Code's own renderer at the pane's right edge, so that the copy transform has a real example to
+        \\  rejoin, with words that land near the boundary and a few longer words like internationalization
+        \\  and incomprehensibilities to vary where the break falls on each row of the rendered output here.
+        \\
+        \\  A very long URL that must wrap: https://github.com/dzearing/ghoztty/blob/main/src/terminal/formatt
+        \\  er.zig?plain=1&query=this-is-a-deliberately-long-query-string-that-keeps-going-and-going-past-the-
+        \\  right-edge-of-the-pane-for-testing#L1234-L1300 and some trailing text after it.
+        \\
+        \\  - A list item that is long enough to wrap onto a second row so that we can observe the hanging
+        \\    indent Claude Code uses for list continuation lines in the rendered output, padding padding
+        \\    padding.
+        \\  - Second item, short.
+        \\    - Nested item that is also long enough to wrap onto a second row so the nested hanging
+        \\      indentation is visible in the grid, more padding words here to reach the edge.
+        \\  1. Numbered item that is long enough to wrap onto a second row so that we can observe the numbered
+        \\     hanging indent Claude Code uses here.
+        \\
+        \\  ▎ A blockquote that is long enough to wrap onto a second row so we can see how Claude Code renders
+        \\  ▎ quote continuation lines in the grid, more words.
+        \\
+        \\  zig
+        \\  const x = foo(bar, baz);
+        \\      return x;
+        \\  // a very long code line that definitely exceeds the width of the pane so we can see whether
+        \\  Claude Code wraps code lines itself or lets the terminal soft-wrap them instead of hard wrapping
+        \\
+        \\  ┌───────────────────────────────────────────────────────────────────────────────────┬─────────┐
+        \\  │                                     Column A                                      │ Column  │
+        \\  │                                                                                   │    B    │
+        \\  ├───────────────────────────────────────────────────────────────────────────────────┼─────────┤
+        \\  │ a cell with some fairly long text that might wrap inside the table renderer if    │ b       │
+        \\  │ the pane is narrow enough to force it                                             │         │
+        \\  └───────────────────────────────────────────────────────────────────────────────────┴─────────┘
+        \\
+        \\  Short line one.
+        \\  Short line two.
+    );
+    defer s.deinit();
+
+    const contents = try s.selectionString(alloc, .{
+        .sel = Selection.init(
+            s.pages.pin(.{ .screen = .{ .x = 12, .y = 0 } }).?,
+            s.pages.pin(.{ .screen = .{ .x = 99, .y = 3 } }).?,
+            false,
+        ),
+        .trim = true,
+        .reflow = true,
+    });
+    defer alloc.free(contents);
+    try testing.expectEqualStrings(
+        \\deliberately long paragraph of ordinary prose that should be hard-wrapped by Claude Code's own renderer at the pane's right edge, so that the copy transform has a real example to rejoin, with words that land near the boundary and a few longer words like internationalization and incomprehensibilities to vary where the break falls on each row of the rendered output here.
+    , contents);
+}
+
+test "Screen: selectionString reflow selection ending in a continuation margin" {
+    // Selecting only the margin of a continuation row selects no text from
+    // it: no glue, no newline.
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var s = try testReflowScreen(alloc, 100,
+        \\⏺ This is a deliberately long paragraph of ordinary prose that should be hard-wrapped by Claude
+        \\  Code's own renderer at the pane's right edge, so that the copy transform has a real example to
+        \\  rejoin, with words that land near the boundary and a few longer words like internationalization
+        \\  and incomprehensibilities to vary where the break falls on each row of the rendered output here.
+        \\
+        \\  A very long URL that must wrap: https://github.com/dzearing/ghoztty/blob/main/src/terminal/formatt
+        \\  er.zig?plain=1&query=this-is-a-deliberately-long-query-string-that-keeps-going-and-going-past-the-
+        \\  right-edge-of-the-pane-for-testing#L1234-L1300 and some trailing text after it.
+        \\
+        \\  - A list item that is long enough to wrap onto a second row so that we can observe the hanging
+        \\    indent Claude Code uses for list continuation lines in the rendered output, padding padding
+        \\    padding.
+        \\  - Second item, short.
+        \\    - Nested item that is also long enough to wrap onto a second row so the nested hanging
+        \\      indentation is visible in the grid, more padding words here to reach the edge.
+        \\  1. Numbered item that is long enough to wrap onto a second row so that we can observe the numbered
+        \\     hanging indent Claude Code uses here.
+        \\
+        \\  ▎ A blockquote that is long enough to wrap onto a second row so we can see how Claude Code renders
+        \\  ▎ quote continuation lines in the grid, more words.
+        \\
+        \\  zig
+        \\  const x = foo(bar, baz);
+        \\      return x;
+        \\  // a very long code line that definitely exceeds the width of the pane so we can see whether
+        \\  Claude Code wraps code lines itself or lets the terminal soft-wrap them instead of hard wrapping
+        \\
+        \\  ┌───────────────────────────────────────────────────────────────────────────────────┬─────────┐
+        \\  │                                     Column A                                      │ Column  │
+        \\  │                                                                                   │    B    │
+        \\  ├───────────────────────────────────────────────────────────────────────────────────┼─────────┤
+        \\  │ a cell with some fairly long text that might wrap inside the table renderer if    │ b       │
+        \\  │ the pane is narrow enough to force it                                             │         │
+        \\  └───────────────────────────────────────────────────────────────────────────────────┴─────────┘
+        \\
+        \\  Short line one.
+        \\  Short line two.
+    );
+    defer s.deinit();
+
+    const contents = try s.selectionString(alloc, .{
+        .sel = Selection.init(
+            s.pages.getTopLeft(.screen),
+            s.pages.pin(.{ .screen = .{ .x = 1, .y = 1 } }).?,
+            false,
+        ),
+        .trim = true,
+        .reflow = true,
+    });
+    defer alloc.free(contents);
+    try testing.expectEqualStrings(
+        \\⏺ This is a deliberately long paragraph of ordinary prose that should be hard-wrapped by Claude
+    , contents);
+}
+
+test "Screen: selectionString reflow leaves shell output byte-identical" {
+    // Real `ls -la`, `git log --stat`, and `git log --graph --oneline`
+    // output: nothing here was laid out by a TUI, so reflow must change
+    // nothing. At 80 columns the 72-column commit bodies end a few columns
+    // from the edge, where only the near-miss check keeps them from being
+    // half-rejoined.
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    const corpus = [_][]const u8{
+        \\total 728
+        \\drwxr-xr-x@ 60 dzearing  staff    1920 Oct  7 10:21 ..
+        \\-rw-r--r--@  1 dzearing  staff   17088 Oct  7 10:21 size.zig
+        \\drwxr-xr-x@ 22 dzearing  staff     704 Oct  7 10:21 .
+        \\-rw-r--r--@  1 dzearing  staff   14123 Oct  7 10:21 shadertoy.zig
+        \\drwxr-xr-x@  8 dzearing  staff     256 Oct  7 10:21 shaders
+        \\-rw-r--r--@  1 dzearing  staff    2523 Oct  7 10:21 row.zig
+        \\drwxr-xr-x@ 10 dzearing  staff     320 Oct  7 10:21 opengl
+        \\drwxr-xr-x@ 12 dzearing  staff     384 Oct  7 10:21 metal
+        \\-rw-r--r--@  1 dzearing  staff    4285 Oct  7 10:21 message.zig
+        \\-rw-r--r--@  1 dzearing  staff    9756 Oct  7 10:21 link.zig
+        \\-rw-r--r--@  1 dzearing  staff   32801 Oct  7 10:21 image.zig
+        \\-rw-r--r--@  1 dzearing  staff  144456 Oct  7 10:21 generic.zig
+        \\-rw-r--r--@  1 dzearing  staff    6320 Oct  7 10:21 cursor.zig
+        \\-rw-r--r--@  1 dzearing  staff   22040 Oct  7 10:21 cell.zig
+        \\-rw-r--r--@  1 dzearing  staff     534 Oct  7 10:21 backend.zig
+        \\-rw-r--r--@  1 dzearing  staff      81 Oct  7 10:21 WebGL.zig
+        \\-rw-r--r--@  1 dzearing  staff   22908 Oct  7 10:21 Thread.zig
+        \\-rw-r--r--@  1 dzearing  staff    5914 Oct  7 10:21 State.zig
+        \\-rw-r--r--@  1 dzearing  staff   12593 Oct  7 10:21 Overlay.zig
+        \\-rw-r--r--@  1 dzearing  staff     732 Oct  7 10:21 Options.zig
+        \\-rw-r--r--@  1 dzearing  staff   14491 Oct  7 10:21 OpenGL.zig
+        \\-rw-r--r--@  1 dzearing  staff   15320 Oct  7 10:21 Metal.zig
+        ,
+        \\commit 56779766a89dcdaabdec44a7eb1502d2cb7f5b7b
+        \\Author: dzearing <dzearing@noreply.com>
+        \\Date:   Sat Oct 3 10:06:29 2026 -0700
+        \\
+        \\    docs: client release notes for v1.37.0
+        \\    
+        \\    Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+        \\    Claude-Session: https://claude.ai/code/session_01MvqsRJ6jaeJAeFdtjkj5e2
+        \\
+        \\ release-notes/client/1.37.0.json | 14 ++++++++++++++
+        \\ 1 file changed, 14 insertions(+)
+        \\
+        \\commit 9d9d906f6b12e8b1a929b40f6f701aa862fb8808
+        \\Merge: 8adc45de4 d31fbeec6
+        \\Author: dzearing <dzearing@noreply.com>
+        \\Date:   Sat Oct 3 09:39:28 2026 -0700
+        \\
+        \\    Merge branch 'users/dzearing/viewer-reveal-in-finder': Reveal in Finder button in the viewer nav bar
+        \\
+        \\commit d31fbeec66af7d18b1503f6b6a34180fe1403531
+        \\Author: dzearing <dzearing@noreply.com>
+        \\Date:   Sat Oct 3 09:39:25 2026 -0700
+        \\
+        \\    feat(viewer): Reveal in Finder button in the viewer nav bar
+        \\    
+        \\    A folder button beside Home reveals the file the pane is showing in
+        \\    Finder with the file selected. Present only while the pane shows a local
+        \\    file (markdown, code, HTML, image) — a website or diff has nothing to
+        \\    reveal — and it follows the pane's current location, not where it was
+        \\    opened. `mode` now announces itself to observers so the bar updates
+        \\    without riding on an incidental @Published change.
+        \\    
+        \\    Routed through BannerLinkOpener.revealInFinder, the same path as the
+        \\    link menu's "Reveal in Finder". A path that no longer exists (a file
+        \\    deleted under its pane, a banner autolink to a missing path) now opens
+        \\    the nearest surviving ancestor folder instead of a dead click.
+        \\    
+        \\    Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+        \\
+        \\ CLAUDE.md                                                 |  15 ++-
+        \\ macos/Sources/Features/Viewer/ViewerSplitLeaf.swift       |  27 +++++
+        \\ macos/Sources/Features/Viewer/ViewerView.swift            |  19 ++++
+        \\ macos/Sources/Ghostty/Surface View/BannerLinkOpener.swift |  35 ++++++-
+        \\ macos/Tests/Ghostty/ViewerChromeBarTests.swift            |   5 +-
+        \\ macos/Tests/Ghostty/ViewerRevealInFinderTests.swift       | 179 ++++++++++++++++++++++++++++++++++
+        \\ 6 files changed, 275 insertions(+), 5 deletions(-)
+        \\
+        \\commit 8adc45de46d196bbe05b909c49171e2bdcd48d74
+        \\Merge: fd3838acf 1d513083a
+        \\Author: dzearing <dzearing@noreply.com>
+        \\Date:   Sat Oct 3 09:24:49 2026 -0700
+        \\
+        \\    Merge branch 'users/dzearing/viewer-key-fallback': unclaimed chords in a focused viewer pane fall back to Ghoztty keybindings
+        ,
+        \\* 56779766a (HEAD -> users/dzearing/copy-cleanup, tag: v1.37.0, origin/main, origin/HEAD, users/dzearing/reboot-restore, main) docs: client release notes for v1.37.0
+        \\*   9d9d906f6 Merge branch 'users/dzearing/viewer-reveal-in-finder': Reveal in Finder button in the viewer nav bar
+        \\|\  
+        \\| * d31fbeec6 feat(viewer): Reveal in Finder button in the viewer nav bar
+        \\|/  
+        \\*   8adc45de4 Merge branch 'users/dzearing/viewer-key-fallback': unclaimed chords in a focused viewer pane fall back to Ghoztty keybindings
+        \\|\  
+        \\| * 1d513083a fix(viewer): unclaimed chords in a focused viewer pane fall back to Ghoztty keybindings
+        \\|/  
+        \\* fd3838acf (tag: v1.36.0) docs: client release notes for v1.36.0
+        ,
+    };
+
+    for (corpus) |text| for ([_]size.CellCountInt{ 80, 100, 200 }) |cols| {
+        var s = try testReflowScreen(alloc, cols, text);
+        defer s.deinit();
+
+        const plain = try testReflowAll(&s, alloc, false);
+        defer alloc.free(plain);
+        const reflowed = try testReflowAll(&s, alloc, true);
+        defer alloc.free(reflowed);
+        try testing.expectEqualStrings(plain, reflowed);
+    };
+}
+
+test "Screen: selectionString reflow ignores rectangle selections" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var s = try testReflowScreen(alloc, 100,
+        \\⏺ This is a deliberately long paragraph of ordinary prose that should be hard-wrapped by Claude
+        \\  Code's own renderer at the pane's right edge, so that the copy transform has a real example to
+        \\  rejoin, with words that land near the boundary and a few longer words like internationalization
+        \\  and incomprehensibilities to vary where the break falls on each row of the rendered output here.
+        \\
+        \\  A very long URL that must wrap: https://github.com/dzearing/ghoztty/blob/main/src/terminal/formatt
+        \\  er.zig?plain=1&query=this-is-a-deliberately-long-query-string-that-keeps-going-and-going-past-the-
+        \\  right-edge-of-the-pane-for-testing#L1234-L1300 and some trailing text after it.
+        \\
+        \\  - A list item that is long enough to wrap onto a second row so that we can observe the hanging
+        \\    indent Claude Code uses for list continuation lines in the rendered output, padding padding
+        \\    padding.
+        \\  - Second item, short.
+        \\    - Nested item that is also long enough to wrap onto a second row so the nested hanging
+        \\      indentation is visible in the grid, more padding words here to reach the edge.
+        \\  1. Numbered item that is long enough to wrap onto a second row so that we can observe the numbered
+        \\     hanging indent Claude Code uses here.
+        \\
+        \\  ▎ A blockquote that is long enough to wrap onto a second row so we can see how Claude Code renders
+        \\  ▎ quote continuation lines in the grid, more words.
+        \\
+        \\  zig
+        \\  const x = foo(bar, baz);
+        \\      return x;
+        \\  // a very long code line that definitely exceeds the width of the pane so we can see whether
+        \\  Claude Code wraps code lines itself or lets the terminal soft-wrap them instead of hard wrapping
+        \\
+        \\  ┌───────────────────────────────────────────────────────────────────────────────────┬─────────┐
+        \\  │                                     Column A                                      │ Column  │
+        \\  │                                                                                   │    B    │
+        \\  ├───────────────────────────────────────────────────────────────────────────────────┼─────────┤
+        \\  │ a cell with some fairly long text that might wrap inside the table renderer if    │ b       │
+        \\  │ the pane is narrow enough to force it                                             │         │
+        \\  └───────────────────────────────────────────────────────────────────────────────────┴─────────┘
+        \\
+        \\  Short line one.
+        \\  Short line two.
+    );
+    defer s.deinit();
+
+    const sel = Selection.init(
+        s.pages.getTopLeft(.screen),
+        s.pages.pin(.{ .screen = .{ .x = 99, .y = 3 } }).?,
+        true,
+    );
+    const plain = try s.selectionString(alloc, .{ .sel = sel, .trim = true });
+    defer alloc.free(plain);
+    const reflowed = try s.selectionString(alloc, .{ .sel = sel, .trim = true, .reflow = true });
+    defer alloc.free(reflowed);
+    try testing.expectEqualStrings(plain, reflowed);
+}
+
+test "Screen: selectionString reflow across a page boundary" {
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var s = try init(alloc, .{ .cols = 20, .rows = 3, .max_scrollback = 2048 });
+    defer s.deinit();
+
+    const first_page_size = s.pages.pages.first.?.data.capacity.rows;
+
+    // Seek to the first page boundary so the wrapped row is the last row
+    // of the first page and its continuation the first row of the second.
+    s.pages.pages.first.?.data.pauseIntegrityChecks(true);
+    for (0..first_page_size - 1) |_| {
+        try s.testWriteString("\n");
+    }
+    s.pages.pages.first.?.data.pauseIntegrityChecks(false);
+
+    try s.testWriteString("  some words to wrap\n  around the edge\n");
+    const top = s.pages.pin(.{ .active = .{ .x = 0, .y = 0 } }).?;
+    const bottom = s.pages.pin(.{ .active = .{ .x = 19, .y = 1 } }).?;
+    try testing.expect(top.node != bottom.node);
+
+    const contents = try s.selectionString(alloc, .{
+        .sel = Selection.init(top, bottom, false),
+        .trim = true,
+        .reflow = true,
+    });
+    defer alloc.free(contents);
+    try testing.expectEqualStrings("some words to wrap around the edge", contents);
+}
+
+test "Screen: hard_wrap.seams agrees with seamAt" {
+    // The hover highlight decides a viewport with `seams`, the copy
+    // formatter walks rows with `Walker`; both must agree with the
+    // reference `seamAt` on every row.
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    const corpus = [_]struct { size.CellCountInt, []const u8 }{
+        .{ 100,
+        \\⏺ This is a deliberately long paragraph of ordinary prose that should be hard-wrapped by Claude
+        \\  Code's own renderer at the pane's right edge, so that the copy transform has a real example to
+        \\  rejoin, with words that land near the boundary and a few longer words like internationalization
+        \\  and incomprehensibilities to vary where the break falls on each row of the rendered output here.
+        \\
+        \\  A very long URL that must wrap: https://github.com/dzearing/ghoztty/blob/main/src/terminal/formatt
+        \\  er.zig?plain=1&query=this-is-a-deliberately-long-query-string-that-keeps-going-and-going-past-the-
+        \\  right-edge-of-the-pane-for-testing#L1234-L1300 and some trailing text after it.
+        \\
+        \\  - A list item that is long enough to wrap onto a second row so that we can observe the hanging
+        \\    indent Claude Code uses for list continuation lines in the rendered output, padding padding
+        \\    padding.
+        \\  - Second item, short.
+        \\    - Nested item that is also long enough to wrap onto a second row so the nested hanging
+        \\      indentation is visible in the grid, more padding words here to reach the edge.
+        \\  1. Numbered item that is long enough to wrap onto a second row so that we can observe the numbered
+        \\     hanging indent Claude Code uses here.
+        \\
+        \\  ▎ A blockquote that is long enough to wrap onto a second row so we can see how Claude Code renders
+        \\  ▎ quote continuation lines in the grid, more words.
+        \\
+        \\  zig
+        \\  const x = foo(bar, baz);
+        \\      return x;
+        \\  // a very long code line that definitely exceeds the width of the pane so we can see whether
+        \\  Claude Code wraps code lines itself or lets the terminal soft-wrap them instead of hard wrapping
+        \\
+        \\  ┌───────────────────────────────────────────────────────────────────────────────────┬─────────┐
+        \\  │                                     Column A                                      │ Column  │
+        \\  │                                                                                   │    B    │
+        \\  ├───────────────────────────────────────────────────────────────────────────────────┼─────────┤
+        \\  │ a cell with some fairly long text that might wrap inside the table renderer if    │ b       │
+        \\  │ the pane is narrow enough to force it                                             │         │
+        \\  └───────────────────────────────────────────────────────────────────────────────────┴─────────┘
+        \\
+        \\  Short line one.
+        \\  Short line two.
+        },
+        .{ 80,
+        \\commit 56779766a89dcdaabdec44a7eb1502d2cb7f5b7b
+        \\Author: dzearing <dzearing@noreply.com>
+        \\Date:   Sat Oct 3 10:06:29 2026 -0700
+        \\
+        \\    docs: client release notes for v1.37.0
+        \\    
+        \\    Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+        \\    Claude-Session: https://claude.ai/code/session_01MvqsRJ6jaeJAeFdtjkj5e2
+        \\
+        \\ release-notes/client/1.37.0.json | 14 ++++++++++++++
+        \\ 1 file changed, 14 insertions(+)
+        \\
+        \\commit 9d9d906f6b12e8b1a929b40f6f701aa862fb8808
+        \\Merge: 8adc45de4 d31fbeec6
+        \\Author: dzearing <dzearing@noreply.com>
+        \\Date:   Sat Oct 3 09:39:28 2026 -0700
+        \\
+        \\    Merge branch 'users/dzearing/viewer-reveal-in-finder': Reveal in Finder button in the viewer nav bar
+        \\
+        \\commit d31fbeec66af7d18b1503f6b6a34180fe1403531
+        \\Author: dzearing <dzearing@noreply.com>
+        \\Date:   Sat Oct 3 09:39:25 2026 -0700
+        \\
+        \\    feat(viewer): Reveal in Finder button in the viewer nav bar
+        \\    
+        \\    A folder button beside Home reveals the file the pane is showing in
+        \\    Finder with the file selected. Present only while the pane shows a local
+        \\    file (markdown, code, HTML, image) — a website or diff has nothing to
+        \\    reveal — and it follows the pane's current location, not where it was
+        \\    opened. `mode` now announces itself to observers so the bar updates
+        \\    without riding on an incidental @Published change.
+        \\    
+        \\    Routed through BannerLinkOpener.revealInFinder, the same path as the
+        \\    link menu's "Reveal in Finder". A path that no longer exists (a file
+        \\    deleted under its pane, a banner autolink to a missing path) now opens
+        \\    the nearest surviving ancestor folder instead of a dead click.
+        \\    
+        \\    Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+        \\
+        \\ CLAUDE.md                                                 |  15 ++-
+        \\ macos/Sources/Features/Viewer/ViewerSplitLeaf.swift       |  27 +++++
+        \\ macos/Sources/Features/Viewer/ViewerView.swift            |  19 ++++
+        \\ macos/Sources/Ghostty/Surface View/BannerLinkOpener.swift |  35 ++++++-
+        \\ macos/Tests/Ghostty/ViewerChromeBarTests.swift            |   5 +-
+        \\ macos/Tests/Ghostty/ViewerRevealInFinderTests.swift       | 179 ++++++++++++++++++++++++++++++++++
+        \\ 6 files changed, 275 insertions(+), 5 deletions(-)
+        \\
+        \\commit 8adc45de46d196bbe05b909c49171e2bdcd48d74
+        \\Merge: fd3838acf 1d513083a
+        \\Author: dzearing <dzearing@noreply.com>
+        \\Date:   Sat Oct 3 09:24:49 2026 -0700
+        \\
+        \\    Merge branch 'users/dzearing/viewer-key-fallback': unclaimed chords in a focused viewer pane fall back to Ghoztty keybindings
+        },
+    };
+
+    for (corpus) |c| {
+        var s = try testReflowScreen(alloc, c[0], c[1]);
+        defer s.deinit();
+
+        const top = s.pages.getTopLeft(.screen);
+        const rows = s.pages.rows;
+        const out = try alloc.alloc(?hard_wrap.Seam, rows);
+        defer alloc.free(out);
+        try hard_wrap.seams(alloc, top, out);
+
+        var walker: hard_wrap.Walker = .init(top);
+        var joined: usize = 0;
+        for (out, 0..) |batched, y| {
+            const pin = top.down(y).?;
+            const single = hard_wrap.seamAt(pin);
+            try testing.expectEqual(single, batched);
+
+            walker.moveTo(pin);
+            try testing.expectEqual(single, walker.seam());
+            if (pin.down(1)) |below| {
+                try testing.expectEqual(hard_wrap.seamAt(below), walker.seamBelow());
+            }
+            if (single != null) joined += 1;
+        }
+        // Sanity: the Claude Code render does have seams.
+        if (c[0] == 100) try testing.expect(joined > 0);
     }
 }
 
