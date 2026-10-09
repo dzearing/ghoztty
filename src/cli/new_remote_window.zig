@@ -90,6 +90,9 @@ pub const Options = struct {
 ///   * `--command=<cmd>`: Command to run in the remote session instead of an
 ///     interactive shell. Runs THROUGH the resolved shell using its native
 ///     convention (POSIX `-lic`, cmd `/c`, powershell `-Command`, wsl `--`).
+///   * `--focus`: Activate Ghoztty and raise the new window. Without it the
+///     window opens in the background, like every `ghoztty +…` window. (A
+///     failed dial still reports itself with a modal alert either way.)
 ///
 /// Available since: 1.2.0
 pub fn run(alloc: Allocator) !u8 {

@@ -4,15 +4,65 @@ A fork of [Ghostty](https://github.com/ghostty-org/ghostty) that adds CLI-driven
 
 ## CLI Window Management
 
-IPC commands communicate with a running Ghoztty instance over a Unix domain socket. All commands are idempotent — named targets that already exist are focused instead of recreated.
+IPC commands communicate with a running Ghoztty instance over a Unix domain socket. All commands are idempotent — named targets that already exist are reused instead of recreated (and focused only with `--focus`).
+
+### Focus: programmatic surfaces stay in the background
+
+**No `ghoztty +…` command takes focus unless it is given `--focus`.** Agents
+and hooks open windows and panes while the user is working somewhere else —
+another app, or another pane — and every one of them used to activate the app,
+raise the window, and move the caret into the new pane. That default is
+inverted, so no skill or hook has to change:
+
+| | default (no `--focus`) | `--focus` |
+|---|---|---|
+| App activation (`NSApp.activate`) | no | yes |
+| Window raise (`makeKeyAndOrderFront`) | no | yes |
+| Keyboard focus moved to the new/target pane | no — **the pane that had it keeps it** | yes |
+
+- **Where it applies**: `+new-window` (incl. `--view`, `--split`,
+  `--from-focused`), `+split` (every anchor: caller pane, `--pane`, `--target`,
+  `--from-focused`; terminal and `--view`), and `+new-remote-window`. The
+  **idempotent hits** too: `+new-window --target=<existing>` and `+split
+  --name=<existing>` succeed and do nothing focus-wise; with `--focus` they
+  raise/focus the existing target.
+- A background window is shown without being made key, ordered **directly
+  behind Ghoztty's frontmost window** (`TerminalController.orderInBackground`)
+  — not `orderBack`, which buried it behind every app's windows.
+- `+split` run from a pane leaves **the caller's pane** with the caret. That
+  needs work, not just restraint: inserting a split re-parents the pane beside
+  it, which resigns first responder and leaves the *window* as first responder
+  (typing goes nowhere). `BaseTerminalController.keepingFirstResponder` hands
+  focus back after the re-parent; every non-focusing split goes through it,
+  including the GUI's viewer side panes (banner/link Cmd-click), which had the
+  same latent loss.
+- `--focus` from an **inactive** app waits for activation to land before
+  moving the caret (`IPCServer.focusOnceSettled`): otherwise the window's
+  become-key handler restores its stale `focusedSurface` — the pane the caret
+  was just taken from — after the move.
+- `--focus` is a bare switch; `--focus=true` / `--focus=false` also parse. After
+  `-e` it is part of the command. **`--no-activate`** (the old opt-out) is
+  accepted and does nothing, since it now names the default; `--focus` wins if
+  both are given. It is kept so callers in the wild don't break.
+- **Manual surfaces are unaffected**: Cmd-N, Cmd-D, the menu, the command
+  palette, File → Open, the dock, App Intents and AppleScript keep focusing as
+  they always have — they never consult the policy.
+- **`ghoztty://focus/<target>` is unaffected** — it is a person clicking a
+  link, and raising is the whole verb. It shares `IPCServer.bringForward` with
+  the `--focus` idempotent hits, so "focus an existing target" means one thing.
+- A failed `+new-remote-window` dial still shows its modal alert either way.
+- One decision point: `IPCFocusPolicy` (`.background` / `.foreground`), parsed
+  into `ParsedArguments.focus`. Tests: `IPCFocusPolicyTests`.
 
 ### `ghoztty +new-window`
 
 Create or focus a terminal window. Auto-launches Ghoztty if no instance is running.
 
 ```
-ghoztty +new-window --target=<name> --working-directory=<path> --command=<cmd> --view=<path-or-url-or-diff> --shell=<path> --title=<title> --split=right|down|left|up --split-command=<cmd> --no-activate -e <args...>
+ghoztty +new-window --target=<name> --working-directory=<path> --command=<cmd> --view=<path-or-url-or-diff> --shell=<path> --title=<title> --split=right|down|left|up --split-command=<cmd> --focus -e <args...>
 ```
+
+- `--focus`: Activate Ghoztty and raise the window (or the existing `--target`). Without it the window opens in the background — see Focus above. `--no-activate` is still accepted as a no-op.
 
 - `--shell`: Shell to use for `--command`/`--split-command`, invoked with `-lic` so profile is loaded. Falls back to config `command-shell`, then `$SHELL`, then `/bin/zsh`.
 - `--view`: Open a window whose single pane is a **viewer** (see Viewer Panes below) instead of a terminal — a file (markdown, HTML rendered as a live page, code, or an **image**), a website, or a **git diff** (`git-status:` / `git-diff:<revspec>`, see Git diff panes). Mutually exclusive with `--command`/`-e`.
@@ -23,8 +73,10 @@ ghoztty +new-window --target=<name> --working-directory=<path> --command=<cmd> -
 Create a split pane in a running window.
 
 ```
-ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --command=<cmd> --view=<path-or-url-or-diff> --shell=<path> --working-directory=<path> -e <args...>
+ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --command=<cmd> --view=<path-or-url-or-diff> --shell=<path> --working-directory=<path> --focus -e <args...>
 ```
+
+- `--focus`: Move keyboard focus to the new (or existing `--name`) pane, raise its window, and activate Ghoztty. Without it the pane that had focus — normally the caller's — keeps it. See Focus above.
 
 - `--direction`: Split direction. Default: `right`.
 - `--target`: Named window to split in. Default: **the pane the command was
@@ -259,7 +311,7 @@ action (dial the agent, build a remote surface, open the window), so the remote
 path is scriptable/testable from the shell.
 
 ```
-ghoztty +new-remote-window --host=<host> --port=<port> --working-directory=<path> --shell=<path> --command=<cmd>
+ghoztty +new-remote-window --host=<host> --port=<port> --working-directory=<path> --shell=<path> --command=<cmd> --focus
 ```
 
 - `--host`: Agent host (DNS name or literal IP). Required.
@@ -271,6 +323,9 @@ ghoztty +new-remote-window --host=<host> --port=<port> --working-directory=<path
 - `--command`: Command to run in the remote session instead of an interactive
   shell. Runs through the resolved shell using its native convention (POSIX
   `-lic`, cmd `/c`, powershell/pwsh `-Command`, wsl `--`).
+- `--focus`: Activate Ghoztty and raise the new window; it opens in the
+  background otherwise (see Focus above). A failed dial still shows its modal
+  alert.
 
 ```bash
 ghoztty +new-remote-window --host=127.0.0.1 --port=7777

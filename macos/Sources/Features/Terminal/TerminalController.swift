@@ -300,7 +300,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     static func newWindowInheritingRemote(
         _ ghostty: Ghostty.App,
         withBaseConfig baseConfig: Ghostty.SurfaceConfiguration? = nil,
-        from parent: NSWindow? = nil
+        from parent: NSWindow? = nil,
+        activate: Bool = true
     ) {
         // Only inherit when the parent is a remote window and the incoming config
         // isn't already remote-bound.
@@ -309,7 +310,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
               (baseConfig?.remoteConnection == nil),
               let parentSurface = parentController.focusedSurface else {
             // Local (or no) parent: normal local window, created synchronously.
-            _ = newWindow(ghostty, withBaseConfig: baseConfig, withParent: parent)
+            _ = newWindow(ghostty, withBaseConfig: baseConfig, withParent: parent, activate: activate)
             return
         }
 
@@ -350,12 +351,34 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             if cfg.remoteShell == nil {
                 cfg.remoteShell = parentRemote.machine.settings.shell
             }
-            let controller = newWindow(ghostty, withBaseConfig: cfg, withParent: parent)
+            let controller = newWindow(ghostty, withBaseConfig: cfg, withParent: parent, activate: activate)
             // Carry the strong connection owner onto the new window so the shared
             // handle outlives every surface/split and its splits/tabs keep
             // inheriting the same machine + connection.
             controller.remoteConnection = parentRemote
             controller.remoteMachine = parentRemote.machine
+        }
+    }
+
+    /// Show a new window WITHOUT taking focus: it is not made key, and it is
+    /// ordered directly behind this app's frontmost window rather than on top
+    /// of it. Used for windows a script created (`IPCFocusPolicy.background`)
+    /// while the user is working somewhere else.
+    ///
+    /// Behind our frontmost window, not `orderBack`: `orderBack` sends the
+    /// window behind every app's windows, so a script-opened window was often
+    /// nowhere to be seen. Directly behind the window the user is in keeps it
+    /// one click away without covering anything. When the app is inactive its
+    /// frontmost window is already behind the active app's, so the new one
+    /// lands behind that app too. With no other window of ours on screen
+    /// there is nothing to sit behind, and `orderBack` is the only answer.
+    static func orderInBackground(_ window: NSWindow) {
+        if let front = NSApp.orderedWindows.first(where: {
+            $0 !== window && $0.isVisible && $0.windowController is TerminalController
+        }) {
+            window.order(.below, relativeTo: front.windowNumber)
+        } else {
+            window.orderBack(nil)
         }
     }
 
@@ -401,8 +424,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         c.scheduleInitialPresentation {
             if activate {
                 c.showWindow(self)
-            } else {
-                c.window?.orderBack(nil)
+            } else if let window = c.window {
+                Self.orderInBackground(window)
             }
 
             // Only cascade if we aren't fullscreen.
@@ -458,6 +481,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         tree: SplitTree<PaneView>,
         position: NSPoint? = nil,
         confirmUndo: Bool = true,
+        activate: Bool = true
     ) -> TerminalController {
         let c = TerminalController.init(ghostty, withSurfaceTree: tree)
 
@@ -465,7 +489,11 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         let treeSize: CGSize? = tree.root?.viewBounds()
 
         c.scheduleInitialPresentation {
-            c.showWindow(self)
+            if activate {
+                c.showWindow(self)
+            } else if let window = c.window {
+                Self.orderInBackground(window)
+            }
             if let window = c.window {
                 // If we have a tree size, resize the window's content to match
                 if let treeSize, treeSize.width > 0, treeSize.height > 0 {

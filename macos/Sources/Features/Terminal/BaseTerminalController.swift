@@ -525,12 +525,17 @@ class BaseTerminalController: NSWindowController,
     // MARK: Methods
 
     /// Create a new split.
+    ///
+    /// `focus` moves keyboard focus to the new pane, as every split the user
+    /// asks for does. A script's split passes false (`IPCFocusPolicy`) so the
+    /// pane that had the caret keeps it.
     @discardableResult
     func newSplit(
         at oldView: Ghostty.SurfaceView,
         direction: SplitTree<PaneView>.NewDirection,
         baseConfig config: Ghostty.SurfaceConfiguration? = nil,
         ratio: Double = 0.5,
+        focus: Bool = true,
         onCreate: ((Ghostty.SurfaceView) -> Void)? = nil
     ) -> Ghostty.SurfaceView? {
         // We can only create new splits for surfaces in our tree.
@@ -621,7 +626,8 @@ class BaseTerminalController: NSWindowController,
                     at: oldView,
                     direction: direction,
                     ratio: ratio,
-                    hasExplicitTint: hasExplicitTint) {
+                    hasExplicitTint: hasExplicitTint,
+                    focus: focus) {
                     onCreate?(newView)
                 }
             }
@@ -633,7 +639,8 @@ class BaseTerminalController: NSWindowController,
             at: oldView,
             direction: direction,
             ratio: ratio,
-            hasExplicitTint: hasExplicitTint)
+            hasExplicitTint: hasExplicitTint,
+            focus: focus)
         if let newView { onCreate?(newView) }
         return newView
     }
@@ -675,11 +682,13 @@ class BaseTerminalController: NSWindowController,
             return nil
         }
 
-        replaceSurfaceTree(
-            newTree,
-            moveFocusTo: nil,
-            moveFocusFrom: oldPane.surfaceView,
-            undoAction: "New Split")
+        keepingFirstResponder {
+            replaceSurfaceTree(
+                newTree,
+                moveFocusTo: nil,
+                moveFocusFrom: oldPane.surfaceView,
+                undoAction: "New Split")
+        }
 
         return pane
     }
@@ -687,12 +696,14 @@ class BaseTerminalController: NSWindowController,
     /// Terminal split anchored at a VIEWER pane. The regular `newSplit`
     /// inherits tint/remote context from its anchor surface; a viewer has
     /// neither, so this creates a plain local surface from the given config.
+    /// `focus` is as for `newSplit`.
     @discardableResult
     func newTerminalSplit(
         atPane oldPane: PaneView,
         direction: SplitTree<PaneView>.NewDirection,
         baseConfig config: Ghostty.SurfaceConfiguration? = nil,
-        ratio: Double = 0.5
+        ratio: Double = 0.5,
+        focus: Bool = true
     ) -> Ghostty.SurfaceView? {
         guard surfaceTree.root?.node(view: oldPane) != nil else { return nil }
         guard let ghostty_app = ghostty.app else { return nil }
@@ -715,11 +726,13 @@ class BaseTerminalController: NSWindowController,
             return nil
         }
 
-        replaceSurfaceTree(
-            newTree,
-            moveFocusTo: newView,
-            moveFocusFrom: focusedSurface,
-            undoAction: "New Split")
+        keepingFirstResponder(unless: focus) {
+            replaceSurfaceTree(
+                newTree,
+                moveFocusTo: focus ? newView : nil,
+                moveFocusFrom: focusedSurface,
+                undoAction: "New Split")
+        }
 
         return newView
     }
@@ -733,7 +746,8 @@ class BaseTerminalController: NSWindowController,
         at oldView: Ghostty.SurfaceView,
         direction: SplitTree<PaneView>.NewDirection,
         ratio: Double,
-        hasExplicitTint: Bool
+        hasExplicitTint: Bool,
+        focus: Bool
     ) -> Ghostty.SurfaceView? {
         // The parent may have been removed from the tree while we were resolving
         // the remote cwd off the main thread.
@@ -759,11 +773,13 @@ class BaseTerminalController: NSWindowController,
             return nil
         }
 
-        replaceSurfaceTree(
-            newTree,
-            moveFocusTo: newView,
-            moveFocusFrom: oldView,
-            undoAction: "New Split")
+        keepingFirstResponder(unless: focus) {
+            replaceSurfaceTree(
+                newTree,
+                moveFocusTo: focus ? newView : nil,
+                moveFocusFrom: oldView,
+                undoAction: "New Split")
+        }
 
         // Only adjust the terminal palette for explicit IPC --color flags.
         // Auto-shifted splits use the SwiftUI overlay for visual depth
@@ -879,6 +895,68 @@ class BaseTerminalController: NSWindowController,
             let cwd = queryRemoteCwd(sessionId: sessionId, on: connection)
             DispatchQueue.main.async {
                 build(inherit.command, cwd)
+            }
+        }
+    }
+
+    /// Run a tree mutation that must NOT move keyboard focus, and make sure it
+    /// doesn't.
+    ///
+    /// "Don't move focus" is not the same as "do nothing": inserting a split
+    /// re-parents the pane beside it, and a view leaving its superview resigns
+    /// first responder — so after the mutation the WINDOW is first responder
+    /// and typing goes nowhere (measured: a split that passed no focus target
+    /// left `window.firstResponder === window` indefinitely). Splits that move
+    /// focus never noticed, because they hand it to the new pane right after.
+    /// This hands it back to whatever had it.
+    ///
+    /// No-op when `skip` is true (the caller is moving focus itself) or when
+    /// nothing in this window's panes had focus to begin with.
+    func keepingFirstResponder(unless skip: Bool = false, _ mutate: () -> Void) {
+        guard !skip,
+              let window,
+              let responder = window.firstResponder as? NSView,
+              let pane = surfaceTree.first(where: {
+                  responder === $0.contentView || responder.isDescendant(of: $0.contentView)
+              })
+        else {
+            mutate()
+            return
+        }
+        mutate()
+        Self.restoreFirstResponder(responder, pane: pane, in: window)
+    }
+
+    /// Put `responder` back as first responder once the re-parenting is over.
+    ///
+    /// SwiftUI applies the tree change on a later pass, so this looks on each
+    /// of a few backoff ticks: while the responder still holds focus the
+    /// re-parent may not have happened yet; once the window itself (or
+    /// nothing) holds it, focus was lost and is restored as soon as the view
+    /// is back in the window. Anything ELSE holding focus means someone moved
+    /// it on purpose — a click, a `--focus` — and is left alone.
+    private static func restoreFirstResponder(
+        _ responder: NSView,
+        pane: PaneView,
+        in window: NSWindow,
+        attempt: Int = 0
+    ) {
+        let delays: [TimeInterval] = [0, 0.05, 0.1, 0.2, 0.4]
+        guard attempt < delays.count else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delays[attempt]) {
+            let current = window.firstResponder
+            guard current == nil || current === window || current === responder else { return }
+            if current === responder || (responder.window !== window && pane.contentView.window !== window) {
+                // Not disturbed yet, or not back in the window yet.
+                restoreFirstResponder(responder, pane: pane, in: window, attempt: attempt + 1)
+                return
+            }
+            if responder.window === window {
+                window.makeFirstResponder(responder)
+            } else {
+                // The responder itself did not come back (a field editor is
+                // torn down with its field); focus the pane that held it.
+                Ghostty.moveFocus(to: pane)
             }
         }
     }

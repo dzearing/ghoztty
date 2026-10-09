@@ -1474,6 +1474,7 @@ class AppDelegate: NSObject,
         workingDirectory: String? = nil,
         shell: String? = nil,
         command: String? = nil,
+        activate: Bool = true,
         onOpen: ((TerminalController) -> Void)? = nil
     ) -> String? {
         // Resolve a friendly NAME from the registry so an IPC-opened window's
@@ -1494,6 +1495,7 @@ class AppDelegate: NSObject,
             workingDirectory: workingDirectory,
             shell: shell,
             command: command,
+            activate: activate,
             onOpen: onOpen)
     }
 
@@ -1515,6 +1517,7 @@ class AppDelegate: NSObject,
         workingDirectory: String? = nil,
         shell: String? = nil,
         command: String? = nil,
+        activate: Bool = true,
         onOpen: ((TerminalController) -> Void)? = nil
     ) -> String? {
         // Defense in depth for the signed-out case: every caller resolves the
@@ -1548,7 +1551,8 @@ class AppDelegate: NSObject,
             ipcName: ipcName,
             workingDirectory: workingDirectory,
             shell: shell,
-            command: command)
+            command: command,
+            activate: activate)
         onOpen?(controller)
         return nil
     }
@@ -1595,7 +1599,8 @@ class AppDelegate: NSObject,
         workingDirectory: String? = nil,
         shell: String? = nil,
         command: String? = nil,
-        replacingManifestEntry: UUID? = nil
+        replacingManifestEntry: UUID? = nil,
+        activate: Bool = true
     ) -> TerminalController {
         // The relay path has no TCP port. The DISPLAY NAME wins: prefer the
         // account's friendly name for the device (`fallbackName` — the chooser
@@ -1643,7 +1648,7 @@ class AppDelegate: NSObject,
                 command: command)
         }
 
-        let controller = TerminalController.newWindow(ghostty, withBaseConfig: cfg)
+        let controller = TerminalController.newWindow(ghostty, withBaseConfig: cfg, activate: activate)
         controller.remoteMachine = machine
         controller.remoteConnection = connection
 
@@ -1908,6 +1913,7 @@ class AppDelegate: NSObject,
         command: String? = nil,
         attachSessionID: String? = nil,
         windowTitle: String? = nil,
+        activate: Bool = true,
         onOpen: ((TerminalController) -> Void)? = nil
     ) -> String? {
         // Dial the agent over TCP. This blocks through the handshake and returns
@@ -1950,7 +1956,7 @@ class AppDelegate: NSObject,
                 command: command)
         }
 
-        let controller = TerminalController.newWindow(ghostty, withBaseConfig: cfg)
+        let controller = TerminalController.newWindow(ghostty, withBaseConfig: cfg, activate: activate)
         controller.remoteMachine = machine
         controller.remoteConnection = connection
         if let windowTitle, !windowTitle.isEmpty {
