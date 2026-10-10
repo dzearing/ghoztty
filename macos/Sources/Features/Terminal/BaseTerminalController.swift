@@ -37,7 +37,27 @@ class BaseTerminalController: NSWindowController,
 
     /// The currently focused surface.
     var focusedSurface: Ghostty.SurfaceView? {
-        didSet { syncFocusToSurfaceTree() }
+        didSet {
+            syncFocusToSurfaceTree()
+            publishFocusedPane()
+        }
+    }
+
+    /// `focusedPane`, published, for views that show which pane has focus
+    /// (the pane sidebar's selection). `focusedPane` itself is derived — from
+    /// `focusedSurface` for a terminal and from the window's first responder
+    /// for a viewer — so neither change reached an observing view, and the
+    /// highlight stayed on the old row. Kept current by `publishFocusedPane`.
+    @Published private(set) var publishedFocusedPane: PaneView?
+
+    /// Watches the window's first responder: a viewer pane taking or giving
+    /// up focus changes nothing else the controller hears about.
+    private var firstResponderObservation: NSKeyValueObservation?
+
+    /// Re-derive `focusedPane` and publish it if it moved.
+    func publishFocusedPane() {
+        let pane = focusedPane
+        if pane !== publishedFocusedPane { publishedFocusedPane = pane }
     }
 
     /// The tree of splits within this terminal window.
@@ -1017,6 +1037,9 @@ class BaseTerminalController: NSWindowController,
         if to.isEmpty {
             focusedSurface = nil
         }
+        // A viewer pane leaving the tree (or stashed) changes `focusedPane`
+        // without touching the first responder or `focusedSurface`.
+        publishFocusedPane()
 
         // Session close intent: a leaf that LEFT the tree was closed by the
         // user (removeSurfaceNode, or a redo of a close) — its agent session
@@ -2234,6 +2257,10 @@ class BaseTerminalController: NSWindowController,
 
         // Everything beyond here is setting up the window
         guard let window else { return }
+
+        firstResponderObservation = window.observe(\.firstResponder) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.publishFocusedPane() }
+        }
 
         // We always initialize our fullscreen style to native if we can because
         // initialization sets up some state (i.e. observers). If its set already

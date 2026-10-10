@@ -167,7 +167,7 @@ struct PaneSidebarView: View {
         // Only THIS window has a selection: another window's focus is not
         // focus here, and a highlighted row among its siblings read as a
         // "primary" pane with the others nested under it.
-        let focused = isThisWindow ? (owner.focusedPane ?? visible.first) : nil
+        let focused = isThisWindow ? (owner.publishedFocusedPane ?? visible.first) : nil
 
         ForEach(visible) { pane in
             row(pane, owner: owner, isStashed: false,
@@ -375,7 +375,7 @@ private struct PaneSidebarWindowHeader: View {
         if let override = owner.windowTitleOverride ?? owner.titleOverride, !override.isEmpty {
             return override
         }
-        let pane = owner.focusedPane ?? owner.surfaceTree.visibleLeaves.first
+        let pane = owner.publishedFocusedPane ?? owner.surfaceTree.visibleLeaves.first
         return PaneSidebarText.title(
             pane?.title ?? "",
             pwd: pane?.surfaceView?.pwd,

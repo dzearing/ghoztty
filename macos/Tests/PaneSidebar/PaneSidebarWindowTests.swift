@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import GhosttyKit
 import SwiftUI
 import Testing
@@ -366,6 +367,56 @@ struct PaneSidebarWindowTests {
         #expect(abs(sourceFrame.midX - paneFrame.midX) < 1, "centered on the pane")
         #expect(abs(sourceFrame.maxY - paneFrame.maxY) < 1, "at the pane's top edge")
         #expect(all.contains { $0.pane === terminal }, "the terminal keeps its own")
+
+        controller.close()
+        await settle(0.3)
+    }
+
+    /// The sidebar's selection is `focusedPane`, read inside a view that
+    /// observes the controller — so a focus change must PUBLISH, or the
+    /// highlight stays on the old row until something unrelated redraws.
+    /// Both kinds: a terminal (`focusedSurface`) and a viewer (derived from
+    /// the window's first responder).
+    @Test func aFocusChangeRedrawsTheSidebarSelection() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let a = terminalPane(app), b = terminalPane(app)
+        let viewer = PaneView(viewer: ViewerView(location: "about:blank"))
+        let tree = try SplitTree<PaneView>(view: a)
+            .inserting(view: b, at: a, direction: .right)
+            .inserting(view: viewer, at: b, direction: .down)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        controller.paneSidebarState.isHidden = false
+        controller.paneSidebarState.isPinned = true
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        await settle(0.8)
+
+        var changes = 0
+        let watch = controller.objectWillChange.sink { _ in changes += 1 }
+        defer { watch.cancel() }
+
+        let surfaceB = try #require(b.surfaceView)
+        window.makeFirstResponder(surfaceB)
+        await settle(0.3)
+        #expect(controller.focusedPane === b)
+        #expect(controller.publishedFocusedPane === b)
+        #expect(changes > 0, "terminal focus change published nothing")
+
+        changes = 0
+        let web = try #require(viewer.viewerView?.webView)
+        window.makeFirstResponder(web)
+        await settle(0.3)
+        #expect(controller.focusedPane === viewer)
+        #expect(controller.publishedFocusedPane === viewer)
+        #expect(changes > 0, "viewer focus change published nothing")
+
+        changes = 0
+        window.makeFirstResponder(try #require(a.surfaceView))
+        await settle(0.3)
+        #expect(controller.focusedPane === a)
+        #expect(controller.publishedFocusedPane === a)
+        #expect(changes > 0, "focus back from a viewer published nothing")
 
         controller.close()
         await settle(0.3)
