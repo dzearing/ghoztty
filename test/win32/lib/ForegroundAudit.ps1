@@ -425,6 +425,37 @@ function Get-ForegroundAuditSites {
 }
 
 # ---------------------------------------------------------------------------
+# The presence gate (T1795). A declared input-desktop script runs on the user's
+# real screen, so before it starts anything it must ask lib\UserPresence.ps1
+# whether a person is using that screen - `Assert-UserAbsent` directly, or
+# `Assert-TestDesktopCapability -Interactive`, which asks it first (T1794). A
+# declared script without either is how 2026-09-27 happened: the declaration
+# said the script COULD use the screen and nothing asked whether it SHOULD.
+# Read off the AST, so a gate named in a comment or a string does not count.
+# ---------------------------------------------------------------------------
+function Test-ForegroundAuditPresenceGate {
+    param(
+        [string]$Path,
+        [string[]]$Text
+    )
+    $src = if ($null -ne $Text) { $Text -join "`n" } else { Get-Content -Raw -LiteralPath $Path }
+    if ($null -eq $src) { return $false }
+    $tokens = $null; $errors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($src, [ref]$tokens, [ref]$errors)
+    foreach ($cmd in @($ast.FindAll({ param($n)
+        $n -is [System.Management.Automation.Language.CommandAst] }, $true))) {
+        $name = $cmd.GetCommandName()
+        if ($name -eq 'Assert-UserAbsent') { return $true }
+        if ($name -ne 'Assert-TestDesktopCapability') { continue }
+        foreach ($el in $cmd.CommandElements) {
+            if ($el -is [System.Management.Automation.Language.CommandParameterAst] -and
+                $el.ParameterName -eq 'Interactive') { return $true }
+        }
+    }
+    return $false
+}
+
+# ---------------------------------------------------------------------------
 # The analyzer. One object per finding; an empty result is a clean suite.
 # ---------------------------------------------------------------------------
 function Get-ForegroundAuditFindings {
@@ -514,6 +545,13 @@ function Get-ForegroundAuditFindings {
             [void]$findings.Add([pscustomobject]@{
                 Path = $f; Line = $first.Line; Kind = 'undeclared'
                 Detail = "$how and is not declared in lib\TestDesktop.ps1" })
+        } elseif (-not $inLib -and -not (Test-ForegroundAuditPresenceGate -Path $f)) {
+            # Declared, so it MAY use the real screen - but it never asks whether
+            # somebody is using it right now (T1795). lib\ helpers are exempt:
+            # the script that calls one is the thing that gates.
+            [void]$findings.Add([pscustomobject]@{
+                Path = $f; Line = 0; Kind = 'ungated'
+                Detail = "$name is declared input-desktop but never asks whether a person is using the box; call Assert-UserAbsent (lib\UserPresence.ps1) or Assert-TestDesktopCapability -Interactive before it starts anything" })
         }
     }
 
@@ -532,7 +570,7 @@ function Get-ForegroundAuditFindings {
 
 # Every kind is the defect here - there is no reported-but-unenforced tier.
 function Get-ForegroundAuditHardKinds {
-    return @('undeclared', 'stale-declaration', 'malformed-declaration')
+    return @('undeclared', 'stale-declaration', 'malformed-declaration', 'ungated')
 }
 
 function Get-ForegroundAuditSweep([string]$Root) {

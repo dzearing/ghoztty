@@ -19,7 +19,8 @@
 #   F  the daemon does not yield to ITSELF (the marker), or it would never run
 #   G  the measured lane is cache-isolated from the repo (the T401 rule)
 #   I  a round never reaps a test binary it did not build (T1648)
-#   H  stop leaves nothing behind
+#   U  a person using the box makes it busy (T1795)
+#   H  stop leaves nothing behind, and stays stopped across a tick (T1795)
 #
 # Hermetic: its own state directory, its own scratch directory, its own mutex
 # (derived from the state directory), and a FIXTURE command instead of a real
@@ -103,6 +104,13 @@ function Wait-For {
 }
 
 New-Item -ItemType Directory -Force $stateDir | Out-Null
+
+# The daemon also yields to a PERSON at the box (T1795), and this script runs
+# while somebody may be using it. Every section but U pins the predicate to
+# `absent` so the rules they test are measured on their own; the daemon
+# processes `Daemon` starts inherit it. Section U drives `present`.
+$priorPresence = $env:GHOZTTY_TEST_FORCE_USER_PRESENCE
+$env:GHOZTTY_TEST_FORCE_USER_PRESENCE = 'absent'
 
 try {
     ""
@@ -261,6 +269,27 @@ try {
     }
 
     ""
+    "U. a PERSON at the box is busy too (T1795)"
+    # 2026-09-27: a round ran while the user played a fullscreen game, because
+    # the rule above yields to foreground WORK and a game is not work. The
+    # predicate is lib\UserPresence.ps1 (T1794); `present` stands in for the
+    # person without needing one, and every section above is its control.
+    $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = 'present'
+    try {
+        $r = Daemon @('busy')
+        Assert 'U1 `busy` reads a present user as busy, and exits nonzero' ($r.Code -eq 3 -and $r.Out -match 'BUSY user present')
+        Assert 'U2 and names why' ($r.Out -match 'GHOZTTY_TEST_FORCE_USER_PRESENCE')
+        $before = @(Read-Ledger).Count
+        $r = Daemon @('run', '-MaxRounds', '1', '-FixtureCommand', 'exit 0',
+            '-YieldPollSeconds', '1', '-IdleWaitSeconds', '1', '-QuitAfterBusySeconds', '3')
+        Assert 'U3 no round starts while somebody is using the box' (@(Read-Ledger).Count -eq $before)
+        Assert 'U4 and it said so when it stood down' ($r.Out -match 'box busy' -and $r.Out -match 'user present')
+    }
+    finally { $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = 'absent' }
+    $r = Daemon @('busy')
+    Assert 'U5 control: the same box with nobody at it reads IDLE' ($r.Code -eq 0 -and $r.Out -match 'IDLE')
+
+    ""
     "H. stop leaves nothing behind"
     $r = Daemon @('start', '-FixtureCommand', "Start-Sleep -Seconds 120", '-YieldPollSeconds', '1')
     $up = Wait-For { (Daemon @('status')).Out -match 'state=running' } 20
@@ -272,12 +301,24 @@ try {
     $left = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -and $_.CommandLine -like ('*' + $marker + '*') })
     Assert 'H4 no round process survived it' ($left.Count -eq 0)
+    # T1795: on 2026-09-27 `stop` was run and the next tick restarted the
+    # daemon, which then ran rounds under the user's game for two weeks.
+    $r = Daemon @('tick', '-FixtureCommand', "Start-Sleep -Seconds 120", '-YieldPollSeconds', '1')
+    Assert 'H5 a tick after `stop` does NOT bring the daemon back' ($r.Out -match 'stopped by request')
+    Start-Sleep -Seconds 3
+    $r = Daemon @('status')
+    Assert 'H6 and status says it was stopped on purpose' ($r.Out -match 'state=stopped-by-request')
+    $r = Daemon @('start', '-MaxRounds', '1', '-FixtureCommand', 'exit 0', '-YieldPollSeconds', '1', '-IdleWaitSeconds', '1')
+    Assert 'H7 an explicit start is what undoes it' ((Daemon @('status')).Out -notmatch 'stopped-by-request')
+    Daemon @('stop') | Out-Null
 
     Complete-TestBody  # T1039: the last statement of the body an unwind can skip
 }
 finally {
     # --- teardown ---------------------------------------------------------
     try { Daemon @('stop') | Out-Null } catch { }
+    if ($null -eq $priorPresence) { Remove-Item Env:GHOZTTY_TEST_FORCE_USER_PRESENCE -ErrorAction SilentlyContinue }
+    else { $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = $priorPresence }
     foreach ($s in $sleepers) { try { Stop-Process -Id $s.Id -Force -ErrorAction SilentlyContinue } catch { } }
     Remove-Item -Recurse -Force $stateDir -ErrorAction SilentlyContinue
     Remove-Item -Recurse -Force $scratchDir -ErrorAction SilentlyContinue

@@ -1186,7 +1186,15 @@ FIRST (before the real-input probe, which is itself injected input) and prints
 `SKIP ALL: user-absent ...` with the reason; `rdp-session` and
 `test-desktop-spike` call `Assert-UserAbsent` directly. It never waits and never
 fails. `GHOZTTY_TEST_FORCE_USER_PRESENCE=present|absent` exists for
-`test-desktop-harness.ps1` section B2 only, which drives both directions.
+`test-desktop-harness.ps1` section B2, which drives both directions, and for
+`test\win32\soak-daemon.ps1`, which pins `absent` for its other sections and
+drives `present` in section U.
+
+The **soak daemon** asks the same predicate (T1795): `soak-daemon.ps1 busy`
+answers `BUSY user present: <reason>` while somebody is at the box, so a round
+never starts under them and a round in flight yields when they come back. And
+`foreground-audit.ps1` fails any declared input-desktop script that never asks
+it (`ungated`; `-TeethCheck` plants one).
 
 **Stealing focus is one cause of being un-runnable in the loop, not the
 definition of it** (T276), so a second family counts toward the same one list: a

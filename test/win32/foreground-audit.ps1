@@ -31,6 +31,12 @@
          its intent on one `# input-desktop-helper:` line with a reason, which
          is the exemption; outside `lib\` that marker means nothing.
 
+      F. The presence gate (T1795) - a DECLARED script must still ask
+         lib\UserPresence.ps1 whether a person is using the box before it
+         starts anything (`Assert-UserAbsent`, or
+         `Assert-TestDesktopCapability -Interactive`). A declared script
+         without it is an `ungated` finding. `-TeethCheck` plants one.
+
       C. The sweep over `test\win32\*.ps1` and `test\win32\lib\*.ps1`: every
          site is declared or marked, and every declaration still names a script
          that needs the input desktop.
@@ -162,8 +168,10 @@ $decl = @([pscustomobject]@{ Script = 'declared.ps1'; Reason = 'because'; Line =
 $tmp = Join-Path $env:TEMP "ghoztty-t272-$PID"
 if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }
 New-Item -ItemType Directory -Force $tmp | Out-Null
+# Declared AND gated (T1795): a declared script that never asks for presence is
+# a finding of its own (section F), which is not what B8 measures.
 Set-Content -LiteralPath (Join-Path $tmp 'declared.ps1') -Encoding ascii `
-    -Value '$null = [Drv]::SendInput(1, $i, 40)'
+    -Value @('Assert-UserAbsent', '$null = [Drv]::SendInput(1, $i, 40)')
 Set-Content -LiteralPath (Join-Path $tmp 'undeclared.ps1') -Encoding ascii `
     -Value '$null = [Drv]::SetForegroundWindow($hwnd)'
 Set-Content -LiteralPath (Join-Path $tmp 'migrated.ps1') -Encoding ascii `
@@ -262,7 +270,8 @@ AssertEq 'D9 nor a C# comment inside a here-string' 0 (ScreenDcCount @(
 # End to end through the analyzer: the same declaration list covers both
 # families, because it is one exemption - "this script needs the input desktop".
 Set-Content -LiteralPath (Join-Path $tmp 'probe.ps1') -Encoding ascii `
-    -Value '$hdc = [Drv]::GetDC([IntPtr]::Zero); $c = [Drv]::GetPixel($hdc, 4, 4)'
+    -Value @('Assert-TestDesktopCapability -Name screen-pixels -Interactive',
+        '$hdc = [Drv]::GetDC([IntPtr]::Zero); $c = [Drv]::GetPixel($hdc, 4, 4)')
 $probe = @((Join-Path $tmp 'probe.ps1'))
 
 $declProbe = @([pscustomobject]@{
@@ -393,6 +402,50 @@ foreach ($n in $libExempt.Keys) {
 
 # ===========================================================================
 Write-Host ''
+Write-Host '== F: a declared script asks whether a person is at the box (T1795)'
+# ===========================================================================
+# Declared means the script MAY use the user's real screen; it does not mean
+# it may use it while they are on it. 2026-09-27: two declared scripts ran over
+# a fullscreen game. The gate is read off the AST, both directions.
+function Gated([string[]]$Text) { return (Test-ForegroundAuditPresenceGate -Text $Text) }
+Assert 'F1 Assert-UserAbsent is a gate' (Gated @('Assert-UserAbsent', '$null = [Drv]::SendInput(1, $i, 40)'))
+Assert 'F2 so is Assert-TestDesktopCapability -Interactive' (Gated @('Assert-TestDesktopCapability -Name real-input, foreground -Interactive'))
+Assert 'F3 a conditional gate counts (rdp-session''s shape)' (Gated @('if (-not ($BackgroundDesktop -or $SelfTest)) { Assert-UserAbsent }'))
+Assert 'F4 the capability check WITHOUT -Interactive is not one' (-not (Gated @('Assert-TestDesktopCapability -Name screen-pixels')))
+Assert 'F5 a gate named only in a comment is not one' (-not (Gated @('# Assert-UserAbsent is called elsewhere', '$null = [Drv]::SendInput(1, $i, 40)')))
+Assert 'F6 nor one named only in a string' (-not (Gated @('Write-Host "remember Assert-UserAbsent"')))
+Assert 'F7 a script with no gate at all is not one' (-not (Gated @('$null = [Drv]::SendInput(1, $i, 40)')))
+
+# The analyzer over a scratch directory: a declared, ungated grabber is a hard
+# finding; the same script gated is clean; a lib\ helper is never asked.
+$fx = Join-Path $env:TEMP ("fg-audit-gate-{0}" -f $PID)
+New-Item -ItemType Directory -Force (Join-Path $fx 'lib') | Out-Null
+try {
+    Set-Content -LiteralPath (Join-Path $fx 'ungated.ps1') -Encoding ascii -Value '$null = [Drv]::SendInput(1, $i, 40)'
+    Set-Content -LiteralPath (Join-Path $fx 'gated.ps1') -Encoding ascii -Value @('Assert-UserAbsent', '$null = [Drv]::SendInput(1, $i, 40)')
+    Set-Content -LiteralPath (Join-Path $fx 'lib\helper.ps1') -Encoding ascii -Value '$null = [Drv]::SendInput(1, $i, 40)'
+    $decl = @(
+        [pscustomobject]@{ Script = 'ungated.ps1'; Reason = 'fixture'; Line = 1; Malformed = $false }
+        [pscustomobject]@{ Script = 'gated.ps1'; Reason = 'fixture'; Line = 2; Malformed = $false }
+        [pscustomobject]@{ Script = 'lib\helper.ps1'; Reason = 'fixture'; Line = 3; Malformed = $false }
+    )
+    $fxFind = @(Get-ForegroundAuditFindings -Root $fx -Declared $decl)
+    Assert 'F8 a declared script with no presence gate is an `ungated` finding' (
+        @($fxFind | Where-Object { $_.Kind -eq 'ungated' -and $_.Path -match 'ungated\.ps1$' }).Count -eq 1)
+    Assert 'F9 the gated twin is clean' (@($fxFind | Where-Object { $_.Path -match '\\gated\.ps1$' }).Count -eq 0)
+    Assert 'F10 a declared lib\ helper is not asked (its caller gates)' (
+        @($fxFind | Where-Object { $_.Path -match 'helper\.ps1$' }).Count -eq 0)
+    Assert 'F11 and `ungated` is a hard kind, so the sweep fails on it' ((Get-ForegroundAuditHardKinds) -contains 'ungated')
+} catch {
+    # An unwind here must score red, not skip to a green verdict (T1039).
+    Write-Host "  FAIL F the analyzer fixture threw: $($_.Exception.Message)" -ForegroundColor Red
+    $script:fail++
+} finally {
+    Remove-Item -Recurse -Force $fx -ErrorAction SilentlyContinue
+}
+
+# ===========================================================================
+Write-Host ''
 Write-Host '== C: the sweep over the acceptance suite'
 # ===========================================================================
 
@@ -410,6 +463,9 @@ if ($TeethCheck) {
         # T780: in lib\, which the sweep did not read at all until it did.
         @{ Name = 'lib\zz-foreground-audit-teeth-helper.ps1'
            Body = '$hdc = [Drv]::GetDC([IntPtr]::Zero)' }
+        # T1795: DECLARED (below) but never asks whether a person is present.
+        @{ Name = 'zz-foreground-audit-teeth-ungated.ps1'
+           Body = '$null = [Drv]::SendInput(1, $inputs, 40)' }
     ) | ForEach-Object {
         $p = Join-Path $Suite $_.Name
         Set-Content -LiteralPath $p -Encoding ascii -Value @(
@@ -418,11 +474,19 @@ if ($TeethCheck) {
         )
         $p
     }
-    Write-Host '  TEETH CHECK: three real undeclared violators are in the swept tree (one in lib\)'
+    Write-Host '  TEETH CHECK: three real undeclared violators are in the swept tree (one in lib\), plus one declared but ungated'
 }
 
 try {
-    $sweep = @(Get-ForegroundAuditSweep $Suite)
+    if ($TeethCheck) {
+        # The real declaration list plus one for the planted ungated script, so
+        # the sweep reads it as declared and the only thing wrong is the gate.
+        $teethDecl = @(Get-ForegroundAuditDeclarations -Path (Join-Path $Suite 'lib\TestDesktop.ps1')) + @(
+            [pscustomobject]@{ Script = 'zz-foreground-audit-teeth-ungated.ps1'; Reason = 'teeth'; Line = 0; Malformed = $false })
+        $sweep = @(Get-ForegroundAuditFindings -Root $Suite -Declared $teethDecl)
+    } else {
+        $sweep = @(Get-ForegroundAuditSweep $Suite)
+    }
 } finally {
     foreach ($p in $planted) { Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
 }
@@ -437,6 +501,8 @@ if ($TeethCheck) {
         @($hard | Where-Object { $_.Path -match 'zz-foreground-audit-teeth-screendc' }).Count -eq 1)
     Assert 'C1c and when the unmarked helper is in lib\ (T780)' (
         @($hard | Where-Object { $_.Path -match 'zz-foreground-audit-teeth-helper' }).Count -eq 1)
+    Assert 'C1d and when a declared script never asks whether a person is present (T1795)' (
+        @($hard | Where-Object { $_.Path -match 'zz-foreground-audit-teeth-ungated' -and $_.Kind -eq 'ungated' }).Count -eq 1)
 } else {
     Assert 'C1 every input-desktop site in the suite is declared, and every declaration is live' ($hard.Count -eq 0)
     foreach ($h in $hard) {

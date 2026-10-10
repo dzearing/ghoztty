@@ -34,6 +34,11 @@
 
       - `soak-daemon.ps1 pause` was run and not resumed (explicit, and what a
         turn should reach for if it wants the machine to itself for a while).
+      - A person using the box (T1795): `test\win32\lib\UserPresence.ps1` says
+        so on recent keyboard/mouse input, a fullscreen/Direct3D/presentation
+        shell state, or a foreground window covering its monitor (a game).
+        The daemon takes the box only when nobody is at it; `busy` prints
+        `BUSY user present: <reason>`.
       - A live process whose command line names foreground work: floor-lane.ps1,
         suite-run.ps1, anything under test\win32\, or a `zig build`. Our own
         descendants are excluded by the marker every one of them carries (the
@@ -54,7 +59,8 @@
 .PARAMETER Command
     status     what has accumulated, and whether the daemon is up (default)
     start      launch the daemon in the background if it is not already running
-    stop       stop the daemon and kill any round in flight
+    stop       stop the daemon and kill any round in flight. Durable: the tick
+               will not restart it until an explicit `start` (T1795)
     pause      leave the daemon up but stop it taking the box
     resume     clear a pause
     tick       what the scheduled task runs: start unless stopped or running
@@ -156,6 +162,9 @@ foreach ($l in $LaneList) {
 }
 if ($LaneList.Count -eq 0) { $LaneList = @('agent', 'none', 'none-releasesafe', 'win32-releasesafe') }
 
+# The user-presence predicate (T1794/T1795): `busy` and the yield rule ask it.
+. (Join-Path $PSScriptRoot '..\test\win32\lib\UserPresence.ps1')
+
 $IgnoreList = @($IgnorePids -split ',' | ForEach-Object { $_.Trim() } |
     Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
 
@@ -181,6 +190,12 @@ $StatePath = Join-Path $StateDir 'state.json'
 $LedgerPath = Join-Path $StateDir 'ledger.jsonl'
 $PausePath = Join-Path $StateDir 'pause.flag'
 $StopPath = Join-Path $StateDir 'stop.flag'
+# `stop` is DURABLE (T1795). The stop flag above is a request to the running
+# daemon and is cleared once it is down - and on 2026-09-27 that was all a
+# `stop` left behind, so the next 10-minute tick started a fresh daemon and it
+# ran rounds under the user's game for two weeks while everyone believed it was
+# stopped. This flag is what `tick` honours; only an explicit `start` clears it.
+$DisabledPath = Join-Path $StateDir 'stopped.flag'
 $LogPath = Join-Path $StateDir 'daemon.log'
 # Round scripts and their logs live under the SCRATCH directory, not the state
 # directory, because that path carries the marker: a round launched as
@@ -266,6 +281,15 @@ function Get-BoxBusyReason {
         return "paused: $why"
     }
     if (Test-Path -LiteralPath $StopPath) { return 'stop requested' }
+
+    # A PERSON at the box is busy too (T1795). The rule below yields to
+    # foreground WORK and could not see a foreground USER, so a fullscreen game
+    # read as an idle box and a round ran under it on 2026-09-27. The predicate
+    # is the one the input-desktop scripts ask (T1794), not a second copy.
+    if (Get-Command Get-UserPresence -ErrorAction SilentlyContinue) {
+        $presence = Get-UserPresence
+        if ($presence.Present) { return "user present: $($presence.Reason)" }
+    }
 
     $patterns = @('floor-lane.ps1', 'suite-run.ps1', '\test\win32\', 'zig build', 'zig.exe build')
     $procs = @(Get-CimInstance Win32_Process `
@@ -457,6 +481,8 @@ function Invoke-Round {
 # ------------------------------------------------------------------- verbs
 
 function Invoke-Start {
+    # An explicit start is the one thing that undoes a `stop` (T1795).
+    Remove-Item -LiteralPath $DisabledPath -Force -ErrorAction SilentlyContinue
     if (Test-DaemonRunning) { Log 'daemon already running'; return 0 }
     Remove-Item -LiteralPath $StopPath -Force -ErrorAction SilentlyContinue
     Ensure-Dirs
@@ -481,6 +507,7 @@ function Invoke-Start {
 function Invoke-Stop {
     Ensure-Dirs
     Set-Content -LiteralPath $StopPath -Value ((Get-Date).ToString('o') + ' ' + $Reason) -Encoding UTF8
+    Set-Content -LiteralPath $DisabledPath -Value ((Get-Date).ToString('o') + ' ' + $Reason) -Encoding UTF8
     $procs = @(Get-DaemonProcs)
     foreach ($p in $procs) { Stop-Tree -Id $p.ProcessId }
     # The stop flag is a request, not the state: clear it once nothing is left,
@@ -501,6 +528,7 @@ function Invoke-Status {
     $state = if (Test-DaemonRunning) {
         if (Test-Path -LiteralPath $PausePath) { 'paused' } else { 'running' }
     }
+    elseif (Test-Path -LiteralPath $DisabledPath) { 'stopped-by-request' }
     else { 'stopped' }
     $since = if ($s.since) { $s.since } else { 'never' }
     Write-Host ('SOAK state={0} rounds={1} pass={2} crash={3} fail={4} yielded={5} stall={6} error={7} since={8} last={9}' -f
@@ -593,6 +621,7 @@ function Invoke-Run {
 # in every state but "down and wanted".
 function Invoke-Tick {
     if (Test-Path -LiteralPath $StopPath) { Write-Host 'tick: stop flag set; not starting'; return 0 }
+    if (Test-Path -LiteralPath $DisabledPath) { Write-Host 'tick: stopped by request (soak-daemon.ps1 start undoes it); not starting'; return 0 }
     if (Test-DaemonRunning) { Write-Host 'tick: already running'; return 0 }
     return (Invoke-Start)
 }

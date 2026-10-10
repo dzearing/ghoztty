@@ -34725,3 +34725,29 @@ translucent-window, background-blur and test-desktop-spike each skipped with
 no window created and the game still in front. `test-desktop-harness.ps1`
 section B2 drives every signal plus both forced directions (ALL PASS, 95).
 The soak-daemon half stays with T1795, which now reuses this predicate.
+
+## 2026-10-10 — T1795: the soak daemon yields to a person, `stop` sticks, and the audit wants the presence gate
+
+User report (2026-09-27 and 2026-10-10): automation popped windows over a
+fullscreen game. Four findings, all measured live with the user in fullscreen
+Valheim:
+
+- **The soak daemon was never stopped.** `soak-daemon.ps1 stop` cleared its own
+  flag, and the 10-minute tick task started a fresh daemon. The ledger shows
+  rounds right through today, including a win32-releasesafe round at 12:41
+  while the game was in front. It is now
+  PAUSED. `stop` writes a durable `stopped.flag` that `tick` honours, and only
+  an explicit `start` clears it.
+- **The daemon yields to a person.** `Get-BoxBusyReason` now asks
+  `lib\UserPresence.ps1` (T1794). `busy` printed `BUSY user present: the shell
+  reports a fullscreen app in use`.
+- **The win32 unit lane shows windows on the user's screen.** A hidden watcher
+  saw `ghostty-test.exe` create 12 visible top-level windows (10 `GhozttyBannerOverlay`) on
+  the input desktop during `floor-lane -Lane win32`. They took no focus
+  (`SW_SHOWNOACTIVATE`), but a newly shown window goes on top of the
+  non-topmost z-order, which can put it over a borderless game (inferred). Filed as T1813 (P0).
+- **`foreground-audit.ps1` fails a declared input-desktop script that never
+  asks for presence** (`ungated`, section F, teeth arm C1d).
+
+The fullscreen stand-in proof and the soak resume need the user away, so they
+moved to T1814.
