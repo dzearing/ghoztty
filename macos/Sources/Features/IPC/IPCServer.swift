@@ -472,7 +472,7 @@ class IPCServer {
                     originDirectory: parsed.config.workingDirectory))
                 let controller = TerminalController.newWindow(
                     ghostty,
-                    tree: SplitTree<PaneView>(root: .leaf(view: pane), zoomed: nil),
+                    tree: SplitTree<PaneView>(view: pane),
                     activate: parsed.focus.raisesWindow)
                 if parsed.focus.activatesApp {
                     NSApp.activate(ignoringOtherApps: true)
@@ -1664,9 +1664,19 @@ class IPCServer {
                     return
                 }
 
+                // A STASHED pane the layout leaves out stays stashed — the
+                // layout describes the grid, and a stash is not part of it.
+                // It is carried into the new tree (top level, where it is
+                // hidden anyway); one the layout DOES place is restored.
+                let placed = Set(newRoot.leaves())
+                let carried = controller.surfaceTree.stashedViews.filter { !placed.contains($0) }
+                let rootWithStash = carried.reduce(SplitTree<PaneView>(root: newRoot, zoomed: nil, stashed: [])) {
+                    $0.insertingAtTopLevel(view: $1, side: .right)
+                }
+
                 // Collect all current panes in the tree
                 let currentPanes = Set(controller.surfaceTree.map { $0 })
-                let keptPanes = Set(newRoot.leaves())
+                let keptPanes = Set(rootWithStash.map { $0 })
                 let removedPanes = currentPanes.subtracting(keptPanes)
 
                 // Focus stays where it was if the layout kept that pane, and
@@ -1685,7 +1695,7 @@ class IPCServer {
                 }
 
                 // Replace the tree
-                let newTree = SplitTree<PaneView>(root: newRoot, zoomed: nil)
+                let newTree = rootWithStash.withStash(carried.map(\.id))
                 controller.replaceSurfaceTree(
                     newTree,
                     moveFocusTo: newFocus.surfaceView,

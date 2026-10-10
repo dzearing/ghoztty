@@ -709,7 +709,7 @@ class AppDelegate: NSObject,
                 originDirectory: (filename as NSString).deletingLastPathComponent))
             let controller = TerminalController.newWindow(
                 ghostty,
-                tree: SplitTree<PaneView>(root: .leaf(view: pane), zoomed: nil))
+                tree: SplitTree<PaneView>(view: pane))
             controller.titleOverride = pane.title
             return true
         }

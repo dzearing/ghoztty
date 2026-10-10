@@ -3959,7 +3959,7 @@ extension ViewerView: WKUIDelegate {
         let pane = PaneView(viewer: popup)
         let newController = TerminalController.newWindow(
             controller.ghostty,
-            tree: SplitTree<PaneView>(root: .leaf(view: pane), zoomed: nil))
+            tree: SplitTree<PaneView>(view: pane))
         // A viewer-only window has no focused surface to title it, so pin the
         // popup's title the same way the `+new-window --view` path does.
         newController.titleOverride = pane.title

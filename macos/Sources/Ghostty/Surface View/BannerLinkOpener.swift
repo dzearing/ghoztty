@@ -136,7 +136,7 @@ struct BannerLinkOpener {
             originDirectory: anchor?.anchorDirectory))
         _ = TerminalController.newWindow(
             controller.ghostty,
-            tree: SplitTree<PaneView>(root: .leaf(view: pane), zoomed: nil))
+            tree: SplitTree<PaneView>(view: pane))
         NSApp.activate(ignoringOtherApps: true)
     }
 

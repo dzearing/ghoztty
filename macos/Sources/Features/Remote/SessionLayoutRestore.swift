@@ -319,7 +319,7 @@ extension AppDelegate {
 
         let controller = TerminalController(
             ghostty,
-            withSurfaceTree: SplitTree(root: root, zoomed: nil))
+            withSurfaceTree: SplitTree(root: root, zoomed: nil, stashed: []))
 
         // For a LOCAL resume/restore, adopt the manifest entry so the window is
         // itself restorable and detaches-on-close. Ordering matters: the entry id
@@ -599,7 +599,7 @@ extension AppDelegate {
         // the rebuilt tree in.
         controller.remoteConnection = connection
         controller.remoteMachine = connection.machine
-        controller.surfaceTree = SplitTree(root: root, zoomed: nil)
+        controller.surfaceTree = SplitTree(root: root, zoomed: nil, stashed: [])
 
         // Re-register pane IPC names against the NEW surfaces (the window name,
         // being controller-keyed, is unaffected — the controller is the same).

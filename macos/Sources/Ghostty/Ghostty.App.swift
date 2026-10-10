@@ -1206,17 +1206,21 @@ extension Ghostty {
                         return true
                     }
 
+                    // Navigation moves between panes ON SCREEN: a stashed pane
+                    // is in the tree but not in the layout.
+                    let visible = controller.surfaceTree.visibleTree
+
                     // If the window has no splits, the action is not performable
-                    guard controller.surfaceTree.isSplit else { return false }
+                    guard visible.isSplit else { return false }
 
                     // Find the current node in the tree
-                    guard let targetNode = controller.surfaceTree.root?.node(view: surfaceView) else { return false }
+                    guard let targetNode = visible.root?.node(view: surfaceView) else { return false }
 
                     // Check if a split actually exists in the target direction before
                     // returning true. This ensures performable keybinds only consume
                     // the key event when we actually perform navigation.
                     let focusDirection: SplitTree<PaneView>.FocusDirection = splitDirection.toSplitTreeFocusDirection()
-                    guard controller.surfaceTree.focusTarget(for: focusDirection, from: targetNode) != nil else {
+                    guard visible.focusTarget(for: focusDirection, from: targetNode) != nil else {
                         return false
                     }
 
@@ -1251,14 +1255,15 @@ extension Ghostty {
                     guard let surfaceView = self.surfaceView(from: surface) else { return false }
                     guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
 
-                    guard controller.surfaceTree.isSplit else { return false }
+                    let visible = controller.surfaceTree.visibleTree
+                    guard visible.isSplit else { return false }
 
                     guard let splitDirection = SplitFocusDirection.from(direction: direction) else { return false }
 
-                    guard let targetNode = controller.surfaceTree.root?.node(view: surfaceView) else { return false }
+                    guard let targetNode = visible.root?.node(view: surfaceView) else { return false }
 
                     let focusDirection: SplitTree<PaneView>.FocusDirection = splitDirection.toSplitTreeFocusDirection()
-                    guard controller.surfaceTree.focusTarget(for: focusDirection, from: targetNode) != nil else {
+                    guard visible.focusTarget(for: focusDirection, from: targetNode) != nil else {
                         return false
                     }
 
@@ -1350,8 +1355,8 @@ extension Ghostty {
                     guard let surfaceView = self.surfaceView(from: surface) else { return false }
                     guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
 
-                    // If the window has no splits, the action is not performable
-                    guard controller.surfaceTree.isSplit else { return false }
+                    // If the window has no splits ON SCREEN, the action is not performable
+                    guard controller.surfaceTree.isVisiblySplit else { return false }
 
                     guard let resizeDirection = SplitResizeDirection.from(direction: resize.direction) else { return false }
                     NotificationCenter.default.post(
@@ -1404,8 +1409,8 @@ extension Ghostty {
                 guard let surfaceView = self.surfaceView(from: surface) else { return false }
                 guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
 
-                // If the window has no splits, the action is not performable
-                guard controller.surfaceTree.isSplit else { return false }
+                // If the window has no splits ON SCREEN, the action is not performable
+                guard controller.surfaceTree.isVisiblySplit else { return false }
 
                 NotificationCenter.default.post(
                     name: Notification.didToggleSplitZoom,
@@ -1432,7 +1437,7 @@ extension Ghostty {
                 guard let surfaceView = self.surfaceView(from: surface) else { return false }
                 guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
 
-                guard controller.surfaceTree.isSplit else { return false }
+                guard controller.surfaceTree.isVisiblySplit else { return false }
 
                 NotificationCenter.default.post(
                     name: Notification.didToggleHeroMode,

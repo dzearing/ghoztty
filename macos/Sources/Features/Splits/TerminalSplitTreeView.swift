@@ -33,13 +33,18 @@ struct TerminalSplitTreeView: View {
     let windowRef: PaneDropWindowRef
 
     var body: some View {
+        // The LAYOUT is the visible tree: stashed panes stay in `tree` (so
+        // nothing that walks it loses them) but are not mounted here, exactly
+        // as the panes behind a zoom are not. Divider gestures report nodes of
+        // this tree; the controller lifts their ratios back onto the full one.
+        let visible = tree.visibleTree
         if heroModeState.isActive {
-            HeroModeView(tree: tree, state: heroModeState)
+            HeroModeView(tree: visible, state: heroModeState)
                 .transition(.opacity)
-        } else if let node = tree.zoomed ?? tree.root {
+        } else if let node = visible.zoomed ?? visible.root {
             TerminalSplitSubtreeView(
                 node: node,
-                isRoot: node == tree.root,
+                isRoot: node == visible.root,
                 rearranging: rearrangeModeState.isActive,
                 action: action)
             // This is necessary because we can't rely on SwiftUI's implicit

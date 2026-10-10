@@ -267,7 +267,7 @@ struct SplitTreeTests {
 
     @Test func encodingAndDecodingPreservesZoomedPath() throws {
         let (tree, _, view2) = try makeHorizontalSplit()
-        let treeWithZoomed = SplitTree<MockView>(root: tree.root, zoomed: .leaf(view: view2))
+        let treeWithZoomed = SplitTree<MockView>(root: tree.root, zoomed: .leaf(view: view2), stashed: [])
 
         let data = try JSONEncoder().encode(treeWithZoomed)
         let decoded = try JSONDecoder().decode(SplitTree<MockView>.self, from: data)
