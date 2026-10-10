@@ -34710,3 +34710,18 @@ rewritten to the new contract (46 assertions; `-NegativeControl` red; with the
 GotFocus hook disabled step 2c goes red). Floor lanes, P1-P3, `split-dim.ps1`
 and the due harnesses green. Filed T1812 (delete the now-dead viewer overlay
 code).
+
+## 2026-10-10 — T1794: input-desktop tests skip themselves while somebody is using the box
+
+User report (2026-09-27): screen tests drew over a fullscreen game and took
+its keystrokes. New `test/win32/lib/UserPresence.ps1`: present when there was
+keyboard/mouse input in the last 300s, when the shell reports a fullscreen /
+Direct3D / presentation state, or when the foreground window covers its
+monitor and is not from this repo (the gamepad case). `Assert-TestDesktopCapability
+-Interactive` asks it first; `rdp-session` and `test-desktop-spike` call
+`Assert-UserAbsent` directly. All of them print `SKIP ALL: user-absent ...` and
+exit 0. Validated live: the user was in fullscreen Valheim during the turn, and
+translucent-window, background-blur and test-desktop-spike each skipped with
+no window created and the game still in front. `test-desktop-harness.ps1`
+section B2 drives every signal plus both forced directions (ALL PASS, 95).
+The soak-daemon half stays with T1795, which now reuses this predicate.

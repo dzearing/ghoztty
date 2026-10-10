@@ -1173,6 +1173,21 @@ from the other direction. A hardcoded `New-TestDesktop -Interactive` counts too
 (the hatch is for debugging by hand, never for scoring a run); forwarding the
 switch does not.
 
+**A declared exception never runs over a person using the box** (T1794). On
+2026-09-27 `translucent-window` and `background-blur` drew over the user's
+fullscreen game and took its keystrokes. `lib\UserPresence.ps1` answers "is
+somebody using this desktop?" from three signals: keyboard/mouse input in the
+last `GHOZTTY_TEST_PRESENCE_IDLE_SECONDS` (300), the shell's own busy state
+(`SHQueryUserNotificationState`: fullscreen app, exclusive Direct3D,
+presentation mode), and a foreground window that covers its monitor and is not
+from this repo, which catches a borderless game played on a gamepad that
+`GetLastInputInfo` never sees. `Assert-TestDesktopCapability -Interactive` asks it
+FIRST (before the real-input probe, which is itself injected input) and prints
+`SKIP ALL: user-absent ...` with the reason; `rdp-session` and
+`test-desktop-spike` call `Assert-UserAbsent` directly. It never waits and never
+fails. `GHOZTTY_TEST_FORCE_USER_PRESENCE=present|absent` exists for
+`test-desktop-harness.ps1` section B2 only, which drives both directions.
+
 **Stealing focus is one cause of being un-runnable in the loop, not the
 definition of it** (T276), so a second family counts toward the same one list: a
 read of the **composited screen** — `CopyFromScreen`, or `GetDC`/`GetWindowDC`/

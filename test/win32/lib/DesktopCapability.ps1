@@ -94,6 +94,10 @@
 # Deliberately sets no StrictMode: dot-sourced INTO suite scripts, and a mode
 # set here would silently change how every one of them evaluates.
 
+# T1794: `-Interactive` also asks whether a PERSON is using the input desktop,
+# and skips when one is - see lib\UserPresence.ps1.
+. (Join-Path $PSScriptRoot 'UserPresence.ps1')
+
 if (-not ('GhozttyDesktopCapability' -as [type])) {
 Add-Type @'
 using System;
@@ -273,6 +277,10 @@ function Assert-TestDesktopCapability {
         [Parameter(Mandatory = $true)][string[]]$Name,
         [switch]$Interactive
     )
+    # T1794: a script that runs on the INPUT desktop must first know nobody is
+    # using it. Asked BEFORE the capability probes, because the real-input
+    # probe is itself an injected event and would read back as recent input.
+    if ($Interactive) { Assert-UserAbsent }
     foreach ($n in $Name) {
         $cap = Get-TestDesktopCapability -Name $n -Interactive:$Interactive
         if (-not $cap.Available) { Exit-TestSkip -Capability $cap.Name -Reason $cap.Reason }

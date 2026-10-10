@@ -196,6 +196,10 @@ if (-not $isRemote -and -not $SelfTest) {
 
 if (-not (Test-Path $Exe)) { Write-Host "SETUP FAIL: $Exe not found - build it first"; exit 2 }
 
+# T1794: an interactive run never goes over a person using the box. Asked
+# before anything is stopped, created or launched.
+if (-not ($BackgroundDesktop -or $SelfTest)) { Assert-UserAbsent }
+
 $root = Join-Path $env:TEMP "ghoztty-rdp-session-$PID"
 $savedLocalAppData = $env:LOCALAPPDATA
 $savedAgentBin = $env:GHOSTTY_LOCAL_AGENT_BIN

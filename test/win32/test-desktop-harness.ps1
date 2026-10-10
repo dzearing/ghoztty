@@ -230,10 +230,14 @@ Set-Content -LiteralPath $capProbe -Encoding ASCII -Value @(
 # line but one - while an unwind at this depth kills the script outright, which
 # prints no verdict at all.
 $env:GHOZTTY_TEST_FORCE_MISSING_CAPS = 'real-input'
+# T1794: -Interactive asks the user-presence gate first; force it absent so
+# this child reaches the capability under test. Section B2 covers the gate.
+$env:GHOZTTY_TEST_FORCE_USER_PRESENCE = 'absent'
 $pc = Start-Process -FilePath 'powershell.exe' -PassThru -NoNewWindow -Wait `
     -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $capProbe) `
     -RedirectStandardOutput $capOut
 Remove-Item Env:GHOZTTY_TEST_FORCE_MISSING_CAPS -ErrorAction SilentlyContinue
+Remove-Item Env:GHOZTTY_TEST_FORCE_USER_PRESENCE -ErrorAction SilentlyContinue
 $capText = ''
 if (Test-Path -LiteralPath $capOut) { $capText = (Get-Content -LiteralPath $capOut -Raw) }
 if ($null -eq $capText) { $capText = '' }
@@ -261,6 +265,74 @@ if ($null -eq $capText2) { $capText2 = '' }
 Assert (($pc2.ExitCode -eq 0) -and ($capText2 -match 'REACHED THE END') -and ($capText2 -notmatch 'SKIP ALL')) `
     'a capability that IS available lets the run continue, silently'
 Remove-Item -LiteralPath $capProbe, $capOut -Force -ErrorAction SilentlyContinue
+
+# ---------------------------------------------------------------------
+# B2. USER PRESENCE (T1794).
+#
+# `-Interactive` used to ask only whether the input desktop COULD be used. On
+# 2026-09-27 two input-desktop scripts ran over the user's fullscreen game and
+# took its keystrokes. lib\UserPresence.ps1 is the question that was missing.
+# Every signal is driven through the PURE decision with constructed inputs -
+# no person, no game, no window - and the exit path is driven in a child with
+# the forced override, both ways: `present` must skip before the body runs,
+# `absent` must let it run, so the gate is shown to fire and shown not to be a
+# blanket skip. The child asks for chrome-pixels, which the interactive answer
+# grants without probing, so neither child touches the screen.
+Write-Host 'B2. user presence gate (T1794)'
+$rp = Resolve-UserPresence -IdleSeconds 5 -IdleThreshold 300
+Assert ($rp.Present -and $rp.Reason -match 'input 5s ago') "recent input reads present ($($rp.Reason))"
+$rp = Resolve-UserPresence -IdleSeconds 900 -IdleThreshold 300
+Assert (-not $rp.Present) "long-idle with nothing fullscreen reads absent ($($rp.Reason))"
+$rp = Resolve-UserPresence -IdleSeconds -1 -IdleThreshold 300
+Assert (-not $rp.Present) 'unknown idle with nothing fullscreen reads absent'
+$rp = Resolve-UserPresence -IdleSeconds 900 -ForegroundFullscreen $true -ForegroundDescription 'game, class UnityWndClass'
+Assert ($rp.Present -and $rp.Reason -match 'covers its whole monitor') "an idle box with a fullscreen foreign window reads present - a gamepad is not input GetLastInputInfo sees ($($rp.Reason))"
+$rp = Resolve-UserPresence -IdleSeconds 900 -ForegroundFullscreen $true -ForegroundOurs $true
+Assert (-not $rp.Present) 'a fullscreen window from THIS repo (a test build) is not a person'
+$rp = Resolve-UserPresence -IdleSeconds 900 -NotificationState 2
+Assert ($rp.Present) 'the shell reporting a fullscreen app (QUNS_BUSY) reads present'
+$rp = Resolve-UserPresence -IdleSeconds 900 -NotificationState 2 -ForegroundOurs $true
+Assert (-not $rp.Present) 'QUNS_BUSY with our own window in front is our window, not a person'
+$rp = Resolve-UserPresence -IdleSeconds 900 -NotificationState 3 -ForegroundOurs $true
+Assert ($rp.Present -and $rp.Reason -match 'Direct3D') 'an exclusive Direct3D game reads present even when our window is in front'
+$rp = Resolve-UserPresence -IdleSeconds 900 -NotificationState 4
+Assert ($rp.Present) 'presentation mode reads present'
+$rp = Resolve-UserPresence -IdleSeconds 900 -NotificationState 5
+Assert (-not $rp.Present) 'an ordinary accepts-notifications shell state on an idle box reads absent'
+
+# The live probe answers on this box without being forced, with a reason.
+$live = Get-UserPresence
+Write-Host ("  live presence: present={0} - {1}" -f $live.Present, $live.Reason)
+Assert (($live.Present -is [bool]) -and $live.Reason -and -not $live.Forced) 'the live probe answers with a reason and is not forced'
+
+$presProbe = Join-Path $env:TEMP ("ghoztty-presence-probe-$PID.ps1")
+$presOut = Join-Path $env:TEMP ("ghoztty-presence-probe-$PID.log")
+Set-Content -LiteralPath $presProbe -Encoding ASCII -Value @(
+    ". (Join-Path '$PSScriptRoot' 'lib\DesktopCapability.ps1')",
+    'Assert-TestDesktopCapability -Name chrome-pixels -Interactive',
+    "'REACHED THE END'"
+)
+$presResults = @{}
+foreach ($mode in 'present', 'absent') {
+    # Flat, not try/finally, for the same reason as the capability probe above.
+    $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = $mode
+    $pp = Start-Process -FilePath 'powershell.exe' -PassThru -NoNewWindow -Wait `
+        -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $presProbe) `
+        -RedirectStandardOutput $presOut
+    Remove-Item Env:GHOZTTY_TEST_FORCE_USER_PRESENCE -ErrorAction SilentlyContinue
+    $t = ''
+    if (Test-Path -LiteralPath $presOut) { $t = (Get-Content -LiteralPath $presOut -Raw) }
+    if ($null -eq $t) { $t = '' }
+    Write-Host "  forced-$mode probe: exit $($pp.ExitCode) text=$($t.Trim())"
+    $presResults[$mode] = @{ Exit = $pp.ExitCode; Text = $t }
+}
+Assert ($presResults['present'].Text -match 'SKIP ALL: user-absent is not available here - somebody is using this box') `
+    'with a person present, an -Interactive script prints SKIP ALL naming user-absent and the reason'
+Assert ($presResults['present'].Exit -eq 0) "and exits 0 - the user being there is not a failure (got $($presResults['present'].Exit))"
+Assert ($presResults['present'].Text -notmatch 'REACHED THE END') 'and stops before the body, so nothing is started on the input desktop'
+Assert (($presResults['absent'].Exit -eq 0) -and ($presResults['absent'].Text -match 'REACHED THE END') -and ($presResults['absent'].Text -notmatch 'SKIP ALL')) `
+    'NEGATIVE CONTROL: with nobody present the same script runs its body - the gate is not a blanket skip'
+Remove-Item -LiteralPath $presProbe, $presOut -Force -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------------
 # C. the capture CONTENT FLOOR (T1128).

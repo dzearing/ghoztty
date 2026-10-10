@@ -3952,6 +3952,9 @@ $GuardTable = @(
             # scripts skip rather than fail. Section Z of the harness is the only
             # thing that drives its skip path.
             'test\win32\lib\DesktopCapability.ps1',
+            # T1794: the user-presence gate `-Interactive` now asks first.
+            # Section B2 drives every signal and both forced directions.
+            'test\win32\lib\UserPresence.ps1',
             'test\win32\test-desktop-harness.ps1'
         )
     },
