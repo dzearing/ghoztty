@@ -413,3 +413,12 @@ as the digest that showed them.
 - Peek through the window (hold a chord to fade the window almost clear)
 - "Did you mean +split?" (closest-match suggestion for a mistyped CLI verb or flag)
 - Restore big scrollbacks without the wait (last screen first, older history filled in behind)
+
+## 2026-10-10
+
+- Stay out of the way while a game is fullscreen (new angle on "a quiet hour": switches itself on while a fullscreen app owns the screen; holds toasts, flashes and new windows, says what it held)
+- Take me to what just opened (a chord to the newest background-opened window/pane, soft tab mark until seen)
+- A note on a session saying why you kept it (one line shown on the chooser card and tab tooltip)
+- Copy just Claude's answer (one click copies a Claude Code reply block without margins, prompt or status line)
+- New windows open on the monitor you are using (script-opened windows land where you are working)
+- Stop drawing a window nobody can see (no redraw while fully covered or on another virtual desktop)
