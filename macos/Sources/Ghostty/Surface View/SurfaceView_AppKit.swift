@@ -86,6 +86,13 @@ extension Ghostty {
         // used by overlays such as the split drag handle reveal region.
         @Published private(set) var mouseLocationInSurface: CGPoint?
 
+        // Whether the pointer is over this pane's sticky banner. The terminal
+        // is inset BELOW the banner, so a pointer on the banner has left this
+        // view (`mouseLocationInSurface` is nil) while it is still at the very
+        // top of the pane — exactly where the grab handle sits. Set by the
+        // banner's own hover tracking (`SurfaceView`).
+        @Published var pointerOverBanner: Bool = false
+
         // Whether the cursor is currently visible (not hidden by typing, etc.)
         @Published private(set) var cursorVisible: Bool = true
 

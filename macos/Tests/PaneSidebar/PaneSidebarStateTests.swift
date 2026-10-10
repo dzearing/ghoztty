@@ -176,3 +176,39 @@ struct PaneSidebarShimmerTests {
         #expect(bandCenter(0) >= width + width / 2 - 0.0001)
     }
 }
+
+/// The grab handle's reveal rule. The pane's top band is where you reach for
+/// the handle — and with a banner, that band IS the banner, under which the
+/// terminal can't see the pointer.
+struct SurfaceGrabHandleRevealTests {
+    private let bounds = CGRect(x: 0, y: 0, width: 600, height: 400)
+
+    private func reveals(
+        cursorVisible: Bool = true,
+        hovering: Bool = false,
+        overBanner: Bool = false,
+        at location: CGPoint?
+    ) -> Bool {
+        Ghostty.SurfaceGrabHandle.revealsHandle(
+            cursorVisible: cursorVisible, isHovering: hovering, isDragging: false,
+            pointerOverBanner: overBanner, mouseLocation: location, surfaceBounds: bounds)
+    }
+
+    @Test func theTopBandOfTheTerminalReveals() {
+        #expect(reveals(at: CGPoint(x: 300, y: 390)))   // non-flipped: top is maxY
+        #expect(!reveals(at: CGPoint(x: 300, y: 100)))
+    }
+
+    @Test func aPointerOnTheBannerReveals() {
+        // Over the banner the terminal reports no location at all — the bug.
+        #expect(reveals(overBanner: true, at: nil))
+    }
+
+    @Test func aPointerNowhereHides() {
+        #expect(!reveals(at: nil))
+    }
+
+    @Test func aHiddenCursorAlwaysHides() {
+        #expect(!reveals(cursorVisible: false, overBanner: true, at: nil))
+    }
+}

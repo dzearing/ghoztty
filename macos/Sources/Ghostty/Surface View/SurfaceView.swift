@@ -201,6 +201,14 @@ extension Ghostty {
                                 background: paneBackgroundColor,
                                 paneWidth: geo.size.width,
                                 linkSurface: surfaceView)
+                            #if canImport(AppKit)
+                                // The terminal is inset below the banner, so
+                                // it can't see a pointer here; the grab
+                                // handle's reveal still has to. Cleared when
+                                // the banner goes away under the pointer.
+                                .onHover { surfaceView.pointerOverBanner = $0 }
+                                .onDisappear { surfaceView.pointerOverBanner = false }
+                            #endif
                                 .onPreferenceChange(BannerTargetHeightKey.self) { target in
                                     // The target comes from a hidden
                                     // animation-free copy of the banner, so it

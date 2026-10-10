@@ -34,15 +34,41 @@ extension Ghostty {
         }
 
         private var ellipsisVisible: Bool {
+            Self.revealsHandle(
+                cursorVisible: surfaceView.cursorVisible,
+                isHovering: isHovering,
+                isDragging: isDragging,
+                pointerOverBanner: surfaceView.pointerOverBanner,
+                mouseLocation: surfaceView.mouseLocationInSurface,
+                surfaceBounds: surfaceView.bounds)
+        }
+
+        /// Whether the handle is revealed. Pure, so the rule is testable.
+        ///
+        /// The reveal band is the top of the PANE. With a banner, the top of
+        /// the pane is the banner — and the terminal is inset below it, so a
+        /// pointer there is outside the surface and reports no location. The
+        /// banner reports it instead, and counts as in the band: otherwise
+        /// the handle (drawn over the banner) vanished exactly where you
+        /// reach for it.
+        static func revealsHandle(
+            cursorVisible: Bool,
+            isHovering: Bool,
+            isDragging: Bool,
+            pointerOverBanner: Bool,
+            mouseLocation: CGPoint?,
+            surfaceBounds: CGRect
+        ) -> Bool {
             // If the cursor isn't visible, never show the handle
-            guard surfaceView.cursorVisible else { return false }
+            guard cursorVisible else { return false }
             // If we're hovering or actively dragging, always visible
             if isHovering || isDragging { return true }
+            if pointerOverBanner { return true }
 
             // Require our mouse location to be within the top area of the
             // surface.
-            guard let mouseLocation = surfaceView.mouseLocationInSurface else { return false }
-            return Self.isInHoverRegion(mouseLocation, in: surfaceView.bounds)
+            guard let mouseLocation else { return false }
+            return isInHoverRegion(mouseLocation, in: surfaceBounds)
         }
 
         var body: some View {
