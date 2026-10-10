@@ -490,7 +490,14 @@ called), so reaching for glass is a deliberate act that starts here.
 
 What this does NOT rule out: `background-opacity < 1`, where the user has
 asked for a translucent window and the terminal surface renders its own alpha.
-That path is `background-blur` today and is unaffected.
+That path is `background-blur`, and it is the ONE place the window sets
+`DWMWA_SYSTEMBACKDROP_TYPE` (T1788): only when the user turns the blur on, and
+always to **3 (Acrylic)**, never 2 (Mica). Acrylic blurs every window behind,
+which is what Mac's blur shows; Mica samples only the wallpaper, so a window
+behind the terminal would vanish instead of blurring (measured in T1016).
+Below 22H2 the attribute is refused and the accent blur-behind carries the blur.
+**Known gap:** Mac's `background-blur = N` sets a radius; acrylic's radius and
+tint are fixed by Windows, so every enabled value looks the same here.
 
 ---
 

@@ -232,6 +232,7 @@
 # @input-desktop-exception: test-desktop-spike.ps1 -- (T207) the spike that measured what does and does not work off the input desktop; it has to reach both.
 # @input-desktop-exception: notification-click-real.ps1 -- (T572) the subject IS a real click on a shell-drawn toast: balloons render on the input desktop and nowhere else, and a posted WM_APP_TRAY cannot validate delivery.
 # @input-desktop-exception: translucent-window.ps1 -- (T1787) the subject IS the DWM composite of a per-pixel-alpha window over a backdrop; DWM composes only the input desktop, and a PrintWindow capture never sees what shows through.
+# @input-desktop-exception: background-blur.ps1 -- (T1788) the subject IS DWM blurring what shows through a translucent window; DWM composes only the input desktop, so a capture anywhere else sees neither the backdrop nor the blur.
 # @input-desktop-exception: rdp-session.ps1 -- (T1253/T1316) its subject is the desktop being shipped over the wire, and arm G reads the COMPOSITE of a viewer surface with the dim overlay blended onto it; DWM composes only the input desktop.
 #
 # `lib\` IS SWEPT TOO as of T780, and a HELPER is not declared here - it states
@@ -263,6 +264,7 @@
 # @user-desktop-launch: notification-click-real.ps1 -- (T572) already interactive-by-design above: the toast the shell draws for our balloon only exists on the input desktop, so the app that raises it has to be there too.
 # @user-desktop-launch: profile-latency.ps1 -- (T53b) already interactive-by-design above: injection timing is the measurement, and it can only be taken where input is injected.
 # @user-desktop-launch: translucent-window.ps1 -- (T1787) already interactive-by-design above: its oracle is DWM's composite of the app over a backdrop, so the app has to be on the input desktop too.
+# @user-desktop-launch: background-blur.ps1 -- (T1788) already interactive-by-design above: its oracle is DWM's blurred composite of the app over a checker, so the app has to be on the input desktop too.
 # @user-desktop-launch: go-loop-guard.ps1 -- (T1193) the ONE bare launch is the fallback taken when New-TestDesktop throws - a desktop we cannot create must not cost the whole suite, and the fallback says so loudly before it runs.
 # @user-desktop-launch: go-loop-resume.ps1 -- (T1478) the same fallback, for the same reason: its GUI arms stage a parked loop pane, and a desktop that cannot be created must degrade to the interactive one with a NOTE rather than skip the whole recovery proof.
 #

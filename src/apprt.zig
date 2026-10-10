@@ -74,6 +74,10 @@ test {
     // (T1787), same no-OS-imports deal.
     _ = @import("apprt/win32/chrome_alpha.zig");
 
+    // Pure win32 background-blur mechanism choice (T1788): acrylic backdrop,
+    // accent fallback below 22H2. Same no-OS-imports deal.
+    _ = @import("apprt/win32/blur_backdrop.zig");
+
     // Pure win32 split-tree leaf reference counting (T371): the arithmetic
     // `PaneView` and `Surface` share, including the underflow rule that keeps
     // a pane the tree never accepted from leaking everything underneath. The

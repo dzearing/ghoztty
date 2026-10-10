@@ -34656,3 +34656,20 @@ names the command it did not re-run. RELAUNCH terminates the child it replaces.
 Bound panes keep the plain exit, filed as T1793. Unit tests in session.zig;
 `agent-handoff.ps1 -BreakHolders` now turns C8/C9 red with the notice; floor
 lanes, holder/agent harnesses and the harness floor green.
+## 2026-10-10 — T1788: background-blur uses the Windows 11 acrylic backdrop
+
+`background-blur` now asks DWM for the acrylic system backdrop
+(`DWMWA_SYSTEMBACKDROP_TYPE = 3`), never Mica, and falls back to the accent
+blur-behind where the attribute is refused (below 22H2); the two are never on
+together. The choice is the pure `blur_backdrop.zig` (5 none-lane tests) and a
+`background-blur mechanism=` log line. Off the user's desktop, a window with the
+blur on reads its backdrop back as 3 and logs `acrylic`, with it off reads 0.
+The on-screen harness `background-blur.ps1` was NOT RUN: it draws on the input
+desktop and the user is present (go.md). It is declared an input-desktop
+exception, and its guard row is advisory and known-blocked by T1808, which runs
+it once T1794 can tell the user is away. Design system §3.4 records acrylic's
+fixed radius against Mac's `background-blur = N`. Floor lanes green.
+Also: `build-fresh-guard.ps1` E1-E7 went red on an untouched tree after the
+13-day pause - its stub was aged a fixed 600 minutes, which is NEWER than every
+source when nothing in `src\` changed for ten hours. It now dates the stub 10
+minutes before the real src high-water mark (ALL PASS 42).

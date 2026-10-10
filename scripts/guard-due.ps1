@@ -2714,6 +2714,24 @@ $GuardTable = @(
             'test\win32\translucent-window.ps1'
         )
     },
+    # background-blur (T1788): the acrylic system backdrop behind a translucent
+    # window. `blur_backdrop` decides acrylic vs the accent fallback and is
+    # unit-tested; whether DWM actually BLURS what shows through is only
+    # visible in its composite, on the input desktop. ADVISORY until a run can
+    # tell the user is away (T1794): this harness drew over a fullscreen game
+    # on 2026-09-27, and go.md forbids input-desktop runs while the user is
+    # present. T1808 runs it once T1794 can tell, and drops `Advisory`.
+    [pscustomobject]@{
+        Name     = 'background-blur'
+        Script   = 'test\win32\background-blur.ps1'
+        Stamp    = 'test\win32\background-blur.stamp.json'
+        Advisory = $true
+        KnownBlockedBy = 'T1808'
+        Covers   = @(
+            'src\apprt\win32\blur_backdrop.zig',
+            'test\win32\background-blur.ps1'
+        )
+    },
     # The hovered-frame capture is the ONLY way any script can photograph a
     # hover fill off the background desktop (T282), and it is a seam nothing
     # else exercises: four scripts consume it, none of them would fail

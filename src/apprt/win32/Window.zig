@@ -136,6 +136,7 @@ const hero_math = @import("hero_math.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
 const dim_math = @import("dim_math.zig");
 const chrome_alpha = @import("chrome_alpha.zig");
+const blur_backdrop = @import("blur_backdrop.zig");
 const split_geometry = @import("split_geometry.zig");
 const rearrange_header = @import("rearrange_header.zig");
 const pane_drop = @import("pane_drop.zig");
@@ -1125,15 +1126,35 @@ fn paintAlphaCorrect(
     _ = w32.AlphaBlend(hdc, box.left, box.top, w, h, mem_dc, box.left, box.top, w, h, .{});
 }
 
-/// Called from App.config_change so the title bar tracks live config
-/// reloads (background color in particular).
-/// Enable/disable the DWM accent blur behind the window (background-blur).
+/// Blur what is behind the window (`background-blur`), T1788.
 ///
-/// Measured in T1016 on the old whole-window-alpha window: it blurred nothing,
-/// only lightened the view. On a per-pixel-alpha window (T1787) the accent
-/// blur does blur what is behind; moving it to the documented Win11 acrylic
-/// backdrop is T1788.
+/// The documented Windows 11 acrylic backdrop first (`blur_backdrop` says why
+/// acrylic and not Mica); where the attribute does not exist (below 22H2) DWM
+/// refuses it and the accent blur-behind carries the blur instead. Either one
+/// shows only where the window is translucent - the per-pixel alpha
+/// `setTranslucent` switches on - which is also where Mac's blur shows.
+///
+/// Mac takes a radius (`background-blur = 20`); acrylic's is fixed, so any
+/// enabled value gets the same blur here. Recorded in the design system.
 fn applyBackgroundBlur(hwnd: w32.HWND, enabled: bool) void {
+    const want: u32 = @intFromEnum(blur_backdrop.requested(enabled));
+    const hr = w32.DwmSetWindowAttribute(
+        hwnd,
+        w32.DWMWA_SYSTEMBACKDROP_TYPE,
+        @ptrCast(&want),
+        @sizeOf(u32),
+    );
+    const mechanism = blur_backdrop.resolve(enabled, hr);
+    setAccentBlur(hwnd, mechanism.accentOn());
+    log.info("background-blur mechanism={s} backdrop_hr=0x{x}", .{
+        @tagName(mechanism),
+        @as(u32, @bitCast(hr)),
+    });
+}
+
+/// The accent blur-behind (undocumented `SetWindowCompositionAttribute`): the
+/// fallback for a Windows without the system backdrop attribute.
+fn setAccentBlur(hwnd: w32.HWND, enabled: bool) void {
     var policy: w32.ACCENT_POLICY = .{
         .AccentState = if (enabled) w32.ACCENT_ENABLE_BLURBEHIND else w32.ACCENT_DISABLED,
         .AccentFlags = 0,
@@ -1186,6 +1207,8 @@ pub fn logReloadUpdateRegion(self: *Window) void {
     );
 }
 
+/// Called from App.config_change so the title bar and the blur track live
+/// config reloads (background color in particular).
 pub fn onConfigChange(self: *Window) void {
     if (self.hwnd) |hwnd| {
         applyChromeTheme(hwnd, self.app.config.@"window-theme", self.app.config.background);

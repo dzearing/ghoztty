@@ -208,7 +208,16 @@ Set-Content -LiteralPath $fxExe -Encoding ascii -Value @(
     'echo Build Config',
     'echo   - build mode    : .Debug'
 )
-Set-Age $fxExe 600
+# "Old on purpose" means older than the real src\ high-water mark, not older
+# than a fixed age: with no src edit in the last ten hours, a stub aged 600
+# minutes is NEWER than every source and reads as fresh (2026-10-10, after a
+# 13-day pause - E1/E2/E3/E5/E6/E7 went red on a tree nobody had touched).
+function Set-StaleAgainstSrc($path) {
+    Reset-FreshCache
+    $hw = Get-GhozttySourceHighWater -Repo $Repo
+    [System.IO.File]::SetLastWriteTimeUtc($path, $hw.Time.AddMinutes(-10))
+}
+Set-StaleAgainstSrc $fxExe
 Reset-FreshCache
 
 $msgWire = Get-Throw { Assert-GhozttyIsolatedBuild -Exe $fxExe }
@@ -227,7 +236,7 @@ Assert "E4 the same exe, freshly built, passes the pre-flight" `
 # before it gets there. Played end to end in a child process - a synthetic
 # harness with the same shape as the real ones (pre-flight, then work, then
 # stamp) pointed at the stale stub.
-Set-Age $fxExe 600
+Set-StaleAgainstSrc $fxExe
 $marker = Join-Path $tmp 'stamped.txt'
 $fakeHarness = Join-Path $tmp 'fake-harness.ps1'
 Set-Content -LiteralPath $fakeHarness -Encoding ascii -Value @(

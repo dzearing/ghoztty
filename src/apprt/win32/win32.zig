@@ -1908,6 +1908,9 @@ pub const DWMWA_COLOR_DEFAULT: u32 = 0xFFFFFFFF;
 pub const DWMWA_TEXT_COLOR: u32 = 36;
 /// Border color (Windows 11+). COLORREF 0x00BBGGRR.
 pub const DWMWA_BORDER_COLOR: u32 = 34;
+/// System backdrop material (Windows 11 22H2+), a `DWM_SYSTEMBACKDROP_TYPE`
+/// (`blur_backdrop.Backdrop`). Carries `background-blur` (T1788).
+pub const DWMWA_SYSTEMBACKDROP_TYPE: u32 = 38;
 
 // `MARGINS` + `DwmExtendFrameIntoClientArea` used to be declared here and were
 // never called. They are the entry point to a DWM system backdrop (Mica /
