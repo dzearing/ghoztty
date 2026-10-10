@@ -1,16 +1,16 @@
 {
     "guard":  "holder-volume",
     "script":  "test/win32/holder-volume.ps1",
-    "generated":  "2026-09-27T07:22:39-07:00",
-    "commit":  "ceda67135",
+    "generated":  "2026-10-10T16:06:22-07:00",
+    "commit":  "9b5cb3ead",
     "uncommitted":  [
-                        "src/remote/agent/pty_holder_child.zig",
+                        "src/remote/agent/ring_snapshot.zig",
                         "src/remote/agent/session.zig"
                     ],
     "files":  {
                   "src/remote/agent/pty_holder_child.zig":  "198095818b07ea25e60da88546b33affca04236e90a7bcebeca013845c90387f",
-                  "src/remote/agent/ring_snapshot.zig":  "4c535d114876d61f80512102d5e4c6789bc707804eb71b4cafc111f319f46c68",
-                  "src/remote/agent/session.zig":  "fa02d0e5d8d07c1e09de1a190a92d3f681c9e93191d21b6a9003d723e8765b87",
+                  "src/remote/agent/ring_snapshot.zig":  "43d927ca2996eeecafac57a50952fc4de4c0fb5b07bf1368d10eecd4a05f4234",
+                  "src/remote/agent/session.zig":  "6c90311f464d43f89500b615e2e9f439a2a74670f4352581ab0a4945f2173e0f",
                   "test/win32/holder-volume.ps1":  "9eff753b32372341d23edc406af363757896fabdf4a8a8bb37b8f16ef6f1ea63",
                   "test/win32/lib/RingSnapshot.ps1":  "97aaf7f3047095d13b76d6d5ef12610b1eaa449fdd122f6e5d68ae499baa7778"
               }

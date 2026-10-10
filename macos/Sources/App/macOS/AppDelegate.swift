@@ -56,6 +56,7 @@ class AppDelegate: NSObject,
     @IBOutlet private var menuBringAllToFront: NSMenuItem?
     @IBOutlet private var menuZoomSplit: NSMenuItem?
     @IBOutlet private var menuHeroMode: NSMenuItem?
+    @IBOutlet private var menuRearrangeMode: NSMenuItem?
     @IBOutlet private var menuPreviousSplit: NSMenuItem?
     @IBOutlet private var menuNextSplit: NSMenuItem?
     @IBOutlet private var menuSelectSplitAbove: NSMenuItem?
@@ -339,6 +340,28 @@ class AppDelegate: NSObject,
             // load, so this cannot race it into a false "signed out" purge.
             Task { @MainActor in
                 await MachineRegistry.shared.refreshFromRelay(quiet: true)
+            }
+
+            // A sign-out that couldn't reach the relay left THIS machine still
+            // enrolled and reachable by every other client on the account. That
+            // is never allowed to be silent: retry it now, and again on every
+            // network-came-back transition, until the relay confirms it (see
+            // `MachineEnrollmentRevoking`). A no-op when nothing is pending.
+            LocalMachineEnrollment.shared.startPendingRevocationRetries()
+
+            // The mirror image: a sign-in whose re-enrollment of this machine
+            // failed transiently (relay 5xx, device quota, offline right then)
+            // left the machine suspended and OUT of the account. Nobody would
+            // think to fix that by signing out and in again, so retry it at
+            // every launch while signed in. A no-op — two defaults reads, no
+            // network — when there is nothing suspended.
+            Task { @MainActor in
+                await RelayAccount.shared.waitForInitialLoad()
+                guard let email = RelayAccount.shared.email,
+                      let token = await RelayAccount.resolveToken()
+                else { return }
+                await LocalMachineEnrollment.shared.restoreEnrollment(
+                    accountEmail: email, sessionToken: token)
             }
 
             // Test seam: exercise the local-agent find-or-spawn path without
@@ -667,12 +690,17 @@ class AppDelegate: NSObject,
         var isDirectory = ObjCBool(true)
         guard FileManager.default.fileExists(atPath: filename, isDirectory: &isDirectory) else { return false }
 
-        // Markdown files open as a viewer pane in a new window (File → Open,
-        // dock drops, `open -a`), not as an executed terminal command. Other
-        // extensions keep the terminal behavior below.
+        // Markdown and image files open as a viewer pane in a new window (File
+        // → Open, dock drops, `open -a`), not as an executed terminal command.
+        // Other extensions keep the terminal behavior below.
+        //
+        // Only handed-to-us files: `CFBundleDocumentTypes` still declares only
+        // markdown, deliberately. Claiming `public.image` would put Ghoztty in
+        // the Open With menu for every screenshot on the machine, which is a
+        // system-wide decision about what this app IS, not a consequence of
+        // being able to display one.
         if !isDirectory.boolValue,
-           ["md", "markdown", "mdown", "mkd", "mdwn"]
-               .contains((filename as NSString).pathExtension.lowercased()) {
+           ViewerView.opensAsViewerWindow(path: filename) {
             // The file's own directory is also its origin: if the user later
             // navigates this pane to a dev-server URL, feedback still has a
             // directory to fall back to.
@@ -1446,6 +1474,7 @@ class AppDelegate: NSObject,
         workingDirectory: String? = nil,
         shell: String? = nil,
         command: String? = nil,
+        activate: Bool = true,
         onOpen: ((TerminalController) -> Void)? = nil
     ) -> String? {
         // Resolve a friendly NAME from the registry so an IPC-opened window's
@@ -1466,6 +1495,7 @@ class AppDelegate: NSObject,
             workingDirectory: workingDirectory,
             shell: shell,
             command: command,
+            activate: activate,
             onOpen: onOpen)
     }
 
@@ -1487,6 +1517,7 @@ class AppDelegate: NSObject,
         workingDirectory: String? = nil,
         shell: String? = nil,
         command: String? = nil,
+        activate: Bool = true,
         onOpen: ((TerminalController) -> Void)? = nil
     ) -> String? {
         // Defense in depth for the signed-out case: every caller resolves the
@@ -1520,7 +1551,8 @@ class AppDelegate: NSObject,
             ipcName: ipcName,
             workingDirectory: workingDirectory,
             shell: shell,
-            command: command)
+            command: command,
+            activate: activate)
         onOpen?(controller)
         return nil
     }
@@ -1567,7 +1599,8 @@ class AppDelegate: NSObject,
         workingDirectory: String? = nil,
         shell: String? = nil,
         command: String? = nil,
-        replacingManifestEntry: UUID? = nil
+        replacingManifestEntry: UUID? = nil,
+        activate: Bool = true
     ) -> TerminalController {
         // The relay path has no TCP port. The DISPLAY NAME wins: prefer the
         // account's friendly name for the device (`fallbackName` — the chooser
@@ -1615,7 +1648,7 @@ class AppDelegate: NSObject,
                 command: command)
         }
 
-        let controller = TerminalController.newWindow(ghostty, withBaseConfig: cfg)
+        let controller = TerminalController.newWindow(ghostty, withBaseConfig: cfg, activate: activate)
         controller.remoteMachine = machine
         controller.remoteConnection = connection
 
@@ -1880,6 +1913,7 @@ class AppDelegate: NSObject,
         command: String? = nil,
         attachSessionID: String? = nil,
         windowTitle: String? = nil,
+        activate: Bool = true,
         onOpen: ((TerminalController) -> Void)? = nil
     ) -> String? {
         // Dial the agent over TCP. This blocks through the handshake and returns
@@ -1922,7 +1956,7 @@ class AppDelegate: NSObject,
                 command: command)
         }
 
-        let controller = TerminalController.newWindow(ghostty, withBaseConfig: cfg)
+        let controller = TerminalController.newWindow(ghostty, withBaseConfig: cfg, activate: activate)
         controller.remoteMachine = machine
         controller.remoteConnection = connection
         if let windowTitle, !windowTitle.isEmpty {
@@ -2156,6 +2190,7 @@ extension AppDelegate {
 
         syncMenuShortcut(config, action: "toggle_split_zoom", menuItem: self.menuZoomSplit)
         syncMenuShortcut(config, action: "toggle_hero_mode", menuItem: self.menuHeroMode)
+        syncMenuShortcut(config, action: "toggle_rearrange_mode", menuItem: self.menuRearrangeMode)
         syncMenuShortcut(config, action: "goto_split:previous", menuItem: self.menuPreviousSplit)
         syncMenuShortcut(config, action: "goto_split:next", menuItem: self.menuNextSplit)
         syncMenuShortcut(config, action: "goto_split:up", menuItem: self.menuSelectSplitAbove)
@@ -2199,6 +2234,14 @@ extension AppDelegate {
 
     @MainActor func performGhosttyBindingMenuKeyEquivalent(with event: NSEvent) -> Bool {
         menuShortcutManager.performGhosttyBindingMenuKeyEquivalent(with: event)
+    }
+
+    @MainActor func hasGhosttyBindingMenuItem(forAction action: String) -> Bool {
+        menuShortcutManager.hasMenuItem(forAction: action)
+    }
+
+    @MainActor func performGhosttyBindingMenuItem(forAction action: String) -> Bool {
+        menuShortcutManager.performGhosttyBindingMenuItem(forAction: action)
     }
 }
 

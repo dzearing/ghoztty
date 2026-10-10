@@ -61,6 +61,13 @@ pub const default_high_water: usize = default_capacity - 64 * 1024;
 /// doesn't thrash pause/resume frames.
 pub const default_low_water: usize = 16 * 1024;
 
+/// Ceiling on a channel's overflow (see `Channel.overflow`). Past it, bytes are
+/// dropped — the pre-overflow behavior, now reserved for a peer that ignores
+/// `FLOW{pause}`. Far above anything a well-behaved agent has in flight when it
+/// sees a pause: its largest single frame is a reboot/re-attach replay, bounded
+/// by its ring (`persistent-scrollback-bytes`, 16 MiB at most).
+pub const max_overflow_bytes: usize = 32 * 1024 * 1024;
+
 // -----------------------------------------------------------------------------
 // Waker — abstracts the pane's wakeup mechanism
 // -----------------------------------------------------------------------------
@@ -235,6 +242,33 @@ pub const Channel = struct {
     high_water: usize,
     low_water: usize,
 
+    /// Bytes that arrived when the ring had no room for them, in arrival order,
+    /// waiting for the consumer. Without it the remainder of any frame larger than
+    /// the ring's free space was DROPPED: `FLOW{pause}` only stops what the agent
+    /// sends NEXT, not what is already on the wire, and an agent's single frames
+    /// are routinely bigger than the whole 256 KiB ring — a reboot replay is up to
+    /// 2 MB in ONE frame. The pane got the first 256 KiB of its restored history
+    /// and lost the rest, including the "session was lost" notice at its tail,
+    /// and the fresh shell's prompt behind it: the restored pane that looked dead.
+    ///
+    /// Ordering rule: once anything is in `overflow`, every later push appends
+    /// here too (never to the ring), and the consumer only reads `overflow` after
+    /// the ring is empty — so ring bytes always precede overflow bytes.
+    /// `overflow_mutex` serializes the producer's push against the consumer's
+    /// overflow reads; the ring itself stays lock-free SPSC.
+    overflow: std.ArrayListUnmanaged(u8) = .empty,
+    /// Consumed prefix of `overflow` (compacted when it empties), so a pop does
+    /// not shift the whole buffer.
+    overflow_head: usize = 0,
+    /// Unread overflow bytes, readable without the lock (water marks, the
+    /// consumer's empty check).
+    overflow_len: Atomic(usize) = .init(0),
+    overflow_mutex: std.Thread.Mutex = .{},
+    /// Bytes dropped because `max_overflow_bytes` was exceeded (a peer ignoring
+    /// FLOW). Diagnostics only.
+    dropped: Atomic(usize) = .init(0),
+    alloc: Allocator,
+
     /// Flow-pause state. Written by the producer (false→true at high-water) and
     /// the consumer (true→false at low-water), so it is atomic and transitions
     /// are claimed via CAS to make each `FLOW` edge fire exactly once.
@@ -321,22 +355,52 @@ pub const Channel = struct {
             .waker = opts.waker,
             .high_water = high,
             .low_water = low,
+            .alloc = alloc,
         };
     }
 
     pub fn deinit(self: *Channel, alloc: Allocator) void {
         self.ring.deinit(alloc);
+        self.overflow.deinit(self.alloc);
         self.* = undefined;
     }
 
+    /// Everything waiting for the consumer: the ring plus the overflow.
+    pub fn pendingLen(self: *const Channel) usize {
+        return self.ring.len() + self.overflow_len.load(.acquire);
+    }
+
     /// Producer entry point. Pushes (non-blocking), wakes the consumer if any
-    /// bytes landed, and reports whether to send `FLOW{pause}`.
+    /// bytes landed, and reports whether to send `FLOW{pause}`. Bytes that do not
+    /// fit in the ring go to `overflow` instead of being dropped.
     pub fn push(self: *Channel, bytes: []const u8) PushResult {
-        const written = self.ring.push(bytes);
+        var written: usize = 0;
+        {
+            self.overflow_mutex.lock();
+            defer self.overflow_mutex.unlock();
+            if (self.overflow_len.load(.monotonic) == 0) written = self.ring.push(bytes);
+            const rest = bytes[written..];
+            if (rest.len > 0) {
+                const unread = self.overflow.items.len - self.overflow_head;
+                const room = max_overflow_bytes -| unread;
+                const take = @min(room, rest.len);
+                self.overflow.appendSlice(self.alloc, rest[0..take]) catch {
+                    _ = self.dropped.fetchAdd(rest.len, .monotonic);
+                    return self.finishPush(written);
+                };
+                if (take < rest.len) _ = self.dropped.fetchAdd(rest.len - take, .monotonic);
+                written += take;
+                self.overflow_len.store(self.overflow.items.len - self.overflow_head, .release);
+            }
+        }
+        return self.finishPush(written);
+    }
+
+    fn finishPush(self: *Channel, written: usize) PushResult {
         if (written > 0) self.waker.wake();
 
         var send_pause = false;
-        if (self.ring.len() >= self.high_water) {
+        if (self.pendingLen() >= self.high_water) {
             // Claim the flowing→paused edge: CAS succeeds (returns null) for the
             // single producer that first crosses high-water.
             if (self.paused.cmpxchgStrong(false, true, .acq_rel, .monotonic) == null) {
@@ -349,9 +413,29 @@ pub const Channel = struct {
     /// Consumer entry point. Pops into `dst` and reports whether to send
     /// `FLOW{resume}` now that the ring has drained.
     pub fn pop(self: *Channel, dst: []u8) PopResult {
-        const read = self.ring.pop(dst);
+        var read = self.ring.pop(dst);
+        // Ring empty: anything still pending is in the overflow, and it is all
+        // NEWER than what the ring held (see `overflow`).
+        if (read == 0 and self.overflow_len.load(.acquire) > 0) {
+            self.overflow_mutex.lock();
+            defer self.overflow_mutex.unlock();
+            const unread = self.overflow.items[self.overflow_head..];
+            read = @min(unread.len, dst.len);
+            @memcpy(dst[0..read], unread[0..read]);
+            self.overflow_head += read;
+            if (self.overflow_head == self.overflow.items.len) {
+                self.overflow.clearRetainingCapacity();
+                self.overflow_head = 0;
+                // Give a huge one-off burst's memory back rather than holding it
+                // for the pane's lifetime.
+                if (self.overflow.capacity > 4 * self.ring.capacity()) {
+                    self.overflow.clearAndFree(self.alloc);
+                }
+            }
+            self.overflow_len.store(self.overflow.items.len - self.overflow_head, .release);
+        }
         var send_resume = false;
-        if (read > 0 and self.ring.len() <= self.low_water) {
+        if (read > 0 and self.pendingLen() <= self.low_water) {
             if (self.paused.cmpxchgStrong(true, false, .acq_rel, .monotonic) == null) {
                 send_resume = true;
             }
@@ -470,11 +554,12 @@ pub const ChannelTable = struct {
     pending: std.AutoHashMapUnmanaged(u128, std.ArrayListUnmanaged(u8)) = .empty,
     alloc: Allocator,
 
-    /// Per-channel prebuffer cap. The real race window is microseconds (rpc reply →
-    /// `register`), so legitimate replay buffered here is tiny; this only bounds a
-    /// misbehaving/stale channel. Sized at one client ring so a full ring's worth
-    /// of replay is never dropped for lack of buffer.
-    const max_pending_bytes_per_channel: usize = default_capacity;
+    /// Per-channel prebuffer cap. The race window is microseconds (rpc reply →
+    /// `register`), but what lands in it is the agent's replay — a reboot or
+    /// re-attach replay is ONE frame as large as the agent's ring (2 MB by
+    /// default). Sized like the channel overflow so that frame is never cut;
+    /// `max_pending_channels` still bounds a stale/hostile id.
+    const max_pending_bytes_per_channel: usize = max_overflow_bytes;
     /// Cap on distinct un-claimed channels buffered at once (hostile-input bound):
     /// once this many are pending, further unknown channels are dropped (not
     /// buffered) until one is claimed or the connection tears down.
@@ -503,9 +588,9 @@ pub const ChannelTable = struct {
         try self.map.put(self.alloc, ch.id, ch);
         if (self.pending.fetchRemove(ch.id)) |kv| {
             var buf = kv.value;
-            // Flush the raced-in prefix. We ignore the pause edge: the buffered
-            // amount is small and any real backpressure re-fires on the next live
-            // push. `ch.push` truncates to ring capacity if somehow oversized.
+            // Flush the raced-in prefix (whatever does not fit in the ring goes
+            // to the channel's overflow). We ignore the pause edge: any real
+            // backpressure re-fires on the next live push.
             _ = ch.push(buf.items);
             buf.deinit(self.alloc);
         }
@@ -714,6 +799,73 @@ test "Channel: flow pause/resume edges fire exactly once each" {
     }
     try testing.expectEqual(@as(usize, 1), resumes);
     try testing.expect(!ch.isPaused());
+}
+
+/// Drain everything pending on `ch` (ring then overflow) into `out`.
+fn drainAll(ch: *Channel, out: *std.ArrayList(u8)) !void {
+    var dst: [100]u8 = undefined; // deliberately small: many pops, both sources
+    while (true) {
+        const p = ch.pop(&dst);
+        if (p.read == 0) break;
+        try out.appendSlice(testing.allocator, dst[0..p.read]);
+    }
+}
+
+test "Channel: a frame larger than the ring is never cut (overflow)" {
+    // The reboot bug: the agent sends the whole restored history as ONE frame
+    // (up to 2 MB) into a 256 KiB ring. Everything past the ring's free space —
+    // the tail of the history, the "session was lost" notice, the new shell's
+    // prompt — used to be dropped on the floor.
+    const alloc = testing.allocator;
+    var ch = try Channel.init(alloc, 1, .{ .capacity = 64 });
+    defer ch.deinit(alloc);
+
+    var big: [1000]u8 = undefined;
+    for (&big, 0..) |*b, i| b.* = @intCast(i % 251);
+    const r = ch.push(&big);
+    try testing.expectEqual(big.len, r.written);
+    try testing.expect(r.send_pause); // still asks the agent to stop sending
+    try testing.expectEqual(big.len, ch.pendingLen());
+
+    // Pushes while the overflow is non-empty queue BEHIND it, even when the
+    // ring has drained enough to have room.
+    var dst: [32]u8 = undefined;
+    _ = ch.pop(&dst);
+    _ = ch.push("TAIL");
+
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(alloc);
+    try out.appendSlice(alloc, dst[0..32]);
+    try drainAll(&ch, &out);
+    try testing.expectEqualSlices(u8, &big, out.items[0..big.len]);
+    try testing.expectEqualSlices(u8, "TAIL", out.items[big.len..]);
+    try testing.expectEqual(@as(usize, 0), ch.pendingLen());
+    try testing.expect(!ch.isPaused()); // drained below low-water → resumed
+    try testing.expectEqual(@as(usize, 0), ch.dropped.load(.monotonic));
+
+    // Once fully drained the ring is used directly again.
+    _ = ch.push("again");
+    try testing.expectEqual(@as(usize, 5), ch.ring.len());
+    try testing.expectEqual(@as(usize, 0), ch.overflow_len.load(.monotonic));
+}
+
+test "ChannelTable: a large raced-in replay survives registration intact" {
+    // The same frame arriving BEFORE the channel is registered (the replay race)
+    // must not be cut to one ring's worth either.
+    const alloc = testing.allocator;
+    var table = ChannelTable.init(alloc);
+    defer table.deinit();
+    var big: [5000]u8 = undefined;
+    for (&big, 0..) |*b, i| b.* = @intCast(i % 249);
+    try testing.expect(table.pushTo(0x77, &big) == .buffered);
+
+    var ch = try Channel.init(alloc, 0x77, .{ .capacity = 256 });
+    defer ch.deinit(alloc);
+    try table.register(&ch);
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(alloc);
+    try drainAll(&ch, &out);
+    try testing.expectEqualSlices(u8, &big, out.items);
 }
 
 test "ChannelTable: register / route / deregister; unregistered id is buffered then dropped" {

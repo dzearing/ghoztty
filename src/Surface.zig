@@ -148,6 +148,12 @@ pub const RemoteBackend = struct {
     /// by the same restore pass (T1684), so it OPENs a fresh shell — and says
     /// why (T1687). Forwarded to `termio.Remote.Config`.
     session_restored_elsewhere: bool = false,
+    /// True while the apprt has not yet reported the surface's real size — the
+    /// surface is still at its construction placeholder (800×600 px in the
+    /// embedded apprt, i.e. 49×17 cells), because the view has not been laid out.
+    /// A re-attach waits briefly for the real size rather than announcing the
+    /// placeholder to a LIVE program (see `termio.Remote.awaitRealSize`).
+    size_pending: bool = false,
 };
 
 /// Unique ID used to identify this surface for IPC purposes. It is
@@ -967,6 +973,15 @@ pub fn init(
         try env.put("GHOZTTY_WINDOW_NAME", surface_id_str);
         try env.put("GHOZTTY_PANE_NAME", surface_id_str);
 
+        // Claude Code's fullscreen renderer by default (`claude-code-fullscreen`).
+        // Decided once here for both backends; a remote backend only applies it
+        // to the LOCAL agent (below).
+        const claude_fullscreen = config.@"claude-code-fullscreen" and
+            claudeFullscreenWanted(alloc, &env);
+        if (claude_fullscreen and rt_surface.remoteBackend() == null) {
+            try env.put(claude_fullscreen_env, "1");
+        }
+
         // The working directory we'd hand to either backend.
         const working_directory: ?[]const u8 =
             if (config.@"working-directory") |wd| wd.value() else null;
@@ -1141,6 +1156,12 @@ pub fn init(
                 // OPEN only — never on the `notify` fresh-shell open below,
                 // which exists precisely to NOT re-run the recorded command.
                 const command_argv: ?[]const []const u8 = rb.command_argv;
+                // Claude Code's fullscreen renderer — local agent only: a
+                // cross-machine pane's Claude decides for itself (it turns the
+                // renderer off where it renders poorly, e.g. Windows remotes).
+                if (claude_fullscreen and rb.local_shell_integration) {
+                    try remote_env.append(alloc, .{ .key = claude_fullscreen_env, .value = "1" });
+                }
 
                 // User/apprt env overrides applied LAST (they win over the
                 // integration env above, mirroring exec's `env_override`).
@@ -1168,13 +1189,26 @@ pub fn init(
                 // spawns the child in its own inherited cwd, and the autostart
                 // agent inherits the launcher's. See
                 // `termio.Remote.openWorkingDirectory` for the full rule.
+                //
+                // And for `inherit` (no configured directory) the local default
+                // is THIS process's cwd, handed over explicitly — an exec child
+                // gets it by simply inheriting it, but the agent's own cwd is not
+                // a default at all (launchd parks it in `/`; an autostarted agent
+                // sits wherever its launcher was), so a bare `+new-window` opened
+                // there, recorded nothing, and a reboot brought it back there.
+                const own_cwd: ?[]u8 = if (rb.working_directory == null and
+                    rb.local_shell_integration and working_directory == null)
+                    std.process.getCwdAlloc(alloc) catch null
+                else
+                    null;
+                defer if (own_cwd) |c| alloc.free(c); // `Remote.init` dupes it
                 const io_remote = try termio.Remote.init(alloc, .{
                     .conn = rb.connection,
                     .session_id = rb.session_id,
                     .command = remote_command,
                     .working_directory = termio.Remote.openWorkingDirectory(
                         rb.working_directory,
-                        working_directory,
+                        working_directory orelse own_cwd,
                         rb.local_shell_integration,
                     ),
                     // A bare-shell command IS the shell (T514); an explicit
@@ -1219,6 +1253,7 @@ pub fn init(
                     // T1687: the fresh shell a duplicate-session restore got
                     // instead says so.
                     .session_restored_elsewhere = rb.session_restored_elsewhere,
+                    .size_pending = rb.size_pending,
                 });
                 break :backend .{ .remote = io_remote };
             }
@@ -1585,6 +1620,19 @@ pub fn needsConfirmQuit(self: *Surface) bool {
             break :true !self.io.terminal.cursorIsAtPrompt();
         },
     };
+}
+
+/// True if `confirm-close-surface` permits a close confirmation for this
+/// surface at all. This is the CONFIGURATION alone; `needsConfirmQuit` folds
+/// that setting together with liveness (child exited, cursor at prompt).
+///
+/// The apprt needs the setting BY ITSELF because an idle remote pane still
+/// warrants a prompt: closing it ends a session on another machine, which is
+/// not recoverable the way a local idle shell is. `needsConfirmQuit` would say
+/// false there (cursor at prompt) and the apprt could not tell that apart from
+/// the user having opted out of close confirmation entirely.
+pub fn confirmCloseEnabled(self: *const Surface) bool {
+    return self.config.confirm_close_surface != .false;
 }
 
 /// Mark whether this surface's remote/agent session should be CLOSEd
@@ -2337,6 +2385,9 @@ fn mouseRefreshLinks(
                 const str = try self.io.terminal.screens.active.selectionString(alloc, .{
                     .sel = link.selection,
                     .trim = false,
+                    // A link matched across a TUI hard wrap (see
+                    // linkAtPin) reads back whole only when reflowed.
+                    .reflow = true,
                 });
                 break :link .{
                     .{ .url = str },
@@ -2630,6 +2681,77 @@ pub const Text = struct {
 /// selection state.
 ///
 /// The returned value contains allocated data and must be deinitialized.
+/// The Claude Code variable that selects its fullscreen renderer
+/// (`claude-code-fullscreen`).
+const claude_fullscreen_env = "CLAUDE_CODE_NO_FLICKER";
+
+/// Whether to default this pane's Claude Code to its fullscreen renderer: only
+/// when the user has not already made the choice themselves — the variable is
+/// not already in the pane's environment, and their Claude Code settings do not
+/// set `tui` (what `/tui default|fullscreen` records). Claude gives the variable
+/// precedence over that setting, so setting it blindly would override someone
+/// who deliberately chose the classic renderer.
+fn claudeFullscreenWanted(alloc: Allocator, env: *const std.process.EnvMap) bool {
+    if (env.get(claude_fullscreen_env) != null) return false;
+    return !claudeSettingsChooseRenderer(alloc, env);
+}
+
+/// True when the user's Claude Code settings file sets `tui`. Settings live in
+/// `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`. A missing
+/// or unreadable file means no choice was made.
+fn claudeSettingsChooseRenderer(alloc: Allocator, env: *const std.process.EnvMap) bool {
+    const path = if (env.get("CLAUDE_CONFIG_DIR")) |dir|
+        std.fs.path.join(alloc, &.{ dir, "settings.json" }) catch return false
+    else if (env.get("HOME")) |home|
+        std.fs.path.join(alloc, &.{ home, ".claude", "settings.json" }) catch return false
+    else
+        return false;
+    defer alloc.free(path);
+    const bytes = std.fs.cwd().readFileAlloc(alloc, path, 4 * 1024 * 1024) catch return false;
+    defer alloc.free(bytes);
+    return claudeSettingsSetTui(alloc, bytes);
+}
+
+/// Parse half of `claudeSettingsChooseRenderer`, separate so it is testable.
+fn claudeSettingsSetTui(alloc: Allocator, bytes: []const u8) bool {
+    const parsed = std.json.parseFromSlice(
+        struct { tui: ?[]const u8 = null },
+        alloc,
+        bytes,
+        .{ .ignore_unknown_fields = true },
+    ) catch return false;
+    defer parsed.deinit();
+    return parsed.value.tui != null;
+}
+
+test "claudeFullscreenWanted: an explicit choice — env or /tui — is never overridden" {
+    const alloc = std.testing.allocator;
+    try std.testing.expect(claudeSettingsSetTui(alloc, "{\"tui\":\"default\",\"model\":\"x\"}"));
+    try std.testing.expect(claudeSettingsSetTui(alloc, "{\"tui\":\"fullscreen\"}"));
+    try std.testing.expect(!claudeSettingsSetTui(alloc, "{\"model\":\"x\",\"hooks\":{}}"));
+    try std.testing.expect(!claudeSettingsSetTui(alloc, "not json"));
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir);
+    var env = std.process.EnvMap.init(alloc);
+    defer env.deinit();
+    try env.put("CLAUDE_CONFIG_DIR", dir);
+
+    // No settings file: no choice made → default to fullscreen.
+    try std.testing.expect(claudeFullscreenWanted(alloc, &env));
+    // `/tui default` recorded → respected.
+    try tmp.dir.writeFile(.{ .sub_path = "settings.json", .data = "{\"tui\":\"default\"}" });
+    try std.testing.expect(!claudeFullscreenWanted(alloc, &env));
+    // Settings without `tui` → default to fullscreen again.
+    try tmp.dir.writeFile(.{ .sub_path = "settings.json", .data = "{\"model\":\"opus\"}" });
+    try std.testing.expect(claudeFullscreenWanted(alloc, &env));
+    // The variable already in the environment (even "0") → respected.
+    try env.put(claude_fullscreen_env, "0");
+    try std.testing.expect(!claudeFullscreenWanted(alloc, &env));
+}
+
 /// A WP-D3 session snapshot: a structured VT repaint of the pane's current
 /// screen plus the absolute agent-stream byte offset it reflects. Persisted on
 /// quit and replayed on re-attach for a fast, visually-correct restore.
@@ -2775,14 +2897,18 @@ fn snapshotOffsetLagSeam() u64 {
     return lag;
 }
 
+/// `reflow` undoes TUI hard wraps and margins (see
+/// terminal.formatter.Options.reflow): right for text handed to the user
+/// as the selection, wrong for reading the screen as it is laid out.
 pub fn dumpText(
     self: *Surface,
     alloc: Allocator,
     sel: terminal.Selection,
+    reflow: bool,
 ) !Text {
     self.renderer_state.mutex.lock();
     defer self.renderer_state.mutex.unlock();
-    return try self.dumpTextLocked(alloc, sel);
+    return try self.dumpTextLocked(alloc, sel, reflow);
 }
 
 /// Same as `dumpText` but assumes the renderer state mutex is already
@@ -2791,11 +2917,13 @@ pub fn dumpTextLocked(
     self: *Surface,
     alloc: Allocator,
     sel: terminal.Selection,
+    reflow: bool,
 ) !Text {
     // Read out the text
     const text = try self.io.terminal.screens.active.selectionString(alloc, .{
         .sel = sel,
         .trim = false,
+        .reflow = reflow,
     });
     errdefer alloc.free(text);
 
@@ -2911,7 +3039,9 @@ pub fn hasSelection(self: *const Surface) bool {
     return self.io.terminal.screens.active.selection != null;
 }
 
-/// Returns the selected text. This is allocated.
+/// Returns the selected text exactly as laid out on screen. This is
+/// allocated. It is deliberately NOT reflowed: its caller searches the
+/// screen for it, and the screen holds the hard-wrapped form.
 pub fn selectionString(self: *Surface, alloc: Allocator) !?[:0]const u8 {
     self.renderer_state.mutex.lock();
     defer self.renderer_state.mutex.unlock();
@@ -3096,6 +3226,9 @@ fn copySelectionToClipboards(
     const opts: terminal.formatter.Options = .{
         .emit = .plain, // We'll override this below
         .unwrap = true,
+        // Copied text leaves the terminal, so undo the layout a TUI
+        // imposed on it: its left margin and its own hard wraps.
+        .reflow = true,
         .trim = self.config.clipboard_trim_trailing_spaces,
         .codepoint_map = self.config.clipboard_codepoint_map.map.list,
         .background = self.io.terminal.colors.background.get(),
@@ -3318,6 +3451,12 @@ pub fn sizeCallback(self: *Surface, size: apprt.SurfaceSize) !void {
     // Crash metadata in case we crash in here
     crash.sentry.thread_state = self.crashThreadState();
     defer crash.sentry.thread_state = null;
+
+    // The apprt has laid the view out; from here on the size is real, not the
+    // construction placeholder. Published on the way OUT (after the resize below
+    // has queued the size), so a reader that sees the flag also finds that size
+    // in `pending_resize`.
+    defer self.io.size_reported.store(true, .release);
 
     const new_screen_size: rendererpkg.ScreenSize = .{
         .width = size.width,
@@ -5363,12 +5502,17 @@ fn linkAtPin(
         // Respect semantic prompt boundaries so link/path matching doesn't
         // merge shell prompt content with the text beside it.
         .semantic_prompt_boundary = true,
+        // A URL a TUI broke across rows is still one URL.
+        .hard_wraps = true,
     }) orelse return null;
 
+    // Reflowed, so a URL broken across a TUI hard wrap reads back whole:
+    // the seam joins it with nothing and the re-indentation is dropped.
     var strmap: terminal.StringMap = undefined;
     self.alloc.free(try screen.selectionString(self.alloc, .{
         .sel = line,
         .trim = false,
+        .reflow = true,
         .map = &strmap,
     }));
     defer strmap.deinit(self.alloc);
@@ -5386,6 +5530,10 @@ fn linkAtPin(
             defer match.deinit();
             const sel = match.selection();
             if (!sel.contains(screen, mouse_pin)) continue;
+
+            // A match across a hard wrap spans the continuation row's
+            // margin without containing it.
+            if (!match.covers(mouse_pin)) continue;
             return .{
                 .action = link.action,
                 .selection = sel,
@@ -5426,6 +5574,7 @@ fn processLinks(self: *Surface, pos: apprt.CursorPos) !bool {
             const str = try self.io.terminal.screens.active.selectionString(self.alloc, .{
                 .sel = link.selection,
                 .trim = false,
+                .reflow = true,
             });
             defer self.alloc.free(str);
 
@@ -6323,6 +6472,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
                         break :url_text (self.io.terminal.screens.active.selectionString(self.alloc, .{
                             .sel = link_info.selection,
                             .trim = self.config.clipboard_trim_trailing_spaces,
+                            .reflow = true,
                         })) catch |err| {
                             log.err("error reading url string err={}", .{err});
                             return false;
@@ -6957,7 +7107,7 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
 /// Returns true if performing the given action result in closing
 /// the surface. This is used to determine if our self pointer is
 /// still valid after performing some binding action.
-fn closingAction(action: input.Binding.Action) bool {
+pub fn closingAction(action: input.Binding.Action) bool {
     return switch (action) {
         .close_surface,
         .close_window,

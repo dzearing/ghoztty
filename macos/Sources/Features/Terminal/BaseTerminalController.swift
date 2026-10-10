@@ -53,6 +53,16 @@ class BaseTerminalController: NSWindowController,
     private var dividerDragOrigin: (tree: SplitTree<PaneView>, node: SplitTree<PaneView>.Node)?
 
     let heroModeState = HeroModeState()
+
+    /// Pane rearrange mode: every pane grows a drag header and the tab bar
+    /// is forced visible because it is a drop target.
+    let rearrangeModeState = RearrangeModeState()
+
+    /// Names this window when resolving a pane drop.
+    var rearrangeWindowRef: PaneDropWindowRef { PaneDropWindowRef(self) }
+
+    /// Live only while rearrange mode is on. See `installRearrangeEscapeMonitor`.
+    private var rearrangeEscapeMonitor: Any?
     private var heroSelectionCancellable: AnyCancellable?
 
     /// This can be set to show/hide the command palette.
@@ -377,7 +387,10 @@ class BaseTerminalController: NSWindowController,
         // pending CLOSE-on-free intent. (didSet does not fire for this init
         // assignment, so the surfaceTreeDidChange clearing doesn't run here.)
         if tree != nil {
-            for view in surfaceTree { view.setSessionCloseIntent(false) }
+            for view in surfaceTree {
+                view.clearSessionDetachPin()
+                view.setSessionCloseIntent(false)
+            }
         }
 
         // Setup our bell state for the window
@@ -492,11 +505,6 @@ class BaseTerminalController: NSWindowController,
             selector: #selector(ghosttyDidPresentTerminal(_:)),
             name: Ghostty.Notification.ghosttyPresentTerminal,
             object: nil)
-        center.addObserver(
-            self,
-            selector: #selector(ghosttySurfaceDragEndedNoTarget(_:)),
-            name: .ghosttySurfaceDragEndedNoTarget,
-            object: nil)
 
         // Listen for local events that we need to know of outside of
         // single surface handlers.
@@ -517,12 +525,17 @@ class BaseTerminalController: NSWindowController,
     // MARK: Methods
 
     /// Create a new split.
+    ///
+    /// `focus` moves keyboard focus to the new pane, as every split the user
+    /// asks for does. A script's split passes false (`IPCFocusPolicy`) so the
+    /// pane that had the caret keeps it.
     @discardableResult
     func newSplit(
         at oldView: Ghostty.SurfaceView,
         direction: SplitTree<PaneView>.NewDirection,
         baseConfig config: Ghostty.SurfaceConfiguration? = nil,
         ratio: Double = 0.5,
+        focus: Bool = true,
         onCreate: ((Ghostty.SurfaceView) -> Void)? = nil
     ) -> Ghostty.SurfaceView? {
         // We can only create new splits for surfaces in our tree.
@@ -613,7 +626,8 @@ class BaseTerminalController: NSWindowController,
                     at: oldView,
                     direction: direction,
                     ratio: ratio,
-                    hasExplicitTint: hasExplicitTint) {
+                    hasExplicitTint: hasExplicitTint,
+                    focus: focus) {
                     onCreate?(newView)
                 }
             }
@@ -625,7 +639,8 @@ class BaseTerminalController: NSWindowController,
             at: oldView,
             direction: direction,
             ratio: ratio,
-            hasExplicitTint: hasExplicitTint)
+            hasExplicitTint: hasExplicitTint,
+            focus: focus)
         if let newView { onCreate?(newView) }
         return newView
     }
@@ -667,11 +682,13 @@ class BaseTerminalController: NSWindowController,
             return nil
         }
 
-        replaceSurfaceTree(
-            newTree,
-            moveFocusTo: nil,
-            moveFocusFrom: oldPane.surfaceView,
-            undoAction: "New Split")
+        keepingFirstResponder {
+            replaceSurfaceTree(
+                newTree,
+                moveFocusTo: nil,
+                moveFocusFrom: oldPane.surfaceView,
+                undoAction: "New Split")
+        }
 
         return pane
     }
@@ -679,12 +696,14 @@ class BaseTerminalController: NSWindowController,
     /// Terminal split anchored at a VIEWER pane. The regular `newSplit`
     /// inherits tint/remote context from its anchor surface; a viewer has
     /// neither, so this creates a plain local surface from the given config.
+    /// `focus` is as for `newSplit`.
     @discardableResult
     func newTerminalSplit(
         atPane oldPane: PaneView,
         direction: SplitTree<PaneView>.NewDirection,
         baseConfig config: Ghostty.SurfaceConfiguration? = nil,
-        ratio: Double = 0.5
+        ratio: Double = 0.5,
+        focus: Bool = true
     ) -> Ghostty.SurfaceView? {
         guard surfaceTree.root?.node(view: oldPane) != nil else { return nil }
         guard let ghostty_app = ghostty.app else { return nil }
@@ -707,11 +726,13 @@ class BaseTerminalController: NSWindowController,
             return nil
         }
 
-        replaceSurfaceTree(
-            newTree,
-            moveFocusTo: newView,
-            moveFocusFrom: focusedSurface,
-            undoAction: "New Split")
+        keepingFirstResponder(unless: focus) {
+            replaceSurfaceTree(
+                newTree,
+                moveFocusTo: focus ? newView : nil,
+                moveFocusFrom: focusedSurface,
+                undoAction: "New Split")
+        }
 
         return newView
     }
@@ -725,7 +746,8 @@ class BaseTerminalController: NSWindowController,
         at oldView: Ghostty.SurfaceView,
         direction: SplitTree<PaneView>.NewDirection,
         ratio: Double,
-        hasExplicitTint: Bool
+        hasExplicitTint: Bool,
+        focus: Bool
     ) -> Ghostty.SurfaceView? {
         // The parent may have been removed from the tree while we were resolving
         // the remote cwd off the main thread.
@@ -751,11 +773,13 @@ class BaseTerminalController: NSWindowController,
             return nil
         }
 
-        replaceSurfaceTree(
-            newTree,
-            moveFocusTo: newView,
-            moveFocusFrom: oldView,
-            undoAction: "New Split")
+        keepingFirstResponder(unless: focus) {
+            replaceSurfaceTree(
+                newTree,
+                moveFocusTo: focus ? newView : nil,
+                moveFocusFrom: oldView,
+                undoAction: "New Split")
+        }
 
         // Only adjust the terminal palette for explicit IPC --color flags.
         // Auto-shifted splits use the SwiftUI overlay for visual depth
@@ -875,6 +899,68 @@ class BaseTerminalController: NSWindowController,
         }
     }
 
+    /// Run a tree mutation that must NOT move keyboard focus, and make sure it
+    /// doesn't.
+    ///
+    /// "Don't move focus" is not the same as "do nothing": inserting a split
+    /// re-parents the pane beside it, and a view leaving its superview resigns
+    /// first responder — so after the mutation the WINDOW is first responder
+    /// and typing goes nowhere (measured: a split that passed no focus target
+    /// left `window.firstResponder === window` indefinitely). Splits that move
+    /// focus never noticed, because they hand it to the new pane right after.
+    /// This hands it back to whatever had it.
+    ///
+    /// No-op when `skip` is true (the caller is moving focus itself) or when
+    /// nothing in this window's panes had focus to begin with.
+    func keepingFirstResponder(unless skip: Bool = false, _ mutate: () -> Void) {
+        guard !skip,
+              let window,
+              let responder = window.firstResponder as? NSView,
+              let pane = surfaceTree.first(where: {
+                  responder === $0.contentView || responder.isDescendant(of: $0.contentView)
+              })
+        else {
+            mutate()
+            return
+        }
+        mutate()
+        Self.restoreFirstResponder(responder, pane: pane, in: window)
+    }
+
+    /// Put `responder` back as first responder once the re-parenting is over.
+    ///
+    /// SwiftUI applies the tree change on a later pass, so this looks on each
+    /// of a few backoff ticks: while the responder still holds focus the
+    /// re-parent may not have happened yet; once the window itself (or
+    /// nothing) holds it, focus was lost and is restored as soon as the view
+    /// is back in the window. Anything ELSE holding focus means someone moved
+    /// it on purpose — a click, a `--focus` — and is left alone.
+    private static func restoreFirstResponder(
+        _ responder: NSView,
+        pane: PaneView,
+        in window: NSWindow,
+        attempt: Int = 0
+    ) {
+        let delays: [TimeInterval] = [0, 0.05, 0.1, 0.2, 0.4]
+        guard attempt < delays.count else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + delays[attempt]) {
+            let current = window.firstResponder
+            guard current == nil || current === window || current === responder else { return }
+            if current === responder || (responder.window !== window && pane.contentView.window !== window) {
+                // Not disturbed yet, or not back in the window yet.
+                restoreFirstResponder(responder, pane: pane, in: window, attempt: attempt + 1)
+                return
+            }
+            if responder.window === window {
+                window.makeFirstResponder(responder)
+            } else {
+                // The responder itself did not come back (a field editor is
+                // torn down with its field); focus the pane that held it.
+                Ghostty.moveFocus(to: pane)
+            }
+        }
+    }
+
     /// Move focus to a surface view.
     func focusSurface(_ view: Ghostty.SurfaceView) {
         // Check if target surface is in our tree
@@ -915,7 +1001,16 @@ class BaseTerminalController: NSWindowController,
             from: from.root?.leaves() ?? [],
             to: to.root?.leaves() ?? [],
             sessionID: { $0.surfaceView?.boundRemoteSessionID })
-        for view in plan.keepAlive { view.setSessionCloseIntent(false) }
+        // `keepAlive` is a re-adoption (an undone close, a pane moved between
+        // windows): the pane is live again, so a Disconnect the user chose for
+        // the close that is being undone no longer applies and a LATER close
+        // must close normally. `spared` is NOT — it is a rebuild swap, where
+        // the departing leaf was never re-adopted by anyone and its pin is
+        // still the user's standing answer.
+        for view in plan.keepAlive {
+            view.clearSessionDetachPin()
+            view.setSessionCloseIntent(false)
+        }
         for view in plan.spared { view.setSessionCloseIntent(false) }
         for view in plan.close { view.setSessionCloseIntent(true) }
 
@@ -1029,9 +1124,38 @@ class BaseTerminalController: NSWindowController,
         window.isRestorable = false
     }
 
+    /// The panes of `views` whose agent session lives on a REMOTE machine and
+    /// is still alive — exactly the ones a "Disconnect" would leave running.
+    ///
+    /// Empty for a plain local window, for a session-persistence window on the
+    /// LOCAL agent (see `SessionDisconnectPolicy.machineIsDisconnectable`), for
+    /// viewer panes, for panes whose child already exited, and for a user who
+    /// turned `confirm-close-surface` off. An empty result is the signal that
+    /// this close is an ordinary one: no third button, no widened prompt.
+    func disconnectableViews(in views: [PaneView]) -> [PaneView] {
+        guard SessionDisconnectPolicy.machineIsDisconnectable(remoteMachine) else { return [] }
+        return views.filter { SessionDisconnectPolicy.isDisconnectable($0.disconnectFacts) }
+    }
+
+    /// This window's Disconnect offer: the panes a Disconnect would spare plus
+    /// the machine to name in the alert. Empty when there is nothing to offer.
+    /// A tab-group close merges the offers of every affected controller (see
+    /// `SessionDisconnectPolicy.merge`).
+    func disconnectOffer(in views: [PaneView]) -> SessionDisconnectPolicy.Offer<PaneView> {
+        let panes = disconnectableViews(in: views)
+        guard !panes.isEmpty, let name = remoteMachine?.name else { return .none }
+        return .init(panes: panes, machineNames: [name])
+    }
+
+    /// This whole window's Disconnect offer.
+    var disconnectOffer: SessionDisconnectPolicy.Offer<PaneView> {
+        disconnectOffer(in: Array(surfaceTree))
+    }
+
     func confirmClose(
         messageText: String,
         informativeText: String,
+        disconnect: SessionDisconnectPolicy.Offer<PaneView> = .none,
         completion: @escaping () -> Void
     ) {
         // If we already have an alert, we need to wait for that one.
@@ -1048,14 +1172,56 @@ class BaseTerminalController: NSWindowController,
         // in the tab group.
         let alert = NSAlert()
         alert.messageText = messageText
-        alert.informativeText = informativeText
-        alert.addButton(withTitle: "Close")
-        alert.addButton(withTitle: "Cancel")
         alert.alertStyle = .warning
+
+        // A close that would end live sessions on another machine gets a third
+        // button. The sessions are resumable from the Cmd-Shift-N chooser, so
+        // ending them is the destructive answer and keeping them is the safe
+        // one — Disconnect is therefore added FIRST, which makes it both the
+        // rightmost button and the default (Return). A button literally titled
+        // "Cancel" picks up Escape from AppKit automatically.
+        //
+        // The informative text is generated HERE rather than by each caller:
+        // it has to name the machine and count the sessions, and the wording
+        // is deliberately scope-neutral so one sentence serves a pane, a tab,
+        // a window and a tab group alike.
+        if disconnect.isEmpty {
+            alert.informativeText = informativeText
+            alert.addButton(withTitle: "Close")
+            alert.addButton(withTitle: "Cancel")
+        } else {
+            alert.informativeText = SessionDisconnectPolicy.informativeText(
+                machineNames: disconnect.machineNames,
+                count: disconnect.panes.count)
+            alert.addButton(withTitle: "Disconnect")
+            alert.addButton(withTitle: "Close")
+            alert.addButton(withTitle: "Cancel")
+        }
+
         alert.beginSheetModal(for: window) { response in
             let alertWindow = alert.window
             self.alert = nil
-            if response == .alertFirstButtonReturn {
+
+            // Proceeding with the close is the first button in the 2-button
+            // alert and the SECOND in the 3-button one; the first there keeps
+            // the sessions alive first and then proceeds identically.
+            let proceed: Bool
+            if !disconnect.isEmpty {
+                if response == .alertFirstButtonReturn {
+                    // Pin BEFORE the close runs: the close marks CLOSE-on-free
+                    // from two independent places whose relative order varies
+                    // by path, and the pin is what makes the user's answer win
+                    // regardless. See `SurfaceView.pinSessionDetachOnFree()`.
+                    for view in disconnect.panes { view.pinSessionDetachOnFree() }
+                    proceed = true
+                } else {
+                    proceed = response == .alertSecondButtonReturn
+                }
+            } else {
+                proceed = response == .alertFirstButtonReturn
+            }
+
+            if proceed {
                 // This is important so that we avoid losing focus when Stage
                 // Manager is used (#8336)
                 alertWindow.orderOut(nil)
@@ -1158,7 +1324,8 @@ class BaseTerminalController: NSWindowController,
         // being shown, and provides no callback to detect this.
         confirmClose(
             messageText: "Close Terminal?",
-            informativeText: "The terminal still has a running process. If you close the terminal the process will be killed."
+            informativeText: "The terminal still has a running process. If you close the terminal the process will be killed.",
+            disconnect: disconnectOffer(in: node.leaves())
         ) { [weak self] in
             if let self {
                 self.removeSurfaceNode(node)
@@ -1333,7 +1500,17 @@ class BaseTerminalController: NSWindowController,
         guard let node = surfaceTree.root?.node(view: target) else { return }
         let processAlive = (notification.userInfo?["process_alive"] as? Bool) ?? false
         Ghostty.logger.warning("ghosttyDidCloseSurface processAlive=\(processAlive)")
-        closeSurface(node, withConfirmation: processAlive)
+
+        // A remote pane is confirmed even when it is IDLE: closing it ends a
+        // session on another machine, which — unlike a local idle shell — is
+        // not something the user can just start again where they left off.
+        // Widened HERE, at the interactive `close_surface` caller, and never
+        // inside `closeSurface` itself: that would put a modal on the IPC /
+        // AppleScript / App Intents paths, which pass `withConfirmation: false`
+        // precisely because a modal there wedges every later `ghoztty +…`
+        // command until someone dismisses it.
+        let confirm = processAlive || !disconnectableViews(in: node.leaves()).isEmpty
+        closeSurface(node, withConfirmation: confirm)
     }
 
     @objc private func ghosttyDidNewSplit(_ notification: Notification) {
@@ -1487,6 +1664,10 @@ class BaseTerminalController: NSWindowController,
     /// above), and the menu accelerator (`toggleHeroMode(_:)` IBAction) when
     /// a viewer pane has focus.
     private func toggleHeroMode(target pane: PaneView) {
+        // Hero mode replaces the split tree view wholesale, so the rearrange
+        // headers would have nothing to sit on. The two modes are exclusive.
+        exitRearrangeMode()
+
         if heroModeState.isActive {
             let previousPane = heroPaneForCurrentSelection()
             heroModeState.deactivate()
@@ -1509,6 +1690,83 @@ class BaseTerminalController: NSWindowController,
         }
 
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    // MARK: Rearrange Mode
+
+    /// Toggle pane rearrange mode for this window.
+    func toggleRearrangeMode() {
+        if rearrangeModeState.isActive {
+            exitRearrangeMode()
+        } else {
+            enterRearrangeModeIfNeeded()
+        }
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// Enter rearrange mode, if it is not already on.
+    ///
+    /// Also called by `PaneMoveCoordinator` after a drop into this window, so
+    /// the mode follows the pane: you are still rearranging, and the window
+    /// you are now looking at should still be rearrangeable.
+    func enterRearrangeModeIfNeeded() {
+        guard !rearrangeModeState.isActive else { return }
+
+        // Hero mode and zoom both hide panes, and you cannot rearrange what
+        // you cannot see.
+        if heroModeState.isActive { heroModeState.deactivate() }
+        if surfaceTree.zoomed != nil {
+            surfaceTree = SplitTree(root: surfaceTree.root, zoomed: nil)
+        }
+
+        // The tab bar is a drop target in this mode, so it has to be on
+        // screen even for a lone window. Remember whether WE turned it on:
+        // a bar the user already had must survive the mode.
+        var forcedTabBar = false
+        if let window, window.tabGroup?.isTabBarVisible != true {
+            window.toggleTabBar(nil)
+            forcedTabBar = true
+        }
+
+        rearrangeModeState.activate(forcingTabBar: forcedTabBar)
+        installRearrangeEscapeMonitor()
+    }
+
+    /// Leave rearrange mode, restoring the tab bar if entering forced it on.
+    func exitRearrangeMode() {
+        let restoreTabBar = rearrangeModeState.deactivate()
+        removeRearrangeEscapeMonitor()
+        guard restoreTabBar else { return }
+        guard let window, window.tabGroup?.isTabBarVisible == true else { return }
+        // Only ever collapses a bar that is showing a single tab; a real tab
+        // group keeps its bar.
+        if (window.tabGroup?.windows.count ?? 1) <= 1 {
+            window.toggleTabBar(nil)
+        }
+    }
+
+    /// Escape leaves rearrange mode — but only when there is no drag in
+    /// flight. Mid-drag, Escape belongs to the drag (`PaneDragSourceView`
+    /// cancels it), and stealing it would drop you out of the mode while a
+    /// pane was still in the air. Innermost gesture wins.
+    private func installRearrangeEscapeMonitor() {
+        guard rearrangeEscapeMonitor == nil else { return }
+        rearrangeEscapeMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: .keyDown
+        ) { [weak self] event in
+            guard let self, self.rearrangeModeState.isActive else { return event }
+            guard event.keyCode == 53 else { return event }          // Escape
+            guard self.window?.isKeyWindow == true else { return event }
+            guard !PaneDragSession.shared.isDragging else { return event }
+            self.exitRearrangeMode()
+            return nil
+        }
+    }
+
+    private func removeRearrangeEscapeMonitor() {
+        guard let rearrangeEscapeMonitor else { return }
+        NSEvent.removeMonitor(rearrangeEscapeMonitor)
+        self.rearrangeEscapeMonitor = nil
     }
 
     private func heroPaneForCurrentSelection() -> PaneView? {
@@ -1570,42 +1828,6 @@ class BaseTerminalController: NSWindowController,
 
         // Show a brief highlight to help the user locate the presented terminal.
         target.highlight()
-    }
-
-    @objc private func ghosttySurfaceDragEndedNoTarget(_ notification: Notification) {
-        guard let target = notification.object as? Ghostty.SurfaceView else { return }
-        guard let targetNode = surfaceTree.root?.node(view: target) else { return }
-
-        // If our tree isn't split, then we never create a new window, because
-        // it is already a single split.
-        guard surfaceTree.isSplit else { return }
-
-        // If we are removing our focused surface then we move it. We need to
-        // keep track of our old one so undo sends focus back to the right place.
-        let oldFocusedSurface = focusedSurface
-        if focusedSurface == target {
-            focusedSurface = findNextFocusTargetAfterClosing(node: targetNode)?.surfaceView
-        }
-
-        // Remove the surface from our tree
-        let removedTree = surfaceTree.removing(targetNode)
-
-        // Create a new tree with the dragged surface and open a new window
-        let newTree = SplitTree<PaneView>(view: target)
-
-        // Treat our undo below as a full group.
-        undoManager?.beginUndoGrouping()
-        undoManager?.setActionName("Move Split")
-        defer {
-            undoManager?.endUndoGrouping()
-        }
-
-        replaceSurfaceTree(removedTree, moveFocusFrom: oldFocusedSurface)
-        _ = TerminalController.newWindow(
-            ghostty,
-            tree: newTree,
-            position: notification.userInfo?[Notification.Name.ghosttySurfaceDragEndedNoTargetPointKey] as? NSPoint,
-            confirmUndo: false)
     }
 
     // MARK: Local Events
@@ -1740,8 +1962,6 @@ class BaseTerminalController: NSWindowController,
         switch action {
         case .resize(let resize):
             splitDidResize(resize)
-        case .drop(let drop):
-            splitDidDrop(source: drop.payload, destination: drop.destination, zone: drop.zone)
         }
     }
 
@@ -1775,85 +1995,6 @@ class BaseTerminalController: NSWindowController,
                 Ghostty.logger.warning("failed to move split divider: \(error)")
             }
         }
-    }
-
-    private func splitDidDrop(
-        source: Ghostty.SurfaceView,
-        destination: Ghostty.SurfaceView,
-        zone: TerminalSplitDropZone
-    ) {
-        // Map drop zone to split direction
-        let direction: SplitTree<PaneView>.NewDirection = switch zone {
-        case .top: .up
-        case .bottom: .down
-        case .left: .left
-        case .right: .right
-        }
-
-        // Check if source is in our tree
-        if let sourceNode = surfaceTree.root?.node(view: source) {
-            // Source is in our tree - same window move
-            let treeWithoutSource = surfaceTree.removing(sourceNode)
-            let newTree: SplitTree<PaneView>
-            do {
-                newTree = try treeWithoutSource.inserting(view: source, at: destination, direction: direction)
-            } catch {
-                Ghostty.logger.warning("failed to insert surface during drop: \(error)")
-                return
-            }
-
-            replaceSurfaceTree(
-                newTree,
-                moveFocusTo: source,
-                moveFocusFrom: focusedSurface,
-                undoAction: "Move Split")
-            return
-        }
-
-        // Source is not in our tree - search other windows
-        var sourceController: BaseTerminalController?
-        var sourceNode: SplitTree<PaneView>.Node?
-        for window in NSApp.windows {
-            guard let controller = window.windowController as? BaseTerminalController else { continue }
-            guard controller !== self else { continue }
-            if let node = controller.surfaceTree.root?.node(view: source) {
-                sourceController = controller
-                sourceNode = node
-                break
-            }
-        }
-
-        guard let sourceController, let sourceNode else {
-            Ghostty.logger.warning("source surface not found in any window during drop")
-            return
-        }
-
-        // Remove from source controller's tree and add it to our tree.
-        // We do this first because if there is an error then we can
-        // abort.
-        let newTree: SplitTree<PaneView>
-        do {
-            newTree = try surfaceTree.inserting(view: source, at: destination, direction: direction)
-        } catch {
-            Ghostty.logger.warning("failed to insert surface during cross-window drop: \(error)")
-            return
-        }
-
-        // Treat our undo below as a full group.
-        undoManager?.beginUndoGrouping()
-        undoManager?.setActionName("Move Split")
-        defer {
-            undoManager?.endUndoGrouping()
-        }
-
-        // Remove the node from the source.
-        sourceController.removeSurfaceNode(sourceNode)
-
-        // Add in the surface to our tree
-        replaceSurfaceTree(
-            newTree,
-            moveFocusTo: source,
-            moveFocusFrom: focusedSurface)
     }
 
     func performAction(_ action: String, on surfaceView: Ghostty.SurfaceView) {
@@ -2084,17 +2225,45 @@ class BaseTerminalController: NSWindowController,
         // If we already have an alert, continue with it
         guard alert == nil else { return false }
 
-        // If our surfaces don't require confirmation, close.
-        if !surfaceTree.contains(where: { $0.needsConfirmQuit }) { return true }
+        // If our surfaces don't require confirmation, close. A live REMOTE
+        // session requires it even when idle — closing it ends a process on
+        // another machine (see `disconnectableViews`).
+        let disconnect = disconnectOffer
+        if !surfaceTree.contains(where: { $0.needsConfirmQuit }) && disconnect.isEmpty {
+            return true
+        }
 
         // We require confirmation, so show an alert as long as we aren't already.
         confirmClose(
             messageText: "Close Terminal?",
-            informativeText: "The terminal still has a running process. If you close the terminal the process will be killed."
+            informativeText: "The terminal still has a running process. If you close the terminal the process will be killed.",
+            disconnect: disconnect
         ) {
             window.close()
         }
 
+        return false
+    }
+
+    /// Whether `pane` is currently a leaf of some OTHER live window's tree.
+    ///
+    /// Such a pane was not closed by this window — it was MOVED OUT of it, by
+    /// a rearrange drag that took the window's last pane and so emptied it.
+    /// Marking it CLOSE-on-free would terminate the agent session of a pane
+    /// the user is still looking at.
+    ///
+    /// This has to be a check rather than a flag, because the closing window's
+    /// own `surfaceTree` still contains the departed pane:
+    /// `TerminalController.replaceSurfaceTree` short-circuits an empty tree
+    /// straight into `closeTabImmediately()` and returns WITHOUT assigning it,
+    /// so what is iterated above is the tree as it was before the last pane
+    /// left.
+    private func isAliveInAnotherWindow(_ pane: PaneView) -> Bool {
+        for window in NSApp.windows {
+            guard let controller = window.windowController as? BaseTerminalController,
+                  controller !== self else { continue }
+            if controller.surfaceTree.contains(where: { $0 === pane }) { return true }
+        }
         return false
     }
 
@@ -2110,7 +2279,9 @@ class BaseTerminalController: NSWindowController,
         do {
             let delegate = NSApp.delegate as? AppDelegate
             if delegate?.isQuitting != true && delegate?.isSigningOut != true {
-                for view in surfaceTree { view.setSessionCloseIntent(true) }
+                for view in surfaceTree where !isAliveInAnotherWindow(view) {
+                    view.setSessionCloseIntent(true)
+                }
             }
         }
 
@@ -3184,6 +3355,10 @@ class BaseTerminalController: NSWindowController,
         }
         guard let surface = focusedSurface?.surface else { return }
         ghostty.splitToggleZoom(surface: surface)
+    }
+
+    @IBAction func toggleRearrangeMode(_ sender: Any) {
+        toggleRearrangeMode()
     }
 
     @IBAction func toggleHeroMode(_ sender: Any) {

@@ -682,10 +682,10 @@ pub const Server = struct {
         self.detachAll();
         // Reboot scrollback (T13, §5.4): a viewer disconnecting is the moment its
         // sessions become vulnerable to a subsequent reboot (the agent could be
-        // killed before the next periodic snapshot). Flush dirty rings to disk now
-        // so a restart can replay the scrollback up to this instant. No-op when
-        // ring snapshots are disabled or nothing is dirty; best-effort.
-        self.store.snapshotRings();
+        // killed before the next periodic snapshot). Checkpoint now — dirty rings
+        // + history to disk, live cwds into the metadata — so a restart restores
+        // the sessions as of this instant. Best-effort; no-op when nothing moved.
+        self.store.checkpoint();
         // Stop + join the metrics pump BEFORE the streams close path completes: it
         // is a per-connection thread that frames onto our writer, so it must never
         // outlive the Server (the just-fixed UAF class). Signalling stop wakes its
@@ -1341,6 +1341,11 @@ pub const Server = struct {
         // a fresh viewer must be told rather than inherit a dead one's state.
         s.fg_pid = 0;
         s.has_descendants = null;
+        // FLOW catch-up watermark (`catchUpLocked`): a fresh bind starts at the
+        // current tail, so a stale value from an earlier viewer can never make a
+        // later resume re-send history. ATTACH/RELAUNCH advance it past their own
+        // replay once that is framed.
+        s.sent_offset = s.out_offset.value;
         s.bound = true;
         // A viewer is looking at it again: the long-unattached clock (T534)
         // restarts from the NEXT detach, not from some earlier one.
@@ -1594,6 +1599,9 @@ pub const Server = struct {
                 if (b.len > 0) self.sendRepaint(s.channel, snapshot_at, b) catch {};
             }
         }
+        // This viewer now has everything up to S; live output continues from there
+        // (and a FLOW resume catches up from here — `catchUpLocked`).
+        s.sent_offset = snapshot_at;
     }
 
     fn handleResize(self: *Server, channel: u128, payload: []const u8) void {
@@ -2305,6 +2313,16 @@ pub const Server = struct {
                 replay_n = rs.ring.copyRetained(rb);
             } else |_| {}
         }
+        // The replay (restored history + divider + notice) is what this pane now
+        // SHOWS above the fresh shell, so the session's emulator must hold it too —
+        // it is where the next checkpoint's history comes from, and a second
+        // reboot must not forget everything from before the first. Fed at the
+        // relaunch geometry, before the child's first byte, exactly like a viewer.
+        rs.rows = req.rows;
+        rs.cols = req.cols;
+        if (replay_buf) |rb| rs.feedEmulator(rb[0..replay_n]);
+        // The replay below delivers everything up to the current tail.
+        rs.sent_offset = rs.out_offset.value;
         self.store.mutex.unlock();
 
         // Replay the preloaded scrollback + divider first (outside the lock), so
@@ -2370,9 +2388,51 @@ pub const Server = struct {
         if (s.bridge_ctx != @as(?*anyopaque, self)) return;
         switch (flow.op) {
             .pause => s.streaming = false,
-            .@"resume" => s.streaming = true,
+            .@"resume" => {
+                s.streaming = true;
+                self.catchUpLocked(s);
+            },
             .credit => {}, // v2; ignored in v1
         }
+    }
+
+    /// Send the bound viewer everything the session produced while its stream
+    /// was paused — `(sent_offset, out_offset]`, straight from the ring — so a
+    /// resume picks up exactly where delivery stopped. Caller holds the store
+    /// lock, which is what orders this DATA before any live output (the live
+    /// path frames under the same lock).
+    ///
+    /// Without it a pause LOST that output for good: the bytes were ringed but
+    /// never framed, and the next DATA the viewer saw started later in the
+    /// stream. Claude Code draws with relative cursor motion, so a viewer that
+    /// missed even one frame put every later redraw on the wrong rows — garbled
+    /// and duplicated text — or, when the burst was the last thing printed (a
+    /// restored shell's first prompt), showed nothing at all.
+    ///
+    /// If the ring already evicted part of the gap (more than its capacity was
+    /// printed during the pause), say so with the same marker an attach gap-fill
+    /// uses, then send what is left.
+    fn catchUpLocked(self: *Server, s: *session.Session) void {
+        const end = s.out_offset.value;
+        if (s.sent_offset >= end) return;
+        var from = s.sent_offset;
+        const base = s.ring.base_offset;
+        if (from < base) {
+            var marker_buf: [96]u8 = undefined;
+            const marker = std.fmt.bufPrint(
+                &marker_buf,
+                "\r\n[ghoztty: {d} bytes of output lost while paused]\r\n",
+                .{base - from},
+            ) catch "";
+            if (marker.len > 0) self.sendData(s.channel, from, marker) catch {};
+            from = base;
+        }
+        const want: usize = @intCast(end - from);
+        const tmp = self.alloc.alloc(u8, want) catch return; // retried on the next resume
+        defer self.alloc.free(tmp);
+        const n = s.ring.slice(from, end, tmp) orelse return;
+        self.sendData(s.channel, from, tmp[0..n]) catch return;
+        s.sent_offset = end;
     }
 
     // --- Host metrics push (§9.3) --------------------------------------------
@@ -5865,7 +5925,10 @@ test "RELAUNCH: reboot ring snapshot is replayed (scrollback + divider) before l
     }
 
     const rec_id = "abcabcabcabcabcabcabcabcabcabcab";
-    const scrollback = "PANE=3 PID=4242\r\ntick-3-0\r\ntick-3-1\r\n";
+    // A raw ring the way a dead TUI leaves it: content interleaved with modes and
+    // queries the restored pane must never see (they would re-arm mouse tracking
+    // and answer into the fresh shell's stdin).
+    const scrollback = "\x1b[?1003h\x1b[>1uPANE=3 PID=4242\r\ntick-3-0\r\n\x1b[ctick-3-1\r\n";
     {
         const recs = [_]@import("session_meta.zig").Record{.{ .id = rec_id, .argv = "sleep 600", .pinned = true, .created_ms = 50 }};
         const body = try @import("session_meta.zig").serialize(alloc, &recs);
@@ -5903,12 +5966,20 @@ test "RELAUNCH: reboot ring snapshot is replayed (scrollback + divider) before l
     try testing.expect(rp.value.ok and rp.value.found);
     try testing.expect(rp.value.replayed); // scrollback was replayed
 
-    // First DATA frame: the replayed scrollback + divider at offset 0.
+    // First DATA frame: the replayed scrollback + divider at offset 0. The ring
+    // is replayed as its HISTORY (content only), never raw.
     const d0 = (try h.client.nextData()).?;
     const dp0 = try protocol.DataPayload.decode(d0.payload);
     try testing.expectEqual(@as(u64, 0), dp0.byte_offset);
-    const want = scrollback ++ session.reboot_divider;
+    const history = try @import("grid_snapshot.zig").historyFromRaw(alloc, scrollback, 80, 24);
+    defer alloc.free(history);
+    const want = try std.mem.concat(alloc, u8, &.{ history, session.reboot_divider });
+    defer alloc.free(want);
     try testing.expectEqualSlices(u8, want, dp0.bytes);
+    try testing.expect(std.mem.startsWith(u8, dp0.bytes, "PANE=3 PID=4242\r\ntick-3-0\r\ntick-3-1"));
+    try testing.expect(std.mem.indexOf(u8, dp0.bytes, "\x1b[?1003h") == null);
+    try testing.expect(std.mem.indexOf(u8, dp0.bytes, "\x1b[c") == null);
+    try testing.expect(std.mem.indexOf(u8, dp0.bytes, "\x1b[>1u") == null);
 
     // Live output continues immediately AFTER the replayed content (no offset hole).
     h.server.onChildOutput(channel, "fresh-prompt$ ");
@@ -5992,12 +6063,18 @@ test "T824 RELAUNCH: the viewer's notice is spliced into the tail of the replay"
     // Order is the whole point: restored scrollback, then the agent's divider,
     // then our reset — and the reset is the TAIL, so the respawned child's first
     // output continues after it instead of being undone by it.
+    //
+    // Since the T1796 merge (main 7e78aacf4) the restored scrollback of a
+    // holderless reboot is the session's HISTORY, which never carries the dead
+    // program's modes at all — the `?1003h` the raw ring held is gone before
+    // the reset even has to undo it. The order the reset exists for still holds.
     const idx_back = std.mem.indexOf(u8, dp0.bytes, "PANE=3 PID=4242").?;
-    const idx_arm = std.mem.indexOf(u8, dp0.bytes, "\x1b[?1003h").?;
+    const idx_tick = std.mem.indexOf(u8, dp0.bytes, "tick-3-0").?;
     const idx_div = std.mem.indexOf(u8, dp0.bytes, session.reboot_divider).?;
     const idx_notice = std.mem.indexOf(u8, dp0.bytes, notice).?;
-    try testing.expect(idx_back < idx_arm);
-    try testing.expect(idx_arm < idx_div);
+    try testing.expect(std.mem.indexOf(u8, dp0.bytes[0..idx_div], "\x1b[?1003h") == null);
+    try testing.expect(idx_back < idx_tick);
+    try testing.expect(idx_tick < idx_div);
     try testing.expect(idx_div < idx_notice);
     try testing.expectEqual(dp0.bytes.len, idx_notice + notice.len);
 
@@ -6357,8 +6434,8 @@ test "FLOW pause halts streaming; resume continues from buffered offset" {
     try testing.expect(waitUntil("the session to stop streaming (paused)", P.paused, .{ h.server, o.channel }));
     h.server.onChildOutput(o.channel, "PAUSED"); // ringed at offset 0, not sent
 
-    // Resume → subsequent output streams live (the buffered bytes recover via
-    // attach gap-fill in production; here we assert the gate releases).
+    // Resume → the agent first sends what the viewer missed while paused, then
+    // output streams live again, contiguous with it.
     try h.client.sendControlRaw(.flow, protocol.control_channel, blk: {
         const fl: protocol.Flow = .{ .channel = o.channel, .op = .@"resume" };
         var buf: [protocol.Flow.encoded_len]u8 = undefined;
@@ -6368,9 +6445,15 @@ test "FLOW pause halts streaming; resume continues from buffered offset" {
     try testing.expect(waitUntil("the session to resume streaming", P.streaming, .{ h.server, o.channel }));
     h.server.onChildOutput(o.channel, "LIVE"); // streams at offset 6
 
+    // The paused output is NOT lost: it arrives first, at its own offset…
+    const d0 = try h.client.nextData();
+    const dp0 = try protocol.DataPayload.decode(d0.?.payload);
+    try testing.expectEqual(@as(u64, 0), dp0.byte_offset);
+    try testing.expectEqualSlices(u8, "PAUSED", dp0.bytes);
+    // …and live output continues right after it, no gap, no repeat.
     const d = try h.client.nextData();
     const dp = try protocol.DataPayload.decode(d.?.payload);
-    try testing.expectEqual(@as(u64, 6), dp.byte_offset); // offset advanced past PAUSED
+    try testing.expectEqual(@as(u64, 6), dp.byte_offset);
     try testing.expectEqualSlices(u8, "LIVE", dp.bytes);
 }
 

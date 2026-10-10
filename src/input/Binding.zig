@@ -1467,6 +1467,136 @@ pub const Action = union(enum) {
         };
     }
 
+    /// What an action needs from the focused pane in order to mean anything.
+    ///
+    /// `scope` answers "app or surface?", which is all the core needs. An
+    /// embedder whose focused pane is NOT a terminal (macOS viewer panes)
+    /// needs a finer answer: a surface-scoped action may only use its surface
+    /// to name a window (`new_tab`), or it may act on the focused pane itself
+    /// (`new_split`), or it may act on terminal state that a non-terminal pane
+    /// does not have (`copy_to_clipboard`, `text`). Performing that last kind
+    /// through some other terminal in the window would act on the wrong pane —
+    /// typing into a shell the user is not looking at — so the embedder must
+    /// be able to tell them apart.
+    ///
+    /// Sync with `ghostty_binding_requires_e` in ghostty.h.
+    pub const Requires = enum(c_int) {
+        /// App-scoped: needs no surface at all.
+        app,
+        /// Acts on the window or its tab group; any terminal in the window
+        /// can name it.
+        window,
+        /// Acts on, or relative to, the focused pane — terminal or not.
+        pane,
+        /// Acts on terminal state: input, selection, scrollback, fonts,
+        /// search, key tables. Meaningless without a focused terminal.
+        terminal,
+    };
+
+    /// Returns what this action needs from the focused pane. See `Requires`.
+    /// Exhaustive on purpose: a new action must be classified here.
+    pub fn requires(self: Action) Requires {
+        return switch (self) {
+            .ignore,
+            .unbind,
+            .open_config,
+            .reload_config,
+            .close_all_windows,
+            .quit,
+            .toggle_quick_terminal,
+            .toggle_visibility,
+            .check_for_updates,
+            .show_gtk_inspector,
+            .new_window,
+            .undo,
+            .redo,
+            => .app,
+
+            .new_tab,
+            .previous_tab,
+            .next_tab,
+            .last_tab,
+            .goto_tab,
+            .move_tab,
+            .toggle_tab_overview,
+            .goto_window,
+            .close_tab,
+            .close_window,
+            .toggle_maximize,
+            .toggle_fullscreen,
+            .toggle_window_decorations,
+            .toggle_window_float_on_top,
+            .toggle_background_opacity,
+            .toggle_command_palette,
+            .toggle_rearrange_mode,
+            .reset_window_size,
+            .prompt_tab_title,
+            .prompt_window_title,
+            .set_tab_title,
+            .equalize_splits,
+            => .window,
+
+            .new_split,
+            .goto_split,
+            .swap_split,
+            .toggle_split_zoom,
+            .resize_split,
+            .toggle_hero_mode,
+            .close_surface,
+            .prompt_surface_title,
+            .set_surface_title,
+            => .pane,
+
+            .csi,
+            .esc,
+            .text,
+            .cursor_key,
+            .search,
+            .navigate_search,
+            .search_selection,
+            .start_search,
+            .end_search,
+            .reset,
+            .copy_to_clipboard,
+            .copy_url_to_clipboard,
+            .copy_title_to_clipboard,
+            .paste_from_clipboard,
+            .paste_from_selection,
+            .increase_font_size,
+            .decrease_font_size,
+            .reset_font_size,
+            .set_font_size,
+            .prompt_surface_banner,
+            .clear_screen,
+            .select_all,
+            .scroll_to_top,
+            .scroll_to_bottom,
+            .scroll_to_selection,
+            .scroll_to_row,
+            .scroll_page_up,
+            .scroll_page_down,
+            .scroll_page_fractional,
+            .scroll_page_lines,
+            .adjust_selection,
+            .jump_to_prompt,
+            .write_scrollback_file,
+            .write_screen_file,
+            .write_selection_file,
+            .toggle_secure_input,
+            .toggle_mouse_reporting,
+            .toggle_readonly,
+            .show_on_screen_keyboard,
+            .inspector,
+            .activate_key_table,
+            .activate_key_table_once,
+            .deactivate_key_table,
+            .deactivate_all_key_tables,
+            .end_key_sequence,
+            .crash,
+            => .terminal,
+        };
+    }
+
     /// Returns a union type that only contains actions that are scoped to
     /// the given scope.
     pub fn Scoped(comptime s: Scope) type {
@@ -4648,6 +4778,51 @@ test "action: format" {
     defer buf.deinit();
     try a.format(&buf.writer);
     try testing.expectEqualStrings("text:\\xf0\\x9f\\x91\\xbb", buf.written());
+}
+
+test "action: requires" {
+    const testing = std.testing;
+    // Every app-scoped action needs nothing from the pane.
+    try testing.expectEqual(Action.Requires.app, (Action{ .quit = {} }).requires());
+    try testing.expectEqual(Action.Requires.app, (Action{ .undo = {} }).requires());
+    // The surface only names the window.
+    try testing.expectEqual(Action.Requires.window, (Action{ .toggle_rearrange_mode = {} }).requires());
+    try testing.expectEqual(Action.Requires.window, (Action{ .goto_tab = 1 }).requires());
+    // Acts on the focused pane.
+    try testing.expectEqual(Action.Requires.pane, (Action{ .new_split = .right }).requires());
+    try testing.expectEqual(Action.Requires.pane, (Action{ .close_surface = {} }).requires());
+    // Terminal state: never performed through a pane that is not a terminal.
+    try testing.expectEqual(Action.Requires.terminal, (Action{ .text = "x" }).requires());
+    try testing.expectEqual(Action.Requires.terminal, (Action{ .copy_to_clipboard = .mixed }).requires());
+
+    // Nothing app-scoped is classified as needing a surface, and nothing
+    // surface-scoped as needing nothing: `requires` refines `scope`.
+    inline for (@typeInfo(Action).@"union".fields) |field| {
+        const a = @unionInit(Action, field.name, undefined);
+        try testing.expectEqual(a.scope() == .app, a.requires() == .app);
+    }
+}
+
+test "action: canonical spelling" {
+    // The macOS app finds a binding's menu item by the formatted action, so
+    // it canonicalizes its menu items' action strings through parse+format.
+    // Literal spellings are NOT canonical: a bare `close_tab` formats with
+    // its default mode.
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const cases = [_][2][]const u8{
+        .{ "close_tab", "close_tab:this" },
+        .{ "new_split:right", "new_split:right" },
+        .{ "resize_split:up,10", "resize_split:up,10" },
+        .{ "toggle_rearrange_mode", "toggle_rearrange_mode" },
+    };
+    for (cases) |c| {
+        const a = try Action.parse(c[0]);
+        var buf: std.Io.Writer.Allocating = .init(alloc);
+        defer buf.deinit();
+        try a.format(&buf.writer);
+        try testing.expectEqualStrings(c[1], buf.written());
+    }
 }
 
 test "action: format set title" {

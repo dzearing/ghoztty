@@ -1429,6 +1429,19 @@ pub const Attached = struct {
     /// 0 → the client keeps today's live-width replay).
     replay_rows: u16 = 0,
     replay_cols: u16 = 0,
+    /// Total bytes of DATA the agent sends in reply to this ATTACH before live
+    /// output resumes — the gap-fill, a scrollback-lost marker, and the grid
+    /// snapshot (set with `status == .alive`). Null from an older agent.
+    ///
+    /// The viewer counts every byte it applies to compute the stream offset it
+    /// persists for its next re-attach, but the marker and the grid snapshot are
+    /// synthetic: they occupy no offsets in the agent's stream. Counted anyway,
+    /// they inflated the persisted offset by one screen repaint per restart until
+    /// it ran AHEAD of the agent — and the next re-attach then discarded the
+    /// child's real output until the stream caught up (an idle pane froze;
+    /// typing echoed nothing). With this the viewer anchors its count so that
+    /// after `replay_len` bytes it equals `snapshot_at_offset` exactly.
+    replay_len: ?u64 = null,
 
     pub const AttachStatus = enum { alive, dead, not_found };
 };
@@ -1763,12 +1776,16 @@ pub const Relaunched = struct {
     /// clients (ignore it) interoperate unchanged.
     replayed: bool = false,
 
-    /// The width/height the replayed scrollback (`replayed == true`) was drawn at
-    /// — the snapshot's capture geometry (§5.4). 0 = unknown (blank relaunch, or a
-    /// legacy GRS1 snapshot with no width). The client replays the raw stream at
-    /// this width and then reflows to the live pane, so in-place prompt redraws
-    /// don't smear when the restored pane is a different size. Additive/defaulted →
-    /// an older agent sends 0 and the client falls back to live-width replay.
+    /// The width/height the replayed scrollback (`replayed == true`) must be
+    /// replayed at — the snapshot's capture geometry (§5.4) — or 0 for "replay at
+    /// your own width". Non-zero only for a RAW ring replay, whose in-place
+    /// prompt redraws land cleanly only at the width they were drawn at: the
+    /// client replays at this width and then reflows to the live pane. A current
+    /// agent replays the session's content HISTORY instead (soft wraps unwrapped,
+    /// no cursor motion), which re-wraps correctly at any width, and sends 0.
+    /// Also 0 for a blank relaunch or a legacy GRS1 snapshot with no width.
+    /// Additive/defaulted → an older agent sends 0 and the client replays at its
+    /// own width.
     replay_cols: u16 = 0,
     replay_rows: u16 = 0,
 

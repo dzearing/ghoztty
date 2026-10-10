@@ -117,6 +117,10 @@ notice_fold_armed: bool = false,
 /// active area where the child's repaint erases it. Null when this pane never
 /// showed a notice, which is the overwhelming majority of panes.
 notice_guard: ?*terminalpkg.Pin = null,
+/// Set (GUI thread, `Surface.sizeCallback`) once the apprt has reported the
+/// surface's real size. Until then the size is a construction placeholder;
+/// read by a backend's bring-up on the IO thread (`Remote.awaitRealSize`).
+size_reported: std.atomic.Value(bool) = .init(false),
 
 /// The state we need to keep around only until we enter the IO
 /// thread. Then we can throw it all away.
@@ -506,6 +510,15 @@ pub fn queueMessage(
     self.mailbox.notify();
 }
 
+/// The latest pending resize WITHOUT clearing it (see `pending_resize`): for a
+/// backend's bring-up that needs the real geometry before the IO loop has run,
+/// and leaves applying it to that loop. Only meaningful once `size_reported`.
+pub fn peekPendingResize(self: *Termio) ?renderer.Size {
+    self.pending_resize_mutex.lock();
+    defer self.pending_resize_mutex.unlock();
+    return self.pending_resize;
+}
+
 /// Atomically take and clear the latest pending resize (see `pending_resize`).
 /// Called by the IO thread on each mailbox drain so a coalesced RESIZE is
 /// applied even when the bounded data mailbox is saturated. Null = nothing
@@ -630,6 +643,31 @@ pub fn resize(
     }
 
     // Mail the renderer so that it can update the GPU and re-render
+    _ = self.renderer_mailbox.push(.{ .resize = size }, .{ .forever = {} });
+    self.renderer_wakeup.notify() catch {};
+}
+
+/// Adopt `size` for the LOCAL terminal only — `self.size`, the grid, pixel
+/// sizes, the renderer — without telling the backend (no pty ioctl, no agent
+/// RESIZE, no in-band size report). For a backend's bring-up on the IO thread
+/// before the loop runs: content painted during bring-up (a restore snapshot,
+/// an agent replay) must land in a grid of the pane's REAL size, not the
+/// construction placeholder it still has, or its absolute cursor positions are
+/// wrong once the grid is resized. The IO loop's own `resize` for the same size
+/// then follows as usual (and tells the backend).
+pub fn adoptSizeLocal(self: *Termio, size: renderer.Size) void {
+    self.size = size;
+    const grid_size = size.grid();
+    {
+        self.renderer_state.mutex.lock();
+        defer self.renderer_state.mutex.unlock();
+        self.terminal.resize(self.alloc, grid_size.columns, grid_size.rows) catch |err| {
+            log.warn("adoptSizeLocal resize failed err={}", .{err});
+            return;
+        };
+        self.terminal.width_px = grid_size.columns * self.size.cell.width;
+        self.terminal.height_px = grid_size.rows * self.size.cell.height;
+    }
     _ = self.renderer_mailbox.push(.{ .resize = size }, .{ .forever = {} });
     self.renderer_wakeup.notify() catch {};
 }

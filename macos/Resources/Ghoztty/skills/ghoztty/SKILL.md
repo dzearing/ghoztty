@@ -68,7 +68,7 @@ Rules that follow from this:
 
 ### `ghoztty +new-window`
 
-Create or focus a terminal window. **Auto-launches Ghoztty if no instance is running.**
+Create (or reuse) a terminal window. **Auto-launches Ghoztty if no instance is running.**
 
 ```
 ghoztty +new-window [flags]

@@ -70,6 +70,12 @@ final class ViewerView: NSView, Codable, ObservableObject {
         /// file behind `python3 -m http.server` was the only way to see it
         /// before.
         case html(URL)
+        /// An image file, rendered by a native `NSScrollView` surface mounted
+        /// over the web view rather than by a page (see `ViewerImageSurface`
+        /// for why). The web view still holds the render template underneath,
+        /// so the pane keeps its history entry, its address, and its error
+        /// card — the picture is the only part that is not web content.
+        case image(URL)
         /// A website; the web view navigates to it directly.
         case web(URL)
     }
@@ -79,12 +85,19 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// `.web`, and navigating Back over that boundary switches it home again
     /// (see `syncMode(toCommitted:)`).
     ///
-    /// Whether the chrome bar is pinned open depends on the mode, so every
-    /// assignment re-evaluates it here rather than at each navigation site —
-    /// there are five of them, and a new one that forgot would silently leave
-    /// a website peeking or a document pinned.
+    /// Whether the native image surface is mounted depends on the mode, so
+    /// every assignment re-evaluates it here rather than at each navigation
+    /// site — there are six of them, and a new one that forgot would leave an
+    /// image painted over a website, or a blank template where a picture
+    /// should be.
+    ///
+    /// The nav bar reads it too (the diff controls, the Reveal in Finder
+    /// button), so a change is announced to observers explicitly rather than
+    /// left to ride on whichever `@Published` field the navigation site
+    /// happens to touch next.
     private(set) var mode: Mode {
-        didSet { updateChromePin() }
+        willSet { objectWillChange.send() }
+        didSet { updateImageSurface() }
     }
 
     /// The file the template page is showing, if any. Kept separately from
@@ -117,11 +130,15 @@ final class ViewerView: NSView, Codable, ObservableObject {
     private var reloadNeedsRearm = false
 
     // Browser chrome state. The chrome bar (WebChromeBar, hosted in an
-    // NSHostingView) peeks in when the mouse hovers the thin strip at the
-    // very top of the pane and auto-hides after inactivity. While visible
-    // it RESERVES its space: the web view's top is inset below the bar, so
-    // the top of the page is never covered and stays clickable. It shows an
-    // editable address field + nav controls in every mode.
+    // NSHostingView) is PINNED OPEN in every viewer mode, from the pane's
+    // first layout. It RESERVES its space: the content view's top is inset
+    // below the bar, so the top of the page is never covered and stays
+    // clickable. It shows an editable address field + nav controls in every
+    // mode.
+    //
+    // False only while the pane is detached (closed, sitting in the undo
+    // stack), where the bar is torn down along with everything else that
+    // would retain the pane.
     @Published private(set) var chromeVisible = false
     @Published private(set) var currentURL: String = ""
     @Published private(set) var canGoBack = false
@@ -136,17 +153,29 @@ final class ViewerView: NSView, Codable, ObservableObject {
     private var urlObservation: NSKeyValueObservation?
     private var backObservation: NSKeyValueObservation?
     private var forwardObservation: NSKeyValueObservation?
-    private var chromeHideTimer: Timer?
-    private var chromeHeld = false
     private var chromeMonitor: Any?
     private var chromeHost: NSHostingView<WebChromeBar>?
-    /// Top inset of the web view: 0 with the bar hidden, the bar's height
-    /// while it is visible (content starts below the bar, never under it).
+    /// Top inset of the content views: the bar's height (content starts below
+    /// the bar, never under it), plus the composer's while it is open.
     private var webViewTopConstraint: NSLayoutConstraint?
+    /// The same inset for the native image surface, which sits in the web
+    /// view's slot while the pane is showing an image.
+    private var imageSurfaceTopConstraint: NSLayoutConstraint?
 
     /// The bar's top offset: -barHeight parks it just above the pane's top
-    /// edge (clipped away); 0 is fully slid in. Animated for the slide.
+    /// edge (clipped away, only while detached); 0 is fully in place.
     private var chromeTopConstraint: NSLayoutConstraint?
+
+    /// True while the pane is out of the split tree — closed, and retained
+    /// only by the undo stack. Everything it owns is torn down, and must stay
+    /// torn down through any layout passes that follow.
+    private var isDetached = false
+
+    /// The native image surface, mounted only while `mode` is `.image`.
+    private var imageSurface: ViewerImageSurface?
+    /// Set when the current image mode could not decode its file, so the
+    /// template page shows its error card once it finishes loading.
+    private var imageLoadFailed = false
 
     // The side panel: one card in the pane's left gutter, whose CONTENTS
     // depend on what the pane is showing — a markdown document's table of
@@ -254,8 +283,16 @@ final class ViewerView: NSView, Codable, ObservableObject {
     var isLivePage: Bool {
         switch mode {
         case .web, .html: return true
-        case .markdown, .code, .diff: return false
+        case .markdown, .code, .diff, .image: return false
         }
+    }
+
+    /// True while this pane is rendering an image on the native surface rather
+    /// than in the web view. Drives what the content-focus and find paths
+    /// point at, and what a reload re-reads.
+    var isImageMode: Bool {
+        if case .image = mode { return true }
+        return false
     }
 
     /// True while the bundled template page is what the web view is actually
@@ -267,8 +304,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
     }
 
     /// True while this pane is rendering a git diff. Drives which side panel
-    /// the card shows, which controls the nav bar carries, and whether the
-    /// bar may auto-hide.
+    /// the card shows and which controls the nav bar carries.
     var isDiffMode: Bool {
         if case .diff = mode { return true }
         return false
@@ -277,7 +313,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// The file URL for file-backed modes, nil for websites and diffs.
     var fileURL: URL? {
         switch mode {
-        case .markdown(let url), .code(let url), .html(let url): return url
+        case .markdown(let url), .code(let url), .html(let url), .image(let url): return url
         case .web, .diff: return nil
         }
     }
@@ -311,15 +347,17 @@ final class ViewerView: NSView, Codable, ObservableObject {
         self.diffSpec = mode.diffSpec
         self.title = Self.initialTitle(for: location)
         super.init(frame: .zero)
-        // The chrome bar parks above the top edge between reveals; without
-        // clipping it would paint over whatever sits above this pane.
+        // The chrome bar parks above the top edge while the pane is detached;
+        // without clipping it would paint over whatever sits above this pane.
         clipsToBounds = true
         setupWebView(adopting: adoptedWebView)
-        // Before the pane has a window, so a mode that pins the bar reserves
-        // its space in the pane's first layout: the page then paints once, at
-        // its final size, instead of being pushed down by a bar sliding in
-        // over content the user is already reading.
-        updateChromePin()
+        // Before the pane has a window, so the bar reserves its space in the
+        // pane's FIRST layout: the content then paints once, at its final
+        // size, instead of being pushed down a frame later.
+        showChrome()
+        // Property observers don't run during init, so `mode`'s `didSet` has
+        // not fired and the surface has to be mounted by hand here.
+        updateImageSurface()
         // A popup adopts a web view WebKit is already driving (see
         // `createWebViewWith`): loading our own request would fight that
         // navigation and break the opener↔popup link, and there is no file to
@@ -359,7 +397,6 @@ final class ViewerView: NSView, Codable, ObservableObject {
     deinit {
         fileMonitor?.cancel()
         reloadDebounce?.cancel()
-        chromeHideTimer?.invalidate()
         diffRefreshTimer?.invalidate()
         if let chromeMonitor { NSEvent.removeMonitor(chromeMonitor) }
     }
@@ -371,16 +408,13 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// leaving it mounted is a retain cycle that would keep the web view
     /// alive (and audible) forever.
     func setDetached(_ detached: Bool) {
+        isDetached = detached
         if detached {
             removeEventMonitor()
-            chromeHideTimer?.invalidate()
             chromeHost?.removeFromSuperview()
             chromeHost = nil
             chromeTopConstraint = nil
             chromeVisible = false
-            // The pin goes with the bar: a re-attach re-mounts from scratch,
-            // and a pinned pane has to pin the new bar too.
-            chromePinned = false
             // Same retain-cycle reasoning as the chrome bar. The composer's
             // CONTENT is safe: it lives in `feedbackModel`, which this view
             // owns, so an undo that re-attaches the pane brings the
@@ -393,8 +427,22 @@ final class ViewerView: NSView, Codable, ObservableObject {
             // The bar is gone; a re-attach re-mounts and re-measures it. Keep
             // `feedbackDraftStem` so an undo restores the same draft folder.
             feedbackBarHeight = 0
+            // Same retain-cycle reasoning again for the find card. The QUERY
+            // is kept (it lives on this view), so an undo that re-attaches the
+            // pane can resume the search with Cmd-G — but the bar comes back
+            // closed, because a detached pane's highlights are gone with its
+            // page state.
+            unmountFindHost()
+            findOpen = false
+            findResult = .none
             chromeAnimating = false
             webViewTopConstraint?.constant = 0
+            imageSurfaceTopConstraint?.constant = 0
+            // A detached image pane must let go of its decoded bitmap: the
+            // closed tree is retained by the undo stack, so this can be many
+            // megabytes held for as long as the undo window lasts. The URL
+            // stays in `mode`, so a re-attach reloads it.
+            imageSurface?.clear()
             // Same reasoning as the chrome bar: these hosting views' root
             // views strongly reference us, so a detached pane sitting in the
             // undo stack would never let go of its web view.
@@ -415,7 +463,9 @@ final class ViewerView: NSView, Codable, ObservableObject {
         } else {
             installEventMonitor()
             startWatchingDiff()
-            updateChromePin()
+            showChrome()
+            // Re-decode the image the detach dropped.
+            reloadImageSurface()
         }
     }
 
@@ -437,6 +487,18 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// same menu as one outside it.
     static func linkMenuUserScript() -> WKUserScript? {
         userScript(named: "links", degradesTo: "the link menu", forMainFrameOnly: false)
+    }
+
+    /// The bundled find-in-page user script, or nil if the resource is missing
+    /// (a broken bundle degrades to "Cmd-F does nothing", never a crash).
+    ///
+    /// Main frame only. Highlighting, counting, and stepping all happen in one
+    /// document's coordinate and offset space; a subframe would be a second,
+    /// independent search with its own count, and merging the two into one
+    /// "3/17" is not something one script in each frame can do. The find bar
+    /// says so instead (see `find.js` → `scopeNote`).
+    static func findUserScript() -> WKUserScript? {
+        userScript(named: "find", degradesTo: "find-in-page", forMainFrameOnly: true)
     }
 
     private static func userScript(
@@ -476,13 +538,44 @@ final class ViewerView: NSView, Codable, ObservableObject {
             return .web(url)
         }
         let url = URL(fileURLWithPath: Self.expandFilePath(location))
-        switch url.pathExtension.lowercased() {
+        let ext = url.pathExtension.lowercased()
+        if imageExtensions.contains(ext) { return .image(url) }
+        switch ext {
         case "md", "markdown", "mdown", "mkd", "mdwn":
             return .markdown(url)
         case "html", "htm":
             return .html(url)
         default:
             return .code(url)
+        }
+    }
+
+    /// Extensions that open as an image pane rather than as highlighted
+    /// source. A fixed list rather than `NSImage.imageTypes`, for the same
+    /// reason the markdown list is fixed: what a `--view=` path does should be
+    /// predictable from the path, not from which decoders this macOS build
+    /// happens to ship.
+    ///
+    /// `svg` is here even though it is text — it is a picture, and reading its
+    /// source is what an editor is for.
+    static let imageExtensions: Set<String> = [
+        "png", "apng", "jpg", "jpeg", "jpe", "jfif",
+        "gif", "webp", "avif", "heic", "heif",
+        "tif", "tiff", "bmp", "ico", "icns", "svg",
+    ]
+
+    /// Whether a file handed to the app (File → Open, a dock drop, `open -a
+    /// Ghoztty foo.png`) should open a viewer WINDOW instead of a terminal
+    /// running the file as a command.
+    ///
+    /// Deliberately narrower than "everything a viewer can render": a `.swift`
+    /// or `.json` dropped on the dock has always opened a terminal there, and
+    /// changing that would break a workflow to buy a nicety. Markdown and
+    /// images are the two kinds nobody drops on a terminal on purpose.
+    static func opensAsViewerWindow(path: String) -> Bool {
+        switch mode(for: path) {
+        case .markdown, .image: return true
+        case .code, .html, .web, .diff: return false
         }
     }
 
@@ -502,7 +595,8 @@ final class ViewerView: NSView, Codable, ObservableObject {
     private static func initialTitle(for location: String) -> String {
         switch mode(for: location) {
         case .web(let url): return url.host ?? location
-        case .markdown(let url), .code(let url), .html(let url): return url.lastPathComponent
+        case .markdown(let url), .code(let url), .html(let url), .image(let url):
+            return url.lastPathComponent
         case .diff(let spec): return spec.title
         }
     }
@@ -571,6 +665,14 @@ final class ViewerView: NSView, Codable, ObservableObject {
                 config.userContentController.addUserScript(script)
             }
 
+            // Find-in-page, injected into every page for the same reason.
+            // WKWebView's own `find(_:configuration:)` reports only
+            // `matchFound` — no count, no ordinal — so the browser-standard
+            // "3/17" is unreachable through it and the search has to be ours.
+            if let script = Self.findUserScript() {
+                config.userContentController.addUserScript(script)
+            }
+
             webView = WKWebView(frame: .zero, configuration: config)
         }
 
@@ -630,12 +732,83 @@ final class ViewerView: NSView, Codable, ObservableObject {
         installEventMonitor()
     }
 
-    // MARK: - Browser chrome (web mode)
+    // MARK: - Image surface
 
-    /// The pane-top strip (in points) that reveals the chrome bar on hover.
-    /// Deliberately thin so ordinary interaction with the page never
-    /// triggers the bar — only an intentional move to the very top edge.
-    private static let chromeRevealHeight: CGFloat = 20
+    /// Mount, refresh, or tear down the native image surface for the current
+    /// mode. The single choke point `mode`'s `didSet` calls, so no navigation
+    /// site can forget it.
+    ///
+    /// The surface is a SIBLING of the web view occupying the same rect, not a
+    /// replacement for it: the web view keeps the render template loaded
+    /// underneath, which is what gives an image pane a real history entry, an
+    /// address, and an error card (see `ViewerImageSurface`'s note).
+    private func updateImageSurface() {
+        guard case .image(let url) = mode else {
+            imageSurface?.removeFromSuperview()
+            imageSurface = nil
+            imageSurfaceTopConstraint = nil
+            imageLoadFailed = false
+            return
+        }
+
+        let surface = imageSurface ?? mountImageSurface()
+        // Only re-decode when the file actually changed. A mode assignment for
+        // the image already on screen — Back landing on the template page, say
+        // — must not reset the user's zoom. (A pane whose last decode FAILED
+        // has a nil url, so it re-tries.)
+        guard surface.url != url else { return }
+        imageLoadFailed = !surface.show(url)
+        // The template may already be up (a re-navigation inside a loaded
+        // pane), in which case the error card has to be pushed now — nothing
+        // else will arrive to do it.
+        if imageLoadFailed { renderFileContent() }
+    }
+
+    /// The topmost view that counts as pane CONTENT, in subview order. The
+    /// overlays — the composer, the find card, the nav bar — all mount above
+    /// this, so whichever content layers exist, they land in front of all of
+    /// them and in front of each other in the order they are created.
+    private var topContentLayer: NSView {
+        sidePanelResizeHandle ?? sidePanelContainer ?? imageSurface ?? webView
+    }
+
+    private func mountImageSurface() -> ViewerImageSurface {
+        let surface = ViewerImageSurface(frame: bounds)
+        surface.translatesAutoresizingMaskIntoConstraints = false
+        // Directly above the web view: this is CONTENT, and everything else
+        // mounted over the pane (the side panel, the composer, the find card,
+        // the nav bar) anchors itself above the topmost content layer.
+        addSubview(surface, positioned: .above, relativeTo: webView)
+        let top = surface.topAnchor.constraint(
+            equalTo: topAnchor, constant: webViewTopConstraint?.constant ?? 0)
+        NSLayoutConstraint.activate([
+            top,
+            surface.bottomAnchor.constraint(equalTo: bottomAnchor),
+            surface.leadingAnchor.constraint(equalTo: leadingAnchor),
+            surface.trailingAnchor.constraint(equalTo: trailingAnchor),
+        ])
+        imageSurfaceTopConstraint = top
+        imageSurface = surface
+        // The chrome layers were mounted above the WEB VIEW, which this
+        // surface now sits on top of; lift them back over it.
+        for layer in [sidePanelContainer, sidePanelResizeHandle, feedbackHost, findHost, chromeHost] {
+            guard let layer else { continue }
+            addSubview(layer, positioned: .above, relativeTo: surface)
+        }
+        return surface
+    }
+
+    /// Re-read the image from disk (live reload, `+reload`, re-attach after an
+    /// undo). Falls back to the template's error card if it can no longer be
+    /// decoded — a file that was deleted or replaced with something else.
+    private func reloadImageSurface() {
+        guard case .image(let url) = mode, let surface = imageSurface else { return }
+        let ok = surface.url == nil ? surface.show(url) : surface.reloadFromDisk()
+        imageLoadFailed = !ok
+        if imageLoadFailed { renderFileContent() }
+    }
+
+    // MARK: - Browser chrome
 
     func goBack() { webView.goBack() }
     func goForward() { webView.goForward() }
@@ -662,6 +835,15 @@ final class ViewerView: NSView, Codable, ObservableObject {
             } else {
                 load()
             }
+        case .image:
+            // The picture is native, so an explicit reload is a re-decode
+            // rather than a page load. Zoom and scroll survive it the same way
+            // scroll position survives a markdown re-render (see
+            // `reloadFromDisk`); the template underneath is untouched, so
+            // history and the address are unaffected.
+            startWatchingFile()
+            reloadImageSurface()
+            if !pageLoaded { load() }
         case .html:
             // Re-arm the watcher like the other file modes, then re-fetch the
             // page from disk. `reloadFromOrigin` rather than `reload` because
@@ -708,12 +890,25 @@ final class ViewerView: NSView, Codable, ObservableObject {
         // reliably move the AppKit first responder off the field editor here (a
         // recurring NSHostingView limitation elsewhere in this file), so move it
         // explicitly.
-        window?.makeFirstResponder(webView)
+        window?.makeFirstResponder(contentFocusView)
     }
 
     /// Return to the location this pane was opened with (the home button).
     func goHome() {
         openLocation(homeLocation)
+    }
+
+    /// Show the file this pane is displaying in Finder, selected (the folder
+    /// button). Follows the pane's CURRENT location — `fileURL` is derived
+    /// from the live mode — so a pane that navigated to another file reveals
+    /// that one, and a pane showing a website or a diff has nothing to reveal.
+    ///
+    /// Routed through `BannerLinkOpener` so the button and the "Reveal in
+    /// Finder" item on a link's right-click menu are one behavior, including
+    /// what happens when the file has since been deleted.
+    func revealFileInFinder() {
+        guard let fileURL else { return }
+        BannerLinkOpener(anchor: self).revealInFinder(fileURL)
     }
 
     /// A typed address that names a local file rather than a website: an
@@ -750,7 +945,12 @@ final class ViewerView: NSView, Codable, ObservableObject {
             stopWatchingDiff()
             startWatchingFile()
             load()
-        case .markdown(let url), .code(let url):
+        case .markdown(let url), .code(let url), .image(let url):
+            // An image goes through the template path with everything else:
+            // the page it loads renders nothing (the native surface is over
+            // it), but it is a real history entry, which is what makes Back,
+            // Home, and the address field behave the same in an image pane as
+            // in a markdown one.
             mode = newMode
             fileLocation = url
             diffSpec = nil
@@ -817,7 +1017,6 @@ final class ViewerView: NSView, Codable, ObservableObject {
     @discardableResult
     func focusAddressBar() -> Bool {
         guard window != nil else { return false }
-        holdChrome(true)
         addressFocusRequest += 1
         // Belt and braces: SwiftUI's @FocusState does not propagate reliably
         // inside an NSHostingView (the same reason chromeKeyboardFocused is
@@ -866,7 +1065,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
     func cancelAddressEditing() {
         // Focus first: resigning the field editor commits whatever was typed
         // into the bar's text binding, so the revert has to land after it.
-        window?.makeFirstResponder(webView)
+        window?.makeFirstResponder(contentFocusView)
         addressRevertRequest += 1
         reclaimPageFocus()
     }
@@ -883,40 +1082,56 @@ final class ViewerView: NSView, Codable, ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self, let window = self.window else { return }
             if window.firstResponder === window {
-                window.makeFirstResponder(self.webView)
+                window.makeFirstResponder(self.contentFocusView)
             }
             self.reclaimPageFocus(attempt: attempt + 1)
         }
     }
 
     /// A key event this pane wants before the focused element sees it (from the
-    /// pane's local event monitor). Today: Escape while a chrome text field —
-    /// the address bar, or the diff panel's filter — is being edited. Returns
-    /// true when the event was consumed.
+    /// pane's local event monitor): Escape while a chrome text field — the
+    /// address bar, the diff panel's filter, or the find field — is being
+    /// edited or while find is open, and Return/Shift-Return in the find field.
+    /// Returns true when the event was consumed.
     ///
     /// AppKit-level rather than a SwiftUI `.onExitCommand` for the same reason
     /// the rest of the chrome's focus handling is: @FocusState does not
     /// propagate reliably inside an NSHostingView, and the field editor — not
-    /// the SwiftUI view — is what actually holds the keystroke.
+    /// the SwiftUI view — is what actually holds the keystroke. Shift-Return is
+    /// the other half of that: a single-line field editor turns it into an
+    /// ordinary `insertNewline:`, indistinguishable from Return by the time
+    /// SwiftUI's `onSubmit` sees it, so "find previous" has to be read off the
+    /// event itself.
     func handleChromeKeyDown(_ event: NSEvent) -> Bool {
         guard event.window === window else { return false }
-        let editingAddress = chromeTextFieldFocused
-        let editingFilter = sidePanelTextFieldFocused
-        guard editingAddress || editingFilter else { return false }
-        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard event.keyCode == 53,  // Escape
-              !mods.contains(.command),
-              !mods.contains(.control),
-              !mods.contains(.option)
+        // Escape closes find from the PAGE too, so this is no longer gated on a
+        // text field having the caret — but it must still be gated on the
+        // keystroke belonging to THIS pane, or a viewer split would eat Escape
+        // from the terminal next door.
+        guard paneHoldsFocus else { return false }
+        guard let action = Self.fieldKeyAction(
+            for: event,
+            addressFocused: chromeTextFieldFocused,
+            diffFilterFocused: sidePanelTextFieldFocused,
+            findFocused: findTextFieldFocused,
+            findOpen: findOpen)
         else { return false }
-        if editingAddress {
+
+        switch action {
+        case .revertAddress:
             cancelAddressEditing()
-        } else {
+        case .clearDiffFilter:
             // Escape in the filter puts the whole list back and hands focus to
             // the diff — the same "throw the edit away" contract the address
             // field has.
             setDiffFilter("")
-            window?.makeFirstResponder(webView)
+            window?.makeFirstResponder(contentFocusView)
+        case .closeFind:
+            closeFind()
+        case .findNext:
+            stepFind(1)
+        case .findPrevious:
+            stepFind(-1)
         }
         return true
     }
@@ -969,7 +1184,6 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// a plain caret at the click point and wipes the selection out again.
     /// So the selection is applied once the click is FINISHED.
     func addressFieldFocusChanged(_ focused: Bool) {
-        holdChrome(focused)
         guard focused else { return }
         // Cmd-C / Cmd-V are Ghoztty keybindings (copy_to_clipboard /
         // paste_from_clipboard). A terminal surface sharing this window keeps
@@ -1012,70 +1226,15 @@ final class ViewerView: NSView, Codable, ObservableObject {
         editor.selectAll(nil)
     }
 
-    /// True while the chrome bar must stay on screen regardless of hover:
-    /// the compact TOC layout hosts the contents toggle there, and a control
-    /// that slides away before you can reach it is not a control. The open
-    /// feedback composer pins it for the same reason — and because the
-    /// composer hangs off the bar's bottom edge, so retracting the bar would
-    /// drag the toolbar the user is typing into off screen with it.
-    /// A diff pane pins the bar too: it is where next/previous-change and the
-    /// unified⇄side-by-side toggle live, and a control you have to go hunting
-    /// for with the mouse before every use is not a control. It also keeps the
-    /// revspec visible, which is the one thing a diff pane's chrome should say.
-    /// So does a live page — a website, or a local HTML file the web view
-    /// renders as one: that is something you NAVIGATE, so the address and the
-    /// back/forward controls are part of using it, and a blank browser pane is
-    /// nothing but its address field. A markdown or code viewer is a reading
-    /// surface whose address rarely changes, so it keeps the hover peek rather
-    /// than spending a permanent strip of the document on chrome.
-    private var chromeAlwaysVisible: Bool {
-        sidePanelLayout == .compact || feedbackOpen || isDiffMode || isLivePage
-    }
-
-    /// The pin state the chrome currently reflects, so `updateChromePin` acts
-    /// only on a real change and never re-arms the hide timer under a bar the
-    /// user is already looking at.
-    private var chromePinned = false
-
-    /// Re-evaluate `chromeAlwaysVisible` after something that can change it —
-    /// a navigation, the side panel switching layout, the composer opening or
-    /// closing. A pane's mode is not fixed at open (the address field
-    /// navigates a markdown viewer to a website, and Back brings it home), so
-    /// the pin follows where the pane IS rather than where it was opened.
-    ///
-    /// EVERY pin transition goes through here, because the conditions overlap:
-    /// a pane can be pinned by two of them at once, and one of them ending
-    /// must not un-pin a bar the other still needs.
-    private func updateChromePin() {
-        let pinned = chromeAlwaysVisible
-        guard pinned != chromePinned else { return }
-        chromePinned = pinned
-        // Newly pinned: show it now. No longer pinned: hand it back to the
-        // hover timer rather than yanking it away mid-glance.
-        if pinned { setChromeVisible(true) } else { scheduleChromeHide() }
-    }
-
     /// Toggle the contents panel (the chrome bar's leading button).
     func toggleSidePanel() {
         setSidePanelOpen(!sidePanelOpen)
     }
 
-    /// The chrome bar calls this while hovered or while the URL field is
-    /// focused so auto-hide pauses.
-    func holdChrome(_ hold: Bool) {
-        chromeHeld = hold
-        if hold {
-            chromeHideTimer?.invalidate()
-            setChromeVisible(true)
-        } else {
-            scheduleChromeHide()
-        }
-    }
-
     /// True while keyboard focus (window first responder) is inside the
     /// chrome bar — the URL field's field editor or any of its buttons.
-    /// Checked at hide time at the AppKit level because SwiftUI @FocusState
-    /// doesn't propagate reliably inside an NSHostingView.
+    /// Checked at the AppKit level because SwiftUI @FocusState doesn't
+    /// propagate reliably inside an NSHostingView.
     private var chromeKeyboardFocused: Bool {
         guard let chromeHost, let responder = window?.firstResponder as? NSView else { return false }
         return responder === chromeHost || responder.isDescendant(of: chromeHost)
@@ -1102,43 +1261,28 @@ final class ViewerView: NSView, Codable, ObservableObject {
     }
 
     /// True when keyboard focus is on an element inside THIS viewer pane that
-    /// should receive the standard editing chords: the address field's editor or
-    /// the web content. Deliberately excludes the bar's buttons and the feedback
-    /// composer (which handles the chords itself). Gates the editing routing in
-    /// `performKeyEquivalent`.
+    /// should receive the standard editing chords: one of the pane's three text
+    /// fields (address, diff filter, find) or the web content. Deliberately
+    /// excludes the bar's buttons and the feedback composer (which handles the
+    /// chords itself). Gates the editing routing in `performKeyEquivalent`.
     private var paneHoldsEditingFocus: Bool {
-        chromeTextFieldFocused || sidePanelTextFieldFocused || isViewerContentFocused
+        chromeTextFieldFocused || sidePanelTextFieldFocused
+            || findTextFieldFocused || isViewerContentFocused
     }
 
-    private func scheduleChromeHide(after delay: TimeInterval = 2.0) {
-        chromeHideTimer?.invalidate()
-        chromeHideTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-            guard let self else { return }
-            // Never hide out from under the user: keep the bar while it is
-            // hovered (chromeHeld) or holds keyboard focus; check again later.
-            if self.chromeHeld || self.chromeKeyboardFocused {
-                self.scheduleChromeHide(after: 1.0)
-                return
-            }
-            self.setChromeVisible(false)
-        }
-    }
-
-    /// WKWebView swallows normal mouse events, tracking areas over web
-    /// content are unreliable, and SwiftUI's focus plumbing can keep first
-    /// responder on the last terminal even after a click lands in web
-    /// content. One app-local event monitor solves both: clicks inside the
-    /// pane claim keyboard focus for the web view, and mouse movement near
-    /// the pane top reveals the chrome bar (all viewer modes).
+    /// WKWebView swallows normal mouse events, and SwiftUI's focus plumbing
+    /// can keep first responder on the last terminal even after a click lands
+    /// in viewer content. One app-local event monitor solves both: clicks
+    /// inside the pane claim keyboard focus for the pane's content view, and
+    /// Escape reaches the pane's fields ahead of the field editor.
     private func installEventMonitor() {
         guard chromeMonitor == nil else { return }
         chromeMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.mouseMoved, .leftMouseDown, .keyDown]
+            matching: [.leftMouseDown, .keyDown]
         ) { [weak self] event in
             guard let self else { return event }
             switch event.type {
             case .leftMouseDown: self.handleMouseDown(event)
-            case .mouseMoved: self.handleChromeMouseMoved(event)
             // Escape in the address field: consumed here (return nil) so the
             // field editor never sees it.
             case .keyDown: if self.handleChromeKeyDown(event) { return nil }
@@ -1153,7 +1297,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
         chromeMonitor = nil
     }
 
-    /// A click anywhere in this pane gives the web view keyboard focus so
+    /// A click anywhere in this pane gives its content view keyboard focus so
     /// pane-level keybinds (Cmd+W, Cmd+D, nav) target THIS pane.
     private func handleMouseDown(_ event: NSEvent) {
         guard let window, event.window === window else { return }
@@ -1176,7 +1320,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
            responder === webView || responder.isDescendant(of: self) {
             return // already ours
         }
-        window.makeFirstResponder(webView)
+        window.makeFirstResponder(contentFocusView)
     }
 
     /// Whether a left-click at `point` (in this view's coordinates) should
@@ -1190,41 +1334,30 @@ final class ViewerView: NSView, Codable, ObservableObject {
         return field.convert(field.bounds, to: self).contains(point)
     }
 
-    private func handleChromeMouseMoved(_ event: NSEvent) {
-        guard let window, event.window === window else { return }
-        let point = convert(event.locationInWindow, from: nil)
-        guard bounds.contains(point) else {
-            if chromeVisible, !chromeHeld { scheduleChromeHide(after: 0.5) }
-            return
-        }
-        // Non-flipped view: the top strip is the high-y band.
-        if point.y > bounds.height - Self.chromeRevealHeight {
-            if !chromeVisible { setChromeVisible(true) }
-            scheduleChromeHide()
-        } else if chromeVisible, !chromeHeld {
-            scheduleChromeHide(after: 0.7)
-        }
-    }
-
-    /// Mount/animate the chrome bar hosting view. AppKit-level (not a SwiftUI
-    /// overlay) so it reliably sits above the WKWebView subview. The bar
-    /// reserves its space rather than floating over the page: while visible,
-    /// the web view's top is inset by the bar height, so top-of-page content
-    /// is never covered and stays clickable.
+    /// Mount the chrome bar hosting view and put it on screen. AppKit-level
+    /// (not a SwiftUI overlay) so it reliably sits above the WKWebView
+    /// subview.
     ///
-    /// Reveal/hide is a SLIDE: the bar starts parked just above the pane's
-    /// top edge (clipped away) and its top constraint animates to 0 while
-    /// the web view's top inset animates to the bar height in the same
-    /// group, so the bar visibly pushes the content down and retracts back
-    /// up. Constraint animators re-run layout every frame — implicit
-    /// animation does not animate constraint-driven layout reliably.
-    private func setChromeVisible(_ requested: Bool) {
-        // Single choke point for the pin: in the compact TOC layout the bar
-        // carries the contents toggle, so nothing may hide it.
-        let visible = requested || chromeAlwaysVisible
-        chromeVisible = visible
+    /// **The bar is pinned open in every viewer mode.** It used to peek in on
+    /// a mouse-to-the-top-edge and auto-hide, for markdown and code panes
+    /// only, on the theory that a reading surface should not spend a permanent
+    /// strip on chrome. In practice the address, Home, and Back/Forward are
+    /// how you get anywhere from a viewer pane, and a control you have to go
+    /// hunting for with the mouse before every use is not a control — the same
+    /// argument that had already pinned the bar for diffs, live pages, the
+    /// compact side-panel layout, and the open composer, i.e. for most panes
+    /// most of the time. What was left was one inconsistent mode where content
+    /// reflowed under the pointer.
+    ///
+    /// It RESERVES its space rather than floating over the content: the
+    /// content view's top is inset by the bar height, so the top of the page
+    /// is never covered and stays clickable. Because this is called from
+    /// `init`, that inset is in place for the pane's first layout — the
+    /// content paints once, at its final size.
+    private func showChrome() {
+        chromeVisible = true
 
-        if visible, chromeHost == nil {
+        if chromeHost == nil {
             let host = NSHostingView(rootView: WebChromeBar(viewerView: self))
             host.translatesAutoresizingMaskIntoConstraints = false
             // Height from the content, width from the pane. The default options
@@ -1235,7 +1368,9 @@ final class ViewerView: NSView, Codable, ObservableObject {
             host.sizingOptions = [.intrinsicContentSize]
             // Above the composer too: the composer parks behind the bar and
             // slides out from under it.
-            addSubview(host, positioned: .above, relativeTo: feedbackHost ?? webView)
+            addSubview(
+                host, positioned: .above,
+                relativeTo: feedbackHost ?? imageSurface ?? webView)
             let top = host.topAnchor.constraint(
                 equalTo: topAnchor, constant: -host.fittingSize.height)
             NSLayoutConstraint.activate([
@@ -1245,13 +1380,12 @@ final class ViewerView: NSView, Codable, ObservableObject {
             ])
             chromeTopConstraint = top
             chromeHost = host
-            // Realize the parked-above position now so the first slide
+            // Realize the parked-above position now so a re-attach's slide
             // animates from offscreen instead of from a zero frame.
             layoutSubtreeIfNeeded()
         }
 
-        guard chromeHost != nil else { return }
-        if visible { chromeHost?.isHidden = false }
+        chromeHost?.isHidden = false
         applyTopChromeGeometry(animated: window?.isVisible == true)
     }
 
@@ -1317,6 +1451,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
             chromeTopConstraint?.constant = geometry.barTop
             feedbackTopConstraint?.constant = geometry.composerTop
             webViewTopConstraint?.constant = geometry.contentInset
+            imageSurfaceTopConstraint?.constant = geometry.contentInset
             layoutSubtreeIfNeeded()
             if !chromeVisible { chromeHost?.isHidden = true }
             if !feedbackOpen { feedbackHost?.isHidden = true }
@@ -1330,6 +1465,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
             chromeTopConstraint?.animator().constant = geometry.barTop
             feedbackTopConstraint?.animator().constant = geometry.composerTop
             webViewTopConstraint?.animator().constant = geometry.contentInset
+            imageSurfaceTopConstraint?.animator().constant = geometry.contentInset
         } completionHandler: { [weak self] in
             guard let self else { return }
             self.chromeAnimating = false
@@ -1428,10 +1564,6 @@ final class ViewerView: NSView, Codable, ObservableObject {
                     date: Date(), suffix: ViewerFeedbackReport.randomSuffix())
             }
             mountFeedbackHost()
-            // The composer's only close affordance lives in the chrome bar,
-            // so the bar must stop auto-hiding while it is open (same reason
-            // the compact TOC layout pins it).
-            updateChromePin()
             applyFeedbackState(animated: window?.isVisible == true)
             focusFeedbackInput()
         } else {
@@ -1439,9 +1571,8 @@ final class ViewerView: NSView, Codable, ObservableObject {
             // Hand focus back to the content so the pane is usable again.
             if let responder = window?.firstResponder as? NSView,
                let feedbackHost, responder.isDescendant(of: feedbackHost) {
-                window?.makeFirstResponder(webView)
+                window?.makeFirstResponder(contentFocusView)
             }
-            updateChromePin()
         }
     }
 
@@ -1454,15 +1585,13 @@ final class ViewerView: NSView, Codable, ObservableObject {
         // nav bar above: this composer spans the full pane, so a published
         // minimum width would become the pane's minimum width.
         host.sizingOptions = [.intrinsicContentSize]
-        // Above the TOC card as well as the web view: the composer spans the
-        // full pane width just under the nav bar and must never draw BEHIND the
-        // table-of-contents card in the gutter. The TOC layers are mounted
-        // `.above webView` too, so anchoring to the topmost of them (rather than
-        // to `webView`) is what keeps the composer in front regardless of which
-        // was created first. (The chrome bar is lifted back on top just below.)
-        addSubview(
-            host, positioned: .above,
-            relativeTo: sidePanelResizeHandle ?? sidePanelContainer ?? webView)
+        // Above every content layer, not just the web view: the composer spans
+        // the full pane width just under the nav bar and must never draw BEHIND
+        // the table-of-contents card in the gutter (or an image surface). All
+        // of those mount `.above webView` too, so anchoring to the topmost of
+        // them is what keeps the composer in front regardless of which was
+        // created first. (The chrome bar is lifted back on top just below.)
+        addSubview(host, positioned: .above, relativeTo: topContentLayer)
         // The chrome bar has to stay on top: the composer parks BEHIND it and
         // slides out from under it.
         if let chromeHost {
@@ -1510,12 +1639,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
     func captureFeedbackScreenshot() {
         guard let feedbackHost,
               let textView = Self.firstTextView(in: feedbackHost) else { return }
-        // The capture UI takes over the screen; the bar must not auto-hide
-        // out from under the user while they are dragging out a region.
-        holdChrome(true)
-        textView.captureScreenshot { [weak self] in
-            self?.holdChrome(false)
-        }
+        textView.captureScreenshot()
     }
 
     /// The draft's staging folder, or nil when there is no draft in progress
@@ -1531,6 +1655,16 @@ final class ViewerView: NSView, Codable, ObservableObject {
     var feedbackStagingRelativePath: String? {
         guard let stem = feedbackDraftStem, worktree != nil else { return nil }
         return "\(ViewerFeedbackReport.stagingRelativePath)/\(stem)"
+    }
+
+    /// What kind of thing the report is about, for the downstream agent
+    /// draining the queue. `image` is called out separately from `file`
+    /// because it changes what the rest of the report means: there is no
+    /// `selection`, there are no `quotes`, and `filePath` names a picture
+    /// rather than something to read.
+    private var feedbackSourceKind: String {
+        if isWebURL { return "web" }
+        return isImageMode ? "image" : "file"
     }
 
     /// Reveal the draft's staging folder in Finder, materializing it — the
@@ -1556,7 +1690,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
                 editedText: quote.editedText)
         }
         var context = ViewerFeedbackReport.Context(
-            source: location, sourceKind: isWebURL ? "web" : "file")
+            source: location, sourceKind: feedbackSourceKind)
         context.filePath = fileURL?.path
         context.relativePath = fileURL.flatMap {
             Self.relativePath(of: $0.path, under: worktree.path)
@@ -1613,7 +1747,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
             guard let self else { return }
             var context = ViewerFeedbackReport.Context(
                 source: self.location,
-                sourceKind: self.isWebURL ? "web" : "file")
+                sourceKind: self.feedbackSourceKind)
             context.filePath = self.fileURL?.path
             context.relativePath = self.fileURL.flatMap {
                 Self.relativePath(of: $0.path, under: worktree.path)
@@ -1831,6 +1965,8 @@ final class ViewerView: NSView, Codable, ObservableObject {
             handleQuoteMessage(payload)
         case "linkMenu":
             presentLinkMenu(payload)
+        case "find":
+            handleFindMessage(payload)
         case "diffNavOverflow":
             // The open file has no further hunk in that direction; the next
             // change is in the next FILE.
@@ -1940,7 +2076,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
             host.trailingAnchor.constraint(equalTo: container.trailingAnchor),
         ])
 
-        addSubview(container, positioned: .above, relativeTo: webView)
+        addSubview(container, positioned: .above, relativeTo: imageSurface ?? webView)
         sidePanelConstraints = [
             container.topAnchor.constraint(equalTo: webView.topAnchor),
             container.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -2022,6 +2158,12 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// empty list means no card, because a card with nothing in it is a strip
     /// of the document taken away for nothing.
     private var desiredSidePanelLayout: SidePanelLayout {
+        // A detached pane shows nothing. `setDetached` tears the card down,
+        // but `layout()` still runs afterwards (the bar's inset collapsing is
+        // itself a layout change) and would rebuild the card and its gutter
+        // from `tocItems`, which the detach deliberately keeps so an undo can
+        // re-attach a populated pane.
+        guard !isDetached else { return .hidden }
         let hasContent = isDiffMode ? !diffFiles.isEmpty : !tocItems.isEmpty
         guard hasContent else { return .hidden }
         return bounds.width >= Self.sidePanelGutterMinWidth ? .gutter : .compact
@@ -2032,6 +2174,9 @@ final class ViewerView: NSView, Codable, ObservableObject {
         // Panes are resized constantly by split-tree drags, so the gutter ⇄
         // compact switch has to ride layout rather than any one-shot setup.
         updateSidePanelLayout()
+        // Same reason: a squeezed pane has to squeeze the find card rather
+        // than push it off the trailing edge.
+        updateFindBarWidth()
     }
 
     /// Mount, size, or tear down the TOC views for the current pane width,
@@ -2040,16 +2185,11 @@ final class ViewerView: NSView, Codable, ObservableObject {
         // layout() can run before setupWebView has assigned the web view.
         guard webView != nil else { return }
 
+        // Guarded because `sidePanelLayout` is @Published and this runs on
+        // every frame of a divider drag: re-publishing an unchanged value
+        // would re-render the bar's SwiftUI content each time.
         let layout = desiredSidePanelLayout
-        if sidePanelLayout != layout {
-            sidePanelLayout = layout
-            // The compact layout puts the only control that opens the
-            // contents panel in the chrome bar, so the bar has to stop
-            // auto-hiding. Leaving compact hands it back to hover — unless
-            // something else still pins it, which is `updateChromePin`'s job
-            // to know.
-            updateChromePin()
-        }
+        if sidePanelLayout != layout { sidePanelLayout = layout }
 
         // The card hangs off the WEB VIEW's top, not the pane's: when the
         // chrome bar slides in it insets the web view, and the TOC has to
@@ -2586,11 +2726,254 @@ final class ViewerView: NSView, Codable, ObservableObject {
         updateSidePanelLayout()
     }
 
+    // MARK: - Find in page
+
+    /// Whether the find bar is mounted and showing.
+    @Published private(set) var findOpen = false
+    /// What the user has typed. Outlives the bar being closed so Cmd-G can
+    /// resume the last search the way Safari does.
+    @Published private(set) var findQuery = ""
+    /// The page's answer for `findQuery` (see `find.js`).
+    @Published private(set) var findResult = ViewerFindResult.none
+    /// Bumped to ask the bar to put the caret back in its field; the bar
+    /// watches this rather than exposing its @FocusState upward, the same
+    /// one-way channel `addressFocusRequest` uses.
+    @Published private(set) var findFocusRequest = 0
+
+    private var findHost: NSHostingView<ViewerFindBar>?
+    private var findWidthConstraint: NSLayoutConstraint?
+
+    /// Whether this pane has text to search at all.
+    ///
+    /// An image does not, and the honest answer to Cmd-F there is to DECLINE
+    /// it: the chord falls through to its global binding and no bar appears.
+    /// The alternative — opening a bar that can only ever say "no results" —
+    /// looks like a broken search rather than an inapplicable one, and the
+    /// find card's whole design is that it is honest about what it is not
+    /// searching (see `find.js` → `scopeNote`). Cmd-G is declined for the same
+    /// reason, via `stepFindFromKeyboard`'s empty-query check plus this.
+    var canFind: Bool { !isImageMode }
+
+    /// Widest the card is allowed to get, in points (its own margins included).
+    /// Wide enough for a real phrase plus the count and three buttons; capped
+    /// so it never spans a wide pane like a toolbar, which is exactly what the
+    /// card is not.
+    private static let findBarMaxWidth: CGFloat = 400
+
+    /// Open the find bar and put the caret in it, selecting whatever query is
+    /// already there so the next keystroke replaces it — the browser rule, and
+    /// the same one `focusAddressBar` follows.
+    ///
+    /// Returns false when this pane could never mount a bar (it is not in a
+    /// window) or has nothing to search (an image), so Cmd-F falls through to
+    /// its global binding rather than being silently swallowed.
+    @discardableResult
+    func openFind() -> Bool {
+        guard window != nil, canFind else { return false }
+        if !findOpen {
+            findOpen = true
+            mountFindHost()
+        }
+        findFocusRequest += 1
+        claimFindField()
+        // Re-running the search on open is what makes Cmd-F, Escape, Cmd-F
+        // come back to the same highlights instead of an empty page with a
+        // query still in the field.
+        if !findQuery.isEmpty { pushFindQuery() }
+        return true
+    }
+
+    /// Close the bar, drop the query, and clear the page's highlights.
+    ///
+    /// Closing CLEARS rather than hides: highlights painted over a document
+    /// nobody is searching any more are just noise, and a browser's Escape
+    /// does the same. `findQuery` is kept so Cmd-G can resume it, which is why
+    /// the page is told to clear explicitly rather than by pushing "".
+    func closeFind() {
+        // The page is cleared unconditionally, ahead of the open check: the
+        // highlights are the page's state, not the bar's, and "close" must
+        // never be able to leave them painted on a pane with no bar to remove
+        // them with.
+        findResult = .none
+        evaluateFind("window.__ghozttyFind.clear()")
+        guard findOpen else { return }
+        findOpen = false
+        unmountFindHost()
+        // Hand focus back to the page so the pane is usable again — the same
+        // thing the feedback composer does when it closes.
+        if let responder = window?.firstResponder as? NSView,
+           responder === self || responder.isDescendant(of: self) {
+            window?.makeFirstResponder(contentFocusView)
+        }
+    }
+
+    func toggleFind() {
+        if findOpen { closeFind() } else { openFind() }
+    }
+
+    /// The user typed. Pushed straight through (no debounce): the page caches
+    /// its text index between keystrokes and only rebuilds it when the DOM
+    /// actually moves, so a keystroke costs a scan of an already-built buffer.
+    func setFindQuery(_ text: String) {
+        guard findQuery != text else { return }
+        findQuery = text
+        if text.isEmpty { findResult = .none }
+        pushFindQuery()
+    }
+
+    /// Step to the next (+1) or previous (-1) match, wrapping.
+    func stepFind(_ delta: Int) {
+        guard !findQuery.isEmpty else { return }
+        evaluateFind("window.__ghozttyFind.step(\(delta))")
+    }
+
+    /// Cmd-G / Cmd-Shift-G: step the last search, re-opening the bar if it was
+    /// closed. Returns false when there is nothing to step, so the chord falls
+    /// through to its global binding instead of being eaten.
+    @discardableResult
+    func stepFindFromKeyboard(_ delta: Int) -> Bool {
+        guard canFind, !findQuery.isEmpty else { return false }
+        if !findOpen {
+            guard openFind() else { return false }
+        }
+        stepFind(delta)
+        return true
+    }
+
+    private func pushFindQuery() {
+        evaluateFind("window.__ghozttyFind.search(\(Self.js(findQuery)))")
+    }
+
+    /// Run a find call in the page, tolerating a page that has not installed
+    /// the script yet (a load in flight, or a `pdf`/plugin document WebKit
+    /// renders without running user scripts). A find that cannot reach the
+    /// page reports nothing rather than throwing into the console.
+    private func evaluateFind(_ call: String) {
+        guard webView != nil else { return }
+        webView.evaluateJavaScript("if (window.__ghozttyFind) { \(call); }")
+    }
+
+    /// The page reported a new match count (see `find.js` → `post`).
+    fileprivate func handleFindMessage(_ payload: [String: Any]) {
+        // A result for a query the user has already moved on from is stale;
+        // the push for the current one is on its way.
+        guard let reported = payload["query"] as? String, reported == findQuery else { return }
+        findResult = ViewerFindResult(payload: payload)
+    }
+
+    /// Re-arm the search after a navigation: the user script is re-injected
+    /// into the new document with no state, so an open find bar would be
+    /// showing a count for a page that is gone.
+    private func refreshFindAfterLoad() {
+        guard findOpen, !findQuery.isEmpty else { return }
+        pushFindQuery()
+    }
+
+    private func mountFindHost() {
+        guard findHost == nil else { return }
+        let host = NSHostingView(rootView: ViewerFindBar(viewerView: self))
+        host.translatesAutoresizingMaskIntoConstraints = false
+        // Height from the content (the honesty note makes the card two lines);
+        // width from the constraint below, so a narrow pane shrinks the card
+        // instead of the card flooring the pane's width.
+        host.sizingOptions = [.intrinsicContentSize]
+        // Above the side panel card: in the compact layout that card is an
+        // overlay from the left, and the two can meet in a narrow pane.
+        addSubview(host, positioned: .above, relativeTo: topContentLayer)
+        // The nav bar stays on top. The card never overlaps it in steady state
+        // (it hangs off the web view's top edge, which the bar insets), but the
+        // two move in the same animation group and must not cross mid-slide.
+        if let chromeHost {
+            addSubview(chromeHost, positioned: .above, relativeTo: host)
+        }
+        let width = host.widthAnchor.constraint(equalToConstant: Self.findBarMaxWidth)
+        NSLayoutConstraint.activate([
+            // The WEB VIEW's top, not the pane's: when the nav bar slides in it
+            // insets the web view, and the card has to move down with the
+            // content rather than slide under the bar. Same anchor the side
+            // panel card uses, for the same reason.
+            host.topAnchor.constraint(equalTo: webView.topAnchor),
+            host.trailingAnchor.constraint(equalTo: trailingAnchor),
+            width,
+        ])
+        findWidthConstraint = width
+        findHost = host
+        updateFindBarWidth()
+    }
+
+    private func unmountFindHost() {
+        findHost?.removeFromSuperview()
+        findHost = nil
+        findWidthConstraint = nil
+    }
+
+    /// Keep the card inside a narrow pane. Runs from `layout()`, so dragging a
+    /// split divider squeezes the card rather than pushing it off the edge.
+    private func updateFindBarWidth() {
+        guard let findWidthConstraint else { return }
+        let width = min(Self.findBarMaxWidth, max(0, bounds.width))
+        if abs(findWidthConstraint.constant - width) > 0.5 {
+            findWidthConstraint.constant = width
+        }
+    }
+
+    /// Make the find field first responder and select what is in it.
+    ///
+    /// Retried for the same reason `claimAddressField` is: the bar's SwiftUI
+    /// content is not built in the run-loop turn the host is mounted, so the
+    /// field usually does not exist yet on the first pass.
+    private func claimFindField(attempt: Int = 0) {
+        guard let window, let findHost,
+              let field = Self.firstTextField(in: findHost)
+        else {
+            guard attempt < 50, findOpen else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
+                self?.claimFindField(attempt: attempt + 1)
+            }
+            return
+        }
+        // A terminal surface sharing this window keeps its `focused` flag set
+        // even while this field holds keyboard focus, so its
+        // performKeyEquivalent would eat Cmd-C/V before the field editor sees
+        // them. The same yield the address and filter fields perform.
+        if let controller = window.windowController as? BaseTerminalController {
+            _ = controller.focusedSurface?.resignFirstResponder()
+        }
+        window.makeFirstResponder(field)
+        field.currentEditor()?.selectAll(nil)
+    }
+
+    /// The find field gained or lost keyboard focus. Only the yield above
+    /// matters here; the bar keeps its own caret.
+    func findFieldFocusChanged(_ focused: Bool) {
+        guard focused else { return }
+        if let controller = window?.windowController as? BaseTerminalController {
+            _ = controller.focusedSurface?.resignFirstResponder()
+        }
+    }
+
+    /// True when the find bar's own text field holds keyboard focus. Separate
+    /// from the chrome bar's and the side panel's for the same reason those are
+    /// separate from each other: three hosting views, and all three have to be
+    /// able to claim the standard editing chords.
+    private var findTextFieldFocused: Bool {
+        guard let findHost, window?.firstResponder is NSText,
+              let responder = window?.firstResponder as? NSView
+        else { return false }
+        return responder === findHost || responder.isDescendant(of: findHost)
+    }
+
+    /// The mounted find field, for tests that assert where the caret landed.
+    var findFieldForTesting: NSTextField? {
+        guard let findHost else { return nil }
+        return Self.firstTextField(in: findHost)
+    }
+
     // MARK: - Loading
 
     private func load() {
         switch mode {
-        case .markdown, .code, .diff:
+        case .markdown, .code, .diff, .image:
             loadTemplatePage()
         case .html(let url):
             // Read access is scoped to the file's own directory: that is what
@@ -2634,6 +3017,19 @@ final class ViewerView: NSView, Codable, ObservableObject {
         }
         guard let fileURL else { return }
 
+        if case .image = mode {
+            // The picture itself is native, so the page has nothing to render
+            // — EXCEPT when the file could not be decoded, which is the one
+            // thing an image pane borrows the template for. Reusing the same
+            // error card every other file mode shows is why image mode goes
+            // through the template at all instead of drawing its own.
+            if imageLoadFailed {
+                webView.evaluateJavaScript(
+                    "window.__viewer.setError(\(Self.js("Cannot read image")), \(Self.js(fileURL.path)))")
+            }
+            return
+        }
+
         if case .html = mode {
             // An HTML file has no content to inject — the web view loaded it
             // directly. Reaching here means `load()` could not open it and
@@ -2658,7 +3054,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
             case .code:
                 let lang = Self.highlightLanguage(forExtension: fileURL.pathExtension.lowercased())
                 call = "window.__viewer.setCode(\(Self.js(text)), \(Self.js(lang ?? "")))"
-            case .html, .web, .diff:
+            case .html, .web, .diff, .image:
                 return
             }
         } catch {
@@ -2723,6 +3119,14 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// Back stack), and WebKit restores the scroll offset across it, which is
     /// what keeps a save from throwing you back to the top of a long page.
     private func reloadAfterFileChange() {
+        if case .image = mode {
+            // Re-decode in place. Zoom and scroll survive a save at the same
+            // dimensions — the image analogue of the scroll preservation a
+            // markdown re-render gets — and a re-export at a different size
+            // re-fits (see `reloadFromDisk`).
+            reloadImageSurface()
+            return
+        }
         guard case .html = mode else {
             renderFileContent()
             return
@@ -2792,10 +3196,17 @@ final class ViewerView: NSView, Codable, ObservableObject {
     override var acceptsFirstResponder: Bool { true }
 
     override func becomeFirstResponder() -> Bool {
-        // Hand focus straight to the web view so scrolling/keyboard work.
-        window?.makeFirstResponder(webView)
+        // Hand focus straight to the content view so scrolling/keyboard work.
+        window?.makeFirstResponder(contentFocusView)
         return true
     }
+
+    /// The subview that holds keyboard focus on this pane's behalf: the web
+    /// view, or the image surface's scroll view while the pane is showing an
+    /// image. Everything that hands focus back to "the content" goes through
+    /// here, so an image pane's arrow keys scroll the image rather than a
+    /// blank template page nobody can see.
+    var contentFocusView: NSView { imageSurface?.focusView ?? webView }
 
     /// Swallow the hero-navigation chords (Cmd+Shift+Up/Down) before they reach
     /// the inner WKWebView.
@@ -2849,7 +3260,25 @@ final class ViewerView: NSView, Codable, ObservableObject {
         if paneHoldsFocus, let chord = Self.paneChord(for: event), handle(chord) {
             return true
         }
-        return super.performKeyEquivalent(with: event)
+        // Everything inside the pane gets the next claim: the web page (WebKit
+        // takes every Command chord here to offer it to the page, and re-sends
+        // the ones the page leaves alone — on that second pass it declines), a
+        // focused text field, the feedback composer.
+        if super.performKeyEquivalent(with: event) { return true }
+        // Nothing in this pane wanted the chord: hand it to Ghoztty's bindings,
+        // which a focused terminal would have dispatched itself. Without this
+        // it reached Ghoztty only by happening to be a menu key equivalent.
+        // Done HERE rather than by relaxing `SurfaceView`'s focus gate or the
+        // app-level key monitor's main-window guard, because this is the one
+        // place that knows (a) the pane, not a terminal, has focus and (b)
+        // nothing in the pane claimed the key — both are what make forwarding
+        // safe. Only the focused pane forwards: this method is offered to every
+        // view in the window.
+        guard paneHoldsFocus else { return false }
+        return ViewerKeyFallback.perform(
+            event,
+            in: window?.windowController as? BaseTerminalController,
+            textInputFocused: window?.firstResponder is NSText)
     }
 
     /// A chord that belongs to a focused viewer pane rather than to the app.
@@ -2858,23 +3287,34 @@ final class ViewerView: NSView, Codable, ObservableObject {
         case reload
         /// Cmd-D — focus and select the address field.
         case focusAddress
+        /// Cmd-F — open the find bar and focus its field.
+        case find
+        /// Cmd-G — step to the next match without reaching for the bar.
+        case findNext
+        /// Cmd-Shift-G — step to the previous match.
+        case findPrevious
     }
 
     /// Classify a key event as one of the viewer's pane-scoped chords, or nil
     /// if it is not one. Pure classification (no side effects) so the mapping is
-    /// unit-testable without a live pane. Requires exactly Command (no
-    /// Control/Option/Shift) so Cmd+Shift+R ("Change Window Title") and the
-    /// other Cmd+Shift bindings are untouched.
+    /// unit-testable without a live pane. Requires Command and rejects
+    /// Control/Option, so Ctrl+Cmd+F ("Toggle Full Screen") is untouched. Shift
+    /// is rejected for every chord but Cmd+Shift+G — the macOS-standard "find
+    /// previous" — so Cmd+Shift+R ("Change Window Title") and Cmd+Shift+D
+    /// (split down) keep their global meanings.
     static func paneChord(for event: NSEvent) -> PaneChord? {
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard mods.contains(.command),
               !mods.contains(.control),
-              !mods.contains(.option),
-              !mods.contains(.shift)
+              !mods.contains(.option)
         else { return nil }
-        switch event.charactersIgnoringModifiers?.lowercased() {
-        case "r": return .reload
-        case "d": return .focusAddress
+        let shift = mods.contains(.shift)
+        switch (event.charactersIgnoringModifiers?.lowercased() ?? "", shift) {
+        case ("r", false): return .reload
+        case ("d", false): return .focusAddress
+        case ("f", false): return .find
+        case ("g", false): return .findNext
+        case ("g", true): return .findPrevious
         default: return nil
         }
     }
@@ -2889,6 +3329,64 @@ final class ViewerView: NSView, Codable, ObservableObject {
             return true
         case .focusAddress:
             return focusAddressBar()
+        case .find:
+            return openFind()
+        case .findNext:
+            return stepFindFromKeyboard(1)
+        case .findPrevious:
+            return stepFindFromKeyboard(-1)
+        }
+    }
+
+    /// What Escape or Return means to a viewer pane's transient fields.
+    enum FieldKeyAction: Equatable {
+        /// Throw away a half-typed address and show the pane's real location.
+        case revertAddress
+        /// Put the whole file list back in a diff pane's side panel.
+        case clearDiffFilter
+        /// Close the find bar and clear its highlights.
+        case closeFind
+        /// Step to the next / previous match.
+        case findNext
+        case findPrevious
+    }
+
+    /// Decide what Escape/Return means given which of the pane's three text
+    /// fields has the caret. Pure so the PRECEDENCE is checkable — a viewer
+    /// pane can have an address field, a diff file filter, and a find field all
+    /// alive at once, and each of them wants Escape.
+    ///
+    /// Escape belongs to whichever field is being EDITED before it belongs to
+    /// find: an abandoned address edit left sitting in the bar is a lie about
+    /// where the pane is, and closing find would not fix it. With no field
+    /// focused, Escape closes find from the page — which is what a browser does,
+    /// and where the highlights are.
+    static func fieldKeyAction(
+        for event: NSEvent,
+        addressFocused: Bool,
+        diffFilterFocused: Bool,
+        findFocused: Bool,
+        findOpen: Bool
+    ) -> FieldKeyAction? {
+        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard !mods.contains(.command),
+              !mods.contains(.control),
+              !mods.contains(.option)
+        else { return nil }
+
+        switch event.keyCode {
+        case 53:  // Escape
+            if addressFocused { return .revertAddress }
+            if diffFilterFocused { return .clearDiffFilter }
+            if findOpen { return .closeFind }
+            return nil
+        case 36, 76:  // Return, keypad Enter
+            // Only the find field: Return in the filter opens the top file and
+            // in the address bar navigates, both via their own onSubmit.
+            guard findFocused else { return nil }
+            return mods.contains(.shift) ? .findPrevious : .findNext
+        default:
+            return nil
         }
     }
 
@@ -2984,7 +3482,16 @@ final class ViewerView: NSView, Codable, ObservableObject {
     }
 
     /// Apply a Cmd+/−/0 zoom chord: step the factor and push it to the page.
+    ///
+    /// An image pane routes to its own surface instead. Page zoom would scale
+    /// a template page with nothing on it, and the image has real zoom rules
+    /// of its own — including a 100% that means something exact, which is what
+    /// Cmd-0 lands on.
     private func handleZoom(_ action: ZoomAction) {
+        if let imageSurface {
+            imageSurface.applyZoomAction(action)
+            return
+        }
         zoomFactor = Self.steppedZoom(from: zoomFactor, action: action)
         pushZoomToWebView()
     }
@@ -2997,7 +3504,8 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// so it is excluded too.
     private var isViewerContentFocused: Bool {
         guard let responder = window?.firstResponder as? NSView else { return false }
-        return responder === webView || responder.isDescendant(of: webView)
+        let content = contentFocusView
+        return responder === content || responder.isDescendant(of: content)
     }
 
     // MARK: - Codable
@@ -3036,16 +3544,21 @@ extension ViewerView.Mode {
     /// The file this mode renders, nil for a website or a diff.
     var fileURL: URL? {
         switch self {
-        case .markdown(let url), .code(let url), .html(let url): return url
+        case .markdown(let url), .code(let url), .html(let url), .image(let url): return url
         case .web, .diff: return nil
         }
     }
 
-    /// The file the TEMPLATE page renders, nil for everything the web view
+    /// The file the TEMPLATE page stands for, nil for everything the web view
     /// loads itself. An HTML file is excluded on purpose — see `fileLocation`.
+    ///
+    /// An image IS included even though the template renders nothing for it:
+    /// this is what records "the template page currently stands for this
+    /// file", which is how Back out of a website knows to land on the image
+    /// and how the address field knows what to show.
     var templateFileURL: URL? {
         switch self {
-        case .markdown(let url), .code(let url): return url
+        case .markdown(let url), .code(let url), .image(let url): return url
         case .html, .web, .diff: return nil
         }
     }
@@ -3140,6 +3653,13 @@ extension ViewerView: WKNavigationDelegate {
         // as the user follows links / types addresses within the pane (all
         // modes). Cheap no-op at 100%.
         if zoomFactor != 1.0 { pushZoomToWebView() }
+        // The find user script is re-injected into the new document with no
+        // state, so an open bar would be showing a count for a page that is
+        // gone. Before the `.web` early return: a website navigation needs this
+        // most, since it is the one that changes the document out from under a
+        // search. (Ahead of `renderFileContent` too — the page's own mutation
+        // observer picks the rendered content up 200ms later.)
+        refreshFindAfterLoad()
         if case .web = mode { return }
         pageLoaded = true
         // An HTML file IS the page — there is no template to inject into, and
@@ -3218,8 +3738,8 @@ extension ViewerView: WKNavigationDelegate {
 
     /// Route a clicked link in a markdown/code viewer:
     /// - http(s) → default browser
-    /// - relative/local markdown or HTML file → new viewer split next to this
-    ///   pane (both are things a viewer can now render)
+    /// - relative/local markdown, HTML, or IMAGE file → new viewer split next
+    ///   to this pane (all three are things a viewer renders itself)
     /// - other local files → open with the default app
     private func handleFileModeLink(_ url: URL) {
         if url.scheme == "http" || url.scheme == "https" {
@@ -3234,7 +3754,7 @@ extension ViewerView: WKNavigationDelegate {
         guard let fileURL = resolvedLinkURL(for: url), fileURL.isFileURL else { return }
 
         switch Self.mode(for: fileURL.path) {
-        case .markdown, .html:
+        case .markdown, .html, .image:
             openViewerSplit(location: fileURL.path)
         default:
             NSWorkspace.shared.open(fileURL)

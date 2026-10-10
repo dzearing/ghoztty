@@ -33,6 +33,12 @@ protocol TerminalViewModel: ObservableObject {
     /// The hero mode state for this window.
     var heroModeState: HeroModeState { get }
 
+    /// The pane rearrange mode state for this window.
+    var rearrangeModeState: RearrangeModeState { get }
+
+    /// Names this window when resolving a pane drop.
+    var rearrangeWindowRef: PaneDropWindowRef { get }
+
     /// The command palette state.
     var commandPaletteIsShowing: Bool { get set }
 
@@ -85,7 +91,9 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                     TerminalSplitTreeView(
                         tree: viewModel.surfaceTree,
                         action: { delegate?.performSplitAction($0) },
-                        heroModeState: viewModel.heroModeState)
+                        heroModeState: viewModel.heroModeState,
+                        rearrangeModeState: viewModel.rearrangeModeState,
+                        windowRef: viewModel.rearrangeWindowRef)
                         .environmentObject(ghostty)
                         .ghosttyLastFocusedSurface(lastFocusedSurface)
                         .focused($focused)

@@ -12,6 +12,7 @@ const Screen = @import("Screen.zig");
 const Terminal = @import("Terminal.zig");
 const Cell = @import("page.zig").Cell;
 const Coordinate = @import("point.zig").Coordinate;
+const hard_wrap = @import("hard_wrap.zig");
 const Page = @import("page.zig").Page;
 const PageList = @import("PageList.zig");
 const Pin = PageList.Pin;
@@ -89,11 +90,37 @@ pub const Options = struct {
     /// screen contents as it is rendered on the page in the given size.
     unwrap: bool = false,
 
+    /// VT only: also emit the shell-integration (OSC 133) semantics of the
+    /// content — which rows begin a prompt, and which cells are prompt, input
+    /// or command output — so a terminal that replays the output rebuilds them.
+    ///
+    /// Without them a restored screen is "all output", and the terminal's
+    /// resize logic (`Screen.resize` with `prompt_redraw`) — which, with the
+    /// cursor at a prompt, blanks everything from the current prompt's first
+    /// row down so the shell can redraw it — walks up past the unmarked
+    /// restored prompt to an OLDER marked one and blanks the real output in
+    /// between. Seen as restored shell output vanishing on the first resize.
+    ///
+    /// Emitted only as side-effect-free OSC 133 actions: `P` (prompt start, no
+    /// fresh-line) and `I` (input until end of line). Never `A` (it can insert
+    /// a newline), `C` or `D` (they signal command start/finish, which drive
+    /// command notifications), so replaying the output starts no "command".
+    semantic_prompts: bool = false,
+
     /// Trim trailing whitespace on lines with other text. Trailing blank
     /// lines are always trimmed. This only affects trailing whitespace
     /// on rows that have at least one other cell with text. Whitespace
     /// is currently only space characters (0x20).
     trim: bool = true,
+
+    /// Undo a TUI's own text layout: rejoin rows the program hard-wrapped
+    /// itself (see hard_wrap.zig) and strip the left margin shared by the
+    /// formatted lines, keeping any indentation deeper than that margin.
+    /// This is what makes a copy out of Claude Code paste as clean prose.
+    ///
+    /// Only meaningful with `unwrap`, and ignored for rectangle selections,
+    /// whose columns are the user's explicit choice.
+    reflow: bool = false,
 
     /// Replace matching Unicode codepoints with some other values.
     /// This will use the last matching range found in the list.
@@ -678,6 +705,22 @@ pub const ScreenFormatter = struct {
             const cursor = &self.screen.cursor;
             // CUP is 1-indexed
             try writer.print("\x1b[{d};{d}H", .{ cursor.y + 1, cursor.x + 1 });
+
+            // …and leave the cursor in the semantic state it was in, so a
+            // shell sitting at its prompt is still "at its prompt" (see
+            // `Options.semantic_prompts`). Output needs nothing: the content
+            // above ends in output wherever the source cursor is in output.
+            if (self.opts.semantic_prompts) switch (cursor.semantic_content) {
+                .prompt => try writer.writeAll(if (cursor.page_row.semantic_prompt == .prompt_continuation)
+                    "\x1b]133;P;k=s\x1b\\"
+                else
+                    "\x1b]133;P;k=i\x1b\\"),
+                .input => try writer.writeAll(if (cursor.semantic_content_clear_eol)
+                    "\x1b]133;I\x1b\\"
+                else
+                    "\x1b]133;B\x1b\\"),
+                .output => {},
+            };
         }
 
         // If we have a pin_map, we need to count how many bytes the extras
@@ -758,6 +801,10 @@ pub const PageListFormatter = struct {
         const tl: PageList.Pin = self.top_left orelse self.list.getTopLeft(.screen);
         const br: PageList.Pin = self.bottom_right orelse self.list.getBottomRight(.screen).?;
 
+        const reflow = self.opts.reflow and self.opts.unwrap and !self.rectangle;
+        var walker: hard_wrap.Walker = if (reflow) .init(tl) else undefined;
+        const margin: usize = if (reflow) commonMargin(tl, br, &walker) else 0;
+
         // If we keep track of pins, we'll need this.
         var point_map: std.ArrayList(Coordinate) = .empty;
         defer if (self.pin_map) |*m| point_map.deinit(m.alloc);
@@ -773,6 +820,13 @@ pub const PageListFormatter = struct {
             formatter.end_y = chunk.end - 1;
             formatter.trailing_state = page_state;
             formatter.rectangle = self.rectangle;
+            if (reflow) formatter.reflow = .{
+                .node = chunk.node,
+                .walker = &walker,
+                .margin = margin,
+                .first = chunk.node == tl.node and chunk.start == tl.y,
+                .more = chunk.node != br.node,
+            };
 
             // For rectangle selection, apply start_x and end_x to all chunks
             if (self.rectangle) {
@@ -806,6 +860,42 @@ pub const PageListFormatter = struct {
                 }
             }
         }
+    }
+
+    /// The left margin shared by the lines of the range: the smallest
+    /// indentation among the rows that START a line. Rows that continue a
+    /// line (soft or TUI-hard wrapped) don't count, nor do blank rows, nor
+    /// a first row the selection starts in the middle of — its own leading
+    /// whitespace isn't part of the selection, and must not drag the margin
+    /// to zero.
+    fn commonMargin(
+        tl: PageList.Pin,
+        br: PageList.Pin,
+        walker: *hard_wrap.Walker,
+    ) usize {
+        var margin: ?usize = null;
+        var it = tl.rowIterator(.right_down, br);
+        while (it.next()) |p| {
+            walker.moveTo(p);
+            const row = p.rowAndCell().row;
+            if (row.wrap_continuation) continue;
+
+            const cells = p.cells(.all);
+            const first_text = hard_wrap.firstText(cells) orelse continue;
+            const is_first = p.node == tl.node and p.y == tl.y;
+            if (is_first) {
+                if (tl.x > first_text) continue;
+            } else if (walker.seam() != null) continue;
+
+            // A last row selected only through its margin contributes no
+            // text, so it has no say in the margin either.
+            if (p.node == br.node and p.y == br.y and br.x < first_text) continue;
+
+            const indent = hard_wrap.indent(cells) orelse continue;
+            margin = @min(margin orelse indent, indent);
+        }
+
+        return margin orelse 0;
     }
 };
 
@@ -862,12 +952,43 @@ pub const PageFormatter = struct {
     /// accounting works properly.
     trailing_state: ?TrailingState,
 
+    /// Set by PageListFormatter when `opts.reflow` applies. Reflow needs
+    /// to see neighboring rows, which can live in other pages, so it
+    /// carries the page's node rather than working from `page` alone.
+    reflow: ?Reflow,
+
+    pub const Reflow = struct {
+        /// The PageList node `page` belongs to.
+        node: *PageList.List.Node,
+
+        /// Decides the seams, moved along row by row. Shared across the
+        /// pages of one format so no row is measured twice.
+        walker: *hard_wrap.Walker,
+
+        /// Leading columns stripped from every line (see `commonMargin`).
+        margin: usize,
+
+        /// Whether `start_y` is the first row of the whole output, so
+        /// nothing before it can be joined to.
+        first: bool,
+
+        /// Whether output continues into a later page after `end_y`.
+        more: bool,
+    };
+
     /// Trailing state. This is used to ensure that rows wrapped across
     /// multiple pages are unwrapped properly, as well as other accounting
     /// we may do in the future.
     pub const TrailingState = struct {
         rows: usize = 0,
         cells: usize = 0,
+        /// With `Options.semantic_prompts`: the semantic content the REPLAYING
+        /// terminal's cursor is in after what has been emitted so far.
+        semantic: Cell.SemanticContent = .output,
+
+        /// Whether the last row formatted wrote text. A hard-wrap rejoin
+        /// only replaces a newline that follows text.
+        text: bool = false,
 
         pub const empty: TrailingState = .{ .rows = 0, .cells = 0 };
     };
@@ -885,6 +1006,7 @@ pub const PageFormatter = struct {
             .rectangle = false,
             .point_map = null,
             .trailing_state = null,
+            .reflow = null,
         };
     }
 
@@ -895,12 +1017,58 @@ pub const PageFormatter = struct {
         _ = try self.formatWithState(writer);
     }
 
+    /// Bring the replaying terminal's semantic state to `cell`'s
+    /// (`Options.semantic_prompts`). `sem` is that terminal's current state.
+    fn writeSemantic(
+        writer: *std.Io.Writer,
+        row: *const Row,
+        cell: *const Cell,
+        sem: *Cell.SemanticContent,
+        row_prompt_marked: *bool,
+    ) std.Io.Writer.Error!void {
+        switch (cell.semantic_content) {
+            .prompt => {
+                // A row the source marked as a primary prompt gets its own
+                // mark; a continuation row is marked by the newline itself
+                // while the terminal is in prompt state, so it only needs one
+                // when coming from another state.
+                const need = sem.* != .prompt or
+                    (!row_prompt_marked.* and row.semantic_prompt == .prompt);
+                if (!need) return;
+                try writer.writeAll(if (row.semantic_prompt == .prompt_continuation)
+                    "\x1b]133;P;k=s\x1b\\"
+                else
+                    "\x1b]133;P;k=i\x1b\\");
+                sem.* = .prompt;
+                row_prompt_marked.* = true;
+            },
+            .input => {
+                if (sem.* == .input) return;
+                try writer.writeAll("\x1b]133;I\x1b\\");
+                sem.* = .input;
+            },
+            .output => {
+                // No side-effect-free way to say "output" mid-line (`C` starts
+                // a command). Leaving a prompt goes through input-until-EOL,
+                // which the next newline turns into output; already in input
+                // means that newline is coming anyway.
+                if (sem.* != .prompt) return;
+                try writer.writeAll("\x1b]133;I\x1b\\");
+                sem.* = .input;
+            },
+        }
+    }
+
     pub fn formatWithState(
         self: PageFormatter,
         writer: *std.Io.Writer,
     ) std.Io.Writer.Error!TrailingState {
         var blank_rows: usize = 0;
         var blank_cells: usize = 0;
+        var prev_text = false;
+        // Semantic state of the replaying terminal (`Options.semantic_prompts`),
+        // carried across pages like the blank counts.
+        var sem: Cell.SemanticContent = if (self.trailing_state) |st| st.semantic else .output;
 
         // Continue our prior trailing state if we have it, but only if we're
         // starting from the beginning (start_y and start_x are both 0).
@@ -909,21 +1077,22 @@ pub const PageFormatter = struct {
             if (self.start_y == 0 and self.start_x == 0) {
                 blank_rows = state.rows;
                 blank_cells = state.cells;
+                prev_text = state.text;
             }
         }
 
         // Setup our starting column and perform some validation for overflows.
         // Note: start_x only applies to the first row, end_x only applies to the last row.
         const start_x: size.CellCountInt = self.start_x;
-        if (start_x >= self.page.size.cols) return .{ .rows = blank_rows, .cells = blank_cells };
+        if (start_x >= self.page.size.cols) return .{ .rows = blank_rows, .cells = blank_cells, .semantic = sem, .text = prev_text };
         const end_x_unclamped: size.CellCountInt = self.end_x orelse self.page.size.cols - 1;
         var end_x = @min(end_x_unclamped, self.page.size.cols - 1);
 
         // Setup our starting row and perform some validation for overflows.
         const start_y: size.CellCountInt = self.start_y;
-        if (start_y >= self.page.size.rows) return .{ .rows = blank_rows, .cells = blank_cells };
+        if (start_y >= self.page.size.rows) return .{ .rows = blank_rows, .cells = blank_cells, .semantic = sem, .text = prev_text };
         const end_y_unclamped: size.CellCountInt = self.end_y orelse self.page.size.rows - 1;
-        if (start_y > end_y_unclamped) return .{ .rows = blank_rows, .cells = blank_cells };
+        if (start_y > end_y_unclamped) return .{ .rows = blank_rows, .cells = blank_cells, .semantic = sem, .text = prev_text };
         var end_y = @min(end_y_unclamped, self.page.size.rows - 1);
 
         // Edge case: if our end x/y falls on a spacer head AND we're unwrapping,
@@ -951,7 +1120,7 @@ pub const PageFormatter = struct {
 
         // If we only have a single row, validate that start_x <= end_x
         if (start_y == end_y and start_x > end_x) {
-            return .{ .rows = blank_rows, .cells = blank_cells };
+            return .{ .rows = blank_rows, .cells = blank_cells, .semantic = sem, .text = prev_text };
         }
 
         // Wrap HTML output in monospace font styling
@@ -1028,12 +1197,14 @@ pub const PageFormatter = struct {
             const y: size.CellCountInt = @intCast(y_usize);
             const row: *Row = self.page.getRow(y);
             const cells: []const Cell = self.page.getCells(row);
+            // Whether this row's own prompt mark has been emitted yet.
+            var row_prompt_marked = false;
 
             // Determine the x range for this row
             // - First row: start_x to end of row (or end_x if single row)
             // - Last row: start of row to end_x
             // - Middle rows: full width
-            const cells_subset, const row_start_x = cells_subset: {
+            var cells_subset, var row_start_x = cells_subset: {
                 // The end is always straightforward
                 const row_end_x: size.CellCountInt = if (self.rectangle or y == end_y)
                     end_x + 1
@@ -1061,12 +1232,62 @@ pub const PageFormatter = struct {
                 break :cells_subset .{ subset, row_start_x };
             };
 
+            // Reflow: decide whether this row continues the one above it
+            // (a TUI hard wrap), and drop its margin or re-indentation.
+            var join: ?hard_wrap.Seam = null;
+            var join_next = false;
+            if (self.reflow) |r| reflow: {
+                r.walker.moveTo(.{ .node = r.node, .y = y });
+
+                // A row the NEXT row joins loses its trailing blanks even
+                // when trimming is off: they are wrapper padding, and kept
+                // they would land in the middle of the rejoined text.
+                if (y < end_y or r.more) join_next = r.walker.seamBelow() != null;
+
+                // Only a newline that follows emitted text can be undone.
+                if (!(r.first and y == start_y) and blank_rows == 1 and prev_text) {
+                    join = r.walker.seam();
+                }
+
+                const skip_to: usize = if (join) |j|
+                    j.skip
+                else if (row.wrap_continuation)
+                    // Mid-line of a soft wrap: column 0 is real content.
+                    break :reflow
+                else
+                    // A whitespace-only row loses its margin too, so an
+                    // untrimmed copy doesn't keep the padding.
+                    @min(r.margin, hard_wrap.firstText(cells) orelse r.margin);
+
+                if (skip_to <= row_start_x) break :reflow;
+                const row_end_x = row_start_x + cells_subset.len;
+                row_start_x = @intCast(@min(skip_to, row_end_x));
+                cells_subset = cells[row_start_x..row_end_x];
+            }
+
             // If this row is blank, accumulate to avoid a bunch of extra
             // work later. If it isn't blank, make sure we dump all our
             // blanks.
             if (!Cell.hasTextAny(cells_subset)) {
                 blank_rows += 1;
+                prev_text = false;
                 continue;
+            }
+            prev_text = true;
+
+            // Rejoin a hard-wrapped row: the newline the row above queued
+            // becomes the seam's glue, and the trailing blanks before the
+            // seam are wrapper padding, not content.
+            if (join) |j| {
+                blank_rows = 0;
+                blank_cells = 0;
+                const glue = j.glue.bytes();
+                try writer.writeAll(glue);
+                if (self.point_map) |*map| map.map.appendNTimes(
+                    map.alloc,
+                    .{ .x = @intCast(j.skip), .y = y },
+                    glue.len,
+                ) catch return error.WriteFailed;
             }
 
             if (blank_rows > 0) {
@@ -1094,6 +1315,9 @@ pub const PageFormatter = struct {
                 };
 
                 for (0..blank_rows) |_| try writer.writeAll(sequence);
+                // Every input we emit is `I` (input until end of line): the
+                // replaying terminal drops back to output at this newline.
+                if (sem == .input) sem = .output;
 
                 // \r and \n map to the row that ends with this newline.
                 // If we're continuing (trailing state) then this will be
@@ -1150,6 +1374,14 @@ pub const PageFormatter = struct {
                 // only want to turn zero values into spaces if we have a non-zero
                 // char sometime later.
                 blank: {
+                    // Padding before a hard-wrap seam (see join_next). This
+                    // precedes the styled check: an unstyled space is just
+                    // as much padding in HTML as in plain text.
+                    if (join_next and cell.codepoint() == ' ' and !cell.hasStyling()) {
+                        blank_cells += 1;
+                        continue;
+                    }
+
                     // If we're emitting styled output (not plaintext) and
                     // the cell has some kind of styling or is not empty
                     // then this isn't blank.
@@ -1162,6 +1394,7 @@ pub const PageFormatter = struct {
                         continue;
                     }
 
+
                     // Trailing spaces are blank. We know it is trailing
                     // because if we get a non-empty cell later we'll
                     // fill the blanks.
@@ -1169,6 +1402,14 @@ pub const PageFormatter = struct {
                         blank_cells += 1;
                         continue;
                     }
+                }
+
+                // Shell-integration semantics, before anything of this cell
+                // (including the blanks leading up to it) is written.
+                // (Not mapped in `point_map`: no caller that tracks points
+                // enables semantic output.)
+                if (self.opts.semantic_prompts and self.opts.emit == .vt) {
+                    try writeSemantic(writer, row, cell, &sem, &row_prompt_marked);
                 }
 
                 // This cell is not blank. If we have accumulated blank cells
@@ -1379,7 +1620,7 @@ pub const PageFormatter = struct {
             }
         }
 
-        return .{ .rows = blank_rows, .cells = blank_cells };
+        return .{ .rows = blank_rows, .cells = blank_cells, .semantic = sem, .text = prev_text };
     }
 
     fn writeCell(

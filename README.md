@@ -25,11 +25,13 @@ Upstream Ghostty has no CLI mechanism for creating splits or targeting specific 
 
 ## CLI Window Management
 
-All commands are **idempotent** — repeating them is safe and will not create duplicates. Named targets that already exist are focused instead of recreated.
+All commands are **idempotent** — repeating them is safe and will not create duplicates. Named targets that already exist are reused instead of recreated.
+
+**Commands never take focus unless asked.** A window or pane created from the CLI appears without activating Ghoztty, raising its window, or moving the caret — the pane you ran the command from keeps it. Pass `--focus` to raise and focus instead. (Windows and panes you open yourself — Cmd-N, Cmd-D, the menu — focus as usual.)
 
 ### `ghoztty +new-window`
 
-Create a new terminal window (or focus an existing named one). If no running Ghoztty instance is found, one is launched automatically.
+Create a new terminal window (or reuse an existing named one). If no running Ghoztty instance is found, one is launched automatically.
 
 ```
 ghoztty +new-window [flags]
@@ -37,12 +39,13 @@ ghoztty +new-window [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--target=<name>` | Register the window with a name. If a window with this name exists, it is focused instead. |
+| `--target=<name>` | Register the window with a name. If a window with this name exists, it is reused (raised only with `--focus`). |
 | `--working-directory=<path>` | Set the working directory. Relative paths resolve from cwd. |
 | `--command=<cmd>` | Command to run in the window. |
 | `--title=<title>` | Override the window title. |
 | `--split=right\|down\|left\|up` | Immediately create a split after the window is created. |
 | `--split-command=<cmd>` | Command to run in the split pane (requires `--split`). |
+| `--focus` | Activate Ghoztty and raise the window. Off by default. (`--no-activate` is accepted as a no-op.) |
 | `-e <args...>` | Everything after `-e` becomes the command. |
 
 ### `ghoztty +split`
@@ -57,9 +60,10 @@ ghoztty +split [flags]
 |------|-------------|
 | `--direction=right\|down\|left\|up` | Split direction. Default: `right`. |
 | `--target=<name>` | Target a named window (from `+new-window --target`). Default: most recently focused window. |
-| `--name=<name>` | Register this pane with a name. If a pane with this name exists, it is focused instead. |
+| `--name=<name>` | Register this pane with a name. If a pane with this name exists, it is reused (focused only with `--focus`). |
 | `--command=<cmd>` | Command to run in the new pane. |
 | `--working-directory=<path>` | Working directory for the new pane. |
+| `--focus` | Focus the new pane, raise its window, and activate Ghoztty. Off by default. |
 | `-e <args...>` | Everything after `-e` becomes the command. |
 
 ### `ghoztty +close`

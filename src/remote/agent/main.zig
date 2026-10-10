@@ -2167,16 +2167,17 @@ fn startSigtermWatcher(store: *session.SessionStore) void {
     t.detach();
 }
 
-/// The watcher loop: `sigwait` for the (already-blocked) SIGTERM, then flush
-/// dirty rings and `exit(0)`. The clean exit means launchd's SIGTERM→SIGKILL
-/// escalation is never needed. `sigwait` runs in ORDINARY thread context (not a
-/// signal handler), so the mutex + file I/O inside `snapshotRings` are safe here.
+/// The watcher loop: `sigwait` for the (already-blocked) SIGTERM, then
+/// checkpoint (dirty rings + history + live cwds) and `exit(0)`. The clean exit
+/// means launchd's SIGTERM→SIGKILL escalation is never needed. `sigwait` runs in
+/// ORDINARY thread context (not a signal handler), so the mutex + file I/O inside
+/// `checkpoint` are safe here.
 fn sigtermWatcherLoop(store: *session.SessionStore) void {
     var set = sigtermSet();
     var signo: c_int = 0;
     // Loop past a spurious nonzero return (e.g. EINTR); we only wait on SIGTERM.
     while (std.c.sigwait(&set, &signo) != 0) {}
-    store.snapshotRings();
+    store.checkpoint();
     std.process.exit(0);
 }
 

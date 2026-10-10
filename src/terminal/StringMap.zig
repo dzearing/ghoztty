@@ -110,6 +110,28 @@ pub const Match = struct {
         const end_pt = self.map.map[self.offset + end_idx];
         return .init(start_pt, end_pt, false);
     }
+
+    /// Whether `pin` lies within the matched text on its row: between the
+    /// first and last cells the match maps to there. Unlike
+    /// `selection().contains`, this excludes cells the string skipped
+    /// between matched cells — the re-indentation of a row a TUI
+    /// hard-wrapped, when the string was formatted with reflow.
+    pub fn covers(self: Match, pin: Pin) bool {
+        const start: usize = @intCast(self.region.starts()[0]);
+        const end: usize = @intCast(self.region.ends()[0]);
+        var min: ?usize = null;
+        var max: usize = 0;
+        for (self.map.map[self.offset + start .. self.offset + end]) |p| {
+            if (p.node != pin.node or p.y != pin.y) continue;
+            min = @min(min orelse p.x, p.x);
+
+            // A wide character's spacer tail has no bytes of its own.
+            const tail: usize = if (p.rowAndCell().cell.wide == .wide) 1 else 0;
+            max = @max(max, p.x + tail);
+        }
+        const lo = min orelse return false;
+        return pin.x >= lo and pin.x <= max;
+    }
 };
 
 test "StringMap searchIterator" {
@@ -228,6 +250,96 @@ test "StringMap searchIterator URL detection" {
     }
 
     try testing.expect(try it.next() == null);
+}
+
+test "StringMap searchIterator URL across a TUI hard wrap" {
+    // Claude Code broke this URL mid-token across three rows and re-indented
+    // each continuation (a real 100-column render). Hard-wrap line selection
+    // plus reflow must see one URL, and the margins it skips are not part of
+    // the link.
+    if (comptime !build_options.oniguruma) return error.SkipZigTest;
+
+    const testing = std.testing;
+    const alloc = testing.allocator;
+    const url = @import("../config/url.zig");
+
+    try oni.testing.ensureInit();
+    var re = try oni.Regex.init(
+        url.regex,
+        .{},
+        oni.Encoding.utf8,
+        oni.Syntax.default,
+        null,
+    );
+    defer re.deinit();
+
+    var s = try Screen.init(alloc, .{ .cols = 100, .rows = 5, .max_scrollback = 0 });
+    defer s.deinit();
+    try s.testWriteString(
+        \\  A very long URL that must wrap: https://github.com/dzearing/ghoztty/blob/main/src/terminal/formatt
+        \\  er.zig?plain=1&query=this-is-a-deliberately-long-query-string-that-keeps-going-and-going-past-the-
+        \\  right-edge-of-the-pane-for-testing#L1234-L1300 and some trailing text after it.
+    );
+
+    // Hover the middle row.
+    const line = s.selectLine(.{
+        .pin = s.pages.pin(.{ .active = .{ .x = 50, .y = 1 } }).?,
+        .whitespace = null,
+        .hard_wraps = true,
+    }).?;
+    var map: StringMap = undefined;
+    const sel_str = try s.selectionString(alloc, .{
+        .sel = line,
+        .trim = false,
+        .reflow = true,
+        .map = &map,
+    });
+    alloc.free(sel_str);
+    defer map.deinit(alloc);
+
+    var it = map.searchIterator(re);
+    var match = (try it.next()).?;
+    defer match.deinit();
+
+    const start: usize = @intCast(match.region.starts()[0]);
+    const end: usize = @intCast(match.region.ends()[0]);
+    try testing.expectEqualStrings(
+        "https://github.com/dzearing/ghoztty/blob/main/src/terminal/formatter.zig?plain=1&query=this-is-a-deliberately-long-query-string-that-keeps-going-and-going-past-the-right-edge-of-the-pane-for-testing#L1234-L1300",
+        map.string[match.offset + start .. match.offset + end],
+    );
+
+    const sel = match.selection();
+    try testing.expectEqual(point.Point{ .screen = .{
+        .x = 34,
+        .y = 0,
+    } }, s.pages.pointFromPin(.screen, sel.start()).?);
+    try testing.expectEqual(point.Point{ .screen = .{
+        .x = 47,
+        .y = 2,
+    } }, s.pages.pointFromPin(.screen, sel.end()).?);
+
+    // Text on every row is the link; a continuation's margin is not.
+    for ([_]point.Coordinate{
+        .{ .x = 60, .y = 0 },
+        .{ .x = 2, .y = 1 },
+        .{ .x = 99, .y = 1 },
+        .{ .x = 2, .y = 2 },
+    }) |c| try testing.expect(match.covers(s.pages.pin(.{ .active = c }).?));
+    for ([_]point.Coordinate{
+        .{ .x = 0, .y = 1 },
+        .{ .x = 1, .y = 2 },
+        .{ .x = 49, .y = 2 },
+    }) |c| try testing.expect(!match.covers(s.pages.pin(.{ .active = c }).?));
+
+    // The selection reformatted with reflow — what a click opens and what
+    // copy-URL copies — is the whole URL.
+    const opened = try s.selectionString(alloc, .{
+        .sel = sel,
+        .trim = false,
+        .reflow = true,
+    });
+    defer alloc.free(opened);
+    try testing.expectEqualStrings("https://github.com/dzearing/ghoztty/blob/main/src/terminal/formatter.zig?plain=1&query=this-is-a-deliberately-long-query-string-that-keeps-going-and-going-past-the-right-edge-of-the-pane-for-testing#L1234-L1300", opened);
 }
 
 test "StringMap searchIterator URL with click position" {

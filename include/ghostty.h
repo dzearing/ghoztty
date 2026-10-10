@@ -152,6 +152,14 @@ typedef enum {
   GHOSTTY_BINDING_FLAGS_PERFORMABLE = 1 << 3,
 } ghostty_binding_flags_e;
 
+// Sync with Binding.Action.Requires
+typedef enum {
+  GHOSTTY_BINDING_REQUIRES_APP,
+  GHOSTTY_BINDING_REQUIRES_WINDOW,
+  GHOSTTY_BINDING_REQUIRES_PANE,
+  GHOSTTY_BINDING_REQUIRES_TERMINAL,
+} ghostty_binding_requires_e;
+
 typedef enum {
   GHOSTTY_ACTION_RELEASE,
   GHOSTTY_ACTION_PRESS,
@@ -411,6 +419,13 @@ typedef struct {
   uintptr_t len;
   bool sentinel;
 } ghostty_string_s;
+
+// Sync with embedded.zig BindingInfo
+typedef struct {
+  uint8_t flags;  // ghostty_binding_flags_e
+  ghostty_binding_requires_e requires;
+  ghostty_string_s action;  // free with ghostty_string_free
+} ghostty_binding_info_s;
 
 typedef struct {
   double tl_px_x;
@@ -1239,6 +1254,9 @@ GHOSTTY_API ghostty_input_trigger_s ghostty_config_trigger(ghostty_config_t,
                                                               const char*,
                                                               uintptr_t);
 GHOSTTY_API bool ghostty_config_key_is_binding(ghostty_config_t, ghostty_input_key_s);
+GHOSTTY_API bool ghostty_config_key_binding(ghostty_config_t,
+                                            ghostty_input_key_s,
+                                            ghostty_binding_info_s*);
 GHOSTTY_API uint32_t ghostty_config_diagnostics_count(ghostty_config_t);
 GHOSTTY_API ghostty_diagnostic_s ghostty_config_get_diagnostic(ghostty_config_t, uint32_t);
 GHOSTTY_API ghostty_string_s ghostty_config_open_path(void);
@@ -1250,6 +1268,11 @@ GHOSTTY_API void ghostty_app_tick(ghostty_app_t);
 GHOSTTY_API void* ghostty_app_userdata(ghostty_app_t);
 GHOSTTY_API void ghostty_app_set_focus(ghostty_app_t, bool);
 GHOSTTY_API bool ghostty_app_key(ghostty_app_t, ghostty_input_key_s);
+GHOSTTY_API bool ghostty_app_key_binding_perform(ghostty_app_t,
+                                                 ghostty_surface_t,
+                                                 ghostty_input_key_s);
+GHOSTTY_API ghostty_string_s ghostty_binding_action_canonical(const char*,
+                                                              uintptr_t);
 GHOSTTY_API void ghostty_app_keyboard_changed(ghostty_app_t);
 GHOSTTY_API void ghostty_app_open_config(ghostty_app_t);
 GHOSTTY_API void ghostty_app_update_config(ghostty_app_t, ghostty_config_t);
@@ -1269,6 +1292,7 @@ GHOSTTY_API ghostty_surface_config_s ghostty_surface_inherited_config(ghostty_su
 GHOSTTY_API void ghostty_surface_update_config(ghostty_surface_t, ghostty_config_t);
 GHOSTTY_API bool ghostty_surface_needs_confirm_quit(ghostty_surface_t);
 GHOSTTY_API void ghostty_surface_set_session_close_intent(ghostty_surface_t, bool);
+GHOSTTY_API bool ghostty_surface_confirm_close_enabled(ghostty_surface_t);
 GHOSTTY_API bool ghostty_surface_process_exited(ghostty_surface_t);
 GHOSTTY_API void ghostty_surface_refresh(ghostty_surface_t);
 GHOSTTY_API void ghostty_surface_draw(ghostty_surface_t);

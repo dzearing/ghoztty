@@ -60,10 +60,20 @@ pub fn write(
             .y = @intCast(total - max_rows),
         } }) orelse screen.pages.getTopLeft(.screen);
 
+    // unwrap=true: a soft-wrapped line is emitted as ONE logical line, so the
+    // restored terminal wraps it itself — at whatever width the pane has now,
+    // and again on every later resize. With unwrap=false every wrapped row was
+    // followed by a hard CRLF, so the restored scrollback was frozen at the old
+    // width (main 7e78aacf4). Replayed at the SAME width the line re-wraps onto
+    // the same rows, so the viewport alignment pass 2 relies on is unchanged.
+    //
+    // semantic_prompts=true: keep which rows are prompts, or the first resize
+    // after the restore blanks restored output (see `Options.semantic_prompts`).
     const opts: terminal.formatter.Options = .{
         .emit = .vt,
-        .unwrap = false,
+        .unwrap = true,
         .trim = true,
+        .semantic_prompts = true,
     };
 
     // Pass 1: palette, modes, and the cells. No extra that moves the cursor.
@@ -267,4 +277,72 @@ test "session snapshot: the max_rows bound still lines the viewport up" {
     var t2 = try replay(alloc, &t, 30);
     defer t2.deinit(alloc);
     try expectSameCursor(&t, &t2);
+}
+
+test "write: restored output survives the first resize at a prompt" {
+    // Main 7e78aacf4: "Restore, then resize: shell output is gone." On resize
+    // with the cursor at a prompt, the terminal blanks from the current prompt's
+    // first row down (the shell redraws it). A repaint without prompt marks left
+    // the CURRENT prompt unmarked, so that walk went up to an older marked
+    // prompt and blanked the real output in between.
+    const alloc = testing.allocator;
+    const shell_line = "\x1b]133;A\x1b\\$ \x1b]133;B\x1b\\";
+    var src: Terminal = try .init(alloc, .{ .cols = 40, .rows = 10 });
+    defer src.deinit(alloc);
+    {
+        var s: terminal.TerminalStream = .initAlloc(alloc, .init(&src));
+        defer s.deinit();
+        s.nextSlice(shell_line ++ "make\r\n\x1b]133;C\x1b\\");
+        s.nextSlice("OUTPUT-LINE-ONE\r\nOUTPUT-LINE-TWO\r\n");
+        s.nextSlice("\x1b]133;D;0\x1b\\" ++ shell_line);
+    }
+    var buf: std.Io.Writer.Allocating = .init(alloc);
+    defer buf.deinit();
+    try write(&buf.writer, &src, 1000, false);
+
+    // The restoring terminal had already seen an OLDER prompt (an earlier
+    // replay), then gets the repaint.
+    var dst: Terminal = try .init(alloc, .{ .cols = 40, .rows = 10 });
+    defer dst.deinit(alloc);
+    {
+        var s: terminal.TerminalStream = .initAlloc(alloc, .init(&dst));
+        defer s.deinit();
+        s.nextSlice(shell_line ++ "\x1b[H\x1b[2J");
+        s.nextSlice(buf.written());
+    }
+    try dst.resize(alloc, 30, 10);
+    const text = try dst.plainString(alloc);
+    defer alloc.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "OUTPUT-LINE-ONE") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "OUTPUT-LINE-TWO") != null);
+    try testing.expect(std.mem.indexOf(u8, text, "make") != null);
+}
+
+test "write: soft-wrapped lines survive a restore as reflowable lines" {
+    // Main 7e78aacf4: the re-attach half of "scrolling up after a resize shows
+    // the wrong width".
+    const alloc = testing.allocator;
+    var src: Terminal = try .init(alloc, .{ .cols = 10, .rows = 5 });
+    defer src.deinit(alloc);
+    {
+        var s: terminal.TerminalStream = .initAlloc(alloc, .init(&src));
+        defer s.deinit();
+        // 25 characters at 10 columns: three ROWS, one logical line.
+        s.nextSlice("abcdefghijklmnopqrstuvwxy\r\nnext line");
+    }
+    var buf: std.Io.Writer.Allocating = .init(alloc);
+    defer buf.deinit();
+    try write(&buf.writer, &src, 1000, false);
+
+    // Restore into a WIDER pane: the long line must come back as one row.
+    var dst: Terminal = try .init(alloc, .{ .cols = 40, .rows = 5 });
+    defer dst.deinit(alloc);
+    {
+        var s: terminal.TerminalStream = .initAlloc(alloc, .init(&dst));
+        defer s.deinit();
+        s.nextSlice(buf.written());
+    }
+    const text = try dst.plainString(alloc);
+    defer alloc.free(text);
+    try testing.expect(std.mem.indexOf(u8, text, "abcdefghijklmnopqrstuvwxy") != null);
 }

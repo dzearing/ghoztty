@@ -1,13 +1,13 @@
 {
     "guard":  "viewer-panes",
     "script":  "test/win32/viewer-panes.ps1",
-    "generated":  "2026-10-10T11:37:03-07:00",
-    "commit":  "5ab9d774b",
+    "generated":  "2026-10-10T16:03:52-07:00",
+    "commit":  "9b5cb3ead",
     "uncommitted":  [
-                        "src/apprt/win32/ViewerPane.zig"
+                        "src/apprt/win32/IpcHandlers.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/IpcHandlers.zig":  "7dd252e7ac3ad0a8c9428ff126661a0fd0c5e39fe91662711e2d341cecf61775",
+                  "src/apprt/win32/IpcHandlers.zig":  "624591bc7715d3f5768a26328d6cabfbc7bc11249a28b20d834a7d15f829e1c0",
                   "src/apprt/win32/viewer_content.zig":  "a221b7d62a68561c5f126a95994446a462f0e2b465edcb7815ee15ec6635c9e1",
                   "src/apprt/win32/ViewerPane.zig":  "24deed7138fbbbbadf23c7c6ac95e3f8f166545deb5552697e7e417bfbfdc3d8",
                   "src/cli/list.zig":  "0f331b05264e2232790b7ee70d010c32198c6251c9b111007a001d29187c5d80",

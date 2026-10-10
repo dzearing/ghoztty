@@ -1,4 +1,5 @@
 import AppKit
+import GhosttyKit
 import SwiftUI
 
 extension Ghostty {
@@ -13,15 +14,29 @@ extension Ghostty {
         /// If multiple items map to the same shortcut, the most recent one wins.
         private var menuItemsByShortcut: [MenuShortcutKey: Weak<NSMenuItem>] = [:]
 
+        /// Ghostty menu items indexed by their action, in canonical spelling
+        /// (see `canonicalAction`). Unlike `menuItemsByShortcut` this holds
+        /// every action-backed item, including ones with no key equivalent —
+        /// a trigger on a physical key such as `period` cannot be expressed as
+        /// one, but the binding still exists and still needs its menu item's
+        /// handler when no terminal is focused to dispatch it (see
+        /// `ViewerKeyFallback`).
+        private var menuItemsByAction: [String: Weak<NSMenuItem>] = [:]
+
         /// Reset our shortcut index since we're about to rebuild all menu bindings.
         func reset() {
             menuItemsByShortcut.removeAll(keepingCapacity: true)
+            menuItemsByAction.removeAll(keepingCapacity: true)
         }
 
         /// Syncs a single menu shortcut for the given action. The action string is the same
         /// action string used for the Ghostty configuration.
         func syncMenuShortcut(_ config: Ghostty.Config, action: String?, menuItem: NSMenuItem?) {
             guard let menu = menuItem else { return }
+
+            if let action, let canonical = Self.canonicalAction(action) {
+                menuItemsByAction[canonical] = .init(menu)
+            }
 
             if !updateMenuShortcut(config, action: action, menuItem: menu) {
                 menu.keyEquivalent = ""
@@ -52,6 +67,38 @@ extension Ghostty {
                 return false
             }
 
+            return perform(item)
+        }
+
+        /// Whether a Ghostty menu item exists for `action` (canonical spelling).
+        func hasMenuItem(forAction action: String) -> Bool {
+            menuItemsByAction[action]?.value != nil
+        }
+
+        /// Perform the Ghostty menu item for `action` (canonical spelling, as
+        /// `ghostty_config_key_binding` reports it), if there is one and it is
+        /// enabled. The action-keyed twin of
+        /// `performGhosttyBindingMenuKeyEquivalent`, for callers that know the
+        /// binding but cannot rely on the item carrying a key equivalent.
+        func performGhosttyBindingMenuItem(forAction action: String) -> Bool {
+            guard let item = menuItemsByAction[action]?.value else {
+                menuItemsByAction.removeValue(forKey: action)
+                return false
+            }
+            return perform(item)
+        }
+
+        /// The spelling the core formats `action` with, which is what binding
+        /// lookups report — literal spellings are not always canonical (a bare
+        /// `close_tab` formats as `close_tab:this`). Nil if it does not parse.
+        static func canonicalAction(_ action: String) -> String? {
+            let canonical = action.withCString { ptr in
+                Ghostty.AllocatedString(ghostty_binding_action_canonical(ptr, UInt(strlen(ptr)))).string
+            }
+            return canonical.isEmpty ? nil : canonical
+        }
+
+        private func perform(_ item: NSMenuItem) -> Bool {
             guard let parentMenu = item.menu else {
                 return false
             }

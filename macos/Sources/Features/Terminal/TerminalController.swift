@@ -300,7 +300,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
     static func newWindowInheritingRemote(
         _ ghostty: Ghostty.App,
         withBaseConfig baseConfig: Ghostty.SurfaceConfiguration? = nil,
-        from parent: NSWindow? = nil
+        from parent: NSWindow? = nil,
+        activate: Bool = true
     ) {
         // Only inherit when the parent is a remote window and the incoming config
         // isn't already remote-bound.
@@ -309,7 +310,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
               (baseConfig?.remoteConnection == nil),
               let parentSurface = parentController.focusedSurface else {
             // Local (or no) parent: normal local window, created synchronously.
-            _ = newWindow(ghostty, withBaseConfig: baseConfig, withParent: parent)
+            _ = newWindow(ghostty, withBaseConfig: baseConfig, withParent: parent, activate: activate)
             return
         }
 
@@ -350,12 +351,34 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             if cfg.remoteShell == nil {
                 cfg.remoteShell = parentRemote.machine.settings.shell
             }
-            let controller = newWindow(ghostty, withBaseConfig: cfg, withParent: parent)
+            let controller = newWindow(ghostty, withBaseConfig: cfg, withParent: parent, activate: activate)
             // Carry the strong connection owner onto the new window so the shared
             // handle outlives every surface/split and its splits/tabs keep
             // inheriting the same machine + connection.
             controller.remoteConnection = parentRemote
             controller.remoteMachine = parentRemote.machine
+        }
+    }
+
+    /// Show a new window WITHOUT taking focus: it is not made key, and it is
+    /// ordered directly behind this app's frontmost window rather than on top
+    /// of it. Used for windows a script created (`IPCFocusPolicy.background`)
+    /// while the user is working somewhere else.
+    ///
+    /// Behind our frontmost window, not `orderBack`: `orderBack` sends the
+    /// window behind every app's windows, so a script-opened window was often
+    /// nowhere to be seen. Directly behind the window the user is in keeps it
+    /// one click away without covering anything. When the app is inactive its
+    /// frontmost window is already behind the active app's, so the new one
+    /// lands behind that app too. With no other window of ours on screen
+    /// there is nothing to sit behind, and `orderBack` is the only answer.
+    static func orderInBackground(_ window: NSWindow) {
+        if let front = NSApp.orderedWindows.first(where: {
+            $0 !== window && $0.isVisible && $0.windowController is TerminalController
+        }) {
+            window.order(.below, relativeTo: front.windowNumber)
+        } else {
+            window.orderBack(nil)
         }
     }
 
@@ -401,8 +424,8 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         c.scheduleInitialPresentation {
             if activate {
                 c.showWindow(self)
-            } else {
-                c.window?.orderBack(nil)
+            } else if let window = c.window {
+                Self.orderInBackground(window)
             }
 
             // Only cascade if we aren't fullscreen.
@@ -458,6 +481,7 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         tree: SplitTree<PaneView>,
         position: NSPoint? = nil,
         confirmUndo: Bool = true,
+        activate: Bool = true
     ) -> TerminalController {
         let c = TerminalController.init(ghostty, withSurfaceTree: tree)
 
@@ -465,7 +489,11 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         let treeSize: CGSize? = tree.root?.viewBounds()
 
         c.scheduleInitialPresentation {
-            c.showWindow(self)
+            if activate {
+                c.showWindow(self)
+            } else if let window = c.window {
+                Self.orderInBackground(window)
+            }
             if let window = c.window {
                 // If we have a tree size, resize the window's content to match
                 if let treeSize, treeSize.width > 0, treeSize.height > 0 {
@@ -1504,14 +1532,18 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
             return
         }
 
-        guard surfaceTree.contains(where: { $0.needsConfirmQuit }) else {
+        // A live REMOTE session is confirmed even when idle: closing the tab
+        // ends a process on another machine (see `disconnectOffer`).
+        let disconnect = disconnectOffer
+        guard surfaceTree.contains(where: { $0.needsConfirmQuit }) || !disconnect.isEmpty else {
             closeTabImmediately()
             return
         }
 
         confirmClose(
             messageText: "Close Tab?",
-            informativeText: "The terminal still has a running process. If you close the tab the process will be killed."
+            informativeText: "The terminal still has a running process. If you close the tab the process will be killed.",
+            disconnect: disconnect
         ) {
             self.closeTabImmediately()
         }
@@ -1524,26 +1556,27 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // If we only have one window then we have no other tabs to close
         guard tabGroup.windows.count > 1 else { return }
 
-        // Check if we have to confirm close.
-        guard tabGroup.windows.contains(where: { window in
-            // Ignore ourself
-            if window == self.window { return false }
+        let others = tabGroup.windows
+            .filter { $0 != self.window }
+            .compactMap { $0.windowController as? TerminalController }
 
-            // Ignore non-terminals
-            guard let controller = window.windowController as? TerminalController else {
-                return false
-            }
-
-            // Check if any surfaces require confirmation
-            return controller.surfaceTree.contains(where: { $0.needsConfirmQuit })
-        }) else {
+        // Check if we have to confirm close. A tab group can MIX a remote
+        // window with local ones, so the two questions are asked separately:
+        // does anything need confirming, and is there anything a Disconnect
+        // would spare? Only the panes of the true-remote controllers are
+        // offered up — local tabs in a mixed close still close normally.
+        let disconnect = SessionDisconnectPolicy.merge(others.map(\.disconnectOffer))
+        guard others.contains(where: { controller in
+            controller.surfaceTree.contains(where: { $0.needsConfirmQuit })
+        }) || !disconnect.isEmpty else {
             self.closeOtherTabsImmediately()
             return
         }
 
         confirmClose(
             messageText: "Close Other Tabs?",
-            informativeText: "At least one other tab still has a running process. If you close the tab the process will be killed."
+            informativeText: "At least one other tab still has a running process. If you close the tab the process will be killed.",
+            disconnect: disconnect
         ) {
             self.closeOtherTabsImmediately()
         }
@@ -1557,22 +1590,26 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         let tabsToClose = tabGroup.windows.enumerated().filter { $0.offset > currentIndex }
         guard !tabsToClose.isEmpty else { return }
 
-        let needsConfirm = tabsToClose.contains { (_, candidate) in
-            guard let controller = candidate.windowController as? TerminalController else {
-                return false
-            }
-
-            return controller.surfaceTree.contains(where: { $0.needsConfirmQuit })
+        let controllers = tabsToClose.compactMap {
+            $0.element.windowController as? TerminalController
+        }
+        let needsConfirm = controllers.contains { controller in
+            controller.surfaceTree.contains(where: { $0.needsConfirmQuit })
         }
 
-        if !needsConfirm {
+        // Same mixed-tab-group rule as `closeOtherTabs`: confirm if ANY
+        // affected tab has something to confirm, but pin only the panes that
+        // actually live on a remote machine.
+        let disconnect = SessionDisconnectPolicy.merge(controllers.map(\.disconnectOffer))
+        if !needsConfirm && disconnect.isEmpty {
             self.closeTabsOnTheRightImmediately()
             return
         }
 
         confirmClose(
             messageText: "Close Tabs on the Right?",
-            informativeText: "At least one tab to the right still has a running process. If you close the tab the process will be killed."
+            informativeText: "At least one tab to the right still has a running process. If you close the tab the process will be killed.",
+            disconnect: disconnect
         ) {
             self.closeTabsOnTheRightImmediately()
         }
@@ -1590,19 +1627,30 @@ class TerminalController: BaseTerminalController, TabGroupCloseCoordinator.Contr
         // if we're closing the window. If we don't have a tabgroup for any
         // reason we check ourselves.
         let windows: [NSWindow] = window.tabGroup?.windows ?? [window]
-        guard let confirmController = windows
-            .compactMap({ $0.windowController as? TerminalController })
+        let controllers = windows.compactMap { $0.windowController as? TerminalController }
+
+        // A tab group can mix remote and local tabs. Confirm if ANY tab needs
+        // it — including a remote tab that is merely idle, whose close would
+        // end a process on another machine — and offer Disconnect for the
+        // panes of the true-remote controllers only.
+        let disconnect = SessionDisconnectPolicy.merge(controllers.map(\.disconnectOffer))
+        guard let confirmController = controllers
             .first(where: { $0.surfaceTree.contains(where: { $0.needsConfirmQuit }) })
+            ?? controllers.first(where: { !$0.disconnectOffer.isEmpty })
         else {
             closeWindowImmediately()
             return
         }
 
         // We call confirmClose on the proper controller so the alert is
-        // attached to the window that needs confirmation.
+        // attached to the window that needs confirmation. The offer travels
+        // with the call rather than being re-derived there, so a Disconnect
+        // still spares the remote tabs even when the alert is hosted by a
+        // local one.
         confirmController.confirmClose(
             messageText: "Close Window?",
             informativeText: "All terminal sessions in this window will be terminated.",
+            disconnect: disconnect
         ) {
             self.closeWindowImmediately()
         }

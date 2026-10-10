@@ -367,7 +367,9 @@ class IPCServer {
         var lines: Int?
         var shell: String?
         var state: String?
-        var noActivate: Bool = false
+        /// Whether this command may take focus (`--focus`). Background by
+        /// default — see `IPCFocusPolicy`.
+        var focus: IPCFocusPolicy = .background
         // A path or http(s) URL to open as a viewer pane instead of a terminal
         // (mutually exclusive with command/-e).
         var view: String?
@@ -403,15 +405,14 @@ class IPCServer {
             return IPCResponse(success: false, error: "--view cannot be combined with --command/-e")
         }
 
-        // Idempotent: if target exists and window is alive, focus it
+        // Idempotent: if target exists and window is alive, it is the
+        // answer. Raising it is the caller's choice (`--focus`); by default
+        // finding it is a no-op, like every other programmatic path.
         if let target = parsed.target {
             pruneStaleTargets()
-            if let entry = resolveTarget(target), let controller = entry.controller {
-                if !parsed.noActivate {
-                    DispatchQueue.main.async {
-                        controller.window?.makeKeyAndOrderFront(nil)
-                        NSApp.activate(ignoringOtherApps: true)
-                    }
+            if let entry = resolveTarget(target), entry.controller != nil {
+                if parsed.focus.raisesWindow {
+                    DispatchQueue.main.async { _ = Self.bringForward(entry) }
                 }
                 return .ok
             }
@@ -484,7 +485,8 @@ class IPCServer {
                 TerminalController.newWindowInheritingRemote(
                     ghostty,
                     withBaseConfig: config,
-                    from: TerminalController.preferredParent?.window)
+                    from: TerminalController.preferredParent?.window,
+                    activate: parsed.focus.raisesWindow)
             }
             return .ok
         }
@@ -497,8 +499,9 @@ class IPCServer {
                     originDirectory: parsed.config.workingDirectory))
                 let controller = TerminalController.newWindow(
                     ghostty,
-                    tree: SplitTree<PaneView>(root: .leaf(view: pane), zoomed: nil))
-                if !parsed.noActivate {
+                    tree: SplitTree<PaneView>(root: .leaf(view: pane), zoomed: nil),
+                    activate: parsed.focus.raisesWindow)
+                if parsed.focus.activatesApp {
                     NSApp.activate(ignoringOtherApps: true)
                 }
                 // Window titles track the focused *surface*; a viewer-only
@@ -524,7 +527,7 @@ class IPCServer {
 
         let windowTint: Color? = config.backgroundTint
         DispatchQueue.main.async { [ghostty = self.ghostty, weak self] in
-            let controller = TerminalController.newWindow(ghostty, withBaseConfig: config, activate: !parsed.noActivate)
+            let controller = TerminalController.newWindow(ghostty, withBaseConfig: config, activate: parsed.focus.raisesWindow)
 
             if let title = parsed.title, !title.isEmpty {
                 // A CLI-set title is a WINDOW title: it pins the titlebar
@@ -599,8 +602,12 @@ class IPCServer {
                         at: surfaceView,
                         direction: direction,
                         baseConfig: splitConfig,
-                        ratio: ratio
-                    )
+                        ratio: ratio,
+                        focus: parsed.focus.movesKeyboardFocus
+                    ) { newView in
+                        Self.presentIfAsked(
+                            controller.surfaceTree.pane(for: newView), in: controller, parsed.focus)
+                    }
 
                     if let newView {
                         Self.applyColorScheme(for: splitTint, to: newView)
@@ -647,16 +654,14 @@ class IPCServer {
         }
         let tintColor: Color? = tintNSColor.map { Color($0) }
 
-        // Idempotent: if --name exists and pane is alive, focus it
+        // Idempotent: if --name exists and pane is alive, it is the answer.
+        // Focusing it is the caller's choice (`--focus`), as for `+new-window
+        // --target=`.
         if let name = parsed.name {
             pruneStaleTargets()
             if let entry = resolveTarget(name), entry.isAlive {
-                DispatchQueue.main.async {
-                    if let surface = entry.surfaceView, let controller = entry.controller {
-                        controller.focusSurface(surface)
-                    } else if let pane = entry.viewerPaneView {
-                        pane.window?.makeKeyAndOrderFront(nil)
-                    }
+                if parsed.focus.movesKeyboardFocus {
+                    DispatchQueue.main.async { _ = Self.bringForward(entry) }
                 }
                 return .ok
             }
@@ -703,8 +708,11 @@ class IPCServer {
                     at: surfaceView,
                     direction: direction,
                     baseConfig: splitConfig,
-                    ratio: ratio
-                )
+                    ratio: ratio,
+                    focus: parsed.focus.movesKeyboardFocus
+                ) { newView in
+                    Self.presentIfAsked(controller.surfaceTree.pane(for: newView), in: controller, parsed.focus)
+                }
             }
             return .ok
         }
@@ -752,7 +760,8 @@ class IPCServer {
                         ratio: ratio,
                         location: viewLocation,
                         originDirectory: parsed.config.workingDirectory,
-                        name: parsed.name)
+                        name: parsed.name,
+                        focus: parsed.focus)
                     return
                 }
 
@@ -776,7 +785,8 @@ class IPCServer {
                         atPane: anchorPane,
                         direction: direction,
                         baseConfig: splitConfig,
-                        ratio: ratio
+                        ratio: ratio,
+                        focus: parsed.focus.movesKeyboardFocus
                     ) {
                         Self.applyColorScheme(for: tintColor, to: newView)
                         if let name = parsed.name {
@@ -784,6 +794,7 @@ class IPCServer {
                                 controller: WeakRef(controller),
                                 surface: WeakRef(newView))
                         }
+                        Self.presentIfAsked(controller.surfaceTree.pane(for: newView), in: controller, parsed.focus)
                     }
                     return
                 }
@@ -820,7 +831,8 @@ class IPCServer {
                     at: surface,
                     direction: direction,
                     baseConfig: splitConfig,
-                    ratio: ratio
+                    ratio: ratio,
+                    focus: parsed.focus.movesKeyboardFocus
                 ) { newView in
                     Self.applyColorScheme(for: tintColor, to: newView)
                     if let name = parsed.name {
@@ -830,6 +842,7 @@ class IPCServer {
                         )
                         Self.logger.info("IPC: registered pane target '\(name)'")
                     }
+                    Self.presentIfAsked(controller.surfaceTree.pane(for: newView), in: controller, parsed.focus)
                 }
             }
 
@@ -888,7 +901,8 @@ class IPCServer {
                     ratio: ratio,
                     location: viewLocation,
                     originDirectory: parsed.config.workingDirectory,
-                    name: parsed.name)
+                    name: parsed.name,
+                    focus: parsed.focus)
                 return
             }
 
@@ -923,7 +937,8 @@ class IPCServer {
                     atPane: anchorPane,
                     direction: direction,
                     baseConfig: splitConfig,
-                    ratio: ratio
+                    ratio: ratio,
+                    focus: parsed.focus.movesKeyboardFocus
                 ) {
                     Self.applyColorScheme(for: tintColor, to: newView)
                     if let name = parsed.name {
@@ -932,6 +947,7 @@ class IPCServer {
                             surface: WeakRef(newView))
                         Self.logger.info("IPC: registered pane target '\(name)'")
                     }
+                    Self.presentIfAsked(controller.surfaceTree.pane(for: newView), in: controller, parsed.focus)
                 }
                 return
             }
@@ -943,7 +959,8 @@ class IPCServer {
                 at: surfaceView,
                 direction: direction,
                 baseConfig: splitConfig,
-                ratio: ratio
+                ratio: ratio,
+                focus: parsed.focus.movesKeyboardFocus
             ) { newView in
                 Self.applyColorScheme(for: tintColor, to: newView)
                 if let name = parsed.name {
@@ -953,6 +970,7 @@ class IPCServer {
                     )
                     Self.logger.info("IPC: registered pane target '\(name)'")
                 }
+                Self.presentIfAsked(controller.surfaceTree.pane(for: newView), in: controller, parsed.focus)
             }
         }
 
@@ -968,7 +986,8 @@ class IPCServer {
         ratio: Double,
         location: String,
         originDirectory: String?,
-        name: String?
+        name: String?,
+        focus: IPCFocusPolicy
     ) {
         let viewer = ViewerView(location: location, originDirectory: originDirectory)
         guard let pane = controller.newViewerSplit(
@@ -986,6 +1005,9 @@ class IPCServer {
                 pane: WeakRef(pane))
             Self.logger.info("IPC: registered viewer pane target '\(name)'")
         }
+        // `newViewerSplit` never moves focus (a GUI side pane opened from a
+        // link leaves the caret where it was), so `--focus` does it here.
+        Self.presentIfAsked(pane, in: controller, focus)
     }
 
     private func handleClose(_ request: IPCRequest) -> IPCResponse {
@@ -1258,7 +1280,7 @@ class IPCServer {
                     viewer = pane.viewerView
                 } else if controller.focusedSurface == nil,
                           panes.count == 1, panes.first?.viewerView != nil {
-                    // A never-focused window (e.g. opened --no-activate) has
+                    // A never-focused window (e.g. a background IPC window) has
                     // no first responder; a lone viewer pane is unambiguous.
                     viewer = panes.first?.viewerView
                 } else {
@@ -1311,6 +1333,10 @@ class IPCServer {
         var workingDirectory: String?
         var shell: String?
         var command: String?
+        // Opening in the background is the default here as everywhere; a
+        // failed dial still shows its modal alert (that is a report of the
+        // command failing, not a window it opened).
+        let focus = IPCFocusPolicy.parse(arguments)
         for arg in arguments {
             if let value = arg.dropPrefix("--host=") {
                 host = String(value)
@@ -1389,6 +1415,7 @@ class IPCServer {
                     workingDirectory: workingDirectory,
                     shell: shell,
                     command: command,
+                    activate: focus.raisesWindow,
                     onOpen: { [weak self] controller in
                         // Register the window under its friendly name so
                         // +send-keys / +read / +close can target it (mirrors the
@@ -1409,6 +1436,7 @@ class IPCServer {
                     workingDirectory: workingDirectory,
                     shell: shell,
                     command: command,
+                    activate: focus.raisesWindow,
                     onOpen: { [weak self] controller in
                         // Same registration as the relay path above: expose
                         // the window under its friendly name so +send-keys /
@@ -2059,20 +2087,32 @@ class IPCServer {
     /// resolver — and therefore the naming system — with `--target`, rather
     /// than getting a parallel one. Never creates anything: a link that
     /// LAUNCHED the app finds an empty registry and correctly does nothing.
+    ///
+    /// Unlike every `ghoztty +…` command, this ALWAYS takes focus: a link
+    /// click is a person asking to go somewhere, and raising is the whole
+    /// verb. It does not consult `IPCFocusPolicy`.
     @MainActor
     @discardableResult
     func focusTarget(_ target: String) -> Bool {
         pruneStaleTargets()
         guard let entry = resolveTarget(target), entry.isAlive else { return false }
+        return Self.bringForward(entry)
+    }
 
-        // Same two shapes the idempotent `+split --name=` / `+new-window
-        // --target=` focus paths use: a terminal pane gets real focus inside
-        // its window (which `focusSurface` also raises and activates), while a
-        // viewer pane has no surface to focus, so raising its window is all
-        // there is.
+    /// Activate the app, raise the window owning `entry`, and focus the pane
+    /// it names. Shared by the URL scheme and by the idempotent `+split
+    /// --name=` / `+new-window --target=` hits when the caller passed
+    /// `--focus` — so "focus an existing target" means one thing.
+    @MainActor
+    @discardableResult
+    private static func bringForward(_ entry: TargetEntry) -> Bool {
+        // A terminal pane goes through `focusSurface`, which also raises and
+        // activates; a viewer pane has no surface, so it is made first
+        // responder directly and its window raised.
         if let surface = entry.surfaceView, let controller = entry.controller {
             controller.focusSurface(surface)
         } else if let pane = entry.viewerPaneView {
+            Ghostty.moveFocus(to: pane)
             pane.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         } else if let controller = entry.controller {
@@ -2082,6 +2122,55 @@ class IPCServer {
             return false
         }
         return true
+    }
+
+    /// After a programmatic split, honor `--focus`: activate the app, raise
+    /// the window, and give the new pane keyboard focus. With the default
+    /// (background) there is nothing to do — the split kept focus where it
+    /// was (`BaseTerminalController.keepingFirstResponder`).
+    @MainActor
+    static func presentIfAsked(
+        _ pane: PaneView?,
+        in controller: BaseTerminalController,
+        _ focus: IPCFocusPolicy
+    ) {
+        guard let pane else { return }
+        if focus.raisesWindow {
+            controller.window?.makeKeyAndOrderFront(nil)
+        }
+        if focus.activatesApp {
+            NSApp.activate(ignoringOtherApps: true)
+        }
+        if focus.movesKeyboardFocus {
+            focusOnceSettled(pane, in: controller, deadline: .now() + 2)
+        }
+    }
+
+    /// Move keyboard focus to `pane` once activation has landed.
+    ///
+    /// Moving it straight away loses when the app was INACTIVE: activation
+    /// makes the window key a beat later, and the window's become-key handler
+    /// (`BaseTerminalController.windowDidBecomeKey`) finds the window itself
+    /// as first responder — the split re-parented the old pane — and restores
+    /// the stale `focusedSurface`, the pane the caret was just taken from
+    /// (measured). Waiting until the app is active, the window is key, and
+    /// the pane is mounted puts this move after that restore. A deadline
+    /// keeps a refused activation from leaving the pane unfocused for good.
+    @MainActor
+    private static func focusOnceSettled(
+        _ pane: PaneView,
+        in controller: BaseTerminalController,
+        deadline: DispatchTime
+    ) {
+        guard let window = controller.window else { return }
+        let settled = NSApp.isActive && window.isKeyWindow && pane.contentView.window === window
+        if settled || DispatchTime.now() >= deadline {
+            Ghostty.moveFocus(to: pane)
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            focusOnceSettled(pane, in: controller, deadline: deadline)
+        }
     }
 
     private func windowName(for controller: TerminalController) -> String? {
@@ -2229,6 +2318,12 @@ class IPCServer {
     }
 
     private func parseArguments(_ arguments: [String]) -> ParsedArguments {
+        Self.parseArguments(arguments)
+    }
+
+    /// Pure: the IPC argument list → `ParsedArguments`. Static so tests can
+    /// pin what each flag means without a running server.
+    static func parseArguments(_ arguments: [String]) -> ParsedArguments {
         var result = ParsedArguments(config: Ghostty.SurfaceConfiguration())
         var eFlag = false
         var commandParts: [String] = []
@@ -2349,8 +2444,14 @@ class IPCServer {
                 continue
             }
 
-            if arg == "--no-activate" {
-                result.noActivate = true
+            if let focus = IPCFocusPolicy.fromFlag(arg) {
+                result.focus = focus
+                continue
+            }
+
+            // The pre-`--focus` opt-out. Not focusing is now the default, so
+            // it is accepted and does nothing (callers in the wild pass it).
+            if arg == IPCFocusPolicy.legacyNoActivateFlag {
                 continue
             }
 

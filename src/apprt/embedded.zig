@@ -858,6 +858,9 @@ pub const Surface = struct {
     core_surface: CoreSurface,
     content_scale: apprt.ContentScale,
     size: apprt.SurfaceSize,
+    /// False until the host reports the view's real size (`updateSize`).
+    /// Until then `size` is the 800×600 construction placeholder.
+    size_reported: bool = false,
     cursor_pos: apprt.CursorPos,
     inspector: ?*Inspector = null,
 
@@ -1017,6 +1020,7 @@ pub const Surface = struct {
                 .y = @floatCast(opts.scale_factor),
             },
             .size = .{ .width = 800, .height = 600 },
+            .size_reported = false,
             .cursor_pos = .{ .x = -1, .y = -1 },
             // Remote backend handle (remote-machines design §3.2). Recorded
             // before `core_surface.init` so `remoteBackend()` can branch the
@@ -1364,6 +1368,10 @@ pub const Surface = struct {
     }
 
     pub fn updateSize(self: *Surface, width: u32, height: u32) void {
+        // The view has been laid out: whatever the size is now, it is real (even
+        // if it happens to equal the construction placeholder).
+        self.size_reported = true;
+
         // Runtimes sometimes generate superfluous resize events even
         // if the size did not actually change (SwiftUI). We check
         // that the size actually changed from what we last recorded
@@ -1576,6 +1584,7 @@ pub const Surface = struct {
             else
                 null,
             .restore_offset = self.remote_restore_offset,
+            .size_pending = !self.size_reported,
         };
     }
 
@@ -2092,6 +2101,82 @@ pub const CAPI = struct {
         };
     }
 
+    /// Sync with ghostty_binding_info_s
+    const BindingInfo = extern struct {
+        flags: input.Binding.Flags.C = 0,
+        requires: input.Binding.Action.Requires = .app,
+        action: String = .empty,
+    };
+
+    /// Describe the root-set binding `event` triggers, for an embedder whose
+    /// focused pane is not a terminal. `requires` is the most demanding
+    /// `Action.requires` across the binding's actions. `action` is the
+    /// formatted action for a single-action binding (empty for a chain), so
+    /// the embedder can find a native control for it; free it with
+    /// `ghostty_string_free`. Returns false when `event` is not a binding.
+    export fn ghostty_config_key_binding(
+        config: *Config,
+        event: KeyEvent,
+        info: *BindingInfo,
+    ) bool {
+        const core_event = event.keyEvent().core() orelse return false;
+        const leaf = CoreApp.bindingForEvent(config, core_event) orelse return false;
+        const actions = leaf.actionsSlice();
+
+        var requires: input.Binding.Action.Requires = .app;
+        for (actions) |action| {
+            const r = action.requires();
+            if (@intFromEnum(r) > @intFromEnum(requires)) requires = r;
+        }
+
+        const action: String = if (actions.len == 1) formatAction(actions[0]) else .empty;
+
+        info.* = .{
+            .flags = leaf.flags.cval(),
+            .requires = requires,
+            .action = action,
+        };
+        return true;
+    }
+
+    /// The canonical spelling of an action string (parse, then format) — the
+    /// spelling `ghostty_config_key_binding` reports. Empty if `str` does not
+    /// parse. Free with `ghostty_string_free`.
+    export fn ghostty_binding_action_canonical(
+        str: [*]const u8,
+        len: usize,
+    ) String {
+        const action = input.Binding.Action.parse(str[0..len]) catch return .empty;
+        return formatAction(action);
+    }
+
+    fn formatAction(action: input.Binding.Action) String {
+        var buf: std.Io.Writer.Allocating = .init(global.alloc);
+        defer buf.deinit();
+        action.format(&buf.writer) catch return .empty;
+        const copy = global.alloc.dupeZ(u8, buf.written()) catch return .empty;
+        return .fromSlice(copy);
+    }
+
+    /// Perform the binding `event` triggers WITHOUT a focused terminal: the
+    /// key is never sent to any terminal as input. `surface` (nullable) is a
+    /// terminal in the same window that surface-scoped actions are performed
+    /// through. The caller must only send bindings whose `requires` allows
+    /// it (see `ghostty_config_key_binding`). Returns whether any action was
+    /// performed.
+    export fn ghostty_app_key_binding_perform(
+        app: *App,
+        surface: ?*Surface,
+        event: KeyEvent,
+    ) bool {
+        const core_event = event.keyEvent().core() orelse return false;
+        return app.core_app.performBindingForNonTerminal(
+            app,
+            if (surface) |s| &s.core_surface else null,
+            core_event,
+        );
+    }
+
     /// Returns true if the given key event would trigger a binding
     /// if it were sent to the surface right now. The "right now"
     /// is important because things like trigger sequences are only
@@ -2255,6 +2340,14 @@ pub const CAPI = struct {
         surface.core_surface.setSessionCloseIntent(close_on_exit);
     }
 
+    /// Returns true if this surface's `confirm-close-surface` configuration
+    /// permits a close confirmation at all (i.e. it is not `false`). Distinct
+    /// from `ghostty_surface_needs_confirm_quit`, which also folds in whether
+    /// the child is alive and sitting at a prompt.
+    export fn ghostty_surface_confirm_close_enabled(surface: *Surface) bool {
+        return surface.core_surface.confirmCloseEnabled();
+    }
+
     /// Returns true if the surface process has exited.
     export fn ghostty_surface_process_exited(surface: *Surface) bool {
         return surface.core_surface.child_exited;
@@ -2278,8 +2371,10 @@ pub const CAPI = struct {
         // If we don't have a selection, do nothing.
         const core_sel = core_surface.io.terminal.screens.active.selection orelse return false;
 
-        // Read the text from the selection.
-        return readTextLocked(surface, core_sel, result);
+        // Read the text from the selection. This is the selection as the
+        // user means it (Services, accessibility, Look Up), so it gets the
+        // same reflow a copy does.
+        return readTextLocked(surface, core_sel, true, result);
     }
 
     /// Read some arbitrary text from the surface.
@@ -2299,12 +2394,15 @@ pub const CAPI = struct {
             surface.core_surface.renderer_state.terminal.screens.active,
         ) orelse return false;
 
-        return readTextLocked(surface, core_sel, result);
+        // Arbitrary screen reads (`+read`, the IPC text APIs) want the
+        // screen exactly as laid out.
+        return readTextLocked(surface, core_sel, false, result);
     }
 
     fn readTextLocked(
         surface: *Surface,
         core_sel: terminal.Selection,
+        reflow: bool,
         result: *Text,
     ) bool {
         const core_surface = &surface.core_surface;
@@ -2313,6 +2411,7 @@ pub const CAPI = struct {
         const text = core_surface.dumpTextLocked(
             global.alloc,
             core_sel,
+            reflow,
         ) catch |err| {
             log.warn("error reading text err={}", .{err});
             return false;
@@ -4310,7 +4409,7 @@ pub const CAPI = struct {
             };
 
             // Read the selection
-            return readTextLocked(ptr, sel, result);
+            return readTextLocked(ptr, sel, false, result);
         }
 
         export fn ghostty_inspector_metal_init(ptr: *Inspector, device: objc.c.id) bool {

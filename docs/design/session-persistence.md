@@ -368,7 +368,7 @@ processes after a reboot.
 
 ### 5.3 The viewer
 
-- **Config:** `session-persistence = off | on` (per-window override via
+- **Config:** `session-persistence = false | true` (per-window override via
   `+new-window --persist=...`). When on, local window creation routes through
   `remoteBackend()` with a connection to the local agent instead of `.exec`.
   `Machine.isLocalMachine` already suppresses the remote pill; extend it to
@@ -434,11 +434,25 @@ processes after a reboot.
   visible truncation marker (already implemented). 16 MB ≈ tens of thousands
   of lines — in practice "full scrollback" for the AC1 workloads; genuinely
   unbounded history is out of scope v1 (future: ring spill-to-disk).
-- **Reboot:** the agent snapshots each ring to disk on graceful shutdown
-  (SIGTERM from launchd at logout/shutdown) and every 30 s (dirty sessions
-  only, atomic writes). After reboot the relaunched pane replays the snapshot
-  *then* a `--- session restarted after reboot ---` divider, then live
-  output. Best-effort by design (kernel panic loses ≤ 30 s of tail).
+- **Reboot:** the agent checkpoints each session to disk on graceful shutdown
+  (SIGTERM from launchd at logout/shutdown), when a viewer disconnects, and
+  every 30 s (dirty sessions only, atomic writes): the raw ring, its live cwd,
+  and — what a reboot actually restores — the session's **history**, serialized
+  from the agent's per-session emulator as content-only VT (`<id>.hist`: text,
+  styles, hyperlinks, soft wraps unwrapped; no modes, no cursor addressing, no
+  queries). After reboot the relaunched pane replays that history, *then* the
+  `--- session restarted ---` divider and the policy's notice, then live output.
+  Best-effort by design (kernel panic loses ≤ 30 s of tail).
+
+  *Why not the raw ring (the original design, shipped through 1.37):* measured
+  against real Claude Code panes it restored garbage. The ring is a byte window
+  that starts mid-sequence, is mostly a TUI's in-place redraws, and carries
+  every query the program sent — replayed, the terminal answered them into the
+  fresh shell's stdin and re-armed the dead program's mouse/kitty-keyboard/
+  synchronized-output state; its relative cursor motion smeared at any other
+  geometry; and as ONE frame larger than the viewer's 256 KiB inbound ring it
+  was cut to its first 256 KiB (notice and new prompt lost — the pane looked
+  dead). A ring written by an older agent is converted to a history at load.
 - **Alternate-screen apps** (vim, htop): byte replay re-enters the alternate
   screen naturally; a post-attach `RESIZE` (rows±0 trick or SIGWINCH) nudges
   TUIs to repaint — same trick the reconnect path uses today.

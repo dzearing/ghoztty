@@ -604,13 +604,12 @@ pub const Session = struct {
     /// nothing.
     winch_on_next_resize: bool = false,
 
-    /// Capture width/height of a PRELOADED reboot-scrollback snapshot (T13, §5.4),
-    /// i.e. the pty geometry the ring bytes were drawn at. 0 = unknown (no
-    /// snapshot, or a legacy width-less GRS1 file). Sent to the reattaching viewer
-    /// on RELAUNCH (`Relaunched.replay_cols/rows`) so it can replay the raw stream
-    /// at the original width and reflow to the live pane — replayed narrower, the
-    /// stream's in-place prompt redraws smear. Only meaningful until the first live
-    /// resize; the fresh child then owns the geometry.
+    /// The width/height the viewer must replay the PRELOADED reboot scrollback
+    /// at (T13, §5.4), sent on RELAUNCH (`Relaunched.replay_cols/rows`). 0 —
+    /// the normal case — means "at your own width": the preload is a content
+    /// history that re-wraps anywhere. Non-zero only when the preload had to fall
+    /// back to a RAW ring (history conversion failed), whose in-place prompt
+    /// redraws land cleanly only at the pty geometry they were drawn at.
     replay_cols: u16 = 0,
     replay_rows: u16 = 0,
 
@@ -629,6 +628,14 @@ pub const Session = struct {
     /// frame's `byte_offset` comes from `out_offset.advance(n)`; the SAME counter
     /// the client uses to discard already-applied DATA after a snapshot.
     out_offset: protocol.ByteOffset = .{},
+
+    /// The outbound offset up to which the BOUND viewer has been sent every byte
+    /// (live DATA, an attach gap-fill, or a relaunch replay). Normally equal to
+    /// `out_offset`; it falls behind only while the viewer has the stream paused
+    /// (`streaming == false`), and `Server.handleFlow` uses it to send what the
+    /// viewer missed the moment it resumes. Without it, everything the child
+    /// printed during a pause was recorded but never delivered.
+    sent_offset: u64 = 0,
 
     /// The outbound offset captured at the last successful ring disk snapshot
     /// (T13, §5.4). The ring is "dirty" (needs re-snapshotting) when
@@ -904,7 +911,12 @@ pub const Session = struct {
     /// best-effort: an allocation failure just leaves the emulator absent/stale so
     /// this session falls back to ring-only replay — it never disturbs the ring or
     /// the byte stream.
-    fn feedEmulator(self: *Session, bytes: []const u8) void {
+    ///
+    /// Public for the bytes the AGENT puts in front of a relaunched child (the
+    /// replayed history, divider and notice — `Server.handleRelaunch`): they are
+    /// what the pane shows, so the emulator must hold them too, or the NEXT
+    /// restart's history would forget everything from before this one.
+    pub fn feedEmulator(self: *Session, bytes: []const u8) void {
         const emu = self.emulator orelse blk: {
             const created = grid_snapshot.GridEmulator.create(
                 self.alloc,
@@ -936,6 +948,15 @@ pub const Session = struct {
         // the raw ring it replaces.
         emu.ensureSize(self.rows, self.cols);
         return emu.snapshotAlloc(gpa, opts) catch null;
+    }
+
+    /// The session's reboot history — scrollback + screen as content-only VT
+    /// (`GridEmulator.historyAlloc`), owned by `gpa`. Null when there is no
+    /// emulator (no output yet) or on OOM; the ring alone is then all there is.
+    pub fn historyAlloc(self: *Session, gpa: Allocator) ?[]u8 {
+        const emu = self.emulator orelse return null;
+        emu.ensureSize(self.rows, self.cols);
+        return emu.historyAlloc(gpa) catch null;
     }
 
     /// True when the emulator shows the child is on the ALTERNATE screen. False
@@ -1592,7 +1613,10 @@ pub const SessionStore = struct {
             // offset its bytes end at.
             if (s.child.deliveredOffset()) |off| s.holder_offset = off;
             if (s.streaming and s.bound) {
-                if (s.bridge_data) |f| f(s.bridge_ctx.?, s.channel, at, bytes);
+                if (s.bridge_data) |f| {
+                    f(s.bridge_ctx.?, s.channel, at, bytes);
+                    s.sent_offset = at + bytes.len;
+                }
             }
         }
         // Reap-check: emit EXIT (after the final DATA already bridged) on exit.
@@ -1663,6 +1687,7 @@ pub const SessionStore = struct {
             const stop = self.reaper_stop;
             self.reaper_mutex.unlock();
             if (stop) break;
+            self.reapExited();
             self.reapIdle();
             // Live foreground-pid sampling (wp3): push `META{foreground_pid}`
             // for any bound session whose pty foreground group changed since
@@ -1715,12 +1740,70 @@ pub const SessionStore = struct {
             // cost is up to one tick (1 s) of extra latency, which is the
             // granularity everything else in this loop already runs at.
             ticks +%= 1;
-            if (ticks >= snapshot_every_ticks or self.volumeSnapshotDue()) {
+            const timer_due = ticks >= snapshot_every_ticks;
+            if (timer_due or self.volumeSnapshotDue()) {
                 ticks = 0;
                 self.last_snapshot_ms = self.now();
-                self.snapshotRings();
+                self.snapshotRingsWith(timer_due);
             }
         }
+    }
+
+    /// Reap-check every alive session and tombstone the ones whose child has
+    /// exited, framing EXIT to a bound viewer — the same transition
+    /// `onChildOutput` makes, for the exits it never sees. Its only reap check
+    /// is the pty reader's EOF nudge, and EOF is no proof of exit: a child can
+    /// close its terminal and run on (exiting later, with no output left to
+    /// carry a nudge), and one exiting under memory or scheduler pressure can
+    /// outlast the reader's bounded wait. Missed, the session stayed `alive`
+    /// forever over a zombie — a pane that accepted no input and never said
+    /// why. `tryWait` is a single `waitpid(WNOHANG)`, so a per-tick sweep is
+    /// cheap. EXIT is framed outside the store lock, collect-then-act like
+    /// `sampleForegroundPids`.
+    pub fn reapExited(self: *SessionStore) void {
+        const Exit = struct {
+            f: *const fn (ctx: *anyopaque, channel: u128, code: i64, runtime_ms: u64) void,
+            ctx: *anyopaque,
+            channel: u128,
+            code: i64,
+            runtime: u64,
+        };
+        var exits: std.ArrayList(Exit) = .empty;
+        defer exits.deinit(self.table.alloc);
+
+        self.mutex.lock();
+        const now_ms = self.now();
+        var roster_changed = false;
+        var it = self.table.by_id.valueIterator();
+        while (it.next()) |sp| {
+            const s = sp.*;
+            if (!s.alive) continue;
+            const code = s.child.tryWait() orelse continue;
+            // The same transition `onChildOutput` makes, rule for rule: a holder
+            // that died under an UNBOUND session interrupted it, it did not exit
+            // (T1771), and either way the roster changed (T1749).
+            roster_changed = true;
+            if (!s.bound and s.child.wasLost()) {
+                s.markLost(now_ms);
+                std.log.warn("session {s}: its holder died, not its shell; kept as an interrupted session", .{s.idStr()});
+                continue;
+            }
+            s.markExited(code, now_ms);
+            if (!s.bound) continue;
+            const f = s.bridge_exit orelse continue;
+            const ctx = s.bridge_ctx orelse continue;
+            exits.append(self.table.alloc, .{
+                .f = f,
+                .ctx = ctx,
+                .channel = s.channel,
+                .code = code,
+                .runtime = @intCast(@max(0, now_ms - s.created_ms)),
+            }) catch continue; // OOM: tombstoned; the viewer learns on re-attach
+        }
+        if (roster_changed) self.notifyRosterChanged();
+        self.mutex.unlock();
+
+        for (exits.items) |e| e.f(e.ctx, e.channel, e.code, e.runtime);
     }
 
     /// Sample every bound+alive session's pty foreground pid and push
@@ -2254,8 +2337,13 @@ pub const SessionStore = struct {
 
         var parsed = (session_meta.load(alloc, path) catch |err| {
             std.log.warn("session_meta: load from {s} failed: {s}", .{ path, @errorName(err) });
+            // A file we cannot read is not proof the sessions are gone: keep
+            // their snapshots (no sweep) for a later start that can.
             return 0;
-        }) orelse return 0; // absent → nothing to restore
+        }) orelse {
+            self.sweepOrphanSnapshots(); // absent → no session owns any snapshot
+            return 0;
+        };
         defer parsed.deinit();
 
         // Newest first (T278). A file may carry more records than
@@ -2281,6 +2369,7 @@ pub const SessionStore = struct {
         var refused: usize = 0;
         self.mutex.lock();
         defer self.mutex.unlock();
+        defer self.sweepOrphanSnapshots();
         for (parsed.value.sessions, 0..) |_, i| {
             const rec = parsed.value.sessions[if (order) |o| o[i] else i];
             const s = self.table.materialize(rec, ring_bytes, self.now()) catch |err| {
@@ -2317,41 +2406,172 @@ pub const SessionStore = struct {
         return n;
     }
 
-    /// Load `sess`'s ring disk snapshot (if any) into its output ring, then append
-    /// the reboot divider, and anchor `out_offset` at the ring tail so a later
-    /// RELAUNCH's fresh child output continues after it (T13, §5.4). The ring is
-    /// renumbered to base offset 0 (a freshly-restored viewer applies DATA from 0
-    /// with no resync watermark — a non-zero base would manufacture a phantom gap).
-    /// No-op when ring snapshots are disabled or none exists. Called under the store
-    /// lock from `loadPersisted`, before any connection or the reaper runs.
+    /// Delete every snapshot file in `rings_dir` (`.ring`, its `.ringlog` journal
+    /// (T997), `.hist`, and their `.tmp` staging files) whose session is not in
+    /// the table. Called once at
+    /// start, right after the persisted sessions are materialized — the only
+    /// moment the table is exactly "every session that can still be restored".
     ///
-    /// `with_divider = false` loads the scrollback but leaves the divider off,
-    /// for a holder-backed record whose shell may not have restarted at all
-    /// (T906); `appendRestartDivider` adds it later if adoption fails.
+    /// A snapshot is otherwise deleted only when its session is CLOSEd or reaped
+    /// while the agent is running, so every other way a session ends — a child
+    /// that exits on its own, a tombstone aged out of `sessions.json`
+    /// (`max_unclaimed_restarts`), an agent killed mid-close — leaves its files
+    /// behind forever: 146 files / 182 MB for 6 live sessions on a real box.
+    /// Best-effort; any error just leaves a file for the next start.
+    fn sweepOrphanSnapshots(self: *SessionStore) void {
+        const dir_path = self.rings_dir orelse return;
+        var dir = std.fs.cwd().openDir(dir_path, .{ .iterate = true }) catch return;
+        defer dir.close();
+        var it = dir.iterate();
+        while (it.next() catch null) |entry| {
+            if (entry.kind != .file) continue;
+            const name = entry.name;
+            // `atomic_write` stages as `<file>.<nonce>.tmp`, so a staging file is
+            // recognised by what it stages, not by a fixed suffix.
+            const ours = std.mem.endsWith(u8, name, ".ring") or
+                std.mem.endsWith(u8, name, ".ringlog") or
+                std.mem.endsWith(u8, name, ".hist") or
+                (std.mem.endsWith(u8, name, ".tmp") and
+                    (std.mem.indexOf(u8, name, ".ring") != null or
+                        std.mem.indexOf(u8, name, ".hist") != null));
+            if (!ours) continue;
+            const id = name[0 .. std.mem.indexOfScalar(u8, name, '.') orelse continue];
+            if (id.len != 32) continue; // not a session id: not ours to judge
+            if (self.table.getByIdStr(id) != null) continue;
+            dir.deleteFile(name) catch {};
+        }
+    }
+
+    /// Load what `sess` was showing before the restart into its output ring, then
+    /// append the reboot divider, and anchor `out_offset` at the ring tail so a
+    /// later RELAUNCH's fresh child output continues after it (T13, §5.4).
+    ///
+    /// What gets replayed for a session whose shell DIED is its HISTORY —
+    /// content-only VT, never the raw ring (see `grid_snapshot.zig`'s module doc
+    /// for everything the raw ring does to a fresh pane). In order of preference:
+    ///   1. the `.hist` file written next to the ring, when it reflects the same
+    ///      stream offset the ring does (a matched pair from one snapshot pass);
+    ///   2. otherwise the ring converted through a scratch emulator — which is
+    ///      what restores a snapshot written by an agent that predates `.hist`;
+    ///   3. otherwise (conversion OOM) the raw ring, as a last resort rather
+    ///      than an empty pane.
+    ///
+    /// `with_divider = false` is a holder-backed record whose shell may not have
+    /// restarted at all (T906): its raw ring IS the stream the holder continues
+    /// from the ack, so it is loaded as-is and without the divider;
+    /// `abandonHolder` converts it and draws the divider if adoption fails.
+    ///
+    /// The ring is renumbered to base offset 0 (a freshly-restored viewer applies
+    /// DATA from 0 with no resync watermark — a non-zero base would manufacture a
+    /// phantom gap). No-op when ring snapshots are disabled or none exists.
+    /// Called under the store lock from `loadPersisted`, before any connection or
+    /// the reaper runs.
     fn preloadRingSnapshot(self: *SessionStore, sess: *Session, with_divider: bool) void {
         const dir = self.rings_dir orelse return;
         const alloc = self.table.alloc;
-        const path = ring_snapshot.pathFor(alloc, dir, sess.idStr()) catch return;
-        defer alloc.free(path);
-        var loaded = (ring_snapshot.load(alloc, path) catch |err| {
-            std.log.warn("ring_snapshot: load {s} failed: {s}", .{ path, @errorName(err) });
+
+        var ring: ?ring_snapshot.Loaded = ring: {
+            const path = ring_snapshot.pathFor(alloc, dir, sess.idStr()) catch break :ring null;
+            defer alloc.free(path);
+            break :ring ring_snapshot.load(alloc, path) catch |err| {
+                std.log.warn("ring_snapshot: load {s} failed: {s}", .{ path, @errorName(err) });
+                break :ring null;
+            };
+        };
+        defer if (ring) |*r| r.free(alloc);
+
+        // A holder-backed record (T906): the shell may still be running, and the
+        // holder will continue THIS byte stream from the ack. Load it verbatim —
+        // a history in its place would put the holder's next bytes on the wrong
+        // rows — and leave the divider to `abandonHolder`.
+        if (!with_divider) {
+            const r = ring orelse return;
+            if (r.bytes.len == 0) return; // nothing to replay
+            // Remember the width these bytes were drawn at (0 for a legacy GRS1
+            // snapshot) so RELAUNCH can tell the viewer to replay at that width.
+            sess.replay_cols = r.cols;
+            sess.replay_rows = r.rows;
+            sess.ring.preload(0, r.bytes);
+            sess.out_offset.value = sess.ring.tailOffset();
+            sess.last_snapshot_offset = sess.out_offset.value;
             return;
-        }) orelse return;
-        defer loaded.free(alloc);
-        if (loaded.bytes.len == 0) return; // nothing to replay
+        }
 
-        // Remember the width these bytes were drawn at (0 for a legacy GRS1
-        // snapshot) so RELAUNCH can tell the viewer to replay at that width.
-        sess.replay_cols = loaded.cols;
-        sess.replay_rows = loaded.rows;
+        var hist: ?ring_snapshot.History = hist: {
+            const path = ring_snapshot.historyPathFor(alloc, dir, sess.idStr()) catch break :hist null;
+            defer alloc.free(path);
+            break :hist ring_snapshot.loadHistory(alloc, path) catch |err| {
+                std.log.warn("ring_snapshot: load {s} failed: {s}", .{ path, @errorName(err) });
+                break :hist null;
+            };
+        };
+        defer if (hist) |*h| h.free(alloc);
 
-        // Renumber to base 0: [snapshot bytes][divider]. out_offset := tail so the
+        // A history only stands for the ring it was written WITH. If the ring was
+        // rewritten later and the history write failed, the ring is newer.
+        if (hist) |h| if (ring) |r| {
+            if (h.end_offset != r.base_offset + r.bytes.len) {
+                std.log.info("ring_snapshot: history for {s} is stale (end {d} vs ring end {d}); converting the ring instead", .{ sess.idStr(), h.end_offset, r.base_offset + r.bytes.len });
+                hist = null;
+                h.free(alloc);
+            }
+        };
+
+        var converted: ?[]u8 = null;
+        defer if (converted) |c| alloc.free(c);
+
+        // The capture geometry the viewer must replay at, 0 = "replay at your own
+        // width". A history is soft-wrap-free content, so it re-wraps correctly
+        // at any width and needs no geometry at all — and claiming one would make
+        // the viewer replay at that width and reflow afterwards, which only works
+        // if it has the WHOLE replay in hand before it reflows (it does not: its
+        // inbound ring is far smaller than a full history). Only the raw-ring
+        // fallback, whose cursor motion lands right only at the width it was drawn
+        // at, still reports one.
+        var cols: u16 = 0;
+        var rows: u16 = 0;
+        const bytes: []const u8 = if (hist) |h|
+            h.bytes
+        else if (ring) |r| bytes: {
+            if (r.bytes.len == 0) return; // nothing to replay
+            converted = grid_snapshot.historyFromRaw(alloc, r.bytes, r.cols, r.rows) catch null;
+            if (converted) |c| break :bytes c;
+            std.log.warn("ring_snapshot: converting {s} failed (OOM); replaying the raw ring", .{sess.idStr()});
+            cols = r.cols;
+            rows = r.rows;
+            break :bytes r.bytes;
+        } else return;
+        if (bytes.len == 0) return; // nothing was on screen
+
+        // The ring must hold the history PLUS the divider and the viewer's
+        // notice appended after it; anything that does not fit is evicted from
+        // the FRONT, mid-escape-sequence. Keep the newest whole lines instead.
+        const budget = sess.ring.buf.len -| (reboot_divider.len + protocol.Relaunch.max_notice_bytes);
+        const fitted = historyTail(bytes, budget);
+
+        // Tell RELAUNCH what width (if any) the viewer must replay these bytes at.
+        sess.replay_cols = cols;
+        sess.replay_rows = rows;
+
+        // Renumber to base 0: [history][divider]. out_offset := tail so the
         // relaunched child's first output lands immediately after the divider.
-        sess.ring.preload(0, loaded.bytes);
+        sess.ring.preload(0, fitted);
         sess.out_offset.value = sess.ring.tailOffset();
-        if (with_divider) appendRestartDivider(sess);
+        appendRestartDivider(sess);
         // Not dirty: this is loaded-from-disk content, not new child output.
         sess.last_snapshot_offset = sess.out_offset.value;
+    }
+
+    /// Everything a reboot needs to restore a session as it was RIGHT NOW: its
+    /// live working directory (`refreshCwds`, which persists `sessions.json` when
+    /// one moved) and its scrollback plus history (`snapshotRings`). The entry
+    /// point for the two moments that cannot wait for the reaper's next tick — a
+    /// viewer disconnecting, and the agent's shutdown at logout — so neither can
+    /// persist one without the other (main 7e78aacf4).
+    pub fn checkpoint(self: *SessionStore) void {
+        self.refreshCwds();
+        self.last_snapshot_ms = self.now();
+        self.snapshotRings();
     }
 
     /// Append the restart divider to `sess`'s ring at its current tail. Split
@@ -2514,7 +2734,38 @@ pub const SessionStore = struct {
             s.holder_offset = 0;
             s.holder_snapshot_offset = 0;
         }
+        // The shell is gone after all, so what this pane will replay is no
+        // longer a stream anybody continues: convert it to the same content-only
+        // history a holderless reboot gets (`preloadRingSnapshot`). In memory
+        // only — the files on disk stay the raw pair, which is what a later
+        // agent that CAN serve the holder needs to adopt it.
+        self.convertRingToHistory(s);
         appendRestartDivider(s);
+    }
+
+    /// Replace a tombstone's preloaded raw ring with its content-only history
+    /// (`grid_snapshot.historyFromRaw`), trimmed to whole lines that leave room
+    /// for the divider and the viewer's notice. Caller holds the store lock. On
+    /// OOM the raw ring stays — the last-resort replay, never an empty pane.
+    fn convertRingToHistory(self: *SessionStore, s: *Session) void {
+        if (s.ring.len == 0) return;
+        const alloc = self.table.alloc;
+        const raw = alloc.alloc(u8, s.ring.len) catch return;
+        defer alloc.free(raw);
+        const n = s.ring.copyRetained(raw);
+        const hist = grid_snapshot.historyFromRaw(alloc, raw[0..n], s.replay_cols, s.replay_rows) catch return;
+        defer alloc.free(hist);
+        const budget = s.ring.buf.len -| (reboot_divider.len + protocol.Relaunch.max_notice_bytes);
+        const fitted = historyTail(hist, budget);
+        // A ring too small to hold any history next to the divider and notice
+        // keeps its raw bytes: something to replay beats nothing.
+        if (fitted.len == 0 or budget == 0) return;
+        s.ring.preload(0, fitted);
+        s.out_offset.value = s.ring.tailOffset();
+        s.last_snapshot_offset = s.out_offset.value;
+        // Content, not geometry-bound VT: the viewer replays it at its own width.
+        s.replay_cols = 0;
+        s.replay_rows = 0;
     }
 
     /// Whether a snapshot pass may APPEND to a session's journal rather than
@@ -2605,6 +2856,18 @@ pub const SessionStore = struct {
         );
     }
 
+    /// The newest whole lines of `bytes` that fit in `budget`: the suffix that
+    /// starts right after the first CRLF at or past the cut point. A history only
+    /// ever breaks lines with CRLF and only ever ends one with it, so this never
+    /// starts inside an escape sequence. Returns `bytes` when it already fits, and
+    /// the raw tail when no line boundary exists past the cut (one giant line).
+    fn historyTail(bytes: []const u8, budget: usize) []const u8 {
+        if (bytes.len <= budget) return bytes;
+        const cut = bytes.len - budget;
+        const nl = std.mem.indexOfPos(u8, bytes, cut, "\r\n") orelse return bytes[cut..];
+        return bytes[nl + 2 ..];
+    }
+
     /// Flush every dirty ALIVE session's output ring to `<rings_dir>/<id>.ring`
     /// (§5.4 reboot scrollback, T13). No-op when `rings_dir` is null (disabled).
     /// Triggered periodically by the reaper and on a viewer disconnect (server
@@ -2621,7 +2884,21 @@ pub const SessionStore = struct {
     /// gets just those bytes appended to its journal. The base is rewritten
     /// whole only when that is not possible, or once the journal has grown to
     /// about a ring's worth — which caps the disk write at 2x the output.
+    ///
+    /// Each pass also writes the session's HISTORY (`<id>.hist`, main 7e78aacf4)
+    /// beside the ring — see `snapshotRingsWith` for the one pass that does not.
     pub fn snapshotRings(self: *SessionStore) void {
+        self.snapshotRingsWith(true);
+    }
+
+    /// `snapshotRings`, with the history optional. Serializing a history walks
+    /// the emulator's whole scrollback UNDER the store lock, which is fine at the
+    /// 30-second timer and at a checkpoint but not on a volume-triggered pass
+    /// (T969), which a busy pane can fire every second. Those pass `false`: the
+    /// ring still lands, and a reboot before the next timer pass finds a history
+    /// whose end no longer matches the ring and converts the ring instead — the
+    /// same content, built at load time.
+    pub fn snapshotRingsWith(self: *SessionStore, with_history: bool) void {
         const dir = self.rings_dir orelse return;
         const alloc = self.table.alloc;
         self.snapshot_mutex.lock();
@@ -2683,10 +2960,24 @@ pub const SessionStore = struct {
             // The holder offset these bytes end at (T906) — captured under the
             // same lock as the ring copy, so the pair cannot drift.
             const cap_holder_offset = s.holder_offset;
+            // The history the reboot will actually restore, serialized from the
+            // emulator at the SAME instant as the ring copy (both under this lock
+            // hold), so `end_offset` pairs them exactly.
+            const hist: ?[]u8 = if (with_history) s.historyAlloc(alloc) else null;
+            defer if (hist) |h| alloc.free(h);
             var id_str_buf: [32]u8 = s.id_str;
             self.mutex.unlock();
 
-            // Write OUTSIDE the lock.
+            // Write OUTSIDE the lock. History first: a crash between the two
+            // leaves a history whose `end_offset` no longer matches the OLD ring
+            // still on disk, which the loader detects and falls back from.
+            if (hist) |h| hist: {
+                const hpath = ring_snapshot.historyPathFor(alloc, dir, id_str_buf[0..]) catch break :hist;
+                defer alloc.free(hpath);
+                ring_snapshot.writeHistoryAtomic(alloc, hpath, at, cap_cols, cap_rows, h) catch |err| {
+                    std.log.warn("ring_snapshot: write {s} failed: {s}", .{ hpath, @errorName(err) });
+                };
+            }
             const path = ring_snapshot.pathFor(alloc, dir, id_str_buf[0..]) catch continue;
             defer alloc.free(path);
             const jpath = ring_snapshot.journalPathFor(alloc, path) catch continue;
@@ -4434,17 +4725,19 @@ test "SessionStore ring snapshot: dirty alive ring persists; reload preloads scr
         const s = store.table.getByIdStr(id_buf[0..]).?;
         try testing.expect(!s.alive and s.relaunchable);
 
-        // The ring holds [payload][divider]; out_offset is anchored at the tail so a
-        // RELAUNCH's fresh child output continues after the divider.
-        const want_len = payload.len + reboot_divider.len;
-        try testing.expectEqual(@as(u64, want_len), s.out_offset.value);
-        try testing.expectEqual(@as(u64, want_len), s.ring.tailOffset());
+        // The ring holds [history][divider] — the session's scrollback as
+        // content, not its raw bytes — and out_offset is anchored at the tail so
+        // a RELAUNCH's fresh child output continues after the divider.
+        try testing.expectEqual(s.ring.tailOffset(), s.out_offset.value);
         try testing.expectEqual(@as(u64, 0), s.ring.base_offset);
-        const buf = try alloc.alloc(u8, want_len);
+        const buf = try alloc.alloc(u8, s.ring.len);
         defer alloc.free(buf);
         const n = s.ring.copyRetained(buf);
-        try testing.expect(std.mem.startsWith(u8, buf[0..n], payload));
+        try testing.expect(std.mem.startsWith(u8, buf[0..n], "PANE=3 PID=4242\r\ntick-3-0\r\ntick-3-1"));
         try testing.expect(std.mem.endsWith(u8, buf[0..n], reboot_divider));
+        // A history re-wraps at any width: no capture geometry for the viewer.
+        try testing.expectEqual(@as(u16, 0), s.replay_cols);
+        try testing.expectEqual(@as(u16, 0), s.replay_rows);
     }
 }
 
@@ -4535,8 +4828,13 @@ test "agent restart renumbers a session's byte stream to base 0: the id survives
         // `Connection.resumeOffset`, T532).
         try testing.expectEqual(@as(u64, 0), s.ring.base_offset);
         try testing.expectEqual(s.ring.tailOffset(), s.out_offset.value);
-        try testing.expect(s.out_offset.value < run1_offset);
-        try testing.expectEqual(@as(u64, retained + reboot_divider.len), s.out_offset.value);
+        // The head counts exactly what the ring now holds — the restored
+        // content plus the divider — from 0. (Since the T1796 merge that content
+        // is the session's history rather than its raw ring, so its length is
+        // no longer `retained`; what this test locks in is the renumbering.)
+        try testing.expectEqual(@as(u64, s.ring.len), s.out_offset.value);
+        try testing.expect(s.ring.endsWith(reboot_divider));
+        try testing.expect(run1_offset > retained);
     }
 }
 
@@ -5196,4 +5494,309 @@ test "a journal that vanished makes the next pass rewrite the base (T997)" {
     var l = (try ring_snapshot.load(alloc, bp)).?;
     defer l.free(alloc);
     try testing.expectEqualStrings("first-second", l.bytes);
+}
+
+// -----------------------------------------------------------------------------
+// main 7e78aacf4 / c6619717b — reboot history, orphan sweep, checkpoint, reap
+// -----------------------------------------------------------------------------
+
+/// Write `bytes` as a session's on-disk ring (and nothing else) — what an agent
+/// that predates the history file leaves behind.
+fn writeLegacyRing(alloc: Allocator, rings: []const u8, id: []const u8, bytes: []const u8, cols: u16, rows: u16) !void {
+    const rp = try ring_snapshot.pathFor(alloc, rings, id);
+    defer alloc.free(rp);
+    try ring_snapshot.writeAtomic(alloc, rp, 7777, cols, rows, bytes);
+}
+
+/// A sessions.json holding one persisted session `id`.
+fn writeOneSessionMeta(alloc: Allocator, meta: []const u8, id: []const u8) !void {
+    const body = try session_meta.serialize(alloc, &.{.{ .id = id, .cwd = "/tmp", .pinned = true }});
+    defer alloc.free(body);
+    try session_meta.writeAtomic(alloc, meta, body);
+}
+
+/// The preloaded replay of the one materialized session (owned by `alloc`).
+fn preloadedReplay(alloc: Allocator, store: *SessionStore, id: []const u8) ![]u8 {
+    const s = store.table.getByIdStr(id).?;
+    const buf = try alloc.alloc(u8, s.ring.len);
+    _ = s.ring.copyRetained(buf);
+    return buf;
+}
+
+test "SessionStore reboot preload: a legacy RAW ring is converted, never replayed raw" {
+    // The user's actual first reboot after upgrading: the rings on disk were
+    // written by the old agent, as raw Claude Code output — queries, kitty
+    // keyboard pushes, synchronized-output frames. None of that may reach the
+    // restored pane; its CONTENT must.
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const meta = try std.fs.path.join(alloc, &.{ dir_path, "sessions.json" });
+    defer alloc.free(meta);
+    const rings = try std.fs.path.join(alloc, &.{ dir_path, "rings" });
+    defer alloc.free(rings);
+    const id = "0123456789abcdef0123456789abcdef";
+
+    const raw = "\x1b[>1u\x1b[>4;2m\x1b[?1003h\x1b[?1006h\x1b[?2004h\x1b[?1004h" ++
+        "the conversation so far\r\n" ++
+        "\x1b[?2026h\x1b[2K> prompt\x1b[?2026l\x1b[c\x1b[?2026$p\x1b[>0q\x1b]777;notify;Claude;waiting\x07";
+    try writeLegacyRing(alloc, rings, id, raw, 215, 50);
+    try writeOneSessionMeta(alloc, meta, id);
+
+    var prng = std.Random.DefaultPrng.init(0x7171);
+    var clock: MutClock = .{ .ms = 1000 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    store.meta_path = meta;
+    store.rings_dir = rings;
+    defer store.deinit();
+    try testing.expectEqual(@as(usize, 1), store.loadPersisted(1 << 16));
+
+    const replay = try preloadedReplay(alloc, &store, id);
+    defer alloc.free(replay);
+    try testing.expect(std.mem.indexOf(u8, replay, "the conversation so far") != null);
+    try testing.expect(std.mem.indexOf(u8, replay, "> prompt") != null);
+    try testing.expect(std.mem.endsWith(u8, replay, reboot_divider));
+    for ([_][]const u8{ "\x1b[?", "\x1b[>", "\x1b[c", "$p", "\x1b]777" }) |f| {
+        try testing.expect(std.mem.indexOf(u8, replay, f) == null);
+    }
+    // Converted to content, so the viewer replays it at its own width.
+    const s = store.table.getByIdStr(id).?;
+    try testing.expectEqual(@as(u16, 0), s.replay_cols);
+    try testing.expectEqual(@as(u16, 0), s.replay_rows);
+}
+
+test "SessionStore reboot preload: a matching history wins; a stale one falls back to the ring" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const meta = try std.fs.path.join(alloc, &.{ dir_path, "sessions.json" });
+    defer alloc.free(meta);
+    const rings = try std.fs.path.join(alloc, &.{ dir_path, "rings" });
+    defer alloc.free(rings);
+    const id = "0123456789abcdef0123456789abcdef";
+    try writeOneSessionMeta(alloc, meta, id);
+
+    const ring_bytes = "from the RING\r\n";
+    try writeLegacyRing(alloc, rings, id, ring_bytes, 100, 30);
+    const hp = try ring_snapshot.historyPathFor(alloc, rings, id);
+    defer alloc.free(hp);
+
+    // Matching end offset (7777 + len): the history is used verbatim.
+    try ring_snapshot.writeHistoryAtomic(alloc, hp, 7777 + ring_bytes.len, 120, 40, "from the HISTORY\r\n");
+    {
+        var prng = std.Random.DefaultPrng.init(1);
+        var clock: MutClock = .{ .ms = 1000 };
+        var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+        store.meta_path = meta;
+        store.rings_dir = rings;
+        defer store.deinit();
+        _ = store.loadPersisted(1 << 16);
+        const replay = try preloadedReplay(alloc, &store, id);
+        defer alloc.free(replay);
+        try testing.expect(std.mem.startsWith(u8, replay, "from the HISTORY\r\n"));
+    }
+
+    // Stale end offset (a later ring write whose history write failed): the
+    // newer ring is converted instead.
+    try ring_snapshot.writeHistoryAtomic(alloc, hp, 1, 120, 40, "from the HISTORY\r\n");
+    {
+        var prng = std.Random.DefaultPrng.init(2);
+        var clock: MutClock = .{ .ms = 1000 };
+        var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+        store.meta_path = meta;
+        store.rings_dir = rings;
+        defer store.deinit();
+        _ = store.loadPersisted(1 << 16);
+        const replay = try preloadedReplay(alloc, &store, id);
+        defer alloc.free(replay);
+        try testing.expect(std.mem.indexOf(u8, replay, "from the RING") != null);
+        try testing.expect(std.mem.indexOf(u8, replay, "HISTORY") == null);
+    }
+}
+
+test "SessionStore reboot preload: an oversized history keeps the newest WHOLE lines" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const meta = try std.fs.path.join(alloc, &.{ dir_path, "sessions.json" });
+    defer alloc.free(meta);
+    const rings = try std.fs.path.join(alloc, &.{ dir_path, "rings" });
+    defer alloc.free(rings);
+    const id = "0123456789abcdef0123456789abcdef";
+    try writeOneSessionMeta(alloc, meta, id);
+
+    // Far more styled history than a small ring holds.
+    var hist: std.ArrayList(u8) = .empty;
+    defer hist.deinit(alloc);
+    var i: usize = 0;
+    while (i < 400) : (i += 1) try hist.print(alloc, "\x1b[38;2;10;20;30mline {d:0>4}\x1b[0m\r\n", .{i});
+    const hp = try ring_snapshot.historyPathFor(alloc, rings, id);
+    defer alloc.free(hp);
+    try ring_snapshot.writeHistoryAtomic(alloc, hp, 0, 80, 24, hist.items);
+
+    var prng = std.Random.DefaultPrng.init(3);
+    var clock: MutClock = .{ .ms = 1000 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    store.meta_path = meta;
+    store.rings_dir = rings;
+    defer store.deinit();
+    const ring_cap: usize = 4096;
+    _ = store.loadPersisted(ring_cap);
+    const replay = try preloadedReplay(alloc, &store, id);
+    defer alloc.free(replay);
+    // It starts on a line boundary (an SGR, never the middle of one) …
+    try testing.expect(std.mem.startsWith(u8, replay, "\x1b[38;2;10;20;30mline "));
+    // … keeps the newest line, and still leaves room for divider + notice.
+    try testing.expect(std.mem.indexOf(u8, replay, "line 0399") != null);
+    try testing.expect(std.mem.indexOf(u8, replay, "line 0000") == null);
+    try testing.expect(replay.len + protocol.Relaunch.max_notice_bytes <= ring_cap);
+}
+
+test "SessionStore loadPersisted: sweeps snapshot files no persisted session owns" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const meta = try std.fs.path.join(alloc, &.{ dir_path, "sessions.json" });
+    defer alloc.free(meta);
+    const rings = try std.fs.path.join(alloc, &.{ dir_path, "rings" });
+    defer alloc.free(rings);
+
+    const kept = "0123456789abcdef0123456789abcdef";
+    const gone = "fedcba9876543210fedcba9876543210";
+    try writeOneSessionMeta(alloc, meta, kept);
+    try writeLegacyRing(alloc, rings, kept, "keep me\r\n", 80, 24);
+    try writeLegacyRing(alloc, rings, gone, "orphan\r\n", 80, 24);
+    const gone_hist = try ring_snapshot.historyPathFor(alloc, rings, gone);
+    defer alloc.free(gone_hist);
+    try ring_snapshot.writeHistoryAtomic(alloc, gone_hist, 0, 80, 24, "orphan\r\n");
+    // Something that is not ours stays.
+    {
+        var d = try std.fs.cwd().openDir(rings, .{});
+        defer d.close();
+        try d.writeFile(.{ .sub_path = "README", .data = "x" });
+    }
+
+    var prng = std.Random.DefaultPrng.init(4);
+    var clock: MutClock = .{ .ms = 1000 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    store.meta_path = meta;
+    store.rings_dir = rings;
+    defer store.deinit();
+    try testing.expectEqual(@as(usize, 1), store.loadPersisted(1 << 16));
+
+    var d = try std.fs.cwd().openDir(rings, .{});
+    defer d.close();
+    var buf: [64]u8 = undefined;
+    const kept_ring = try std.fmt.bufPrint(&buf, "{s}.ring", .{kept});
+    try d.access(kept_ring, .{});
+    try d.access("README", .{});
+    var buf2: [64]u8 = undefined;
+    try testing.expectError(error.FileNotFound, d.access(try std.fmt.bufPrint(&buf2, "{s}.ring", .{gone}), .{}));
+    try testing.expectError(error.FileNotFound, d.access(try std.fmt.bufPrint(&buf2, "{s}.hist", .{gone}), .{}));
+}
+
+test "SessionStore checkpoint: persists the live cwd AND writes the history next to the ring" {
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const dir_path = try tmp.dir.realpathAlloc(alloc, ".");
+    defer alloc.free(dir_path);
+    const meta = try std.fs.path.join(alloc, &.{ dir_path, "sessions.json" });
+    defer alloc.free(meta);
+    const rings = try std.fs.path.join(alloc, &.{ dir_path, "rings" });
+    defer alloc.free(rings);
+
+    var prng = std.Random.DefaultPrng.init(0x9191);
+    var clock: MutClock = .{ .ms = 500 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    store.meta_path = meta;
+    store.rings_dir = rings;
+    defer store.deinit();
+
+    var fake: FakeChild = .{ .alloc = alloc, .fake_cwd = "/Users/me/moved" };
+    defer fake.deinit();
+    const s = try store.table.create(fake.child(), 4242, 24, 80, 1 << 16, 500);
+    s.pinned = true;
+    s.setCwd("/Users/me/start");
+    _ = s.recordOutput("\x1b[?1003h\x1b[cvisible text\r\n", 600);
+    var id_buf: [32]u8 = s.id_str;
+
+    store.checkpoint();
+
+    var parsed = (try session_meta.load(alloc, meta)).?;
+    defer parsed.deinit();
+    try testing.expectEqualStrings("/Users/me/moved", parsed.value.sessions[0].cwd.?);
+
+    const hp = try ring_snapshot.historyPathFor(alloc, rings, id_buf[0..]);
+    defer alloc.free(hp);
+    var h = (try ring_snapshot.loadHistory(alloc, hp)).?;
+    defer h.free(alloc);
+    try testing.expect(std.mem.indexOf(u8, h.bytes, "visible text") != null);
+    try testing.expect(std.mem.indexOf(u8, h.bytes, "\x1b[?1003h") == null);
+    // Paired with the ring written in the same pass.
+    const rp = try ring_snapshot.pathFor(alloc, rings, id_buf[0..]);
+    defer alloc.free(rp);
+    var r = (try ring_snapshot.load(alloc, rp)).?;
+    defer r.free(alloc);
+    try testing.expectEqual(r.base_offset + r.bytes.len, h.end_offset);
+}
+
+test "SessionStore.reapExited: an exit no output ever reported still tombstones + frames EXIT once" {
+    // The pty reader's EOF nudge was the only reap check. A child that exited
+    // after it (closed its terminal first, or simply lost the race to become
+    // reapable) left the session `alive` over a zombie forever.
+    const alloc = testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0xE417);
+    var fakes: [2]FakeChild = .{ .{ .alloc = alloc }, .{ .alloc = alloc } };
+    defer for (&fakes) |*f| f.deinit();
+    var clock: MutClock = .{ .ms = 1_000 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 60_000);
+    defer store.deinit();
+
+    const Exits = struct {
+        count: usize = 0,
+        code: i64 = -1,
+        channel: u128 = 0,
+        fn f(ctx: *anyopaque, channel: u128, code: i64, runtime_ms: u64) void {
+            _ = runtime_ms;
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.count += 1;
+            self.code = code;
+            self.channel = channel;
+        }
+    };
+    var exits: Exits = .{};
+
+    const exited = try store.table.create(fakes[0].child(), 300, 24, 80, 1024, 0);
+    exited.bound = true;
+    exited.bridge_ctx = &exits;
+    exited.bridge_exit = Exits.f;
+    const running = try store.table.create(fakes[1].child(), 301, 24, 80, 1024, 0);
+
+    // Nothing has exited: the sweep changes nothing.
+    store.reapExited();
+    try testing.expect(exited.alive and running.alive);
+    try testing.expectEqual(@as(usize, 0), exits.count);
+
+    // The child exits with no output and no nudge.
+    fakes[0].exit_code = 3;
+    store.reapExited();
+    try testing.expect(!exited.alive);
+    try testing.expectEqual(@as(?i64, 3), exited.exit_code);
+    try testing.expectEqual(@as(usize, 1), exits.count);
+    try testing.expectEqual(@as(i64, 3), exits.code);
+    try testing.expectEqual(exited.channel, exits.channel);
+    try testing.expect(running.alive);
+
+    // Once tombstoned it is not reported again.
+    store.reapExited();
+    try testing.expectEqual(@as(usize, 1), exits.count);
 }

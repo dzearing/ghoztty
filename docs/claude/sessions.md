@@ -273,6 +273,176 @@ of the LaunchAgent is an HKCU Run entry (`GhozttyAgent`) the GUI
 writes/refreshes when persistence engages. Design + measured E2E results:
 `docs/design/session-persistence.md`; E2E harness: `scripts/e2e/session-persistence.py`.
 
+### Reboot restore: history, live cwd, and what every agent-backed pane relies on
+
+Imported from main's CLAUDE.md at the T1796 merge (main 7e78aacf4 and
+c6619717b). Where this branch differs, the text says so. Three differences
+worth knowing up front: (1) `session-relaunch = restore` here opens a fresh
+session and paints the app's own snapshot with a notice (T230), so the agent's
+history matters to `rerun`/`prompt` and to anything that replays the agent
+ring; (2) a holder-backed record (T906) keeps its RAW ring at load, because the
+holder continues that exact byte stream, and is converted to history only if
+adoption fails (`abandonHolder`); (3) a volume-triggered snapshot pass (T969)
+skips the history write, which is serialized under the store lock
+(`snapshotRingsWith`). Windows proof of all of it is T1800.
+
+  **The recorded cwd is the shell's LIVE cwd.** `handleOpen` records `OPEN.cwd`
+  at spawn, and every agent checkpoint (`SessionStore.checkpoint`: the 30 s
+  reaper tick, a viewer disconnecting, the agent's SIGTERM at logout) then
+  re-samples each live child's actual cwd from the OS (`refreshCwds`) and
+  rewrites `sessions.json` when it moved — so a shell that `cd`'d comes back
+  where it was, not where it started. A pane opened with no directory at all
+  (a GUI window with no parent pane to inherit from) is handed the app's own
+  default — the configured `working-directory`, else the app's cwd — instead of
+  inheriting the agent's, which for a launchd-started agent is `/`.
+  (`ghoztty +new-window` run from a shell already sends the caller's cwd, and
+  splits and tabs inherit their parent pane's.)
+
+  **What a reboot replays is the session's HISTORY, not its raw bytes.** Each
+  session's agent-side emulator (`agent/grid_snapshot.zig`) keeps bounded
+  scrollback, and every timer pass and checkpoint writes it next to the raw ring as a `.hist`
+  file: content-only VT (text, SGR, hyperlinks, soft wraps left unwrapped so the
+  pane re-wraps them), no modes, no cursor addressing, no queries. After an agent
+  restart that history is what gets preloaded and replayed — a pane that was on
+  the alternate screen comes back as its primary-screen scrollback followed by
+  the TUI's last frame, on the PRIMARY screen, with the fresh shell below it. A
+  ring written by an agent that predates `.hist` is converted the same way at
+  load (`historyFromRaw`). The raw ring was the wrong thing to replay: it starts
+  mid-sequence, is mostly a TUI's in-place redraws (2 MB of Claude Code is ~700
+  frames of spinner), and carries every query (`CSI c`, `CSI ? 2026 $ p`, …) the
+  terminal then answered into the NEW shell's stdin, plus mouse/kitty-keyboard/
+  synchronized-output state, plus cursor motion that only lands at the original
+  geometry. Snapshot files whose session is gone are swept at agent start.
+
+  **The replay reaches the pane whole.** A viewer's inbound ring is 256 KiB; a
+  reboot replay is ONE DATA frame of up to the agent ring's size. Bytes that do
+  not fit now go to a per-channel overflow (`inbound_ring.Channel.overflow`)
+  instead of being dropped — they used to be, which cut every restored history
+  to its first 256 KiB and lost the notice and the new shell's prompt behind it
+  (the "unresponsive" restored pane). And `FLOW{resume}` now sends what the
+  session printed while paused (`Server.catchUpLocked`); it used to be recorded
+  and never delivered.
+
+  **Restoring scrollback can still restore VT modes** — from an older agent's
+  raw replay, or from the app's own quit-time snapshot of a pane whose child has
+  since been relaunched. `termio/Remote.zig`'s `replay_mode_reset` undoes them:
+  mouse tracking above all (a dead TUI's `ESC[?1003h` makes a plain zsh read
+  pointer motion as typed input — `zsh: command not found: 30M35`), plus
+  bracketed paste, focus reporting, cursor keys/keypad, the kitty keyboard flag
+  stack and modifyOtherKeys (Claude Code pushes both; left on, Ctrl-C reaches the
+  shell as `CSI 99;5u`), synchronized output, autowrap, cursor visibility, and
+  SGR. It is **mode state only** — no `RIS`, and deliberately no alt-screen /
+  origin / scroll-region reset, because ghostty applies those unconditionally
+  (cursor restore, erase, home) and they would land the fresh prompt on top of
+  the restored output; a history replay never leaves any of them set. It is
+  **not** applied on the ordinary alive re-attach: there the child still runs and
+  still owns those modes.
+
+  **The notice and the reset travel in the stream, not as a local print**
+  (`RELAUNCH.notice`, gated on the `relaunch_notice` HELLO capability). The
+  agent appends them to the ring before replaying, so they land after the
+  scrollback + divider and before the respawned child's first byte — the same
+  slot the divider occupies. A client-side inject does not survive: it reaches
+  the terminal after the fresh shell owns the screen, and the shell's first
+  prompt repaint blanks the line (measured — the agent-baked divider one row up
+  survives while the client's line goes blank, which is what pinned the cause).
+  Putting the reset there too removes a second hazard: injected locally it could
+  land *after* a `rerun` TUI armed its own mouse tracking and switch it back off.
+  Against an agent too old to advertise the capability the client falls back to
+  printing both itself — visible, just repaintable.
+
+- `claude-code-fullscreen = true|false` (macOS, default `true`). Sets
+  `CLAUDE_CODE_NO_FLICKER=1` in local and session-persistence panes so Claude
+  Code uses its **fullscreen renderer**, which keeps the conversation itself and
+  re-wraps ALL of it on a resize. Its classic renderer writes the conversation
+  into the terminal's scrollback pre-laid-out with cursor moves — no soft wraps
+  for the terminal to reflow — so after a resize everything above the last
+  screen stays at the old width, and nothing on our side can fix that.
+  **An explicit choice always wins**: the variable already in the environment,
+  a `tui` key in Claude's settings (`$CLAUDE_CONFIG_DIR/settings.json`, else
+  `~/.claude/settings.json` — what `/tui default|fullscreen` writes; Claude gives
+  the variable precedence over that setting, so injecting it blindly would
+  override the user), or `env = CLAUDE_CODE_NO_FLICKER=…` in the config, applied
+  last. **Never applied to cross-machine panes** — Claude itself turns the
+  renderer off where it renders poorly (Windows over a remote connection).
+  Trade-off: the conversation lives inside Claude, not in scrollback, so a
+  reboot restores Claude's last screen and `claude --resume` brings back the
+  rest. Code: `claudeFullscreenWanted` (`src/Surface.zig`).
+
+Session lifecycle: a process DIES when the user closes its pane/tab/window (or
+`+close`s it — the CLOSE lands when the close's undo window expires), when the
+shell itself exits, or when the agent dies (children then relaunch as
+tombstones per `session-relaunch`). It SURVIVES app quit/crash/upgrade (quit
+never prompts for persistent windows — their sessions re-attach on relaunch).
+E2E: `scripts/e2e/session-persistence.py` (incl. `--winsize` for re-attach
+PTY-geometry integrity, and `--reboot-tui` for a reboot of panes running a
+Claude-Code-shaped TUI).
+
+Properties every agent-backed pane relies on, each of which used to fail under
+real Claude Code output:
+
+- **A pane is only ever sized to its REAL geometry.** A surface is built at a
+  placeholder (800×600 px = 49×17 cells) and its IO thread starts before the
+  view is laid out; OPEN/ATTACH used to carry the placeholder, so every app
+  restart resized each live program to 49×17 and back (Claude Code re-rendered
+  at 49 columns into the scrollback, then again at full width). Bring-up now
+  waits, bounded, for the first real size (`Remote.awaitRealSize`, signalled by
+  `Termio.size_reported`) and sizes its own grid to it before painting anything.
+- **One pane cannot freeze the others' input.** Input is written to each pty by
+  that child's own writer thread (`PtyChild.writerLoop`, POSIX). The write used
+  to happen on the connection's single data-reader thread, so one program not
+  reading its terminal blocked typing in every pane.
+- **A re-attach resumes exactly where the viewer left off.** The offset a
+  viewer persists for its next re-attach is a count of bytes it applied, and the
+  agent's re-attach reply includes synthetic bytes (the visible-screen repaint,
+  a scrollback-lost marker) that occupy no stream offsets. Counted anyway, every
+  restart pushed the offset one repaint further until it passed the agent's head,
+  and the next re-attach discarded the child's real output until the stream
+  caught up — an idle pane froze after an app restart (the unmodified 1.37 build
+  freezes all three panes of a 3-pane test by the 3rd restart). On this branch the
+  viewer takes its position from the CONNECTION's stream position (T739,
+  `Remote.adoptStreamPos`), which the agent's `data_repaint` framing keeps exact,
+  and a resume point above the agent's head is clamped (T532,
+  `Connection.resumeOffset`). Main solved the same defect with an additive
+  `ATTACHED.replay_len`; the field is in the protocol, so a main-built viewer
+  that relies on it degrades to its own clamp against this agent, which does not
+  send it.
+- **Restored scrollback stays reflowable.** The app's quit-time snapshot and the
+  agent's re-attach repaint serialize soft-wrapped rows as continuations
+  (`unwrap = true`), not rows ending in CRLF — otherwise every app restart froze
+  the restored lines at the old width, and widening the pane later left them
+  broken where the old width broke them. They also carry the rows'
+  shell-integration prompt marks (`formatter.Options.semantic_prompts`, OSC 133
+  `P`/`I` only — never `A`/`C`/`D`, which move the cursor or signal commands):
+  on a resize with the cursor at a prompt the terminal blanks from the current
+  prompt's first row down for the shell to redraw, and an unmarked restored
+  prompt sent that walk up to an older one, blanking the restored output in
+  between. E2E: `--restore-resize`.
+
+  Not ours and not restore-specific: a prompt LONGER than the pane wraps, and
+  zsh redraws it on a resize by moving up the row count it had at the old
+  width — after widening that overwrites the end of the last output line. Same
+  with no restart at all.
+- **A burst of output cannot stall the pane.** The remote backend parses output
+  on the IO thread that also drains its own 64-slot mailbox, and a parse emits a
+  message per query reply and per synchronized-output frame; `drainRing` now
+  yields as soon as that mailbox is half full (`Mailbox.underPressure`) instead
+  of overflowing it — each overflowing message cost a 50 ms wait and a drop,
+  minutes of a frozen pane for one 2 MB replay.
+- **A child that exits is always seen to exit.** The agent's only reap check
+  used to be the pty reader's EOF nudge, and EOF is no proof of exit: the
+  kernel closes the child's slave fds part-way through exit, before `waitpid`
+  can collect it, so the nudge usually found it "still running" and was never
+  repeated. The session stayed `alive` over a zombie, and the pane showed its
+  last output, took no input (`pty input write failed: error.InputOutput` in
+  `agent.log`), and never said "process exited". Any shell exit could leave a
+  pane like that, e.g. Claude Code's `claude …; exec zsh -li` after the zsh
+  ends. The reader now waits (bounded) for the exit to land before nudging,
+  and the reaper tick sweeps every alive session (`SessionStore.reapExited`),
+  which also catches a child that closed its terminal and exited later.
+  Tests: `the EOF nudge finds the exited child reapable`,
+  `SessionStore.reapExited`.
+
 ### Browsing and resuming sessions from the chooser
 
 The machine chooser (Cmd-Shift-N on macOS, Ctrl+Shift+N on Windows) is where a

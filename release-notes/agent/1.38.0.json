@@ -1,0 +1,15 @@
+{
+  "version": "1.38.0",
+  "sections": [
+    {
+      "title": "Session persistence",
+      "items": [
+        { "title": "A reboot brings your panes back readable, with a live shell", "text": "Restore used to replay the raw byte stream the agent had recorded, which answered a dead TUI's terminal queries into your fresh shell and left its keyboard and mouse modes switched on — a plain prompt would read mouse movement as typed input. Each session now keeps a content-only history instead, so a pane that was running a TUI comes back as its real scrollback followed by that TUI's last frame, with a working prompt below it." },
+        { "title": "One busy pane can't freeze typing in the others", "text": "Input was written on the single thread that also read every session's output, so one program that stopped reading its terminal blocked the keyboard in every pane at once. Each session writes on its own thread now." },
+        { "title": "A pane whose shell exits now says so", "text": "The exit check fired at the wrong moment in the kernel's teardown and was never retried, so a finished shell left its session listed as alive forever. The pane showed its last output, silently accepted no input, and never reported that its process had ended. Any shell exit could do it; `claude …; exec zsh -li` hit it routinely." },
+        { "title": "A shell that `cd`'d comes back where it was", "text": "The working directory is re-sampled from each live shell at every checkpoint, rather than being frozen at whatever it was when the pane opened." },
+        { "title": "Nothing is lost while a pane is paused", "text": "Output produced while a session was flow-paused was recorded and then never delivered on resume, and a restored pane's resume point could drift ahead of the agent's own position — after which the pane silently discarded its program's real output. Both are fixed, and the agent now reports how much of a re-attach was replay so the two can never disagree." }
+      ]
+    }
+  ]
+}

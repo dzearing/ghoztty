@@ -1099,7 +1099,8 @@ fn handleRead(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         const tl = pages.getTopLeft(.screen);
         const br = pages.getBottomRight(.screen) orelse break :dump null;
         const sel = terminal.Selection.init(tl, br, false);
-        const text = core.dumpTextLocked(arena, sel) catch break :dump null;
+        // `+read` reports the screen as laid out, so no TUI reflow (main d886ba4b5).
+        const text = core.dumpTextLocked(arena, sel, false) catch break :dump null;
         break :dump text.text;
     };
     if (perf) perf: {
