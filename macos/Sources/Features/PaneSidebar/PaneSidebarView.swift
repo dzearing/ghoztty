@@ -20,6 +20,7 @@ struct PaneSidebarView: View {
     let isFlat: Bool
 
     @Environment(\.controlActiveState) private var controlActiveState
+    @Environment(\.paneSidebarInteractive) private var isInteractive
 
     var body: some View {
         list
@@ -88,16 +89,22 @@ struct PaneSidebarView: View {
 
     // MARK: List
 
+    @ViewBuilder
     private var list: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 0) {
-                if state.showsAllWindows {
-                    allWindows
-                } else {
-                    windowSection(controller, isThisWindow: true)
-                }
+        let content = VStack(alignment: .leading, spacing: 0) {
+            if state.showsAllWindows {
+                allWindows
+            } else {
+                windowSection(controller, isThisWindow: true, indent: 0)
             }
-            .padding(.vertical, SidePanelRow.fillInset)
+        }
+        .padding(.vertical, SidePanelRow.fillInset)
+
+        if isInteractive {
+            ScrollView(.vertical) { content }
+        } else {
+            // A still render (`ImageRenderer` can't draw ScrollView content).
+            content.frame(maxHeight: .infinity, alignment: .top)
         }
     }
 
@@ -107,8 +114,10 @@ struct PaneSidebarView: View {
         windowGroup(controller, isThisWindow: true)
         ForEach(others.map(PaneSidebarControllerRef.init)) { ref in
             if let other = ref.controller {
+                if !isRail {
+                    PaneSidebarDivider(isRail: false).padding(.bottom, 4)
+                }
                 windowGroup(other, isThisWindow: false)
-                    .padding(.top, 6)
             }
         }
     }
@@ -131,7 +140,10 @@ struct PaneSidebarView: View {
                     })
             }
             if !folded || isRail {
-                windowSection(owner, isThisWindow: isThisWindow)
+                // In the outline, a window's panes are its CHILDREN: indented
+                // under its header so the header reads as the parent.
+                windowSection(owner, isThisWindow: isThisWindow,
+                              indent: isRail ? 0 : PaneSidebarOutline.childIndent)
             }
         }
         .background(GeometryReader { proxy in
@@ -144,19 +156,26 @@ struct PaneSidebarView: View {
     }
 
     @ViewBuilder
-    private func windowSection(_ owner: BaseTerminalController, isThisWindow: Bool) -> some View {
+    private func windowSection(
+        _ owner: BaseTerminalController,
+        isThisWindow: Bool,
+        indent: CGFloat
+    ) -> some View {
         let tree = owner.surfaceTree
         let visible = tree.visibleLeaves
         let stashed = tree.stashedViews
-        let focused = owner.focusedPane ?? visible.first
+        // Only THIS window has a selection: another window's focus is not
+        // focus here, and a highlighted row among its siblings read as a
+        // "primary" pane with the others nested under it.
+        let focused = isThisWindow ? (owner.focusedPane ?? visible.first) : nil
 
         ForEach(visible) { pane in
             row(pane, owner: owner, isStashed: false,
-                isSelected: pane === focused, isThisWindow: isThisWindow)
+                isSelected: pane === focused, isThisWindow: isThisWindow, indent: indent)
         }
 
         if !stashed.isEmpty || (isThisWindow && dragSession.isDragging && stashed.isEmpty) {
-            PaneSidebarDivider(isRail: isRail)
+            PaneSidebarDivider(isRail: isRail, indent: indent)
             if !isRail {
                 HStack(alignment: .firstTextBaseline) {
                     SidePanelCaption(text: "Stashed")
@@ -167,7 +186,7 @@ struct PaneSidebarView: View {
                             .foregroundStyle(.tertiary)
                     }
                 }
-                .padding(.leading, SidePanelRow.labelInset)
+                .padding(.leading, SidePanelRow.labelInset + indent)
                 .padding(.trailing, SidePanelRow.labelInset)
                 .padding(.top, 10)
                 .padding(.bottom, 5)
@@ -177,7 +196,8 @@ struct PaneSidebarView: View {
         let caret = isThisWindow ? stashCaretIndex : nil
         ForEach(Array(stashed.enumerated()), id: \.element.id) { index, pane in
             if caret == index { PaneSidebarCaret(isRail: isRail) }
-            row(pane, owner: owner, isStashed: true, isSelected: false, isThisWindow: isThisWindow)
+            row(pane, owner: owner, isStashed: true, isSelected: false,
+                isThisWindow: isThisWindow, indent: indent)
         }
         if let caret, caret >= stashed.count, !stashed.isEmpty { PaneSidebarCaret(isRail: isRail) }
 
@@ -191,7 +211,8 @@ struct PaneSidebarView: View {
         owner: BaseTerminalController,
         isStashed: Bool,
         isSelected: Bool,
-        isThisWindow: Bool
+        isThisWindow: Bool,
+        indent: CGFloat
     ) -> some View {
         PaneSidebarRow(
             pane: pane,
@@ -201,7 +222,8 @@ struct PaneSidebarView: View {
             isForeign: !isThisWindow,
             isRail: isRail,
             isQuickKill: state.isQuickKill,
-            isBeingDragged: dragSession.isDragging(pane))
+            isBeingDragged: dragSession.isDragging(pane),
+            indent: indent)
         .background(GeometryReader { proxy in
             Color.clear.preference(
                 key: PaneSidebarRowFrames.self,
@@ -279,32 +301,32 @@ private struct PaneSidebarWindowHeader: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: PaneSidebarOutline.chevronSpacing) {
             Button(action: onFold) {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .semibold))
+                    .font(.system(size: 9, weight: .bold))
                     .rotationEffect(.degrees(isFolded ? -90 : 0))
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 12, height: 12)
+                    .foregroundStyle(.secondary)
+                    .frame(width: PaneSidebarOutline.chevronWidth, height: 14)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(isFolded ? "Show this window’s panes" : "Hide this window’s panes")
 
-            Image(systemName: "macwindow")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 4) {
+            // The PARENT row: the window's own name, at the weight a sidebar
+            // gives a group, with its panes indented beneath it.
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(title)
-                    .font(.system(size: 11.5, weight: .semibold))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color(nsColor: .labelColor))
                     .lineLimit(1)
                     .truncationMode(.tail)
                 if isThisWindow {
-                    Text("this window")
+                    Text("This Window")
                         .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
+                        .fixedSize()
                 }
             }
             Spacer(minLength: 4)
@@ -324,7 +346,7 @@ private struct PaneSidebarWindowHeader: View {
             }
         }
         .padding(.vertical, 6)
-        .padding(.leading, 6)
+        .padding(.leading, PaneSidebarOutline.headerLeading)
         .padding(.trailing, SidePanelRow.textInset)
         .background(
             RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
@@ -343,9 +365,19 @@ private struct PaneSidebarWindowHeader: View {
         .help(isThisWindow ? "This window" : "Raise this window")
     }
 
+    /// The window's name as a person would say it: a title the user set,
+    /// else what its focused pane is called — never the raw window title,
+    /// which carries the activity suffix ("(question)") and, for a pane
+    /// that never set one, the placeholder ghost.
     private var title: String {
-        let title = owner.window?.title ?? ""
-        return title.isEmpty ? "Window" : title
+        if let override = owner.windowTitleOverride ?? owner.titleOverride, !override.isEmpty {
+            return override
+        }
+        let pane = owner.focusedPane ?? owner.surfaceTree.visibleLeaves.first
+        return PaneSidebarText.title(
+            pane?.title ?? "",
+            pwd: pane?.surfaceView?.pwd,
+            kind: "Window")
     }
 
     private var hasQuestion: Bool {
@@ -355,14 +387,29 @@ private struct PaneSidebarWindowHeader: View {
 
 // MARK: - Small pieces
 
+/// The all-windows outline's geometry: a window header's disclosure chevron
+/// sits where a row's label starts, and a window's panes are indented so
+/// their icons line up under the window's name — the parent/child reading.
+enum PaneSidebarOutline {
+    static let chevronWidth: CGFloat = 12
+    static let chevronSpacing: CGFloat = 5
+    /// The header's leading edge inside its fill: the chevron's left edge
+    /// lands on the rows' label inset.
+    static var headerLeading: CGFloat { SidePanelRow.textInset }
+    /// How far a window's pane rows are indented: one chevron and its gap.
+    static var childIndent: CGFloat { chevronWidth + chevronSpacing }
+}
+
 struct PaneSidebarDivider: View {
     let isRail: Bool
+    var indent: CGFloat = 0
 
     var body: some View {
         Rectangle()
             .fill(Color.primary.opacity(0.09))
             .frame(height: 1)
-            .padding(.horizontal, isRail ? 10 : SidePanelRow.labelInset)
+            .padding(.leading, isRail ? 10 : SidePanelRow.labelInset + indent)
+            .padding(.trailing, isRail ? 10 : SidePanelRow.labelInset)
             .padding(.vertical, isRail ? 5 : 0)
             .padding(.top, isRail ? 0 : 8)
     }

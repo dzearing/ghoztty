@@ -22,6 +22,9 @@ struct PaneSidebarRow: View {
     let isRail: Bool
     let isQuickKill: Bool
     let isBeingDragged: Bool
+    /// Leading indent of the row's content (not its fill): a window's panes
+    /// sit under its header in the all-windows outline.
+    var indent: CGFloat = 0
 
     @State private var isHovered = false
     @Environment(\.paneSidebarEmphasized) private var windowIsKey
@@ -64,14 +67,19 @@ struct PaneSidebarRow: View {
                 Color.clear.frame(width: trailingButtonWidth, height: 1)
             }
             .padding(.vertical, SidePanelRow.verticalPadding)
-            .padding(.horizontal, SidePanelRow.textInset)
+            .padding(.leading, SidePanelRow.textInset + indent)
+            .padding(.trailing, SidePanelRow.textInset)
             .background(fill)
-
             // The drag source + click target, everywhere except the button.
-            HStack(spacing: 0) {
-                interaction
-                Color.clear.frame(width: trailingButtonWidth + (trailingButtonWidth > 0 ? SidePanelRow.textInset : 0))
-                    .allowsHitTesting(false)
+            // An OVERLAY, so it takes exactly the row's size and can never
+            // stretch the row taller.
+            .overlay {
+                HStack(spacing: 0) {
+                    interaction
+                    Color.clear
+                        .frame(width: trailingButtonWidth + (trailingButtonWidth > 0 ? SidePanelRow.textInset : 0))
+                        .allowsHitTesting(false)
+                }
             }
 
             trailingButton

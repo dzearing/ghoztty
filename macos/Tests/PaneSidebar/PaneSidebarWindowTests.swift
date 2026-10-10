@@ -89,7 +89,10 @@ struct PaneSidebarWindowTests {
     /// Diagnostic: the sidebar host alone, captured two ways, plus a dump
     /// of what is mounted in it.
     @Test func diagnoseSidebarRendering() async throws {
+        let other = try await open(pinned: true)
+        other.panes[1].surfaceView?.activityState = .needsInput
         let h = try await open(pinned: true)
+        defer { other.controller.close() }
         h.controller.stashPane(h.panes[2])
         await settle(0.8)
         let host = try #require(h.controller.paneSidebarHost)
@@ -134,6 +137,7 @@ struct PaneSidebarWindowTests {
                 .background(GlassCard.fill(isLightBackground: false))
                 .background(bg)
                 .environment(\.colorScheme, .dark)
+                .environment(\.paneSidebarInteractive, false)
             let renderer = ImageRenderer(content: view)
             renderer.scale = 2
             if let image = renderer.nsImage, let tiff = image.tiffRepresentation,

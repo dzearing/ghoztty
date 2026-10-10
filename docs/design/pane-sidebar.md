@@ -440,12 +440,17 @@ should never come back in kill mode.
 A header toggle, **off by default**, that widens the roster from this window
 to every Ghoztty window, so window management can happen from one list.
 
-- The list is grouped by window: this window first (labelled *this window*),
-  then the others front to back. A **group header** shows the window's name,
-  its pane count, and a **question** badge when any pane in it has one. Click
-  it to raise the window; the chevron folds the group.
-- Another window's focused pane is shown in the unemphasized (gray) pill —
-  it is that window's focus, not this one's.
+- The list is an **outline**: each window is a parent row and its panes are
+  its children, indented under it (chevron, then the window's name; the pane
+  icons line up under the name). This window comes first (tagged *This
+  Window*), then the others front to back. A header shows the window's name —
+  a user-set title, else its focused pane's name, never the raw title with its
+  activity suffix — its pane count, and a **question** badge when any pane in
+  it has one. Click it to raise the window; the chevron folds the group.
+  Windows are separated by a hairline.
+- **Only this window has a selection.** The first build drew another window's
+  focused pane in the gray pill; among its siblings that read as a "primary"
+  pane with the others nested under it, so other windows show no selection.
 - Clicking another window's row raises that window and focuses the pane (or
   restores it there, if stashed) — `IPCServer.focusTarget`, the same verb as
   `ghoztty://focus`.
