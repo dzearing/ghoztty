@@ -83,6 +83,21 @@ struct PaneDeskVariant: Codable, Equatable {
         PaneDeskVariant(seed: UInt64.random(in: 1...UInt64.max))
     }
 
+    /// The base config for a window the user opens BY HAND (Cmd-N, the New
+    /// Window menu item or palette command): in the elevated style it gets
+    /// its own random gradient, the same as `+new-window --color=random`, so
+    /// side-by-side windows are easy to tell apart. A variant already on the
+    /// config is kept; the flat style has no desk to vary.
+    static func forNewWindow(
+        _ base: Ghostty.SurfaceConfiguration?,
+        style: Ghostty.Config.MacOSPaneStyle
+    ) -> Ghostty.SurfaceConfiguration? {
+        guard style == .elevated else { return base }
+        var config = base ?? Ghostty.SurfaceConfiguration()
+        if config.deskVariant == nil { config.deskVariant = .random() }
+        return config
+    }
+
     /// The ocean family's ranges, in degrees.
     static let leadHues: ClosedRange<Double> = 196...224   // blues
     static let trailHues: ClosedRange<Double> = 164...190  // teals

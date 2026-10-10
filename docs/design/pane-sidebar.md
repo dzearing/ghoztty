@@ -526,6 +526,10 @@ gap beside a 10pt margin, and the rail's own 12pt card margin on top of the
 grid's: three numbers that read as uneven. Now one constant,
 `PaneElevation.margin`, with `gap` defined as it.)
 
+**Cmd-N picks a random gradient by default**, so windows opened side by side
+are easy to tell apart (`PaneDeskVariant.forNewWindow`; programmatic windows,
+moved panes, and restored windows are unaffected).
+
 **`--color=random` becomes the window's gradient.** In this style a new window
 opened with `--color=random` keeps its terminals' theme color and instead gets
 its own desk: tones drawn at random from the same blue/teal family, falling off

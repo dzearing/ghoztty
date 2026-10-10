@@ -1429,7 +1429,9 @@ rounded cards (11pt radius, a soft two-layer shadow, a hairline rim) on a soft
 blue-to-teal **ocean** gradient. ONE spacing, 10pt, is every gutter: pane to
 pane (the gaps are still the dividers), pane to window edge, and around the
 mini rail (which takes no trailing margin of its own — the grid's is that gap).
-**`+new-window --color=random`** in this style gives the window its OWN
+**A window opened by hand (Cmd-N, the New Window menu item / palette
+command) gets a random gradient by default**, exactly as
+**`+new-window --color=random`** does — in this style that gives the window its OWN
 gradient (`PaneDeskVariant`: a persisted seed; tones drawn from the same
 blue/teal family, falling off darker toward the bottom-trailing corner on a
 dark theme and lighter on a light one) and leaves the terminals their theme

@@ -989,8 +989,11 @@ class AppDelegate: NSObject,
         // preferred/key window otherwise.
         let parent = (notification.object as? Ghostty.SurfaceView)?.window
             ?? TerminalController.preferredParent?.window
+        // A window opened by hand (Cmd-N) gets its own random gradient.
         TerminalController.newWindowInheritingRemote(
-            ghostty, withBaseConfig: config, from: parent)
+            ghostty,
+            withBaseConfig: PaneDeskVariant.forNewWindow(config, style: ghostty.config.macosPaneStyle),
+            from: parent)
     }
 
     @objc private func ghosttyNewTab(_ notification: Notification) {
@@ -1249,7 +1252,11 @@ class AppDelegate: NSObject,
     }
 
     @IBAction func newWindow(_ sender: Any?) {
-        _ = TerminalController.newWindow(ghostty)
+        // A window opened by hand (Cmd-N with no terminal focused, the dock
+        // menu) gets its own random gradient.
+        _ = TerminalController.newWindow(
+            ghostty,
+            withBaseConfig: PaneDeskVariant.forNewWindow(nil, style: ghostty.config.macosPaneStyle))
     }
 
     /// New Window with target picker (Cmd-Shift-N): ALWAYS shows a chooser

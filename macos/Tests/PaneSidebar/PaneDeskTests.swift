@@ -41,6 +41,25 @@ struct PaneDeskTests {
         #expect(palettes.count == seeds.count)
     }
 
+    // MARK: Cmd-N
+
+    @Test func aWindowOpenedByHandGetsARandomDeskWhenElevated() {
+        let first = PaneDeskVariant.forNewWindow(nil, style: .elevated)?.deskVariant
+        let second = PaneDeskVariant.forNewWindow(nil, style: .elevated)?.deskVariant
+        #expect(first != nil)
+        #expect(first != second, "each new window gets its own")
+    }
+
+    @Test func aRequestedVariantIsKept() {
+        var base = Ghostty.SurfaceConfiguration()
+        base.deskVariant = PaneDeskVariant(seed: 7)
+        #expect(PaneDeskVariant.forNewWindow(base, style: .elevated)?.deskVariant == PaneDeskVariant(seed: 7))
+    }
+
+    @Test func theFlatStyleHasNoDeskToVary() {
+        #expect(PaneDeskVariant.forNewWindow(nil, style: .flat)?.deskVariant == nil)
+    }
+
     @Test func theVariantRoundTripsThroughCoding() throws {
         let v = PaneDeskVariant(seed: 0xDEAD_BEEF)
         let back = try JSONDecoder().decode(PaneDeskVariant.self, from: JSONEncoder().encode(v))
