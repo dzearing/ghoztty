@@ -18,7 +18,9 @@ struct PaneSidebarContainer<Content: View>: View {
 
     var body: some View {
         let mode = state.mode(windowWidth: windowWidth)
-        let column = PaneSidebarState.columnWidth(for: mode, panelWidth: state.width)
+        let elevated = controller.ghostty.config.macosPaneStyle == .elevated
+        let insets = PaneSidebarState.railInsets(elevated: elevated)
+        let column = PaneSidebarState.columnWidth(for: mode, panelWidth: state.width, elevated: elevated)
 
         HStack(spacing: 0) {
             if mode != .hidden {
@@ -41,7 +43,7 @@ struct PaneSidebarContainer<Content: View>: View {
                 PaneSidebarHostRepresentable(controller: controller, state: state, mode: mode)
                     .frame(width: mode == .expanded
                            ? column
-                           : state.width + 2 * GlassCard.outerMargin)
+                           : insets.leading + state.width + insets.trailing)
                     .frame(maxHeight: .infinity)
             }
         }
@@ -187,10 +189,11 @@ final class PaneSidebarHostView: NSView {
         case .expanded:
             return bounds
         case .mini:
-            let margin = GlassCard.outerMargin
+            let insets = PaneSidebarState.railInsets(
+                elevated: controller?.ghostty.config.macosPaneStyle == .elevated)
             let width = state.isHoverOpen ? state.width : PaneSidebarState.railCardWidth
-            return NSRect(x: margin, y: margin, width: width,
-                          height: Swift.max(0, bounds.height - 2 * margin))
+            return NSRect(x: insets.leading, y: insets.vertical, width: width,
+                          height: Swift.max(0, bounds.height - 2 * insets.vertical))
         }
     }
 
@@ -330,6 +333,7 @@ private struct PaneSidebarChrome: View {
                 // UNPINNED: the raised glass card, as the rail or — under the
                 // pointer — open to full width.
                 let open = state.isHoverOpen
+                let insets = railInsets
                 PaneSidebarView(
                     controller: controller, state: state, geometry: geometry,
                     isRail: !open, isFlat: false)
@@ -338,9 +342,12 @@ private struct PaneSidebarChrome: View {
                         maxHeight: .infinity,
                         accessibilityLabel: "Panes",
                         base: background,
-                        isLightBase: isLight))
+                        isLightBase: isLight,
+                        margins: EdgeInsets(
+                            top: insets.vertical, leading: insets.leading,
+                            bottom: insets.vertical, trailing: insets.trailing)))
                     .overlay(alignment: .trailing) {
-                        resizeHandle.padding(.vertical, GlassCard.outerMargin)
+                        resizeHandle.padding(.vertical, insets.vertical)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .animation(.easeOut(duration: 0.2), value: open)
@@ -374,7 +381,11 @@ private struct PaneSidebarChrome: View {
                 }
             })
             .frame(width: SidePanelResizeHandle.grabWidth)
-            .offset(x: SidePanelResizeHandle.grabWidth / 2 - (mode == .mini ? GlassCard.outerMargin : 0))
+            .offset(x: SidePanelResizeHandle.grabWidth / 2 - (mode == .mini ? railInsets.trailing : 0))
+    }
+
+    private var railInsets: PaneSidebarState.RailInsets {
+        PaneSidebarState.railInsets(elevated: controller.ghostty.config.macosPaneStyle == .elevated)
     }
 }
 

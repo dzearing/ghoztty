@@ -29,22 +29,33 @@ struct PaneSidebarStateTests {
     // MARK: Column
 
     @Test func theColumnIsTheRailPlusItsMargins() {
-        #expect(State.columnWidth(for: .mini, panelWidth: 240) == 44 + 2 * GlassCard.outerMargin)
+        #expect(State.columnWidth(for: .mini, panelWidth: 240, elevated: false) == 44 + 2 * GlassCard.outerMargin)
+    }
+
+    @Test func elevatedRailSharesItsGapWithTheGrid() {
+        // The grid's own margin is the gap after the rail, so the rail adds
+        // none: rail-to-edge and rail-to-panes come out the same.
+        let insets = State.railInsets(elevated: true)
+        #expect(insets.leading == PaneElevation.margin)
+        #expect(insets.vertical == PaneElevation.margin, "the rail's ends line up with the panes'")
+        #expect(insets.trailing == 0)
+        #expect(insets.leading == insets.trailing + PaneElevation.margin, "equal gutters either side")
+        #expect(State.columnWidth(for: .mini, panelWidth: 240, elevated: true) == PaneElevation.margin + 44)
     }
 
     @Test func theColumnIsThePanelWhenPinned() {
-        #expect(State.columnWidth(for: .expanded, panelWidth: 260) == 260)
+        #expect(State.columnWidth(for: .expanded, panelWidth: 260, elevated: true) == 260)
     }
 
     @Test func hiddenTakesNoColumn() {
-        #expect(State.columnWidth(for: .hidden, panelWidth: 260) == 0)
+        #expect(State.columnWidth(for: .hidden, panelWidth: 260, elevated: false) == 0)
     }
 
     @Test func theColumnDoesNotDependOnHoverOpen() {
         // The hover-open card floats; there is no input for it to widen the
         // column with. Stated so a future signature change has to face it.
-        let mini = State.columnWidth(for: .mini, panelWidth: 300)
-        #expect(mini == State.railColumnWidth)
+        let mini = State.columnWidth(for: .mini, panelWidth: 300, elevated: false)
+        #expect(mini == State.railColumnWidth(elevated: false))
     }
 
     @Test func widthIsClamped() {
@@ -91,6 +102,12 @@ struct PaneSidebarTextTests {
 
     @Test func anEmptyTitleStillGetsAMark() {
         #expect(Text.monogram(for: "") == "•")
+    }
+
+    @Test func aPathTitleUsesItsLastComponent() {
+        #expect(Text.monogram(for: "~") == "~", "a shell sitting at home")
+        #expect(Text.monogram(for: "~/git/ghoztty") == "gho")
+        #expect(Text.monogram(for: "/tmp") == "tmp")
     }
 
     // MARK: Title

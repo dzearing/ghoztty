@@ -70,10 +70,33 @@ final class PaneSidebarState: ObservableObject {
     nonisolated static let minimumWidth: CGFloat = 180
     nonisolated static let maximumWidth: CGFloat = 380
 
-    /// The mini rail's card, and its column (the card plus the glass card's
-    /// uniform outer margin on each side).
+    /// The mini rail's card.
     nonisolated static let railCardWidth: CGFloat = 44
-    nonisolated static var railColumnWidth: CGFloat { railCardWidth + 2 * GlassCard.outerMargin }
+
+    /// The space around the raised rail card.
+    struct RailInsets: Equatable {
+        let leading: CGFloat
+        let vertical: CGFloat
+        let trailing: CGFloat
+    }
+
+    /// Flat: the glass card's uniform outer margin on every side. Elevated:
+    /// the SAME margin the panes keep from the window's edge, and none on the
+    /// trailing side — the grid's own margin is already the gap there, and
+    /// adding the card's on top of it left the rail sitting further from the
+    /// panes than from the window edge, with its ends out of line with theirs.
+    nonisolated static func railInsets(elevated: Bool) -> RailInsets {
+        elevated
+            ? .init(leading: PaneElevation.margin, vertical: PaneElevation.margin, trailing: 0)
+            : .init(leading: GlassCard.outerMargin, vertical: GlassCard.outerMargin,
+                    trailing: GlassCard.outerMargin)
+    }
+
+    /// The rail's column: its insets and the card.
+    nonisolated static func railColumnWidth(elevated: Bool) -> CGFloat {
+        let insets = railInsets(elevated: elevated)
+        return insets.leading + railCardWidth + insets.trailing
+    }
 
     /// Dragging the edge is the same gesture as the pin: a panel pushed under
     /// this collapses to the rail, a rail pulled past `expandThreshold` pins.
@@ -102,11 +125,11 @@ final class PaneSidebarState: ObservableObject {
     /// over the grid. Widening the column on hover would resize every terminal
     /// in the window (a SIGWINCH and a TUI redraw) each time the pointer
     /// passed by; only pin/unpin, which are deliberate, change it.
-    nonisolated static func columnWidth(for mode: Mode, panelWidth: CGFloat) -> CGFloat {
+    nonisolated static func columnWidth(for mode: Mode, panelWidth: CGFloat, elevated: Bool) -> CGFloat {
         switch mode {
         case .hidden: 0
         case .expanded: panelWidth
-        case .mini: railColumnWidth
+        case .mini: railColumnWidth(elevated: elevated)
         }
     }
 
@@ -151,12 +174,22 @@ enum PaneSidebarText {
                 return String(word.prefix(2)).uppercased()
             }
         }
+        // A path — what a shell titles itself by default: its last component,
+        // and home is "~" itself (a mark, not a bullet).
+        if trimmed == "~" || trimmed.hasPrefix("~/") || trimmed.hasPrefix("/") {
+            let last = (trimmed as NSString).lastPathComponent
+            if last == "~" || last == "/" || last.isEmpty { return trimmed == "/" ? "/" : "~" }
+            let letters = last.filter { $0.isLetter || $0.isNumber }
+            if !letters.isEmpty { return String(letters.prefix(3)).lowercased() }
+        }
         // A command: its first word, minus any path ("/bin/zsh" → "zsh").
         let first = trimmed.split(separator: " ").first.map(String.init) ?? trimmed
         let command = (first as NSString).lastPathComponent
         let letters = command.filter { $0.isLetter || $0.isNumber }
-        guard !letters.isEmpty else { return "•" }
-        return String(letters.prefix(3)).lowercased()
+        if !letters.isEmpty { return String(letters.prefix(3)).lowercased() }
+        // No letters at all: show what there is rather than a bullet.
+        let visible = trimmed.filter { !$0.isWhitespace }
+        return visible.isEmpty ? "•" : String(visible.prefix(2))
     }
 
     /// The name a row shows. A terminal that never set a title carries

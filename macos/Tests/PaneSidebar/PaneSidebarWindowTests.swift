@@ -216,11 +216,17 @@ struct PaneSidebarWindowTests {
         let h = try await open(pinned: false)
 
         let host = try #require(h.controller.paneSidebarHost)
-        let column = PaneSidebarState.railColumnWidth
+        let elevated = gridMargin(h) > 0
+        let insets = PaneSidebarState.railInsets(elevated: elevated)
+        let column = PaneSidebarState.railColumnWidth(elevated: elevated)
         let gridLeft = frameInWindow(h.panes[0]).minX
-        #expect(abs(gridLeft - (column + gridMargin(h))) < 1, "the grid sits beside the 68pt rail column")
+        #expect(abs(gridLeft - (column + gridMargin(h))) < 1, "the grid sits beside the rail column")
         #expect(host.cardRect.width == PaneSidebarState.railCardWidth)
-        #expect(host.cardRect.minX == GlassCard.outerMargin, "the raised card keeps its margin")
+        #expect(host.cardRect.minX == insets.leading, "the raised card keeps its margin")
+        // Equal gutters: window edge → rail, and rail → panes.
+        let railFrame = host.convert(host.cardRect, to: nil)
+        #expect(abs(railFrame.minX - (gridLeft - railFrame.maxX)) < 1,
+                "the gap left of the rail equals the gap right of it")
         let sizeBefore = gridSize(h.panes[0])
         snapshot(h, "mini")
 

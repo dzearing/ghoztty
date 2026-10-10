@@ -46,6 +46,11 @@ struct SidePanelCard: ViewModifier {
     /// Nil means "follow the color scheme", which is right for a document.
     var isLightBase: Bool? = nil
 
+    /// The space around the card. Nil is `GlassCard.outerMargin` on every
+    /// side (both viewer panels); the pane sidebar's rail shares its edges
+    /// with the elevated grid's margin instead.
+    var margins: EdgeInsets? = nil
+
     @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
@@ -65,7 +70,9 @@ struct SidePanelCard: ViewModifier {
             // card a shade off the page, so it reads as raised rather than flat.
             .background(GlassCard.shape.fill(
                 base ?? SidePanelCard.documentBackground(for: colorScheme)))
-            .padding(GlassCard.outerMargin)
+            .padding(margins ?? EdgeInsets(
+                top: GlassCard.outerMargin, leading: GlassCard.outerMargin,
+                bottom: GlassCard.outerMargin, trailing: GlassCard.outerMargin))
             .accessibilityElement(children: .contain)
             .accessibilityLabel(accessibilityLabel)
     }
