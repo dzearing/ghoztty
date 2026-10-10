@@ -2,6 +2,14 @@
 
 You are the on-box Windows session for the Windows parity effort.
 
+> **NEVER PULL FOCUS FROM THE USER** (user, 2026-10-10, after windows popped
+> over a fullscreen game on 2026-09-27). Run acceptance scripts on the test
+> desktop only. Do not run any `@input-desktop-exception` script
+> (`test/win32/lib/TestDesktop.ps1` header). Do not run anything else that
+> opens a window on the user's desktop and focuses it. If a task's validation needs one of
+> those, record it as NOT RUN (the user is present) and move on. Never fake
+> it. Do not resume the soak daemon until T1795 is done.
+
 ## THE TURN (user, 2026-07-28 — this is the whole job, every time)
 
 > pick up a task, build it, test it, make sure it's right, assess if more
