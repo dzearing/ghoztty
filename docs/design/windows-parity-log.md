@@ -34767,3 +34767,27 @@ moved to T1814.
 - **Not run**: whether the old windows drew over the game (needs the old
   behavior reproduced in front of the user). **Filed** T1815: a crashed lane's
   cdb re-run still launches from the input desktop.
+
+## 2026-10-10 — T1796: the Windows branch has main's last seven weeks again
+
+- **33 main commits merged** (b0c7ddb72, merge-base now 910baa91b, 0 behind):
+  rearrange mode, image panes, find-in-page, remote Disconnect, clean copy out
+  of TUIs, background CLI windows, the agent reap fix and the v1.38 reboot
+  restore. 16 files conflicted, 69 hunks.
+- **Where both seats fixed the same bug, ours survived**: resume offsets stay
+  on T739/T532 (main's `replay_len` dropped, the field kept), the T1626
+  snapshot writer stays, CLAUDE.md stays split. Main's new doc sections moved
+  into `docs/claude/`.
+- **Grafted from main**: reflowable restored scrollback, the extra mode resets,
+  awaitRealSize, mailbox-pressure yield, FLOW catch-up (watermark reset at
+  every bind), reapExited (through the T1771 rule), orphan snapshot sweep
+  (+ `.ringlog`), and the reboot history. Holder-backed records keep their raw
+  ring, history is written on timer/checkpoint passes only, and it pairs with
+  the ring's end offset, which main had wrong for our journal appends.
+- **The floor found five breakages** the auto-merge left: a `+read` call
+  missing main's new argument, four ported tests without `testing`, three
+  agent tests asserting a raw replay, a too-small-ring conversion, and a
+  counted wait test-wait-oracle caught.
+- **Validation**: floor lanes all PASS, P1–P3 ALL PASS, 29 due harnesses plus
+  agent-upgrade and agent-lineage-suites green. **Filed** T1816 (mac seat:
+  run the e2e over this resolution, which differs from main's).
