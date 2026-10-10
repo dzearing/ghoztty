@@ -532,12 +532,18 @@ moved panes, and restored windows are unaffected).
 
 **`--color=random` becomes the window's gradient.** In this style a new window
 opened with `--color=random` keeps its terminals' theme color and instead gets
-its own desk: a random hue from the whole wheel (the tones `--color=random`
-always drew from) with a neighboring second pool, in ocean's two-pool shape,
-falling off darker toward the bottom-trailing corner on a dark theme and
-lighter on a light one. (The first build kept every variant within the
-blue/teal family; seen through 10pt gutters, windows opened side by side were
-indistinguishable — "the color is the same".) It persists as a seed (`PaneDeskVariant`), and the palette is derived from
+its own desk in ONE random hue from the whole wheel (the tones
+`--color=random` always drew from): a soft spotlight from just above the top
+center (the mock page's own background), a base running from the top-leading
+corner toward the bottom-trailing one, and a shade pooling in that corner — so
+it gets progressively darker toward the bottom-trailing corner on a dark theme
+and lighter on a light one. Every layer is the same hue; only saturation and
+brightness vary. History: the first build kept every variant within the
+blue/teal family, and seen through 10pt gutters windows opened side by side
+were indistinguishable ("the color is the same"); the second used ocean's
+two-pool shape with a neighboring second hue, which lit the bottom-trailing
+corner instead of darkening it and read as duo-toned. Ocean, the default,
+keeps its two pools. It persists as a seed (`PaneDeskVariant`), and the palette is derived from
 the seed for the CURRENT theme, so a window keeps its character across a
 light/dark switch and a session restore. The pinned sidebar panel goes
 translucent over the same gradient instead of carrying its own 1px rule. Cost:

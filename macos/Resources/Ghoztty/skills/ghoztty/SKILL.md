@@ -865,7 +865,7 @@ offers just **Focus in Ghoztty** and **Copy Link**.
 ## Background Colors
 
 - `--color=#1a1a2e` sets a specific hex background color on a window or pane.
-- `--color=random` on a WINDOW gives it its own gradient background (a random hue, with a neighboring tone) in the default elevated pane style; in the `flat` style, and on a split, it generates a random dark-tinted terminal background (charcoal with subtle hue).
+- `--color=random` on a WINDOW gives it its own gradient background (one random hue, lit from the top center and darkening toward the bottom-right) in the default elevated pane style; in the `flat` style, and on a split, it generates a random dark-tinted terminal background (charcoal with subtle hue).
 - When splitting a pane (ctrl-d or `+split`), the child pane automatically inherits a slightly lighter version of the parent's background for visual depth.
 - Right-click a pane → "Background Color..." opens a live color picker.
 

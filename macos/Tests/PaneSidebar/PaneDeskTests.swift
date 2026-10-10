@@ -4,25 +4,34 @@ import Testing
 @testable import Ghostty
 
 /// A window's own gradient (`--color=random` / Cmd-N in the elevated pane
-/// style): a random hue from the whole wheel with a neighboring second pool,
-/// falling off darker on a dark theme and lighter on a light one, derived
-/// deterministically from a persisted seed.
+/// style): ONE random hue from the whole wheel, a spotlight from the top
+/// center, falling off darker toward the bottom-trailing corner on a dark
+/// theme and lighter on a light one, derived deterministically from a
+/// persisted seed.
 struct PaneDeskTests {
     private let seeds: [UInt64] = (1...200).map { UInt64($0) &* 0x9E37_79B9_7F4A_7C15 }
 
-    @Test func theSecondPoolIsANeighborOfTheFirst() {
+    private func spotlight(_ p: PaneDeskPalette) -> (light: PaneDeskPalette.HSB, shade: PaneDeskPalette.HSB)? {
+        if case let .spotlight(light, shade) = p.look { return (light, shade) }
+        return nil
+    }
+
+    @Test func aVariantIsOneHue() {
+        // A neighboring second hue read as duo-toned.
         for seed in seeds {
-            let p = PaneDeskVariant(seed: seed).palette(isLight: false)
-            var delta = abs(p.lead.hue - p.trail.hue) * 360
-            if delta > 180 { delta = 360 - delta }
-            #expect(PaneDeskVariant.trailOffset.contains(delta), "neighbor hue, \(delta)° away")
+            for isLight in [false, true] {
+                let p = PaneDeskVariant(seed: seed).palette(isLight: isLight)
+                let s = try! #require(spotlight(p))
+                let hues = Set([p.baseStart.hue, p.baseEnd.hue, s.light.hue, s.shade.hue])
+                #expect(hues.count == 1)
+            }
         }
     }
 
     @Test func variantsSpanTheWholeWheel() {
         // The first fix kept every variant within ~30° of blue, so windows
         // opened side by side looked the same. Hues must cover the wheel.
-        let hues = seeds.map { PaneDeskVariant(seed: $0).palette(isLight: false).lead.hue * 360 }
+        let hues = seeds.map { PaneDeskVariant(seed: $0).palette(isLight: false).baseStart.hue * 360 }
         let sextants = Set(hues.map { Int($0 / 60) })
         #expect(sextants.count == 6, "every 60° slice of the wheel is used (got \(sextants.sorted()))")
     }
@@ -35,6 +44,25 @@ struct PaneDeskTests {
             let light = PaneDeskVariant(seed: seed).palette(isLight: true)
             #expect(light.baseEnd.brightness > light.baseStart.brightness)
             #expect(light.baseStart.brightness > 0.9, "a light desk stays light")
+        }
+    }
+
+    @Test func aVariantIsLitFromTheTopAndFallsAwayTowardTheBottomTrailingCorner() {
+        for seed in seeds {
+            let dark = PaneDeskVariant(seed: seed).palette(isLight: false)
+            let d = try! #require(spotlight(dark))
+            #expect(d.light.brightness > dark.baseStart.brightness, "the spotlight lifts the top")
+            #expect(d.shade.brightness < dark.baseEnd.brightness, "darkest in the corner")
+            let light = PaneDeskVariant(seed: seed).palette(isLight: true)
+            let l = try! #require(spotlight(light))
+            #expect(l.light.brightness > light.baseStart.brightness)
+            #expect(l.shade.brightness > light.baseEnd.brightness, "lightest in the corner")
+        }
+    }
+
+    @Test func theOceanDefaultKeepsItsTwoPools() {
+        guard case .pools = PaneDeskPalette.ocean(isLight: false).look else {
+            Issue.record("ocean is the two-pool look"); return
         }
     }
 

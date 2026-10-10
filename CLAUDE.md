@@ -1432,10 +1432,10 @@ mini rail (which takes no trailing margin of its own — the grid's is that gap)
 **A window opened by hand (Cmd-N, the New Window menu item / palette
 command) gets a random gradient by default**, exactly as
 **`+new-window --color=random`** does — in this style that gives the window its OWN
-gradient (`PaneDeskVariant`: a persisted seed; a random hue from the whole
-wheel — the tones `--color=random` always drew from — with a neighboring second
-pool 22–46° away, falling off darker toward the bottom-trailing corner on a
-dark theme and lighter on a light one) and leaves the terminals their theme
+gradient (`PaneDeskVariant`: a persisted seed; ONE random hue from the whole
+wheel — the tones `--color=random` always drew from — with a soft spotlight
+from the top center, getting darker toward the bottom-trailing corner on a
+dark theme and lighter on a light one; never a second hue) and leaves the terminals their theme
 color; an explicit `--color=#hex`, `random` on a split, and `random` in the
 `flat` style still tint the terminal background as before. `flat` is the classic
 edge-to-edge look with a 1px `split-divider-color` line, and its geometry is

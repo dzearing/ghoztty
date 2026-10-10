@@ -32,12 +32,11 @@ enum PaneElevation {
 
 /// The colors of one window's gradient desk.
 ///
-/// The default is the "ocean" palette the style was chosen with. A window
-/// opened with `--color=random` (or by hand, with Cmd-N) gets a
-/// `PaneDeskVariant` instead: the same two-pool shape built around a random
-/// hue from the whole wheel — the tones `--color=random` has always drawn
-/// from — falling off darker toward the bottom-trailing corner on a dark theme
-/// and lighter on a light one.
+/// The default is the "ocean" palette the style was chosen with: two pools,
+/// blue and teal, at opposite corners. A window opened with `--color=random`
+/// (or by hand, with Cmd-N) gets a `PaneDeskVariant` instead, in ONE hue from
+/// the whole wheel: a soft spotlight from the top center, falling away darker
+/// toward the bottom-trailing corner on a dark theme (lighter on a light one).
 struct PaneDeskPalette: Equatable {
     struct HSB: Equatable {
         var hue: Double        // 0...1
@@ -47,31 +46,38 @@ struct PaneDeskPalette: Equatable {
         var color: Color { Color(hue: hue, saturation: saturation, brightness: brightness) }
     }
 
-    /// The pool of color at the top-leading corner, and at the bottom-trailing.
-    var lead: HSB
-    var trail: HSB
-    /// The base the pools sit on, from its top-leading end to its far end.
+    enum Look: Equatable {
+        /// A pool of color at the top-leading corner and another at the
+        /// bottom-trailing one; each reach is a fraction of the window's
+        /// longer side. (Ocean.)
+        case pools(lead: HSB, trail: HSB, leadReach: Double, trailReach: Double)
+        /// A spotlight from just above the top center, and a shade pooling in
+        /// the bottom-trailing corner. (A variant.)
+        case spotlight(light: HSB, shade: HSB)
+    }
+
+    /// The base the look sits on, from its top-leading end to its far end.
     var baseStart: HSB
     var baseEnd: HSB
-    /// How far each pool reaches, as a fraction of the window's longer side.
-    var leadReach: Double
-    var trailReach: Double
+    var look: Look
 
     /// The ocean palette: blue top-leading, teal bottom-trailing, over slate.
     static func ocean(isLight: Bool) -> PaneDeskPalette {
         isLight
             ? .init(
-                lead: .init(hue: 205 / 360, saturation: 0.16, brightness: 0.97),
-                trail: .init(hue: 171 / 360, saturation: 0.14, brightness: 0.93),
                 baseStart: .init(hue: 206 / 360, saturation: 0.04, brightness: 0.98),
                 baseEnd: .init(hue: 198 / 360, saturation: 0.03, brightness: 0.96),
-                leadReach: 0.75, trailReach: 0.65)
+                look: .pools(
+                    lead: .init(hue: 205 / 360, saturation: 0.16, brightness: 0.97),
+                    trail: .init(hue: 171 / 360, saturation: 0.14, brightness: 0.93),
+                    leadReach: 0.75, trailReach: 0.65))
             : .init(
-                lead: .init(hue: 205 / 360, saturation: 0.73, brightness: 0.42),
-                trail: .init(hue: 177 / 360, saturation: 0.77, brightness: 0.35),
                 baseStart: .init(hue: 213 / 360, saturation: 0.50, brightness: 0.14),
                 baseEnd: .init(hue: 213 / 360, saturation: 0.39, brightness: 0.11),
-                leadReach: 0.75, trailReach: 0.65)
+                look: .pools(
+                    lead: .init(hue: 205 / 360, saturation: 0.73, brightness: 0.42),
+                    trail: .init(hue: 177 / 360, saturation: 0.77, brightness: 0.35),
+                    leadReach: 0.75, trailReach: 0.65))
     }
 }
 
@@ -100,50 +106,36 @@ struct PaneDeskVariant: Codable, Equatable {
         return config
     }
 
-    /// How far the second pool's hue sits from the first, in degrees — the
-    /// same relationship as ocean's teal beside its blue, so a variant reads
-    /// as a sibling of the default rather than a clash.
-    static let trailOffset: ClosedRange<Double> = 22...46
-
     func palette(isLight: Bool) -> PaneDeskPalette {
         var rng = SplitMix64(seed: seed)
         func pick(_ range: ClosedRange<Double>) -> Double {
             range.lowerBound + (range.upperBound - range.lowerBound) * rng.nextUnit()
         }
-        func wrap(_ degrees: Double) -> Double {
-            (degrees.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360) / 360
-        }
-        // A random hue from the whole wheel (what `--color=random` has always
-        // drawn from), its neighbor on one side or the other, and a base
-        // tinted toward the first.
-        let leadDegrees = pick(0...360)
-        let direction: Double = rng.nextUnit() < 0.5 ? -1 : 1
-        let leadHue = wrap(leadDegrees)
-        let trailHue = wrap(leadDegrees + direction * pick(Self.trailOffset))
-        let baseHue = wrap(leadDegrees + direction * pick(4...12))
-        let leadReach = pick(0.6...0.85)
-        let trailReach = pick(0.5...0.75)
+        // ONE hue from the whole wheel (what `--color=random` has always
+        // drawn from). Every layer is that hue — a second one read as
+        // duo-toned — and only saturation and brightness vary.
+        let hue = pick(0...360) / 360
 
         if isLight {
-            // Pale pools on a near-white base that gets LIGHTER away from the
-            // top-leading corner.
-            let start = pick(0.95...0.965)
+            // A tinted near-white, brightening toward the top center and
+            // getting LIGHTER toward the bottom-trailing corner.
+            let start = pick(0.93...0.945)
             return .init(
-                lead: .init(hue: leadHue, saturation: pick(0.12...0.22), brightness: pick(0.95...0.98)),
-                trail: .init(hue: trailHue, saturation: pick(0.10...0.18), brightness: pick(0.92...0.96)),
-                baseStart: .init(hue: baseHue, saturation: pick(0.03...0.06), brightness: start),
-                baseEnd: .init(hue: baseHue, saturation: pick(0.01...0.03), brightness: min(0.995, start + pick(0.02...0.035))),
-                leadReach: leadReach, trailReach: trailReach)
+                baseStart: .init(hue: hue, saturation: pick(0.07...0.10), brightness: start),
+                baseEnd: .init(hue: hue, saturation: pick(0.02...0.04), brightness: start + pick(0.035...0.045)),
+                look: .spotlight(
+                    light: .init(hue: hue, saturation: pick(0.02...0.04), brightness: 1.0),
+                    shade: .init(hue: hue, saturation: 0.01, brightness: 1.0)))
         }
-        // Deep pools on a slate base that gets DARKER away from the
-        // top-leading corner.
-        let start = pick(0.13...0.17)
+        // A deep slate of the hue, lit from the top center and getting
+        // DARKER toward the bottom-trailing corner.
+        let start = pick(0.15...0.18)
         return .init(
-            lead: .init(hue: leadHue, saturation: pick(0.55...0.78), brightness: pick(0.34...0.46)),
-            trail: .init(hue: trailHue, saturation: pick(0.55...0.78), brightness: pick(0.28...0.38)),
-            baseStart: .init(hue: baseHue, saturation: pick(0.35...0.55), brightness: start),
-            baseEnd: .init(hue: baseHue, saturation: pick(0.30...0.45), brightness: start - pick(0.04...0.06)),
-            leadReach: leadReach, trailReach: trailReach)
+            baseStart: .init(hue: hue, saturation: pick(0.38...0.50), brightness: start),
+            baseEnd: .init(hue: hue, saturation: pick(0.35...0.45), brightness: start - pick(0.07...0.09)),
+            look: .spotlight(
+                light: .init(hue: hue, saturation: pick(0.30...0.42), brightness: pick(0.40...0.48)),
+                shade: .init(hue: hue, saturation: pick(0.30...0.40), brightness: pick(0.03...0.045))))
     }
 }
 
@@ -168,8 +160,9 @@ struct SplitMix64: RandomNumberGenerator {
     }
 }
 
-/// The soft gradient the elevated panes sit on: two soft pools of color at
-/// opposite corners over a gently graded base — simple on purpose, nothing
+/// The soft gradient the elevated panes sit on: a gently graded base under
+/// either two soft corner pools (ocean) or a spotlight from the top center
+/// and a shade in the far corner (a variant) — simple on purpose, nothing
 /// that competes with the terminals.
 struct PaneDesk: View {
     let palette: PaneDeskPalette
@@ -182,20 +175,41 @@ struct PaneDesk: View {
             let size = proxy.size
             let reach = max(size.width, size.height)
             ZStack {
-                LinearGradient(
-                    colors: [palette.baseStart.color, palette.baseEnd.color],
-                    startPoint: UnitPoint(x: 0.2, y: 0),
-                    endPoint: UnitPoint(x: 0.8, y: 1))
-                RadialGradient(
-                    colors: [palette.lead.color, .clear],
-                    center: .topLeading,
-                    startRadius: 0,
-                    endRadius: reach * palette.leadReach)
-                RadialGradient(
-                    colors: [palette.trail.color, .clear],
-                    center: .bottomTrailing,
-                    startRadius: 0,
-                    endRadius: reach * palette.trailReach)
+                switch palette.look {
+                case let .pools(lead, trail, leadReach, trailReach):
+                    LinearGradient(
+                        colors: [palette.baseStart.color, palette.baseEnd.color],
+                        startPoint: UnitPoint(x: 0.2, y: 0),
+                        endPoint: UnitPoint(x: 0.8, y: 1))
+                    RadialGradient(
+                        colors: [lead.color, .clear],
+                        center: .topLeading,
+                        startRadius: 0,
+                        endRadius: reach * leadReach)
+                    RadialGradient(
+                        colors: [trail.color, .clear],
+                        center: .bottomTrailing,
+                        startRadius: 0,
+                        endRadius: reach * trailReach)
+
+                case let .spotlight(light, shade):
+                    LinearGradient(
+                        colors: [palette.baseStart.color, palette.baseEnd.color],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing)
+                    // An ellipse fitted to the window, so the light spreads
+                    // wide across the top and only part way down.
+                    EllipticalGradient(
+                        colors: [light.color, light.color.opacity(0.45), .clear],
+                        center: UnitPoint(x: 0.5, y: -0.1),
+                        startRadiusFraction: 0,
+                        endRadiusFraction: 0.95)
+                    RadialGradient(
+                        colors: [shade.color, shade.color.opacity(0.6), .clear],
+                        center: .bottomTrailing,
+                        startRadius: 0,
+                        endRadius: reach * 0.85)
+                }
             }
         }
         .opacity(opacity)
