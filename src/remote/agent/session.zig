@@ -1055,6 +1055,7 @@ pub const SessionStore = struct {
             const stop = self.reaper_stop;
             self.reaper_mutex.unlock();
             if (stop) break;
+            self.reapExited();
             self.reapIdle();
             // Live foreground-pid sampling (wp3): push `META{foreground_pid}`
             // for any bound session whose pty foreground group changed since
@@ -1072,6 +1073,52 @@ pub const SessionStore = struct {
                 self.checkpoint();
             }
         }
+    }
+
+    /// Reap-check every alive session and tombstone the ones whose child has
+    /// exited, framing EXIT to a bound viewer — the same transition
+    /// `onChildOutput` makes, for the exits it never sees. Its only reap check
+    /// is the pty reader's EOF nudge, and EOF is no proof of exit: a child can
+    /// close its terminal and run on (exiting later, with no output left to
+    /// carry a nudge), and one exiting under memory or scheduler pressure can
+    /// outlast the reader's bounded wait. Missed, the session stayed `alive`
+    /// forever over a zombie — a pane that accepted no input and never said
+    /// why. `tryWait` is a single `waitpid(WNOHANG)`, so a per-tick sweep is
+    /// cheap. EXIT is framed outside the store lock, collect-then-act like
+    /// `sampleForegroundPids`.
+    pub fn reapExited(self: *SessionStore) void {
+        const Exit = struct {
+            f: *const fn (ctx: *anyopaque, channel: u128, code: i64, runtime_ms: u64) void,
+            ctx: *anyopaque,
+            channel: u128,
+            code: i64,
+            runtime: u64,
+        };
+        var exits: std.ArrayList(Exit) = .empty;
+        defer exits.deinit(self.table.alloc);
+
+        self.mutex.lock();
+        const now_ms = self.now();
+        var it = self.table.by_id.valueIterator();
+        while (it.next()) |sp| {
+            const s = sp.*;
+            if (!s.alive) continue;
+            const code = s.child.tryWait() orelse continue;
+            s.markExited(code, now_ms);
+            if (!s.bound) continue;
+            const f = s.bridge_exit orelse continue;
+            const ctx = s.bridge_ctx orelse continue;
+            exits.append(self.table.alloc, .{
+                .f = f,
+                .ctx = ctx,
+                .channel = s.channel,
+                .code = code,
+                .runtime = @intCast(@max(0, now_ms - s.created_ms)),
+            }) catch continue; // OOM: tombstoned; the viewer learns on re-attach
+        }
+        self.mutex.unlock();
+
+        for (exits.items) |e| e.f(e.ctx, e.channel, e.code, e.runtime);
     }
 
     /// Sample every bound+alive session's pty foreground pid and push
@@ -2856,4 +2903,56 @@ test "SessionStore checkpoint: persists the live cwd AND writes the history next
     var r = (try ring_snapshot.load(alloc, rp)).?;
     defer r.free(alloc);
     try testing.expectEqual(r.base_offset + r.bytes.len, h.end_offset);
+}
+
+test "SessionStore.reapExited: an exit no output ever reported still tombstones + frames EXIT once" {
+    // The pty reader's EOF nudge was the only reap check. A child that exited
+    // after it (closed its terminal first, or simply lost the race to become
+    // reapable) left the session `alive` over a zombie forever.
+    const alloc = testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0xE417);
+    var fakes: [2]FakeChild = .{ .{ .alloc = alloc }, .{ .alloc = alloc } };
+    defer for (&fakes) |*f| f.deinit();
+    var clock: MutClock = .{ .ms = 1_000 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 60_000);
+    defer store.deinit();
+
+    const Exits = struct {
+        count: usize = 0,
+        code: i64 = -1,
+        channel: u128 = 0,
+        fn f(ctx: *anyopaque, channel: u128, code: i64, runtime_ms: u64) void {
+            _ = runtime_ms;
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.count += 1;
+            self.code = code;
+            self.channel = channel;
+        }
+    };
+    var exits: Exits = .{};
+
+    const exited = try store.table.create(fakes[0].child(), 300, 24, 80, 1024, 0);
+    exited.bound = true;
+    exited.bridge_ctx = &exits;
+    exited.bridge_exit = Exits.f;
+    const running = try store.table.create(fakes[1].child(), 301, 24, 80, 1024, 0);
+
+    // Nothing has exited: the sweep changes nothing.
+    store.reapExited();
+    try testing.expect(exited.alive and running.alive);
+    try testing.expectEqual(@as(usize, 0), exits.count);
+
+    // The child exits with no output and no nudge.
+    fakes[0].exit_code = 3;
+    store.reapExited();
+    try testing.expect(!exited.alive);
+    try testing.expectEqual(@as(?i64, 3), exited.exit_code);
+    try testing.expectEqual(@as(usize, 1), exits.count);
+    try testing.expectEqual(@as(i64, 3), exits.code);
+    try testing.expectEqual(exited.channel, exits.channel);
+    try testing.expect(running.alive);
+
+    // Once tombstoned it is not reported again.
+    store.reapExited();
+    try testing.expectEqual(@as(usize, 1), exits.count);
 }
