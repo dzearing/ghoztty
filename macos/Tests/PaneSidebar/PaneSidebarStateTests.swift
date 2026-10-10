@@ -105,6 +105,12 @@ struct PaneSidebarTextTests {
         #expect(Text.title("👻", pwd: "/", kind: "Terminal") == "Terminal")
     }
 
+    @Test func aSubtitleThatRepeatsTheTitleIsDropped() {
+        #expect(Text.distinct("~", from: "~") == nil)
+        #expect(Text.distinct("~/git/x", from: "zsh") == "~/git/x")
+        #expect(Text.distinct(nil, from: "zsh") == nil)
+    }
+
     // MARK: Banner line
 
     @Test func theBannerLineIsPlainText() {

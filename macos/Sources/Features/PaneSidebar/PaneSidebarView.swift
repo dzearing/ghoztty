@@ -339,7 +339,7 @@ private struct PaneSidebarWindowHeader: View {
                     .foregroundStyle(.tertiary)
             }
 
-            if isQuickKill && !isThisWindow {
+            if showsKill {
                 PaneSidebarKillButton(help: "Kill this window now") {
                     owner.window?.close()
                 }
@@ -347,7 +347,9 @@ private struct PaneSidebarWindowHeader: View {
         }
         .padding(.vertical, 6)
         .padding(.leading, PaneSidebarOutline.headerLeading)
-        .padding(.trailing, SidePanelRow.textInset)
+        // With a trailing button, the SAME inset a row's button has, so the
+        // header's × and its panes' ×s line up in one column.
+        .padding(.trailing, showsKill ? PaneSidebarRow.trailingButtonInset : SidePanelRow.textInset)
         .background(
             RoundedRectangle(cornerRadius: SidePanelRow.cornerRadius, style: .continuous)
                 .fill(isHovered && !isThisWindow ? Color.primary.opacity(0.06) : .clear))
@@ -383,6 +385,8 @@ private struct PaneSidebarWindowHeader: View {
     private var hasQuestion: Bool {
         owner.surfaceTree.contains { $0.activityState == .needsInput }
     }
+
+    private var showsKill: Bool { isQuickKill && !isThisWindow }
 }
 
 // MARK: - Small pieces

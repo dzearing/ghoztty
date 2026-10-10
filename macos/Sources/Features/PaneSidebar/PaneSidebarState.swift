@@ -206,6 +206,13 @@ enum PaneSidebarText {
         return nil
     }
 
+    /// `subtitle`, unless it only repeats `title` — then nil.
+    static func distinct(_ subtitle: String?, from title: String) -> String? {
+        guard let subtitle else { return nil }
+        let trim = { (s: String) in s.trimmingCharacters(in: .whitespaces) }
+        return trim(subtitle) == trim(title) ? nil : subtitle
+    }
+
     private static func isThematicBreak(_ line: String) -> Bool {
         let compact = line.filter { !$0.isWhitespace }
         guard compact.count >= 3, let first = compact.first, "-*_".contains(first) else { return false }

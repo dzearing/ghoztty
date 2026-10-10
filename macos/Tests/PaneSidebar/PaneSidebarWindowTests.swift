@@ -126,9 +126,11 @@ struct PaneSidebarWindowTests {
         // SwiftUI's own renderer: draws the view tree itself (AppKit
         // representables — the rows' click/drag views — are invisible anyway).
         for (name, rail, quick, all) in [("render-pinned", false, false, false), ("render-rail", true, false, false),
-                                          ("render-trash", false, true, false), ("render-all", false, false, true)] {
+                                          ("render-trash", false, true, false), ("render-all", false, false, true),
+                                          ("render-all-trash", false, true, true)] {
             h.controller.paneSidebarState.isQuickKill = quick
             h.controller.paneSidebarState.showsAllWindows = all
+            await settle(0.1)
             let bg = h.controller.ghostty.config.backgroundColor
             let view = PaneSidebarView(
                 controller: h.controller, state: h.controller.paneSidebarState,

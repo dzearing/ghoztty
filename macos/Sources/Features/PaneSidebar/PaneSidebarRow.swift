@@ -59,7 +59,7 @@ struct PaneSidebarRow: View {
                         .foregroundStyle(onAccent
                             ? AnyShapeStyle(Color(nsColor: .alternateSelectedControlTextColor))
                             : AnyShapeStyle(Color(nsColor: .labelColor)))
-                    PaneSidebarSubtitle(pane: pane, onAccent: onAccent)
+                    PaneSidebarSubtitle(pane: pane, title: displayTitle, onAccent: onAccent)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 stateAccessories
@@ -83,7 +83,7 @@ struct PaneSidebarRow: View {
             }
 
             trailingButton
-                .padding(.trailing, SidePanelRow.textInset - 4)
+                .padding(.trailing, Self.trailingButtonInset)
         }
         .padding(.horizontal, SidePanelRow.fillInset)
         .padding(.vertical, 0.5)
@@ -118,6 +118,10 @@ struct PaneSidebarRow: View {
         }
         .frame(height: 15)
     }
+
+    /// Where a row's trailing button sits inside its fill. Shared with the
+    /// all-windows header, whose × must line up with its panes' ×s.
+    static let trailingButtonInset: CGFloat = SidePanelRow.textInset - 4
 
     /// −/↩ on hover (this window only); trash mode's red × always. There is
     /// NO close button outside trash mode — a stray click on the list must
@@ -326,14 +330,17 @@ struct PaneSidebarIcon: View {
 /// (for its working directory) or the viewer (for its location) directly.
 private struct PaneSidebarSubtitle: View {
     @ObservedObject var pane: PaneView
+    /// The row's title: a subtitle that only repeats it (a shell titled
+    /// "~" sitting in ~) is dropped rather than shown twice.
+    let title: String
     let onAccent: Bool
 
     var body: some View {
         Group {
             if let surface = pane.surfaceView {
-                TerminalSubtitle(surface: surface, banner: pane.paneBanner, onAccent: onAccent)
+                TerminalSubtitle(surface: surface, banner: pane.paneBanner, title: title, onAccent: onAccent)
             } else if let viewer = pane.viewerView {
-                ViewerSubtitle(viewer: viewer, onAccent: onAccent)
+                ViewerSubtitle(viewer: viewer, title: title, onAccent: onAccent)
             }
         }
     }
@@ -341,22 +348,28 @@ private struct PaneSidebarSubtitle: View {
     private struct TerminalSubtitle: View {
         @ObservedObject var surface: Ghostty.SurfaceView
         let banner: String?
+        let title: String
         let onAccent: Bool
 
         var body: some View {
             // A banner line is prose — cut its tail. A path keeps both ends.
             let isBanner = PaneSidebarText.bannerLine(banner) != nil
-            line(PaneSidebarText.subtitle(banner: banner, pwd: surface.pwd, viewerLocation: nil),
+            line(PaneSidebarText.distinct(
+                    PaneSidebarText.subtitle(banner: banner, pwd: surface.pwd, viewerLocation: nil),
+                    from: title),
                  onAccent, truncation: isBanner ? .tail : .middle)
         }
     }
 
     private struct ViewerSubtitle: View {
         @ObservedObject var viewer: ViewerView
+        let title: String
         let onAccent: Bool
 
         var body: some View {
-            line(PaneSidebarText.subtitle(banner: nil, pwd: nil, viewerLocation: viewer.location),
+            line(PaneSidebarText.distinct(
+                    PaneSidebarText.subtitle(banner: nil, pwd: nil, viewerLocation: viewer.location),
+                    from: title),
                  onAccent, truncation: .middle)
         }
     }
