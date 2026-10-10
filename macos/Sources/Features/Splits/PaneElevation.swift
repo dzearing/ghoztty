@@ -33,9 +33,11 @@ enum PaneElevation {
 /// The colors of one window's gradient desk.
 ///
 /// The default is the "ocean" palette the style was chosen with. A window
-/// opened with `--color=random` gets a `PaneDeskVariant` instead: tones drawn
-/// at random from the SAME family (blues and teals), falling off darker toward
-/// the bottom-trailing corner on a dark theme and lighter on a light one.
+/// opened with `--color=random` (or by hand, with Cmd-N) gets a
+/// `PaneDeskVariant` instead: the same two-pool shape built around a random
+/// hue from the whole wheel — the tones `--color=random` has always drawn
+/// from — falling off darker toward the bottom-trailing corner on a dark theme
+/// and lighter on a light one.
 struct PaneDeskPalette: Equatable {
     struct HSB: Equatable {
         var hue: Double        // 0...1
@@ -98,18 +100,27 @@ struct PaneDeskVariant: Codable, Equatable {
         return config
     }
 
-    /// The ocean family's ranges, in degrees.
-    static let leadHues: ClosedRange<Double> = 196...224   // blues
-    static let trailHues: ClosedRange<Double> = 164...190  // teals
+    /// How far the second pool's hue sits from the first, in degrees — the
+    /// same relationship as ocean's teal beside its blue, so a variant reads
+    /// as a sibling of the default rather than a clash.
+    static let trailOffset: ClosedRange<Double> = 22...46
 
     func palette(isLight: Bool) -> PaneDeskPalette {
         var rng = SplitMix64(seed: seed)
         func pick(_ range: ClosedRange<Double>) -> Double {
             range.lowerBound + (range.upperBound - range.lowerBound) * rng.nextUnit()
         }
-        let leadHue = pick(Self.leadHues) / 360
-        let trailHue = pick(Self.trailHues) / 360
-        let baseHue = pick(200...216) / 360
+        func wrap(_ degrees: Double) -> Double {
+            (degrees.truncatingRemainder(dividingBy: 360) + 360).truncatingRemainder(dividingBy: 360) / 360
+        }
+        // A random hue from the whole wheel (what `--color=random` has always
+        // drawn from), its neighbor on one side or the other, and a base
+        // tinted toward the first.
+        let leadDegrees = pick(0...360)
+        let direction: Double = rng.nextUnit() < 0.5 ? -1 : 1
+        let leadHue = wrap(leadDegrees)
+        let trailHue = wrap(leadDegrees + direction * pick(Self.trailOffset))
+        let baseHue = wrap(leadDegrees + direction * pick(4...12))
         let leadReach = pick(0.6...0.85)
         let trailReach = pick(0.5...0.75)
 

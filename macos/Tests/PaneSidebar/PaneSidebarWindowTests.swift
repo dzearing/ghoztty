@@ -419,3 +419,28 @@ struct PaneSidebarWindowTests {
         await close(h)
     }
 }
+
+/// Cmd-N: the core's new_window action posts `ghosttyNewWindow`, which the
+/// app delegate turns into a window. Drive that exact path and look at what
+/// the window got.
+@MainActor
+@Suite(.serialized)
+struct NewWindowDeskTests {
+    @Test func cmdNWindowsGetTheirOwnGradient() async throws {
+        let before = Set(NSApp.windows.compactMap { $0.windowController as? TerminalController }.map(ObjectIdentifier.init))
+        for _ in 0..<2 {
+            NotificationCenter.default.post(name: Ghostty.Notification.ghosttyNewWindow, object: nil, userInfo: [:])
+            try? await Task.sleep(nanoseconds: 400_000_000)
+        }
+        let created = NSApp.windows
+            .compactMap { $0.windowController as? TerminalController }
+            .filter { !before.contains(ObjectIdentifier($0)) }
+        defer { created.forEach { $0.close() } }
+        #expect(created.count == 2)
+        let variants = created.map(\.deskVariant)
+        try? "variants=\(variants) style=\(created.first?.ghostty.config.macosPaneStyle as Any)".write(
+            toFile: "/tmp/pane-sidebar-snapshots/cmdn.txt", atomically: true, encoding: .utf8)
+        #expect(variants.allSatisfy { $0 != nil }, "each Cmd-N window has its own gradient")
+        #expect(variants[0] != variants[1])
+    }
+}

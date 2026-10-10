@@ -3,20 +3,28 @@ import SwiftUI
 import Testing
 @testable import Ghostty
 
-/// A window's own gradient (`--color=random` in the elevated pane style):
-/// random tones from the ocean family, falling off darker on a dark theme and
-/// lighter on a light one, derived deterministically from a persisted seed.
+/// A window's own gradient (`--color=random` / Cmd-N in the elevated pane
+/// style): a random hue from the whole wheel with a neighboring second pool,
+/// falling off darker on a dark theme and lighter on a light one, derived
+/// deterministically from a persisted seed.
 struct PaneDeskTests {
     private let seeds: [UInt64] = (1...200).map { UInt64($0) &* 0x9E37_79B9_7F4A_7C15 }
 
-    @Test func tonesStayInTheOceanFamily() {
+    @Test func theSecondPoolIsANeighborOfTheFirst() {
         for seed in seeds {
-            for isLight in [false, true] {
-                let p = PaneDeskVariant(seed: seed).palette(isLight: isLight)
-                #expect(PaneDeskVariant.leadHues.contains(p.lead.hue * 360), "lead is a blue")
-                #expect(PaneDeskVariant.trailHues.contains(p.trail.hue * 360), "trail is a teal")
-            }
+            let p = PaneDeskVariant(seed: seed).palette(isLight: false)
+            var delta = abs(p.lead.hue - p.trail.hue) * 360
+            if delta > 180 { delta = 360 - delta }
+            #expect(PaneDeskVariant.trailOffset.contains(delta), "neighbor hue, \(delta)° away")
         }
+    }
+
+    @Test func variantsSpanTheWholeWheel() {
+        // The first fix kept every variant within ~30° of blue, so windows
+        // opened side by side looked the same. Hues must cover the wheel.
+        let hues = seeds.map { PaneDeskVariant(seed: $0).palette(isLight: false).lead.hue * 360 }
+        let sextants = Set(hues.map { Int($0 / 60) })
+        #expect(sextants.count == 6, "every 60° slice of the wheel is used (got \(sextants.sorted()))")
     }
 
     @Test func aDarkDeskGetsDarkerAndALightOneLighter() {
