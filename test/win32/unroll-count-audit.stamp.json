@@ -1,18 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-10T10:00:46-07:00",
-    "commit":  "ae2a14bda",
+    "generated":  "2026-10-10T11:57:46-07:00",
+    "commit":  "5ab9d774b",
     "uncommitted":  [
-                        "scripts/guard-due.ps1",
-                        "test/win32/caller-anchor.ps1",
-                        "test/win32/cli-focus-policy.ps1",
-                        "test/win32/hero-nav.ps1",
-                        "test/win32/notification-click-focus.ps1",
-                        "test/win32/pane-banner.ps1",
-                        "test/win32/rearrange-viewer.ps1",
-                        "test/win32/remote-inherit.ps1",
-                        "test/win32/viewer-panes.ps1"
+                        "test/win32/split-dim-viewer.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -420,7 +412,7 @@
                   "test/win32/soak.ps1":  "24245788ab729a9a9a2d59c42acd3a407c87f7895c43b0ff2d4daaabe90a7869",
                   "test/win32/soak-daemon.ps1":  "10a19e7d3a5b7b885afae8a3bb2a04bb92cdf20e8b17c974bb59e54f06be2470",
                   "test/win32/split-dim.ps1":  "a0d3d7e7816fc6a89ab6c2f285c2d19f2e2a550333765c2a3fabdb377c9e8b8b",
-                  "test/win32/split-dim-viewer.ps1":  "454a52890b54b98bd41361b823291d51d54b6986180613e921fd0d185324dea9",
+                  "test/win32/split-dim-viewer.ps1":  "3775cecc0d93488b88311d24f75f63fb3e14bd0458d4c04fda886c4ae37cccbb",
                   "test/win32/split-divider.ps1":  "f3ef692329085abefb527c622478b7ca4a06b8b0f44d18c5d10c913221c20ab8",
                   "test/win32/split-inherit-cwd.ps1":  "f26f4a4f33220e2a2b13418a71da0a6e1feb2644eebce5ae09d8751e06a3b443",
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",

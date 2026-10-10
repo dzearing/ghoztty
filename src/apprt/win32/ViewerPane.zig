@@ -168,6 +168,16 @@ pub const WM_APP_VIEWER_CLOSE: u32 = w32.WM_APP + 25;
 /// menu post still in flight frees it.
 pub const WM_APP_VIEWER_LINK_MENU: u32 = w32.WM_APP + 27;
 
+/// Keyboard focus went INTO the page (T1809): WebView2's `GotFocus`. A click
+/// on web content gives focus to Chromium's own child window, so the host
+/// never sees a `WM_SETFOCUS` and the pane never became the tab's active pane
+/// — the tab kept the old pane's title and the old pane stayed undimmed while
+/// the user worked in the viewer. Posted rather than handled inside the
+/// `Invoke`, for the reason `WM_APP_VIEWER_ACCEL` is: the handler re-places
+/// every overlay the window owns, and the browser is blocked on our return.
+/// +39: every lower WM_APP slot is taken somewhere in the app.
+pub const WM_APP_VIEWER_GOT_FOCUS: u32 = w32.WM_APP + 39;
+
 /// How long the "Filed …" confirmation stays up before the composer closes
 /// itself, matching Mac's 1.8s: long enough to read, short enough that the
 /// pane gives its space back without being asked.
@@ -410,6 +420,9 @@ title_handler: ?*DocumentTitleChangedHandler = null,
 
 /// Our reference on the `AcceleratorKeyPressed` handler (T394), same rule.
 accel_handler: ?*AcceleratorKeyPressedHandler = null,
+
+/// Our reference on the controller's `GotFocus` handler (T1809), same rule.
+got_focus_handler: ?*GotFocusHandler = null,
 
 /// Our reference on the `WindowCloseRequested` handler (T163), same rule.
 window_close_handler: ?*WindowCloseRequestedHandler = null,
@@ -871,6 +884,10 @@ pub fn deinit(self: *ViewerPane, alloc: Allocator) void {
     if (self.accel_handler) |h| {
         h.release();
         self.accel_handler = null;
+    }
+    if (self.got_focus_handler) |h| {
+        h.release();
+        self.got_focus_handler = null;
     }
     if (self.window_close_handler) |h| {
         h.release();
@@ -5339,6 +5356,7 @@ fn adoptController(self: *ViewerPane, c: *iface.ICoreWebView2Controller) void {
     self.subscribeNewWindowRequested();
     self.subscribeWindowCloseRequested();
     self.subscribeAcceleratorKey();
+    self.subscribeGotFocus();
     self.subscribeDocumentTitle();
     // Before the navigation below, and that ordering is the contract: a script
     // registered after a page has started loading does not reach that page, so
@@ -5463,6 +5481,68 @@ fn subscribeAcceleratorKey(self: *ViewerPane) void {
     }
     self.accel_handler = handler;
     log.debug("accelerator handler registered", .{});
+}
+
+/// `ICoreWebView2FocusChangedEventHandler` on the controller's `GotFocus`
+/// (T1809). Its `Invoke` args is a bare `IUnknown` that carries nothing.
+const GotFocusHandler = com.CallbackOwning(
+    iface.IID_FocusChangedHandler,
+    onGotFocus,
+    releasePendingToken,
+);
+
+/// Register the `GotFocus` handler on a freshly adopted controller (T1809).
+/// Non-fatal: a pane that fails here still works, and only a click straight
+/// into the page misses the active-pane move (the pre-T1809 state).
+fn subscribeGotFocus(self: *ViewerPane) void {
+    std.debug.assert(self.got_focus_handler == null);
+    const c = self.controller orelse return;
+    const p = self.pending orelse return;
+
+    const handler = GotFocusHandler.create(p.alloc, p) catch return;
+    p.refs += 1;
+    if (!c.addGotFocus(@ptrCast(handler))) {
+        log.warn("add_GotFocus failed; a click into the page will not make this the active pane", .{});
+        handler.release(); // takes the borrowed token reference with it
+        return;
+    }
+    self.got_focus_handler = handler;
+    log.debug("got-focus handler registered", .{});
+}
+
+fn onGotFocus(
+    p: *Pending,
+    sender: ?*iface.ICoreWebView2Controller,
+    args: ?*anyopaque,
+) com.HRESULT {
+    _ = sender;
+    _ = args;
+    const self = p.pane orelse return com.S_OK;
+    const hwnd = self.hwnd orelse return com.S_OK;
+    log.debug("page got focus", .{});
+    _ = w32.PostMessageW(hwnd, WM_APP_VIEWER_GOT_FOCUS, 0, 0);
+    return com.S_OK;
+}
+
+/// Make this pane its tab's active pane: relabel the tab after it (T92) and
+/// move the unfocused-split dim onto the pane the user left (T74). Shared by
+/// the host's `WM_SETFOCUS` and WebView2's `GotFocus` (T1809), because a click
+/// into the page reaches only the second. Idempotent.
+///
+/// `heroOnPaneFocused` is deliberately NOT here: hero excludes viewers (T90g).
+///
+/// Not while the window is closing (T1356). Our own `deinit` closes the
+/// WebView2 controller, and that close pumps messages: a focus change
+/// dispatched during it would ask a window whose panes are being freed to
+/// re-place every overlay it owns.
+fn becomeActivePane(self: *ViewerPane) void {
+    const pv = self.pane_view orelse return;
+    const win = self.parent_window;
+    if (win.closing) return;
+    const tab = win.active_tab;
+    win.tab_active_pane[tab] = pv;
+    win.refreshTabTitle(tab);
+    win.updateDimOverlays();
 }
 
 /// The modifier state at Invoke time. The event args carry no modifiers by
@@ -6552,24 +6632,16 @@ pub fn wndProc(
             // from a terminal into a viewer leaves the tab named after the pane
             // the user just left, and a later `DocumentTitleChanged` is filtered
             // out by `onPaneTitleChanged`'s active-pane guard.
-            //
-            // `heroOnPaneFocused` is deliberately NOT here: hero excludes
-            // viewers (T90g). `updateDimOverlays` IS (T380): the active pane
-            // just changed, so the dim has to move off this pane and onto the
-            // one the user left, exactly as the terminal focus path does.
-            //
-            // Not while the window is closing (T1356). Our own `deinit`
-            // closes the WebView2 controller, and that close pumps messages:
-            // a focus change dispatched during it would ask a window whose
-            // panes are being freed to re-place every overlay it owns.
-            if (self.pane_view) |pv| {
-                const win = self.parent_window;
-                if (win.closing) return 0;
-                const tab = win.active_tab;
-                win.tab_active_pane[tab] = pv;
-                win.refreshTabTitle(tab);
-                win.updateDimOverlays();
-            }
+            self.becomeActivePane();
+            return 0;
+        },
+
+        // Focus went straight into the page (T1809) — the click path, which
+        // never reaches the `WM_SETFOCUS` above. `focus()` is not called: the
+        // browser already holds focus, and asking it to move again is noise.
+        WM_APP_VIEWER_GOT_FOCUS => {
+            self.focused = true;
+            self.becomeActivePane();
             return 0;
         },
 

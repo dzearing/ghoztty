@@ -1,37 +1,40 @@
-# T380 acceptance: a VIEWER pane in a split gets the T74 unfocused-split dim
-# overlay, exactly like a terminal pane.
+# T1809 acceptance: a VIEWER pane NEVER gets the unfocused-split dim overlay,
+# and focus moving into a viewer still moves the dim onto the terminal.
 #
-# T373 gave viewer panes a real host window (class GhozttyViewer); before T380
-# the PaneView viewer arm no-opped show/hideDimOverlay, so in a terminal+viewer
-# split the terminal dimmed when unfocused and the viewer never did - the
-# viewer always read as the active pane.
+# History: T380 gave viewer panes the T74 overlay. The user then reported an
+# HTML pane that dimmed and never undimmed, and directed that viewer panes
+# never dim at all (2026-10-10) - which is also Mac's behavior. The stranding
+# cause: a click into the web content hands focus to WebView2's own child
+# window, so the viewer's host never saw WM_SETFOCUS, never became the tab's
+# active pane, and kept its dim while the user worked in it. T1809 removed the
+# viewer dim and subscribed WebView2's GotFocus so the active pane follows
+# that click.
 #
 # One GUI launch, defaults pinned (--background=#101014 -> alpha 77, fill
-# 16,16,20 - the same numbers split-dim.ps1 run 1 asserts for terminals):
+# 16,16,20 - the same numbers split-dim.ps1 run 1 asserts for terminals). In
+# EVERY step, no GhozttyDimOverlay window (visible or hidden) may cover the
+# viewer, and at most one overlay window may exist (the terminal's):
 #
-#   1. +split --view=<md>: the new viewer pane is focused, so exactly one
-#      overlay is visible and it covers the TERMINAL (already true pre-T380;
-#      proves the viewer counts as the focused pane).
-#   2. Click the terminal: the overlay must MOVE to the viewer host rect
-#      (the T380 behavior), with ex-style/alpha/fill matching the terminal
-#      overlay's contract.
-#   3. Resize the top window: the overlay re-glues to the viewer's new rect
-#      (no stale rect after layout).
-#   4. Zoom the terminal (ctrl+shift+enter): all overlays hide. Unzoom: the
-#      viewer overlay comes back.
-#   5. New tab (ctrl+t): all overlays hide (popups do not follow pane
-#      visibility for free). Back to tab 1 (ctrl+1): the viewer overlay
-#      returns.
+#   1. +split --view=<md>: the new viewer pane is focused, so the TERMINAL is
+#      dimmed (positive control: the dim machinery is alive).
+#   2. Focus the terminal: NO visible overlay (the viewer does not dim).
+#   2b. goto_split into the viewer: the terminal dims again; a posted click on
+#      the terminal clears it.
+#   2c. Focus put STRAIGHT into Chromium's input window (the click path that
+#      skips the host's WM_SETFOCUS): the terminal must dim, which only
+#      happens if the viewer became the active pane through GotFocus.
+#   3. Resize: still nothing over the viewer; the terminal overlay re-glues.
+#   4. Zoom/unzoom and 5. a tab switch: nothing over the viewer, ever.
 #
-# Oracles are the migrated T214 route-1 ones (rects + GetLayeredWindowAttributes
-# + PrintWindow fill of the overlay's own window): there is no composited screen
-# off the input desktop, and the composite of fill+alpha is Windows' own. See
-# split-dim.ps1's header for the full argument.
+# Oracles are window enumeration (rects, visibility) plus, for the terminal
+# overlay, GetLayeredWindowAttributes and the overlay's own painted fill - see
+# split-dim.ps1's header for why there is no composited screen to probe here.
 #
-# The focus flip is a posted click (Send-TestMouse): the terminal surface's
-# WM_LBUTTONDOWN handler defers SetFocus itself (App.zig), so this works on the
-# background test desktop where real input does not exist. -NegativeControl
-# inverts the step-2 rect assertion to prove the oracle can fail.
+# The focus flips are posted clicks/chords (Send-TestMouse/Send-TestKeys): the
+# terminal surface's WM_LBUTTONDOWN handler defers SetFocus itself (App.zig),
+# so this works on the background test desktop where real input does not
+# exist. -NegativeControl inverts the step-2 assertion to prove the oracle can
+# fail.
 #
 # Only touches ghoztty processes running from this repo's zig-out*.
 param([string]$ExePath, [switch]$NegativeControl, [switch]$Interactive)
@@ -85,8 +88,8 @@ function Get-Overlays([int]$procId) {
 }
 
 # Poll until exactly one visible overlay covers $pane (T48 defers focus, so
-# the flip lands asynchronously). $pane may be a live hwnd holder: the rect is
-# re-read each poll, so this also serves the resize step.
+# the flip lands asynchronously). The rect is re-read each poll, so this also
+# serves the resize step.
 function Wait-OverlayOverHwnd([int]$procId, [IntPtr]$paneHwnd) {
     for ($t = 0; $t -lt 25; $t++) {
         $rect = Get-TestWindowRect -Window $paneHwnd
@@ -109,6 +112,17 @@ function Wait-NoOverlays([int]$procId) {
         Start-Sleep -Milliseconds 100
     }
     return @(Get-Overlays $procId | Where-Object Visible)
+}
+
+# The T1809 invariant, checked against EVERY overlay window the process owns,
+# hidden ones included: none may cover the viewer, and a viewer never owns
+# one, so there is at most one in the whole process (the terminal's).
+function Assert-ViewerNeverDimmed([string]$when) {
+    $all = @(Get-Overlays $app.Pid)
+    $vr = Get-TestWindowRect -Window $viewH
+    $over = @($all | Where-Object { $vr -and (Rects-Match $_ $vr) })
+    Assert ($over.Count -eq 0) "${when}: no dim overlay window covers the viewer ($($over.Count))"
+    Assert ($all.Count -le 1) "${when}: at most one overlay window exists, the terminal's ($($all.Count))"
 }
 
 # The overlay's OWN painted fill, as "r,g,b" (split-dim.ps1's migrated oracle,
@@ -158,7 +172,7 @@ Set-Content -Path $md -Value "# Dim overlay fixture`n`nsome text`n" -Encoding as
 
 try {
     if ($NegativeControl) {
-        Write-Host 'NEGATIVE CONTROL: step 2 asserts the overlay stays over the TERMINAL after the terminal is focused - this run MUST fail'
+        Write-Host 'NEGATIVE CONTROL: step 2 asserts the VIEWER is dimmed after the terminal is focused - this run MUST fail'
     }
 
     Remove-Item $errlog -ErrorAction SilentlyContinue
@@ -174,7 +188,9 @@ try {
     Assert (-not (Test-TestDesktopLeak -ProcessId $app.Pid)) `
         'window is NOT enumerable on the interactive desktop'
 
-    & $exe +split --direction=down "--view=$md" | Out-Null
+    # --focus: CLI splits open in the background since T1797, and step 1
+    # needs the viewer to be the focused pane.
+    & $exe +split --direction=down "--view=$md" --focus | Out-Null
     Start-Sleep -Milliseconds 800
     $terms = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal')
     $views = @(Get-TestChildWindows -Window $top -Class 'GhozttyViewer')
@@ -196,9 +212,13 @@ try {
     $ov = @(Wait-OverlayOverHwnd $app.Pid $termH)
     Assert ($ov.Count -eq 1) "viewer focused: exactly one visible overlay ($($ov.Count))"
     if ($ov.Count -eq 1) {
-        Assert (Rects-Match $ov[0] $term) 'viewer focused: overlay covers the TERMINAL pane'
-        Assert (-not (Rects-Match $ov[0] $view)) 'viewer focused: overlay does not cover the viewer'
+        Assert (Rects-Match $ov[0] $term) 'viewer focused: overlay covers the TERMINAL pane (positive control)'
+        $la = Get-TestLayeredAttrs -Window ([IntPtr]$ov[0].Hwnd)
+        Assert ($la.Ok -and $la.Alpha -eq 77) "terminal overlay: layered alpha is 77 = (1-0.7)*255 (got $($la.Alpha))"
+        $fill = Get-OverlayFill $ov[0]
+        Assert ($fill -eq '16,16,20') "terminal overlay paints the background color #101014 (got $fill)"
     }
+    Assert-ViewerNeverDimmed 'viewer focused'
 
     # Positive control: a chord posted at the terminal reaches binding dispatch
     # (debug log only) - the zoom/tab steps below depend on it. Side effect,
@@ -208,7 +228,7 @@ try {
     Start-Sleep -Milliseconds 300
     if (Test-Path $errlog) {
         if (-not (Select-String -Path $errlog -Pattern 'clear_screen' -Quiet)) {
-            Write-Host 'ABORT: positive control failed (clear_screen never dispatched) - injection broken, not a T380 verdict'
+            Write-Host 'ABORT: positive control failed (clear_screen never dispatched) - injection broken, not a T1809 verdict'
             Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue; exit 1
         }
         Write-Host 'OK    positive control: injection reaches bindings (clear_screen dispatched)'
@@ -217,63 +237,97 @@ try {
     }
 
     # -----------------------------------------------------------------------
-    # 2. The terminal now has focus: the overlay must have moved to the
-    #    VIEWER - the exact gap T380 closes.
+    # 2. The terminal now has focus: its overlay is gone and the viewer did
+    #    NOT take one (the T380 behavior T1809 removes).
     # -----------------------------------------------------------------------
-    $ov = @(Wait-OverlayOverHwnd $app.Pid $viewH)
+    $ov = @(Wait-NoOverlays $app.Pid)
     $script:negReached = $true
     if ($NegativeControl) {
-        Assert ($ov.Count -eq 1 -and (Rects-Match $ov[0] $term)) `
-            'NEGATIVE: overlay stays over the terminal after the terminal took focus'
+        Assert ($ov.Count -eq 1 -and (Rects-Match $ov[0] $view)) `
+            'NEGATIVE: the viewer is dimmed after the terminal took focus'
     } else {
-        Assert ($ov.Count -eq 1) "terminal focused: exactly one visible overlay ($($ov.Count))"
-        if ($ov.Count -eq 1) {
-            Assert (Rects-Match $ov[0] $view) 'terminal focused: overlay covers the VIEWER pane (T380)'
-            Assert (-not (Rects-Match $ov[0] $term)) 'terminal focused: overlay does not cover the terminal'
-            $la = Get-TestLayeredAttrs -Window ([IntPtr]$ov[0].Hwnd)
-            Assert ($la.Ok -and $la.Alpha -eq 77) "viewer overlay: layered alpha is 77 = (1-0.7)*255 (got $($la.Alpha))"
-            $ex = Get-TestWindowStyle -Window ([IntPtr]$ov[0].Hwnd) -ExStyle
-            Assert (($ex -band 0x80000) -ne 0) 'viewer overlay: WS_EX_LAYERED'
-            Assert (($ex -band 0x20) -ne 0) 'viewer overlay: WS_EX_TRANSPARENT (click-through)'
-            Assert (($ex -band 0x8000000) -ne 0) 'viewer overlay: WS_EX_NOACTIVATE'
-            $fill = Get-OverlayFill $ov[0]
-            Assert ($fill -eq '16,16,20') "viewer overlay paints the background color #101014 (got $fill)"
-        }
+        Assert ($ov.Count -eq 0) "terminal focused: no visible overlay - the viewer never dims ($($ov.Count))"
+        Assert-ViewerNeverDimmed 'terminal focused'
     }
 
     # -----------------------------------------------------------------------
     # 2b. goto_split down (at the terminal) hands focus to the VIEWER through
-    #     the T48 deferred-SetFocus path: the host's WM_SETFOCUS is what runs
-    #     T380's updateDimOverlays call, so the overlay must flip back to the
-    #     terminal. Then a posted click on the terminal flips it again.
+    #     the T48 deferred-SetFocus path: the terminal dims. Then a posted
+    #     click on the terminal clears it, and nothing lands on the viewer.
     # -----------------------------------------------------------------------
     $r = Send-TestKeys -Window $top -Target $termH -Modifiers ctrl,alt -Key Down
     Assert $r 'goto-down chord delivered'
     $ov = @(Wait-OverlayOverHwnd $app.Pid $termH)
     Assert ($ov.Count -eq 1 -and (Rects-Match $ov[0] $term)) `
-        'goto_split into the viewer: overlay flips back onto the terminal'
+        'goto_split into the viewer: the terminal dims'
+    Assert-ViewerNeverDimmed 'goto_split into the viewer'
 
     $cx = [int](($term.Left + $term.Right) / 2)
     $cy = [int](($term.Top + $term.Bottom) / 2)
     $r = Send-TestMouse -Window $top -Target $termH -X $cx -Y $cy
     Assert $r 'terminal click delivered'
-    $ov = @(Wait-OverlayOverHwnd $app.Pid $viewH)
-    Assert ($ov.Count -eq 1 -and (Rects-Match $ov[0] $view)) `
-        'terminal clicked: overlay back over the viewer'
+    $ov = @(Wait-NoOverlays $app.Pid)
+    Assert ($ov.Count -eq 0) "terminal clicked: no visible overlay ($($ov.Count))"
+    Assert-ViewerNeverDimmed 'terminal clicked'
 
     # -----------------------------------------------------------------------
-    # 3. Resize: the overlay re-glues to the viewer's new rect.
+    # 2c. Focus straight into the page - what a click on web content does.
+    #     The host never sees WM_SETFOCUS on this path; only WebView2's
+    #     GotFocus says it happened. If the viewer became the active pane the
+    #     terminal dims; before T1809 the terminal stayed lit and the viewer
+    #     stayed dimmed.
+    # -----------------------------------------------------------------------
+    $chrome = [IntPtr]::Zero
+    for ($t = 0; $t -lt 50 -and $chrome -eq [IntPtr]::Zero; $t++) {
+        $kids = @(Get-TestChildWindows -Window $viewH -Class '*')
+        $widget = @($kids | Where-Object { $_.Class -eq 'Chrome_RenderWidgetHostHWND' })
+        if ($widget.Count -lt 1) { $widget = @($kids | Where-Object { $_.Class -eq 'Chrome_WidgetWin_1' }) }
+        if ($widget.Count -ge 1) { $chrome = [IntPtr][int64]$widget[0].Hwnd }
+        else { Start-Sleep -Milliseconds 200 }
+    }
+    Assert ($chrome -ne [IntPtr]::Zero) 'the viewer Chromium input window is up'
+    if ($chrome -ne [IntPtr]::Zero) {
+        $vr = Get-TestWindowRect -Window $viewH
+        $vx = [int](($vr.Left + $vr.Right) / 2)
+        $vy = [int](($vr.Top + $vr.Bottom) / 2)
+        $r = Send-TestMouse -Window $top -Target $chrome -X $vx -Y $vy
+        Write-Host "DEBUG click into Chromium ($chrome $((Get-TestWindowClass -Window $chrome))) returned $r"
+        $ov = @(Wait-OverlayOverHwnd $app.Pid $termH)
+        Assert ($ov.Count -eq 1 -and (Rects-Match $ov[0] $term)) `
+            'focus straight into the page: the viewer becomes the active pane and the terminal dims (GotFocus)'
+        Assert-ViewerNeverDimmed 'focus straight into the page'
+        # Hand the keyboard back to the terminal for the steps below.
+        $r = Send-TestMouse -Window $top -Target $termH -X $cx -Y $cy
+        $ov = @(Wait-NoOverlays $app.Pid)
+        Assert ($ov.Count -eq 0) "terminal clicked after the page: no visible overlay ($($ov.Count))"
+    }
+
+    # -----------------------------------------------------------------------
+    # 3. Resize: nothing over the viewer; with the viewer focused, the
+    #    terminal's overlay re-glues to the terminal's new rect.
     # -----------------------------------------------------------------------
     $topRect = Get-TestWindowRect -Window $top
     $newW = ($topRect.Right - $topRect.Left) - 120
     $newH = ($topRect.Bottom - $topRect.Top) - 80
     Set-TestWindowSize -Window $top -Width $newW -Height $newH | Out-Null
-    $ov = @(Wait-OverlayOverHwnd $app.Pid $viewH)
-    Assert ($ov.Count -eq 1 -and (Rects-Match $ov[0] (Get-TestWindowRect -Window $viewH))) `
-        'resize: overlay re-glued to the viewer pane rect'
+    $ov = @(Wait-NoOverlays $app.Pid)
+    Assert ($ov.Count -eq 0) "resize, terminal focused: no visible overlay ($($ov.Count))"
+    Assert-ViewerNeverDimmed 'resize'
+    $r = Send-TestKeys -Window $top -Target $termH -Modifiers ctrl,alt -Key Down
+    Assert $r 'goto-down chord delivered after resize'
+    $ov = @(Wait-OverlayOverHwnd $app.Pid $termH)
+    Assert ($ov.Count -eq 1 -and (Rects-Match $ov[0] (Get-TestWindowRect -Window $termH))) `
+        'resize, viewer focused: terminal overlay re-glued to the terminal rect'
+    Assert-ViewerNeverDimmed 'resize, viewer focused'
+    $term = Get-TestWindowRect -Window $termH
+    $cx = [int](($term.Left + $term.Right) / 2)
+    $cy = [int](($term.Top + $term.Bottom) / 2)
+    $r = Send-TestMouse -Window $top -Target $termH -X $cx -Y $cy
+    $ov = @(Wait-NoOverlays $app.Pid)
+    Assert ($ov.Count -eq 0) "terminal clicked after resize: no visible overlay ($($ov.Count))"
 
     # -----------------------------------------------------------------------
-    # 4. Zoom the (focused) terminal: overlays hide; unzoom restores.
+    # 4. Zoom the (focused) terminal and unzoom: nothing over the viewer.
     # -----------------------------------------------------------------------
     $r = Send-TestKeys -Window $top -Target $termH -Modifiers ctrl,shift -Key Enter
     Assert $r 'zoom chord delivered'
@@ -281,26 +335,24 @@ try {
     Assert ($ov.Count -eq 0) "zoomed: no visible overlay ($($ov.Count))"
     $r = Send-TestKeys -Window $top -Target $termH -Modifiers ctrl,shift -Key Enter
     Assert $r 'unzoom chord delivered'
-    $ov = @(Wait-OverlayOverHwnd $app.Pid $viewH)
-    Assert ($ov.Count -eq 1 -and (Rects-Match $ov[0] (Get-TestWindowRect -Window $viewH))) `
-        'unzoom: overlay restored over the viewer'
+    Start-Sleep -Milliseconds 500
+    $ov = @(Wait-NoOverlays $app.Pid)
+    Assert ($ov.Count -eq 0) "unzoomed, terminal focused: no visible overlay ($($ov.Count))"
+    Assert-ViewerNeverDimmed 'unzoom'
 
     # -----------------------------------------------------------------------
-    # 5. Tab switch: overlays are popups, so an inactive tab's must be HIDDEN
-    #    by updateDimOverlays, not just occluded.
+    # 5. Tab switch away and back: nothing over the viewer.
     # -----------------------------------------------------------------------
     $r = Send-TestKeys -Window $top -Target $termH -Modifiers ctrl -Key T
     Assert $r 'new-tab chord delivered'
     $ov = @(Wait-NoOverlays $app.Pid)
     Assert ($ov.Count -eq 0) "tab 2 active: no visible overlay ($($ov.Count))"
-    # Back to tab 1 via ctrl+1, posted at tab 2's (visible) terminal.
     $t2 = @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible)
     if ($t2.Count -ge 1) {
         $r = Send-TestKeys -Window $top -Target ([IntPtr]$t2[0].Hwnd) -Modifiers ctrl -Key '1'
         Assert $r 'goto-tab-1 chord delivered'
-        $ov = @(Wait-OverlayOverHwnd $app.Pid $viewH)
-        Assert ($ov.Count -eq 1 -and (Rects-Match $ov[0] (Get-TestWindowRect -Window $viewH))) `
-            'tab 1 active again: overlay returns over the viewer'
+        Start-Sleep -Milliseconds 500
+        Assert-ViewerNeverDimmed 'tab 1 active again'
     } else {
         Assert $false 'tab 2 terminal pane found for the return chord'
     }

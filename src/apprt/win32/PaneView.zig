@@ -200,15 +200,14 @@ pub fn bannerLayoutInset(self: *PaneView, slot_w: i32, slot_h: i32) i32 {
     };
 }
 
-/// Show the unfocused-split dim overlay (T74; viewers since T380 — the T373
-/// host window is what gives the overlay something to glue to).
+/// Show the unfocused-split dim overlay (T74). Terminal panes only: viewer
+/// panes never dim (T1809, user directive 2026-10-10, reversing T380), the
+/// same as Mac. `dim_math.shouldDim` already says no for a viewer; this arm
+/// is the second lock, so no caller can put a wash over a viewer by asking.
 pub fn showDimOverlay(self: *PaneView, color: u32, alpha: u8, batch: ?*?w32.HDWP) void {
     switch (self.kind) {
         .terminal => |s| s.showDimOverlay(color, alpha, batch),
-        // The viewer method takes the allocator as a parameter so the host
-        // floor stays unit-testable without a Window; every PaneView is in a
-        // tree, so reaching through the parent window is safe HERE.
-        .viewer => |v| v.showDimOverlay(v.parent_window.app.core_app.alloc, color, alpha, batch),
+        .viewer => |v| v.hideDimOverlay(),
     }
 }
 

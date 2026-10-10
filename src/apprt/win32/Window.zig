@@ -5564,6 +5564,7 @@ pub fn updateDimOverlays(self: *Window) void {
                 .zoomed = tree.zoomed != null,
                 .hero = self.tab_hero_active[tab],
                 .focused_pane = entry.view == self.tab_active_pane[tab],
+                .viewer = entry.view.kind == .viewer,
             });
             if (dim) {
                 entry.view.showDimOverlay(color, alpha, &hdwp);

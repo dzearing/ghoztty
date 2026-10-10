@@ -335,6 +335,17 @@ pub const IID_AcceleratorKeyPressedHandler: GUID = .{
     .Data4 = .{ 0x8E, 0x44, 0x65, 0x81, 0x1C, 0x76, 0xDC, 0xB2 },
 };
 
+// {05EA24BD-6452-4926-9014-4B82B498135D}
+// `ICoreWebView2FocusChangedEventHandler` (T1809): the controller's `GotFocus`
+// and `LostFocus` share it. Its `Invoke` takes `(controller, IUnknown args)`,
+// and the args carry nothing.
+pub const IID_FocusChangedHandler: GUID = .{
+    .Data1 = 0x05EA24BD,
+    .Data2 = 0x6452,
+    .Data3 = 0x4926,
+    .Data4 = .{ 0x90, 0x14, 0x4B, 0x82, 0xB4, 0x98, 0x13, 0x5D },
+};
+
 // {9F760F8A-FB79-42BE-9990-7B56900FA9C7}
 pub const IID_ICoreWebView2AcceleratorKeyPressedEventArgs: GUID = .{
     .Data1 = 0x9F760F8A,
@@ -1402,7 +1413,9 @@ pub const ICoreWebView2Controller = extern struct {
         MoveFocus: *const fn (*ICoreWebView2Controller, MoveFocusReason) callconv(.winapi) HRESULT,
         add_MoveFocusRequested: *const anyopaque,
         remove_MoveFocusRequested: *const anyopaque,
-        add_GotFocus: *const anyopaque,
+        /// T1809: a click into the page moves focus without a `WM_SETFOCUS`
+        /// on the host, and this is the only signal that it happened.
+        add_GotFocus: *const fn (*ICoreWebView2Controller, *anyopaque, *EventRegistrationToken) callconv(.winapi) HRESULT,
         remove_GotFocus: *const anyopaque,
         add_LostFocus: *const anyopaque,
         remove_LostFocus: *const anyopaque,
@@ -1468,6 +1481,13 @@ pub const ICoreWebView2Controller = extern struct {
     pub fn addAcceleratorKeyPressed(self: *ICoreWebView2Controller, handler: *anyopaque) bool {
         var token: EventRegistrationToken = .{};
         return !com.failed(self.vtable.add_AcceleratorKeyPressed(self, handler, &token));
+    }
+
+    /// Register a `GotFocus` handler (T1809). Token discarded, same reason as
+    /// `addAcceleratorKeyPressed`.
+    pub fn addGotFocus(self: *ICoreWebView2Controller, handler: *anyopaque) bool {
+        var token: EventRegistrationToken = .{};
+        return !com.failed(self.vtable.add_GotFocus(self, handler, &token));
     }
 
     pub fn notifyParentWindowPositionChanged(self: *ICoreWebView2Controller) void {

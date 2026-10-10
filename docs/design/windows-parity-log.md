@@ -34693,3 +34693,20 @@ cannot open maximized (Windows has no non-activating maximize). New harness
 `cli-focus-policy.ps1` (39 assertions, negative control red, guard row added);
 seven existing harnesses that had relied on the old contract now pass `--focus`
 in their fixtures. Floor lanes, P1-P3 and the focus-sensitive sweep green.
+
+## 2026-10-10 — T1809: viewer panes never dim, and a click into a page makes it the active pane
+
+User report: an HTML pane dimmed and never undimmed; directive that viewer
+panes never dim. Root cause of the stranding: a click into web content gives
+keyboard focus to Chromium's own child window, so the viewer host never saw
+`WM_SETFOCUS`, never became the tab's active pane, and kept the T380 dim on the
+pane being used. `dim_math.shouldDim` now refuses any viewer (`.viewer`), the
+`PaneView` viewer arm only hides, and `ViewerPane` subscribes the controller's
+`GotFocus` (posted as `WM_APP_VIEWER_GOT_FOCUS` into the shared
+`becomeActivePane`), so the tab title follows the click and the terminal left
+behind dims as it should. Terminals cannot strand by this cause. Mac owes
+nothing (its viewers never dimmed; T559 skipped). `split-dim-viewer.ps1`
+rewritten to the new contract (46 assertions; `-NegativeControl` red; with the
+GotFocus hook disabled step 2c goes red). Floor lanes, P1-P3, `split-dim.ps1`
+and the due harnesses green. Filed T1812 (delete the now-dead viewer overlay
+code).

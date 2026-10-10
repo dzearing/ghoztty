@@ -33,11 +33,17 @@ pub const DimState = struct {
     hero: bool,
     /// This pane is the tab's active (last-focused) pane.
     focused_pane: bool,
+    /// This pane is a viewer (markdown, HTML, code, diff, website, image).
+    /// Viewers never dim (T1809, user directive 2026-10-10), which is also
+    /// what Mac does: its viewer panes never had the overlay. T380 had added
+    /// one here, and a click into the web content does not always move the
+    /// tab's active pane, so the dim could strand on a pane being used.
+    viewer: bool,
 };
 
 pub fn shouldDim(state: DimState) bool {
     return state.alpha > 0 and state.active_tab and state.is_split and
-        !state.zoomed and !state.hero and !state.focused_pane;
+        !state.zoomed and !state.hero and !state.focused_pane and !state.viewer;
 }
 
 /// A screen-space placement of the overlay, in the units `SetWindowPos`
@@ -114,6 +120,7 @@ test "shouldDim: unfocused pane of a split active tab dims" {
         .zoomed = false,
         .hero = false,
         .focused_pane = false,
+        .viewer = false,
     }));
 }
 
@@ -125,6 +132,7 @@ test "shouldDim: focused pane never dims" {
         .zoomed = false,
         .hero = false,
         .focused_pane = true,
+        .viewer = false,
     }));
 }
 
@@ -136,6 +144,7 @@ test "shouldDim: single pane never dims" {
         .zoomed = false,
         .hero = false,
         .focused_pane = false,
+        .viewer = false,
     }));
 }
 
@@ -147,6 +156,7 @@ test "shouldDim: alpha 0 (opacity 1) disables dimming" {
         .zoomed = false,
         .hero = false,
         .focused_pane = false,
+        .viewer = false,
     }));
 }
 
@@ -158,6 +168,7 @@ test "shouldDim: inactive tab, zoom, and hero suppress dimming" {
         .zoomed = false,
         .hero = false,
         .focused_pane = false,
+        .viewer = false,
     };
     var s = base;
     s.active_tab = false;
@@ -168,6 +179,33 @@ test "shouldDim: inactive tab, zoom, and hero suppress dimming" {
     s = base;
     s.hero = true;
     try testing.expect(!shouldDim(s));
+}
+
+test "shouldDim: a viewer pane never dims, in any state (T1809)" {
+    // Every combination of the other inputs, including the one that dims a
+    // terminal: the viewer flag alone must keep the overlay off.
+    for (0..32) |bits| {
+        const s: DimState = .{
+            .alpha = if (bits & 1 != 0) 77 else 0,
+            .active_tab = bits & 2 != 0,
+            .is_split = bits & 4 != 0,
+            .zoomed = bits & 8 != 0,
+            .hero = false,
+            .focused_pane = bits & 16 != 0,
+            .viewer = true,
+        };
+        try testing.expect(!shouldDim(s));
+    }
+    // Positive control: the same dimming state with a terminal does dim.
+    try testing.expect(shouldDim(.{
+        .alpha = 77,
+        .active_tab = true,
+        .is_split = true,
+        .zoomed = false,
+        .hero = false,
+        .focused_pane = false,
+        .viewer = false,
+    }));
 }
 
 test "needsReposition: a steady, already-shown overlay does nothing" {
