@@ -75,6 +75,9 @@
                 <outlet property="menuZoomSplit" destination="oPd-mn-IEH" id="wTu-jK-egI"/>
                 <outlet property="menuHeroMode" destination="hRm-Tg-001" id="hRm-Tg-003"/>
                 <outlet property="menuRearrangeMode" destination="rAr-Mo-001" id="rAr-Mo-003"/>
+                <outlet property="menuTogglePaneSidebar" destination="pSb-Tg-001" id="pSb-Tg-003"/>
+                <outlet property="menuStashPane" destination="pSb-St-001" id="pSb-St-003"/>
+                <outlet property="menuRestoreStashedPane" destination="pSb-Rs-001" id="pSb-Rs-003"/>
             </connections>
         </customObject>
         <customObject id="YLy-65-1bz" customClass="NSFontManager"/>
@@ -452,6 +455,25 @@
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
                                     <action selector="toggleRearrangeMode:" target="-1" id="rAr-Mo-002"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem isSeparatorItem="YES" id="pSb-Sp-001"/>
+                            <menuItem title="Show Pane Sidebar" id="pSb-Tg-001">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="togglePaneSidebar:" target="-1" id="pSb-Tg-002"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Stash Pane" id="pSb-St-001">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="stashPane:" target="-1" id="pSb-St-002"/>
+                                </connections>
+                            </menuItem>
+                            <menuItem title="Restore Stashed Pane" id="pSb-Rs-001">
+                                <modifierMask key="keyEquivalentModifierMask"/>
+                                <connections>
+                                    <action selector="restoreStashedPane:" target="-1" id="pSb-Rs-002"/>
                                 </connections>
                             </menuItem>
                             <menuItem title="Select Previous Split" id="Lic-px-1wg">

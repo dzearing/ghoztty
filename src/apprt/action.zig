@@ -161,6 +161,16 @@ pub const Action = union(Key) {
     /// Toggle pane rearrange mode for the window.
     toggle_rearrange_mode,
 
+    /// Show or hide the window's pane sidebar.
+    toggle_pane_sidebar,
+
+    /// Stash the focused pane: take it out of the split layout, into the
+    /// pane sidebar, without ending it.
+    stash_pane,
+
+    /// Restore the top of the window's stash to the layout.
+    restore_stashed_pane,
+
     /// Present the target terminal whether its a tab, split, or window.
     present_terminal,
 
@@ -388,6 +398,9 @@ pub const Action = union(Key) {
         toggle_split_zoom,
         toggle_hero_mode,
         toggle_rearrange_mode,
+        toggle_pane_sidebar,
+        stash_pane,
+        restore_stashed_pane,
         present_terminal,
         size_limit,
         reset_window_size,

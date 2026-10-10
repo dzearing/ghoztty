@@ -7,6 +7,9 @@ import GhosttyKit
 class QuickTerminalController: BaseTerminalController {
     override var windowNibName: NSNib.Name? { "QuickTerminal" }
 
+    /// The Quick Terminal has no window chrome for a pane sidebar to live in.
+    override var hasPaneSidebar: Bool { false }
+
     /// The position for the quick terminal.
     let position: QuickTerminalPosition
 

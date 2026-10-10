@@ -425,6 +425,13 @@ pub const Action = union(enum) {
     /// Reload a named viewer pane's content in place.
     reload: Reload,
 
+    /// Stash a pane: take it out of its window's split layout, into the
+    /// pane sidebar, without ending it.
+    stash: Stash,
+
+    /// Restore a stashed pane to its window's split layout.
+    restore: Restore,
+
     pub const NewWindow = struct {
         /// A list of command arguments to launch in the new window. If this is
         /// `null` the command configured in the config or the user's default
@@ -709,6 +716,11 @@ pub const Action = union(enum) {
         }
     };
 
+    /// `+stash` and `+restore` carry only their CLI arguments, exactly like
+    /// `+reload`.
+    pub const Stash = Reload;
+    pub const Restore = Reload;
+
     /// Sync with: ghostty_ipc_action_tag_e
     pub const Key = enum(c_int) {
         new_window,
@@ -720,6 +732,8 @@ pub const Action = union(enum) {
         set_state,
         set_banner,
         reload,
+        stash,
+        restore,
 
         test "ghostty.h Action.Key" {
             try lib.checkGhosttyHEnum(Key, "GHOSTTY_IPC_ACTION_");

@@ -39,11 +39,31 @@ protocol TerminalViewModel: ObservableObject {
     /// Names this window when resolving a pane drop.
     var rearrangeWindowRef: PaneDropWindowRef { get }
 
+    /// The pane sidebar's state, and whether this window has one.
+    var paneSidebarState: PaneSidebarState { get }
+    var hasPaneSidebar: Bool { get }
+
     /// The command palette state.
     var commandPaletteIsShowing: Bool { get set }
 
     /// The update overlay should be visible.
     var updateOverlayIsVisible: Bool { get }
+}
+
+/// The grid, beside the window's pane sidebar when it has one.
+private struct PaneSidebarSlot<ViewModel: TerminalViewModel, Content: View>: View {
+    @ObservedObject var viewModel: ViewModel
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        if viewModel.hasPaneSidebar, let controller = viewModel as? BaseTerminalController {
+            PaneSidebarContainer(state: viewModel.paneSidebarState, controller: controller) {
+                content
+            }
+        } else {
+            content
+        }
+    }
 }
 
 /// The main terminal view. This terminal view supports splits.
@@ -88,12 +108,14 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                         DebugBuildWarningView()
                     }
 
-                    TerminalSplitTreeView(
-                        tree: viewModel.surfaceTree,
-                        action: { delegate?.performSplitAction($0) },
-                        heroModeState: viewModel.heroModeState,
-                        rearrangeModeState: viewModel.rearrangeModeState,
-                        windowRef: viewModel.rearrangeWindowRef)
+                    PaneSidebarSlot(viewModel: viewModel) {
+                        TerminalSplitTreeView(
+                            tree: viewModel.surfaceTree,
+                            action: { delegate?.performSplitAction($0) },
+                            heroModeState: viewModel.heroModeState,
+                            rearrangeModeState: viewModel.rearrangeModeState,
+                            windowRef: viewModel.rearrangeWindowRef)
+                    }
                         .environmentObject(ghostty)
                         .ghosttyLastFocusedSurface(lastFocusedSurface)
                         .focused($focused)

@@ -103,6 +103,15 @@ final class SessionLayoutManifest {
         /// decode with nil. Always nil for viewer leaves (banners are
         /// terminal-only).
         var banner: String?
+        /// The pane's position in its window's pane-sidebar stash, or nil
+        /// when it is in the layout. Per-leaf like `banner`, so it is keyed to
+        /// the pane through the topology rather than to an id (a viewer's id
+        /// is minted fresh on restore). A stash is the window's LAYOUT — like
+        /// a ratio or a zoom — so it persists; losing it would hand back every
+        /// pane the user put away. Optional/additive: older manifests decode
+        /// with nil (nothing stashed) and an older app ignores it, showing
+        /// every pane in the grid — no pane is lost either way.
+        var stashIndex: Int?
 
         var isViewer: Bool { kind == "viewer" }
     }
@@ -164,6 +173,13 @@ final class SessionLayoutManifest {
         var tabIndex: Int = 0
         /// The split topology. Nil until the first tree sync.
         var tree: Node?
+        /// The pane sidebar's layout flags (pinned flat panel vs mini rail;
+        /// hidden). Layout, so persisted; the sidebar's transient states
+        /// (hover-open, trash mode, all-windows scope) never are.
+        /// Optional/additive: older manifests decode with nil and the window
+        /// takes the defaults new windows get.
+        var paneSidebarPinned: Bool? = nil
+        var paneSidebarHidden: Bool? = nil
     }
 
     // MARK: Storage
@@ -265,12 +281,16 @@ final class SessionLayoutManifest {
         ipcName: String?,
         tabGroupID: UUID?,
         tabIndex: Int,
-        tree: Node?
+        tree: Node?,
+        paneSidebarPinned: Bool? = nil,
+        paneSidebarHidden: Bool? = nil
     ) {
         lock.lock()
         defer { lock.unlock() }
         guard let idx = entries.firstIndex(where: { $0.id == id }) else { return }
         var entry = entries[idx]
+        if let paneSidebarPinned { entry.paneSidebarPinned = paneSidebarPinned }
+        if let paneSidebarHidden { entry.paneSidebarHidden = paneSidebarHidden }
         if let frame { entry.frame = frame }
         entry.titleOverride = titleOverride
         entry.windowTitleOverride = windowTitleOverride
@@ -441,6 +461,16 @@ final class SessionLayoutManifest {
     /// left-before-right) — the same order `makeTreeNode` invokes its leaf
     /// factory and `SplitTree.Node.leaves()` returns views, so restored
     /// views pair with their manifest leaves by position.
+    /// The stash a restored tree should carry: the panes whose leaves were
+    /// stashed, in stash order. `panes` are the restored tree's leaves, in
+    /// the same order as `leaves(of: tree)`.
+    static func stashedIDs<Pane: Identifiable>(tree: Node, panes: [Pane]) -> [Pane.ID] {
+        zip(leaves(of: tree), panes)
+            .compactMap { leaf, pane in leaf.stashIndex.map { ($0, pane.id) } }
+            .sorted { $0.0 < $1.0 }
+            .map(\.1)
+    }
+
     static func leaves(of node: Node) -> [Leaf] {
         switch node {
         case .leaf(let leaf):
@@ -571,7 +601,8 @@ final class SessionLayoutManifest {
                         viewerLocation: viewer.location,
                         viewerHomeLocation: viewer.homeLocation,
                         viewerOriginDirectory: viewer.originDirectory,
-                        surfaceID: nil)
+                        surfaceID: nil,
+                        stashIndex: controller.surfaceTree.stashed.firstIndex(of: pane.id))
                 }
                 let view = pane.surfaceView
                 // WP-D3: capture a fresh structured screen snapshot + byte
@@ -591,7 +622,8 @@ final class SessionLayoutManifest {
                     surfaceID: view?.id.uuidString,
                     screenSnapshot: snap?.snapshot,
                     screenSnapshotOffset: snap?.offset,
-                    banner: view?.paneBanner)
+                    banner: view?.paneBanner,
+                    stashIndex: controller.surfaceTree.stashed.firstIndex(of: pane.id))
             }
         }
 
@@ -625,7 +657,9 @@ final class SessionLayoutManifest {
             ipcName: ipcName,
             tabGroupID: tabGroupID,
             tabIndex: tabIndex,
-            tree: tree)
+            tree: tree,
+            paneSidebarPinned: controller.paneSidebarState.isPinned,
+            paneSidebarHidden: controller.paneSidebarState.isHidden)
     }
 
     /// WP-D3: capture the surface's structured VT screen snapshot (base64) and

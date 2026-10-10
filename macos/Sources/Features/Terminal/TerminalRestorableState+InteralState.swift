@@ -20,6 +20,12 @@ extension TerminalRestorableState {
         // title). Optional so version-7 archives decode fine (missing ⇒ nil).
         let windowTitleOverride: String?
 
+        // The pane sidebar's layout flags. The STASH itself rides in
+        // `surfaceTree` (SplitTree encodes it). Optional: older archives
+        // decode with nil and take the defaults for new windows.
+        let paneSidebarPinned: Bool?
+        let paneSidebarHidden: Bool?
+
         init(
             focusedSurface: String?,
             surfaceTree: SplitTree<ViewType>,
@@ -27,6 +33,8 @@ extension TerminalRestorableState {
             tabColor: TerminalTabColor?,
             titleOverride: String?,
             windowTitleOverride: String? = nil,
+            paneSidebarPinned: Bool? = nil,
+            paneSidebarHidden: Bool? = nil,
         ) {
             self.focusedSurface = focusedSurface
             self.surfaceTree = surfaceTree
@@ -34,12 +42,18 @@ extension TerminalRestorableState {
             self.tabColor = tabColor
             self.titleOverride = titleOverride
             self.windowTitleOverride = windowTitleOverride
+            self.paneSidebarPinned = paneSidebarPinned
+            self.paneSidebarHidden = paneSidebarHidden
         }
     }
 }
 
 extension TerminalRestorableState.InternalState where ViewType == PaneView {
     init(from controller: TerminalController) {
+        // Window state is only ever encoded on the main thread.
+        let sidebar = MainActor.assumeIsolated {
+            (controller.paneSidebarState.isPinned, controller.paneSidebarState.isHidden)
+        }
         self.init(
             focusedSurface: controller.focusedSurface?.id.uuidString,
             surfaceTree: controller.surfaceTree,
@@ -47,6 +61,8 @@ extension TerminalRestorableState.InternalState where ViewType == PaneView {
             tabColor: (controller.window as? TerminalWindow)?.tabColor,
             titleOverride: controller.titleOverride,
             windowTitleOverride: controller.windowTitleOverride,
+            paneSidebarPinned: sidebar.0,
+            paneSidebarHidden: sidebar.1,
         )
     }
 }

@@ -335,6 +335,12 @@ fn formatTerminal(stdout: *std.Io.Writer, terminal_val: std.json.Value) !void {
         }
     }
 
+    // Out of the layout, in the window's pane sidebar — still running and
+    // still targetable.
+    if (jsonBool(term.get("stashed"))) {
+        try stdout.writeAll("  [stashed]");
+    }
+
     if (focused) {
         try stdout.writeAll(" *");
     }

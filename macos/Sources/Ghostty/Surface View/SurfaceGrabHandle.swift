@@ -10,6 +10,7 @@ extension Ghostty {
         private static let hoverHeightFactor: CGFloat = 0.2
 
         @ObservedObject var surfaceView: SurfaceView
+        @EnvironmentObject private var ghostty: Ghostty.App
 
         @State private var isHovering: Bool = false
         @State private var isDragging: Bool = false
@@ -58,9 +59,7 @@ extension Ghostty {
                     }
 
                     if ellipsisVisible {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(.primary.opacity(isHovering ? 0.8 : 0.3))
+                        grip
                             .offset(y: -3)
                             .allowsHitTesting(false)
                             .transition(.opacity)
@@ -68,6 +67,31 @@ extension Ghostty {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
+        }
+
+        /// Two states, so the handle reads as the thing you are about to grab:
+        /// hovering the PANE fades it in translucent; hovering (or holding)
+        /// the HANDLE makes it fully opaque — a solid fill a shade off the
+        /// terminal background, full-strength dots, and a slight shadow.
+        private var grip: some View {
+            let engaged = isHovering || isDragging
+            return Image(systemName: "ellipsis")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(Color.primary.opacity(engaged ? 1 : 0.6))
+                .frame(width: 46, height: 14)
+                .background(
+                    Capsule().fill(engaged ? solidFill : Color.gray.opacity(0.22)))
+                .shadow(color: .black.opacity(engaged ? 0.35 : 0), radius: 2, y: 1)
+                .animation(.easeOut(duration: 0.15), value: engaged)
+        }
+
+        /// The terminal background lifted (or, on a light theme, sunk) far
+        /// enough to stand off it, and fully opaque.
+        private var solidFill: Color {
+            let background = OSColor(ghostty.config.backgroundColor)
+            return Color(nsColor: background.isLightColor
+                ? background.darken(by: 0.14)
+                : background.lighten(by: 0.22))
         }
 
         /// The full-width hover band that reveals the drag handle.

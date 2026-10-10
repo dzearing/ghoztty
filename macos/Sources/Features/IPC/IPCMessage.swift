@@ -82,12 +82,17 @@ enum IPCData: Encodable {
         var url: String? = nil
         /// The pane's sticky banner text (terminal panes only; nil when none).
         var banner: String? = nil
+        /// True when the pane is stashed in its window's pane sidebar: out of
+        /// the layout, still running. Absent (not false) otherwise, like
+        /// `banner` — an additive field older readers never see.
+        var stashed: Bool? = nil
 
         private enum CodingKeys: String, CodingKey {
             case id, title, working_directory, pid, tty, name, focused, exit_code
             case pane_type = "type"
             case url
             case banner
+            case stashed
         }
 
         func encode(to encoder: Encoder) throws {
@@ -103,6 +108,7 @@ enum IPCData: Encodable {
             try container.encode(pane_type, forKey: .pane_type)
             try container.encode(url, forKey: .url)
             try container.encodeIfPresent(banner, forKey: .banner)
+            try container.encodeIfPresent(stashed == true ? true : nil, forKey: .stashed)
         }
     }
 

@@ -61,6 +61,17 @@ class BaseTerminalController: NSWindowController,
     /// Names this window when resolving a pane drop.
     var rearrangeWindowRef: PaneDropWindowRef { PaneDropWindowRef(self) }
 
+    /// The pane sidebar's per-window state. See docs/design/pane-sidebar.md.
+    let paneSidebarState = PaneSidebarState()
+
+    /// The sidebar's AppKit host while it is showing, for drop geometry.
+    /// Set and cleared by the host itself.
+    weak var paneSidebarHost: PaneSidebarHostView?
+
+    /// Whether this kind of window has a pane sidebar at all. The Quick
+    /// Terminal has no chrome for one.
+    var hasPaneSidebar: Bool { true }
+
     /// Live only while rearrange mode is on. See `installRearrangeEscapeMonitor`.
     private var rearrangeEscapeMonitor: Any?
     private var heroSelectionCancellable: AnyCancellable?
@@ -540,6 +551,7 @@ class BaseTerminalController: NSWindowController,
     ) -> Ghostty.SurfaceView? {
         // We can only create new splits for surfaces in our tree.
         guard surfaceTree.root?.node(view: oldView) != nil else { return nil }
+        if let anchor = surfaceTree.pane(for: oldView) { restoreSplitAnchor(anchor) }
 
         // Inherit and shift the parent's background color for visual depth.
         // Use explicit tint if set, otherwise fall back to the terminal's
@@ -668,6 +680,7 @@ class BaseTerminalController: NSWindowController,
         ratio: Double = 0.5
     ) -> PaneView? {
         guard surfaceTree.root?.node(view: oldPane) != nil else { return nil }
+        restoreSplitAnchor(oldPane)
 
         let pane = PaneView(viewer: viewer)
         let newTree: SplitTree<PaneView>
@@ -707,6 +720,7 @@ class BaseTerminalController: NSWindowController,
     ) -> Ghostty.SurfaceView? {
         guard surfaceTree.root?.node(view: oldPane) != nil else { return nil }
         guard let ghostty_app = ghostty.app else { return nil }
+        restoreSplitAnchor(oldPane)
 
         var effectiveConfig = config ?? Ghostty.SurfaceConfiguration()
         if effectiveConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] == nil {
@@ -1028,9 +1042,12 @@ class BaseTerminalController: NSWindowController,
         for view in plan.keepAlive { ClosingSessions.shared.unmark(view.surfaceView?.boundRemoteSessionID) }
         for view in plan.spared { ClosingSessions.shared.unmark(view.surfaceView?.boundRemoteSessionID) }
 
+        // Another window's all-windows sidebar lists these panes.
+        PaneRoster.shared.changed()
+
         // Session persistence (T05): the split topology is the heart of the
         // layout manifest — re-sync on every tree change (new split, close,
-        // resize-equalize, ...). Debounced; each sync also restarts the
+        // resize-equalize, stash, ...). Debounced; each sync also restarts the
         // per-leaf session-id capture for freshly-opened panes.
         if sessionLayoutEntryID != nil {
             SessionLayoutManifest.shared.scheduleSync(self)
@@ -1337,7 +1354,7 @@ class BaseTerminalController: NSWindowController,
 
     /// Find the next surface to focus when a node is being closed.
     /// Goes to previous split unless we're the leftmost leaf, then goes to next.
-    private func findNextFocusTargetAfterClosing(node: SplitTree<PaneView>.Node) -> PaneView? {
+    func findNextFocusTargetAfterClosing(node: SplitTree<PaneView>.Node) -> PaneView? {
         // Focus can only go to a pane on screen.
         let visible = surfaceTree.visibleTree
         guard let root = visible.root,
@@ -3387,6 +3404,23 @@ class BaseTerminalController: NSWindowController,
         toggleRearrangeMode()
     }
 
+    // The pane sidebar's menu items. Menu-routed (rather than only the core
+    // keybind) so a focused VIEWER pane reaches them too.
+    @IBAction func togglePaneSidebar(_ sender: Any) {
+        guard hasPaneSidebar else { return }
+        togglePaneSidebar()
+    }
+
+    @IBAction func stashPane(_ sender: Any) {
+        guard hasPaneSidebar else { return }
+        stashFocusedPane()
+    }
+
+    @IBAction func restoreStashedPane(_ sender: Any) {
+        guard hasPaneSidebar else { return }
+        restoreTopStashedPane()
+    }
+
     @IBAction func toggleHeroMode(_ sender: Any) {
         // Menu path. The core keybind needs a focused terminal surface, so a
         // window whose focused pane is a viewer only reaches the toggle here,
@@ -3560,6 +3594,16 @@ extension BaseTerminalController: NSMenuItemValidation {
         switch item.action {
         case #selector(findHide):
             return focusedSurface?.searchState != nil
+
+        case #selector(togglePaneSidebar(_:)):
+            item.title = paneSidebarState.isHidden ? "Show Pane Sidebar" : "Hide Pane Sidebar"
+            return hasPaneSidebar
+
+        case #selector(stashPane(_:)):
+            return hasPaneSidebar && surfaceTree.visibleLeaves.count > 1
+
+        case #selector(restoreStashedPane(_:)):
+            return hasPaneSidebar && !surfaceTree.stashed.isEmpty
 
         default:
             return true

@@ -63,6 +63,20 @@ enum PaneMoveCoordinator {
 
         case .newWindow(let point):
             moveToNewWindow(pane: pane, node: sourceNode, from: source, at: point)
+
+        case .stash(let window, let index):
+            guard let destination = controller(for: window) else { return }
+            if destination === source {
+                source.stashPane(pane, at: index)
+            } else {
+                stashInOtherWindow(pane: pane, node: sourceNode, from: source,
+                                   in: destination, at: index)
+            }
+
+        case .joinWindow(let window):
+            guard let destination = controller(for: window), destination !== source else { return }
+            insertAtTopLevel(pane: pane, node: sourceNode, from: source,
+                             in: destination, side: .right)
         }
     }
 
@@ -103,8 +117,11 @@ enum PaneMoveCoordinator {
             // A new tab beside SOME OTHER window is a real relocation; a new
             // tab beside your own lone-pane window is the churn case.
             return sourcePaneCount > 1 || !targetIsSourceWindow
-        case .split, .swap, .topLevel:
+        case .split, .swap, .topLevel, .stash:
             return true
+        case .joinWindow:
+            // Joining your own window is not a move.
+            return !targetIsSourceWindow
         }
     }
 
@@ -159,7 +176,13 @@ enum PaneMoveCoordinator {
         guard let destNode = destination.surfaceTree.root?.node(view: destPane) else { return }
 
         if source === destination {
-            guard let swapped = try? source.surfaceTree.swapping(node, with: destNode) else {
+            // A STASHED pane dropped on a visible one is an exchange: it takes
+            // that slot, and the other pane takes its place in the stash —
+            // the same thing Option-clicking its sidebar row does.
+            let swapped: SplitTree<PaneView>? = source.surfaceTree.isStashed(pane)
+                ? try? source.surfaceTree.exchanging(stashed: pane, with: destPane)
+                : try? source.surfaceTree.swapping(node, with: destNode)
+            guard let swapped else {
                 logger.warning("failed to swap panes")
                 return
             }
@@ -170,13 +193,19 @@ enum PaneMoveCoordinator {
         // A cross-window swap is an EXCHANGE: each pane leaves one tree and
         // arrives in the other, so both controllers keep their pane count and
         // neither window can be emptied.
-        guard let newSourceTree = try? source.surfaceTree.replacing(
+        guard var newSourceTree = try? source.surfaceTree.replacing(
                 node: node, with: .leaf(view: destPane)),
               let newDestTree = try? destination.surfaceTree.replacing(
                 node: destNode, with: .leaf(view: pane))
         else {
             logger.warning("failed to swap panes across windows")
             return
+        }
+        // Exchanged out of a stash: the arriving pane takes the departing
+        // one's place in it, as a same-window exchange does.
+        if source.surfaceTree.isStashed(pane) {
+            newSourceTree = newSourceTree.withStash(
+                source.surfaceTree.stashed.map { $0 == pane.id ? destPane.id : $0 })
         }
         crossWindowCommit(
             pane: pane, alsoRelocated: [destPane],
@@ -214,6 +243,32 @@ enum PaneMoveCoordinator {
             destination: destination, destinationTree: wrapped)
     }
 
+    /// Stash `pane` in ANOTHER window's sidebar: it joins that window's tree
+    /// at the top level (where it is hidden anyway, and where a later restore
+    /// puts it beside everything) and is stashed there, in one undo group.
+    /// Focus stays put — the pane is going somewhere you aren't looking.
+    private static func stashInOtherWindow(
+        pane: PaneView,
+        node: SplitTree<PaneView>.Node,
+        from source: BaseTerminalController,
+        in destination: BaseTerminalController,
+        at index: Int
+    ) {
+        let arrived = destination.surfaceTree.insertingAtTopLevel(view: pane, side: .right)
+        guard let stashed = try? arrived.stashing(pane, at: index) else {
+            logger.warning("failed to stash pane in another window")
+            return
+        }
+
+        source.undoManager?.beginUndoGrouping()
+        source.undoManager?.setActionName("Stash Pane")
+        defer { source.undoManager?.endUndoGrouping() }
+
+        source.replaceSurfaceTree(source.surfaceTree.removing(node), moveFocusFrom: source.focusedSurface)
+        destination.replaceSurfaceTree(stashed, undoAction: "Stash Pane")
+        finishRelocation(of: [pane], into: destination, from: source)
+    }
+
     private static func moveToNewTab(
         pane: PaneView,
         node: SplitTree<PaneView>.Node,
@@ -247,7 +302,7 @@ enum PaneMoveCoordinator {
             newWindow.makeKeyAndOrderFront(nil)
         }
 
-        finishRelocation(of: [pane], into: controller)
+        finishRelocation(of: [pane], into: controller, from: source)
     }
 
     private static func moveToNewWindow(
@@ -270,7 +325,7 @@ enum PaneMoveCoordinator {
             position: point.map { NSPoint(x: $0.x, y: $0.y) },
             confirmUndo: false)
 
-        finishRelocation(of: [pane], into: controller)
+        finishRelocation(of: [pane], into: controller, from: source)
     }
 
     // MARK: Commit
@@ -310,7 +365,7 @@ enum PaneMoveCoordinator {
         source.replaceSurfaceTree(sourceTree, moveFocusFrom: source.focusedSurface)
         commit(in: destination, tree: destinationTree, focus: pane)
 
-        finishRelocation(of: [pane] + alsoRelocated, into: destination)
+        finishRelocation(of: [pane] + alsoRelocated, into: destination, from: source)
     }
 
     /// Declare that these panes MOVED rather than closed, and carry the mode
@@ -329,7 +384,8 @@ enum PaneMoveCoordinator {
     /// — says so explicitly, and ordering stops being load-bearing.
     private static func finishRelocation(
         of panes: [PaneView],
-        into destination: BaseTerminalController
+        into destination: BaseTerminalController,
+        from source: BaseTerminalController
     ) {
         for pane in panes {
             pane.setSessionCloseIntent(false)
@@ -337,9 +393,13 @@ enum PaneMoveCoordinator {
             ClosingSessions.shared.unmark(pane.surfaceView?.boundRemoteSessionID)
         }
 
-        // The mode follows the pane: you are still rearranging, and the window
-        // you are now looking at should still be rearrangeable.
-        destination.enterRearrangeModeIfNeeded()
+        // The mode follows the pane: if you were rearranging, the window you
+        // are now looking at should still be rearrangeable. A move made
+        // outside the mode — the hover grab handle, a pane-sidebar row —
+        // doesn't switch the mode on anywhere.
+        if source.rearrangeModeState.isActive {
+            destination.enterRearrangeModeIfNeeded()
+        }
     }
 
     // MARK: Lookup

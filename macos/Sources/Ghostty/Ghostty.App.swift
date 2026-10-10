@@ -546,6 +546,25 @@ extension Ghostty {
             case GHOSTTY_ACTION_TOGGLE_REARRANGE_MODE:
                 return toggleRearrangeMode(app, target: target)
 
+            case GHOSTTY_ACTION_TOGGLE_PANE_SIDEBAR:
+                return paneSidebarAction(app, target: target) { controller, _ in
+                    controller.togglePaneSidebar()
+                }
+
+            case GHOSTTY_ACTION_STASH_PANE:
+                return paneSidebarAction(app, target: target) { controller, surfaceView in
+                    // The keybind fires from the focused terminal: stash THAT
+                    // pane (a focused viewer reaches the menu item instead).
+                    guard let pane = controller.surfaceTree.first(where: { $0.surfaceView === surfaceView })
+                    else { return }
+                    controller.stashPane(pane)
+                }
+
+            case GHOSTTY_ACTION_RESTORE_STASHED_PANE:
+                return paneSidebarAction(app, target: target) { controller, _ in
+                    controller.restoreTopStashedPane()
+                }
+
             case GHOSTTY_ACTION_INSPECTOR:
                 controlInspector(app, target: target, mode: action.action.inspector)
 
@@ -1443,6 +1462,33 @@ extension Ghostty {
                     name: Notification.didToggleHeroMode,
                     object: surfaceView
                 )
+                return true
+
+            default:
+                assertionFailure()
+                return false
+            }
+        }
+
+        /// The pane sidebar's keybind actions, all window-scoped through the
+        /// surface that fired them.
+        private static func paneSidebarAction(
+            _ app: ghostty_app_t,
+            target: ghostty_target_s,
+            perform: (BaseTerminalController, SurfaceView) -> Void
+        ) -> Bool {
+            switch target.tag {
+            case GHOSTTY_TARGET_APP:
+                Ghostty.logger.warning("pane sidebar actions do nothing with an app target")
+                return false
+
+            case GHOSTTY_TARGET_SURFACE:
+                guard let surface = target.target.surface else { return false }
+                guard let surfaceView = self.surfaceView(from: surface) else { return false }
+                guard let controller = surfaceView.window?.windowController
+                        as? BaseTerminalController,
+                      controller.hasPaneSidebar else { return false }
+                perform(controller, surfaceView)
                 return true
 
             default:

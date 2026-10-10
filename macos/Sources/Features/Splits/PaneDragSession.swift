@@ -270,6 +270,7 @@ final class PaneDragSession: ObservableObject {
             contentRect: contentRect,
             paneRects: paneRects,
             tabBarRect: tabBarRect,
-            tabButtonRects: tabButtonRects)
+            tabButtonRects: tabButtonRects,
+            sidebar: controller.paneSidebarHost?.dropGeometry())
     }
 }

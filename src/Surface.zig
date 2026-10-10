@@ -6536,6 +6536,24 @@ pub fn performBindingAction(self: *Surface, action: input.Binding.Action) !bool 
             {},
         ),
 
+        .toggle_pane_sidebar => return try self.rt_app.performAction(
+            .{ .surface = self },
+            .toggle_pane_sidebar,
+            {},
+        ),
+
+        .stash_pane => return try self.rt_app.performAction(
+            .{ .surface = self },
+            .stash_pane,
+            {},
+        ),
+
+        .restore_stashed_pane => return try self.rt_app.performAction(
+            .{ .surface = self },
+            .restore_stashed_pane,
+            {},
+        ),
+
         .toggle_readonly => {
             self.readonly = !self.readonly;
             _ = try self.rt_app.performAction(

@@ -50,11 +50,30 @@ struct PaneDragSource: NSViewRepresentable {
 /// needing to know about the drag.
 final class PaneDragSourceView: NSView, NSDraggingSource {
     /// Scale factor applied to the pane snapshot for the drag preview image.
-    private static let previewScale: CGFloat = 0.2
+    fileprivate static let previewScale: CGFloat = 0.2
 
     var pane: PaneView?
     var onDragStateChanged: ((Bool) -> Void)?
     var onHoverChanged: ((Bool) -> Void)?
+
+    /// The window the pane belongs to, when it can't be found through the
+    /// pane's own view: a STASHED pane is unmounted and has no window, so a
+    /// pane-sidebar row names its controller explicitly. Nil means "the
+    /// window the pane's content is mounted in", the grab-handle case.
+    weak var controller: BaseTerminalController?
+
+    /// A click that never became a drag (mouse-up with no drag session). The
+    /// pane-sidebar row is both a drag source and a button, and the drag
+    /// source has to own mouseDown to keep the window's own drag handler out
+    /// of it — so the click is reported from here.
+    var onClick: ((NSEvent) -> Void)?
+
+    /// The context menu for a right-click, if this source has one.
+    var menuProvider: (() -> NSMenu?)?
+
+    /// The open-hand cursor says "grab me". A grip or header wants it; a
+    /// pane-sidebar row is a list row first and keeps the arrow.
+    var showsGrabCursor: Bool = true
 
     /// Whether we are inside a drag (between `willBegin` and `endedAt`).
     private var isTracking: Bool = false
@@ -79,6 +98,21 @@ final class PaneDragSourceView: NSView, NSDraggingSource {
         // window drag handler out of it. The drag starts in mouseDragged.
     }
 
+    override func mouseUp(with event: NSEvent) {
+        // A drag reports its end through `endedAt`; a mouse-up that arrives
+        // here never started one, so it is a click.
+        guard !isTracking else { return }
+        onClick?(event)
+    }
+
+    override func rightMouseDown(with event: NSEvent) {
+        guard let menu = menuProvider?() else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach { removeTrackingArea($0) }
@@ -90,6 +124,7 @@ final class PaneDragSourceView: NSView, NSDraggingSource {
     }
 
     override func resetCursorRects() {
+        guard showsGrabCursor || isTracking else { return }
         addCursorRect(bounds, cursor: isTracking ? .closedHand : .openHand)
     }
 
@@ -104,8 +139,9 @@ final class PaneDragSourceView: NSView, NSDraggingSource {
         // Refusing to start that drag is clearer than starting one that can
         // only be cancelled. A lone pane with ANOTHER window open is very much
         // draggable — that is how you undo a pop-out.
-        guard let controller = pane.contentView.window?.windowController
-                as? BaseTerminalController else { return }
+        guard let controller = self.controller
+                ?? pane.contentView.window?.windowController as? BaseTerminalController
+        else { return }
         let otherTerminalWindows = NSApp.windows.contains { window in
             window.isVisible
                 && window.windowController !== controller
@@ -120,7 +156,9 @@ final class PaneDragSourceView: NSView, NSDraggingSource {
         item.setString(pane.id.uuidString, forType: .ghosttyPaneId)
         let draggingItem = NSDraggingItem(pasteboardWriter: item)
 
-        if let snapshot = pane.dragSnapshot {
+        // A stashed pane is unmounted and has nothing to snapshot; the row it
+        // is being dragged from stands in for it.
+        if let snapshot = pane.dragSnapshot ?? ownSnapshot {
             let imageSize = NSSize(
                 width: snapshot.size.width * Self.previewScale,
                 height: snapshot.size.height * Self.previewScale)
@@ -208,6 +246,23 @@ final class PaneDragSourceView: NSView, NSDraggingSource {
 
         isTracking = false
         onDragStateChanged?(false)
+    }
+}
+
+extension PaneDragSourceView {
+    /// What is drawn under this view — for a pane-sidebar row, the row
+    /// itself — as a stand-in drag preview, sized up so that `previewScale`
+    /// brings it back to its on-screen size.
+    fileprivate var ownSnapshot: NSImage? {
+        guard let host = superview, !bounds.isEmpty else { return nil }
+        let rect = convert(bounds, to: host)
+        guard let rep = host.bitmapImageRepForCachingDisplay(in: rect) else { return nil }
+        host.cacheDisplay(in: rect, to: rep)
+        let image = NSImage(size: NSSize(
+            width: rect.width / Self.previewScale,
+            height: rect.height / Self.previewScale))
+        image.addRepresentation(rep)
+        return image
     }
 }
 

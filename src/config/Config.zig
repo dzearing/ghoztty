@@ -7076,6 +7076,20 @@ pub const Keybinds = struct {
 
         // Mac-specific keyboard bindings.
         if (comptime builtin.target.os.tag.isDarwin()) {
+            // Pane sidebar (macOS only). Ctrl+Cmd+S is the system "Show
+            // Sidebar" chord (Finder, Mail, Notes); Shift+Cmd+M sits beside
+            // Cmd+M (minimize the window) as "minimize the pane". Both were
+            // unbound before this.
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 's' }, .mods = .{ .super = true, .ctrl = true } },
+                .{ .toggle_pane_sidebar = {} },
+            );
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 'm' }, .mods = .{ .super = true, .shift = true } },
+                .{ .stash_pane = {} },
+            );
             try self.set.put(
                 alloc,
                 .{ .key = .{ .unicode = 'q' }, .mods = .{ .super = true } },
