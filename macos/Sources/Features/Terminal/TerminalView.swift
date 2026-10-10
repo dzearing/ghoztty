@@ -72,8 +72,10 @@ private struct PaneSidebarSlot<ViewModel: TerminalViewModel, Content: View>: Vie
         }
         .background {
             if elevated {
+                let isLight = OSColor(ghostty.config.backgroundColor).isLightColor
                 PaneDesk(
-                    isLight: OSColor(ghostty.config.backgroundColor).isLightColor,
+                    palette: (viewModel as? BaseTerminalController)?.deskPalette(isLight: isLight)
+                        ?? .ocean(isLight: isLight),
                     opacity: ghostty.config.backgroundOpacity)
             }
         }

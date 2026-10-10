@@ -40,9 +40,15 @@ struct PaneSidebarContainer<Content: View>: View {
         })
         .overlay(alignment: .topLeading) {
             if mode != .hidden {
+                // In the pinned case the frame reaches half a grab width past
+                // the panel: the resize handle straddles the panel's edge, and
+                // AppKit never hit-tests the part of a view outside its
+                // parent's bounds — the outer half of the handle was dead, so
+                // the sizer sat LEFT of the line. `hitTest` limits the extra
+                // strip to the handle.
                 PaneSidebarHostRepresentable(controller: controller, state: state, mode: mode)
                     .frame(width: mode == .expanded
-                           ? column
+                           ? column + SidePanelResizeHandle.grabWidth / 2
                            : insets.leading + state.width + insets.trailing)
                     .frame(maxHeight: .infinity)
             }
@@ -187,7 +193,11 @@ final class PaneSidebarHostView: NSView {
         case .hidden:
             return .zero
         case .expanded:
-            return bounds
+            // The panel, without the strip the frame reserves past its edge
+            // for the resize handle's outer half.
+            return NSRect(x: 0, y: 0,
+                          width: Swift.max(0, bounds.width - SidePanelResizeHandle.grabWidth / 2),
+                          height: bounds.height)
         case .mini:
             let insets = PaneSidebarState.railInsets(
                 elevated: controller?.ghostty.config.macosPaneStyle == .elevated)
@@ -313,7 +323,10 @@ private struct PaneSidebarChrome: View {
                 PaneSidebarView(
                     controller: controller, state: state, geometry: geometry,
                     isRail: false, isFlat: true)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    // Exactly the column: the host reaches half a grab width
+                    // further only so the resize handle's outer half is live.
+                    .frame(width: state.width)
+                    .frame(maxHeight: .infinity, alignment: .topLeading)
                     // Elevated: translucent, so the window's gradient runs
                     // under the sidebar and the panel reads as part of the
                     // same surface the panes are raised from. Flat: the
@@ -328,6 +341,7 @@ private struct PaneSidebarChrome: View {
                         }
                     }
                     .overlay(alignment: .trailing) { resizeHandle }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
             case .mini:
                 // UNPINNED: the raised glass card, as the rail or — under the

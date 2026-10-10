@@ -64,6 +64,21 @@ class BaseTerminalController: NSWindowController,
     /// The pane sidebar's per-window state. See docs/design/pane-sidebar.md.
     let paneSidebarState = PaneSidebarState()
 
+    /// This window's own gradient, when it was opened with `--color=random`
+    /// in the elevated pane style; nil is the default ocean desk. Persisted
+    /// (the seed) with the window's layout.
+    @Published var deskVariant: PaneDeskVariant? {
+        didSet {
+            guard deskVariant != oldValue, sessionLayoutEntryID != nil else { return }
+            SessionLayoutManifest.shared.scheduleSync(self)
+        }
+    }
+
+    /// The desk palette to draw, for the current terminal theme.
+    func deskPalette(isLight: Bool) -> PaneDeskPalette {
+        deskVariant?.palette(isLight: isLight) ?? .ocean(isLight: isLight)
+    }
+
     /// The sidebar's AppKit host while it is showing, for drop geometry.
     /// Set and cleared by the host itself.
     weak var paneSidebarHost: PaneSidebarHostView?
@@ -403,6 +418,10 @@ class BaseTerminalController: NSWindowController,
                 view.setSessionCloseIntent(false)
             }
         }
+
+        // A window opened with `--color=random` (elevated style) brings its
+        // own gradient in on its base config.
+        self.deskVariant = base?.deskVariant
 
         // Setup our bell state for the window
         setupBellNotificationPublisher()

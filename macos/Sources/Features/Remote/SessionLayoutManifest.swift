@@ -180,6 +180,9 @@ final class SessionLayoutManifest {
         /// takes the defaults new windows get.
         var paneSidebarPinned: Bool? = nil
         var paneSidebarHidden: Bool? = nil
+        /// The window's own gradient (`--color=random` in the elevated pane
+        /// style), as its seed. Optional/additive: nil is the default desk.
+        var deskVariant: PaneDeskVariant? = nil
     }
 
     // MARK: Storage
@@ -283,7 +286,8 @@ final class SessionLayoutManifest {
         tabIndex: Int,
         tree: Node?,
         paneSidebarPinned: Bool? = nil,
-        paneSidebarHidden: Bool? = nil
+        paneSidebarHidden: Bool? = nil,
+        deskVariant: PaneDeskVariant?? = nil
     ) {
         lock.lock()
         defer { lock.unlock() }
@@ -291,6 +295,7 @@ final class SessionLayoutManifest {
         var entry = entries[idx]
         if let paneSidebarPinned { entry.paneSidebarPinned = paneSidebarPinned }
         if let paneSidebarHidden { entry.paneSidebarHidden = paneSidebarHidden }
+        if let deskVariant { entry.deskVariant = deskVariant }
         if let frame { entry.frame = frame }
         entry.titleOverride = titleOverride
         entry.windowTitleOverride = windowTitleOverride
@@ -659,7 +664,8 @@ final class SessionLayoutManifest {
             tabIndex: tabIndex,
             tree: tree,
             paneSidebarPinned: controller.paneSidebarState.isPinned,
-            paneSidebarHidden: controller.paneSidebarState.isHidden)
+            paneSidebarHidden: controller.paneSidebarState.isHidden,
+            deskVariant: .some(controller.deskVariant))
     }
 
     /// WP-D3: capture the surface's structured VT screen snapshot (base64) and

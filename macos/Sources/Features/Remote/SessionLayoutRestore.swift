@@ -326,6 +326,7 @@ extension AppDelegate {
         // have — one size, not a placeholder and then a corrective resize.
         if let pinned = entry.paneSidebarPinned { controller.paneSidebarState.isPinned = pinned }
         if let hidden = entry.paneSidebarHidden { controller.paneSidebarState.isHidden = hidden }
+        controller.deskVariant = entry.deskVariant
 
         // For a LOCAL resume/restore, adopt the manifest entry so the window is
         // itself restorable and detaches-on-close. Ordering matters: the entry id

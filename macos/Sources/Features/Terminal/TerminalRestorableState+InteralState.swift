@@ -26,6 +26,9 @@ extension TerminalRestorableState {
         let paneSidebarPinned: Bool?
         let paneSidebarHidden: Bool?
 
+        // The window's own gradient seed (`--color=random`, elevated style).
+        let deskVariant: PaneDeskVariant?
+
         init(
             focusedSurface: String?,
             surfaceTree: SplitTree<ViewType>,
@@ -35,6 +38,7 @@ extension TerminalRestorableState {
             windowTitleOverride: String? = nil,
             paneSidebarPinned: Bool? = nil,
             paneSidebarHidden: Bool? = nil,
+            deskVariant: PaneDeskVariant? = nil,
         ) {
             self.focusedSurface = focusedSurface
             self.surfaceTree = surfaceTree
@@ -44,6 +48,7 @@ extension TerminalRestorableState {
             self.windowTitleOverride = windowTitleOverride
             self.paneSidebarPinned = paneSidebarPinned
             self.paneSidebarHidden = paneSidebarHidden
+            self.deskVariant = deskVariant
         }
     }
 }
@@ -52,7 +57,7 @@ extension TerminalRestorableState.InternalState where ViewType == PaneView {
     init(from controller: TerminalController) {
         // Window state is only ever encoded on the main thread.
         let sidebar = MainActor.assumeIsolated {
-            (controller.paneSidebarState.isPinned, controller.paneSidebarState.isHidden)
+            (controller.paneSidebarState.isPinned, controller.paneSidebarState.isHidden, controller.deskVariant)
         }
         self.init(
             focusedSurface: controller.focusedSurface?.id.uuidString,
@@ -63,6 +68,7 @@ extension TerminalRestorableState.InternalState where ViewType == PaneView {
             windowTitleOverride: controller.windowTitleOverride,
             paneSidebarPinned: sidebar.0,
             paneSidebarHidden: sidebar.1,
+            deskVariant: sidebar.2,
         )
     }
 }

@@ -201,9 +201,17 @@ struct PaneSidebarWindowTests {
 
         let host = try #require(h.controller.paneSidebarHost)
         let hostFrame = host.convert(host.bounds, to: nil)
-        #expect(abs(hostFrame.width - 240) < 1, "the flat panel is the full column")
+        #expect(abs(hostFrame.width - (240 + SidePanelResizeHandle.grabWidth / 2)) < 1,
+                "the column, plus the resize handle's outer half")
         #expect(abs(hostFrame.minX) < 1, "flush with the window's left edge")
-        #expect(host.cardRect == host.bounds, "the panel fills its frame, no card margin")
+        #expect(abs(host.cardRect.width - 240) < 1, "the panel fills its column, no card margin")
+        // The resize handle straddles the panel's edge, and BOTH halves take
+        // the mouse (the outer half used to fall outside the host).
+        let edgeX = host.frame.minX + host.cardRect.maxX
+        #expect(host.hitTest(NSPoint(x: edgeX - 2, y: host.frame.midY)) != nil, "inner half")
+        #expect(host.hitTest(NSPoint(x: edgeX + 2, y: host.frame.midY)) != nil, "outer half")
+        #expect(host.hitTest(NSPoint(x: edgeX + SidePanelResizeHandle.grabWidth, y: host.frame.midY)) == nil,
+                "nothing past the handle")
 
         // The grid starts where the column ends (plus the elevated margin).
         let leftPane = frameInWindow(h.panes[0])
@@ -227,6 +235,11 @@ struct PaneSidebarWindowTests {
         let railFrame = host.convert(host.cardRect, to: nil)
         #expect(abs(railFrame.minX - (gridLeft - railFrame.maxX)) < 1,
                 "the gap left of the rail equals the gap right of it")
+        if elevated {
+            // ...and both equal the gap between two panes: one spacing.
+            let paneGap = frameInWindow(h.panes[1]).minX - frameInWindow(h.panes[0]).maxX
+            #expect(abs(paneGap - railFrame.minX) < 1, "pane gap \(paneGap) == rail gutter \(railFrame.minX)")
+        }
         let sizeBefore = gridSize(h.panes[0])
         snapshot(h, "mini")
 

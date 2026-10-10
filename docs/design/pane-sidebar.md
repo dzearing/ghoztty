@@ -519,8 +519,20 @@ chosen: **Elevated · Ocean**, as the default, with `macos-pane-style = flat`
 to opt out. Each pane is a slightly raised rounded card on a soft gradient —
 blue pooling at the top-leading corner, teal at the bottom-trailing, over deep
 slate (pale counterparts on a light terminal theme) — "the simplicity of the
-ocean option". Panes are separated by a real 8pt gap (still the divider) with
-a 10pt margin at the window edge for the shadows. The pinned sidebar panel goes
+ocean option". One 10pt spacing is every gutter — pane to pane (still the divider),
+pane to window edge, and around the mini rail, which takes no trailing margin
+of its own because the grid's margin is that gap. (The first build used an 8pt
+gap beside a 10pt margin, and the rail's own 12pt card margin on top of the
+grid's: three numbers that read as uneven. Now one constant,
+`PaneElevation.margin`, with `gap` defined as it.)
+
+**`--color=random` becomes the window's gradient.** In this style a new window
+opened with `--color=random` keeps its terminals' theme color and instead gets
+its own desk: tones drawn at random from the same blue/teal family, falling off
+darker toward the bottom-trailing corner on a dark theme and lighter on a light
+one. It persists as a seed (`PaneDeskVariant`), and the palette is derived from
+the seed for the CURRENT theme, so a window keeps its character across a
+light/dark switch and a session restore. The pinned sidebar panel goes
 translucent over the same gradient instead of carrying its own 1px rule. Cost:
 roughly a column or two per split, which is the trade for the depth.
 

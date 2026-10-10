@@ -755,6 +755,12 @@ extension Ghostty {
         /// Background tint color from IPC --color flag
         var backgroundTint: Color?
 
+        /// A WINDOW-level request carried in on the window's base config, like
+        /// `GHOZTTY_WINDOW_NAME`: in the elevated pane style, `--color=random`
+        /// randomizes the window's gradient desk (this) rather than tinting
+        /// its terminals. Read once by the controller that creates the window.
+        var deskVariant: PaneDeskVariant?
+
         #if canImport(AppKit)
         /// Resolved NSColor for the tint, avoiding lossy SwiftUI Color roundtrips
         var backgroundTintNSColor: NSColor?

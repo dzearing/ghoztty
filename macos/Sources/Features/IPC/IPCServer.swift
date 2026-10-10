@@ -442,12 +442,20 @@ class IPCServer {
         // Convert color strings to Color values
         var config = parsed.config
         if let colorStr = parsed.color {
-            let nsColor: NSColor? = colorStr == "random"
-                ? Self.randomDarkColor()
-                : NSColor(hex: colorStr)
-            if let nsColor {
-                config.backgroundTint = Color(nsColor)
-                config.backgroundTintNSColor = nsColor
+            if colorStr == "random", ghostty.config.macosPaneStyle == .elevated {
+                // Elevated panes sit on the window's gradient: a random color
+                // is a random GRADIENT — tones from the same ocean family —
+                // and the terminals keep their theme. (An explicit hex is
+                // still a terminal tint, as is `random` in the flat style.)
+                config.deskVariant = .random()
+            } else {
+                let nsColor: NSColor? = colorStr == "random"
+                    ? Self.randomDarkColor()
+                    : NSColor(hex: colorStr)
+                if let nsColor {
+                    config.backgroundTint = Color(nsColor)
+                    config.backgroundTintNSColor = nsColor
+                }
             }
         }
 

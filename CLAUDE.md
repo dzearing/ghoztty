@@ -1426,8 +1426,15 @@ the interactive mock settled).
 
 `elevated` (the default) presents a window's panes as slightly raised
 rounded cards (11pt radius, a soft two-layer shadow, a hairline rim) on a soft
-blue-to-teal **ocean** gradient, separated by a real 8pt gap with a 10pt margin
-at the window's edge; the gaps are still the dividers. `flat` is the classic
+blue-to-teal **ocean** gradient. ONE spacing, 10pt, is every gutter: pane to
+pane (the gaps are still the dividers), pane to window edge, and around the
+mini rail (which takes no trailing margin of its own — the grid's is that gap).
+**`+new-window --color=random`** in this style gives the window its OWN
+gradient (`PaneDeskVariant`: a persisted seed; tones drawn from the same
+blue/teal family, falling off darker toward the bottom-trailing corner on a
+dark theme and lighter on a light one) and leaves the terminals their theme
+color; an explicit `--color=#hex`, `random` on a split, and `random` in the
+`flat` style still tint the terminal background as before. `flat` is the classic
 edge-to-edge look with a 1px `split-divider-color` line, and its geometry is
 unchanged byte for byte. Geometry and palette live once in
 `PaneElevation`/`PaneDesk`/`PaneCard` (`Features/Splits/PaneElevation.swift`),
