@@ -1,0 +1,27 @@
+{
+  "version": "1.38.0",
+  "sections": [
+    {
+      "title": "Copy and links",
+      "items": [
+        { "title": "Cmd+C out of a TUI pastes as clean prose", "text": "Claude Code and anything built on Ink wraps its own output, writing every visual row itself and re-indenting it to the left margin of its text block. Copying brought that margin along on every line and broke each paragraph into rows. Copy now strips the margin the selected lines share, rejoins the rows the TUI wrapped, and leaves deeper indentation — code, nested lists — alone. Always on for Cmd+C and copy-on-select; Option-drag rectangle selections are untouched." },
+        { "title": "A URL a TUI broke across lines comes back whole", "text": "The wrap used to split it into two dead fragments. Hover highlight, click, link preview, and Copy URL now all see the whole URL, with the skipped margin left out of it." },
+        { "title": "Text you wrapped yourself is copied byte for byte", "text": "A 72-column commit message body in an 80-column pane, `ls -la`, `git log`, tables, and box-drawn output are all left exactly as they are on screen. Every ambiguous case resolves to keeping the line break." }
+      ]
+    },
+    {
+      "title": "Command line",
+      "items": [
+        { "title": "`ghoztty +…` no longer yanks you out of what you're doing", "text": "Every command that created or found a window or pane used to activate the app, raise the window, and move the caret into the new pane. An agent opening a side pane, or `/wt` opening a window, stole your keystrokes mid-sentence. Programmatic surfaces now open in the background, ordered directly behind Ghoztty's frontmost window, and the pane that had focus keeps it. Pass **`--focus`** when you do want the old behavior." },
+        { "title": "Everything you do by hand is unchanged", "text": "Cmd-N, Cmd-D, the menu, the command palette, File → Open, the dock, and `ghoztty://focus/` links all still focus exactly as before. `--no-activate` is still accepted, now as a no-op, so existing scripts keep working." },
+        { "title": "Typing goes somewhere after a background split", "text": "Inserting a split re-parents the pane beside it, which used to leave the window itself holding focus and your keystrokes going nowhere. This also fixes viewer side panes opened from a banner or a Cmd-clicked link in the GUI." }
+      ]
+    },
+    {
+      "title": "Session persistence",
+      "items": [
+        { "title": "Claude Code uses its fullscreen renderer by default", "text": "`claude-code-fullscreen` keeps the conversation inside Claude and re-wraps all of it when you resize the pane, instead of leaving everything above the last screen frozen at the old width. An explicit choice of your own always wins: the environment variable, `/tui default`, or `env =` in your config. Never applied to panes on another machine." }
+      ]
+    }
+  ]
+}
