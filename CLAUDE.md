@@ -1443,7 +1443,22 @@ unchanged byte for byte. Geometry and palette live once in
 `PaneElevation`/`PaneDesk`/`PaneCard` (`Features/Splits/PaneElevation.swift`),
 which the grid AND the hidden stashed-pane slots both use — the slots must lay
 out exactly like the grid or a restored pane would reflow. The pinned pane
-sidebar goes translucent so the gradient runs under it. A translucent terminal
+sidebar goes translucent so the gradient runs under it.
+**Glass panes** (`macos-pane-glass`, default `true`, elevated only): each pane
+is a translucent sheet tinted 50% with the terminal's own background (Liquid
+Glass on macOS 26, a plain tint before — `PaneGlass`), so the gradient's light
+and shade read through every pane. The renderer stops drawing the terminal's
+background (`generic.zig` `pane_glass`, the same switch the `macos-glass-*`
+blur styles use), the banner strip skips its base fill, viewer template pages
+(markdown/code/diff/image) go see-through (`ViewerView.isOnGlass`, a
+`pane-glass` class in `viewer.css`) while websites and HTML files keep their
+own background, and the gradient runs up under the titlebar: the transparent
+titlebar window turns on `.fullSizeContentView` and `titlebarAppearsTransparent`
+(macOS 26 otherwise backs it with a material), and the desk sits behind the
+whole content stack. Any `.background(Color)` in that stack must pass
+`ignoresSafeAreaEdges: []` — SwiftUI's default extends it behind the titlebar
+(the debug-build warning did). Verified by `glassPanesLetTheGradientThrough`,
+which also writes a ScreenCaptureKit capture of its own window. A translucent terminal
 (`background-opacity` < 1) gets an equally translucent gradient. Settled in the
 pane-sidebar mock (`docs/design/pane-sidebar.md` → Pane style).
 

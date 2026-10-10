@@ -219,14 +219,28 @@ struct PaneDesk: View {
 
 /// A pane as a raised card: clipped to the card's shape, over an opaque
 /// card-colored base that carries the shadow (an AppKit view can't cast a
-/// SwiftUI shadow, so the base does it from behind).
+/// SwiftUI shadow, so the base does it from behind) — or, with
+/// `macos-pane-glass`, over a translucent glass sheet tinted with the same
+/// color, through which the window's gradient reads. The terminal draws no
+/// background of its own in that case (the renderer applies the same rule),
+/// so the sheet IS the pane's background.
 struct PaneCard: ViewModifier {
     let isElevated: Bool
+    var isGlass: Bool = false
     let background: Color
     let isLight: Bool
 
     func body(content: Content) -> some View {
-        if isElevated {
+        if isElevated && isGlass {
+            content
+                .clipShape(PaneElevation.cardShape)
+                .overlay(
+                    PaneElevation.cardShape
+                        .strokeBorder(isLight ? Color.black.opacity(0.08) : Color.white.opacity(0.10),
+                                      lineWidth: 0.5)
+                        .allowsHitTesting(false))
+                .background(PaneGlass(tint: background, isLight: isLight))
+        } else if isElevated {
             content
                 .clipShape(PaneElevation.cardShape)
                 .overlay(
@@ -241,6 +255,31 @@ struct PaneCard: ViewModifier {
                         .shadow(color: .black.opacity(isLight ? 0.12 : 0.24), radius: 11, y: 8))
         } else {
             content
+        }
+    }
+}
+
+/// The glass sheet behind a glass pane. It is tinted with the terminal's own
+/// background — neutral, so text keeps its contrast — and lets the desk's
+/// light and shade through.
+struct PaneGlass: View {
+    let tint: Color
+    let isLight: Bool
+
+    /// How much of the terminal's background the sheet keeps — 50%, chosen
+    /// in the pane-sidebar mock: enough for text contrast, little enough
+    /// that the gradient's light and shade carry through.
+    static let tint: Double = 0.5
+
+    var body: some View {
+        let shape = PaneElevation.cardShape
+        if #available(macOS 26.0, *) {
+            Color.clear
+                .glassEffect(.regular.tint(tint.opacity(Self.tint)), in: shape)
+        } else {
+            shape
+                .fill(tint.opacity(Self.tint))
+                .shadow(color: .black.opacity(isLight ? 0.06 : 0.2), radius: 9, y: 6)
         }
     }
 }

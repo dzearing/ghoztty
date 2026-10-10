@@ -8,9 +8,13 @@ import SwiftUI
 /// controls and an editable address field.
 struct ViewerSplitLeaf: View {
     @ObservedObject var viewerView: ViewerView
+    @EnvironmentObject private var ghostty: Ghostty.App
 
     var body: some View {
+        let glass = ghostty.config.paneGlass
         ViewerRepresentable(viewerView: viewerView)
+            // A glass pane's sheet is the page's background too.
+            .task(id: glass) { viewerView.isOnGlass = glass }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Viewer pane")
             // The same hover grab handle a terminal has: drag a viewer onto

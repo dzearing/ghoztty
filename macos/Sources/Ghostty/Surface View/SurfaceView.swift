@@ -118,7 +118,9 @@ extension Ghostty {
                 // a translucent wash, so a background color change repaints
                 // one element per region in one pass instead of several
                 // elements on their own schedules.
-                if surfaceView.paneBanner != nil {
+                // A glass pane has no base background: the sheet behind the
+                // whole pane is it, banner strip included.
+                if surfaceView.paneBanner != nil, !ghostty.config.paneGlass {
                     VStack(spacing: 0) {
                         Rectangle()
                             .fill(basePaneBackgroundColor)

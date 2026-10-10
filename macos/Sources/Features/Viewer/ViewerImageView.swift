@@ -159,6 +159,12 @@ final class ViewerImageSurface: NSView {
     private let scrollView = ViewerImageScrollView()
     private let imageView = ViewerImageDocumentView()
 
+    /// On a glass pane the matte is the sheet itself (see
+    /// `ViewerView.isOnGlass`).
+    var isOnGlass = false {
+        didSet { scrollView.drawsBackground = !isOnGlass }
+    }
+
     /// The file currently displayed, so a live-reload can tell a genuine
     /// re-render from a navigation to a different image.
     private(set) var url: URL?

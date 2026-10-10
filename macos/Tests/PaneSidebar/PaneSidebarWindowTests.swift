@@ -1,5 +1,7 @@
 import AppKit
 import Combine
+import ScreenCaptureKit
+import WebKit
 import GhosttyKit
 import SwiftUI
 import Testing
@@ -90,6 +92,63 @@ struct PaneSidebarWindowTests {
         view.cacheDisplay(in: view.bounds, to: rep)
         let url = URL(fileURLWithPath: dir).appendingPathComponent("\(name).png")
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
+    }
+
+    /// Glass panes (the default): nothing paints over the window's gradient —
+    /// not the terminal (the renderer drops its background), not a viewer's
+    /// page, not the titlebar. Also writes the window as the WINDOW SERVER
+    /// composites it (Liquid Glass and the Metal terminal included, which
+    /// `cacheDisplay` cannot see) to /tmp/pane-sidebar-snapshots — capturing
+    /// one's own window needs no screen-recording grant.
+    @Test func glassPanesLetTheGradientThrough() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = "/bin/sh -c 'ls -la /; echo; echo hello from a glass pane; cat'"
+        let a = PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
+        let b = PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
+        let doc = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("docs/design/pane-sidebar.md")
+        let viewer = PaneView(viewer: ViewerView(location: doc.path))
+        let tree = try SplitTree<PaneView>(view: a)
+            .inserting(view: b, at: a, direction: .right)
+            .inserting(view: viewer, at: b, direction: .down)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        controller.deskVariant = PaneDeskVariant(seed: 7)
+        controller.paneSidebarState.isHidden = false
+        controller.paneSidebarState.isPinned = true
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1200, height: 760))
+        await settle(2.5)
+
+        let dir = "/tmp/pane-sidebar-snapshots"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        // The pieces that make it glass, each of which was found painting an
+        // opaque layer over the gradient at some point.
+        #expect(window.styleMask.contains(.fullSizeContentView), "the gradient can't reach under the titlebar")
+        #expect(window.titlebarAppearsTransparent, "macOS 26 backs the titlebar with its own material")
+        let v = try #require(viewer.viewerView)
+        #expect(v.isOnGlass)
+        #expect((v.webView.value(forKey: "drawsBackground") as? Bool) == false)
+        let page = try await v.webView.evaluateJavaScript(
+            "[document.documentElement.className, getComputedStyle(document.body).backgroundColor, getComputedStyle(document.querySelector('.markdown-body')).backgroundColor].join('|')") as? String
+        #expect(page == "pane-glass|rgba(0, 0, 0, 0)|rgba(0, 0, 0, 0)", "the page paints over the sheet: \(page ?? "nil")")
+
+        let content = try await SCShareableContent.currentProcess
+        let scWindow = try #require(content.windows.first { $0.windowID == CGWindowID(window.windowNumber) })
+        let filter = SCContentFilter(desktopIndependentWindow: scWindow)
+        let cfg = SCStreamConfiguration()
+        cfg.width = Int(scWindow.frame.width * 2)
+        cfg.height = Int(scWindow.frame.height * 2)
+        cfg.showsCursor = false
+        let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: cfg)
+        let rep = NSBitmapImageRep(cgImage: image)
+        try rep.representation(using: .png, properties: [:])?
+            .write(to: URL(fileURLWithPath: "\(dir)/glass-window.png"))
+        controller.close()
+        await settle(0.3)
     }
 
     /// Diagnostic: the sidebar host alone, captured two ways, plus a dump

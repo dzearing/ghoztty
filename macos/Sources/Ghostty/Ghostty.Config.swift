@@ -400,6 +400,21 @@ extension Ghostty {
             return MacDockDropBehavior(rawValue: str) ?? defaultValue
         }
 
+        /// `macos-pane-glass` as configured (see `paneGlass` for whether it
+        /// is in effect).
+        var macosPaneGlass: Bool {
+            guard let config = self.config else { return true }
+            var v = true
+            let key = "macos-pane-glass"
+            _ = ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8)))
+            return v
+        }
+
+        /// Whether panes are glass sheets: `macos-pane-glass`, which only
+        /// means anything in the elevated style. The renderer applies the
+        /// same rule (it stops drawing the terminal's background).
+        var paneGlass: Bool { macosPaneStyle == .elevated && macosPaneGlass }
+
         var macosWindowShadow: Bool {
             guard let config = self.config else { return false }
             var v = false

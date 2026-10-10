@@ -331,7 +331,10 @@ private struct PaneSidebarChrome: View {
                     // under the sidebar and the panel reads as part of the
                     // same surface the panes are raised from. Flat: the
                     // terminal background, lifted, and a 1px rule.
-                    .background(GlassCard.fill(isLightBackground: isLight))
+                    // Glass panes: no lifting wash either — it greys the
+                    // gradient out — just the panes' own neutral tint.
+                    .background(controller.ghostty.config.paneGlass
+                        ? AnyShapeStyle(Color.clear) : GlassCard.fill(isLightBackground: isLight))
                     .background(background.opacity(elevated ? 0.38 : 1))
                     .overlay(alignment: .trailing) {
                         if !elevated {

@@ -104,7 +104,38 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// happens to touch next.
     private(set) var mode: Mode {
         willSet { objectWillChange.send() }
-        didSet { updateImageSurface() }
+        didSet {
+            updateImageSurface()
+            applyGlass()
+        }
+    }
+
+    /// Whether this pane sits on a glass sheet (`macos-pane-glass`), set by
+    /// the leaf that hosts it — the view has no config of its own.
+    var isOnGlass = false {
+        didSet { if isOnGlass != oldValue { applyGlass() } }
+    }
+
+    /// Our own pages — markdown, code, a diff, an image — are see-through on
+    /// a glass pane, so the sheet behind is their background, as it is a
+    /// terminal's. A website or an HTML file keeps its own: a page that sets
+    /// no background was written for a white one.
+    private var drawsOnGlass: Bool { isOnGlass && !isLivePage }
+
+    private func applyGlass() {
+        guard let webView else { return }
+        let clear = drawsOnGlass
+        webView.setValue(!clear, forKey: "drawsBackground")
+        webView.underPageBackgroundColor = clear ? .clear : .windowBackgroundColor
+        imageSurface?.isOnGlass = clear
+        pushGlassToPage()
+    }
+
+    /// The template's own background (viewer.css) yields to the sheet.
+    private func pushGlassToPage() {
+        guard pageLoaded, showingTemplatePage else { return }
+        webView.evaluateJavaScript(
+            "document.documentElement.classList.toggle('pane-glass', \(drawsOnGlass))")
     }
 
     /// The file the template page is showing, if any. Kept separately from
@@ -365,6 +396,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
         // Property observers don't run during init, so `mode`'s `didSet` has
         // not fired and the surface has to be mounted by hand here.
         updateImageSurface()
+        applyGlass()
         // A popup adopts a web view WebKit is already driving (see
         // `createWebViewWith`): loading our own request would fight that
         // navigation and break the opener↔popup link, and there is no file to
@@ -3697,6 +3729,7 @@ extension ViewerView: WKNavigationDelegate {
         refreshFindAfterLoad()
         if case .web = mode { return }
         pageLoaded = true
+        pushGlassToPage()
         // An HTML file IS the page — there is no template to inject into, and
         // calling into `window.__viewer` on someone else's document would only
         // throw. (Unless the load failed and we fell back to the template, in

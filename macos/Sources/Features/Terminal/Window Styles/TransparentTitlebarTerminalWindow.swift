@@ -67,6 +67,18 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
         // Save our config in case we need to reapply
         lastSurfaceConfig = surfaceConfig
 
+        // Glass panes: the content view runs up under the titlebar so the
+        // window's gradient can too (the SwiftUI content still keeps to the
+        // safe area; only the gradient ignores it). The titlebar itself is
+        // cleared in the per-release sync below.
+        if derivedConfig.paneGlass != styleMask.contains(.fullSizeContentView) {
+            if derivedConfig.paneGlass {
+                styleMask.insert(.fullSizeContentView)
+            } else {
+                styleMask.remove(.fullSizeContentView)
+            }
+        }
+
         // Every time we change appearance, set KVO up again in case any of our
         // references changed (e.g. tabGroup is new).
         setupKVO()
@@ -95,7 +107,8 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
             let isTransparentTitlebar = derivedConfig.macosTitlebarStyle == .transparent ||
             derivedConfig.macosTitlebarStyle == .tabs
 
-            titlebarView.layer?.backgroundColor = (isGlassStyle && isTransparentTitlebar)
+            // Glass panes too: their gradient runs up under the titlebar.
+            titlebarView.layer?.backgroundColor = ((isGlassStyle || derivedConfig.paneGlass) && isTransparentTitlebar)
                 ? NSColor.clear.cgColor
                 : preferredBackgroundColor?.cgColor
         }
@@ -103,6 +116,11 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
         // In all cases, we have to hide the background view since this has multiple subviews
         // that force a background color.
         titlebarBackgroundView?.isHidden = true
+
+        // Glass panes: the titlebar draws no material of its own (macOS 26
+        // backs a full-size-content titlebar with a backdrop otherwise), so
+        // the gradient under it shows.
+        if derivedConfig.paneGlass { titlebarAppearsTransparent = true }
     }
 
     @available(macOS 13.0, *)
@@ -111,7 +129,10 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
 
         // Setup the titlebar background color to match ours
         titlebarContainer.wantsLayer = true
-        titlebarContainer.layer?.backgroundColor = preferredBackgroundColor?.cgColor
+        // Glass panes: clear, so the gradient running up under it shows.
+        titlebarContainer.layer?.backgroundColor = derivedConfig.paneGlass
+            ? NSColor.clear.cgColor
+            : preferredBackgroundColor?.cgColor
 
         // See the docs for the function that sets this to true on why
         effectViewIsHidden = false

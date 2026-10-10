@@ -3359,6 +3359,23 @@ keybind: Keybinds = .{},
 /// Changing this option at runtime applies to every window.
 @"macos-pane-style": MacPaneStyle = .elevated,
 
+/// In the `elevated` pane style, whether each pane is a translucent glass
+/// sheet over the window's gradient (`true`, the default) or a solid card
+/// (`false`). macOS only; ignored in the `flat` style.
+///
+/// A glass pane is tinted with the terminal's own background color, so text
+/// keeps its contrast while the gradient's light and shade read through every
+/// pane, and the gradient runs up under the titlebar. On macOS 26 the sheet
+/// is Liquid Glass; earlier releases get a translucent tint.
+///
+/// The terminal stops drawing its own background (the sheet is the
+/// background), so `background-opacity` does not apply to a glass pane;
+/// cells a program colors explicitly are still drawn opaque unless
+/// `background-opacity-cells` is set.
+///
+/// Changing this option at runtime applies to every window.
+@"macos-pane-glass": bool = true,
+
 /// Whether the proxy icon in the macOS titlebar is visible. The proxy icon
 /// is the icon that represents the folder of the current working directory.
 /// You can see this very clearly in the macOS built-in Terminal.app

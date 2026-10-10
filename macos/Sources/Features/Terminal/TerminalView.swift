@@ -70,14 +70,24 @@ private struct PaneSidebarSlot<ViewModel: TerminalViewModel, Content: View>: Vie
                 grid
             }
         }
-        .background {
-            if elevated {
-                let isLight = OSColor(ghostty.config.backgroundColor).isLightColor
-                PaneDesk(
-                    palette: (viewModel as? BaseTerminalController)?.deskPalette(isLight: isLight)
-                        ?? .ocean(isLight: isLight),
-                    opacity: ghostty.config.backgroundOpacity)
-            }
+    }
+}
+
+/// The elevated style's gradient, behind the window's whole content. With
+/// glass panes it also runs up under the (cleared) titlebar, so the window
+/// reads as one sheet of glass over one gradient.
+private struct PaneDeskBackground<ViewModel: TerminalViewModel>: View {
+    @EnvironmentObject private var ghostty: Ghostty.App
+    @ObservedObject var viewModel: ViewModel
+
+    var body: some View {
+        if ghostty.config.macosPaneStyle == .elevated {
+            let isLight = OSColor(ghostty.config.backgroundColor).isLightColor
+            PaneDesk(
+                palette: (viewModel as? BaseTerminalController)?.deskPalette(isLight: isLight)
+                    ?? .ocean(isLight: isLight),
+                opacity: ghostty.config.backgroundOpacity)
+                .ignoresSafeArea(.container, edges: ghostty.config.paneGlass ? .top : [])
         }
     }
 }
@@ -154,6 +164,12 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                         .frame(idealWidth: lastFocusedSurface?.value?.initialSize?.width,
                                idealHeight: lastFocusedSurface?.value?.initialSize?.height)
                 }
+                // The elevated gradient spans the whole content (the debug
+                // warning strip included) and, with glass panes, the titlebar.
+                .background {
+                    PaneDeskBackground(viewModel: viewModel)
+                        .environmentObject(ghostty)
+                }
                 // Ignore safe area to extend up in to the titlebar region if we have the "hidden" titlebar style
                 .ignoresSafeArea(.container, edges: ghostty.config.macosTitlebarStyle == .hidden ? .top : [])
 
@@ -217,7 +233,11 @@ struct DebugBuildWarningView: View {
 
             Spacer()
         }
-        .background(Color(.windowBackgroundColor))
+        // Its own band only: a color background otherwise reaches up behind
+        // the titlebar (SwiftUI's default), covering the elevated gradient
+        // that runs under it with glass panes. Translucent for the same
+        // reason — this strip should not be what the debug build looks like.
+        .background(Color(.windowBackgroundColor).opacity(0.6), ignoresSafeAreaEdges: [])
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Debug build warning")

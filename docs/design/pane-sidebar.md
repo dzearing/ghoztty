@@ -628,3 +628,26 @@ inspection and by the user's feel test, not by synthetic events (synthetic
 - **Stashing a whole split subtree.** Only leaves stash, as only leaves move.
 - **Reordering grid rows in the list.** Grid order is derived from the layout,
   in reading order. Changing it is what dragging in the grid does.
+
+
+### Glass panes (`macos-pane-glass`, default on)
+
+Tried in the mock as a "Glass panes" toggle with a tint slider; the user chose
+**50%**. A pane is a translucent sheet tinted with the terminal's own (neutral)
+background — Liquid Glass on macOS 26 — so the spotlight-to-shade progression
+of the desk reads through every pane rather than only in the gutters, and the
+desk runs up under the titlebar so the window is one surface. A blur alone does
+nothing here (the gradient has no detail to frost); the tint and the sheet's
+edge are what make it read as glass.
+
+Making it real took removing every opaque layer between the gradient and the
+eye, each found by capturing the window (ScreenCaptureKit, own process) and
+probing: the terminal renderer's background (now zeroed, as for the
+`macos-glass-*` blur styles), the banner strip's base fill, the viewer
+template's page and `.markdown-body` backgrounds plus the web view's own,
+macOS 26's titlebar backdrop (`titlebarAppearsTransparent`), the window
+content stopping at the titlebar (`.fullSizeContentView`), and a debug-only
+warning strip whose color background reached up behind the titlebar. Websites
+and local HTML pages keep their own backgrounds: a page that sets none was
+written for white. Cells a program colors explicitly stay opaque unless
+`background-opacity-cells` is set.

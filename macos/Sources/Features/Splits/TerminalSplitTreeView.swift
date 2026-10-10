@@ -202,6 +202,7 @@ private struct PaneLeafView: View {
         // The elevated style: a raised rounded card on the window's gradient.
         .modifier(PaneCard(
             isElevated: ghostty.config.macosPaneStyle == .elevated,
+            isGlass: ghostty.config.paneGlass,
             background: ghostty.config.backgroundColor,
             isLight: OSColor(ghostty.config.backgroundColor).isLightColor))
     }

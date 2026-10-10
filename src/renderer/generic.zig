@@ -569,6 +569,10 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             colorspace: configpkg.Config.WindowColorspace,
             blending: configpkg.Config.AlphaBlending,
             background_blur: configpkg.Config.BackgroundBlur,
+            /// The elevated pane style's glass sheets (`macos-pane-glass`):
+            /// the pane's card draws the tinted background, so the terminal
+            /// draws none.
+            pane_glass: bool,
             scroll_to_bottom_on_output: bool,
 
             pub fn init(
@@ -643,6 +647,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     .colorspace = config.@"window-colorspace",
                     .blending = config.@"alpha-blending",
                     .background_blur = config.@"background-blur",
+                    .pane_glass = (comptime builtin.os.tag == .macos) and
+                        config.@"macos-pane-style" == .elevated and
+                        config.@"macos-pane-glass",
                     .scroll_to_bottom_on_output = config.@"scroll-to-bottom".output,
                     .arena = arena,
                 };
@@ -1428,6 +1435,12 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
 
                     else => {},
                 };
+
+                // Glass panes: the card behind the terminal is the
+                // background, tinted with this same color.
+                if (comptime builtin.os.tag == .macos) {
+                    if (self.config.pane_glass) self.uniforms.bg_color[3] = 0;
+                }
 
                 // Prepare our overlay image for upload (or unload). This
                 // has to use our general allocator since it modifies
