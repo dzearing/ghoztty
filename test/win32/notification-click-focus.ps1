@@ -162,13 +162,13 @@ Assert (-not (Test-TestDesktopLeak -ProcessId $script:appPid)) 'window is NOT en
 $paneA1 = Get-FocusedPane
 Assert ($paneA1 -ne 0) 'the launch window has a focused pane'
 
-& $Exe +split --name=nf-a2 --direction=down 2>&1 | Out-Null
+& $Exe +split --name=nf-a2 --direction=down --focus 2>&1 | Out-Null
 $paneA2 = Wait-NewFocus $paneA1
 Assert ($paneA2 -ne 0) 'split nf-a2 created and focused (window A, pane 2)'
 
-& $Exe +new-window --target=nf-b 2>&1 | Out-Null
+& $Exe +new-window --target=nf-b --focus 2>&1 | Out-Null
 Start-Sleep -Seconds 3
-& $Exe +split --target=nf-b --name=nf-b2 --direction=down 2>&1 | Out-Null
+& $Exe +split --target=nf-b --name=nf-b2 --direction=down --focus 2>&1 | Out-Null
 $paneB2 = Wait-NewFocus $paneA2
 Assert ($paneB2 -ne 0) 'split nf-b2 created and focused (window B, pane 2)'
 

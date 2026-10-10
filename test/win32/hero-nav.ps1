@@ -445,7 +445,7 @@ try {
     # WebView2's chain whose loop turns a posted WM_KEYDOWN into an
     # AcceleratorKeyPressed event (probed on-box, 2026-08-06 - see
     # viewer-panes.ps1 section 11b).
-    & $exe +split --target=heronav2 --direction=right --name=heron_view "--view=$viewFile" | Out-Null
+    & $exe +split --target=heronav2 --direction=right --name=heron_view "--view=$viewFile" --focus | Out-Null
     Start-Sleep -Seconds 3
     $leavesBv = Get-Leaves $topB
     $viewers = @($leavesBv | Where-Object { $_.Kind -eq 'GhozttyViewer' })
@@ -540,9 +540,9 @@ try {
     if ($topC -ne [IntPtr]::Zero) {
         Set-TestWindowSize -Window $topC -Width 1200 -Height 800 | Out-Null
         Start-Sleep -Milliseconds 400
-        & $exe +split --target=heronav3 --direction=down --name=heron_f2 | Out-Null
+        & $exe +split --target=heronav3 --direction=down --name=heron_f2 --focus | Out-Null
         Start-Sleep -Milliseconds 900
-        & $exe +split --target=heronav3 --direction=right --name=heron_f3 | Out-Null
+        & $exe +split --target=heronav3 --direction=right --name=heron_f3 --focus | Out-Null
         Start-Sleep -Milliseconds 900
 
         $leavesF = Get-Leaves $topC

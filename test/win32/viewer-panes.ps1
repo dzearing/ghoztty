@@ -671,7 +671,9 @@ try {
     # The known fallback: a terminal in a directory that is NOT the file's.
     # It is the last focused core surface from here on, so it is what a split
     # gets when the viewer contributes nothing.
-    $r = Invoke-Verb @('+split', '--target=vp', '--name=t395base', "--working-directory=$t395other")
+    # `--focus` (T1797): CLI splits no longer take focus on their own, and this
+    # fixture IS "the focused terminal".
+    $r = Invoke-Verb @('+split', '--target=vp', '--name=t395base', "--working-directory=$t395other", '--focus')
     Assert ($r.Code -eq 0) "+split --working-directory=<other dir> exits 0 (got $($r.Code))"
     Assert ($null -ne (Wait-Leaf 'vp' 't395base')) 'the base terminal exists'
     Assert (Test-SameDir (Get-LeafCwd 'vp' 't395base' $t395other) $t395other) 'the base terminal is in the other dir'
@@ -697,7 +699,7 @@ try {
     # the focus away first, so the assertion above cannot pass by accident.
     $t395far = Join-Path $env:TEMP 'ghoztty-t538-far'
     New-Item -ItemType Directory -Force -Path $t395far | Out-Null
-    $r = Invoke-Verb @('+new-window', '--target=t538far', "--working-directory=$t395far")
+    $r = Invoke-Verb @('+new-window', '--target=t538far', "--working-directory=$t395far", '--focus')
     Assert ($r.Code -eq 0) "+new-window in a far directory exits 0 (got $($r.Code))"
     Assert ($null -ne (Wait-Win 't538far')) 'the far window exists'
     $r = Invoke-Verb @('+split', '--pane=t395web', '--name=t538crossterm')

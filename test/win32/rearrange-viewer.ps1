@@ -258,15 +258,18 @@ try {
     if ($r.Code -ne 0 -or -not (Wait-Win 'rvw')) {
         Write-TestAssertedNothing -Label 'T827 ACCEPTANCE' -Reason "the rvw fixture window never appeared ($($r.Out))"
     }
-    $r = Invoke-Verb @('+split', '--target=rvw', '--direction=right', '--name=rv1', "--view=$doc")
+    # `--focus` on the fixture splits (T1797): each one used to take focus, so
+    # the next split anchored on it and the last one created holds focus - the
+    # state arm A's focus assertion moves away from.
+    $r = Invoke-Verb @('+split', '--target=rvw', '--direction=right', '--name=rv1', "--view=$doc", '--focus')
     Assert ($r.Code -eq 0) "fixture: +split --view exits 0 (got $($r.Code): $($r.Out))"
     if (-not (Wait-LeafNamed 'rvw' 'rv1')) {
         Write-TestAssertedNothing -Label 'T827 ACCEPTANCE' -Reason 'the viewer pane rv1 never appeared in +list'
     }
-    $r = Invoke-Verb @('+split', '--target=rvw', '--direction=down', '--name=rvt1')
+    $r = Invoke-Verb @('+split', '--target=rvw', '--direction=down', '--name=rvt1', '--focus')
     Assert ($r.Code -eq 0) "fixture: +split rvt1 exits 0 (got $($r.Code): $($r.Out))"
     [void](Wait-LeafNamed 'rvw' 'rvt1')
-    $r = Invoke-Verb @('+split', '--target=rvw', '--direction=right', '--name=rvt2')
+    $r = Invoke-Verb @('+split', '--target=rvw', '--direction=right', '--name=rvt2', '--focus')
     Assert ($r.Code -eq 0) "fixture: +split rvt2 exits 0 (got $($r.Code): $($r.Out))"
     [void](Wait-LeafNamed 'rvw' 'rvt2')
     Start-Sleep -Seconds 3

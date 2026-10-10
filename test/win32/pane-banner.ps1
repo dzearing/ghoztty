@@ -1761,7 +1761,8 @@ try {
     $null = Wait-Banner 'bw' 0 'NONE'
 
     # --- 7. per-pane: named split pane gets its own banner ---------------------
-    & $exe +split --target=bw --name=bp1 --direction=down | Out-Null
+    # `--focus` (T1797): this section is about the FOCUSED pane being the split.
+    & $exe +split --target=bw --name=bp1 --direction=down --focus | Out-Null
     Start-Sleep -Seconds 1
     & $exe +set-banner --target=bp1 "split banner" | Out-Null
     $b = Wait-Banner 'bw' 1 'split banner'

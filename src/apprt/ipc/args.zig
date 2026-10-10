@@ -47,7 +47,15 @@ pub const VerbArgs = struct {
     /// in the handler so parse errors can be ignored Mac-style.
     color: ?[]const u8 = null,
     split_color: ?[]const u8 = null,
-    no_activate: bool = false,
+    /// `--focus` / `--focus=true|false` (T1797, main 3081022ec): whether a
+    /// programmatic command may take focus. The default is BACKGROUND - the
+    /// window opens without activating, behind Ghoztty's frontmost window, and
+    /// the pane that had the keyboard keeps it; `--focus` opts back into
+    /// raise-and-focus. The win32 twin of the Mac's `IPCFocusPolicy.parse`:
+    /// the last focus flag before `-e` wins, any other value is not a focus
+    /// flag, and `--no-activate` (the old opt-out, now the default) is accepted
+    /// as a no-op that cannot override an explicit `--focus`.
+    focus: bool = false,
     /// `--cwd-implicit` (T135): the CLI auto-inserts `--working-directory=<its
     /// cwd>` when the caller gave none, and marks that insertion with this flag
     /// so the server can tell an explicit request apart from the default. Only
@@ -91,8 +99,11 @@ pub fn parseVerbArgs(
         }
         if (std.mem.eql(u8, arg, "-e")) {
             e_flag = true;
+        } else if (focusFlag(arg)) |on| {
+            result.focus = on;
         } else if (std.mem.eql(u8, arg, "--no-activate")) {
-            result.no_activate = true;
+            // Names the default. Recognised so it is never mistaken for an
+            // unknown flag, and deliberately sets nothing.
         } else if (std.mem.eql(u8, arg, "--from-focused")) {
             result.from_focused = true;
         } else if (std.mem.eql(u8, arg, "--cwd-implicit")) {
@@ -163,6 +174,16 @@ pub fn parseVerbArgs(
     result.env = env.items;
     result.e_args = e_args.items;
     return result;
+}
+
+/// The focus policy one argument sets, or null when it is not a focus flag
+/// (`IPCFocusPolicy.fromFlag`): `--focus` and `--focus=true` opt in,
+/// `--focus=false` is the default spelled out, and any other value is not a
+/// focus flag at all rather than a guess.
+fn focusFlag(arg: []const u8) ?bool {
+    if (std.mem.eql(u8, arg, "--focus") or std.mem.eql(u8, arg, "--focus=true")) return true;
+    if (std.mem.eql(u8, arg, "--focus=false")) return false;
+    return null;
 }
 
 /// The flag `apprt.ipc.seedCallerPane` adds to carry `$GHOZTTY_PANE_ID` to the
@@ -900,7 +921,8 @@ test "parseVerbArgs: full flag set" {
     try testing.expectEqualStrings("logs", parsed.pane.?);
     try testing.expectEqual(@as(?i64, 30), parsed.percent);
     try testing.expectEqual(@as(?i64, 10), parsed.lines);
-    try testing.expect(parsed.no_activate);
+    // `--no-activate` names the default (T1797): accepted, sets nothing.
+    try testing.expect(!parsed.focus);
     try testing.expect(parsed.from_focused);
     try testing.expectEqualStrings("#334455", parsed.color.?);
     try testing.expectEqualStrings("random", parsed.split_color.?);
@@ -1066,6 +1088,42 @@ test "droppedOnExistingTarget: -e, --view, split flags and --env all count" {
         "--target=main", "--no-activate",
     });
     try testing.expect(try droppedOnExistingTarget(alloc, quiet) == null);
+}
+
+// T1797: the flag vocabulary of the background-by-default contract, case for
+// case with the Mac's IPCFocusPolicyTests so the two parsers cannot disagree.
+test "parseVerbArgs: --focus opts in; background is the default" {
+    var arena = testArena();
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    try testing.expect(!(try parseVerbArgs(a, &[_][]const u8{ "--target=dev", "--view=README.md" })).focus);
+    try testing.expect((try parseVerbArgs(a, &[_][]const u8{ "--focus", "--view=README.md" })).focus);
+
+    // `--no-activate` names the default: accepted, harmless, leaks nowhere.
+    const legacy = try parseVerbArgs(a, &[_][]const u8{ "--no-activate", "--target=x", "-e", "zsh" });
+    try testing.expect(!legacy.focus);
+    try testing.expectEqualStrings("x", legacy.target.?);
+    try testing.expectEqual(@as(usize, 1), legacy.e_args.len);
+
+    // A no-op cannot override an explicit request, in either order.
+    try testing.expect((try parseVerbArgs(a, &[_][]const u8{ "--focus", "--no-activate" })).focus);
+    try testing.expect((try parseVerbArgs(a, &[_][]const u8{ "--no-activate", "--focus" })).focus);
+
+    // After `-e` everything is the command being run.
+    const dash_e = try parseVerbArgs(a, &[_][]const u8{ "-e", "mytool", "--focus" });
+    try testing.expect(!dash_e.focus);
+    try testing.expectEqualStrings("--focus", dash_e.e_args[1]);
+
+    // Boolean spellings; anything else is not a focus flag at all.
+    try testing.expect((try parseVerbArgs(a, &[_][]const u8{"--focus=true"})).focus);
+    try testing.expect(!(try parseVerbArgs(a, &[_][]const u8{"--focus=false"})).focus);
+    try testing.expect(!(try parseVerbArgs(a, &[_][]const u8{ "--focus", "--focus=false" })).focus);
+    try testing.expect(!(try parseVerbArgs(a, &[_][]const u8{"--focus=yes"})).focus);
+    try testing.expect(!(try parseVerbArgs(a, &[_][]const u8{"--focused"})).focus);
+
+    // `+new-remote-window` shares this parser, so it reads the same flag.
+    try testing.expect((try parseVerbArgs(a, &[_][]const u8{ "--host=h", "--port=1", "--focus" })).focus);
 }
 
 test "parseVerbArgs: --view is captured, not dropped as an unknown flag" {

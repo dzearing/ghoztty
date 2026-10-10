@@ -235,7 +235,9 @@ try {
     $paneA = $leaves[0].id
     Assert ($paneA -match '^[0-9A-Fa-f]{8}-') "A2 window A's pane has a pane id ($paneA)"
 
-    $r = Run-Cli '+new-window --title=t1079-B' 'newwin.txt' '' 25
+    # `--focus` (T1797): section B reads window B as the app's FRONT window, and
+    # a CLI-opened window is only that when it is asked to be.
+    $r = Run-Cli '+new-window --title=t1079-B --focus' 'newwin.txt' '' 25
     Assert ($r.exit -eq 0) "A3 +new-window made a second window (exit $($r.exit))"
     $tree = Wait-LeafCount 'a1' 2 30
     Assert (@(Get-ListWindows $tree).Count -eq 2) "A4 two windows exist (got $(@(Get-ListWindows $tree).Count))"

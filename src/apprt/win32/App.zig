@@ -1457,8 +1457,13 @@ fn resolveDeferDisabled() bool {
 /// and `--working-directory` survive the handoff. The cwd is forwarded
 /// whenever it resolved to a path: config finalize resolves the Windows CLI
 /// default to the launching directory (T506), so this matches both a first
-/// launch and `+new-window`'s auto-inserted `--working-directory`. Returns
-/// null when there is nothing to say, preserving the bare-verb wire shape.
+/// launch and `+new-window`'s auto-inserted `--working-directory`.
+///
+/// It always leads with `--focus` (T1797): `+new-window` opens in the
+/// background by default now, and this window is the one thing in the IPC path
+/// the user asked for by hand - a shortcut, a taskbar click - so it is raised
+/// like any window the user opens. Never null any more; the optional stays for
+/// the send call's sake.
 /// Allocations are owned by the caller; the forward path exits the process
 /// immediately after sending, so it never frees them.
 /// This process's build identity, for the launch handoff (T1022).
@@ -1597,6 +1602,9 @@ fn forwardedNewWindowArgs(
     var args: std.ArrayList([:0]const u8) = .empty;
     errdefer args.deinit(alloc);
 
+    // Ahead of everything: after a `-e` it would be part of the command.
+    try args.append(alloc, try alloc.dupeZ(u8, "--focus"));
+
     if (working_directory) |wd| {
         if (wd.value()) |path| {
             try args.append(alloc, try std.fmt.allocPrintSentinel(
@@ -1625,19 +1633,20 @@ fn forwardedNewWindowArgs(
         )),
     };
 
-    if (args.items.len == 0) {
-        args.deinit(alloc);
-        return null;
-    }
     return try args.toOwnedSlice(alloc);
 }
 
-test "forwardedNewWindowArgs: nothing to forward stays a bare verb (T487)" {
+test "forwardedNewWindowArgs: nothing else to forward is --focus alone (T487, T1797)" {
     const testing = std.testing;
-    try testing.expect(try forwardedNewWindowArgs(testing.allocator, null, null) == null);
-    // `.inherit` and `.home` resolve to no path — still a bare verb.
-    try testing.expect(try forwardedNewWindowArgs(testing.allocator, null, .inherit) == null);
-    try testing.expect(try forwardedNewWindowArgs(testing.allocator, null, .home) == null);
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const alloc = arena.allocator();
+    // `.inherit` and `.home` resolve to no path, so they add nothing either.
+    for ([_]?configpkg.Config.WorkingDirectory{ null, .inherit, .home }) |wd| {
+        const args = (try forwardedNewWindowArgs(alloc, null, wd)).?;
+        try testing.expectEqual(@as(usize, 1), args.len);
+        try testing.expectEqualStrings("--focus", args[0]);
+    }
 }
 
 test "forwardedNewWindowArgs: -e argv and the launch cwd survive the handoff (T487)" {
@@ -1651,13 +1660,14 @@ test "forwardedNewWindowArgs: -e argv and the launch cwd survive the handoff (T4
         .{ .direct = &.{ "pwsh", "-NoExit", "-Command", "echo hi" } },
         .{ .path = "D:\\proj" },
     )).?;
-    try testing.expectEqual(@as(usize, 6), args.len);
-    try testing.expectEqualStrings("--working-directory=D:\\proj", args[0]);
-    try testing.expectEqualStrings("-e", args[1]);
-    try testing.expectEqualStrings("pwsh", args[2]);
-    try testing.expectEqualStrings("-NoExit", args[3]);
-    try testing.expectEqualStrings("-Command", args[4]);
-    try testing.expectEqualStrings("echo hi", args[5]);
+    try testing.expectEqual(@as(usize, 7), args.len);
+    try testing.expectEqualStrings("--focus", args[0]);
+    try testing.expectEqualStrings("--working-directory=D:\\proj", args[1]);
+    try testing.expectEqualStrings("-e", args[2]);
+    try testing.expectEqualStrings("pwsh", args[3]);
+    try testing.expectEqualStrings("-NoExit", args[4]);
+    try testing.expectEqualStrings("-Command", args[5]);
+    try testing.expectEqualStrings("echo hi", args[6]);
 }
 
 test "forwardedNewWindowArgs: a shell-form initial-command maps to --command (T487)" {
@@ -1667,8 +1677,9 @@ test "forwardedNewWindowArgs: a shell-form initial-command maps to --command (T4
     const alloc = arena.allocator();
 
     const args = (try forwardedNewWindowArgs(alloc, .{ .shell = "htop -d 5" }, null)).?;
-    try testing.expectEqual(@as(usize, 1), args.len);
-    try testing.expectEqualStrings("--command=htop -d 5", args[0]);
+    try testing.expectEqual(@as(usize, 2), args.len);
+    try testing.expectEqualStrings("--focus", args[0]);
+    try testing.expectEqualStrings("--command=htop -d 5", args[1]);
 }
 
 pub fn run(self: *App) !void {
@@ -6449,6 +6460,10 @@ pub fn openDialedWindow(
     const window = self.createWindow(.{
         .surface_overrides = &overrides,
         .ipc_name = opts.ipc_name,
+        // T1797: a `+new-remote-window` without `--focus` opens in the
+        // background from its very first show. Re-showing it inactive AFTER a
+        // normal first show was too late: that show had already activated it.
+        .background = !opts.activate,
     }) catch |err| {
         log.warn("remote window: create window failed err={}", .{err});
         dialed.deinitDestroy(self.core_app.alloc);
@@ -6464,11 +6479,9 @@ pub fn openDialedWindow(
     }
 
     if (opts.title) |title| window.setTitleOverride(title);
-    if (!opts.activate) {
-        if (window.hwnd) |hwnd| _ = w32.ShowWindow(hwnd, w32.SW_SHOWNOACTIVATE);
-    } else if (window.hwnd) |hwnd| {
+    if (opts.activate) if (window.hwnd) |hwnd| {
         _ = w32.SetForegroundWindow(hwnd);
-    }
+    };
     return window;
 }
 
@@ -6993,6 +7006,10 @@ pub fn openRemoteWindowFrom(
         working_directory: ?[]const u8 = null,
         shell: ?[]const u8 = null,
         command: ?[]const u8 = null,
+        /// Raise and focus the new window (T1797). The keybind path is the
+        /// user's own New Window and keeps the default; the IPC
+        /// `--from-focused` path passes its `--focus`.
+        activate: bool = true,
     },
 ) RemoteOpenError!*Window {
     const machine = parent.remote_machine orelse return error.DialFailed;
@@ -7032,6 +7049,7 @@ pub fn openRemoteWindowFrom(
         .shell = explicit.shell,
         .command = command,
         .machine = machine,
+        .activate = explicit.activate,
     };
 
     switch (machine) {

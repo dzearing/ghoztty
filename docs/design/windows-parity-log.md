@@ -34673,3 +34673,23 @@ Also: `build-fresh-guard.ps1` E1-E7 went red on an untouched tree after the
 13-day pause - its stub was aged a fixed 600 minutes, which is NEWER than every
 source when nothing in `src\` changed for ten hours. It now dates the stub 10
 minutes before the real src high-water mark (ALL PASS 42).
+
+## 2026-10-10 — T1797: CLI-created windows and panes open in the background; `--focus` opts in
+
+The Windows half of main 3081022ec. `ghoztty +new-window` (terminal, `--view`,
+`--split`, `--from-focused`), `+split` (every anchor, terminal and viewer),
+`+new-remote-window` and the idempotent `--target`/`--name` hits no longer
+activate Ghoztty, raise a window, or move the keyboard: a new window shows
+without activating (`SW_SHOWNOACTIVATE`, no deferred SetFocus, which would have
+activated it anyway) and is placed directly behind Ghoztty's frontmost window,
+never over the user's app (pure rule `background_zorder.zig`); a split leaves
+the tab's active pane and the keyboard where they were (`Window.split_background`
+baton). `--focus` / `--focus=true` restores raise-and-focus, `--no-activate` is
+an accepted no-op, parsed in `ipc/args.zig` case for case with the Mac's
+`IPCFocusPolicy`, and the CLI's flag check accepts it. The single-instance
+launch handoff (a shortcut while Ghoztty runs) forwards `--focus`, because the
+user opened that one. Known limit, documented in cli.md: a background window
+cannot open maximized (Windows has no non-activating maximize). New harness
+`cli-focus-policy.ps1` (39 assertions, negative control red, guard row added);
+seven existing harnesses that had relied on the old contract now pass `--focus`
+in their fixtures. Floor lanes, P1-P3 and the focus-sensitive sweep green.

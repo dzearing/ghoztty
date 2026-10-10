@@ -182,6 +182,7 @@ const menu_bar = @import("menu_bar.zig");
 const update_badge = @import("update_badge.zig");
 const menu_label = @import("menu_label.zig");
 const overlay_zorder = @import("overlay_zorder.zig");
+const background_zorder = @import("background_zorder.zig");
 const chrome_fanout = @import("chrome_fanout.zig");
 const tab_tooltip = @import("tab_tooltip.zig");
 const internal_os = @import("../../os/main.zig");
@@ -668,6 +669,21 @@ start_maximized: bool = false,
 /// SIZE_RESTORED fires for every programmatic resize too.
 was_maximized: bool = false,
 
+/// Open this window in the BACKGROUND (T1797, main 3081022ec): its first show
+/// does not activate it, places it directly behind Ghoztty's frontmost window
+/// rather than over the app the user is in, and moves no keyboard focus. Set
+/// from `InitOptions.background` (a `ghoztty +new-window` without `--focus`)
+/// and spent by that first show; a user-opened window never sets it.
+background_first_show: bool = false,
+
+/// The NEXT split inserted into this window leaves keyboard focus where it is
+/// (T1797): the pane that had it - normally the one the `+split` was run from -
+/// keeps it, and the tab's active pane does not move to the new one. A baton
+/// like `pending_surface_overrides`: set by the IPC handler around one
+/// `newSplitAt`/`newViewerSplitAt` and cleared right after. Keybind and menu
+/// splits never set it, so they focus the new pane as they always have.
+split_background: bool = false,
+
 /// IPC surface-config overrides consumed by the NEXT Surface.init in this
 /// window (see Surface.Overrides). Set immediately before addTab/newSplit
 /// by the IPC server; creation is synchronous so borrowed strings are fine.
@@ -811,6 +827,10 @@ pub const InitOptions = struct {
     /// Canonical IPC name for this window (`+new-window --target`).
     /// Borrowed; duped at registration. Null → auto-generated `window-N`.
     ipc_name: ?[]const u8 = null,
+
+    /// Open in the background (T1797): see `background_first_show`. Only the
+    /// IPC verbs set it, and only without `--focus`.
+    background: bool = false,
 
     /// `+new-window --view=<url>` (T374): the window's first (and only) pane is
     /// a VIEWER opened with this, rather than a terminal. Borrowed; the pane
@@ -1312,6 +1332,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         .app = app,
         .is_quick_terminal = options.is_quick_terminal,
         .pending_surface_overrides = options.surface_overrides,
+        .background_first_show = options.background,
     };
 
     // T1343 measurement switches, read once per window: `GHOZTTY_PERF` turns
@@ -2530,6 +2551,59 @@ fn insertPaneAsTab(self: *Window, pane: *PaneView, tree: SplitTree(PaneView)) vo
     self.insertPaneAsTabAt(pane, tree, pos);
 }
 
+/// The first show of a window opened in the BACKGROUND (T1797): visible,
+/// never activated, and placed directly behind Ghoztty's frontmost window
+/// rather than at the top of the z-order, where a no-activate show still lands
+/// - over whatever app the user is in. `background_zorder.place` is the rule;
+/// this only describes the live z-order to it.
+///
+/// A remembered or configured MAXIMIZED state is not honored here: Windows has
+/// no show command that maximizes without activating (`SW_SHOWMAXIMIZED` is
+/// the only maximize spelling, and it activates), and not taking focus is the
+/// whole contract. The window opens at its restored size, which is the size it
+/// would restore down to anyway.
+fn showInBackground(self: *Window, h: w32.HWND) void {
+    _ = w32.ShowWindow(h, w32.SW_SHOWNOACTIVATE);
+
+    const cap = 512;
+    var entries: [cap]background_zorder.Entry = undefined;
+    var hwnds: [cap]w32.HWND = undefined;
+    var n: usize = 0;
+    // foreground-audit: this asks which window of ANY process the user is in,
+    // so the new one can sit behind it - not "is one of our windows active",
+    // which is window_active's question. Off the input desktop there is no
+    // foreground window, and the rule's ours-first branch is the answer.
+    const fg = w32.GetForegroundWindow();
+    var cur = w32.GetWindow(h, w32.GW_HWNDFIRST);
+    while (cur) |c| : (cur = w32.GetWindow(c, w32.GW_HWNDNEXT)) {
+        if (n == cap) break;
+        if (c == h or w32.IsWindowVisible(c) == 0) continue;
+        var ours = false;
+        for (self.app.windows.items) |w| {
+            if (w != self and w.hwnd == c) ours = true;
+        }
+        const ex = w32.GetWindowLongW(c, w32.GWL_EXSTYLE);
+        entries[n] = .{ .ours = ours, .topmost = ex & w32.WS_EX_TOPMOST != 0, .foreground = fg == c };
+        hwnds[n] = c;
+        n += 1;
+    }
+
+    const after: ?w32.HWND = switch (background_zorder.place(entries[0..n])) {
+        .after => |i| hwnds[i],
+        .top => null, // HWND_TOP
+    };
+    _ = w32.SetWindowPos(
+        h,
+        after,
+        0,
+        0,
+        0,
+        0,
+        w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOACTIVATE | w32.SWP_NOOWNERZORDER,
+    );
+    log.info("window opened in the background (T1797): placed behind {?}", .{after});
+}
+
 /// The same, at an index the CALLER chose rather than the one the config
 /// implies: a pane dropped on the tab strip becomes a tab exactly where it was
 /// dropped (T1537), which is a position the user pointed at and not a policy.
@@ -2594,22 +2668,31 @@ fn insertPaneAsTabAt(
         // Quick terminal windows are shown by QuickTerminal.animateIn() instead.
         if (!self.is_quick_terminal) {
             if (self.hwnd) |h| {
-                // T85: first show honors the remembered/config maximized
-                // state. The pre-show size (remembered or initial_size)
-                // remains the restored size underneath.
-                _ = w32.ShowWindow(
-                    h,
-                    if (self.start_maximized) w32.SW_MAXIMIZE else w32.SW_SHOW,
-                );
+                if (self.background_first_show) {
+                    self.showInBackground(h);
+                } else {
+                    // T85: first show honors the remembered/config maximized
+                    // state. The pre-show size (remembered or initial_size)
+                    // remains the restored size underneath.
+                    _ = w32.ShowWindow(
+                        h,
+                        if (self.start_maximized) w32.SW_MAXIMIZE else w32.SW_SHOW,
+                    );
+                }
                 _ = w32.UpdateWindow(h);
             }
         }
         self.active_tab = pos;
         self.updateWindowTitle();
-        // Set keyboard focus to the child pane so it receives input.
-        if (!self.is_quick_terminal) {
+        // Set keyboard focus to the child pane so it receives input. Not for a
+        // background window (T1797): SetFocus on a child of an inactive
+        // top-level ACTIVATES that top-level, which is the very raise the
+        // background show avoided. The frame's WM_SETFOCUS hands focus to the
+        // active pane whenever the user does activate it.
+        if (!self.is_quick_terminal and !self.background_first_show) {
             if (pane.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
         }
+        self.background_first_show = false;
     } else {
         self.selectTabIndex(pos);
     }
@@ -6723,14 +6806,17 @@ fn insertPaneAsSplit(
     self.tab_trees[tab] = new_tree;
     old_tree.deinit();
 
-    // Focus the new pane...
-    self.tab_active_pane[tab] = new_pane;
+    // Focus the new pane - unless the split was asked for in the background
+    // (T1797), where the pane that had the keyboard keeps it and stays the
+    // tab's active pane, so the user's typing keeps landing where it was.
+    const background = self.split_background;
+    if (!background) self.tab_active_pane[tab] = new_pane;
     // ...and relabel the tab after it, for the reason `insertPaneAsTab` does:
     // the focused pane drives the tab title (T92), and a viewer was named
     // before this tree existed so its own `setTitle` had nobody to tell (T383).
     self.refreshTabTitle(tab);
     self.heroOnTreeChanged(tab);
-    if (self.tab_hero_active[tab]) {
+    if (!background and self.tab_hero_active[tab]) {
         if (self.leafIndexOf(tab, new_pane)) |index| {
             self.tab_hero_index[tab] = @intCast(index);
         }
@@ -6738,7 +6824,7 @@ fn insertPaneAsSplit(
 
     if (tab == self.active_tab) {
         self.layoutSplits();
-        if (new_pane.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
+        if (!background) if (new_pane.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
     } else {
         // Both leaf kinds create their child hwnd visible; this pane belongs to
         // a background tab, so hide it until its tab is selected.

@@ -474,6 +474,24 @@ $GuardTable = @(
             'src\apprt\surface.zig'
         )
     },
+    # CLI-created windows and panes open in the background; `--focus` opts in
+    # (T1797, main 3081022ec). Every file that decides it: the flag parse
+    # (`ipc\args.zig`), the verbs (`IpcHandlers.zig`), the remote open tail and
+    # the launch handoff's `--focus` (`App.zig`), the background first show and
+    # the split baton (`Window.zig`), and the z-order rule.
+    [pscustomobject]@{
+        Name   = 'cli-focus-policy'
+        Script = 'test\win32\cli-focus-policy.ps1'
+        Stamp  = 'test\win32\cli-focus-policy.stamp.json'
+        Covers = @(
+            'test\win32\cli-focus-policy.ps1',
+            'src\apprt\ipc\args.zig',
+            'src\apprt\win32\IpcHandlers.zig',
+            'src\apprt\win32\App.zig',
+            'src\apprt\win32\Window.zig',
+            'src\apprt\win32\background_zorder.zig'
+        )
+    },
     # The viewer suite carries the browser-leak tripwire (T594): the only
     # thing that scores whether a test run handed a page to the user's real
     # browser, and it is not in the P1-P3 floor. The zig-side guard

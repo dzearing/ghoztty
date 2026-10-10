@@ -5,7 +5,9 @@ description: Use when opening terminal windows, creating split pane layouts, ope
 
 # Ghoztty CLI Reference
 
-Ghoztty is a fork of Ghostty that adds CLI-driven window management over a Unix domain socket. All IPC commands are **idempotent** — named targets that already exist are focused instead of recreated.
+Ghoztty is a fork of Ghostty that adds CLI-driven window management over a Unix domain socket. All IPC commands are **idempotent** — named targets that already exist are reused instead of recreated.
+
+**Commands do not take focus by default.** A window or pane you create appears without activating Ghoztty, raising its window, or moving the caret — the user's pane (and yours) keeps keyboard focus, so opening a side pane never interrupts them. Pass `--focus` only when bringing the surface to the user's attention is the point (e.g. they asked to be taken there).
 
 ## Prerequisites
 
@@ -74,13 +76,14 @@ ghoztty +new-window [flags]
 
 | Flag | Description |
 |------|-------------|
-| `--target=<name>` | Register window with a name. If it already exists, focuses it instead. |
+| `--target=<name>` | Register window with a name. If it already exists, it is reused (raised only with `--focus`). |
 | `--working-directory=<path>` | Working directory for the terminal. Relative paths are resolved from CWD. `~` is expanded. If omitted, uses the CWD where `ghoztty` is invoked. |
 | `--command=<cmd>` | Command to run in the terminal. Auto-wrapped in the user's login shell with profile loaded. |
 | `--view=<path-or-url>` | Open a **viewer** pane instead of a terminal: a rendered markdown file, an `.html`/`.htm` file rendered as a **live page**, a syntax-highlighted text/code file, an **image**, or a website (http/https URL). Relative paths resolve against `--working-directory` (else caller cwd). Mutually exclusive with `--command`/`-e`. |
 | `--shell=<path>` | Shell to use for `--command`/`--split-command`, invoked with `-lic`. Falls back to config `command-shell`, then `$SHELL`, then `/bin/zsh`. |
 | `--env=KEY=VALUE` | Environment variable for the spawned process. Repeatable. |
-| `--no-activate` | Create the window without stealing focus from the current workspace. Useful for automation and background agent windows. |
+| `--focus` | Activate Ghoztty and raise the window (or the existing `--target`). Off by default — windows open in the background, behind Ghoztty's frontmost window and never over the app the user is in. |
+| `--no-activate` | No-op, kept for compatibility: not taking focus is now the default. |
 | `--title=<title>` | Override the window/tab title. |
 | `--split=right\|down\|left\|up` | Atomically create a split pane alongside the main pane. |
 | `--color=<#hex\|random>` | Background color for the window. Hex (`#rrggbb` or `#rgb`) or `random` for a random dark tint. |
@@ -102,7 +105,8 @@ ghoztty +split [flags]
 | `--direction=right\|down\|left\|up` | Split direction. Default: `right`. |
 | `--target=<name>` | Window or pane to split in — a name from `--target`/`--name`, or any pane id (e.g. `$GHOZTTY_PANE_ID`, no registration needed). Default: **your own pane** (`$GHOZTTY_PANE_ID`), falling back to the most recently focused window when there is none. |
 | `--pane=<name-or-id>` | Split adjacent to **this exact pane** — where `--target` anchors at whichever pane its window has focused. Your own pane is now the default, so reach for this to name a *different* pane, or to state the anchor out loud (`--pane="$GHOZTTY_PANE_ID"`). Unlike the implicit default, a `--pane` that names nothing is an error, not a fallback. |
-| `--name=<name>` | Register the new pane with a name. If it already exists, focuses it instead. |
+| `--name=<name>` | Register the new pane with a name. If it already exists, it is reused (focused only with `--focus`). |
+| `--focus` | Move keyboard focus to the new pane, raise its window, and activate Ghoztty. Off by default — the pane that had focus keeps it. |
 | `--command=<cmd>` | Command to run in the new pane. Auto-wrapped in the user's login shell with profile loaded. |
 | `--view=<path-or-url>` | Open the new pane as a **viewer** (rendered markdown / live HTML page / highlighted code / image / website) instead of a terminal. Relative paths resolve against `--working-directory` (else caller cwd). Mutually exclusive with `--command`/`-e`. This is the way to "open a file/README/doc/screenshot in a side pane". |
 | `--shell=<path>` | Shell to use for `--command`, invoked with `-lic`. Falls back to config `command-shell`, then `$SHELL`, then `/bin/zsh`. |
@@ -718,6 +722,7 @@ ghoztty +new-remote-window --host=<host> --port=<port> [flags]
 | `--working-directory=<path>` | Working directory **on the remote machine**. Overrides that machine's per-host default. |
 | `--shell=<path>` | Shell **on the remote machine** (e.g. `wsl.exe`, `powershell.exe`, `/bin/zsh`). Overrides the per-host default. |
 | `--command=<cmd>` | Command to run instead of an interactive shell, through the resolved shell's native convention (POSIX `-lic`, cmd `/c`, powershell `-Command`, wsl `--`). |
+| `--focus` | Activate Ghoztty and raise the new window. Off by default — it opens in the background. |
 
 ```bash
 ghoztty +new-remote-window --host=127.0.0.1 --port=7777

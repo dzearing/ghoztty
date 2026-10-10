@@ -633,6 +633,11 @@ test {
     // asks for (T748). Imports only `restore_frame.zig` for its `Rect`.
     _ = @import("apprt/win32/window_placement.zig");
 
+    // Pure win32 background-window z-order rule (T1797): where a window opened
+    // without `--focus` sits - behind Ghoztty's frontmost, never over the
+    // user's app. No imports.
+    _ = @import("apprt/win32/background_zorder.zig");
+
     // Pure win32 local-agent crash-recovery policy: when a dropped shared link
     // is a real drop, and whose session a tree swap may never end (T145). Its
     // only non-std import is the shared-core `remote/connection.zig` link-state

@@ -131,7 +131,9 @@ try {
     $basePanes = @(Get-PaneNames)
 
     "== 1: open a remote window rooted in the marker dir"
-    cmd /c "`"$Exe`" +new-remote-window --host=127.0.0.1 --port=$Port --name=rem `"--working-directory=$root`" > `"$tmp\open.txt`" 2>&1"
+    # `--focus` (T1797): the `--from-focused` arms below need THIS window to be
+    # the focused one, which a CLI-opened window no longer is by default.
+    cmd /c "`"$Exe`" +new-remote-window --host=127.0.0.1 --port=$Port --name=rem --focus `"--working-directory=$root`" > `"$tmp\open.txt`" 2>&1"
     Assert "open exit 0" ($LASTEXITCODE -eq 0)
     Start-Sleep -Seconds 3
     $before = @(Get-PaneNames)
@@ -167,7 +169,9 @@ try {
     }
 
     "== 3: +split --target with a remote-native --command stays remote"
-    cmd /c "`"$Exe`" +split --target=rem --name=remsplit `"--command=echo t68-split-marker`" > `"$tmp\split2.txt`" 2>&1"
+    # `--focus` (T1797): section 4's ctrl+t inherits from the ACTIVE pane, which
+    # must be this split.
+    cmd /c "`"$Exe`" +split --target=rem --name=remsplit --focus `"--command=echo t68-split-marker`" > `"$tmp\split2.txt`" 2>&1"
     Assert "split --target exit 0" ($LASTEXITCODE -eq 0)
     Start-Sleep -Seconds 3
     $dump = Read-Pane 'remsplit' 'read-split2.txt'
@@ -221,7 +225,7 @@ try {
     "== 6: --from-focused with a LOCAL parent falls through to local"
     & $Exe +new-window --target=locbase 2>&1 | Out-Null
     Start-Sleep -Seconds 2
-    & $Exe +new-window --target=locbase 2>&1 | Out-Null # idempotent re-call focuses it
+    & $Exe +new-window --target=locbase --focus 2>&1 | Out-Null # idempotent re-call focuses it (T1797: on request)
     Start-Sleep -Seconds 1
     $namesBeforeLocal = @(Get-PaneNames)
     cmd /c "`"$Exe`" +split --from-focused > `"$tmp\lsplit.txt`" 2>&1"

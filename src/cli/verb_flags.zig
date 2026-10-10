@@ -93,8 +93,29 @@ pub fn checkFlag(spec: Spec, arg: []const u8) ?Problem {
         return .{ .kind = .unknown, .name = name };
 
     if (wants_value and eq == null) return .{ .kind = .value_required, .name = name };
-    if (!wants_value and eq != null) return .{ .kind = .value_not_allowed, .name = name };
+    if (!wants_value and eq != null) {
+        if (isBoolSwitch(name)) {
+            const value = body[eq.? + 1 ..];
+            if (std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "false")) return null;
+        }
+        return .{ .kind = .value_not_allowed, .name = name };
+    }
     return null;
+}
+
+/// Switches that also take an explicit boolean (T1797): `--focus` is the bare
+/// spelling, and `--focus=true` / `--focus=false` are the same two states
+/// spelled out, which both servers read (`args.focusFlag`, Mac
+/// `IPCFocusPolicy.fromFlag`). Any other value is still `value_not_allowed`,
+/// because the servers treat `--focus=yes` as no focus flag at all and the
+/// command would quietly do the opposite of what was typed.
+const bool_switches = [_][]const u8{"focus"};
+
+fn isBoolSwitch(name: []const u8) bool {
+    for (bool_switches) |s| {
+        if (std.mem.eql(u8, s, name)) return true;
+    }
+    return false;
 }
 
 /// Per-verb flag state, embedded in a forwarding verb's `Options` as
@@ -268,6 +289,7 @@ pub const split: Spec = .{
         "percent=",
         "split-percent=",
         "from-focused",
+        "focus",
         "view=",
         "command=",
         "split-command=",
@@ -301,6 +323,7 @@ pub const new_window: Spec = .{
         "split-percent=",
         "percent=",
         "no-activate",
+        "focus",
         "from-focused",
         "cwd-implicit",
     },
@@ -320,6 +343,7 @@ pub const new_remote_window: Spec = .{
         "shell=",
         "command=",
         "no-activate",
+        "focus",
     },
 };
 
@@ -373,6 +397,20 @@ test "checkFlag: a switch given a value is value_not_allowed" {
 
     try testing.expectEqual(Problem.Kind.value_not_allowed, checkFlag(new_window, "--no-activate=true").?.kind);
     try testing.expectEqual(Problem.Kind.value_not_allowed, checkFlag(reload, "--config=").?.kind);
+}
+
+test "checkFlag: --focus is a switch that also takes an explicit boolean (T1797)" {
+    for ([_]Spec{ split, new_window, new_remote_window }) |spec| {
+        try testing.expect(checkFlag(spec, "--focus") == null);
+        try testing.expect(checkFlag(spec, "--focus=true") == null);
+        try testing.expect(checkFlag(spec, "--focus=false") == null);
+        // Any other value would be read as "no focus flag" by the servers.
+        try testing.expectEqual(Problem.Kind.value_not_allowed, checkFlag(spec, "--focus=yes").?.kind);
+    }
+    // The boolean spelling is focus's alone, not every switch's.
+    try testing.expectEqual(Problem.Kind.value_not_allowed, checkFlag(new_window, "--no-activate=true").?.kind);
+    // And it is not a flag of the verbs that create nothing.
+    try testing.expectEqual(Problem.Kind.unknown, checkFlag(close, "--focus").?.kind);
 }
 
 test "checkFlag: single-dash arguments and a bare -- are not flags" {
@@ -553,7 +591,9 @@ test "specs: flag entries are well formed and fit the suggestion buffer" {
 // ones). Anything else the server reads by prefix, `--name=`, so a switch
 // entry for it would pass the bare spelling the server then drops.
 test "specs: the switches are exactly the server's whole-argument flags" {
-    const switches = [_][]const u8{ "no-activate", "from-focused", "cwd-implicit", "config", "clear" };
+    // `focus` is the one switch the server also reads with `=true|false`
+    // (see `bool_switches`); its bare spelling is still a whole-argument match.
+    const switches = [_][]const u8{ "no-activate", "focus", "from-focused", "cwd-implicit", "config", "clear" };
     for (all_specs) |spec| {
         for (spec.flags) |entry| {
             const is_switch = !std.mem.endsWith(u8, entry, "=");

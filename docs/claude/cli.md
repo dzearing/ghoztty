@@ -22,6 +22,26 @@ re-focus stays quiet. (win32 server done; Mac server half is T523 — the
 shared CLI already prints any note it receives.) The verbs, flags, and semantics below are the
 same on both platforms.
 
+**No command takes focus unless it is asked to** (main 3081022ec on macOS,
+T1797 on Windows). `+new-window` (terminal, `--view`, `--split`,
+`--from-focused`), `+split` (every anchor, terminal and viewer),
+`+new-remote-window`, and the idempotent `--target`/`--name` hits all open in
+the BACKGROUND: the app is not activated, the window is not raised, and the
+pane that had keyboard focus — normally the caller's own — keeps it, so an
+agent opening a side pane never interrupts the user. `--focus` (or
+`--focus=true`; `--focus=false` is the default spelled out) restores the old
+raise-and-focus. `--no-activate`, the old opt-out, is accepted as a no-op and
+never overrides `--focus`. A background window is placed directly behind
+Ghoztty's frontmost window, never over the app the user is in and never at
+the bottom of the z-order where nobody would find it. Surfaces the user opens
+(keybinds, menu, palette, File Open, the dock or a shortcut — Windows'
+single-instance launch handoff sends `--focus` for exactly this reason) and
+the `ghoztty://focus` scheme are unchanged. One Windows-only limit: a
+background window does not open MAXIMIZED even where the placement memory
+says so, because Windows has no show command that maximizes without
+activating; it opens at its restored size. Acceptance:
+`test/win32/cli-focus-policy.ps1`; the Mac half is `IPCFocusPolicyTests`.
+
 **A flag this list does not contain is an error, not a no-op** (T489, T852).
 Every verb — the ones that parse their own flags and the ones that forward
 their whole command line to the running instance — rejects an unknown `--flag`
@@ -37,7 +57,8 @@ run 'ghoztty +split --help' for usage
 **So is a real flag in the wrong shape** (T950). A flag that carries a value
 is always written `--flag=value`; a space instead of the `=` is refused and the
 message shows the form to write. A switch (`--no-activate`, `--from-focused`,
-`--clear`, `--config`) takes no value and refuses one:
+`--clear`, `--config`) takes no value and refuses one — except `--focus`,
+which also takes exactly `=true` or `=false`:
 
 ```
 $ ghoztty +close --target dev
@@ -55,11 +76,13 @@ it after a bare `--`, which stops flag parsing.
 
 ### `ghoztty +new-window`
 
-Create or focus a terminal window. Auto-launches Ghoztty if no instance is running.
+Create a terminal window, or find an existing `--target`. Auto-launches Ghoztty if no instance is running.
 
 ```
-ghoztty +new-window --target=<name> --name=<pane-name> --working-directory=<path> --command=<cmd> --view=<path-or-url-or-diff> --shell=<path> --title=<title> --split=right|down|left|up --split-command=<cmd> --no-activate -e <args...>
+ghoztty +new-window --target=<name> --name=<pane-name> --working-directory=<path> --command=<cmd> --view=<path-or-url-or-diff> --shell=<path> --title=<title> --split=right|down|left|up --split-command=<cmd> --focus -e <args...>
 ```
+
+- `--focus`: Activate Ghoztty and raise the window (or the existing `--target`). Without it the window opens in the background — see the focus rule above.
 
 - `--shell`: Shell to use for `--command`/`--split-command`, invoked with `-lic` so profile is loaded. Falls back to config `command-shell`, then `$SHELL`, then `/bin/zsh`.
   **With no `--command`, `--shell` names the pane's interactive shell** (T1665): `+new-window --shell=pwsh` and `+split --shell=pwsh` open a pwsh pane, with `session-persistence` on or off. On Windows the off path used to read `--shell` only to wrap a command, and `+split --shell=` alone took the "nothing explicit, inherit" shortcut on the agent path, so both quietly opened the default shell. Acceptance: arm K of `test/win32/ipc-command-keepalive.ps1`. The macOS half is T1750.
@@ -83,6 +106,7 @@ ghoztty +split --direction=right|down|left|up --target=<name> --name=<name> --co
   invoked from** (see Caller anchoring), falling back to the most recently
   focused window.
 - `--name`: Register the new pane with a name for later targeting.
+- `--focus`: Move keyboard focus to the new pane, raise its window, and activate Ghoztty. Without it the pane that had focus keeps it.
 - `--view`: Open a **viewer** pane (see `docs/claude/viewers.md`) instead of a terminal — a file, a local **HTML page**, a website, or a **git diff** (`git-status:` / `git-diff:<revspec>`, see Git diff panes in that doc). Mutually exclusive with `--command`/`-e`. Works with `--pane` targeting, including splitting off an existing viewer pane.
 
 On Windows, `ghoztty +list --pid=<pid>` prints just the name of the pane

@@ -2596,6 +2596,8 @@ pub const WS_EX_TOPMOST: u32 = 0x00000008;
 pub const SW_SHOWNOACTIVATE: i32 = 4;
 
 // GetWindow relationships (z-order and ownership walks).
+pub const GW_HWNDFIRST: u32 = 0;
+pub const GW_HWNDNEXT: u32 = 2;
 pub const GW_HWNDPREV: u32 = 3;
 pub const GW_OWNER: u32 = 4;
 

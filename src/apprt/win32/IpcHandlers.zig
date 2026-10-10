@@ -264,6 +264,13 @@ pub fn focusTarget(entry: App.IpcTarget) void {
     }
 }
 
+/// How the idempotent-hit note names what happened to the existing surface
+/// (T1797): it is raised only on request now, so "focused it" would describe a
+/// raise that did not happen.
+fn foundVerb(focus: bool) []const u8 {
+    return if (focus) "focused" else "kept";
+}
+
 /// Resolve a `--color`/`--split-color` value to a color: `#rgb`/`#rrggbb`
 /// hex or `random` (a dark muted color). Unparseable values are silently
 /// ignored (Mac rule: `NSColor(hex:)` failing just skips the tint).
@@ -298,6 +305,7 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
                     .working_directory = nonEmpty(args.working_directory),
                     .shell = nonEmpty(args.shell),
                     .command = nonEmpty(args.command),
+                    .activate = args.focus, // T1797
                 }) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     error.DialFailed => return try errorResponse(
@@ -326,19 +334,20 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         args.title = null;
     }
 
-    // Idempotent: an existing live target is focused, not recreated. T135:
+    // Idempotent: an existing live target is found, not recreated - and raised
+    // only with `--focus` (T1797). T135:
     // the reply says so (`outcome: focused` vs `created`), and when the
     // caller passed flags that only a create would honor, a `note` names
     // them — the CLI prints it to stderr so the drop is loud. Exit stays 0:
     // idempotency is the contract, silence was the defect.
     if (args.target) |target| {
         if (app.ipcLookup(target)) |entry| {
-            if (!args.no_activate) focusTarget(entry);
+            if (args.focus) focusTarget(entry); // T1797: raised only on request
             if (try verb_args.droppedOnExistingTarget(arena, args)) |dropped| {
                 const note = try std.fmt.allocPrint(
                     arena,
-                    "target '{s}' already exists; focused it. Ignored: {s}. +close it first to recreate.",
-                    .{ target, dropped },
+                    "target '{s}' already exists; {s} it. Ignored: {s}. +close it first to recreate.",
+                    .{ target, foundVerb(args.focus), dropped },
                 );
                 return try successResponse(ctx.alloc, "focused", note);
             }
@@ -353,14 +362,14 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // caller named no window.
     if (args.name) |name| if (args.target == null) {
         if (app.ipcLookup(name)) |entry| {
-            if (!args.no_activate) focusTarget(entry);
+            if (args.focus) focusTarget(entry); // T1797: raised only on request
             var lost = args;
             lost.name = null;
             if (try verb_args.droppedOnExistingTarget(arena, lost)) |dropped| {
                 const note = try std.fmt.allocPrint(
                     arena,
-                    "pane '{s}' already exists; focused it. Ignored: {s}. +close it first to recreate.",
-                    .{ name, dropped },
+                    "pane '{s}' already exists; {s} it. Ignored: {s}. +close it first to recreate.",
+                    .{ name, foundVerb(args.focus), dropped },
                 );
                 return try successResponse(ctx.alloc, "focused", note);
             }
@@ -447,6 +456,9 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         .surface_overrides = if (viewer_open != null) null else &overrides,
         .viewer_open = viewer_open,
         .ipc_name = args.target,
+        // T1797: background unless `--focus` - shown without activation,
+        // behind Ghoztty's frontmost window, no keyboard focus moved.
+        .background = !args.focus,
     }) catch |err| {
         log.warn("IPC new-window failed err={}", .{err});
         return try errorResponse(ctx.alloc, "failed to create window", .{});
@@ -478,15 +490,11 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         }
     }
 
-    if (args.no_activate) {
-        // Window creation focused it within our app; at least don't keep it
-        // raised over the previously-active window.
-        if (window.hwnd) |hwnd| {
-            _ = w32.ShowWindow(hwnd, w32.SW_SHOWNOACTIVATE);
-        }
-    } else if (window.hwnd) |hwnd| {
+    // `--focus` (T1797): the old raise. Without it the window was already
+    // shown in the background by its first tab, and nothing here touches it.
+    if (args.focus) if (window.hwnd) |hwnd| {
         _ = w32.SetForegroundWindow(hwnd);
-    }
+    };
 
     // Inline split (`--split=<dir>`, `--split-command`, `--name`).
     if (args.split_direction) |dir_str| {
@@ -526,6 +534,12 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         };
         if (split_overrides) |*ov| window.pending_surface_overrides = ov;
         defer window.pending_surface_overrides = null;
+        // T1797: without `--focus` the window's first pane keeps the keyboard,
+        // so it is the pane that has it when the user activates the window
+        // (Mac's `keepingFirstResponder`). With it, the split is focused as it
+        // always was.
+        window.split_background = !args.focus;
+        defer window.split_background = false;
         const new_surface = window.newSplit(dir) catch |err| blk: {
             log.warn("IPC inline split failed err={}", .{err});
             break :blk null;
@@ -637,7 +651,7 @@ fn handleNewRemoteWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         .command = nonEmpty(args.command),
         .ipc_name = args.name,
         .title = args.title,
-        .activate = !args.no_activate,
+        .activate = args.focus, // T1797: background unless `--focus`
     };
 
     if (use_relay) {
@@ -774,7 +788,7 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         if (app.ipcLookup(name)) |entry| {
             switch (entry) {
                 .pane => {
-                    focusTarget(entry);
+                    if (args.focus) focusTarget(entry); // T1797
                     return try ctx.alloc.dupe(u8, "{\"success\":true}");
                 },
                 // A window under this name: fall through and let the later
@@ -811,11 +825,16 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         if (window.tab_count == 0)
             return try errorResponse(ctx.alloc, "no surface to split", .{});
         const at = window.tab_active_pane[window.active_tab];
+        window.split_background = !args.focus; // T1797
+        defer window.split_background = false;
         const inherited = window.newSplitAt(at, direction, ratio) catch |err| {
             log.warn("IPC split --from-focused failed err={}", .{err});
             return try errorResponse(ctx.alloc, "failed to create split", .{});
         } orelse return try errorResponse(ctx.alloc, "failed to create split", .{});
-        if (inherited.pane_view) |pv| app.ipc_session_await.add(pv.paneId()); // T1612
+        if (inherited.pane_view) |pv| {
+            app.ipc_session_await.add(pv.paneId()); // T1612
+            if (args.focus) focusTarget(.{ .pane = pv });
+        }
         return try ctx.alloc.dupe(u8, "{\"success\":true}");
     }
 
@@ -870,6 +889,8 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
             // `+split --view=` seeds it with the caller's cwd for exactly this
             // (`cli/split.zig:seedViewWorkingDirectory`), and a viewer has no
             // shell to hand a cwd to.
+            window.split_background = !args.focus; // T1797
+            defer window.split_background = false;
             const pane = window.newViewerSplitAt(at, direction, ratio, .{
                 .location = location,
                 .origin_directory = nonEmpty(args.working_directory),
@@ -878,6 +899,7 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
                 return try errorResponse(ctx.alloc, "failed to create split", .{});
             } orelse return try errorResponse(ctx.alloc, "failed to create split", .{});
             if (args.name) |name| app.ipcRegister(name, .{ .pane = pane }) catch {};
+            if (args.focus) focusTarget(.{ .pane = pane });
             return try ctx.alloc.dupe(u8, "{\"success\":true}");
         }
     }
@@ -974,6 +996,10 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
 
     if (overrides) |*ov| window.pending_surface_overrides = ov;
     defer window.pending_surface_overrides = null;
+    // T1797: the new pane does not take the keyboard unless `--focus` - the
+    // pane that had it (normally the caller's own) keeps it.
+    window.split_background = !args.focus;
+    defer window.split_background = false;
     const new_surface = window.newSplitAt(at, direction, ratio) catch |err| {
         log.warn("IPC split failed err={}", .{err});
         return try errorResponse(ctx.alloc, "failed to create split", .{});
@@ -989,7 +1015,12 @@ fn handleSplit(ctx: Context, request: Request) Allocator.Error!?[]u8 {
 
     // T1612: answer once the new pane's agent session is bound (see
     // `ipc_session_await.zig`), so `+list --json` right after reads it.
-    if (new_surface.pane_view) |pv| app.ipc_session_await.add(pv.paneId());
+    if (new_surface.pane_view) |pv| {
+        app.ipc_session_await.add(pv.paneId());
+        // `--focus` (T1797): focus the new pane, raise its window, take the
+        // foreground - the one focus implementation a `--target` hit uses.
+        if (args.focus) focusTarget(.{ .pane = pv });
+    }
 
     return try ctx.alloc.dupe(u8, "{\"success\":true}");
 }
