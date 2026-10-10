@@ -13,6 +13,10 @@ struct ViewerSplitLeaf: View {
         ViewerRepresentable(viewerView: viewerView)
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Viewer pane")
+            // The same hover grab handle a terminal has: drag a viewer onto
+            // the pane sidebar, into another split, or out to a new window
+            // without entering rearrange mode.
+            .overlay { ViewerGrabHandle(viewerView: viewerView) }
     }
 }
 

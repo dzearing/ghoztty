@@ -474,8 +474,13 @@ the trash button again or Escape leaves it. Never persisted.
 
 ### The grab handle
 
-The hover-revealed grab handle at the top of every pane
-(`SurfaceGrabHandle`) is the everyday way to drag a pane onto the sidebar. It
+The hover-revealed grab handle at the top of every pane (`PaneGrabHandle`,
+for terminals and viewers alike) is the everyday way to drag a pane onto the
+sidebar. Viewer panes had none before — a doc, HTML page, or website could only
+be dragged in rearrange mode — so the handle was factored into one shared view;
+each pane kind only reports whether the pointer is in its top band (a viewer
+through a tracking area that keeps working over the web view; a terminal also
+counts its banner, under which the surface can't see the pointer). It
 has two states: hovering the PANE fades it in translucent; hovering the HANDLE
 makes it fully opaque — a solid fill, full-strength dots, a slight shadow — so
 it reads as the thing you are about to grab. It stays opaque while held.

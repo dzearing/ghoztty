@@ -49,6 +49,13 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// Re-resolved off the main thread on every navigation.
     @Published private(set) var worktree: ViewerWorktree?
 
+    /// Where the pointer is in this pane (this view's coordinates), or nil
+    /// when it is outside — what reveals the pane's grab handle. From a
+    /// tracking area OWNED by this view, so it keeps reporting while the
+    /// pointer is over the web view or the nav bar inside it.
+    @Published private(set) var mouseLocationInViewer: CGPoint?
+    private var pointerTrackingArea: NSTrackingArea?
+
     /// Guards against a slow resolution for a location the pane has since
     /// navigated away from overwriting the current answer.
     private var worktreeGeneration = 0
@@ -2163,6 +2170,38 @@ final class ViewerView: NSView, Codable, ObservableObject {
         let hasContent = isDiffMode ? !diffFiles.isEmpty : !tocItems.isEmpty
         guard hasContent else { return .hidden }
         return bounds.width >= Self.sidePanelGutterMinWidth ? .gutter : .compact
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let pointerTrackingArea { removeTrackingArea(pointerTrackingArea) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil)
+        addTrackingArea(area)
+        pointerTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        mouseLocationInViewer = convert(event.locationInWindow, from: nil)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        let location = convert(event.locationInWindow, from: nil)
+        // Only publish a change of band, not every pixel: this drives SwiftUI.
+        let wasInBand = mouseLocationInViewer.map { PaneGrabHandle.isInHoverRegion($0, in: bounds) }
+        if wasInBand != PaneGrabHandle.isInHoverRegion(location, in: bounds) || mouseLocationInViewer == nil {
+            mouseLocationInViewer = location
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        mouseLocationInViewer = nil
     }
 
     override func layout() {

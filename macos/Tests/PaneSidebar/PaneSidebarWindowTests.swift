@@ -311,6 +311,36 @@ struct PaneSidebarWindowTests {
         await settle(0.3)
     }
 
+    /// Viewer panes get the same hover grab handle terminals have — before,
+    /// a viewer could only be dragged (onto the sidebar, say) in rearrange
+    /// mode. Its drag source is mounted at the top center of the pane.
+    @Test func aViewerPaneHasAGrabHandle() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let terminal = terminalPane(app)
+        let viewer = PaneView(viewer: ViewerView(location: "about:blank"))
+        let tree = try SplitTree<PaneView>(view: terminal)
+            .inserting(view: viewer, at: terminal, direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        await settle(0.8)
+
+        func sources(in view: NSView) -> [PaneDragSourceView] {
+            (view as? PaneDragSourceView).map { [$0] } ?? view.subviews.flatMap(sources)
+        }
+        let all = sources(in: try #require(window.contentView))
+        let viewerSource = try #require(all.first { $0.pane === viewer }, "no drag source for the viewer")
+        let sourceFrame = viewerSource.convert(viewerSource.bounds, to: nil)
+        let paneFrame = viewer.contentView.convert(viewer.contentView.bounds, to: nil)
+        #expect(abs(sourceFrame.midX - paneFrame.midX) < 1, "centered on the pane")
+        #expect(abs(sourceFrame.maxY - paneFrame.maxY) < 1, "at the pane's top edge")
+        #expect(all.contains { $0.pane === terminal }, "the terminal keeps its own")
+
+        controller.close()
+        await settle(0.3)
+    }
+
     @Test func aStashedPaneIsStillInTheTreeAndAlive() async throws {
         let h = try await open(pinned: true)
         let b = h.panes[1]
