@@ -34751,3 +34751,19 @@ Valheim:
 
 The fullscreen stand-in proof and the soak resume need the user away, so they
 moved to T1814.
+
+## 2026-10-10 — T1813: test lanes run on their own desktop, so their windows never reach the user's screen
+
+- **Every floor lane and every soak round now starts on `GhozttyLaneDesktop`**
+  (`scripts/lib/LaneDesktop.ps1`, created suspended with `lpDesktop`, adopted,
+  resumed). zig, the build runner and the test binaries inherit it, so no test
+  changed. The verdict line names the desktop; a failed create falls back loudly.
+- **A full `floor-lane -Lane all` under a 150 ms input-desktop watcher**: all four
+  lanes PASS, `polls=6093 windows=0`. The baseline at 12:55 was 12 windows.
+- **Teeth**: floor-lane samples the input desktop for windows the lane's tree
+  owns and scores the lane FAIL if it sees any. `test/win32/floor-lane-desktop.ps1`
+  (14/14) plants the window on a probe desktop, never the user's;
+  `soak-daemon.ps1` section L proves a round lands on the lane desktop.
+- **Not run**: whether the old windows drew over the game (needs the old
+  behavior reproduced in front of the user). **Filed** T1815: a crashed lane's
+  cdb re-run still launches from the input desktop.

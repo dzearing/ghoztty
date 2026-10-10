@@ -281,6 +281,10 @@ $ErrorActionPreference = 'Stop'
 # a caller keeping only the tail - which is every caller under the context rule
 # - still has the pointer and the reason, instead of the bare word FAIL.
 . "$PSScriptRoot\lib\LaneVerdict.ps1"
+# Runs each lane on a background desktop so the windows its tests open can
+# never reach the user's screen, and checks the input desktop to prove it
+# (T1813).
+. "$PSScriptRoot\lib\LaneDesktop.ps1"
 
 # Exit codes, named so a caller does not have to guess.
 $EXIT_PASS = 0
@@ -661,11 +665,19 @@ function Invoke-Lane {
     $preTestPids = @(Get-LaneTestProcess -ExeNames $TEST_EXE_NAMES | ForEach-Object { $_.ProcessId })
     $laneStart = Get-Date
 
-    $proc = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', $cmd -PassThru -WindowStyle Hidden
-    # Cache the handle NOW: without it $proc.ExitCode reads empty after the
-    # child exits, which is how gating on exit codes fabricates failures.
-    $null = $proc.Handle
+    # On a background desktop, not the user's (T1813): every process the lane
+    # starts inherits it, so a test that shows a window shows it THERE. The
+    # 2026-10-10 baseline was 12 test windows on the user's screen per win32
+    # run, over a fullscreen game. Start-LaneProcess caches the handle (without
+    # it $proc.ExitCode reads empty after the child exits, which is how gating
+    # on exit codes fabricates failures).
+    $proc = Start-LaneProcess -CommandLine ('cmd.exe /c ' + $cmd)
     $rootPid = $proc.Id
+    # Windows this lane's tree showed on the INPUT desktop, keyed by hwnd. The
+    # desktop above should keep this empty by construction; this is the check
+    # that says so, and it turns a regression into a red lane (T1813).
+    $inputWindows = [ordered]@{}
+    $inputLookFailed = $false
 
     $started = Get-Date
     $selfSpawnNoted = $false
@@ -743,6 +755,19 @@ function Invoke-Lane {
                     $selfSpawnNoted = $true
                 }
                 $cpu = Get-TreeCpu -Tree $tree -IgnorePids $selfSpawned -State $cpuState
+                # GHOZTTY_FLOOR_LANE_WINDOW_DESKTOP points the check at a named
+                # desktop instead of the input one. Never set outside
+                # test\win32\floor-lane-desktop.ps1, which needs to plant a window
+                # the check must catch WITHOUT putting one on the user's screen.
+                $look = Get-LaneInputDesktopWindow -ProcessId @($tree | ForEach-Object { [int]$_.ProcessId }) `
+                    -DesktopName $env:GHOZTTY_FLOOR_LANE_WINDOW_DESKTOP
+                if ($look.Looked) { foreach ($w in $look.Windows) { if (-not $inputWindows.Contains($w)) { $inputWindows[$w] = Get-Date } } }
+                elseif (-not $inputLookFailed) {
+                    # A locked workstation refuses the input desktop: nothing on it
+                    # can reach anybody, and "could not look" is said, not scored.
+                    Write-Host "  LANE INPUT DESKTOP UNREADABLE ($($look.Error)); the window check is blind for this run (T1813)"
+                    $inputLookFailed = $true
+                }
                 $logLen = 0
                 if (Test-Path $log) { $logLen = (Get-Item $log).Length }
 
@@ -894,7 +919,16 @@ function Invoke-Lane {
             $result = 'CRASH'
         }
     }
-    Write-Host "LANE $Name $result in ${elapsed}s (leaked webview hosts swept: $leaked; leaked test binaries: $leakedTests) | $tail"
+    # A window on the user's screen is a red lane whatever the tests said
+    # (T1813): the user directive is that automation never reaches their
+    # screen, and a green lane over a window that did is the silent version.
+    if ($inputWindows.Count -gt 0) {
+        Write-Host "LANE $Name SHOWED $($inputWindows.Count) WINDOW(S) ON THE USER'S DESKTOP (T1813) - the lane must run on its own desktop:"
+        foreach ($w in $inputWindows.Keys) { Write-Host "  input-desktop window: $w" }
+        if ($result -eq 'PASS') { $result = 'FAIL' }
+    }
+    $desktopNote = if ($proc.LaneDesktop) { "desktop: $($proc.LaneDesktop)" } else { 'desktop: INPUT (fallback)' }
+    Write-Host "LANE $Name $result in ${elapsed}s (leaked webview hosts swept: $leaked; leaked test binaries: $leakedTests; $desktopNote) | $tail"
     return $result
 }
 

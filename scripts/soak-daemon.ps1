@@ -164,6 +164,9 @@ if ($LaneList.Count -eq 0) { $LaneList = @('agent', 'none', 'none-releasesafe', 
 
 # The user-presence predicate (T1794/T1795): `busy` and the yield rule ask it.
 . (Join-Path $PSScriptRoot '..\test\win32\lib\UserPresence.ps1')
+# Rounds run on a background desktop, so a test window never reaches the
+# user's screen (T1813).
+. (Join-Path $PSScriptRoot 'lib\LaneDesktop.ps1')
 
 $IgnoreList = @($IgnorePids -split ',' | ForEach-Object { $_.Trim() } |
     Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
@@ -418,8 +421,13 @@ function Invoke-Round {
     $started = Get-Date
     $proc = $null
     try {
-        $proc = Start-Process -FilePath 'powershell.exe' -ArgumentList $argv -PassThru -WindowStyle Hidden `
-            -RedirectStandardOutput $log -RedirectStandardError ($log + '.err')
+        # On the lane desktop, not the user's (T1813): the win32-releasesafe
+        # round runs the same tests that put banner windows on the user's
+        # screen, and everything the runner starts inherits this desktop. cmd
+        # does the redirection Start-Process used to do.
+        $proc = Start-LaneProcess -CommandLine ('cmd.exe /c powershell.exe ' + ($argv -join ' ') +
+            ' > "' + $log + '" 2> "' + $log + '.err"')
+        if (-not $proc.LaneDesktop) { Log "round $Lane is running on the INPUT desktop (lane desktop unavailable)" }
     }
     catch {
         return [pscustomobject]@{

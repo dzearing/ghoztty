@@ -2369,6 +2369,22 @@ $GuardTable = @(
             'test\win32\floor-lane-releasesafe.ps1'
         )
     },
+    # Lanes run on a background desktop, and a window a lane's tree shows on
+    # the input desktop turns the lane red (T1813). Covers floor-lane.ps1 for
+    # the same reason lane-releasesafe does: the launch and the check are
+    # wiring that lives nowhere else, and losing either is silent - test
+    # windows go back to the user's screen and every lane still reads green.
+    # The harness runs in under a minute and never shows a window to the user.
+    [pscustomobject]@{
+        Name   = 'lane-desktop'
+        Script = 'test\win32\floor-lane-desktop.ps1'
+        Stamp  = 'test\win32\floor-lane-desktop.stamp.json'
+        Covers = @(
+            'scripts\lib\LaneDesktop.ps1',
+            'scripts\floor-lane.ps1',
+            'test\win32\floor-lane-desktop.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'lane-compiler-crash'
         Script = 'test\win32\floor-lane-compiler-crash.ps1'
@@ -2432,6 +2448,8 @@ $GuardTable = @(
         Stamp  = 'test\win32\soak-daemon.stamp.json'
         Covers = @(
             'scripts\soak-daemon.ps1',
+            # Rounds launch through it (T1813); section L proves where they land.
+            'scripts\lib\LaneDesktop.ps1',
             'test\win32\soak-daemon.ps1'
         )
     },

@@ -20,6 +20,7 @@
 #   G  the measured lane is cache-isolated from the repo (the T401 rule)
 #   I  a round never reaps a test binary it did not build (T1648)
 #   U  a person using the box makes it busy (T1795)
+#   L  a round runs on the lane desktop, never the user's (T1813)
 #   H  stop leaves nothing behind, and stays stopped across a tick (T1795)
 #
 # Hermetic: its own state directory, its own scratch directory, its own mutex
@@ -288,6 +289,26 @@ try {
     finally { $env:GHOZTTY_TEST_FORCE_USER_PRESENCE = 'absent' }
     $r = Daemon @('busy')
     Assert 'U5 control: the same box with nobody at it reads IDLE' ($r.Code -eq 0 -and $r.Out -match 'IDLE')
+
+    ""
+    "L. a round runs on the lane desktop, never the user's (T1813)"
+    # The win32-releasesafe round runs tests that show windows; the round's
+    # runner asks which desktop it is on, from inside, and exits by the answer.
+    # The control is the same probe from THIS process, which is on the input
+    # desktop - so the probe can say no.
+    $probe = Join-Path $stateDir 'desktop-probe.ps1'
+    $laneLib = Join-Path $Repo 'scripts\lib\LaneDesktop.ps1'
+    Set-Content -LiteralPath $probe -Encoding ASCII -Value @(
+        (". '" + $laneLib + "'"),
+        "if ([GhozttyLaneDesktop]::CurrentDesktopName() -eq 'GhozttyLaneDesktop') { exit 0 } else { exit 1 }")
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $probe
+    Assert 'L1 control: the probe says no on the input desktop' ($LASTEXITCODE -eq 1)
+    $before = @(Read-Ledger).Count
+    $r = Daemon @('run', '-MaxRounds', '1', '-FixtureCommand', ("& '" + $probe + "'; exit `$LASTEXITCODE"),
+        '-YieldPollSeconds', '1', '-IdleWaitSeconds', '1')
+    $rows = @(Read-Ledger)
+    Assert 'L2 the round ran and its probe found the lane desktop' ($rows.Count -eq $before + 1 -and $rows[-1].outcome -eq 'pass')
+    Assert 'L3 and the daemon did not fall back to the input desktop' ($r.Out -notmatch 'INPUT desktop')
 
     ""
     "H. stop leaves nothing behind"

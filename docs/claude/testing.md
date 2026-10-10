@@ -1196,6 +1196,21 @@ never starts under them and a round in flight yields when they come back. And
 `foreground-audit.ps1` fails any declared input-desktop script that never asks
 it (`ungated`; `-TeethCheck` plants one).
 
+**The zig test lanes run on a background desktop too** (T1813). On 2026-10-10 a
+single `floor-lane -Lane win32` run put 12 visible test windows (banner
+overlays shown `SW_SHOWNOACTIVATE`) on the user's screen over a fullscreen
+game. `scripts\lib\LaneDesktop.ps1` starts the lane's root process with
+`STARTUPINFO.lpDesktop` = `GhozttyLaneDesktop`; zig, the build runner and every
+test binary inherit it, so no test has to know. `floor-lane.ps1` and the soak
+daemon's rounds both launch through it, and floor-lane also samples the INPUT
+desktop for visible windows the lane's process tree owns: any it sees turns the
+lane red (`SHOWED n WINDOW(S) ON THE USER'S DESKTOP`) whatever the tests said.
+If the desktop cannot be created the lane falls back to the old hidden launch
+and says `LANE DESKTOP UNAVAILABLE`; the verdict line always names the desktop
+it ran on. Acceptance: `test\win32\floor-lane-desktop.ps1` (plants its window
+on a probe desktop, never the user's) and section L of
+`test\win32\soak-daemon.ps1`.
+
 **Stealing focus is one cause of being un-runnable in the loop, not the
 definition of it** (T276), so a second family counts toward the same one list: a
 read of the **composited screen** — `CopyFromScreen`, or `GetDC`/`GetWindowDC`/
