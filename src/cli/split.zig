@@ -90,9 +90,15 @@ pub const Options = struct {
 /// to the most recently focused window when there is no such pane — a plain
 /// non-Ghoztty shell, or a pane that has since closed.
 ///
+/// The new pane does NOT take focus by default: the pane that had keyboard
+/// focus (normally the one the command was run from) keeps it, and the app
+/// is not activated. Pass `--focus` to focus the new pane, raise its window,
+/// and activate Ghoztty. Splits the user makes themselves (Cmd-D, the menu)
+/// are unaffected.
+///
 /// This command is idempotent: if `--name` is specified and a pane with
-/// that name already exists, the existing pane is focused instead of
-/// creating a new split.
+/// that name already exists, no new split is created and the command
+/// succeeds (the existing pane is focused only with `--focus`).
 ///
 /// Flags:
 ///
@@ -101,8 +107,11 @@ pub const Options = struct {
 ///     Overrides the calling pane as the anchor.
 ///
 ///   * `--name=<name>`: Register this split pane with a name for later
-///     targeting. If a pane with this name already exists, it will be
-///     focused instead of creating a new split.
+///     targeting. If a pane with this name already exists, no split is
+///     created (and the existing pane is focused only with `--focus`).
+///
+///   * `--focus`: Move keyboard focus to the new (or existing `--name`)
+///     pane, raise its window, and activate Ghoztty. Off by default.
 ///
 ///   * `--direction=right|down|left|up`: The direction to split. Defaults
 ///     to `right` if not specified.

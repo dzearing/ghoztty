@@ -191,8 +191,9 @@ pub const Options = struct {
 ///     default command.
 ///
 ///   * `--target=<name>`: Register this window with a name. If a window
-///     with this name already exists, it is focused instead of creating
-///     a new one. Named windows can be targeted by `+split` and `+close`.
+///     with this name already exists, nothing new is created and the command
+///     succeeds (the existing window is raised only with `--focus`). Named
+///     windows can be targeted by `+split` and `+close`.
 ///
 ///   * `--split=right|down|left|up`: After creating the new window, create a
 ///     split in the given direction.
@@ -220,10 +221,14 @@ pub const Options = struct {
 ///     on the initial split pane. Only meaningful when `--split` is also
 ///     specified.
 ///
-///   * `--no-activate`: Create the window without activating the app or
-///     stealing focus. The window is created and visible but remains in
-///     the background. Also suppresses focus when an existing `--target`
-///     is found.
+///   * `--focus`: Activate Ghoztty and raise the window (or, with an
+///     existing `--target`, raise that one). Without it the window opens
+///     in the background — not made key, ordered behind Ghoztty's
+///     frontmost window — and the app the user is in keeps focus. Windows
+///     the user opens themselves (Cmd-N, the menu, the dock) are unaffected.
+///
+///   * `--no-activate`: Accepted for compatibility and does nothing: not
+///     taking focus is now the default. `--focus` wins if both are given.
 ///
 /// Available since: 1.2.0
 pub fn run(alloc: Allocator) !u8 {
