@@ -1595,6 +1595,19 @@ real Claude Code output:
   yields as soon as that mailbox is half full (`Mailbox.underPressure`) instead
   of overflowing it — each overflowing message cost a 50 ms wait and a drop,
   minutes of a frozen pane for one 2 MB replay.
+- **A child that exits is always seen to exit.** The agent's only reap check
+  used to be the pty reader's EOF nudge, and EOF is no proof of exit: the
+  kernel closes the child's slave fds part-way through exit, before `waitpid`
+  can collect it, so the nudge usually found it "still running" and was never
+  repeated. The session stayed `alive` over a zombie, and the pane showed its
+  last output, took no input (`pty input write failed: error.InputOutput` in
+  `agent.log`), and never said "process exited". Any shell exit could leave a
+  pane like that, e.g. Claude Code's `claude …; exec zsh -li` after the zsh
+  ends. The reader now waits (bounded) for the exit to land before nudging,
+  and the reaper tick sweeps every alive session (`SessionStore.reapExited`),
+  which also catches a child that closed its terminal and exited later.
+  Tests: `the EOF nudge finds the exited child reapable`,
+  `SessionStore.reapExited`.
 
 The agent owns the PTYs, keeps a per-session output ring (2 MB default;
 snapshotted to disk — with the session's history — for reboot scrollback),

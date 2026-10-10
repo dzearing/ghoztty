@@ -344,12 +344,36 @@ pub const PtyChild = struct {
         // After EOF the child has (almost certainly) exited; surface it so the next
         // tryWait reaps and the EXIT/tombstone path fires. A final zero-length sink
         // call nudges the server to reap-check.
+        //
+        // EOF arrives when the child's last slave fd closes, which the kernel
+        // does part-way through exit — before the process is a zombie `waitpid`
+        // can collect. A nudge sent straight away usually finds it "still
+        // running", so give the exit a moment to land first (bounded: a child
+        // that closed its terminal and kept running is left to the store's
+        // periodic sweep, `SessionStore.reapExited`).
+        if (!is_windows) self.awaitReapable(500 * std.time.ns_per_ms);
         self.mutex.lock();
         const sink = self.sink;
         const sink_ctx = self.sink_ctx;
         const channel = self.channel;
         self.mutex.unlock();
         if (sink) |f| f(sink_ctx.?, channel, &.{});
+    }
+
+    /// Poll `tryWait` until the child is reaped or `timeout_ns` passes. Returns
+    /// at once when `terminate` is under way: it SIGKILLs and reaps on its own,
+    /// and is waiting to join this thread.
+    fn awaitReapable(self: *PtyChild, timeout_ns: u64) void {
+        const step_ns: u64 = 2 * std.time.ns_per_ms;
+        var waited: u64 = 0;
+        while (waited < timeout_ns) : (waited += step_ns) {
+            self.mutex.lock();
+            const closed = self.closed;
+            self.mutex.unlock();
+            if (closed) return;
+            if (tryWaitFn(self) != null) return;
+            std.Thread.sleep(step_ns);
+        }
     }
 
     // --- write: client keystrokes → master ------------------------------------
@@ -1470,4 +1494,54 @@ test "PtyChild: SIGNAL terminates the child via its process group" {
 
     pc.child().terminate();
     terminated = true;
+}
+
+/// Records what `tryWait` answers at the moment the reader's EOF nudge (the
+/// zero-length sink call) arrives — the one reap check the session store gets.
+const NudgeProbe = struct {
+    mutex: std.Thread.Mutex = .{},
+    pc: ?*PtyChild = null,
+    nudged: bool = false,
+    reaped_at_nudge: ?i64 = null,
+
+    fn sink(ctx: *anyopaque, channel: u128, bytes: []const u8) void {
+        _ = channel;
+        if (bytes.len != 0) return;
+        const self: *NudgeProbe = @ptrCast(@alignCast(ctx));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.nudged = true;
+        self.reaped_at_nudge = self.pc.?.child().tryWait();
+    }
+    fn wasNudged(self: *NudgeProbe) bool {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.nudged;
+    }
+};
+
+test "PtyChild: the EOF nudge finds the exited child reapable" {
+    // A pty master reads EOF when the child's last slave fd closes, which the
+    // kernel does part-way through exit — BEFORE the process is a zombie
+    // `waitpid` can collect. The nudge was the store's only reap check, so a
+    // nudge that lost that race left the session `alive` forever behind a dead
+    // pty: a pane nothing could type into, its process a zombie.
+    if (is_windows) return error.SkipZigTest;
+    const alloc = testing.allocator;
+    var spawner = try PtySpawner.init(alloc);
+    defer spawner.deinit();
+
+    var round: usize = 0;
+    while (round < 20) : (round += 1) {
+        const pc = try spawner.spawnChild(.{ .rows = 24, .cols = 80, .command = "exit 7" });
+        defer pc.child().terminate();
+        var probe: NudgeProbe = .{ .pc = pc };
+        pc.child().attach(&probe, NudgeProbe.sink, 0x7);
+
+        var spins: usize = 0;
+        while (spins < 50_000 and !probe.wasNudged()) : (spins += 1)
+            std.Thread.sleep(100 * std.time.ns_per_us);
+        try testing.expect(probe.wasNudged());
+        try testing.expectEqual(@as(?i64, 7), probe.reaped_at_nudge);
+    }
 }
