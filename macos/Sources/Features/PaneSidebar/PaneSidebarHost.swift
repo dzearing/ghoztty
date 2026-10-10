@@ -306,16 +306,23 @@ private struct PaneSidebarChrome: View {
                 // PINNED: a flat panel — part of the window, not floating on
                 // it. The terminal background lifted by the same wash the
                 // glass card uses, and a 1px rule in the split-divider color.
+                let elevated = controller.ghostty.config.macosPaneStyle == .elevated
                 PaneSidebarView(
                     controller: controller, state: state, geometry: geometry,
                     isRail: false, isFlat: true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    // Elevated: translucent, so the window's gradient runs
+                    // under the sidebar and the panel reads as part of the
+                    // same surface the panes are raised from. Flat: the
+                    // terminal background, lifted, and a 1px rule.
                     .background(GlassCard.fill(isLightBackground: isLight))
-                    .background(background)
+                    .background(background.opacity(elevated ? 0.38 : 1))
                     .overlay(alignment: .trailing) {
-                        Rectangle()
-                            .fill(controller.ghostty.config.splitDividerColor)
-                            .frame(width: 1)
+                        if !elevated {
+                            Rectangle()
+                                .fill(controller.ghostty.config.splitDividerColor)
+                                .frame(width: 1)
+                        }
                     }
                     .overlay(alignment: .trailing) { resizeHandle }
 

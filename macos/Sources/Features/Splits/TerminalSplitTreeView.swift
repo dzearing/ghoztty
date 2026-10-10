@@ -118,7 +118,9 @@ private struct StashedPaneSlots: View {
                 onDividerGesture: { _ in },
                 left: { StashedPaneSlots(node: split.left, stashed: stashed) },
                 right: { StashedPaneSlots(node: split.right, stashed: stashed) },
-                onEqualize: {})
+                onEqualize: {},
+                // The slots must lay out EXACTLY as the grid does, gaps and all.
+                paneGap: PaneElevation.paneGap(for: ghostty.config.macosPaneStyle))
         }
     }
 }
@@ -161,7 +163,8 @@ private struct TerminalSplitSubtreeView: View {
                     // action (the leftmost leaf may be a viewer pane).
                     guard let surface = node.leaves().compactMap(\.surface).first else { return }
                     ghostty.splitEqualize(surface: surface)
-                }
+                },
+                paneGap: PaneElevation.paneGap(for: ghostty.config.macosPaneStyle)
             )
         }
     }
@@ -173,6 +176,7 @@ private struct TerminalSplitSubtreeView: View {
 /// dragged-pane dimming, and the drop feedback are written once — a viewer is
 /// an ordinary leaf and rearranges exactly like a terminal.
 private struct PaneLeafView: View {
+    @EnvironmentObject var ghostty: Ghostty.App
     @ObservedObject var pane: PaneView
     let isSplit: Bool
     let rearranging: Bool
@@ -195,6 +199,11 @@ private struct PaneLeafView: View {
             PaneDropFeedbackView(paneID: pane.id, isDraggedPane: isBeingDragged)
                 .allowsHitTesting(false)
         }
+        // The elevated style: a raised rounded card on the window's gradient.
+        .modifier(PaneCard(
+            isElevated: ghostty.config.macosPaneStyle == .elevated,
+            background: ghostty.config.backgroundColor,
+            isLight: OSColor(ghostty.config.backgroundColor).isLightColor))
     }
 
     @ViewBuilder

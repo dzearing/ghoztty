@@ -3340,6 +3340,25 @@ keybind: Keybinds = .{},
 /// Changing this option at runtime only applies to new windows.
 @"macos-titlebar-style": MacTitlebarStyle = .transparent,
 
+/// How a window's split panes are presented. macOS only.
+///
+/// Valid values:
+///
+///   * `elevated` - Each pane is a slightly raised card with rounded corners
+///     and a soft shadow, separated from its neighbors by a small gap, on a
+///     soft blue-to-teal gradient ("ocean") that also runs under the pane
+///     sidebar. The gaps are still the split dividers: drag them to resize.
+///
+///   * `flat` - Panes run edge to edge, separated by a 1px divider in
+///     `split-divider-color`.
+///
+/// The gaps and the margin around the window's edge take space from the
+/// terminals (roughly a column or two per split), which is the trade for
+/// the depth.
+///
+/// Changing this option at runtime applies to every window.
+@"macos-pane-style": MacPaneStyle = .elevated,
+
 /// Whether the proxy icon in the macOS titlebar is visible. The proxy icon
 /// is the icon that represents the folder of the current working directory.
 /// You can see this very clearly in the macOS built-in Terminal.app
@@ -9199,6 +9218,12 @@ pub const MacTitlebarStyle = enum {
     transparent,
     tabs,
     hidden,
+};
+
+/// See macos-pane-style
+pub const MacPaneStyle = enum {
+    elevated,
+    flat,
 };
 
 /// See macos-titlebar-proxy-icon

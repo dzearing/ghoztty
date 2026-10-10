@@ -512,6 +512,18 @@ machine (Zecho, which took Shift+Cmd+R, now uses Shift+Cmd+1).
 Both default chords are unbound in Ghoztty's default config and main menu (no
 `s` or `m` bindings exist; the menu has only Cmd+M, Minimize).
 
+## Pane style: elevated on an ocean gradient
+
+Tried in the mock (Flat vs Elevated · Dusk / Ocean / Aurora / Graphite) and
+chosen: **Elevated · Ocean**, as the default, with `macos-pane-style = flat`
+to opt out. Each pane is a slightly raised rounded card on a soft gradient —
+blue pooling at the top-leading corner, teal at the bottom-trailing, over deep
+slate (pale counterparts on a light terminal theme) — "the simplicity of the
+ocean option". Panes are separated by a real 8pt gap (still the divider) with
+a 10pt margin at the window edge for the shadows. The pinned sidebar panel goes
+translucent over the same gradient instead of carrying its own 1px rule. Cost:
+roughly a column or two per split, which is the trade for the depth.
+
 ## CLI
 
 Extends the contract in `CLAUDE.md` → "Pane identity" and "Naming" without

@@ -65,6 +65,11 @@ struct PaneSidebarWindowTests {
         await settle(0.3)
     }
 
+    /// The elevated pane style insets the grid by a margin; flat does not.
+    private func gridMargin(_ h: Harness) -> CGFloat {
+        h.controller.ghostty.config.macosPaneStyle == .elevated ? PaneElevation.margin : 0
+    }
+
     private func frameInWindow(_ pane: PaneView) -> NSRect {
         pane.contentView.convert(pane.contentView.bounds, to: nil)
     }
@@ -200,9 +205,9 @@ struct PaneSidebarWindowTests {
         #expect(abs(hostFrame.minX) < 1, "flush with the window's left edge")
         #expect(host.cardRect == host.bounds, "the panel fills its frame, no card margin")
 
-        // The grid starts where the column ends.
+        // The grid starts where the column ends (plus the elevated margin).
         let leftPane = frameInWindow(h.panes[0])
-        #expect(abs(leftPane.minX - 240) < 1)
+        #expect(abs(leftPane.minX - (240 + gridMargin(h))) < 1)
         snapshot(h, "pinned")
         await close(h)
     }
@@ -213,7 +218,7 @@ struct PaneSidebarWindowTests {
         let host = try #require(h.controller.paneSidebarHost)
         let column = PaneSidebarState.railColumnWidth
         let gridLeft = frameInWindow(h.panes[0]).minX
-        #expect(abs(gridLeft - column) < 1, "the grid sits beside the 68pt rail column")
+        #expect(abs(gridLeft - (column + gridMargin(h))) < 1, "the grid sits beside the 68pt rail column")
         #expect(host.cardRect.width == PaneSidebarState.railCardWidth)
         #expect(host.cardRect.minX == GlassCard.outerMargin, "the raised card keeps its margin")
         let sizeBefore = gridSize(h.panes[0])

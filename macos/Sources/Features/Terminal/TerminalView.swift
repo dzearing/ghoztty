@@ -52,16 +52,30 @@ protocol TerminalViewModel: ObservableObject {
 
 /// The grid, beside the window's pane sidebar when it has one.
 private struct PaneSidebarSlot<ViewModel: TerminalViewModel, Content: View>: View {
+    @EnvironmentObject private var ghostty: Ghostty.App
     @ObservedObject var viewModel: ViewModel
     @ViewBuilder let content: Content
 
     var body: some View {
-        if viewModel.hasPaneSidebar, let controller = viewModel as? BaseTerminalController {
-            PaneSidebarContainer(state: viewModel.paneSidebarState, controller: controller) {
-                content
+        let elevated = ghostty.config.macosPaneStyle == .elevated
+        // Elevated: the grid sits inside a margin (room for the cards'
+        // shadows) on the gradient, which runs under the sidebar too.
+        let grid = content.padding(elevated ? PaneElevation.margin : 0)
+        Group {
+            if viewModel.hasPaneSidebar, let controller = viewModel as? BaseTerminalController {
+                PaneSidebarContainer(state: viewModel.paneSidebarState, controller: controller) {
+                    grid
+                }
+            } else {
+                grid
             }
-        } else {
-            content
+        }
+        .background {
+            if elevated {
+                PaneDesk(
+                    isLight: OSColor(ghostty.config.backgroundColor).isLightColor,
+                    opacity: ghostty.config.backgroundOpacity)
+            }
         }
     }
 }

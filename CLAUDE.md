@@ -1422,6 +1422,21 @@ the interactive mock settled).
 - Keybinds (macOS defaults): `toggle_pane_sidebar` Ctrl+Cmd+S, `stash_pane`
   Shift+Cmd+M, `restore_stashed_pane` (unbound); Window menu items for all three.
 
+## Pane style (`macos-pane-style`)
+
+`elevated` (the default) presents a window's panes as slightly raised
+rounded cards (11pt radius, a soft two-layer shadow, a hairline rim) on a soft
+blue-to-teal **ocean** gradient, separated by a real 8pt gap with a 10pt margin
+at the window's edge; the gaps are still the dividers. `flat` is the classic
+edge-to-edge look with a 1px `split-divider-color` line, and its geometry is
+unchanged byte for byte. Geometry and palette live once in
+`PaneElevation`/`PaneDesk`/`PaneCard` (`Features/Splits/PaneElevation.swift`),
+which the grid AND the hidden stashed-pane slots both use — the slots must lay
+out exactly like the grid or a restored pane would reflow. The pinned pane
+sidebar goes translucent so the gradient runs under it. A translucent terminal
+(`background-opacity` < 1) gets an equally translucent gradient. Settled in the
+pane-sidebar mock (`docs/design/pane-sidebar.md` → Pane style).
+
 ## Pane rearrange mode
 
 **Cmd+Shift+.** (menu: View → Toggle Rearrange Mode; command palette: "Toggle
