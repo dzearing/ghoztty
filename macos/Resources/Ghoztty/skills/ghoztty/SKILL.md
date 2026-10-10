@@ -338,6 +338,32 @@ ghoztty +split --target=dev --name=preview --view=http://localhost:3000
 ghoztty +reload --target=preview
 ```
 
+### `ghoztty +stash` / `ghoztty +restore`
+
+Put a pane out of the way **without ending it**: `+stash` takes it out of its window's split layout and into the window's pane sidebar, where it keeps running. `+restore` puts it back in the slot it left. Use it for helper panes you started (a log tail, a dev server) that the user doesn't need to watch.
+
+```
+ghoztty +stash --target=<pane>
+ghoztty +restore --target=<pane> [--focus]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--target=<pane>` | Registered pane name or pane id. Required. A window target is an error. |
+| `--focus` | (`+restore` only) Also focus the restored pane and raise its window. Without it focus stays where it is. |
+
+- A stashed pane stays **fully targetable**: `+send-keys`, `+read`, `+set-banner`, `+set-state`, `+close`, `+reload` all keep working on it, and `+list` marks it `[stashed]` (JSON: `"stashed": true`).
+- Both are idempotent. Stashing the **last pane on screen** in its window fails (exit 1) — a window always shows at least one pane.
+- `+split` anchored at a stashed pane, and `ghoztty://focus/<stashed pane>`, restore it first.
+- **Don't stash your own pane** — the user is looking at it.
+
+```bash
+ghoztty +split --name=logs --direction=down --command="tail -f app.log"
+ghoztty +stash --target=logs          # still tailing, out of the way
+ghoztty +read --name=logs --lines=20  # still readable
+ghoztty +restore --target=logs        # back in its slot
+```
+
 ### `ghoztty +list`
 
 List all open windows, tabs, and panes. Human-readable tree view by default, `--json` for machine-readable output. Requires a running Ghoztty instance.

@@ -272,6 +272,45 @@ struct PaneSidebarWindowTests {
         await close(h)
     }
 
+    /// A window that OPENS with a pane already stashed — a session restore,
+    /// or `+new-window` of a tree that carries a stash. The stashed terminal
+    /// was never laid out, and it must still get its real slot size rather
+    /// than the 800×600 placeholder (49×17 cells), or its program is told it
+    /// is 49 columns wide and re-renders at that width.
+    @Test func aPaneStashedAtLaunchGetsItsRealSlotSize() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let a = terminalPane(app), b = terminalPane(app), c = terminalPane(app)
+        let tree = try SplitTree<PaneView>(view: a)
+            .inserting(view: b, at: a, direction: .right)
+            .inserting(view: c, at: b, direction: .down)
+            .stashing(b)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        controller.paneSidebarState.isHidden = false
+        controller.paneSidebarState.isPinned = true
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1100, height: 700))
+        await settle(1.0)
+
+        let stashed = try #require(gridSize(b))
+        let sibling = try #require(gridSize(c))
+        // Before restore, the stashed pane's slot is c's column at half its
+        // height — the same width c has now.
+        #expect(stashed.cols == sibling.cols,
+                "the stashed pane is sized to its slot, not a placeholder (got \(stashed.cols)×\(stashed.rows))")
+        #expect(!(stashed.cols == 49 && stashed.rows == 17), "never the 800×600 placeholder")
+
+        // Restoring it is not a reflow: it already has the size it lands at.
+        controller.restorePane(b, focus: false)
+        await settle(0.6)
+        let restored = try #require(gridSize(b))
+        #expect(restored.cols == stashed.cols && restored.rows == stashed.rows)
+
+        controller.close()
+        await settle(0.3)
+    }
+
     @Test func aStashedPaneIsStillInTheTreeAndAlive() async throws {
         let h = try await open(pinned: true)
         let b = h.panes[1]

@@ -12,7 +12,7 @@ only be closed, which kills it, or covered by hero mode, which makes one pane
 big and hides the rest. Nothing says "get this out of my way but keep it
 running".
 
-**Status:** agreed and being built. The interaction model was settled over an
+**Status:** built (branch `users/dzearing/pane-sidebar`). The interaction model was settled over an
 interactive HTML mock (`temp/mocks/pane-sidebar/index.html`, not committed —
 `temp/` is gitignored); everything under "The sidebar view" records what that
 mock converged on, including the choices that were tried and dropped.
@@ -198,8 +198,22 @@ UI (click, drag, or shortcut). A CLI restore follows the `--focus` policy.
 
 ### Geometry: a stashed pane keeps its size
 
-A stashed pane is unmounted, exactly like a pane hidden behind a zoom. Its
-`SurfaceView` keeps its last frame, and the core keeps its last grid size:
+A stashed pane stays **mounted, invisible, behind the grid**, in the slot it
+would occupy in the full (unstashed) layout (`StashedPaneSlots` in
+`TerminalSplitTreeView`, laid out with the same `SplitView`s the grid uses).
+
+The first build unmounted stashed panes, as a zoom does, on the theory that the
+`SurfaceView` would keep its last frame. That held for a pane stashed while
+on screen, and failed for a pane that was **stashed when its window opened**
+(a session restore): it was never laid out, so its terminal was told it was
+the 800×600 placeholder — 49×17 cells — the exact reflow this section exists to
+prevent. Found in the debug app's agent log (`RESIZE … rows=17 cols=49` on
+every relaunch, once per stashed terminal), reproduced by
+`aPaneStashedAtLaunchGetsItsRealSlotSize`, fixed by mounting. (`.hidden()`
+was tried first: a hidden SwiftUI subtree never mounts its AppKit views, so the
+layer uses opacity 0 and sits behind the grid, which wins every hit test.)
+Mounting also keeps a `window` for the stashed terminal, so window-scoped
+actions from it still find their controller.
 
 - **No size is pushed on stash.** The pane is not resized to zero or to a
   placeholder, so its program sees no `SIGWINCH` at all.
@@ -218,8 +232,10 @@ A stashed pane is unmounted, exactly like a pane hidden behind a zoom. Its
   the mini rail resizes nothing**: the card opens over the grid while the
   column stays mini (see Pinned and unpinned).
 
-This will be verified by measuring a stashed surface's grid size before stash
-and after restore (`ghostty_surface_size`), not assumed.
+Verified by measurement, not assumed: `PaneSidebarWindowTests` reads
+`ghostty_surface_size` before a stash, while stashed, and after restore (same
+columns, rows, and pixels), and for a pane stashed at window creation (its
+slot's size, never 49×17).
 
 ### Drop resolution: one resolver, a new target
 
@@ -378,8 +394,10 @@ pill, and a hairline between the grid and stashed sections.
   three characters. Viewer tiles keep their kind glyph.
 - **Activity rides as a corner badge**: a blue `?` (question) top-right, a dot
   (bell); busy is the same shimmer, on the monogram.
-- **Hovering a tile** shows a label beside it: title, subtitle, which section
-  it is in, and its state in words ("Has a question for you").
+- **Hovering the rail opens the card** (after the 140ms intent delay), so the
+  full rows are the label; a tile also carries a tooltip with its title. (The
+  mock's separate hover label was dropped — the card opening makes it
+  redundant.)
 
 ### Pinned and unpinned
 
@@ -472,9 +490,14 @@ classified `.window`, so a focused viewer forwards it (`ViewerKeyFallback`).
 
 | Action | Default | Menu |
 |---|---|---|
-| `toggle_pane_sidebar` | **Ctrl+Cmd+S** (the system "Show Sidebar" chord in Finder, Mail, and Notes) | View → Show/Hide Pane Sidebar |
+| `toggle_pane_sidebar` | **Ctrl+Cmd+S** (the system "Show Sidebar" chord in Finder, Mail, and Notes) | Window → Show/Hide Pane Sidebar |
 | `stash_pane` | **Shift+Cmd+M** (Cmd+M minimizes the window; Shift+Cmd+M stashes the pane) | Window → Stash Pane |
 | `restore_stashed_pane` | none by default; restores the top of the stash | Window → Restore Stashed Pane |
+
+All three sit together in the Window menu after Toggle Rearrange Mode, and the
+defaults are macOS-only (the sidebar is). Neither chord collided with a
+system symbolic hotkey or a registered global hotkey on the development
+machine (Zecho, which took Shift+Cmd+R, now uses Shift+Cmd+1).
 
 Both default chords are unbound in Ghoztty's default config and main menu (no
 `s` or `m` bindings exist; the menu has only Cmd+M, Minimize).
