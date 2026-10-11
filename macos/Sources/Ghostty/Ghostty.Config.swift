@@ -368,6 +368,16 @@ extension Ghostty {
             return MacOSTitlebarStyle(rawValue: String(cString: ptr)) ?? defaultValue
         }
 
+        var macosPaneStyle: MacOSPaneStyle {
+            let defaultValue = MacOSPaneStyle.default
+            guard let config = self.config else { return defaultValue }
+            var v: UnsafePointer<Int8>?
+            let key = "macos-pane-style"
+            guard ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8))) else { return defaultValue }
+            guard let ptr = v else { return defaultValue }
+            return MacOSPaneStyle(rawValue: String(cString: ptr)) ?? defaultValue
+        }
+
         var macosTitlebarProxyIcon: MacOSTitlebarProxyIcon {
             let defaultValue = MacOSTitlebarProxyIcon.visible
             guard let config = self.config else { return defaultValue }
@@ -389,6 +399,21 @@ extension Ghostty {
             let str = String(cString: ptr)
             return MacDockDropBehavior(rawValue: str) ?? defaultValue
         }
+
+        /// `macos-pane-glass` as configured (see `paneGlass` for whether it
+        /// is in effect).
+        var macosPaneGlass: Bool {
+            guard let config = self.config else { return true }
+            var v = true
+            let key = "macos-pane-glass"
+            _ = ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8)))
+            return v
+        }
+
+        /// Whether panes are glass sheets: `macos-pane-glass`, which only
+        /// means anything in the elevated style. The renderer applies the
+        /// same rule (it stops drawing the terminal's background).
+        var paneGlass: Bool { macosPaneStyle == .elevated && macosPaneGlass }
 
         var macosWindowShadow: Bool {
             guard let config = self.config else { return false }
@@ -609,13 +634,13 @@ extension Ghostty {
         #endif
 
         var resizeOverlay: ResizeOverlay {
-            guard let config = self.config else { return .after_first }
+            guard let config = self.config else { return .never }
             var v: UnsafePointer<Int8>?
             let key = "resize-overlay"
-            guard ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8))) else { return .after_first }
-            guard let ptr = v else { return .after_first }
+            guard ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8))) else { return .never }
+            guard let ptr = v else { return .never }
             let str = String(cString: ptr)
-            return ResizeOverlay(rawValue: str) ?? .after_first
+            return ResizeOverlay(rawValue: str) ?? .never
         }
 
         var resizeOverlayPosition: ResizeOverlayPosition {
@@ -950,5 +975,11 @@ extension Ghostty.Config {
     enum MacOSTitlebarStyle: String {
         static let `default` = MacOSTitlebarStyle.transparent
         case native, transparent, tabs, hidden
+    }
+
+    /// See `macos-pane-style`.
+    enum MacOSPaneStyle: String {
+        static let `default` = MacOSPaneStyle.elevated
+        case elevated, flat
     }
 }

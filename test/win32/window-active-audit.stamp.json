@@ -1,12 +1,10 @@
 {
     "guard":  "window-active-audit",
     "script":  "test/win32/window-active-audit.ps1",
-    "generated":  "2026-10-11T04:45:40-07:00",
-    "commit":  "be49068d0",
+    "generated":  "2026-10-11T05:48:37-07:00",
+    "commit":  "45852d134",
     "uncommitted":  [
-                        "src/apprt/win32/chooser_sessions.zig",
-                        "src/apprt/win32/MachineChooser.zig",
-                        "src/apprt/win32/SessionRoster.zig"
+                        "src/apprt/win32/App.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -34,7 +32,7 @@
                   "src/apprt/win32/agent_upgrade.zig":  "32238c442c66a6ee5885c31c751f9fbf23f174c36bf852905eda7cd1ad3ea603",
                   "src/apprt/win32/AgentIntegration.zig":  "ce4bbfbbf2bc5159eab352bda4d83b4039616b94fc14f938274e3a97efdb945d",
                   "src/apprt/win32/AgentIntegrationsDialog.zig":  "bae8123be8ee78f13e7c5008ef66f2589e26eaf047e42163a3be94879952d92d",
-                  "src/apprt/win32/App.zig":  "63b40a11fd8d4b4c436eae7297dd8295dc6082778991bf488d7c876abd95d7b2",
+                  "src/apprt/win32/App.zig":  "8cebfd2599796177af52c84400195c1b0d55e096a0283d6fd4ab57824089b3a6",
                   "src/apprt/win32/app_restart.zig":  "e6de2b1d367b2e5832906b032b50b8f1fd3ff7f9cd59602b2e626b7f4a9ea73f",
                   "src/apprt/win32/background_zorder.zig":  "f365d4f6606a4f32c237ae49721ba46b6a7239e253fb205598df7a668e75d823",
                   "src/apprt/win32/banner_card.zig":  "8a8ae5c2bc901bfc594b23bb443f6d919bdc4756d9f42d7c9c102f5e05a13b90",

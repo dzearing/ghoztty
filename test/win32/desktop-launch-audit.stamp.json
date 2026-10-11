@@ -1,13 +1,14 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-10-11T04:49:40-07:00",
-    "commit":  "be49068d0",
+    "generated":  "2026-10-11T05:53:43-07:00",
+    "commit":  "45852d134",
     "uncommitted":  [
-                        "test/win32/chooser-sessions.ps1"
+                        "src/cli/ghostty.zig",
+                        "test/win32/lib/DesktopLaunchAudit.ps1"
                     ],
     "files":  {
-                  "src/cli/ghostty.zig":  "ef54b501298cfda9306cfb958c1094db24ee30f355b25865656b3e2bc713bcd7",
+                  "src/cli/ghostty.zig":  "85048b74f8795c4f500ca8dd98fa52a24e92a94808ef1b16df34070b4cf6094d",
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",
@@ -192,7 +193,7 @@
                   "test/win32/layout-blob-cross-lineage.ps1":  "1a9b1c0069d19704b7f379445c7648de5857c318312188cbed22a02152930f5b",
                   "test/win32/layout-blobs.ps1":  "d91f5b4afad56f13d8fba4d6f00abf44539b9a5e93afadd26acaec53c5413b75",
                   "test/win32/layout-capture-cost.ps1":  "60a2c830f6bac395be0ea78847d0f07466cefca0c8bb9d86385ea27618628e8e",
-                  "test/win32/lib/DesktopLaunchAudit.ps1":  "6a520668a22c54f4c5163d5efe9fb3a01bdb8568d60f6cfa5366a1fb2edad86f",
+                  "test/win32/lib/DesktopLaunchAudit.ps1":  "3b312e4839e56a4d0ddabb501b2e33cb090cb42e88bd32cc6925ee069170471a",
                   "test/win32/lib/TestDesktop.ps1":  "741f7289c8f953f3ce61719fc809ed7ab5305183aea184308a7576414ac6c2a5",
                   "test/win32/local-split-no-command-rerun.ps1":  "ee277b6308cdb172e153fe92d0624732f8b64743418134ce466da5534138fae2",
                   "test/win32/log-append.ps1":  "61e904625bdcce9ad697d8d8ea6065dcd15673388768a1b306cf72902d255b11",

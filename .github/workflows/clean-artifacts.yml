@@ -1,8 +1,19 @@
 name: Clean Artifacts
 on:
   schedule:
-    # Once a day
-    - cron: "0 0 * * *"
+    # Weekly, not daily, and deliberately NOT near a release window.
+    #
+    # c-hive/gha-remove-artifacts enumerates every workflow run and its
+    # artifacts. This fork has thousands of runs, so one pass can spend the
+    # whole 5,000/hr GitHub App installation rate limit - a bucket that is
+    # SHARED with every other workflow, including Release. On 2026-10-11 this
+    # job drained it at 03:27 UTC and the v1.39.0 release then failed twice
+    # trying to create its GitHub release.
+    #
+    # Release now retries a rate-limited publish on its own (see release.yml),
+    # so this is defence in depth rather than the fix: run it a quarter as
+    # often, and on Sunday early-morning UTC.
+    - cron: "0 9 * * 0"
   workflow_dispatch:
 jobs:
   remove-old-artifacts:

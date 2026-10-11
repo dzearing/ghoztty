@@ -240,7 +240,9 @@ final class PaneDragSession: ObservableObject {
         }
 
         var paneRects: [(id: UUID, rect: CGRect)] = []
-        for pane in controller.surfaceTree {
+        // Only panes ON SCREEN are drop targets: a stashed pane is mounted
+        // (hidden, in its slot) but nothing can land on it.
+        for pane in controller.surfaceTree.visibleLeaves {
             let view = pane.contentView
             // A pane that is not mounted (zoomed out, hero mode) has no
             // window and no meaningful frame.
@@ -270,6 +272,7 @@ final class PaneDragSession: ObservableObject {
             contentRect: contentRect,
             paneRects: paneRects,
             tabBarRect: tabBarRect,
-            tabButtonRects: tabButtonRects)
+            tabButtonRects: tabButtonRects,
+            sidebar: controller.paneSidebarHost?.dropGeometry())
     }
 }

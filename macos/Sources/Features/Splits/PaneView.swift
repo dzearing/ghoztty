@@ -27,6 +27,9 @@ final class PaneView: NSView, Codable, Identifiable, ObservableObject {
     // subscriptions (SplitTree.valuesPublisher aggregation of bell/activity,
     // window title tracking) work uniformly across pane kinds.
     @Published private(set) var title: String = ""
+    /// Whether this is its window's focused pane (`BaseTerminalController
+    /// .publishedFocusedPane`), for the elevated style's focus glow.
+    @Published var isFocusedPane: Bool = false
     @Published private(set) var bell: Bool = false
     @Published private(set) var activityState: Ghostty.ActivityState = .idle
     @Published private(set) var paneBanner: String?

@@ -85,6 +85,10 @@ enum IPCData: Encodable {
         /// Whether the pane is in read-only mode (T574). Additive: nil (the
         /// off state, and every viewer pane) omits the key entirely.
         var readonly: Bool? = nil
+        /// True when the pane is stashed in its window's pane sidebar: out of
+        /// the layout, still running. Absent (not false) otherwise, like
+        /// `banner` — an additive field older readers never see.
+        var stashed: Bool? = nil
 
         private enum CodingKeys: String, CodingKey {
             case id, title, working_directory, pid, tty, name, focused, exit_code
@@ -92,6 +96,7 @@ enum IPCData: Encodable {
             case url
             case banner
             case readonly
+            case stashed
         }
 
         func encode(to encoder: Encoder) throws {
@@ -108,6 +113,7 @@ enum IPCData: Encodable {
             try container.encode(url, forKey: .url)
             try container.encodeIfPresent(banner, forKey: .banner)
             try container.encodeIfPresent(readonly, forKey: .readonly)
+            try container.encodeIfPresent(stashed == true ? true : nil, forKey: .stashed)
         }
     }
 

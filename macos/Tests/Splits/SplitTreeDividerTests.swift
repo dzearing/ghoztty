@@ -262,7 +262,7 @@ struct SplitTreeDividerTests {
     @Test func treeKeepsTheZoomedPane() throws {
         let (columns, _, _, c) = try makeRightNestedColumns()
         let zoomedNode = try #require(columns.root?.node(view: c))
-        let tree = SplitTree(root: columns.root, zoomed: zoomedNode)
+        let tree = SplitTree(root: columns.root, zoomed: zoomedNode, stashed: [])
 
         let moved = try tree.movingDivider(of: try #require(tree.root), to: 400, in: 900)
 

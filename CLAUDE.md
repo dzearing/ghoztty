@@ -132,6 +132,7 @@ powershell -NoProfile -File test\win32\ipc-p1.ps1   # then ipc-p2.ps1, ipc-p3.ps
 ```
 ghoztty +new-window | +split | +close | +rearrange | +read | +list | +sessions
         +send-keys | +set-state | +set-banner | +reload | +new-remote-window
+        +stash | +restore
 ```
 
 All verbs are idempotent — named targets that already exist are focused, not

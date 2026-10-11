@@ -63,6 +63,11 @@ pub const List = struct {
         /// every viewer pane) omits the field, so an older client sees the
         /// shape it always saw.
         readonly: ?bool = null,
+        /// True when the pane is stashed out of its window's layout (main
+        /// 597a193cc's pane sidebar). Written only when true, as the Mac
+        /// encoder does (`stashed == true ? true : nil`); win32 has no stash
+        /// yet (T1827), so today it is always omitted.
+        stashed: bool = false,
         /// The session-persistence agent session this pane is bound to
         /// (T332): the join key against `+sessions --json`. Absent for a
         /// plain local ConPTY pane and for viewers; present for local-agent
@@ -398,6 +403,10 @@ pub const List = struct {
         if (term.readonly) |ro| {
             try jws.objectField("readonly");
             try jws.write(ro);
+        }
+        if (term.stashed) {
+            try jws.objectField("stashed");
+            try jws.write(true);
         }
         if (term.session_id) |sid| {
             try jws.objectField("session_id");
@@ -1191,6 +1200,7 @@ test "List: the JSON shape still matches the Mac Swift encoder (T370)" {
         .background_tint = "#112233",
         .banner = "**PR #1**",
         .readonly = true,
+        .stashed = true,
         .session_id = "s1",
     } };
     const leaf_right: List.Node = .{ .leaf = List.empty_terminal };

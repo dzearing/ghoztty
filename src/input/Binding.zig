@@ -674,6 +674,19 @@ pub const Action = union(enum) {
     /// is a drop target.
     toggle_rearrange_mode,
 
+    /// Show or hide the current window's pane sidebar: the list of every
+    /// pane in the window, into which panes can be stashed.
+    toggle_pane_sidebar,
+
+    /// Stash the focused pane: take it out of the split layout and into the
+    /// pane sidebar, where it keeps running. Refused when it is the last
+    /// pane on screen.
+    stash_pane,
+
+    /// Restore the most recently stashed pane (the top of the pane
+    /// sidebar's stash) to the split layout.
+    restore_stashed_pane,
+
     /// Toggle read-only mode for the current surface.
     ///
     /// When a surface is in read-only mode:
@@ -1459,6 +1472,9 @@ pub const Action = union(enum) {
             .toggle_split_zoom,
             .toggle_hero_mode,
             .toggle_rearrange_mode,
+            .toggle_pane_sidebar,
+            .stash_pane,
+            .restore_stashed_pane,
             .toggle_readonly,
             .resize_split,
             .equalize_splits,
@@ -1529,6 +1545,8 @@ pub const Action = union(enum) {
             .toggle_background_opacity,
             .toggle_command_palette,
             .toggle_rearrange_mode,
+            .toggle_pane_sidebar,
+            .restore_stashed_pane,
             .reset_window_size,
             .prompt_tab_title,
             .prompt_window_title,
@@ -1542,6 +1560,7 @@ pub const Action = union(enum) {
             .toggle_split_zoom,
             .resize_split,
             .toggle_hero_mode,
+            .stash_pane,
             .close_surface,
             .prompt_surface_title,
             .set_surface_title,
@@ -4787,6 +4806,9 @@ test "action: requires" {
     try testing.expectEqual(Action.Requires.app, (Action{ .undo = {} }).requires());
     // The surface only names the window.
     try testing.expectEqual(Action.Requires.window, (Action{ .toggle_rearrange_mode = {} }).requires());
+    try testing.expectEqual(Action.Requires.window, (Action{ .toggle_pane_sidebar = {} }).requires());
+    try testing.expectEqual(Action.Requires.window, (Action{ .restore_stashed_pane = {} }).requires());
+    try testing.expectEqual(Action.Requires.pane, (Action{ .stash_pane = {} }).requires());
     try testing.expectEqual(Action.Requires.window, (Action{ .goto_tab = 1 }).requires());
     // Acts on the focused pane.
     try testing.expectEqual(Action.Requires.pane, (Action{ .new_split = .right }).requires());
@@ -4815,6 +4837,9 @@ test "action: canonical spelling" {
         .{ "new_split:right", "new_split:right" },
         .{ "resize_split:up,10", "resize_split:up,10" },
         .{ "toggle_rearrange_mode", "toggle_rearrange_mode" },
+        .{ "toggle_pane_sidebar", "toggle_pane_sidebar" },
+        .{ "stash_pane", "stash_pane" },
+        .{ "restore_stashed_pane", "restore_stashed_pane" },
     };
     for (cases) |c| {
         const a = try Action.parse(c[0]);

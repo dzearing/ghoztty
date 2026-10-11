@@ -20,7 +20,7 @@ struct SplitTreeRearrangeTests {
         let tree = SplitTree<MockView>(
             root: .split(.init(direction: .horizontal, ratio: 0.5,
                                left: .leaf(view: a), right: .leaf(view: b))),
-            zoomed: nil)
+            zoomed: nil, stashed: [])
         return (tree, a, b)
     }
 
@@ -114,7 +114,7 @@ struct SplitTreeRearrangeTests {
         // A zoom hides most of the window; reshaping its top level makes that
         // hidden state meaningless.
         let (tree, a, b) = pair()
-        let zoomed = SplitTree<MockView>(root: tree.root, zoomed: .leaf(view: a))
+        let zoomed = SplitTree<MockView>(root: tree.root, zoomed: .leaf(view: a), stashed: [])
         let result = zoomed.insertingAtTopLevel(view: MockView(), side: .up)
         #expect(result.zoomed == nil)
         #expect(leaves(result).contains(b))
@@ -139,7 +139,7 @@ struct SplitTreeRearrangeTests {
                                right: .split(.init(direction: .horizontal, ratio: 0.5,
                                                    left: .leaf(view: b),
                                                    right: .leaf(view: c))))),
-            zoomed: nil)
+            zoomed: nil, stashed: [])
 
         guard let nodeA = tree.root?.node(view: a) else {
             Issue.record("could not find a"); return

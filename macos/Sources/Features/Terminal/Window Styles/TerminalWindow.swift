@@ -662,6 +662,10 @@ class TerminalWindow: NSWindow {
         let macosWindowButtons: Ghostty.MacOSWindowButtons
         let macosTitlebarStyle: Ghostty.Config.MacOSTitlebarStyle
         let windowCornerRadius: CGFloat
+        /// Glass panes (`macos-pane-glass` in the elevated style): the
+        /// window's gradient runs up under the titlebar, which must not paint
+        /// over it.
+        let paneGlass: Bool
 
         init() {
             self.title = nil
@@ -671,6 +675,7 @@ class TerminalWindow: NSWindow {
             self.backgroundBlur = .disabled
             self.macosTitlebarStyle = .default
             self.windowCornerRadius = 16
+            self.paneGlass = false
         }
 
         init(_ config: Ghostty.Config) {
@@ -680,6 +685,7 @@ class TerminalWindow: NSWindow {
             self.macosWindowButtons = config.macosWindowButtons
             self.backgroundBlur = config.backgroundBlur
             self.macosTitlebarStyle = config.macosTitlebarStyle
+            self.paneGlass = config.paneGlass
 
             // Set corner radius based on macos-titlebar-style
             // Native, transparent, and hidden styles use 16pt radius

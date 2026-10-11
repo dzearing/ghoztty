@@ -8,11 +8,20 @@ import SwiftUI
 /// controls and an editable address field.
 struct ViewerSplitLeaf: View {
     @ObservedObject var viewerView: ViewerView
+    /// Whether the pane is a glass sheet (`macos-pane-glass`). Passed in, not
+    /// read from the environment, so the leaf can be hosted on its own.
+    var isOnGlass = false
 
     var body: some View {
         ViewerRepresentable(viewerView: viewerView)
+            // A glass pane's sheet is the page's background too.
+            .task(id: isOnGlass) { viewerView.isOnGlass = isOnGlass }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Viewer pane")
+            // The same hover grab handle a terminal has: drag a viewer onto
+            // the pane sidebar, into another split, or out to a new window
+            // without entering rearrange mode.
+            .overlay { ViewerGrabHandle(viewerView: viewerView) }
     }
 }
 

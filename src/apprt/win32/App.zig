@@ -8164,6 +8164,17 @@ pub fn performAction(
             },
         },
 
+        // Pane sidebar and stash (main 597a193cc) are not built on win32
+        // yet: T1827 (stash) and T1828 (sidebar). Answer "not performed"
+        // so the binding is not consumed and nothing claims it happened.
+        .toggle_pane_sidebar,
+        .stash_pane,
+        .restore_stashed_pane,
+        => {
+            log.info("{s}: not implemented on win32 yet (T1827/T1828)", .{@tagName(action)});
+            return false;
+        },
+
         // Acknowledge actions that don't need Win32-specific handling.
         // The core handles the logic; we just confirm receipt.
         .cell_size,

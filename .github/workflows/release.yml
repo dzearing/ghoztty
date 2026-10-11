@@ -2,6 +2,15 @@ on:
   push:
     tags:
       - "v*"
+  # Re-drive a release for an existing tag. A tag-push run is frozen against
+  # the workflow file AT that tag, so a fix to this file can only be applied to
+  # an already-pushed tag through a dispatch.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to (re-)release, e.g. v1.39.0"
+        required: true
+        type: string
 
 name: Release
 
@@ -14,6 +23,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # A dispatch builds the named tag; a tag push builds what it pushed.
+          ref: ${{ inputs.tag || github.ref }}
 
       - name: Select latest Xcode
         run: |
@@ -25,8 +36,11 @@ jobs:
 
       - name: Set release variables
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          TAG="${{ inputs.tag }}"
+          [ -n "$TAG" ] || TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
           ARCH=$(uname -m)
+          echo "TAG=$TAG" >> $GITHUB_ENV
           DMG_NAME="Ghoztty-${VERSION}-${ARCH}.dmg"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
           echo "ARCH=$ARCH" >> $GITHUB_ENV
@@ -146,11 +160,73 @@ jobs:
           DMG_LENGTH=$(stat -f%z "$DMG_NAME")
           echo "DMG_LENGTH=$DMG_LENGTH" >> $GITHUB_ENV
 
-      - uses: softprops/action-gh-release@v2
+      # Keep the signed, notarized DMG even if publishing below fails. Without
+      # this the runner's copy is the only one, so a transient API failure threw
+      # away a ~6 minute build + notarization and forced a full rebuild. With it,
+      # a failed publish is recoverable by hand:
+      #   gh run download <run-id> -n dmg && gh release create v<x.y.z> *.dmg
+      - name: Keep the DMG as an artifact
+        uses: actions/upload-artifact@v4
         with:
-          files: ${{ env.DMG_NAME }}
-          body: |
-            Custom Ghoztty build (macOS ${{ env.ARCH }}, signed and notarized).
+          name: dmg
+          path: ${{ env.DMG_NAME }}
+          if-no-files-found: error
+          retention-days: 14
+
+      # Publish with `gh` and an explicit backoff rather than
+      # softprops/action-gh-release, which classifies EVERY 403 as a permissions
+      # problem ("Skip retry - your GitHub token/PAT does not have the required
+      # permission") and gives up. The 403 we actually hit is
+      # "API rate limit exceeded for installation" - the shared 5,000/hr bucket
+      # that the scheduled Clean Artifacts job can drain - which is retryable,
+      # and is the single thing most likely to fail a release.
+      #
+      # Idempotent on purpose, so a re-run of a partially-successful job is safe:
+      # the release is created only if absent, and the asset is --clobber'd.
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+
+          publish() {
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Release $TAG already exists; uploading asset."
+            else
+              gh release create "$TAG" \
+                --repo "$GITHUB_REPOSITORY" \
+                --title "Ghoztty $TAG" \
+                --notes "Custom Ghoztty build (macOS ${ARCH}, signed and notarized)." \
+                || return 1
+            fi
+            gh release upload "$TAG" "$DMG_NAME" \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          }
+
+          # ~17 minutes of total patience, which covers a drained installation
+          # bucket refilling on its rolling hour.
+          for delay in 0 30 60 120 240 300 300; do
+            if [ "$delay" != 0 ]; then
+              # If we are rate limited, prefer sleeping until the real reset.
+              reset=$(gh api rate_limit --jq '.resources.core.reset' 2>/dev/null || echo "")
+              if [ -n "$reset" ]; then
+                now=$(date -u +%s)
+                until_reset=$(( reset - now ))
+                if [ "$until_reset" -gt 0 ] && [ "$until_reset" -lt 900 ]; then
+                  delay=$(( until_reset + 15 ))
+                fi
+              fi
+              echo "::warning::Publish failed; retrying in ${delay}s"
+              sleep "$delay"
+            fi
+            if publish; then
+              echo "Published $TAG"
+              exit 0
+            fi
+          done
+
+          echo "::error::Could not publish $TAG after repeated attempts. The DMG is kept as the 'dmg' artifact on this run - download it and publish by hand, or re-run this workflow via workflow_dispatch."
+          exit 1
 
       - name: Update appcast and deploy to GitHub Pages
         env:
@@ -178,6 +254,14 @@ jobs:
           tree = ET.parse("appcast.xml")
           channel = tree.find("channel")
 
+          # Idempotent: a re-run (or a dispatch re-release) must REPLACE this
+          # version's entry, never append a second one. A rebuilt DMG has a new
+          # signature and length, so the newest write is the correct one.
+          for existing in channel.findall("item"):
+              v = existing.find("{%s}version" % ns["sparkle"])
+              if v is not None and (v.text or "").strip() == version:
+                  channel.remove(existing)
+
           item = ET.SubElement(channel, "item")
           ET.SubElement(item, "title").text = f"Version {version}"
           ET.SubElement(item, "{%s}version" % ns["sparkle"]).text = version
@@ -201,19 +285,30 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add appcast.xml
+
+          # A re-run whose appcast edit is byte-identical has nothing to
+          # commit, and `git commit` exits non-zero on that - which under
+          # bash -e would fail a release that is already fully published.
+          if git diff --cached --quiet; then
+            echo "Appcast already up to date for v${VERSION}"
+            exit 0
+          fi
           git commit -m "Update appcast for v${VERSION}"
 
-          # release-windows.yml now writes index.html on this same branch from
-          # the same tag push (T39), so this push has a concurrent writer.
-          # Rebase and retry rather than losing the appcast entry to a race.
+          # release-windows.yml also writes index.html on this branch from the
+          # same tag push (T39), so this push has two concurrent writers.
+          # gh-pages also carries the website version bump, so a release can
+          # race a human push and lose on a non-fast-forward. Rebase and retry
+          # rather than failing the job after the release is already public.
           for attempt in 1 2 3 4 5; do
             if git push origin gh-pages; then
-              echo "appcast pushed (attempt $attempt)"
+              echo "Appcast pushed"
               exit 0
             fi
-            echo "push rejected (attempt $attempt) -- rebasing onto origin/gh-pages"
-            git pull --rebase origin gh-pages
-            sleep $(( attempt * 3 ))
+            echo "::warning::gh-pages push rejected (attempt ${attempt}); rebasing"
+            git pull --rebase origin gh-pages || exit 1
+            sleep 5
           done
-          echo "::error::could not push the appcast after 5 attempts"
+
+          echo "::error::Could not push the appcast to gh-pages"
           exit 1

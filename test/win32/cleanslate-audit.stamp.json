@@ -1,10 +1,10 @@
 {
     "guard":  "cleanslate",
     "script":  "test/win32/cleanslate-audit.ps1",
-    "generated":  "2026-10-11T04:47:40-07:00",
-    "commit":  "be49068d0",
+    "generated":  "2026-10-11T05:56:17-07:00",
+    "commit":  "45852d134",
     "uncommitted":  [
-                        "test/win32/chooser-sessions.ps1"
+                        "test/win32/lib/DesktopLaunchAudit.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -209,7 +209,7 @@
                   "test/win32/lib/ComposerSurface.ps1":  "7edd6dccc01fa8654f186ad97e64fb13bd9199305aa0424aebfbe7537e39d287",
                   "test/win32/lib/CountOrZero.ps1":  "becbcdc2dabc0728175ea276fc082a3e270df5637b659c434d93f3e407a9fa9c",
                   "test/win32/lib/DesktopCapability.ps1":  "d515c5b58b16aaaf2e077e22e86b8b6eb33fda4d639461ba0b133460b3cdf7e7",
-                  "test/win32/lib/DesktopLaunchAudit.ps1":  "6a520668a22c54f4c5163d5efe9fb3a01bdb8568d60f6cfa5366a1fb2edad86f",
+                  "test/win32/lib/DesktopLaunchAudit.ps1":  "3b312e4839e56a4d0ddabb501b2e33cb090cb42e88bd32cc6925ee069170471a",
                   "test/win32/lib/ExitCodeAudit.ps1":  "c6aa6eb8adbe8d682bdacc2a0034e4accf17ee1790b5867a856de3105ba6806c",
                   "test/win32/lib/FakeAgentRelay.ps1":  "75beb6bffdb603e237860dc7bcbda4cfc41ace110f7f12b13777395244c232c7",
                   "test/win32/lib/FakeRelay.ps1":  "c1d824a5de199369521042d5eadb2ca0c879b55d92104b709c98d17b880eee26",

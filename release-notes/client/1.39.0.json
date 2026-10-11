@@ -1,0 +1,101 @@
+{
+  "version": "1.39.0",
+  "sections": [
+    {
+      "title": "Your windows will look different",
+      "items": [
+        {
+          "text": "Panes are now slightly raised translucent cards on a soft gradient. To go back to the classic edge-to-edge look, set `macos-pane-style = flat` in your config — its geometry is unchanged, byte for byte."
+        }
+      ]
+    },
+    {
+      "title": "Pane sidebar",
+      "items": [
+        {
+          "title": "Stash a pane instead of closing it",
+          "text": "There was no way to say \"get this pane out of my way but keep it running\": only close, which kills it, or hero mode, which hides everything else. Every window now has a pane sidebar, and dragging a pane's grab handle onto the list (or **Shift+Cmd+M**) takes it out of the split grid while it keeps running. The remaining panes reflow to fill the space. Click its row to put it back in the exact slot it left."
+        },
+        {
+          "title": "The list is the whole window, not just a drawer",
+          "text": "Grid panes first with the focused one selected, then your stashed ones below. Click a grid row to focus that pane. Option-click a stashed row to swap it with the focused pane. Drag a row back into the grid to place it wherever you drop it."
+        },
+        {
+          "title": "Pinned or out of the way",
+          "text": "Pinned, it's a flat panel the grid sits beside. Unpinned, it collapses to a narrow rail of tiles that opens over the grid when your pointer reaches it. The hover-open card floats, so no terminal resizes just because you moved the mouse. **Ctrl+Cmd+S** hides and shows it entirely."
+        },
+        {
+          "title": "A stashed pane tells you when it needs you",
+          "text": "A busy pane's icon shimmers, and one waiting on input shows a question badge. That's the real payoff of putting an agent out of sight."
+        },
+        {
+          "title": "See every window at once",
+          "text": "A header toggle groups the panes from all your windows, with worktree windows collected under collapsible project headers, plus a search field that matches on window title, pane title, banner, and directory."
+        },
+        {
+          "title": "Nothing is closed by accident",
+          "text": "Rows offer only stash and restore. Closing is behind the right-click menu (confirmed, as always) or a deliberate trash mode you have to turn on."
+        },
+        {
+          "title": "A stashed pane stays fully yours",
+          "text": "`+send-keys`, `+read`, `+set-banner`, `+set-state`, and `+close` all keep working on it, `+list` marks it `[stashed]`, and new `ghoztty +stash` / `ghoztty +restore` commands do it from the CLI. Splitting off a stashed pane or focusing it restores it first, since a new pane beside an invisible one would be invisible too."
+        },
+        {
+          "title": "Stashing never costs you the session",
+          "text": "A stashed pane stays in the window's tree and keeps its real size and slot, so it isn't mistaken for a closed pane, it's never sized to a placeholder, and restoring it doesn't re-wrap your scrollback. Your stash comes back after a restart."
+        }
+      ]
+    },
+    {
+      "title": "Pane style",
+      "items": [
+        {
+          "title": "Panes are elevated cards on a gradient",
+          "text": "`macos-pane-style`, default `elevated` — raised rounded panes with a soft shadow and a hairline rim on a blue-to-teal ocean gradient, with one 10pt gutter everywhere: between panes, at the window edge, and around the sidebar rail."
+        },
+        {
+          "title": "The gradient reads through your panes",
+          "text": "`macos-pane-glass`, default `true` — each pane is a translucent sheet tinted with its own background color, Liquid Glass on macOS 26, so light and shade run through the whole window and up under the titlebar. A translucent terminal gets an equally translucent gradient."
+        },
+        {
+          "title": "Every window gets its own color",
+          "text": "A window you open by hand (Cmd-N, the menu item, the palette) now picks a random gradient from the whole hue wheel, lit from the top center and darkening toward the bottom corner, where a dim pool of the complementary hue lights the edge. `+new-window --color=random` does the same. Your terminal colors are left alone."
+        },
+        {
+          "title": "The focused pane reads as backlit",
+          "text": "A soft light behind the card spills onto the gradient around it, outside the pane only, so nothing inside your terminal changes brightness."
+        },
+        {
+          "title": "Classic look preserved",
+          "text": "`macos-pane-style = flat` is the old edge-to-edge style with its 1px divider, geometry untouched."
+        }
+      ]
+    },
+    {
+      "title": "Terminal",
+      "items": [
+        {
+          "title": "Dragging a split divider no longer makes TUIs flicker",
+          "text": "Every resize is a signal on which a full-screen app like Claude Code clears and repaints the screen, and a 600ms drag was sending about 35 of them. Resizes now settle before reaching the program: roughly 4 repaints for that same drag, applied once you stop moving and never held longer than a third of a second."
+        },
+        {
+          "title": "No more dimensions popup on every drag",
+          "text": "`resize-overlay` now defaults to `never`."
+        }
+      ]
+    },
+    {
+      "title": "Viewer panes",
+      "items": [
+        {
+          "title": "Viewer panes have the drag handle terminals have",
+          "text": "They were draggable in rearrange mode but had no hover-revealed grab handle of their own, so there was no way to pick one up without entering the mode."
+        },
+        {
+          "title": "The grab handle stays put while you reach for it",
+          "text": "It vanished the moment your pointer crossed the pane's banner on the way to it."
+        }
+      ]
+    }
+  ]
+}

@@ -10,6 +10,20 @@ struct SplitTree<ViewType: NSView & Codable & Identifiable> {
     /// size of the view area where the splits are shown.
     let zoomed: Node?
 
+    /// Leaves that are STASHED: still in `root`, but left out of the layout.
+    /// In the pane sidebar's order. See `SplitTree+Stash.swift`.
+    ///
+    /// A stashed pane never leaves the tree, the same way a pane hidden behind
+    /// a zoom never does. Everything that walks the tree — IPC targeting,
+    /// session close intent, close confirmation, the session manifest — keeps
+    /// seeing it, so stashing can't silently end a session or orphan a pane
+    /// from the CLI. Only the spatial operations (layout, divider moves,
+    /// directional focus) run on `visibleTree`.
+    ///
+    /// No initializer defaults this: a tree rebuilt without saying what
+    /// happens to the stash would quietly un-stash every pane.
+    let stashed: [ViewType.ID]
+
     /// A single node in the tree is either a leaf node (a view) or a split (has a
     /// left/right or top/bottom).
     indirect enum Node: Codable {
@@ -101,11 +115,11 @@ extension SplitTree {
     }
 
     init() {
-        self.init(root: nil, zoomed: nil)
+        self.init(root: nil, zoomed: nil, stashed: [])
     }
 
     init(view: ViewType) {
-        self.init(root: .leaf(view: view), zoomed: nil)
+        self.init(root: .leaf(view: view), zoomed: nil, stashed: [])
     }
 
     /// Checks if the tree contains the specified node.
@@ -124,7 +138,7 @@ extension SplitTree {
     /// This will always reset the zoomed state of the tree.
     func inserting(view: ViewType, at: ViewType, direction: NewDirection, ratio: Double = 0.5) throws -> Self {
         guard let root else { throw SplitError.viewNotFound }
-        return .init(
+        return rebuilt(
             root: try root.inserting(view: view, at: at, direction: direction, ratio: ratio),
             zoomed: nil)
     }
@@ -154,7 +168,7 @@ extension SplitTree {
 
         // A top-level insert reshapes the whole window, so a zoom that hid
         // most of it can no longer be meaningful.
-        return .init(root: newRoot, zoomed: nil)
+        return rebuilt(root: newRoot, zoomed: nil)
     }
 
     /// Find a node containing a view with the specified ID.
@@ -172,7 +186,7 @@ extension SplitTree {
 
         // If we're removing the root itself, return an empty tree
         if root == target {
-            return .init(root: nil, zoomed: nil)
+            return .init(root: nil, zoomed: nil, stashed: [])
         }
 
         // Otherwise, try to remove from the tree
@@ -181,7 +195,7 @@ extension SplitTree {
         // Update zoomed if it was the removed node
         let newZoomed = (zoomed == target) ? nil : zoomed
 
-        return .init(root: newRoot, zoomed: newZoomed)
+        return rebuilt(root: newRoot, zoomed: newZoomed)
     }
 
     /// Replace a node in the tree with a new node.
@@ -199,7 +213,7 @@ extension SplitTree {
         // Update zoomed if it was the replaced node
         let newZoomed = (zoomed == node) ? newNode : zoomed
 
-        return .init(root: newRoot, zoomed: newZoomed)
+        return rebuilt(root: newRoot, zoomed: newZoomed)
     }
 
     /// Swap two leaf nodes in the tree by exchanging their views.
@@ -215,7 +229,10 @@ extension SplitTree {
         let intermediate = try root.replacingNode(at: pathA, with: .leaf(view: viewB))
         let newRoot = try intermediate.replacingNode(at: pathB, with: .leaf(view: viewA))
 
-        return .init(root: newRoot, zoomed: zoomed)
+        // The zoomed node is matched structurally, so after an exchange it no
+        // longer names a node in the new root; re-find it by path.
+        let newZoomed = zoomed.flatMap { root.path(to: $0) }.flatMap { newRoot.node(at: $0) }
+        return rebuilt(root: newRoot, zoomed: newZoomed)
     }
 
     /// Find the next view to focus based on the current focused node and direction
@@ -281,7 +298,8 @@ extension SplitTree {
     func equalized() -> Self {
         guard let root else { return self }
         let newRoot = root.equalize()
-        return .init(root: newRoot, zoomed: zoomed)
+        let newZoomed = zoomed.flatMap { root.path(to: $0) }.flatMap { newRoot.node(at: $0) }
+        return rebuilt(root: newRoot, zoomed: newZoomed)
     }
 
     /// Resize a node in the tree by the given pixel amount in the specified direction.
@@ -358,7 +376,7 @@ extension SplitTree {
 
         // Replace the split node with the new one
         let newRoot = try root.replacingNode(at: splitPath, with: newSplitNode)
-        return .init(root: newRoot, zoomed: nil)
+        return rebuilt(root: newRoot, zoomed: nil)
     }
 
     /// Move the divider of `node` to `position` points from that node's leading edge.
@@ -402,6 +420,7 @@ private enum CodingKeys: String, CodingKey {
     case version
     case root
     case zoomed
+    case stashed
 
     static let currentVersion: Int = 1
 }
@@ -431,6 +450,20 @@ extension SplitTree: Codable {
         } else {
             self.zoomed = nil
         }
+
+        // Stashed leaves are encoded as PATHS, like `zoomed`: a viewer pane's
+        // id is minted fresh on decode, so an id written before a restore
+        // would name nothing after it. Additive — an older encoding has no
+        // key and decodes with nothing stashed, which loses no pane.
+        let stashedPaths = try container.decodeIfPresent([Path].self, forKey: .stashed) ?? []
+        if let root = self.root {
+            self.stashed = stashedPaths.compactMap { path in
+                if case .leaf(let view) = root.node(at: path) { return view.id }
+                return nil
+            }
+        } else {
+            self.stashed = []
+        }
     }
 
     func encode(to encoder: Encoder) throws {
@@ -446,6 +479,11 @@ extension SplitTree: Codable {
         // map it on decode back to the correct node in root.
         if let zoomed, let path = root?.path(to: zoomed) {
             try container.encode(path, forKey: .zoomed)
+        }
+
+        if let root, !stashed.isEmpty {
+            let paths = stashed.compactMap { id in root.find(id: id).flatMap { root.path(to: $0) } }
+            try container.encode(paths, forKey: .stashed)
         }
     }
 }
@@ -1572,15 +1610,18 @@ extension SplitTree {
     struct StructuralIdentity: Hashable {
         private let root: Node?
         private let zoomed: Node?
+        private let stashed: [ViewType.ID]
 
         init(_ tree: SplitTree) {
             self.root = tree.root
             self.zoomed = tree.zoomed
+            self.stashed = tree.stashed
         }
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             areNodesStructurallyEqual(lhs.root, rhs.root) &&
-            areNodesStructurallyEqual(lhs.zoomed, rhs.zoomed)
+            areNodesStructurallyEqual(lhs.zoomed, rhs.zoomed) &&
+            lhs.stashed == rhs.stashed
         }
 
         func hash(into hasher: inout Hasher) {
@@ -1592,6 +1633,8 @@ extension SplitTree {
             if let zoomed = zoomed {
                 zoomed.hashStructure(into: &hasher)
             }
+            hasher.combine(2) // Stash marker
+            hasher.combine(stashed)
         }
 
         /// Helper to compare optional nodes for structural equality

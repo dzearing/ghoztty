@@ -44,6 +44,17 @@ enum SessionCloseIntentPolicy {
         var spared: [Leaf]
     }
 
+    /// The leaves a tree change is judged over: EVERY leaf in the tree,
+    /// stashed ones included.
+    ///
+    /// Not `visibleLeaves`. A stashed pane is out of the layout but still in
+    /// the window, and judging over the visible leaves would read every stash
+    /// as a close — terminating a session the user only put aside. One
+    /// definition, shared by the controller and `PaneStashSessionSafetyTests`.
+    static func leaves<View>(of tree: SplitTree<View>) -> [View] {
+        tree.root?.leaves() ?? []
+    }
+
     /// Sort the leaves of a surface-tree change into `Plan` buckets.
     ///
     /// `sessionID` maps a leaf to the agent session it is bound to, or nil for

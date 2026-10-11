@@ -1,13 +1,13 @@
 {
     "guard":  "merge-terminology",
     "script":  "test/win32/merge-terminology.ps1",
-    "generated":  "2026-10-10T07:37:28-07:00",
-    "commit":  "93c24b400",
+    "generated":  "2026-10-11T05:48:45-07:00",
+    "commit":  "45852d134",
     "uncommitted":  [
-
+                        "CLAUDE.md"
                     ],
     "files":  {
-                  "CLAUDE.md":  "ed2bd546b1fb102c9ed719093fb0bfa3b52c407acae184ef2880e1b7aba027d7",
+                  "CLAUDE.md":  "b03bf0f8e5f2ead39c1dc4b636c9d234f4a9e2580bbad469906a4645c2795100",
                   "docs/design/windows-parity-ship-workflow.md":  "f7289e5a320ad543ee36ece4ddef741e958f78ba942eed49547f9db26784e0c6",
                   "docs/design/windows-parity-upstream-pull-plan.md":  "745020bf54846ee5fcc2e2313df0c8c280f51e548a86b1a4913a4c5f453aa5a6",
                   "go.md":  "7c2fb40851d84f71079617c87e8a3c23935bc1bf1bec11837a1853736beb5635",

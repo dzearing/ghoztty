@@ -29,12 +29,34 @@ struct ViewerSidePanel: View {
 
 /// The card's own chrome: shape, glass, opaque base, size, and outer margin.
 ///
-/// Applied identically by both panels, so "the file tree looks like the table
-/// of contents" is a fact about the code rather than a thing to keep checking.
+/// Applied identically by both viewer panels, so "the file tree looks like the
+/// table of contents" is a fact about the code rather than a thing to keep
+/// checking — and by the pane sidebar's raised (unpinned) card, which sits on
+/// the TERMINAL rather than on a document, so it passes its own `base`.
 struct SidePanelCard: ViewModifier {
     let width: CGFloat
     let maxHeight: CGFloat
     let accessibilityLabel: String
+
+    /// The opaque color under the glass: what the card actually sits on.
+    /// Nil means the viewer document's background (both viewer panels).
+    var base: Color? = nil
+
+    /// Whether `base` is light, which decides the glass wash's direction.
+    /// Nil means "follow the color scheme", which is right for a document.
+    var isLightBase: Bool? = nil
+
+    /// The space around the card. Nil is `GlassCard.outerMargin` on every
+    /// side (both viewer panels); the pane sidebar's rail shares its edges
+    /// with the elevated grid's margin instead.
+    var margins: EdgeInsets? = nil
+
+    /// Glass panes: instead of the opaque base, the same tinted glass sheet
+    /// the panes are (`PaneGlass`). The card floats over panes that are glass
+    /// themselves, and an opaque slab there read as the one solid thing in
+    /// the window; the glass's own blur keeps what passes under it from
+    /// competing with the list.
+    var isGlass = false
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -47,15 +69,33 @@ struct SidePanelCard: ViewModifier {
             // layers go on: the list runs edge to edge, and un-clipped it
             // would square off the rounded corners it scrolls into.
             .clipShape(GlassCard.shape)
+            // Glass: no lifting wash — it greys the color coming through.
             .modifier(GlassCardBackground(
-                fill: GlassCard.fill(isLightBackground: colorScheme == .light)))
+                fill: isGlass
+                    ? AnyShapeStyle(Color.clear)
+                    : GlassCard.fill(isLightBackground: isLightBase ?? (colorScheme == .light))))
             // An OPAQUE base under the glass layers. In the narrow layout this
             // card floats over the document, and a translucent panel let body
             // text show through it — unreadable. The wash above still lifts the
             // card a shade off the page, so it reads as raised rather than flat.
-            .background(GlassCard.shape.fill(
-                SidePanelCard.documentBackground(for: colorScheme)))
-            .padding(GlassCard.outerMargin)
+            .background {
+                let fill = base ?? SidePanelCard.documentBackground(for: colorScheme)
+                if isGlass {
+                    // Lighter than a pane's tint: the card floats over panes
+                    // that are tinted glass already, and stacked at full
+                    // strength it reads as a grey slab.
+                    PaneGlass(
+                        tint: fill,
+                        isLight: isLightBase ?? (colorScheme == .light),
+                        cornerRadius: GlassCard.cornerRadius,
+                        tintStrength: PaneGlass.overlayTint)
+                } else {
+                    GlassCard.shape.fill(fill)
+                }
+            }
+            .padding(margins ?? EdgeInsets(
+                top: GlassCard.outerMargin, leading: GlassCard.outerMargin,
+                bottom: GlassCard.outerMargin, trailing: GlassCard.outerMargin))
             .accessibilityElement(children: .contain)
             .accessibilityLabel(accessibilityLabel)
     }
@@ -85,6 +125,9 @@ struct SidePanelCard: ViewModifier {
 /// Untinted, the glass takes the color of whatever is passing behind it — a
 /// selected row turned the whole header accent-blue on its way past.
 struct SidePanelHeader<Content: View>: View {
+    /// The card's base color, when it isn't the viewer document's (the pane
+    /// sidebar sits on the terminal).
+    var base: Color? = nil
     @ViewBuilder let content: Content
 
     @Environment(\.colorScheme) private var colorScheme
@@ -92,7 +135,7 @@ struct SidePanelHeader<Content: View>: View {
     var body: some View {
         content
             .glassBackdrop(
-                tint: SidePanelCard.documentBackground(for: colorScheme).opacity(0.3))
+                tint: (base ?? SidePanelCard.documentBackground(for: colorScheme)).opacity(0.3))
     }
 }
 
@@ -100,11 +143,14 @@ struct SidePanelHeader<Content: View>: View {
 /// "CONTENTS" and "FILES" titles are the same typography, not two guesses at it.
 struct SidePanelCaption: View {
     let text: String
+    /// Overrides the secondary label color — the pane sidebar's kill-mode
+    /// caption is red, because the mode it names is destructive.
+    var color: Color? = nil
 
     var body: some View {
         Text(text)
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(.secondary)
+            .foregroundStyle(color.map(AnyShapeStyle.init) ?? AnyShapeStyle(.secondary))
             .textCase(.uppercase)
             .kerning(0.6)
             .lineLimit(1)

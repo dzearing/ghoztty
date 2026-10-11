@@ -83,7 +83,8 @@ function Get-DesktopLaunchAuditQuietVerbs {
         '+show-config', '+explain-config', '+validate-config', '+show-face',
         '+crash-report', '+boo', '+split', '+close', '+rename', '+rearrange',
         '+list', '+sessions', '+read', '+send-keys', '+set-state',
-        '+set-banner', '+reload', '+json', '+new-remote-window'
+        '+set-banner', '+reload', '+json', '+new-remote-window',
+        '+stash', '+restore'
     )
 }
 

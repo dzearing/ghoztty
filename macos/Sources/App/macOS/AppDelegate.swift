@@ -57,6 +57,9 @@ class AppDelegate: NSObject,
     @IBOutlet private var menuZoomSplit: NSMenuItem?
     @IBOutlet private var menuHeroMode: NSMenuItem?
     @IBOutlet private var menuRearrangeMode: NSMenuItem?
+    @IBOutlet private var menuTogglePaneSidebar: NSMenuItem?
+    @IBOutlet private var menuStashPane: NSMenuItem?
+    @IBOutlet private var menuRestoreStashedPane: NSMenuItem?
     @IBOutlet private var menuPreviousSplit: NSMenuItem?
     @IBOutlet private var menuNextSplit: NSMenuItem?
     @IBOutlet private var menuSelectSplitAbove: NSMenuItem?
@@ -709,7 +712,7 @@ class AppDelegate: NSObject,
                 originDirectory: (filename as NSString).deletingLastPathComponent))
             let controller = TerminalController.newWindow(
                 ghostty,
-                tree: SplitTree<PaneView>(root: .leaf(view: pane), zoomed: nil))
+                tree: SplitTree<PaneView>(view: pane))
             controller.titleOverride = pane.title
             return true
         }
@@ -986,8 +989,11 @@ class AppDelegate: NSObject,
         // preferred/key window otherwise.
         let parent = (notification.object as? Ghostty.SurfaceView)?.window
             ?? TerminalController.preferredParent?.window
+        // A window opened by hand (Cmd-N) gets its own random gradient.
         TerminalController.newWindowInheritingRemote(
-            ghostty, withBaseConfig: config, from: parent)
+            ghostty,
+            withBaseConfig: PaneDeskVariant.forNewWindow(config, style: ghostty.config.macosPaneStyle),
+            from: parent)
     }
 
     @objc private func ghosttyNewTab(_ notification: Notification) {
@@ -1246,7 +1252,11 @@ class AppDelegate: NSObject,
     }
 
     @IBAction func newWindow(_ sender: Any?) {
-        _ = TerminalController.newWindow(ghostty)
+        // A window opened by hand (Cmd-N with no terminal focused, the dock
+        // menu) gets its own random gradient.
+        _ = TerminalController.newWindow(
+            ghostty,
+            withBaseConfig: PaneDeskVariant.forNewWindow(nil, style: ghostty.config.macosPaneStyle))
     }
 
     /// New Window with target picker (Cmd-Shift-N): ALWAYS shows a chooser
@@ -2191,6 +2201,9 @@ extension AppDelegate {
         syncMenuShortcut(config, action: "toggle_split_zoom", menuItem: self.menuZoomSplit)
         syncMenuShortcut(config, action: "toggle_hero_mode", menuItem: self.menuHeroMode)
         syncMenuShortcut(config, action: "toggle_rearrange_mode", menuItem: self.menuRearrangeMode)
+        syncMenuShortcut(config, action: "toggle_pane_sidebar", menuItem: self.menuTogglePaneSidebar)
+        syncMenuShortcut(config, action: "stash_pane", menuItem: self.menuStashPane)
+        syncMenuShortcut(config, action: "restore_stashed_pane", menuItem: self.menuRestoreStashedPane)
         syncMenuShortcut(config, action: "goto_split:previous", menuItem: self.menuPreviousSplit)
         syncMenuShortcut(config, action: "goto_split:next", menuItem: self.menuNextSplit)
         syncMenuShortcut(config, action: "goto_split:up", menuItem: self.menuSelectSplitAbove)
