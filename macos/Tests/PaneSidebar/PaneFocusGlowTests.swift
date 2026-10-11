@@ -31,10 +31,13 @@ struct PaneFocusGlowTests {
         let lit = try render(focused: true), dark = try render(focused: false)
         try? lit.representation(using: .png, properties: [:])?
             .write(to: URL(fileURLWithPath: "/tmp/pane-sidebar-snapshots/focus-glow.png"))
-        // 6pt outside the card's right edge (card spans x 50...250).
-        #expect(brightness(lit, 256, 120) > brightness(dark, 256, 120) + 0.02, "no light outside the card")
+        // 3pt outside the card's right edge (card spans x 50...250).
+        #expect(brightness(lit, 253, 120) > brightness(dark, 253, 120) + 0.02, "no light outside the card")
         // Nothing lights the pane itself: 6pt inside the same edge is unchanged.
         #expect(abs(brightness(lit, 244, 120) - brightness(dark, 244, 120)) < 0.01, "the glow reached inside the card")
+        // Tight: it has died out by the 10pt gap to the next pane, so a
+        // neighbouring glass pane never looks lit from behind.
+        #expect(abs(brightness(lit, 260, 120) - brightness(dark, 260, 120)) < 0.01, "the glow spreads too far")
         // Far from the card, the desk is untouched.
         #expect(abs(brightness(lit, 296, 120) - brightness(dark, 296, 120)) < 0.02)
     }

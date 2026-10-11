@@ -285,7 +285,7 @@ struct PaneCard: ViewModifier {
 }
 
 /// The focused pane's glow: the pane reads as BACKLIT — a soft light from
-/// under the card spilling out past its edges onto the desk. It sits BEHIND
+/// under the card spilling out about 8pt past its edges onto the desk. It sits BEHIND
 /// the card and is masked to outside its shape, so it never lightens the
 /// pane's own glass.
 struct PaneFocusGlow: View {
@@ -294,8 +294,9 @@ struct PaneFocusGlow: View {
     var body: some View {
         let shape = PaneElevation.cardShape
         shape
-            .stroke(Color.white.opacity(isLight ? 0.7 : 0.28), lineWidth: 8)
-            .blur(radius: 16)
+            .stroke(Color.white.opacity(isLight ? 0.8 : 0.4), lineWidth: 4)
+            // Tight: the light dies out ~8pt past the edge.
+            .blur(radius: 4)
             .mask {
                 ZStack {
                     Rectangle().padding(-48)
