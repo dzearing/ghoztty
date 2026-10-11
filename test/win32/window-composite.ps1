@@ -133,8 +133,9 @@ try {
 # DIFFERENT tint per pane - the known image section 2 scores against.
 # --unfocused-split-opacity=1 so the unfocused pane's tint is the tint and not
 # a dimmed version of it.
+# T1831: the divider-band oracles score the FLAT style's divider line; the elevated default has a gap instead (pane-elevation.ps1 covers that).
 $app = Start-OnTestDesktop -Exe $exe -Arguments @(
-    '--config-default-files=false', '--session-persistence=false',
+    '--config-default-files=false', '--session-persistence=false', '--macos-pane-style=flat',
     '--background=#101014', '--unfocused-split-opacity=1',
     '--split-divider-color=00ff00')
 $appPid = [int]$app.Pid

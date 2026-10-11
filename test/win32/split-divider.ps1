@@ -355,7 +355,9 @@ function Start-Gui([string]$label, [string[]]$extraArgs, [bool]$control) {
 
 # Common args: hermetic config, no dim overlays near the gap, black terminal,
 # and no session manifest to restore into the next launch (T131).
-$common = @('--config-default-files=false', '--background=#000000',
+# T1831: this script's subject is the FLAT style's divider line; the default
+# is now elevated (a real gap, no line), which pane-elevation.ps1 covers.
+$common = @('--config-default-files=false', '--background=#000000', '--macos-pane-style=flat',
     '--unfocused-split-opacity=1', '--session-persistence=false')
 
 Kill-RepoInstances

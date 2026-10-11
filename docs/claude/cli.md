@@ -1063,6 +1063,14 @@ unchanged byte for byte. Geometry and palette live once in
 which the grid AND the hidden stashed-pane slots both use — the slots must lay
 out exactly like the grid or a restored pane would reflow. The pinned pane
 sidebar goes translucent so the gradient runs under it.
+**Windows** (T1831) reads the same `macos-pane-style` key with the same default
+and geometry (10 DIP margin and gap, 11 DIP corners, the ocean desk). The
+parent window paints the desk, the shadows and each card's antialiased fill and
+rim (`pane_elevation.zig` / `PaneDesk.zig`); each pane's child window sits one
+rim width inside its card, clipped to a rounded window region. The Quick
+Terminal stays flat. Not yet on Windows: the sidebar over the desk (T1850),
+card-shaped header/banner bands (T1851), translucent windows (T1852), random
+per-window desks (T1832), glass (T1833), the focus glow (T1834).
 **Glass panes** (`macos-pane-glass`, default `true`, elevated only): each pane
 is a translucent sheet tinted 40% with the terminal's own background (Liquid
 Glass on macOS 26, a plain tint before — `PaneGlass`), so the gradient's light

@@ -35161,3 +35161,28 @@ moved to T1814.
 - **Filed.** T1842 (hover-open card) and T1844 (drag in and out), both P1 M1.
   T1843 shimmer, T1845 menu/trash, T1846 resize, T1847 persistence, T1848
   Window menu, T1849 `stash_pane` swallowed by a focused viewer.
+
+## 2026-10-11 — T1831: Windows panes are raised cards on the ocean desk by default
+
+- **What changed.** Mac's new default look now ships on Windows. Each pane is a
+  rounded card (11 DIP corners, two-layer shadow, hairline rim) on a soft
+  blue-to-teal gradient. One 10 DIP spacing serves as the window margin and the
+  pane gap, and the gap is still the divider. `macos-pane-style = flat` keeps
+  the old geometry exactly. A reload switches open windows. Windows reads Mac's
+  own key, and the Quick Terminal stays flat.
+- **Design.** The pure geometry, the desk palette and the card raster live in
+  `pane_elevation.zig`, which is unit tested. `PaneDesk.zig` caches the desk
+  (rendered at quarter size and stretched) and blits the card composite. A child
+  HWND cannot cast a shadow or antialias its corners, so the parent paints both.
+  The child sits one rim inside its card, clipped to a rounded region whose
+  staircase stays inside the parent's curve. The dim wash copies that region.
+  The gap is the split band (`axisWithBand`), and the grab zone covers all of
+  it.
+- **Evidence.** New `test\win32\pane-elevation.ps1` ALL PASS 27, and its
+  negative control is red. Floor lanes PASS; P1-P3 ALL PASS. Every harness the
+  change made due was re-run. Three that measured flush/flat panes
+  (rearrange-drag, pane-sidebar, window-composite) were pinned to flat and pass.
+- **Filed.** T1850 sidebar over the desk, T1851 header/banner/viewer corners,
+  T1852 translucent windows, T1856 drag paint cost (17.9ms/move Debug). Reds
+  that predate this change: T1853 split-divider T533, T1854 drag-perf
+  sampling, T1855 ipc-relay.

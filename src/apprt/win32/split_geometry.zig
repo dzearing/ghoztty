@@ -273,11 +273,18 @@ pub const Axis = struct {
 /// Resolve a split along one axis. `start`/`end` are the split rect's
 /// bounds on that axis (end exclusive), `ratio` is the child's share of it.
 pub fn axis(start: i32, end: i32, ratio: f64, scale: f32) Axis {
+    return axisWithBand(start, end, ratio, bandPx(scale));
+}
+
+/// `axis` with an explicit band width: the elevated pane style's real gap
+/// (T1831, `pane_elevation.gapPx`) is the divider there, and Mac centres it
+/// on the split position exactly as it centres the 1pt line
+/// (`SplitView.swift` `splitterPoint` adds half the gap).
+pub fn axisWithBand(start: i32, end: i32, ratio: f64, band: i32) Axis {
     const total = end - start;
     const pos = start + @as(i32, @intFromFloat(
         @as(f32, @floatCast(ratio)) * @as(f32, @floatFromInt(total)),
     ));
-    const band = bandPx(scale);
     return .{
         .lo_start = start,
         .band_lo = pos - @divTrunc(band, 2),
@@ -289,7 +296,9 @@ pub fn axis(start: i32, end: i32, ratio: f64, scale: f32) Axis {
 
 /// Whether a coordinate on the split's axis is inside the grab band.
 pub fn inGrabBand(a: Axis, coord: i32, scale: f32) bool {
-    const half = grabHalfPx(scale);
+    // A band wider than the grab zone (the elevated style's gap, T1831) is
+    // grabbable across its whole width: every pixel of it is the divider.
+    const half = @max(grabHalfPx(scale), @divTrunc(a.bandWidth() + 1, 2));
     return coord >= a.split_pos - half and coord <= a.split_pos + half;
 }
 
@@ -785,4 +794,18 @@ test "grab band is wider than the visible band on both sides" {
         try testing.expect(!inGrabBand(a, a.split_pos - grabHalfPx(scale) - 1, scale));
         try testing.expect(!inGrabBand(a, a.split_pos + grabHalfPx(scale) + 1, scale));
     }
+}
+
+test "T1831: a wide band (the elevated gap) is centred and grabbable edge to edge" {
+    const a = axisWithBand(0, 1000, 0.5, 15);
+    try testing.expectEqual(@as(i32, 500), a.split_pos);
+    try testing.expectEqual(@as(i32, 15), a.bandWidth());
+    try testing.expectEqual(@as(i32, 493), a.band_lo);
+    // Every pixel of the band is the divider, even past the 4.5 DIP grab.
+    var c = a.band_lo;
+    while (c < a.band_hi) : (c += 1) try testing.expect(inGrabBand(a, c, 1.0));
+    try testing.expect(!inGrabBand(a, a.band_hi + 2, 1.0));
+    // The flat band keeps its old geometry and grab zone exactly.
+    try testing.expectEqual(axis(0, 1000, 0.5, 1.5), axisWithBand(0, 1000, 0.5, bandPx(1.5)));
+    try testing.expect(inGrabBand(axis(0, 1000, 0.5, 1.0), 504, 1.0));
 }

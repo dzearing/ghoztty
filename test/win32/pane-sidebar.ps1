@@ -154,7 +154,8 @@ $script:scale = 1.0
 try {
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
     Assert-GhozttyPrivateEndpoint -Exe $Exe
-    $app = Start-OnTestDesktop -Exe $Exe -Arguments @('--session-persistence=false')
+    # T1831: the grid-edge oracles assume flush flat panes; the elevated default adds a grid margin (pane-elevation.ps1 covers that).
+    $app = Start-OnTestDesktop -Exe $Exe -Arguments @('--session-persistence=false', '--macos-pane-style=flat')
     Start-Sleep -Seconds 3
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
     if ($top -eq [IntPtr]::Zero) { "  SETUP FAIL: top window not found"; $script:failures++; return }

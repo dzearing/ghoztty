@@ -142,6 +142,8 @@ const chrome_alpha = @import("chrome_alpha.zig");
 const opacity_mode = @import("opacity_mode.zig");
 const blur_backdrop = @import("blur_backdrop.zig");
 const split_geometry = @import("split_geometry.zig");
+const pane_elevation = @import("pane_elevation.zig");
+const PaneDesk = @import("PaneDesk.zig");
 const rearrange_header = @import("rearrange_header.zig");
 const pane_drop = @import("pane_drop.zig");
 const pane_relocate = @import("pane_relocate.zig");
@@ -532,6 +534,13 @@ pane_sidebar_pinned: bool = false,
 pane_sidebar_hidden: bool = false,
 /// The pinned panel's preferred width.
 pane_sidebar_width_dip: f32 = pane_sidebar.default_width_dip,
+
+/// The elevated pane style's desk and card bitmaps (T1831). Empty until the
+/// first elevated paint; freed in `deinit`.
+pane_desk: PaneDesk = .{},
+/// The pane style the current layout was computed for, so a config reload
+/// that flips it relayouts rather than only recolouring.
+applied_pane_style: pane_elevation.Style = .elevated,
 
 /// Split divider drag state.
 dragging_split: bool = false,
@@ -1307,6 +1316,16 @@ pub fn onConfigChange(self: *Window) void {
     // `background-opacity` takes effect on open windows, the way Mac's
     // `syncAppearance` re-runs on reload (T1789).
     self.syncTranslucency();
+    // `macos-pane-style` applies to every open window, as on Mac (T1831).
+    // A flip moves every pane, so it is a relayout plus a full repaint of the
+    // content area; in the elevated style a reload can also recolour the
+    // cards (their fill is the terminal background), which is a repaint.
+    if (self.paneStyle() != self.applied_pane_style) {
+        self.layoutSplits();
+        self.invalidateContentArea();
+    } else if (self.applied_pane_style == .elevated) {
+        self.invalidateContentArea();
+    }
     // Re-apply unfocused-split-opacity/-fill (T74).
     self.updateDimOverlays();
     // Re-color split dividers so `split-divider-color` takes effect live
@@ -1753,6 +1772,7 @@ pub fn deinit(self: *Window) void {
 
     // Close all tab surfaces.
     self.cleanupAllSurfaces();
+    self.pane_desk.deinit();
 
     // Tear down the remote-agent transport AFTER every surface is gone:
     // each remote surface's termio backend borrows the transport's `conn`,
@@ -2174,6 +2194,53 @@ pub fn surfaceRect(self: *const Window) w32.RECT {
     // starts from this rect lays the grid out beside it, never under it.
     rect.left = @min(rect.left + self.paneSidebarColumnPx(), rect.right);
     return rect;
+}
+
+/// Ask for a repaint of the content area - the desk, the cards, the gaps -
+/// through the paint cycle (T252's rule: a colour change is something to ask
+/// for, not to paint behind the cycle's back).
+fn invalidateContentArea(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    var r = self.surfaceRect();
+    _ = w32.InvalidateRect(hwnd, &r, 0);
+}
+
+/// Mac's `macos-pane-style`, read under the same key (T1831). The Quick
+/// Terminal is one edge-to-edge pane dropped from a screen edge, with no
+/// desk to raise it from, so it stays flat.
+pub fn paneStyle(self: *const Window) pane_elevation.Style {
+    if (self.is_quick_terminal) return .flat;
+    return switch (self.app.config.@"macos-pane-style") {
+        .elevated => .elevated,
+        .flat => .flat,
+    };
+}
+
+/// The rect the split GRID is laid out in: the surface rect, inside the
+/// elevated style's margin (T1831; Mac pads the whole grid by
+/// `PaneElevation.margin`). Every walk of the split tree - placement, paint,
+/// hit test, drag and the rearrange slots - starts here, never at
+/// `surfaceRect`, or a band would be computed where no pane was put. Hero
+/// mode lays out its own presentation from `surfaceRect` and is unaffected.
+pub fn gridRect(self: *const Window) w32.RECT {
+    var rect = self.surfaceRect();
+    const m = pane_elevation.marginPx(self.paneStyle(), self.scale);
+    if (rect.right - rect.left > 2 * m and rect.bottom - rect.top > 2 * m) {
+        rect.left += m;
+        rect.top += m;
+        rect.right -= m;
+        rect.bottom -= m;
+    }
+    return rect;
+}
+
+/// A card's slot, shrunk to where its pane's child window goes: one rim
+/// width inside, so the rim the window paints shows down every edge (T1831).
+/// The identity in the flat style.
+fn cardInner(self: *const Window, slot: w32.RECT) w32.RECT {
+    const i = pane_elevation.childInsetPx(self.paneStyle(), self.scale);
+    if (i == 0 or slot.right - slot.left <= 2 * i or slot.bottom - slot.top <= 2 * i) return slot;
+    return .{ .left = slot.left + i, .top = slot.top + i, .right = slot.right - i, .bottom = slot.bottom - i };
 }
 
 /// The sidebar's mode for this window as it is sized right now.
@@ -3529,7 +3596,7 @@ fn collectPaneSlots(self: *Window, out: []PaneSlot) usize {
     if (self.tab_count == 0) return 0;
     if (self.tab_hero_active[self.active_tab]) return 0;
     const tree = self.tab_trees[self.active_tab];
-    const rect = self.surfaceRect();
+    const rect = self.gridRect();
     if (tree.zoomed) |zoomed_handle| {
         var it = tree.iterator();
         while (it.next()) |entry| {
@@ -4765,7 +4832,10 @@ fn toHeaderRect(r: w32.RECT) rearrange_header.Rect {
 fn rearrangeHeaderFor(self: *const Window, slot: w32.RECT) ?rearrange_header.Layout {
     if (!self.rearrange_mode) return null;
     if (self.tab_count > 0 and self.tab_hero_active[self.active_tab]) return null;
-    return rearrange_header.layout(toHeaderRect(slot), self.rearrangeMetrics());
+    // Inside the card's rim in the elevated style (T1831), the same rect the
+    // pane's child is placed in - so the header and the terminal under it
+    // share their left and right edges.
+    return rearrange_header.layout(toHeaderRect(self.cardInner(slot)), self.rearrangeMetrics());
 }
 
 /// How far down a pane starts because of its rearrange header. Zero when the
@@ -5637,14 +5707,20 @@ pub fn layoutSplits(self: *Window) void {
     self.beginFrameWaitBatch();
     defer self.endFrameWaitBatch();
     const tree = self.tab_trees[self.active_tab];
-    const rect = self.surfaceRect();
     if (self.tab_hero_active[self.active_tab]) {
         if (self.visibleLeafCount(self.active_tab) > 1) {
-            self.layoutHero(rect);
+            // The carousel is its own presentation: no cards, no regions.
+            self.applyCardRegions(false);
+            self.layoutHero(self.surfaceRect());
             return;
         }
         self.tab_hero_active[self.active_tab] = false;
     }
+    self.applied_pane_style = self.paneStyle();
+    const rect = self.gridRect();
+    // Card regions follow the placement below; the defer runs after the
+    // batch has landed so each region is cut for the size the pane now is.
+    defer self.applyCardRegions(self.applied_pane_style == .elevated);
     // Not in hero mode: stop the thumbnail heartbeat (harmless if it was
     // never started) and repaint the area the carousel used to own.
     if (self.hwnd) |h| _ = w32.KillTimer(h, HERO_SNAP_TIMER_ID);
@@ -5659,13 +5735,7 @@ pub fn layoutSplits(self: *Window) void {
                     // (T1530/T101) — the header is the topmost thing in the
                     // pane on Mac too, so the banner moves down with the
                     // terminal rather than sitting above the grip.
-                    const header = self.rearrangeHeaderInset(rect);
-                    const top = rect.top + header;
-                    const avail = @max(rect.bottom - top, 1);
-                    const inset = entry.view.bannerLayoutInset(rect.right - rect.left, avail);
-                    const w = @max(rect.right - rect.left, 1);
-                    const ht = @max(avail - inset, 1);
-                    placePane(&hdwp, h, rect.left, top + inset, @intCast(w), @intCast(ht), true);
+                    self.placeLeaf(&hdwp, entry.view, h, rect, true);
                 }
             } else {
                 entry.view.setVisible(false);
@@ -5679,6 +5749,14 @@ pub fn layoutSplits(self: *Window) void {
             }
         }
         endPaneBatch(hdwp);
+        // The zoomed pane is a card on the desk too (T1831), and its corners
+        // moved with it - the same moved-pixels argument as the grid's pass.
+        if (self.applied_pane_style == .elevated) if (self.hwnd) |hwnd| {
+            if (w32.GetDC(hwnd)) |dc| {
+                self.paintAlphaCorrect(dc, paintMovedBands);
+                _ = w32.ReleaseDC(hwnd, dc);
+            }
+        };
         return;
     }
     var place_timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
@@ -5882,6 +5960,82 @@ fn placePane(
     _ = w32.SetWindowPos(h, null, x, y, cx, cy, flags);
 }
 
+/// Place one leaf's child window in its slot: inside the card's rim (T1831),
+/// then below the rearrange header (T1530) and the sticky-banner strip
+/// (T101) - the terminal starts below both, never under either. The zoomed
+/// pane, the grid and the hidden stashed slots all come through here, so a
+/// stashed pane is held at exactly the size it will come back at.
+fn placeLeaf(self: *Window, hdwp: *?w32.HDWP, view: *PaneView, h: w32.HWND, slot: w32.RECT, show: bool) void {
+    const inner = self.cardInner(slot);
+    const header = self.rearrangeHeaderInset(slot);
+    const top = inner.top + header;
+    const avail = @max(inner.bottom - top, 1);
+    const inset = view.bannerLayoutInset(inner.right - inner.left, avail);
+    const w = @max(inner.right - inner.left, 1);
+    const ht = @max(avail - inset, 1);
+    placePane(hdwp, h, inner.left, top + inset, @intCast(w), @intCast(ht), show);
+}
+
+/// Clip every visible pane child of the active tab to its card's rounded
+/// shape (T1831), or give every child back its plain rectangle.
+///
+/// Only the corners that ARE card corners are rounded: a pane with a header
+/// or a banner above it starts below the card's top edge, so its top corners
+/// are square and the band above carries the curve. The window's desk paint
+/// supplies the antialiased edge; see `pane_elevation.zig` for why the
+/// region's staircase can never show.
+///
+/// `SetWindowRgn` is a window-manager transaction, so a pane whose region is
+/// already the right one is left alone - a divider drag re-runs this every
+/// frame, and most panes do not change size on most frames.
+fn applyCardRegions(self: *Window, elevated: bool) void {
+    if (self.tab_count == 0) return;
+    const parent = self.hwnd orelse return;
+    var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
+    const n = if (elevated) self.collectPaneSlots(&slots) else 0;
+    const d = 2 * pane_elevation.childRadiusPx(self.scale);
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| {
+            const h = entry.view.hwnd() orelse continue;
+            var key: u64 = 0;
+            var cw: i32 = 0;
+            var ch: i32 = 0;
+            var square_top = false;
+            // Only a pane the grid placed in a card is in `slots`; a stashed,
+            // hidden-by-zoom or other-tab pane keeps (or gets back) no region.
+            for (slots[0..n]) |slot| {
+                if (slot.view != entry.view) continue;
+                var wr: w32.RECT = undefined;
+                if (w32.GetWindowRect(h, &wr) == 0) break;
+                var pt: w32.POINT = .{ .x = wr.left, .y = wr.top };
+                _ = w32.ScreenToClient(parent, &pt);
+                cw = wr.right - wr.left;
+                ch = wr.bottom - wr.top;
+                // A header or banner above the pane: the band carries the
+                // card's top curve, the pane's own top corners stay square.
+                square_top = pt.y > self.cardInner(slot.rect).top;
+                key = (@as(u64, @intCast(@max(cw, 0))) << 33) |
+                    (@as(u64, @intCast(@max(ch, 0))) << 2) |
+                    (@as(u64, @intFromBool(square_top)) << 1) | 1;
+                break;
+            }
+            if (entry.view.card_region_key == key) continue;
+            entry.view.card_region_key = key;
+            if (key == 0) {
+                _ = w32.SetWindowRgn(h, null, 1);
+                continue;
+            }
+            // Square top: the rounded rect starts a whole corner ABOVE the
+            // window, so its top corners fall outside it.
+            const top: i32 = if (square_top) -d else 0;
+            const rgn = w32.CreateRoundRectRgn(0, top, cw + 1, ch + 1, d, d) orelse continue;
+            // The system owns the region from here; it is never deleted.
+            if (w32.SetWindowRgn(h, rgn, 1) == 0) _ = w32.DeleteObject(rgn);
+        }
+    }
+}
+
 /// Hide one pane through the batch, leaving its geometry alone. Same batch as
 /// the shows, so a swap (zoom, hero selection) is one frame rather than a hide
 /// frame followed by a show frame with the window background in between.
@@ -5923,18 +6077,7 @@ fn layoutNode(self: *Window, tree: SplitTree(PaneView), handle: SplitTree(PaneVi
     switch (tree.nodes[handle.idx()]) {
         .leaf => |view| {
             view.setVisible(true);
-            if (view.hwnd()) |h| {
-                // Reserve the rearrange header (T1530) and then the sticky-
-                // banner strip band above the terminal (T101): the grid starts
-                // below both, never under either.
-                const header = self.rearrangeHeaderInset(rect);
-                const top = rect.top + header;
-                const avail = @max(rect.bottom - top, 1);
-                const inset = view.bannerLayoutInset(rect.right - rect.left, avail);
-                const w = @max(rect.right - rect.left, 1);
-                const ht = @max(avail - inset, 1);
-                placePane(hdwp, h, rect.left, top + inset, @intCast(w), @intCast(ht), true);
-            }
+            if (view.hwnd()) |h| self.placeLeaf(hdwp, view, h, rect, true);
         },
         .split => |s| {
             // Panes and the divider band TILE the rect (T155): the child
@@ -5986,8 +6129,11 @@ fn splitRects(
 /// `splitRects` ignoring the stash: the slots the FULL layout would give.
 /// Only `placeStashedNode` wants this.
 fn splitRectsFull(self: *Window, s: SplitTree(PaneView).Split, rect: w32.RECT) SplitRects {
+    // The elevated style's gap IS the band (T1831); flat keeps the 2 DIP line.
+    const band = pane_elevation.gapPx(self.paneStyle(), self.scale) orelse
+        split_geometry.bandPx(self.scale);
     if (s.layout == .horizontal) {
-        const a = split_geometry.axis(rect.left, rect.right, s.ratio, self.scale);
+        const a = split_geometry.axisWithBand(rect.left, rect.right, s.ratio, band);
         return .{
             .lo = .{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom },
             .hi = .{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom },
@@ -5995,7 +6141,7 @@ fn splitRectsFull(self: *Window, s: SplitTree(PaneView).Split, rect: w32.RECT) S
             .axis = a,
         };
     }
-    const a = split_geometry.axis(rect.top, rect.bottom, s.ratio, self.scale);
+    const a = split_geometry.axisWithBand(rect.top, rect.bottom, s.ratio, band);
     return .{
         .lo = .{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo },
         .hi = .{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end },
@@ -6015,15 +6161,7 @@ fn placeStashedNode(self: *Window, tree: SplitTree(PaneView), handle: SplitTree(
         .leaf => |view| {
             if (!pane_stash.isStashed(view)) return;
             view.setVisible(false);
-            if (view.hwnd()) |h| {
-                const header = self.rearrangeHeaderInset(rect);
-                const top = rect.top + header;
-                const avail = @max(rect.bottom - top, 1);
-                const inset = view.bannerLayoutInset(rect.right - rect.left, avail);
-                const w = @max(rect.right - rect.left, 1);
-                const ht = @max(avail - inset, 1);
-                placePane(hdwp, h, rect.left, top + inset, @intCast(w), @intCast(ht), false);
-            }
+            if (view.hwnd()) |h| self.placeLeaf(hdwp, view, h, rect, false);
         },
         .split => |s| {
             const r = self.splitRectsFull(s, rect);
@@ -6068,10 +6206,13 @@ fn paintMovedBands(self: *Window, hdc: w32.HDC) void {
 fn paintDividers(self: *Window, hdc: w32.HDC) void {
     if (self.tab_count == 0) return;
     if (self.tab_hero_active[self.active_tab]) return;
+    // The elevated style has no divider line: the gap IS the divider, and
+    // everything the window owns around the panes is the desk (T1831).
+    if (self.paneStyle() == .elevated) return self.paintPaneDesk(hdc);
     const tree = self.tab_trees[self.active_tab];
     if (!pane_stash.isVisiblySplit(tree)) return;
     if (tree.zoomed != null) return;
-    const rect = self.surfaceRect();
+    const rect = self.gridRect();
     const configured = self.dividerConfiguredColor();
 
     // T233: the hovered/dragged divider paints shaded, and which way to shade
@@ -6099,6 +6240,37 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
         if (self.dragging_split) self.drag_split_handle else self.hover_split;
 
     self.paintDividerNode(hdc, tree, .root, rect, brush, hot_brush orelse brush, hot_handle);
+}
+
+/// The elevated style's window-owned pixels (T1831): the ocean desk over the
+/// whole content area, and on it a raised card - shadow, antialiased rounded
+/// corners in the terminal's background, hairline rim - for every pane the
+/// grid shows. The pane children sit on top (`WS_CLIPCHILDREN` keeps the blit
+/// off them), each clipped to its card by `applyCardRegions`.
+///
+/// A visible pane's card is its whole slot, header and banner band included:
+/// on Mac those are inside the pane's card too.
+fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
+    const area = self.surfaceRect();
+    const w = area.right - area.left;
+    const h = area.bottom - area.top;
+    if (w <= 0 or h <= 0) return;
+    var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
+    const n = self.collectPaneSlots(&slots);
+    var cards: [MAX_DRAG_NODES]pane_elevation.Card = undefined;
+    for (slots[0..n], 0..) |slot, i| cards[i] = .{
+        .left = slot.rect.left - area.left,
+        .top = slot.rect.top - area.top,
+        .right = slot.rect.right - area.left,
+        .bottom = slot.rect.bottom - area.top,
+    };
+    const bg = self.app.config.background;
+    const fill: color_math.Rgb = .{ .r = bg.r, .g = bg.g, .b = bg.b };
+    self.pane_desk.paint(hdc, area.left, area.top, w, h, cards[0..n], .{
+        .fill = fill,
+        .is_light = color_math.isLight(fill),
+        .scale = self.scale,
+    });
 }
 
 fn paintDividerNode(
@@ -6143,7 +6315,7 @@ fn paintRearrangeHeaders(self: *Window, hdc: w32.HDC) void {
     if (self.tab_count == 0) return;
     if (self.tab_hero_active[self.active_tab]) return;
     const tree = self.tab_trees[self.active_tab];
-    const rect = self.surfaceRect();
+    const rect = self.gridRect();
     const pal = self.chromePalette();
     const ib = icon_button.Metrics.init(self.scale);
     if (tree.zoomed) |zoomed_handle| {
@@ -6327,7 +6499,7 @@ pub fn hitTestRearrangeHeader(self: *Window, x: i32, y: i32) ?RearrangeHover {
     if (self.tab_count == 0) return null;
     if (self.tab_hero_active[self.active_tab]) return null;
     const tree = self.tab_trees[self.active_tab];
-    const rect = self.surfaceRect();
+    const rect = self.gridRect();
     if (tree.zoomed) |zoomed_handle| {
         var it = tree.iterator();
         while (it.next()) |entry| {
@@ -6408,7 +6580,7 @@ pub fn hitTestDivider(self: *Window, x: i32, y: i32) ?DividerHit {
     const tree = self.tab_trees[self.active_tab];
     if (!pane_stash.isVisiblySplit(tree)) return null;
     if (tree.zoomed != null) return null;
-    const rect = self.surfaceRect();
+    const rect = self.gridRect();
     return self.hitTestDividerNode(tree, .root, rect, x, y);
 }
 
@@ -6448,7 +6620,7 @@ fn dividerBandRect(self: *Window, target: SplitTree(PaneView).Node.Handle) ?w32.
     const tree = self.tab_trees[self.active_tab];
     if (!pane_stash.isVisiblySplit(tree)) return null;
     if (tree.zoomed != null) return null;
-    return self.dividerBandRectNode(tree, .root, self.surfaceRect(), target);
+    return self.dividerBandRectNode(tree, .root, self.gridRect(), target);
 }
 
 fn dividerBandRectNode(
@@ -6482,7 +6654,7 @@ fn splitRegionRect(self: *Window, target: SplitTree(PaneView).Node.Handle) ?w32.
     const tree = self.tab_trees[self.active_tab];
     if (!pane_stash.isVisiblySplit(tree)) return null;
     if (tree.zoomed != null) return null;
-    return self.splitRegionRectNode(tree, .root, self.surfaceRect(), target);
+    return self.splitRegionRectNode(tree, .root, self.gridRect(), target);
 }
 
 fn splitRegionRectNode(
@@ -6637,7 +6809,7 @@ fn startDividerDrag(self: *Window, handle: SplitTree(PaneView).Node.Handle, layo
     // pointer against the whole surface teleported the second divider of a
     // 3-column layout ~200px right on the first motion tick.
     const region = self.splitRegionRect(handle);
-    self.drag_start_rect = region orelse self.surfaceRect();
+    self.drag_start_rect = region orelse self.gridRect();
     // T533: freeze the tree the drag is solved against. Only when the node's
     // own region resolved — compensating against the surface rect would pin
     // boundaries to positions the layout never puts them at.

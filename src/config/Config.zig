@@ -3344,7 +3344,8 @@ keybind: Keybinds = .{},
 /// Changing this option at runtime only applies to new windows.
 @"macos-titlebar-style": MacTitlebarStyle = .transparent,
 
-/// How a window's split panes are presented. macOS only.
+/// How a window's split panes are presented, on macOS and on Windows (which
+/// reads this same key; the Quick Terminal stays flat on Windows).
 ///
 /// Valid values:
 ///

@@ -2036,6 +2036,9 @@ pub extern "gdi32" fn CreateRectRgn(x1: i32, y1: i32, x2: i32, y2: i32) callconv
 /// floating overlay mode, T160). The system takes ownership of the region on
 /// success — the caller must NOT delete it afterwards.
 pub extern "user32" fn SetWindowRgn(hwnd: HWND, hrgn: ?*anyopaque, redraw: i32) callconv(.winapi) i32;
+/// Copy a window's region into `hrgn` (which the caller owns). Returns
+/// `ERROR` (0) when the window has no region.
+pub extern "user32" fn GetWindowRgn(hwnd: HWND, hrgn: ?*anyopaque) callconv(.winapi) i32;
 /// Fill a region directly. Preferred over SelectClipRgn+FillRect when
 /// painting inside code that already holds a clip (the tab loop holds the
 /// chiclet clip): this leaves the current clip untouched, where clearing it

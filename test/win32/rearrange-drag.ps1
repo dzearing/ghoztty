@@ -170,6 +170,8 @@ function Start-Session([int]$Splits) {
         Exe = $exe
         Arguments = @(
             '--config-default-files=false',
+            # T1831: pane-width oracles assume flush flat panes; the elevated default insets them (pane-elevation.ps1 covers that).
+            '--macos-pane-style=flat',
             '--session-persistence=false',
             '--window-show-tab-bar=always',
             '--keybind=ctrl+shift+f9=toggle_rearrange_mode')

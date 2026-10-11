@@ -1304,6 +1304,8 @@ pub fn showDimOverlay(self: *Surface, color: u32, alpha: u8, batch: ?*?w32.HDWP)
         };
     }
     _ = self.dim_overlay.?.show(color, alpha, batch);
+    // An elevated pane's wash takes its card's rounded shape (T1831).
+    if (self.pane_view) |pv| self.dim_overlay.?.matchOwnerRegion(pv.card_region_key);
 }
 
 /// Hide this pane's dim overlay if it exists.

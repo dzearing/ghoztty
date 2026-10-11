@@ -2769,6 +2769,20 @@ $GuardTable = @(
             'test\win32\split-divider.ps1'
         )
     },
+    # T1831: the elevated pane style - the desk, the cards, their regions and
+    # the gap-as-divider geometry. The raster is unit tested; this is the only
+    # thing that photographs it and drags its gap.
+    [pscustomobject]@{
+        Name   = 'pane-elevation'
+        Script = 'test\win32\pane-elevation.ps1'
+        Stamp  = 'test\win32\pane-elevation.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_elevation.zig',
+            'src\apprt\win32\PaneDesk.zig',
+            'src\apprt\win32\split_geometry.zig',
+            'test\win32\pane-elevation.ps1'
+        )
+    },
     # T1579: a terminal pane is a child window and never hears WM_DPICHANGED
     # or WM_SETTINGCHANGE; the top-level window forwards both. The unit tests
     # own the rule for what each pane is owed; this row owns the claim that a

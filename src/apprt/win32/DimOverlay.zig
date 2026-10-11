@@ -42,6 +42,9 @@ pub const DimOverlay = struct {
     /// The placement last handed to SetWindowPos. Only meaningful while
     /// `shown`.
     placement: dim_math.Placement = .{ .left = 0, .top = 0, .width = 0, .height = 0 },
+    /// The owner's region this wash was last clipped to (T1831); see
+    /// `matchOwnerRegion`.
+    region_key: u64 = 0,
 
     pub fn create(
         alloc: std.mem.Allocator,
@@ -203,6 +206,25 @@ pub const DimOverlay = struct {
         self.placement = placement;
         self.shown = true;
         return true;
+    }
+
+    /// Clip the wash to the owner pane's window region (T1831): an elevated
+    /// pane is a rounded card, and a rectangular wash over it would paint
+    /// square dim corners onto the desk. `key` is the owner's
+    /// `PaneView.card_region_key` - the region is only re-copied when it
+    /// changed, 0 meaning "the owner has none".
+    pub fn matchOwnerRegion(self: *DimOverlay, key: u64) void {
+        if (key == self.region_key) return;
+        self.region_key = key;
+        if (key == 0) {
+            _ = w32.SetWindowRgn(self.hwnd, null, 1);
+            return;
+        }
+        const rgn = w32.CreateRectRgn(0, 0, 0, 0) orelse return;
+        if (w32.GetWindowRgn(self.owner, rgn) == 0 or w32.SetWindowRgn(self.hwnd, rgn, 1) == 0) {
+            _ = w32.DeleteObject(rgn);
+            self.region_key = 0;
+        }
     }
 
     pub fn hide(self: *DimOverlay) void {
