@@ -1457,7 +1457,10 @@ titlebar window turns on `.fullSizeContentView` and `titlebarAppearsTransparent`
 (macOS 26 otherwise backs it with a material), and the desk sits behind the
 whole content stack. Any `.background(Color)` in that stack must pass
 `ignoresSafeAreaEdges: []` — SwiftUI's default extends it behind the titlebar
-(the debug-build warning did). Verified by `glassPanesLetTheGradientThrough`,
+(the debug-build warning did). The unpinned sidebar's card is the same tinted glass
+(`SidePanelCard(isGlass:)`) instead of an opaque slab. In the elevated style the
+**focused pane** (of several) gets a subtle white glow from its edges
+(`PaneFocusGlow`, driven by `PaneView.isFocusedPane`). Verified by `glassPanesLetTheGradientThrough`,
 which also writes a ScreenCaptureKit capture of its own window. A translucent terminal
 (`background-opacity` < 1) gets an equally translucent gradient. Settled in the
 pane-sidebar mock (`docs/design/pane-sidebar.md` → Pane style).

@@ -106,7 +106,7 @@ final class PaneSidebarState: ObservableObject {
     /// Hover-open timing: a short intent delay on the way in (so passing over
     /// the rail on the way somewhere else doesn't pop it open) and a grace
     /// period on the way out.
-    nonisolated static let hoverOpenDelay: TimeInterval = 0.14
+    nonisolated static let hoverOpenDelay: TimeInterval = 0.1
     nonisolated static let hoverCloseDelay: TimeInterval = 0.28
 
     nonisolated static func mode(isPinned: Bool, isHidden: Bool, windowWidth: CGFloat) -> Mode {

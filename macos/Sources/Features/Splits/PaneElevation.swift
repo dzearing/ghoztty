@@ -227,10 +227,24 @@ struct PaneDesk: View {
 struct PaneCard: ViewModifier {
     let isElevated: Bool
     var isGlass: Bool = false
+    var isFocused: Bool = false
     let background: Color
     let isLight: Bool
 
     func body(content: Content) -> some View {
+        card(content)
+            .overlay {
+                if isElevated {
+                    PaneFocusGlow(isLight: isLight)
+                        .opacity(isFocused ? 1 : 0)
+                        .animation(.easeOut(duration: 0.2), value: isFocused)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private func card(_ content: Content) -> some View {
         if isElevated && isGlass {
             content
                 .clipShape(PaneElevation.cardShape)
@@ -259,12 +273,33 @@ struct PaneCard: ViewModifier {
     }
 }
 
+/// The focused pane's subtle white glow from its edges: a soft light that
+/// falls inward from the rim (a blurred stroke clipped to the card), a crisp
+/// brighter rim, and a faint halo outside it on the desk.
+struct PaneFocusGlow: View {
+    let isLight: Bool
+
+    var body: some View {
+        let shape = PaneElevation.cardShape
+        ZStack {
+            shape
+                .stroke(Color.white.opacity(isLight ? 0.7 : 0.22), lineWidth: 10)
+                .blur(radius: 8)
+                .clipShape(shape)
+            shape
+                .strokeBorder(Color.white.opacity(isLight ? 0.9 : 0.32), lineWidth: 1)
+        }
+        .shadow(color: .white.opacity(isLight ? 0.5 : 0.14), radius: 8)
+    }
+}
+
 /// The glass sheet behind a glass pane. It is tinted with the terminal's own
 /// background — neutral, so text keeps its contrast — and lets the desk's
 /// light and shade through.
 struct PaneGlass: View {
     let tint: Color
     let isLight: Bool
+    var cornerRadius: CGFloat = PaneElevation.cornerRadius
 
     /// How much of the terminal's background the sheet keeps — 50%, chosen
     /// in the pane-sidebar mock: enough for text contrast, little enough
@@ -272,7 +307,7 @@ struct PaneGlass: View {
     static let tint: Double = 0.5
 
     var body: some View {
-        let shape = PaneElevation.cardShape
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         if #available(macOS 26.0, *) {
             Color.clear
                 .glassEffect(.regular.tint(tint.opacity(Self.tint)), in: shape)

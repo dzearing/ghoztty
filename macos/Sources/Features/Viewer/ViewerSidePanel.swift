@@ -51,6 +51,13 @@ struct SidePanelCard: ViewModifier {
     /// with the elevated grid's margin instead.
     var margins: EdgeInsets? = nil
 
+    /// Glass panes: instead of the opaque base, the same tinted glass sheet
+    /// the panes are (`PaneGlass`). The card floats over panes that are glass
+    /// themselves, and an opaque slab there read as the one solid thing in
+    /// the window; the glass's own blur keeps what passes under it from
+    /// competing with the list.
+    var isGlass = false
+
     @Environment(\.colorScheme) private var colorScheme
 
     func body(content: Content) -> some View {
@@ -68,8 +75,17 @@ struct SidePanelCard: ViewModifier {
             // card floats over the document, and a translucent panel let body
             // text show through it — unreadable. The wash above still lifts the
             // card a shade off the page, so it reads as raised rather than flat.
-            .background(GlassCard.shape.fill(
-                base ?? SidePanelCard.documentBackground(for: colorScheme)))
+            .background {
+                let fill = base ?? SidePanelCard.documentBackground(for: colorScheme)
+                if isGlass {
+                    PaneGlass(
+                        tint: fill,
+                        isLight: isLightBase ?? (colorScheme == .light),
+                        cornerRadius: GlassCard.cornerRadius)
+                } else {
+                    GlassCard.shape.fill(fill)
+                }
+            }
             .padding(margins ?? EdgeInsets(
                 top: GlassCard.outerMargin, leading: GlassCard.outerMargin,
                 bottom: GlassCard.outerMargin, trailing: GlassCard.outerMargin))

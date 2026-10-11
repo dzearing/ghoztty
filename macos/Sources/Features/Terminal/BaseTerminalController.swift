@@ -57,7 +57,10 @@ class BaseTerminalController: NSWindowController,
     /// Re-derive `focusedPane` and publish it if it moved.
     func publishFocusedPane() {
         let pane = focusedPane
-        if pane !== publishedFocusedPane { publishedFocusedPane = pane }
+        guard pane !== publishedFocusedPane else { return }
+        publishedFocusedPane?.isFocusedPane = false
+        pane?.isFocusedPane = true
+        publishedFocusedPane = pane
     }
 
     /// The tree of splits within this terminal window.

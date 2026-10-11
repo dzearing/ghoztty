@@ -94,6 +94,22 @@ struct PaneSidebarWindowTests {
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
 
+    /// Writes `window` as the window server composites it.
+    private func captureComposited(_ window: NSWindow, _ name: String) async throws {
+        let dir = "/tmp/pane-sidebar-snapshots"
+        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+        let content = try await SCShareableContent.currentProcess
+        let scWindow = try #require(content.windows.first { $0.windowID == CGWindowID(window.windowNumber) })
+        let cfg = SCStreamConfiguration()
+        cfg.width = Int(scWindow.frame.width * 2)
+        cfg.height = Int(scWindow.frame.height * 2)
+        cfg.showsCursor = false
+        let image = try await SCScreenshotManager.captureImage(
+            contentFilter: SCContentFilter(desktopIndependentWindow: scWindow), configuration: cfg)
+        try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?
+            .write(to: URL(fileURLWithPath: "\(dir)/\(name).png"))
+    }
+
     /// Glass panes (the default): nothing paints over the window's gradient —
     /// not the terminal (the renderer drops its background), not a viewer's
     /// page, not the titlebar. Also writes the window as the WINDOW SERVER
@@ -123,8 +139,6 @@ struct PaneSidebarWindowTests {
         window.setContentSize(NSSize(width: 1200, height: 760))
         await settle(2.5)
 
-        let dir = "/tmp/pane-sidebar-snapshots"
-        try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         // The pieces that make it glass, each of which was found painting an
         // opaque layer over the gradient at some point.
         #expect(window.styleMask.contains(.fullSizeContentView), "the gradient can't reach under the titlebar")
@@ -136,17 +150,17 @@ struct PaneSidebarWindowTests {
             "[document.documentElement.className, getComputedStyle(document.body).backgroundColor, getComputedStyle(document.querySelector('.markdown-body')).backgroundColor].join('|')") as? String
         #expect(page == "pane-glass|rgba(0, 0, 0, 0)|rgba(0, 0, 0, 0)", "the page paints over the sheet: \(page ?? "nil")")
 
-        let content = try await SCShareableContent.currentProcess
-        let scWindow = try #require(content.windows.first { $0.windowID == CGWindowID(window.windowNumber) })
-        let filter = SCContentFilter(desktopIndependentWindow: scWindow)
-        let cfg = SCStreamConfiguration()
-        cfg.width = Int(scWindow.frame.width * 2)
-        cfg.height = Int(scWindow.frame.height * 2)
-        cfg.showsCursor = false
-        let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: cfg)
-        let rep = NSBitmapImageRep(cgImage: image)
-        try rep.representation(using: .png, properties: [:])?
-            .write(to: URL(fileURLWithPath: "\(dir)/glass-window.png"))
+        try await captureComposited(window, "glass-window")
+        // Unpinned: the mini rail, then the card opened over the grid. (A
+        // viewer page may come out blank in these two: the test window opens
+        // behind others, occluded, and WebKit skips repaints after the
+        // column change while occluded — the page is there, unpainted.)
+        controller.paneSidebarState.isPinned = false
+        await settle(0.8)
+        try await captureComposited(window, "glass-rail")
+        controller.paneSidebarState.isHoverOpen = true
+        await settle(0.8)
+        try await captureComposited(window, "glass-overlay")
         controller.close()
         await settle(0.3)
     }

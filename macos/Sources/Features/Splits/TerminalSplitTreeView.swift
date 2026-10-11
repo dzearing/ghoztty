@@ -203,6 +203,8 @@ private struct PaneLeafView: View {
         .modifier(PaneCard(
             isElevated: ghostty.config.macosPaneStyle == .elevated,
             isGlass: ghostty.config.paneGlass,
+            // Only among siblings: a lone pane has nothing to stand out from.
+            isFocused: isSplit && pane.isFocusedPane,
             background: ghostty.config.backgroundColor,
             isLight: OSColor(ghostty.config.backgroundColor).isLightColor))
     }

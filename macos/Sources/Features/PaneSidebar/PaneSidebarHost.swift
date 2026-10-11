@@ -362,15 +362,24 @@ private struct PaneSidebarChrome: View {
                         isLightBase: isLight,
                         margins: EdgeInsets(
                             top: insets.vertical, leading: insets.leading,
-                            bottom: insets.vertical, trailing: insets.trailing)))
+                            bottom: insets.vertical, trailing: insets.trailing),
+                        isGlass: controller.ghostty.config.paneGlass))
                     .overlay(alignment: .trailing) {
                         resizeHandle.padding(.vertical, insets.vertical)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .animation(.easeOut(duration: 0.2), value: open)
+                    .animation(Self.hoverOpenAnimation(opening: open), value: open)
             }
         }
         .coordinateSpace(name: PaneSidebarGeometry.space)
+    }
+
+    /// The rail opening to full width, and closing again: the mock's strong
+    /// ease-out, `cubic-bezier(.2, .8, .2, 1)` — most of the travel up front,
+    /// then a soft settle. SwiftUI's `.easeOut` is a far milder curve and read
+    /// as linear, mechanical; it also read a tad slow, so this is quick.
+    static func hoverOpenAnimation(opening: Bool) -> Animation {
+        .timingCurve(0.2, 0.8, 0.2, 1, duration: opening ? 0.2 : 0.18)
     }
 
     /// Drag the edge: resize the panel, or — past the thresholds — pin and
