@@ -7424,13 +7424,19 @@ pub const Keybinds = struct {
 
         // Pane stash on Windows (T1827): Mac's Shift+Cmd+M "minimize the
         // pane", carried across the way every Cmd chord here is - Cmd becomes
-        // Ctrl+Shift. It was unbound before this. The sidebar toggle waits
-        // for the sidebar itself (T1828).
+        // Ctrl+Shift. It was unbound before this. The pane sidebar toggle
+        // (T1828) is Mac's Ctrl+Cmd+S "Show Sidebar" carried the same way:
+        // Ctrl+Shift+S, which nothing here bound before.
         if (comptime builtin.target.os.tag == .windows) {
             try self.set.put(
                 alloc,
                 .{ .key = .{ .unicode = 'm' }, .mods = .{ .ctrl = true, .shift = true } },
                 .{ .stash_pane = {} },
+            );
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 's' }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .toggle_pane_sidebar = {} },
             );
         }
 

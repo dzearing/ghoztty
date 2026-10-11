@@ -97,8 +97,11 @@ function Get-HeroLeaf([IntPtr]$top) {
     $visible = @($leaves | Where-Object Visible)
     if ($visible.Count -ne 1) { return $null }
     $hero = $visible[0]
-    if ($hero.Left -gt 2) { return $null }
-    if ($hero.Width -lt [int](0.6 * $c.Width)) { return $null }
+    # The grid (and so the hero) starts after the pane sidebar's column (T1828).
+    $sbar = @(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') | Where-Object Visible | Select-Object -First 1
+    $col = if ($sbar) { $sbar.Width } else { 0 }
+    if ($hero.Left - $col -gt 2) { return $null }
+    if ($hero.Width -lt [int](0.6 * ($c.Width - $col))) { return $null }
     # Every hidden leaf is sized to the hero rect, which is what tells hero
     # mode from a zoom (a zoom leaves the others at their tree rects).
     foreach ($p in @($leaves | Where-Object { -not $_.Visible })) {

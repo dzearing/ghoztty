@@ -240,6 +240,9 @@ pub fn forwardsTag(tag: std.meta.Tag(input.Binding.Action)) bool {
         // viewer pane is one of the panes rearrange mode exists to move, so
         // a focused viewer must not swallow the chord (T1524).
         .toggle_rearrange_mode,
+        // The pane sidebar is the window's column (T1828; Mac classifies the
+        // action `.window` so a focused viewer forwards it).
+        .toggle_pane_sidebar,
         .toggle_fullscreen,
         .toggle_maximize,
         // The window's size is the window's, and a viewer-only window has no

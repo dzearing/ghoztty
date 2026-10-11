@@ -28,6 +28,8 @@ const viewer_accel = @import("viewer_accel.zig");
 const viewer_content = @import("viewer_content.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
 const pane_stash = @import("pane_stash.zig");
+const pane_sidebar = @import("pane_sidebar.zig");
+const PaneSidebar = @import("PaneSidebar.zig");
 const terminal = @import("../../terminal/main.zig");
 const tcp_dial = @import("../../remote/tcp_dial.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
@@ -518,6 +520,18 @@ tracking_mouse: bool = false,
 
 /// Whether this window is a quick terminal (borderless popup, no tabs).
 is_quick_terminal: bool = false,
+
+/// The pane sidebar (T1828): the column left of the grid listing every pane
+/// of the active tab. Created on the first layout; null on the Quick
+/// Terminal, which has no chrome for it (Mac leaves it out there too).
+sidebar: ?*PaneSidebar = null,
+/// Pinned = the flat panel; unpinned = the mini rail. Hidden = no column.
+/// Layout state, so new windows start from the last choice
+/// (`PaneSidebar.remembered`), as Mac's do.
+pane_sidebar_pinned: bool = false,
+pane_sidebar_hidden: bool = false,
+/// The pinned panel's preferred width.
+pane_sidebar_width_dip: f32 = pane_sidebar.default_width_dip,
 
 /// Split divider drag state.
 dragging_split: bool = false,
@@ -1392,6 +1406,8 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         .is_quick_terminal = options.is_quick_terminal,
         .pending_surface_overrides = options.surface_overrides,
         .background_first_show = options.background,
+        .pane_sidebar_pinned = PaneSidebar.remembered.pinned,
+        .pane_sidebar_hidden = PaneSidebar.remembered.hidden,
     };
 
     // T1343 measurement switches, read once per window: `GHOZTTY_PERF` turns
@@ -2153,7 +2169,98 @@ pub fn surfaceRect(self: *const Window) w32.RECT {
         return .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
     }
     rect.top += self.chromeHeight();
+    // The pane sidebar's column (T1828) is the grid's left neighbor, the way
+    // the chrome is its top one: every layout, drop zone and hit test that
+    // starts from this rect lays the grid out beside it, never under it.
+    rect.left = @min(rect.left + self.paneSidebarColumnPx(), rect.right);
     return rect;
+}
+
+/// The sidebar's mode for this window as it is sized right now.
+pub fn paneSidebarMode(self: *const Window) pane_sidebar.Mode {
+    if (self.is_quick_terminal or self.tab_count == 0) return .hidden;
+    const hwnd = self.hwnd orelse return .hidden;
+    var rc: w32.RECT = undefined;
+    if (w32.GetClientRect(hwnd, &rc) == 0) return .hidden;
+    const w_dip = @as(f32, @floatFromInt(rc.right - rc.left)) / self.scale;
+    return pane_sidebar.mode(self.pane_sidebar_pinned, self.pane_sidebar_hidden, w_dip);
+}
+
+/// The width the sidebar's column takes from the grid, in pixels.
+pub fn paneSidebarColumnPx(self: *const Window) i32 {
+    return pane_sidebar.columnPx(self.paneSidebarMode(), self.pane_sidebar_width_dip, self.scale);
+}
+
+/// Bring the sidebar up to date with the window: create it on first use,
+/// place its column, and refresh its roster. Cheap when nothing changed, so
+/// every layout, focus and title event can call it.
+pub fn syncPaneSidebar(self: *Window) void {
+    if (self.closing or self.is_quick_terminal) return;
+    const hwnd = self.hwnd orelse return;
+    if (self.sidebar == null) {
+        if (self.tab_count == 0) return;
+        self.sidebar = PaneSidebar.create(self.app.core_app.alloc, self, hwnd);
+    }
+    const sb = self.sidebar orelse return;
+    var rc: w32.RECT = undefined;
+    if (w32.GetClientRect(hwnd, &rc) == 0) return;
+    rc.top += self.chromeHeight();
+    rc.right = rc.left + self.paneSidebarColumnPx();
+    sb.refresh();
+    sb.place(rc, self.paneSidebarMode(), self.scale);
+}
+
+/// `toggle_pane_sidebar` (Mac Ctrl+Cmd+S, here Ctrl+Shift+S): hide or show
+/// the sidebar entirely. The grid takes the column back, or gives it up.
+pub fn togglePaneSidebar(self: *Window) void {
+    self.pane_sidebar_hidden = !self.pane_sidebar_hidden;
+    self.paneSidebarLayoutChanged();
+}
+
+/// The pin: flat panel <-> mini rail.
+pub fn togglePaneSidebarPin(self: *Window) void {
+    self.pane_sidebar_pinned = !self.pane_sidebar_pinned;
+    self.paneSidebarLayoutChanged();
+}
+
+fn paneSidebarLayoutChanged(self: *Window) void {
+    PaneSidebar.remembered = .{ .pinned = self.pane_sidebar_pinned, .hidden = self.pane_sidebar_hidden };
+    self.layoutSplits();
+    self.syncPaneSidebar();
+    self.app.markLayoutDirty();
+}
+
+/// Whether `pane` is still a leaf of this window's ACTIVE tab. Pointer
+/// comparison only: the sidebar can hold a pane pointer across a close, and
+/// must ask before it uses one.
+fn paneInActiveTab(self: *Window, pane: *PaneView) bool {
+    if (self.tab_count == 0) return false;
+    var it = self.tab_trees[self.active_tab].iterator();
+    while (it.next()) |entry| if (entry.view == pane) return true;
+    return false;
+}
+
+/// A click on a sidebar row: focus a grid pane, or restore a stashed one and
+/// focus it (Mac's click on a stashed row restores it to its own slot).
+pub fn paneSidebarActivate(self: *Window, pane: *PaneView) void {
+    if (!self.paneInActiveTab(pane)) return;
+    self.restorePane(pane, true);
+    self.syncPaneSidebar();
+}
+
+/// A row's hover button: stash a grid pane, restore a stashed one. A refused
+/// stash (the last pane on screen) beeps, as Mac's does.
+pub fn paneSidebarToggleStash(self: *Window, pane: *PaneView) void {
+    if (!self.paneInActiveTab(pane)) return;
+    if (pane_stash.isStashed(pane)) {
+        self.restorePane(pane, true);
+    } else {
+        self.stashPane(pane) catch {
+            _ = w32.MessageBeep(0xFFFFFFFF);
+            return;
+        };
+    }
+    self.syncPaneSidebar();
 }
 
 /// Returns the currently active pane, or null if there are no tabs.
@@ -5671,6 +5778,8 @@ pub fn updateDimOverlays(self: *Window) void {
     self.updateReadonlyBadges();
     // ...and the key-state pill (T446).
     self.updateKeyStateIndicators();
+    // ...and the pane sidebar's selection and roster (T1828).
+    self.syncPaneSidebar();
 }
 
 /// Show/reposition/hide every pane's key-state pill (T446). Rides the same
@@ -7351,6 +7460,7 @@ pub const viewer_dispatch_tags = [_]std.meta.Tag(input.Binding.Action){
     .toggle_split_zoom,
     .toggle_hero_mode,
     .toggle_rearrange_mode,
+    .toggle_pane_sidebar,
     .toggle_fullscreen,
     .toggle_maximize,
     .toggle_window_decorations,
@@ -7506,6 +7616,7 @@ pub fn performViewerBindingAction(
         // Rearrange mode is window-scoped for the same reason, and a viewer
         // pane is one of the panes you would want to move (T1524).
         .toggle_rearrange_mode => self.toggleRearrangeMode(),
+        .toggle_pane_sidebar => self.togglePaneSidebar(),
 
         .toggle_fullscreen => self.toggleFullscreen(),
         .toggle_maximize => {
@@ -7802,6 +7913,9 @@ pub fn activityAggregate(self: *Window) terminal.osc.Command.ActivityState {
 
 pub fn updateWindowTitle(self: *Window) void {
     const hwnd = self.hwnd orelse return;
+    // An activity change lands here from both the OSC and the CLI paths; the
+    // sidebar shows it per pane (T1828).
+    defer self.syncPaneSidebar();
 
     // Base title: the override if set, else the active tab's title.
     var buf: [280]u16 = undefined;
@@ -7882,6 +7996,8 @@ pub fn setTitleOverride(self: *Window, title: ?[]const u8) void {
 /// the `*Surface` in this signature that made "pane" and "terminal" the same
 /// word here — the exact thing `PaneView` exists to separate.
 pub fn onPaneTitleChanged(self: *Window, pane: *PaneView, title: [:0]const u8) void {
+    // Every pane's title is on the sidebar, not only the focused one's (T1828).
+    self.syncPaneSidebar();
     const tab_idx = self.findTabIndex(pane) orelse return;
     if (self.tab_title_pinned[tab_idx]) return;
     if (self.tab_active_pane[tab_idx] != pane) return;
@@ -10959,6 +11075,13 @@ fn onDestroy(self: *Window) void {
             qt.onWindowDestroyed();
         }
         return;
+    }
+
+    // The sidebar is a child HWND that DestroyWindow is taking down with us;
+    // free what it owns while its back-pointer can still be cleared first.
+    if (self.sidebar) |sb| {
+        sb.destroy();
+        self.sidebar = null;
     }
 
     // Remove from App's window list.

@@ -35135,3 +35135,29 @@ moved to T1814.
   It threw, and the early version still scored green, so the script now
   asserts that its body reached the end. It also had a nested `@()` that the
   unroll-count audit caught.
+
+## 2026-10-11 — T1828: the pane sidebar on Windows (core)
+
+- **What changed.** Every window now has Mac's pane sidebar on its left. By
+  default it is the mini rail: one tile per pane, labeled with a monogram. The
+  pin opens it into a 240 DIP panel listing grid panes, then stashed ones, each
+  with a title and a subtitle (the banner's first line, else the folder). It
+  shows the selection, a question badge and a busy dot. A click focuses a pane
+  or restores a stashed one. A row's hover button stashes or restores.
+  Ctrl+Shift+S hides it (also from a focused viewer). A window under 720 DIP
+  always gets the rail.
+- **Design.** Pure rules and geometry in `pane_sidebar.zig`, tested at four
+  scales. One child HWND per window in `PaneSidebar.zig`. `surfaceRect` takes
+  the column off the grid's left, so layout, drop zones and hero mode all sit
+  beside it. The roster is hashed and rebuilt only when it changes, because a
+  divider drag is a layout per mouse move.
+- **Evidence.** New `test\win32\pane-sidebar.ps1` ALL PASS 34 on a background
+  desktop; its negative control is red. Floor lanes all PASS; P1-P3 ALL PASS;
+  every harness the change made due re-run green.
+- **Harnesses updated.** `rearrange-drag.ps1` E and `tab-overview-action.ps1`
+  measured "the whole window" from the client's left edge. The grid now starts
+  after the column, so they measure the grid. `viewer-find.ps1` failed once on
+  Escape and passed unchanged on rerun.
+- **Filed.** T1842 (hover-open card) and T1844 (drag in and out), both P1 M1.
+  T1843 shimmer, T1845 menu/trash, T1846 resize, T1847 persistence, T1848
+  Window menu, T1849 `stash_pane` swallowed by a focused viewer.

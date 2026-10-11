@@ -445,6 +445,10 @@ try {
     Show-Boxes 'before' $before3
 
     $client = Get-TestWindowRect -Window $top -Client
+    # The grid starts after the pane sidebar's column (T1828), so "the whole
+    # window" for a top-level drop is the client minus that column.
+    $sbar = @(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') | Where-Object Visible | Select-Object -First 1
+    $gridW = ($client.Right - $client.Left) - $(if ($sbar) { $sbar.Width } else { 0 })
     $first = $before3[0]
     $grabX = $first.Left + 60
     $grabY = $first.Top - [int]($band / 2)
@@ -459,8 +463,8 @@ try {
     Assert ($null -ne $prev3) 'E: the top-level drop is previewed'
     if ($prev3) {
         Write-Host ("      preview: x={0} y={1} w={2} h={3}" -f $prev3.Left, $prev3.Top, $prev3.Width, $prev3.Height)
-        Assert (Test-Near $prev3.Width ($client.Right - $client.Left) 4) `
-            'E: the preview spans the WHOLE window width - not one pane of it'
+        Assert (Test-Near $prev3.Width $gridW 4) `
+            'E: the preview spans the WHOLE grid width - not one pane of it'
     }
     Assert (Send-TestMouse -Window $top -Target $top -X $edgeX -Y $edgeY -Action up) 'E: release delivered'
     Start-Sleep -Milliseconds 1500
@@ -474,8 +478,8 @@ try {
         # pane last, across the bottom.
         $bottom = $after3[2]
         Assert ($bottom.Hwnd -eq $first.Hwnd) 'E: the dragged pane is the one across the bottom'
-        Assert (Test-Near $bottom.Width ($client.Right - $client.Left) 6) `
-            'E: and it spans the whole window, which a pane split never would'
+        Assert (Test-Near $bottom.Width $gridW 6) `
+            'E: and it spans the whole grid, which a pane split never would'
         Assert ($after3[0].Top -lt $bottom.Top -and $after3[1].Top -lt $bottom.Top) `
             'E: the other two share the row above it'
         $ids3 = @($before3 | ForEach-Object { $_.Hwnd } | Sort-Object)

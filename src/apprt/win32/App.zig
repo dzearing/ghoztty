@@ -8183,12 +8183,17 @@ pub fn performAction(
             .surface => |core_surface| return core_surface.rt_surface.parent_window.restoreTopStashedPane(),
         },
 
-        // The pane sidebar (main 597a193cc) is not built on win32 yet:
-        // T1828. Answer "not performed" so the binding is not consumed and
-        // nothing claims it happened.
-        .toggle_pane_sidebar => {
-            log.info("{s}: not implemented on win32 yet (T1828)", .{@tagName(action)});
-            return false;
+        // The pane sidebar (T1828, main 597a193cc): hide or show the column.
+        // The Quick Terminal has none (Mac disables it there too), so the
+        // binding falls through rather than claiming it did something.
+        .toggle_pane_sidebar => switch (target) {
+            .app => return false,
+            .surface => |core_surface| {
+                const window = core_surface.rt_surface.parent_window;
+                if (window.is_quick_terminal) return false;
+                window.togglePaneSidebar();
+                return true;
+            },
         },
 
         // Acknowledge actions that don't need Win32-specific handling.
