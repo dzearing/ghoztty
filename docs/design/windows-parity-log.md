@@ -35078,3 +35078,29 @@ moved to T1814.
   closed, still attached for five seconds" state that Mac filters out was
   never seen here (`lingering attached: False`). Section 3b passes without
   that state, which is why 3c is the real check.
+
+## 2026-10-11 — T1826: main's pane-sidebar redesign is merged into the Windows branch
+
+- **What changed.** origin/main 55ed55f85 is merged: 27 Mac commits from the
+  2026-10-10 evening (pane stash and sidebar, elevated and glass panes, window
+  gradients, focus glow, resize debounce). Windows gets the shared parts now.
+  Resizes reach the program debounced, and the size popup is off by default.
+  The Mac-only look is gated to macOS in the renderer.
+- **Conflicts (7).** Kept our IPC client route and taught it `stash`/`restore`.
+  Kept the CLAUDE.md split and moved main's three new sections into
+  `docs/claude/cli.md` with Windows status lines. Took both sides in the CLI
+  verb table, the Swift list encoder and `viewer.css`. Took main's gh-pages
+  push loop.
+- **Caught by tests.** The T370 shape test failed because Mac's `+list` now
+  writes `stashed`. Windows writes it in the same place, only when true.
+  `desktop-launch-audit` flagged the two new verbs as unclassified; they are
+  quiet verbs now.
+- **Evidence.** Floor lanes all PASS. P1-P3 ALL PASS. 16 of the due harnesses
+  are green, plus the audits and harness floor the library edit made due.
+- **Found.** `ipc-relay.ps1` is red on two checks that this merge cannot reach.
+  A token-less relay dial reports "agent not reachable" instead of "not
+  signed in". A relay window whose agent dies is left with no way back. Its
+  last green stamp is 09-12. Filed as T1837 (P1, M1).
+- **Own slip.** Called the banner `.sh` from PowerShell once. PowerShell
+  refused it ("cannot run a document in the middle of a pipeline"), so no
+  picker opened (checked: the only OpenWith process is 10-10's).
