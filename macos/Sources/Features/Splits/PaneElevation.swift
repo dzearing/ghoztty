@@ -294,7 +294,7 @@ struct PaneFocusGlow: View {
     var body: some View {
         let shape = PaneElevation.cardShape
         shape
-            .stroke(Color.white.opacity(isLight ? 0.64 : 0.32), lineWidth: 4)
+            .stroke(Color.white.opacity(isLight ? 0.5 : 0.24), lineWidth: 4)
             // Tight: the light dies out ~8pt past the edge.
             .blur(radius: 4)
             .mask {
