@@ -2094,3 +2094,44 @@ test "PtyChild: the EOF nudge finds the exited child reapable" {
         try testing.expectEqual(@as(?i64, 7), probe.reaped_at_nudge);
     }
 }
+
+test "PtyChild (Windows): a ConPTY shell that exits on its own is reapable by tryWait alone (T1798)" {
+    // The POSIX fix for a dead, untypeable pane (main c6619717b) leans on the
+    // pty reader's EOF. ConPTY never gives one: conhost holds the output pipe
+    // open until `ClosePseudoConsole`, so on Windows the store's per-tick
+    // `reapExited` sweep is the ONLY thing that notices an exit, and the only
+    // question it asks is `tryWait`. Prove that answers from the process handle
+    // for an exit nothing typed (a delayed `exit`), and for one whose console
+    // is still held open by a grandchild that outlives the shell.
+    if (!is_windows) return error.SkipZigTest;
+    const alloc = testing.allocator;
+    var spawner = try PtySpawner.init(alloc);
+    defer spawner.deinit();
+
+    const Case = struct { command: []const u8, code: i64 };
+    const cases = [_]Case{
+        .{ .command = "ping -n 3 127.0.0.1 >nul & exit 5", .code = 5 },
+        .{ .command = "start /b ping -n 6 127.0.0.1 >nul & exit 4", .code = 4 },
+    };
+    for (cases) |c| {
+        var capture: CaptureSink = .{ .alloc = alloc };
+        defer capture.deinit();
+        const pc = try spawner.spawnChild(.{ .rows = 24, .cols = 80, .command = c.command });
+        defer pc.child().terminate();
+        pc.child().attach(&capture, CaptureSink.sink, 0x1798);
+
+        // Not yet: the shell is still inside its ping.
+        try testing.expectEqual(@as(?i64, null), pc.child().tryWait());
+
+        var reaped: ?i64 = null;
+        var deadline = test_util.Deadline.start("a ConPTY shell's own exit to be reapable by tryWait");
+        while (reaped == null) {
+            reaped = pc.child().tryWait();
+            if (reaped == null) deadline.tick() catch break;
+        }
+        try testing.expectEqual(@as(?i64, c.code), reaped);
+        // Reaped once, answered the same forever: the sweep must not see a
+        // second exit, and must not lose this one.
+        try testing.expectEqual(@as(?i64, c.code), pc.child().tryWait());
+    }
+}

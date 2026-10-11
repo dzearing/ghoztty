@@ -1,12 +1,10 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-10-10T14:29:01-07:00",
-    "commit":  "1473fefee",
+    "generated":  "2026-10-10T17:43:31-07:00",
+    "commit":  "db99673db",
     "uncommitted":  [
-                        "docs/claude/testing.md",
-                        "test/win32/floor-lane-desktop.ps1",
-                        "test/win32/soak-daemon.ps1"
+                        "test/win32/session-shell-exit.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "72e71dd3e9cc038a9d91cac58273f2e095c831a78fac3333e4780027afed3f30",
@@ -277,6 +275,7 @@
                   "test/win32/session-restore-maximized.ps1":  "5af0d5334fc5974b4bf643c69addfb503c6f35b8f161691c729ad704ffafddf7",
                   "test/win32/session-resume-offset.ps1":  "6c0591c0924e67301a4fd88b4ea615aba24ae508bd5eff7e7d9cf133ed28c3da",
                   "test/win32/sessions-agent-build.ps1":  "4ddcd1913f07dfb9c177312382493b5a0e6f69d126ebec1ce3522c6908299eea",
+                  "test/win32/session-shell-exit.ps1":  "3d60d7703bb364ea19de403a9c101e68d7ea5a6909d185970b897e35e71fb032",
                   "test/win32/session-snapshot-reattach.ps1":  "1d8418cbb1c74dd82bbb3aebe3353456e9cfb6f36b1c230bee1754e9bc2fbbce",
                   "test/win32/sessions-running-cmd.ps1":  "0b2c67aa7bebd9981abd9b159546885aaf8856c249cd8df26ceb2bf5f6e59ec6",
                   "test/win32/session-vanished.ps1":  "61b7542f3a5d3d1f1fea94e55df07bf7a373b1f72cb4d60a5d5d03f514a7e777",

@@ -1,13 +1,10 @@
 {
     "guard":  "test-wait-oracle",
     "script":  "test/win32/test-wait-oracle.ps1",
-    "generated":  "2026-10-10T16:37:03-07:00",
-    "commit":  "9b5cb3ead",
+    "generated":  "2026-10-10T17:33:08-07:00",
+    "commit":  "db99673db",
     "uncommitted":  [
-                        "src/cli/new_remote_window.zig",
-                        "src/cli/new_window.zig",
-                        "src/remote/agent/pty_child.zig",
-                        "src/remote/connection.zig"
+                        "src/remote/agent/pty_child.zig"
                     ],
     "files":  {
                   "src/cli/action.zig":  "dedb0dfe145e8d39dfb53af30225e6c8a170a02e1d79a9c224de1779f0efb654",
@@ -49,7 +46,7 @@
                   "src/cli/verb_flags.zig":  "bda869e6c325347ca64c0ce8008cde3054c1f9821be670e377d48670c6ac46a1",
                   "src/cli/version.zig":  "6b2bc632a3f4096373189da3b0ca71103dac63ceaeb15d24cb3b9eafe2693303",
                   "src/cli/view_arg.zig":  "e743f118fc97e7c676b7fc40e2448b0285439e956a8131bdb03bc5faa0697cbf",
-                  "src/remote/agent/pty_child.zig":  "fd458cab6c092ee50ff2137514257a7995cf801c58ea14e4c6f4dad7b2b50068",
+                  "src/remote/agent/pty_child.zig":  "1bd89262802861257efebb5f09f2098c404de10375df9d7bb6d29c0bf11b0d05",
                   "src/remote/agent/test_util.zig":  "93a64a05d6f8bb7aee6b54e60564c856e64bc2215fb4397c4544faf58f347d83",
                   "src/remote/connection.zig":  "8ff9747bbc292d4b123cc7c89675512c203a98631da69953632344038a56fba8",
                   "src/remote/test_util.zig":  "a645a6fe87547061970dfa2ddeefcbc0c6e36b008e1333d992f31cb8b50d07db",

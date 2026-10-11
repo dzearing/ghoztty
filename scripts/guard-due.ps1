@@ -994,6 +994,22 @@ $GuardTable = @(
             'src\remote\agent\descendants.zig'
         )
     },
+    # A shell that EXITS in a persistence pane (T1798, main c6619717b): ConPTY
+    # never gives the reader an EOF, so the holder's exit poller and the store's
+    # `reapExited` sweep are the whole mechanism on Windows. A regression is a
+    # pane left dead and untypeable with its session still reported running.
+    [pscustomobject]@{
+        Name   = 'session-shell-exit'
+        Script = 'test\win32\session-shell-exit.ps1'
+        Stamp  = 'test\win32\session-shell-exit.stamp.json'
+        Covers = @(
+            'test\win32\session-shell-exit.ps1',
+            'src\remote\agent\session.zig',
+            'src\remote\agent\pty_child.zig',
+            'src\remote\agent\pty_host.zig',
+            'src\remote\agent\pty_holder_child.zig'
+        )
+    },
     # The RESUME-OFFSET accounting (T739/T804): how far through its session's
     # stream a reconnecting pane says it has read. The two files here are busy
     # and move for many reasons, and covering them anyway is the point - this

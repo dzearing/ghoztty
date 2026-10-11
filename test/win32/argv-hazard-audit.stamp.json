@@ -1,15 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-10T14:39:28-07:00",
-    "commit":  "1473fefee",
+    "generated":  "2026-10-10T17:37:44-07:00",
+    "commit":  "db99673db",
     "uncommitted":  [
-                        "scripts/floor-lane.ps1",
                         "scripts/guard-due.ps1",
-                        "scripts/lib/LaneDesktop.ps1",
-                        "scripts/soak-daemon.ps1",
-                        "test/win32/floor-lane-desktop.ps1",
-                        "test/win32/soak-daemon.ps1"
+                        "test/win32/session-shell-exit.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -38,7 +34,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "6445f9bdeeef14e28562424a2bfe39e289b0799da4c77b49a865afca252b489d",
+                  "scripts/guard-due.ps1":  "e22e783bc90a0fc3202c933bb2337ac0f51c88aaf2393e3897f8f06d8b421c68",
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -410,6 +406,7 @@
                   "test/win32/session-restore-maximized.ps1":  "5af0d5334fc5974b4bf643c69addfb503c6f35b8f161691c729ad704ffafddf7",
                   "test/win32/session-resume-offset.ps1":  "6c0591c0924e67301a4fd88b4ea615aba24ae508bd5eff7e7d9cf133ed28c3da",
                   "test/win32/sessions-agent-build.ps1":  "4ddcd1913f07dfb9c177312382493b5a0e6f69d126ebec1ce3522c6908299eea",
+                  "test/win32/session-shell-exit.ps1":  "3d60d7703bb364ea19de403a9c101e68d7ea5a6909d185970b897e35e71fb032",
                   "test/win32/session-snapshot-reattach.ps1":  "1d8418cbb1c74dd82bbb3aebe3353456e9cfb6f36b1c230bee1754e9bc2fbbce",
                   "test/win32/sessions-running-cmd.ps1":  "0b2c67aa7bebd9981abd9b159546885aaf8856c249cd8df26ceb2bf5f6e59ec6",
                   "test/win32/session-vanished.ps1":  "61b7542f3a5d3d1f1fea94e55df07bf7a373b1f72cb4d60a5d5d03f514a7e777",

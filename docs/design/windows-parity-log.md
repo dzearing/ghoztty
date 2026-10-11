@@ -34791,3 +34791,20 @@ moved to T1814.
 - **Validation**: floor lanes all PASS, P1–P3 ALL PASS, 29 due harnesses plus
   agent-upgrade and agent-lineage-suites green. **Filed** T1816 (mac seat:
   run the e2e over this resolution, which differs from main's).
+
+## 2026-10-10 — T1798: a Windows persistence pane whose shell exits is proven to say so
+
+- **No code change was owed.** Main's c6619717b fixed Mac panes left dead
+  over a zombie because the only reap check rode the pty reader's EOF. ConPTY
+  never gives that EOF, and Windows never relied on it: `PtyChild.tryWaitFn`
+  polls the process handle, the holder's exit poller runs it every 200 ms and
+  frames EXIT, and T1796's shared `reapExited` sweep is a second net.
+- **What landed is the proof.** A Windows agent unit test on a real ConPTY
+  (delayed exit, and exit with a background process still on the console;
+  negative control goes red) and `test\win32\session-shell-exit.ps1`, which
+  runs on the test desktop: PowerShell, cmd, delayed exit, and exit under a
+  `start /b` grandchild all tombstone in 57-384 ms (C's 3.4 s is its own
+  ping), show `Process exited`, and stay tombstones when typed into. New
+  guard row `session-shell-exit`.
+- **Validation**: floor lanes all PASS, harness floor PASS (after adding the
+  script's `# persistence:` marker), P1-P3 ALL PASS.
