@@ -202,6 +202,57 @@ if (Test-Path $avExe) {
     }
 }
 
+# ------------------------------------- 4a. the re-run is off the user's screen
+
+# T1815: floor-lane re-runs a crashed test binary under cdb, and that re-run
+# executes the same win32 tests T1813 moved off the input desktop. The crasher
+# below names the desktop it is on before it faults, so where the re-run ran is
+# measured from inside the debuggee rather than inferred from how it was
+# launched. The control runs the same binary straight from this process, which
+# proves the probe can tell the two desktops apart.
+@(
+    'const std = @import("std");',
+    'const W = std.os.windows;',
+    'extern "kernel32" fn GetCurrentThreadId() callconv(.winapi) W.DWORD;',
+    'extern "user32" fn GetThreadDesktop(id: W.DWORD) callconv(.winapi) ?W.HANDLE;',
+    'extern "user32" fn GetUserObjectInformationW(h: W.HANDLE, idx: c_int, buf: [*]u16, len: W.DWORD, needed: *W.DWORD) callconv(.winapi) W.BOOL;',
+    'pub fn main() !void {',
+    '    var buf: [256]u16 = [_]u16{0} ** 256;',
+    '    var needed: W.DWORD = 0;',
+    '    if (GetThreadDesktop(GetCurrentThreadId())) |h| {',
+    '        _ = GetUserObjectInformationW(h, 2, &buf, buf.len * 2, &needed);',
+    '    }',
+    '    const n = std.mem.indexOfScalar(u16, &buf, 0) orelse 0;',
+    '    var out: [768]u8 = undefined;',
+    '    const len = try std.unicode.utf16LeToUtf8(&out, buf[0..n]);',
+    '    std.debug.print("DESKTOP={s}\n", .{out[0..len]});',
+    '    const p: *volatile u8 = @ptrFromInt(0x10);',
+    '    p.* = 1;',
+    '}'
+) | Set-Content -Path (Join-Path $work 'deskav.zig') -Encoding ASCII
+Push-Location $work
+$b5 = & zig build-exe deskav.zig -luser32 2>&1
+Pop-Location
+$deskExe = Join-Path $work 'deskav.exe'
+Check 'the desktop-reporting crasher built' (Test-Path $deskExe) "$b5"
+
+if (Test-Path $deskExe) {
+    $ctlFile = Join-Path $work 'desk-control.txt'
+    & cmd.exe /c "`"$deskExe`" > `"$ctlFile`" 2>&1"
+    $ctl = Get-Content -LiteralPath $ctlFile -Raw -ErrorAction SilentlyContinue
+    $ctlDesk = if ($ctl -match 'DESKTOP=(\S+)') { $Matches[1] } else { '' }
+    Check 'control: run directly, the crasher names a desktop' ($ctlDesk -ne '') "got: $ctl"
+    Check 'control: that desktop is not the lane desktop' ($ctlDesk -ne 'GhozttyLaneDesktop') "got '$ctlDesk'"
+
+    $deskOut = Join-Path $work 'desk-dumps'
+    $dr = Invoke-CrashCatch -Exe $deskExe -OutDir $deskOut -TimeoutSeconds 120 -Writer { param($s) }
+    Check 'the re-run still catches the crash' ($dr -and $dr.Crashed -and $dr.ExceptionCode -eq '0xc0000005') `
+        "crashed=$($dr.Crashed) code=$($dr.ExceptionCode)"
+    $errText = if ($dr -and $dr.ErrLogPath) { Get-Content -LiteralPath $dr.ErrLogPath -Raw -ErrorAction SilentlyContinue } else { '' }
+    $runDesk = if ($errText -match 'DESKTOP=(\S+)') { $Matches[1] } else { '' }
+    Check 'the debuggee under cdb ran on GhozttyLaneDesktop' ($runDesk -eq 'GhozttyLaneDesktop') "got '$runDesk' from $($dr.ErrLogPath)"
+}
+
 # ------------------------------------------------- 4b. captures do not pile up
 
 # A /ma dump of a test binary is ~120 MB, and .dumps\ is gitignored, so nothing

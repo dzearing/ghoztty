@@ -1,15 +1,15 @@
 {
     "guard":  "crash-stacks",
     "script":  "test/win32/crash-stacks.ps1",
-    "generated":  "2026-09-24T00:56:11-07:00",
-    "commit":  "7b53a701c",
+    "generated":  "2026-10-11T00:22:30-07:00",
+    "commit":  "fe9baf50c",
     "uncommitted":  [
                         "scripts/lib/CrashCatch.ps1",
                         "test/win32/crash-stacks.ps1"
                     ],
     "files":  {
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
-                  "scripts/lib/CrashCatch.ps1":  "0549bb476eec479d60cb18a51882599585c572e4101deedd71354d43769ec6f8",
-                  "test/win32/crash-stacks.ps1":  "c1b73b66a3afbebf2c7aa7d22dd69f96f956ea978dbc0f0d97ac0dad76371b99"
+                  "scripts/lib/CrashCatch.ps1":  "9d9607d0fd750c0537ed48d7711902e29449d5798ff97406bf23d61f48cccf60",
+                  "test/win32/crash-stacks.ps1":  "d5bc3c0802b16f15d9c80804b0aa9dac36f533d542d6cad5c9daa86a42fbc5d0"
               }
 }

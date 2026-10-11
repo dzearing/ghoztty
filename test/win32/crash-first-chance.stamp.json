@@ -1,14 +1,14 @@
 {
     "guard":  "crash-first-chance",
     "script":  "test/win32/crash-first-chance.ps1",
-    "generated":  "2026-09-24T02:08:21-07:00",
-    "commit":  "e4364e21b",
+    "generated":  "2026-10-11T00:25:54-07:00",
+    "commit":  "fe9baf50c",
     "uncommitted":  [
-                        "test/win32/crash-first-chance.ps1"
+                        "scripts/lib/CrashCatch.ps1"
                     ],
     "files":  {
                   "scripts/crash-catch.ps1":  "c8515ad0ae67ec2fc457f54a7477f5afb5fc28281906f261d631ad0a640ca4aa",
-                  "scripts/lib/CrashCatch.ps1":  "0549bb476eec479d60cb18a51882599585c572e4101deedd71354d43769ec6f8",
+                  "scripts/lib/CrashCatch.ps1":  "9d9607d0fd750c0537ed48d7711902e29449d5798ff97406bf23d61f48cccf60",
                   "scripts/lib/CrashDump.ps1":  "17d0900f709f2b500e444f9166c1c80a712cfe33ca3f54f8c59594b4efadb670",
                   "test/win32/crash-first-chance.ps1":  "87ef370d66a61a2689c51f3d677589eab39e4ac1def7230cc320d4d72ef50a7e"
               }

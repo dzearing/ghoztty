@@ -49,6 +49,11 @@
 # about.
 . "$PSScriptRoot\CrashDiag.ps1"
 
+# T1815: the re-run below executes the very tests whose windows T1813 moved off
+# the user's screen, so it starts on the same background desktop the lane did.
+# LaneDesktop.ps1 dot-sources nothing, so there is no cycle here either.
+. "$PSScriptRoot\LaneDesktop.ps1"
+
 # ------------------------------------------------------------- finding cdb
 
 function Get-CdbPath {
@@ -952,14 +957,24 @@ function Invoke-CrashCatch {
 
         & $Writer ("crash-catch: attempt $a/$Attempts -- $cdbPath -> $base")
         $t0 = Get-Date
-        $p = Start-Process -FilePath $cdbPath -ArgumentList ($argList -join ' ') `
-            -RedirectStandardOutput $log -RedirectStandardError $errLog -NoNewWindow -PassThru
-        # Cache the handle before the child exits or ExitCode reads empty
-        # (the PS 5.1 Start-Process trap).
+        # T1815: on the background lane desktop, never the user's. This used to
+        # be Start-Process from the caller's own process -- floor-lane, which is
+        # on the INPUT desktop -- so a crashed win32 lane re-ran its banner
+        # tests where the user could see them. cmd does the redirection
+        # Start-Process used to; /s keeps the inner quoting verbatim. The
+        # debuggee inherits cdb's desktop, and cdb inherits cmd's.
+        $inner = ('"' + $cdbPath + '" ' + ($argList -join ' ') +
+            ' > "' + $log + '" 2> "' + $errLog + '"')
+        $p = Start-LaneProcess -CommandLine ('cmd.exe /s /c "' + $inner + '"')
+        if (-not $p.LaneDesktop) { & $Writer 'crash-catch: lane desktop unavailable -- the re-run is on the INPUT desktop' }
+        # Start-LaneProcess has already cached the handle, so ExitCode survives
+        # the child's exit (the PS 5.1 Start-Process trap); cmd /c returns cdb's.
         $null = $p.Handle
         if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
             & $Writer "crash-catch: TIMEOUT after ${TimeoutSeconds}s -- killing"
-            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+            # The tree, not cmd alone: killing cmd would orphan cdb and the
+            # debuggee on a desktop nobody can see.
+            & taskkill.exe /T /F /PID $p.Id 2>&1 | Out-Null
             $p.WaitForExit(10000) | Out-Null
         }
         $seconds = [int]((Get-Date) - $t0).TotalSeconds

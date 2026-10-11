@@ -34953,3 +34953,23 @@ moved to T1814.
   P1–P3 are green. NOT RUN: a real held-Shift click. No key can be held on the
   test desktop, and the user's own desktop is off limits. The harness posts the
   message that the Shift read produces. Mac half: T1807.
+
+## 2026-10-11 — T1815: a crashed lane's debugger re-run stays off the user's screen
+
+- **What changed.** When a test lane crashes, floor-lane re-runs the crashed
+  binary under cdb to capture every thread's stack. That re-run used to start
+  from floor-lane's own process, on the user's desktop, so a crashed win32 lane
+  re-ran its banner tests where the user could see them. It now starts on the
+  same hidden `GhozttyLaneDesktop` the lane itself ran on (T1813), and the
+  debuggee inherits it.
+- **How.** `Invoke-CrashCatch` (`scripts\lib\CrashCatch.ps1`) launches cdb
+  through `Start-LaneProcess` with cmd doing the `>`/`2>` redirection, and kills
+  the whole tree on a timeout. The Store `cdbX64.exe` alias inherits the
+  desktop like any other child; that was measured, not assumed.
+- **Evidence.** `test\win32\crash-stacks.ps1` section 4a: a crasher that prints
+  its own desktop before faulting reports `GhozttyLaneDesktop` under the
+  re-run, the crash is still caught, and a direct run of the same binary reports
+  a different desktop. ALL PASS (115). crash-first-chance ALL PASS (70). Filed
+  T1822 for the hand-run tools that still launch from the user's desktop
+  (test-binary-soak, crash-databreak), and T1821 for hook-json, which is red
+  because main's skill doc moved.
