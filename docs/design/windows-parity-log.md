@@ -35244,3 +35244,17 @@ moved to T1814.
   yet. hook-json and split-divider are still red for older reasons that T1841
   and T1853 already track. The duplicates filed by mistake (T1862, T1863) are
   closed.
+
+## 2026-10-11 — T1841: the Windows copy of the ghoztty skill matches main again
+
+- **What.** The guide agents read to drive Ghoztty had fallen behind main on
+  Windows: no `+stash` / `+restore` section, and older wording. The pristine
+  mirror is re-vendored from `origin/main`. The Windows fork is now
+  byte-identical to the Mac bundle again. One sentence was added to both:
+  the per-window `--color=random` gradient has not landed on Windows (T1832),
+  so there it still gives the dark tint.
+- **Evidence.** `test/win32/hook-json.ps1` ALL PASS (55) on a fresh debug
+  build, guard stamped. floor-lane all run.
+- **Closed.** T1821 (same drift, filed earlier) is closed as a duplicate.
+  split-divider is still red on T533 (wanted ~862, got 840), which T1853
+  already tracks. The re-filing T1864 is closed as a duplicate.
