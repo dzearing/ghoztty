@@ -1893,7 +1893,7 @@ fn layoutActions(self: *MachineChooser, l: Layout) void {
 /// (`seeActivityButton`, T1747). Restore All is gated on the machine's live
 /// session COUNT instead (T335), which is why the roster is read here.
 fn actionComposition(self: *const MachineChooser) chooser_layout.Composition {
-    return compositionFor(self.selectedRow(), self.roster.aliveCount());
+    return compositionFor(self.selectedRow(), self.roster.aliveCount(self.window.app));
 }
 
 /// Pure half of `actionComposition` — unit-tested. `null` is the empty list

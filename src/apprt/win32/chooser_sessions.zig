@@ -73,6 +73,27 @@ pub fn isConnectable(s: Session) bool {
     return hasLiveChild(s);
 }
 
+/// A session the chooser OFFERS (T1791, Mac's `actionable`,
+/// `MachineChooserView.swift`): connectable, and not held by a viewer that is
+/// not one of our panes. The agent reports `attached` for two states the user
+/// cannot act on from here — a pane just closed, whose session stays bound to
+/// us for the 5 s undo window, and a session another machine's viewer holds —
+/// and a Resume row for either reads as a leak and invites reviving a window the
+/// user deliberately closed.
+///
+/// Keyed on `open_locally` (one of our panes carries the id) rather than on a
+/// "closing" marker, so it holds by construction: a session on screen here is
+/// always offered (Show), even mid-reconnect when it is momentarily detached,
+/// and a genuinely detached session — the real Resume case — is untouched.
+///
+/// The ONE filter for the rows, the keyboard cursor, the machine row's count
+/// capsule and the Restore All gate, so none of them can disagree about what
+/// is listed.
+pub fn isActionable(s: Session, open_locally: bool) bool {
+    if (!isConnectable(s)) return false;
+    return open_locally or !s.attached;
+}
+
 /// The last component of a path, for the cwd rung of the label ladder. Handles
 /// both separators (a Windows agent reports `\`, a WSL one `/`) and ignores a
 /// trailing separator, so `C:\dev\ghoztty\` still names `ghoztty` and a drive
@@ -250,8 +271,8 @@ pub fn badgeFill(bg: Rgb, tone: Tone) Rgb {
 /// `attached` alone is deliberately NOT the signal: a locally-open session can
 /// be detached for a moment during a reconnect swap (its pane still references
 /// the id, so `open_locally` stays true and no mark flickers on), and a session
-/// attached by ANOTHER machine's viewer is that viewer's, not left over — it
-/// already reads `attached`. Local-target only: for a remote machine, that
+/// attached by ANOTHER machine's viewer is that viewer's, not left over (and
+/// since T1791 not listed at all). Local-target only: for a remote machine, that
 /// machine's own windows are invisible from here, so "not in any window" would
 /// be a guess.
 pub fn orphaned(s: Session, open_locally: bool, local_target: bool) bool {
@@ -264,16 +285,17 @@ pub fn orphaned(s: Session, open_locally: bool, local_target: bool) bool {
 /// - Alive: `busy` / `needs input`, and NOTHING for idle — the default needs no
 ///   noise.
 /// - Dead: the exit label (which is why `exit_buf` is a parameter).
-/// - Then, for a session NOT open in one of our panes: `attached` when some
-///   other viewer holds it, else `not in any window` when the caller says the
-///   row is `orphaned` (T520) — a live local session nothing shows.
+/// - Then, for a session NOT open in one of our panes: `not in any window` when
+///   the caller says the row is `orphaned` (T520) — a live local session
+///   nothing shows.
 ///
-/// Deliberately no `open` chip (T1760) and no `pinned` one. A chip marks the
-/// EXCEPTION (`MachineChooserView.swift:856-866`): every persistent local
-/// session is pinned, and since T1746 the row's own Show / Resume button already
-/// says whether it is on screen, so `open` sat on nearly every row to repeat it.
-/// `attached` stays because this list still offers rows another viewer holds,
-/// which Mac's `actionable` filter drops; on Windows that row IS the exception.
+/// Deliberately no `open`, `attached` or `pinned` chip, as on Mac
+/// (`MachineChooserView.swift:856-866`). A chip marks the EXCEPTION: every
+/// persistent local session is pinned, and since T1746 the row's own Show /
+/// Resume button already says whether it is on screen, so `open` sat on nearly
+/// every row to repeat it (T1760). `attached` went with T1791: `isActionable`
+/// no longer lists a session another viewer holds, so no listed row is in the
+/// state the chip named.
 ///
 /// The dead arm is a BACKSTOP as of T1364, not a state the user meets:
 /// `isConnectable` keeps exited sessions out of the list entirely, so nothing
@@ -297,11 +319,6 @@ pub fn badges(out: []Badge, exit_buf: []u8, s: Session, open_locally: bool, orph
 
     if (open_locally) {
         // On screen here: the Show button says so, and nothing else needs to.
-    } else if (s.attached) {
-        if (n < out.len) {
-            out[n] = .{ .text = "attached", .tone = .neutral };
-            n += 1;
-        }
     } else if (orphan and n < out.len) {
         out[n] = .{ .text = orphan_text, .tone = .warn };
         n += 1;
@@ -1068,13 +1085,28 @@ test "badges: a row open here wears no openness chip, and a dead row leads with 
     try testing.expectEqual(@as(usize, 1), busy_open.len);
     try testing.expectEqualStrings("busy", busy_open[0].text);
 
+    // Held by another viewer (T1791): no chip - `isActionable` keeps such a
+    // row out of the list, and the chip that named it went with it.
     const elsewhere = badges(&out, &ebuf, .{ .alive = true, .attached = true }, false, false);
-    try testing.expectEqualStrings("attached", elsewhere[0].text);
+    try testing.expectEqual(@as(usize, 0), elsewhere.len);
 
     const dead = badges(&out, &ebuf, .{ .alive = false, .exit_code = 2, .attached = true }, false, false);
-    try testing.expectEqual(@as(usize, 2), dead.len);
+    try testing.expectEqual(@as(usize, 1), dead.len);
     try testing.expectEqualStrings("exited (2)", dead[0].text);
-    try testing.expectEqualStrings("attached", dead[1].text);
+}
+
+test "isActionable: an attached session no pane of ours holds is not offered (T1791)" {
+    // The real Resume case: live, detached, not on screen here.
+    try testing.expect(isActionable(.{ .alive = true }, false));
+    // On screen here (Show), attached or momentarily detached mid-reconnect.
+    try testing.expect(isActionable(.{ .alive = true, .attached = true }, true));
+    try testing.expect(isActionable(.{ .alive = true }, true));
+    // A pane just closed (bound to us for the undo window), or another
+    // viewer's: attached, and no pane of ours holds it.
+    try testing.expect(!isActionable(.{ .alive = true, .attached = true }, false));
+    // The dead-end backstop still applies, whatever the openness.
+    try testing.expect(!isActionable(.{ .alive = false, .relaunchable = true }, false));
+    try testing.expect(!isActionable(.{ .alive = false }, true));
 }
 
 test "badges never overrun the caller's buffer" {
@@ -1103,7 +1135,7 @@ test "orphaned: precisely 'no local pane holds this live local session' (T520)" 
     try testing.expect(!orphaned(.{ .alive = true }, false, false));
 }
 
-test "badges: an orphaned row reads 'not in any window', and open/attached beat it" {
+test "badges: an orphaned row reads 'not in any window', and open beats it" {
     var out: [2]Badge = undefined;
     var ebuf: [32]u8 = undefined;
 
@@ -1118,12 +1150,9 @@ test "badges: an orphaned row reads 'not in any window', and open/attached beat 
     try testing.expectEqualStrings("busy", busy[0].text);
     try testing.expectEqualStrings(orphan_text, busy[1].text);
 
-    // The openness slot is one slot: a row open here leaves it empty, and
-    // attached still wins it over the orphan mark.
+    // The openness slot is one slot: a row open here leaves it empty.
     const open = badges(&out, &ebuf, .{ .alive = true }, true, false);
     try testing.expectEqual(@as(usize, 0), open.len);
-    const attached = badges(&out, &ebuf, .{ .alive = true, .attached = true }, false, false);
-    try testing.expectEqualStrings("attached", attached[0].text);
 }
 
 test "sublineCount counts only the lines the agent reported" {
@@ -1420,11 +1449,12 @@ test "no row wears an affordance badge - the tombstone rows are gone (T1364)" {
     const live = badges(&out, &exit_buf, .{ .alive = true }, false, false);
     try testing.expectEqual(@as(usize, 0), live.len);
 
-    // The badge run at its widest is now two: state + openness.
-    const busy_held = badges(&out, &exit_buf, .{ .alive = true, .activity = "busy", .attached = true }, false, false);
-    try testing.expectEqual(@as(usize, 2), busy_held.len);
-    try testing.expectEqualStrings("busy", busy_held[0].text);
-    try testing.expectEqualStrings("attached", busy_held[1].text);
+    // The badge run at its widest is now two: state + openness - and since
+    // T1791 the only openness chip left is the orphan mark.
+    const busy_orphan = badges(&out, &exit_buf, .{ .alive = true, .activity = "busy" }, false, true);
+    try testing.expectEqual(@as(usize, 2), busy_orphan.len);
+    try testing.expectEqualStrings("busy", busy_orphan[0].text);
+    try testing.expectEqualStrings(orphan_text, busy_orphan[1].text);
 }
 
 test "badgeList spells a badge run for the roster's log oracle (T1760)" {

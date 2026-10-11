@@ -847,8 +847,9 @@ pub const VisibleRow = struct {
 
 /// The rows worth rendering, in agent order: the sessions whose program is
 /// still running (T1364 — a tombstone is not a row, relaunchable or not), minus
-/// anything the user just killed. Fills the caller's buffer and returns its
-/// filled prefix.
+/// any held by a viewer that is not one of our panes (T1791,
+/// `chooser_sessions.isActionable`), minus anything the user just killed. Fills
+/// the caller's buffer and returns its filled prefix.
 pub fn visible(self: *const SessionRoster, app: *App, out: []VisibleRow) []const VisibleRow {
     const roster = self.owned orelse return out[0..0];
     var n: usize = 0;
@@ -877,6 +878,9 @@ pub fn visible(self: *const SessionRoster, app: *App, out: []VisibleRow) []const
         // machine's own layout view, so the rung is answered from the right
         // record on both and a remote row is no longer nameless.
         const live = liveFor(app, s.id);
+        // T1791: attached, and no pane of ours holds it — a pane just closed
+        // (inside its undo window) or another viewer's. Not offered.
+        if (!chooser_sessions.isActionable(row, live.open)) continue;
         out[n] = .{
             .session = row,
             .live = live,
@@ -928,15 +932,19 @@ pub fn sortRows(self: *const SessionRoster, rows: []VisibleRow) void {
 /// and the button cannot outlive the rows that justify it. NOT capped at
 /// `max_rows`: the gate is a property of the machine, not of what fits on
 /// screen.
-pub fn aliveCount(self: *const SessionRoster) usize {
+///
+/// Since T1791 it counts what is OFFERED, as Mac's `highlightedAliveSessionCount`
+/// counts its displayed (actionable) sessions: a session another viewer holds,
+/// or one whose pane was just closed, is not a row, so it does not make two.
+pub fn aliveCount(self: *const SessionRoster, app: *App) usize {
     const roster = self.owned orelse return 0;
     var n: usize = 0;
     for (roster.sessions) |s| {
         if (self.isKilled(s.id)) continue;
-        // One predicate for "is there a live child here", shared with the
-        // Restore All floor. Since T1364 it is also what decides the rows, so
-        // this count and the rendered list can no longer disagree.
-        if (chooser_sessions.hasLiveChild(.{ .id = s.id, .alive = s.alive })) n += 1;
+        // The same predicate `visible` keeps a row by, so this count and the
+        // rendered list can no longer disagree.
+        const row: chooser_sessions.Session = .{ .id = s.id, .alive = s.alive, .attached = s.attached };
+        if (chooser_sessions.isActionable(row, liveFor(app, s.id).open)) n += 1;
     }
     return n;
 }
@@ -972,13 +980,22 @@ pub fn logListed(self: *const SessionRoster, app: *App) void {
     const shown = self.visible(app, &rows);
     const listed = shown.len;
     var hidden: usize = 0;
+    // T1791: live sessions left out because a viewer that is not one of our
+    // panes holds them (a pane just closed, or another machine's). Same absence
+    // oracle as `hidden`, against the agent's own `attached`.
+    var held: usize = 0;
     if (self.owned) |roster| {
         for (roster.sessions) |s| {
             if (self.isKilled(s.id)) continue;
-            if (!chooser_sessions.isConnectable(.{ .id = s.id, .alive = s.alive })) hidden += 1;
+            const row: chooser_sessions.Session = .{ .id = s.id, .alive = s.alive, .attached = s.attached };
+            if (!chooser_sessions.isConnectable(row)) {
+                hidden += 1;
+            } else if (!chooser_sessions.isActionable(row, liveFor(app, s.id).open)) {
+                held += 1;
+            }
         }
     }
-    log.info("chooser roster: listing {d} session(s), {d} exited hidden", .{ listed, hidden });
+    log.info("chooser roster: listing {d} session(s), {d} exited hidden, {d} held elsewhere hidden", .{ listed, hidden, held });
 
     // Which chips each listed row wears (T1760), from the same `badges` call
     // the painter makes. Owner-drawn again: the only other way to see a chip is

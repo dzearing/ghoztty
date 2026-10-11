@@ -35054,3 +35054,27 @@ moved to T1814.
   on the user's screen at 03:07. The turn closed the picker. The installed
   hook still carries the old instruction until a publish ships T1823's fix,
   so this turn files a publish request.
+
+## 2026-10-11 — T1791: the machine chooser lists only the sessions this window can act on
+
+- **What changed.** The chooser's session list no longer offers sessions that
+  another Ghoztty window is already showing. Mac's `actionable` filter did
+  this already. The machine row's count, the keyboard cursor and the Restore
+  All button go by the same list, so none of them can disagree with the rows.
+  The grey `attached` chip is gone, as on Mac, because no listed row can be in
+  that state any more.
+- **How.** `chooser_sessions.isActionable` keeps a session when it is still
+  running and either one of our panes holds it or nothing is attached to it.
+  `SessionRoster.visible` and `aliveCount` both use it. The roster's log line
+  now also says `N held elsewhere hidden`.
+- **Evidence.** New sections 3b and 3c of `test\win32\chooser-sessions.ps1`
+  report ALL PASS (33). Section 3c starts a second app on the same debug agent.
+  That app lists none of the sessions the first app holds, still lists its
+  own pane, and its count equals its rows. With the filter switched off, 3c
+  fails twice, so the check can go red. All four floor lanes, P1-P3, the
+  harness floor and the six other chooser scripts are green. hook-json is red
+  only on T1821's mirror drift.
+- **Finding.** On Windows, `+close` ends a pane's session at once. The "just
+  closed, still attached for five seconds" state that Mac filters out was
+  never seen here (`lingering attached: False`). Section 3b passes without
+  that state, which is why 3c is the real check.

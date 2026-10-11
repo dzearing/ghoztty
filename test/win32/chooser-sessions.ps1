@@ -13,7 +13,11 @@
 #      lighter than the dialog background it sits on;
 #   3. Kill ends the session: clicking the first card's Kill button opens the
 #      destructive confirmation, approving it logs the close, the agent
-#      confirms it, and `+sessions` stops listing that id.
+#      confirms it, and `+sessions` stops listing that id;
+#   3b/3c. only what THIS viewer can act on is offered (T1791, Mac's
+#      `actionable`): a just-closed pane's session is not a row, and a second
+#      app on the same agent lists none of the sessions the first one holds,
+#      while its own pane stays listed and its count capsule equals the rows.
 #
 # WHY A LOG LINE IS THE ORACLE. The roster is owner-drawn on the dialog's own
 # surface - there are no HWNDs to read back with WM_GETTEXT, so "what did it
@@ -309,6 +313,97 @@ try {
         if ($killedId -ne '') {
             $stillThere = @($after | Where-Object { $_.id -eq $killedId })
             Assert ($stillThere.Count -eq 0) 'the killed id specifically is gone'
+        }
+    }
+
+    # --- T1791: only what this viewer can act on is offered ---------------
+    # Mac's `actionable` filter: a session the agent reports ATTACHED that no
+    # pane of ours holds is not a row - a pane just closed (bound to us for the
+    # close's undo window) or another viewer's. The roster is owner-drawn, so
+    # the oracles are the roster's own lines, held against `+sessions` (which
+    # dials the agent directly and never goes through the app).
+    Write-Host ''
+    Write-Host '3b. a just-closed pane is not offered as a Resume row (T1791)'
+    $pre = @(Get-Sessions)
+    & $Exe +split --direction=right 2>$null | Out-Null
+    Start-Sleep -Seconds 2
+    $post = @(Get-Sessions)
+    $fresh = @($post | Where-Object { @($pre | ForEach-Object { $_.id }) -notcontains $_.id })
+    Assert ($fresh.Count -eq 1) "the split opened exactly one new session ($($fresh.Count))"
+    if ($fresh.Count -eq 1) {
+        $closedId = $fresh[0].id
+        $listPat = 'chooser roster: listing (\d+) session\(s\), (\d+) exited hidden, (\d+) held elsewhere hidden'
+        & $Exe +close "--target=$($fresh[0].pane_id)" 2>$null | Out-Null
+        # Straight after the close: is the agent still holding the session for
+        # us (the undo window), or did the close end it outright? Either way it
+        # must not be offered; the line says which case this run exercised.
+        $mid = @(Get-Sessions | Where-Object { $_.id -eq $closedId })
+        $lingered = ($mid.Count -eq 1 -and $mid[0].alive -and $mid[0].attached)
+        Write-Host "  (closed session $closedId lingering attached: $lingered)"
+        # Reopen the chooser: a fresh open fetches, and the fetch says what it
+        # lists. Escape first - the dialog is modeless, and a second chord on an
+        # open one only focuses it.
+        $listsBefore = @(Select-String -Path $errlog -Pattern $listPat -ErrorAction SilentlyContinue).Count
+        Send-TestControlKey -Control $chooser -Key Escape | Out-Null
+        Start-Sleep -Milliseconds 500
+        $surf = Get-TestChildWindow -Window $g.Top -Class 'GhozttyTerminal'
+        $chooser = [IntPtr]::Zero
+        if (Send-TestKeys -Window $g.Top -Target $surf -Modifiers ctrl, shift -Key N) {
+            $chooser = Wait-TestWindow -ProcessId $g.Pid -Class 'GhozttyMachineChooser' -TimeoutMs 4000
+        }
+        Assert ($chooser -ne [IntPtr]::Zero) 'the chooser reopens after the close'
+        $lst = Wait-LogCount $errlog $listPat ($listsBefore + 1) 6000
+        Assert ($null -ne $lst) 'the reopened roster says what it lists'
+        if ($lst) {
+            $rowsNow = @(Select-String -Path $errlog -Pattern "chooser roster: row id=$closedId " -ErrorAction SilentlyContinue)
+            # Only rows logged AFTER the reopen count: the split's own row was
+            # (correctly) listed open before the close.
+            $lstIdx = (@(Select-String -Path $errlog -Pattern $listPat))[$listsBefore].LineNumber
+            $late = @($rowsNow | Where-Object { $_.LineNumber -gt $lstIdx })
+            Assert ($late.Count -eq 0) "the closed pane's session is not listed ($($late.Count) row line(s))"
+            if ($lingered -and $lst -match $listPat) {
+                Assert ([int]$Matches[3] -ge 1) "the lingering session is counted as held, not listed ($($Matches[3]))"
+            }
+        }
+    }
+
+    Write-Host ''
+    Write-Host '3c. another viewer''s sessions are not offered; the count agrees (T1791)'
+    # A SECOND app on the same debug agent: its own pane is ours to Show, and
+    # every session app 1 holds is attached to someone else from where it sits.
+    $held = @(Get-Sessions | Where-Object { $_.alive -and $_.attached })
+    Assert ($held.Count -ge 1) "app 1 holds attached sessions to hide ($($held.Count))"
+    $errlog3b = Join-Path $env:TEMP "ghoztty-t318-stderr3b-$PID.log"
+    Remove-Item $errlog3b -ErrorAction SilentlyContinue
+    $savedSuffix = $env:GHOZTTY_PIPE_SUFFIX
+    $env:GHOZTTY_PIPE_SUFFIX = "-t1791$PID"
+    try {
+        $g3 = Launch-Gui $errlog3b @('--session-persistence=true')
+    } finally { $env:GHOZTTY_PIPE_SUFFIX = $savedSuffix }
+    Assert ($null -ne $g3) 'a second viewer launches on the same agent'
+    if ($g3) {
+        $chooser3 = [IntPtr]::Zero
+        if (Send-TestKeys -Window $g3.Top -Target $g3.Surface -Modifiers ctrl, shift -Key N) {
+            $chooser3 = Wait-TestWindow -ProcessId $g3.Pid -Class 'GhozttyMachineChooser' -TimeoutMs 4000
+        }
+        Assert ($chooser3 -ne [IntPtr]::Zero) "the second viewer's chooser opens"
+        $lst3 = Wait-LogLine $errlog3b 'chooser roster: listing (\d+) session\(s\), (\d+) exited hidden, (\d+) held elsewhere hidden' 6000
+        Assert ($null -ne $lst3) "the second viewer's roster says what it lists"
+        if ($lst3 -and $lst3 -match 'listing (\d+) session\(s\), (\d+) exited hidden, (\d+) held elsewhere hidden') {
+            $listed3 = [int]$Matches[1]; $heldHidden = [int]$Matches[3]
+            Assert ($heldHidden -ge $held.Count) `
+                "every session app 1 holds is hidden from app 2 ($heldHidden hidden vs $($held.Count) held)"
+            $rows3 = @(Select-String -Path $errlog3b -Pattern 'chooser roster: row id=(\S+) open=(\w+) ' -ErrorAction SilentlyContinue)
+            $leaked = @($rows3 | Where-Object { @($held | ForEach-Object { $_.id }) -contains $_.Matches[0].Groups[1].Value })
+            Assert ($leaked.Count -eq 0) "no row names a session app 1 holds ($($leaked.Count))"
+            # Positive control: the filter is not simply emptying the list -
+            # app 2's own pane is listed, open, ready to Show.
+            $own = @($rows3 | Where-Object { $_.Matches[0].Groups[2].Value -eq 'true' })
+            Assert ($own.Count -ge 1) "app 2's own pane is still listed as open ($($own.Count))"
+            $cnt = Wait-LogLine $errlog3b 'chooser row count key=local count=(\d+)' 3000
+            $capsule = -1
+            if ($cnt -match 'count=(\d+)') { $capsule = [int]$Matches[1] }
+            Assert ($capsule -eq $listed3) "the machine row's count equals the rows listed ($capsule vs $listed3)"
         }
     }
 
