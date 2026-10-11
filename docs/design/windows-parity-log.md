@@ -35027,3 +35027,30 @@ moved to T1814.
   pickers. go-loop-guard (430), gate-negatives (58), guard-due (128),
   go-loop-resume (22), the harness floor, all four floor lanes and P1-P3 are green. The two pickers were
   left for the user to close.
+
+## 2026-10-11 — T1789: a config reload changes the opacity of windows that are already open
+
+- **What changed.** Reloading the config after changing `background-opacity`
+  now turns open windows translucent or opaque straight away. Before, only new
+  windows picked it up. A viewer pane opened while the window was opaque gets
+  its own opaque layer on the reload, so its toolbar stays visible. A window
+  the user toggled opaque stays opaque across a reload, as on Mac.
+- **How.** Each window keeps its own "toggled opaque" flag, the counterpart of
+  Mac's `isBackgroundOpaque`. Before this, that state was read back off the
+  window's current mode. `Window.syncTranslucency` applies the pure rule in
+  the new `opacity_mode.zig` from window creation, the toggle, and
+  `onConfigChange`. The rule stays out of `chrome_alpha.zig` because that file
+  belongs to the input-desktop-only translucent-window guard.
+- **Evidence.** The new `test\win32\opacity-reload.ps1` runs on the background
+  desktop and reports ALL PASS (20). It counts the app's own
+  `window translucent=` lines across 1.0 -> 0.6, toggle + 0.8, toggle +
+  1.0 and 0.6 again, and reads the viewer host's layered bit before and after.
+  `-NegativeControl` exits 1. All four floor lanes, P1-P3 and the harness floor
+  are green. hook-json is red only on T1821's mirror drift.
+- **Not run.** The pixel check that the desktop shows through after a reload
+  needs the input desktop, and the user is present. It is noted on T1808.
+- **Own mistake.** This turn ran the banner `.sh` from the PowerShell tool.
+  That is T1823's exact shape, and it opened an "open with" picker (pid 44652)
+  on the user's screen at 03:07. The turn closed the picker. The installed
+  hook still carries the old instruction until a publish ships T1823's fix,
+  so this turn files a publish request.

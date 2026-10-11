@@ -1,12 +1,10 @@
 {
     "guard":  "isolation-meta",
     "script":  "test/win32/isolation-meta.ps1",
-    "generated":  "2026-10-11T02:38:12-07:00",
-    "commit":  "d7fb6d9a0",
+    "generated":  "2026-10-11T03:27:08-07:00",
+    "commit":  "d847fd5c7",
     "uncommitted":  [
-                        "test/win32/focus-pull-scan.ps1",
-                        "test/win32/gate-negatives.ps1",
-                        "test/win32/hook-json.ps1"
+                        "test/win32/opacity-reload.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -207,6 +205,7 @@
                   "test/win32/notification-click-focus.ps1":  "43777bc3c6728b1874037f9e0917084ab8f8e51aff04bde05d86c991f0612edf",
                   "test/win32/notification-click-real.ps1":  "e57fda842e05013fca3f4f6813fc22b993dd67b34c3310735ab965d61f9202ff",
                   "test/win32/one-installer.ps1":  "e8f2855cab4c267362f75fe7d78b810375ebc6fd253a31ab70c43579b3cea76e",
+                  "test/win32/opacity-reload.ps1":  "b79367eddf623fd7c5907d0eafccc471acae34b4d0bd1eede04277cdb400eeef",
                   "test/win32/orphan-notify.ps1":  "d0a83000af274f7624da536bf4ff585d037a4c6768d10a365a71f57a03505e62",
                   "test/win32/overlay-zorder.ps1":  "62d995250f699e0b28745c9045f9ab8fd57b33e1b92b8802cf9f6a4dcc72003b",
                   "test/win32/palette-close-crash.ps1":  "a22d78896b8a333e0dec14c230101606f0c13b48dbf1bb7ff7b79a44e2e63707",

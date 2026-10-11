@@ -1,0 +1,14 @@
+{
+    "guard":  "opacity-reload",
+    "script":  "test/win32/opacity-reload.ps1",
+    "generated":  "2026-10-11T03:07:23-07:00",
+    "commit":  "d847fd5c7",
+    "uncommitted":  [
+                        "src/apprt/win32/opacity_mode.zig",
+                        "test/win32/opacity-reload.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/opacity_mode.zig":  "15862807a7578171d1b1c2b45c81f0de2951af89133c4d40cd1a5fd03d3ac07f",
+                  "test/win32/opacity-reload.ps1":  "b79367eddf623fd7c5907d0eafccc471acae34b4d0bd1eede04277cdb400eeef"
+              }
+}

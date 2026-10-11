@@ -7607,10 +7607,7 @@ pub fn performAction(
             // from upstream e5c31e8b3 (#11583).
             const force_opaque: bool = switch (target) {
                 .app => false,
-                .surface => |cs| blk: {
-                    if (self.config.@"background-opacity" >= 1.0) break :blk false;
-                    break :blk !cs.rt_surface.parent_window.translucent;
-                },
+                .surface => |cs| cs.rt_surface.parent_window.isForcedOpaque(),
             };
 
             _ = self.createWindow(.{ .force_opaque = force_opaque }) catch |err| {
@@ -8031,9 +8028,12 @@ pub fn performAction(
                 .surface => |core_surface| {
                     // Per-pixel alpha on and off (T1787). Mac toggles only a
                     // window whose config is translucent in the first place.
+                    // The toggle is its own flag (T1789), so a later config
+                    // reload recomputes the mode without forgetting it.
                     if (self.config.@"background-opacity" >= 1.0) return true;
                     const window = core_surface.rt_surface.parent_window;
-                    window.setTranslucent(!window.translucent);
+                    window.toggled_opaque = !window.toggled_opaque;
+                    window.syncTranslucency();
                 },
             }
             return true;

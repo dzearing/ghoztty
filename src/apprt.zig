@@ -74,6 +74,10 @@ test {
     // (T1787), same no-OS-imports deal.
     _ = @import("apprt/win32/chrome_alpha.zig");
 
+    // Pure win32 background-opacity mode rule (T1789): config plus the
+    // user's toggle, re-applied on reload. Same no-OS-imports deal.
+    _ = @import("apprt/win32/opacity_mode.zig");
+
     // Pure win32 background-blur mechanism choice (T1788): acrylic backdrop,
     // accent fallback below 22H2. Same no-OS-imports deal.
     _ = @import("apprt/win32/blur_backdrop.zig");

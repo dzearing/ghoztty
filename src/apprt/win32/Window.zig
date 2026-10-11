@@ -136,6 +136,7 @@ const hero_math = @import("hero_math.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
 const dim_math = @import("dim_math.zig");
 const chrome_alpha = @import("chrome_alpha.zig");
+const opacity_mode = @import("opacity_mode.zig");
 const blur_backdrop = @import("blur_backdrop.zig");
 const split_geometry = @import("split_geometry.zig");
 const rearrange_header = @import("rearrange_header.zig");
@@ -280,6 +281,12 @@ hwnd: ?w32.HWND = null,
 /// Off for an opaque config and for a window toggled opaque with
 /// `toggle_background_opacity`. Only `setTranslucent` moves it.
 translucent: bool = false,
+
+/// The user toggled this window opaque with `toggle_background_opacity`
+/// (Mac's `isBackgroundOpaque`). Kept apart from `translucent` so a config
+/// reload can recompute the mode without forgetting the toggle (T1789):
+/// `syncTranslucency` applies `opacity_mode.wantsTranslucent` of the two.
+toggled_opaque: bool = false,
 
 /// Tab split trees owned by this window (fixed-capacity inline array).
 tab_count: usize = 0,
@@ -1083,6 +1090,40 @@ pub fn setTranslucent(self: *Window, enabled: bool) void {
     );
 }
 
+/// Put the window in the mode `background-opacity` and the user's toggle ask
+/// for (T1789) - after `toggle_background_opacity`, and on every config
+/// reload, which before this left an open window in whatever mode it was
+/// created in.
+///
+/// Turning translucent also has to lift the GDI children that were created
+/// under an opaque config onto opaque layers of their own, or the viewer's
+/// chrome and an open tab-rename box would show the desktop through. Going
+/// the other way leaves them layered, which is harmless on an opaque window
+/// (`composeOpaqueLayer`).
+pub fn syncTranslucency(self: *Window) void {
+    // Panes are being torn down under a closing window (T1356's guard).
+    if (self.closing) return;
+    const opacity = self.app.config.@"background-opacity";
+    if (opacity < 1.0) {
+        for (0..self.tab_count) |tab| {
+            var it = self.tab_trees[tab].iterator();
+            while (it.next()) |entry| {
+                if (entry.view.viewer()) |v| v.composeOpaque();
+            }
+        }
+        if (self.rename_edit) |edit| composeOpaqueLayer(edit, "tab rename box");
+    }
+    const want = opacity_mode.wantsTranslucent(opacity, self.toggled_opaque);
+    if (want != self.translucent) {
+        self.setTranslucent(want);
+    } else if (self.translucent) {
+        // Same mode, new opacity: the chrome pre-fills its buffer with the
+        // background AT the configured opacity (`paintAlphaCorrect`), so it
+        // repaints to match the panes rather than keep the old alpha.
+        if (self.hwnd) |hwnd| _ = w32.RedrawWindow(hwnd, null, null, w32.RDW_INVALIDATE | w32.RDW_FRAME);
+    }
+}
+
 /// Compose a GDI-painted CHILD window fully opaque inside a per-pixel-alpha
 /// top-level (T1787) - the viewer host, the inline tab-rename box.
 ///
@@ -1248,6 +1289,9 @@ pub fn onConfigChange(self: *Window) void {
         applyChromeTheme(hwnd, self.app.config.@"window-theme", self.app.config.background);
         applyBackgroundBlur(hwnd, self.app.config.@"background-blur".enabled());
     }
+    // `background-opacity` takes effect on open windows, the way Mac's
+    // `syncAppearance` re-runs on reload (T1789).
+    self.syncTranslucency();
     // Re-apply unfocused-split-opacity/-fill (T74).
     self.updateDimOverlays();
     // Re-color split dividers so `split-divider-color` takes effect live
@@ -1544,7 +1588,8 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     // If background opacity is less than 1.0, make the window transparent.
     // Skip when force_opaque (parent window was toggled to opaque via
     // toggle_background_opacity — inherit that state for the new window).
-    if (app.config.@"background-opacity" < 1.0 and !options.force_opaque) {
+    self.toggled_opaque = options.force_opaque;
+    if (opacity_mode.wantsTranslucent(app.config.@"background-opacity", self.toggled_opaque)) {
         self.setTranslucent(true);
     }
     if (app.config.@"background-blur".enabled()) {
@@ -4481,12 +4526,12 @@ fn collapseAfterRelocation(self: *Window, source_tab: usize, fallback: *PaneView
 
 /// Has this window been toggled OPAQUE against a translucent config?
 ///
-/// Read off `translucent`, exactly the way the `new_window` action derives
-/// it (`toggle_background_opacity` is what moves it), so the two answers
-/// cannot drift.
-fn isForcedOpaque(self: *const Window) bool {
+/// The one answer the `new_window` action and the rearrange drop both
+/// inherit from, read off the toggle itself (T1789) rather than the window's
+/// current mode, which a refused `setTranslucent` could leave out of step.
+pub fn isForcedOpaque(self: *const Window) bool {
     if (self.app.config.@"background-opacity" >= 1.0) return false;
-    return !self.translucent;
+    return self.toggled_opaque;
 }
 
 /// Bring the window a pane was just dropped into to the front.

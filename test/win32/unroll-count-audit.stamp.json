@@ -1,15 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-11T02:44:32-07:00",
-    "commit":  "d7fb6d9a0",
+    "generated":  "2026-10-11T03:33:40-07:00",
+    "commit":  "d847fd5c7",
     "uncommitted":  [
-                        "scripts/focus-pull-scan.ps1",
-                        "scripts/go-loop-exec.ps1",
                         "scripts/guard-due.ps1",
-                        "test/win32/focus-pull-scan.ps1",
-                        "test/win32/gate-negatives.ps1",
-                        "test/win32/hook-json.ps1"
+                        "test/win32/opacity-reload.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -39,7 +35,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "e0fe92d30f7802c9d22f6f203fa26961b6b09e8f2dea4b567e8b68164d04e3d7",
+                  "scripts/guard-due.ps1":  "e31fd511a5f1f39ad480b7e8a8daa22d43cf45f0ff882372a267b46d96a8e22c",
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -344,6 +340,7 @@
                   "test/win32/notification-click-focus.ps1":  "43777bc3c6728b1874037f9e0917084ab8f8e51aff04bde05d86c991f0612edf",
                   "test/win32/notification-click-real.ps1":  "e57fda842e05013fca3f4f6813fc22b993dd67b34c3310735ab965d61f9202ff",
                   "test/win32/one-installer.ps1":  "e8f2855cab4c267362f75fe7d78b810375ebc6fd253a31ab70c43579b3cea76e",
+                  "test/win32/opacity-reload.ps1":  "b79367eddf623fd7c5907d0eafccc471acae34b4d0bd1eede04277cdb400eeef",
                   "test/win32/orphan-notify.ps1":  "d0a83000af274f7624da536bf4ff585d037a4c6768d10a365a71f57a03505e62",
                   "test/win32/overlay-zorder.ps1":  "62d995250f699e0b28745c9045f9ab8fd57b33e1b92b8802cf9f6a4dcc72003b",
                   "test/win32/palette-close-crash.ps1":  "a22d78896b8a333e0dec14c230101606f0c13b48dbf1bb7ff7b79a44e2e63707",

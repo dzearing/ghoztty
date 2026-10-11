@@ -2816,6 +2816,20 @@ $GuardTable = @(
             'test\win32\translucent-window.ps1'
         )
     },
+    # background-opacity on reload (T1789): an open window follows a config
+    # reload into (and out of) translucency, and keeps the user's opacity
+    # toggle across it. `opacity_mode` is the rule; whether the app actually
+    # re-applies it on reload is only visible to a running app, which this
+    # harness drives on the background desktop.
+    [pscustomobject]@{
+        Name   = 'opacity-reload'
+        Script = 'test\win32\opacity-reload.ps1'
+        Stamp  = 'test\win32\opacity-reload.stamp.json'
+        Covers = @(
+            'src\apprt\win32\opacity_mode.zig',
+            'test\win32\opacity-reload.ps1'
+        )
+    },
     # background-blur (T1788): the acrylic system backdrop behind a translucent
     # window. `blur_backdrop` decides acrylic vs the accent fallback and is
     # unit-tested; whether DWM actually BLURS what shows through is only
