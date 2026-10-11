@@ -1333,6 +1333,28 @@ $GuardTable = @(
             'test\win32\session-relaunch.ps1'
         )
     },
+    # T1817: a reboot restore of panes that were running a TUI - the shape every
+    # one of the user's Claude Code panes is in, which the ping/echo panes of
+    # the two rows above never exercise. It scores what the Mac's
+    # `--reboot-tui` scenario scores (main 7e78aacf4): the conversation history
+    # exactly once and in order, no query reply typed into the new shell, no
+    # mode left armed, a live prompt, the real size, and history that survives
+    # a resize. The snapshot writer, the restore-path helpers and the inbound
+    # ring are each a place one of those outcomes was broken on the Mac.
+    [pscustomobject]@{
+        Name   = 'session-reboot-tui'
+        Script = 'test\win32\session-reboot-tui.ps1'
+        Stamp  = 'test\win32\session-reboot-tui.stamp.json'
+        Covers = @(
+            'src\termio\Remote.zig',
+            'src\termio\restore_history.zig',
+            'src\termio\session_snapshot.zig',
+            'src\termio\session_notice.zig',
+            'src\remote\inbound_ring.zig',
+            'test\win32\lib\PaneLiveness.ps1',
+            'test\win32\session-reboot-tui.ps1'
+        )
+    },
     # T1048: the only harness that measures WHICH captured tree a rebuilt tab is
     # rebuilt from. It drives the one window nothing else can reach - the tab
     # list moving between `captureSessionLayout` and the rebuild, while the

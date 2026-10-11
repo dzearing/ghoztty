@@ -34868,3 +34868,26 @@ moved to T1814.
   control. Floor lanes all PASS.
 - **Not run.** Measuring the effect on T1763's resize flicker needs a live
   Claude run and a per-resize capture. Filed as T1818.
+
+## 2026-10-10 — T1814 parked; T1817: a reboot restore of TUI panes is now measured on Windows
+
+- **T1814 parked.** It needs the user away (a stand-in fullscreen window on
+  their desktop). `Get-UserPresence` read present (a fullscreen app in
+  front), so it is NOT RUN and `blocked` with an `unblock:` condition.
+- **T1817 what.** New `test\win32\session-reboot-tui.ps1`, the Windows port of
+  the Mac's `--reboot-tui` scenario. Two panes play TUI-shaped streams (an
+  inline 120-line conversation with queries and kitty pushes; a full-screen
+  alt-screen app with mouse tracking), plus a bare shell. Then the reboot
+  shape: app, manager and PTY holders all killed, app relaunched on the
+  default `restore` policy.
+- **Result**: ALL PASS (56), stamped, with a new `session-reboot-tui` guard
+  row. Exact history, no query replies in the new shell, no file a reply could
+  create, no mouse/focus/paste mode left on, live prompts, the real width, no
+  placeholder bring-up, and history that survives a resize.
+- **Found.** A pane that was in a full-screen TUI comes back blank above the
+  notice: the restore leaves the alt screen and drops its frame. Since T1801
+  that is every Claude Code pane on Windows. Filed **T1819** (P1, M1); the
+  harness prints `PENDING H4 (T1819)` until it lands.
+- **Measured, not scorable.** The kitty keyboard query gets no reply through
+  ConPTY, so it is reported as information. Restored rows are the window less
+  the notice banner, which the size check allows for.

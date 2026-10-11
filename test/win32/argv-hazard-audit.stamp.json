@@ -1,11 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-10T19:52:58-07:00",
-    "commit":  "29e2ac264",
+    "generated":  "2026-10-10T20:31:29-07:00",
+    "commit":  "bf1e6a16c",
     "uncommitted":  [
                         "scripts/guard-due.ps1",
-                        "test/win32/claude-fullscreen-env.ps1"
+                        "test/win32/session-reboot-tui.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -34,7 +34,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "852523494de47a1771903af4f36a7d2a3d1669619e365ea52924eb86980caeae",
+                  "scripts/guard-due.ps1":  "d233d945e23f75cb465e6133316f5c3b09b12e61f1f58c816629bfe4cc2cdd26",
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -402,6 +402,7 @@
                   "test/win32/session-persistence.ps1":  "f3c1e45d764a320f9f5a97979350697c1556fcc26a1b9ea71c1824abbd080a9c",
                   "test/win32/session-reattach.ps1":  "cb73635c3f3503ffc470a75e9a65ef39a5adb30496149ed22c92bfd360a4a1ea",
                   "test/win32/session-reattach-zombie.ps1":  "5dc30cdebcaf21553c17c3e13c3b08b3d4fc120fb487972407acb7377d51cf4a",
+                  "test/win32/session-reboot-tui.ps1":  "09ef0b34ac96d4c1299c4d46ee35dada99f3b2f5776d6c94488b543fd45b525d",
                   "test/win32/session-relaunch.ps1":  "cb149640d00e572745261626dc8637ed95b26a0d955bd16b6012c1e179f622ce",
                   "test/win32/session-relaunch-notify.ps1":  "9280e19d7454b618d7bb34ad85bd0f62fb0148d88ee8c1661a6fcf0bdf107914",
                   "test/win32/session-restore-maximized.ps1":  "5af0d5334fc5974b4bf643c69addfb503c6f35b8f161691c729ad704ffafddf7",
