@@ -21,7 +21,6 @@ struct PaneSidebarView: View {
 
     @Environment(\.controlActiveState) private var controlActiveState
     @Environment(\.paneSidebarInteractive) private var isInteractive
-    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         content
@@ -392,24 +391,34 @@ struct PaneSidebarView: View {
         }
     }
 
+    /// System Settings' sidebar search: a soft capsule, a magnifier, a
+    /// "Search" placeholder, a clear button once there is a query.
+    ///
+    /// The text is a borderless `NSTextField`, which draws its placeholder
+    /// and edits its text in the same rect. A SwiftUI `TextField` drew the
+    /// placeholder a point off from the field editor (it jumped when the
+    /// field took the caret), and an unbezeled `NSSearchField` moved its text
+    /// under the magnifier while editing.
     private var searchField: some View {
-        HStack(spacing: 5) {
+        HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.tertiary)
-            TextField("Search windows and panes", text: $state.filter)
-                .textFieldStyle(.plain)
-                .font(.system(size: 11))
-                .focused($isSearchFocused)
-                .onSubmit { revealFirstMatch() }
-                // Escape clears a query, then gives the caret back.
-                .onExitCommand {
-                    if state.filter.isEmpty { isSearchFocused = false } else { state.filter = "" }
-                }
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+            PaneSidebarSearchField(
+                text: $state.filter,
+                onSubmit: revealFirstMatch,
+                onFocusChange: { focused in
+                    state.isFilterFocused = focused
+                    // The diff filter's yield: a terminal in this window keeps
+                    // its `focused` flag while the field has the caret, and its
+                    // key handling would eat Cmd-C/V before the field editor
+                    // saw them.
+                    if focused { _ = controller.focusedSurface?.resignFirstResponder() }
+                })
             if !state.filter.isEmpty {
                 Button(action: { state.filter = "" }) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 10))
+                        .font(.system(size: 13))
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
@@ -417,18 +426,11 @@ struct PaneSidebarView: View {
                 .accessibilityLabel("Clear search")
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 4)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-        .padding(.horizontal, SidePanelRow.labelInset)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Capsule().fill(Color.primary.opacity(0.08)))
+        .padding(.horizontal, SidePanelRow.fillInset)
         .padding(.bottom, 6)
-        .onChange(of: isSearchFocused) { focused in
-            state.isFilterFocused = focused
-            // The diff filter's yield: a terminal in this window keeps its
-            // `focused` flag while the field has the caret, and its key
-            // handling would eat Cmd-C/V before the field editor saw them.
-            if focused { _ = controller.focusedSurface?.resignFirstResponder() }
-        }
     }
 
     // MARK: Drop feedback
@@ -984,5 +986,71 @@ struct FoldReveal: ViewModifier, Animatable {
                 }
             }
             .opacity(fraction > 0 ? 1 : 0)
+    }
+}
+
+/// The all-windows search's text: a borderless `NSTextField` (see
+/// `searchField`). Return reports a submit; Escape clears the query, and on
+/// an empty field gives the caret back.
+struct PaneSidebarSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let onSubmit: () -> Void
+    let onFocusChange: (Bool) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.placeholderString = "Search"
+        field.font = .systemFont(ofSize: 14)
+        field.isBezeled = false
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.usesSingleLineMode = true
+        field.cell?.wraps = false
+        field.cell?.isScrollable = true
+        field.delegate = context.coordinator
+        field.setAccessibilityLabel("Search windows and panes")
+        field.toolTip = "Search windows and panes — every word must match"
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.parent = self
+        if field.stringValue != text { field.stringValue = text }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: PaneSidebarSearchField
+
+        init(_ parent: PaneSidebarSearchField) { self.parent = parent }
+
+        func controlTextDidChange(_ note: Notification) {
+            guard let field = note.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+
+        func controlTextDidBeginEditing(_ note: Notification) { parent.onFocusChange(true) }
+        func controlTextDidEndEditing(_ note: Notification) { parent.onFocusChange(false) }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            switch selector {
+            case #selector(NSResponder.insertNewline(_:)):
+                parent.onSubmit()
+                return true
+            case #selector(NSResponder.cancelOperation(_:)):
+                if parent.text.isEmpty {
+                    control.window?.makeFirstResponder(nil)
+                } else {
+                    (control as? NSTextField)?.stringValue = ""
+                    parent.text = ""
+                }
+                return true
+            default:
+                return false
+            }
+        }
     }
 }

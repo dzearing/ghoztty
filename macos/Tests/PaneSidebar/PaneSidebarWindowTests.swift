@@ -170,6 +170,17 @@ struct PaneSidebarWindowTests {
         window.setContentSize(NSSize(width: 900, height: 560))
         await settle(1.2)
         try await captureComposited(window, "all-windows")
+        // The empty field, then focused: the placeholder must not move.
+        func all<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+            (view as? T).map { [$0] } ?? [] + view.subviews.flatMap { all(type, in: $0) }
+        }
+        let content = try #require(window.contentView)
+        let field = try #require(all(NSTextField.self, in: content).first { $0.placeholderString == "Search" })
+        try await captureComposited(window, "search-idle")
+        window.makeFirstResponder(field)
+        await settle(0.4)
+        try await captureComposited(window, "search-focused")
+        window.makeFirstResponder(nil)
         // Searching: only matching windows, under their project.
         main.paneSidebarState.filter = "ghoztty side"
         await settle(0.6)
