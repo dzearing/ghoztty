@@ -1,8 +1,8 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-10-10T20:36:39-07:00",
-    "commit":  "bf1e6a16c",
+    "generated":  "2026-10-10T21:43:29-07:00",
+    "commit":  "68ea5663f",
     "uncommitted":  [
                         "test/win32/session-reboot-tui.ps1"
                     ],
@@ -270,7 +270,7 @@
                   "test/win32/session-persistence.ps1":  "f3c1e45d764a320f9f5a97979350697c1556fcc26a1b9ea71c1824abbd080a9c",
                   "test/win32/session-reattach.ps1":  "cb73635c3f3503ffc470a75e9a65ef39a5adb30496149ed22c92bfd360a4a1ea",
                   "test/win32/session-reattach-zombie.ps1":  "5dc30cdebcaf21553c17c3e13c3b08b3d4fc120fb487972407acb7377d51cf4a",
-                  "test/win32/session-reboot-tui.ps1":  "09ef0b34ac96d4c1299c4d46ee35dada99f3b2f5776d6c94488b543fd45b525d",
+                  "test/win32/session-reboot-tui.ps1":  "08a515b17d028e9e82e2f27313a4476ffe72becde28f1cb10cd6489db10b9d45",
                   "test/win32/session-relaunch.ps1":  "cb149640d00e572745261626dc8637ed95b26a0d955bd16b6012c1e179f622ce",
                   "test/win32/session-relaunch-notify.ps1":  "9280e19d7454b618d7bb34ad85bd0f62fb0148d88ee8c1661a6fcf0bdf107914",
                   "test/win32/session-restore-maximized.ps1":  "5af0d5334fc5974b4bf643c69addfb503c6f35b8f161691c729ad704ffafddf7",

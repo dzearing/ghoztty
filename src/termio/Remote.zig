@@ -1313,17 +1313,37 @@ pub fn threadEnter(
         // there is no agent repaint to wait for, because there is no gap-fill —
         // the new session's stream starts at 0.
         if (restore_history.historyToPaint(self.restore_snapshot, self.attach_offset)) |snap| {
-            @call(.always_inline, termio.Termio.processOutput, .{ io, snap });
+            // A snapshot taken inside a full-screen program — on Windows, every
+            // Claude Code pane since T1801 — is the program's last frame on the
+            // ALTERNATE screen. Painted as it is, it lands on an alternate screen
+            // still at the restored pane's placeholder size, which has no
+            // scrollback: the frame's top rows scroll away, and leaving the alt
+            // screen afterwards discards the rest — the end of the conversation
+            // the user asked to keep. So it is turned into plain history first
+            // (T1819): the primary screen's rows, then the frame, painted on the
+            // primary where the notice fold takes them into the scrollback.
+            const size = size: {
+                io.renderer_state.mutex.lock();
+                defer io.renderer_state.mutex.unlock();
+                break :size .{ io.terminal.cols, io.terminal.rows };
+            };
+            const alt_history = restore_history.altHistory(alloc, snap, size[0], size[1]) catch |err| alt: {
+                log.warn("restore policy: could not flatten a full-screen snapshot err={}", .{err});
+                break :alt null;
+            };
+            defer if (alt_history) |h| alloc.free(h);
+            @call(.always_inline, termio.Termio.processOutput, .{ io, alt_history orelse snap });
 
             // The snapshot restores MODES as well as rows (the formatter emits
             // every differing mode), and the program that armed them is gone —
             // the same hazard T824 named on the relaunch path, arriving by a
             // different carrier. Left set, mouse tracking turns every pointer
-            // move into typed input at the fresh prompt, and a snapshot taken
-            // inside a TUI would leave the new shell running on the alternate
-            // screen with no scrollback to scroll. Read the screen back rather
-            // than assuming: the alt-screen exit must not fire on a pane that is
-            // already on the primary, where it would erase the restored rows.
+            // move into typed input at the fresh prompt, and a snapshot that
+            // could not be flattened above would leave the new shell running on
+            // the alternate screen with no scrollback to scroll. Read the screen
+            // back rather than assuming: the alt-screen exit must not fire on a
+            // pane that is already on the primary, where it would erase the
+            // restored rows.
             const on_alt = alt: {
                 io.renderer_state.mutex.lock();
                 defer io.renderer_state.mutex.unlock();
@@ -1333,8 +1353,9 @@ pub fn threadEnter(
                 io, restore_history.alt_screen_exit,
             });
             @call(.always_inline, termio.Termio.processOutput, .{ io, replay_mode_reset });
-            log.info("restore policy: restored {d} bytes of the dead session's screen (alt={})", .{
+            log.info("restore policy: restored {d} bytes of the dead session's screen (full_screen={} alt={})", .{
                 snap.len,
+                alt_history != null,
                 on_alt,
             });
         }

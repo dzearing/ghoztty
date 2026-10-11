@@ -50,6 +50,20 @@ pub fn write(
     input_modes: bool,
 ) !void {
     const screen = t.screens.active;
+
+    // A pane inside a full-screen program (T1819): the primary screen beneath it
+    // is not the active screen, so it used to be left out entirely — and the
+    // line printed before the program started was gone after any restore. Paint
+    // it first, as plain rows; pass 1's modes then enter the alternate screen
+    // (saving the cursor this leaves) and paint the frame over it, exactly the
+    // order the live program produced them in. Its rows come out of the same
+    // `max_rows` budget, so the persisted blob does not grow past it.
+    if (t.screens.active_key == .alternate) {
+        if (t.screens.get(.primary)) |primary| {
+            try writePrimaryUnder(writer, primary, max_rows -| t.rows);
+        }
+    }
+
     const br = screen.pages.getBottomRight(.screen) orelse return;
     const total = screen.pages.total_rows;
     const tl = if (total <= max_rows)
@@ -122,18 +136,61 @@ pub fn write(
     try writer.print("\x1b[{d};{d}H", .{ y + 1, x + 1 });
 }
 
+/// The primary screen under an active alternate screen: its last `max_rows`
+/// rows as content only (no modes or terminal extras — those belong to the
+/// alternate-screen pass that follows), the trimmed blank rows put back so the
+/// viewport lines up, and the primary cursor last. Writes nothing for a blank
+/// primary, so a TUI started in an empty pane snapshots exactly as before.
+fn writePrimaryUnder(
+    writer: *std.Io.Writer,
+    primary: *const terminal.Screen,
+    max_rows: usize,
+) !void {
+    if (max_rows == 0) return;
+    const br = primary.pages.getBottomRight(.screen) orelse return;
+    const total = primary.pages.total_rows;
+    const tl = if (total <= max_rows)
+        primary.pages.getTopLeft(.screen)
+    else
+        primary.pages.pin(.{ .screen = .{
+            .x = 0,
+            .y = @intCast(total - max_rows),
+        } }) orelse primary.pages.getTopLeft(.screen);
+
+    const trailing = trailingRows(tl, br);
+    if (trailing.all_blank) return;
+
+    var content: terminal.formatter.ScreenFormatter = .init(primary, .{
+        .emit = .vt,
+        .unwrap = true,
+        .trim = true,
+        .semantic_prompts = true,
+    });
+    content.content = .{ .selection = terminal.Selection.init(tl, br, false) };
+    content.extra = .none;
+    try content.format(writer);
+
+    try writer.writeAll("\x1b[0m");
+    for (0..trailing.rows) |_| try writer.writeAll("\r\n");
+    try writer.print("\x1b[{d};{d}H", .{ primary.cursor.y + 1, primary.cursor.x + 1 });
+}
+
 const Trailing = struct { rows: usize, all_blank: bool };
 
 /// How many rows at the bottom of `[tl, br]` hold no text — the rows the
 /// formatter will not write.
 fn trailingBlankRows(t: *const Terminal, tl: terminal.Pin, br: terminal.Pin) Trailing {
+    _ = t;
+    return trailingRows(tl, br);
+}
+
+fn trailingRows(tl: terminal.Pin, br: terminal.Pin) Trailing {
     var it = br.rowIterator(.left_up, tl);
     var rows: usize = 0;
     while (it.next()) |pin| {
         if (terminal.page.Cell.hasTextAny(pin.cells(.all))) return .{ .rows = rows, .all_blank = false };
         rows += 1;
     }
-    _ = t;
     return .{ .rows = rows, .all_blank = true };
 }
 
@@ -345,4 +402,55 @@ test "write: soft-wrapped lines survive a restore as reflowable lines" {
     const text = try dst.plainString(alloc);
     defer alloc.free(text);
     try testing.expect(std.mem.indexOf(u8, text, "abcdefghijklmnopqrstuvwxy") != null);
+}
+
+test "write: a pane inside a TUI keeps the primary screen beneath it (T1819)" {
+    const alloc = testing.allocator;
+    var t = try Terminal.init(alloc, .{ .cols = 40, .rows = 8 });
+    defer t.deinit(alloc);
+    var s = t.vtStream();
+    defer s.deinit();
+    s.nextSlice("BEFORE-TUI\r\nprompt> ");
+    s.nextSlice("\x1b[?1049h\x1b[H\x1b[2J\x1b[2;3HFINAL-FRAME\x1b[5;1H");
+    try testing.expect(t.screens.active_key == .alternate);
+
+    var t2 = try replay(alloc, &t, 600);
+    defer t2.deinit(alloc);
+
+    // The live re-attach shape is unchanged: still on the alt screen, same
+    // frame, same cursor.
+    try testing.expect(t2.screens.active_key == .alternate);
+    try expectSameCursor(&t, &t2);
+    const frame = try t2.plainString(alloc);
+    defer alloc.free(frame);
+    try testing.expect(std.mem.indexOf(u8, frame, "FINAL-FRAME") != null);
+    try testing.expect(std.mem.indexOf(u8, frame, "BEFORE-TUI") == null);
+
+    // And the primary under it came back, cursor and all: leaving the alt
+    // screen shows the line printed before the program started.
+    var s2 = t2.vtStream();
+    defer s2.deinit();
+    s2.nextSlice("\x1b[?1049l");
+    s.nextSlice("\x1b[?1049l");
+    try expectSameCursor(&t, &t2);
+    const a = try viewportText(alloc, &t);
+    defer alloc.free(a);
+    const b = try viewportText(alloc, &t2);
+    defer alloc.free(b);
+    try testing.expectEqualStrings(a, b);
+}
+
+test "write: a TUI over a blank primary writes no primary rows" {
+    const alloc = testing.allocator;
+    var t = try Terminal.init(alloc, .{ .cols = 40, .rows = 8 });
+    defer t.deinit(alloc);
+    var s = t.vtStream();
+    defer s.deinit();
+    s.nextSlice("\x1b[?1049h\x1b[HONLY");
+
+    var with: std.Io.Writer.Allocating = .init(alloc);
+    defer with.deinit();
+    try write(&with.writer, &t, 600, false);
+    // Nothing precedes pass 1: the first bytes are the palette, not rows.
+    try testing.expect(std.mem.startsWith(u8, with.written(), "\x1b]4;"));
 }

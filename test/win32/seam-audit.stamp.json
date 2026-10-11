@@ -1,9 +1,12 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-10T20:36:48-07:00",
-    "commit":  "bf1e6a16c",
+    "generated":  "2026-10-10T21:43:38-07:00",
+    "commit":  "68ea5663f",
     "uncommitted":  [
+                        "src/termio/Remote.zig",
+                        "src/termio/restore_history.zig",
+                        "src/termio/session_snapshot.zig",
                         "test/win32/session-reboot-tui.ps1"
                     ],
     "files":  {
@@ -444,11 +447,11 @@
                   "src/termio/message.zig":  "63d33245f9e7b2c47c7731c962293edbf771b0545650bfe76180b725b1c3e894",
                   "src/termio/open_failed_notice.zig":  "b1bb823e0da76a5767696caa8a8730ffa543ef857a3b37d9d33115ffb4549283",
                   "src/termio/Options.zig":  "13585e8d7c656de60a1e69c553a45be13cf3f2e9c0e761e0f42507d9a0b63b1f",
-                  "src/termio/Remote.zig":  "a2730800c8c3595143ddff5d2a8b43b26f79d0269761ff691c5231ad6f57894d",
-                  "src/termio/restore_history.zig":  "17ffdfe2bf7e107fe11cf26eab4c79bc6f815f85ad38e9531a5a5daa464e9de2",
+                  "src/termio/Remote.zig":  "bef30b0bc48062cfde53e88fb9f1c1d96c0f5493602bf5ac8f9bc0f84ad69745",
+                  "src/termio/restore_history.zig":  "97a014e735d210ce091a27a2c40f9f796ead624507373718a7ab193f7e34306f",
                   "src/termio/restore_park.zig":  "1e68d21a293216cfb5a003f0fa1cb494ba031fe4d7ac236b4f5ccd168e6f50bd",
                   "src/termio/session_notice.zig":  "786dd7fd1f71ac8aef90d5034824c7be140f56e1aa336b6e5b25d40637dc12d2",
-                  "src/termio/session_snapshot.zig":  "79a55a9923c1a92222c030f6f0f1e6cdc8886634ff8576775241dcfcf816fe71",
+                  "src/termio/session_snapshot.zig":  "72d2abd34fd2df726b6ae44aa88ed1b22c84cdb1b17253f9136597e278052ada",
                   "src/termio/shell_integration.zig":  "9516f3dc973e902e406f09418bce7454e2f09400de0f70462fdf0fd5c9492c58",
                   "src/termio/stream_handler.zig":  "f4426909f86c1b03e535d7217515150cf6ad84f41473fa6af63309f7e7235fc9",
                   "src/termio/Termio.zig":  "d818faf248859686c323c9fb8dee428f4836f985af65971fe405cec2d781c5c5",
@@ -776,7 +779,7 @@
                   "test/win32/session-persistence.ps1":  "f3c1e45d764a320f9f5a97979350697c1556fcc26a1b9ea71c1824abbd080a9c",
                   "test/win32/session-reattach.ps1":  "cb73635c3f3503ffc470a75e9a65ef39a5adb30496149ed22c92bfd360a4a1ea",
                   "test/win32/session-reattach-zombie.ps1":  "5dc30cdebcaf21553c17c3e13c3b08b3d4fc120fb487972407acb7377d51cf4a",
-                  "test/win32/session-reboot-tui.ps1":  "09ef0b34ac96d4c1299c4d46ee35dada99f3b2f5776d6c94488b543fd45b525d",
+                  "test/win32/session-reboot-tui.ps1":  "08a515b17d028e9e82e2f27313a4476ffe72becde28f1cb10cd6489db10b9d45",
                   "test/win32/session-relaunch.ps1":  "cb149640d00e572745261626dc8637ed95b26a0d955bd16b6012c1e179f622ce",
                   "test/win32/session-relaunch-notify.ps1":  "9280e19d7454b618d7bb34ad85bd0f62fb0148d88ee8c1661a6fcf0bdf107914",
                   "test/win32/session-restore-maximized.ps1":  "5af0d5334fc5974b4bf643c69addfb503c6f35b8f161691c729ad704ffafddf7",

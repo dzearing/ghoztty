@@ -517,21 +517,18 @@ $textB = Read-Pane $rid['tuiB'] 'postB'
 $tB = Tight $textB
 $atB = $tB.IndexOf($NOTICE, [StringComparison]::OrdinalIgnoreCase)
 $preB = if ($atB -ge 0) { $tB.Substring(0, $atB) } else { $tB }
-# PENDING T1819, not scored: the restore leaves the alternate screen so the
-# fresh shell is not stranded without scrollback, and leaving it discards the
-# frame (restore_history.zig). The Mac scores this; T1819 makes Windows match
-# and promotes this line to an Assert. Printed every run so it cannot go quiet.
-if ($preB.Contains('FINAL-B')) {
-    Say "  NOTE H4 tuiB: FINAL-B IS above the notice now - T1819 can promote H4 to a scored assertion"
-} else {
-    Say "  PENDING H4 tuiB: the full-screen app's last frame (FINAL-B) is not above the notice (T1819)"
-}
+# T1819: a snapshot taken inside the full-screen app is flattened into plain
+# history (restore_history.altHistory) instead of being painted onto an alt
+# screen the restore then has to leave - which discarded the frame.
+Assert "H4 tuiB: the full-screen app's last frame (FINAL-B) is above the notice" ($preB.Contains('FINAL-B'))
 $staleB = ([regex]::Matches($preB, 'frame\d+row\d+')).Count
 Assert "H5 tuiB: no stale full-screen frame rows replayed ($staleB)" ($staleB -eq 0)
-# Information: the Mac also keeps the primary screen UNDER the full-screen app
-# (BEFORE-TUI-B). On Windows, whether that line ever reached the app's own
-# primary screen depends on how conhost carried the alternate screen.
-Say "  info: tuiB's primary-screen line (BEFORE-TUI-B) restored: $($preB.Contains('BEFORE-TUI-B'))"
+# The Mac also keeps the primary screen UNDER the full-screen app
+# (BEFORE-TUI-B); since T1819 the session snapshot persists it beneath an
+# active alt screen (session_snapshot.writePrimaryUnder), so it is scored.
+$atBefore = $preB.IndexOf('BEFORE-TUI-B')
+$atFinal = $preB.IndexOf('FINAL-B')
+Assert "H6 tuiB: the line printed before the full-screen app started (BEFORE-TUI-B) is above its last frame ($atBefore < $atFinal)" ($atBefore -ge 0 -and $atBefore -lt $atFinal)
 
 # ============================================================================
 Say "== Q: no reply to the dead program's queries reached the new shell"
