@@ -1,11 +1,10 @@
 {
     "guard":  "cleanslate",
     "script":  "test/win32/cleanslate-audit.ps1",
-    "generated":  "2026-10-10T22:57:08-07:00",
-    "commit":  "acfe7cb72",
+    "generated":  "2026-10-10T23:47:10-07:00",
+    "commit":  "a1585e8b4",
     "uncommitted":  [
-                        "test/win32/app-restart.ps1",
-                        "test/win32/menu-bar.ps1"
+                        "test/win32/remote-disconnect.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -306,7 +305,7 @@
                   "test/win32/relay-signin-live.ps1":  "f35a640bd8f1bd3dfb8eec671e051d3c5d061026fd7609c62326d3cff96a02fe",
                   "test/win32/release-artifacts.ps1":  "13f74ae4a6bdd94b67d051c25ef8ffd2ae4bc5315a86b85f16e10d363789c4a5",
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",
-                  "test/win32/remote-disconnect.ps1":  "4386cea29967d897fd29e5c5aae282daec44f7971138dff2e181887a4dbbe65f",
+                  "test/win32/remote-disconnect.ps1":  "141b5a35d6c9540813b75eb09729b64adc9a9f3a5607e12dc721729d132a0391",
                   "test/win32/remote-inherit.ps1":  "51c3fd032cd9d40bd1318c0fe69c670dab65756103b4cf02cffe836c9009089a",
                   "test/win32/remote-pill.ps1":  "dc5d1cdcebbe758f4ffdad2200fa2fb8b0924f637992132f5e55084b831dac39",
                   "test/win32/remote-pill-relay-name.ps1":  "a0f08221e9ebcae3af2fb7281d92d5350a549957ba50c72c08fba136d833c996",

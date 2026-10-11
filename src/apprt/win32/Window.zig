@@ -211,6 +211,15 @@ pub const WM_APP_OPEN_MENU: u32 = w32.WM_APP + 10;
 /// release build ignores it.
 pub const WM_APP_TEST_DPICHANGED: u32 = w32.WM_APP + 38;
 
+/// Close the window the way a SHIFT-click on the caption X does (T1806): the
+/// Disconnect / Close question of a remote window is answered with its default,
+/// Disconnect, instead of being asked. The X posts it in place of SC_CLOSE when
+/// Shift was down at the click; the handler then runs the ordinary SC_CLOSE, so
+/// nothing about the close differs except the skipped question. Being a message
+/// rather than a key state read later, it is also how an acceptance script on a
+/// background desktop - where no key can be held - drives the same path.
+pub const WM_APP_SHIFT_CLOSE: u32 = w32.WM_APP + 40;
+
 /// Hero-mode carousel thumbnail refresh period (Mac parity: 0.15s).
 const HERO_SNAP_INTERVAL_MS: u32 = 150;
 const HERO_SNAP_TIMER_ID: usize = 0x4853; // 'HS'
@@ -630,6 +639,11 @@ hover_split: ?SplitTree(PaneView).Node.Handle = null,
 /// handlers that allocate into a window about to be freed (e.g. the
 /// new-tab "+" button calling addTab()).
 closing: bool = false,
+
+/// Set by `WM_APP_SHIFT_CLOSE` for exactly the SC_CLOSE it sends, and consumed
+/// by the WM_CLOSE that SC_CLOSE produces (T1806): that close takes Disconnect
+/// instead of asking. Never left set — WM_CLOSE clears it before anything else.
+skip_disconnect_prompt: bool = false,
 
 /// Optional resize limits in window-rect pixels (incl. non-client).
 /// 0 means "no limit" — the OS default applies. Set by .size_limit
@@ -7976,7 +7990,16 @@ fn handleNcLButtonUp(self: *Window, wparam: usize) bool {
         .minimize => w32.SC_MINIMIZE,
         .maximize => w32.SC_MAXIMIZE,
         .restore => w32.SC_RESTORE,
-        .close => w32.SC_CLOSE,
+        .close => blk: {
+            // Shift is read HERE, at the release that fires the close (T1806),
+            // never when the posted close is processed — the user may have let
+            // go of it by then.
+            if (w32.GetKeyState(w32.VK_SHIFT) < 0) {
+                _ = w32.PostMessageW(hwnd, WM_APP_SHIFT_CLOSE, 0, 0);
+                return true;
+            }
+            break :blk w32.SC_CLOSE;
+        },
         // The "…" never arms a press (it opened on the way down), so its
         // release has nothing to fire. Handled rather than `unreachable`: a
         // stray release is a message-ordering accident, not a bug worth
@@ -10463,6 +10486,13 @@ pub fn cancelTabRename(self: *Window) void {
 /// When the last tab has already been closed (tab_count == 0) there is
 /// nothing to confirm, so this returns true silently.
 pub fn confirmCloseIfNeeded(self: *Window) bool {
+    return self.confirmCloseIfNeededOpts(false);
+}
+
+/// `confirmCloseIfNeeded`, with `skip_disconnect_prompt` set for a Shift-click
+/// on the caption X (T1806): a remote window then takes Disconnect - the
+/// dialog's default, which ends nothing - without showing the dialog.
+pub fn confirmCloseIfNeededOpts(self: *Window, skip_disconnect_prompt: bool) bool {
     // One process snapshot for the whole window: `shellIsIdle` is asked once
     // per pane and Toolhelp32 is not cheap enough to walk per tab (T41).
     const alloc = self.app.core_app.alloc;
@@ -10506,12 +10536,20 @@ pub fn confirmCloseIfNeeded(self: *Window) bool {
     // an idle remote shell is precisely the one worth walking away from. It is
     // widened HERE, at an interactive caller, and never inside the programmatic
     // close path - a modal there would wedge every later `ghoztty +...`.
-    const offering = disconnectable > 0;
-    if (!needs and !offering) return true;
+    const step = session_disconnect.closeStep(needs, disconnectable, skip_disconnect_prompt);
+    switch (step) {
+        .close => return true,
+        .disconnect => {
+            log.info("close: shift-click takes Disconnect without asking ({d} session(s))", .{disconnectable});
+            self.pinDisconnect();
+            return true;
+        },
+        .ask_running, .ask_disconnect => {},
+    }
 
     const refocus: ?w32.HWND = if (self.getActiveSurface()) |s| s.hwnd else null;
 
-    if (!offering) {
+    if (step == .ask_running) {
         const result = ConfirmDialog.show(
             self.app,
             self.hwnd,
@@ -10986,6 +11024,18 @@ pub fn windowWndProc(
             window.heroOnSnapReady(wparam);
             return 0;
         },
+        WM_APP_SHIFT_CLOSE => {
+            // The ordinary SC_CLOSE, synchronously, so the WM_CLOSE it produces
+            // is the one that consumes the flag (T1806).
+            if (window.closing) return 0;
+            window.skip_disconnect_prompt = true;
+            _ = w32.SendMessageW(hwnd, w32.WM_SYSCOMMAND, w32.SC_CLOSE, 0);
+            // `window` is freed once the close destroys the HWND; only touch it
+            // when the window is still there (a close that never reached
+            // WM_CLOSE), so a stray flag cannot outlive this message.
+            if (w32.IsWindow(hwnd) != 0) window.skip_disconnect_prompt = false;
+            return 0;
+        },
         WM_APP_OPEN_MENU => {
             window.openMenuBar();
             return 0;
@@ -11111,7 +11161,12 @@ pub fn windowWndProc(
             // Title-bar X / Alt+F4 / close_all_windows land here. Confirm
             // once for the whole window if any tab has a running process.
             // window.close() then marks every pane's session CLOSE (T89e).
-            if (!window.confirmCloseIfNeeded()) return 0;
+            //
+            // A Shift-click on the X (T1806) arrives with the flag up: it is
+            // read and lowered first, so it can only ever apply to this close.
+            const skip = window.skip_disconnect_prompt;
+            window.skip_disconnect_prompt = false;
+            if (!window.confirmCloseIfNeededOpts(skip)) return 0;
             window.close();
             return 0;
         },

@@ -34930,3 +34930,26 @@ moved to T1814.
   Cancel default, the stand-in agent untouched, the relaunch never on the user's
   desktop. All four floor lanes are green. The Mac half (T1805) now has the
   exact names and wording to match.
+
+## 2026-10-10 — T1806: Shift-clicking a remote window's X closes it without asking
+
+- **What changed.** Holding Shift while clicking the X on a remote window
+  closes it with no Disconnect/Close dialog. It takes the dialog's default
+  answer, **Disconnect**: the window goes away and the remote session keeps
+  running, so nothing is lost and it can be re-attached later. A plain click
+  still asks. Shift does not skip the "processes are still running" question on
+  a local window, because a local close has no answer that keeps anything.
+- **How.** Shift is read at the button release that fires the close, not later.
+  The X then posts a private close message that runs the ordinary SC_CLOSE with
+  a one-shot flag, which WM_CLOSE reads and clears first. The decision is a pure
+  function, `session_disconnect.closeStep`, with four unit tests. Only the
+  caption X is covered. Ctrl+Shift+W, tab close buttons and Alt+F4 are
+  unchanged. Ctrl+Shift+W is itself a Shift chord, so reading Shift there would
+  skip the prompt every time.
+- **Evidence.** `test\win32\remote-disconnect.ps1` has a new section G: no
+  dialog, the window is gone, the remote shell is still alive. Section F also
+  checks that a Shift-close of a busy local window still asks. ALL PASS (56).
+  `-NegativeControl` fails as it should (A and G). All four floor lanes and
+  P1–P3 are green. NOT RUN: a real held-Shift click. No key can be held on the
+  test desktop, and the user's own desktop is off limits. The harness posts the
+  message that the Shift read produces. Mac half: T1807.

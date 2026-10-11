@@ -108,6 +108,34 @@ pub fn informativeText(buf: []u8, machine: ?[]const u8, count: usize) []const u8
 /// A buffer this size always holds `informativeText`'s longest output.
 pub const text_cap: usize = 160 + machine_name_cap;
 
+/// What a whole-window close does before it closes (T1806).
+pub const CloseStep = enum {
+    /// Nothing to ask: close.
+    close,
+    /// Ask "Processes are still running … Close anyway?".
+    ask_running,
+    /// Ask Disconnect / Close.
+    ask_disconnect,
+    /// Take the Disconnect answer without asking: the window closes and the
+    /// remote sessions keep running.
+    disconnect,
+};
+
+/// Decide a whole-window close from what the window holds.
+///
+/// `needs_confirm` is "some pane has a running process"; `disconnectable` is
+/// how many panes a Disconnect would spare (zero on any local window).
+/// `skip_disconnect_prompt` is a Shift-click on the caption X: it answers the
+/// Disconnect / Close question with the dialog's DEFAULT, Disconnect, which ends
+/// nothing — so the shortcut can only ever lose the user a dialog, never a
+/// session. It does not silence the local "processes are still running"
+/// question; a local close has no non-destructive answer to take instead.
+pub fn closeStep(needs_confirm: bool, disconnectable: usize, skip_disconnect_prompt: bool) CloseStep {
+    if (disconnectable > 0) return if (skip_disconnect_prompt) .disconnect else .ask_disconnect;
+    if (needs_confirm) return .ask_running;
+    return .close;
+}
+
 /// The "Disconnect" pin, kept here rather than as a bare bool on `Surface` so
 /// the ordering invariant it exists for is checkable without a desktop.
 ///
@@ -150,6 +178,26 @@ pub const DetachPin = struct {
 // =============================================================================
 
 const testing = std.testing;
+
+test "closeStep: a Shift-click on a remote window takes Disconnect without asking" {
+    try testing.expectEqual(CloseStep.disconnect, closeStep(false, 1, true));
+    try testing.expectEqual(CloseStep.disconnect, closeStep(true, 3, true));
+}
+
+test "closeStep: a plain click on a remote window still asks Disconnect / Close" {
+    try testing.expectEqual(CloseStep.ask_disconnect, closeStep(false, 1, false));
+    try testing.expectEqual(CloseStep.ask_disconnect, closeStep(true, 2, false));
+}
+
+test "closeStep: Shift never silences the local running-process question" {
+    try testing.expectEqual(CloseStep.ask_running, closeStep(true, 0, true));
+    try testing.expectEqual(CloseStep.ask_running, closeStep(true, 0, false));
+}
+
+test "closeStep: nothing running and nothing to spare closes outright" {
+    try testing.expectEqual(CloseStep.close, closeStep(false, 0, false));
+    try testing.expectEqual(CloseStep.close, closeStep(false, 0, true));
+}
 
 test "machineIsDisconnectable: only a cross-machine window" {
     // A window dialed to another box hosts sessions worth keeping.

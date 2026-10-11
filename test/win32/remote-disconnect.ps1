@@ -32,6 +32,10 @@
 #     there is no session to leave behind, and a local session-persistence pane
 #     is excluded on purpose because "closing a pane ends its session" is that
 #     feature's documented contract.
+#   Section G - Shift-click on the X (T1806). No dialog; the window closes and
+#     the remote shell keeps running, because Shift takes the dialog's default
+#     answer, Disconnect. Section F also shows a Shift-close of a busy LOCAL
+#     window still asks.
 #
 # Sections A/B/C run their shells IDLE on purpose. A remote window is confirmed
 # even when nothing is running under it - ending a process on another machine is
@@ -83,6 +87,8 @@ $td = New-TestDesktop
 # BS_DEFPUSHBUTTON: the Enter default, which for this dialog must be Disconnect.
 $BS_DEFPUSHBUTTON = 0x1
 $WM_CLOSE = 0x0010
+# Window.WM_APP_SHIFT_CLOSE (WM_APP + 40): what a Shift-click on the X posts.
+$WM_APP_SHIFT_CLOSE = 0x8028
 
 function Stop-Everything {
     [void](Reset-GhozttyTestState -Exe $Exe -SettleMs 800)
@@ -348,6 +354,34 @@ try {
 
     # -----------------------------------------------------------------------
     Write-Host ""
+    Write-Host "== G: Shift-clicking the X takes Disconnect without asking (T1806) =="
+
+    # The X posts WM_APP_SHIFT_CLOSE in place of SC_CLOSE when Shift is down at
+    # the click. No key can be held on the test desktop, so the message is
+    # posted directly: it is the whole difference a held Shift makes, and the
+    # Shift READ itself is the one line this harness cannot reach (NOT RUN on
+    # this box - it needs the interactive desktop). Section A is the positive
+    # control: the same close without Shift raised the dialog.
+    $remG = Open-RemoteWindow $g.Pid 'remdiscG' $agent.Id $shells
+    Assert ($null -ne $remG -and $remG.Hwnd -ne [IntPtr]::Zero) 'G: remote window opened'
+    if ($null -eq $remG -or $remG.Hwnd -eq [IntPtr]::Zero) { exit 1 }
+    Assert ($remG.Shell -gt 0) "G: the agent spawned a shell (pid $($remG.Shell))"
+    if ($remG.Shell -le 0) { exit 1 }
+    $shells += $remG.Shell
+
+    [void](Send-TestRawMessage -Window $remG.Hwnd -Message $WM_APP_SHIFT_CLOSE)
+    Assert ((Wait-Dialog $g.Pid $false 2500) -eq [IntPtr]::Zero) 'G: a Shift-close raises NO dialog'
+    Assert (Wait-WindowGone $remG.Hwnd) 'G: the remote window closes on a Shift-close'
+    Start-Sleep -Seconds 3
+    $aliveG = Test-PidAlive $remG.Shell
+    if ($NegativeControl) {
+        Assert (-not $aliveG) 'G: the remote shell keeps running after a Shift-close (inverted)'
+    } else {
+        Assert $aliveG 'G: the remote shell KEEPS RUNNING after a Shift-close (Disconnect, not Close)'
+    }
+
+    # -----------------------------------------------------------------------
+    Write-Host ""
     Write-Host "== C: Cancel keeps the window and the session =="
 
     $remC = Open-RemoteWindow $g.Pid 'remdiscC' $agent.Id $shells
@@ -449,6 +483,18 @@ try {
         Send-TestControlKey -Control $dlg -Key Escape | Out-Null
         Assert ((Wait-Dialog $g.Pid $false 4000) -eq [IntPtr]::Zero) 'F: Escape dismisses the local confirm'
         Assert (Test-TestWindowVisible -Window $g.Top) 'F: the local window survives the cancelled close'
+    }
+
+    # T1806 scope: Shift skips only the Disconnect question. A local close has no
+    # non-destructive answer to take instead, so a Shift-close of a busy local
+    # window still asks.
+    [void](Send-TestRawMessage -Window $g.Top -Message $WM_APP_SHIFT_CLOSE)
+    $dlg = Wait-Dialog $g.Pid $true
+    Assert ($dlg -ne [IntPtr]::Zero) 'F: a Shift-close of a busy LOCAL window still confirms'
+    if ($dlg -ne [IntPtr]::Zero) {
+        Send-TestControlKey -Control $dlg -Key Escape | Out-Null
+        [void](Wait-Dialog $g.Pid $false 4000)
+        Assert (Test-TestWindowVisible -Window $g.Top) 'F: the local window survives the cancelled Shift-close'
     }
 
     # And the PANE path (`Surface.close`), which grew its own offer arm and so
