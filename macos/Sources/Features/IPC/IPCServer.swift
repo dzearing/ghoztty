@@ -345,6 +345,10 @@ class IPCServer {
             return handleSetBanner(request)
         case "reload":
             return handleReload(request)
+        case "stash":
+            return handleStash(request, restore: false)
+        case "restore":
+            return handleStash(request, restore: true)
         case "new-remote-window":
             return handleNewRemoteWindow(request)
         default:
@@ -438,12 +442,20 @@ class IPCServer {
         // Convert color strings to Color values
         var config = parsed.config
         if let colorStr = parsed.color {
-            let nsColor: NSColor? = colorStr == "random"
-                ? Self.randomDarkColor()
-                : NSColor(hex: colorStr)
-            if let nsColor {
-                config.backgroundTint = Color(nsColor)
-                config.backgroundTintNSColor = nsColor
+            if colorStr == "random", ghostty.config.macosPaneStyle == .elevated {
+                // Elevated panes sit on the window's gradient: a random color
+                // is a random GRADIENT — tones from the same ocean family —
+                // and the terminals keep their theme. (An explicit hex is
+                // still a terminal tint, as is `random` in the flat style.)
+                config.deskVariant = .random()
+            } else {
+                let nsColor: NSColor? = colorStr == "random"
+                    ? Self.randomDarkColor()
+                    : NSColor(hex: colorStr)
+                if let nsColor {
+                    config.backgroundTint = Color(nsColor)
+                    config.backgroundTintNSColor = nsColor
+                }
             }
         }
 
@@ -472,7 +484,7 @@ class IPCServer {
                     originDirectory: parsed.config.workingDirectory))
                 let controller = TerminalController.newWindow(
                     ghostty,
-                    tree: SplitTree<PaneView>(root: .leaf(view: pane), zoomed: nil),
+                    tree: SplitTree<PaneView>(view: pane),
                     activate: parsed.focus.raisesWindow)
                 if parsed.focus.activatesApp {
                     NSApp.activate(ignoringOtherApps: true)
@@ -844,7 +856,7 @@ class IPCServer {
             let focusedSurfaceView = controller.focusedSurface
             let anchorPane = focusedSurfaceView.flatMap { controller.surfaceTree.pane(for: $0) }
                 ?? controller.focusedViewerPane
-                ?? controller.surfaceTree.first(where: { _ in true })
+                ?? controller.surfaceTree.visibleLeaves.first
             guard let anchorPane else {
                 Self.logger.warning("IPC: no pane to anchor split in target window")
                 return
@@ -1176,6 +1188,93 @@ class IPCServer {
     /// re-render the file preserving scroll. For a window target the reload
     /// applies to its focused pane. A terminal target is an error — there
     /// is nothing to reload.
+    /// `+stash` / `+restore`: move a pane out of its window's layout into the
+    /// pane sidebar, or back. Both idempotent, like every IPC command, and —
+    /// like every one — `+restore` leaves focus alone unless given `--focus`.
+    private func handleStash(_ request: IPCRequest, restore: Bool) -> IPCResponse {
+        let verb = restore ? "+restore" : "+stash"
+        var target: String?
+        var focus = false
+        for arg in request.arguments ?? [] {
+            if let value = arg.dropPrefix("--target=") {
+                target = String(value)
+            } else if arg == "--focus" || arg == "--focus=true" {
+                focus = true
+            } else if arg == "--focus=false" {
+                focus = false
+            }
+        }
+        guard let target else {
+            return IPCResponse(success: false, error: "--target is required for \(verb)")
+        }
+
+        pruneStaleTargets()
+        guard let entry = resolveTarget(target), entry.isAlive else {
+            return IPCResponse(success: false, error: "target '\(target)' not found in registry")
+        }
+        if case .window = entry {
+            return IPCResponse(
+                success: false,
+                error: "target '\(target)' is a window; \(verb) takes a pane (a name or pane id)")
+        }
+
+        var failure: String?
+        let semaphore = DispatchSemaphore(value: 0)
+        DispatchQueue.main.async {
+            defer { semaphore.signal() }
+            MainActor.assumeIsolated {
+                guard let (controller, pane) = Self.paneAndController(for: entry) else {
+                    failure = "target '\(target)' is no longer alive"
+                    return
+                }
+                guard controller.hasPaneSidebar else {
+                    failure = "target '\(target)' is in the Quick Terminal, which has no pane sidebar"
+                    return
+                }
+                if restore {
+                    controller.restorePane(pane, focus: false)
+                    if focus { controller.revealPane(pane) }
+                    return
+                }
+                // Checked first so a refusal is an error message, not a beep.
+                if !controller.surfaceTree.isStashed(pane) {
+                    do {
+                        _ = try controller.surfaceTree.stashing(pane)
+                    } catch SplitTreeStashError.lastVisiblePane {
+                        failure = "target '\(target)' is the last pane on screen in its window; "
+                            + "a window always shows at least one pane"
+                        return
+                    } catch {
+                        failure = "target '\(target)' is not in its window's layout"
+                        return
+                    }
+                    controller.stashPane(pane)
+                }
+            }
+        }
+        semaphore.wait()
+
+        if let failure {
+            return IPCResponse(success: false, error: failure)
+        }
+        Self.logger.info("IPC: \(restore ? "restored" : "stashed") '\(target)'")
+        return IPCResponse(success: true)
+    }
+
+    /// The pane a target names and the window that holds it NOW — found by
+    /// walking the live windows rather than trusting the controller recorded
+    /// at registration, which a pane moved between windows has left.
+    @MainActor
+    private static func paneAndController(for entry: TargetEntry) -> (BaseTerminalController, PaneView)? {
+        for window in NSApp.windows {
+            guard let controller = window.windowController as? BaseTerminalController else { continue }
+            if let pane = controller.surfaceTree.first(where: { entry.names($0) }) {
+                return (controller, pane)
+            }
+        }
+        return nil
+    }
+
     private func handleReload(_ request: IPCRequest) -> IPCResponse {
         var target: String?
         for arg in request.arguments ?? [] {
@@ -1664,9 +1763,19 @@ class IPCServer {
                     return
                 }
 
+                // A STASHED pane the layout leaves out stays stashed — the
+                // layout describes the grid, and a stash is not part of it.
+                // It is carried into the new tree (top level, where it is
+                // hidden anyway); one the layout DOES place is restored.
+                let placed = Set(newRoot.leaves())
+                let carried = controller.surfaceTree.stashedViews.filter { !placed.contains($0) }
+                let rootWithStash = carried.reduce(SplitTree<PaneView>(root: newRoot, zoomed: nil, stashed: [])) {
+                    $0.insertingAtTopLevel(view: $1, side: .right)
+                }
+
                 // Collect all current panes in the tree
                 let currentPanes = Set(controller.surfaceTree.map { $0 })
-                let keptPanes = Set(newRoot.leaves())
+                let keptPanes = Set(rootWithStash.map { $0 })
                 let removedPanes = currentPanes.subtracting(keptPanes)
 
                 // Focus stays where it was if the layout kept that pane, and
@@ -1685,7 +1794,7 @@ class IPCServer {
                 }
 
                 // Replace the tree
-                let newTree = SplitTree<PaneView>(root: newRoot, zoomed: nil)
+                let newTree = rootWithStash.withStash(carried.map(\.id))
                 controller.replaceSurfaceTree(
                     newTree,
                     moveFocusTo: newFocus.surfaceView,
@@ -1891,7 +2000,8 @@ class IPCServer {
                     focused: false,
                     exit_code: nil,
                     pane_type: "viewer",
-                    url: viewer.location
+                    url: viewer.location,
+                    stashed: controller.surfaceTree.isStashed(pane)
                 ))
             }
             guard let view = pane.surfaceView else {
@@ -1918,7 +2028,8 @@ class IPCServer {
                 name: paneName,
                 focused: view === focusedSurface,
                 exit_code: view.exitCode.map { Int($0) },
-                banner: view.paneBanner
+                banner: view.paneBanner,
+                stashed: controller.surfaceTree.isStashed(pane)
             ))
         case .split(let split):
             let direction: String = switch split.direction {
@@ -2038,6 +2149,13 @@ class IPCServer {
     @MainActor
     @discardableResult
     private static func bringForward(_ entry: TargetEntry) -> Bool {
+        // A STASHED pane is restored first: raising a pane you can't see
+        // raises nothing. `revealPane` restores, raises, and focuses.
+        if let (owner, pane) = paneAndController(for: entry), owner.surfaceTree.isStashed(pane) {
+            owner.revealPane(pane)
+            return true
+        }
+
         // A terminal pane goes through `focusSurface`, which also raises and
         // activates; a viewer pane has no surface, so it is made first
         // responder directly and its window raised.

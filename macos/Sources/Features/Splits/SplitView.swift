@@ -33,6 +33,12 @@ struct SplitView<L: View, R: View>: View {
     /// Called as the user works the divider. See `SplitViewDividerGesture`.
     let onDividerGesture: (SplitViewDividerGesture) -> Void
 
+    /// The `elevated` pane style: a real, transparent gap of this many points
+    /// between the two panes (the panes are raised cards on the window's
+    /// gradient). Nil is the classic look — a 1pt line in `dividerColor` —
+    /// whose geometry is exactly what it always was.
+    let paneGap: CGFloat?
+
     /// The visible size of the splitter, in points. The invisible size is a transparent hitbox that can still
     /// be used for getting a resize handle. The total width/height of the splitter is the sum of both.
     private let splitterVisibleSize: CGFloat = 1
@@ -63,9 +69,9 @@ struct SplitView<L: View, R: View>: View {
                     .accessibilityElement(children: .contain)
                     .accessibilityLabel(rightPaneLabel)
                 Divider(direction: direction,
-                        visibleSize: splitterVisibleSize,
+                        visibleSize: paneGap ?? splitterVisibleSize,
                         invisibleSize: splitterInvisibleSize,
-                        color: dividerColor,
+                        color: paneGap == nil ? dividerColor : .clear,
                         split: split,
                         onAdjust: { moveDivider(to: $0 * dim, in: dim) })
                     .position(splitterPoint)
@@ -100,10 +106,12 @@ struct SplitView<L: View, R: View>: View {
         onDividerGesture: @escaping (SplitViewDividerGesture) -> Void,
         @ViewBuilder left: (() -> L),
         @ViewBuilder right: (() -> R),
-        onEqualize: @escaping () -> Void
+        onEqualize: @escaping () -> Void,
+        paneGap: CGFloat? = nil
     ) {
         self.direction = direction
         self.split = split
+        self.paneGap = paneGap
         self.dividerColor = dividerColor
         self.resizeIncrements = resizeIncrements
         self.onDividerGesture = onDividerGesture
@@ -129,12 +137,12 @@ struct SplitView<L: View, R: View>: View {
         switch direction {
         case .horizontal:
             result.size.width *= split
-            result.size.width -= splitterVisibleSize / 2
+            result.size.width -= (paneGap ?? splitterVisibleSize) / 2
             result.size.width -= result.size.width.truncatingRemainder(dividingBy: self.resizeIncrements.width)
 
         case .vertical:
             result.size.height *= split
-            result.size.height -= splitterVisibleSize / 2
+            result.size.height -= (paneGap ?? splitterVisibleSize) / 2
             result.size.height -= result.size.height.truncatingRemainder(dividingBy: self.resizeIncrements.height)
         }
 
@@ -150,12 +158,13 @@ struct SplitView<L: View, R: View>: View {
             // For horizontal layouts we offset the starting X by the left rect
             // and make the width fit the remaining space.
             result.origin.x += leftRect.size.width
-            result.origin.x += splitterVisibleSize / 2
+            // A real gap is the WHOLE gap; the classic line straddles the edge.
+            result.origin.x += paneGap ?? (splitterVisibleSize / 2)
             result.size.width -= result.origin.x
 
         case .vertical:
             result.origin.y += leftRect.size.height
-            result.origin.y += splitterVisibleSize / 2
+            result.origin.y += paneGap ?? (splitterVisibleSize / 2)
             result.size.height -= result.origin.y
         }
 
@@ -166,10 +175,10 @@ struct SplitView<L: View, R: View>: View {
     private func splitterPoint(for size: CGSize, leftRect: CGRect) -> CGPoint {
         switch direction {
         case .horizontal:
-            return CGPoint(x: leftRect.size.width, y: size.height / 2)
+            return CGPoint(x: leftRect.size.width + (paneGap ?? 0) / 2, y: size.height / 2)
 
         case .vertical:
-            return CGPoint(x: size.width / 2, y: leftRect.size.height)
+            return CGPoint(x: size.width / 2, y: leftRect.size.height + (paneGap ?? 0) / 2)
         }
     }
 

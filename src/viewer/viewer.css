@@ -173,3 +173,13 @@ body.viewer-has-gutter .markdown-body {
   }
 }
 
+
+/* A glass pane (macos-pane-glass): the pane's tinted sheet is the page's
+ * background, as it is a terminal's. ViewerView toggles the class. */
+html.pane-glass,
+html.pane-glass body {
+  background-color: transparent;
+}
+html.pane-glass .markdown-body {
+  background-color: transparent;
+}

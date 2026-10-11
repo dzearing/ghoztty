@@ -118,7 +118,9 @@ extension Ghostty {
                 // a translucent wash, so a background color change repaints
                 // one element per region in one pass instead of several
                 // elements on their own schedules.
-                if surfaceView.paneBanner != nil {
+                // A glass pane has no base background: the sheet behind the
+                // whole pane is it, banner strip included.
+                if surfaceView.paneBanner != nil, !ghostty.config.paneGlass {
                     VStack(spacing: 0) {
                         Rectangle()
                             .fill(basePaneBackgroundColor)
@@ -201,6 +203,14 @@ extension Ghostty {
                                 background: paneBackgroundColor,
                                 paneWidth: geo.size.width,
                                 linkSurface: surfaceView)
+                            #if canImport(AppKit)
+                                // The terminal is inset below the banner, so
+                                // it can't see a pointer here; the grab
+                                // handle's reveal still has to. Cleared when
+                                // the banner goes away under the pointer.
+                                .onHover { surfaceView.pointerOverBanner = $0 }
+                                .onDisappear { surfaceView.pointerOverBanner = false }
+                            #endif
                                 .onPreferenceChange(BannerTargetHeightKey.self) { target in
                                     // The target comes from a hidden
                                     // animation-free copy of the banner, so it
@@ -746,6 +756,12 @@ extension Ghostty {
 
         /// Background tint color from IPC --color flag
         var backgroundTint: Color?
+
+        /// A WINDOW-level request carried in on the window's base config, like
+        /// `GHOZTTY_WINDOW_NAME`: in the elevated pane style, `--color=random`
+        /// randomizes the window's gradient desk (this) rather than tinting
+        /// its terminals. Read once by the controller that creates the window.
+        var deskVariant: PaneDeskVariant?
 
         #if canImport(AppKit)
         /// Resolved NSColor for the tint, avoiding lossy SwiftUI Color roundtrips

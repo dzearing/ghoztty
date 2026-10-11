@@ -49,6 +49,13 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// Re-resolved off the main thread on every navigation.
     @Published private(set) var worktree: ViewerWorktree?
 
+    /// Where the pointer is in this pane (this view's coordinates), or nil
+    /// when it is outside — what reveals the pane's grab handle. From a
+    /// tracking area OWNED by this view, so it keeps reporting while the
+    /// pointer is over the web view or the nav bar inside it.
+    @Published private(set) var mouseLocationInViewer: CGPoint?
+    private var pointerTrackingArea: NSTrackingArea?
+
     /// Guards against a slow resolution for a location the pane has since
     /// navigated away from overwriting the current answer.
     private var worktreeGeneration = 0
@@ -97,7 +104,38 @@ final class ViewerView: NSView, Codable, ObservableObject {
     /// happens to touch next.
     private(set) var mode: Mode {
         willSet { objectWillChange.send() }
-        didSet { updateImageSurface() }
+        didSet {
+            updateImageSurface()
+            applyGlass()
+        }
+    }
+
+    /// Whether this pane sits on a glass sheet (`macos-pane-glass`), set by
+    /// the leaf that hosts it — the view has no config of its own.
+    var isOnGlass = false {
+        didSet { if isOnGlass != oldValue { applyGlass() } }
+    }
+
+    /// Our own pages — markdown, code, a diff, an image — are see-through on
+    /// a glass pane, so the sheet behind is their background, as it is a
+    /// terminal's. A website or an HTML file keeps its own: a page that sets
+    /// no background was written for a white one.
+    private var drawsOnGlass: Bool { isOnGlass && !isLivePage }
+
+    private func applyGlass() {
+        guard let webView else { return }
+        let clear = drawsOnGlass
+        webView.setValue(!clear, forKey: "drawsBackground")
+        webView.underPageBackgroundColor = clear ? .clear : .windowBackgroundColor
+        imageSurface?.isOnGlass = clear
+        pushGlassToPage()
+    }
+
+    /// The template's own background (viewer.css) yields to the sheet.
+    private func pushGlassToPage() {
+        guard pageLoaded, showingTemplatePage else { return }
+        webView.evaluateJavaScript(
+            "document.documentElement.classList.toggle('pane-glass', \(drawsOnGlass))")
     }
 
     /// The file the template page is showing, if any. Kept separately from
@@ -358,6 +396,7 @@ final class ViewerView: NSView, Codable, ObservableObject {
         // Property observers don't run during init, so `mode`'s `didSet` has
         // not fired and the surface has to be mounted by hand here.
         updateImageSurface()
+        applyGlass()
         // A popup adopts a web view WebKit is already driving (see
         // `createWebViewWith`): loading our own request would fight that
         // navigation and break the opener↔popup link, and there is no file to
@@ -2165,6 +2204,38 @@ final class ViewerView: NSView, Codable, ObservableObject {
         return bounds.width >= Self.sidePanelGutterMinWidth ? .gutter : .compact
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let pointerTrackingArea { removeTrackingArea(pointerTrackingArea) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeInActiveApp, .inVisibleRect],
+            owner: self,
+            userInfo: nil)
+        addTrackingArea(area)
+        pointerTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        mouseLocationInViewer = convert(event.locationInWindow, from: nil)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        let location = convert(event.locationInWindow, from: nil)
+        // Only publish a change of band, not every pixel: this drives SwiftUI.
+        let wasInBand = mouseLocationInViewer.map { PaneGrabHandle.isInHoverRegion($0, in: bounds) }
+        if wasInBand != PaneGrabHandle.isInHoverRegion(location, in: bounds) || mouseLocationInViewer == nil {
+            mouseLocationInViewer = location
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        mouseLocationInViewer = nil
+    }
+
     override func layout() {
         super.layout()
         // Panes are resized constantly by split-tree drags, so the gutter ⇄
@@ -3658,6 +3729,7 @@ extension ViewerView: WKNavigationDelegate {
         refreshFindAfterLoad()
         if case .web = mode { return }
         pageLoaded = true
+        pushGlassToPage()
         // An HTML file IS the page — there is no template to inject into, and
         // calling into `window.__viewer` on someone else's document would only
         // throw. (Unless the load failed and we fell back to the template, in
@@ -3959,7 +4031,7 @@ extension ViewerView: WKUIDelegate {
         let pane = PaneView(viewer: popup)
         let newController = TerminalController.newWindow(
             controller.ghostty,
-            tree: SplitTree<PaneView>(root: .leaf(view: pane), zoomed: nil))
+            tree: SplitTree<PaneView>(view: pane))
         // A viewer-only window has no focused surface to title it, so pin the
         // popup's title the same way the `+new-window --view` path does.
         newController.titleOverride = pane.title

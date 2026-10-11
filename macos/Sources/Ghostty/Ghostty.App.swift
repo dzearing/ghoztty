@@ -546,6 +546,25 @@ extension Ghostty {
             case GHOSTTY_ACTION_TOGGLE_REARRANGE_MODE:
                 return toggleRearrangeMode(app, target: target)
 
+            case GHOSTTY_ACTION_TOGGLE_PANE_SIDEBAR:
+                return paneSidebarAction(app, target: target) { controller, _ in
+                    controller.togglePaneSidebar()
+                }
+
+            case GHOSTTY_ACTION_STASH_PANE:
+                return paneSidebarAction(app, target: target) { controller, surfaceView in
+                    // The keybind fires from the focused terminal: stash THAT
+                    // pane (a focused viewer reaches the menu item instead).
+                    guard let pane = controller.surfaceTree.first(where: { $0.surfaceView === surfaceView })
+                    else { return }
+                    controller.stashPane(pane)
+                }
+
+            case GHOSTTY_ACTION_RESTORE_STASHED_PANE:
+                return paneSidebarAction(app, target: target) { controller, _ in
+                    controller.restoreTopStashedPane()
+                }
+
             case GHOSTTY_ACTION_INSPECTOR:
                 controlInspector(app, target: target, mode: action.action.inspector)
 
@@ -1206,17 +1225,21 @@ extension Ghostty {
                         return true
                     }
 
+                    // Navigation moves between panes ON SCREEN: a stashed pane
+                    // is in the tree but not in the layout.
+                    let visible = controller.surfaceTree.visibleTree
+
                     // If the window has no splits, the action is not performable
-                    guard controller.surfaceTree.isSplit else { return false }
+                    guard visible.isSplit else { return false }
 
                     // Find the current node in the tree
-                    guard let targetNode = controller.surfaceTree.root?.node(view: surfaceView) else { return false }
+                    guard let targetNode = visible.root?.node(view: surfaceView) else { return false }
 
                     // Check if a split actually exists in the target direction before
                     // returning true. This ensures performable keybinds only consume
                     // the key event when we actually perform navigation.
                     let focusDirection: SplitTree<PaneView>.FocusDirection = splitDirection.toSplitTreeFocusDirection()
-                    guard controller.surfaceTree.focusTarget(for: focusDirection, from: targetNode) != nil else {
+                    guard visible.focusTarget(for: focusDirection, from: targetNode) != nil else {
                         return false
                     }
 
@@ -1251,14 +1274,15 @@ extension Ghostty {
                     guard let surfaceView = self.surfaceView(from: surface) else { return false }
                     guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
 
-                    guard controller.surfaceTree.isSplit else { return false }
+                    let visible = controller.surfaceTree.visibleTree
+                    guard visible.isSplit else { return false }
 
                     guard let splitDirection = SplitFocusDirection.from(direction: direction) else { return false }
 
-                    guard let targetNode = controller.surfaceTree.root?.node(view: surfaceView) else { return false }
+                    guard let targetNode = visible.root?.node(view: surfaceView) else { return false }
 
                     let focusDirection: SplitTree<PaneView>.FocusDirection = splitDirection.toSplitTreeFocusDirection()
-                    guard controller.surfaceTree.focusTarget(for: focusDirection, from: targetNode) != nil else {
+                    guard visible.focusTarget(for: focusDirection, from: targetNode) != nil else {
                         return false
                     }
 
@@ -1350,8 +1374,8 @@ extension Ghostty {
                     guard let surfaceView = self.surfaceView(from: surface) else { return false }
                     guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
 
-                    // If the window has no splits, the action is not performable
-                    guard controller.surfaceTree.isSplit else { return false }
+                    // If the window has no splits ON SCREEN, the action is not performable
+                    guard controller.surfaceTree.isVisiblySplit else { return false }
 
                     guard let resizeDirection = SplitResizeDirection.from(direction: resize.direction) else { return false }
                     NotificationCenter.default.post(
@@ -1404,8 +1428,8 @@ extension Ghostty {
                 guard let surfaceView = self.surfaceView(from: surface) else { return false }
                 guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
 
-                // If the window has no splits, the action is not performable
-                guard controller.surfaceTree.isSplit else { return false }
+                // If the window has no splits ON SCREEN, the action is not performable
+                guard controller.surfaceTree.isVisiblySplit else { return false }
 
                 NotificationCenter.default.post(
                     name: Notification.didToggleSplitZoom,
@@ -1432,12 +1456,39 @@ extension Ghostty {
                 guard let surfaceView = self.surfaceView(from: surface) else { return false }
                 guard let controller = surfaceView.window?.windowController as? BaseTerminalController else { return false }
 
-                guard controller.surfaceTree.isSplit else { return false }
+                guard controller.surfaceTree.isVisiblySplit else { return false }
 
                 NotificationCenter.default.post(
                     name: Notification.didToggleHeroMode,
                     object: surfaceView
                 )
+                return true
+
+            default:
+                assertionFailure()
+                return false
+            }
+        }
+
+        /// The pane sidebar's keybind actions, all window-scoped through the
+        /// surface that fired them.
+        private static func paneSidebarAction(
+            _ app: ghostty_app_t,
+            target: ghostty_target_s,
+            perform: (BaseTerminalController, SurfaceView) -> Void
+        ) -> Bool {
+            switch target.tag {
+            case GHOSTTY_TARGET_APP:
+                Ghostty.logger.warning("pane sidebar actions do nothing with an app target")
+                return false
+
+            case GHOSTTY_TARGET_SURFACE:
+                guard let surface = target.target.surface else { return false }
+                guard let surfaceView = self.surfaceView(from: surface) else { return false }
+                guard let controller = surfaceView.window?.windowController
+                        as? BaseTerminalController,
+                      controller.hasPaneSidebar else { return false }
+                perform(controller, surfaceView)
                 return true
 
             default:

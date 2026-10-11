@@ -79,6 +79,15 @@ final class TerminalRestorableState: TerminalRestorable {
     var windowTitleOverride: String? {
         internalState.windowTitleOverride
     }
+    var paneSidebarPinned: Bool? {
+        internalState.paneSidebarPinned
+    }
+    var paneSidebarHidden: Bool? {
+        internalState.paneSidebarHidden
+    }
+    var deskVariant: PaneDeskVariant? {
+        internalState.deskVariant
+    }
 
     /// Internal State we use to perform unit tests
     ///
@@ -161,6 +170,12 @@ class TerminalWindowRestoration: NSObject, NSWindowRestoration {
         let c = TerminalController.init(
             appDelegate.ghostty,
             withSurfaceTree: state.surfaceTree)
+
+        // The pane sidebar's layout before the window lays out its terminals.
+        if let pinned = state.paneSidebarPinned { c.paneSidebarState.isPinned = pinned }
+        if let hidden = state.paneSidebarHidden { c.paneSidebarState.isHidden = hidden }
+        c.deskVariant = state.deskVariant
+
         guard let window = c.window else {
             completionHandler(nil, TerminalRestoreError.windowDidNotLoad)
             return

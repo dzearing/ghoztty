@@ -582,6 +582,24 @@ fn actionCommands(action: Action.Key) []const Command {
             .description = "Toggle pane rearrange mode, giving every pane a drag header so panes can be moved between splits, tabs, and windows.",
         }},
 
+        .toggle_pane_sidebar => comptime &.{.{
+            .action = .toggle_pane_sidebar,
+            .title = "Toggle Pane Sidebar",
+            .description = "Show or hide the pane sidebar, the list of every pane in the window.",
+        }},
+
+        .stash_pane => comptime &.{.{
+            .action = .stash_pane,
+            .title = "Stash Pane",
+            .description = "Move the focused pane out of the layout and into the pane sidebar, where it keeps running.",
+        }},
+
+        .restore_stashed_pane => comptime &.{.{
+            .action = .restore_stashed_pane,
+            .title = "Restore Stashed Pane",
+            .description = "Bring the most recently stashed pane back into the layout.",
+        }},
+
         .toggle_readonly => comptime &.{.{
             .action = .toggle_readonly,
             .title = "Toggle Read-Only Mode",

@@ -37,7 +37,30 @@ class BaseTerminalController: NSWindowController,
 
     /// The currently focused surface.
     var focusedSurface: Ghostty.SurfaceView? {
-        didSet { syncFocusToSurfaceTree() }
+        didSet {
+            syncFocusToSurfaceTree()
+            publishFocusedPane()
+        }
+    }
+
+    /// `focusedPane`, published, for views that show which pane has focus
+    /// (the pane sidebar's selection). `focusedPane` itself is derived — from
+    /// `focusedSurface` for a terminal and from the window's first responder
+    /// for a viewer — so neither change reached an observing view, and the
+    /// highlight stayed on the old row. Kept current by `publishFocusedPane`.
+    @Published private(set) var publishedFocusedPane: PaneView?
+
+    /// Watches the window's first responder: a viewer pane taking or giving
+    /// up focus changes nothing else the controller hears about.
+    private var firstResponderObservation: NSKeyValueObservation?
+
+    /// Re-derive `focusedPane` and publish it if it moved.
+    func publishFocusedPane() {
+        let pane = focusedPane
+        guard pane !== publishedFocusedPane else { return }
+        publishedFocusedPane?.isFocusedPane = false
+        pane?.isFocusedPane = true
+        publishedFocusedPane = pane
     }
 
     /// The tree of splits within this terminal window.
@@ -60,6 +83,32 @@ class BaseTerminalController: NSWindowController,
 
     /// Names this window when resolving a pane drop.
     var rearrangeWindowRef: PaneDropWindowRef { PaneDropWindowRef(self) }
+
+    /// The pane sidebar's per-window state. See docs/design/pane-sidebar.md.
+    let paneSidebarState = PaneSidebarState()
+
+    /// This window's own gradient, when it was opened with `--color=random`
+    /// in the elevated pane style; nil is the default ocean desk. Persisted
+    /// (the seed) with the window's layout.
+    @Published var deskVariant: PaneDeskVariant? {
+        didSet {
+            guard deskVariant != oldValue, sessionLayoutEntryID != nil else { return }
+            SessionLayoutManifest.shared.scheduleSync(self)
+        }
+    }
+
+    /// The desk palette to draw, for the current terminal theme.
+    func deskPalette(isLight: Bool) -> PaneDeskPalette {
+        deskVariant?.palette(isLight: isLight) ?? .ocean(isLight: isLight)
+    }
+
+    /// The sidebar's AppKit host while it is showing, for drop geometry.
+    /// Set and cleared by the host itself.
+    weak var paneSidebarHost: PaneSidebarHostView?
+
+    /// Whether this kind of window has a pane sidebar at all. The Quick
+    /// Terminal has no chrome for one.
+    var hasPaneSidebar: Bool { true }
 
     /// Live only while rearrange mode is on. See `installRearrangeEscapeMonitor`.
     private var rearrangeEscapeMonitor: Any?
@@ -393,6 +442,10 @@ class BaseTerminalController: NSWindowController,
             }
         }
 
+        // A window opened with `--color=random` (elevated style) brings its
+        // own gradient in on its base config.
+        self.deskVariant = base?.deskVariant
+
         // Setup our bell state for the window
         setupBellNotificationPublisher()
 
@@ -540,6 +593,7 @@ class BaseTerminalController: NSWindowController,
     ) -> Ghostty.SurfaceView? {
         // We can only create new splits for surfaces in our tree.
         guard surfaceTree.root?.node(view: oldView) != nil else { return nil }
+        if let anchor = surfaceTree.pane(for: oldView) { restoreSplitAnchor(anchor) }
 
         // Inherit and shift the parent's background color for visual depth.
         // Use explicit tint if set, otherwise fall back to the terminal's
@@ -668,6 +722,7 @@ class BaseTerminalController: NSWindowController,
         ratio: Double = 0.5
     ) -> PaneView? {
         guard surfaceTree.root?.node(view: oldPane) != nil else { return nil }
+        restoreSplitAnchor(oldPane)
 
         let pane = PaneView(viewer: viewer)
         let newTree: SplitTree<PaneView>
@@ -707,6 +762,7 @@ class BaseTerminalController: NSWindowController,
     ) -> Ghostty.SurfaceView? {
         guard surfaceTree.root?.node(view: oldPane) != nil else { return nil }
         guard let ghostty_app = ghostty.app else { return nil }
+        restoreSplitAnchor(oldPane)
 
         var effectiveConfig = config ?? Ghostty.SurfaceConfiguration()
         if effectiveConfig.environmentVariables["GHOZTTY_WINDOW_NAME"] == nil {
@@ -984,6 +1040,9 @@ class BaseTerminalController: NSWindowController,
         if to.isEmpty {
             focusedSurface = nil
         }
+        // A viewer pane leaving the tree (or stashed) changes `focusedPane`
+        // without touching the first responder or `focusedSurface`.
+        publishFocusedPane()
 
         // Session close intent: a leaf that LEFT the tree was closed by the
         // user (removeSurfaceNode, or a redo of a close) — its agent session
@@ -998,8 +1057,8 @@ class BaseTerminalController: NSWindowController,
         // marking it would kill a session a live pane is using. See
         // `SessionCloseIntentPolicy`.
         let plan = SessionCloseIntentPolicy.plan(
-            from: from.root?.leaves() ?? [],
-            to: to.root?.leaves() ?? [],
+            from: SessionCloseIntentPolicy.leaves(of: from),
+            to: SessionCloseIntentPolicy.leaves(of: to),
             sessionID: { $0.surfaceView?.boundRemoteSessionID })
         // `keepAlive` is a re-adoption (an undone close, a pane moved between
         // windows): the pane is live again, so a Disconnect the user chose for
@@ -1028,17 +1087,20 @@ class BaseTerminalController: NSWindowController,
         for view in plan.keepAlive { ClosingSessions.shared.unmark(view.surfaceView?.boundRemoteSessionID) }
         for view in plan.spared { ClosingSessions.shared.unmark(view.surfaceView?.boundRemoteSessionID) }
 
+        // Another window's all-windows sidebar lists these panes.
+        PaneRoster.shared.changed()
+
         // Session persistence (T05): the split topology is the heart of the
         // layout manifest — re-sync on every tree change (new split, close,
-        // resize-equalize, ...). Debounced; each sync also restarts the
+        // resize-equalize, stash, ...). Debounced; each sync also restarts the
         // per-leaf session-id capture for freshly-opened panes.
         if sessionLayoutEntryID != nil {
             SessionLayoutManifest.shared.scheduleSync(self)
         }
 
         if heroModeState.isActive {
-            let oldLeaves = from.root?.leaves() ?? []
-            let newLeaves = to.root?.leaves() ?? []
+            let oldLeaves = from.visibleLeaves
+            let newLeaves = to.visibleLeaves
             if newLeaves.count <= 1 {
                 heroModeState.deactivate()
             } else {
@@ -1337,15 +1399,22 @@ class BaseTerminalController: NSWindowController,
 
     /// Find the next surface to focus when a node is being closed.
     /// Goes to previous split unless we're the leftmost leaf, then goes to next.
-    private func findNextFocusTargetAfterClosing(node: SplitTree<PaneView>.Node) -> PaneView? {
-        guard let root = surfaceTree.root else { return nil }
+    func findNextFocusTargetAfterClosing(node: SplitTree<PaneView>.Node) -> PaneView? {
+        // Focus can only go to a pane on screen.
+        let visible = surfaceTree.visibleTree
+        guard let root = visible.root,
+              let visibleNode = node.leaves().lazy.compactMap({ root.node(view: $0) }).first
+        else {
+            // The closing node isn't on screen (a stashed pane): nothing to move.
+            return nil
+        }
 
         // If we're the leftmost, then we move to the next pane after closing.
         // Otherwise, we move to the previous.
-        if root.leftmostLeaf() == node.leftmostLeaf() {
-            return surfaceTree.focusTarget(for: .next, from: node)
+        if root.leftmostLeaf() == visibleNode.leftmostLeaf() {
+            return visible.focusTarget(for: .next, from: visibleNode)
         } else {
-            return surfaceTree.focusTarget(for: .previous, from: node)
+            return visible.focusTarget(for: .previous, from: visibleNode)
         }
     }
 
@@ -1543,8 +1612,8 @@ class BaseTerminalController: NSWindowController,
         // Check if target surface is in current controller's tree
         guard surfaceTree.contains(target) else { return }
 
-        // Equalize the splits
-        surfaceTree = surfaceTree.equalized()
+        // Equalize the splits ON SCREEN; stashed panes' slots keep their ratios.
+        surfaceTree = surfaceTree.applyingToVisible { $0.equalized() }
     }
 
     @objc private func ghosttyDidFocusSplit(_ notification: Notification) {
@@ -1554,7 +1623,7 @@ class BaseTerminalController: NSWindowController,
 
         // Intercept navigation when hero mode is active
         if heroModeState.isActive {
-            let leaves = surfaceTree.root?.leaves() ?? []
+            let leaves = surfaceTree.visibleLeaves
             guard let directionValue = notification.userInfo?[Ghostty.Notification.SplitDirectionKey] as? Ghostty.SplitFocusDirection else { return }
             switch directionValue {
             case .previous, .up, .left:
@@ -1569,21 +1638,23 @@ class BaseTerminalController: NSWindowController,
         guard let directionAny = notification.userInfo?[Ghostty.Notification.SplitDirectionKey] else { return }
         guard let direction = directionAny as? Ghostty.SplitFocusDirection else { return }
 
+        // Navigation moves between panes on screen — a stashed pane is in the
+        // tree but not in the layout.
+        let visible = surfaceTree.visibleTree
+
         // Find the node for the target surface
-        guard let targetNode = surfaceTree.root?.node(view: target) else { return }
+        guard let targetNode = visible.root?.node(view: target) else { return }
 
         // Find the next surface to focus
-        guard let nextSurface = surfaceTree.focusTarget(for: direction.toSplitTreeFocusDirection(), from: targetNode) else {
+        guard let nextSurface = visible.focusTarget(for: direction.toSplitTreeFocusDirection(), from: targetNode) else {
             return
         }
 
         if surfaceTree.zoomed != nil {
             if derivedConfig.splitPreserveZoom.contains(.navigation) {
-                surfaceTree = SplitTree(
-                    root: surfaceTree.root,
-                    zoomed: surfaceTree.root?.node(view: nextSurface))
+                surfaceTree = surfaceTree.settingZoomed(surfaceTree.root?.node(view: nextSurface))
             } else {
-                surfaceTree = SplitTree(root: surfaceTree.root, zoomed: nil)
+                surfaceTree = surfaceTree.settingZoomed(nil)
             }
         }
 
@@ -1603,7 +1674,11 @@ class BaseTerminalController: NSWindowController,
         guard let targetNode = surfaceTree.root?.node(view: target) else { return }
 
         let focusDirection: SplitTree<PaneView>.FocusDirection = direction.toSplitTreeFocusDirection()
-        guard let neighborView = surfaceTree.focusTarget(for: focusDirection, from: targetNode) else {
+        // The neighbor is the one on SCREEN; the swap itself happens in the
+        // full tree, where both leaves also live.
+        let visible = surfaceTree.visibleTree
+        guard let visibleTarget = visible.root?.node(view: target),
+              let neighborView = visible.focusTarget(for: focusDirection, from: visibleTarget) else {
             return
         }
 
@@ -1633,13 +1708,13 @@ class BaseTerminalController: NSWindowController,
         // Toggle the zoomed state
         if surfaceTree.zoomed == targetNode {
             // Already zoomed, unzoom it
-            surfaceTree = SplitTree(root: surfaceTree.root, zoomed: nil)
+            surfaceTree = surfaceTree.settingZoomed(nil)
         } else {
-            // We require that the split tree have splits
-            guard surfaceTree.isSplit else { return }
+            // We require that the split tree have splits on screen
+            guard surfaceTree.isVisiblySplit else { return }
 
             // Not zoomed or different node zoomed, zoom this node
-            surfaceTree = SplitTree(root: surfaceTree.root, zoomed: targetNode)
+            surfaceTree = surfaceTree.settingZoomed(targetNode)
         }
 
         // Move focus to our window. Importantly this ensures that if we click the
@@ -1679,10 +1754,12 @@ class BaseTerminalController: NSWindowController,
         } else {
             // Exit zoom if active
             if surfaceTree.zoomed != nil {
-                surfaceTree = SplitTree(root: surfaceTree.root, zoomed: nil)
+                surfaceTree = surfaceTree.settingZoomed(nil)
             }
 
-            let leaves = surfaceTree.root?.leaves() ?? []
+            // Hero mode is over the panes on screen; stashed ones were put
+            // away on purpose.
+            let leaves = surfaceTree.visibleLeaves
             guard leaves.count > 1 else { return }
 
             let focusedIndex = leaves.firstIndex(of: pane) ?? 0
@@ -1716,7 +1793,7 @@ class BaseTerminalController: NSWindowController,
         // you cannot see.
         if heroModeState.isActive { heroModeState.deactivate() }
         if surfaceTree.zoomed != nil {
-            surfaceTree = SplitTree(root: surfaceTree.root, zoomed: nil)
+            surfaceTree = surfaceTree.settingZoomed(nil)
         }
 
         // The tab bar is a drop target in this mode, so it has to be on
@@ -1770,7 +1847,7 @@ class BaseTerminalController: NSWindowController,
     }
 
     private func heroPaneForCurrentSelection() -> PaneView? {
-        let leaves = surfaceTree.root?.leaves() ?? []
+        let leaves = surfaceTree.visibleLeaves
         guard heroModeState.selectedIndex < leaves.count else { return nil }
         return leaves[heroModeState.selectedIndex]
     }
@@ -1803,12 +1880,20 @@ class BaseTerminalController: NSWindowController,
         case .right: spatialDirection = .right
         }
 
+        // Resize what is on screen, then lift the new ratios back onto the
+        // full tree so stashed panes' slots are untouched.
+        let visible = surfaceTree.visibleTree
+        guard let visibleNode = visible.root?.node(view: target) else { return }
+        _ = targetNode
+
         // Use viewBounds for the spatial calculation bounds
-        let bounds = CGRect(origin: .zero, size: surfaceTree.viewBounds())
+        let bounds = CGRect(origin: .zero, size: visible.viewBounds())
 
         // Perform the resize using the new SplitTree resize method
         do {
-            surfaceTree = try surfaceTree.resizing(node: targetNode, by: amount, in: spatialDirection, with: bounds)
+            surfaceTree = try surfaceTree.applyingToVisible {
+                try $0.resizing(node: visibleNode, by: amount, in: spatialDirection, with: bounds)
+            }
         } catch {
             Ghostty.logger.warning("failed to resize split: \(error)")
         }
@@ -1989,8 +2074,11 @@ class BaseTerminalController: NSWindowController,
             // snapshot and the live tree is the right thing to move.
             let origin = dividerDragOrigin ?? (tree: surfaceTree, node: resize.node)
             do {
-                surfaceTree = try origin.tree.movingDivider(
-                    of: origin.node, to: position, in: dimension)
+                // The divider belongs to the rendered (visible) tree; move it
+                // there and lift the ratio back onto the full tree.
+                surfaceTree = try origin.tree.applyingToVisible {
+                    try $0.movingDivider(of: origin.node, to: position, in: dimension)
+                }
             } catch {
                 Ghostty.logger.warning("failed to move split divider: \(error)")
             }
@@ -2172,6 +2260,10 @@ class BaseTerminalController: NSWindowController,
 
         // Everything beyond here is setting up the window
         guard let window else { return }
+
+        firstResponderObservation = window.observe(\.firstResponder) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.publishFocusedPane() }
+        }
 
         // We always initialize our fullscreen style to native if we can because
         // initialization sets up some state (i.e. observers). If its set already
@@ -3347,9 +3439,9 @@ class BaseTerminalController: NSWindowController,
         if let pane = focusedViewerPane,
            let node = surfaceTree.root?.node(view: pane) {
             if surfaceTree.zoomed == node {
-                surfaceTree = SplitTree(root: surfaceTree.root, zoomed: nil)
-            } else if surfaceTree.isSplit {
-                surfaceTree = SplitTree(root: surfaceTree.root, zoomed: node)
+                surfaceTree = surfaceTree.settingZoomed(nil)
+            } else if surfaceTree.isVisiblySplit {
+                surfaceTree = surfaceTree.settingZoomed(node)
             }
             return
         }
@@ -3361,6 +3453,23 @@ class BaseTerminalController: NSWindowController,
         toggleRearrangeMode()
     }
 
+    // The pane sidebar's menu items. Menu-routed (rather than only the core
+    // keybind) so a focused VIEWER pane reaches them too.
+    @IBAction func togglePaneSidebar(_ sender: Any) {
+        guard hasPaneSidebar else { return }
+        togglePaneSidebar()
+    }
+
+    @IBAction func stashPane(_ sender: Any) {
+        guard hasPaneSidebar else { return }
+        stashFocusedPane()
+    }
+
+    @IBAction func restoreStashedPane(_ sender: Any) {
+        guard hasPaneSidebar else { return }
+        restoreTopStashedPane()
+    }
+
     @IBAction func toggleHeroMode(_ sender: Any) {
         // Menu path. The core keybind needs a focused terminal surface, so a
         // window whose focused pane is a viewer only reaches the toggle here,
@@ -3369,7 +3478,7 @@ class BaseTerminalController: NSWindowController,
         // and the notification path never double-fire.
         let pane = focusedViewerPane
             ?? surfaceTree.first(where: { $0.surfaceView === focusedSurface })
-            ?? surfaceTree.root?.leaves().first
+            ?? surfaceTree.visibleLeaves.first
         guard let pane else { return }
         toggleHeroMode(target: pane)
     }
@@ -3400,7 +3509,7 @@ class BaseTerminalController: NSWindowController,
 
     @IBAction func equalizeSplits(_ sender: Any) {
         if focusedViewerPane != nil {
-            surfaceTree = surfaceTree.equalized()
+            surfaceTree = surfaceTree.applyingToVisible { $0.equalized() }
             return
         }
         guard let surface = focusedSurface?.surface else { return }
@@ -3431,8 +3540,8 @@ class BaseTerminalController: NSWindowController,
         // Navigate FROM a focused viewer pane directly on the tree —
         // libghostty can only navigate from a terminal surface.
         if let pane = focusedViewerPane,
-           let node = surfaceTree.root?.node(view: pane) {
-            if let next = surfaceTree.focusTarget(
+           let node = surfaceTree.visibleTree.root?.node(view: pane) {
+            if let next = surfaceTree.visibleTree.focusTarget(
                 for: direction.toSplitTreeFocusDirection(),
                 from: node
             ) {
@@ -3534,6 +3643,16 @@ extension BaseTerminalController: NSMenuItemValidation {
         switch item.action {
         case #selector(findHide):
             return focusedSurface?.searchState != nil
+
+        case #selector(togglePaneSidebar(_:)):
+            item.title = paneSidebarState.isHidden ? "Show Pane Sidebar" : "Hide Pane Sidebar"
+            return hasPaneSidebar
+
+        case #selector(stashPane(_:)):
+            return hasPaneSidebar && surfaceTree.visibleLeaves.count > 1
+
+        case #selector(restoreStashedPane(_:)):
+            return hasPaneSidebar && !surfaceTree.stashed.isEmpty
 
         default:
             return true

@@ -2376,8 +2376,10 @@ keybind: Keybinds = .{},
 ///                     is first created, but will show up if the surface is
 ///                     subsequently resized.
 ///
-/// The default is `after-first`.
-@"resize-overlay": ResizeOverlay = .@"after-first",
+/// The default is `never` (upstream Ghostty's is `after-first`): resizing
+/// panes is routine here — divider drags, the pane sidebar, stashing — and a
+/// dimensions popup over every pane on each one is noise.
+@"resize-overlay": ResizeOverlay = .never,
 
 /// If resize overlays are enabled, this controls the position of the overlay.
 /// The possible options are:
@@ -3339,6 +3341,42 @@ keybind: Keybinds = .{},
 ///
 /// Changing this option at runtime only applies to new windows.
 @"macos-titlebar-style": MacTitlebarStyle = .transparent,
+
+/// How a window's split panes are presented. macOS only.
+///
+/// Valid values:
+///
+///   * `elevated` - Each pane is a slightly raised card with rounded corners
+///     and a soft shadow, separated from its neighbors by a small gap, on a
+///     soft blue-to-teal gradient ("ocean") that also runs under the pane
+///     sidebar. The gaps are still the split dividers: drag them to resize.
+///
+///   * `flat` - Panes run edge to edge, separated by a 1px divider in
+///     `split-divider-color`.
+///
+/// The gaps and the margin around the window's edge take space from the
+/// terminals (roughly a column or two per split), which is the trade for
+/// the depth.
+///
+/// Changing this option at runtime applies to every window.
+@"macos-pane-style": MacPaneStyle = .elevated,
+
+/// In the `elevated` pane style, whether each pane is a translucent glass
+/// sheet over the window's gradient (`true`, the default) or a solid card
+/// (`false`). macOS only; ignored in the `flat` style.
+///
+/// A glass pane is tinted with the terminal's own background color, so text
+/// keeps its contrast while the gradient's light and shade read through every
+/// pane, and the gradient runs up under the titlebar. On macOS 26 the sheet
+/// is Liquid Glass; earlier releases get a translucent tint.
+///
+/// The terminal stops drawing its own background (the sheet is the
+/// background), so `background-opacity` does not apply to a glass pane;
+/// cells a program colors explicitly are still drawn opaque unless
+/// `background-opacity-cells` is set.
+///
+/// Changing this option at runtime applies to every window.
+@"macos-pane-glass": bool = true,
 
 /// Whether the proxy icon in the macOS titlebar is visible. The proxy icon
 /// is the icon that represents the folder of the current working directory.
@@ -7076,6 +7114,20 @@ pub const Keybinds = struct {
 
         // Mac-specific keyboard bindings.
         if (comptime builtin.target.os.tag.isDarwin()) {
+            // Pane sidebar (macOS only). Ctrl+Cmd+S is the system "Show
+            // Sidebar" chord (Finder, Mail, Notes); Shift+Cmd+M sits beside
+            // Cmd+M (minimize the window) as "minimize the pane". Both were
+            // unbound before this.
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 's' }, .mods = .{ .super = true, .ctrl = true } },
+                .{ .toggle_pane_sidebar = {} },
+            );
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 'm' }, .mods = .{ .super = true, .shift = true } },
+                .{ .stash_pane = {} },
+            );
             try self.set.put(
                 alloc,
                 .{ .key = .{ .unicode = 'q' }, .mods = .{ .super = true } },
@@ -9185,6 +9237,12 @@ pub const MacTitlebarStyle = enum {
     transparent,
     tabs,
     hidden,
+};
+
+/// See macos-pane-style
+pub const MacPaneStyle = enum {
+    elevated,
+    flat,
 };
 
 /// See macos-titlebar-proxy-icon

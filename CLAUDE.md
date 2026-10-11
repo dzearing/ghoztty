@@ -303,6 +303,30 @@ ghoztty +split --target=dev --name=preview --view=http://localhost:3000
 ghoztty +reload --target=preview
 ```
 
+### `ghoztty +stash` / `ghoztty +restore`
+
+Take a pane out of its window's split layout and into the window's **pane
+sidebar** without ending it, and put it back. See Pane sidebar below.
+
+```
+ghoztty +stash --target=<pane>
+ghoztty +restore --target=<pane> [--focus]
+```
+
+- `--target`: a registered pane name or a pane id (a window target is an error).
+- `--focus` (`+restore`): also focus the restored pane and raise its window —
+  like every command, it leaves focus alone otherwise.
+- Idempotent both ways. `+stash` of the **last pane on screen** in its window
+  fails (exit 1): a window always shows at least one pane. Quick Terminal panes
+  have no sidebar and are refused.
+- A stashed pane stays fully targetable — `+send-keys`, `+read`, `+set-banner`,
+  `+set-state`, `+close`, `+reload` — and `+list` marks it `[stashed]`
+  (`--json`: `"stashed": true`, absent otherwise, like `banner`).
+- `+split` anchored at a stashed pane, and `ghoztty://focus/<stashed pane>` /
+  the `--focus` idempotent hits, **restore it first**: a new pane beside an
+  invisible one would be invisible, and raising a pane you can't see raises
+  nothing. `+rearrange` keeps a stashed pane its layout omits stashed.
+
 ### `ghoztty +new-remote-window`
 
 Open a terminal window whose shell runs on a remote machine via a `ghoztty-agent`
@@ -1357,6 +1381,114 @@ lines that happen to pass the wrap test are joined — unavoidable from bytes
 alone. Tests: `hard_wrap.zig`, `Screen: selectionString reflow …` (real
 Claude Code renders, plus `ls -la`/`git log` that must stay byte-identical),
 `StringMap … TUI hard wrap`, `renderCellMap URL across a TUI hard wrap`.
+
+## Pane sidebar
+
+A per-window list of **every pane in the window**, into which a pane can be
+**stashed**: out of the split grid, still running. Design:
+`docs/design/pane-sidebar.md` (it records the alternatives and the choices
+the interactive mock settled).
+
+- **Pinned** (pin button, or drag the edge out) = a flat edge-to-edge panel the
+  grid sits beside. **Unpinned** = the raised glass card collapsed to a 68pt
+  **mini rail** of tiles that opens to full width while the pointer is over it.
+  Dragging a pinned panel's edge only resizes it (min/max, never unpins).
+  The hover-open card FLOATS over the grid — the column never widens on hover,
+  so no terminal resizes; only pin/unpin change the column. A window narrower
+  than 720pt shows the rail even when pinned. **Ctrl+Cmd+S** hides/shows the
+  sidebar entirely.
+- Rows: grid panes (focused one selected), then **STASHED**. Click focuses /
+  restores to the exact slot it left; **Option-click** swaps a stashed pane with
+  the focused one; drag a pane's grab handle onto the list to stash it, a row
+  into the grid to place it (ONE resolver: `PaneDropTarget.stash` /
+  `.joinWindow`). Hover offers only stash (−) / restore (↩). **There are no
+  close buttons** except in **trash mode** (header trash button): a red × on
+  every row that kills with no confirmation and no undo window; Escape leaves
+  it. Right-click → Close Pane is the ordinary confirmed close.
+- Activity: a **busy** pane's icon shimmers (no spinner, no glow); `needs_input`
+  shows a **question** badge — the human label, never the machine token.
+- **All-windows** header toggle (off by default) groups every window's panes.
+  Windows are **sorted by name** (Finder order; stable as focus moves), and a
+  window titled **`<project>: <worktree>`** is grouped under a collapsible,
+  **sticky** project header and labeled by its worktree alone
+  (`PaneSidebarWindowGrouping`, `PaneSidebarWindowGroupingTests`). Other
+  windows sort among the projects at the top level. All windows also brings a **search
+  field**: whitespace-separated terms, all of which must appear in a pane's
+  window title, title, banner, or directory/location (`PaneSidebarFilter`);
+  Return goes to the first hit, Escape clears. Switching scopes slides the
+  lists past each other (this window on the left, all windows on the right).
+- **A stashed pane never leaves the tree** — `SplitTree.stashed` sits beside
+  `zoomed`; the grid renders `visibleTree` and spatial ops lift their ratios
+  back. That is what keeps stashing from marking a session CLOSE-on-free
+  (`PaneStashSessionSafetyTests`) and keeps every tree walker (IPC, close
+  confirmation, the manifest) seeing the pane.
+- **A stashed pane keeps its geometry**: it stays mounted, invisible, behind the
+  grid, in the slot it would occupy (`StashedPaneSlots`), so it is never sized
+  to the 800×600 placeholder (49×17) — even when stashed at launch — and
+  restoring it is not a reflow. Tested in `PaneSidebarWindowTests`.
+- Persisted: the stash (manifest per-leaf `stashIndex`; `SplitTree` coding for
+  AppKit restoration) and the pinned/hidden flags. Hover-open, trash mode and
+  the all-windows scope are never persisted.
+- Keybinds (macOS defaults): `toggle_pane_sidebar` Ctrl+Cmd+S, `stash_pane`
+  Shift+Cmd+M, `restore_stashed_pane` (unbound); Window menu items for all three.
+
+## Pane style (`macos-pane-style`)
+
+`elevated` (the default) presents a window's panes as slightly raised
+rounded cards (11pt radius, a soft two-layer shadow, a hairline rim) on a soft
+blue-to-teal **ocean** gradient. ONE spacing, 10pt, is every gutter: pane to
+pane (the gaps are still the dividers), pane to window edge, and around the
+mini rail (which takes no trailing margin of its own — the grid's is that gap).
+**A window opened by hand (Cmd-N, the New Window menu item / palette
+command) gets a random gradient by default**, exactly as
+**`+new-window --color=random`** does — in this style that gives the window its OWN
+gradient (`PaneDeskVariant`: a persisted seed; ONE random hue from the whole
+wheel — the tones `--color=random` always drew from — with a soft spotlight
+from the top center, getting darker toward the bottom-trailing corner on a
+dark theme and lighter on a light one, where a dim pool of the
+**complementary** hue subtly lights that corner) and leaves the terminals their theme
+color; an explicit `--color=#hex`, `random` on a split, and `random` in the
+`flat` style still tint the terminal background as before. `flat` is the classic
+edge-to-edge look with a 1px `split-divider-color` line, and its geometry is
+unchanged byte for byte. Geometry and palette live once in
+`PaneElevation`/`PaneDesk`/`PaneCard` (`Features/Splits/PaneElevation.swift`),
+which the grid AND the hidden stashed-pane slots both use — the slots must lay
+out exactly like the grid or a restored pane would reflow. The pinned pane
+sidebar goes translucent so the gradient runs under it.
+**Glass panes** (`macos-pane-glass`, default `true`, elevated only): each pane
+is a translucent sheet tinted 40% with the terminal's own background (Liquid
+Glass on macOS 26, a plain tint before — `PaneGlass`), so the gradient's light
+and shade read through every pane. The renderer stops drawing the terminal's
+background (`generic.zig` `pane_glass`, the same switch the `macos-glass-*`
+blur styles use), the banner strip skips its base fill, viewer template pages
+(markdown/code/diff/image) go see-through (`ViewerView.isOnGlass`, a
+`pane-glass` class in `viewer.css`) while websites and HTML files keep their
+own background, and the gradient runs up under the titlebar: the transparent
+titlebar window turns on `.fullSizeContentView` and `titlebarAppearsTransparent`
+(macOS 26 otherwise backs it with a material), and the desk sits behind the
+whole content stack. Any `.background(Color)` in that stack must pass
+`ignoresSafeAreaEdges: []` — SwiftUI's default extends it behind the titlebar
+(the debug-build warning did). The unpinned sidebar's card is the same tinted glass
+(`SidePanelCard(isGlass:)`) instead of an opaque slab. On glass the sidebar header is no band of its
+own (the list starts below it), the pinned panel's edge is a pane-rim hairline,
+and the sidebar's glyphs are the mock's icon set drawn natively
+(`PaneSidebarSymbol`), not SF Symbols. Folding a window or project group animates. In the elevated style the
+**focused pane** (of several) reads as **backlit**: a soft white light behind the
+card spills past its edges onto the desk (masked to outside the card, so it never
+lightens the pane's own glass) — a subtle outer glow only, nothing inside the
+pane (`PaneFocusGlow`, driven by
+`PaneView.isFocusedPane`; `PaneFocusGlowTests`).
+
+**Resizes are debounced before they reach the program** (`src/termio/Thread.zig`
+`Coalesce`): applied once resizes stop arriving for 100ms, never held back more
+than 350ms. Each one is a SIGWINCH on which a full-screen TUI (Claude Code)
+clears and repaints; at the old fixed 25ms coalesce a 600ms divider drag was 35
+repaints — the resize flicker — and is now ~4
+(`aDragDoesNotStormTheProgramWithResizes`). `resize-overlay` defaults to
+`never` in this fork (the dimensions popup on every divider drag). Verified by `glassPanesLetTheGradientThrough`,
+which also writes a ScreenCaptureKit capture of its own window. A translucent terminal
+(`background-opacity` < 1) gets an equally translucent gradient. Settled in the
+pane-sidebar mock (`docs/design/pane-sidebar.md` → Pane style).
 
 ## Pane rearrange mode
 

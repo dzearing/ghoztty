@@ -317,9 +317,16 @@ extension AppDelegate {
         // must survive partial death.
         let root = Self.makeSessionLayoutRoot(tree: tree, connection: connection, app: app)
 
-        let controller = TerminalController(
-            ghostty,
-            withSurfaceTree: SplitTree(root: root, zoomed: nil))
+        let restoredTree = SplitTree<PaneView>(root: root, zoomed: nil, stashed: [])
+            .withStash(SessionLayoutManifest.stashedIDs(tree: tree, panes: root.leaves()))
+        let controller = TerminalController(ghostty, withSurfaceTree: restoredTree)
+
+        // The pane sidebar's layout flags BEFORE the window first lays out, so
+        // the restored terminals are sized for the column they will actually
+        // have — one size, not a placeholder and then a corrective resize.
+        if let pinned = entry.paneSidebarPinned { controller.paneSidebarState.isPinned = pinned }
+        if let hidden = entry.paneSidebarHidden { controller.paneSidebarState.isHidden = hidden }
+        controller.deskVariant = entry.deskVariant
 
         // For a LOCAL resume/restore, adopt the manifest entry so the window is
         // itself restorable and detaches-on-close. Ordering matters: the entry id
@@ -599,7 +606,8 @@ extension AppDelegate {
         // the rebuilt tree in.
         controller.remoteConnection = connection
         controller.remoteMachine = connection.machine
-        controller.surfaceTree = SplitTree(root: root, zoomed: nil)
+        controller.surfaceTree = SplitTree(root: root, zoomed: nil, stashed: [])
+            .withStash(SessionLayoutManifest.stashedIDs(tree: tree, panes: root.leaves()))
 
         // Re-register pane IPC names against the NEW surfaces (the window name,
         // being controller-keyed, is unaffected — the controller is the same).

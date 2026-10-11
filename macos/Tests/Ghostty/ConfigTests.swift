@@ -106,9 +106,11 @@ struct ConfigTests {
         #expect(config.macosTitlebarStyle == expected)
     }
 
-    @Test func resizeOverlayDefaultsToAfterFirst() throws {
+    /// This fork's default: no dimensions popup over every pane on each
+    /// divider drag (upstream Ghostty's is `after-first`).
+    @Test func resizeOverlayDefaultsToNever() throws {
         let config = try TemporaryConfig("")
-        #expect(config.resizeOverlay == .after_first)
+        #expect(config.resizeOverlay == .never)
     }
 
     @Test(arguments: [
