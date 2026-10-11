@@ -478,6 +478,15 @@ switch ($Action) {
             foreach ($line in ($auditOut -split "`r?`n")) { if ($line.Trim()) { "  $line" } }
         }
 
+        # T1823: a shell "open with" picker sitting on the user's desktop is a
+        # focus pull some earlier turn caused, and nothing else here would ever
+        # say so. Reported, never refused - the picker is the user's to dismiss.
+        $pickerScript = Join-Path $PSScriptRoot 'focus-pull-scan.ps1'
+        if (Test-Path -LiteralPath $pickerScript) {
+            $pickerOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $pickerScript 2>&1 | Out-String
+            foreach ($line in ($pickerOut -split "`r?`n")) { if ($line.Trim()) { "  $line" } }
+        }
+
         # T829: did the box come back from its last reboot by itself, or did the
         # loop sit dead until somebody signed in? Reported HERE for the same
         # reason the guard report above is: this is the one command every turn

@@ -1,0 +1,14 @@
+{
+    "guard":  "focus-pull-scan",
+    "script":  "test/win32/focus-pull-scan.ps1",
+    "generated":  "2026-10-11T02:33:54-07:00",
+    "commit":  "d7fb6d9a0",
+    "uncommitted":  [
+                        "scripts/focus-pull-scan.ps1",
+                        "test/win32/focus-pull-scan.ps1"
+                    ],
+    "files":  {
+                  "scripts/focus-pull-scan.ps1":  "ce1ebfa8aac19eed0eb7cc7578fb0a1df8b39974204777a9991ac2fea1eec8e8",
+                  "test/win32/focus-pull-scan.ps1":  "3976c83da8ce1fd4d88288908cffb66d69a003597d1e8759dc62957280023660"
+              }
+}

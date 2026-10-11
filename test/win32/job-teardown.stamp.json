@@ -1,10 +1,12 @@
 {
     "guard":  "job-teardown",
     "script":  "test/win32/job-teardown.ps1",
-    "generated":  "2026-10-11T00:47:39-07:00",
-    "commit":  "fe9baf50c",
+    "generated":  "2026-10-11T02:38:28-07:00",
+    "commit":  "d7fb6d9a0",
     "uncommitted":  [
-                        "test/win32/crash-stacks.ps1"
+                        "test/win32/focus-pull-scan.ps1",
+                        "test/win32/gate-negatives.ps1",
+                        "test/win32/hook-json.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -128,10 +130,11 @@
                   "test/win32/floor-lane-webview-settle.ps1":  "d5cf22c7342c16a5bebc1a27d1f7d62e1c4dbe297fe2538e9542a7b3cfe8122b",
                   "test/win32/focus-defer.ps1":  "0781efdaa91cf1730f88acaec0143573697a9d4d305e4becdd08eab8774efafd",
                   "test/win32/focus-follows-mouse.ps1":  "09c5f9884b9c51bdb0d91321a12c0e8b8c554552434fd78f7b6267826caaa4e1",
+                  "test/win32/focus-pull-scan.ps1":  "3976c83da8ce1fd4d88288908cffb66d69a003597d1e8759dc62957280023660",
                   "test/win32/font-inherit.ps1":  "f303affd8f1c72da77f48f09a10b18d0c7c72af845a4602455bf013662d8c257",
                   "test/win32/foreground-audit.ps1":  "f9d1b2caed851695f70fd1430a378506831ebfb54458b55068252d7984622b0d",
                   "test/win32/fork-identity.ps1":  "9661dc44ad46212f55a3f65601c083cd0f1eebcba2e3a323f6fe4c4f44b62cbe",
-                  "test/win32/gate-negatives.ps1":  "337fc01f68d2977db0edc76d18b23856f3351862fd9faa5ca376c15eb0c8662b",
+                  "test/win32/gate-negatives.ps1":  "a8e6fd05663fa4faae6629c6db03599201b9221010500182a90795148b02a2fa",
                   "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76",
                   "test/win32/gl-device-lost.ps1":  "3bb5067fd1c667f8b9d9d5d28e04acaae173beee1d78e68a79f673e159e462aa",
                   "test/win32/go-loop-guard.ps1":  "9f0ca6a4218a422c2bbda812d8ffa90e2d9aede177e0d55207ee8e566d284200",
@@ -151,7 +154,7 @@
                   "test/win32/holder-durable.ps1":  "7d42ae987bd4754e5cb9d4a041064eee0aa22f35d6cbc21313b2b1a9eda81be4",
                   "test/win32/holder-soak.ps1":  "a8c7eaa00a75aeb97f8436055214b4afc913f9af0f6f9c552f672cd42f4f30f6",
                   "test/win32/holder-volume.ps1":  "9eff753b32372341d23edc406af363757896fabdf4a8a8bb37b8f16ef6f1ea63",
-                  "test/win32/hook-json.ps1":  "53c55376fe85bb0584e45d23d4276d3a4b4bb22d58b59019bf60e6aa400de135",
+                  "test/win32/hook-json.ps1":  "ebfa453fd43f1312173decf8c2ed0c68e13e67d53df30c489d816eace3446eb7",
                   "test/win32/host-settings.ps1":  "1bc9c64131b1c97a74eb41b461102d69f6ca9a28dfc72b34b42f6bff9337cb6d",
                   "test/win32/hover-capture.ps1":  "f36af98b0a13a5c6e72c685cd52070af5a74b7ac9af3845f90636fa9fae1a2ff",
                   "test/win32/install-launch.ps1":  "df8a8917d448d735d327ae87bcfde00f09a665dcbe0737ae56c4c0487d8225ca",

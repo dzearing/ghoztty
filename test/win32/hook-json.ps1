@@ -187,6 +187,14 @@ $forkText = [System.IO.File]::ReadAllText($fork)
 Assert ($forkText -notmatch 'jq') 'banner fork carries no jq reference at all'
 Assert ($forkText -match [regex]::Escape('ghoztty +json')) 'banner fork parses through ghoztty +json'
 Assert ($forkText.Contains("`n") -and -not $forkText.Contains("`r`n")) 'banner fork is LF-only (a CRLF script dies in bash)'
+# T1823: the instruction the prompt hook hands the model must keep it out of
+# PowerShell. A .sh run from PowerShell is ShellExecuted, and with no open verb
+# for .sh Windows pops the Open-With picker on the user's desktop - twice on
+# 2026-10-10/11, each time holding the foreground.
+$helpText = [regex]::Match($forkText, "(?s)banner_help\(\) \{\s*cat <<'EOF'\r?\n(.*?)\r?\nEOF").Groups[1].Value
+Assert ($helpText.Length -gt 0) 'banner fork help text found'
+Assert ($helpText.Contains('from the Bash tool') -and $helpText.Contains('never from PowerShell')) `
+    'banner fork help text keeps the model out of PowerShell (T1823)'
 $forkBytes = [System.IO.File]::ReadAllBytes($fork)
 Assert (-not ($forkBytes.Length -ge 3 -and $forkBytes[0] -eq 0xEF)) 'banner fork has no UTF-8 BOM (a BOM breaks the shebang)'
 

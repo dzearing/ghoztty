@@ -35002,3 +35002,28 @@ moved to T1814.
   test, then passed alone (filed T1824). The ten guards that cover
   `IpcHandlers.zig` were re-run green, except hook-json, which is red for
   T1821.
+
+## 2026-10-11 — T1823: the "open with" picker on the user's screen came from the banner hook's own instruction
+
+- **What changed.** A Windows "How do you want to open this file?" box had
+  appeared over the user's screen twice (10-10 10:52, 10-11 00:17) and held
+  the focus. The banner hook's instruction to Claude now says to run the
+  banner script from the Bash tool and never from PowerShell. The loop's claim
+  also reports any such picker left on the desktop, with its pid and start
+  time, at every turn.
+- **Root cause.** It was not a test script. Both pickers started within a
+  second of a PowerShell-tool call that began with
+  `~/.config/ghoztty/hooks/ghoztty-banner.sh`. PowerShell cannot run a `.sh`,
+  so it hands the file to the shell. `.sh` has no open verb on this box, so
+  Windows starts `OpenWith.exe` on the interactive desktop. The last 40 session
+  transcripts hold six such calls. The line comes from the Windows hook's
+  `banner_help` text. Mac needs no change, because a `.sh` runs from every Mac
+  shell.
+- **Evidence.** hook-json gains an assertion on the help text. It passes, and
+  the same check against the old text fails. Section C (the prompt hook end to
+  end on the rebuilt exe) passes. Its two other reds are T1821's mirror drift.
+  The new `test\win32\focus-pull-scan.ps1` reports ALL PASS (10), and
+  `-NegativeControl` scores exactly one failure. Its live run names both real
+  pickers. go-loop-guard (430), gate-negatives (58), guard-due (128),
+  go-loop-resume (22), the harness floor, all four floor lanes and P1-P3 are green. The two pickers were
+  left for the user to close.

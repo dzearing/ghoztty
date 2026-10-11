@@ -2128,6 +2128,18 @@ $GuardTable = @(
             'test\win32\divergence-inventory.ps1'
         )
     },
+    # The claim's shell-picker report (T1823). It reports and never refuses, so
+    # a regression in it is silent by construction - the one place that says a
+    # turn left an "open with" picker over the user's screen just stops saying.
+    [pscustomobject]@{
+        Name   = 'focus-pull-scan'
+        Script = 'test\win32\focus-pull-scan.ps1'
+        Stamp  = 'test\win32\focus-pull-scan.stamp.json'
+        Covers = @(
+            'scripts\focus-pull-scan.ps1',
+            'test\win32\focus-pull-scan.ps1'
+        )
+    },
     # The vendored agent assets (T866) rot silently: main edits its copy of a
     # skill or hook script and nothing here goes red until someone re-runs the
     # drift compare, and a banner-script or +json edit that breaks the jq-free

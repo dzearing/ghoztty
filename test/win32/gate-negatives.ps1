@@ -187,6 +187,12 @@ $Registry = @(
     # test\win32\deliver-windows-build.ps1 (the audit itself, and -Strict) and
     # `deliver=` on go-loop-health.ps1.
     [pscustomobject]@{ Label = 'DELIVER AUDIT'; Kind = 'status'; Via = 'scripts\deliver-audit.ps1' }
+    # T1823. A shell "open with" picker left on the user's desktop.
+    # Informational BY DESIGN: the picker is the user's to dismiss and the
+    # remedy is finding its caller, so a refusal would wedge the loop over a
+    # window no turn may close. Constructed-state demonstration (it CAN report):
+    # test\win32\focus-pull-scan.ps1.
+    [pscustomobject]@{ Label = 'FOCUS PULL'; Kind = 'status'; Via = 'scripts\focus-pull-scan.ps1' }
     [pscustomobject]@{ Label = 'CI IN PROGRESS'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
     [pscustomobject]@{ Label = 'CI OK'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
     [pscustomobject]@{ Label = 'CI UNKNOWN'; Kind = 'status'; Via = 'scripts\ci-status.ps1' }
