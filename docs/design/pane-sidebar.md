@@ -410,8 +410,9 @@ pill, and a hairline between the grid and stashed sections.
 | Narrow window (< 720pt) | Shows the mini rail — the full panel would crowd the grid, the rail doesn't | Mini rail |
 
 - **Pin is the expand/collapse control.** There is no separate collapse
-  button; dragging the edge does the same thing (pull the rail past 120pt and
-  it pins open; push the panel under 140pt and it unpins).
+  button. Pulling the rail's edge past 120pt pins it open; a pinned panel's
+  edge only resizes it, stopping at the minimum and maximum widths — it never
+  unpins under a drag (that read as the panel jumping away mid-resize).
 - **Unpinning never snaps shut under the pointer.** The pointer is on the pin
   when you click it, so the card stays open until the pointer leaves.
 - **The hover-open card floats; the column does not widen.** Widening the

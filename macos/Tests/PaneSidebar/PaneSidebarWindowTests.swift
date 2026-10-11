@@ -170,6 +170,13 @@ struct PaneSidebarWindowTests {
         window.setContentSize(NSSize(width: 900, height: 560))
         await settle(1.2)
         try await captureComposited(window, "all-windows")
+        // Searching: only matching windows, under their project.
+        main.paneSidebarState.filter = "ghoztty side"
+        await settle(0.6)
+        try await captureComposited(window, "all-windows-search")
+        // Leaving all windows drops the search.
+        main.paneSidebarState.showsAllWindows = false
+        #expect(main.paneSidebarState.filter.isEmpty)
         for c in controllers { c.close() }
         await settle(0.3)
     }
@@ -536,6 +543,109 @@ struct PaneSidebarWindowTests {
     /// highlight stays on the old row until something unrelated redraws.
     /// Both kinds: a terminal (`focusedSurface`) and a viewer (derived from
     /// the window's first responder).
+    /// A row's hover covers its −/↩ button. It used to be measured by the
+    /// row's drag source, which stops short of the button — so reaching for
+    /// the button ended the hover and hid it, and it could never be clicked.
+    @Test func aRowsHoverCoversItsStashButton() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let a = terminalPane(app), b = terminalPane(app)
+        let tree = try SplitTree<PaneView>(view: a).inserting(view: b, at: a, direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        controller.paneSidebarState.isHidden = false
+        controller.paneSidebarState.isPinned = true
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        // Wide enough for the full panel (narrower shows the rail).
+        window.setContentSize(NSSize(width: 1000, height: 600))
+        await settle(0.8)
+
+        func all<T: NSView>(_ type: T.Type, in view: NSView) -> [T] {
+            (view as? T).map { [$0] } ?? [] + view.subviews.flatMap { all(type, in: $0) }
+        }
+        let root = try #require(window.contentView)
+        // A sidebar row's drag source (the grid's grab handles have no controller).
+        let source = try #require(all(PaneDragSourceView.self, in: root)
+            .filter { $0.controller != nil }.first)
+        let hovers = all(HoverTrackingArea.View.self, in: root)
+        let sourceRect = source.convert(source.bounds, to: nil)
+        let hover = try #require(hovers.first { $0.convert($0.bounds, to: nil).intersects(sourceRect) },
+                                 "the row has no hover area of its own")
+        hover.onHoverChanged?(true)
+        await settle(0.4)
+        let hoverRect = hover.convert(hover.bounds, to: nil)
+        let shrunk = source.convert(source.bounds, to: nil)
+        #expect(hoverRect.maxX > shrunk.maxX + 18, "the button sits outside the row's hover area")
+        controller.close()
+        await settle(0.3)
+    }
+
+    /// A busy pane's sidebar icon shimmers: two captures a moment apart
+    /// differ around the icon (and only while busy). Writes busy-a/b.png.
+    @Test func aBusyPaneShimmersInTheSidebar() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let a = terminalPane(app), b = terminalPane(app)
+        let tree = try SplitTree<PaneView>(view: a).inserting(view: b, at: a, direction: .right)
+        let controller = TerminalController.newWindow(ghostty, tree: tree)
+        controller.paneSidebarState.isHidden = false
+        controller.paneSidebarState.isPinned = true
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 1000, height: 600))
+        await settle(0.8)
+
+        b.surfaceView?.activityState = .busy
+        await settle(0.3)
+        #expect(b.activityState == .busy)
+        // Frames across one whole shimmer period: two captures alone can both
+        // land while the band is parked off the glyph.
+        let first = try await captureImage(window)
+        var frames: [CGImage] = []
+        for _ in 0..<6 {
+            await settle(0.23)
+            frames.append(try await captureImage(window))
+        }
+        // The sidebar's strip: x 0…240pt (2x capture), below the titlebar.
+        let strip = CGRect(x: 0, y: 120, width: 480, height: 400)
+        let diffs = frames.map { Self.pixelsDiffering(first, $0, in: strip) }
+        let changed = diffs.max() ?? 0
+        if let best = frames.max(by: { Self.pixelsDiffering(first, $0, in: strip) < Self.pixelsDiffering(first, $1, in: strip) }) {
+            try? NSBitmapImageRep(cgImage: first).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: "/tmp/pane-sidebar-snapshots/busy-a.png"))
+            try? NSBitmapImageRep(cgImage: best).representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: "/tmp/pane-sidebar-snapshots/busy-b.png"))
+        }
+        try? "changed pixels in the sidebar per frame: \(diffs)\n".write(
+            toFile: "/tmp/pane-sidebar-snapshots/busy-probe.txt", atomically: true, encoding: .utf8)
+        #expect(changed > 20, "the busy icon did not move (\(changed) pixels changed)")
+        controller.close()
+        await settle(0.3)
+    }
+
+    private func captureImage(_ window: NSWindow) async throws -> CGImage {
+        let content = try await SCShareableContent.currentProcess
+        let scWindow = try #require(content.windows.first { $0.windowID == CGWindowID(window.windowNumber) })
+        let cfg = SCStreamConfiguration()
+        cfg.width = Int(scWindow.frame.width * 2)
+        cfg.height = Int(scWindow.frame.height * 2)
+        cfg.showsCursor = false
+        return try await SCScreenshotManager.captureImage(
+            contentFilter: SCContentFilter(desktopIndependentWindow: scWindow), configuration: cfg)
+    }
+
+    private static func pixelsDiffering(_ a: CGImage, _ b: CGImage, in rect: CGRect) -> Int {
+        let ra = NSBitmapImageRep(cgImage: a), rb = NSBitmapImageRep(cgImage: b)
+        var count = 0
+        for y in stride(from: Int(rect.minY), to: Int(rect.maxY), by: 1) {
+            for x in stride(from: Int(rect.minX), to: Int(rect.maxX), by: 1) {
+                guard let ca = ra.colorAt(x: x, y: y), let cb = rb.colorAt(x: x, y: y) else { continue }
+                if abs(ca.brightnessComponent - cb.brightnessComponent) > 0.06 { count += 1 }
+            }
+        }
+        return count
+    }
+
     @Test func aFocusChangeRedrawsTheSidebarSelection() async throws {
         let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
         let app = try #require(ghostty.app)

@@ -70,6 +70,10 @@ struct PaneSidebarRow: View {
             .padding(.leading, SidePanelRow.textInset + indent)
             .padding(.trailing, SidePanelRow.textInset)
             .background(fill)
+            // Hover is the WHOLE row, button included. The drag source below
+            // stops short of the button, so hover measured there ended the
+            // moment the pointer reached the button — which hid it.
+            .background(rowHover)
             // The drag source + click target, everywhere except the button.
             // An OVERLAY, so it takes exactly the row's size and can never
             // stretch the row taller.
@@ -170,6 +174,7 @@ struct PaneSidebarRow: View {
                 interaction
             }
             .frame(width: 32, height: 32)
+            .background(rowHover)
 
             if pane.activityState == .needsInput {
                 Text("?")
@@ -206,11 +211,15 @@ struct PaneSidebarRow: View {
         if isInteractive { interactionView }
     }
 
+    @ViewBuilder
+    private var rowHover: some View {
+        if isInteractive { HoverTrackingArea(isHovered: $isHovered) }
+    }
+
     private var interactionView: some View {
         PaneSidebarRowInteraction(
             pane: pane,
             owner: owner,
-            isHovered: $isHovered,
             onClick: click,
             menu: contextMenu)
     }
@@ -430,7 +439,6 @@ private final class PaneSidebarMenuActions: NSObject {
 struct PaneSidebarRowInteraction: NSViewRepresentable {
     let pane: PaneView
     let owner: BaseTerminalController
-    @Binding var isHovered: Bool
     let onClick: (NSEvent) -> Void
     let menu: () -> NSMenu
 
@@ -450,9 +458,6 @@ struct PaneSidebarRowInteraction: NSViewRepresentable {
         view.onClick = onClick
         view.menuProvider = menu
         view.showsGrabCursor = false
-        view.onHoverChanged = { hovering in
-            isHovered = hovering
-        }
         view.onDragStateChanged = { _ in }
     }
 }

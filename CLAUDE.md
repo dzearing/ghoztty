@@ -1392,6 +1392,7 @@ the interactive mock settled).
 - **Pinned** (pin button, or drag the edge out) = a flat edge-to-edge panel the
   grid sits beside. **Unpinned** = the raised glass card collapsed to a 68pt
   **mini rail** of tiles that opens to full width while the pointer is over it.
+  Dragging a pinned panel's edge only resizes it (min/max, never unpins).
   The hover-open card FLOATS over the grid — the column never widens on hover,
   so no terminal resizes; only pin/unpin change the column. A window narrower
   than 720pt shows the rail even when pinned. **Ctrl+Cmd+S** hides/shows the
@@ -1411,7 +1412,11 @@ the interactive mock settled).
   window titled **`<project>: <worktree>`** is grouped under a collapsible,
   **sticky** project header and labeled by its worktree alone
   (`PaneSidebarWindowGrouping`, `PaneSidebarWindowGroupingTests`). Other
-  windows sort among the projects at the top level.
+  windows sort among the projects at the top level. All windows also brings a **search
+  field**: whitespace-separated terms, all of which must appear in a pane's
+  window title, title, banner, or directory/location (`PaneSidebarFilter`);
+  Return goes to the first hit, Escape clears. Switching scopes slides the
+  lists past each other (this window on the left, all windows on the right).
 - **A stashed pane never leaves the tree** — `SplitTree.stashed` sits beside
   `zoomed`; the grid renders `visibleTree` and spatial ops lift their ratios
   back. That is what keeps stashing from marking a session CLOSE-on-free

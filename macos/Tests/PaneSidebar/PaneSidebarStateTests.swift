@@ -68,8 +68,7 @@ struct PaneSidebarStateTests {
 
     @Test func thresholdsSitBetweenTheRailAndTheNarrowestPanel() {
         #expect(State.railCardWidth < State.expandThreshold)
-        #expect(State.expandThreshold < State.collapseThreshold)
-        #expect(State.collapseThreshold < State.minimumWidth)
+        #expect(State.expandThreshold < State.minimumWidth)
     }
 
     // MARK: Transient state is never persisted
@@ -274,5 +273,31 @@ struct PaneSidebarWindowGroupingTests {
             (id: 1, title: "app: wt-10"), (id: 2, title: "app: wt-2"), (id: 3, title: "App2: x"),
         ])
         #expect(sections[0].windows.map(\.label) == ["wt-2", "wt-10"])
+    }
+}
+
+struct PaneSidebarFilterTests {
+    private func hit(_ query: String, _ fields: [String?]) -> Bool {
+        PaneSidebarFilter.matches(PaneSidebarFilter.terms(query), in: fields)
+    }
+
+    @Test func aProjectNameKeepsEveryPaneInIt() {
+        #expect(hit("ghoztty", ["ghoztty: pane-sidebar", "zsh", nil]))
+        #expect(!hit("ghoztty", ["relay: main", "zsh", "~/git/relay"]))
+    }
+
+    @Test func everyTermMustMatchSomewhere() {
+        let fields: [String?] = ["ghoztty: pane-sidebar", "claude — pane-sidebar", "Pane sidebar — building"]
+        #expect(hit("ghoztty claude", fields))
+        #expect(!hit("ghoztty relay", fields))
+    }
+
+    @Test func caseAndAccentsDoNotMatter() {
+        #expect(hit("CAFE", ["café logs"]))
+    }
+
+    @Test func anEmptyQueryMatchesEverything() {
+        #expect(hit("   ", ["anything"]))
+        #expect(PaneSidebarFilter.terms("  a  b ") == ["a", "b"])
     }
 }

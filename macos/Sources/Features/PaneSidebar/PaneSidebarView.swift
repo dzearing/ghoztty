@@ -21,6 +21,7 @@ struct PaneSidebarView: View {
 
     @Environment(\.controlActiveState) private var controlActiveState
     @Environment(\.paneSidebarInteractive) private var isInteractive
+    @FocusState private var isSearchFocused: Bool
 
     var body: some View {
         content
@@ -35,7 +36,11 @@ struct PaneSidebarView: View {
     /// rather than scrolling under a backdrop.
     @ViewBuilder
     private var content: some View {
-        if controller.ghostty.config.paneGlass {
+        if isRail {
+            // The minimized rail is just its tiles: the header's buttons are
+            // there once it opens (hover) or is pinned.
+            list
+        } else if controller.ghostty.config.paneGlass {
             VStack(spacing: 0) {
                 headerContent
                 list
@@ -50,22 +55,22 @@ struct PaneSidebarView: View {
     // MARK: Header
 
     private var headerContent: some View {
-            Group {
-                if isRail {
-                    VStack(spacing: 2) { headerButtons }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                } else {
-                    HStack(spacing: 2) {
-                        caption
-                        Spacer(minLength: 4)
-                        headerButtons
-                    }
-                    .padding(.leading, SidePanelRow.labelInset)
-                    .padding(.trailing, 6)
-                    .frame(height: 34)
-                }
+        VStack(spacing: 0) {
+            HStack(spacing: 2) {
+                caption
+                Spacer(minLength: 4)
+                headerButtons
             }
+            .padding(.leading, SidePanelRow.labelInset)
+            .padding(.trailing, 6)
+            .frame(height: 34)
+            // All windows is the "find that pane" view, so it brings a
+            // search with it.
+            if state.showsAllWindows {
+                searchField
+                    .transition(PaneSidebarOutline.foldTransition)
+            }
+        }
     }
 
     private var caption: some View {
@@ -83,7 +88,9 @@ struct PaneSidebarView: View {
         PaneSidebarHeaderButton(
             symbol: .windows(filled: state.showsAllWindows),
             help: state.showsAllWindows ? "Show only this window’s panes" : "Show panes from all windows"
-        ) { state.showsAllWindows.toggle() }
+        ) {
+            withAnimation(PaneSidebarOutline.scopeAnimation) { state.showsAllWindows.toggle() }
+        }
 
         PaneSidebarHeaderButton(
             symbol: .trash(filled: state.isQuickKill),
@@ -103,8 +110,27 @@ struct PaneSidebarView: View {
 
     // MARK: List
 
-    @ViewBuilder
+    /// Switching between this window and all windows slides like a
+    /// navigation push: this window's list lives on the LEFT, all windows on
+    /// the RIGHT, so going to all windows slides left and coming back slides
+    /// right, each list fading as it goes. Each list's transition is tied to
+    /// which list it IS (not to the direction of the switch), because a
+    /// removed view animates with the transition it was last rendered with.
     private var list: some View {
+        let side: CGFloat = state.showsAllWindows ? 1 : -1
+        let slide = AnyTransition.offset(x: side * PaneSidebarOutline.scopeSlide).combined(with: .opacity)
+        // A ZStack, so the outgoing and incoming lists overlap; clipped, so
+        // neither slides past the panel's edge.
+        return ZStack(alignment: .top) {
+            scrollingList
+                .id(state.showsAllWindows)
+                .transition(slide)
+        }
+        .clipped()
+    }
+
+    @ViewBuilder
+    private var scrollingList: some View {
         if isInteractive {
             ScrollView(.vertical) {
                 // Lazy only for the pinned (sticky) project headers.
@@ -137,18 +163,35 @@ struct PaneSidebarView: View {
         let controllers = roster.controllers.contains { $0 === controller }
             ? roster.controllers : [controller] + roster.controllers
         let byID = Dictionary(uniqueKeysWithValues: controllers.map { (ObjectIdentifier($0), $0) })
-        let sections = PaneSidebarWindowGrouping.sections(
-            controllers.map { (id: ObjectIdentifier($0), title: PaneSidebarText.windowTitle(of: $0)) })
+        let titled = controllers.map { (id: ObjectIdentifier($0), title: PaneSidebarText.windowTitle(of: $0)) }
+        let matches = searchMatches(controllers, titles: Dictionary(uniqueKeysWithValues: titled.map { ($0.id, $0.title) }))
+        // Searching: only windows with a matching pane, and nothing folded
+        // away — a hit hidden inside a folded group would read as no hit.
+        let sections = PaneSidebarWindowGrouping.sections(titled).compactMap { section in
+            guard let matches else { return section }
+            let windows = section.windows.filter { !(matches[$0.id]?.isEmpty ?? true) }
+            return windows.isEmpty
+                ? nil : PaneSidebarWindowGrouping.Section(project: section.project, windows: windows)
+        }
+
+        if matches != nil && sections.isEmpty {
+            Text("No matching panes")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, SidePanelRow.labelInset)
+                .padding(.vertical, SidePanelRow.verticalPadding)
+        }
 
         ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
             if let project = section.project, !isRail {
-                let folded = state.foldedProjects.contains(project)
+                let folded = matches == nil && state.foldedProjects.contains(project)
                 Section {
                     if !folded {
                         ForEach(section.windows, id: \.id) { entry in
                             if let owner = byID[entry.id] {
                                 windowGroup(owner, isThisWindow: owner === controller,
-                                            label: entry.label, indent: PaneSidebarOutline.childIndent)
+                                            label: entry.label, indent: PaneSidebarOutline.childIndent,
+                                            matches: matches?[entry.id])
                                     .transition(PaneSidebarOutline.foldTransition)
                             }
                         }
@@ -172,7 +215,8 @@ struct PaneSidebarView: View {
                         if !isRail, index > 0 {
                             PaneSidebarDivider(isRail: false).padding(.bottom, 4)
                         }
-                        windowGroup(owner, isThisWindow: owner === controller, label: entry.label)
+                        windowGroup(owner, isThisWindow: owner === controller, label: entry.label,
+                                    matches: matches?[entry.id])
                     }
                 }
             }
@@ -183,9 +227,10 @@ struct PaneSidebarView: View {
         _ owner: BaseTerminalController,
         isThisWindow: Bool,
         label: String,
-        indent: CGFloat = 0
+        indent: CGFloat = 0,
+        matches: Set<ObjectIdentifier>? = nil
     ) -> some View {
-        let folded = state.foldedWindows.contains(ObjectIdentifier(owner))
+        let folded = matches == nil && state.foldedWindows.contains(ObjectIdentifier(owner))
         return VStack(alignment: .leading, spacing: 0) {
             if isRail {
                 PaneSidebarDivider(isRail: true)
@@ -210,7 +255,8 @@ struct PaneSidebarView: View {
                 // under its header so the header reads as the parent.
                 VStack(alignment: .leading, spacing: 0) {
                     windowSection(owner, isThisWindow: isThisWindow,
-                                  indent: isRail ? 0 : indent + PaneSidebarOutline.childIndent)
+                                  indent: isRail ? 0 : indent + PaneSidebarOutline.childIndent,
+                                  matches: matches)
                 }
                 .transition(PaneSidebarOutline.foldTransition)
             }
@@ -228,11 +274,13 @@ struct PaneSidebarView: View {
     private func windowSection(
         _ owner: BaseTerminalController,
         isThisWindow: Bool,
-        indent: CGFloat
+        indent: CGFloat,
+        matches: Set<ObjectIdentifier>? = nil
     ) -> some View {
         let tree = owner.surfaceTree
-        let visible = tree.visibleLeaves
-        let stashed = tree.stashedViews
+        let shown = { (pane: PaneView) in matches?.contains(ObjectIdentifier(pane)) ?? true }
+        let visible = tree.visibleLeaves.filter(shown)
+        let stashed = tree.stashedViews.filter(shown)
         // Only THIS window has a selection: another window's focus is not
         // focus here, and a highlighted row among its siblings read as a
         // "primary" pane with the others nested under it.
@@ -300,6 +348,87 @@ struct PaneSidebarView: View {
                     ? [.init(id: pane.id, frame: proxy.frame(in: .named(PaneSidebarGeometry.space)))]
                     : [])
         })
+    }
+
+    // MARK: Search
+
+    /// Searching: for each window, the panes the query matches. Nil when not
+    /// searching (no query, or the rail, which has no room for the field).
+    private func searchMatches(
+        _ controllers: [BaseTerminalController],
+        titles: [ObjectIdentifier: String]
+    ) -> [ObjectIdentifier: Set<ObjectIdentifier>]? {
+        let terms = PaneSidebarFilter.terms(state.filter)
+        guard !terms.isEmpty, !isRail else { return nil }
+        var result: [ObjectIdentifier: Set<ObjectIdentifier>] = [:]
+        for owner in controllers {
+            let id = ObjectIdentifier(owner)
+            let tree = owner.surfaceTree
+            let panes = tree.visibleLeaves + tree.stashedViews
+            result[id] = Set(panes
+                .filter { PaneSidebarFilter.matches(terms, in: [titles[id]] + PaneSidebarText.searchFields(of: $0)) }
+                .map(ObjectIdentifier.init))
+        }
+        return result
+    }
+
+    /// Return in the search field: go to the first match, as clicking it would.
+    private func revealFirstMatch() {
+        let controllers = roster.controllers.contains { $0 === controller }
+            ? roster.controllers : [controller] + roster.controllers
+        let titled = controllers.map { (id: ObjectIdentifier($0), title: PaneSidebarText.windowTitle(of: $0)) }
+        guard let matches = searchMatches(
+            controllers, titles: Dictionary(uniqueKeysWithValues: titled.map { ($0.id, $0.title) })) else { return }
+        let byID = Dictionary(uniqueKeysWithValues: controllers.map { (ObjectIdentifier($0), $0) })
+        for section in PaneSidebarWindowGrouping.sections(titled) {
+            for entry in section.windows {
+                guard let owner = byID[entry.id], let hits = matches[entry.id] else { continue }
+                let tree = owner.surfaceTree
+                if let pane = (tree.visibleLeaves + tree.stashedViews).first(where: { hits.contains(ObjectIdentifier($0)) }) {
+                    owner.revealPane(pane)
+                    return
+                }
+            }
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.tertiary)
+            TextField("Search windows and panes", text: $state.filter)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11))
+                .focused($isSearchFocused)
+                .onSubmit { revealFirstMatch() }
+                // Escape clears a query, then gives the caret back.
+                .onExitCommand {
+                    if state.filter.isEmpty { isSearchFocused = false } else { state.filter = "" }
+                }
+            if !state.filter.isEmpty {
+                Button(action: { state.filter = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear search")
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, SidePanelRow.labelInset)
+        .padding(.bottom, 6)
+        .onChange(of: isSearchFocused) { focused in
+            state.isFilterFocused = focused
+            // The diff filter's yield: a terminal in this window keeps its
+            // `focused` flag while the field has the caret, and its key
+            // handling would eat Cmd-C/V before the field editor saw them.
+            if focused { _ = controller.focusedSurface?.resignFirstResponder() }
+        }
     }
 
     // MARK: Drop feedback
@@ -495,6 +624,12 @@ enum PaneSidebarOutline {
     /// the rows below slide to their new place. Not a `.move`: that slid the
     /// rows up THROUGH the (transparent) header and whatever was above it.
     static let foldAnimation: Animation = .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.22)
+    /// This window ⇄ all windows: the same ease-out, a little longer — the
+    /// whole list changes, not one group.
+    static let scopeAnimation: Animation = .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.3)
+    /// How far a list slides as it leaves or arrives: enough to read as a
+    /// direction, not a full page turn.
+    static let scopeSlide: CGFloat = 48
     static let foldTransition: AnyTransition = .modifier(
         active: FoldReveal(fraction: 0), identity: FoldReveal(fraction: 1))
     static let chevronWidth: CGFloat = 12
@@ -673,8 +808,10 @@ enum PaneSidebarShimmer {
     /// The band layer is this many times the glyph's width, so that at either
     /// end of its travel the bright band is fully off the glyph.
     static let bandWidthFactor: CGFloat = 3
-    /// The glyph's base under the band.
-    static let baseOpacity: Double = 0.62
+    /// The glyph's base under the band. Low enough that the band reads at a
+    /// glance on a 14pt glyph: at 0.62 it swept from 62% to 100% and, at
+    /// that size, looked like no busy indication at all.
+    static let baseOpacity: Double = 0.3
 
     /// 1 = band parked off the LEADING edge, 0 = off the TRAILING edge; the
     /// sweep runs 1 → 0 (left to right), eased, then rests at 0.
@@ -804,6 +941,21 @@ extension PaneSidebarText {
     /// carries the activity suffix ("(question)") and, for a pane that never
     /// set one, the placeholder ghost. What the all-windows scope sorts and
     /// groups by.
+    /// Everything a pane's row says about it, for the all-windows search:
+    /// its title, banner, and working directory or location (both as shown
+    /// and in full, so `~/git` and `/Users/me/git` each find it).
+    @MainActor
+    static func searchFields(of pane: PaneView) -> [String?] {
+        let pwd = pane.surfaceView?.pwd
+        let location = pane.viewerView?.location
+        return [
+            title(pane.title, pwd: pwd, kind: pane.surfaceView != nil ? "Terminal" : "Viewer"),
+            bannerLine(pane.paneBanner),
+            pwd, pwd?.abbreviatedPath,
+            location, location?.abbreviatedPath,
+        ]
+    }
+
     @MainActor
     static func windowTitle(of owner: BaseTerminalController) -> String {
         if let override = owner.windowTitleOverride ?? owner.titleOverride, !override.isEmpty {

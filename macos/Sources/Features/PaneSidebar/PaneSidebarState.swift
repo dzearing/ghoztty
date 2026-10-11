@@ -33,7 +33,16 @@ final class PaneSidebarState: ObservableObject {
     @Published var isQuickKill: Bool = false
 
     /// List panes from every window, grouped by window. Off by default.
-    @Published var showsAllWindows: Bool = false
+    @Published var showsAllWindows: Bool = false {
+        // A filter belongs to one look at every window, not to the next one.
+        didSet { if !showsAllWindows { filter = "" } }
+    }
+
+    /// The all-windows search (`PaneSidebarFilter`). Empty = no filter.
+    @Published var filter: String = ""
+    /// The search field has the caret: an open hover card stays open while
+    /// someone is typing in it, wherever the pointer wanders.
+    @Published var isFilterFocused: Bool = false
 
     /// Window groups folded closed in the all-windows list.
     @Published var foldedWindows: Set<ObjectIdentifier> = []
@@ -100,9 +109,8 @@ final class PaneSidebarState: ObservableObject {
         return insets.leading + railCardWidth + insets.trailing
     }
 
-    /// Dragging the edge is the same gesture as the pin: a panel pushed under
-    /// this collapses to the rail, a rail pulled past `expandThreshold` pins.
-    nonisolated static let collapseThreshold: CGFloat = 140
+    /// A rail pulled out past this pins. (A pinned panel dragged narrow just
+    /// stops at `minimumWidth` — it never unpins itself.)
     nonisolated static let expandThreshold: CGFloat = 120
 
     /// Hover-open timing: a short intent delay on the way in (so passing over
@@ -348,5 +356,26 @@ enum PaneSidebarWindowGrouping {
     /// "wt-10").
     static func before(_ a: String, _ b: String) -> Bool {
         a.localizedStandardCompare(b) == .orderedAscending
+    }
+}
+
+// MARK: - All-windows search (pure)
+
+/// The all-windows search: whitespace-separated terms, ALL of which must
+/// appear (case- and diacritic-insensitive) somewhere in what a pane's row
+/// says about it — its window's title (so `ghoztty` keeps a whole project and
+/// `ghoztty relay` can't), its own title, its banner, its working directory
+/// or location. Tested in `PaneSidebarFilterTests`.
+enum PaneSidebarFilter {
+    static func terms(_ query: String) -> [String] {
+        query.split(whereSeparator: \.isWhitespace).map(String.init)
+    }
+
+    static func matches(_ terms: [String], in fields: [String?]) -> Bool {
+        guard !terms.isEmpty else { return true }
+        let haystack = fields.compactMap { $0 }.joined(separator: "\n")
+        return terms.allSatisfy {
+            haystack.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil
+        }
     }
 }

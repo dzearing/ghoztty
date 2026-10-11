@@ -261,11 +261,13 @@ final class PaneSidebarHostView: NSView {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                // Never contract out from under the pointer, a drag, or a
-                // sheet the sidebar put up; try again shortly instead.
+                // Never contract out from under the pointer, a drag, a
+                // sheet the sidebar put up, or someone typing in its search;
+                // try again shortly instead.
                 if self.pointerIsOverCard
                     || PaneDragSession.shared.isDragging
-                    || self.window?.attachedSheet != nil {
+                    || self.window?.attachedSheet != nil
+                    || self.state.isFilterFocused {
                     if !self.pointerIsOverCard { self.scheduleClose() }
                     return
                 }
@@ -385,8 +387,10 @@ private struct PaneSidebarChrome: View {
         .timingCurve(0.2, 0.8, 0.2, 1, duration: opening ? 0.2 : 0.18)
     }
 
-    /// Drag the edge: resize the panel, or — past the thresholds — pin and
-    /// unpin, the same as the pin button.
+    /// Drag the edge: resize the panel between its minimum and maximum, and
+    /// stop there — a pinned panel never unpins itself under a drag (only the
+    /// pin button unpins). The rail pulled out far enough pins, the one
+    /// direction where the drag can't be mistaken for a resize.
     private var resizeHandle: some View {
         PaneSidebarResizeHandle(
             currentWidth: {
@@ -398,12 +402,6 @@ private struct PaneSidebarChrome: View {
                 case .mini where !state.isHoverOpen:
                     if proposed > PaneSidebarState.expandThreshold {
                         controller.setPaneSidebarPinned(true)
-                    }
-                case .expanded:
-                    if proposed < PaneSidebarState.collapseThreshold {
-                        controller.setPaneSidebarPinned(false)
-                    } else {
-                        state.width = PaneSidebarState.clampWidth(proposed)
                     }
                 default:
                     state.width = PaneSidebarState.clampWidth(proposed)
