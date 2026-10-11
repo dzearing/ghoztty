@@ -1464,7 +1464,10 @@ titlebar window turns on `.fullSizeContentView` and `titlebarAppearsTransparent`
 whole content stack. Any `.background(Color)` in that stack must pass
 `ignoresSafeAreaEdges: []` — SwiftUI's default extends it behind the titlebar
 (the debug-build warning did). The unpinned sidebar's card is the same tinted glass
-(`SidePanelCard(isGlass:)`) instead of an opaque slab. In the elevated style the
+(`SidePanelCard(isGlass:)`) instead of an opaque slab. On glass the sidebar header is no band of its
+own (the list starts below it), the pinned panel's edge is a pane-rim hairline,
+and the sidebar's glyphs are the mock's icon set drawn natively
+(`PaneSidebarSymbol`), not SF Symbols. Folding a window or project group animates. In the elevated style the
 **focused pane** (of several) reads as **backlit**: a soft white light behind the
 card spills past its edges onto the desk (masked to outside the card, so it never
 lightens the pane's own glass) — a subtle outer glow only, nothing inside the

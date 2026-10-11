@@ -165,7 +165,7 @@ struct PaneSidebarRow: View {
                             .minimumScaleFactor(0.7)
                     }
                 } else {
-                    PaneSidebarIcon(pane: pane, isBusy: isBusy, color: iconColor)
+                    PaneSidebarIcon(pane: pane, isBusy: isBusy, color: iconColor, size: 15)
                 }
                 interaction
             }
@@ -301,27 +301,34 @@ struct PaneSidebarRow: View {
     }
 }
 
-/// A row's icon: the pane kind's symbol, shimmering while busy.
+/// A row's icon: the pane kind's glyph (the mock's icon set — see
+/// `PaneSidebarSymbol`), shimmering while busy.
 struct PaneSidebarIcon: View {
     @ObservedObject var pane: PaneView
     let isBusy: Bool
     let color: Color
+    var size: CGFloat = 14
 
     var body: some View {
         PaneSidebarGlyph(isBusy: isBusy, color: color) {
-            Image(systemName: Self.symbol(for: pane))
-                .font(.system(size: 12.5))
+            if let symbol = Self.symbol(for: pane) {
+                PaneSidebarSymbolView(symbol: symbol, size: size)
+            } else {
+                // An image pane: the mock has no glyph for one.
+                Image(systemName: "photo")
+                    .font(.system(size: size - 1.5))
+                    .frame(width: size, height: size)
+            }
         }
     }
 
-    static func symbol(for pane: PaneView) -> String {
-        guard let viewer = pane.viewerView else { return "terminal" }
+    static func symbol(for pane: PaneView) -> PaneSidebarSymbol? {
+        guard let viewer = pane.viewerView else { return .terminal }
         return switch viewer.mode {
-        case .markdown: "doc.richtext"
-        case .code, .html: "doc.text"
-        case .diff: "plusminus"
-        case .image: "photo"
-        case .web: "globe"
+        case .markdown, .code, .html: .document
+        case .diff: .diff
+        case .image: nil
+        case .web: .globe
         }
     }
 }

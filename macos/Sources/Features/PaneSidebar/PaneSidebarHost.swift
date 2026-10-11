@@ -336,12 +336,15 @@ private struct PaneSidebarChrome: View {
                     .background(controller.ghostty.config.paneGlass
                         ? AnyShapeStyle(Color.clear) : GlassCard.fill(isLightBackground: isLight))
                     .background(background.opacity(elevated ? 0.38 : 1))
+                    // Its edge: in the elevated style, the same hairline a
+                    // pane's rim is drawn in, so the panel has an edge
+                    // against the desk; flat, the split-divider rule.
                     .overlay(alignment: .trailing) {
-                        if !elevated {
-                            Rectangle()
-                                .fill(controller.ghostty.config.splitDividerColor)
-                                .frame(width: 1)
-                        }
+                        Rectangle()
+                            .fill(elevated
+                                ? (isLight ? Color.black.opacity(0.10) : Color.white.opacity(0.12))
+                                : controller.ghostty.config.splitDividerColor)
+                            .frame(width: 1)
                     }
                     .overlay(alignment: .trailing) { resizeHandle }
                     .frame(maxWidth: .infinity, alignment: .leading)

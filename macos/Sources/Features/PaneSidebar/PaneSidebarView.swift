@@ -23,18 +23,33 @@ struct PaneSidebarView: View {
     @Environment(\.paneSidebarInteractive) private var isInteractive
 
     var body: some View {
-        list
-            .safeAreaInset(edge: .top, spacing: 0) { header }
+        content
             .onPreferenceChange(PaneSidebarRowFrames.self) { geometry.rowFrames = $0 }
             .onPreferenceChange(PaneSidebarGroupFrames.self) { geometry.groupFrames = $0 }
             .font(.system(size: 12))
             .environment(\.paneSidebarEmphasized, controlActiveState == .key)
     }
 
+    /// Glass panes: the header is no band of its own — just the caption and
+    /// buttons on the panel, as in the mock — so the list starts BELOW it
+    /// rather than scrolling under a backdrop.
+    @ViewBuilder
+    private var content: some View {
+        if controller.ghostty.config.paneGlass {
+            VStack(spacing: 0) {
+                headerContent
+                list
+            }
+        } else {
+            list.safeAreaInset(edge: .top, spacing: 0) {
+                SidePanelHeader(base: controller.ghostty.config.backgroundColor) { headerContent }
+            }
+        }
+    }
+
     // MARK: Header
 
-    private var header: some View {
-        SidePanelHeader(base: controller.ghostty.config.backgroundColor) {
+    private var headerContent: some View {
             Group {
                 if isRail {
                     VStack(spacing: 2) { headerButtons }
@@ -51,7 +66,6 @@ struct PaneSidebarView: View {
                     .frame(height: 34)
                 }
             }
-        }
     }
 
     private var caption: some View {
@@ -67,12 +81,12 @@ struct PaneSidebarView: View {
     @ViewBuilder
     private var headerButtons: some View {
         PaneSidebarHeaderButton(
-            systemName: state.showsAllWindows ? "rectangle.stack.fill" : "rectangle.stack",
+            symbol: .windows(filled: state.showsAllWindows),
             help: state.showsAllWindows ? "Show only this window’s panes" : "Show panes from all windows"
         ) { state.showsAllWindows.toggle() }
 
         PaneSidebarHeaderButton(
-            systemName: state.isQuickKill ? "trash.fill" : "trash",
+            symbol: .trash(filled: state.isQuickKill),
             tint: state.isQuickKill ? Color(nsColor: .systemRed) : nil,
             help: state.isQuickKill
                 ? "Done killing panes (Esc)"
@@ -80,7 +94,7 @@ struct PaneSidebarView: View {
         ) { state.isQuickKill.toggle() }
 
         PaneSidebarHeaderButton(
-            systemName: state.isPinned ? "pin.fill" : "pin",
+            symbol: .pin(filled: state.isPinned),
             // Unpinned the pin lies tilted; pinned it stands upright.
             rotation: state.isPinned ? 0 : 45,
             help: state.isPinned ? "Unpin — collapse to icons" : "Pin — keep the sidebar open"
@@ -135,6 +149,7 @@ struct PaneSidebarView: View {
                             if let owner = byID[entry.id] {
                                 windowGroup(owner, isThisWindow: owner === controller,
                                             label: entry.label, indent: PaneSidebarOutline.childIndent)
+                                    .transition(PaneSidebarOutline.foldTransition)
                             }
                         }
                     }
@@ -145,8 +160,10 @@ struct PaneSidebarView: View {
                         isFolded: folded,
                         isFirst: index == 0,
                         onFold: {
-                            if folded { state.foldedProjects.remove(project) }
-                            else { state.foldedProjects.insert(project) }
+                            withAnimation(PaneSidebarOutline.foldAnimation) {
+                                if folded { state.foldedProjects.remove(project) }
+                                else { state.foldedProjects.insert(project) }
+                            }
                         })
                 }
             } else {
@@ -182,17 +199,24 @@ struct PaneSidebarView: View {
                     isQuickKill: state.isQuickKill,
                     isDropTarget: isJoinTarget(owner),
                     onFold: {
-                        if folded { state.foldedWindows.remove(ObjectIdentifier(owner)) }
-                        else { state.foldedWindows.insert(ObjectIdentifier(owner)) }
+                        withAnimation(PaneSidebarOutline.foldAnimation) {
+                            if folded { state.foldedWindows.remove(ObjectIdentifier(owner)) }
+                            else { state.foldedWindows.insert(ObjectIdentifier(owner)) }
+                        }
                     })
             }
             if !folded || isRail {
                 // In the outline, a window's panes are its CHILDREN: indented
                 // under its header so the header reads as the parent.
-                windowSection(owner, isThisWindow: isThisWindow,
-                              indent: isRail ? 0 : indent + PaneSidebarOutline.childIndent)
+                VStack(alignment: .leading, spacing: 0) {
+                    windowSection(owner, isThisWindow: isThisWindow,
+                                  indent: isRail ? 0 : indent + PaneSidebarOutline.childIndent)
+                }
+                .transition(PaneSidebarOutline.foldTransition)
             }
         }
+        // The folding rows slide under the header, not over the group above.
+        .clipped()
         .background(GeometryReader { proxy in
             Color.clear.preference(
                 key: PaneSidebarGroupFrames.self,
@@ -302,7 +326,7 @@ struct PaneSidebarView: View {
 /// from the glyph (outline ⇄ filled, tilted ⇄ upright), never from a tint —
 /// the one exception being trash's red, which says "this kills".
 struct PaneSidebarHeaderButton: View {
-    let systemName: String
+    let symbol: PaneSidebarSymbol
     var tint: Color? = nil
     var rotation: Double = 0
     let help: String
@@ -310,7 +334,7 @@ struct PaneSidebarHeaderButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: systemName)
+            PaneSidebarSymbolView(symbol: symbol, size: 15)
                 .rotationEffect(.degrees(rotation))
                 .animation(.spring(response: 0.3, dampingFraction: 0.6), value: rotation)
                 .foregroundStyle(tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.primary))
@@ -466,6 +490,11 @@ private struct PaneSidebarProjectHeader: View {
 /// sits where a row's label starts, and a window's panes are indented so
 /// their icons line up under the window's name — the parent/child reading.
 enum PaneSidebarOutline {
+    /// Folding a group open or closed: the rows below slide to their new
+    /// place while the group's own rows fade in or out from under its header.
+    static let foldAnimation: Animation = .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.22)
+    static let foldTransition: AnyTransition =
+        .opacity.combined(with: .move(edge: .top))
     static let chevronWidth: CGFloat = 12
     static let chevronSpacing: CGFloat = 5
     /// The header's leading edge inside its fill: the chevron's left edge
