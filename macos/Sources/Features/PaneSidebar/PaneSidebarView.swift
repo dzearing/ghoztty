@@ -215,8 +215,6 @@ struct PaneSidebarView: View {
                 .transition(PaneSidebarOutline.foldTransition)
             }
         }
-        // The folding rows slide under the header, not over the group above.
-        .clipped()
         .background(GeometryReader { proxy in
             Color.clear.preference(
                 key: PaneSidebarGroupFrames.self,
@@ -421,7 +419,9 @@ private struct PaneSidebarWindowHeader: View {
                 .strokeBorder(Color(nsColor: .controlAccentColor), lineWidth: isDropTarget ? 2 : 0))
         .padding(.horizontal, SidePanelRow.fillInset)
         .contentShape(Rectangle())
-        .onHover { isHovered = $0 }
+        // Not `.onHover`: it blinks off for a frame when a fold re-lays out
+        // the list (see `HoverTrackingView`).
+        .background(HoverTrackingArea(isHovered: $isHovered))
         .onTapGesture {
             guard !isThisWindow else { onFold(); return }
             owner.window?.makeKeyAndOrderFront(nil)
@@ -490,11 +490,13 @@ private struct PaneSidebarProjectHeader: View {
 /// sits where a row's label starts, and a window's panes are indented so
 /// their icons line up under the window's name — the parent/child reading.
 enum PaneSidebarOutline {
-    /// Folding a group open or closed: the rows below slide to their new
-    /// place while the group's own rows fade in or out from under its header.
+    /// Folding a group open or closed: a disclosure. The group's rows stay
+    /// where they are and are revealed (or covered) from the top down while
+    /// the rows below slide to their new place. Not a `.move`: that slid the
+    /// rows up THROUGH the (transparent) header and whatever was above it.
     static let foldAnimation: Animation = .timingCurve(0.2, 0.8, 0.2, 1, duration: 0.22)
-    static let foldTransition: AnyTransition =
-        .opacity.combined(with: .move(edge: .top))
+    static let foldTransition: AnyTransition = .modifier(
+        active: FoldReveal(fraction: 0), identity: FoldReveal(fraction: 1))
     static let chevronWidth: CGFloat = 12
     static let chevronSpacing: CGFloat = 5
     /// The header's leading edge inside its fill: the chevron's left edge
@@ -809,5 +811,26 @@ extension PaneSidebarText {
         }
         let pane = owner.publishedFocusedPane ?? owner.surfaceTree.visibleLeaves.first
         return title(pane?.title ?? "", pwd: pane?.surfaceView?.pwd, kind: "Window")
+    }
+}
+
+/// Shows the top `fraction` of its content, cut off at a straight edge: the
+/// fold transition's mask.
+struct FoldReveal: ViewModifier, Animatable {
+    var fraction: CGFloat
+
+    var animatableData: CGFloat {
+        get { fraction }
+        set { fraction = newValue }
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .mask(alignment: .top) {
+                GeometryReader { proxy in
+                    Rectangle().frame(height: max(0, proxy.size.height * fraction))
+                }
+            }
+            .opacity(fraction > 0 ? 1 : 0)
     }
 }

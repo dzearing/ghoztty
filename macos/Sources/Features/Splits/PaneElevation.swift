@@ -256,7 +256,10 @@ struct PaneCard: ViewModifier {
                 .clipShape(PaneElevation.cardShape)
                 .overlay(
                     PaneElevation.cardShape
-                        .strokeBorder(isLight ? Color.black.opacity(0.08) : Color.white.opacity(0.10),
+                        // The focused pane's rim is a touch brighter, with its glow.
+                        .strokeBorder(isLight
+                                      ? Color.black.opacity(isFocused ? 0.12 : 0.08)
+                                      : Color.white.opacity(isFocused ? 0.20 : 0.10),
                                       lineWidth: 0.5)
                         .allowsHitTesting(false))
                 .background(PaneGlass(tint: background, isLight: isLight))
@@ -265,7 +268,9 @@ struct PaneCard: ViewModifier {
                 .clipShape(PaneElevation.cardShape)
                 .overlay(
                     PaneElevation.cardShape
-                        .strokeBorder(isLight ? Color.black.opacity(0.06) : Color.white.opacity(0.07),
+                        .strokeBorder(isLight
+                                      ? Color.black.opacity(isFocused ? 0.10 : 0.06)
+                                      : Color.white.opacity(isFocused ? 0.16 : 0.07),
                                       lineWidth: 0.5)
                         .allowsHitTesting(false))
                 .background(
@@ -289,7 +294,7 @@ struct PaneFocusGlow: View {
     var body: some View {
         let shape = PaneElevation.cardShape
         shape
-            .stroke(Color.white.opacity(isLight ? 0.6 : 0.22), lineWidth: 8)
+            .stroke(Color.white.opacity(isLight ? 0.7 : 0.28), lineWidth: 8)
             .blur(radius: 16)
             .mask {
                 ZStack {

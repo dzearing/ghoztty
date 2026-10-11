@@ -48,13 +48,12 @@ struct PaneDragSource: NSViewRepresentable {
 /// a continuous screen-point feed that spans every window on the desktop.
 /// That feed is what makes cross-window dragging work without any window
 /// needing to know about the drag.
-final class PaneDragSourceView: NSView, NSDraggingSource {
+final class PaneDragSourceView: HoverTrackingView, NSDraggingSource {
     /// Scale factor applied to the pane snapshot for the drag preview image.
     fileprivate static let previewScale: CGFloat = 0.2
 
     var pane: PaneView?
     var onDragStateChanged: ((Bool) -> Void)?
-    var onHoverChanged: ((Bool) -> Void)?
 
     /// The window the pane belongs to, when it can't be found through the
     /// pane's own view: a STASHED pane is unmounted and has no window, so a
@@ -113,23 +112,10 @@ final class PaneDragSourceView: NSView, NSDraggingSource {
         NSMenu.popUpContextMenu(menu, with: event, for: self)
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach { removeTrackingArea($0) }
-        addTrackingArea(NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInActiveApp],
-            owner: self,
-            userInfo: nil))
-    }
-
     override func resetCursorRects() {
         guard showsGrabCursor || isTracking else { return }
         addCursorRect(bounds, cursor: isTracking ? .closedHand : .openHand)
     }
-
-    override func mouseEntered(with event: NSEvent) { onHoverChanged?(true) }
-    override func mouseExited(with event: NSEvent) { onHoverChanged?(false) }
 
     override func mouseDragged(with event: NSEvent) {
         guard !isTracking, let pane else { return }
@@ -277,5 +263,78 @@ extension PaneView {
         let image = NSImage(size: view.bounds.size)
         image.addRepresentation(rep)
         return image
+    }
+}
+
+/// A view that reports whether the pointer is over it — from WHERE THE
+/// POINTER IS, not from the enter/exit events alone.
+///
+/// A layout change (a sidebar group folding open, rows sliding) makes AppKit
+/// rebuild every tracking area, and a rebuilt area fires an exit and a fresh
+/// enter for a pointer that never moved: the hover fill blinked off for a
+/// frame. Every event is checked against the real pointer location, and a
+/// rebuilt area re-syncs from it, so hover only changes when the answer does
+/// — including a row that slides out from under a still pointer.
+class HoverTrackingView: NSView {
+    var onHoverChanged: ((Bool) -> Void)?
+
+    private var isHovered = false
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach { removeTrackingArea($0) }
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInActiveApp],
+            owner: self,
+            userInfo: nil))
+        // Called mid-layout: report after it, not during a view update.
+        DispatchQueue.main.async { [weak self] in self?.syncHover() }
+    }
+
+    override func mouseEntered(with event: NSEvent) { syncHover() }
+    override func mouseExited(with event: NSEvent) { syncHover() }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil { setHovered(false) }
+    }
+
+    /// The pointer in this view's coordinates, or nil when it can't be over
+    /// it (no window, or the app inactive — the tracking area's own scope).
+    var pointerLocation: NSPoint? {
+        guard let window, NSApp.isActive else { return nil }
+        return convert(window.mouseLocationOutsideOfEventStream, from: nil)
+    }
+
+    func syncHover() {
+        guard let point = pointerLocation else { return setHovered(false) }
+        setHovered(!isHiddenOrHasHiddenAncestor && bounds.contains(point))
+    }
+
+    private func setHovered(_ hovered: Bool) {
+        guard hovered != isHovered else { return }
+        isHovered = hovered
+        onHoverChanged?(hovered)
+    }
+}
+
+/// `HoverTrackingView` for SwiftUI, behind content that handles its own
+/// clicks: it never takes a hit test.
+struct HoverTrackingArea: NSViewRepresentable {
+    @Binding var isHovered: Bool
+
+    final class View: HoverTrackingView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+
+    func makeNSView(context: Context) -> View {
+        let view = View()
+        view.onHoverChanged = { isHovered = $0 }
+        return view
+    }
+
+    func updateNSView(_ view: View, context: Context) {
+        view.onHoverChanged = { isHovered = $0 }
     }
 }
