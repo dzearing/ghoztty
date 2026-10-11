@@ -458,15 +458,21 @@ const WindowsPty = struct {
     /// handle with an in-flight `ReadFile` BLOCKS until that read completes,
     /// so the `deinit` order (handles first, console last) deadlocks such an
     /// owner. Join the reader, then call `deinitAfterReader`.
+    ///
+    /// Also closes OUR dup of the input pipe's READ end, after the console:
+    /// the same owner writes `in_pipe` from its own blocking writer thread
+    /// (T1800), and a write parked on a full pipe completes only once every
+    /// read end is gone. Conhost's dup leaves with conhost; this was the other.
+    /// Nothing ever reads `in_pipe_pty` here, so closing it cannot block.
     pub fn closeConsole(self: *Pty) void {
         _ = windows.CloseHandle(self.out_pipe_pty);
         _ = windows.exp.kernel32.ClosePseudoConsole(self.pseudo_console);
+        _ = windows.CloseHandle(self.in_pipe_pty);
     }
 
     /// Second half of the `closeConsole` teardown: free the remaining handles
-    /// once the reader thread has observed EOF and been joined.
+    /// once the reader (and writer) threads have stopped and been joined.
     pub fn deinitAfterReader(self: *Pty) void {
-        _ = windows.CloseHandle(self.in_pipe_pty);
         _ = windows.CloseHandle(self.in_pipe);
         _ = windows.CloseHandle(self.out_pipe);
         self.* = undefined;

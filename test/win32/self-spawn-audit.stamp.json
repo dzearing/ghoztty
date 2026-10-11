@@ -1,10 +1,11 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-10T17:55:38-07:00",
-    "commit":  "aef247988",
+    "generated":  "2026-10-10T19:04:07-07:00",
+    "commit":  "d251bdd1c",
     "uncommitted":  [
-
+                        "src/pty.zig",
+                        "src/remote/agent/pty_child.zig"
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -637,7 +638,7 @@
                   "src/os/wasm/target.zig":  "07528971020c03f8fa9601e6efc141d29233244484b5fd5645d829922acfc7ec",
                   "src/os/windows.zig":  "74921028a715c95e30094e3f0a1136e1a7b9df12cc744018960816a2f9d5a6d3",
                   "src/os/xdg.zig":  "fc1ea4c4091746fd2de40fa48c5aa38c8246cb56f8d440b2e4784c8300c21c33",
-                  "src/pty.zig":  "4ac86b8dcf8853aa1bd0134cde850fe5eaf34cad088c09c4c1d4bdbfe4a70fa8",
+                  "src/pty.zig":  "c201e12f692ca48a4c66920cf661dd2e7763a4b34b59b0000201628ca025a1b0",
                   "src/quirks.zig":  "eeef560fe350b99f541827b53de3c057d16fadb2f625cf08764da0f8a57ef021",
                   "src/remote/agent/adopt.zig":  "4c168a5c270f708e5e3d1dbde9fa03cb0d96f47ee6f55fb5c499a4b5fc80d984",
                   "src/remote/agent/atomic_write.zig":  "74bfecbb79a06425c8e32bb7b0381d23605355a90983191cbaf2758f0b002222",
@@ -658,7 +659,7 @@
                   "src/remote/agent/proc.zig":  "9b9661ba3efb488afc6db8b459f8be45de76f5679be914433e8c8814c47d1261",
                   "src/remote/agent/proc_control.zig":  "2d4d6f313adf91a24201f8d66441aa8dede7208c0d0f5d63d6cf3dd2af14d20e",
                   "src/remote/agent/proc_spawn.zig":  "b1a9eb9d9cef3e01b75813837285b80b0d3bfb4795aeb74f69f66458bfb8c8cd",
-                  "src/remote/agent/pty_child.zig":  "1bd89262802861257efebb5f09f2098c404de10375df9d7bb6d29c0bf11b0d05",
+                  "src/remote/agent/pty_child.zig":  "ac9cc765ecea2854d59c20c3771e0d540dfb7959715486e51da8e7419f17a6f9",
                   "src/remote/agent/pty_holder_child.zig":  "198095818b07ea25e60da88546b33affca04236e90a7bcebeca013845c90387f",
                   "src/remote/agent/pty_host.zig":  "3d8487a37eb3a3fb8155d9520d72186f63ca830385a4ef5c91b7132e897a5d8b",
                   "src/remote/agent/pty_host_proto.zig":  "a8ef76003f78d212f41503343106f5bbe6ec1ce38fbf4c661c545e8a4d6babd3",

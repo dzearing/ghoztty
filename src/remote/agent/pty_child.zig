@@ -308,7 +308,7 @@ pub const PtyChild = struct {
     closed: bool = false,
 
     /// Viewer input waiting to be written to the pty, and the thread that
-    /// writes it (POSIX). A pty write BLOCKS once the program in the pane stops
+    /// writes it (both platforms since T1800; see `writeFn`). A pty write BLOCKS once the program in the pane stops
     /// reading its terminal and the line discipline's input queue is full — a
     /// TUI busy computing, a script that never reads stdin, a stopped job. The
     /// write used to happen on the connection's ONE data-reader thread, so a
@@ -468,20 +468,31 @@ pub const PtyChild = struct {
 
     // --- write: client keystrokes → master ------------------------------------
 
-    fn writeFn(ctx: *anyopaque, bytes: []const u8) anyerror!usize {
-        const self: *PtyChild = @ptrCast(@alignCast(ctx));
+    /// One blocking write to the pty's input side; returns the count written.
+    /// Windows feeds the ConPTY input pipe — `WriteFile(in_pipe)` is the
+    /// smoke-proven input path (`conpty_smoke.zig`).
+    fn rawWrite(self: *PtyChild, bytes: []const u8) !usize {
         if (is_windows) {
-            // Windows: feed the ConPTY input side. `WriteFile(in_pipe)` is the
-            // smoke-proven input path (`conpty_smoke.zig`). Return the count so the
-            // caller loops on a short write, exactly like the POSIX branch.
             var written: windows.DWORD = 0;
-            if (bytes.len == 0) return 0;
             if (windows.kernel32.WriteFile(self.pty.in_pipe, bytes.ptr, @intCast(bytes.len), &written, null) == 0)
                 return error.BrokenPipe;
             return @intCast(written);
         }
-        // POSIX: queue for this child's own writer thread (see `input`). Never
-        // blocks the caller — the connection's data reader, shared by every pane.
+        return posix.write(self.pty.master, bytes);
+    }
+
+    fn writeFn(ctx: *anyopaque, bytes: []const u8) anyerror!usize {
+        const self: *PtyChild = @ptrCast(@alignCast(ctx));
+        // Queue for this child's own writer thread (see `input`). Never blocks
+        // the caller — the connection's data reader, shared by every pane.
+        //
+        // Windows too (T1800): a ConPTY input write does not wedge outright
+        // the way a full pty line discipline does, but conhost drains it at
+        // about 1.7 MB/s whether or not the program is reading — measured, an
+        // 8 MiB paste held the writer for 4.9 s — and before this that whole
+        // time was the shared thread's, so one big paste froze typing in every
+        // other pane. The holder arm inherits this: `pty_host` writes through
+        // a PtyChild.
         if (bytes.len == 0) return 0;
         self.input_mutex.lock();
         defer self.input_mutex.unlock();
@@ -493,7 +504,7 @@ pub const PtyChild = struct {
                 log.warn("failed to spawn pty writer thread: {}; writing inline", .{err});
                 self.input_mutex.unlock();
                 defer self.input_mutex.lock();
-                return posix.write(self.pty.master, bytes);
+                return self.rawWrite(bytes);
             };
         }
         const queued = self.input.items.len - self.input_head;
@@ -514,9 +525,10 @@ pub const PtyChild = struct {
         return bytes.len;
     }
 
-    /// Drain `input` into the pty master, blocking only this child (POSIX).
-    /// Exits when `terminate` sets `input_stop` (after the pty is torn down, a
-    /// write in flight fails with EIO instead of blocking forever).
+    /// Drain `input` into the pty, blocking only this child. Exits when
+    /// `terminate` sets `input_stop` (after the pty is torn down, a write in
+    /// flight fails — EIO on POSIX, BROKEN_PIPE once `closeConsole` has closed
+    /// the input pipe's last read end on Windows — instead of blocking forever).
     fn writerLoop(self: *PtyChild) void {
         var chunk: [16 * 1024]u8 = undefined;
         while (true) {
@@ -535,7 +547,7 @@ pub const PtyChild = struct {
 
             var off: usize = 0;
             while (off < n) {
-                const w = posix.write(self.pty.master, chunk[off..n]) catch |err| {
+                const w = self.rawWrite(chunk[off..n]) catch |err| {
                     // The pty is gone (child exited / torn down): nothing more
                     // can be delivered. Park until terminate stops us.
                     log.debug("pty input write failed: {}", .{err});
@@ -1970,23 +1982,32 @@ test "PtyChild: a child that never reads stdin cannot block the writer — or te
     // The "every pane froze" bug: input was written to the pty on the shared
     // connection thread, and a program that is not reading its terminal fills
     // the line discipline's input queue, after which the write blocks forever.
-    if (is_windows) return error.SkipZigTest; // POSIX writer thread only
     const alloc = testing.allocator;
     var spawner = try PtySpawner.init(alloc);
     defer spawner.deinit();
 
     // `sleep` never reads its terminal; raw mode so nothing is consumed by
-    // canonical line editing either.
-    const pc = try spawner.spawnChild(.{ .rows = 24, .cols = 80, .command = "stty raw -echo; exec sleep 600" });
+    // canonical line editing either. Windows (T1800): `ping` never reads its
+    // console input either, so the ConPTY input pipe is left for conhost alone
+    // to drain - the same shape, on the pipe both child arms write through.
+    const pc = try spawner.spawnChild(.{
+        .rows = 24,
+        .cols = 80,
+        .command = if (is_windows) "ping -n 600 127.0.0.1 >nul" else "stty raw -echo; exec sleep 600",
+    });
     var capture: CaptureSink = .{ .alloc = alloc };
     defer capture.deinit();
     pc.child().attach(&capture, CaptureSink.sink, 0x5151);
 
     // Far more than any pty input queue holds. Every write returns at once.
+    // Windows writes 8 MiB: conhost accepts input at ~1.7 MB/s, so 1 MiB took
+    // 0.6 s written inline and would pass this bound without the writer
+    // thread; 8 MiB took 4.9 s inline (T1800, measured on the box).
     const chunk = [_]u8{'x'} ** 4096;
+    const chunks: usize = if (is_windows) 256 * 8 else 256;
     var timer = try std.time.Timer.start();
     var i: usize = 0;
-    while (i < 256) : (i += 1) try pc.child().writeAll(&chunk); // 1 MiB
+    while (i < chunks) : (i += 1) try pc.child().writeAll(&chunk);
     try testing.expect(timer.read() < 2 * std.time.ns_per_s);
 
     // And tearing the child down with input still queued (its writer blocked

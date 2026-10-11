@@ -34829,3 +34829,23 @@ moved to T1814.
   foreground taken; harness floor PASS (after fixing two audit findings in
   the new script: unwrapped `.Count` and a silent catch), guard-due ALL PASS.
   No `src/` change, so the zig lanes and P1-P3 were not re-run.
+
+## 2026-10-10 — T1800: one slow Windows pane no longer stalls typing in the others
+
+- **Measured before fixing.** Main 7e78aacf4 gave each Mac pane its own input
+  writer thread and skipped the test on Windows. A ConPTY input write never
+  wedges outright, but conhost takes input at about 1.7 MB/s whether or not
+  the program reads it. With a non-reading child, 1 MiB took 0.6 s and 8 MiB
+  took 4.9 s. All of that time was spent on the agent's shared connection
+  thread, so every other pane's typing froze.
+- **Fix.** `PtyChild` now queues input to the per-child writer on Windows too.
+  The holder arm gets it for free, because `pty_host` writes through a
+  `PtyChild`. `Pty.closeConsole` also closes the input pipe's read end, so a
+  writer parked mid-write at teardown gets BROKEN_PIPE instead of hanging the
+  join.
+- **Split.** The reboot/re-attach acceptance port moved to T1817.
+- **Validation**: the Mac unit test is now enabled on Windows (8 MiB in under
+  2 s, teardown with 4 MiB queued in under 5 s). A negative control proved it
+  executes. Floor lanes all PASS. P1-P3 ALL PASS. Guard harnesses
+  job-escape-startup, session-shell-exit, holder-soak, sessions-running-cmd,
+  thread-join, test-wait-oracle, self-spawn and seam-audit ALL PASS.
