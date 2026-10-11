@@ -118,14 +118,32 @@ pub fn shouldRelaunch(app_exited: bool, marker_present: bool) bool {
     return app_exited and marker_present;
 }
 
-/// `%LOCALAPPDATA%\ghoztty\agent-refresh[-debug].marker` — per lineage, like
+/// What a guard is watching over. Each purpose has its own marker, so a
+/// deliberate restart and an agent refresh can never disarm each other's guard.
+pub const Purpose = enum {
+    /// The destructive agent refresh (T421): the app is expected to SURVIVE,
+    /// and the guard relaunches it only if it did not.
+    agent_refresh,
+    /// A user-invoked "Restart Ghoztty" (T1804): the app is expected to EXIT,
+    /// and the guard is the thing that starts it again. It waits for the exit
+    /// rather than racing it, because a copy started while this one still owns
+    /// the IPC pipe would forward a new-window request to the dying instance
+    /// and quit (`App.init`'s AlreadyRunning arm), and nothing would come back.
+    app_restart,
+
+    pub fn markerName(self: Purpose, is_debug: bool) []const u8 {
+        return switch (self) {
+            .agent_refresh => if (is_debug) "agent-refresh-debug.marker" else "agent-refresh.marker",
+            .app_restart => if (is_debug) "app-restart-debug.marker" else "app-restart.marker",
+        };
+    }
+};
+
+/// `%LOCALAPPDATA%\ghoztty\<purpose>[-debug].marker` — per lineage, like
 /// every other bit of app state, so a debug run can never arm a guard that
 /// relaunches the user's installed release.
-pub fn markerPath(arena: Allocator) ![]const u8 {
-    const name = if (build_config.is_debug)
-        "agent-refresh-debug.marker"
-    else
-        "agent-refresh.marker";
+pub fn markerPath(arena: Allocator, purpose: Purpose) ![]const u8 {
+    const name = purpose.markerName(build_config.is_debug);
     const local = std.process.getEnvVarOwned(arena, "LOCALAPPDATA") catch return error.NoLocalAppData;
     return std.fmt.allocPrint(arena, "{s}\\ghoztty\\{s}", .{ local, name });
 }
@@ -153,14 +171,21 @@ pub const Armed = struct {
 /// the user asked for, and refusing it because a supervisor would not start
 /// trades a rare failure for a certain one.
 pub fn arm(alloc: Allocator) ?Armed {
+    return armFor(alloc, .agent_refresh);
+}
+
+/// `arm` for a named purpose. For `.app_restart` the caller does NOT disarm
+/// on success: the marker still being there when the app exits is the order to
+/// start it again. It disarms only when it backs out of the restart.
+pub fn armFor(alloc: Allocator, purpose: Purpose) ?Armed {
     if (comptime builtin.os.tag != .windows) return null;
-    return armImpl(alloc) catch |err| {
-        log.warn("relaunch guard: NOT armed err={} (the refresh proceeds unsupervised)", .{err});
+    return armImpl(alloc, purpose) catch |err| {
+        log.warn("relaunch guard: NOT armed for {s} err={}", .{ @tagName(purpose), err });
         return null;
     };
 }
 
-fn armImpl(alloc: Allocator) !Armed {
+fn armImpl(alloc: Allocator, purpose: Purpose) !Armed {
     const windows = std.os.windows;
 
     var arena_state = std.heap.ArenaAllocator.init(alloc);
@@ -173,7 +198,7 @@ fn armImpl(alloc: Allocator) !Armed {
     // another guard (T933). `arm` already treats any failure here as "NOT
     // armed", which is the right answer in a test build.
     const exe = try internal_os.self_exe.productExePathAlloc(arena);
-    const marker = try markerPath(arena);
+    const marker = try markerPath(arena, purpose);
     if (std.fs.path.dirname(marker)) |dir| {
         std.fs.cwd().makePath(dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
@@ -223,8 +248,8 @@ fn armImpl(alloc: Allocator) !Armed {
     windows.CloseHandle(spawned.pi.hThread);
 
     log.info(
-        "relaunch guard: ARMED (guard pid {d} watching app pid {d}; marker {s}; escape={s})",
-        .{ guard_pid, pid, marker, spawned.tier.name() },
+        "relaunch guard: ARMED (guard pid {d} watching app pid {d}; marker {s}; escape={s}; purpose={s})",
+        .{ guard_pid, pid, marker, spawned.tier.name(), @tagName(purpose) },
     );
     return .{ .alloc = alloc, .marker = try alloc.dupe(u8, marker) };
 }
@@ -290,7 +315,7 @@ fn run(alloc: Allocator, spec: Spec) u8 {
     }
 
     log.warn(
-        "relaunch guard: app pid {d} ENDED during the agent refresh; relaunching {s}",
+        "relaunch guard: app pid {d} ENDED with the marker armed; relaunching {s}",
         .{ spec.pid, spec.exe },
     );
     const ok = relaunch(alloc, spec.exe);
@@ -401,7 +426,7 @@ test "markerPath is per lineage so a debug run cannot relaunch the release" {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
-    const p = try markerPath(arena.allocator());
+    const p = try markerPath(arena.allocator(), .agent_refresh);
     try testing.expect(std.mem.endsWith(u8, p, ".marker"));
     try testing.expect(std.mem.indexOf(u8, p, "\\ghoztty\\") != null);
     if (build_config.is_debug) {
@@ -409,6 +434,22 @@ test "markerPath is per lineage so a debug run cannot relaunch the release" {
     } else {
         try testing.expect(std.mem.endsWith(u8, p, "\\agent-refresh.marker"));
     }
+}
+
+test "each purpose has its own marker, per lineage (T1804)" {
+    // A restart's marker must never be the refresh's: the refresh DISARMS on
+    // its way out, and a shared file would cancel the restart it ran beside.
+    for ([_]bool{ false, true }) |dbg| {
+        const a = Purpose.agent_refresh.markerName(dbg);
+        const r = Purpose.app_restart.markerName(dbg);
+        try testing.expect(!std.mem.eql(u8, a, r));
+        try testing.expectEqual(dbg, std.mem.indexOf(u8, r, "-debug") != null);
+    }
+    try testing.expect(!std.mem.eql(
+        u8,
+        Purpose.app_restart.markerName(false),
+        Purpose.app_restart.markerName(true),
+    ));
 }
 
 test "the guard is armed with a spec long enough for two max-length paths" {

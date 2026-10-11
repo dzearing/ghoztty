@@ -1,0 +1,18 @@
+{
+    "guard":  "app-restart",
+    "script":  "test/win32/app-restart.ps1",
+    "generated":  "2026-10-10T22:55:44-07:00",
+    "commit":  "acfe7cb72",
+    "uncommitted":  [
+                        "src/apprt/win32/app_restart.zig",
+                        "src/apprt/win32/job_spawn.zig",
+                        "src/apprt/win32/relaunch_guard.zig",
+                        "test/win32/app-restart.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/app_restart.zig":  "e6de2b1d367b2e5832906b032b50b8f1fd3ff7f9cd59602b2e626b7f4a9ea73f",
+                  "src/apprt/win32/job_spawn.zig":  "1f839b5b293fee5be784946b6ba2ca6bfcd4aeecde33c9c0226d33af9ebb2673",
+                  "src/apprt/win32/relaunch_guard.zig":  "3cc0c7d3961eb984559da32e7e6ab36db57795d1e0165bc5fe9fe71104c2b847",
+                  "test/win32/app-restart.ps1":  "464cc554288d8bf666def591c723c0595fcccb4f574cd0792da0844f5c826fe3"
+              }
+}

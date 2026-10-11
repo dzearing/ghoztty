@@ -65,6 +65,7 @@ const install_location = @import("install_location.zig");
 const update_apply = @import("update_apply.zig");
 const update_install = @import("update_install.zig");
 const update_reopen = @import("update_reopen.zig");
+const app_restart = @import("app_restart.zig");
 const update_progress = @import("update_progress.zig");
 const UpdateProgress = @import("UpdateProgress.zig");
 const install_prepare = @import("install_prepare.zig");
@@ -9959,43 +9960,132 @@ fn staleBuildOnDiskNs(exe: []const u8) i128 {
 /// Sessions survive: the agent owns the PTYs, and the relaunched app
 /// re-attaches them exactly as it does after a logoff or a Restart Manager
 /// close.
+///
+/// Since T1804 this is `restartApp(.app)`: the replacement used to be spawned
+/// BEFORE this process quit, and a copy started while this one still owns the
+/// IPC pipe forwards a new-window to it and exits (`init`'s AlreadyRunning
+/// arm), so the restart could come back as nothing at all. The guard waits for
+/// the exit instead.
 pub fn restartIntoInstalledBuild(self: *App) void {
-    var arena_state = std.heap.ArenaAllocator.init(self.core_app.alloc);
-    defer arena_state.deinit();
-    const arena = arena_state.allocator();
+    if (self.restartApp(.app)) return;
+    _ = self.showTrayBalloon(
+        NOTIF_STALE_UID,
+        NOTIF_STALE_TIMER_ID,
+        "Ghoztty",
+        "Could not restart automatically.\nQuit and reopen Ghoztty to use the new build.",
+    );
+}
 
-    const exe = internal_os.self_exe.productExePathAlloc(arena) catch |err| {
-        log.err("restart into new build: cannot resolve own exe: {}", .{err});
-        return;
-    };
-    const cmd = std.fmt.allocPrint(arena, "\"{s}\"", .{exe}) catch return;
-    const cmd_w = std.unicode.utf8ToUtf16LeAllocZ(arena, cmd) catch return;
-
-    const spawned = job_spawn.spawnEscapingJob(
-        arena,
-        cmd_w.ptr,
-        job_spawn.DETACHED_PROCESS,
-        "restart into new build",
-    ) catch |err| {
-        log.err("restart into new build: spawn of {s} FAILED: {}", .{ exe, err });
-        _ = self.showTrayBalloon(
-            NOTIF_STALE_UID,
-            NOTIF_STALE_TIMER_ID,
-            "Ghoztty",
-            "Could not restart automatically.\nQuit and reopen Ghoztty to use the new build.",
-        );
-        return;
-    };
-    const pid = w32.GetProcessId(spawned.pi.hProcess);
-    std.os.windows.CloseHandle(spawned.pi.hProcess);
-    std.os.windows.CloseHandle(spawned.pi.hThread);
-    log.warn("restart into new build: launched pid {d} (escape={s}), quitting", .{
-        pid,
-        spawned.tier.name(),
+/// The palette's and the File menu's "Restart Ghoztty" / "Restart Ghoztty and
+/// Background Sessions" (T1804): ask what `app_restart.prompt` says to ask,
+/// then restart. `owner` and `refocus` place the confirmation and give focus
+/// back when it is cancelled.
+pub fn requestRestart(self: *App, kind: app_restart.Kind, owner: ?*Window, refocus: ?w32.HWND) void {
+    const alloc = self.core_app.alloc;
+    const persistence = self.config.@"session-persistence";
+    // Only the agent restart costs sessions, so only it asks the agent.
+    const live: ?usize = if (kind == .app_and_agent and persistence)
+        (if (self.agentSessionMix()) |m| m.live else null)
+    else
+        null;
+    const ask = app_restart.prompt(kind, persistence, live);
+    log.info("restart requested: kind={s} persistence={} live={?d} prompt={s}", .{
+        @tagName(kind), persistence, live, @tagName(ask),
     });
 
+    if (ask != .none) {
+        var text_buf: [768]u8 = undefined;
+        const title: []const u8, const text: []const u8 = switch (ask) {
+            .none => .{ "", "" }, // excluded by the `if` above
+            .shells_close => .{ app_restart.shells_close_title, app_restart.shells_close_text },
+            .sessions_end => .{ app_restart.sessions_end_title, app_restart.sessionsEndText(&text_buf, live) },
+        };
+        if (text.len == 0) return;
+        const title_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, title) catch return;
+        defer alloc.free(title_w);
+        const text_w = std.unicode.utf8ToUtf16LeAllocZ(alloc, text) catch return;
+        defer alloc.free(text_w);
+        const result = ConfirmDialog.show(
+            self,
+            if (owner) |w| w.hwnd else null,
+            if (owner) |w| w.scale else 1.0,
+            refocus,
+            .{
+                .title = title_w.ptr,
+                .text = text_w,
+                .icon = .warning,
+                // Enter lands on Cancel: never let a stray keystroke end work.
+                .default_cancel = true,
+                .ok_label = std.unicode.utf8ToUtf16LeStringLiteral(app_restart.ok_label),
+                .cancel_label = std.unicode.utf8ToUtf16LeStringLiteral(app_restart.cancel_label),
+            },
+        );
+        if (result != .ok) {
+            log.info("restart cancelled by the user (kind={s})", .{@tagName(kind)});
+            return;
+        }
+    }
+
+    if (!self.restartApp(kind)) {
+        const text = std.unicode.utf8ToUtf16LeStringLiteral(
+            "Ghoztty could not restart itself.\n\nNothing was closed. Quit and reopen Ghoztty instead.",
+        );
+        _ = ConfirmDialog.show(
+            self,
+            if (owner) |w| w.hwnd else null,
+            if (owner) |w| w.scale else 1.0,
+            refocus,
+            .{
+                .title = std.unicode.utf8ToUtf16LeStringLiteral("Restart Ghoztty"),
+                .text = text,
+                .style = .ok_only,
+                .icon = .warning,
+            },
+        );
+    }
+}
+
+/// Quit and come back (T1804). False when the restart could not be set up, in
+/// which case NOTHING has happened: no session ended, no window closed.
+///
+/// The relaunch is the relaunch guard's (`relaunch_guard.Purpose.app_restart`):
+/// a detached, job-escaped copy that waits for this process to EXIT and then
+/// starts the app again. Waiting is the point — see `restartIntoInstalledBuild`.
+///
+/// `.app` quits exactly the way Quit does with persistence on, so every pane's
+/// session is detached rather than closed and the relaunch's launch restore
+/// re-attaches it. `.app_and_agent` first stops the local agent — THIS build's,
+/// by the pid in this lineage's own info file, verified against the agent image
+/// before it is killed (`LocalAgent.terminateAgent`), so a debug build cannot
+/// reach the installed release's agent. The protocol has no shutdown request, so
+/// termination is the only stop there is; the relaunch starts a fresh agent.
+pub fn restartApp(self: *App, kind: app_restart.Kind) bool {
+    const alloc = self.core_app.alloc;
+    var guard = relaunch_guard.armFor(alloc, .app_restart) orelse {
+        log.err("restart: the relaunch guard could not be armed; NOT quitting (kind={s})", .{@tagName(kind)});
+        return false;
+    };
+    // The marker is the guard's order to relaunch, so it stays on disk; only the
+    // allocation is ours to give back.
+    alloc.free(guard.marker);
+    guard.marker = &.{};
+
+    recordUpdateClose(alloc, app_restart.reopenReason(kind, self.config.@"session-persistence"));
+
+    if (kind == .app_and_agent) {
+        const killed = self.local_agent.restartForUpgrade();
+        log.warn("restart: background agent stopped={} (the relaunch starts a fresh one)", .{killed});
+    }
+
+    // The user asked for this, so the windows that come back may come to the
+    // front. Only the foreground process can grant that, and only now, before
+    // it exits.
+    _ = w32.AllowSetForegroundWindow(w32.ASFW_ANY);
+
+    log.warn("restart: quitting for the relaunch guard (kind={s})", .{@tagName(kind)});
     self.quit_requested = true;
     w32.PostQuitMessage(0);
+    return true;
 }
 
 /// `%LOCALAPPDATA%\ghoztty\update-reopen[-debug]` (T1208). Caller frees.

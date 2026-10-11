@@ -282,6 +282,12 @@ pub extern "user32" fn GetSystemMetricsForDpi(
     dpi: u32,
 ) callconv(.winapi) i32;
 
+/// Let another process take the foreground with its next `SetForegroundWindow`
+/// (T1804). Only the foreground process may grant it; `ASFW_ANY` names no pid,
+/// because the process that will need it does not exist yet.
+pub extern "user32" fn AllowSetForegroundWindow(dwProcessId: u32) callconv(.winapi) BOOL;
+pub const ASFW_ANY: u32 = 0xFFFFFFFF;
+
 // IME messages
 pub const WM_IME_STARTCOMPOSITION: u32 = 0x010D;
 pub const WM_IME_ENDCOMPOSITION: u32 = 0x010E;

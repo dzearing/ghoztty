@@ -105,6 +105,8 @@ pub fn spawnEscapedOnly(
 
     var si: windows.STARTUPINFOW = std.mem.zeroes(windows.STARTUPINFOW);
     si.cb = @sizeOf(windows.STARTUPINFOW);
+    var desk_buf: DesktopName = undefined;
+    si.lpDesktop = ownDesktop(&desk_buf);
     var pi: windows.PROCESS_INFORMATION = undefined;
 
     if (oswin.exp.kernel32.CreateProcessW(
@@ -163,6 +165,8 @@ pub fn spawnEscapingJob(
 
     var si: windows.STARTUPINFOW = std.mem.zeroes(windows.STARTUPINFOW);
     si.cb = @sizeOf(windows.STARTUPINFOW);
+    var desk_buf: DesktopName = undefined;
+    si.lpDesktop = ownDesktop(&desk_buf);
     var pi: windows.PROCESS_INFORMATION = undefined;
 
     if (oswin.exp.kernel32.CreateProcessW(
@@ -246,6 +250,8 @@ fn spawnWithParent(
         .lpAttributeList = attr_buf.ptr,
     };
     siex.StartupInfo.cb = @sizeOf(oswin.exp.STARTUPINFOEX);
+    var desk_buf: DesktopName = undefined;
+    siex.StartupInfo.lpDesktop = ownDesktop(&desk_buf);
 
     var pi: windows.PROCESS_INFORMATION = undefined;
     if (oswin.exp.kernel32.CreateProcessW(
@@ -270,6 +276,46 @@ fn spawnWithParent(
     log.info("{s}: escaped the job via {s} spawn (parent pid {d})", .{ tag, donor_label, donor_pid });
     return pi;
 }
+
+/// `<window station>\<desktop>` of the CALLING thread, NUL-terminated.
+pub const DesktopName = [2 * 256 + 2]u16;
+
+/// The caller's own desktop, spelled out for `STARTUPINFOW.lpDesktop` (T1804).
+///
+/// A null `lpDesktop` means "inherit the desktop of the parent", and the parent
+/// of a tier-2/3 child is the DONOR — Explorer, or whichever jobless process
+/// adopted it — not us. On the user's own desktop that is the same desktop, so
+/// nothing changes. On a background desktop (every GUI acceptance run, T218) it
+/// is not: a relaunched app would open on the user's screen, beside whatever
+/// they were doing, which is the one thing those runs exist never to do. Naming
+/// our desktop makes every tier land where the caller is.
+///
+/// Null when either name cannot be read, which is the old behavior.
+pub fn ownDesktop(buf: *DesktopName) ?[*:0]u16 {
+    const winsta = GetProcessWindowStation() orelse return null;
+    const desk = GetThreadDesktop(GetCurrentThreadId()) orelse return null;
+    var n: u32 = 0;
+    if (GetUserObjectInformationW(winsta, UOI_NAME, buf, 256 * @sizeOf(u16), &n) == 0) return null;
+    var len: usize = std.mem.indexOfScalar(u16, buf[0..256], 0) orelse return null;
+    buf[len] = '\\';
+    len += 1;
+    if (GetUserObjectInformationW(desk, UOI_NAME, buf[len..].ptr, 256 * @sizeOf(u16), &n) == 0) return null;
+    const tail = std.mem.indexOfScalar(u16, buf[len .. len + 256], 0) orelse return null;
+    buf[len + tail] = 0;
+    return @ptrCast(buf);
+}
+
+const UOI_NAME: c_int = 2;
+extern "user32" fn GetProcessWindowStation() callconv(.winapi) ?std.os.windows.HANDLE;
+extern "user32" fn GetThreadDesktop(dwThreadId: std.os.windows.DWORD) callconv(.winapi) ?std.os.windows.HANDLE;
+extern "kernel32" fn GetCurrentThreadId() callconv(.winapi) std.os.windows.DWORD;
+extern "user32" fn GetUserObjectInformationW(
+    hObj: std.os.windows.HANDLE,
+    nIndex: c_int,
+    pvInfo: ?*anyopaque,
+    nLength: std.os.windows.DWORD,
+    lpnLengthNeeded: ?*std.os.windows.DWORD,
+) callconv(.winapi) std.os.windows.BOOL;
 
 // =============================================================================
 // Tier 3: a jobless donor found by enumeration (T674)
@@ -522,6 +568,16 @@ extern "kernel32" fn Process32NextW(
 // =============================================================================
 
 const testing = std.testing;
+
+test "ownDesktop names this thread's window station and desktop (T1804)" {
+    if (@import("builtin").os.tag != .windows) return error.SkipZigTest;
+    var buf: DesktopName = undefined;
+    const p = ownDesktop(&buf) orelse return error.SkipZigTest; // no window station (a service)
+    const name = std.mem.span(p);
+    const sep = std.mem.indexOfScalar(u16, name, '\\') orelse return error.TestUnexpectedResult;
+    try testing.expect(sep > 0);
+    try testing.expect(sep + 1 < name.len);
+}
 
 test "a tier reports whether the child actually got out" {
     try testing.expect(Tier.breakaway.escaped());

@@ -63,6 +63,10 @@ pub const Kind = enum {
     /// Open a blank browser viewer split with the caret in its address
     /// field (T396) — the interactive `+split --view=about:blank`.
     viewer_open_browser,
+    /// Relaunch the app, leaving the background sessions running (T1804).
+    restart_app,
+    /// Restart the background agent too, ending its sessions (T1804).
+    restart_app_and_agent,
 };
 
 /// Stable identity for a command. The name is the identity — reordering
@@ -155,6 +159,8 @@ pub const Id = enum {
     // (`menuCommandId`), so a new name goes on the end (T1673).
     install_update,
     dismiss_update,
+    restart_app,
+    restart_app_and_agent,
 };
 
 /// Where "Ghoztty Help" goes. The docs are the same for every platform, so
@@ -194,7 +200,19 @@ pub const Command = struct {
     /// `CommandOption.emphasis` — a heavier title and an accent outline — which
     /// its palette gives the one row offering the update.
     emphasis: bool = false,
+    /// Extra words the palette search also matches (T1804), for a command
+    /// people look for by a word its title does not contain — "relaunch" for
+    /// a row titled "Restart". Space-separated; never displayed.
+    keywords: []const u8 = "",
 };
+
+/// Whether the palette's search text `filter` finds `c`: a case-insensitive
+/// substring of its name or of its keywords. An empty filter finds everything.
+pub fn matches(c: Command, filter: []const u8) bool {
+    if (filter.len == 0) return true;
+    if (std.ascii.indexOfIgnoreCase(c.name, filter) != null) return true;
+    return c.keywords.len != 0 and std.ascii.indexOfIgnoreCase(c.keywords, filter) != null;
+}
 
 /// Whether `c` belongs to the palette's pinned section (T1754): Mac's
 /// `updateOptions`, a section of its own ABOVE "Recent" and "All Commands".
@@ -334,6 +352,11 @@ pub const registry = [_]Command{
     // Mac's palette title (TerminalCommandPalette.swift): opens the Agent
     // Integrations management window, not a blind install (T871).
     .{ .id = .claude_integration, .name = "Set Up Agent Integrations…", .action = .new_window, .kind = .claude },
+    // T1804, the pair Mac carries too (T1805): the first relaunches the app
+    // and keeps every background session; the second restarts the background
+    // process as well and asks first, naming what ends (`app_restart.zig`).
+    .{ .id = .restart_app, .name = "Restart Ghoztty", .action = .new_window, .kind = .restart_app, .keywords = "relaunch reopen" },
+    .{ .id = .restart_app_and_agent, .name = "Restart Ghoztty and Background Sessions", .action = .new_window, .kind = .restart_app_and_agent, .keywords = "relaunch reopen agent" },
     .{ .id = .quit, .name = "Quit", .action = .quit, .quit_keep = true },
 };
 
@@ -543,6 +566,8 @@ test "only the local kinds carry a placeholder action" {
         .viewer_open_browser,
         .install_update,
         .dismiss_update,
+        .restart_app,
+        .restart_app_and_agent,
         => try std.testing.expectEqual(
             input.Binding.Action.new_window,
             c.action,
@@ -596,6 +621,30 @@ test "every other command is listed regardless of app state (T1676)" {
         try std.testing.expect(available(c, .{}));
         try std.testing.expect(available(c, .{ .update_pending = true }));
     }
+}
+
+test "the restart commands are found by restart and by relaunch (T1804)" {
+    // The names are shared with Mac (T1805): a user who learned them on one
+    // platform types the same words on the other.
+    try std.testing.expectEqualStrings("Restart Ghoztty", get(.restart_app).name);
+    try std.testing.expectEqualStrings("Restart Ghoztty and Background Sessions", get(.restart_app_and_agent).name);
+    for ([_]Id{ .restart_app, .restart_app_and_agent }) |id| {
+        const c = get(id);
+        try std.testing.expect(matches(c, "restart"));
+        try std.testing.expect(matches(c, "RELAUNCH"));
+        try std.testing.expect(matches(c, ""));
+        try std.testing.expect(!matches(c, "zzz"));
+        // Always listed: a restart is wanted precisely when something is wrong.
+        try std.testing.expect(available(c, .{}));
+    }
+    // The lossless one sorts first, so the cheaper row is the one seen first.
+    try std.testing.expect(index(.restart_app) < index(.restart_app_and_agent));
+}
+
+test "keywords never make an ordinary command match a stray word" {
+    // Only the commands that declare keywords get the wider match.
+    try std.testing.expect(!matches(get(.new_tab), "relaunch"));
+    try std.testing.expect(matches(get(.new_tab), "new t"));
 }
 
 test "quit is the only quit_keep command" {

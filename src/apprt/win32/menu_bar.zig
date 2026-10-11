@@ -125,6 +125,12 @@ const file_menu = [_]Node{
     .{ .item = .{ .cmd = .close_window, .title = u16lit("Close &Window") } },
     .{ .item = .{ .cmd = .close_all_windows, .title = u16lit("Close &All Windows") } },
     .separator,
+    // T1804: beside Exit, because they are Exit's siblings — the app going
+    // away, and coming back. Mac adds the same pair to its application menu
+    // (T1805), which is where its Quit lives. `R` and `S` are taken at this
+    // level (Remote, Split), hence `e` and `g`.
+    .{ .item = .{ .cmd = .restart_app, .title = u16lit("R&estart Ghoztty") } },
+    .{ .item = .{ .cmd = .restart_app_and_agent, .title = u16lit("Restart Ghoztty and Back&ground Sessions…") } },
     // Windows convention puts Exit at the foot of File; Mac's lives in the
     // application menu, which Windows does not have.
     .{ .item = .{ .cmd = .quit, .title = u16lit("E&xit") } },

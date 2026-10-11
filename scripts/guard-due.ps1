@@ -3201,6 +3201,22 @@ $GuardTable = @(
             'test\win32\soak.ps1'
         )
     },
+    # The palette's "Restart Ghoztty" / "...and Background Sessions" (T1804).
+    # The question policy and its wording are pure (app_restart.zig, none lane);
+    # this harness is the only thing that proves the relaunch actually comes
+    # back, keeps the sessions, lands on the caller's desktop (job_spawn's
+    # lpDesktop) and stops only this build's agent.
+    [pscustomobject]@{
+        Name   = 'app-restart'
+        Script = 'test\win32\app-restart.ps1'
+        Stamp  = 'test\win32\app-restart.stamp.json'
+        Covers = @(
+            'test\win32\app-restart.ps1',
+            'src\apprt\win32\app_restart.zig',
+            'src\apprt\win32\relaunch_guard.zig',
+            'src\apprt\win32\job_spawn.zig'
+        )
+    },
     # The palette's "Focus: <pane>" jump entries (T555). The pure derivation
     # rides the none lane; this row ties the HARNESS to its own family only -
     # Surface.zig/IpcHandlers.zig move for a hundred non-palette reasons and

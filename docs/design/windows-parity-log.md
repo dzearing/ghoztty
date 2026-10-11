@@ -34908,3 +34908,25 @@ moved to T1814.
 - **Evidence.** `session-reboot-tui.ps1` scores H4 and the new H6 (ALL PASS, 58).
   The relaunch, resume-offset and ingest-lag harnesses, plus all four floor
   lanes, are green.
+
+## 2026-10-10 — T1804: Ghoztty can be restarted from the command palette on Windows
+
+- **What changed.** The palette and the File menu have **Restart Ghoztty** and
+  **Restart Ghoztty and Background Sessions** (also found by typing
+  "relaunch"). The first relaunches the app without asking, and every pane
+  re-attaches to the same running session. The second restarts the background
+  process too: it asks first, names how many sessions will end, and puts Enter
+  on Cancel. With session persistence off, Restart Ghoztty asks before it
+  closes the shells. The relaunched app shows a "Ghoztty Restarted" notice.
+- **How.** A relaunch guard waits for the old process to exit and then starts
+  the app again. The About box's "restart into the new build" now uses the same
+  guard. Its old order (start the new copy, then quit) could lose to the
+  single-instance check and bring nothing back. Only this build's agent is
+  stopped: its pid comes from this build's own info file and its image is checked.
+  Spawned children now name the caller's desktop explicitly, so a relaunch never
+  opens on a different desktop than the app it replaced.
+- **Evidence.** New `test\win32\app-restart.ps1` (ALL PASS, 43): same agent pid
+  and same live session ids across a restart, the marker kept in scrollback,
+  Cancel default, the stand-in agent untouched, the relaunch never on the user's
+  desktop. All four floor lanes are green. The Mac half (T1805) now has the
+  exact names and wording to match.

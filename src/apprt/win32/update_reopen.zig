@@ -35,6 +35,13 @@ pub const Reason = enum {
     installer,
     /// The in-app updater armed its applier and quit to let it install.
     updater,
+    /// The user chose "Restart Ghoztty" (T1804): the app relaunched itself and
+    /// the background sessions were left running.
+    restart,
+    /// A user restart (T1804) after which the sessions are fresh ones: "Restart
+    /// Ghoztty and Background Sessions", or "Restart Ghoztty" with session
+    /// persistence off.
+    restart_sessions,
 
     pub fn text(self: Reason) []const u8 {
         return @tagName(self);
@@ -120,6 +127,7 @@ pub const Notice = struct {
 
 pub const title = "Ghoztty Was Updated";
 pub const title_reopened = "Ghoztty Was Reopened";
+pub const title_restarted = "Ghoztty Restarted";
 
 /// Decide what (if anything) this launch says, given the marker it found.
 ///
@@ -141,6 +149,27 @@ pub fn decide(buf: []u8, marker: ?Marker, current_version: []const u8, now_ms: i
     if (age > max_age_ms or age < -max_skew_ms) return null;
 
     const moved = !std.mem.eql(u8, m.from_version, current_version);
+
+    // A restart the user asked for (T1804) is not an update, even when it
+    // happens to pick up a newer build: the sentence names what they did.
+    switch (m.reason) {
+        .restart, .restart_sessions => {
+            const kept = m.reason == .restart;
+            const what = if (kept)
+                "Your terminal sessions kept running."
+            else
+                "Your terminal sessions were started fresh.";
+            const body = (if (moved)
+                std.fmt.bufPrint(buf, "Ghoztty restarted into version {s} (you had {s}). {s}\nClick to see what's new.", .{
+                    current_version, m.from_version, what,
+                })
+            else
+                std.fmt.bufPrint(buf, "Ghoztty restarted. {s}", .{what})) catch return null;
+            return .{ .title = title_restarted, .body = body, .offer_whats_new = moved };
+        },
+        .installer, .updater => {},
+    }
+
     if (moved) {
         const body = std.fmt.bufPrint(
             buf,
@@ -152,6 +181,7 @@ pub fn decide(buf: []u8, marker: ?Marker, current_version: []const u8, now_ms: i
 
     return switch (m.reason) {
         .updater => null,
+        .restart, .restart_sessions => null, // answered above
         .installer => .{
             .title = title_reopened,
             .body = std.fmt.bufPrint(
@@ -239,6 +269,31 @@ test "decide: an installer close with no version change still says it reopened" 
     try testing.expectEqualStrings(title_reopened, n.title);
     try testing.expect(!n.offer_whats_new);
     try testing.expect(std.mem.indexOf(u8, n.body, "1.37.2") != null);
+}
+
+test "decide: a user restart says which restart it was (T1804)" {
+    var buf: [256]u8 = undefined;
+    const kept = decide(&buf, .{ .reason = .restart, .at_ms = 1000, .from_version = "1.37.2" }, "1.37.2", 2000).?;
+    try testing.expectEqualStrings(title_restarted, kept.title);
+    try testing.expect(!kept.offer_whats_new);
+    try testing.expect(std.mem.indexOf(u8, kept.body, "kept running") != null);
+
+    const fresh = decide(&buf, .{ .reason = .restart_sessions, .at_ms = 1000, .from_version = "1.37.2" }, "1.37.2", 2000).?;
+    try testing.expectEqualStrings(title_restarted, fresh.title);
+    try testing.expect(std.mem.indexOf(u8, fresh.body, "started fresh") != null);
+
+    // A restart that picked up a newer build names both versions and offers
+    // What's New, but still says it was a restart, not an install.
+    const moved = decide(&buf, .{ .reason = .restart, .at_ms = 1000, .from_version = "1.37.2" }, "1.37.3", 2000).?;
+    try testing.expectEqualStrings(title_restarted, moved.title);
+    try testing.expect(moved.offer_whats_new);
+    try testing.expect(std.mem.indexOf(u8, moved.body, "1.37.3") != null);
+    try testing.expect(moved.body.len < 256);
+
+    // Round-trips through the file format.
+    var line_buf: [128]u8 = undefined;
+    const p = parse(format(&line_buf, .{ .reason = .restart_sessions, .at_ms = 9, .from_version = "1.0" })).?;
+    try testing.expectEqual(Reason.restart_sessions, p.reason);
 }
 
 test "decide: a stale or future-dated marker is not about this launch" {

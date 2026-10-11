@@ -186,6 +186,11 @@ test {
     // no-OS-imports deal.
     _ = @import("apprt/win32/update_reopen.zig");
 
+    // Pure win32 user-invoked restart policy (T1804): what "Restart Ghoztty"
+    // and "Restart Ghoztty and Background Sessions" ask before they act, and in
+    // which words. Every lane, same no-OS-imports deal.
+    _ = @import("apprt/win32/app_restart.zig");
+
     // Pure win32 "is this window running the build that is on disk?" (T1205):
     // the FILETIME conversion and the started-vs-written comparison behind
     // About's stale-build line and its restart offer. Every lane, same

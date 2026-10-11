@@ -527,6 +527,8 @@ $expectedTree = @(
     "&File/Close &Window"
     "&File/Close &All Windows"
     '&File/---'
+    "&File/R&estart Ghoztty"
+    "&File/Restart Ghoztty and Back&ground Sessions$EL"
     "&File/E&xit"
     '&Edit >'
     "&Edit/&Copy"

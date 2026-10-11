@@ -3029,7 +3029,7 @@ fn filterPaletteEntries(self: *Surface, filter: []const u8) void {
     const state: commands.State = .{ .update_pending = self.app.pendingUpdate() != null };
     for (palette_entries, 0..) |entry, i| {
         if (!commands.available(entry, state)) continue;
-        if (filter.len != 0 and std.ascii.indexOfIgnoreCase(entry.name, filter) == null) continue;
+        if (!commands.matches(entry, filter)) continue;
         const idx: u16 = @intCast(i);
         if (commands.pinned(entry)) {
             pinned[pinned_n] = idx;
@@ -3238,6 +3238,11 @@ pub fn performCommand(self: *Surface, id: commands.Id) void {
         // "Cancel or Skip Update" (T1754): put the offer away until the next
         // one, as Mac's palette row does.
         .dismiss_update => self.app.dismissUpdate(),
+
+        // The two user-invoked restarts (T1804). What is asked first, and in
+        // which words, is `app_restart.zig`; the restart itself is App's.
+        .restart_app => self.app.requestRestart(.app, self.parent_window, self.hwnd),
+        .restart_app_and_agent => self.app.requestRestart(.app_and_agent, self.parent_window, self.hwnd),
 
         // The Agent Integrations management window (T871): per-agent state
         // rows with Set Up / Update / Uninstall, probing off-thread. Mac's
