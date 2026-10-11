@@ -2582,6 +2582,11 @@ pub extern "user32" fn SetForegroundWindow(
     hWnd: HWND,
 ) callconv(.winapi) i32;
 
+/// Activate a window within its own thread's input queue (T1820). It never
+/// takes the foreground from another app: in a background queue it changes
+/// only which of OUR windows is the active one, without raising it.
+pub extern "user32" fn SetActiveWindow(hWnd: ?HWND) callconv(.winapi) ?HWND;
+
 // -----------------------------------------------------------------------
 // Window positioning constants (additional)
 // -----------------------------------------------------------------------

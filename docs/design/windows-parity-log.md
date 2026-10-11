@@ -34973,3 +34973,32 @@ moved to T1814.
   T1822 for the hand-run tools that still launch from the user's desktop
   (test-binary-soak, crash-databreak), and T1821 for hook-json, which is red
   because main's skill doc moved.
+
+## 2026-10-11 — T1820: `--focus` on an existing window works even when Windows refuses the foreground
+
+- **What changed.** `ghoztty +new-window --target=<existing> --focus` asks for
+  an already-open window to come to the front. When another app held the
+  foreground, Windows refused the request and the window stayed exactly where it
+  was. It wasn't even Ghoztty's active window, so the next Alt+Tab back landed
+  elsewhere. Now a refused raise still makes the target Ghoztty's active window
+  (Mac's key window). It never takes the foreground from the user's app.
+- **Root cause.** Not a T1804 regression. A build of acfe7cb72, the green
+  stamp's commit, fails section K identically today. The raise used only
+  `SetForegroundWindow`. Windows refuses that under focus-steal prevention, and
+  this box's foreground lock timeout never expires. The earlier green run
+  happened under a foreground state that granted it. The foreground this time
+  was a stray OpenWith picker from 00:17:52 (filed T1823).
+- **How.** `raiseWindow` in `IpcHandlers.zig` follows `SetForegroundWindow`
+  with `SetActiveWindow`, which acts on Ghoztty's own queue only. It runs
+  unconditionally: it is a no-op when the raise landed, and checking whether
+  the raise landed means comparing the foreground window. The T730 audit forbids
+  that comparison, and it caught a first draft that made it. Both the
+  existing-target path (`focusTarget`) and the new-window `--focus` path use
+  `raiseWindow`.
+- **Evidence.** cli-focus-policy: K failed on 3 of 3 runs before the fix (HEAD
+  twice, acfe7cb72 once). After the fix it reports ALL PASS (39) and is
+  stamped. `-NegativeControl` still fails. All four floor lanes are green and
+  P1-P3 are ALL PASS. On the first floor run the win32 lane died with no named
+  test, then passed alone (filed T1824). The ten guards that cover
+  `IpcHandlers.zig` were re-run green, except hook-json, which is red for
+  T1821.

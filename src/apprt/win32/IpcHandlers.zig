@@ -240,7 +240,7 @@ pub fn focusTarget(entry: App.IpcTarget) void {
     };
     if (window.hwnd) |hwnd| {
         if (IsIconic(hwnd) != 0) _ = w32.ShowWindow(hwnd, w32.SW_RESTORE);
-        _ = w32.SetForegroundWindow(hwnd);
+        raiseWindow(hwnd);
     }
     switch (entry) {
         .window => {},
@@ -262,6 +262,27 @@ pub fn focusTarget(entry: App.IpcTarget) void {
             }
         },
     }
+}
+
+/// Bring `hwnd` to the front for a `--focus` request (T1820).
+///
+/// SetForegroundWindow alone is not enough: Windows refuses it whenever
+/// focus-steal prevention is in force (another app holds the foreground and
+/// the lock timeout has not run out, which on a box set to "never" is always),
+/// and a refused call left an EXISTING target exactly where it was - not even
+/// Ghoztty's own active window, so the next Alt+Tab back landed on some other
+/// window. Mac's `makeKeyAndOrderFront` makes the window the app's key window
+/// even when activating the app is denied; the Windows equivalent is
+/// activating it within our own input queue, which never takes the foreground
+/// from the user's app and, in a background queue, does not raise it over them.
+///
+/// It runs unconditionally rather than after asking whether the raise landed:
+/// when it did, the window is already active and this is a no-op, and the
+/// question itself ("is the foreground window this one?") answers "no" forever
+/// on a background desktop (the T730 rule).
+fn raiseWindow(hwnd: w32.HWND) void {
+    _ = w32.SetForegroundWindow(hwnd);
+    _ = w32.SetActiveWindow(hwnd);
 }
 
 /// How the idempotent-hit note names what happened to the existing surface
@@ -492,9 +513,7 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
 
     // `--focus` (T1797): the old raise. Without it the window was already
     // shown in the background by its first tab, and nothing here touches it.
-    if (args.focus) if (window.hwnd) |hwnd| {
-        _ = w32.SetForegroundWindow(hwnd);
-    };
+    if (args.focus) if (window.hwnd) |hwnd| raiseWindow(hwnd);
 
     // Inline split (`--split=<dir>`, `--split-command`, `--name`).
     if (args.split_direction) |dir_str| {
