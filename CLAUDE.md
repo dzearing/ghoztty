@@ -1451,7 +1451,7 @@ which the grid AND the hidden stashed-pane slots both use — the slots must lay
 out exactly like the grid or a restored pane would reflow. The pinned pane
 sidebar goes translucent so the gradient runs under it.
 **Glass panes** (`macos-pane-glass`, default `true`, elevated only): each pane
-is a translucent sheet tinted 50% with the terminal's own background (Liquid
+is a translucent sheet tinted 40% with the terminal's own background (Liquid
 Glass on macOS 26, a plain tint before — `PaneGlass`), so the gradient's light
 and shade read through every pane. The renderer stops drawing the terminal's
 background (`generic.zig` `pane_glass`, the same switch the `macos-glass-*`
@@ -1467,8 +1467,8 @@ whole content stack. Any `.background(Color)` in that stack must pass
 (`SidePanelCard(isGlass:)`) instead of an opaque slab. In the elevated style the
 **focused pane** (of several) reads as **backlit**: a soft white light behind the
 card spills past its edges onto the desk (masked to outside the card, so it never
-lightens the pane's own glass), with a faint, wide wash just inside the rim as if
-seen through the glass (`PaneFocusGlow.Outer`/`.Inner`, driven by
+lightens the pane's own glass) — a subtle outer glow only, nothing inside the
+pane (`PaneFocusGlow`, driven by
 `PaneView.isFocusedPane`; `PaneFocusGlowTests`).
 
 **Resizes are debounced before they reach the program** (`src/termio/Thread.zig`

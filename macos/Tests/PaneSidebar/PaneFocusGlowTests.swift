@@ -3,8 +3,8 @@ import SwiftUI
 import Testing
 @testable import Ghostty
 
-/// The focused pane's backlit glow, rendered offscreen: light must reach
-/// OUTSIDE the card (onto the desk), not just sit inside it.
+/// The focused pane's backlit glow, rendered offscreen: light reaches
+/// OUTSIDE the card (onto the desk) and never inside it.
 @MainActor
 struct PaneFocusGlowTests {
     private func render(focused: Bool) throws -> NSBitmapImageRep {
@@ -33,6 +33,8 @@ struct PaneFocusGlowTests {
             .write(to: URL(fileURLWithPath: "/tmp/pane-sidebar-snapshots/focus-glow.png"))
         // 6pt outside the card's right edge (card spans x 50...250).
         #expect(brightness(lit, 256, 120) > brightness(dark, 256, 120) + 0.02, "no light outside the card")
+        // Nothing lights the pane itself: 6pt inside the same edge is unchanged.
+        #expect(abs(brightness(lit, 244, 120) - brightness(dark, 244, 120)) < 0.01, "the glow reached inside the card")
         // Far from the card, the desk is untouched.
         #expect(abs(brightness(lit, 296, 120) - brightness(dark, 296, 120)) < 0.02)
     }

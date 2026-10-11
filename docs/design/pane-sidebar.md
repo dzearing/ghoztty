@@ -633,7 +633,7 @@ inspection and by the user's feel test, not by synthetic events (synthetic
 ### Glass panes (`macos-pane-glass`, default on)
 
 Tried in the mock as a "Glass panes" toggle with a tint slider; the user chose
-**50%**. A pane is a translucent sheet tinted with the terminal's own (neutral)
+**50%**, then lowered it to **40%** after living with it in the app. A pane is a translucent sheet tinted with the terminal's own (neutral)
 background — Liquid Glass on macOS 26 — so the spotlight-to-shade progression
 of the desk reads through every pane rather than only in the gutters, and the
 desk runs up under the titlebar so the window is one surface. A blur alone does
