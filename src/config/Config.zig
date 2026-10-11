@@ -2376,8 +2376,10 @@ keybind: Keybinds = .{},
 ///                     is first created, but will show up if the surface is
 ///                     subsequently resized.
 ///
-/// The default is `after-first`.
-@"resize-overlay": ResizeOverlay = .@"after-first",
+/// The default is `never` (upstream Ghostty's is `after-first`): resizing
+/// panes is routine here — divider drags, the pane sidebar, stashing — and a
+/// dimensions popup over every pane on each one is noise.
+@"resize-overlay": ResizeOverlay = .never,
 
 /// If resize overlays are enabled, this controls the position of the overlay.
 /// The possible options are:

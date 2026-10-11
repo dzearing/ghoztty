@@ -25,11 +25,22 @@ const log = std.log.scoped(.io_thread);
 
 /// This stores the information that is coalesced.
 const Coalesce = struct {
-    /// The number of milliseconds to coalesce certain messages like resize for.
-    /// Not all message types are coalesced.
-    const min_ms = 25;
+    /// A resize is applied once resizes have stopped arriving for this long
+    /// (a trailing debounce). Every resize that reaches the program is a
+    /// SIGWINCH, on which a full-screen TUI (Claude Code, an editor) clears
+    /// and repaints: applied every 25ms, a divider drag or window resize was
+    /// ~35 repaints in 600ms — the flicker. A drag now reaches the program as
+    /// a few.
+    const settle_ms = 100;
+
+    /// ...but a burst never holds a resize back longer than this, so a long,
+    /// continuous drag still reflows the terminal as it goes.
+    const max_ms = 350;
 
     resize: ?renderer.Size = null,
+
+    /// When the oldest resize not yet applied arrived.
+    pending_since: ?std.time.Instant = null,
 };
 
 /// The number of milliseconds before we reset the synchronized output flag
@@ -387,16 +398,35 @@ fn startSynchronizedOutput(self: *Thread, cb: *CallbackData) void {
 fn handleResize(self: *Thread, cb: *CallbackData, resize: renderer.Size) void {
     self.coalesce_data.resize = resize;
 
-    // If the timer is already active we just return. In the future we want
-    // to reset the timer up to a maximum wait time but for now this ensures
-    // relatively smooth resizing.
-    if (self.coalesce_c.state() == .active) return;
+    // Trailing debounce, capped: each new resize pushes the deadline out to
+    // `settle_ms` from now, but never past `max_ms` from the first pending one.
+    const now = std.time.Instant.now() catch {
+        // No clock: fall back to applying after the settle delay.
+        self.armResize(cb, Coalesce.settle_ms);
+        return;
+    };
+    const since = self.coalesce_data.pending_since orelse since: {
+        self.coalesce_data.pending_since = now;
+        break :since now;
+    };
+    const waited_ms = now.since(since) / std.time.ns_per_ms;
+    if (waited_ms >= Coalesce.max_ms) {
+        // Overdue: let an armed timer fire as scheduled (it is due within
+        // the cap), or apply on the next tick.
+        if (self.coalesce_c.state() == .active) return;
+        self.armResize(cb, 0);
+        return;
+    }
+    self.armResize(cb, @min(Coalesce.settle_ms, Coalesce.max_ms - waited_ms));
+}
 
+fn armResize(self: *Thread, cb: *CallbackData, delay_ms: u64) void {
+    // `reset` cancels a timer that is already armed and re-arms it.
     self.coalesce.reset(
         &self.loop,
         &self.coalesce_c,
         &self.coalesce_cancel_c,
-        Coalesce.min_ms,
+        delay_ms,
         CallbackData,
         cb,
         coalesceCallback,
@@ -440,6 +470,7 @@ fn coalesceCallback(
 
     if (cb.self.coalesce_data.resize) |v| {
         cb.self.coalesce_data.resize = null;
+        cb.self.coalesce_data.pending_since = null;
         cb.io.resize(&cb.data, v) catch |err| {
             log.warn("error during resize err={}", .{err});
         };

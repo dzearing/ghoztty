@@ -634,13 +634,13 @@ extension Ghostty {
         #endif
 
         var resizeOverlay: ResizeOverlay {
-            guard let config = self.config else { return .after_first }
+            guard let config = self.config else { return .never }
             var v: UnsafePointer<Int8>?
             let key = "resize-overlay"
-            guard ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8))) else { return .after_first }
-            guard let ptr = v else { return .after_first }
+            guard ghostty_config_get(config, &v, key, UInt(key.lengthOfBytes(using: .utf8))) else { return .never }
+            guard let ptr = v else { return .never }
             let str = String(cString: ptr)
-            return ResizeOverlay(rawValue: str) ?? .after_first
+            return ResizeOverlay(rawValue: str) ?? .never
         }
 
         var resizeOverlayPosition: ResizeOverlayPosition {

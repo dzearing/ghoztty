@@ -1459,8 +1459,19 @@ whole content stack. Any `.background(Color)` in that stack must pass
 `ignoresSafeAreaEdges: []` — SwiftUI's default extends it behind the titlebar
 (the debug-build warning did). The unpinned sidebar's card is the same tinted glass
 (`SidePanelCard(isGlass:)`) instead of an opaque slab. In the elevated style the
-**focused pane** (of several) gets a subtle white glow from its edges
-(`PaneFocusGlow`, driven by `PaneView.isFocusedPane`). Verified by `glassPanesLetTheGradientThrough`,
+**focused pane** (of several) reads as **backlit**: a soft white light behind the
+card spills past its edges onto the desk (masked to outside the card, so it never
+lightens the pane's own glass), with a faint, wide wash just inside the rim as if
+seen through the glass (`PaneFocusGlow.Outer`/`.Inner`, driven by
+`PaneView.isFocusedPane`; `PaneFocusGlowTests`).
+
+**Resizes are debounced before they reach the program** (`src/termio/Thread.zig`
+`Coalesce`): applied once resizes stop arriving for 100ms, never held back more
+than 350ms. Each one is a SIGWINCH on which a full-screen TUI (Claude Code)
+clears and repaints; at the old fixed 25ms coalesce a 600ms divider drag was 35
+repaints — the resize flicker — and is now ~4
+(`aDragDoesNotStormTheProgramWithResizes`). `resize-overlay` defaults to
+`never` in this fork (the dimensions popup on every divider drag). Verified by `glassPanesLetTheGradientThrough`,
 which also writes a ScreenCaptureKit capture of its own window. A translucent terminal
 (`background-opacity` < 1) gets an equally translucent gradient. Settled in the
 pane-sidebar mock (`docs/design/pane-sidebar.md` → Pane style).

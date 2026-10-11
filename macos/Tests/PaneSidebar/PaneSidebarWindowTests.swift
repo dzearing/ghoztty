@@ -94,6 +94,61 @@ struct PaneSidebarWindowTests {
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
 
+    /// A drag resizes a pane dozens of times a second, and every resize that
+    /// reaches the program is a SIGWINCH — on which a full-screen TUI like
+    /// Claude Code clears and repaints: the flicker. Resizes that arrive in a
+    /// burst must reach the program as a few, not one per frame.
+    @Test func aDragDoesNotStormTheProgramWithResizes() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        let countFile = "/tmp/pane-sidebar-snapshots/winch-\(UUID().uuidString).txt"
+        try? FileManager.default.createDirectory(atPath: "/tmp/pane-sidebar-snapshots", withIntermediateDirectories: true)
+        var config = Ghostty.SurfaceConfiguration()
+        config.command = """
+            /usr/bin/python3 -c "import signal,sys
+            n=[0]
+            def h(*a):
+                n[0]+=1
+                open('\(countFile)','w').write(str(n[0]))
+            signal.signal(signal.SIGWINCH,h)
+            open('\(countFile)','w').write('0')
+            while True: signal.pause()"
+            """
+        let pane = PaneView(surface: Ghostty.SurfaceView(app, baseConfig: config))
+        let controller = TerminalController.newWindow(ghostty, tree: SplitTree(view: pane))
+        _ = await poll(timeout: 10) { controller.window?.isVisible == true }
+        let window = try #require(controller.window)
+        window.setContentSize(NSSize(width: 900, height: 600))
+        _ = await poll(timeout: 10) { FileManager.default.fileExists(atPath: countFile) }
+        await settle(1.0)
+        let read = { Int((try? String(contentsOfFile: countFile, encoding: .utf8)) ?? "") ?? -1 }
+        let before = read()
+
+        // ~600ms of drag: 40 steps of 4pt, one every 15ms (longer on a busy
+        // machine, which the bound below allows for).
+        let started = Date()
+        for step in 1...40 {
+            window.setContentSize(NSSize(width: 900 + CGFloat(step) * 4, height: 600))
+            await settle(0.015)
+        }
+        let dragSeconds = Date().timeIntervalSince(started)
+        await settle(1.0)
+        let during = read() - before
+        try? "resizes delivered during the drag: \(during)\n".write(
+            toFile: "/tmp/pane-sidebar-snapshots/winch-result.txt", atomically: true, encoding: .utf8)
+        #expect(during >= 1, "the final size must still arrive")
+        // Was 35 (one per 25ms) before the debounce; 4 after, measured. A long
+        // drag still updates every 350ms (the cap), so the bound scales with
+        // how long the drag actually took.
+        let allowed = Int(dragSeconds / 0.35) + 2
+        #expect(during <= allowed,
+                "a \(Int(dragSeconds * 1000))ms drag reached the program as \(during) resizes (allowed \(allowed))")
+
+        controller.close()
+        await settle(0.3)
+        try? FileManager.default.removeItem(atPath: countFile)
+    }
+
     /// Writes `window` as the window server composites it.
     private func captureComposited(_ window: NSWindow, _ name: String) async throws {
         let dir = "/tmp/pane-sidebar-snapshots"
@@ -150,7 +205,13 @@ struct PaneSidebarWindowTests {
             "[document.documentElement.className, getComputedStyle(document.body).backgroundColor, getComputedStyle(document.querySelector('.markdown-body')).backgroundColor].join('|')") as? String
         #expect(page == "pane-glass|rgba(0, 0, 0, 0)|rgba(0, 0, 0, 0)", "the page paints over the sheet: \(page ?? "nil")")
 
+        window.makeFirstResponder(a.surfaceView)
+        await settle(0.5)
+        #expect(a.isFocusedPane, "the focused pane is the one that glows")
         try await captureComposited(window, "glass-window")
+        window.makeFirstResponder(b.surfaceView)
+        await settle(0.6)
+        try await captureComposited(window, "glass-window-b")
         // Unpinned: the mini rail, then the card opened over the grid. (A
         // viewer page may come out blank in these two: the test window opens
         // behind others, occluded, and WebKit skips repaints after the

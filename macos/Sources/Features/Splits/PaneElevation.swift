@@ -235,12 +235,19 @@ struct PaneCard: ViewModifier {
         card(content)
             .overlay {
                 if isElevated {
-                    PaneFocusGlow(isLight: isLight)
+                    PaneFocusGlow.Inner(isLight: isLight)
                         .opacity(isFocused ? 1 : 0)
-                        .animation(.easeOut(duration: 0.2), value: isFocused)
                         .allowsHitTesting(false)
                 }
             }
+            .background {
+                if isElevated {
+                    PaneFocusGlow.Outer(isLight: isLight)
+                        .opacity(isFocused ? 1 : 0)
+                        .allowsHitTesting(false)
+                }
+            }
+            .animation(.easeOut(duration: 0.25), value: isFocused)
     }
 
     @ViewBuilder
@@ -273,23 +280,42 @@ struct PaneCard: ViewModifier {
     }
 }
 
-/// The focused pane's subtle white glow from its edges: a soft light that
-/// falls inward from the rim (a blurred stroke clipped to the card), a crisp
-/// brighter rim, and a faint halo outside it on the desk.
-struct PaneFocusGlow: View {
-    let isLight: Bool
+/// The focused pane's glow: the pane reads as BACKLIT — light from under the
+/// card spilling out past its edges onto the desk — with a faint, wide wash
+/// of the same light just inside the rim, as if seen through the glass.
+///
+/// Two layers: `outer` goes BEHIND the card and is masked to outside its
+/// shape (so it never lightens the pane's own glass), `inner` goes over the
+/// content, clipped to the card, and is kept very faint and spread.
+enum PaneFocusGlow {
+    struct Outer: View {
+        let isLight: Bool
 
-    var body: some View {
-        let shape = PaneElevation.cardShape
-        ZStack {
+        var body: some View {
+            let shape = PaneElevation.cardShape
             shape
-                .stroke(Color.white.opacity(isLight ? 0.7 : 0.22), lineWidth: 10)
-                .blur(radius: 8)
-                .clipShape(shape)
-            shape
-                .strokeBorder(Color.white.opacity(isLight ? 0.9 : 0.32), lineWidth: 1)
+                .stroke(Color.white.opacity(isLight ? 0.85 : 0.32), lineWidth: 8)
+                .blur(radius: 16)
+                .mask {
+                    ZStack {
+                        Rectangle().padding(-48)
+                        shape.blendMode(.destinationOut)
+                    }
+                    .compositingGroup()
+                }
         }
-        .shadow(color: .white.opacity(isLight ? 0.5 : 0.14), radius: 8)
+    }
+
+    struct Inner: View {
+        let isLight: Bool
+
+        var body: some View {
+            let shape = PaneElevation.cardShape
+            shape
+                .stroke(Color.white.opacity(isLight ? 0.35 : 0.07), lineWidth: 36)
+                .blur(radius: 26)
+                .clipShape(shape)
+        }
     }
 }
 
@@ -300,20 +326,23 @@ struct PaneGlass: View {
     let tint: Color
     let isLight: Bool
     var cornerRadius: CGFloat = PaneElevation.cornerRadius
+    var tintStrength: Double = PaneGlass.tint
 
     /// How much of the terminal's background the sheet keeps — 50%, chosen
     /// in the pane-sidebar mock: enough for text contrast, little enough
     /// that the gradient's light and shade carry through.
     static let tint: Double = 0.5
+    /// A glass card floating over glass panes (the unpinned sidebar).
+    static let overlayTint: Double = 0.3
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         if #available(macOS 26.0, *) {
             Color.clear
-                .glassEffect(.regular.tint(tint.opacity(Self.tint)), in: shape)
+                .glassEffect(.regular.tint(tint.opacity(tintStrength)), in: shape)
         } else {
             shape
-                .fill(tint.opacity(Self.tint))
+                .fill(tint.opacity(tintStrength))
                 .shadow(color: .black.opacity(isLight ? 0.06 : 0.2), radius: 9, y: 6)
         }
     }

@@ -69,8 +69,11 @@ struct SidePanelCard: ViewModifier {
             // layers go on: the list runs edge to edge, and un-clipped it
             // would square off the rounded corners it scrolls into.
             .clipShape(GlassCard.shape)
+            // Glass: no lifting wash — it greys the color coming through.
             .modifier(GlassCardBackground(
-                fill: GlassCard.fill(isLightBackground: isLightBase ?? (colorScheme == .light))))
+                fill: isGlass
+                    ? AnyShapeStyle(Color.clear)
+                    : GlassCard.fill(isLightBackground: isLightBase ?? (colorScheme == .light))))
             // An OPAQUE base under the glass layers. In the narrow layout this
             // card floats over the document, and a translucent panel let body
             // text show through it — unreadable. The wash above still lifts the
@@ -78,10 +81,14 @@ struct SidePanelCard: ViewModifier {
             .background {
                 let fill = base ?? SidePanelCard.documentBackground(for: colorScheme)
                 if isGlass {
+                    // Lighter than a pane's tint: the card floats over panes
+                    // that are tinted glass already, and stacked at full
+                    // strength it reads as a grey slab.
                     PaneGlass(
                         tint: fill,
                         isLight: isLightBase ?? (colorScheme == .light),
-                        cornerRadius: GlassCard.cornerRadius)
+                        cornerRadius: GlassCard.cornerRadius,
+                        tintStrength: PaneGlass.overlayTint)
                 } else {
                     GlassCard.shape.fill(fill)
                 }

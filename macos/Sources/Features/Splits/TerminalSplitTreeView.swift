@@ -103,7 +103,7 @@ private struct StashedPaneSlots: View {
                 case .terminal(let surfaceView):
                     Ghostty.InspectableSurface(surfaceView: surfaceView, isSplit: true)
                 case .viewer(let viewerView):
-                    ViewerSplitLeaf(viewerView: viewerView)
+                    ViewerSplitLeaf(viewerView: viewerView, isOnGlass: ghostty.config.paneGlass)
                 }
             } else {
                 Color.clear
@@ -217,7 +217,7 @@ private struct PaneLeafView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Terminal pane")
         case .viewer(let viewerView):
-            ViewerSplitLeaf(viewerView: viewerView)
+            ViewerSplitLeaf(viewerView: viewerView, isOnGlass: ghostty.config.paneGlass)
         }
     }
 }
