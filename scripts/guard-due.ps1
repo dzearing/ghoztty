@@ -1393,6 +1393,22 @@ $GuardTable = @(
             'test\win32\clipboard-paste.ps1'
         )
     },
+    # T1799: every win32 copy route (three chords, the context menu,
+    # copy-on-select) and the link hover undo a TUI's own wrapping and margin,
+    # while +read stays raw. Covers the shared transform (hard_wrap.zig decides
+    # the seams, formatter.zig applies them) and the context menu's action
+    # mapping, the one win32 file that chooses which action Copy performs.
+    [pscustomobject]@{
+        Name   = 'tui-copy-reflow'
+        Script = 'test\win32\tui-copy-reflow.ps1'
+        Stamp  = 'test\win32\tui-copy-reflow.stamp.json'
+        Covers = @(
+            'src\terminal\hard_wrap.zig',
+            'src\terminal\formatter.zig',
+            'src\apprt\win32\context_menu.zig',
+            'test\win32\tui-copy-reflow.ps1'
+        )
+    },
     [pscustomobject]@{
         Name   = 'upgrade-no-fork'
         Script = 'test\win32\upgrade-no-fork.ps1'

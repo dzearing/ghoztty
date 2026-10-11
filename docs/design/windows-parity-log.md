@@ -34808,3 +34808,24 @@ moved to T1814.
   guard row `session-shell-exit`.
 - **Validation**: floor lanes all PASS, harness floor PASS (after adding the
   script's `# persistence:` marker), P1-P3 ALL PASS.
+
+## 2026-10-10 — T1799: copying Claude Code output on Windows comes out clean, by every route
+
+- **No app change was needed.** Main d886ba4b5's copy-time reflow arrived with
+  T1796. The audit of `src/apprt/win32/` found no copy path that skips it. The
+  menu bar, the context menu, the palette and every chord dispatch the core
+  `copy_to_clipboard`. Copy-on-select and link hover are core code. The only
+  win32 selection dump is `+read`, which is raw on purpose.
+- **What landed is the proof.** `test\win32\tui-copy-reflow.ps1` runs a
+  stand-in TUI that wraps a paragraph at the pane width behind a margin,
+  breaks a URL at the edge, and indents a code block. It then copies five
+  ways: ctrl+shift+c, ctrl+c, ctrl+insert, context menu Copy and
+  copy-on-select. Each gives one line per paragraph, no margin, the code
+  indentation kept and the URL whole. A ctrl-hover on either URL row shows the
+  whole URL. `+read` stays raw, and the oracle rejects that raw text. The
+  ctrl+click open was NOT RUN because it would launch a browser on the user's
+  desktop. New guard row `tui-copy-reflow`.
+- **Validation**: tui-copy-reflow ALL PASS (43), on the test desktop with no
+  foreground taken; harness floor PASS (after fixing two audit findings in
+  the new script: unwrapped `.Count` and a silent catch), guard-due ALL PASS.
+  No `src/` change, so the zig lanes and P1-P3 were not re-run.
