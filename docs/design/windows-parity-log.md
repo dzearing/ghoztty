@@ -34891,3 +34891,20 @@ moved to T1814.
 - **Measured, not scorable.** The kitty keyboard query gets no reply through
   ConPTY, so it is reported as information. Restored rows are the window less
   the notice banner, which the size check allows for.
+
+## 2026-10-10 — T1819: a Claude Code pane comes back from a reboot with its last screen
+
+- **What changed.** A pane that was running a full-screen program (every Claude
+  Code pane on Windows since T1801) now comes back after a reboot with that
+  program's last screen above the interrupted notice, and with the line printed
+  before it started above that. Before this fix, only the notice and a fresh
+  prompt came back.
+- **Why it was lost.** The restore painted the saved full-screen frame into a
+  pane still at its placeholder size, and the full-screen buffer keeps no
+  scrollback, so the frame's top scrolled away. Leaving that buffer then threw
+  away the rest. The restore now decodes the saved frame in a large scratch
+  terminal and paints it as plain history, which is what the Mac does. The saved
+  snapshot also now includes the normal screen beneath the program.
+- **Evidence.** `session-reboot-tui.ps1` scores H4 and the new H6 (ALL PASS, 58).
+  The relaunch, resume-offset and ingest-lag harnesses, plus all four floor
+  lanes, are green.
