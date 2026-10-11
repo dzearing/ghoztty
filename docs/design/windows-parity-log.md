@@ -35224,3 +35224,23 @@ moved to T1814.
   because build-mode isolation does not cover it. T1860: the desktop-launch
   audit misses a `cmd /c` launch. hook-json and split-divider are still red;
   T1841 and T1853 already track them.
+
+## 2026-10-11 — T1838: a stashed pane stays stashed after a Windows restart
+
+- **What changed.** The session manifest records each stashed pane's place in
+  the stash (`stash_index` on the leaf, 0 = top, Mac's `stashIndex`). The
+  restore re-stashes the rebuilt panes in that order once each tab is whole
+  (`Window.applyRecordedStash`), keeps the tab's focus off a hidden pane, and
+  lets the first layout pass size them to their real slots. Agent in-place
+  recovery used to un-stash a stashed terminal when it swapped the surface.
+  `replaceTabLeaf` now carries the stash over. A Mac layout blob's
+  `stashIndex` is decoded as well.
+- **Evidence.** New `test/win32/stash-restore.ps1` ALL PASS (23):
+  manifest order, both panes still stashed after a kill and relaunch, hidden
+  HWNDs sized to the column, sessions re-attached, the stashed pane live, and
+  `+restore` back into its slot. `-NegativeControl` fails as required.
+  floor-lane all PASS. 43 of 45 due harnesses ALL PASS.
+- **Filed.** T1861 covers the agent-recovery path, which no harness drives
+  yet. hook-json and split-divider are still red for older reasons that T1841
+  and T1853 already track. The duplicates filed by mistake (T1862, T1863) are
+  closed.

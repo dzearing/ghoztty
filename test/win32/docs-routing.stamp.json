@@ -1,15 +1,15 @@
 {
     "guard":  "docs-routing",
     "script":  "test/win32/docs-routing.ps1",
-    "generated":  "2026-10-11T12:32:41-07:00",
-    "commit":  "ef3adf9cb",
+    "generated":  "2026-10-11T15:31:02-07:00",
+    "commit":  "51a63e098",
     "uncommitted":  [
                         "docs/claude/cli.md"
                     ],
     "files":  {
                   "CLAUDE.md":  "b03bf0f8e5f2ead39c1dc4b636c9d234f4a9e2580bbad469906a4645c2795100",
                   "docs/claude/build.md":  "4dbfa6ae2ff3a877f8ed7af3c37119aff22109c36cd3d438a3b07a2c8d198c67",
-                  "docs/claude/cli.md":  "f8cb0ca98fa3581a4f681a1ff1c6df3f4f33cf1f25ca547746cadb230514e416",
+                  "docs/claude/cli.md":  "06f10a2497ba608ef40579c6a65d2eff79552c125b733237de06a1fd1c485141",
                   "docs/claude/remote.md":  "05862b3f93acb518d2e13369c12219e913d5bb219df8cdce5816325ea384034e",
                   "docs/claude/sessions.md":  "5910852e1f9df1078754a2f016fe12cb91786ac194ec28bbe4d2d2ab44ffd19d",
                   "docs/claude/testing.md":  "72e71dd3e9cc038a9d91cac58273f2e095c831a78fac3333e4780027afed3f30",

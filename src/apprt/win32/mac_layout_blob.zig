@@ -322,6 +322,9 @@ fn leafFrom(v: std.json.Value) session_layout.Leaf {
         .viewer_location = str(obj.get("viewerLocation")),
         .viewer_home_location = str(obj.get("viewerHomeLocation")),
         .viewer_origin_directory = str(obj.get("viewerOriginDirectory")),
+        // T1838: the pane's place in its window's stash (0 = top). A stash is
+        // layout, so it follows the layout across machines like the banner.
+        .stash_index = if (int(obj.get("stashIndex"))) |i| std.math.cast(u32, i) else null,
     };
 }
 
@@ -620,6 +623,26 @@ test "T337: the WP-D3 snapshot pair is dropped, and a banner is not" {
     try testing.expect(leaf.screen_snapshot == null);
     try testing.expect(leaf.screen_snapshot_offset == null);
     try testing.expectEqualStrings("**build** ok", leaf.banner.?);
+}
+
+test "T1838: a Mac leaf's stashIndex is carried, and absent means on screen" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const entry = try translate(arena,
+        \\{"id":"e","tree":{"split":{"_0":{"direction":"horizontal","ratio":0.5,
+        \\ "left":{"leaf":{"_0":{"sessionID":"a"}}},
+        \\ "right":{"leaf":{"_0":{"sessionID":"b","stashIndex":0}}}}}}}
+    );
+    try testing.expect(entry.nodes[1].leaf.?.stash_index == null);
+    try testing.expectEqual(@as(?u32, 0), entry.nodes[2].leaf.?.stash_index);
+
+    // A negative index is not a place in a stash.
+    const bad = try translate(arena,
+        \\{"id":"e","tree":{"leaf":{"_0":{"sessionID":"a","stashIndex":-1}}}}
+    );
+    try testing.expect(bad.nodes[0].leaf.?.stash_index == null);
 }
 
 test "T337: a malformed tree fails the entry rather than half-building it" {

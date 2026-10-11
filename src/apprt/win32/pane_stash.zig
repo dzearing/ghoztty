@@ -129,6 +129,44 @@ pub fn stashIndex(tree: anytype, view: anytype) ?usize {
     return above;
 }
 
+/// The manifest's spelling of `stashIndex` (T1838): what capture writes for
+/// one leaf. Null for a pane on screen, and for an index past `u32` (a tree
+/// cannot hold that many leaves; recording nothing beats truncating).
+pub fn recordedIndex(tree: anytype, view: anytype) ?u32 {
+    const i = stashIndex(tree, view) orelse return null;
+    return std.math.cast(u32, i);
+}
+
+/// One leaf a restore found stashed in the manifest, and where in the stash
+/// it sat (0 = top).
+pub fn Recorded(comptime View: type) type {
+    return struct { view: *View, index: u32 };
+}
+
+/// Re-stash a freshly restored tree the way the manifest recorded it (T1838,
+/// Mac `withStash(stashedIDs(...))`). Marks bottom-first so the recorded top
+/// ends up the most recent, which is all the order a stash has; the absolute
+/// numbers do not survive and do not need to. Entries naming a view that is
+/// not a leaf of `tree` are ignored. Then `normalize`, so a manifest whose
+/// stash would hide every pane — hand-edited, or written mid-close — still
+/// restores with one on screen. Returns what `normalize` had to restore.
+/// Reorders `recorded` in place.
+pub fn applyRecorded(
+    tree: anytype,
+    recorded: []Recorded(@TypeOf(tree.*).View),
+) ?*@TypeOf(tree.*).View {
+    const Entry = Recorded(@TypeOf(tree.*).View);
+    std.mem.sort(Entry, recorded, {}, struct {
+        fn deeperFirst(_: void, a: Entry, b: Entry) bool {
+            return a.index > b.index;
+        }
+    }.deeperFirst);
+    for (recorded) |entry| {
+        if (contains(tree.*, entry.view)) mark(entry.view);
+    }
+    return normalize(tree);
+}
+
 /// Whether the subtree under `handle` holds at least one visible leaf. A split
 /// with one invisible side collapses into the other in every geometry walk.
 pub fn subtreeVisible(tree: anytype, handle: anytype) bool {
@@ -459,6 +497,75 @@ test "pane_stash: the visible clone is the on-screen arrangement" {
     try std.testing.expect(contains(vis, &a) and contains(vis, &c));
     // The full tree is untouched.
     try std.testing.expectEqual(@as(usize, 5), tree.nodes.len);
+}
+
+test "pane_stash: a recorded stash round-trips its order, top preserved" {
+    const alloc = std.testing.allocator;
+    var a: TestView = .{ .label = "A" };
+    var b: TestView = .{ .label = "B" };
+    var c: TestView = .{ .label = "C" };
+    var tree = try threePane(alloc, &a, &b, &c);
+    defer tree.deinit();
+
+    // Capture side: stash B then C, so C is the top (index 0).
+    mark(&b);
+    mark(&c);
+    try std.testing.expectEqual(@as(?u32, 1), recordedIndex(tree, &b));
+    try std.testing.expectEqual(@as(?u32, 0), recordedIndex(tree, &c));
+    try std.testing.expectEqual(@as(?u32, null), recordedIndex(tree, &a));
+
+    // Restore side: fresh panes (nothing marked), recorded in tree order —
+    // the order a restore walk meets them, which is NOT stash order.
+    unmark(&b);
+    unmark(&c);
+    var rec = [_]Recorded(TestView){
+        .{ .view = &b, .index = 1 },
+        .{ .view = &c, .index = 0 },
+    };
+    try std.testing.expect(applyRecorded(&tree, &rec) == null);
+    try std.testing.expect(!isStashed(&a));
+    try std.testing.expect(topStashed(tree).? == &c);
+    try std.testing.expectEqual(@as(?u32, 1), recordedIndex(tree, &b));
+    try std.testing.expectEqual(@as(?u32, 0), recordedIndex(tree, &c));
+}
+
+test "pane_stash: a recorded stash that would hide every pane leaves the top visible" {
+    const alloc = std.testing.allocator;
+    var a: TestView = .{ .label = "A" };
+    var b: TestView = .{ .label = "B" };
+    var c: TestView = .{ .label = "C" };
+    var tree = try threePane(alloc, &a, &b, &c);
+    defer tree.deinit();
+
+    var rec = [_]Recorded(TestView){
+        .{ .view = &a, .index = 2 },
+        .{ .view = &b, .index = 0 },
+        .{ .view = &c, .index = 1 },
+    };
+    try std.testing.expect(applyRecorded(&tree, &rec).? == &b);
+    try std.testing.expectEqual(@as(usize, 1), visibleLeafCount(tree));
+    try std.testing.expect(!isStashed(&b));
+    // C was next under the top, so it is the new top.
+    try std.testing.expect(topStashed(tree).? == &c);
+}
+
+test "pane_stash: a recorded entry for a view outside the tree is ignored" {
+    const alloc = std.testing.allocator;
+    var a: TestView = .{ .label = "A" };
+    var b: TestView = .{ .label = "B" };
+    var c: TestView = .{ .label = "C" };
+    var stranger: TestView = .{ .label = "X" };
+    var tree = try threePane(alloc, &a, &b, &c);
+    defer tree.deinit();
+
+    var rec = [_]Recorded(TestView){
+        .{ .view = &stranger, .index = 0 },
+        .{ .view = &a, .index = 1 },
+    };
+    try std.testing.expect(applyRecorded(&tree, &rec) == null);
+    try std.testing.expect(!isStashed(&stranger));
+    try std.testing.expect(isStashed(&a));
+    try std.testing.expectEqual(@as(usize, 1), stashedCount(tree));
 }
 
 test "pane_stash: equalize on the visible tree lifts back, collapsed splits keep their ratio" {

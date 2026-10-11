@@ -78,6 +78,7 @@ const orphan_notify = @import("orphan_notify.zig");
 const exit_reason = @import("exit_reason.zig");
 const palette_order = @import("palette_order.zig");
 const session_layout = @import("session_layout.zig");
+const pane_stash = @import("pane_stash.zig");
 const layout_refresh = @import("layout_refresh.zig");
 const layout_cost = @import("layout_cost.zig");
 const layout_blobs = @import("layout_blobs.zig");
@@ -3154,6 +3155,12 @@ fn captureWindow(
                     .right = @intFromEnum(sp.right),
                 } },
             };
+            // T1838: the stash is layout, and lives nowhere but here. Both
+            // leaf kinds can be stashed, so it is recorded after the switch.
+            if (nodes[ni].leaf) |*lf| switch (node) {
+                .leaf => |pane| lf.stash_index = pane_stash.recordedIndex(tree.*, pane),
+                .split => {},
+            };
         }
         const color = win.tab_colors[ti];
         tabs[ti] = .{
@@ -4872,7 +4879,10 @@ fn restoreTab(
     // predecessor used rather than the fresh one `insertPaneAsTab` just made.
     // Absent in a pre-T1048 manifest, and then the fresh id stands.
     if (tab.uuid) |u| window.adoptTabUuid(tab_index, u);
-    try self.restoreBuildSubtree(window, tab.nodes, 0, first_pane, tr, attach, 0);
+    var stash: RestoredStash = .{};
+    defer stash.deinit(self.core_app.alloc);
+    try self.restoreBuildSubtree(window, tab.nodes, 0, first_pane, tr, attach, &stash, 0);
+    window.applyRecordedStash(tab_index, stash.entries.items);
 
     if (tab.color) |c| {
         if (std.meta.stringToEnum(tab_color.TabColor, c)) |tc| window.tab_colors[tab_index] = tc;
@@ -4896,6 +4906,7 @@ fn restoreBuildSubtree(
     anchor: *PaneView,
     tr: RestoreTransport,
     attach: ?*const std.StringHashMap(void),
+    stash: *RestoredStash,
     depth: usize,
 ) !void {
     if (depth > nodes.len or idx >= nodes.len) return error.CorruptLayout;
@@ -4905,6 +4916,7 @@ fn restoreBuildSubtree(
             self.ipcRegister(n, .{ .pane = anchor }) catch |err|
                 log.warn("session-restore: pane IPC register '{s}' failed err={}", .{ n, err });
         restoreLeafPresentation(anchor, lf);
+        stash.note(self.core_app.alloc, anchor, lf);
         return;
     }
     const sp = node.split orelse return error.CorruptLayout;
@@ -4939,9 +4951,29 @@ fn restoreBuildSubtree(
         break :pane new_surface.pane_view orelse return error.CorruptLayout;
     };
 
-    try self.restoreBuildSubtree(window, nodes, sp.left, anchor, tr, attach, depth + 1);
-    try self.restoreBuildSubtree(window, nodes, sp.right, new_pane, tr, attach, depth + 1);
+    try self.restoreBuildSubtree(window, nodes, sp.left, anchor, tr, attach, stash, depth + 1);
+    try self.restoreBuildSubtree(window, nodes, sp.right, new_pane, tr, attach, stash, depth + 1);
 }
+
+/// The stash a restore walk found in the manifest (T1838): each restored pane
+/// whose leaf carried a `stash_index`, collected as the walk meets them and
+/// applied once the tab's tree is whole (`Window.applyRecordedStash`), because
+/// stash order is not tree order and a half-built tree cannot be normalized.
+/// A failed append drops that one pane's stash and nothing else: it comes back
+/// on screen, which is what every pane did before the field existed.
+const RestoredStash = struct {
+    entries: std.ArrayList(pane_stash.Recorded(PaneView)) = .empty,
+
+    fn note(self: *RestoredStash, gpa: Allocator, pane: *PaneView, lf: session_layout.Leaf) void {
+        const index = lf.stash_index orelse return;
+        self.entries.append(gpa, .{ .view = pane, .index = index }) catch |err|
+            log.warn("session-restore: stash entry dropped err={}", .{err});
+    }
+
+    fn deinit(self: *RestoredStash, gpa: Allocator) void {
+        self.entries.deinit(gpa);
+    }
+};
 
 /// Put back the app-side presentation a restored terminal pane carries in the
 /// manifest and NOWHERE else (T422): its last title and its sticky banner.
@@ -6070,8 +6102,11 @@ fn rebuildTabRootInPlace(
     // Everything below the root is the ordinary restore walk. `restoreTab`
     // would re-apply color/hero/title too, but those live on the WINDOW and
     // were never lost — only the surfaces were — so we replay just the splits.
-    self.restoreBuildSubtree(window, tab.nodes, 0, root, tr, attach, 0) catch |err|
-        log.warn("in-place recovery: tab {d} subtree replay failed err={}", .{ tab_index, err });
+    var stash: RestoredStash = .{};
+    defer stash.deinit(self.core_app.alloc);
+    if (self.restoreBuildSubtree(window, tab.nodes, 0, root, tr, attach, &stash, 0)) {
+        window.applyRecordedStash(tab_index, stash.entries.items);
+    } else |err| log.warn("in-place recovery: tab {d} subtree replay failed err={}", .{ tab_index, err });
 
     var n: usize = 0;
     for (tab.nodes) |node| {

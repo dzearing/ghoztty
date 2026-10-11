@@ -24,7 +24,8 @@
 //!                                  "left":1,"right":2}},
 //!                        {"leaf":{"session_id":"<32hex>","pane_id":"<uuid>",
 //!                                 "title":..?,"banner":..?,
-//!                                 "working_directory":..?}},
+//!                                 "working_directory":..?,
+//!                                 "stash_index":0?}},
 //!                        {"leaf":{"session_id":"<32hex>"}}],
 //!               "color":"blue"?,"hero_ratio":..?,"title":..?,"active":true}]}]}
 //!
@@ -178,6 +179,16 @@ pub const Frame = struct {
 /// inherits, so a stale value costs the pane nothing. Always null for a viewer
 /// leaf (`viewer_origin_directory` is the viewer's own answer to this
 /// question). Additive and optional in the usual way.
+///
+/// `stash_index` is the pane's place in its tab's stash (T1838, Mac per-leaf
+/// `stashIndex`): 0 is the top — the most recently stashed, the one the
+/// restore keybind brings back first — and null means the pane was on screen.
+/// A stash is part of the LAYOUT, and like the banner it lives nowhere but the
+/// app, so without it every stashed pane came back on screen after a restart.
+/// Restore re-marks the stashed leaves in this order and then re-establishes
+/// the stash invariants (`pane_stash.applyRecorded`), so a manifest whose
+/// stash would hide every pane still restores with one visible. Additive and
+/// optional in the usual way: an older app ignores it and shows the pane.
 pub const Leaf = struct {
     session_id: ?[]const u8 = null,
     title: ?[]const u8 = null,
@@ -191,6 +202,7 @@ pub const Leaf = struct {
     viewer_origin_directory: ?[]const u8 = null,
     screen_snapshot: ?[]const u8 = null,
     screen_snapshot_offset: ?u64 = null,
+    stash_index: ?u32 = null,
 
     /// Whether this leaf describes a VIEWER pane. Absent `kind` ⇒ terminal, so
     /// this is also the compatibility rule for a pre-viewer manifest. One
@@ -1289,6 +1301,28 @@ test "parse tolerates unknown fields and missing optionals (additive interop)" {
     const leaf = w.tabs[0].nodes[0].leaf.?;
     try testing.expect(leaf.session_id == null);
     try testing.expect(leaf.title == null);
+}
+
+test "T1838: stash_index round-trips, and an on-screen leaf writes none" {
+    const alloc = testing.allocator;
+    var nodes = [_]Node{
+        .{ .split = .{ .layout = "horizontal", .ratio = 0.5, .left = 1, .right = 2 } },
+        .{ .leaf = .{ .session_id = "a" } },
+        .{ .leaf = .{ .session_id = "b", .stash_index = 0 } },
+    };
+    var tabs = [_]Tab{.{ .nodes = &nodes, .active = true }};
+    var wins = [_]Window{.{ .id = "w", .tabs = &tabs }};
+    const bytes = try serialize(alloc, .{ .windows = &wins });
+    defer alloc.free(bytes);
+    // Written only where there is a stash: an older reader sees nothing new
+    // on an ordinary leaf, and ignores it on a stashed one.
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, bytes, "\"stash_index\""));
+
+    var parsed = try parse(alloc, bytes);
+    defer parsed.deinit();
+    const back = parsed.value.windows[0].tabs[0].nodes;
+    try testing.expect(back[1].leaf.?.stash_index == null);
+    try testing.expectEqual(@as(?u32, 0), back[2].leaf.?.stash_index);
 }
 
 // -- reconcile (T194) ---------------------------------------------------------

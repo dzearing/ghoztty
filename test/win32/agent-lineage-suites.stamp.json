@@ -1,13 +1,13 @@
 {
     "guard":  "agent-lineage-suites",
     "script":  "test/win32/agent-lineage-suites.ps1",
-    "generated":  "2026-09-26T21:30:17-07:00",
-    "commit":  "7c27c8c6f",
+    "generated":  "2026-10-11T15:17:52-07:00",
+    "commit":  "51a63e098",
     "uncommitted":  [
                         "src/apprt/win32/session_layout.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/session_layout.zig":  "ed6d24f1e89e738428a1a464f72cc507674efcd40a64adc60ead21d2d0e2984c",
+                  "src/apprt/win32/session_layout.zig":  "4fe4efd5886b9d9eb9be7906ca89826d601ad2bf2b8dd6fea82d56a1d5938876",
                   "src/remote/agent/pty_host_spec.zig":  "8f7154a95aeb18b04a70a979080c4fa37deaf304b0156ff86c746206cda10c67",
                   "src/remote/agent_lineage.zig":  "277bca4d33eb667f06fc7676e7c933d74b7a50911fadf6266fae5f8cc69f40d7",
                   "test/win32/agent-lineage-suites.ps1":  "2ae245733d72b0cf2a56d67f2f4c5de7360ac7e2423ac80f6a9688a590e08e84",

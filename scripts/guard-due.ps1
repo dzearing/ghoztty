@@ -456,6 +456,22 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T1838: a STASHED pane stays stashed across a restart, in stash order and
+    # sized to its slot. The stash is written per leaf by the capture in
+    # App.zig, carried by the manifest schema, re-applied by
+    # `Window.applyRecordedStash`, and ordered by `pane_stash.applyRecorded`.
+    [pscustomobject]@{
+        Name   = 'stash-restore'
+        Script = 'test\win32\stash-restore.ps1'
+        Stamp  = 'test\win32\stash-restore.stamp.json'
+        Covers = @(
+            'test\win32\stash-restore.ps1',
+            'src\apprt\win32\pane_stash.zig',
+            'src\apprt\win32\session_layout.zig',
+            'src\apprt\win32\App.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # Where a split starts (T760). The answer is assembled in `newSplitAt`
     # from three sources - a viewer parent's file directory, the agent's
     # GET_CWD, and the local process read - and the defect this guards was

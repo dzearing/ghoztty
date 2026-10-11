@@ -552,10 +552,12 @@ ghoztty +restore --target=<pane> [--focus]
 carried as Ctrl+Shift) and `restore_stashed_pane` (unbound, as on Mac). The
 stash is a mark on the pane itself (`PaneView.stash_seq`, model in
 `src/apprt/win32/pane_stash.zig`), and every split geometry walk collapses a
-split whose one side is all stashed panes (`Window.splitRects`). Not yet on
-Windows: the sidebar to SEE the stash in (T1828) and the stash surviving a
-restart (T1838) - use `+list` to find stashed panes. Acceptance:
-`test\win32\ipc-stash.ps1`.
+split whose one side is all stashed panes (`Window.splitRects`). The stash
+survives a restart (T1838): the session manifest records a per-leaf
+`stash_index` (0 = top, Mac's `stashIndex`) and the restore re-stashes in that
+order. Not yet on Windows: the sidebar to SEE the stash in (T1828) - use
+`+list` to find stashed panes. Acceptance: `test\win32\ipc-stash.ps1`,
+`test\win32\stash-restore.ps1`.
 
 ### Naming
 

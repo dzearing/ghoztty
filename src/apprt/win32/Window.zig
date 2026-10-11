@@ -3047,6 +3047,9 @@ pub fn replaceTabLeaf(
     const handle = self.findHandle(tab_index, old) orelse return error.PaneNotInTab;
 
     const pane = try self.buildPane(spec);
+    // The stash is the slot's, not the surface's (T1838): a stashed pane that
+    // recovery swaps must stay stashed, in the same place in the stash.
+    pane.stash_seq = old.stash_seq;
     var tree = self.tab_trees[tab_index].replaceLeaf(alloc, handle, pane) catch |err| {
         pane.destroyUnowned(alloc);
         return err;
@@ -7579,6 +7582,34 @@ pub fn restorePane(self: *Window, pane: *PaneView, focus: bool) void {
             self.selectTabIndex(tab);
         } else if (pane.hwnd()) |h| App.deferSetFocus(h); // T48
     }
+}
+
+/// Re-stash a just-restored tab the way the session manifest recorded it
+/// (T1838). `recorded` pairs each restored pane with its recorded stash
+/// index; it is reordered in place. Panes go straight to stashed without the
+/// focus dance `stashPane` does — nothing has been shown yet — but the tab's
+/// active pane must not be one of them, or the tab would come up focused on a
+/// pane nobody can see. The first layout pass sizes each stashed pane to its
+/// real slot (`placeStashedNode`), exactly as for a pane stashed live. Session
+/// close intent is never touched: this is layout, not a close.
+pub fn applyRecordedStash(self: *Window, tab: usize, recorded: []pane_stash.Recorded(PaneView)) void {
+    if (recorded.len == 0 or tab >= self.tab_count) return;
+    _ = pane_stash.applyRecorded(&self.tab_trees[tab], recorded);
+    if (pane_stash.isStashed(self.tab_active_pane[tab])) {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| {
+            if (pane_stash.isStashed(entry.view)) continue;
+            self.tab_active_pane[tab] = entry.view;
+            break;
+        }
+    }
+    self.heroOnTreeChanged(tab);
+    if (tab == self.active_tab) self.layoutSplits();
+    log.info("restored stash in tab={} stashed={} visible={}", .{
+        tab,
+        pane_stash.stashedCount(self.tab_trees[tab]),
+        self.visibleLeafCount(tab),
+    });
 }
 
 /// The `stash_pane` keybind: stash the active tab's focused pane. False -

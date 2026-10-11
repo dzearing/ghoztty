@@ -1,11 +1,10 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-10-11T14:30:07-07:00",
-    "commit":  "dc988c3c9",
+    "generated":  "2026-10-11T15:30:39-07:00",
+    "commit":  "51a63e098",
     "uncommitted":  [
-                        "test/win32/ipc-relay.ps1",
-                        "test/win32/ipc-remote.ps1"
+                        "test/win32/stash-restore.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "72e71dd3e9cc038a9d91cac58273f2e095c831a78fac3333e4780027afed3f30",
@@ -302,6 +301,7 @@
                   "test/win32/split-zoom-nav.ps1":  "7ed3a76e0a6abc09573263efa8f7c7d3889ab31d6d8b258040ab7cf5e9882b12",
                   "test/win32/sprite-testdata.ps1":  "79914472fe57b285f38ca6e0740a22e4975c142ccd15fe554b9b3b0835033d21",
                   "test/win32/startup-failure.ps1":  "29b3227309b6e317524108fab200b9aecb27cc9f5d94cd82a32a0357dfec0aad",
+                  "test/win32/stash-restore.ps1":  "d9e182239741cde3b2c56210c9b7c624de97b58f7a293ccda0e90abc912371b9",
                   "test/win32/stderr-capture-audit.ps1":  "bd7dfb5347d974e8b9b2cb2e1cfc25cc91eefe68bf13f185ff1ce414a54c9a53",
                   "test/win32/stderr-launch-capture.ps1":  "829a5f62f8ae5ac8899019505460cab8cefea4b73fcca6b86e72478a51e3eb3e",
                   "test/win32/suite-run.ps1":  "e5937c1bc5b01432e73f7c22a3ebe2ecfba2fad903dc367fa42890e1ddf88bf8",
