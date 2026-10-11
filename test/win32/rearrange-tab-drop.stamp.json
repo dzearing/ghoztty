@@ -1,16 +1,16 @@
 {
     "guard":  "rearrange-tab-drop",
     "script":  "test/win32/rearrange-tab-drop.ps1",
-    "generated":  "2026-10-11T00:06:30-07:00",
-    "commit":  "a1585e8b4",
+    "generated":  "2026-10-11T03:47:39-07:00",
+    "commit":  "c51a1ffa1",
     "uncommitted":  [
-                        "src/apprt/win32/Window.zig"
+
                     ],
     "files":  {
                   "src/apprt/win32/drop_highlight.zig":  "8dfbf3d0ebddf5331ee0113b53d1b6eb958907758d40a2374fcc3ee1b9a3ccdf",
                   "src/apprt/win32/DropHighlight.zig":  "cd1971ad62bb0e7c0b6eca85f07a6c29357d7afacd9e7a9ae86de50865aa7cbc",
                   "src/apprt/win32/pane_drop.zig":  "815e9f5636c7e3e34b32c8686c81b643d1b141d64a715ea31d6de500397c429c",
-                  "src/apprt/win32/Window.zig":  "34f302ba4b711481d71a682741a77816e87343e565d0e6d170a384046fcbb5d5",
+                  "src/apprt/win32/Window.zig":  "1715d9bf7af55e8fcc500a916a0b865383a0711f3358f64c5f010a9b0c1aa225",
                   "src/datastruct/split_tree.zig":  "16a9e4fdfd0071c1a14116dabb723ce76497ff3ecb50291c51b716e4e4b06a25",
                   "test/win32/rearrange-tab-drop.ps1":  "21f3ba960da61a9b28f9f0a48ac9e2c1335653db66667d7e92c92c47c312bdff"
               }
