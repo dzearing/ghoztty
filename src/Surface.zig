@@ -2700,16 +2700,53 @@ fn claudeFullscreenWanted(alloc: Allocator, env: *const std.process.EnvMap) bool
 /// `$CLAUDE_CONFIG_DIR/settings.json`, else `~/.claude/settings.json`. A missing
 /// or unreadable file means no choice was made.
 fn claudeSettingsChooseRenderer(alloc: Allocator, env: *const std.process.EnvMap) bool {
-    const path = if (env.get("CLAUDE_CONFIG_DIR")) |dir|
-        std.fs.path.join(alloc, &.{ dir, "settings.json" }) catch return false
-    else if (env.get("HOME")) |home|
-        std.fs.path.join(alloc, &.{ home, ".claude", "settings.json" }) catch return false
-    else
+    const path = claudeSettingsPath(alloc, env, builtin.os.tag == .windows) orelse
         return false;
     defer alloc.free(path);
     const bytes = std.fs.cwd().readFileAlloc(alloc, path, 4 * 1024 * 1024) catch return false;
     defer alloc.free(bytes);
     return claudeSettingsSetTui(alloc, bytes);
+}
+
+/// Where Claude Code keeps its settings: `$CLAUDE_CONFIG_DIR/settings.json`,
+/// else `<home>/.claude/settings.json`. Home is Node's `os.homedir()`, which is
+/// what Claude itself resolves: `HOME` on POSIX, but `USERPROFILE` on Windows,
+/// where `HOME` is usually unset and, when a POSIX shell set it, is ignored by
+/// Node. Reading `HOME` there missed every `/tui` choice and overrode it.
+/// Caller frees; null when there is nowhere to look.
+fn claudeSettingsPath(
+    alloc: Allocator,
+    env: *const std.process.EnvMap,
+    windows: bool,
+) ?[]u8 {
+    if (env.get("CLAUDE_CONFIG_DIR")) |dir|
+        return std.fs.path.join(alloc, &.{ dir, "settings.json" }) catch null;
+    const home = env.get(if (windows) "USERPROFILE" else "HOME") orelse return null;
+    return std.fs.path.join(alloc, &.{ home, ".claude", "settings.json" }) catch null;
+}
+
+test "claudeSettingsPath: Windows reads the profile dir, not HOME" {
+    const alloc = std.testing.allocator;
+    var env = std.process.EnvMap.init(alloc);
+    defer env.deinit();
+    try std.testing.expect(claudeSettingsPath(alloc, &env, true) == null);
+    try std.testing.expect(claudeSettingsPath(alloc, &env, false) == null);
+
+    try env.put("HOME", "hh");
+    try env.put("USERPROFILE", "up");
+    const win = claudeSettingsPath(alloc, &env, true).?;
+    defer alloc.free(win);
+    const posix = claudeSettingsPath(alloc, &env, false).?;
+    defer alloc.free(posix);
+    const sep = std.fs.path.sep_str;
+    try std.testing.expectEqualStrings("up" ++ sep ++ ".claude" ++ sep ++ "settings.json", win);
+    try std.testing.expectEqualStrings("hh" ++ sep ++ ".claude" ++ sep ++ "settings.json", posix);
+
+    // CLAUDE_CONFIG_DIR wins on both.
+    try env.put("CLAUDE_CONFIG_DIR", "cc");
+    const cfg = claudeSettingsPath(alloc, &env, true).?;
+    defer alloc.free(cfg);
+    try std.testing.expectEqualStrings("cc" ++ sep ++ "settings.json", cfg);
 }
 
 /// Parse half of `claudeSettingsChooseRenderer`, separate so it is testable.

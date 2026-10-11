@@ -2906,6 +2906,20 @@ $GuardTable = @(
             'test\win32\window-name-env.ps1'
         )
     },
+    # claude-code-fullscreen (T1801): CLAUDE_CODE_NO_FLICKER=1 in local and
+    # persistence panes, never in a cross-machine one, and every explicit
+    # choice (env, %USERPROFILE% settings `tui`, config env, the option)
+    # wins. The code is a few lines of src\Surface.zig, which is far too hot
+    # a file to cover (every edit would make this due); the unit tests pin
+    # the decision, and this row pins the harness.
+    [pscustomobject]@{
+        Name   = 'claude-fullscreen-env'
+        Script = 'test\win32\claude-fullscreen-env.ps1'
+        Stamp  = 'test\win32\claude-fullscreen-env.stamp.json'
+        Covers = @(
+            'test\win32\claude-fullscreen-env.ps1'
+        )
+    },
     # Shell-integration detection + the agent argv delivery (T151, T513):
     # detectShell's Windows spellings (.exe suffix, full paths, mixed case)
     # are proven end-to-end only by this harness — the none-lane unit tests

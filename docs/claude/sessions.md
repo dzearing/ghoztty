@@ -351,7 +351,7 @@ skips the history write, which is serialized under the store lock
   Against an agent too old to advertise the capability the client falls back to
   printing both itself — visible, just repaintable.
 
-- `claude-code-fullscreen = true|false` (macOS, default `true`). Sets
+- `claude-code-fullscreen = true|false` (macOS and Windows, default `true`). Sets
   `CLAUDE_CODE_NO_FLICKER=1` in local and session-persistence panes so Claude
   Code uses its **fullscreen renderer**, which keeps the conversation itself and
   re-wraps ALL of it on a resize. Its classic renderer writes the conversation
@@ -360,14 +360,16 @@ skips the history write, which is serialized under the store lock
   screen stays at the old width, and nothing on our side can fix that.
   **An explicit choice always wins**: the variable already in the environment,
   a `tui` key in Claude's settings (`$CLAUDE_CONFIG_DIR/settings.json`, else
-  `~/.claude/settings.json` — what `/tui default|fullscreen` writes; Claude gives
+  `~/.claude/settings.json`, which on Windows is `%USERPROFILE%\.claude\` —
+  Node's homedir, not `$HOME` (T1801) — what `/tui default|fullscreen` writes; Claude gives
   the variable precedence over that setting, so injecting it blindly would
   override the user), or `env = CLAUDE_CODE_NO_FLICKER=…` in the config, applied
   last. **Never applied to cross-machine panes** — Claude itself turns the
   renderer off where it renders poorly (Windows over a remote connection).
   Trade-off: the conversation lives inside Claude, not in scrollback, so a
   reboot restores Claude's last screen and `claude --resume` brings back the
-  rest. Code: `claudeFullscreenWanted` (`src/Surface.zig`).
+  rest. Code: `claudeFullscreenWanted` (`src/Surface.zig`); Windows acceptance:
+  `test\win32\claude-fullscreen-env.ps1`.
 
 Session lifecycle: a process DIES when the user closes its pane/tab/window (or
 `+close`s it — the CLOSE lands when the close's undo window expires), when the

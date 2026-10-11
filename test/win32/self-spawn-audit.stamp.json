@@ -1,11 +1,11 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-10T19:04:07-07:00",
-    "commit":  "d251bdd1c",
+    "generated":  "2026-10-10T20:04:57-07:00",
+    "commit":  "29e2ac264",
     "uncommitted":  [
-                        "src/pty.zig",
-                        "src/remote/agent/pty_child.zig"
+                        "src/config/Config.zig",
+                        "src/Surface.zig"
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -454,7 +454,7 @@
                   "src/config/ClipboardCodepointMap.zig":  "fcd1560f302af18ff1f94329b0ade3e025a64e88f8715ef4d73498f3a9173b4e",
                   "src/config/command.zig":  "7a9e6da3d47433a0c2245c4bc65bd7965bbcffd25cae635409718c6a367ed6ca",
                   "src/config/conditional.zig":  "ba7912c4a8bf02a3e39339799febd8dd6c3545f6d6d26641152a4580913c48f8",
-                  "src/config/Config.zig":  "2ff417d25759d2208debcf13c39761a37898d2a6ce26b87ec2ee5cd14347f232",
+                  "src/config/Config.zig":  "f1291fa529892ea298a00cfa0aabc5b227ecff09e96b6053306750088911a2d4",
                   "src/config/edit.zig":  "9fc0369523151068529c72200c5c8a8fddcfa448d68fcc8fd33ff77a793def7c",
                   "src/config/ErrorList.zig":  "8913d3844831b9d021466f3513f7f2c9a24c3264519b50ec6ef5179b59c32537",
                   "src/config/file_load.zig":  "96e8165c5a365808b7407d61f7073aa074189bcd96b3daa0a43d37f5e3d4c94f",
@@ -755,7 +755,7 @@
                   "src/simd/main.zig":  "f52a8e47a679baeb9e82dbfd2203f03752694bf2493f72bd16d6f3fa846e983d",
                   "src/simd/vt.zig":  "afc1dc1f039f6cd2f6233154d39ceb32d640101bc48aa01e60d7da4c3c31b500",
                   "src/stb/main.zig":  "c3c85b2c626d27de603c1c13b56802a2ed2d5a5717abbc5fb76bb142f5e470ec",
-                  "src/Surface.zig":  "39d26eb869d508a8eccd9be5b186cd2245ed4dc069fb6ae0bc6a3bcfc27fdf19",
+                  "src/Surface.zig":  "5c11f3e8c7cfc0c4c8393f346cef90745ab70033c60542b0bc4d23ef9a40cfb9",
                   "src/surface_mouse.zig":  "3e8ca84731b6923de31644d02ac0c82422c45d8c73c89a2c92e44d4612d0a3a1",
                   "src/synthetic/Bytes.zig":  "d6817ffca0b222dc78e9e4048660bdc3882aa544b9f374651ffa892526c99222",
                   "src/synthetic/cli.zig":  "a0e3a4a708c4ffaee0ba3c17d4fa60d3f3b1e5265573cdd9bd89a679f87d33fb",

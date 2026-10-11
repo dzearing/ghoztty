@@ -34849,3 +34849,22 @@ moved to T1814.
   executes. Floor lanes all PASS. P1-P3 ALL PASS. Guard harnesses
   job-escape-startup, session-shell-exit, holder-soak, sessions-running-cmd,
   thread-join, test-wait-oracle, self-spawn and seam-audit ALL PASS.
+
+## 2026-10-10 — T1801: Windows panes start Claude Code in its fullscreen renderer, and respect a /tui choice
+
+- **What.** Main's `claude-code-fullscreen` (default on) came across in the
+  T1796 merge: `CLAUDE_CODE_NO_FLICKER=1` in local and persistence panes,
+  never in cross-machine ones. The shared code already reached the Windows
+  agent's ConPTY through the OPEN env.
+- **Windows gap fixed.** The "did the user already choose?" check read
+  Claude's settings from `$HOME`. Windows GUI processes usually have no
+  `HOME`, and Claude itself (Node's homedir) uses `%USERPROFILE%`. So a user
+  who had picked a renderer with `/tui` got overridden. `claudeSettingsPath`
+  now reads `USERPROFILE` on Windows, with a unit test. The docs say macOS and
+  Windows.
+- **Validation**: new `test\win32\claude-fullscreen-env.ps1` ALL PASS (13),
+  run on the test desktop. It covers a persistence pane, a local pane, all
+  four opt-outs, and a remote pane over a loopback agent with a local
+  control. Floor lanes all PASS.
+- **Not run.** Measuring the effect on T1763's resize flicker needs a live
+  Claude run and a per-resize capture. Filed as T1818.

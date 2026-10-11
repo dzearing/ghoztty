@@ -1256,7 +1256,8 @@ command: ?Command = null,
 /// scrollback intact. It only matters across an agent restart.
 @"session-relaunch": SessionRelaunch = .restore,
 
-/// Run Claude Code in its fullscreen renderer in local panes (macOS).
+/// Run Claude Code in its fullscreen renderer in local panes (macOS and
+/// Windows).
 ///
 /// Claude Code has two renderers. Its classic one writes the conversation into
 /// the terminal's scrollback, laid out row by row at the width it had at the
@@ -1270,7 +1271,8 @@ command: ?Command = null,
 ///
 ///   * `CLAUDE_CODE_NO_FLICKER` is already set in the environment, or
 ///   * your Claude Code settings (`$CLAUDE_CONFIG_DIR/settings.json`, else
-///     `~/.claude/settings.json`) set `tui` — `/tui default` or `/tui fullscreen`
+///     `~/.claude/settings.json`; `%USERPROFILE%\.claude\settings.json` on
+///     Windows) set `tui` — `/tui default` or `/tui fullscreen`
 ///     records exactly that, and is always respected, or
 ///   * you set the variable yourself with the `env` option, which wins.
 ///

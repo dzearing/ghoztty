@@ -1,0 +1,12 @@
+{
+    "guard":  "claude-fullscreen-env",
+    "script":  "test/win32/claude-fullscreen-env.ps1",
+    "generated":  "2026-10-10T19:52:16-07:00",
+    "commit":  "29e2ac264",
+    "uncommitted":  [
+                        "test/win32/claude-fullscreen-env.ps1"
+                    ],
+    "files":  {
+                  "test/win32/claude-fullscreen-env.ps1":  "4471ab86002e9dcb652e11b80adbc100c50e759fba9bed816ca7c2cdd57c6f1b"
+              }
+}

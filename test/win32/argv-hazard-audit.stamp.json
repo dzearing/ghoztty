@@ -1,11 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-10T18:24:50-07:00",
-    "commit":  "d6836ece3",
+    "generated":  "2026-10-10T19:52:58-07:00",
+    "commit":  "29e2ac264",
     "uncommitted":  [
                         "scripts/guard-due.ps1",
-                        "test/win32/tui-copy-reflow.ps1"
+                        "test/win32/claude-fullscreen-env.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -34,7 +34,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "be29a56890d9964e5447761df41d1e7475f7fcb5d33be389412ee56746f9df6f",
+                  "scripts/guard-due.ps1":  "852523494de47a1771903af4f36a7d2a3d1669619e365ea52924eb86980caeae",
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -146,6 +146,7 @@
                   "test/win32/chooser-warm-list.ps1":  "c615a0de86c2debc15e196b56f97cc2021594a6548058fa4f9a48e991fca28f2",
                   "test/win32/chrome-merged-row.ps1":  "d33d8e41a1c00c40822433b47ddc00ea9cb572cf42829277c39d3334cd3a8020",
                   "test/win32/chrome-theme.ps1":  "92d71dc5766283047e1432b1e318ea74b9a2ca1962746fa99cc4969db4428380",
+                  "test/win32/claude-fullscreen-env.ps1":  "4471ab86002e9dcb652e11b80adbc100c50e759fba9bed816ca7c2cdd57c6f1b",
                   "test/win32/claude-integration.ps1":  "a65c25e4bb1b51a50a227b72126a6feedb1a0c7443f3838d32888b9359c4090b",
                   "test/win32/cleanslate-audit.ps1":  "cb6bcd4aa4122ce79eec0f10213acc3ed0906e4b68d836df4ebcc89b13080244",
                   "test/win32/cli-argv-fidelity.ps1":  "c51d36e42d332a1085d12418098befe48a46aa119badb5173be35727cc598221",
