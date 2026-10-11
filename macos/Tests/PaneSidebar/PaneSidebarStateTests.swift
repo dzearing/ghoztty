@@ -235,3 +235,44 @@ struct SurfaceGrabHandleRevealTests {
         #expect(!reveals(cursorVisible: false, overBanner: true, at: nil))
     }
 }
+
+struct PaneSidebarWindowGroupingTests {
+    typealias G = PaneSidebarWindowGrouping
+
+    @Test func aProjectColonWorktreeTitleSplits() {
+        let parts = G.split("ghoztty: pane-sidebar")
+        #expect(parts?.project == "ghoztty")
+        #expect(parts?.worktree == "pane-sidebar")
+    }
+
+    @Test func otherTitlesDoNot() {
+        #expect(G.split("zsh") == nil)
+        #expect(G.split("ghoztty:") == nil, "no worktree")
+        #expect(G.split(": main") == nil, "no project")
+        #expect(G.split("http://localhost:3000") == nil, "a colon without a space after it")
+        #expect(G.split(String(repeating: "x", count: 50) + ": y") == nil, "a sentence, not a project")
+    }
+
+    @Test func windowsAreSortedByNameAndGroupedByProject() {
+        let sections = G.sections([
+            (id: 1, title: "zsh"),
+            (id: 2, title: "ghoztty: windows-amd64"),
+            (id: 3, title: "relay: main"),
+            (id: 4, title: "ghoztty: pane-sidebar"),
+            (id: 5, title: "Build logs"),
+            (id: 6, title: "ghoztty: main"),
+        ])
+        #expect(sections.map { $0.project ?? $0.windows[0].title } == ["Build logs", "ghoztty", "relay", "zsh"])
+        let ghoztty = sections[1]
+        #expect(ghoztty.windows.map(\.label) == ["main", "pane-sidebar", "windows-amd64"])
+        #expect(ghoztty.windows.map(\.id) == [6, 4, 2])
+        #expect(sections[0].windows[0].label == "Build logs", "an ungrouped window keeps its whole name")
+    }
+
+    @Test func numbersSortByValueAndCaseIsIgnored() {
+        let sections = G.sections([
+            (id: 1, title: "app: wt-10"), (id: 2, title: "app: wt-2"), (id: 3, title: "App2: x"),
+        ])
+        #expect(sections[0].windows.map(\.label) == ["wt-2", "wt-10"])
+    }
+}

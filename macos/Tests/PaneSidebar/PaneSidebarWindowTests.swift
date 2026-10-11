@@ -149,6 +149,31 @@ struct PaneSidebarWindowTests {
         try? FileManager.default.removeItem(atPath: countFile)
     }
 
+    /// The all-windows scope sorted by name, `<project>: <worktree>` windows
+    /// under their project's header. Writes all-windows.png.
+    @Test func allWindowsGroupsProjects() async throws {
+        let ghostty = try #require((NSApp.delegate as? AppDelegate)?.ghostty)
+        let app = try #require(ghostty.app)
+        var controllers: [TerminalController] = []
+        for title in ["ghoztty: windows-amd64", "relay: main", "ghoztty: pane-sidebar", "Build logs"] {
+            let c = TerminalController.newWindow(ghostty, tree: SplitTree(view: terminalPane(app)))
+            c.windowTitleOverride = title
+            controllers.append(c)
+        }
+        let main = controllers[2]
+        main.paneSidebarState.isHidden = false
+        main.paneSidebarState.isPinned = true
+        main.paneSidebarState.width = 260
+        main.paneSidebarState.showsAllWindows = true
+        _ = await poll(timeout: 10) { controllers.allSatisfy { $0.window?.isVisible == true } }
+        let window = try #require(main.window)
+        window.setContentSize(NSSize(width: 900, height: 560))
+        await settle(1.2)
+        try await captureComposited(window, "all-windows")
+        for c in controllers { c.close() }
+        await settle(0.3)
+    }
+
     /// Writes `window` as the window server composites it.
     private func captureComposited(_ window: NSWindow, _ name: String) async throws {
         let dir = "/tmp/pane-sidebar-snapshots"

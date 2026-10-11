@@ -11,20 +11,28 @@ import Testing
 struct PaneDeskTests {
     private let seeds: [UInt64] = (1...200).map { UInt64($0) &* 0x9E37_79B9_7F4A_7C15 }
 
-    private func spotlight(_ p: PaneDeskPalette) -> (light: PaneDeskPalette.HSB, shade: PaneDeskPalette.HSB)? {
-        if case let .spotlight(light, shade) = p.look { return (light, shade) }
+    private func spotlight(_ p: PaneDeskPalette) -> (light: PaneDeskPalette.HSB, accent: PaneDeskPalette.HSB)? {
+        if case let .spotlight(light, accent) = p.look { return (light, accent) }
         return nil
     }
 
-    @Test func aVariantIsOneHue() {
-        // A neighboring second hue read as duo-toned.
+    @Test func everythingButTheCornerLightIsOneHue() {
         for seed in seeds {
             for isLight in [false, true] {
                 let p = PaneDeskVariant(seed: seed).palette(isLight: isLight)
                 let s = try! #require(spotlight(p))
-                let hues = Set([p.baseStart.hue, p.baseEnd.hue, s.light.hue, s.shade.hue])
-                #expect(hues.count == 1)
+                #expect(Set([p.baseStart.hue, p.baseEnd.hue, s.light.hue]).count == 1)
             }
+        }
+    }
+
+    @Test func theCornerLightIsTheComplement() {
+        for seed in seeds {
+            let p = PaneDeskVariant(seed: seed).palette(isLight: false)
+            let s = try! #require(spotlight(p))
+            var delta = abs(s.accent.hue - p.baseStart.hue) * 360
+            if delta > 180 { delta = 360 - delta }
+            #expect(abs(delta - 180) < 0.001, "\(delta)° apart")
         }
     }
 
@@ -47,16 +55,18 @@ struct PaneDeskTests {
         }
     }
 
-    @Test func aVariantIsLitFromTheTopAndFallsAwayTowardTheBottomTrailingCorner() {
+    @Test func aVariantIsLitFromTheTopAndOnlySubtlyInTheCorner() {
         for seed in seeds {
             let dark = PaneDeskVariant(seed: seed).palette(isLight: false)
             let d = try! #require(spotlight(dark))
             #expect(d.light.brightness > dark.baseStart.brightness, "the spotlight lifts the top")
-            #expect(d.shade.brightness < dark.baseEnd.brightness, "darkest in the corner")
+            #expect(dark.baseEnd.brightness < dark.baseStart.brightness, "the base still falls away")
+            #expect(d.accent.brightness > dark.baseEnd.brightness, "the corner is lit")
+            #expect(d.accent.brightness < d.light.brightness - 0.1, "but well under the spotlight")
             let light = PaneDeskVariant(seed: seed).palette(isLight: true)
             let l = try! #require(spotlight(light))
             #expect(l.light.brightness > light.baseStart.brightness)
-            #expect(l.shade.brightness > light.baseEnd.brightness, "lightest in the corner")
+            #expect(l.accent.saturation < 0.2, "a pale complement on a light theme")
         }
     }
 

@@ -91,46 +91,93 @@ struct PaneSidebarView: View {
 
     @ViewBuilder
     private var list: some View {
-        let content = VStack(alignment: .leading, spacing: 0) {
-            if state.showsAllWindows {
-                allWindows
-            } else {
-                windowSection(controller, isThisWindow: true, indent: 0)
-            }
-        }
-        .padding(.vertical, SidePanelRow.fillInset)
-
         if isInteractive {
-            ScrollView(.vertical) { content }
+            ScrollView(.vertical) {
+                // Lazy only for the pinned (sticky) project headers.
+                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    listContent
+                }
+                .padding(.vertical, SidePanelRow.fillInset)
+            }
         } else {
+            let content = VStack(alignment: .leading, spacing: 0) { listContent }
+                .padding(.vertical, SidePanelRow.fillInset)
             // A still render (`ImageRenderer` can't draw ScrollView content).
             content.frame(maxHeight: .infinity, alignment: .top)
         }
     }
 
     @ViewBuilder
+    private var listContent: some View {
+        if state.showsAllWindows {
+            allWindows
+        } else {
+            windowSection(controller, isThisWindow: true, indent: 0)
+        }
+    }
+
+    /// Every window, sorted by name; `<project>: <worktree>` windows grouped
+    /// under a collapsible, sticky project header (`PaneSidebarWindowGrouping`).
+    @ViewBuilder
     private var allWindows: some View {
-        let others = roster.controllers.filter { $0 !== controller }
-        windowGroup(controller, isThisWindow: true)
-        ForEach(others.map(PaneSidebarControllerRef.init)) { ref in
-            if let other = ref.controller {
-                if !isRail {
-                    PaneSidebarDivider(isRail: false).padding(.bottom, 4)
+        let controllers = roster.controllers.contains { $0 === controller }
+            ? roster.controllers : [controller] + roster.controllers
+        let byID = Dictionary(uniqueKeysWithValues: controllers.map { (ObjectIdentifier($0), $0) })
+        let sections = PaneSidebarWindowGrouping.sections(
+            controllers.map { (id: ObjectIdentifier($0), title: PaneSidebarText.windowTitle(of: $0)) })
+
+        ForEach(Array(sections.enumerated()), id: \.element.id) { index, section in
+            if let project = section.project, !isRail {
+                let folded = state.foldedProjects.contains(project)
+                Section {
+                    if !folded {
+                        ForEach(section.windows, id: \.id) { entry in
+                            if let owner = byID[entry.id] {
+                                windowGroup(owner, isThisWindow: owner === controller,
+                                            label: entry.label, indent: PaneSidebarOutline.childIndent)
+                            }
+                        }
+                    }
+                } header: {
+                    PaneSidebarProjectHeader(
+                        project: project,
+                        windowCount: section.windows.count,
+                        isFolded: folded,
+                        isFirst: index == 0,
+                        onFold: {
+                            if folded { state.foldedProjects.remove(project) }
+                            else { state.foldedProjects.insert(project) }
+                        })
                 }
-                windowGroup(other, isThisWindow: false)
+            } else {
+                ForEach(section.windows, id: \.id) { entry in
+                    if let owner = byID[entry.id] {
+                        if !isRail, index > 0 {
+                            PaneSidebarDivider(isRail: false).padding(.bottom, 4)
+                        }
+                        windowGroup(owner, isThisWindow: owner === controller, label: entry.label)
+                    }
+                }
             }
         }
     }
 
-    private func windowGroup(_ owner: BaseTerminalController, isThisWindow: Bool) -> some View {
+    private func windowGroup(
+        _ owner: BaseTerminalController,
+        isThisWindow: Bool,
+        label: String,
+        indent: CGFloat = 0
+    ) -> some View {
         let folded = state.foldedWindows.contains(ObjectIdentifier(owner))
         return VStack(alignment: .leading, spacing: 0) {
             if isRail {
-                if !isThisWindow { PaneSidebarDivider(isRail: true) }
+                PaneSidebarDivider(isRail: true)
             } else {
                 PaneSidebarWindowHeader(
                     owner: owner,
+                    title: label,
                     isThisWindow: isThisWindow,
+                    indent: indent,
                     isFolded: folded,
                     isQuickKill: state.isQuickKill,
                     isDropTarget: isJoinTarget(owner),
@@ -143,7 +190,7 @@ struct PaneSidebarView: View {
                 // In the outline, a window's panes are its CHILDREN: indented
                 // under its header so the header reads as the parent.
                 windowSection(owner, isThisWindow: isThisWindow,
-                              indent: isRail ? 0 : PaneSidebarOutline.childIndent)
+                              indent: isRail ? 0 : indent + PaneSidebarOutline.childIndent)
             }
         }
         .background(GeometryReader { proxy in
@@ -248,18 +295,6 @@ struct PaneSidebarView: View {
     }
 }
 
-/// A controller in a `ForEach`, without retaining it or demanding it be
-/// Identifiable.
-private struct PaneSidebarControllerRef: Identifiable {
-    weak var controller: BaseTerminalController?
-    let id: ObjectIdentifier
-
-    init(_ controller: BaseTerminalController) {
-        self.controller = controller
-        self.id = ObjectIdentifier(controller)
-    }
-}
-
 // MARK: - Header button
 
 /// A 24pt borderless glyph button, styled exactly like the viewer nav bar's
@@ -292,7 +327,11 @@ struct PaneSidebarHeaderButton: View {
 
 private struct PaneSidebarWindowHeader: View {
     @ObservedObject var owner: BaseTerminalController
+    /// The window's name, or — inside a project group — its worktree.
+    let title: String
     let isThisWindow: Bool
+    /// Inside a project group: one outline level in.
+    var indent: CGFloat = 0
     let isFolded: Bool
     let isQuickKill: Bool
     let isDropTarget: Bool
@@ -346,7 +385,7 @@ private struct PaneSidebarWindowHeader: View {
             }
         }
         .padding(.vertical, 6)
-        .padding(.leading, PaneSidebarOutline.headerLeading)
+        .padding(.leading, PaneSidebarOutline.headerLeading + indent)
         // With a trailing button, the SAME inset a row's button has, so the
         // header's × and its panes' ×s line up in one column.
         .padding(.trailing, showsKill ? PaneSidebarRow.trailingButtonInset : SidePanelRow.textInset)
@@ -367,26 +406,58 @@ private struct PaneSidebarWindowHeader: View {
         .help(isThisWindow ? "This window" : "Raise this window")
     }
 
-    /// The window's name as a person would say it: a title the user set,
-    /// else what its focused pane is called — never the raw window title,
-    /// which carries the activity suffix ("(question)") and, for a pane
-    /// that never set one, the placeholder ghost.
-    private var title: String {
-        if let override = owner.windowTitleOverride ?? owner.titleOverride, !override.isEmpty {
-            return override
-        }
-        let pane = owner.publishedFocusedPane ?? owner.surfaceTree.visibleLeaves.first
-        return PaneSidebarText.title(
-            pane?.title ?? "",
-            pwd: pane?.surfaceView?.pwd,
-            kind: "Window")
-    }
-
     private var hasQuestion: Bool {
         owner.surfaceTree.contains { $0.activityState == .needsInput }
     }
 
     private var showsKill: Bool { isQuickKill && !isThisWindow }
+}
+
+// MARK: - Project header (all-windows scope)
+
+/// A `<project>: …` group's header: sticky at the top of the list while its
+/// windows scroll under it, and folds them away. On Liquid Glass so rows
+/// passing beneath stay legible (see `glassBackdrop`).
+private struct PaneSidebarProjectHeader: View {
+    let project: String
+    let windowCount: Int
+    let isFolded: Bool
+    let isFirst: Bool
+    let onFold: () -> Void
+
+    var body: some View {
+        Button(action: onFold) {
+            HStack(spacing: PaneSidebarOutline.chevronSpacing) {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .rotationEffect(.degrees(isFolded ? -90 : 0))
+                    .foregroundStyle(.secondary)
+                    .frame(width: PaneSidebarOutline.chevronWidth, height: 14)
+                Text(project.uppercased())
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .tracking(0.6)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                Text("\(windowCount)")
+                    .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.leading, PaneSidebarOutline.headerLeading)
+            .padding(.trailing, SidePanelRow.textInset)
+            .padding(.horizontal, SidePanelRow.fillInset)
+            .padding(.top, isFirst ? 4 : 10)
+            .padding(.bottom, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .glassBackdrop()
+        .help(isFolded ? "Show \(project)’s windows" : "Hide \(project)’s windows")
+        .accessibilityLabel("\(project), \(windowCount) windows")
+        .accessibilityAddTraits(.isHeader)
+    }
 }
 
 // MARK: - Small pieces
@@ -693,5 +764,21 @@ final class PaneRoster: ObservableObject {
     /// Something about some window's panes changed.
     func changed() {
         objectWillChange.send()
+    }
+}
+
+extension PaneSidebarText {
+    /// A window's name as a person would say it: a title the user set, else
+    /// what its focused pane is called — never the raw window title, which
+    /// carries the activity suffix ("(question)") and, for a pane that never
+    /// set one, the placeholder ghost. What the all-windows scope sorts and
+    /// groups by.
+    @MainActor
+    static func windowTitle(of owner: BaseTerminalController) -> String {
+        if let override = owner.windowTitleOverride ?? owner.titleOverride, !override.isEmpty {
+            return override
+        }
+        let pane = owner.publishedFocusedPane ?? owner.surfaceTree.visibleLeaves.first
+        return title(pane?.title ?? "", pwd: pane?.surfaceView?.pwd, kind: "Window")
     }
 }

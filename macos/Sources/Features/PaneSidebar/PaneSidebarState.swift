@@ -37,6 +37,8 @@ final class PaneSidebarState: ObservableObject {
 
     /// Window groups folded closed in the all-windows list.
     @Published var foldedWindows: Set<ObjectIdentifier> = []
+    /// Folded project groups in the all-windows scope, by project name.
+    @Published var foldedProjects: Set<String> = []
 
     /// The flat panel's width. One preference shared by every window, like
     /// the viewer side panel's.
@@ -280,5 +282,71 @@ enum PaneSidebarText {
                 in: out, range: NSRange(out.startIndex..., in: out), withTemplate: "")
         }
         return out.trimmingCharacters(in: .whitespaces)
+    }
+}
+
+/// The all-windows scope's order and grouping — pure, so pinned in tests.
+///
+/// Windows are sorted by name (stable as focus moves, unlike frontmost-first,
+/// which reshuffled the list on every window switch). A window named
+/// `<project>: <worktree>` — the convention for worktree windows — is grouped
+/// under its project, which gets a collapsible sticky header; the window
+/// itself is then labeled by its worktree alone.
+enum PaneSidebarWindowGrouping {
+    /// A window title split as `<project>: <worktree>`, or nil when it isn't
+    /// one: both halves must be non-empty, and the project short and a single
+    /// line — a sentence that happens to contain a colon is not a project.
+    static func split(_ title: String) -> (project: String, worktree: String)? {
+        guard let range = title.range(of: ": ") else { return nil }
+        let project = title[..<range.lowerBound].trimmingCharacters(in: .whitespaces)
+        let worktree = title[range.upperBound...].trimmingCharacters(in: .whitespaces)
+        guard !project.isEmpty, !worktree.isEmpty,
+              project.count <= 40,
+              !project.contains(where: \.isNewline)
+        else { return nil }
+        return (project, worktree)
+    }
+
+    struct Entry<ID: Hashable> {
+        let id: ID
+        let title: String
+        /// What the window's own header shows: the worktree inside a group,
+        /// else the whole title.
+        let label: String
+    }
+
+    /// A top-level item: a project and its windows, or a lone window.
+    struct Section<ID: Hashable>: Identifiable {
+        /// Non-nil for a project group.
+        let project: String?
+        let windows: [Entry<ID>]
+
+        var id: String { project.map { "project:" + $0 } ?? "window:\(windows[0].id)" }
+    }
+
+    /// Sections in name order: projects by name (their windows by worktree),
+    /// interleaved with ungrouped windows by title.
+    static func sections<ID: Hashable>(_ windows: [(id: ID, title: String)]) -> [Section<ID>] {
+        var projects: [String: [Entry<ID>]] = [:]
+        var sections: [Section<ID>] = []
+        for window in windows {
+            if let parts = split(window.title) {
+                projects[parts.project, default: []].append(
+                    .init(id: window.id, title: window.title, label: parts.worktree))
+            } else {
+                sections.append(.init(project: nil, windows: [
+                    .init(id: window.id, title: window.title, label: window.title)]))
+            }
+        }
+        for (project, entries) in projects {
+            sections.append(.init(project: project, windows: entries.sorted { before($0.label, $1.label) }))
+        }
+        return sections.sorted { before($0.project ?? $0.windows[0].title, $1.project ?? $1.windows[0].title) }
+    }
+
+    /// Finder's order: case-insensitive, numbers by value ("wt-2" before
+    /// "wt-10").
+    static func before(_ a: String, _ b: String) -> Bool {
+        a.localizedStandardCompare(b) == .orderedAscending
     }
 }

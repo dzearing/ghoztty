@@ -34,9 +34,10 @@ enum PaneElevation {
 ///
 /// The default is the "ocean" palette the style was chosen with: two pools,
 /// blue and teal, at opposite corners. A window opened with `--color=random`
-/// (or by hand, with Cmd-N) gets a `PaneDeskVariant` instead, in ONE hue from
-/// the whole wheel: a soft spotlight from the top center, falling away darker
-/// toward the bottom-trailing corner on a dark theme (lighter on a light one).
+/// (or by hand, with Cmd-N) gets a `PaneDeskVariant` instead: a random hue
+/// from the whole wheel with a soft spotlight from the top center, falling
+/// away darker toward the bottom-trailing corner on a dark theme (lighter on
+/// a light one) — where a dim pool of the COMPLEMENTARY hue subtly lights it.
 struct PaneDeskPalette: Equatable {
     struct HSB: Equatable {
         var hue: Double        // 0...1
@@ -51,9 +52,9 @@ struct PaneDeskPalette: Equatable {
         /// bottom-trailing one; each reach is a fraction of the window's
         /// longer side. (Ocean.)
         case pools(lead: HSB, trail: HSB, leadReach: Double, trailReach: Double)
-        /// A spotlight from just above the top center, and a shade pooling in
-        /// the bottom-trailing corner. (A variant.)
-        case spotlight(light: HSB, shade: HSB)
+        /// A spotlight from just above the top center, and a dim pool of the
+        /// complementary hue lighting the bottom-trailing corner. (A variant.)
+        case spotlight(light: HSB, accent: HSB)
     }
 
     /// The base the look sits on, from its top-leading end to its far end.
@@ -111,31 +112,36 @@ struct PaneDeskVariant: Codable, Equatable {
         func pick(_ range: ClosedRange<Double>) -> Double {
             range.lowerBound + (range.upperBound - range.lowerBound) * rng.nextUnit()
         }
-        // ONE hue from the whole wheel (what `--color=random` has always
-        // drawn from). Every layer is that hue — a second one read as
-        // duo-toned — and only saturation and brightness vary.
-        let hue = pick(0...360) / 360
+        // A hue from the whole wheel (what `--color=random` has always drawn
+        // from) for everything, except the corner light: its complement.
+        // (A NEIGHBORING second hue read as duo-toned; the complement, dim and
+        // confined to one corner, reads as light from elsewhere.)
+        let degrees = pick(0...360)
+        let hue = degrees / 360
+        let complement = (degrees + 180).truncatingRemainder(dividingBy: 360) / 360
 
         if isLight {
             // A tinted near-white, brightening toward the top center and
-            // getting LIGHTER toward the bottom-trailing corner.
+            // getting LIGHTER toward the bottom-trailing corner, which the
+            // complement faintly colors.
             let start = pick(0.93...0.945)
             return .init(
                 baseStart: .init(hue: hue, saturation: pick(0.07...0.10), brightness: start),
                 baseEnd: .init(hue: hue, saturation: pick(0.02...0.04), brightness: start + pick(0.035...0.045)),
                 look: .spotlight(
                     light: .init(hue: hue, saturation: pick(0.02...0.04), brightness: 1.0),
-                    shade: .init(hue: hue, saturation: 0.01, brightness: 1.0)))
+                    accent: .init(hue: complement, saturation: pick(0.10...0.15), brightness: pick(0.96...0.99))))
         }
-        // A deep slate of the hue, lit from the top center and getting
-        // DARKER toward the bottom-trailing corner.
+        // A deep slate of the hue, lit from the top center and getting DARKER
+        // toward the bottom-trailing corner — where the complement glows,
+        // dimly: well under the spotlight, a little over the base.
         let start = pick(0.15...0.18)
         return .init(
             baseStart: .init(hue: hue, saturation: pick(0.38...0.50), brightness: start),
             baseEnd: .init(hue: hue, saturation: pick(0.35...0.45), brightness: start - pick(0.07...0.09)),
             look: .spotlight(
                 light: .init(hue: hue, saturation: pick(0.30...0.42), brightness: pick(0.40...0.48)),
-                shade: .init(hue: hue, saturation: pick(0.30...0.40), brightness: pick(0.03...0.045))))
+                accent: .init(hue: complement, saturation: pick(0.40...0.55), brightness: pick(0.22...0.28))))
     }
 }
 
@@ -162,7 +168,7 @@ struct SplitMix64: RandomNumberGenerator {
 
 /// The soft gradient the elevated panes sit on: a gently graded base under
 /// either two soft corner pools (ocean) or a spotlight from the top center
-/// and a shade in the far corner (a variant) — simple on purpose, nothing
+/// and a dim complementary light in the far corner (a variant) — simple on purpose, nothing
 /// that competes with the terminals.
 struct PaneDesk: View {
     let palette: PaneDeskPalette
@@ -192,7 +198,7 @@ struct PaneDesk: View {
                         startRadius: 0,
                         endRadius: reach * trailReach)
 
-                case let .spotlight(light, shade):
+                case let .spotlight(light, accent):
                     LinearGradient(
                         colors: [palette.baseStart.color, palette.baseEnd.color],
                         startPoint: .topLeading,
@@ -205,10 +211,10 @@ struct PaneDesk: View {
                         startRadiusFraction: 0,
                         endRadiusFraction: 0.95)
                     RadialGradient(
-                        colors: [shade.color, shade.color.opacity(0.6), .clear],
+                        colors: [accent.color, accent.color.opacity(0.35), .clear],
                         center: .bottomTrailing,
                         startRadius: 0,
-                        endRadius: reach * 0.85)
+                        endRadius: reach * 0.6)
                 }
             }
         }

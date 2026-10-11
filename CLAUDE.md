@@ -1407,6 +1407,11 @@ the interactive mock settled).
 - Activity: a **busy** pane's icon shimmers (no spinner, no glow); `needs_input`
   shows a **question** badge — the human label, never the machine token.
 - **All-windows** header toggle (off by default) groups every window's panes.
+  Windows are **sorted by name** (Finder order; stable as focus moves), and a
+  window titled **`<project>: <worktree>`** is grouped under a collapsible,
+  **sticky** project header and labeled by its worktree alone
+  (`PaneSidebarWindowGrouping`, `PaneSidebarWindowGroupingTests`). Other
+  windows sort among the projects at the top level.
 - **A stashed pane never leaves the tree** — `SplitTree.stashed` sits beside
   `zoomed`; the grid renders `visibleTree` and spatial ops lift their ratios
   back. That is what keeps stashing from marking a session CLOSE-on-free
@@ -1435,7 +1440,8 @@ command) gets a random gradient by default**, exactly as
 gradient (`PaneDeskVariant`: a persisted seed; ONE random hue from the whole
 wheel — the tones `--color=random` always drew from — with a soft spotlight
 from the top center, getting darker toward the bottom-trailing corner on a
-dark theme and lighter on a light one; never a second hue) and leaves the terminals their theme
+dark theme and lighter on a light one, where a dim pool of the
+**complementary** hue subtly lights that corner) and leaves the terminals their theme
 color; an explicit `--color=#hex`, `random` on a split, and `random` in the
 `flat` style still tint the terminal background as before. `flat` is the classic
 edge-to-edge look with a 1px `split-divider-color` line, and its geometry is
