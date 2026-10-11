@@ -63,22 +63,26 @@ function Assert($name, $cond) {
 # the log of a failed run is all anybody gets afterwards. The 2026-08-22 sweep
 # scored this script 14 FAILURE(S) and the log could not say whether the very
 # first one was a refusal or a 20-second hang.
+#
+# T1837: it runs ON THE TEST DESKTOP. It used to be `cmd /c "$Exe" ...`, and
+# `+new-window` auto-launches the app, so every run threw the base window and
+# three relay windows across the user's desktop - a launch shape the
+# desktop-launch audit does not recognise (T1860). The `"..."` groups in an
+# argsLine are kept as one argument; Invoke-OnTestDesktop re-quotes them.
 function Run-Cli($argsLine, $outfile, $timeoutSec = 20) {
+    $argv = @([regex]::Matches($argsLine, '"[^"]*"|\S+') | ForEach-Object { $_.Value.Trim('"') })
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    $p = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `
-        -ArgumentList "/c `"`"$Exe`" $argsLine > `"$tmp\$outfile`" 2>&1`""
-    $null = $p.Handle   # before any wait, or ExitCode reads empty (lib\ExitCodeAudit.ps1)
-    if (-not $p.WaitForExit($timeoutSec * 1000)) {
-        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-        $sw.Stop()
+    $r = Invoke-OnTestDesktop -Exe $Exe -Arguments $argv -TimeoutSec $timeoutSec
+    $sw.Stop()
+    Set-Content -LiteralPath "$tmp\$outfile" -Value $r.Output -Encoding UTF8
+    if ($r.TimedOut) {
         $script:lastCli = @{ Args = $argsLine; Out = $outfile
             Why = "TIMED OUT after ${timeoutSec}s (the CLI never returned)" }
         return $null
     }
-    $sw.Stop()
     $script:lastCli = @{ Args = $argsLine; Out = $outfile
-        Why = "exited $($p.ExitCode) after $([math]::Round($sw.Elapsed.TotalSeconds, 1))s" }
-    return $p.ExitCode
+        Why = "exited $($r.ExitCode) after $([math]::Round($sw.Elapsed.TotalSeconds, 1))s" }
+    return $r.ExitCode
 }
 
 function Get-Out($outfile) {
@@ -154,6 +158,22 @@ Stop-TestProcs
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 'ipcrelay')
 Assert-GhozttyPrivateEndpoint -Exe $Exe
+
+# T1837: and its own (empty) relay account. The app this run launches resolves
+# a relay credential from the account store FIRST - ahead of the env, and on
+# every re-dial ahead of the token the window was opened with - and the default
+# store is the user's real %LOCALAPPDATA%\ghoztty\account.dat. Once the box was
+# signed in, section 4's tokenless dial went out carrying the user's real bearer
+# (a 401 from this local relay: "not reachable", not "not signed in") and
+# section 6's re-dial did the same (a 401 is terminal: self_healable=false).
+# Both read as relay regressions; neither was. A nonexistent path is "signed
+# out", and it also keeps this debug app from RENEWING the user's session token.
+# Set before 0c, because the GUI inherits it from the first Run-Cli.
+$env:GHOSTTY_ACCOUNT_STORE = Join-Path $tmp 'account.dat'
+Remove-Item env:GHOSTTY_RELAY_TOKEN -ErrorAction SilentlyContinue
+
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+$td = New-TestDesktop
 
 "== 0a: build + start a local relay (DEV_AUTH)"
 Push-Location $RelaySrc
@@ -524,6 +544,7 @@ Stop-TestProcs
 if ($agent2) { Stop-Process -Id $agent2.Id -Force -ErrorAction SilentlyContinue }
 Stop-Process -Id $relay.Id -Force -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+Remove-TestDesktop | Out-Null
 
 Complete-TestBody  # T1039: before the stamp, whose child process reads this run's state
 

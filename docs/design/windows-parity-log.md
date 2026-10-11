@@ -35204,3 +35204,23 @@ moved to T1814.
 - **Reds that predate this change.** split-divider T533 is T1853, and
   drag-perf scoring every count with the 2-pane sample is T1854. Both were
   found again and already tracked.
+
+## 2026-10-11 — T1837: the relay-window test was reading the user's real account
+
+- **What was red.** `ipc-relay.ps1` failed two checks. A signed-out dial said
+  "not reachable" instead of "not signed in". A relay window whose agent died
+  went straight to "disconnected, will not heal".
+- **Cause: the harness, not the product.** The test's debug app reads the
+  relay credential from the account store first, and the default store is the
+  user's real `account.dat`. The box is signed in now, so the "tokenless" dial
+  and the reconnect both went to the local test relay with the user's real
+  token. The relay returned 401, which is "unreachable" on a fresh dial and
+  terminal on a re-dial. The suspected agent commits are cleared.
+- **Fix.** `ipc-relay.ps1` and `ipc-remote.ps1` point `GHOSTTY_ACCOUNT_STORE`
+  at an empty path in the run's temp dir. ipc-relay's CLI calls also moved
+  onto the test desktop, because they launched windows on the user's desktop.
+- **Evidence.** ipc-relay ALL PASS (35), twice. ipc-remote ALL PASS.
+- **Filed.** T1859: a debug build can read and renew the real account store,
+  because build-mode isolation does not cover it. T1860: the desktop-launch
+  audit misses a `cmd /c` launch. hook-json and split-divider are still red;
+  T1841 and T1853 already track them.

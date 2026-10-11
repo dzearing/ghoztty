@@ -38,6 +38,12 @@ $Port = Resolve-TestPort -Name 'agent' -Port $Port
 # +new-remote-window calls below open windows in the user's installed release.
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 'ipcrem')
+# T1837: an empty relay account too. The app resolves a relay credential from
+# the account store before anything else, and the default store is the user's
+# real one - so on a signed-in box section 5's tokenless dial is not tokenless
+# and never says "not signed in". A nonexistent path reads as signed out.
+$env:GHOSTTY_ACCOUNT_STORE = Join-Path $tmp 'account.dat'
+Remove-Item env:GHOSTTY_RELAY_TOKEN -ErrorAction SilentlyContinue
 
 # T248: one shared reset instead of a private copy — see lib\CleanSlate.ps1.
 # Same app+agent kill as before, but exact-exe (a '*zig-out*' CommandLine
