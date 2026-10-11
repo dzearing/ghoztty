@@ -547,9 +547,15 @@ ghoztty +restore --target=<pane> [--focus]
   invisible one would be invisible, and raising a pane you can't see raises
   nothing. `+rearrange` keeps a stashed pane its layout omits stashed.
 
-**Windows:** not yet (T1827). The verbs reach the win32 IPC server through the
-shared CLI, which answers them as unknown until T1827 lands; the CLI surface
-itself is already identical on both platforms.
+**Windows** (T1827): the same verbs, refusals and messages, plus the
+`stash_pane` keybind (default **Ctrl+Shift+M**, Mac's Shift+Cmd+M with Cmd
+carried as Ctrl+Shift) and `restore_stashed_pane` (unbound, as on Mac). The
+stash is a mark on the pane itself (`PaneView.stash_seq`, model in
+`src/apprt/win32/pane_stash.zig`), and every split geometry walk collapses a
+split whose one side is all stashed panes (`Window.splitRects`). Not yet on
+Windows: the sidebar to SEE the stash in (T1828) and the stash surviving a
+restart (T1838) - use `+list` to find stashed panes. Acceptance:
+`test\win32\ipc-stash.ps1`.
 
 ### Naming
 

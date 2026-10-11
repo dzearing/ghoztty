@@ -65,8 +65,8 @@ pub const List = struct {
         readonly: ?bool = null,
         /// True when the pane is stashed out of its window's layout (main
         /// 597a193cc's pane sidebar). Written only when true, as the Mac
-        /// encoder does (`stashed == true ? true : nil`); win32 has no stash
-        /// yet (T1827), so today it is always omitted.
+        /// encoder does (`stashed == true ? true : nil`); win32 reports it
+        /// since T1827.
         stashed: bool = false,
         /// The session-persistence agent session this pane is bound to
         /// (T332): the join key against `+sessions --json`. Absent for a

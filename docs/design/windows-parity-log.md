@@ -35104,3 +35104,34 @@ moved to T1814.
 - **Own slip.** Called the banner `.sh` from PowerShell once. PowerShell
   refused it ("cannot run a document in the middle of a pipeline"), so no
   picker opened (checked: the only OpenWith process is 10-10's).
+
+## 2026-10-11 — T1827: panes can be stashed out of the grid on Windows
+
+- **What changed.** `+stash` / `+restore`, the `stash_pane` keybind (default
+  Ctrl+Shift+M) and `restore_stashed_pane` now work on Windows, with Mac's
+  refusal strings. `+list` marks stashed panes. Focusing or splitting at a
+  stashed pane restores it first. Closing the last visible pane restores the
+  top of the stash.
+- **Design.** The stash is a mark on the pane (`PaneView.stash_seq`), not a
+  per-tab list, because the tab arrays shift on every tab insert, close and
+  move. Model plus unit tests: `src/apprt/win32/pane_stash.zig`. All nine
+  split geometry walks in `Window.zig` share one helper, `splitRects`, that
+  collapses a split whose one side is all stashed. Focus nav, swap and
+  equalize run on a visible clone of the tree.
+- **Found and fixed on the way.** Win32 `+rearrange` destroys any pane the
+  layout omits, so it would have closed a stashed pane nobody could see. It
+  now carries the pane forward, still stashed, as Mac does.
+- **Evidence.** New `test\win32\ipc-stash.ps1`: ALL PASS 49, on a background
+  desktop. Its negative control goes red, and so does a build with the
+  stashed-pane placement disabled. Floor lanes all PASS. P1-P3 ALL PASS. The
+  due harnesses this change made due are green, except two that are red for
+  reasons outside it (below).
+- **Filed.** T1838: the stash does not survive a restart yet. T1839: divider
+  drags with a stash present. T1840: the win32 floor lane went red on the
+  user's own Spotify window, through a reused parent pid. T1841: the Windows
+  copy of the ghoztty skill is behind main's (hook-json vendor drift).
+  `ipc-relay.ps1` is still red on T1837.
+- **Own slips.** My test used `$pId`, which is PowerShell's read-only `$PID`.
+  It threw, and the early version still scored green, so the script now
+  asserts that its body reached the end. It also had a nested `@()` that the
+  unroll-count audit caught.

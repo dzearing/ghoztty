@@ -27,6 +27,7 @@ const ViewerPane = @import("ViewerPane.zig");
 const viewer_accel = @import("viewer_accel.zig");
 const viewer_content = @import("viewer_content.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
+const pane_stash = @import("pane_stash.zig");
 const terminal = @import("../../terminal/main.zig");
 const tcp_dial = @import("../../remote/tcp_dial.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
@@ -3019,17 +3020,14 @@ pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
     };
     log.debug("closeSplitPane: removing handle={} from tab={}", .{ handle.idx(), tab });
 
-    // Find next focus target BEFORE removing.
-    const next_handle = (tree.goto(alloc, handle, .next) catch null) orelse
-        (tree.goto(alloc, handle, .previous) catch null);
-
-    // Extract the pane pointer from the next handle before we modify the tree.
-    const next_pane: ?*PaneView = if (next_handle) |nh| blk: {
-        break :blk switch (tree.nodes[nh.idx()]) {
-            .leaf => |v| v,
-            .split => null,
-        };
-    } else null;
+    // Find next focus target BEFORE removing, over the panes ON SCREEN
+    // (T1827): focus handed to a stashed pane is focus in a hidden window.
+    // Closing a STASHED pane moves nothing - the focused pane is still there.
+    const closing_stashed = pane_stash.isStashed(pane);
+    var next_pane: ?*PaneView = if (closing_stashed) self.tab_active_pane[tab] else blk: {
+        const n = self.gotoVisible(tab, pane, .next) orelse self.gotoVisible(tab, pane, .previous);
+        break :blk if (n == pane) null else n;
+    };
     log.debug("closeSplitPane: has_next={}", .{next_pane != null});
 
     const new_tree = tree.remove(alloc, handle) catch {
@@ -3057,13 +3055,20 @@ pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
     self.tab_trees[tab] = new_tree;
     old_tree.deinit();
 
+    // The last pane on screen closed with others stashed (T1827, invariant
+    // 1): the top of the stash comes back rather than leaving an empty tab.
+    if (pane_stash.normalize(&self.tab_trees[tab])) |restored| {
+        if (next_pane == null) next_pane = restored;
+    }
+
     if (next_pane) |ns| {
         log.debug("closeSplitPane: focusing next pane", .{});
         self.tab_active_pane[tab] = ns;
         self.heroOnTreeChanged(tab);
         self.layoutSplits();
         self.app.markLayoutDirty(); // T89f: split closed → re-persist the layout
-        if (ns.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
+        // A stashed pane closing leaves keyboard focus where it was.
+        if (!closing_stashed) if (ns.hwnd()) |h| App.deferSetFocus(h); // T48: defer out of WndProc
     } else {
         log.debug("closeSplitPane: no next pane, closing tab", .{});
         self.closeTabByIndex(tab);
@@ -3159,10 +3164,14 @@ pub fn leafCount(self: *Window, tab: usize) usize {
 /// preview of the pane you just made appeared ABOVE the original and the
 /// arrow keys walked the strip backwards.
 fn leafIndexOf(self: *Window, tab: usize, pane: *PaneView) ?usize {
+    // Visible leaves only (T1827): every caller is hero mode, which is over
+    // the panes on screen - a stashed pane has no tile and no hero slot.
     var i: usize = 0;
     var it = self.tab_trees[tab].leafIterator();
-    while (it.next()) |entry| : (i += 1) {
+    while (it.next()) |entry| {
+        if (pane_stash.isStashed(entry.view)) continue;
         if (entry.view == pane) return i;
+        i += 1;
     }
     return null;
 }
@@ -3170,12 +3179,23 @@ fn leafIndexOf(self: *Window, tab: usize, pane: *PaneView) ?usize {
 /// The leaf at a screen-order index, if in range. Pub: the hero slide
 /// painter resolves its outgoing/incoming snapshots by index.
 pub fn leafAt(self: *Window, tab: usize, index: usize) ?*PaneView {
+    // Visible leaves only, like `leafIndexOf` (T1827).
     var i: usize = 0;
     var it = self.tab_trees[tab].leafIterator();
-    while (it.next()) |entry| : (i += 1) {
+    while (it.next()) |entry| {
+        if (pane_stash.isStashed(entry.view)) continue;
         if (i == index) return entry.view;
+        i += 1;
     }
     return null;
+}
+
+/// The panes ON SCREEN in a tab: `leafCount` minus the stashed ones (T1827).
+/// Every question about what the user can see - hero mode, "is this tab
+/// split" for dim and dividers - asks this one; `leafCount` stays the number
+/// of panes the tab OWNS.
+pub fn visibleLeafCount(self: *Window, tab: usize) usize {
+    return pane_stash.visibleLeafCount(self.tab_trees[tab]);
 }
 
 /// Toggle hero mode for the active tab (fork feature, T19). Activation
@@ -3188,7 +3208,7 @@ pub fn toggleHeroMode(self: *Window) void {
         self.tab_hero_active[tab] = false;
         self.resetPointerTransients();
     } else {
-        if (self.leafCount(tab) <= 1) return;
+        if (self.visibleLeafCount(tab) <= 1) return;
         const focused = self.tab_active_pane[tab];
         self.tab_hero_index[tab] = @intCast(self.leafIndexOf(tab, focused) orelse 0);
         self.tab_hero_scroll[tab] = 0;
@@ -3434,15 +3454,9 @@ fn collectPaneSlotsNode(
             n.* += 1;
         },
         .split => |sp| {
-            if (sp.layout == .horizontal) {
-                const a = split_geometry.axis(rect.left, rect.right, sp.ratio, self.scale);
-                self.collectPaneSlotsNode(tree, sp.left, .{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom }, out, n);
-                self.collectPaneSlotsNode(tree, sp.right, .{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom }, out, n);
-                return;
-            }
-            const a = split_geometry.axis(rect.top, rect.bottom, sp.ratio, self.scale);
-            self.collectPaneSlotsNode(tree, sp.left, .{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo }, out, n);
-            self.collectPaneSlotsNode(tree, sp.right, .{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end }, out, n);
+            const r = self.splitRects(tree, sp, rect);
+            if (r.lo) |lo| self.collectPaneSlotsNode(tree, sp.left, lo, out, n);
+            if (r.hi) |hi| self.collectPaneSlotsNode(tree, sp.right, hi, out, n);
         },
     }
 }
@@ -4658,7 +4672,7 @@ fn rearrangeHeaderInset(self: *const Window, slot: w32.RECT) i32 {
 /// (snapshot slide + carousel re-center) when possible, instant otherwise.
 fn heroSelect(self: *Window, index: isize) void {
     const tab = self.active_tab;
-    const n = self.leafCount(tab);
+    const n = self.visibleLeafCount(tab);
     if (n == 0) return;
     const clamped: usize = @intCast(@max(0, @min(index, @as(isize, @intCast(n - 1)))));
     log.debug("heroSelect req={} clamped={} cur={} n={}", .{ index, clamped, self.tab_hero_index[tab], n });
@@ -4688,7 +4702,7 @@ fn heroSelect(self: *Window, index: isize) void {
 pub fn heroOnTreeChanged(self: *Window, tab: usize) void {
     self.resetPointerTransients();
     if (!self.tab_hero_active[tab]) return;
-    const n = self.leafCount(tab);
+    const n = self.visibleLeafCount(tab);
     if (n <= 1) {
         self.tab_hero_active[tab] = false;
         return;
@@ -4891,7 +4905,7 @@ fn heroInvalidateCarousel(self: *Window) void {
 /// question, so the resize cursor can never promise a target that is not there.
 pub fn heroHitDivider(self: *Window, x: i32, y: i32) bool {
     if (self.tab_count == 0 or !self.tab_hero_active[self.active_tab]) return false;
-    if (self.leafCount(self.active_tab) <= 1) return false;
+    if (self.visibleLeafCount(self.active_tab) <= 1) return false;
     const split = HeroCarousel.splitRects(self, self.surfaceRect());
     return hero_math.dividerGrab(split, split_geometry.grabHalfPx(self.scale)).contains(x, y);
 }
@@ -5199,7 +5213,7 @@ fn layoutHero(self: *Window, rect: w32.RECT) void {
     // settled state.
     self.heroCancelAnims();
     const tab = self.active_tab;
-    const n = self.leafCount(tab);
+    const n = self.visibleLeafCount(tab);
     if (self.tab_hero_index[tab] >= n) self.tab_hero_index[tab] = @intCast(n - 1);
     const hero_index: usize = self.tab_hero_index[tab];
 
@@ -5210,12 +5224,24 @@ fn layoutHero(self: *Window, rect: w32.RECT) void {
     // One batch for every leaf: the hero swap moves ALL of them to the hero
     // rect and flips which one is shown, and doing that a window at a time
     // shows background between the hide and the show (T1031).
-    var hdwp = beginPaneBatch(n);
+    var hdwp = beginPaneBatch(self.leafCount(tab));
     // Screen order (T560), so `leaf_i` means the same thing here as it does
     // in the carousel strip and in `leafAt`.
     var it = self.tab_trees[tab].leafIterator();
     var leaf_i: usize = 0;
-    while (it.next()) |entry| : (leaf_i += 1) {
+    while (it.next()) |entry| {
+        if (pane_stash.isStashed(entry.view)) {
+            // Stashed (T1827): no tile, never shown, but kept at the size
+            // it would take on screen so its program never re-renders at a
+            // placeholder size (main c6826b79a).
+            entry.view.setVisible(false);
+            if (entry.view.hwnd()) |h| {
+                const inset = entry.view.bannerLayoutInset(@intCast(hero_w), hero_h);
+                placePane(&hdwp, h, split.hero.left, split.hero.top + inset, @intCast(hero_w), @intCast(@max(hero_h - inset, 1)), false);
+            }
+            continue;
+        }
+        defer leaf_i += 1;
         // Renderer stays awake even for hidden leaves (thumbnail source).
         entry.view.setVisible(true);
         if (entry.view.hwnd()) |h| {
@@ -5506,7 +5532,7 @@ pub fn layoutSplits(self: *Window) void {
     const tree = self.tab_trees[self.active_tab];
     const rect = self.surfaceRect();
     if (self.tab_hero_active[self.active_tab]) {
-        if (self.leafCount(self.active_tab) > 1) {
+        if (self.visibleLeafCount(self.active_tab) > 1) {
             self.layoutHero(rect);
             return;
         }
@@ -5551,6 +5577,7 @@ pub fn layoutSplits(self: *Window) void {
     var place_timer = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
     var hdwp = beginPaneBatch(self.leafCount(self.active_tab));
     self.layoutNode(tree, .root, rect, &hdwp);
+    if (pane_stash.stashedCount(tree) > 0) self.placeStashedNode(tree, .root, rect, &hdwp);
     // Every pane of this pass lands in ONE frame here, before the divider
     // bands are painted below (T1031).
     endPaneBatch(hdwp);
@@ -5619,7 +5646,7 @@ pub fn updateDimOverlays(self: *Window) void {
             const dim = dim_math.shouldDim(.{
                 .alpha = alpha,
                 .active_tab = tab == self.active_tab,
-                .is_split = tree.isSplit(),
+                .is_split = pane_stash.isVisiblySplit(tree),
                 .zoomed = tree.zoomed != null,
                 .hero = self.tab_hero_active[tab],
                 .focused_pane = entry.view == self.tab_active_pane[tab],
@@ -5803,20 +5830,96 @@ fn layoutNode(self: *Window, tree: SplitTree(PaneView), handle: SplitTree(PaneVi
         .split => |s| {
             // Panes and the divider band TILE the rect (T155): the child
             // rects end/start exactly at the band, so no parent-owned pixel
-            // is left between them to hold a stale line.
-            if (s.layout == .horizontal) {
-                const a = split_geometry.axis(rect.left, rect.right, s.ratio, self.scale);
-                const left_rect = w32.RECT{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom };
-                const right_rect = w32.RECT{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom };
-                self.layoutNode(tree, s.left, left_rect, hdwp);
-                self.layoutNode(tree, s.right, right_rect, hdwp);
-            } else {
-                const a = split_geometry.axis(rect.top, rect.bottom, s.ratio, self.scale);
-                const top_rect = w32.RECT{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo };
-                const bottom_rect = w32.RECT{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end };
-                self.layoutNode(tree, s.left, top_rect, hdwp);
-                self.layoutNode(tree, s.right, bottom_rect, hdwp);
+            // is left between them to hold a stale line. A side that is all
+            // stashed panes gets no rect (T1827): `placeStashedNode` sizes it.
+            const r = self.splitRects(tree, s, rect);
+            if (r.lo) |lo| self.layoutNode(tree, s.left, lo, hdwp);
+            if (r.hi) |hi| self.layoutNode(tree, s.right, hi, hdwp);
+        },
+    }
+}
+
+/// The rects a split hands its two sides and the band between them,
+/// stash-aware (T1827). A side holding no visible pane gets null, and the
+/// split COLLAPSES: the visible side takes the whole rect and there is no
+/// band. That is Mac's `visibleTree` pruning done in place, on the full tree's
+/// own handles - so a divider handle means the same split in the layout, the
+/// paint, the hit test and the drag, and the collapsed split keeps its
+/// direction and ratio for the pane that comes back to it.
+///
+/// EVERY geometry walk goes through here; one that computed its own rects
+/// would place a header or a hit band beside a pane that is not there.
+const SplitRects = struct {
+    lo: ?w32.RECT,
+    hi: ?w32.RECT,
+    band: ?w32.RECT,
+    axis: split_geometry.Axis,
+};
+
+fn splitRects(
+    self: *Window,
+    tree: SplitTree(PaneView),
+    s: SplitTree(PaneView).Split,
+    rect: w32.RECT,
+) SplitRects {
+    const full = self.splitRectsFull(s, rect);
+    const lo_vis = pane_stash.subtreeVisible(tree, s.left);
+    const hi_vis = pane_stash.subtreeVisible(tree, s.right);
+    if (lo_vis and hi_vis) return full;
+    return .{
+        .lo = if (lo_vis) rect else null,
+        .hi = if (hi_vis and !lo_vis) rect else null,
+        .band = null,
+        .axis = full.axis,
+    };
+}
+
+/// `splitRects` ignoring the stash: the slots the FULL layout would give.
+/// Only `placeStashedNode` wants this.
+fn splitRectsFull(self: *Window, s: SplitTree(PaneView).Split, rect: w32.RECT) SplitRects {
+    if (s.layout == .horizontal) {
+        const a = split_geometry.axis(rect.left, rect.right, s.ratio, self.scale);
+        return .{
+            .lo = .{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom },
+            .hi = .{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom },
+            .band = .{ .left = a.band_lo, .top = rect.top, .right = a.band_hi, .bottom = rect.bottom },
+            .axis = a,
+        };
+    }
+    const a = split_geometry.axis(rect.top, rect.bottom, s.ratio, self.scale);
+    return .{
+        .lo = .{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo },
+        .hi = .{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end },
+        .band = .{ .left = rect.left, .top = a.band_lo, .right = rect.right, .bottom = a.band_hi },
+        .axis = a,
+    };
+}
+
+/// Size every STASHED pane to the slot the full layout would give it, and
+/// keep it hidden (T1827, main c6826b79a). A stashed terminal is still
+/// running; told it was some placeholder size it would re-render its program
+/// at that size, and again on restore. Sized as the full tree lays it out, it
+/// already holds the size it will come back at.
+fn placeStashedNode(self: *Window, tree: SplitTree(PaneView), handle: SplitTree(PaneView).Node.Handle, rect: w32.RECT, hdwp: *?w32.HDWP) void {
+    if (handle.idx() >= tree.nodes.len) return;
+    switch (tree.nodes[handle.idx()]) {
+        .leaf => |view| {
+            if (!pane_stash.isStashed(view)) return;
+            view.setVisible(false);
+            if (view.hwnd()) |h| {
+                const header = self.rearrangeHeaderInset(rect);
+                const top = rect.top + header;
+                const avail = @max(rect.bottom - top, 1);
+                const inset = view.bannerLayoutInset(rect.right - rect.left, avail);
+                const w = @max(rect.right - rect.left, 1);
+                const ht = @max(avail - inset, 1);
+                placePane(hdwp, h, rect.left, top + inset, @intCast(w), @intCast(ht), false);
             }
+        },
+        .split => |s| {
+            const r = self.splitRectsFull(s, rect);
+            self.placeStashedNode(tree, s.left, r.lo.?, hdwp);
+            self.placeStashedNode(tree, s.right, r.hi.?, hdwp);
         },
     }
 }
@@ -5857,7 +5960,7 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
     if (self.tab_count == 0) return;
     if (self.tab_hero_active[self.active_tab]) return;
     const tree = self.tab_trees[self.active_tab];
-    if (!tree.isSplit()) return;
+    if (!pane_stash.isVisiblySplit(tree)) return;
     if (tree.zoomed != null) return;
     const rect = self.surfaceRect();
     const configured = self.dividerConfiguredColor();
@@ -5907,23 +6010,13 @@ fn paintDividerNode(
             // FILL the whole band (Mac draws a filled Rectangle, not a
             // stroke). A hairline down the middle of a wider gap reads as
             // three edges once the panes carry their own background tint.
-            if (s.layout == .horizontal) {
-                const a = split_geometry.axis(rect.left, rect.right, s.ratio, self.scale);
-                var band = w32.RECT{ .left = a.band_lo, .top = rect.top, .right = a.band_hi, .bottom = rect.bottom };
+            const r = self.splitRects(tree, s, rect);
+            if (r.band) |b| {
+                var band = b;
                 _ = w32.FillRect(hdc, &band, brush);
-                const left_rect = w32.RECT{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom };
-                const right_rect = w32.RECT{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom };
-                self.paintDividerNode(hdc, tree, s.left, left_rect, rest_brush, hot_brush, hot_handle);
-                self.paintDividerNode(hdc, tree, s.right, right_rect, rest_brush, hot_brush, hot_handle);
-            } else {
-                const a = split_geometry.axis(rect.top, rect.bottom, s.ratio, self.scale);
-                var band = w32.RECT{ .left = rect.left, .top = a.band_lo, .right = rect.right, .bottom = a.band_hi };
-                _ = w32.FillRect(hdc, &band, brush);
-                const top_rect = w32.RECT{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo };
-                const bottom_rect = w32.RECT{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end };
-                self.paintDividerNode(hdc, tree, s.left, top_rect, rest_brush, hot_brush, hot_handle);
-                self.paintDividerNode(hdc, tree, s.right, bottom_rect, rest_brush, hot_brush, hot_handle);
             }
+            if (r.lo) |lo| self.paintDividerNode(hdc, tree, s.left, lo, rest_brush, hot_brush, hot_handle);
+            if (r.hi) |hi| self.paintDividerNode(hdc, tree, s.right, hi, rest_brush, hot_brush, hot_handle);
         },
     }
 }
@@ -5973,15 +6066,9 @@ fn paintRearrangeNode(
             // The SAME geometry `layoutNode` places panes with — a header
             // computed from a rect the pane was not placed in is a band
             // floating next to its own terminal.
-            if (s.layout == .horizontal) {
-                const a = split_geometry.axis(rect.left, rect.right, s.ratio, self.scale);
-                self.paintRearrangeNode(hdc, tree, s.left, .{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom }, pal, ib);
-                self.paintRearrangeNode(hdc, tree, s.right, .{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom }, pal, ib);
-            } else {
-                const a = split_geometry.axis(rect.top, rect.bottom, s.ratio, self.scale);
-                self.paintRearrangeNode(hdc, tree, s.left, .{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo }, pal, ib);
-                self.paintRearrangeNode(hdc, tree, s.right, .{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end }, pal, ib);
-            }
+            const r = self.splitRects(tree, s, rect);
+            if (r.lo) |lo| self.paintRearrangeNode(hdc, tree, s.left, lo, pal, ib);
+            if (r.hi) |hi| self.paintRearrangeNode(hdc, tree, s.right, hi, pal, ib);
         },
     }
 }
@@ -6155,15 +6242,16 @@ fn hitTestRearrangeNode(
     switch (tree.nodes[handle.idx()]) {
         .leaf => |view| return self.hitTestRearrangeLeaf(view, rect, x, y),
         .split => |s| {
-            if (s.layout == .horizontal) {
-                const a = split_geometry.axis(rect.left, rect.right, s.ratio, self.scale);
-                if (x < a.band_lo) return self.hitTestRearrangeNode(tree, s.left, .{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom }, x, y);
-                if (x >= a.band_hi) return self.hitTestRearrangeNode(tree, s.right, .{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom }, x, y);
+            const r = self.splitRects(tree, s, rect);
+            // Collapsed (T1827): the one visible side owns the whole rect.
+            if (r.band == null) {
+                if (r.lo) |lo| return self.hitTestRearrangeNode(tree, s.left, lo, x, y);
+                if (r.hi) |hi| return self.hitTestRearrangeNode(tree, s.right, hi, x, y);
                 return null;
             }
-            const a = split_geometry.axis(rect.top, rect.bottom, s.ratio, self.scale);
-            if (y < a.band_lo) return self.hitTestRearrangeNode(tree, s.left, .{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo }, x, y);
-            if (y >= a.band_hi) return self.hitTestRearrangeNode(tree, s.right, .{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end }, x, y);
+            const coord = if (s.layout == .horizontal) x else y;
+            if (coord < r.axis.band_lo) return self.hitTestRearrangeNode(tree, s.left, r.lo.?, x, y);
+            if (coord >= r.axis.band_hi) return self.hitTestRearrangeNode(tree, s.right, r.hi.?, x, y);
             return null;
         },
     }
@@ -6209,7 +6297,7 @@ pub fn hitTestDivider(self: *Window, x: i32, y: i32) ?DividerHit {
     // screen (the hero/carousel divider drag lands in T59b).
     if (self.tab_hero_active[self.active_tab]) return null;
     const tree = self.tab_trees[self.active_tab];
-    if (!tree.isSplit()) return null;
+    if (!pane_stash.isVisiblySplit(tree)) return null;
     if (tree.zoomed != null) return null;
     const rect = self.surfaceRect();
     return self.hitTestDividerNode(tree, .root, rect, x, y);
@@ -6227,25 +6315,18 @@ fn hitTestDividerNode(
     switch (tree.nodes[handle.idx()]) {
         .leaf => return null,
         .split => |s| {
-            if (s.layout == .horizontal) {
-                const a = split_geometry.axis(rect.left, rect.right, s.ratio, self.scale);
-                if (split_geometry.inGrabBand(a, x, self.scale) and y >= rect.top and y <= rect.bottom) {
-                    return .{ .handle = handle, .layout = .horizontal };
-                }
-                const left_rect = w32.RECT{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom };
-                const right_rect = w32.RECT{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom };
-                return self.hitTestDividerNode(tree, s.left, left_rect, x, y) orelse
-                    self.hitTestDividerNode(tree, s.right, right_rect, x, y);
-            } else {
-                const a = split_geometry.axis(rect.top, rect.bottom, s.ratio, self.scale);
-                if (split_geometry.inGrabBand(a, y, self.scale) and x >= rect.left and x <= rect.right) {
-                    return .{ .handle = handle, .layout = .vertical };
-                }
-                const top_rect = w32.RECT{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo };
-                const bottom_rect = w32.RECT{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end };
-                return self.hitTestDividerNode(tree, s.left, top_rect, x, y) orelse
-                    self.hitTestDividerNode(tree, s.right, bottom_rect, x, y);
+            const r = self.splitRects(tree, s, rect);
+            // A collapsed split has no band on screen to grab (T1827).
+            if (r.band != null) {
+                const hit = if (s.layout == .horizontal)
+                    split_geometry.inGrabBand(r.axis, x, self.scale) and y >= rect.top and y <= rect.bottom
+                else
+                    split_geometry.inGrabBand(r.axis, y, self.scale) and x >= rect.left and x <= rect.right;
+                if (hit) return .{ .handle = handle, .layout = s.layout };
             }
+            if (r.lo) |lo| if (self.hitTestDividerNode(tree, s.left, lo, x, y)) |h| return h;
+            if (r.hi) |hi| return self.hitTestDividerNode(tree, s.right, hi, x, y);
+            return null;
         },
     }
 }
@@ -6256,7 +6337,7 @@ fn dividerBandRect(self: *Window, target: SplitTree(PaneView).Node.Handle) ?w32.
     if (self.tab_count == 0) return null;
     if (self.tab_hero_active[self.active_tab]) return null;
     const tree = self.tab_trees[self.active_tab];
-    if (!tree.isSplit()) return null;
+    if (!pane_stash.isVisiblySplit(tree)) return null;
     if (tree.zoomed != null) return null;
     return self.dividerBandRectNode(tree, .root, self.surfaceRect(), target);
 }
@@ -6272,31 +6353,12 @@ fn dividerBandRectNode(
     switch (tree.nodes[handle.idx()]) {
         .leaf => return null,
         .split => |s| {
-            if (s.layout == .horizontal) {
-                const a = split_geometry.axis(rect.left, rect.right, s.ratio, self.scale);
-                if (handle == target) return .{
-                    .left = a.band_lo,
-                    .top = rect.top,
-                    .right = a.band_hi,
-                    .bottom = rect.bottom,
-                };
-                const left_rect = w32.RECT{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom };
-                const right_rect = w32.RECT{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom };
-                return self.dividerBandRectNode(tree, s.left, left_rect, target) orelse
-                    self.dividerBandRectNode(tree, s.right, right_rect, target);
-            } else {
-                const a = split_geometry.axis(rect.top, rect.bottom, s.ratio, self.scale);
-                if (handle == target) return .{
-                    .left = rect.left,
-                    .top = a.band_lo,
-                    .right = rect.right,
-                    .bottom = a.band_hi,
-                };
-                const top_rect = w32.RECT{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo };
-                const bottom_rect = w32.RECT{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end };
-                return self.dividerBandRectNode(tree, s.left, top_rect, target) orelse
-                    self.dividerBandRectNode(tree, s.right, bottom_rect, target);
-            }
+            const r = self.splitRects(tree, s, rect);
+            // A collapsed split's band is not on screen (T1827): null.
+            if (handle == target) return r.band;
+            if (r.lo) |lo| if (self.dividerBandRectNode(tree, s.left, lo, target)) |b| return b;
+            if (r.hi) |hi| return self.dividerBandRectNode(tree, s.right, hi, target);
+            return null;
         },
     }
 }
@@ -6309,7 +6371,7 @@ fn splitRegionRect(self: *Window, target: SplitTree(PaneView).Node.Handle) ?w32.
     if (self.tab_count == 0) return null;
     if (self.tab_hero_active[self.active_tab]) return null;
     const tree = self.tab_trees[self.active_tab];
-    if (!tree.isSplit()) return null;
+    if (!pane_stash.isVisiblySplit(tree)) return null;
     if (tree.zoomed != null) return null;
     return self.splitRegionRectNode(tree, .root, self.surfaceRect(), target);
 }
@@ -6331,19 +6393,10 @@ fn splitRegionRectNode(
     switch (tree.nodes[handle.idx()]) {
         .leaf => return null,
         .split => |s| {
-            if (s.layout == .horizontal) {
-                const a = split_geometry.axis(rect.left, rect.right, s.ratio, self.scale);
-                const left_rect = w32.RECT{ .left = a.lo_start, .top = rect.top, .right = a.band_lo, .bottom = rect.bottom };
-                const right_rect = w32.RECT{ .left = a.band_hi, .top = rect.top, .right = a.hi_end, .bottom = rect.bottom };
-                return self.splitRegionRectNode(tree, s.left, left_rect, target) orelse
-                    self.splitRegionRectNode(tree, s.right, right_rect, target);
-            } else {
-                const a = split_geometry.axis(rect.top, rect.bottom, s.ratio, self.scale);
-                const top_rect = w32.RECT{ .left = rect.left, .top = a.lo_start, .right = rect.right, .bottom = a.band_lo };
-                const bottom_rect = w32.RECT{ .left = rect.left, .top = a.band_hi, .right = rect.right, .bottom = a.hi_end };
-                return self.splitRegionRectNode(tree, s.left, top_rect, target) orelse
-                    self.splitRegionRectNode(tree, s.right, bottom_rect, target);
-            }
+            const r = self.splitRects(tree, s, rect);
+            if (r.lo) |lo| if (self.splitRegionRectNode(tree, s.left, lo, target)) |g| return g;
+            if (r.hi) |hi| return self.splitRegionRectNode(tree, s.right, hi, target);
+            return null;
         },
     }
 }
@@ -6395,7 +6448,7 @@ fn refreshAllDividerBands(self: *Window) void {
     if (self.tab_count == 0) return;
     if (self.tab_hero_active[self.active_tab]) return;
     const tree = self.tab_trees[self.active_tab];
-    if (!tree.isSplit()) return;
+    if (!pane_stash.isVisiblySplit(tree)) return;
     if (tree.zoomed != null) return;
 
     var bands: usize = 0;
@@ -6656,6 +6709,10 @@ pub fn newSplitAt(
     const alloc = self.app.core_app.alloc;
     const tab = self.findTabIndex(at) orelse return null;
     const handle = self.findHandle(tab, at) orelse return null;
+    // A split beside a STASHED pane would be invisible too (T1827, Mac
+    // `restoreSplitAnchor`): the anchor comes back first, as part of the
+    // split itself. The layout pass the split ends with places it.
+    pane_stash.unmark(at);
 
     // T395: a viewer parent has no shell, so there is no parent cwd to
     // inherit — Mac takes the viewed FILE's own directory instead
@@ -6815,6 +6872,10 @@ pub fn newViewerSplitAt(
     const alloc = self.app.core_app.alloc;
     const tab = self.findTabIndex(at) orelse return null;
     const handle = self.findHandle(tab, at) orelse return null;
+    // A split beside a STASHED pane would be invisible too (T1827, Mac
+    // `restoreSplitAnchor`): the anchor comes back first, as part of the
+    // split itself. The layout pass the split ends with places it.
+    pane_stash.unmark(at);
 
     const viewer = try self.createViewerPane(open);
     const new_pane = PaneView.createViewer(alloc, viewer) catch |err| {
@@ -6893,10 +6954,45 @@ fn insertPaneAsSplit(
     self.app.markLayoutDirty(); // T89f: split added → re-persist the layout
 }
 
+/// Where `SplitTree.goto` lands from `pane`, over the panes ON SCREEN
+/// (T1827). With nothing stashed it is `goto` on the tab's own tree; with
+/// panes stashed it runs on `pane_stash.visibleClone`, so directional focus
+/// and swap see the arrangement the user sees - a stashed pane's slot is
+/// still in the full tree and `goto` would happily land on it. The answer is
+/// a VIEW: the clone numbers its nodes differently from the tab's tree.
+fn gotoVisible(
+    self: *Window,
+    tab: usize,
+    pane: *PaneView,
+    target: SplitTree(PaneView).Goto,
+) ?*PaneView {
+    const alloc = self.app.core_app.alloc;
+    const tree = self.tab_trees[tab];
+    if (pane_stash.stashedCount(tree) == 0) {
+        const from = self.findHandle(tab, pane) orelse return null;
+        const dest = (tree.goto(alloc, from, target) catch return null) orelse return null;
+        return switch (tree.nodes[dest.idx()]) {
+            .leaf => |v| v,
+            .split => null,
+        };
+    }
+    var vis = pane_stash.visibleClone(tree, alloc) catch return null;
+    defer vis.deinit();
+    var from: ?SplitTree(PaneView).Node.Handle = null;
+    var it = vis.iterator();
+    while (it.next()) |entry| {
+        if (entry.view == pane) from = entry.handle;
+    }
+    const dest = (vis.goto(alloc, from orelse return null, target) catch return null) orelse return null;
+    return switch (vis.nodes[dest.idx()]) {
+        .leaf => |v| v,
+        .split => null,
+    };
+}
+
 /// Navigate to a split in the given direction.
 pub fn gotoSplit(self: *Window, goto_target: apprt.action.GotoSplit) void {
     if (self.tab_count == 0) return;
-    const alloc = self.app.core_app.alloc;
     const tab = self.active_tab;
 
     // Hero mode intercepts prev/next and vertical navigation to move the
@@ -6913,7 +7009,6 @@ pub fn gotoSplit(self: *Window, goto_target: apprt.action.GotoSplit) void {
     const tree = &self.tab_trees[tab];
 
     const active_pane = self.tab_active_pane[tab];
-    const handle = self.findHandle(tab, active_pane) orelse return;
 
     const target: SplitTree(PaneView).Goto = switch (goto_target) {
         .previous => .previous,
@@ -6924,11 +7019,12 @@ pub fn gotoSplit(self: *Window, goto_target: apprt.action.GotoSplit) void {
         .right => .{ .spatial = .right },
     };
 
-    const dest_handle = (tree.goto(alloc, handle, target) catch return) orelse return;
-    if (dest_handle == handle) return;
+    const surface = self.gotoVisible(tab, active_pane, target) orelse return;
+    if (surface == active_pane) return;
+    const dest_handle = self.findHandle(tab, surface) orelse return;
 
     switch (tree.nodes[dest_handle.idx()]) {
-        .leaf => |surface| {
+        .leaf => {
             self.tab_active_pane[tab] = surface;
 
             // Navigating away from a zoomed split must not focus a hidden
@@ -6987,12 +7083,11 @@ pub fn swapSplit(self: *Window, goto_target: apprt.action.GotoSplit) void {
         .left => .{ .spatial = .left },
         .right => .{ .spatial = .right },
     };
-    const dest = (tree.goto(alloc, handle, target) catch return) orelse return;
-    if (dest == handle) return;
-    switch (tree.nodes[dest.idx()]) {
-        .leaf => {},
-        .split => return,
-    }
+    // Over the panes on screen (T1827): a swap with a stashed pane would put
+    // the focused pane out of sight.
+    const dest_view = self.gotoVisible(tab, active_pane, target) orelse return;
+    if (dest_view == active_pane) return;
+    const dest = self.findHandle(tab, dest_view) orelse return;
 
     const new_tree = tree.swap(alloc, handle, dest) catch |err| {
         log.err("failed to swap splits: {}", .{err});
@@ -7029,8 +7124,10 @@ pub fn resizeSplit(self: *Window, rs: apprt.action.ResizeSplit) void {
     };
 
     // The split this gesture moves: the nearest ancestor of the focused pane
-    // whose divider lies on this axis. Same node `SplitTree.resize` picked.
-    const target = tree.nearestSplit(layout, handle) orelse return;
+    // whose divider lies on this axis. Same node `SplitTree.resize` picked,
+    // stepping over splits a stash collapsed (T1827) - their divider is not
+    // on screen, and moving one would only shift a stashed pane's slot.
+    const target = pane_stash.nearestShowingSplit(tree.*, layout, handle) orelse return;
     const ratio: f32 = switch (tree.nodes[target.idx()]) {
         .leaf => return,
         .split => |sp| @floatCast(sp.ratio),
@@ -7094,6 +7191,21 @@ pub fn equalizeSplits(self: *Window) void {
     const alloc = self.app.core_app.alloc;
     const tab = self.active_tab;
 
+    if (pane_stash.stashedCount(self.tab_trees[tab]) > 0) {
+        // Equalize what is ON SCREEN (T1827, Mac `applyingToVisible`): the
+        // shared `equalize` weighs every leaf, so a stashed pane would still
+        // claim its share of the window. Equalize the visible arrangement,
+        // then lift its ratios back; collapsed splits keep theirs, so a
+        // restored pane returns at the size it left.
+        var vis = pane_stash.visibleClone(self.tab_trees[tab], alloc) catch return;
+        defer vis.deinit();
+        var eq = vis.equalize(alloc) catch return;
+        defer eq.deinit();
+        pane_stash.liftRatios(&self.tab_trees[tab], eq);
+        self.layoutSplits();
+        self.app.markLayoutDirty();
+        return;
+    }
     const new_tree = self.tab_trees[tab].equalize(alloc) catch return;
     // Swap-then-release (T1356), same rule as everywhere else.
     var old_tree = self.tab_trees[tab];
@@ -7109,7 +7221,9 @@ pub fn toggleSplitZoom(self: *Window) void {
     const tab = self.active_tab;
     var tree = &self.tab_trees[tab];
 
-    if (!tree.isSplit()) return;
+    // More than one pane ON SCREEN (T1827): zooming the only visible pane of
+    // a tab whose others are stashed would zoom into what is already shown.
+    if (!pane_stash.isVisiblySplit(tree.*)) return;
 
     const active_pane = self.tab_active_pane[tab];
     const handle = self.findHandle(tab, active_pane) orelse return;
@@ -7124,6 +7238,93 @@ pub fn toggleSplitZoom(self: *Window) void {
         tree.zoom(handle);
     }
     self.layoutSplits();
+}
+
+/// Stash `pane`: take it out of its tab's layout without ending it (T1827,
+/// Mac `stashPane`). It stays a leaf of the tree - still running, still
+/// targetable by every verb, still listed - and its split collapses into the
+/// sibling. Idempotent: stashing a stashed pane succeeds and changes nothing,
+/// which is Mac's `+stash` contract.
+///
+/// Refused when it would leave nothing on screen (`LastVisiblePane`). When
+/// the pane held keyboard focus, focus moves to the neighbor a close would
+/// pick; when it did not (a CLI stash of a background pane), focus is left
+/// exactly where it is, like every `ghoztty +...` verb.
+pub fn stashPane(self: *Window, pane: *PaneView) StashError!void {
+    // Mac refuses here too: the Quick Terminal has no pane sidebar, so a
+    // pane stashed in it would have nowhere to be seen or brought back from.
+    if (self.is_quick_terminal) return error.QuickTerminal;
+    const tab = self.findTabIndex(pane) orelse return error.NotInTree;
+    if (pane_stash.isStashed(pane)) return;
+    try pane_stash.checkStash(self.tab_trees[tab], pane);
+
+    // Decide focus against the CURRENT layout, before the pane leaves it.
+    const was_active = self.tab_active_pane[tab] == pane;
+    const next: ?*PaneView = if (was_active) blk: {
+        const n = self.gotoVisible(tab, pane, .previous) orelse self.gotoVisible(tab, pane, .next);
+        break :blk if (n == pane) null else n;
+    } else null;
+    const had_keyboard = paneHasKeyboardFocus(pane);
+
+    pane_stash.mark(pane);
+    _ = pane_stash.normalize(&self.tab_trees[tab]);
+    if (next) |n| self.tab_active_pane[tab] = n;
+    self.heroOnTreeChanged(tab);
+    if (tab == self.active_tab) self.layoutSplits();
+    if (had_keyboard) if (next) |n| if (n.hwnd()) |h| App.deferSetFocus(h); // T48
+    self.app.markLayoutDirty();
+    log.info("stashed pane in tab={} visible={}", .{ tab, self.visibleLeafCount(tab) });
+}
+
+/// Why `stashPane` refused.
+pub const StashError = pane_stash.StashError || error{QuickTerminal};
+
+/// Put a stashed `pane` back in the slot it left (T1827, Mac `restorePane`).
+/// With `focus` it also becomes the tab's active pane, its tab is selected and
+/// its window raised; without it nothing about focus changes (a CLI restore
+/// without `--focus`). Restoring a pane that is not stashed succeeds.
+pub fn restorePane(self: *Window, pane: *PaneView, focus: bool) void {
+    const tab = self.findTabIndex(pane) orelse return;
+    if (pane_stash.isStashed(pane)) {
+        pane_stash.unmark(pane);
+        self.heroOnTreeChanged(tab);
+        if (tab == self.active_tab) self.layoutSplits();
+        self.app.markLayoutDirty();
+        log.info("restored pane in tab={} visible={}", .{ tab, self.visibleLeafCount(tab) });
+    }
+    if (focus) {
+        self.tab_active_pane[tab] = pane;
+        if (tab != self.active_tab) {
+            self.selectTabIndex(tab);
+        } else if (pane.hwnd()) |h| App.deferSetFocus(h); // T48
+    }
+}
+
+/// The `stash_pane` keybind: stash the active tab's focused pane. False -
+/// "not performed", so the key falls through - when there is nothing to
+/// stash or it is the last pane on screen (Mac beeps; a refused binding is
+/// the Windows equivalent the rest of the actions use).
+pub fn stashFocusedPane(self: *Window) bool {
+    if (self.tab_count == 0) return false;
+    self.stashPane(self.tab_active_pane[self.active_tab]) catch return false;
+    return true;
+}
+
+/// The `restore_stashed_pane` keybind: bring back the top of the active
+/// tab's stash and focus it. False when nothing is stashed.
+pub fn restoreTopStashedPane(self: *Window) bool {
+    if (self.tab_count == 0) return false;
+    const top = pane_stash.topStashed(self.tab_trees[self.active_tab]) orelse return false;
+    self.restorePane(top, true);
+    return true;
+}
+
+/// Whether keyboard focus is in `pane` (its HWND or a child of it). GUI
+/// thread only: `GetFocus` answers for the calling thread's input queue.
+fn paneHasKeyboardFocus(pane: *PaneView) bool {
+    const h = pane.hwnd() orelse return false;
+    const f = w32.GetFocus() orelse return false;
+    return f == h or w32.IsChild(h, f) != 0;
 }
 
 /// The action tags `performViewerBindingAction` has an arm for, spelled once

@@ -92,9 +92,7 @@ pub fn geometry(win: *Window) ?Geometry {
     const tab = win.active_tab;
     if (!win.tab_hero_active[tab]) return null;
 
-    var count: usize = 0;
-    var it = win.tab_trees[tab].leafIterator();
-    while (it.next()) |_| count += 1;
+    const count = win.visibleLeafCount(tab);
     if (count == 0) return null;
 
     const split = splitRects(win, win.surfaceRect());
@@ -214,7 +212,10 @@ pub fn paint(win: *Window, hdc_screen: w32.HDC) void {
     // strip used to show the new pane ABOVE the one it split off.
     var it = win.tab_trees[win.active_tab].leafIterator();
     var i: usize = 0;
-    while (it.next()) |entry| : (i += 1) {
+    while (it.next()) |entry| {
+        // A stashed pane has no tile (T1827); `i` counts tiles, not leaves.
+        if (entry.view.stash_seq != 0) continue;
+        defer i += 1;
         const tr = hero_math.tileRect(geo.split.carousel, geo.layout, geo.top0, i);
         // Skip tiles fully outside the painted region.
         if (tr.bottom <= region.top or tr.top >= region.bottom) continue;

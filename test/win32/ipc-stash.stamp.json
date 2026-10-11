@@ -1,0 +1,14 @@
+{
+    "guard":  "ipc-stash",
+    "script":  "test/win32/ipc-stash.ps1",
+    "generated":  "2026-10-11T07:53:06-07:00",
+    "commit":  "ca6f78dcb",
+    "uncommitted":  [
+                        "src/apprt/win32/pane_stash.zig",
+                        "test/win32/ipc-stash.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/pane_stash.zig":  "39caeaddcf5169e3aa48331e306620069fb52d1005d756a77fa7a776bbf1783d",
+                  "test/win32/ipc-stash.ps1":  "37005cbaa7a7cb0155914f3575d25749e2f1077801db42640d79d00312b6ca59"
+              }
+}

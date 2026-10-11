@@ -54,6 +54,12 @@ kind: union(Kind) {
 /// in `pane_refcount.zig`, which is unit-tested in every lane (T371).
 ref_count: RefCount = .{},
 
+/// Non-zero while the pane is stashed out of its tab's layout (T1827): still
+/// a leaf of the tree, still running and targetable, just not on screen. The
+/// larger the number the more recently it was stashed. `pane_stash.zig` owns
+/// the meaning; nothing else should write it.
+stash_seq: u64 = 0,
+
 /// Wrap an existing Surface as a terminal pane. Takes one reference on the
 /// surface, which is released when this PaneView is freed. The surface's
 /// back-pointer is set here so `Surface` destroy paths can find the leaf.

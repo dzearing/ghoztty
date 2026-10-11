@@ -4134,6 +4134,20 @@ $GuardTable = @(
             'test\win32\ipc-target-exists-note.ps1'
         )
     },
+    # The pane stash (T1827): the model's invariants are unit-tested in every
+    # lane, but whether the window actually hides, sizes, refuses and restores
+    # a stashed pane is only answered by the acceptance script. Covers the pure
+    # model and the harness itself; Window.zig is deliberately left out, since
+    # every unrelated edit there would make this row due forever.
+    [pscustomobject]@{
+        Name   = 'ipc-stash'
+        Script = 'test\win32\ipc-stash.ps1'
+        Stamp  = 'test\win32\ipc-stash.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_stash.zig',
+            'test\win32\ipc-stash.ps1'
+        )
+    },
     # The build-mode gate itself (T350, tightened by T1158). BuildMode.ps1 was
     # only ever covered by the build-fresh row above, whose script grades the
     # FRESHNESS half - so the gate's own harness, build-mode-guard.ps1, had no

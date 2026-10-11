@@ -8164,14 +8164,30 @@ pub fn performAction(
             },
         },
 
-        // Pane sidebar and stash (main 597a193cc) are not built on win32
-        // yet: T1827 (stash) and T1828 (sidebar). Answer "not performed"
-        // so the binding is not consumed and nothing claims it happened.
-        .toggle_pane_sidebar,
-        .stash_pane,
-        .restore_stashed_pane,
-        => {
-            log.info("{s}: not implemented on win32 yet (T1827/T1828)", .{@tagName(action)});
+        // Pane stash (T1827, main 597a193cc). A refused stash - the last
+        // pane on screen - or an empty stash answers "not performed", the
+        // Windows stand-in for Mac's beep, so the key is not swallowed.
+        .stash_pane => switch (target) {
+            .app => return false,
+            .surface => |core_surface| {
+                const pane = core_surface.rt_surface.pane_view orelse return false;
+                pane.parentWindow().stashPane(pane) catch |err| {
+                    log.info("stash_pane refused: {}", .{err});
+                    return false;
+                };
+                return true;
+            },
+        },
+        .restore_stashed_pane => switch (target) {
+            .app => return false,
+            .surface => |core_surface| return core_surface.rt_surface.parent_window.restoreTopStashedPane(),
+        },
+
+        // The pane sidebar (main 597a193cc) is not built on win32 yet:
+        // T1828. Answer "not performed" so the binding is not consumed and
+        // nothing claims it happened.
+        .toggle_pane_sidebar => {
+            log.info("{s}: not implemented on win32 yet (T1828)", .{@tagName(action)});
             return false;
         },
 

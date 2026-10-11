@@ -26,6 +26,7 @@ const CoreSurface = @import("../../Surface.zig");
 const PaneView = @import("PaneView.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const Window = @import("Window.zig");
+const pane_stash = @import("pane_stash.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree(PaneView);
 const tab_strip = @import("tab_strip_layout.zig");
 const w32 = @import("win32.zig");
@@ -99,6 +100,10 @@ pub fn dispatch(ctx: Context, request_json: []const u8) Allocator.Error!?[]u8 {
         return try handleReload(ctx, request);
     } else if (std.mem.eql(u8, request.action, "focus")) {
         return try handleFocus(ctx, request);
+    } else if (std.mem.eql(u8, request.action, "stash")) {
+        return try handleStash(ctx, request, false);
+    } else if (std.mem.eql(u8, request.action, "restore")) {
+        return try handleStash(ctx, request, true);
     } else if (ipc_capture.enabled and std.mem.eql(u8, request.action, "capture-pane")) {
         // T275: a DEBUG-ONLY test seam, not a CLI verb — see ipc_capture.zig
         // for why it is gated and why there is no `+capture-pane`. In a
@@ -245,6 +250,9 @@ pub fn focusTarget(entry: App.IpcTarget) void {
     switch (entry) {
         .window => {},
         .pane => |p| {
+            // A STASHED pane comes back first (T1827, Mac `bringForward`):
+            // focusing a pane nobody can see focuses nothing.
+            if (pane_stash.isStashed(p)) window.restorePane(p, false);
             // A pane in a BACKGROUND tab must have its tab selected first
             // (T555): its HWND is hidden, and SetFocus on a hidden window
             // routes keys to a pane the user cannot see. Making it the
@@ -1263,6 +1271,36 @@ fn handleRearrange(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // new tree now owns.
     const response = try ctx.alloc.dupe(u8, "{\"success\":true}");
 
+    // T1827 (Mac `handleRearrange`): a STASHED pane the layout leaves out
+    // stays stashed - the layout describes the grid, and a stash is not part
+    // of it. Without this it would be destroyed below like any omitted pane:
+    // a close the user never asked for, of a pane they could not even see.
+    // It is carried into the new tree at the top level, where it is hidden
+    // anyway; one the layout DOES place comes back on screen. Each carried
+    // pane holds a temporary reference across the swap, released once the
+    // new tree holds its own.
+    var carried: std.ArrayList(*PaneView) = .empty;
+    {
+        var it = tree.iterator();
+        while (it.next()) |view_entry| {
+            const view = view_entry.view;
+            if (!pane_stash.isStashed(view)) continue;
+            const placed = placed: {
+                var kept = surfaces.valueIterator();
+                while (kept.next()) |pane_ptr| {
+                    if (pane_ptr.* == view) break :placed true;
+                }
+                break :placed false;
+            };
+            if (placed) {
+                pane_stash.unmark(view);
+                continue;
+            }
+            carried.append(arena, view) catch continue;
+            _ = view.ref(gpa) catch {};
+        }
+    }
+
     // Take ownership references on the kept panes BEFORE dropping the
     // old tree, so they can't hit refcount 0 during the swap.
     var kept_it = surfaces.valueIterator();
@@ -1290,6 +1328,9 @@ fn handleRearrange(ctx: Context, request: Request) Allocator.Error!?[]u8 {
                 while (kept.next()) |pane_ptr| {
                     if (pane_ptr.* == view) break :in_new_tree true;
                 }
+                // A carried stashed pane survives too (T1827): never mark it
+                // close-on-free (Mac PaneStashSessionSafetyTests).
+                for (carried.items) |c| if (c == view) break :in_new_tree true;
                 break :in_new_tree false;
             };
             const sid: ?[]const u8 = if (view.surface()) |s|
@@ -1321,11 +1362,25 @@ fn handleRearrange(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     };
     old_tree.deinit();
 
+    // Carry the omitted stashed panes in (see above), right of the layout so
+    // the layout's own first leaf stays first for the focus pick below.
+    for (carried.items) |view| {
+        defer view.unref(gpa);
+        var leaf = SplitTree.init(gpa, view) catch continue;
+        defer leaf.deinit();
+        const next = window.tab_trees[tab].insertAtTopLevel(gpa, .right, 0.5, &leaf) catch continue;
+        var prev = window.tab_trees[tab];
+        window.tab_trees[tab] = next;
+        prev.deinit();
+    }
+    _ = pane_stash.normalize(&window.tab_trees[tab]);
+
     // Focus: keep the focused pane if it survived, else the first leaf.
     const focus: *PaneView = focus: {
         var it = window.tab_trees[tab].iterator();
         var first: ?*PaneView = null;
         while (it.next()) |view_entry| {
+            if (pane_stash.isStashed(view_entry.view)) continue;
             if (first == null) first = view_entry.view;
             if (view_entry.view == current_focus) break :focus current_focus;
         }
@@ -1521,6 +1576,67 @@ fn handleReload(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     // caches rather than reloading in place (T601's `ReloadReason`).
     view.reloadContent(.chrome);
     log.info("IPC: reloaded viewer '{s}'", .{target});
+    return try ctx.alloc.dupe(u8, "{\"success\":true}");
+}
+
+/// `+stash` / `+restore` (T1827, Mac `handleStash`): move a pane out of its
+/// window's layout, or back. Both idempotent, like every IPC verb, and -
+/// like every one - `+restore` leaves focus alone unless given `--focus`.
+/// The refusal strings are Mac's, byte for byte.
+fn handleStash(ctx: Context, request: Request, restore: bool) Allocator.Error!?[]u8 {
+    var arena_state = std.heap.ArenaAllocator.init(ctx.alloc);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    const verb = if (restore) "+restore" else "+stash";
+    const args = try parseVerbArgs(arena, request.arguments);
+    const target = args.target orelse
+        return try errorResponse(ctx.alloc, "--target is required for {s}", .{verb});
+
+    const entry = ctx.app.ipcLookup(target) orelse
+        return try errorResponse(ctx.alloc, "target '{s}' not found in registry", .{target});
+    const pane = switch (entry) {
+        .pane => |p| p,
+        .window => return try errorResponse(
+            ctx.alloc,
+            "target '{s}' is a window; {s} takes a pane (a name or pane id)",
+            .{ target, verb },
+        ),
+    };
+    // The window that holds the pane NOW, not the one it registered in: a
+    // pane dragged between windows moved its back-pointer with it (T1538).
+    const window = pane.parentWindow();
+    if (window.is_quick_terminal) return try errorResponse(
+        ctx.alloc,
+        "target '{s}' is in the Quick Terminal, which has no pane sidebar",
+        .{target},
+    );
+
+    if (restore) {
+        window.restorePane(pane, false);
+        if (args.focus) focusTarget(entry);
+        log.info("IPC: restored '{s}'", .{target});
+        return try ctx.alloc.dupe(u8, "{\"success\":true}");
+    }
+
+    window.stashPane(pane) catch |err| return switch (err) {
+        error.LastVisiblePane => try errorResponse(
+            ctx.alloc,
+            "target '{s}' is the last pane on screen in its window; a window always shows at least one pane",
+            .{target},
+        ),
+        error.NotInTree => try errorResponse(
+            ctx.alloc,
+            "target '{s}' is not in its window's layout",
+            .{target},
+        ),
+        error.QuickTerminal => try errorResponse(
+            ctx.alloc,
+            "target '{s}' is in the Quick Terminal, which has no pane sidebar",
+            .{target},
+        ),
+    };
+    log.info("IPC: stashed '{s}'", .{target});
     return try ctx.alloc.dupe(u8, "{\"success\":true}");
 }
 
@@ -2105,6 +2221,7 @@ fn buildNode(
                     .exit_code = null,
                     .pane_type = "viewer",
                     .url = if (viewer.location) |loc| try arena.dupe(u8, loc) else null,
+                    .stashed = pane_stash.isStashed(pane),
                 } };
                 return node;
             };
@@ -2192,6 +2309,9 @@ fn buildNode(
                     // badge T445 paints. Absent when off (and for viewers),
                     // so it is additive for every existing caller.
                     .readonly = if (surface.core_surface.readonly) true else null,
+                    // T1827: stashed out of the layout but still a live,
+                    // targetable pane - `+list` marks it, as Mac does.
+                    .stashed = pane_stash.isStashed(pane),
                     // T332: the agent session this pane is bound to — the join
                     // key against `+sessions --json`. Lock-free read (the
                     // backend publishes the id atomically), duped because the

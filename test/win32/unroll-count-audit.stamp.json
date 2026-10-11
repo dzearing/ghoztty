@@ -1,10 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-11T05:59:31-07:00",
-    "commit":  "45852d134",
+    "generated":  "2026-10-11T08:19:29-07:00",
+    "commit":  "ca6f78dcb",
     "uncommitted":  [
-                        "test/win32/lib/DesktopLaunchAudit.ps1"
+                        "scripts/guard-due.ps1",
+                        "test/win32/ipc-stash.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -34,7 +35,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "8f3aa731552e318700f2698d62716297fbdd9498f44cef24e3f120cb6b8233b2",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "e31fd511a5f1f39ad480b7e8a8daa22d43cf45f0ff882372a267b46d96a8e22c",
+                  "scripts/guard-due.ps1":  "a39880015299bc8ca4bbe3632151fceafaa3eff23c9c86e94df447446f4f249f",
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -249,6 +250,7 @@
                   "test/win32/ipc-remote.ps1":  "0392ad4e1751b8f12a06ccc1b3bb4fc2cf9c29c923178435d98d1d00258ad2e7",
                   "test/win32/ipc-send-keys-fidelity.ps1":  "ecd1a63052e0a9c52fdb10003f817026c4b95acd8fe76b4e2cff8a57a1ff2fd8",
                   "test/win32/ipc-startup-latency.ps1":  "a08b71a5973b1452fe4c8484b10bd338633fd8cb8e0c49c7409871cb19b1b923",
+                  "test/win32/ipc-stash.ps1":  "37005cbaa7a7cb0155914f3575d25749e2f1077801db42640d79d00312b6ca59",
                   "test/win32/ipc-target-exists-note.ps1":  "1a5e848d4ce47cace17947bf9a276b79ffdb978d56ea9488e323ebe1c0de70d3",
                   "test/win32/ipc-timeout.ps1":  "1cc28e2c148b1e65b8e4ec719f0cd1e22b936506a49c75581590da11692d5d30",
                   "test/win32/ipc-under-load.ps1":  "e086bb69c413c1cff080a5b54579d37c709e28c54749c00a3359bcb5fd60e6f1",

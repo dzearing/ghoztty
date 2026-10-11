@@ -1,11 +1,10 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-10-11T05:53:43-07:00",
-    "commit":  "45852d134",
+    "generated":  "2026-10-11T07:57:15-07:00",
+    "commit":  "ca6f78dcb",
     "uncommitted":  [
-                        "src/cli/ghostty.zig",
-                        "test/win32/lib/DesktopLaunchAudit.ps1"
+                        "test/win32/ipc-stash.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "85048b74f8795c4f500ca8dd98fa52a24e92a94808ef1b16df34070b4cf6094d",
@@ -178,6 +177,7 @@
                   "test/win32/ipc-remote.ps1":  "0392ad4e1751b8f12a06ccc1b3bb4fc2cf9c29c923178435d98d1d00258ad2e7",
                   "test/win32/ipc-send-keys-fidelity.ps1":  "ecd1a63052e0a9c52fdb10003f817026c4b95acd8fe76b4e2cff8a57a1ff2fd8",
                   "test/win32/ipc-startup-latency.ps1":  "a08b71a5973b1452fe4c8484b10bd338633fd8cb8e0c49c7409871cb19b1b923",
+                  "test/win32/ipc-stash.ps1":  "37005cbaa7a7cb0155914f3575d25749e2f1077801db42640d79d00312b6ca59",
                   "test/win32/ipc-target-exists-note.ps1":  "1a5e848d4ce47cace17947bf9a276b79ffdb978d56ea9488e323ebe1c0de70d3",
                   "test/win32/ipc-timeout.ps1":  "1cc28e2c148b1e65b8e4ec719f0cd1e22b936506a49c75581590da11692d5d30",
                   "test/win32/ipc-under-load.ps1":  "e086bb69c413c1cff080a5b54579d37c709e28c54749c00a3359bcb5fd60e6f1",

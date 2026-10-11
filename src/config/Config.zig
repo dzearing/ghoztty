@@ -7422,6 +7422,18 @@ pub const Keybinds = struct {
             .{ .prompt_window_title = {} },
         );
 
+        // Pane stash on Windows (T1827): Mac's Shift+Cmd+M "minimize the
+        // pane", carried across the way every Cmd chord here is - Cmd becomes
+        // Ctrl+Shift. It was unbound before this. The sidebar toggle waits
+        // for the sidebar itself (T1828).
+        if (comptime builtin.target.os.tag == .windows) {
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 'm' }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .stash_pane = {} },
+            );
+        }
+
         // Mac-specific keyboard bindings.
         if (comptime builtin.target.os.tag.isDarwin()) {
             // Pane sidebar (macOS only). Ctrl+Cmd+S is the system "Show
