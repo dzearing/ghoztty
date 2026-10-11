@@ -422,3 +422,12 @@ as the digest that showed them.
 - Copy just Claude's answer (one click copies a Claude Code reply block without margins, prompt or status line)
 - New windows open on the monitor you are using (script-opened windows land where you are working)
 - Stop drawing a window nobody can see (no redraw while fully covered or on another virtual desktop)
+
+## 2026-10-11
+
+- A parked pane that comes back when it needs you (a stashed pane restores itself on a question or on finishing, with a soft glow)
+- The last thing each pane said, in the sidebar (each row shows the pane's last output line or Claude's pending question)
+- Your project's color is its backdrop (new angle on per-project window identity: the window gradient's hue derives from the repository)
+- Park a whole task at once (stash a named group of panes and restore the set with its layout)
+- Parked panes cost nothing (stashed panes stop drawing and poll output less; caught up on restore)
+- Readable glass, automatically (new angle on readable text over translucency: glass panes firm up while their output is dense)
