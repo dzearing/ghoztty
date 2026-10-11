@@ -4336,6 +4336,22 @@ $GuardTable = @(
             'test\win32\resize-flicker.ps1'
         )
     },
+    # T1835: how many resizes a divider drag or a window resize delivers to the
+    # PROGRAM in the pane (counted by the program, from its console input), that
+    # the last size always lands, and that no size overlay shows by default.
+    # The debounce lives in the shared termio thread and the default in the
+    # shared config, so an upstream pull that edits either re-opens the
+    # question here. About a minute, off the input desktop.
+    [pscustomobject]@{
+        Name   = 'resize-debounce'
+        Script = 'test\win32\resize-debounce.ps1'
+        Stamp  = 'test\win32\resize-debounce.stamp.json'
+        Covers = @(
+            'src\termio\Thread.zig',
+            'test\win32\lib\count-resizes.ps1',
+            'test\win32\resize-debounce.ps1'
+        )
+    },
     # The ConPTY sync hold (T1763): a ConPTY child's clear-and-redraw arrives
     # as an erase in a bracket that closes at once and then conhost's paint, so
     # the hold is what keeps a resized Claude Code pane from flashing blank.

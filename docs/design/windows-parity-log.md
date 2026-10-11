@@ -35186,3 +35186,21 @@ moved to T1814.
   T1852 translucent windows, T1856 drag paint cost (17.9ms/move Debug). Reds
   that predate this change: T1853 split-divider T533, T1854 drag-perf
   sampling, T1855 ipc-relay.
+
+## 2026-10-11 — T1835: a divider drag no longer storms the program with resizes, proven on Windows
+
+- **What.** Mac's resize debounce (100ms settle, 350ms cap, in the shared
+  termio thread) and its `resize-overlay = never` default arrived with the
+  T1826 merge. Windows needed no product change: the win32 overlay was already
+  gated on that config. This turn adds the proof.
+- **How it is measured.** New `test\win32\resize-debounce.ps1`. The program
+  in the pane counts its own resize events (`lib\count-resizes.ps1`), the
+  Windows version of Mac's SIGWINCH counter.
+- **Evidence.** A 40-move divider drag reached the program as 8 resizes (Mac's
+  bound: 10). A 40-step window resize reached it as 5 (bound: 7). The final
+  size matched a single-move control. No overlay appeared by default, and
+  `--resize-overlay=always` shows one. The negative control is red. A new
+  guard row covers `src\termio\Thread.zig`. resize-flicker ALL PASS.
+- **Reds that predate this change.** split-divider T533 is T1853, and
+  drag-perf scoring every count with the 2-pane sample is T1854. Both were
+  found again and already tracked.

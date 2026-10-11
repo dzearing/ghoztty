@@ -1,0 +1,15 @@
+{
+    "guard":  "resize-debounce",
+    "script":  "test/win32/resize-debounce.ps1",
+    "generated":  "2026-10-11T13:40:23-07:00",
+    "commit":  "46b181660",
+    "uncommitted":  [
+                        "test/win32/lib/count-resizes.ps1",
+                        "test/win32/resize-debounce.ps1"
+                    ],
+    "files":  {
+                  "src/termio/Thread.zig":  "d2cd2a4fab35b32e02897f3b987e7bd74b467cda59e7bb3e6ffac5c2453bbeae",
+                  "test/win32/lib/count-resizes.ps1":  "bd9031b210198942ee1b7e9060d8bf46beebe35d217dd0f1abec75715802ce0e",
+                  "test/win32/resize-debounce.ps1":  "c5793c4b75861f66f0f370d13d553871fe23abfcbf97610ea340215b01c9fc1e"
+              }
+}
