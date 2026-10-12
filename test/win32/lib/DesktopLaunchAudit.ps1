@@ -53,11 +53,17 @@
 # parameter of the enclosing function (the `Run-Cli($argsLine)` wrapper), the
 # function's CALLS are scored instead, each at its own line.
 #
+# THE SPLATTED SHAPE (T1876). `Start-Process @a` with `$a = @{ FilePath = $Exe
+# ... }` names no program on its command line; layout-blob-cross-lineage.ps1
+# started its app that way. The hashtable literal assigned in the same scope is
+# now read for its FilePath and ArgumentList keys, `$a['Key'] = ...` writes
+# included.
+#
 # WHAT THIS STILL CANNOT SEE, stated rather than implied: `Invoke-Expression`
-# and other interpreters handed a string, and (until T1876) a splatted
-# `Start-Process @a` whose FilePath lives in a hashtable. A file whose SUBJECT
-# is these patterns carries the `# desktop-launch-audit:` marker below instead
-# of being scanned.
+# and other interpreters handed a string, and a splat whose hashtable is built
+# at runtime rather than written as a literal (passed in, returned from a
+# function). A file whose SUBJECT is these patterns carries the
+# `# desktop-launch-audit:` marker below instead of being scanned.
 #
 # Declaration grammar, one entry per line, anywhere in `lib\TestDesktop.ps1`:
 #
@@ -365,6 +371,85 @@ function Resolve-DesktopLaunchAuditParamSites {
     return ,$out.ToArray()
 }
 
+# ---------------------------------------------------------------------------
+# The splatted shape (T1876). `Start-Process @a`, where `$a = @{ FilePath =
+# $Exe; ArgumentList = ... }`, puts the exe in a HASHTABLE, so the command line
+# names no program at all - layout-blob-cross-lineage.ps1 started its app on the
+# user's desktop that way with this audit green. The table is resolved
+# statically: the last `$a = @{...}` literal assigned in the same scope (the
+# enclosing function, else the script) before the call, plus any
+# `$a['Key'] = ...` / `$a.Key = ...` writes between that and the call. Returns
+# a hashtable of key -> value AST, or $null when no literal can be found - a
+# table built at runtime cannot be read and is not guessed at.
+# ---------------------------------------------------------------------------
+function Get-DesktopLaunchAuditSplatTable {
+    param($Cmd, [string]$VarName)
+    $scope = $Cmd.Parent
+    while ($null -ne $scope -and
+           $scope -isnot [System.Management.Automation.Language.FunctionDefinitionAst] -and
+           $null -ne $scope.Parent) {
+        $scope = $scope.Parent
+    }
+    if ($null -eq $scope) { return $null }
+    $at = $Cmd.Extent.StartOffset
+    $assigns = @($scope.FindAll({ param($n)
+        $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $n.Extent.StartOffset -lt $at }, $true) | Sort-Object { $_.Extent.StartOffset })
+
+    $table = $null
+    foreach ($as in $assigns) {
+        # An assignment inside a NESTED function is that function's scope.
+        $owner = $as.Parent
+        while ($null -ne $owner -and $owner -ne $scope -and
+               $owner -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) {
+            $owner = $owner.Parent
+        }
+        if ($owner -ne $scope) { continue }
+
+        $left = $as.Left
+        if ($left -is [System.Management.Automation.Language.ConvertExpressionAst]) { $left = $left.Child }
+        $right = $null
+        if ($as.Right -is [System.Management.Automation.Language.CommandExpressionAst]) {
+            $right = $as.Right.Expression
+        }
+
+        if ($left -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $left.VariablePath.UserPath -ieq $VarName) {
+            if ($right -is [System.Management.Automation.Language.HashtableAst]) {
+                $table = @{}
+                foreach ($kv in $right.KeyValuePairs) {
+                    $key = Get-DesktopLaunchAuditStringText $kv.Item1
+                    if ($null -eq $key) { continue }
+                    $val = $kv.Item2
+                    if ($val -is [System.Management.Automation.Language.PipelineAst] -and
+                        $val.PipelineElements.Count -eq 1 -and
+                        $val.PipelineElements[0] -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                        $val = $val.PipelineElements[0].Expression
+                    }
+                    $table[$key] = $val
+                }
+            } else {
+                $table = $null   # reassigned to something unreadable
+            }
+            continue
+        }
+
+        if ($null -eq $table) { continue }
+        $key = $null
+        if ($left -is [System.Management.Automation.Language.IndexExpressionAst] -and
+            $left.Target -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $left.Target.VariablePath.UserPath -ieq $VarName) {
+            $key = Get-DesktopLaunchAuditStringText $left.Index
+        } elseif ($left -is [System.Management.Automation.Language.MemberExpressionAst] -and
+            $left.Expression -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $left.Expression.VariablePath.UserPath -ieq $VarName) {
+            $key = Get-DesktopLaunchAuditStringText $left.Member
+        }
+        if ($null -ne $key -and $null -ne $right) { $table[$key] = $right }
+    }
+    return $table
+}
+
 function Get-DesktopLaunchAuditSites {
     param(
         [string]$Path,
@@ -403,6 +488,22 @@ function Get-DesktopLaunchAuditSites {
                         elseif (Test-DesktopLaunchAuditCmdRef $val) { $cmdEl = $val }
                     } elseif ($pn -match '(?i)^Arg') {
                         $argsText = $val
+                    }
+                    continue
+                }
+                # Shape 1c (T1876) - `Start-Process @a`: the same two keys,
+                # read out of the hashtable the splat names.
+                if ($el -is [System.Management.Automation.Language.VariableExpressionAst] -and $el.Splatted) {
+                    $tbl = Get-DesktopLaunchAuditSplatTable -Cmd $cmd -VarName $el.VariablePath.UserPath
+                    if ($null -eq $tbl) { continue }
+                    foreach ($k in @($tbl.Keys)) {
+                        $val = $tbl[$k]
+                        if ($k -match '(?i)^(FilePath|Path)$') {
+                            if (Test-DesktopLaunchAuditGhozttyRef $val) { $exeEl = $val }
+                            elseif (Test-DesktopLaunchAuditCmdRef $val) { $cmdEl = $val }
+                        } elseif ($k -match '(?i)^Arg') {
+                            $argsText = $val
+                        }
                     }
                     continue
                 }

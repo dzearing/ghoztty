@@ -47,8 +47,9 @@
 # relaunch policy, not about blob translation. `session-crash-recover.ps1` is
 # the oracle for same-PID re-attach, which needs a surviving agent.
 #
-# Non-interactive and headless-safe: no foreground grabs and no synthetic input,
-# so it needs no background-desktop harness. Fully hermetic: a per-run
+# Non-interactive and headless-safe: no foreground grabs and no synthetic input.
+# The app and every CLI call run on a background test desktop (T1876), so no
+# window ever reaches the user's. Fully hermetic: a per-run
 # $env:LOCALAPPDATA, a per-run GHOSTTY_LOCAL_AGENT_BIN, a private IPC pipe
 # suffix, and it ONLY ever kills ghoztty / ghoztty-agent processes launched from
 # the repo zig-out - never the user's installed release.
@@ -89,31 +90,33 @@ function Stop-TestProcs {
 }
 
 # Run a zig-out ghoztty +command with a hard timeout; stdout+stderr -> $out.
+#
+# T1876: ON THE TEST DESKTOP. This used to be `Start-Process cmd.exe /c ...`
+# from the caller's desktop. The app is already up whenever it runs, so no call
+# here should create a process - but `+new-window` against an app that died
+# would auto-launch a fresh one onto whatever desktop the CLI sits on, so the
+# CLI sits on the test desktop too. `"..."` groups in an argument line stay one
+# argument; Invoke-OnTestDesktop re-quotes them.
 function Run-Cli($argsLine, $out, $timeoutSec = 15) {
-    $p = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `
-        -ArgumentList "/c `"`"$Exe`" $argsLine > `"$out`" 2>&1`""
-    $null = $p.Handle   # before any wait, or ExitCode reads empty (lib\ExitCodeAudit.ps1)
-    if (-not $p.WaitForExit($timeoutSec * 1000)) {
-        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-        return $null
-    }
-    return $p.ExitCode
+    $argv = @([regex]::Matches($argsLine, '"[^"]*"|\S+') | ForEach-Object { $_.Value.Trim('"') })
+    $r = Invoke-OnTestDesktop -Exe $Exe -Arguments $argv -TimeoutSec $timeoutSec
+    [System.IO.File]::WriteAllText($out, [string]$r.Output)
+    if ($r.TimedOut) { return $null }
+    return $r.ExitCode
 }
 function Out-Text($f) { if (Test-Path $f) { Get-Content $f -Raw } else { '' } }
 
 # A Debug build links the CONSOLE subsystem, so its std.log lands on stderr and
 # a failure can be explained rather than guessed at.
+#
+# T1876: ON THE TEST DESKTOP. This was a splatted `Start-Process @a`
+# (WindowStyle Minimized) on the caller's desktop - minimized still means a
+# taskbar button and, on some shells, a focus change, and the desktop-launch
+# audit could not see the exe inside the hashtable.
 function Start-App($title, $log) {
-    $a = @{
-        FilePath    = $Exe
-        WindowStyle = 'Minimized'
-        ArgumentList = @("--title=$title", '--window-width=100', '--window-height=30')
-    }
-    if ($log) {
-        $a['RedirectStandardError'] = $log
-        $a['RedirectStandardOutput'] = "$log.out"
-    }
-    Start-Process @a | Out-Null
+    # persistence: on (default) - the subject is the agent's layout blobs and the restore that reads them.
+    [void](Start-OnTestDesktop -Exe $Exe -StdErr $log `
+        -Arguments @("--title=$title", '--window-width=100', '--window-height=30'))
 }
 
 # --- the agent's session roster ---------------------------------------------
@@ -263,6 +266,11 @@ $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 'xlineage')
 Assert-GhozttyPrivateEndpoint -Exe $Exe
+
+# T1876: every launch and every CLI call runs on a background desktop, so no
+# window from this script ever reaches the user's.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+$td = New-TestDesktop
 
 try {
 
@@ -425,6 +433,7 @@ if ($script:failures -gt 0) {
 } finally {
     "== cleanup"
     Stop-TestProcs
+    Remove-TestDesktop | Out-Null
     $env:LOCALAPPDATA = $savedLocalAppData
     if ($null -ne $savedAgentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin }
     else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }

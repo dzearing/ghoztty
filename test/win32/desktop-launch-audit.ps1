@@ -33,11 +33,12 @@
       E. The sweep over `test\win32\*.ps1`: every launch site is declared, and
          every declaration still names a script that launches.
 
-    `-TeethCheck` proves the section-E assertion can fail: it writes three real
+    `-TeethCheck` proves the section-E assertion can fail: it writes four real
     violators into the swept directory - one bare `Start-Process $exe`, one raw
-    `& $exe +new-window`, and (T1860) a `cmd /c` wrapper called with
-    `+new-window`, the shape ipc-relay.ps1 used - all on no list, and requires
-    the sweep to find each. Run it after any change to the analyzer.
+    `& $exe +new-window`, (T1860) a `cmd /c` wrapper called with
+    `+new-window`, the shape ipc-relay.ps1 used, and (T1876) a splatted
+    `Start-Process @a` whose hashtable holds the exe - all on no list, and
+    requires the sweep to find each. Run it after any change to the analyzer.
 
 .NOTES
     # persistence: launches no GUI - this scores scripts, it does not run them.
@@ -180,6 +181,43 @@ Assert 'B19 a cmd line whose argv is a non-parameter variable is UNKNOWN' (@($s)
 $s = Sites @('Write-Host "cmd /c `"$Exe`" +new-window is what this used to do"')
 Assert 'B20 prose ABOUT a cmd launch is not one' (@($s).Count -eq 0)
 
+# T1876: the splatted shape - the exe lives in a hashtable, so the command line
+# names no program. layout-blob-cross-lineage.ps1's Start-App, in shape.
+$splat = @(
+    'function Start-App($title, $log) {'
+    '    $a = @{'
+    '        FilePath    = $Exe'
+    '        WindowStyle = ''Minimized'''
+    '        ArgumentList = @("--title=$title", ''--window-width=100'')'
+    '    }'
+    '    if ($log) { $a[''RedirectStandardError''] = $log }'
+    '    Start-Process @a | Out-Null'
+    '}'
+)
+$s = Sites $splat
+Assert 'B21 a splatted Start-Process of the exe is a launch, at the call' (
+    @($s).Count -eq 1 -and @($s)[0].Kind -eq 'bare-launch' -and @($s)[0].Line -eq 8)
+
+$s = Sites @('$p = @{ FilePath = $Exe; ArgumentList = @(''+new-window'', ''--target=a'') }', 'Start-Process @p')
+Assert 'B22 a splat whose ArgumentList starts +new-window is a +new-window' (
+    @($s).Count -eq 1 -and @($s)[0].Kind -eq 'new-window')
+
+$s = Sites @('$p = @{ FilePath = $Exe; ArgumentList = @(''+list'', ''--json'') }', 'Start-Process @p')
+Assert 'B23 a splat of a quiet verb is not a launch' (@($s).Count -eq 0)
+
+$s = Sites @('$p = @{ FilePath = ''notepad.exe'' }', '$p[''FilePath''] = $Exe', 'Start-Process @p')
+Assert 'B24 an index write to FilePath is followed' (@($s).Count -eq 1 -and @($s)[0].Kind -eq 'bare-launch')
+
+$s = Sites @('$p = @{ FilePath = $AgentHost; ArgumentList = @(''x'') }', 'Start-Process @p',
+             'Start-Process @fromCaller')
+Assert 'B25 a splat of another program, or of a table built elsewhere, is not a finding' (@($s).Count -eq 0)
+
+$s = Sites @('function Other { $p = @{ FilePath = $Exe } }', 'function Go { Start-Process @p }')
+Assert 'B26 a table assigned in ANOTHER function is not this call''s table' (@($s).Count -eq 0)
+
+$s = Sites @('$p = @{ FilePath = ''cmd.exe''; ArgumentList = "/c `"`"$Exe`" +new-window`"" }', 'Start-Process @p')
+Assert 'B27 a splatted cmd.exe of +new-window is a launch' (@($s).Count -eq 1 -and @($s)[0].Kind -eq 'new-window')
+
 # ---------------------------------------------------------------------------
 Write-Host ''
 Write-Host 'C. the quiet-verb list against the CLI'
@@ -250,7 +288,18 @@ try {
             '}'
             'Run-Cli ''+new-window --target=teeth'' out.txt'
         )
-        $planted = @($v1, $v2, $v3)
+        # T1876: layout-blob-cross-lineage.ps1's Start-App before its
+        # migration - the exe inside a splatted hashtable.
+        $v4 = Join-Path $Suite 'zz-desktop-launch-teeth-splat.ps1'
+        Set-Content -LiteralPath $v4 -Encoding UTF8 -Value @(
+            '$Exe = "D:\git\ghoztty\zig-out\bin\ghoztty.exe"'
+            'function Start-App($title) {'
+            '    $a = @{ FilePath = $Exe; WindowStyle = ''Minimized''; ArgumentList = @("--title=$title") }'
+            '    Start-Process @a | Out-Null'
+            '}'
+            'Start-App teeth'
+        )
+        $planted = @($v1, $v2, $v3, $v4)
     }
 
     $findings = @(Get-DesktopLaunchAuditSweep $Suite)
@@ -262,6 +311,7 @@ try {
         Assert 'E0a the planted bare launch is found' ($names -contains 'zz-desktop-launch-teeth-bare.ps1')
         Assert 'E0b the planted +new-window is found' ($names -contains 'zz-desktop-launch-teeth-verb.ps1')
         Assert 'E0c the planted cmd /c wrapper launch is found' ($names -contains 'zz-desktop-launch-teeth-cmd.ps1')
+        Assert 'E0d the planted splatted Start-Process is found' ($names -contains 'zz-desktop-launch-teeth-splat.ps1')
         $bad = @($bad | Where-Object { (Split-Path $_.Path -Leaf) -notlike 'zz-desktop-launch-teeth-*' })
     }
 

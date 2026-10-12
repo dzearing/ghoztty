@@ -35495,3 +35495,22 @@ moved to T1814.
   (39, with a planted copy of the old ipc-relay wrapper). The pre-T1837
   ipc-relay.ps1 scores red at its `+new-window` call. The three migrated scripts
   are ALL PASS (21, 35, 156), and so are the guards the edit made due.
+
+## 2026-10-12 — T1876: the never-pull-focus audit sees a splatted Start-Process
+
+- **What changed.** `lib\DesktopLaunchAudit.ps1` now resolves `Start-Process @a`
+  to the hashtable literal assigned to `$a` in the same scope, plus any
+  `$a['Key'] = ...` writes before the call, and reads its `FilePath` and
+  `ArgumentList` like the named parameters. A table built at runtime is not
+  guessed at, and that limit is now stated in the header.
+- **Why.** `layout-blob-cross-lineage.ps1` started its app on the user's desktop
+  through that shape while the audit stayed green (found in T1860).
+- **What the sweep found.** That script was the only splatted `Start-Process`
+  in `test\win32`. It now starts the app with `Start-OnTestDesktop` (stderr log
+  kept) and runs its CLI through `Invoke-OnTestDesktop`. Its pending-migration
+  declaration is deleted: 9 declared, 0 pending.
+- **Validation.** desktop-launch-audit ALL PASS (43), with new fixtures B21-B27.
+  `-TeethCheck` ALL PASS (47) with a planted splatted launcher. The migrated
+  script is ALL PASS (14), and `-NegativeControl` fails as it should.
+  persistence-flag needed a `# persistence:` marker on the new launch; it is
+  ALL PASS (29), and the harness floor is green.

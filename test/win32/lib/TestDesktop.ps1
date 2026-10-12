@@ -270,8 +270,6 @@
 #
 # @user-desktop-launch: agent-job-escape.ps1 -- (T1238) its SUBJECT is the agent escaping a kill-on-close job, and the only escape tier that works from the pane-shell job chain is the shell-parent hop: measured on box, breakaway is ACCESS_DENIED and a background desktop has no shell window, so the app logs 'shell-parent spawn unavailable err=error.NoShellWindow' and spawns INSIDE the job. The measurement needs a desktop that has a shell.
 # @user-desktop-launch: relaunch-guard.ps1 -- (T1238) same measured reason as agent-job-escape.ps1 above: its section F asserts the relaunched app lands OUTSIDE a kill-on-close job, and that escape needs the shell-parent hop, which needs a desktop with a shell window.
-#
-# @user-desktop-launch: layout-blob-cross-lineage.ps1 -- (T1876) pending migration: its Start-App runs a splatted `Start-Process @a` on the caller's desktop (an audit blind spot T1876 closes) and its Run-Cli then drives that app with `+new-window`.
 
 # T118: never inherit an IPC endpoint. A script started from one of the user's
 # own panes inherits $GHOZTTY_IPC_SOCKET naming the USER'S app, and the CLI
