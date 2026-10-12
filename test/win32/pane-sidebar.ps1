@@ -20,6 +20,25 @@
 #   5. ctrl+shift+s hides the sidebar: no column, the grid starts at the
 #      client's left edge. Again shows it.
 #   6. Pinned, a window narrower than 720 DIP shows the rail, not the panel.
+#   7. (T1842) Unpinning leaves the card OPEN over the grid, the way Mac's
+#      does: a GhozttyPaneSidebarCard popup owned by the window opens at the
+#      column's top-left, as wide as the panel plus the rail's margins and as
+#      tall as the column, clipped to the column plus a rounded card (the
+#      trailing margin shows the grid), while the column stays the 68 DIP
+#      rail and no pane moves. The pointer is not on it - the real cursor is
+#      on another desktop - so it contracts after Mac's grace period, and the
+#      log says which way each transition went.
+#   8. (T1842) A pointer on the rail's card arms Mac's 100 ms intent timer,
+#      and one in the rail's margin does not. The OPEN itself cannot be shown
+#      from a background desktop: a posted move's hover is cleared by the
+#      WM_MOUSELEAVE the first pump delivers (T233), and the timer re-checks
+#      the real pointer (Mac's pointerIsOverCard), which is elsewhere. The
+#      open/close rules are unit-tested in pane_sidebar_hover.zig; the open
+#      path itself is section 7's.
+#   9. (T1842) Every tile and the pin carries a tooltip, and a tile's names
+#      its pane, then the click hint (Mac's .help); the open card's rows,
+#      row buttons and pin carry theirs. Scored from the `pane sidebar tips`
+#      log line: comctl32 tooltips are never shown on a background desktop.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -155,7 +174,8 @@ try {
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
     Assert-GhozttyPrivateEndpoint -Exe $Exe
     # T1831: the grid-edge oracles assume flush flat panes; the elevated default adds a grid margin (pane-elevation.ps1 covers that).
-    $app = Start-OnTestDesktop -Exe $Exe -Arguments @('--session-persistence=false', '--macos-pane-style=flat')
+    $errlog = Join-Path $tmp 'app-stderr.log'
+    $app = Start-OnTestDesktop -Exe $Exe -StdErr $errlog -Arguments @('--session-persistence=false', '--macos-pane-style=flat')
     Start-Sleep -Seconds 3
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
     if ($top -eq [IntPtr]::Zero) { "  SETUP FAIL: top window not found"; $script:failures++; return }
@@ -267,6 +287,131 @@ try {
     Start-Sleep -Milliseconds 800
     $sb = Get-Sidebar $top
     Assert "wide again, the panel comes back ($($sb.Width))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 240)) -le 1)
+
+    "== 7: unpinning leaves the card open over the grid; it contracts when the pointer is not on it"
+    $pBefore = Get-Panes $top | Where-Object { $_.Hwnd -eq $hP }
+    $logBefore = @(Get-Content $errlog -ErrorAction SilentlyContinue).Count
+    [void](Click $top $sb.Hwnd (Get-PinCenter $sb 'expanded'))
+    $openLine = $null; $closeLine = $null
+    $deadline = (Get-Date).AddSeconds(5)
+    do {
+        Start-Sleep -Milliseconds 100
+        $new = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logBefore)
+        $openLine = $new | Where-Object { $_ -match 'pane sidebar card open reason=unpin' } | Select-Object -First 1
+        $closeLine = $new | Where-Object { $_ -match 'pane sidebar card close reason=left' } | Select-Object -First 1
+    } while ((-not $openLine -or -not $closeLine) -and (Get-Date) -lt $deadline)
+    "  $openLine"
+    "  $closeLine"
+    Assert "unpinning opened the card (log)" ($null -ne $openLine)
+    $sb = Get-Sidebar $top
+    Assert "the column is the 68 DIP rail again ($($sb.Width))" ([math]::Abs($sb.Width - (Px 68)) -le 1)
+    if ($openLine -match 'column=(-?\d+),(-?\d+),(-?\d+),(-?\d+) card=(-?\d+),(-?\d+),(-?\d+),(-?\d+)') {
+        $col = @([int]$Matches[1], [int]$Matches[2], [int]$Matches[3], [int]$Matches[4])
+        $crd = @([int]$Matches[5], [int]$Matches[6], [int]$Matches[7], [int]$Matches[8])
+        $wantW = (Px 12) + (Px 240) + (Px 12)
+        Assert "the card opened at the column's top-left ($($crd[0]),$($crd[1]) vs $($col[0]),$($col[1]))" ($crd[0] -eq $col[0] -and $crd[1] -eq $col[1])
+        Assert "the card is the panel's width plus the rail's margins ($($crd[2] - $crd[0]) vs $wantW)" ([math]::Abs(($crd[2] - $crd[0]) - $wantW) -le 1)
+        Assert "the card is as tall as the column" (($crd[3] - $crd[1]) -eq ($col[3] - $col[1]))
+        Assert "while open, the column stayed the rail ($($col[2] - $col[0]) vs $(Px 68))" ([math]::Abs(($col[2] - $col[0]) - (Px 68)) -le 1)
+    } else {
+        Assert "the open line carries the column and card rects" $false
+    }
+    $pAfter = Get-Panes $top | Where-Object { $_.Hwnd -eq $hP }
+    Assert "the grid sits beside the rail, not under the card (P.left $($pAfter.Left), rail.right $($sb.Right))" ($pAfter.Left -ge $sb.Right -and $pAfter.Left - $sb.Right -le (Px 4))
+    $card = Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard' -AllowHidden
+    Assert "the card is a GhozttyPaneSidebarCard popup of this process" ($card -ne [IntPtr]::Zero)
+    if ($card -ne [IntPtr]::Zero) {
+        $cr = Get-TestWindowRect -Window $card
+        $m = Px 12
+        $midY = [int]($cr.Height / 2)
+        # Region: the column paints, the card's middle paints, the trailing
+        # margin and the card's rounded top-right corner do not.
+        $hits = Get-TestWindowRegionHits -Window $card -Points @(
+            [int]((Px 68) / 2), 2,
+            [int]($cr.Width / 2), $midY,
+            ($cr.Width - [int]($m / 2)), $midY,
+            ($cr.Width - $m - 1), $m)
+        Assert "the card has a region (rounded, not a square popup)" ($null -ne $hits)
+        if ($null -ne $hits) {
+            Assert "the column strip is part of the card" $hits[0]
+            Assert "the card's middle is part of it" $hits[1]
+            Assert "the trailing margin is NOT - the grid shows through" (-not $hits[2])
+            Assert "the card's top-right corner is rounded off" (-not $hits[3])
+        }
+    }
+    Assert "with the pointer elsewhere it contracted after the grace period (log)" ($null -ne $closeLine)
+    Start-Sleep -Milliseconds 300
+    $cardTop = Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard'
+    Assert "the card is hidden once contracted" ($cardTop -eq [IntPtr]::Zero)
+
+    "== 7b: a press held on the open card keeps it open past the grace period; letting go off it closes it"
+    $sb = Get-Sidebar $top
+    [void](Click $top $sb.Hwnd (Get-PinCenter $sb 'mini'))   # pin
+    Start-Sleep -Milliseconds 600
+    $sb = Get-Sidebar $top
+    $logBefore = @(Get-Content $errlog -ErrorAction SilentlyContinue).Count
+    [void](Click $top $sb.Hwnd (Get-PinCenter $sb 'expanded'))   # unpin: the card opens
+    # The press lands on the open card's header caption - no control there -
+    # and must beat the 280 ms grace period that the open started, so it is
+    # the very next thing this script does.
+    $hx = $sb.Left + (Px 12) + (Px 40); $hy = $sb.Top + (Px 12) + (Px 18)
+    $card = Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard'
+    $down = $false
+    if ($card -ne [IntPtr]::Zero) { $down = Send-TestMouse -Window $top -Target $card -X $hx -Y $hy -Action down }
+    Assert "the press reached the open card" $down
+    Start-Sleep -Milliseconds 900
+    $new = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logBefore)
+    $closedEarly = @($new | Where-Object { $_ -match 'pane sidebar card close' }).Count
+    Assert "held: no close after 3x the grace period ($closedEarly)" ($closedEarly -eq 0)
+    Assert "held: the card is still on screen" ((Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard') -ne [IntPtr]::Zero)
+    $c = $null
+    if ($card -ne [IntPtr]::Zero) {
+        try {
+            $shot = Get-TestWindowPixels -Window $card -Sync
+            $path = Join-Path $env:TEMP 't1842-open-card.png'
+            $shot.Bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
+            $c = Get-TestCaptureContent -Shot $shot
+            Close-TestWindowPixels -Shot $shot
+            "  (saved $path; distinct=$($c.Distinct))"
+        } catch { "  capture failed: $($_.Exception.Message)" }
+    }
+    Assert "the open card paints content, not one flat fill" ($null -ne $c -and $c.Distinct -ge 3)
+    # Let go in the trailing margin - off the card.
+    $cr = Get-TestWindowRect -Window $card
+    if ($card -ne [IntPtr]::Zero) { [void](Send-TestMouse -Window $top -Target $card -X ($cr.Right - (Px 4)) -Y $hy -Action up) }
+    $closeLine = $null
+    $deadline = (Get-Date).AddSeconds(3)
+    do {
+        Start-Sleep -Milliseconds 100
+        $closeLine = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logBefore | Where-Object { $_ -match 'pane sidebar card close reason=left' }) | Select-Object -First 1
+    } while (-not $closeLine -and (Get-Date) -lt $deadline)
+    Assert "let go off the card, it contracted (log)" ($null -ne $closeLine)
+
+    "== 8: a pointer on the rail's card arms the intent timer; the margin does not"
+    $sb = Get-Sidebar $top
+    $logBefore = @(Get-Content $errlog -ErrorAction SilentlyContinue).Count
+    # The rail's top margin (above the card): not the card.
+    [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X ($sb.Left + (Px 34)) -Y ($sb.Top + (Px 4)) -Action move)
+    Start-Sleep -Milliseconds 400
+    $armedMargin = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logBefore | Where-Object { $_ -match 'pane sidebar hover-open armed' }).Count
+    Assert "a pointer in the rail's margin arms nothing ($armedMargin)" ($armedMargin -eq 0)
+    $t = Get-TileCenter $sb 0 2
+    [void](Send-TestMouse -Window $top -Target ([IntPtr]$sb.Hwnd) -X $t.X -Y $t.Y -Action move)
+    Start-Sleep -Milliseconds 400
+    $armed = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logBefore | Where-Object { $_ -match 'pane sidebar hover-open armed delay=100ms' })
+    Assert "a pointer on the rail's card armed Mac's 100 ms intent timer ($($armed.Count))" ($armed.Count -ge 1)
+    $opened = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $logBefore | Where-Object { $_ -match 'pane sidebar card open reason=hover' }).Count
+    Assert "the timer re-checked the REAL pointer (elsewhere) and opened nothing ($opened)" ($opened -eq 0)
+
+    "== 9: tooltips on every tile and the pin; a tile's names its pane"
+    $tips = @(Get-Content $errlog -ErrorAction SilentlyContinue | Where-Object { $_ -match 'pane sidebar tips ' })
+    $railTips = $tips | Where-Object { $_ -match 'rail=3 card=0 mode=mini tile0=' } | Select-Object -Last 1
+    "  $railTips"
+    Assert "the rail registered the pin and both tiles (rail=3)" ($null -ne $railTips)
+    Assert "a tile's tip is the pane's title, then 'Click to focus'" ($null -ne $railTips -and $railTips -match 'tile0=\S.*\|Click to focus$')
+    $cardTips = $tips | Where-Object { $_ -match 'card=3' } | Select-Object -First 1
+    "  $cardTips"
+    Assert "the open card registered its pin and both rows (card=3)" ($null -ne $cardTips)
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

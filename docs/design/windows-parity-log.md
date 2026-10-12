@@ -35258,3 +35258,24 @@ moved to T1814.
 - **Closed.** T1821 (same drift, filed earlier) is closed as a duplicate.
   split-divider is still red on T533 (wanted ~862, got 840), which T1853
   already tracks. The re-filing T1864 is closed as a duplicate.
+
+## 2026-10-11 — T1842: the unpinned pane sidebar opens on hover
+
+- **What.** Resting the pointer on the mini rail for Mac's 100 ms now opens
+  the full card over the grid; it folds back 280 ms after the pointer leaves,
+  never under the pointer or a held press. Unpinning leaves it open until the
+  pointer leaves. The column stays 68 DIP, so no terminal resizes. The card
+  is a passive popup owned by the window, seated above the panes' own
+  overlays and below any other app. Every tile, row, row button and the pin
+  has a tooltip; a tile's names its pane.
+- **Evidence.** `pane-sidebar.ps1` ALL PASS (60; sections 7/7b/8/9 new),
+  negative control red. Floor lib/none/win32/agent PASS; P1-P3 ALL PASS;
+  overlay-zorder ALL PASS. The hover OPEN itself cannot be driven from the
+  background desktop and was NOT RUN on the user's desktop.
+- **Also.** T1853 closed: split-divider's T533 shortfall was the sidebar
+  column (85 px / 4 = the 22 px), not a drag bug; that section now runs in a
+  1500 px window, ALL PASS (85). Filed T1865 (soft shadow on the open card).
+- **Caught by a harness.** cli-focus-policy arm R went red: the sidebar's
+  tooltip, created OWNED by every window, lifted a background-opened window
+  above the frontmost one. The tooltip is now unowned, and arm R is green.
+  Filed T1866 to measure the other owned tooltips the same way.

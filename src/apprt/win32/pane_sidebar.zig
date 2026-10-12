@@ -539,9 +539,13 @@ pub const TextMetrics = struct {
 
 pub const Layout = struct {
     mode: Mode = .hidden,
+    /// The unpinned card opened to full width over the grid (T1842): `mode`
+    /// stays `.mini` - the column is still the rail's - but the rows are laid
+    /// out as the panel's, inside `card`.
+    open: bool = false,
     width: i32 = 0,
     height: i32 = 0,
-    /// The rail's raised card (mini only).
+    /// The raised card (mini only): the rail's, or the open card.
     card: Rect = .{},
     /// The pin button's painted square.
     pin: Rect = .{},
@@ -595,40 +599,71 @@ pub fn layout(m: Mode, w: i32, h: i32, items: []const Item, tm: TextMetrics, sca
     }
     switch (m) {
         .hidden => l.count = 0,
-        .expanded => layoutExpanded(&l, items[0..n], tm, scale),
+        .expanded => layoutRows(&l, .{ .right = w, .bottom = h }, items[0..n], tm, scale),
         .mini => layoutMini(&l, scale),
     }
     return l;
 }
 
-fn layoutExpanded(l: *Layout, items: []const Item, tm: TextMetrics, scale: f32) void {
+/// The window the open card is drawn in: the rail's margin, the panel's
+/// width, and the margin again (Mac's host frame, `insets.leading +
+/// state.width + insets.trailing`). Only the column and the card itself are
+/// ever painted or hit; the trailing margin belongs to the grid underneath.
+pub fn openWidthPx(panel_w_dip: f32, scale: f32) i32 {
+    const margin = px(rail_margin_dip, scale);
+    return margin + px(clampWidth(panel_w_dip), scale) + margin;
+}
+
+/// Lay out the unpinned card opened over the grid (T1842) in a `w` x `h`
+/// window (`w` from `openWidthPx`): the raised card at the rail's margins,
+/// as wide as the panel, holding the panel's header and rows.
+pub fn layoutOpen(w: i32, h: i32, items: []const Item, tm: TextMetrics, scale: f32) Layout {
+    var l: Layout = .{ .mode = .mini, .open = true, .width = w, .height = h };
+    const n = @min(items.len, max_items);
+    l.count = n;
+    l.first_stashed = n;
+    for (items[0..n], 0..) |it, i| {
+        if (it.section == .stashed) {
+            l.first_stashed = i;
+            break;
+        }
+    }
+    const margin = px(rail_margin_dip, scale);
+    l.card = .{ .left = margin, .top = margin, .right = @max(w - margin, margin), .bottom = @max(h - margin, margin) };
+    layoutRows(&l, l.card, items[0..n], tm, scale);
+    return l;
+}
+
+/// The panel's header and rows inside `area`: the pinned panel's whole
+/// window, or the open card.
+fn layoutRows(l: *Layout, area: Rect, items: []const Item, tm: TextMetrics, scale: f32) void {
     const sm = px(sm_dip, scale);
     const btn = px(button_dip, scale);
     // The header band holds the caption at the TOC's header padding and the
     // pin with `sm` clear above and below it, whichever is taller - the band
     // is sized to its control, never the reverse (design system §0).
     const header_h = @max(toc.headerHeight(tm.caption_h, scale), btn + 2 * sm);
-    l.header = .{ .left = 0, .top = 0, .right = l.width, .bottom = header_h };
-    l.caption_x = px(toc.label_inset_dip, scale);
-    const pin_top = @divTrunc(header_h - btn, 2);
-    l.pin = .{ .left = l.width - sm - btn, .top = pin_top, .right = l.width - sm, .bottom = pin_top + btn };
+    l.header = .{ .left = area.left, .top = area.top, .right = area.right, .bottom = area.top + header_h };
+    l.caption_x = area.left + px(toc.label_inset_dip, scale);
+    const pin_top = area.top + @divTrunc(header_h - btn, 2);
+    l.pin = .{ .left = area.right - sm - btn, .top = pin_top, .right = area.right - sm, .bottom = pin_top + btn };
 
     const fill = px(toc.fill_inset_dip, scale);
     const gap = @max(px(1, scale), 1);
-    var y = header_h;
+    var y = l.header.bottom;
     for (items, 0..) |it, i| {
         if (i == l.first_stashed) {
             // A hairline, then the STASHED caption at the header's padding.
             const rule_y = y + sm;
-            l.section_rule = .{ .left = fill, .top = rule_y, .right = l.width - fill, .bottom = rule_y + @max(px(1, scale), 1) };
+            l.section_rule = .{ .left = area.left + fill, .top = rule_y, .right = area.right - fill, .bottom = rule_y + @max(px(1, scale), 1) };
             const cap_h = toc.headerHeight(tm.caption_h, scale);
-            l.stashed_caption = .{ .left = 0, .top = rule_y + sm, .right = l.width, .bottom = rule_y + sm + cap_h };
+            l.stashed_caption = .{ .left = area.left, .top = rule_y + sm, .right = area.right, .bottom = rule_y + sm + cap_h };
             y = rule_y + sm + cap_h;
         } else if (i != 0) {
             y += gap;
         }
         const rh = rowHeight(it.two_line, tm, scale);
-        l.items[i] = .{ .left = fill, .top = y, .right = l.width - fill, .bottom = y + rh };
+        l.items[i] = .{ .left = area.left + fill, .top = y, .right = area.right - fill, .bottom = y + rh };
         y += rh;
     }
 }
@@ -670,16 +705,20 @@ pub const Hit = union(enum) {
 pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
     if (l.mode == .hidden) return .none;
     if (l.pin.contains(x, y)) return .pin;
+    const rows = l.mode == .expanded or l.open;
     for (0..l.count) |i| {
         const r = l.items[i];
-        // Rows span to the column's edges for hit purposes - the fill inset is
-        // paint, and a click in it still means that row.
+        // Rows span to the panel's (or the open card's) edges for hit
+        // purposes - the fill inset is paint, and a click in it still means
+        // that row.
         const hit_r: Rect = if (l.mode == .expanded)
             .{ .left = 0, .top = r.top, .right = l.width, .bottom = r.bottom }
+        else if (l.open)
+            .{ .left = l.card.left, .top = r.top, .right = l.card.right, .bottom = r.bottom }
         else
             r;
         if (!hit_r.contains(x, y)) continue;
-        if (l.mode == .expanded and l.rowButton(i, scale).contains(x, y)) return .{ .item_button = i };
+        if (rows and l.rowButton(i, scale).contains(x, y)) return .{ .item_button = i };
         return .{ .item = i };
     }
     return .none;
@@ -893,4 +932,50 @@ test "pane_sidebar: hit testing finds the pin, rows, row buttons and nothing" {
 
     const hidden = layout(.hidden, 0, 600, &items, tm, s);
     try testing.expectEqual(Hit.none, hitTest(&hidden, 0, 0, s));
+}
+
+test "pane_sidebar: the open card floats at the rail's margins, as wide as the panel, with the panel's rows" {
+    const items = [_]Item{ .{ .section = .grid, .two_line = true }, .{ .section = .stashed } };
+    for (scales) |s| {
+        const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
+        const w = openWidthPx(240, s);
+        const h = px(600, s);
+        const l = layout(.mini, columnPx(.mini, 240, s), h, &items, tm, s);
+        const o = layoutOpen(w, h, &items, tm, s);
+        try testing.expect(o.open and o.mode == .mini);
+        // Same margins as the rail's card: it grows rightward from where the
+        // rail's card already stands, never moving its top-left.
+        try testing.expectEqual(l.card.left, o.card.left);
+        try testing.expectEqual(l.card.top, o.card.top);
+        try testing.expectEqual(l.card.bottom, o.card.bottom);
+        // As wide as the panel, with the margin left over on the right.
+        try testing.expectEqual(px(240, s), o.card.width());
+        try testing.expectEqual(w - px(rail_margin_dip, s), o.card.right);
+        // Everything sits inside the card: header, pin, rows, row buttons.
+        try testing.expect(o.header.left == o.card.left and o.header.top == o.card.top);
+        try testing.expect(o.pin.right <= o.card.right and o.pin.top >= o.card.top);
+        try testing.expect(o.caption_x > o.card.left);
+        for (0..o.count) |i| {
+            try testing.expect(o.items[i].left > o.card.left and o.items[i].right < o.card.right);
+            try testing.expect(o.items[i].top >= o.header.bottom);
+            const b = o.rowButton(i, s);
+            try testing.expect(b.right <= o.items[i].right);
+        }
+        try testing.expect(o.stashed_caption != null);
+        // Clamped like the panel.
+        try testing.expectEqual(openWidthPx(380, s), openWidthPx(900, s));
+    }
+}
+
+test "pane_sidebar: hit testing the open card finds rows across the card, buttons and the pin, and nothing past it" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
+    const s: f32 = 1.0;
+    const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
+    const o = layoutOpen(openWidthPx(240, s), 600, &items, tm, s);
+    try testing.expectEqual(Hit.pin, hitTest(&o, o.pin.centerX(), o.pin.centerY(), s));
+    try testing.expectEqual(Hit{ .item = 0 }, hitTest(&o, o.card.left + 1, o.items[0].centerY(), s));
+    const b = o.rowButton(1, s);
+    try testing.expectEqual(Hit{ .item_button = 1 }, hitTest(&o, b.centerX(), b.centerY(), s));
+    // The trailing margin is the grid's, not the card's.
+    try testing.expectEqual(Hit.none, hitTest(&o, o.card.right + 2, o.items[0].centerY(), s));
 }

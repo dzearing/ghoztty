@@ -29,6 +29,7 @@ const viewer_content = @import("viewer_content.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
 const pane_stash = @import("pane_stash.zig");
 const pane_sidebar = @import("pane_sidebar.zig");
+const pane_sidebar_hover = @import("pane_sidebar_hover.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
 const terminal = @import("../../terminal/main.zig");
 const tcp_dial = @import("../../remote/tcp_dial.zig");
@@ -2284,10 +2285,14 @@ pub fn togglePaneSidebar(self: *Window) void {
     self.paneSidebarLayoutChanged();
 }
 
-/// The pin: flat panel <-> mini rail.
+/// The pin: flat panel <-> mini rail. Unpinning leaves the card open over
+/// the grid - the pin was just clicked, so the pointer is on it - until the
+/// pointer leaves (Mac `setPaneSidebarPinned`, T1842); pinning closes it.
 pub fn togglePaneSidebarPin(self: *Window) void {
     self.pane_sidebar_pinned = !self.pane_sidebar_pinned;
     self.paneSidebarLayoutChanged();
+    const sb = self.sidebar orelse return;
+    if (pane_sidebar_hover.openAfterPinToggle(self.pane_sidebar_pinned)) sb.openCard(.unpin) else sb.closeCard(.pin);
 }
 
 fn paneSidebarLayoutChanged(self: *Window) void {

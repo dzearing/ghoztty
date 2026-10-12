@@ -2032,6 +2032,14 @@ pub const HALFTONE: i32 = 4;
 pub extern "msimg32" fn AlphaBlend(hdcDest: HDC, xoriginDest: i32, yoriginDest: i32, wDest: i32, hDest: i32, hdcSrc: HDC, xoriginSrc: i32, yoriginSrc: i32, wSrc: i32, hSrc: i32, ftn: BLENDFUNCTION) callconv(.winapi) i32;
 pub extern "gdi32" fn CreateRoundRectRgn(x1: i32, y1: i32, x2: i32, y2: i32, w: i32, h: i32) callconv(.winapi) ?*anyopaque;
 pub extern "gdi32" fn CreateRectRgn(x1: i32, y1: i32, x2: i32, y2: i32) callconv(.winapi) ?*anyopaque;
+/// `dst = src1 <mode> src2`; `dst` must already exist (any region). Returns
+/// the result's complexity, or `ERROR` (0). The pane sidebar's open card is
+/// the rail column OR its rounded card (T1842).
+pub extern "gdi32" fn CombineRgn(dst: *anyopaque, src1: *anyopaque, src2: *anyopaque, mode: i32) callconv(.winapi) i32;
+pub const RGN_OR: i32 = 2;
+/// The window under a SCREEN point, honoring window regions - the pane
+/// sidebar asks whether the pointer is still on its card (T1842).
+pub extern "user32" fn WindowFromPoint(pt: POINT) callconv(.winapi) ?HWND;
 /// Clip a WINDOW to a region (the viewer TOC card's rounded corners in its
 /// floating overlay mode, T160). The system takes ownership of the region on
 /// success — the caller must NOT delete it afterwards.

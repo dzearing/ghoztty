@@ -98,6 +98,11 @@ test {
     // only the TOC layout and the shared split tree. Every lane.
     _ = @import("apprt/win32/pane_sidebar.zig");
 
+    // Pure win32 pane sidebar hover-open card and tooltips (T1842): Mac's
+    // timing, the close verdict, the card's z-order seat and the tip text.
+    // Imports only pane_sidebar.zig. Every lane.
+    _ = @import("apprt/win32/pane_sidebar_hover.zig");
+
     // Pure win32 erase-vs-preserve rule for the resize paint path (T1031),
     // same no-OS-imports deal.
     _ = @import("apprt/win32/resize_paint.zig");

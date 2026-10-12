@@ -1147,6 +1147,14 @@ if ($a495.Process -and $a495.Process.HasExited) {
         # Two right-splits: +split splits the FOCUSED pane, and each split
         # focuses its new (right) pane, so this builds exactly the T495 tree:
         # split[p1, split[p2, p3]] - three side-by-side columns.
+        #
+        # Wide on purpose (T1842): T533 drags the first divider +120px toward
+        # a second divider that holds still, and at the default width - less
+        # the pane sidebar's 68 DIP column since T1828 - the middle pane hit
+        # its minimum width 22px short of the target, which read as the drag
+        # not tracking.
+        [void](Set-TestWindowSize -Window $t495 -Width 1500 -Height 700)
+        Start-Sleep -Milliseconds 600
         & $exe +split --direction=right | Out-Null
         Start-Sleep -Milliseconds 800
         & $exe +split --direction=right | Out-Null

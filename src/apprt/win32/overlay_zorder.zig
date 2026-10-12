@@ -59,6 +59,15 @@
 //!     `WS_EX_TOPMOST` itself and takes the keyboard (Escape cancels), and it
 //!     lives only as long as the drag. Healing it would demote the one popup
 //!     whose whole job is to be above everything.
+//!   - SEATED ON EVERY SHOW, by its own walk: the pane sidebar's hover-open
+//!     card (`PaneSidebar.positionCard`, T1842). Passive like the HEALED set,
+//!     but it must sit ABOVE them - it opens over the grid, and a pane's dim
+//!     overlay or banner strip must not paint through it - so instead of
+//!     `healOverlayZOrder`'s directly-above-the-owner it is inserted below the
+//!     first visible window that is not the top-level's own
+//!     (`pane_sidebar_hover.seatAfter`), after the same stray-topmost check.
+//!     It is only ever visible under the pointer and contracts when the
+//!     pointer leaves, so it cannot linger over another app.
 //!   - NOT OURS: the tooltips (`ViewerNavBar`, `ViewerFeedbackBar`,
 //!     `KeyStateIndicator`, `Window`) are system `TOOLTIPS_CLASS` windows the
 //!     OS places and tears down itself, and the modal dialogs

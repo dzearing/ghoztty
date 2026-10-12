@@ -4189,6 +4189,7 @@ $GuardTable = @(
         Stamp  = 'test\win32\pane-sidebar.stamp.json'
         Covers = @(
             'src\apprt\win32\pane_sidebar.zig',
+            'src\apprt\win32\pane_sidebar_hover.zig',
             'src\apprt\win32\PaneSidebar.zig',
             'test\win32\pane-sidebar.ps1'
         )

@@ -16,6 +16,17 @@
 //! `pane_sidebar.zig`, which is unit-tested without a window; this file only
 //! paints what that decides and routes the clicks back to `Window`.
 //!
+//! Unpinned, the rail opens on hover (T1842; Mac `PaneSidebarHostView`): with
+//! the pointer on the rail's card for Mac's 100 ms intent delay, the card
+//! grows to the panel's full width OVER the grid - in a second window, a
+//! popup owned by the top-level, so the column (and every terminal beside it)
+//! never resizes, and the card covers the panes' own popups (a dim overlay, a
+//! banner strip) instead of being painted over by them. Leaving starts Mac's
+//! 280 ms grace, after which it contracts unless the pointer came back or a
+//! press on it is still held. Every tile, row, row button and the pin carries
+//! a tooltip (Mac `.help`); a tile's names its pane, since the rail shows only
+//! a monogram. The timing and wording rules are `pane_sidebar_hover.zig`.
+//!
 //! The roster is rebuilt only when what it shows changed — `refresh` hashes
 //! the panes, their titles, banners, states and the selection first — because
 //! it is asked on every layout pass, and a divider drag is a layout pass per
@@ -28,6 +39,8 @@ const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
 const pane_sidebar = @import("pane_sidebar.zig");
+const hov = @import("pane_sidebar_hover.zig");
+const overlay_zorder = @import("overlay_zorder.zig");
 const toc = @import("viewer_toc_layout.zig");
 const color_math = @import("color_math.zig");
 const chrome_theme = @import("chrome_theme.zig");
@@ -45,6 +58,30 @@ const ActivityState = @import("../../terminal/main.zig").osc.Command.ActivitySta
 const log = std.log.scoped(.pane_sidebar);
 
 pub const CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyPaneSidebar");
+/// The hover-open card's popup (T1842).
+pub const CARD_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyPaneSidebarCard");
+
+/// Timer ids, each on its own window: the intent delay on the rail, the
+/// grace period on the card.
+const TIMER_OPEN: usize = 1;
+const TIMER_CLOSE: usize = 2;
+
+/// Which of the sidebar's two windows a message or a paint is for.
+const Surface = enum { rail, card };
+
+/// Why the card opened or closed - logged, so the acceptance script can tell
+/// the paths apart on a desktop where nothing can photograph a popup's life.
+const CardReason = enum { hover, unpin, pin, left, mode, hidden };
+
+/// Tooltip tool ids, per window: the pin, then one per item, then one per
+/// row button.
+const tool_pin: usize = 0;
+fn toolItem(i: usize) usize {
+    return 1 + i;
+}
+fn toolButton(i: usize) usize {
+    return 1 + pane_sidebar.max_items + i;
+}
 
 /// What new windows start from: the most recently chosen pin and hidden
 /// flags, the way a Finder window's sidebar does (Mac `rememberForNewWindows`).
@@ -86,28 +123,55 @@ hover: pane_sidebar.Hit = .none,
 pressed: pane_sidebar.Hit = .none,
 tracking: bool = false,
 
+// The hover-open card (T1842).
+card_hwnd: ?w32.HWND = null,
+card_open: bool = false,
+card_tracking: bool = false,
+open_armed: bool = false,
+
+// Tooltips: one control, tools on both windows. A tile's text names its pane,
+// so it lives here (a tool keeps a pointer to its text); every other tip is a
+// constant.
+tip: ?w32.HWND = null,
+tip_text: [pane_sidebar.max_items][hov.tip_cap]u16 = undefined,
+tip_items: [2]usize = .{ 0, 0 },
+tip_log: [256]u8 = undefined,
+tip_log_len: usize = 0,
+
 title_font: ?*anyopaque = null,
 caption_font: ?*anyopaque = null,
 caption_bold_font: ?*anyopaque = null,
 font_scale: f32 = 0,
 metrics: pane_sidebar.TextMetrics = .{ .title_h = 19, .caption_h = 16 },
 
-// The rail's card backdrop, cached like the TOC card's.
-card_dc: ?w32.HDC = null,
-card_bmp: ?*anyopaque = null,
-card_w: i32 = 0,
-card_h: i32 = 0,
-card_bg: color_math.Rgb = .{ .r = 0, .g = 0, .b = 0 },
-card_scale: f32 = 0,
+// The card material behind the rail and behind the open card, each cached
+// like the TOC card's (two caches, or the two sizes would thrash one).
+rail_card: CardCache = .{},
+open_card: CardCache = .{},
+
+const CardCache = struct {
+    dc: ?w32.HDC = null,
+    bmp: ?*anyopaque = null,
+    w: i32 = 0,
+    h: i32 = 0,
+    bg: color_math.Rgb = .{ .r = 0, .g = 0, .b = 0 },
+    scale: f32 = 0,
+
+    fn release(self: *CardCache) void {
+        if (self.dc) |dc| _ = w32.DeleteDC(dc);
+        if (self.bmp) |b| _ = w32.DeleteObject(b);
+        self.* = .{};
+    }
+};
 
 var class_registered: bool = false;
+var card_class_registered: bool = false;
 
-fn registerClass(hinstance: ?w32.HINSTANCE) void {
-    if (class_registered) return;
+fn registerOne(hinstance: ?w32.HINSTANCE, name: [*:0]const u16) bool {
     const wc = w32.WNDCLASSEXW{
         .cbSize = @sizeOf(w32.WNDCLASSEXW),
         // CS_HREDRAW | CS_VREDRAW (design system §5c): the panel's rule and
-        // the rail's card are drawn against the window's own bounds.
+        // the cards are drawn against the window's own bounds.
         .style = w32.CS_HREDRAW | w32.CS_VREDRAW,
         .lpfnWndProc = &wndProc,
         .cbClsExtra = 0,
@@ -117,14 +181,19 @@ fn registerClass(hinstance: ?w32.HINSTANCE) void {
         .hCursor = w32.LoadCursorW(null, w32.IDC_ARROW),
         .hbrBackground = null, // every pixel painted in WM_PAINT
         .lpszMenuName = null,
-        .lpszClassName = CLASS_NAME,
+        .lpszClassName = name,
         .hIconSm = null,
     };
     if (w32.RegisterClassExW(&wc) == 0) {
         log.warn("pane sidebar class registration failed", .{});
-        return;
+        return false;
     }
-    class_registered = true;
+    return true;
+}
+
+fn registerClass(hinstance: ?w32.HINSTANCE) void {
+    if (!class_registered) class_registered = registerOne(hinstance, CLASS_NAME);
+    if (!card_class_registered) card_class_registered = registerOne(hinstance, CARD_CLASS_NAME);
 }
 
 /// Create the sidebar as a hidden child of `parent`. Null when the window
@@ -161,10 +230,16 @@ pub fn destroy(self: *PaneSidebar) void {
     // Clear the back-pointer FIRST: DestroyWindow delivers messages
     // synchronously and they must not find a half-dead object.
     _ = w32.SetWindowLongPtrW(self.hwnd, w32.GWLP_USERDATA, 0);
+    if (self.card_hwnd) |c| {
+        _ = w32.SetWindowLongPtrW(c, w32.GWLP_USERDATA, 0);
+        _ = w32.DestroyWindow(c);
+    }
+    if (self.tip) |t| _ = w32.DestroyWindow(t);
     _ = w32.DestroyWindow(self.hwnd);
     self.clearEntries();
     self.entries.deinit(self.alloc);
-    self.releaseCard();
+    self.rail_card.release();
+    self.open_card.release();
     self.releaseFonts();
     self.alloc.destroy(self);
 }
@@ -185,6 +260,11 @@ pub fn place(self: *PaneSidebar, rect: w32.RECT, mode: pane_sidebar.Mode, scale:
     const changed = mode != self.mode or scale != self.scale;
     self.mode = mode;
     self.scale = scale;
+    // Only the rail opens (Mac: leaving `.mini` clears `isHoverOpen`).
+    if (mode != .mini) {
+        self.disarm();
+        self.closeCard(if (mode == .hidden) .hidden else .mode);
+    }
     if (mode == .hidden or rect.right <= rect.left or rect.bottom <= rect.top) {
         _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
         return;
@@ -211,6 +291,10 @@ pub fn place(self: *PaneSidebar, rect: w32.RECT, mode: pane_sidebar.Mode, scale:
         );
     }
     if (changed) _ = w32.InvalidateRect(self.hwnd, null, 0);
+    if (moved or changed) self.syncTips();
+    // A relayout under the open card (a split, a stash from its own row
+    // button) moves the column it grows from: keep it glued there.
+    if (self.card_open) self.positionCard();
 }
 
 /// Re-read the roster from the window's active tab. Cheap when nothing it
@@ -258,6 +342,13 @@ pub fn refresh(self: *PaneSidebar) void {
     self.signature = sig;
     self.rebuild(views[0..n], active);
     _ = w32.InvalidateRect(self.hwnd, null, 0);
+    if (self.card_open) {
+        // More or fewer rows: the card is as tall as before, but its region
+        // and rows are re-derived with it.
+        self.positionCard();
+        if (self.card_hwnd) |c| _ = w32.InvalidateRect(c, null, 0);
+    }
+    self.syncTips();
 }
 
 fn clearEntries(self: *PaneSidebar) void {
@@ -342,15 +433,30 @@ fn iconFor(v: *const PaneView) u16 {
 // -------------------------------------------------------------------------
 
 fn currentLayout(self: *PaneSidebar) pane_sidebar.Layout {
+    return self.layoutFor(.rail);
+}
+
+fn surfaceHwnd(self: *const PaneSidebar, which: Surface) ?w32.HWND {
+    return switch (which) {
+        .rail => self.hwnd,
+        .card => self.card_hwnd,
+    };
+}
+
+fn layoutFor(self: *PaneSidebar, which: Surface) pane_sidebar.Layout {
+    const hwnd = self.surfaceHwnd(which) orelse return .{};
     var r: w32.RECT = undefined;
-    if (w32.GetClientRect(self.hwnd, &r) == 0) return .{};
+    if (w32.GetClientRect(hwnd, &r) == 0) return .{};
     var items: [pane_sidebar.max_items]pane_sidebar.Item = undefined;
     const n = @min(self.entries.items.len, items.len);
     for (self.entries.items[0..n], 0..) |e, i| {
         items[i] = .{ .section = e.section, .two_line = e.subtitle.len > 0 };
     }
     self.ensureFonts();
-    return pane_sidebar.layout(self.mode, r.right - r.left, r.bottom - r.top, items[0..n], self.metrics, self.scale);
+    return switch (which) {
+        .rail => pane_sidebar.layout(self.mode, r.right - r.left, r.bottom - r.top, items[0..n], self.metrics, self.scale),
+        .card => pane_sidebar.layoutOpen(r.right - r.left, r.bottom - r.top, items[0..n], self.metrics, self.scale),
+    };
 }
 
 fn makeFont(height: i32, weight: i32) ?*anyopaque {
@@ -486,10 +592,11 @@ fn glyph(hdc: w32.HDC, scale: f32, r: pane_sidebar.Rect, cp: u16, dip: f32, colo
     );
 }
 
-fn paint(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
+fn paint(self: *PaneSidebar, hdc: w32.HDC, which: Surface, width: i32, height: i32) void {
     const t = self.theme();
-    const l = self.currentLayout();
+    const l = self.layoutFor(which);
     _ = w32.SetBkMode(hdc, w32.TRANSPARENT);
+    if (l.open) return self.paintOpen(hdc, &l, t);
     switch (l.mode) {
         .hidden => fillRect(hdc, .{ .right = width, .bottom = height }, rgb(t.bg)),
         .expanded => self.paintExpanded(hdc, &l, t),
@@ -526,7 +633,28 @@ fn paintExpanded(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout
     const rule_w = split_geometry.bandPx(self.scale);
     const divider = split_geometry.dividerPaint(self.window.dividerConfiguredColor(), t.bg, false);
     fillRect(hdc, .{ .left = l.width - rule_w, .right = l.width, .bottom = l.height }, rgb(divider));
+    self.paintRows(hdc, l, t);
+}
 
+/// The unpinned card opened over the grid (T1842): the column as the rail
+/// leaves it - terminal background - and on it the raised card at the
+/// panel's width, holding the panel's header and rows. The window's region
+/// keeps everything right of the column to the card itself, so the grid shows
+/// through the trailing margin.
+fn paintOpen(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
+    ensureCardCache(&self.open_card, hdc, l.width, l.height, t.bg, self.scale);
+    if (self.open_card.dc) |mem| {
+        _ = w32.BitBlt(hdc, 0, 0, l.width, l.height, mem, 0, 0, w32.SRCCOPY);
+    } else {
+        fillRect(hdc, .{ .right = l.width, .bottom = l.height }, rgb(t.bg));
+        fillRound(hdc, l.card, pane_sidebar.px(8, self.scale), rgb(t.surface));
+    }
+    self.paintRows(hdc, l, t);
+}
+
+/// The header (caption + pin), the section rule and caption, and the rows -
+/// shared by the pinned panel and the open card, whose layouts place them.
+fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
     // Header: "PANES" on the label inset, the pin at the trailing edge.
     if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
     drawText(hdc, std.unicode.utf8ToUtf16LeStringLiteral("PANES"), .{
@@ -545,7 +673,7 @@ fn paintExpanded(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout
         var wbuf: [32]u16 = undefined;
         const wn = std.unicode.utf8ToUtf16Le(&wbuf, text8) catch 0;
         if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-        drawText(hdc, wbuf[0..wn], .{ .left = l.caption_x, .top = cap.top, .right = l.width, .bottom = cap.bottom }, t.secondary, w32.DT_VCENTER);
+        drawText(hdc, wbuf[0..wn], .{ .left = l.caption_x, .top = cap.top, .right = cap.right, .bottom = cap.bottom }, t.secondary, w32.DT_VCENTER);
     }
 
     const emphasized = self.isEmphasized();
@@ -653,8 +781,8 @@ fn paintBadge(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, state: Act
 fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
     // The column is the terminal background; the rail is the raised card on
     // it - the banner's material, so the two read as the same family.
-    self.ensureCard(hdc, l.width, l.height, t.bg);
-    if (self.card_dc) |mem| {
+    ensureCardCache(&self.rail_card, hdc, l.width, l.height, t.bg, self.scale);
+    if (self.rail_card.dc) |mem| {
         _ = w32.BitBlt(hdc, 0, 0, l.width, l.height, mem, 0, 0, w32.SRCCOPY);
     } else {
         fillRect(hdc, .{ .right = l.width, .bottom = l.height }, rgb(t.bg));
@@ -695,11 +823,11 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     }
 }
 
-fn ensureCard(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32, bg: color_math.Rgb) void {
-    const stale = self.card_dc == null or self.card_w != w or self.card_h != h or
-        !std.meta.eql(self.card_bg, bg) or self.card_scale != self.scale;
+fn ensureCardCache(cache: *CardCache, hdc: w32.HDC, w: i32, h: i32, bg: color_math.Rgb, scale: f32) void {
+    const stale = cache.dc == null or cache.w != w or cache.h != h or
+        !std.meta.eql(cache.bg, bg) or cache.scale != scale;
     if (!stale) return;
-    self.releaseCard();
+    cache.release();
     if (w <= 0 or h <= 0) return;
 
     var bmi = std.mem.zeroes(w32.BITMAPINFO);
@@ -723,38 +851,24 @@ fn ensureCard(self: *PaneSidebar, hdc: w32.HDC, w: i32, h: i32, bg: color_math.R
     _ = w32.SelectObject(mem_dc, bmp);
     const pixels = @as([*]u32, @ptrCast(@alignCast(raw)));
     // The banner card's margin IS the rail margin (12 DIP), so the card the
-    // material draws lands exactly on `layout().card`.
-    banner_card.render(pixels[0..@intCast(w * h)], banner_card.Metrics.init(w, h, self.scale), bg);
+    // material draws lands exactly on `layout().card` - the rail's, and the
+    // open card's (`layoutOpen` uses the same margin).
+    banner_card.render(pixels[0..@intCast(w * h)], banner_card.Metrics.init(w, h, scale), bg);
 
-    self.card_dc = mem_dc;
-    self.card_bmp = bmp;
-    self.card_w = w;
-    self.card_h = h;
-    self.card_bg = bg;
-    self.card_scale = self.scale;
-}
-
-fn releaseCard(self: *PaneSidebar) void {
-    if (self.card_dc) |dc| _ = w32.DeleteDC(dc);
-    if (self.card_bmp) |b| _ = w32.DeleteObject(b);
-    self.card_dc = null;
-    self.card_bmp = null;
-    self.card_w = 0;
-    self.card_h = 0;
-    self.card_scale = 0;
+    cache.* = .{ .dc = mem_dc, .bmp = bmp, .w = w, .h = h, .bg = bg, .scale = scale };
 }
 
 /// Double-buffered: the whole column is drawn into a memory DC and blitted
 /// once, so a refresh never shows a half-painted list.
-fn paintBuffered(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void {
+fn paintBuffered(self: *PaneSidebar, hdc: w32.HDC, which: Surface, width: i32, height: i32) void {
     if (width <= 0 or height <= 0) return;
-    const mem = w32.CreateCompatibleDC(hdc) orelse return self.paint(hdc, width, height);
+    const mem = w32.CreateCompatibleDC(hdc) orelse return self.paint(hdc, which, width, height);
     defer _ = w32.DeleteDC(mem);
-    const bmp = w32.CreateCompatibleBitmap(hdc, width, height) orelse return self.paint(hdc, width, height);
+    const bmp = w32.CreateCompatibleBitmap(hdc, width, height) orelse return self.paint(hdc, which, width, height);
     defer _ = w32.DeleteObject(bmp);
     const old = w32.SelectObject(mem, bmp);
     defer _ = w32.SelectObject(mem, old);
-    self.paint(mem, width, height);
+    self.paint(mem, which, width, height);
     _ = w32.BitBlt(hdc, 0, 0, width, height, mem, 0, 0, w32.SRCCOPY);
 }
 
@@ -762,15 +876,381 @@ fn paintBuffered(self: *PaneSidebar, hdc: w32.HDC, width: i32, height: i32) void
 // Input
 // -------------------------------------------------------------------------
 
-fn hitAt(self: *PaneSidebar, x: i32, y: i32) pane_sidebar.Hit {
-    const l = self.currentLayout();
+fn hitAt(self: *PaneSidebar, which: Surface, x: i32, y: i32) pane_sidebar.Hit {
+    const l = self.layoutFor(which);
     return pane_sidebar.hitTest(&l, x, y, self.scale);
 }
 
-fn setHover(self: *PaneSidebar, hit: pane_sidebar.Hit) void {
+fn setHover(self: *PaneSidebar, which: Surface, hit: pane_sidebar.Hit) void {
     if (std.meta.eql(self.hover, hit)) return;
     self.hover = hit;
+    if (self.surfaceHwnd(which)) |h| _ = w32.InvalidateRect(h, null, 0);
+}
+
+// -------------------------------------------------------------------------
+// Hover-open (T1842)
+// -------------------------------------------------------------------------
+
+/// Whether the real pointer is on `which` (window regions honored, so the
+/// open card's trailing margin is not "on" it) and, when given, inside
+/// `rect` of that window's client area. Asked at timer time, the way Mac
+/// asks `mouseLocationOutsideOfEventStream`, because a leave message alone
+/// cannot say whether the pointer has come back.
+fn pointerOn(self: *PaneSidebar, which: Surface, rect: ?pane_sidebar.Rect) bool {
+    const hwnd = self.surfaceHwnd(which) orelse return false;
+    var pt: w32.POINT = undefined;
+    if (w32.GetCursorPos_(&pt) == 0) return false;
+    if (w32.WindowFromPoint(pt) != hwnd) return false;
+    const r = rect orelse return true;
+    _ = w32.ScreenToClient(hwnd, &pt);
+    return r.contains(pt.x, pt.y);
+}
+
+/// Arm (or keep armed) the intent timer for a pointer at (`x`, `y`) on the
+/// rail, or disarm it when the point is off the rail's card.
+fn railPointer(self: *PaneSidebar, x: i32, y: i32) void {
+    const l = self.currentLayout();
+    if (!hov.opensOnTimer(self.mode, self.card_open, l.card.contains(x, y))) {
+        self.disarm();
+        return;
+    }
+    if (self.open_armed) return;
+    if (w32.SetTimer(self.hwnd, TIMER_OPEN, hov.open_delay_ms, null) == 0) return;
+    self.open_armed = true;
+    log.info("pane sidebar hover-open armed delay={d}ms", .{hov.open_delay_ms});
+}
+
+fn disarm(self: *PaneSidebar) void {
+    if (!self.open_armed) return;
+    _ = w32.KillTimer(self.hwnd, TIMER_OPEN);
+    self.open_armed = false;
+}
+
+fn onOpenTimer(self: *PaneSidebar) void {
+    self.disarm();
+    const l = self.currentLayout();
+    if (!hov.opensOnTimer(self.mode, self.card_open, self.pointerOn(.rail, l.card))) return;
+    self.openCard(.hover);
+}
+
+fn ensureCardWindow(self: *PaneSidebar) ?w32.HWND {
+    if (self.card_hwnd) |h| return h;
+    if (!card_class_registered) return null;
+    const root = w32.GetAncestor(self.hwnd, w32.GA_ROOT) orelse return null;
+    // A passive popup OWNED by the top-level: it never takes activation (a
+    // click on a row must not pull the window's focus around), it hides and
+    // minimizes with its owner, and as an owned window it sits above the
+    // panes' own popups once seated (`seatCard`).
+    const h = w32.CreateWindowExW(
+        w32.WS_EX_NOACTIVATE | w32.WS_EX_TOOLWINDOW,
+        CARD_CLASS_NAME,
+        std.unicode.utf8ToUtf16LeStringLiteral(""),
+        w32.WS_POPUP,
+        0,
+        0,
+        0,
+        0,
+        root,
+        null,
+        w32.GetModuleHandleW(null),
+        null,
+    ) orelse return null;
+    _ = w32.SetWindowLongPtrW(h, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
+    self.card_hwnd = h;
+    return h;
+}
+
+/// Open the card over the grid. The column - and so the grid - is untouched.
+pub fn openCard(self: *PaneSidebar, reason: CardReason) void {
+    if (self.mode != .mini) return;
+    if (w32.IsWindowVisible(self.hwnd) == 0) return;
+    if (self.ensureCardWindow() == null) return;
+    self.disarm();
+    const was_open = self.card_open;
+    self.card_open = true;
+    self.hover = .none;
+    self.pressed = .none;
+    self.positionCard();
+    if (self.card_hwnd) |c| {
+        _ = w32.InvalidateRect(c, null, 0);
+        // A leave is owed whether or not a move ever arrives: tracking
+        // starts now, so a pointer that is not on the card (an unpin from
+        // the keyboard, a pin clicked and left in one motion) still gets its
+        // grace period rather than a card that never closes.
+        var tme = w32.TRACKMOUSEEVENT{
+            .cbSize = @sizeOf(w32.TRACKMOUSEEVENT),
+            .dwFlags = w32.TME_LEAVE,
+            .hwndTrack = c,
+            .dwHoverTime = 0,
+        };
+        self.card_tracking = w32.TrackMouseEvent(&tme) != 0;
+        _ = w32.SetTimer(c, TIMER_CLOSE, hov.close_delay_ms, null);
+    }
     _ = w32.InvalidateRect(self.hwnd, null, 0);
+    self.syncTips();
+    if (!was_open) self.logCard("open", reason);
+}
+
+pub fn closeCard(self: *PaneSidebar, reason: CardReason) void {
+    if (!self.card_open) return;
+    self.card_open = false;
+    self.card_tracking = false;
+    self.hover = .none;
+    self.pressed = .none;
+    if (self.card_hwnd) |c| {
+        _ = w32.KillTimer(c, TIMER_CLOSE);
+        if (w32.GetCapture() == c) _ = w32.ReleaseCapture();
+        _ = w32.ShowWindow(c, w32.SW_HIDE);
+    }
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    self.logCard("close", reason);
+}
+
+fn logCard(self: *PaneSidebar, what: []const u8, reason: CardReason) void {
+    var col: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+    _ = w32.GetWindowRect(self.hwnd, &col);
+    var card: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+    if (self.card_hwnd) |c| _ = w32.GetWindowRect(c, &card);
+    log.info("pane sidebar card {s} reason={s} column={d},{d},{d},{d} card={d},{d},{d},{d}", .{
+        what,      @tagName(reason),
+        col.left,  col.top,
+        col.right, col.bottom,
+        card.left, card.top,
+        card.right, card.bottom,
+    });
+}
+
+/// Glue the card to the column it grows from: same top-left and height, the
+/// panel's width plus the rail's margins, clipped to the column plus the
+/// rounded card, and seated above the window's other popups.
+fn positionCard(self: *PaneSidebar) void {
+    const c = self.card_hwnd orelse return;
+    var col: w32.RECT = undefined;
+    if (w32.GetWindowRect(self.hwnd, &col) == 0) return;
+    const w = pane_sidebar.openWidthPx(self.window.pane_sidebar_width_dip, self.scale);
+    const h = col.bottom - col.top;
+    if (h <= 0) return;
+
+    // The region: the rail's column, plus the open card's rounded rect.
+    const col_rgn = w32.CreateRectRgn(0, 0, col.right - col.left, h);
+    const margin = pane_sidebar.px(pane_sidebar.rail_margin_dip, self.scale);
+    const radius = @as(i32, @intFromFloat(@round(banner_card.RADIUS * self.scale)));
+    const card_rgn = w32.CreateRoundRectRgn(margin, margin, w - margin + 1, @max(h - margin, margin) + 1, 2 * radius, 2 * radius);
+    if (col_rgn) |a| {
+        if (card_rgn) |b| {
+            _ = w32.CombineRgn(a, a, b, w32.RGN_OR);
+            _ = w32.DeleteObject(b);
+        }
+        // The system owns the region from here (also on a repeat call: the
+        // previous one is released by SetWindowRgn itself).
+        if (w32.SetWindowRgn(c, a, 1) == 0) _ = w32.DeleteObject(a);
+    } else if (card_rgn) |b| _ = w32.DeleteObject(b);
+
+    self.seatCard(c);
+    _ = w32.SetWindowPos(
+        c,
+        self.seatAfterHwnd(c),
+        col.left,
+        col.top,
+        w,
+        h,
+        w32.SWP_NOACTIVATE | w32.SWP_SHOWWINDOW,
+    );
+}
+
+/// Clear a stray topmost bit before seating (`overlay_zorder.isStray`): the
+/// card is never topmost unless its window is.
+fn seatCard(self: *PaneSidebar, c: w32.HWND) void {
+    const root = w32.GetAncestor(self.hwnd, w32.GA_ROOT) orelse return;
+    if (overlay_zorder.isStray(w32.GetWindowLongW(c, w32.GWL_EXSTYLE), w32.GetWindowLongW(root, w32.GWL_EXSTYLE))) {
+        _ = w32.SetWindowPos(c, w32.HWND_NOTOPMOST, 0, 0, 0, 0, w32.SWP_NOACTIVATE | w32.SWP_NOMOVE | w32.SWP_NOSIZE);
+    }
+}
+
+/// Where in the z-order the card goes: directly below the first visible
+/// window above the root that is not one of the root's own popups
+/// (`hov.seatAfter`), or the top of the band.
+fn seatAfterHwnd(self: *PaneSidebar, c: w32.HWND) ?w32.HWND {
+    const root = w32.GetAncestor(self.hwnd, w32.GA_ROOT) orelse return null;
+    var steps: [64]hov.ZStep = undefined;
+    var hwnds: [64]w32.HWND = undefined;
+    var n: usize = 0;
+    var cur = w32.GetWindow(root, w32.GW_HWNDPREV);
+    while (cur) |h| : (cur = w32.GetWindow(h, w32.GW_HWNDPREV)) {
+        if (n == steps.len) break;
+        steps[n] = .{
+            .is_self = h == c,
+            .is_sibling = w32.GetWindow(h, w32.GW_OWNER) == root,
+            .is_visible = w32.IsWindowVisible(h) != 0,
+        };
+        hwnds[n] = h;
+        n += 1;
+    }
+    const i = hov.seatAfter(steps[0..n]) orelse return null; // HWND_TOP
+    return hwnds[i];
+}
+
+fn scheduleClose(self: *PaneSidebar) void {
+    const c = self.card_hwnd orelse return;
+    _ = w32.SetTimer(c, TIMER_CLOSE, hov.close_delay_ms, null);
+}
+
+fn onCloseTimer(self: *PaneSidebar) void {
+    const c = self.card_hwnd orelse return;
+    _ = w32.KillTimer(c, TIMER_CLOSE);
+    if (!self.card_open) return;
+    // A press held on the card (a click in progress; later a drag, T1844, or
+    // a menu, T1845) keeps it open until it is let go.
+    const held = w32.GetCapture() == c;
+    switch (hov.closeVerdict(self.pointerOn(.card, null), held)) {
+        .stay => {},
+        .retry => self.scheduleClose(),
+        .close => self.closeCard(.left),
+    }
+}
+
+// -------------------------------------------------------------------------
+// Tooltips (Mac `.help`)
+// -------------------------------------------------------------------------
+
+fn tipEnsure(self: *PaneSidebar) ?w32.HWND {
+    if (self.tip) |h| return h;
+    var icc = w32.INITCOMMONCONTROLSEX{
+        .dwSize = @sizeOf(w32.INITCOMMONCONTROLSEX),
+        .dwICC = w32.ICC_TAB_CLASSES,
+    };
+    _ = w32.InitCommonControlsEx(&icc);
+    const tip = w32.CreateWindowExW(
+        w32.WS_EX_TOPMOST | w32.WS_EX_TOOLWINDOW | w32.WS_EX_NOACTIVATE,
+        w32.TOOLTIPS_CLASS,
+        std.unicode.utf8ToUtf16LeStringLiteral(""),
+        w32.WS_POPUP | w32.TTS_ALWAYSTIP | w32.TTS_NOPREFIX,
+        w32.CW_USEDEFAULT,
+        w32.CW_USEDEFAULT,
+        w32.CW_USEDEFAULT,
+        w32.CW_USEDEFAULT,
+        // UNOWNED, on purpose. Owned by this window, the topmost tooltip
+        // dragged its owner up the z-order the moment it was created - and it
+        // is created on the first layout of every window, including one
+        // opened in the background, which then landed ABOVE the window the
+        // user was in (cli-focus-policy.ps1 arm R, measured: new window at
+        // z=6 over Ghoztty's frontmost at z=9; unowned, 5 under 4). The tool
+        // texts are set directly, so no notification needs a parent.
+        null,
+        null,
+        null,
+        null,
+    ) orelse return null;
+    // A tile's tip is two lines (the title, then the hint): a max width is
+    // what makes the control honor the line break at all.
+    _ = w32.SendMessageW(tip, w32.TTM_SETMAXTIPWIDTH, 0, pane_sidebar.px(320, self.scale));
+    if (self.theme().dark) {
+        _ = w32.SetWindowTheme(tip, std.unicode.utf8ToUtf16LeStringLiteral("DarkMode_Explorer"), null);
+    }
+    self.tip = tip;
+    return tip;
+}
+
+fn toolInfo(hwnd: w32.HWND, id: usize, r: pane_sidebar.Rect, text: [*:0]const u16) w32.TOOLINFOW {
+    return .{
+        .cbSize = @sizeOf(w32.TOOLINFOW),
+        .uFlags = w32.TTF_SUBCLASS,
+        .hwnd = hwnd,
+        .uId = id,
+        .rect = .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom },
+        .hinst = null,
+        .lpszText = @constCast(@ptrCast(text)),
+        .lParam = 0,
+        .lpReserved = null,
+    };
+}
+
+fn addTool(tip: w32.HWND, hwnd: w32.HWND, id: usize, r: pane_sidebar.Rect, text: [*:0]const u16) void {
+    var ti = toolInfo(hwnd, id, r, text);
+    // Delete first: re-adding an existing id would leave the old rect live.
+    _ = w32.SendMessageW(tip, w32.TTM_DELTOOLW, 0, @bitCast(@intFromPtr(&ti)));
+    _ = w32.SendMessageW(tip, w32.TTM_ADDTOOLW, 0, @bitCast(@intFromPtr(&ti)));
+}
+
+fn delTool(tip: w32.HWND, hwnd: w32.HWND, id: usize) void {
+    var ti = toolInfo(hwnd, id, .{}, std.unicode.utf8ToUtf16LeStringLiteral(""));
+    _ = w32.SendMessageW(tip, w32.TTM_DELTOOLW, 0, @bitCast(@intFromPtr(&ti)));
+}
+
+const W = std.unicode.utf8ToUtf16LeStringLiteral;
+const tip_pin = W(hov.pinTip(false));
+const tip_unpin = W(hov.pinTip(true));
+const tip_focus = W(hov.rowHint(.grid));
+const tip_restore = W(hov.rowHint(.stashed));
+const tip_stash_btn = W(hov.buttonTip(.grid));
+const tip_restore_btn = W(hov.buttonTip(.stashed));
+
+/// Bring both windows' tools in line with their layouts. Idempotent; cheap
+/// enough for every place/refresh (a handful of tool messages).
+fn syncTips(self: *PaneSidebar) void {
+    const tip = self.tipEnsure() orelse return;
+    var line: [256]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&line);
+    const lw = fbs.writer();
+    inline for (.{ Surface.rail, Surface.card }) |which| {
+        const slot = @intFromEnum(which);
+        if (self.surfaceHwnd(which)) |hwnd| {
+            const live = switch (which) {
+                .rail => self.mode != .hidden,
+                .card => self.card_open,
+            };
+            const l = self.layoutFor(which);
+            const n = if (live) @min(l.count, self.entries.items.len) else 0;
+            // Drop the tools of rows that are gone.
+            if (self.tip_items[slot] > n) for (n..self.tip_items[slot]) |i| {
+                delTool(tip, hwnd, toolItem(i));
+                delTool(tip, hwnd, toolButton(i));
+            };
+            if (!live) {
+                delTool(tip, hwnd, tool_pin);
+            } else {
+                addTool(tip, hwnd, tool_pin, l.pin, if (self.window.pane_sidebar_pinned) tip_unpin else tip_pin);
+                const rows = l.mode == .expanded or l.open;
+                for (self.entries.items[0..n], 0..) |e, i| {
+                    if (rows) {
+                        addTool(tip, hwnd, toolItem(i), l.items[i], if (e.section == .stashed) tip_restore else tip_focus);
+                        addTool(tip, hwnd, toolButton(i), l.rowButton(i, self.scale), if (e.section == .stashed) tip_restore_btn else tip_stash_btn);
+                    } else {
+                        const len = hov.tileTip(&self.tip_text[i], e.title, e.section);
+                        addTool(tip, hwnd, toolItem(i), l.items[i], self.tip_text[i][0..len :0]);
+                        delTool(tip, hwnd, toolButton(i));
+                    }
+                }
+            }
+            self.tip_items[slot] = n;
+            lw.print(" {s}={d}", .{ @tagName(which), if (live) n + 1 else 0 }) catch {};
+        }
+    }
+    self.logTips(line[0..fbs.pos]);
+}
+
+/// The tooltip set, once per CHANGE, for the acceptance script: tools are
+/// windows of comctl32's that a background desktop can never show, so what is
+/// scored is that every tile, row and pin got one.
+fn logTips(self: *PaneSidebar, counts: []const u8) void {
+    // The first tile's text, so the script can check it names the pane. Part
+    // of what is compared: the same counts in another mode is another set.
+    var first: [hov.tip_cap * 3]u8 = undefined;
+    var first_len: usize = 0;
+    if (self.mode == .mini and self.tip_items[0] > 0) {
+        const t = std.mem.sliceTo(&self.tip_text[0], 0);
+        first_len = std.unicode.utf16LeToUtf8(&first, t) catch 0;
+        for (first[0..first_len]) |*ch| if (ch.* == 0x0A) {
+            ch.* = '|';
+        };
+    }
+    var buf: [hov.tip_cap * 3 + 256]u8 = undefined;
+    const line = std.fmt.bufPrint(&buf, "{s} mode={s} tile0={s}", .{ counts, @tagName(self.mode), first[0..first_len] }) catch counts;
+    const key = line[0..@min(line.len, self.tip_log.len)];
+    if (key.len == self.tip_log_len and std.mem.eql(u8, self.tip_log[0..self.tip_log_len], key)) return;
+    @memcpy(self.tip_log[0..key.len], key);
+    self.tip_log_len = key.len;
+    log.info("pane sidebar tips{s}", .{line});
 }
 
 fn activate(self: *PaneSidebar, hit: pane_sidebar.Hit) void {
@@ -797,14 +1277,26 @@ fn yOf(lparam: isize) i32 {
 
 fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.winapi) isize {
     const self = fromHwnd(hwnd) orelse return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+    const which: Surface = if (self.card_hwnd != null and self.card_hwnd.? == hwnd) .card else .rail;
     switch (msg) {
         w32.WM_ERASEBKGND => return 1,
+        // The open card never takes activation: a click on a row acts, and the
+        // window's focus moves only as that action moves it.
+        w32.WM_MOUSEACTIVATE => return if (which == .card) w32.MA_NOACTIVATE else w32.DefWindowProcW(hwnd, msg, wparam, lparam),
+        w32.WM_TIMER => {
+            switch (wparam) {
+                TIMER_OPEN => if (which == .rail) self.onOpenTimer(),
+                TIMER_CLOSE => if (which == .card) self.onCloseTimer(),
+                else => {},
+            }
+            return 0;
+        },
         w32.WM_PAINT => {
             var ps: w32.PAINTSTRUCT = undefined;
             const hdc = w32.BeginPaint(hwnd, &ps) orelse return 0;
             defer _ = w32.EndPaint(hwnd, &ps);
             var r: w32.RECT = undefined;
-            if (w32.GetClientRect(hwnd, &r) != 0) self.paintBuffered(hdc, r.right - r.left, r.bottom - r.top);
+            if (w32.GetClientRect(hwnd, &r) != 0) self.paintBuffered(hdc, which, r.right - r.left, r.bottom - r.top);
             return 0;
         },
         // The same column into a caller's DC, so a pixel probe can photograph
@@ -813,43 +1305,68 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             if (wparam == 0) return 0;
             var r: w32.RECT = undefined;
             if (w32.GetClientRect(hwnd, &r) == 0) return 0;
-            self.paint(@ptrFromInt(wparam), r.right - r.left, r.bottom - r.top);
+            self.paint(@ptrFromInt(wparam), which, r.right - r.left, r.bottom - r.top);
             return 0;
         },
         w32.WM_MOUSEMOVE => {
-            self.setHover(self.hitAt(xOf(lparam), yOf(lparam)));
-            if (!self.tracking) {
+            const x = xOf(lparam);
+            const y = yOf(lparam);
+            self.setHover(which, self.hitAt(which, x, y));
+            const tracked = switch (which) {
+                .rail => &self.tracking,
+                .card => &self.card_tracking,
+            };
+            if (!tracked.*) {
                 var tme = w32.TRACKMOUSEEVENT{
                     .cbSize = @sizeOf(w32.TRACKMOUSEEVENT),
                     .dwFlags = w32.TME_LEAVE,
                     .hwndTrack = hwnd,
                     .dwHoverTime = 0,
                 };
-                if (w32.TrackMouseEvent(&tme) != 0) self.tracking = true;
+                if (w32.TrackMouseEvent(&tme) != 0) tracked.* = true;
+            }
+            switch (which) {
+                .rail => self.railPointer(x, y),
+                // Back on the card: the grace period is off.
+                .card => if (self.card_hwnd) |c| {
+                    _ = w32.KillTimer(c, TIMER_CLOSE);
+                },
             }
             return 0;
         },
         w32.WM_MOUSELEAVE => {
-            self.tracking = false;
-            self.pressed = .none;
-            self.setHover(.none);
+            switch (which) {
+                .rail => {
+                    self.tracking = false;
+                    self.disarm();
+                },
+                .card => {
+                    self.card_tracking = false;
+                    if (self.card_open) self.scheduleClose();
+                },
+            }
+            if (w32.GetCapture() != hwnd) self.pressed = .none;
+            self.setHover(which, .none);
             return 0;
         },
         w32.WM_LBUTTONDOWN => {
             // Activation is on the up over the same target (the standard
             // button affordance), so a press that slides off does nothing.
-            self.pressed = self.hitAt(xOf(lparam), yOf(lparam));
+            self.pressed = self.hitAt(which, xOf(lparam), yOf(lparam));
             _ = w32.SetCapture(hwnd);
             _ = w32.InvalidateRect(hwnd, null, 0);
             return 0;
         },
         w32.WM_LBUTTONUP => {
             _ = w32.ReleaseCapture();
-            const hit = self.hitAt(xOf(lparam), yOf(lparam));
+            const hit = self.hitAt(which, xOf(lparam), yOf(lparam));
             const pressed = self.pressed;
             self.pressed = .none;
             _ = w32.InvalidateRect(hwnd, null, 0);
             if (std.meta.eql(hit, pressed)) self.activate(hit);
+            // Let go off the card while it was held open: the grace period
+            // the hold deferred starts now.
+            if (which == .card and self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();
             return 0;
         },
         else => return w32.DefWindowProcW(hwnd, msg, wparam, lparam),
