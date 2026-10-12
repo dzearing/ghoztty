@@ -1,17 +1,17 @@
 {
     "guard":  "pane-elevation",
     "script":  "test/win32/pane-elevation.ps1",
-    "generated":  "2026-10-11T12:13:24-07:00",
-    "commit":  "ef3adf9cb",
+    "generated":  "2026-10-12T11:22:46-07:00",
+    "commit":  "791cf112e",
     "uncommitted":  [
+                        "src/apprt/win32/desk_palette.zig",
                         "src/apprt/win32/pane_elevation.zig",
-                        "src/apprt/win32/PaneDesk.zig",
-                        "src/apprt/win32/split_geometry.zig",
-                        "test/win32/pane-elevation.ps1"
+                        "src/apprt/win32/PaneDesk.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/pane_elevation.zig":  "995a596c16c4dd352d346dbc69804115acb0dc29b1f0bb65aed15ef63c573de2",
-                  "src/apprt/win32/PaneDesk.zig":  "1deb7caac4ff9dec631e3ad65dcaa3ad8e0f543cbe68552d96fab4d90fdce9c5",
+                  "src/apprt/win32/desk_palette.zig":  "15066c263441729e38ca5cd9f785a15869fe7eb923ea14e239b53ee6caf8b707",
+                  "src/apprt/win32/pane_elevation.zig":  "2766a934ee922ec5a1b5631916ddbdb18fe5a5790e0df7225802ac5066ef0632",
+                  "src/apprt/win32/PaneDesk.zig":  "56b3382f7b807363099e13be63b98744d1057c320d72dde7e6fb528790f71117",
                   "src/apprt/win32/split_geometry.zig":  "c60bd4f763c403d8e2c32d66f1b88956565a4928bc64f4d6a09406398ffbc312",
                   "test/win32/pane-elevation.ps1":  "c5f2fe5c13fe3fe66ffc82396a8b85d41bc39c6b5ace4401dec66d65db4561f4"
               }

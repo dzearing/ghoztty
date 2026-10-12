@@ -1,11 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-12T10:49:48-07:00",
-    "commit":  "70d7a31b8",
+    "generated":  "2026-10-12T12:31:42-07:00",
+    "commit":  "791cf112e",
     "uncommitted":  [
                         "scripts/guard-due.ps1",
-                        "test/win32/pane-grab-handle.ps1"
+                        "test/win32/desk-variant.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -35,7 +35,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "e0ef010274bb564481ff123dadce640658569ba14bc37bcfde1dc2e374cc610c",
+                  "scripts/guard-due.ps1":  "fc88942bf72961841753e842a22180c2ccf16f68d85102c969b4f4c133d4f894",
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -182,6 +182,7 @@
                   "test/win32/dashboard-dom.ps1":  "34e4f9885499690ee161fda2d60842afdd46577fa37393f71cc0cc2e5c818b27",
                   "test/win32/deliver-windows-build.ps1":  "137ec598dafcdad2b79248b5d5761fa742d92b0965e012f15c1e05c394f52307",
                   "test/win32/desktop-launch-audit.ps1":  "3cacc5fce5628dd8501cdc2315698e7974c8b28d35159f7c67685f3e99ec57e1",
+                  "test/win32/desk-variant.ps1":  "ad33dc758514da73416631f090514c0c34f9e15adeb7a2e087a2bba660911598",
                   "test/win32/divergence-inventory.ps1":  "938a7b36a7170b1e2d20f7670d0945e3163c7245fcf51cc2322a8837047d630c",
                   "test/win32/docs-routing.ps1":  "0df33f259fc8eb88f4eb186c8f0fb216bfe5e929d3e8e85e59a9b3cbd4b6d821",
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",

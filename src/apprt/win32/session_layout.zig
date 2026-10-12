@@ -299,6 +299,13 @@ pub const Window = struct {
     ipc_name: ?[]const u8 = null,
     active_tab: u32 = 0,
     tabs: []const Tab = &.{},
+    /// The window's own gradient (T1832), as its seed: set by
+    /// `+new-window --color=random` or a window opened by hand, in the
+    /// elevated pane style. The palette is derived from it per theme at paint
+    /// time, so the seed is all a restore needs. Additive: absent is the
+    /// default ocean desk, and an older build ignores it. Mac's spelling is
+    /// `deskVariant: {seed}`.
+    desk_variant: ?u64 = null,
 };
 
 /// The whole file. `windows` is a present (possibly empty) array so a reader
@@ -962,6 +969,26 @@ test "T422: a pane's sticky banner round-trips, markdown source intact" {
     // A pane with no banner records none, so restore leaves the slot free for
     // the session-interrupted notice rather than setting an empty banner.
     try testing.expect(leaves[1].leaf.?.banner == null);
+}
+
+test "T1832: a window's own gradient round-trips as its seed, past i64" {
+    const alloc = testing.allocator;
+    const nodes = [_]Node{.{ .leaf = .{ .session_id = "0123456789abcdef0123456789abcdef" } }};
+    const tabs = [_]Tab{.{ .nodes = &nodes, .active = true }};
+    // A seed above i64's range, as most of Mac's `1...UInt64.max` draws are.
+    const windows = [_]Window{
+        .{ .id = "win-0", .tabs = &tabs, .desk_variant = 0xF00D_CAFE_DEAD_BEEF },
+        .{ .id = "win-1", .tabs = &tabs },
+    };
+    const body = try serialize(alloc, .{ .windows = &windows });
+    defer alloc.free(body);
+    // An ocean window writes nothing at all.
+    try testing.expectEqual(@as(usize, 1), std.mem.count(u8, body, "desk_variant"));
+
+    var parsed = try parse(alloc, body);
+    defer parsed.deinit();
+    try testing.expectEqual(@as(?u64, 0xF00D_CAFE_DEAD_BEEF), parsed.value.windows[0].desk_variant);
+    try testing.expectEqual(@as(?u64, null), parsed.value.windows[1].desk_variant);
 }
 
 test "T422: a pre-banner manifest still loads, with a null banner" {

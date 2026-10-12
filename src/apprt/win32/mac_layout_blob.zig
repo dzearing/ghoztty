@@ -86,6 +86,9 @@ pub const Entry = struct {
     /// entry of a tab group.
     window_title: ?[]const u8 = null,
     ipc_name: ?[]const u8 = null,
+    /// `Entry.deskVariant.seed` (T1832): the window's own gradient. Null is
+    /// the default desk.
+    desk_variant: ?u64 = null,
     /// The tree, flattened to win32's `nodes[0] = root` representation.
     nodes: []const session_layout.Node = &.{},
 };
@@ -134,6 +137,7 @@ pub fn parseEntry(arena: Allocator, v: std.json.Value) !Entry {
         .tab_title = str(obj.get("titleOverride")),
         .window_title = str(obj.get("windowTitleOverride")),
         .ipc_name = str(obj.get("ipcName")),
+        .desk_variant = deskSeed(obj.get("deskVariant")),
         .nodes = try nodes.toOwnedSlice(arena),
     };
 }
@@ -185,6 +189,7 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
         var frame: ?session_layout.Frame = null;
         var window_title: ?[]const u8 = null;
         var ipc_name: ?[]const u8 = null;
+        var desk_variant: ?u64 = null;
         for (g.items, 0..) |entry, ti| {
             tabs[ti] = .{
                 .nodes = entry.nodes,
@@ -196,6 +201,7 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
             if (frame == null) frame = entry.frame;
             if (window_title == null) window_title = entry.window_title;
             if (ipc_name == null) ipc_name = entry.ipc_name;
+            if (desk_variant == null) desk_variant = entry.desk_variant;
         }
 
         try out.append(arena, .{
@@ -208,6 +214,7 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
             .ipc_name = ipc_name,
             .active_tab = 0,
             .tabs = tabs,
+            .desk_variant = desk_variant,
         });
     }
     return out.toOwnedSlice(arena);
@@ -341,6 +348,23 @@ fn str(v: ?std.json.Value) ?[]const u8 {
         .string => |s| if (s.len == 0) null else s,
         else => null,
     };
+}
+
+/// Mac's `PaneDeskVariant` (`{"seed": <UInt64>}`) as its seed (T1832). A
+/// seed past `i64` arrives as a number string, which is most of them: Mac
+/// draws from the whole `1...UInt64.max`. Anything else - absent, zero,
+/// negative, fractional - is no variant.
+fn deskSeed(v: ?std.json.Value) ?u64 {
+    const obj = switch (v orelse return null) {
+        .object => |o| o,
+        else => return null,
+    };
+    const seed: u64 = switch (obj.get("seed") orelse return null) {
+        .integer => |i| if (i > 0) @intCast(i) else return null,
+        .number_string => |s| std.fmt.parseInt(u64, s, 10) catch return null,
+        else => return null,
+    };
+    return if (seed == 0) null else seed;
 }
 
 fn int(v: ?std.json.Value) ?i64 {
@@ -509,6 +533,39 @@ test "T337: a nested Mac tree flattens to win32's indexed nodes array" {
     try testing.expectEqualStrings("bbbb", right.session_id.?);
     try testing.expectEqualStrings("logs", right.ipc_name.?);
     try testing.expect(right.title == null);
+}
+
+test "T1832: a Mac window's deskVariant seed comes across, whatever its size" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+
+    // Above i64: std.json hands it over as a number string.
+    const big =
+        \\{"id":"e","deskVariant":{"seed":17293822569102704639},
+        \\"tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+    ;
+    const e1 = try translate(arena, big);
+    try testing.expectEqual(@as(?u64, 17293822569102704639), e1.desk_variant);
+    const windows = try groupIntoWindows(arena, &.{e1});
+    try testing.expectEqual(@as(?u64, 17293822569102704639), windows[0].desk_variant);
+
+    const small =
+        \\{"id":"e","deskVariant":{"seed":42},"tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+    ;
+    try testing.expectEqual(@as(?u64, 42), (try translate(arena, small)).desk_variant);
+
+    // No variant, a zero, a negative or a malformed one: the default desk.
+    for ([_][]const u8{
+        \\{"id":"e","tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+        ,
+        \\{"id":"e","deskVariant":{"seed":0},"tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+        ,
+        \\{"id":"e","deskVariant":{"seed":-3},"tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+        ,
+        \\{"id":"e","deskVariant":"blue","tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+        ,
+    }) |blob| try testing.expectEqual(@as(?u64, null), (try translate(arena, blob)).desk_variant);
 }
 
 test "T337: a deeper tree keeps every child index above its parent" {

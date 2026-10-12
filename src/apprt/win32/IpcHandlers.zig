@@ -32,6 +32,7 @@ const tab_strip = @import("tab_strip_layout.zig");
 const w32 = @import("win32.zig");
 const window_active = @import("window_active.zig");
 const color_math = @import("color_math.zig");
+const desk_palette = @import("desk_palette.zig");
 const apprt = @import("../../apprt.zig");
 const termio = @import("../../termio.zig");
 const terminal = @import("../../terminal/main.zig");
@@ -309,6 +310,15 @@ fn resolveColor(value: ?[]const u8) ?color_math.Rgb {
     return color_math.parseHex(v);
 }
 
+/// The window's own gradient for a `+new-window --color` value (T1832): a
+/// fresh random one for `random` in the elevated style, null otherwise (no
+/// color, an explicit hex, or the flat style, which has no desk to vary).
+fn deskVariantFor(color: ?[]const u8, style: anytype) ?desk_palette.Variant {
+    const v = color orelse return null;
+    if (style != .elevated or !std.mem.eql(u8, v, "random")) return null;
+    return desk_palette.Variant.random();
+}
+
 fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
     const app = ctx.app;
 
@@ -335,6 +345,7 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
                     .shell = nonEmpty(args.shell),
                     .command = nonEmpty(args.command),
                     .activate = args.focus, // T1797
+                    .desk_variant = deskVariantFor(args.color, app.config.@"macos-pane-style"),
                 }) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     error.DialFailed => return try errorResponse(
@@ -479,12 +490,19 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
         .env = env.items,
     };
 
+    // `--color=random` in the elevated pane style (T1832, Mac fe3f7c8da): the
+    // panes sit on the window's gradient, so a random color is a random
+    // GRADIENT and the terminals keep their theme. An explicit hex is still a
+    // terminal tint, as is `random` in the flat style (below).
+    const desk_variant = deskVariantFor(args.color, app.config.@"macos-pane-style");
+
     const window = app.createWindow(.{
         // A viewer first pane has no shell for these to configure; passing them
         // anyway would describe a spawn that is not happening.
         .surface_overrides = if (viewer_open != null) null else &overrides,
         .viewer_open = viewer_open,
         .ipc_name = args.target,
+        .desk_variant = desk_variant,
         // T1797: background unless `--focus` - shown without activation,
         // behind Ghoztty's frontmost window, no keyboard focus moved.
         .background = !args.focus,
@@ -512,11 +530,12 @@ fn handleNewWindow(ctx: Context, request: Request) Allocator.Error!?[]u8 {
 
     // `--color` (T67): tint the window's first surface — background +
     // contrast foreground + WCAG-adjusted palette (Mac applyColorScheme).
-    if (resolveColor(args.color)) |tint| {
-        if (window.tab_count > 0) {
+    // Not when the color became the window's gradient (T1832).
+    if (desk_variant == null) {
+        if (resolveColor(args.color)) |tint| if (window.tab_count > 0) {
             if (window.tab_active_pane[window.active_tab].surface()) |s|
                 s.applyBackgroundTint(tint, true);
-        }
+        };
     }
 
     // `--focus` (T1797): the old raise. Without it the window was already

@@ -280,6 +280,9 @@ test {
     // Pure win32 elevated-pane geometry, desk gradient and card raster
     // (T1831), same no-OS-imports deal.
     _ = @import("apprt/win32/pane_elevation.zig");
+    // The desk's palettes - the ocean and a window's own seeded gradient
+    // (T1832) - same deal.
+    _ = @import("apprt/win32/desk_palette.zig");
 
     // Pure win32 rearrange-mode drop resolution — which of the five drops a
     // drag point means, across a SET of candidate windows (T1528), same

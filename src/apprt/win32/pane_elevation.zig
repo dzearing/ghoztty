@@ -21,6 +21,7 @@
 const std = @import("std");
 const testing = std.testing;
 const color_math = @import("color_math.zig");
+const desk_palette = @import("desk_palette.zig");
 
 /// THE spacing of the elevated layout, in DIP: between the outermost panes
 /// and the window's edge (room for their shadows), and between two panes
@@ -71,130 +72,12 @@ pub fn childRadiusPx(scale: f32) i32 {
     return radiusPx(scale) - childInsetPx(.elevated, scale) + 1;
 }
 
-// ---------------------------------------------------------------------------
-// The desk: Mac `PaneDeskPalette.ocean` (the `pools` look).
+// The desk's colours and gradient live in `desk_palette.zig` (T1832: a
+// window may carry its own); the card painter shares its pixel helpers.
 
-pub const Hsb = color_math.Hsb;
-
-pub const Rgbf = struct {
-    r: f32,
-    g: f32,
-    b: f32,
-
-    fn fromHsb(hue_deg: f64, s: f64, b: f64) Rgbf {
-        const c = color_math.hsbToRgb(.{ .h = hue_deg / 360.0, .s = s, .b = b });
-        return .{
-            .r = @floatFromInt(c.r),
-            .g = @floatFromInt(c.g),
-            .b = @floatFromInt(c.b),
-        };
-    }
-
-    fn lerp(a: Rgbf, b: Rgbf, t: f32) Rgbf {
-        return .{
-            .r = a.r + (b.r - a.r) * t,
-            .g = a.g + (b.g - a.g) * t,
-            .b = a.b + (b.b - a.b) * t,
-        };
-    }
-
-    fn pack(c: Rgbf) u32 {
-        return packRgb(chan(c.r), chan(c.g), chan(c.b));
-    }
-};
-
-fn chan(v: f32) u8 {
-    return @intFromFloat(std.math.clamp(@round(v), 0, 255));
-}
-
-/// A 32bpp top-down DIB pixel (`BI_RGB`): 0x00RRGGBB.
-pub fn packRgb(r: u8, g: u8, b: u8) u32 {
-    return (@as(u32, r) << 16) | (@as(u32, g) << 8) | b;
-}
-
-fn unpack(p: u32) Rgbf {
-    return .{
-        .r = @floatFromInt((p >> 16) & 0xFF),
-        .g = @floatFromInt((p >> 8) & 0xFF),
-        .b = @floatFromInt(p & 0xFF),
-    };
-}
-
-pub const Palette = struct {
-    base_start: Rgbf,
-    base_end: Rgbf,
-    lead: Rgbf,
-    trail: Rgbf,
-    lead_reach: f32,
-    trail_reach: f32,
-
-    /// Mac `PaneDeskPalette.ocean(isLight:)`, value for value.
-    pub fn ocean(is_light: bool) Palette {
-        if (is_light) return .{
-            .base_start = Rgbf.fromHsb(206, 0.04, 0.98),
-            .base_end = Rgbf.fromHsb(198, 0.03, 0.96),
-            .lead = Rgbf.fromHsb(205, 0.16, 0.97),
-            .trail = Rgbf.fromHsb(171, 0.14, 0.93),
-            .lead_reach = 0.75,
-            .trail_reach = 0.65,
-        };
-        return .{
-            .base_start = Rgbf.fromHsb(213, 0.50, 0.14),
-            .base_end = Rgbf.fromHsb(213, 0.39, 0.11),
-            .lead = Rgbf.fromHsb(205, 0.73, 0.42),
-            .trail = Rgbf.fromHsb(177, 0.77, 0.35),
-            .lead_reach = 0.75,
-            .trail_reach = 0.65,
-        };
-    }
-
-    /// The desk's colour at a point of a `w` x `h` window. SwiftUI's stack:
-    /// a linear base from (0.2w, 0) to (0.8w, h), then a radial pool of
-    /// `lead` fading to clear from the top-leading corner, then one of
-    /// `trail` from the bottom-trailing one; each reach is a fraction of the
-    /// window's longer side. A gradient to `.clear` is a premultiplied fade,
-    /// which over an opaque base is a plain mix by the remaining alpha.
-    pub fn at(self: Palette, x: f32, y: f32, w: f32, h: f32) Rgbf {
-        const sx = 0.2 * w;
-        const ex = 0.8 * w;
-        const dx = ex - sx;
-        const dy = h;
-        const len2 = @max(dx * dx + dy * dy, 1);
-        const t = std.math.clamp(((x - sx) * dx + y * dy) / len2, 0, 1);
-        var c = Rgbf.lerp(self.base_start, self.base_end, t);
-
-        const reach = @max(w, h);
-        const lead_r = @max(reach * self.lead_reach, 1);
-        const lead_a = 1 - @min(@sqrt(x * x + y * y) / lead_r, 1);
-        c = Rgbf.lerp(c, self.lead, lead_a);
-
-        const tx = w - x;
-        const ty = h - y;
-        const trail_r = @max(reach * self.trail_reach, 1);
-        const trail_a = 1 - @min(@sqrt(tx * tx + ty * ty) / trail_r, 1);
-        c = Rgbf.lerp(c, self.trail, trail_a);
-        return c;
-    }
-};
-
-/// Fill a `w` x `h` buffer with the desk of a `full_w` x `full_h` window,
-/// sampled at the centre of each of the buffer's pixels. The caller renders a
-/// reduced-size desk and stretches it: the gradient has no detail to lose,
-/// and a full-size desk recomputed on every live resize frame is the cost a
-/// drag would feel.
-pub fn renderDesk(buf: []u32, w: usize, h: usize, full_w: f32, full_h: f32, pal: Palette) void {
-    std.debug.assert(buf.len >= w * h);
-    if (w == 0 or h == 0) return;
-    const fx = full_w / @as(f32, @floatFromInt(w));
-    const fy = full_h / @as(f32, @floatFromInt(h));
-    for (0..h) |row| {
-        const y = (@as(f32, @floatFromInt(row)) + 0.5) * fy;
-        for (0..w) |col| {
-            const x = (@as(f32, @floatFromInt(col)) + 0.5) * fx;
-            buf[row * w + col] = pal.at(x, y, full_w, full_h).pack();
-        }
-    }
-}
+const Rgbf = desk_palette.Rgbf;
+const unpack = Rgbf.unpack;
+pub const packRgb = desk_palette.packRgb;
 
 // ---------------------------------------------------------------------------
 // Cards: shadow, fill, rim.
@@ -411,28 +294,6 @@ test "T1831: the child sits inside the rim and its corner never leaves the card"
             }
         }
     }
-}
-
-test "T1831: the ocean desk is blue at the top-leading corner and teal at the far one" {
-    const pal = Palette.ocean(false);
-    const tl = pal.at(0, 0, 1000, 600);
-    const br = pal.at(1000, 600, 1000, 600);
-    // Blue: more blue than green; teal: green and blue close together.
-    try testing.expect(tl.b > tl.g and tl.g > tl.r);
-    try testing.expect(br.g > br.r and @abs(br.g - br.b) < 20);
-    // A dark desk on a dark theme, a near-white one on a light theme.
-    const mid = pal.at(500, 300, 1000, 600);
-    try testing.expect(mid.r + mid.g + mid.b < 3 * 110);
-    const light = Palette.ocean(true).at(500, 300, 1000, 600);
-    try testing.expect(light.r + light.g + light.b > 3 * 220);
-}
-
-test "T1831: renderDesk samples the full window however small the buffer" {
-    var buf: [4 * 3]u32 = undefined;
-    const pal = Palette.ocean(false);
-    renderDesk(&buf, 4, 3, 1000, 600, pal);
-    try testing.expectEqual(pal.at(125, 100, 1000, 600).pack(), buf[0]);
-    try testing.expectEqual(pal.at(875, 500, 1000, 600).pack(), buf[11]);
 }
 
 test "T1831: roundRectDistance - inside, edge, corner" {

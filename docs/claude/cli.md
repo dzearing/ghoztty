@@ -1070,9 +1070,15 @@ and geometry (10 DIP margin and gap, 11 DIP corners, the ocean desk). The
 parent window paints the desk, the shadows and each card's antialiased fill and
 rim (`pane_elevation.zig` / `PaneDesk.zig`); each pane's child window sits one
 rim width inside its card, clipped to a rounded window region. The Quick
-Terminal stays flat. Not yet on Windows: the sidebar over the desk (T1850),
-card-shaped header/banner bands (T1851), translucent windows (T1852), random
-per-window desks (T1832), glass (T1833), the focus glow (T1834).
+Terminal stays flat. Random per-window desks landed too (T1832,
+`desk_palette.zig`): Ctrl+Shift+N, the New Window menu item and palette
+command, and `+new-window --color=random` give the window its own gradient,
+derived from Mac's seed with Mac's generator draw for draw - so one seed is one
+gradient on both platforms - and persisted as `desk_variant` in the session
+layout (a Mac blob's `deskVariant.seed` is read across). The machine chooser's
+Local row, like Mac's, opens a plain ocean window. Not yet on Windows: the
+sidebar over the desk (T1850), card-shaped header/banner bands (T1851),
+translucent windows (T1852), glass (T1833), the focus glow (T1834).
 **Glass panes** (`macos-pane-glass`, default `true`, elevated only): each pane
 is a translucent sheet tinted 40% with the terminal's own background (Liquid
 Glass on macOS 26, a plain tint before — `PaneGlass`), so the gradient's light

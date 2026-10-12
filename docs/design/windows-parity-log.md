@@ -35555,3 +35555,32 @@ moved to T1814.
   (lib/none/win32/agent) and P1-P3 are ALL PASS, and so are all 42 harnesses
   the edit made due, the harness floor included. On-screen look beside Mac is
   NOT RUN (the user is present; never pull focus) - filed as T1881.
+
+## 2026-10-12 — T1832: each window can have its own gradient
+
+- **What changed.** In the default elevated style, a window opened by hand
+  (the New Window shortcut, menu or palette item, a viewer's chord, or New
+  Window on a remote window) now gets its own gradient: one random hue, lit
+  softly from the top center and falling away toward the bottom-right corner,
+  where a dim glow of the opposite hue sits. `+new-window --color=random` does
+  the same and no longer tints the terminal, which keeps its theme colour. The
+  startup window and scripted windows keep the shared ocean, and so does the
+  machine chooser's Local row, as on Mac. Flat style and an explicit hex colour
+  keep the old terminal tint.
+- **How.** `desk_palette.zig` holds both desk looks and ports Mac's seeded
+  generator draw for draw, so one seed gives the same gradient on both
+  platforms. The window keeps the seed (`Window.desk_variant`), the cached
+  desk re-renders when it changes, and the session layout records it as
+  `desk_variant`. A Mac layout's `deskVariant.seed` is read too.
+- **Validation.** New `desk-variant.ps1` passes all 28 checks: ocean by default,
+  a random window paints its own gradient with an untinted terminal, a
+  by-hand window gets its own seed, a restart brings back the same seed and the
+  same pixels, and flat style still tints. Its `-NegativeControl` run fails as
+  it should. The floor (lib/none/win32/agent), P1-P3 and `pane-elevation.ps1`
+  all pass, and so does every harness the edit made due.
+- **Found on the way.** Main moved this morning, and its 1342e7af5 changed the
+  ghoztty skill text, which turned hook-json red on vendor drift. The pristine
+  mirror is re-vendored here. The Windows half of that fix is filed as T1883,
+  and the Mac reader of Windows layouts needs `desk_variant` (T1882, Mac seat).
+  The other two new main commits (3ac40dc8b, a5c0841be) are left for
+  tomorrow's intake.

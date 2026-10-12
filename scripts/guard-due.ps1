@@ -2848,9 +2848,25 @@ $GuardTable = @(
         Stamp  = 'test\win32\pane-elevation.stamp.json'
         Covers = @(
             'src\apprt\win32\pane_elevation.zig',
+            'src\apprt\win32\desk_palette.zig',
             'src\apprt\win32\PaneDesk.zig',
             'src\apprt\win32\split_geometry.zig',
             'test\win32\pane-elevation.ps1'
+        )
+    },
+    # T1832: a window's own gradient - `+new-window --color=random`, the New
+    # Window action, and the seed surviving a restart. The unit tests own the
+    # palette maths; this row owns the claim that the right windows get one, the
+    # terminals keep their theme, and a restore brings the same gradient back.
+    [pscustomobject]@{
+        Name   = 'desk-variant'
+        Script = 'test\win32\desk-variant.ps1'
+        Stamp  = 'test\win32\desk-variant.stamp.json'
+        Covers = @(
+            'src\apprt\win32\desk_palette.zig',
+            'src\apprt\win32\PaneDesk.zig',
+            'src\apprt\win32\mac_layout_blob.zig',
+            'test\win32\desk-variant.ps1'
         )
     },
     # T1579: a terminal pane is a child window and never hears WM_DPICHANGED

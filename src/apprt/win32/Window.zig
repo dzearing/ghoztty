@@ -149,6 +149,7 @@ const blur_backdrop = @import("blur_backdrop.zig");
 const split_geometry = @import("split_geometry.zig");
 const pane_elevation = @import("pane_elevation.zig");
 const PaneDesk = @import("PaneDesk.zig");
+const desk_palette = @import("desk_palette.zig");
 const rearrange_header = @import("rearrange_header.zig");
 const pane_drop = @import("pane_drop.zig");
 const pane_relocate = @import("pane_relocate.zig");
@@ -547,6 +548,12 @@ pane_sidebar_width_dip: f32 = pane_sidebar.default_width_dip,
 /// The elevated pane style's desk and card bitmaps (T1831). Empty until the
 /// first elevated paint; freed in `deinit`.
 pane_desk: PaneDesk = .{},
+/// This window's OWN gradient (T1832; Mac `deskVariant`): set by
+/// `+new-window --color=random` and by a window opened by hand, in the
+/// elevated style. Null is the default ocean desk. Persisted (the seed) with
+/// the window's layout, so a restore keeps it; the palette is derived per
+/// theme when the desk is painted.
+desk_variant: ?desk_palette.Variant = null,
 /// The pane style the current layout was computed for, so a config reload
 /// that flips it relayouts rather than only recolouring.
 applied_pane_style: pane_elevation.Style = .elevated,
@@ -881,6 +888,10 @@ pub const InitOptions = struct {
     /// Canonical IPC name for this window (`+new-window --target`).
     /// Borrowed; duped at registration. Null → auto-generated `window-N`.
     ipc_name: ?[]const u8 = null,
+
+    /// The window's own gradient (T1832), carried in the way Mac carries
+    /// `deskVariant` on the window's base config. Null is the ocean desk.
+    desk_variant: ?desk_palette.Variant = null,
 
     /// Open in the background (T1797): see `background_first_show`. Only the
     /// IPC verbs set it, and only without `--focus`.
@@ -1436,6 +1447,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         .background_first_show = options.background,
         .pane_sidebar_pinned = PaneSidebar.remembered.pinned,
         .pane_sidebar_hidden = PaneSidebar.remembered.hidden,
+        .desk_variant = options.desk_variant,
     };
 
     // T1343 measurement switches, read once per window: `GHOZTTY_PERF` turns
@@ -2216,6 +2228,16 @@ fn invalidateContentArea(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     var r = self.surfaceRect();
     _ = w32.InvalidateRect(hwnd, &r, 0);
+}
+
+/// Give the window its own gradient, or (null) the ocean back (T1832). Only
+/// the desk changes: the cards and the terminals keep their colours. Re-persists
+/// the layout, since the seed is what a restore brings back.
+pub fn setDeskVariant(self: *Window, variant: ?desk_palette.Variant) void {
+    if (std.meta.eql(self.desk_variant, variant)) return;
+    self.desk_variant = variant;
+    if (self.hwnd) |hwnd| _ = w32.InvalidateRect(hwnd, null, 0);
+    self.app.markLayoutDirty();
 }
 
 /// Mac's `macos-pane-style`, read under the same key (T1831). The Quick
@@ -6629,7 +6651,7 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         .fill = fill,
         .is_light = color_math.isLight(fill),
         .scale = self.scale,
-    });
+    }, self.desk_variant);
 }
 
 fn paintDividerNode(
@@ -8090,12 +8112,14 @@ pub fn performViewerBindingAction(
         // SAME machine, and a failed re-dial says so rather than silently
         // opening a local window (T68).
         .new_window => {
+            // A window opened by hand gets its own gradient (T1832).
+            const variant = self.app.newWindowDeskVariant();
             if (self.remote_machine != null) {
-                _ = self.app.openRemoteWindowFrom(self, .{}) catch |err| {
+                _ = self.app.openRemoteWindowFrom(self, .{ .desk_variant = variant }) catch |err| {
                     log.warn("viewer chord: new window on remote parent failed err={}", .{err});
                     self.app.showRemoteOpenFailed(self, err);
                 };
-            } else _ = self.app.createWindow(.{}) catch |err| {
+            } else _ = self.app.createWindow(.{ .desk_variant = variant }) catch |err| {
                 log.err("viewer chord: new window failed err={}", .{err});
             };
         },

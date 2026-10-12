@@ -48,6 +48,7 @@ const ViewerNavBar = @import("ViewerNavBar.zig");
 const ViewerFindBar = @import("ViewerFindBar.zig");
 const webview2 = @import("webview2.zig");
 const Window = @import("Window.zig");
+const desk_palette = @import("desk_palette.zig");
 const dial_failure = @import("dial_failure.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
 const relay_signout = @import("relay_signout.zig");
@@ -3245,6 +3246,7 @@ fn captureWindow(
         .ipc_name = if (win.ipc_name) |n| try arena.dupe(u8, n) else null,
         .active_tab = @intCast(win.active_tab),
         .tabs = tabs,
+        .desk_variant = if (win.desk_variant) |v| v.seed else null,
     };
 }
 
@@ -4864,6 +4866,12 @@ fn restoreWindow(
         // rebuild sources — the local manifest and an agent-held blob — since
         // both arrive here as a `session_layout.Window`.
         .layout_uuid = win.uuid,
+        // The window's own gradient comes back with it (T1832). A zero seed
+        // is not one any build writes; treat it as absent.
+        .desk_variant = if (win.desk_variant) |seed|
+            (if (seed != 0) desk_palette.Variant{ .seed = seed } else null)
+        else
+            null,
     }) catch |err| {
         // Ownership transfers to the window, so a window that was never created
         // leaves the dial to us — the same contract `openDialedWindow` keeps,
@@ -6353,6 +6361,19 @@ fn reanchorFrame(frame: restore_frame.Rect) restore_frame.Rect {
     return restore_frame.centerOn(frame, work);
 }
 
+/// The gradient for a window the user opens BY HAND - Ctrl+Shift+N, the New
+/// Window menu item or palette command (T1832; Mac a516200d2
+/// `PaneDeskVariant.forNewWindow`): in the elevated style it gets its own
+/// random one, the same as `+new-window --color=random`, so side-by-side
+/// windows are easy to tell apart. Programmatic, moved and restored windows
+/// never call this; the flat style has no desk to vary.
+pub fn newWindowDeskVariant(self: *const App) ?desk_palette.Variant {
+    return switch (self.config.@"macos-pane-style") {
+        .elevated => desk_palette.Variant.random(),
+        .flat => null,
+    };
+}
+
 /// Create, track, and populate a new Window (with its first tab). Shared by
 /// the .new_window action and the IPC server.
 pub fn createWindow(self: *App, opts: Window.InitOptions) !*Window {
@@ -6499,6 +6520,9 @@ pub const RemoteOpenOptions = struct {
     /// opened, and sending them again would describe a spawn that is not
     /// happening.
     session_id: ?[]const u8 = null,
+    /// The window's own gradient (T1832): a window opened by hand, or with
+    /// `--from-focused --color=random`, in the elevated style.
+    desk_variant: ?desk_palette.Variant = null,
 };
 
 /// `IncompatibleVersion` is kept apart from `DialFailed` for the reason T319
@@ -6553,6 +6577,7 @@ pub fn openDialedWindow(
     const window = self.createWindow(.{
         .surface_overrides = &overrides,
         .ipc_name = opts.ipc_name,
+        .desk_variant = opts.desk_variant,
         // T1797: a `+new-remote-window` without `--focus` opens in the
         // background from its very first show. Re-showing it inactive AFTER a
         // normal first show was too late: that show had already activated it.
@@ -7103,6 +7128,8 @@ pub fn openRemoteWindowFrom(
         /// user's own New Window and keeps the default; the IPC
         /// `--from-focused` path passes its `--focus`.
         activate: bool = true,
+        /// The new window's own gradient (T1832).
+        desk_variant: ?desk_palette.Variant = null,
     },
 ) RemoteOpenError!*Window {
     const machine = parent.remote_machine orelse return error.DialFailed;
@@ -7143,6 +7170,7 @@ pub fn openRemoteWindowFrom(
         .command = command,
         .machine = machine,
         .activate = explicit.activate,
+        .desk_variant = explicit.desk_variant,
     };
 
     switch (machine) {
@@ -7685,7 +7713,9 @@ pub fn performAction(
             };
             if (parent_window) |pw| {
                 if (pw.remote_machine != null) {
-                    _ = self.openRemoteWindowFrom(pw, .{}) catch |err| {
+                    _ = self.openRemoteWindowFrom(pw, .{
+                        .desk_variant = self.newWindowDeskVariant(),
+                    }) catch |err| {
                         log.warn("new window on remote parent failed err={}", .{err});
                         self.showRemoteOpenFailed(pw, err);
                     };
@@ -7702,7 +7732,10 @@ pub fn performAction(
                 .surface => |cs| cs.rt_surface.parent_window.isForcedOpaque(),
             };
 
-            _ = self.createWindow(.{ .force_opaque = force_opaque }) catch |err| {
+            _ = self.createWindow(.{
+                .force_opaque = force_opaque,
+                .desk_variant = self.newWindowDeskVariant(),
+            }) catch |err| {
                 log.err("failed to create new window err={}", .{err});
             };
             return true;

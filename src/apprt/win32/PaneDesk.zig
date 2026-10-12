@@ -1,5 +1,6 @@
 //! The HWND half of the elevated pane style (T1831): the window-owned
-//! pixels around and between the pane cards - the "ocean" desk, every card's
+//! pixels around and between the pane cards - the gradient desk (the
+//! "ocean", or the window's own variant - T1832), every card's
 //! shadow, its antialiased corners and its rim - painted into the window's DC
 //! in one `BitBlt`. The math is `pane_elevation.zig`; this owns the bitmaps.
 //!
@@ -7,7 +8,8 @@
 //!
 //!   * `desk` - the gradient alone. Rendered at a quarter of the size and
 //!     stretched (`HALFTONE`): the gradient has no detail to lose, and it is
-//!     only redone when the size or the light/dark flavour changes.
+//!     only redone when the size, the light/dark flavour or the window's
+//!     variant changes.
 //!   * `comp` - a copy of the desk with the cards painted on, rebuilt on
 //!     every paint, because a divider drag moves the cards every frame.
 //!
@@ -20,6 +22,7 @@ const PaneDesk = @This();
 const std = @import("std");
 const w32 = @import("win32.zig");
 const pane_elevation = @import("pane_elevation.zig");
+const desk_palette = @import("desk_palette.zig");
 
 const log = std.log.scoped(.pane_desk);
 
@@ -76,6 +79,7 @@ const Dib = struct {
 
 desk: ?Dib = null,
 desk_light: bool = false,
+desk_variant: ?desk_palette.Variant = null,
 comp: ?Dib = null,
 
 pub fn deinit(self: *PaneDesk) void {
@@ -95,9 +99,10 @@ pub fn paint(
     h: i32,
     cards: []const pane_elevation.Card,
     style: pane_elevation.CardStyle,
+    variant: ?desk_palette.Variant,
 ) void {
     if (w <= 0 or h <= 0) return;
-    const desk = self.ensureDesk(w, h, style.is_light) orelse return;
+    const desk = self.ensureDesk(w, h, style.is_light, variant) orelse return;
     const comp = self.ensureComp(w, h) orelse return;
     @memcpy(comp.pixels(), desk.pixels());
     pane_elevation.paintCards(comp.pixels(), @intCast(w), @intCast(h), cards, style);
@@ -114,9 +119,10 @@ fn ensureComp(self: *PaneDesk, w: i32, h: i32) ?Dib {
     return self.comp;
 }
 
-fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool) ?Dib {
+fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_palette.Variant) ?Dib {
     if (self.desk) |d| {
-        if (d.w == w and d.h == h and self.desk_light == is_light) return d;
+        if (d.w == w and d.h == h and self.desk_light == is_light and
+            std.meta.eql(self.desk_variant, variant)) return d;
         d.destroy();
         self.desk = null;
     }
@@ -129,13 +135,13 @@ fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool) ?Dib {
         return null;
     };
     defer std.heap.page_allocator.free(small);
-    pane_elevation.renderDesk(
+    desk_palette.renderDesk(
         small,
         sw,
         sh,
         @floatFromInt(w),
         @floatFromInt(h),
-        pane_elevation.Palette.ocean(is_light),
+        desk_palette.Palette.forWindow(variant, is_light),
     );
     const bmi = w32.BITMAPINFO{ .bmiHeader = .{
         .biWidth = @intCast(sw),
@@ -167,5 +173,6 @@ fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool) ?Dib {
     for (full.pixels()) |*p| p.* &= 0x00FF_FFFF;
     self.desk = full;
     self.desk_light = is_light;
+    self.desk_variant = variant;
     return full;
 }

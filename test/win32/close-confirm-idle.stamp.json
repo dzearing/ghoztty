@@ -1,15 +1,15 @@
 {
     "guard":  "close-confirm",
     "script":  "test/win32/close-confirm-idle.ps1",
-    "generated":  "2026-10-12T10:13:53-07:00",
-    "commit":  "70d7a31b8",
+    "generated":  "2026-10-12T11:56:15-07:00",
+    "commit":  "791cf112e",
     "uncommitted":  [
                         "src/apprt/win32/Window.zig"
                     ],
     "files":  {
                   "src/apprt/win32/ProcessTree.zig":  "632b5a9e028c3dfe4fb4c04902f3e3639d857344f459b0e0efb0282f0784875d",
                   "src/apprt/win32/Surface.zig":  "9b84bdedb6b011cb8e5d0b9a6144f5ebb305000443bff02cc5a257a2762f4eae",
-                  "src/apprt/win32/Window.zig":  "7c6c78c2273cab95a5fbc8685a074906cd80323233dca02a14c30a99f69b06ad",
+                  "src/apprt/win32/Window.zig":  "4765c346807510ea558b22c23c7f84f5621696e03b455321333bc3ee01f3a318",
                   "test/win32/close-confirm-idle.ps1":  "208c3276ba5db71b667cefebfe3fe4a2177843344001f6825a4def3bb9f3da4c"
               }
 }

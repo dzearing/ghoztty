@@ -1,10 +1,10 @@
 {
     "guard":  "command-resolve",
     "script":  "test/win32/command-resolve-audit.ps1",
-    "generated":  "2026-10-12T10:34:15-07:00",
-    "commit":  "70d7a31b8",
+    "generated":  "2026-10-12T12:20:56-07:00",
+    "commit":  "791cf112e",
     "uncommitted":  [
-                        "test/win32/pane-grab-handle.ps1"
+                        "test/win32/desk-variant.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -107,6 +107,7 @@
                   "test/win32/dashboard-dom.ps1":  "34e4f9885499690ee161fda2d60842afdd46577fa37393f71cc0cc2e5c818b27",
                   "test/win32/deliver-windows-build.ps1":  "137ec598dafcdad2b79248b5d5761fa742d92b0965e012f15c1e05c394f52307",
                   "test/win32/desktop-launch-audit.ps1":  "3cacc5fce5628dd8501cdc2315698e7974c8b28d35159f7c67685f3e99ec57e1",
+                  "test/win32/desk-variant.ps1":  "ad33dc758514da73416631f090514c0c34f9e15adeb7a2e087a2bba660911598",
                   "test/win32/divergence-inventory.ps1":  "938a7b36a7170b1e2d20f7670d0945e3163c7245fcf51cc2322a8837047d630c",
                   "test/win32/docs-routing.ps1":  "0df33f259fc8eb88f4eb186c8f0fb216bfe5e929d3e8e85e59a9b3cbd4b6d821",
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",
