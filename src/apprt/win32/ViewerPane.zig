@@ -533,12 +533,14 @@ pane_view: ?*PaneView = null,
 /// test pane, which has no tree to split anyway.
 open_link_split: ?*const fn (pv: *PaneView, location: []const u8, origin: ?[]const u8) void = null,
 
-/// How a forwarded accelerator chord's ACTION reaches the window (T394).
-/// The same load-bearing indirection as `open_link_split`, for the same
-/// reason: `performViewerBindingAction` reaches `addTab`/`newSplitAt`/
-/// `App.createWindow`, which pull the renderer world into comptime analysis.
-/// Null for a bare test pane — a chord then resolves but performs nothing.
-perform_accel_action: ?*const fn (pv: *PaneView, action: inputpkg.Binding.Action) void = null,
+/// How an app keybind chord reaches the window (T394, T1803): asked with
+/// `perform = false` whether the window takes the chord from the page, then
+/// with `perform = true` to carry it out (`Window.viewerChord`). The same
+/// load-bearing indirection as `open_link_split`, for the same reason: the
+/// dispatch reaches `addTab`/`newSplitAt`/`App.createWindow`, which pull the
+/// renderer world into comptime analysis. Null for a bare test pane — the
+/// page then keeps every bound chord.
+viewer_chord: ?*const fn (pv: *PaneView, event: inputpkg.KeyEvent, perform: bool) bool = null,
 
 /// The app's shared environment, kept for the life of the pane because
 /// `CreateWebResourceResponse` lives on it and the resource handler needs one
@@ -5554,22 +5556,23 @@ fn accelMods() inputpkg.Mods {
     };
 }
 
-/// The app keybind action a chord resolves to for THIS pane, or null when the
-/// page keeps the key. Consulted twice on purpose: once in the Invoke (to
-/// decide `Handled` while the browser waits) and again when the posted
-/// message lands (the config may have been reloaded in between; the current
-/// table wins). Sequences (`leader`) and chained bindings stay with the page
-/// — a viewer has no UI for a pending sequence prefix.
-fn chordAction(self: *ViewerPane, vk: u16, extended: bool, mods: inputpkg.Mods) ?inputpkg.Binding.Action {
-    const event = viewer_accel.keyEventFor(vk, extended, mods) orelse return null;
-    const set = &self.parent_window.app.config.keybind.set;
-    const entry = set.getEvent(event) orelse return null;
-    const leaf = switch (entry.value_ptr.*) {
-        .leaf => |l| l,
-        .leader, .leaf_chained => return null,
-    };
-    if (!viewer_accel.forwards(leaf.action)) return null;
-    return leaf.action;
+/// Whether an app keybind chord is taken from the page for THIS pane, and
+/// with `perform` carry it out (T1803). Consulted twice on purpose: once in
+/// the Invoke (to decide `Handled` while the browser waits) and again when
+/// the posted message lands (the config may have been reloaded in between;
+/// the current table wins). Sequences (`leader`) stay with the page — a
+/// viewer has no UI for a pending sequence prefix — and so do the page's own
+/// editing and text-navigation chords (`viewer_accel.pageOwns`), which on
+/// Mac the page claims before any binding is asked.
+///
+/// With `perform`, nothing may touch `self` afterwards: a closing action
+/// frees this pane before the window returns.
+fn bindingChord(self: *ViewerPane, vk: u16, extended: bool, mods: inputpkg.Mods, perform: bool) bool {
+    if (viewer_accel.pageOwns(vk, mods)) return false;
+    const event = viewer_accel.keyEventFor(vk, extended, mods) orelse return false;
+    const pv = self.pane_view orelse return false;
+    const chord = self.viewer_chord orelse return false;
+    return chord(pv, event, perform);
 }
 
 /// Push the current `zoom_factor` to the web view (T161) — Mac's
@@ -5835,7 +5838,7 @@ fn claimsChord(self: *ViewerPane, vk: u16, extended: bool, mods: inputpkg.Mods) 
     // table first is what made a focused viewer open a plain local window when
     // the user asked for the machine chooser.
     if (window_chord.classify(vk, mods, self.chordState()) != null) return true;
-    return self.chordAction(vk, extended, mods) != null;
+    return self.bindingChord(vk, extended, mods, false);
 }
 
 /// This pane's window state for the shared chord table (T1530).
@@ -6748,10 +6751,7 @@ pub fn wndProc(
                     return 0;
                 },
             };
-            const action = self.chordAction(vk, extended, mods) orelse return 0;
-            const pv = self.pane_view orelse return 0;
-            const perform = self.perform_accel_action orelse return 0;
-            perform(pv, action);
+            _ = self.bindingChord(vk, extended, mods, true);
             return 0;
         },
 

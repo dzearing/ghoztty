@@ -12,6 +12,7 @@ const apprt = @import("../../apprt.zig");
 const input = @import("../../input.zig");
 
 const App = @import("App.zig");
+const CoreApp = @import("../../App.zig");
 const MachineChooser = @import("MachineChooser.zig");
 const ActivityMonitor = @import("ActivityMonitor.zig");
 const activity_borrow = @import("activity_borrow.zig");
@@ -2688,7 +2689,7 @@ fn createViewerPane(self: *Window, open: ViewerPane.Open) !*ViewerPane {
     // split machinery at comptime — see the field's own doc for why that
     // matters.
     viewer.open_link_split = &openViewerSplitFromLink;
-    viewer.perform_accel_action = &performAccelActionFromViewer;
+    viewer.viewer_chord = &viewerChordFromViewer;
     viewer.open_popup_window = &openPopupWindowFromViewer;
     viewer.close_from_page = &closeViewerPaneFromPage;
     // Taken BEFORE the first fallible step below (T163), so every failure from
@@ -2720,13 +2721,12 @@ fn createViewerPane(self: *Window, open: ViewerPane.Open) !*ViewerPane {
 /// `ViewerPane.open_link_split`; the signature carries the pane's leaf and
 /// its origin directory because those are the two things the pane knows that
 /// the split needs.
-/// A viewer pane's forwarded accelerator chord performs its action (T394).
-/// This is the target of `ViewerPane.perform_accel_action`; the indirection
+/// A viewer pane's accelerator chord is routed and performed (T394, T1803).
+/// This is the target of `ViewerPane.viewer_chord`; the indirection
 /// keeps the renderer world out of ViewerPane's unit-test binary, same as
 /// `openViewerSplitFromLink` above.
-fn performAccelActionFromViewer(pv: *PaneView, action: input.Binding.Action) void {
-    const window = pv.parentWindow();
-    _ = window.performViewerBindingAction(pv, action);
+fn viewerChordFromViewer(pv: *PaneView, event: input.KeyEvent, perform: bool) bool {
+    return pv.parentWindow().viewerChord(pv, event, perform);
 }
 
 /// A viewer pane's `window.open()` becomes its own ghoztty window (T163, Mac's
@@ -7820,7 +7820,7 @@ fn paneHasKeyboardFocus(pane: *PaneView) bool {
 
 /// The action tags `performViewerBindingAction` has an arm for, spelled once
 /// so the comptime block below can hold them against
-/// `viewer_accel.forwardsTag`. Keep this in step with that switch.
+/// `viewer_accel.nativeTag`. Keep this in step with that switch.
 pub const viewer_dispatch_tags = [_]std.meta.Tag(input.Binding.Action){
     .quit,
     .new_window,
@@ -7843,6 +7843,8 @@ pub const viewer_dispatch_tags = [_]std.meta.Tag(input.Binding.Action){
     .toggle_hero_mode,
     .toggle_rearrange_mode,
     .toggle_pane_sidebar,
+    .stash_pane,
+    .restore_stashed_pane,
     .toggle_fullscreen,
     .toggle_maximize,
     .toggle_window_decorations,
@@ -7872,8 +7874,8 @@ comptime {
         for (viewer_dispatch_tags) |handled| {
             if (handled == tag) dispatched = true;
         }
-        if (viewer_accel.forwardsTag(tag) != dispatched) @compileError(
-            "viewer_accel.forwards and Window.performViewerBindingAction " ++
+        if (viewer_accel.nativeTag(tag) != dispatched) @compileError(
+            "viewer_accel.native and Window.performViewerBindingAction " ++
                 "disagree about ." ++ @tagName(tag),
         );
     }
@@ -7886,11 +7888,12 @@ comptime {
 /// reaches, addressed at the viewer's own pane (`close_surface` closes the
 /// viewer, `new_split` splits off it).
 ///
-/// The action vocabulary is `viewer_accel.forwards` — the window/app-scoped
-/// subset with a meaning when no terminal underlies the focused pane — and
-/// this switch must handle everything that list admits, which
-/// `viewer_dispatch_tags` asserts at compile time. Returns false for an
-/// action outside it.
+/// The action vocabulary is `viewer_accel.native` — the actions with a
+/// handler that knows the focused pane may be a viewer — and this switch
+/// must handle everything that list admits, which `viewer_dispatch_tags`
+/// asserts at compile time. Returns false for an action outside it; the
+/// rest of the non-terminal actions reach the core through
+/// `viewerChord` (T1803).
 ///
 /// Callers beware: the closing arms (`close_surface`, `close_tab`,
 /// `close_window`, …) free the pane — and with it the ViewerPane and its
@@ -7900,7 +7903,7 @@ pub fn performViewerBindingAction(
     pane: *PaneView,
     action: input.Binding.Action,
 ) bool {
-    if (!viewer_accel.forwards(action)) return false;
+    if (!viewer_accel.native(action)) return false;
     switch (action) {
         .quit => _ = self.app.performAction(.app, .quit, {}) catch |err| {
             log.err("viewer chord quit failed err={}", .{err});
@@ -7999,6 +8002,14 @@ pub fn performViewerBindingAction(
         // pane is one of the panes you would want to move (T1524).
         .toggle_rearrange_mode => self.toggleRearrangeMode(),
         .toggle_pane_sidebar => self.togglePaneSidebar(),
+        // The viewer itself is put away, not the host terminal the core
+        // would perform it through (T1803). Refused (last pane on screen)
+        // is not performed, as from a terminal.
+        .stash_pane => self.stashPane(pane) catch |err| {
+            log.info("viewer chord stash_pane refused: {}", .{err});
+            return false;
+        },
+        .restore_stashed_pane => return self.restoreTopStashedPane(),
 
         .toggle_fullscreen => self.toggleFullscreen(),
         .toggle_maximize => {
@@ -8042,7 +8053,7 @@ pub fn performViewerBindingAction(
 
         .prompt_window_title => self.promptRenameWindow(),
 
-        // `forwards` admitted it, so this arm being reached is a drift
+        // `native` admitted it, so this arm being reached is a drift
         // between that list and this switch — visible in the log rather
         // than a silently swallowed chord.
         else => {
@@ -8053,20 +8064,51 @@ pub fn performViewerBindingAction(
     return true;
 }
 
+/// Route, and with `perform` carry out, the app keybind chord `event` from
+/// the focused VIEWER `pane` (T1803, Mac `ViewerKeyFallback.perform`).
+/// Returns whether the chord is (or was) taken from the page.
+///
+/// `perform = false` is the accelerator handler's question, asked while the
+/// browser waits; `perform = true` runs when the posted message lands, after
+/// the binding is resolved again against the current config. The decision
+/// itself is `viewer_accel.route`: our native dispatch for the actions that
+/// act on the viewer, the core's non-terminal perform for the other app and
+/// window actions, and the page for anything that needs a terminal.
+///
+/// Callers beware, as for `performViewerBindingAction`: a closing action can
+/// free `pane` before this returns.
+pub fn viewerChord(self: *Window, pane: *PaneView, event: input.KeyEvent, perform: bool) bool {
+    const leaf = CoreApp.bindingForEvent(&self.app.config, event) orelse return false;
+    const host = self.anyTerminalSurface();
+    const r = viewer_accel.route(&leaf, host != null);
+    if (!perform) return r != .pass;
+    switch (r) {
+        .pass => return false,
+        .native => _ = self.performViewerBindingAction(pane, leaf.actionsSlice()[0]),
+        .core => _ = self.app.core_app.performBindingForNonTerminal(
+            self.app,
+            if (host) |s| &s.core_surface else null,
+            event,
+        ),
+    }
+    return true;
+}
+
 /// The first terminal surface in this window, preferring the active tab —
-/// the palette host for a focused viewer (T394). Null in a viewer-only
-/// window.
+/// the palette host for a focused viewer (T394), and the surface the core
+/// performs a viewer's window-scoped bindings through (T1803). Null in a
+/// viewer-only window, and skips a surface whose core is not up yet.
 fn anyTerminalSurface(self: *Window) ?*Surface {
     if (self.tab_count == 0) return null;
     var it = self.tab_trees[self.active_tab].iterator();
     while (it.next()) |entry| {
-        if (entry.view.surface()) |s| return s;
+        if (entry.view.surface()) |s| if (s.core_surface_ready) return s;
     }
     for (0..self.tab_count) |tab| {
         if (tab == self.active_tab) continue;
         var it2 = self.tab_trees[tab].iterator();
         while (it2.next()) |entry| {
-            if (entry.view.surface()) |s| return s;
+            if (entry.view.surface()) |s| if (s.core_surface_ready) return s;
         }
     }
     return null;

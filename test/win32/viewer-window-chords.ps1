@@ -39,6 +39,20 @@
 # resizes. -NegativeControl asserts exactly that, so it must FAIL on a healthy
 # build.
 #
+# T1803 widened the rule from a hand-kept list to the core's classification
+# (`Binding.Action.requires`), and added two arms:
+#   S3. ctrl+shift+f9 = toggle_background_opacity, a window action the old
+#       list never named, which reaches the core through the window's
+#       terminal: from a focused viewer it must now turn the translucent
+#       window opaque and, pressed again, translucent (oracle: the app's own
+#       `window translucent=` log line, opacity-reload.ps1's). Pre-fix, the
+#       page got the F9. (Not float-on-top: off the input desktop there is no
+#       foreground window, and a topmost band change does not stick - T277.)
+#   S4. ctrl+a = toggle_maximize: a binding on one of the page's own editing
+#       chords must NOT be taken from the page - the window stays restored and
+#       the page logs the ctrl+a. (Mac's page claims those before any binding
+#       is asked; WebView2's accelerator hop fires first, so it is spelled out.)
+#
 # Runs on the BACKGROUND test desktop; only touches ghoztty processes running
 # from this repo's zig-out*.
 #
@@ -195,6 +209,9 @@ try {
         '--keybind=f2=clear_screen'
         '--keybind=f8=toggle_maximize'
         '--keybind=f9=reset_window_size'
+        '--background-opacity=0.9'
+        '--keybind=ctrl+shift+f9=toggle_background_opacity'
+        '--keybind=ctrl+a=toggle_maximize'
     )
     $sp = @{ Exe = $exe; Arguments = $cliArgs }
     if (-not $ExePath) { $sp.StdErr = $errlog }
@@ -353,6 +370,58 @@ try {
     Assert ((Get-Client $top) -eq $sizeBefore) 'S2: ...and the no-op disturbed nothing (window unchanged)'
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'S2: no crash'
     Assert (Test-TestWindowResponsive -Window $top) 'S2: the window is still pumping messages'
+
+    # --- SUBJECT 3: a window action the old allowlist never named (T1803) ---
+    function Get-SwitchCount([string]$want) {
+        return @(Select-String -Path $errlog -Pattern "window translucent=$want" -ErrorAction SilentlyContinue).Count
+    }
+    function Wait-SwitchCount([string]$want, [int]$before) {
+        for ($t = 0; $t -lt 25; $t++) {
+            Start-Sleep -Milliseconds 200
+            if ((Get-SwitchCount $want) -gt $before) { return $true }
+        }
+        return $false
+    }
+    $beforeS3 = Get-KeyLog
+    Assert ($beforeS3 -notmatch 'F9') 'S3: no earlier arm put an F9 in the page log'
+    if (-not $script:haveLog) {
+        Write-Host 'NOTE  S3: no debug log (release build) - the translucency oracle is unavailable; only the page leg is asserted'
+    } else {
+        $n0 = Get-SwitchCount 'true'
+        Assert ($n0 -ge 1) "S3: the 0.9-opacity window started out translucent (translucent=true lines: $n0, log: $errlog)"
+    }
+    $opaque0 = Get-SwitchCount 'false'
+    Assert (Send-AtViewer 'F9' 0x78 @('ctrl', 'shift')) 'S3: ctrl+shift+f9 reached the viewer accelerator hop'
+    $toggled = if ($script:haveLog) { Wait-SwitchCount 'false' $opaque0 } else { $true }
+    $logS3 = Get-KeyLog
+    if ($NegativeControl) {
+        Assert (-not $toggled) 'S3 (inverted): the opacity toggle from the viewer did nothing'
+        Assert ($logS3 -match 'F9') "S3 (inverted): ctrl+shift+f9 leaked into the page (log='$logS3')"
+    } else {
+        Assert $toggled 'S3: toggle_background_opacity from a focused viewer turned the window opaque'
+        Assert ($logS3 -notmatch 'F9') "S3: ...and the chord never reached the page (log='$logS3')"
+        $trans0 = Get-SwitchCount 'true'
+        Send-AtViewer 'F9' 0x78 @('ctrl', 'shift') | Out-Null
+        if ($script:haveLog) {
+            Assert (Wait-SwitchCount 'true' $trans0) 'S3: pressed again, the window is translucent again'
+        }
+    }
+
+    # --- SUBJECT 4: the page keeps its own editing chords (T1803) -----------
+    Assert (-not (Test-TestWindowZoomed -Window $top)) 'S4: the window starts restored'
+    $beforeS4 = Get-KeyLog
+    Assert (Send-AtViewer 'A' 0x41 @('ctrl')) 'S4: ctrl+a reached the viewer accelerator hop'
+    $logS4 = Wait-KeyLog $beforeS4
+    $zoom4 = $false
+    for ($t = 0; $t -lt 8; $t++) { Start-Sleep -Milliseconds 200; if (Test-TestWindowZoomed -Window $top) { $zoom4 = $true; break } }
+    if ($NegativeControl) {
+        Assert $zoom4 'S4 (inverted): the binding took ctrl+a from the page'
+    } else {
+        Assert (-not $zoom4) 'S4: a binding on ctrl+a did not fire from a focused viewer'
+        Assert ($logS4 -match '(=|-)ca($|-)') "S4: ...the page saw ctrl+a instead (log='$logS4')"
+    }
+    if ($zoom4) { Send-AtViewer 'F8' 0x77 | Out-Null }
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'S4: no crash'
 } finally {
     if ($script:pageJob) { Stop-Job $script:pageJob -ErrorAction SilentlyContinue; Remove-Job $script:pageJob -Force -ErrorAction SilentlyContinue }
     Remove-TestDesktop
@@ -366,6 +435,14 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
     Assert ($fgSeen.Count -gt 0) 'the foreground watcher actually sampled (negative control)'
     $leaked = @($launched | Where-Object { $fgSeen -contains $_ })
     Assert ($leaked.Count -eq 0) 'no test-desktop app ever became foreground on the interactive desktop'
+}
+
+# A green run stamps the covered files (T783) so guard-due can answer "has this
+# harness been run against the code as it now stands?". Red leaves the stamp
+# alone: red stays due, and a negative-control run is red by construction.
+if ($script:fail -eq 0 -and -not $NegativeControl) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard viewer-window-chords -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Write-Host ''

@@ -713,6 +713,23 @@ $GuardTable = @(
             'src\apprt\win32\viewer_accel.zig'
         )
     },
+    # App keybindings from a focused viewer (T682, T1803): which chords the
+    # page keeps and which reach Ghoztty is decided by the core's action
+    # classification, so the unit lanes prove the policy - only this script
+    # proves a real WebView2 accelerator event is claimed, routed (natively or
+    # through the core) and acted on, and that the page keeps the rest.
+    [pscustomobject]@{
+        Name   = 'viewer-window-chords'
+        Script = 'test\win32\viewer-window-chords.ps1'
+        Stamp  = 'test\win32\viewer-window-chords.stamp.json'
+        Covers = @(
+            'test\win32\viewer-window-chords.ps1',
+            'src\apprt\win32\viewer_accel.zig',
+            'src\apprt\win32\ViewerPane.zig',
+            'src\apprt\win32\Window.zig',
+            'src\App.zig'
+        )
+    },
     # The viewer nav bar's PRESENCE (T1131, finished by T1185): every viewer
     # flavor keeps its address bar on screen, in every mode, with no hover
     # anywhere in the path. The unit lanes assert the band arithmetic; only

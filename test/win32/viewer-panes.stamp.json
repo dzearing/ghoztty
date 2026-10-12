@@ -1,15 +1,15 @@
 {
     "guard":  "viewer-panes",
     "script":  "test/win32/viewer-panes.ps1",
-    "generated":  "2026-10-12T00:08:28-07:00",
-    "commit":  "86ae8c657",
+    "generated":  "2026-10-12T01:47:27-07:00",
+    "commit":  "24077f44d",
     "uncommitted":  [
                         "src/apprt/win32/ViewerPane.zig"
                     ],
     "files":  {
                   "src/apprt/win32/IpcHandlers.zig":  "ff7188efa39137da0a1f33a689f3936d030020e3ca9348095a8d313137b2111f",
                   "src/apprt/win32/viewer_content.zig":  "a221b7d62a68561c5f126a95994446a462f0e2b465edcb7815ee15ec6635c9e1",
-                  "src/apprt/win32/ViewerPane.zig":  "24842f0de9f89103775259731edbb4bcc56ac2cb5561e81771156e8d60440ea0",
+                  "src/apprt/win32/ViewerPane.zig":  "5f0ba2ec7b25fc94e23bfe3f73c463fe361d102242b483c5f958b08d7f11dc00",
                   "src/cli/list.zig":  "82c3fcd6644471c490196fe83d9aa1b36fdc89e92dc81f1b222c0ee3f33c5ff4",
                   "src/cli/reload.zig":  "5755d8fdc574f26b41cf39486b2e31502bc0ee938346c7bd337f40b985095ced",
                   "test/win32/lib/BrowserLeak.ps1":  "ae41845c0869dc0a37c9104ff6189f07d1e4ede98445bdecbeb3e222f5224826",

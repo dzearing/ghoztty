@@ -186,31 +186,107 @@ pub fn keyEventFor(vk: u16, extended: bool, mods: input.Mods) ?input.KeyEvent {
     };
 }
 
-/// Whether a bound action is one a focused VIEWER pane forwards to the app
-/// (T394). This is the app-keybind leg only — the pane-scoped viewer chords
-/// (reload, address bar, zoom; T161) are a separate table checked before
-/// this one.
+/// Where an app keybind chord from a focused viewer pane goes (T1803, Mac
+/// `ViewerKeyFallback.Route`).
+pub const Route = enum {
+    /// Not ours: the page keeps the key exactly as it always did.
+    pass,
+    /// Performed on the VIEWER by `Window.performViewerBindingAction` — the
+    /// Windows counterpart of Mac's menu items, the handlers that know a
+    /// viewer can be the focused pane (split, close, stash and zoom act on
+    /// the viewer itself from here).
+    native,
+    /// Performed through the core (`App.performBindingForNonTerminal`), never
+    /// as terminal input: app actions with no surface, window actions through
+    /// a terminal in the same window.
+    core,
+};
+
+/// Decide where a bound chord from a focused viewer goes. Pure, so the
+/// policy is testable without a pane, a window or a running app — Mac's
+/// `ViewerKeyFallback.route`, with the menu replaced by our native dispatch.
 ///
-/// The rule: an action is forwarded when it is window- or app-scoped and has
-/// a meaning with no terminal underneath — closing/creating panes, tabs and
-/// windows, split navigation and layout, the palette, config and app
-/// commands. Everything else (clipboard, scrollback, font size, search,
-/// terminal state) stays with the page, which has its own meaning for those
-/// keys or none at all.
+/// The rule: **a chord the pane does not claim itself reaches Ghoztty's
+/// bindings exactly as it would from a focused terminal, minus the bindings
+/// that need a terminal.** What needs one is decided by the core,
+/// exhaustively (`Binding.Action.requires`): `text:`/`csi:`, copy/paste, font
+/// size, scrolling and search would otherwise be performed through some
+/// OTHER terminal in the window — typed into a shell the user is not looking
+/// at. Before T1803 this was a hand-kept allowlist of window commands, so a
+/// custom binding, or any action nobody had remembered to list, silently did
+/// nothing from a viewer.
 ///
-/// No arm here depends on the action's PAYLOAD — `close_tab:other` forwards
-/// exactly as `close_tab:this` does — so the decision is really a decision
-/// about the tag, and `forwardsTag` is the form of it that a comptime check
-/// can enumerate. `Window.performViewerBindingAction` uses that to assert its
-/// dispatch switch handles everything this list admits, which is what turns
-/// the gap T682 fixed (forwarded, then quietly unhandled) into a build
-/// failure instead of a log line nobody reads.
-pub fn forwards(action: input.Binding.Action) bool {
-    return forwardsTag(std.meta.activeTag(action));
+/// - `has_host_surface`: the window has a terminal for the core to perform a
+///   window-scoped action through. A window of nothing but viewers has none.
+pub fn route(leaf: *const input.Binding.Set.GenericLeaf, has_host_surface: bool) Route {
+    const actions = leaf.actionsSlice();
+    if (actions.len == 0) return .pass;
+
+    // Global and all-surface bindings are explicitly not about the focused
+    // pane: the core performs them on every surface, as from a terminal.
+    if (leaf.flags.global or leaf.flags.all) return .core;
+
+    // The most demanding requirement across a chain decides it, the way the
+    // core's `ghostty_config_key_binding` reports a chain to Mac.
+    var requires: input.Binding.Action.Requires = .app;
+    for (actions) |action| {
+        const r = action.requires();
+        if (@intFromEnum(r) > @intFromEnum(requires)) requires = r;
+    }
+    if (requires == .terminal) return .pass;
+
+    // Our own dispatch first, as Mac prefers its menu: it acts on the viewer
+    // the user is looking at. A chain has no single native handler.
+    if (actions.len == 1 and native(actions[0])) return .native;
+
+    return switch (requires) {
+        .app => .core,
+        .window => if (has_host_surface) .core else .pass,
+        // A pane action performed through a terminal would act on THAT
+        // terminal's pane, not the viewer the user is looking at.
+        .pane, .terminal => .pass,
+    };
 }
 
-/// `forwards`, over the action's tag alone. See `forwards` for the rule.
-pub fn forwardsTag(tag: std.meta.Tag(input.Binding.Action)) bool {
+/// Chords the page itself uses, which no binding takes from a focused viewer
+/// (T1803). Mac gets this ordering for free — the page and a focused text
+/// field claim a key before the fallback is asked — but WebView2's
+/// accelerator event fires BEFORE the page sees the key, so the page's first
+/// claim has to be spelled out: the editing chords (ctrl+C/V/X/A/Z/Y and
+/// ctrl+shift+Z) and ctrl-arrow/Home/End/Backspace/Delete text navigation.
+/// Ctrl and ctrl+shift only; any alt or Win in the chord makes it nobody's
+/// text chord. Ctrl+shift+arrows are deliberately NOT here: the Windows
+/// defaults bind them to tab navigation, which has always answered from a
+/// viewer.
+pub fn pageOwns(vk: u16, mods: input.Mods) bool {
+    if (!mods.ctrl or mods.alt or mods.super) return false;
+    return switch (vk) {
+        0x43, 0x56, 0x58, 0x41, 0x59 => !mods.shift, // C V X A Y
+        0x5A => true, // Z, and ctrl+shift+Z (redo)
+        // VK_LEFT/UP/RIGHT/DOWN, HOME, END, BACK, DELETE: word and line
+        // movement and deletion in a text field.
+        0x25, 0x26, 0x27, 0x28, 0x24, 0x23, 0x08, 0x2E => !mods.shift,
+        else => false,
+    };
+}
+
+/// Whether an action has a native handler for a focused viewer in
+/// `Window.performViewerBindingAction` (T394). See `nativeTag`.
+///
+/// No arm here depends on the action's PAYLOAD — `close_tab:other` is
+/// handled exactly as `close_tab:this` is — so the decision is really a
+/// decision about the tag, and `nativeTag` is the form of it that a comptime
+/// check can enumerate. `Window.performViewerBindingAction` uses that to
+/// assert its dispatch switch handles everything this list admits, which is
+/// what turns the gap T682 fixed (admitted, then quietly unhandled) into a
+/// build failure instead of a log line nobody reads.
+pub fn native(action: input.Binding.Action) bool {
+    return nativeTag(std.meta.activeTag(action));
+}
+
+/// `native`, over the action's tag alone. Every tag here must be one the
+/// core says needs no terminal (asserted by a test below).
+pub fn nativeTag(tag: std.meta.Tag(input.Binding.Action)) bool {
     return switch (tag) {
         .quit,
         .new_window,
@@ -243,6 +319,11 @@ pub fn forwardsTag(tag: std.meta.Tag(input.Binding.Action)) bool {
         // The pane sidebar is the window's column (T1828; Mac classifies the
         // action `.window` so a focused viewer forwards it).
         .toggle_pane_sidebar,
+        // Stashing is a PANE action, so the core cannot perform it from here
+        // (it would stash the host terminal instead) — the viewer itself is
+        // what the user asked to put away (T1803).
+        .stash_pane,
+        .restore_stashed_pane,
         .toggle_fullscreen,
         .toggle_maximize,
         // The window's size is the window's, and a viewer-only window has no
@@ -614,61 +695,174 @@ test "steppedZoom: Mac's step and clamp, verbatim" {
     try testing.expectEqual(min_zoom, steppedZoom(min_zoom, .zoom_out));
 }
 
-test "forwards: window/app commands yes, terminal-content commands no" {
+fn single(action: input.Binding.Action, flags: input.Binding.Flags) input.Binding.Set.GenericLeaf {
+    return .{ .flags = flags, .actions = .{ .single = .{action} } };
+}
+
+fn routeOf(action: input.Binding.Action, has_host: bool) Route {
+    const leaf = single(action, .{});
+    return route(&leaf, has_host);
+}
+
+test "native: window/app commands yes, terminal-content commands no" {
     // The exact chords the user lost (2026-08-05): close, and the palette.
-    try testing.expect(forwards(.close_surface));
-    try testing.expect(forwards(.{ .close_tab = .this }));
-    try testing.expect(forwards(.toggle_command_palette));
-    try testing.expect(forwards(.new_tab));
-    try testing.expect(forwards(.{ .new_split = .right }));
-    try testing.expect(forwards(.{ .goto_split = .right }));
-    try testing.expect(forwards(.quit));
+    try testing.expect(native(.close_surface));
+    try testing.expect(native(.{ .close_tab = .this }));
+    try testing.expect(native(.toggle_command_palette));
+    try testing.expect(native(.new_tab));
+    try testing.expect(native(.{ .new_split = .right }));
+    try testing.expect(native(.{ .goto_split = .right }));
+    try testing.expect(native(.quit));
 
     // Hero mode: the nav chords were already forwarded, so a viewer that
     // could be navigated INTO but not out of was the one-way door T126
     // found. All three of hero's chords answer from a focused viewer.
-    try testing.expect(forwards(.toggle_hero_mode));
-    try testing.expect(forwards(.{ .swap_split = .down }));
+    try testing.expect(native(.toggle_hero_mode));
+    try testing.expect(native(.{ .swap_split = .down }));
 
     // Rearrange mode arrived on the same ground (T1524): window-scoped, and
     // a viewer pane is one of the panes it exists to move.
-    try testing.expect(forwards(.toggle_rearrange_mode));
+    try testing.expect(native(.toggle_rearrange_mode));
 
     // The two the same sweep left behind (T682). Both are the WINDOW's, and
     // a viewer-only window has no terminal to press them from at all.
-    try testing.expect(forwards(.reset_window_size));
-    try testing.expect(forwards(.toggle_tab_overview));
+    try testing.expect(native(.reset_window_size));
+    try testing.expect(native(.toggle_tab_overview));
 
-    // Content-scoped actions stay with the page.
-    try testing.expect(!forwards(.{ .copy_to_clipboard = .mixed }));
-    try testing.expect(!forwards(.paste_from_clipboard));
-    try testing.expect(!forwards(.scroll_page_up));
-    try testing.expect(!forwards(.{ .increase_font_size = 1 }));
-    try testing.expect(!forwards(.select_all));
-    try testing.expect(!forwards(.start_search));
-    try testing.expect(!forwards(.clear_screen));
-    try testing.expect(!forwards(.prompt_surface_banner));
+    // Stash acts on the viewer itself (T1803).
+    try testing.expect(native(.stash_pane));
+    try testing.expect(native(.restore_stashed_pane));
+
+    // Content-scoped actions have no native handler.
+    try testing.expect(!native(.{ .copy_to_clipboard = .mixed }));
+    try testing.expect(!native(.paste_from_clipboard));
+    try testing.expect(!native(.scroll_page_up));
+    try testing.expect(!native(.{ .increase_font_size = 1 }));
+    try testing.expect(!native(.select_all));
+    try testing.expect(!native(.start_search));
+    try testing.expect(!native(.clear_screen));
+    try testing.expect(!native(.prompt_surface_banner));
 }
 
-test "forwards is decided by the tag, not the payload" {
+test "native is decided by the tag, not the payload" {
     // Every arm of the list is payload-independent, which is what lets
     // `Window.performViewerBindingAction` assert its dispatch switch against
-    // `forwardsTag` over the whole tag space at compile time (T682). If some
-    // future action ever needs to forward on one payload and not another,
+    // `nativeTag` over the whole tag space at compile time (T682). If some
+    // future action ever needs a handler on one payload and not another,
     // this test is where that shows up first.
     inline for (@typeInfo(input.Binding.Action).@"union".fields) |field| {
         const tag = @field(std.meta.Tag(input.Binding.Action), field.name);
         if (field.type == void) {
             const action = @unionInit(input.Binding.Action, field.name, {});
-            try testing.expectEqual(forwardsTag(tag), forwards(action));
+            try testing.expectEqual(nativeTag(tag), native(action));
         }
     }
 
     // The payload-carrying ones the viewer path actually uses, both ways.
-    try testing.expectEqual(forwards(.{ .close_tab = .this }), forwards(.{ .close_tab = .other }));
-    try testing.expectEqual(forwards(.{ .new_split = .up }), forwards(.{ .new_split = .auto }));
+    try testing.expectEqual(native(.{ .close_tab = .this }), native(.{ .close_tab = .other }));
+    try testing.expectEqual(native(.{ .new_split = .up }), native(.{ .new_split = .auto }));
     try testing.expectEqual(
-        forwards(.{ .increase_font_size = 1 }),
-        forwards(.{ .increase_font_size = 4 }),
+        native(.{ .increase_font_size = 1 }),
+        native(.{ .increase_font_size = 4 }),
     );
+}
+
+test "T1803: no native handler is for an action that needs a terminal" {
+    // The core's classification is the authority; a native arm for a
+    // terminal action would perform it on a pane that has no terminal state.
+    inline for (@typeInfo(input.Binding.Action).@"union".fields) |field| {
+        const tag = @field(std.meta.Tag(input.Binding.Action), field.name);
+        if (nativeTag(tag)) {
+            const action = @unionInit(input.Binding.Action, field.name, undefined);
+            try testing.expect(action.requires() != .terminal);
+        }
+    }
+}
+
+test "T1803: no terminal action is ever routed out of a viewer" {
+    // Exhaustive over the action space, with and without a host terminal and
+    // under every flag but global/all (which the core performs everywhere).
+    // `text:` is the case that matters most: routed, it would type into a
+    // shell the user is not looking at.
+    inline for (@typeInfo(input.Binding.Action).@"union".fields) |field| {
+        const action = @unionInit(input.Binding.Action, field.name, undefined);
+        if (action.requires() == .terminal) {
+            for ([_]bool{ false, true }) |host| {
+                for ([_]bool{ false, true }) |performable| {
+                    const leaf = single(action, .{ .performable = performable });
+                    try testing.expectEqual(Route.pass, route(&leaf, host));
+                }
+            }
+        }
+    }
+}
+
+test "T1803: every action the core can perform from a viewer is routed" {
+    // The gap the allowlist left: an app or window action nobody listed.
+    // App actions route with or without a host terminal; window actions
+    // need one unless a native handler exists; pane actions only natively.
+    inline for (@typeInfo(input.Binding.Action).@"union".fields) |field| {
+        const action = @unionInit(input.Binding.Action, field.name, undefined);
+        const has_native = nativeTag(@field(std.meta.Tag(input.Binding.Action), field.name));
+        switch (action.requires()) {
+            .terminal => {},
+            .app => {
+                try testing.expect(routeOf(action, false) != .pass);
+                try testing.expect(routeOf(action, true) != .pass);
+            },
+            .window => {
+                try testing.expect(routeOf(action, true) != .pass);
+                try testing.expectEqual(has_native, routeOf(action, false) != .pass);
+            },
+            .pane => {
+                try testing.expectEqual(has_native, routeOf(action, true) != .pass);
+                try testing.expectEqual(has_native, routeOf(action, false) != .pass);
+            },
+        }
+        if (has_native) try testing.expectEqual(Route.native, routeOf(action, true));
+    }
+
+    // The ones the old allowlist missed, named.
+    try testing.expectEqual(Route.core, routeOf(.{ .goto_window = .next }, true));
+    try testing.expectEqual(Route.core, routeOf(.toggle_window_float_on_top, true));
+    try testing.expectEqual(Route.core, routeOf(.toggle_quick_terminal, false));
+    try testing.expectEqual(Route.core, routeOf(.check_for_updates, false));
+    try testing.expectEqual(Route.pass, routeOf(.toggle_window_float_on_top, false));
+    // A pane action with no native handler would act on the host terminal.
+    try testing.expectEqual(Route.pass, routeOf(.prompt_surface_title, true));
+}
+
+test "T1803: chains route by their most demanding action" {
+    const ok = [_]input.Binding.Action{ .new_tab, .toggle_fullscreen };
+    const leaf_ok: input.Binding.Set.GenericLeaf = .{ .flags = .{}, .actions = .{ .many = &ok } };
+    try testing.expectEqual(Route.core, route(&leaf_ok, true));
+    try testing.expectEqual(Route.pass, route(&leaf_ok, false));
+
+    const typing = [_]input.Binding.Action{ .new_tab, .{ .text = "ls\n" } };
+    const leaf_typing: input.Binding.Set.GenericLeaf = .{ .flags = .{}, .actions = .{ .many = &typing } };
+    try testing.expectEqual(Route.pass, route(&leaf_typing, true));
+
+    // Global and all-surface bindings are not about the focused pane.
+    const all = single(.{ .text = "x" }, .{ .all = true });
+    try testing.expectEqual(Route.core, route(&all, false));
+}
+
+test "T1803: the page keeps its editing and text-navigation chords" {
+    const ctrl: input.Mods = .{ .ctrl = true };
+    const ctrl_shift: input.Mods = .{ .ctrl = true, .shift = true };
+    for ([_]u16{ 0x43, 0x56, 0x58, 0x41, 0x5A, 0x59, 0x25, 0x27, 0x24, 0x23, 0x08, 0x2E }) |vk| {
+        try testing.expect(pageOwns(vk, ctrl));
+    }
+    try testing.expect(pageOwns(0x5A, ctrl_shift)); // ctrl+shift+z = redo
+
+    // Not text chords: tab navigation on ctrl+shift+arrows (a Windows
+    // default), anything with alt or Win, bare keys, and other letters.
+    try testing.expect(!pageOwns(0x25, ctrl_shift));
+    try testing.expect(!pageOwns(0x27, ctrl_shift));
+    try testing.expect(!pageOwns(0x43, ctrl_shift));
+    try testing.expect(!pageOwns(0x25, .{ .ctrl = true, .alt = true }));
+    try testing.expect(!pageOwns(0x43, .{ .ctrl = true, .super = true }));
+    try testing.expect(!pageOwns(0x43, .{}));
+    try testing.expect(!pageOwns(0x54, ctrl)); // ctrl+t
+    try testing.expect(!pageOwns(0x31, ctrl)); // ctrl+1 (goto_tab)
 }

@@ -35370,3 +35370,25 @@ moved to T1814.
   six audits, docs-routing, feedback-user-report and the harness floor green.
   The button is not clicked on the box (Explorer would surface on the user's
   desktop); the click path is asserted through the link sink. Commit cf120a7a2.
+
+## 2026-10-12 — T1803: shortcuts from a focused viewer follow the core's action classification
+
+- **What landed.** A chord nothing in the viewer claims now reaches Ghoztty's
+  bindings the way Mac's `ViewerKeyFallback` does (main 1d513083a): the
+  hand-kept allowlist is gone, and `viewer_accel.route` decides from
+  `Binding.Action.requires`. Terminal actions stay with the page; the old
+  native dispatch (plus stash/restore, which act on the viewer itself) runs
+  first; any other app action, and window actions through a terminal in the
+  same window, go through `App.performBindingForNonTerminal`. Custom bindings
+  and chained bindings now work from a viewer.
+- **Windows-specific.** WebView2 fires the accelerator event before the page,
+  so the page's first claim is spelled out (`pageOwns`: ctrl+C/V/X/A/Z/Y and
+  ctrl-arrow text movement).
+- **Validation.** All four floor lanes, P1-P3, viewer-window-chords (new S3
+  custom window action through the core, S4 page keeps ctrl+a; 34 assertions,
+  negative control fails 6), the harness floor and all 21 due harnesses green.
+  viewer-window-chords now has a guard-due row. Float-on-top was the first S3
+  subject and could not be measured off the input desktop (T277).
+- **Filed.** T1872: Ctrl+C copies the picture in an image pane. T1873: a
+  performable binding that cannot perform is swallowed rather than handed back
+  to the page.
