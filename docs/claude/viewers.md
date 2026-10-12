@@ -260,8 +260,21 @@ ghoztty +close --target=doc
   file↔web boundary — going Back from a website re-renders the file. **Home**
   returns to the location the pane was originally opened with, which is
   remembered separately from where the user has navigated to (and both
-  survive a session restore). Clicking into the address field selects the
-  whole address; clicking again inside it just moves the caret.
+  survive a session restore). Beside Home, a **folder button** reveals the
+  file the pane is showing — Reveal in Finder on Mac, Reveal in File Explorer
+  on Windows (`explorer /select,`), its folder opened with the file
+  **selected** (**T1802**; Mac d31fbeec6). It is present only while the pane
+  IS showing a local file (markdown, code, an HTML page, an image): a website
+  or a diff gets no button rather than one that cannot do anything. It follows
+  the pane's *current* location, so it comes and goes as the address bar,
+  links and Back/Forward move the pane. Same action and wording as the file
+  link menu's Reveal item, through the same code (`BannerLinkOpener` /
+  `banner_link.revealTarget`), including a file deleted under the pane: the
+  nearest folder that still exists opens instead of a dead click — and that
+  fallback applies to a banner path link too. On Windows it is the first
+  command the strip folds into its "…" menu as the pane narrows. Clicking into
+  the address field selects the whole address; clicking again inside it just
+  moves the caret.
 - **Keyboard** (pane-scoped: live only while keyboard focus is inside a
   viewer pane — its page, its nav bar, or its feedback composer — in any
   viewer mode):

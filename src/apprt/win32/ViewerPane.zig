@@ -4140,15 +4140,11 @@ fn performLinkMenuAction(
 ) void {
     switch (act) {
         .open_with_system => self.openExternal(alloc, target),
-        .reveal_in_explorer => {
-            // `explorer /select,<path>` opens the containing folder with the
-            // file selected — the Windows analog of Mac's Reveal in Finder, and
-            // never an app launch for whatever claims the extension.
-            var arg_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
-            const args = std.fmt.bufPrint(&arg_buf, "/select,\"{s}\"", .{target}) catch return;
-            if (link_sink) |s| return s.append("reveal", target);
-            self.shellExecuteArgs(alloc, "explorer.exe", args);
-        },
+        // `explorer /select,<path>` opens the containing folder with the file
+        // selected — the Windows analog of Mac's Reveal in Finder, and never
+        // an app launch for whatever claims the extension. A path that no
+        // longer exists opens its nearest surviving folder instead (T1802).
+        .reveal_in_explorer => self.revealInExplorer(alloc, target),
         .open_in_side_pane => {
             if (link_sink) |s| return s.append("split", target);
             self.openLinkedViewerSplit(target);
@@ -5986,6 +5982,64 @@ fn pushAddress(self: *ViewerPane) void {
     const nav = self.nav orelse return;
     var buf: [std.fs.max_path_bytes]u8 = undefined;
     nav.setAddress(viewer_nav.addressText(&buf, self.location));
+    // Every location change lands here, after `mode` and `file_path` have
+    // moved, so the Reveal button follows the address bar for free.
+    self.pushRevealFile();
+}
+
+/// The file the Reveal in File Explorer button would show, or null when the
+/// pane is showing no local file (a website, a diff, a blank page). Derived
+/// from the CURRENT mode, so it follows navigation (T1802, Mac's `fileURL`).
+pub fn revealFile(self: *const ViewerPane) ?[]const u8 {
+    if (!self.mode.isFile()) return null;
+    return self.file_path;
+}
+
+/// Mirror `revealFile` to the bar. A change of presence re-lays the strip;
+/// moving between two files only re-labels, which the bar does itself.
+///
+/// The log line is the acceptance script's oracle, for the reason
+/// `pushWorktree` has one: native owner-painted chrome on the background test
+/// desktop cannot be screenshotted.
+fn pushRevealFile(self: *ViewerPane) void {
+    const nav = self.nav orelse return;
+    const file = self.revealFile();
+    const moved_shape = nav.setRevealFile(file);
+    if (moved_shape or file != null) {
+        log.info("viewer reveal pane={s} button={s} file={s}", .{
+            self.paneId(),
+            if (file != null) "shown" else "hidden",
+            file orelse "<none>",
+        });
+    }
+    if (moved_shape) self.syncBounds();
+}
+
+/// The nav bar's Reveal button: show the file this pane is displaying in File
+/// Explorer, selected — or, when it has since been deleted, the nearest folder
+/// that survives. The same path the link menu's "Reveal in File Explorer"
+/// takes, so the two cannot drift.
+pub fn revealFileInExplorer(self: *ViewerPane) void {
+    const file = self.revealFile() orelse return;
+    const p = self.pending orelse return;
+    self.revealInExplorer(p.alloc, file);
+}
+
+/// Reveal `path` in File Explorer: selected when it exists, else its nearest
+/// surviving ancestor folder opened (T1802; `banner_link.revealTarget`).
+fn revealInExplorer(self: *ViewerPane, alloc: Allocator, path: []const u8) void {
+    const target = banner_link.revealTarget(path, &banner_link.pathExists);
+    // The test seam: a lane must never reach the shell, so what Explorer
+    // WOULD have been asked for is recorded instead — with the fallback
+    // resolved, which is the half worth asserting.
+    if (link_sink) |s| return switch (target) {
+        .select => |f| s.append("reveal", f),
+        .open_folder => |d| s.append("reveal-folder", d),
+    };
+    var arg_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
+    const args = banner_link.revealArgs(&arg_buf, target) orelse return;
+    log.info("viewer reveal pane={s} explorer {s}", .{ self.paneId(), args });
+    self.shellExecuteArgs(alloc, "explorer.exe", args);
 }
 
 /// History state from `HistoryChanged`, mirrored to the bar's buttons.
@@ -10798,6 +10852,8 @@ test "T1185: the bar's band is reserved in every viewer mode" {
     var nav: ViewerNavBar = undefined;
     nav.show_contents = false;
     nav.worktree_len = 0;
+    nav.diff_mode = false;
+    nav.reveal_file_len = 0;
     pane.nav = &nav;
     defer pane.nav = null;
     const band = nav_layout.Layout.init(pane.scale, 640, .{}).bar_h;
@@ -10806,6 +10862,68 @@ test "T1185: the bar's band is reserved in every viewer mode" {
         pane.mode = m;
         try testing.expectEqual(band, pane.contentTop(640));
     }
+}
+
+test "T1802: the Reveal button follows the pane to a local file, and only there" {
+    // No window and no browser: what the bar is told is `revealFile`, and it
+    // must track the pane's CURRENT location across every kind of navigation.
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    for ([_][]const u8{ "a.md", "b.zig", "c.html", "d.png" }) |name| {
+        try tmp.dir.writeFile(.{ .sub_path = name, .data = "x" });
+    }
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = try tmp.dir.realpath(".", &root_buf);
+
+    var pane: ViewerPane = .{};
+    defer pane.deinit(alloc);
+    // Markdown, code, an HTML page and an image are all local files.
+    for ([_][]const u8{ "a.md", "b.zig", "c.html", "d.png" }) |name| {
+        const path = try std.fs.path.join(alloc, &.{ root, name });
+        defer alloc.free(path);
+        try pane.navigate(alloc, path);
+        try testing.expect(pane.mode.isFile());
+        try testing.expectEqualStrings(path, pane.revealFile().?);
+    }
+    // A website and a diff have no single file to reveal.
+    try pane.navigate(alloc, "https://example.com/");
+    try testing.expect(pane.revealFile() == null);
+    try pane.navigate(alloc, "git-status:");
+    try testing.expectEqual(content.Mode.diff, pane.mode);
+    try testing.expect(pane.revealFile() == null);
+}
+
+test "T1802: a reveal selects the file, or opens the folder it was in" {
+    // Through the link sink, never the shell: what Explorer WOULD be asked for.
+    const alloc = testing.allocator;
+    var sink: LinkSink = .{ .alloc = alloc };
+    defer sink.deinit();
+    link_sink = &sink;
+    defer link_sink = null;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "here.md", .data = "x" });
+    var root_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = try tmp.dir.realpath(".", &root_buf);
+    const here = try std.fs.path.join(alloc, &.{ root, "here.md" });
+    defer alloc.free(here);
+    const gone = try std.fs.path.join(alloc, &.{ root, "gone", "deeper", "x.md" });
+    defer alloc.free(gone);
+
+    var pane: ViewerPane = .{};
+    pane.revealInExplorer(alloc, here);
+    // The link menu's item takes the same road, deleted file included.
+    pane.performLinkMenuAction(alloc, .reveal_in_explorer, gone);
+
+    try testing.expectEqual(@as(usize, 2), sink.entries.items.len);
+    const want_sel = try std.fmt.allocPrint(alloc, "reveal:{s}", .{here});
+    defer alloc.free(want_sel);
+    try testing.expectEqualStrings(want_sel, sink.entries.items[0]);
+    const want_dir = try std.fmt.allocPrint(alloc, "reveal-folder:{s}", .{root});
+    defer alloc.free(want_dir);
+    try testing.expectEqualStrings(want_dir, sink.entries.items[1]);
 }
 
 test "a restored open re-homes the pane; a fresh open homes it where it went" {

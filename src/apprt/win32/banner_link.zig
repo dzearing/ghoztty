@@ -281,6 +281,51 @@ pub fn filePath(target: []const u8, buf: []u8) ?[]const u8 {
     return buf[0..n];
 }
 
+/// What Explorer is asked to show for a reveal (T1802; Mac d31fbeec6's
+/// `BannerLinkOpener.RevealTarget`).
+pub const RevealTarget = union(enum) {
+    /// The file exists: open its folder with it selected.
+    select: []const u8,
+    /// It does not: open the nearest folder that still does.
+    open_folder: []const u8,
+};
+
+/// Where a reveal of `path` lands. A path that no longer exists is ordinary —
+/// a viewed file deleted or moved under its pane, a banner path the autolinker
+/// matched by its shape alone — and `explorer /select,` on a missing path opens
+/// the user's Documents folder instead, which reads as a broken button. The
+/// nearest surviving ancestor is the most useful honest answer: it is where the
+/// file was, or as close as the disk still gets. A path none of whose ancestors
+/// exist (a drive that is gone) falls back to its root, the way Mac's walk ends
+/// at `/`.
+///
+/// `exists` is injected so the walk is testable without a filesystem; the
+/// callers pass `pathExists`. The returned slice aliases `path`.
+pub fn revealTarget(path: []const u8, exists: *const fn ([]const u8) bool) RevealTarget {
+    if (exists(path)) return .{ .select = path };
+    var folder = path;
+    while (std.fs.path.dirnameWindows(folder)) |up| {
+        folder = up;
+        if (exists(folder)) break;
+    }
+    return .{ .open_folder = folder };
+}
+
+/// The `explorer.exe` argument string for `target`, into `buf`: `/select,"<p>"`
+/// selects a file, and a bare quoted folder opens it. Null when it does not fit.
+pub fn revealArgs(buf: []u8, target: RevealTarget) ?[]const u8 {
+    return switch (target) {
+        .select => |p| std.fmt.bufPrint(buf, "/select,\"{s}\"", .{p}) catch null,
+        .open_folder => |p| std.fmt.bufPrint(buf, "\"{s}\"", .{p}) catch null,
+    };
+}
+
+/// The real-disk `exists` for `revealTarget`.
+pub fn pathExists(path: []const u8) bool {
+    std.fs.cwd().access(path, .{}) catch return false;
+    return true;
+}
+
 // ---------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------
@@ -494,4 +539,68 @@ test "filePath: degenerate input never overruns the buffer" {
     try testing.expect(filePath("file://", &buf) == null);
     // A truncated escape at the end is data, not a decode: kept literally.
     try testing.expectEqualStrings("C:\\a%2", filePath("file:///C:/a%2", &buf).?);
+}
+
+const RevealFake = struct {
+    /// The paths the fake disk holds; everything else is missing.
+    var present: []const []const u8 = &.{};
+
+    fn exists(path: []const u8) bool {
+        for (present) |p| if (std.ascii.eqlIgnoreCase(p, path)) return true;
+        return false;
+    }
+};
+
+test "T1802: a file that exists is revealed selected" {
+    RevealFake.present = &.{ "D:\\git\\ghoztty\\README.md", "D:\\git\\ghoztty", "D:\\git", "D:\\" };
+    const t = revealTarget("D:\\git\\ghoztty\\README.md", &RevealFake.exists);
+    try testing.expectEqualStrings("D:\\git\\ghoztty\\README.md", t.select);
+    var buf: [256]u8 = undefined;
+    try testing.expectEqualStrings(
+        "/select,\"D:\\git\\ghoztty\\README.md\"",
+        revealArgs(&buf, t).?,
+    );
+}
+
+test "T1802: a deleted file opens its nearest surviving folder" {
+    // The file and its own folder are both gone; the grandparent survives.
+    RevealFake.present = &.{ "D:\\git", "D:\\" };
+    const t = revealTarget("D:\\git\\gone\\deeper\\notes.md", &RevealFake.exists);
+    try testing.expectEqualStrings("D:\\git", t.open_folder);
+    var buf: [256]u8 = undefined;
+    // A folder is OPENED, not selected inside its parent.
+    try testing.expectEqualStrings("\"D:\\git\"", revealArgs(&buf, t).?);
+
+    // Forward slashes walk the same way.
+    RevealFake.present = &.{"D:/git"};
+    const f = revealTarget("D:/git/gone/x.md", &RevealFake.exists);
+    try testing.expectEqualStrings("D:/git", f.open_folder);
+}
+
+test "T1802: a path with nothing left on disk ends at its root" {
+    RevealFake.present = &.{};
+    const t = revealTarget("Q:\\nowhere\\x.md", &RevealFake.exists);
+    try testing.expectEqualStrings("Q:\\", t.open_folder);
+}
+
+test "T1802: revealArgs never overruns its buffer" {
+    var small: [8]u8 = undefined;
+    try testing.expect(revealArgs(&small, .{ .select = "D:\\a\\long\\path.md" }) == null);
+    try testing.expect(revealArgs(&small, .{ .open_folder = "D:\\a\\long" }) == null);
+}
+
+test "T1802: pathExists reads the real disk" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(.{ .sub_path = "here.md", .data = "x" });
+    var buf: [std.fs.max_path_bytes]u8 = undefined;
+    const root = try tmp.dir.realpath(".", &buf);
+    var p1: [std.fs.max_path_bytes]u8 = undefined;
+    const here = try std.fmt.bufPrint(&p1, "{s}\\here.md", .{root});
+    try testing.expect(pathExists(here));
+    var p2: [std.fs.max_path_bytes]u8 = undefined;
+    const gone = try std.fmt.bufPrint(&p2, "{s}\\gone\\x.md", .{root});
+    try testing.expect(!pathExists(gone));
+    const t = revealTarget(gone, &pathExists);
+    try testing.expectEqualStrings(root, t.open_folder);
 }

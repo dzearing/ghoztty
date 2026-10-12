@@ -46,6 +46,11 @@ pub const field_min_dip: f32 = 72.0;
 /// ones it dropped in a popup menu. It is a CONSEQUENCE of the layout rather
 /// than an input to it — nothing asks for it, the arithmetic decides — which is
 /// why it has no flag in `Shown`.
+/// `reveal` sits beside Home and exists only while the pane shows a LOCAL file
+/// (T1802, Mac d31fbeec6): both answer "where does this pane's content live",
+/// so the pair stays one group the address field's slack never separates. A
+/// website or a diff has no single file to reveal, and a button that could do
+/// nothing would be a lie — the rule the feedback button follows.
 /// `prev_change` / `next_change` / `diff_style` exist only in a DIFF pane
 /// (T817), and sit after Home exactly where Mac's chrome bar puts them
 /// (`ViewerSplitLeaf.chrome`). They are three more buttons in the same strip
@@ -58,6 +63,7 @@ pub const Button = enum {
     forward,
     reload,
     home,
+    reveal,
     prev_change,
     next_change,
     diff_style,
@@ -73,6 +79,7 @@ const leading_order = [_]Button{
     .forward,
     .reload,
     .home,
+    .reveal,
     .prev_change,
     .next_change,
     .diff_style,
@@ -88,7 +95,11 @@ const leading_order = [_]Button{
 /// least — even though they are painted after them. The contents toggle still
 /// sheds last, in a diff pane because it opens the file list and elsewhere
 /// because it is the compact TOC's only opener.
+///
+/// `reveal` goes FIRST (T1802): the link menu still offers the same action, and
+/// Home is the way back from a browse, so Home is worth its slot for longer.
 const shed_order = [_]Button{
+    .reveal,
     .home,
     .reload,
     .forward,
@@ -110,6 +121,10 @@ pub const Shown = struct {
     /// else, because a diff pane always has changes to step and a layout to
     /// choose, even when the diff turns out to be empty.
     diff: bool = false,
+    /// Whether the pane is showing a LOCAL file (markdown, code, HTML, image),
+    /// which is the whole condition on the Reveal in File Explorer button
+    /// (T1802). Derived from the pane's CURRENT mode, so it follows navigation.
+    reveal: bool = false,
 };
 
 /// Whether this bar asks for `b` at all. The one place a button's PRESENCE
@@ -119,6 +134,7 @@ pub fn asks(shown: Shown, b: Button) bool {
     return switch (b) {
         .contents => shown.contents,
         .feedback => shown.feedback,
+        .reveal => shown.reveal,
         .prev_change, .next_change, .diff_style => shown.diff,
         // The "…" is a consequence of the layout, never something asked for.
         .overflow => false,
@@ -328,7 +344,19 @@ pub const Layout = struct {
             buttons[@intFromEnum(Button.feedback)].left - field_gap
         else
             width - pad;
-        const field_right = if (fit.field) @max(field_limit, field_left) else field_left;
+        // While anything is folded into the "…", the field holds exactly its
+        // designed minimum (T1802). Folding two commands into one control
+        // frees a slot, and handing that slot to the field made it GROW as the
+        // pane narrowed — the bar visibly loosening while it is being squeezed.
+        // The band just wider than this one fits with no overflow at roughly
+        // the minimum, so pinning the compact field there is what keeps its
+        // width monotone in the pane's.
+        const field_right = if (!fit.field)
+            field_left
+        else if (fit.overflow)
+            @min(@max(field_limit, field_left), field_left + field_min)
+        else
+            @max(field_limit, field_left);
         return .{
             .bar_h = bar_h,
             .buttons = buttons,
@@ -384,6 +412,9 @@ pub const Labels = struct {
     /// Mac's wording exactly — a toggle that named only the destination reads
     /// as a claim about what is on screen.
     diff_split: bool = false,
+    /// The file the Reveal button would show (T1802). Empty => the button is
+    /// absent, so it has no tooltip at all.
+    file: []const u8 = "",
 };
 
 /// The tooltip for one button, into `buf`. Mac's `.help(...)` on the chrome
@@ -412,6 +443,14 @@ pub fn label(buf: []u8, which: Button, state: Labels) []const u8 {
             "Home"
         else
             std.fmt.bufPrint(buf, "Home \u{2014} back to {s}", .{state.home}) catch "Home",
+        // Mac's "Reveal in Finder — <path>" in Windows' words, the same ones
+        // the link menu's item uses. A path too long to name drops the clause
+        // rather than truncating it to one that points somewhere else.
+        .reveal => if (state.file.len == 0)
+            ""
+        else
+            std.fmt.bufPrint(buf, "Reveal in File Explorer \u{2014} {s}", .{state.file}) catch
+                "Reveal in File Explorer",
         // Mac's `.help` / `.accessibilityLabel` on the same three controls,
         // word for word (T817).
         .prev_change => "Previous change",
@@ -1015,11 +1054,119 @@ test "T817: the layout toggle names the state it is in, and the one it offers" {
 
 test "no button is left unlabelled (T639)" {
     var buf: [512]u8 = undefined;
-    const state: Labels = .{ .home = "D:\\git\\ghoztty", .worktree = "D:\\git\\ghoztty" };
+    const state: Labels = .{
+        .home = "D:\\git\\ghoztty",
+        .worktree = "D:\\git\\ghoztty",
+        .file = "D:\\git\\ghoztty\\README.md",
+    };
     // The defect this task exists for was one labelled button out of six, and
     // it was invisible because nothing asked the question of the whole enum.
     // A button added tomorrow fails here until it has words.
     for (std.enums.values(Button)) |b| {
         try testing.expect(label(&buf, b, state).len > 0);
     }
+}
+
+test "T1802: Reveal sits beside Home, and exists only for a local file" {
+    for (scales) |scale| {
+        const m = icon_button.Metrics.init(scale);
+        const gap = px(4.0, scale);
+        const width = px(600.0, scale);
+        const plain = Layout.init(scale, width, .{});
+        const file = Layout.init(scale, width, .{ .reveal = true });
+
+        // Absent: no room taken, and no hit even dead on where it would be.
+        try testing.expectEqual(@as(i32, 0), plain.button(.reveal).width());
+        const at = file.button(.reveal);
+        try testing.expect(plain.hitButton(scale, at.left + 1, at.top + 1) != Button.reveal);
+
+        // Present: the shared square, immediately after Home on the same band,
+        // and the field starts a full field gap after it.
+        try testing.expectEqual(m.target, at.width());
+        try testing.expectEqual(m.target, at.height());
+        try testing.expectEqual(file.button(.home).right + gap, at.left);
+        try testing.expectEqual(file.button(.home).top, at.top);
+        try testing.expect(file.address.left - at.right >= px(8.0, scale));
+        try testing.expectEqual(
+            Button.reveal,
+            file.hitButton(scale, @divTrunc(at.left + at.right, 2), @divTrunc(at.top + at.bottom, 2)).?,
+        );
+    }
+}
+
+test "T1802: a narrowing pane gives up Reveal before Home, and never loses it" {
+    for (scales) |scale| {
+        const m = icon_button.Metrics.init(scale);
+        const shown: Shown = .{ .reveal = true, .contents = true, .feedback = true };
+        var seen_fold = false;
+        var width: i32 = 0;
+        while (width <= m.target * 14) : (width += 1) {
+            const l = Layout.init(scale, width, shown);
+            // Home is painted whenever Reveal is (Reveal sheds first)...
+            if (l.button(.reveal).width() > 0) try testing.expect(l.button(.home).width() > 0);
+            // ...so whenever ANY leading command is in the menu, Reveal is
+            // too. (The first shed always pays for the "…" with a slot, so
+            // Reveal and Home leave the strip together; the order shows in
+            // which commands the menu holds as it narrows further.)
+            var folded_any = false;
+            for (leading_order) |b| {
+                if (l.overflowed[@intFromEnum(b)]) folded_any = true;
+            }
+            if (folded_any) {
+                seen_fold = true;
+                try testing.expect(l.overflowed[@intFromEnum(Button.reveal)]);
+            }
+            // ...and a shed Reveal is in the menu, never simply gone.
+            if (l.hasOverflow() and l.button(.reveal).width() == 0) {
+                try testing.expect(l.overflowed[@intFromEnum(Button.reveal)]);
+            }
+            for (l.buttons) |b| {
+                if (b.width() <= 0) continue;
+                try testing.expect(b.left >= 0);
+                try testing.expect(b.right <= width);
+            }
+            const fw = l.address.width();
+            try testing.expect(fw == 0 or fw >= px(field_min_dip, scale));
+        }
+        try testing.expect(seen_fold);
+    }
+}
+
+test "T1802: narrowing the pane never widens the address field" {
+    // The property viewer-narrow-pane.ps1 section E measures on the box, walked
+    // one pixel at a time here: folding two commands into one "…" frees a
+    // slot, and a field that took it grew while the pane shrank.
+    for (scales) |scale| {
+        const m = icon_button.Metrics.init(scale);
+        for ([_]Shown{
+            .{},
+            .{ .reveal = true },
+            .{ .reveal = true, .feedback = true },
+            .{ .reveal = true, .contents = true, .feedback = true },
+            .{ .diff = true, .contents = true, .feedback = true },
+        }) |shown| {
+            var prev: ?i32 = null;
+            var width: i32 = m.target * 16;
+            while (width >= 0) : (width -= 1) {
+                const fw = Layout.init(scale, width, shown).address.width();
+                if (prev) |p| try testing.expect(fw <= p);
+                prev = fw;
+            }
+        }
+    }
+}
+
+test "T1802: the Reveal tooltip names the file, or does not exist" {
+    var buf: [512]u8 = undefined;
+    try testing.expectEqualStrings(
+        "Reveal in File Explorer \u{2014} D:\\git\\ghoztty\\README.md",
+        label(&buf, .reveal, .{ .file = "D:\\git\\ghoztty\\README.md" }),
+    );
+    try testing.expectEqualStrings("", label(&buf, .reveal, .{}));
+    // A path that cannot fit keeps the action's name rather than a stub path.
+    var small: [16]u8 = undefined;
+    try testing.expectEqualStrings(
+        "Reveal in File Explorer",
+        label(&small, .reveal, .{ .file = "D:\\git\\ghoztty\\README.md" }),
+    );
 }

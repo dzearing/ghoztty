@@ -63,6 +63,9 @@ fn codepoint(which: icon_button.Glyph) u16 {
         // that happen to sit together.
         .diff_split => 0xE90D, // DockRight
         .diff_unified => 0xE90E, // DockBottom
+        // Reveal in File Explorer (T1802): Windows' own folder mark, the one
+        // Explorer's "Open file location" commands carry.
+        .folder => 0xE8B7, // Folder
     };
 }
 
@@ -94,6 +97,8 @@ fn fontDip(which: icon_button.Glyph) f32 {
         // The diff controls sit in the nav bar's own 28 DIP squares, so they
         // render at the toolbar size like the cluster they join.
         .diff_split, .diff_unified => 12.0,
+        // ...and so does the Reveal button beside Home (T1802).
+        .folder => 12.0,
     };
 }
 

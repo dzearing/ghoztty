@@ -2157,11 +2157,16 @@ pub const BannerOverlay = struct {
                 // the file SELECTED — the Windows analog of Mac's
                 // `activateFileViewerSelecting`. A click reveals, never
                 // opens, so it can't launch whatever app claims the
-                // extension.
+                // extension. A path that no longer exists — a deleted file,
+                // or one the autolinker matched by its shape alone — opens its
+                // nearest surviving folder rather than a dead click (T1802).
                 var path_buf: [std.fs.max_path_bytes]u8 = undefined;
                 const path = banner_link.filePath(url, &path_buf) orelse return;
                 var arg_buf: [std.fs.max_path_bytes + 16]u8 = undefined;
-                const args = std.fmt.bufPrint(&arg_buf, "/select,\"{s}\"", .{path}) catch return;
+                const args = banner_link.revealArgs(
+                    &arg_buf,
+                    banner_link.revealTarget(path, &banner_link.pathExists),
+                ) orelse return;
                 self.shellExecuteArgs("explorer.exe", args);
             },
             .open_in_side_pane => {

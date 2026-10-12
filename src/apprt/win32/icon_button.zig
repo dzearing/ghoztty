@@ -429,6 +429,11 @@ pub const Glyph = enum {
     /// single column of lines: `contents` already owns that mark and sits four
     /// buttons away in the same bar.
     diff_unified,
+    /// "🗀" — reveal the file a viewer pane is showing in File Explorer
+    /// (T1802, Fluent Folder; Mac uses `folder`). The FALLBACK is a folder
+    /// outline with its tab: a four-bar body under a short solid tab on the
+    /// leading half of the top edge.
+    folder,
 };
 
 /// The maximum quads any glyph needs, so callers can size a stack buffer.
@@ -876,6 +881,33 @@ pub fn glyphQuads(m: Metrics, target: Rect, glyph: Glyph, out: []Quad) []const Q
                 centeredExact(inner, inner.width(), so));
             return out[0 .. used.len + 1];
         },
+        .folder => {
+            // A folder: an outlined body under a solid tab. The TAB owns the
+            // mark box's top edge (on its leading half) and the BODY owns the
+            // other three, so the union is exactly the centered mark box and
+            // the glyph stays centered by construction.
+            //
+            // Outlined at `stroke_outline` by the closed-mark rule the
+            // maximize box follows. The tab sits wholly ABOVE the body's top
+            // bar, so no two quads overlap (`squareOutline`'s rule).
+            const b = centered(target, m.mark_close, m.mark_close);
+            const so = m.stroke_outline;
+            const tab_h = @max(@divTrunc(b.height(), 5), so);
+            const body: Rect = .{
+                .left = b.left,
+                .top = b.top + tab_h,
+                .right = b.right,
+                .bottom = b.bottom,
+            };
+            const used = squareOutline(body, so, out);
+            out[used.len] = bar(.{
+                .left = b.left,
+                .top = b.top,
+                .right = b.left + @divTrunc(b.width() + 1, 2),
+                .bottom = body.top,
+            });
+            return out[0 .. used.len + 1];
+        },
         .overflow => {
             // Three square dots on the mark box's center line, spanning the
             // same `mark_caption` extent as the three system glyphs beside it
@@ -1226,6 +1258,7 @@ const all_glyphs = [_]Glyph{
     .send,
     .diff_split,
     .diff_unified,
+    .folder,
 };
 
 /// The painted square a strip button gets at `scale`, i.e. what the glyph

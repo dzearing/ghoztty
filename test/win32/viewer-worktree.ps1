@@ -15,6 +15,9 @@
 #     itself is T634, so what it reaches is a logged intent).
 #   - the address field still shows the file's path with the trailing button
 #     present, i.e. adding it did not eat the field.
+#   - a pane showing a local file carries the Reveal in File Explorer button,
+#     pointed at that file and placed after Home; a browser pane has none
+#     (T1802).
 #   - EVERY present button has a tooltip whose tool rect is its HIT box, and an
 #     absent one has no tool at all (T639). Before it, one button of six
 #     explained itself; the strings themselves are unit-tested in the none lane
@@ -180,6 +183,30 @@ function Test-TipIsHitBox($tip) {
     return (($h[2] - $h[0]) -gt ($p[2] - $p[0])) -and (($h[3] - $h[1]) -gt ($p[3] - $p[1]))
 }
 
+# The pane's LAST reported Reveal in File Explorer state (T1802), from the same
+# stderr oracle: `pushRevealFile` logs the file the bar's Reveal button points
+# at, or `hidden`, from the exact code path that hands the bar its button.
+function Get-RevealState($errlog, $paneId) {
+    if (-not (Test-Path $errlog)) { return $null }
+    if (-not $paneId) { return $null }
+    $hit = $null
+    foreach ($line in (Get-Content $errlog -ErrorAction SilentlyContinue)) {
+        if ($line -match "viewer reveal pane=$([regex]::Escape($paneId)) button=(\w+) file=(.+)$") {
+            $hit = [pscustomobject]@{ Shown = ($Matches[1] -eq 'shown'); File = $Matches[2].Trim() }
+        }
+    }
+    return $hit
+}
+
+function Wait-RevealState($errlog, $paneId, [bool]$Shown) {
+    for ($t = 0; $t -lt 40; $t++) {
+        $s = Get-RevealState $errlog $paneId
+        if ($s -and $s.Shown -eq $Shown) { return $s }
+        Start-Sleep -Milliseconds 250
+    }
+    return (Get-RevealState $errlog $paneId)
+}
+
 # Resolution is asynchronous by design (a `git` spawn off the UI thread), so
 # every read of it waits for a line rather than sampling once.
 function Wait-WorktreeState($errlog, $paneId, [bool]$Shown) {
@@ -273,6 +300,21 @@ try {
     Assert ($tips -and -not $tips.ContainsKey('contents')) `
         'a button the strip is not showing has no tooltip tool at all'
 
+    # --- 2c. a local file gets the Reveal in File Explorer button (T1802) ----
+    # Presence, target and tooltip only. It is deliberately NOT clicked here:
+    # explorer.exe hands the request to the user's own shell, which would open
+    # a window on the interactive desktop. What a click asks Explorer for, and
+    # the deleted-file fallback, are unit-tested through the pane's link sink.
+    $rv = Wait-RevealState $errlog $filePane $true
+    Assert ($rv -and $rv.Shown) "a file pane SHOWS the Reveal button (state '$($rv.Shown)')"
+    Assert ($rv -and $rv.File -eq $viewFile) `
+        "...pointed at the file it is showing (got '$($rv.File)', want '$viewFile')"
+    Assert ($tips -and $tips.ContainsKey('reveal')) 'the Reveal button has a tooltip'
+    Assert ($tips -and (Test-TipIsHitBox $tips['reveal'])) "...whose tool rect is its hit box"
+    Assert ($tips -and $tips.ContainsKey('home') -and $tips.ContainsKey('reveal') -and
+        ($tips['reveal'].Paint[0] -gt $tips['home'].Paint[2])) `
+        'the Reveal button sits after Home on the strip'
+
     # --- 3. clicking is live (the action reaches the pane) -------------------
     # What T633 owes is a button that is WIRED, and since T634 what it is wired
     # to is the composer: the pane reports the open transition with the worktree
@@ -342,6 +384,12 @@ try {
         Assert ($webTips -and $webTips.ContainsKey($b)) `
             "...while '$b' still has one on the same bar"
     }
+    # A browser pane has no file to reveal (T1802): no button, so no tool --
+    # the negative to section 2c's positive control, on a pane that reported.
+    Assert ($webTips -and -not $webTips.ContainsKey('reveal')) `
+        'a browser pane has NO Reveal button tooltip tool'
+    $rv = Get-RevealState $errlog $webPane
+    Assert (-not ($rv -and $rv.Shown)) 'a browser pane never reported a shown Reveal button'
 
     # --- 5. leg 3, populated: a remote URL opened FROM the repo shows it -----
     # The fallback's whole reason to exist: a dev server or a doc site is still
@@ -368,6 +416,11 @@ try {
     $s = Wait-WorktreeState $errlog $outPane $false
     Assert ($s -and -not $s.Shown) `
         "a file outside any repository shows NO button, even opened from one (state '$($s.Shown)')"
+    # Reveal is about the FILE, not the repository: it is there for a file in
+    # no working tree too, pointed at that file (T1802).
+    $rv = Wait-RevealState $errlog $outPane $true
+    Assert ($rv -and $rv.Shown -and $rv.File -eq $outsideFile) `
+        "a file outside any repo still gets the Reveal button, at that file (got '$($rv.File)')"
 
     # --- 7. app survived all of it ------------------------------------------
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'

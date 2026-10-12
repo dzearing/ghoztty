@@ -130,6 +130,13 @@ diff_mode: bool = false,
 /// this is both the glyph and half the wording.
 diff_split: bool = false,
 
+/// The local file the Reveal in File Explorer button would show (T1802),
+/// pushed by the pane on every location change. Empty => the pane is showing a
+/// website, a diff, or nothing, and the button is ABSENT — the feedback
+/// button's rule: a button that could do nothing would be a lie.
+reveal_file: [std.fs.max_path_bytes]u8 = undefined,
+reveal_file_len: usize = 0,
+
 /// The bar's tooltips, and the one control that shows them all. ONE TOOL PER
 /// PRESENT BUTTON (T639): a strip where one of six buttons explains itself and
 /// five do not is a defect by the design system's one-treatment-per-control
@@ -367,6 +374,7 @@ pub fn shown(self: *const ViewerNavBar) layout_mod.Shown {
         .contents = self.show_contents,
         .feedback = self.worktree_len > 0,
         .diff = self.diff_mode,
+        .reveal = self.reveal_file_len > 0,
     };
 }
 
@@ -484,6 +492,30 @@ pub fn setHome(self: *ViewerNavBar, home: ?[]const u8) void {
     self.syncTip(self.currentLayout());
 }
 
+/// Point the Reveal button at the file this pane is showing, or take it away
+/// (null / a path too long to hold). Returns whether the button's PRESENCE
+/// changed, so the pane re-lays the strip only when its shape moved — the same
+/// contract as `setWorktree`.
+pub fn setRevealFile(self: *ViewerNavBar, file: ?[]const u8) bool {
+    const had = self.reveal_file_len > 0;
+    const next: []const u8 = if (file) |f|
+        (if (f.len <= self.reveal_file.len) f else "")
+    else
+        "";
+    if (next.len == self.reveal_file_len and
+        std.mem.eql(u8, self.reveal_file[0..self.reveal_file_len], next))
+    {
+        return false;
+    }
+    @memcpy(self.reveal_file[0..next.len], next);
+    self.reveal_file_len = next.len;
+    // Re-synced here as well as from `place`: a pane that moves between two
+    // files keeps the button and only changes what its tooltip names.
+    self.syncTip(self.currentLayout());
+    _ = w32.InvalidateRect(self.hwnd, null, 1);
+    return had != (next.len > 0);
+}
+
 /// Point the trailing feedback button at `root`, or take it away (null / a
 /// path too long to hold). The pane calls this whenever provenance resolves;
 /// the bar re-lays itself on the next bounds sync, which the pane drives.
@@ -586,6 +618,7 @@ fn labelState(self: *const ViewerNavBar) layout_mod.Labels {
         .diff_split = self.diff_split,
         .home = self.home[0..self.home_len],
         .worktree = self.worktree[0..self.worktree_len],
+        .file = self.reveal_file[0..self.reveal_file_len],
     };
 }
 
@@ -801,7 +834,8 @@ fn buttonEnabled(self: *const ViewerNavBar, b: layout_mod.Button) bool {
         // step with nowhere to go by rolling into the adjacent file, and
         // running out of files is a no-op rather than a state the bar can see
         // from here (Mac does not disable them either).
-        .reload, .home, .feedback, .overflow => true,
+        // Reveal is absent rather than disabled when there is no file.
+        .reload, .home, .reveal, .feedback, .overflow => true,
         .prev_change, .next_change, .diff_style => true,
     };
 }
@@ -813,6 +847,7 @@ fn buttonGlyph(b: layout_mod.Button, split: bool) icon_button.Glyph {
         .forward => .forward,
         .reload => .refresh,
         .home => .home,
+        .reveal => .folder,
         .overflow => .overflow,
         .feedback => .feedback,
         .prev_change => .chevron_up,
@@ -836,6 +871,7 @@ fn overflowTitle(b: layout_mod.Button) [:0]const u16 {
         .forward => L("Forward"),
         .reload => L("Reload"),
         .home => L("Home"),
+        .reveal => L("Reveal in File Explorer"),
         .feedback => L("Send feedback…"),
         .prev_change => L("Previous change"),
         .next_change => L("Next change"),
@@ -1097,6 +1133,7 @@ fn activate(self: *ViewerNavBar, b: layout_mod.Button) void {
         .forward => self.pane.goForward(),
         .reload => self.pane.reloadFromChrome(),
         .home => self.pane.goHome(),
+        .reveal => self.pane.revealFileInExplorer(),
         .feedback => self.pane.toggleFeedback(),
         .prev_change => self.pane.diffNav(false),
         .next_change => self.pane.diffNav(true),
