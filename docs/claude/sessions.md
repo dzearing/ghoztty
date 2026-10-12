@@ -757,6 +757,28 @@ path are contract, not detail:
   naming what was lost. Losing the survive-an-agent-death property is a bad
   day; a dead pane because a holder would not start is a worse one.
 
+**A holder that dies under a running agent interrupts its session; it never
+reads as the program finishing** (T1771, T1793). The agent can tell the two
+apart (`Child.wasLost()`), and both shapes now end in "Session interrupted":
+
+- **Nobody attached** (T1771): the session becomes a relaunchable tombstone, so
+  the pane that re-attaches later gets the ordinary interrupted-restore notice.
+- **A pane attached and watching** (T1793): gated on the `holder_lost` HELLO
+  capability. The agent keeps the same tombstone and sends `EXIT{lost, command}`
+  instead of a plain exit; the pane does not close. It keeps the dead program's
+  screen as history (a full-screen frame is copied off the alternate screen
+  first), undoes its modes, and follows `session-relaunch`: `restore` writes the
+  notice + banner (reason `host_lost`: "the process hosting this session stopped
+  unexpectedly") and RELAUNCHes a fresh shell in place with
+  `RELAUNCH{fresh_shell, replay_from}` - never the recorded command, and
+  replaying nothing the pane already shows; `rerun` respawns the command under a
+  divider; `prompt` waits for a key. Against an agent or app without the
+  capability the old behavior stands: plain EXIT, the pane closes, no tombstone
+  is left behind as a Resume row. A respawn that fails falls back to that same
+  close. Unit coverage: the `T1793` tests in `agent/session.zig`,
+  `agent/server.zig`, `protocol.zig`, `inbound_ring.zig`, `session_notice.zig`,
+  `restore_history.zig`.
+
 Acceptance for that half is `test\win32\pty-holder.ps1`, which kills a real
 agent (with nothing set, i.e. the default) and asserts the shell and holder live
 on — with an opt-OUT negative control (`=0`) asserting the shell still dies with

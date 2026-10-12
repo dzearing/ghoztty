@@ -80,7 +80,21 @@ pub const Reason = enum {
     /// difference from `agent_restarted`, and the wording must not imply it
     /// was lost (T1687).
     restored_elsewhere,
+    /// The process HOSTING this session (its per-pane holder) died while the
+    /// pane was open and the agent stayed up (T1793). The program is gone, as
+    /// with `agent_restarted`, but nothing was restarted - so the sentence names
+    /// what actually happened instead of borrowing that one.
+    host_lost,
 };
+
+/// The reason sentence both carriers share for the reasons whose program is
+/// gone. Lower case after the `Label:`, per the contract above.
+fn lostSentence(reason: Reason) []const u8 {
+    return switch (reason) {
+        .host_lost => "the process hosting this session stopped unexpectedly, so the program in it was closed.",
+        .agent_restarted, .restored_elsewhere => "the background terminal process was restarted, so this session was closed.",
+    };
+}
 
 /// `format` for any `Reason`. `command` is only rendered for
 /// `.agent_restarted`: a session restored elsewhere is still running its
@@ -94,7 +108,9 @@ pub fn formatFor(buf: []u8, reason: Reason, command: ?[]const u8) []const u8 {
         return w.written();
     }
 
-    w.put("\r\n\x1b[2mSession interrupted: the background terminal process was restarted, so this session was closed.\x1b[0m\r\n");
+    w.put("\r\n\x1b[2mSession interrupted: ");
+    w.put(lostSentence(reason));
+    w.put("\x1b[0m\r\n");
 
     if (sanitizedCommand(command)) |cmd| {
         var cmd_buf: [max_command_len + 3]u8 = undefined;
@@ -228,7 +244,9 @@ pub fn formatBannerFor(buf: []u8, reason: Reason, command: ?[]const u8) []const 
         w.put("\x1b]7778;**Session restored elsewhere:** this pane's session is already open in another pane, and a session can only be shown in one place. Nothing was closed; this is a fresh shell.\x07");
         return w.written();
     }
-    w.put("\x1b]7778;**Session interrupted:** the background terminal process was restarted, so this session was closed. Nothing was re-run; this is a fresh shell.");
+    w.put("\x1b]7778;**Session interrupted:** ");
+    w.put(lostSentence(reason));
+    w.put(" Nothing was re-run; this is a fresh shell.");
     if (sanitizedCommand(command)) |cmd| {
         var cmd_buf: [max_command_len + 3]u8 = undefined;
         var esc_buf: [(max_command_len + 3) * 2]u8 = undefined;
@@ -501,6 +519,31 @@ test "formatFor: restored elsewhere names what happened and says nothing was clo
         bel += 1;
     };
     try testing.expectEqual(@as(usize, 1), bel);
+}
+
+test "formatFor: host_lost says the session's host stopped, names the command, and says nothing was re-run" {
+    // T1793: the agent did NOT restart - the pane's own host died under it - so
+    // the sentence must not borrow the restart wording; the rest of the notice
+    // (label, previous command, fresh shell) is the same contract.
+    const testing = std.testing;
+    var buf: [max_len]u8 = undefined;
+    var banner_buf: [max_len]u8 = undefined;
+
+    const stream = formatFor(&buf, .host_lost, "claude --resume");
+    try testing.expect(std.mem.indexOf(u8, stream, "Session interrupted: the process hosting this session stopped unexpectedly, so the program in it was closed.") != null);
+    try testing.expect(std.mem.indexOf(u8, stream, "Previous command:") != null);
+    try testing.expect(std.mem.indexOf(u8, stream, "claude --resume") != null);
+    try testing.expect(std.mem.indexOf(u8, stream, "Nothing was re-run; this is a fresh shell.") != null);
+    try testing.expect(std.mem.indexOf(u8, stream, "restarted") == null);
+
+    const banner = formatBannerFor(&banner_buf, .host_lost, "claude --resume");
+    try testing.expect(std.mem.startsWith(u8, banner, "\x1b]7778;**Session interrupted:** the process hosting this session stopped unexpectedly"));
+    try testing.expect(std.mem.indexOf(u8, banner, "Previous command: `claude --resume`") != null);
+    try testing.expect(std.mem.endsWith(u8, banner, "\x07"));
+    try testing.expect(std.mem.indexOf(u8, banner, "restarted") == null);
+    for ([_][]const u8{ stream, banner }) |out| {
+        try testing.expect(std.mem.indexOf(u8, out, "\u{2014}") == null);
+    }
 }
 
 test "formatFor: agent_restarted is byte-identical to format" {

@@ -1,16 +1,15 @@
 {
     "guard":  "holder-volume",
     "script":  "test/win32/holder-volume.ps1",
-    "generated":  "2026-10-10T16:06:22-07:00",
-    "commit":  "9b5cb3ead",
+    "generated":  "2026-10-11T23:10:22-07:00",
+    "commit":  "6b274f166",
     "uncommitted":  [
-                        "src/remote/agent/ring_snapshot.zig",
                         "src/remote/agent/session.zig"
                     ],
     "files":  {
                   "src/remote/agent/pty_holder_child.zig":  "198095818b07ea25e60da88546b33affca04236e90a7bcebeca013845c90387f",
                   "src/remote/agent/ring_snapshot.zig":  "43d927ca2996eeecafac57a50952fc4de4c0fb5b07bf1368d10eecd4a05f4234",
-                  "src/remote/agent/session.zig":  "6c90311f464d43f89500b615e2e9f439a2a74670f4352581ab0a4945f2173e0f",
+                  "src/remote/agent/session.zig":  "226b8672fea7ad3d0d291e0e9989cd747af1854b790d11fa5bfc1fe8c5a5b49c",
                   "test/win32/holder-volume.ps1":  "9eff753b32372341d23edc406af363757896fabdf4a8a8bb37b8f16ef6f1ea63",
                   "test/win32/lib/RingSnapshot.ps1":  "97aaf7f3047095d13b76d6d5ef12610b1eaa449fdd122f6e5d68ae499baa7778"
               }

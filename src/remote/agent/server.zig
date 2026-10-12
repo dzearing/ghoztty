@@ -547,6 +547,11 @@ pub const Server = struct {
         // trust that flipping the file is enough. An agent without this string
         // never reads the file, and the chooser says so (T889).
         protocol.capability.sharing_reconcile,
+        // A bound session whose holder dies is kept as an interrupted session
+        // and its viewer told so (`EXIT{lost}`), and RELAUNCH honors
+        // `fresh_shell` / `replay_from` for the in-place respawn that follows
+        // (T1793).
+        protocol.capability.holder_lost,
     };
 
     pub const Options = struct {
@@ -731,6 +736,7 @@ pub const Server = struct {
                 s.bridge_ctx = null;
                 s.bridge_data = null;
                 s.bridge_exit = null;
+                s.bridge_lost = null;
                 s.bridge_busy = null;
                 s.bridge_cwd = null;
                 s.has_descendants = null;
@@ -877,6 +883,21 @@ pub const Server = struct {
         // A child exited on its own -- the case a poll handled worst:
         // the row stayed 'alive' until the next tick, which is how exited
         // sessions came to be shown as live "Resume" rows.
+        self.markRosterDirty();
+    }
+
+    /// Bridge: frame `EXIT{lost}` on `channel` — the session's HOLDER died under
+    /// it, and it is now a relaunchable tombstone (T1793). Installed as
+    /// `bridge_lost` only when this connection negotiated
+    /// `capability.holder_lost`; `command` is borrowed for the call.
+    fn bridgeLost(ctx: *anyopaque, channel: u128, runtime_ms: u64, command: ?[]const u8) void {
+        const self: *Server = @ptrCast(@alignCast(ctx));
+        self.sendJson(.exit, channel, protocol.Exit{
+            .code = 0,
+            .runtime_ms = runtime_ms,
+            .lost = true,
+            .command = command,
+        }) catch {};
         self.markRosterDirty();
     }
 
@@ -1334,6 +1355,14 @@ pub const Server = struct {
             (if (n.session_busy) bridgeBusy else null)
         else |_|
             null;
+        // T1793: only a viewer that will respawn a lost session in place is told
+        // it was lost. Every other viewer gets the plain EXIT it understands,
+        // and the store then treats the loss as an exit, so no tombstone is left
+        // behind for a pane that closes on it.
+        s.bridge_lost = if (self.negotiated) |n|
+            (if (n.holder_lost) bridgeLost else null)
+        else |_|
+            null;
         // Reset the sampler baseline so a freshly-(re)bound viewer receives the
         // CURRENT foreground pid on the next tick even if it hasn't changed —
         // the previous viewer's pushes died with its connection (wp3). Same
@@ -1691,6 +1720,7 @@ pub const Server = struct {
             s.bridge_ctx = null;
             s.bridge_data = null;
             s.bridge_exit = null;
+            s.bridge_lost = null;
             s.bridge_busy = null;
             s.bridge_cwd = null;
             s.has_descendants = null;
@@ -2173,8 +2203,12 @@ pub const Server = struct {
         // OPEN). Older clients send none of these — recorded metadata alone,
         // the pre-wp3 behavior. `req`'s borrowed slices outlive the synchronous
         // spawn (parsed is freed at function exit).
+        //
+        // `fresh_shell` (T1793) is the `restore` policy applied in place: the
+        // default shell and never the recorded command, even for a pane that was
+        // opened with one.
         const open: protocol.Open = .{
-            .command = if (req.argv != null) null else argv_copy,
+            .command = if (req.argv != null or req.fresh_shell) null else argv_copy,
             .cwd = cwd_copy,
             .rows = req.rows,
             .cols = req.cols,
@@ -2238,6 +2272,13 @@ pub const Server = struct {
         // re-record whatever runs next. Keeping it would let a later restart
         // notice name a command from two lifetimes ago (T429).
         rs.setFgCmd(null);
+        // A fresh shell no longer runs the recorded command, so the record must
+        // stop naming it: a later reboot's notice (or a `rerun`) would otherwise
+        // offer a command this session has not run since (T1793).
+        if (req.fresh_shell) {
+            if (rs.argv) |a| rs.alloc.free(a);
+            rs.argv = null;
+        }
         // Fresh pty ⇒ fresh tty path (wp3); stable stack copy for the
         // after-unlock reply (`Result.tty` borrows child-owned storage).
         var tty_buf: [128]u8 = undefined;
@@ -2282,7 +2323,11 @@ pub const Server = struct {
         // `replayed` deliberately reports whether there was a real SNAPSHOT,
         // sampled BEFORE this append, so a notice on an otherwise-empty ring
         // doesn't make the viewer suppress its own divider.
-        const had_snapshot = rs.ring.len > 0;
+        //
+        // `replay_from` (T1793) is a viewer that is still SHOWING this session up
+        // to that offset — an in-place respawn — so only what lies beyond it is
+        // replayed, and it draws its own boundary, so no divider is appended.
+        const had_snapshot = rs.ring.len > 0 and req.replay_from == null;
         // T1264: place the divider BEFORE the notice and before the replay copy.
         // The reboot path (agent restarted, ring preloaded from disk) already has
         // one and `appendRestartDivider` leaves it alone; a tombstone relaunched
@@ -2291,7 +2336,7 @@ pub const Server = struct {
         // the boundary between the dead session's output and the respawned child's
         // was simply missing. Only the producer can put it in the right place:
         // the viewer's inject is synchronous and would land ahead of the replay.
-        session.SessionStore.appendRestartDivider(rs);
+        if (req.replay_from == null) session.SessionStore.appendRestartDivider(rs);
         if (req.notice) |notice| {
             if (notice.len > 0) {
                 // Same append+advance the reboot divider does in
@@ -2303,14 +2348,18 @@ pub const Server = struct {
                 rs.last_snapshot_offset = rs.out_offset.value;
             }
         }
-        const replay_lo = rs.ring.base_offset;
-        const replay_len = rs.ring.len;
+        const tail = rs.ring.tailOffset();
+        const replay_lo = if (req.replay_from) |from|
+            @min(@max(from, rs.ring.base_offset), tail)
+        else
+            rs.ring.base_offset;
+        const replay_len: usize = @intCast(tail - replay_lo);
         var replay_buf: ?[]u8 = null;
         var replay_n: usize = 0;
         if (replay_len > 0) {
             if (self.alloc.alloc(u8, replay_len)) |rb| {
                 replay_buf = rb;
-                replay_n = rs.ring.copyRetained(rb);
+                replay_n = rs.ring.slice(replay_lo, tail, rb) orelse 0;
             } else |_| {}
         }
         // The replay (restored history + divider + notice) is what this pane now
@@ -3189,6 +3238,9 @@ const FakeChild = struct {
     /// When nonzero, `queryForegroundPid` reports this (models `tcgetpgrp` on the
     /// pty master, wp3). Zero → null (Windows / query failed / no fg tracking).
     fake_fg_pid: i64 = 0,
+    /// When set, the reported exit was the child's HOST dying (`VTable.lost`,
+    /// T1771/T1793) rather than the shell's own.
+    fake_lost: bool = false,
     /// Optional write gate (wedge test): when both are set, `write` signals
     /// `gate_entered` and then BLOCKS on `gate_release` before sinking the bytes —
     /// modeling a stalled ConPTY input pipe whose `WriteFile` never returns. Lets a
@@ -3217,7 +3269,14 @@ const FakeChild = struct {
         .terminate = tm,
         .queryCwd = qcwd,
         .queryForegroundPid = qfg,
+        .lost = lst,
     };
+    fn lst(ctx: *anyopaque) bool {
+        const self: *FakeChild = @ptrCast(@alignCast(ctx));
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        return self.fake_lost;
+    }
     fn qcwd(ctx: *anyopaque, alloc: Allocator) ?[]u8 {
         const self: *FakeChild = @ptrCast(@alignCast(ctx));
         const c = self.fake_cwd orelse return null;
@@ -3349,6 +3408,15 @@ const FakeSpawner = struct {
     /// the agent happened to be".
     last_cwd_buf: [128]u8 = undefined,
     last_cwd_len: ?usize = null,
+    /// The LAST spawn's `OPEN.command` (T1793): null for a plain shell, so a
+    /// test can tell a fresh shell from a re-run of the recorded command.
+    last_command_buf: [128]u8 = undefined,
+    last_command_len: ?usize = null,
+
+    fn lastCommand(self: *const FakeSpawner) ?[]const u8 {
+        const len = self.last_command_len orelse return null;
+        return self.last_command_buf[0..len];
+    }
 
     fn lastCwd(self: *const FakeSpawner) ?[]const u8 {
         const len = self.last_cwd_len orelse return null;
@@ -3385,6 +3453,11 @@ const FakeSpawner = struct {
             @memcpy(self.last_cwd_buf[0..n], c[0..n]);
             self.last_cwd_len = n;
         } else self.last_cwd_len = null;
+        if (open.command) |c| {
+            const n = @min(c.len, self.last_command_buf.len);
+            @memcpy(self.last_command_buf[0..n], c[0..n]);
+            self.last_command_len = n;
+        } else self.last_command_len = null;
         const fc = self.children[self.next];
         self.next += 1;
         return .{ .child = fc.child(), .pid = self.pid_base + @as(i64, @intCast(self.next)), .tty = self.tty };
@@ -6223,6 +6296,114 @@ test "T1264 RELAUNCH: a tombstone the running agent never reloaded still gets ON
     const dp1 = try protocol.DataPayload.decode(d1.payload);
     try testing.expectEqual(@as(u64, want.len), dp1.byte_offset);
     try testing.expectEqualSlices(u8, "fresh-prompt$ ", dp1.bytes);
+}
+
+test "T1793 a watching viewer is told its holder died, and respawns a fresh shell in place with no replay" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{ .ms = 100 };
+    var fc0: FakeChild = .{ .alloc = alloc };
+    defer fc0.deinit();
+    var fc1: FakeChild = .{ .alloc = alloc };
+    defer fc1.deinit();
+    var kids = [_]*FakeChild{ &fc0, &fc1 };
+    var sp: FakeSpawner = .{ .children = &kids };
+    var prng = std.Random.DefaultPrng.init(0x1793);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    const caps = [_][]const u8{ protocol.capability.close_session, protocol.capability.holder_lost };
+    try h.client.handshakeCaps(&caps);
+    _ = try h.server.waitHandshake();
+
+    // A pane opened WITH a command — the case where re-running the recording
+    // would be wrong.
+    // Copied out by `doOpen`: a parsed payload aliases the mock client's
+    // control buffer, which the EXIT below overwrites.
+    const of = try doOpen(&h, .{ .command = "claude", .rows = 24, .cols = 80 });
+
+    const before = "the conversation so far\r\n";
+    h.server.onChildOutput(of.channel, before);
+    _ = (try h.client.nextData()).?;
+
+    // The holder dies under the watching pane.
+    fc0.mutex.lock();
+    fc0.exit_code = 1;
+    fc0.fake_lost = true;
+    fc0.mutex.unlock();
+    h.server.onChildOutput(of.channel, "");
+
+    const ef = try h.client.waitControl(.exit);
+    var ep = try protocol.parseJson(protocol.Exit, alloc, ef.payload);
+    defer ep.deinit();
+    try testing.expect(ep.value.lost);
+    try testing.expectEqualStrings("claude", ep.value.command.?);
+
+    // The viewer respawns in place: a fresh shell, replaying from where it stands.
+    try h.client.sendControlJson(.relaunch, protocol.control_channel, protocol.Relaunch{
+        .session_id = &of.id,
+        .rows = 24,
+        .cols = 80,
+        .fresh_shell = true,
+        .replay_from = before.len,
+    });
+    const rf = try h.client.waitControl(.relaunched);
+    var rp = try protocol.parseJson(protocol.Relaunched, alloc, rf.payload);
+    defer rp.deinit();
+    try testing.expect(rp.value.ok and rp.value.found);
+    try testing.expect(!rp.value.replayed);
+    // A fresh shell — the recorded command was NOT re-run...
+    try testing.expect(sp.lastCommand() == null);
+    // ...and the record no longer names it.
+    h.server.store.mutex.lock();
+    const argv_after = h.server.store.table.getByIdStr(&of.id).?.argv;
+    h.server.store.mutex.unlock();
+    try testing.expect(argv_after == null);
+
+    // Nothing the pane already shows arrives twice: the fresh shell's first
+    // byte is the next DATA, continuing the stream with no hole.
+    h.server.onChildOutput(of.channel, "fresh-prompt> ");
+    const d1 = (try h.client.nextData()).?;
+    const dp1 = try protocol.DataPayload.decode(d1.payload);
+    try testing.expectEqual(@as(u64, before.len), dp1.byte_offset);
+    try testing.expectEqualSlices(u8, "fresh-prompt> ", dp1.bytes);
+}
+
+test "T1793 a viewer that did not negotiate holder_lost still gets the plain exit" {
+    const alloc = testing.allocator;
+    var clock: TestClock = .{ .ms = 100 };
+    var fc0: FakeChild = .{ .alloc = alloc };
+    defer fc0.deinit();
+    var kids = [_]*FakeChild{&fc0};
+    var sp: FakeSpawner = .{ .children = &kids };
+    var prng = std.Random.DefaultPrng.init(0x1794);
+
+    var h = try Harness.init(alloc, .raw, &clock, &sp, 4096, prng.random());
+    defer h.deinit();
+    try h.server.start();
+    try h.client.handshake();
+    _ = try h.server.waitHandshake();
+
+    // Copied out by `doOpen`: a parsed payload aliases the mock client's
+    // control buffer, which the EXIT below overwrites.
+    const of = try doOpen(&h, .{ .command = "claude", .rows = 24, .cols = 80 });
+
+    fc0.mutex.lock();
+    fc0.exit_code = 1;
+    fc0.fake_lost = true;
+    fc0.mutex.unlock();
+    h.server.onChildOutput(of.channel, "");
+
+    const ef = try h.client.waitControl(.exit);
+    var ep = try protocol.parseJson(protocol.Exit, alloc, ef.payload);
+    defer ep.deinit();
+    try testing.expect(!ep.value.lost);
+    try testing.expectEqual(@as(i64, 1), ep.value.code);
+    h.server.store.mutex.lock();
+    const s = h.server.store.table.getByIdStr(&of.id).?;
+    const relaunchable = s.relaunchable;
+    h.server.store.mutex.unlock();
+    try testing.expect(!relaunchable);
 }
 
 test "OPEN records cwd → sessions.json carries it (T132 reboot floor)" {

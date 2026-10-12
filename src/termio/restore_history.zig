@@ -137,6 +137,51 @@ pub fn altHistory(gpa: Allocator, snapshot: []const u8, cols: u16, rows: u16) !?
     return try out.toOwnedSlice();
 }
 
+/// The LIVE terminal's alternate-screen frame as content-only history, or null
+/// when `t` is on the primary screen or the frame is blank.
+///
+/// The in-place sibling of `altHistory` (T1793): a pane whose session's host
+/// died is still showing the dead program's last frame, and leaving the alternate
+/// screen to give the fresh shell the primary one discards it. Formatted the same
+/// way, so the caller can leave the alternate screen and print this onto the
+/// primary, where the notice fold carries it into the scrollback. The primary
+/// screen's rows are NOT included: unlike a snapshot, they are still there.
+///
+/// Caller holds the terminal's lock and owns the returned bytes.
+pub fn liveAltFrame(gpa: Allocator, t: *terminal.Terminal) !?[]u8 {
+    if (t.screens.active_key != .alternate) return null;
+    const alt = t.screens.get(.alternate) orelse return null;
+    var frame: std.Io.Writer.Allocating = .init(gpa);
+    defer frame.deinit();
+    var sf = terminal.formatter.ScreenFormatter.init(alt, .{ .emit = .vt, .unwrap = true, .trim = true });
+    sf.extra = .none;
+    try sf.format(&frame.writer);
+    if (frame.written().len == 0) return null;
+    try frame.writer.writeAll("\x1b[0m");
+    return try frame.toOwnedSlice();
+}
+
+test "liveAltFrame: a full-screen program's frame comes back as text; the primary screen gives null" {
+    const gpa = testing.allocator;
+    var t: terminal.Terminal = try .init(gpa, .{ .cols = 40, .rows = 6, .max_scrollback = 4096 });
+    defer t.deinit(gpa);
+
+    feedAll(&t, "before the program\r\n");
+    try testing.expect((try liveAltFrame(gpa, &t)) == null);
+
+    feedAll(&t, "\x1b[?1049h\x1b[H\x1b[2Jthe last thing it said");
+    const frame = (try liveAltFrame(gpa, &t)).?;
+    defer gpa.free(frame);
+    try testing.expect(std.mem.indexOf(u8, frame, "the last thing it said") != null);
+    // Content only: nothing that would move the cursor or erase on the way back.
+    try testing.expect(std.mem.indexOf(u8, frame, "\x1b[2J") == null);
+    try testing.expect(std.mem.indexOf(u8, frame, "\x1b[?1049") == null);
+
+    // A blank alternate screen has nothing worth keeping.
+    feedAll(&t, "\x1b[2J");
+    try testing.expect((try liveAltFrame(gpa, &t)) == null);
+}
+
 test "historyToPaint: a real snapshot at a real offset is painted" {
     const snap = "\x1b[H hello";
     try testing.expectEqualStrings(snap, historyToPaint(snap, 4096).?);

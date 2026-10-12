@@ -38,6 +38,14 @@
 #      restores where they actually were, not where the shell was spawned.
 #      Scored on the agent's own sessions.json AND on what the restored shell
 #      prints for `cd`.
+#   H: a pane's HOST dies while the pane is open (T1793). One commanded pane's
+#      `--pty-host` holder is killed with the app and the session manager left
+#      up. The pane must NOT close as if its program had finished: it stays, on
+#      the same session id, says "Session interrupted" in its banner and its
+#      scrollback naming the command, keeps what the program printed above the
+#      notice, does not re-run the command, and takes input on a fresh shell -
+#      while the OTHER pane is untouched. Then `exit` in the respawned shell
+#      closes that pane, so an ordinary exit still means what it always did.
 #   M: the INVERSE (T974). Every arm above kills the session manager AND its PTY
 #      holders, because that is the reboot shape. Kill only the MANAGER and the
 #      outcome must be the opposite of arm A's: since T909 the holders outlive
@@ -123,10 +131,13 @@ $MARK_F = 7700 + ($PID % 89)
 # tombstoned by it. Its own number so a leftover from arm A/B/F can neither
 # satisfy nor spoil "the same process is still running".
 $MARK_M = 6700 + ($PID % 89)
+# T1793: arm H's command, the program whose HOST is killed under a watching pane.
+$MARK_H = 5700 + ($PID % 89)
 $CMD_A = "ping -n $MARK_A 127.0.0.1"
 $CMD_B = "ping -n $MARK_B 127.0.0.1"
 $CMD_F = "ping -n $MARK_F 127.0.0.1"
 $CMD_M = "ping -n $MARK_M 127.0.0.1"
+$CMD_H = "ping -n $MARK_H 127.0.0.1"
 # T422: per-pane banners and a window title pin for arm E. Distinguishable from
 # each other so "each pane kept ITS OWN banner" is a real claim rather than "some
 # banner survived", and space-free so `Run-CliArgs` cannot re-tokenize them.
@@ -185,7 +196,7 @@ function Count-MarkerPings($mark) {
 }
 function Stop-MarkerPings {
     Get-CimInstance Win32_Process -Filter "Name='PING.EXE'" |
-        Where-Object { $_.CommandLine -like "*-n $MARK_A *" -or $_.CommandLine -like "*-n $MARK_B *" -or $_.CommandLine -like "*-n $MARK_F *" -or $_.CommandLine -like "*-n $MARK_M *" } |
+        Where-Object { $_.CommandLine -like "*-n $MARK_A *" -or $_.CommandLine -like "*-n $MARK_B *" -or $_.CommandLine -like "*-n $MARK_F *" -or $_.CommandLine -like "*-n $MARK_M *" -or $_.CommandLine -like "*-n $MARK_H *" } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 # T974: WHICH processes, not how many. "The recorded command is still running"
@@ -1237,6 +1248,102 @@ foreach ($lf in $leavesM2) { $sidAfter[[string]$lf.id] = [string]$lf.session_id 
 Assert "M18 the plain pane is on the SAME session ('$($sidBefore[$paneM])' -> '$($sidAfter[$paneM])')" (
     $paneM -ne '' -and [string]$sidAfter[$paneM] -ne '' -and $sidAfter[$paneM] -eq $sidBefore[$paneM])
 Assert "M19 the plain pane still takes input" (Test-PaneResponsive $paneM 'm-post')
+Stop-TestProcs
+
+# ============================================================================
+Say "== H: a pane's HOST dies while it is watching - interrupted, not exited (T1793)"
+# ============================================================================
+# The bound half of T1771. Before T1793 the agent answered a holder killed under
+# an attached pane with an ordinary EXIT, and the pane closed exactly as if the
+# program had finished: the user's work vanished and nothing said why. Against
+# such a build H5-H13 go red together, because the pane they read is gone.
+Reset-State 'h'
+$workH = Join-Path $root 'workH'
+New-Item -ItemType Directory -Force $workH | Out-Null
+
+$appPidH = Start-App 'hostlost' @("--working-directory=$workH")
+Assert "H1 the GUI came up" ($appPidH -ne 0)
+$leavesH0 = All-Leaves (Wait-Leaves 'h0' 1 45)
+$panePlainH = if ($leavesH0.Count -ge 1) { [string]$leavesH0[0].id } else { '' }
+$H_MARK = "T1793mark$MARK_H"
+Run-CliArgs @('+send-keys', "--target=$panePlainH", 'echo', 'Space', $H_MARK, 'Enter') "$tmp\keys-h.txt" 15 | Out-Null
+Assert "H2 the bystander pane printed its marker" (Wait-PaneTextTight $panePlainH 'h-pre' $H_MARK 2 30)
+
+Run-CliArgs @('+new-window', '--target=nH', "--command=`"$CMD_H`"", "--working-directory=$workH") "$tmp\nwH.txt" 25 | Out-Null
+$leavesH1 = All-Leaves (Wait-Leaves 'h1' 2 45)
+$paneCmdH = ''
+foreach ($lf in $leavesH1) { if ([string]$lf.id -ne $panePlainH) { $paneCmdH = [string]$lf.id } }
+Assert "H3 '$CMD_H' is running in its own pane" ($paneCmdH -ne '' -and (Wait-MarkerPings $MARK_H 1 30))
+Assert "H3b the program printed before its host died" (Wait-PaneText $paneCmdH 'h-ping' 'Reply from 127\.0\.0\.1' 30)
+$sidH = @{}
+foreach ($lf in $leavesH1) { $sidH[[string]$lf.id] = [string]$lf.session_id }
+# The holder is named by an id of its own, not by the session id `+list`
+# reports, so the agent's own record is what links the two: sessions.json carries
+# each session's `holder_pid`. Waited for, since the record is persisted after
+# the OPEN rather than with it.
+$holderH = @()
+$sessionsFileH = Join-Path $tmp 'ghoztty\local-agent-debug\sessions.json'
+$deadlineH4 = (Get-Date).AddSeconds(20)
+while ((Get-Date) -lt $deadlineH4 -and $holderH.Count -eq 0) {
+    try {
+        $docH = Get-Content -Raw -Encoding utf8 $sessionsFileH | ConvertFrom-Json
+        $holderH = @(@($docH.sessions) | Where-Object { [string]$_.id -eq $sidH[$paneCmdH] -and [int]$_.holder_pid -gt 0 } |
+            ForEach-Object { [int]$_.holder_pid } |
+            Where-Object { $hp = $_; @(Get-CimInstance Win32_Process -Filter "ProcessId=$hp" |
+                Where-Object { $_.ExecutablePath -eq $AgentExe -and $_.CommandLine -like '*--pty-host*' }).Count -eq 1 })
+    } catch { }
+    if ($holderH.Count -eq 0) { Start-Sleep -Milliseconds 700 }
+}
+Assert "H4 the commanded pane's own holder was found ($($holderH -join ','))" ($holderH.Count -eq 1)
+if ($holderH.Count -ne 1) {
+    Say "    pane sessions: $(($sidH.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join ' ')"
+    Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" |
+        ForEach-Object { Say "    agent pid=$($_.ProcessId) exe=$($_.ExecutablePath) cmd=$($_.CommandLine)" }
+}
+$mgrH = Wait-ManagerPid $tmp 30
+
+# ---- the kill: ONE holder. Not the app, not the manager. -------------------
+foreach ($h in $holderH) { Stop-Process -Id $h -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 4
+Assert "H5 the app and the session manager are still up" (
+    (Test-PidAlive $appPidH) -and $mgrH -ne 0 -and (Test-PidAlive $mgrH))
+# Wait-BannerSettle already hands back the leaves (see its header).
+$leavesH2 = Wait-BannerSettle 'h2' 2 30
+$cmdLeafH = @($leavesH2 | Where-Object { [string]$_.id -eq $paneCmdH })
+Assert "H6 the pane did NOT close ($($leavesH2.Count) panes listed)" ($cmdLeafH.Count -eq 1)
+Assert "H7 ...and it is still the same session ('$($sidH[$paneCmdH])')" (
+    $cmdLeafH.Count -eq 1 -and [string]$cmdLeafH[0].session_id -eq $sidH[$paneCmdH])
+$bannerH = if ($cmdLeafH.Count -eq 1) { [string]$cmdLeafH[0].banner } else { '' }
+Assert "H8 its banner says the session was interrupted by its host, naming the command ('$bannerH')" (
+    $bannerH -match 'Session interrupted' -and $bannerH -match 'process hosting this session' -and
+    $bannerH -match [regex]::Escape($CMD_H))
+$placeH = Get-NoticePlacement $paneCmdH 'h-notice'
+Assert "H9 the notice is in the pane's own scrollback, above a fresh prompt (notice=$($placeH.notice) fresh=$($placeH.fresh))" (
+    $placeH.notice -ge 0 -and $placeH.fresh -gt $placeH.notice)
+$tightH = (Read-Pane $paneCmdH 'h-hist' 400) -replace '\s', ''
+$replyAt = $tightH.IndexOf('Replyfrom127.0.0.1')
+Assert "H10 what the program printed is kept ABOVE the notice (reply=$replyAt notice=$($placeH.notice))" (
+    $replyAt -ge 0 -and $placeH.notice -ge 0 -and $replyAt -lt $placeH.notice)
+Start-Sleep -Seconds 2
+Assert "H11 the command was NOT re-run ($(Count-MarkerPings $MARK_H) running)" ((Count-MarkerPings $MARK_H) -eq 0)
+Assert "H12 the pane takes input on its fresh shell" (Test-PaneResponsive $paneCmdH 'h-live')
+$plainLeafH = @($leavesH2 | Where-Object { [string]$_.id -eq $panePlainH })
+$plainTightH = (Read-Pane $panePlainH 'h-plain' 400) -replace '\s', ''
+Assert "H13 the bystander pane is untouched: same session, no notice, still holds its marker" (
+    $plainLeafH.Count -eq 1 -and [string]$plainLeafH[0].session_id -eq $sidH[$panePlainH] -and
+    $plainTightH.IndexOf('sessioninterrupted', [System.StringComparison]::OrdinalIgnoreCase) -lt 0 -and
+    $plainTightH.Contains($H_MARK))
+
+# ---- and an ordinary exit still closes the pane ----------------------------
+Run-CliArgs @('+send-keys', "--target=$paneCmdH", 'exit', 'Enter') "$tmp\keys-h-exit.txt" 15 | Out-Null
+$closedH = $false
+$deadlineH = (Get-Date).AddSeconds(25)
+while ((Get-Date) -lt $deadlineH) {
+    $ids = @(All-Leaves (Get-List 'h-exit') | ForEach-Object { [string]$_.id })
+    if ($ids.Count -ge 1 -and -not ($ids -contains $paneCmdH)) { $closedH = $true; break }
+    Start-Sleep -Milliseconds 700
+}
+Assert "H14 'exit' in the respawned shell closes its pane, as an exit always has" $closedH
 Stop-TestProcs
 
 } catch {

@@ -1,12 +1,10 @@
 {
     "guard":  "cleanslate",
     "script":  "test/win32/cleanslate-audit.ps1",
-    "generated":  "2026-10-11T21:15:12-07:00",
-    "commit":  "9128ca433",
+    "generated":  "2026-10-11T22:54:18-07:00",
+    "commit":  "6b274f166",
     "uncommitted":  [
-                        "test/win32/lib/PaneIdle.ps1",
-                        "test/win32/process-family.ps1",
-                        "test/win32/test-binary-soak.ps1"
+                        "test/win32/session-relaunch-notify.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -343,7 +341,7 @@
                   "test/win32/session-reattach-zombie.ps1":  "5dc30cdebcaf21553c17c3e13c3b08b3d4fc120fb487972407acb7377d51cf4a",
                   "test/win32/session-reboot-tui.ps1":  "08a515b17d028e9e82e2f27313a4476ffe72becde28f1cb10cd6489db10b9d45",
                   "test/win32/session-relaunch.ps1":  "cb149640d00e572745261626dc8637ed95b26a0d955bd16b6012c1e179f622ce",
-                  "test/win32/session-relaunch-notify.ps1":  "9280e19d7454b618d7bb34ad85bd0f62fb0148d88ee8c1661a6fcf0bdf107914",
+                  "test/win32/session-relaunch-notify.ps1":  "ab1eacf70edb669d71ce7c6a11686e9903a0ad60d3adc6cda0e688d36cd68e85",
                   "test/win32/session-restore-maximized.ps1":  "5af0d5334fc5974b4bf643c69addfb503c6f35b8f161691c729ad704ffafddf7",
                   "test/win32/session-resume-offset.ps1":  "6c0591c0924e67301a4fd88b4ea615aba24ae508bd5eff7e7d9cf133ed28c3da",
                   "test/win32/sessions-agent-build.ps1":  "4ddcd1913f07dfb9c177312382493b5a0e6f69d126ebec1ce3522c6908299eea",

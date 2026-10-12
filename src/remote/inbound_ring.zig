@@ -291,6 +291,13 @@ pub const Channel = struct {
     exit_code: i64 = 0,
     /// The agent-reported child runtime in ms. Valid only once `exited` is true.
     runtime_ms: u64 = 0,
+    /// The EXIT said the child's HOST died rather than the child exiting
+    /// (`protocol.Exit.lost`, T1793): the session is an interrupted tombstone the
+    /// consumer respawns in place instead of closing the pane. Same publication
+    /// rule as `exit_code`. `lost_command` is what was running, for the notice.
+    exit_lost: bool = false,
+    lost_command_buf: [max_lost_command_len]u8 = undefined,
+    lost_command_len: usize = 0,
 
     /// The session's live FOREGROUND pid, pushed by the agent as
     /// `META{foreground_pid}` whenever the pty's foreground process group
@@ -332,6 +339,9 @@ pub const Channel = struct {
     /// truncated directory is a WRONG directory, and the pane keeps its last
     /// good value instead.
     pub const max_cwd_len = 4096;
+    /// Longer than the notice will ever print (`session_notice` truncates), so a
+    /// command is cut here only when the notice would cut it anyway.
+    pub const max_lost_command_len = 512;
 
     pub const InitOptions = struct {
         capacity: usize = default_capacity,
@@ -456,8 +466,47 @@ pub const Channel = struct {
     pub fn signalExit(self: *Channel, code: i64, runtime: u64) void {
         self.exit_code = code;
         self.runtime_ms = runtime;
+        self.exit_lost = false;
         self.exited.store(true, .release);
         self.waker.wake();
+    }
+
+    /// Producer entry point for `EXIT{lost}` (T1793): the session's host died
+    /// and it is a relaunchable tombstone. Published exactly like `signalExit`,
+    /// with the lost flag and command stored before the release.
+    pub fn signalLost(self: *Channel, runtime: u64, command: ?[]const u8) void {
+        self.exit_code = 0;
+        self.runtime_ms = runtime;
+        self.exit_lost = true;
+        const cmd = command orelse "";
+        const n = @min(cmd.len, self.lost_command_buf.len);
+        @memcpy(self.lost_command_buf[0..n], cmd[0..n]);
+        self.lost_command_len = n;
+        self.exited.store(true, .release);
+        self.waker.wake();
+    }
+
+    /// Consumer entry point, valid once `isExited` is true: was it a lost host?
+    pub fn exitWasLost(self: *const Channel) bool {
+        return self.exit_lost;
+    }
+
+    /// Consumer entry point, valid once `isExited` and `exitWasLost`: the command
+    /// that was running, or null when the agent recorded none.
+    pub fn lostCommand(self: *const Channel) ?[]const u8 {
+        if (self.lost_command_len == 0) return null;
+        return self.lost_command_buf[0..self.lost_command_len];
+    }
+
+    /// Consumer entry point: the session was respawned in place, so the exit
+    /// that was observed belongs to the PREVIOUS child (T1793). Re-arms the
+    /// flag for the respawned child's own EXIT. Called on the consumer thread
+    /// after it has consumed the exit and before the respawn RPC is sent, so the
+    /// respawned child's EXIT cannot be published before this store.
+    pub fn clearExit(self: *Channel) void {
+        self.exited.store(false, .release);
+        self.exit_lost = false;
+        self.lost_command_len = 0;
     }
 
     /// Consumer entry point: has the agent reported this session exited? Acquire
@@ -988,6 +1037,47 @@ test "Channel: signalExit sets isExited, publishes code/runtime, and wakes" {
     try testing.expectEqual(@as(i64, 137), ch.exit_code);
     try testing.expectEqual(@as(u64, 4242), ch.runtime_ms);
     try testing.expect(flag.woke);
+    try testing.expect(!ch.exitWasLost());
+}
+
+test "Channel: signalLost is an exit the consumer can tell apart, and clearExit re-arms it (T1793)" {
+    const alloc = testing.allocator;
+    const Flag = struct {
+        woke: bool = false,
+        fn wake(ctx: *anyopaque) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.woke = true;
+        }
+    };
+    var flag: Flag = .{};
+    var ch = try Channel.init(alloc, 9, .{
+        .capacity = 64,
+        .waker = .{ .ctx = &flag, .wakeFn = Flag.wake },
+    });
+    defer ch.deinit(alloc);
+
+    ch.signalLost(1500, "claude --resume");
+    try testing.expect(ch.isExited());
+    try testing.expect(ch.exitWasLost());
+    try testing.expectEqualStrings("claude --resume", ch.lostCommand().?);
+    try testing.expectEqual(@as(u64, 1500), ch.runtime_ms);
+    try testing.expect(flag.woke);
+
+    // The respawned child starts with no exit on record...
+    ch.clearExit();
+    try testing.expect(!ch.isExited());
+    try testing.expect(ch.lostCommand() == null);
+
+    // ...and its own ordinary exit is not mistaken for another loss.
+    ch.signalExit(0, 10);
+    try testing.expect(ch.isExited());
+    try testing.expect(!ch.exitWasLost());
+
+    // A loss with no recorded command carries none.
+    ch.clearExit();
+    ch.signalLost(1, null);
+    try testing.expect(ch.exitWasLost());
+    try testing.expect(ch.lostCommand() == null);
 }
 
 test "Channel: signalCwd hands each new directory to the consumer exactly once (T1583)" {

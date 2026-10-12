@@ -1287,6 +1287,11 @@ pub const Connection = struct {
         // the agent's pending update instead of claiming the machine is served
         // (T889).
         protocol.capability.sharing_reconcile,
+        // We respawn a pane whose session's HOST died in place, under a
+        // "Session interrupted" notice, instead of closing it (T1793). An agent
+        // that never advertises the other half keeps sending a plain EXIT, and
+        // the pane closes the way it always did.
+        protocol.capability.holder_lost,
     };
 
     /// `create` with explicit health/heartbeat tunables (increment 2).
@@ -2741,6 +2746,13 @@ pub const Connection = struct {
         /// `supportsRelaunchNotice()`; the caller is responsible for injecting
         /// them locally instead when that is false.
         notice: ?[]const u8 = null,
+        /// Spawn the default shell, never the recorded command (see
+        /// `protocol.Relaunch.fresh_shell`). Only sent once
+        /// `supportsHolderLost()`; an older agent would ignore it.
+        fresh_shell: bool = false,
+        /// Replay only from this stream offset (see
+        /// `protocol.Relaunch.replay_from`). Same capability as `fresh_shell`.
+        replay_from: ?u64 = null,
     };
 
     /// Respawn a dead-but-relaunchable session on its known `channel` (§5.4 reboot
@@ -2874,6 +2886,8 @@ pub const Connection = struct {
             .term = fidelity.term,
             .argv = fidelity.argv,
             .notice = fidelity.notice,
+            .fresh_shell = fidelity.fresh_shell,
+            .replay_from = fidelity.replay_from,
         };
         const json = try protocol.encodeJson(self.alloc, req);
         defer self.alloc.free(json);
@@ -2913,6 +2927,13 @@ pub const Connection = struct {
     /// terminal instead.
     pub fn supportsRelaunchNotice(self: *Connection) bool {
         if (self.negotiated) |n| return n.relaunch_notice else |_| return false;
+    }
+
+    /// True iff the negotiated peer advertised `capability.holder_lost` (T1793)
+    /// — it may report a bound session's lost host as `EXIT{lost}`, and it
+    /// honors `RelaunchFidelity.fresh_shell` / `.replay_from`.
+    pub fn supportsHolderLost(self: *Connection) bool {
+        if (self.negotiated) |n| return n.holder_lost else |_| return false;
     }
 
     /// True iff the negotiated peer advertised `capability.grid_snapshot` — i.e.
@@ -3624,16 +3645,31 @@ pub const Connection = struct {
                 // still observes the frame afterward in `controlReaderLoop`.
                 var parsed = protocol.parseJson(protocol.Exit, self.alloc, frame.payload) catch return;
                 defer parsed.deinit();
+                // `lost` (T1793): the session's host died and it is waiting to be
+                // respawned in place. Only an agent we negotiated `holder_lost`
+                // with sends it; the flag is honored only then, so a stray one can
+                // never turn an ordinary exit into a respawn.
+                const lost = parsed.value.lost and self.supportsHolderLost();
                 const ExitSig = struct {
                     code: i64,
                     runtime_ms: u64,
+                    lost: bool,
+                    command: ?[]const u8,
                     fn apply(self_sig: @This(), ch: *ring.Channel) void {
-                        ch.signalExit(self_sig.code, self_sig.runtime_ms);
+                        if (self_sig.lost)
+                            ch.signalLost(self_sig.runtime_ms, self_sig.command)
+                        else
+                            ch.signalExit(self_sig.code, self_sig.runtime_ms);
                     }
                 };
                 _ = self.channels.withChannel(
                     frame.channel,
-                    ExitSig{ .code = parsed.value.code, .runtime_ms = parsed.value.runtime_ms },
+                    ExitSig{
+                        .code = parsed.value.code,
+                        .runtime_ms = parsed.value.runtime_ms,
+                        .lost = lost,
+                        .command = parsed.value.command,
+                    },
                     ExitSig.apply,
                 );
             },

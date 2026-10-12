@@ -781,6 +781,14 @@ pub const Session = struct {
     /// Frames EXIT on the session's channel (ordered after final DATA). Same
     /// lifetime/locking rules as `bridge_data`.
     bridge_exit: ?*const fn (ctx: *anyopaque, channel: u128, code: i64, runtime_ms: u64) void = null,
+    /// Frames `EXIT{lost}` on the session's channel: its holder died under it
+    /// and it is now a relaunchable tombstone (T1793). Installed ONLY when the
+    /// bound connection negotiated `capability.holder_lost`, so its presence is
+    /// what decides whether a bound session's lost host is reported as a loss
+    /// (the viewer respawns in place) or as an ordinary exit (the viewer closes
+    /// the pane). `command` is borrowed for the call. Same lifetime/locking
+    /// rules as `bridge_data`.
+    bridge_lost: ?*const fn (ctx: *anyopaque, channel: u128, runtime_ms: u64, command: ?[]const u8) void = null,
     /// Frames `META{foreground_pid}` on the session's channel when the pty's
     /// foreground process group changes (wp3 live-fg sampling). Same
     /// lifetime/locking rules as `bridge_data`.
@@ -990,7 +998,12 @@ pub const Session = struct {
     /// The holder handle is forgotten (it is gone, and nothing should dial it
     /// again), and the child stays installed for the caller to terminate, as with
     /// `markExited`. Idempotent.
-    pub fn markLost(self: *Session, now_ms: i64) void {
+    ///
+    /// `divider` puts the restart divider at the end of the ring, for the pane
+    /// that re-attaches later and replays it. A session lost while a viewer is
+    /// WATCHING (T1793) passes false: that viewer paints its own notice where the
+    /// output stopped, and respawns without a replay.
+    pub fn markLost(self: *Session, now_ms: i64, divider: bool) void {
         if (!self.alive) return;
         self.alive = false;
         self.relaunchable = true;
@@ -1004,7 +1017,7 @@ pub const Session = struct {
         self.holder_pid = 0;
         self.holder_offset = 0;
         self.holder_snapshot_offset = 0;
-        SessionStore.appendRestartDivider(self);
+        if (divider) SessionStore.appendRestartDivider(self);
     }
 
     pub fn setSignal(self: *Session, name: []const u8) Allocator.Error!void {
@@ -1625,11 +1638,20 @@ pub const SessionStore = struct {
         // so there is nobody to send an exit to - and the pane that re-attaches
         // later must be told its program was lost, not handed nothing to attach
         // to. A tombstone is what makes that re-attach say "Session interrupted".
-        // A BOUND pane still gets the exit below: a tombstone nobody claims would
-        // sit in the chooser as a Resume row for a pane that has already closed.
-        if (!s.bound and s.child.wasLost()) {
-            s.markLost(now_ms);
-            std.log.warn("session {s}: its holder died, not its shell; kept as an interrupted session", .{s.idStr()});
+        // A BOUND pane is told it was lost only when its viewer negotiated the
+        // in-place respawn (T1793, `bridge_lost`); any other viewer still gets
+        // the exit below, because a tombstone nobody claims would sit in the
+        // chooser as a Resume row for a pane that has already closed.
+        if (s.child.wasLost() and (!s.bound or s.bridge_lost != null)) {
+            if (s.bound) {
+                const runtime: u64 = @intCast(@max(0, now_ms - s.created_ms));
+                const command: ?[]const u8 = s.fg_cmd orelse s.argv;
+                s.markLost(now_ms, false);
+                s.bridge_lost.?(s.bridge_ctx.?, s.channel, runtime, command);
+            } else {
+                s.markLost(now_ms, true);
+            }
+            std.log.warn("session {s}: its holder died, not its shell; kept as an interrupted session (bound={})", .{ s.idStr(), s.bound });
             self.notifyRosterChanged();
             return;
         }
@@ -1770,6 +1792,21 @@ pub const SessionStore = struct {
         };
         var exits: std.ArrayList(Exit) = .empty;
         defer exits.deinit(self.table.alloc);
+        // A bound session whose holder died, reported to a viewer that will
+        // respawn it in place (T1793). `command` is owned: it is sent after
+        // the unlock, when the session's own copy may already be replaced.
+        const Lost = struct {
+            f: *const fn (ctx: *anyopaque, channel: u128, runtime_ms: u64, command: ?[]const u8) void,
+            ctx: *anyopaque,
+            channel: u128,
+            runtime: u64,
+            command: ?[]u8,
+        };
+        var losts: std.ArrayList(Lost) = .empty;
+        defer {
+            for (losts.items) |l| if (l.command) |c| self.table.alloc.free(c);
+            losts.deinit(self.table.alloc);
+        }
 
         self.mutex.lock();
         const now_ms = self.now();
@@ -1783,9 +1820,23 @@ pub const SessionStore = struct {
             // that died under an UNBOUND session interrupted it, it did not exit
             // (T1771), and either way the roster changed (T1749).
             roster_changed = true;
-            if (!s.bound and s.child.wasLost()) {
-                s.markLost(now_ms);
-                std.log.warn("session {s}: its holder died, not its shell; kept as an interrupted session", .{s.idStr()});
+            if (s.child.wasLost() and (!s.bound or s.bridge_lost != null)) {
+                if (s.bound) lost: {
+                    const label: ?[]const u8 = s.fg_cmd orelse s.argv;
+                    const command: ?[]u8 = if (label) |l| (self.table.alloc.dupe(u8, l) catch null) else null;
+                    losts.append(self.table.alloc, .{
+                        .f = s.bridge_lost.?,
+                        .ctx = s.bridge_ctx.?,
+                        .channel = s.channel,
+                        .runtime = @intCast(@max(0, now_ms - s.created_ms)),
+                        .command = command,
+                    }) catch {
+                        if (command) |c| self.table.alloc.free(c);
+                        break :lost; // OOM: tombstoned; the viewer learns on re-attach
+                    };
+                }
+                s.markLost(now_ms, !s.bound);
+                std.log.warn("session {s}: its holder died, not its shell; kept as an interrupted session (bound={})", .{ s.idStr(), s.bound });
                 continue;
             }
             s.markExited(code, now_ms);
@@ -1804,6 +1855,7 @@ pub const SessionStore = struct {
         self.mutex.unlock();
 
         for (exits.items) |e| e.f(e.ctx, e.channel, e.code, e.runtime);
+        for (losts.items) |l| l.f(l.ctx, l.channel, l.runtime, l.command);
     }
 
     /// Sample every bound+alive session's pty foreground pid and push
@@ -4925,6 +4977,121 @@ test "T1771 a holder exit that is the shell's own, or reaches a bound pane, stay
     try testing.expect(!b.alive and !b.relaunchable);
     try testing.expectEqual(@as(?i64, 1), b.exit_code);
     try testing.expectEqual(@as(usize, 1), Exits.count);
+}
+
+test "T1793 a bound session whose holder died is reported LOST to a viewer that negotiated it" {
+    // The watching pane can respawn in place, so it is told the truth: no exit,
+    // a relaunchable tombstone, and the command that was running for its notice.
+    const alloc = testing.allocator;
+    var prng = std.Random.DefaultPrng.init(0x1793);
+    var clock: MutClock = .{ .ms = 500 };
+    var store = SessionStore.init(alloc, prng.random(), &clock, MutClock.nowFn, 100000);
+    defer store.deinit();
+
+    const Seen = struct {
+        var exits: usize = 0;
+        var losts: usize = 0;
+        var runtime: u64 = 0;
+        var cmd_buf: [64]u8 = undefined;
+        var cmd_len: ?usize = null;
+        fn onExit(_: *anyopaque, _: u128, _: i64, _: u64) void {
+            exits += 1;
+        }
+        fn onLost(_: *anyopaque, _: u128, runtime_ms: u64, command: ?[]const u8) void {
+            losts += 1;
+            runtime = runtime_ms;
+            if (command) |c| {
+                @memcpy(cmd_buf[0..c.len], c);
+                cmd_len = c.len;
+            } else cmd_len = null;
+        }
+        fn reset() void {
+            exits = 0;
+            losts = 0;
+            runtime = 0;
+            cmd_len = null;
+        }
+    };
+    var ctx: u8 = 0;
+
+    // Reaped by the output path (the reader's EOF nudge).
+    {
+        Seen.reset();
+        var fake: FakeChild = .{ .alloc = alloc };
+        defer fake.deinit();
+        const s = try store.table.create(fake.child(), 4245, 24, 80, 1 << 16, 500);
+        s.setArgv("cmd.exe");
+        s.setFgCmd("claude --resume");
+        s.setHolder("\\\\.\\pipe\\ghoztty-pty-host-x-1793a", 780, "stamp-1");
+        s.bound = true;
+        s.bridge_ctx = &ctx;
+        s.bridge_exit = Seen.onExit;
+        s.bridge_lost = Seen.onLost;
+        store.onChildOutput(s.channel, "the last thing it printed\r\n");
+        const watched_to = s.out_offset.value;
+
+        fake.exit_code = 1;
+        fake.fake_lost = true;
+        clock.ms = 2500;
+        store.onChildOutput(s.channel, "");
+
+        try testing.expect(!s.alive and s.relaunchable);
+        try testing.expect(s.exit_code == null);
+        try testing.expectEqual(@as(usize, 0), Seen.exits);
+        try testing.expectEqual(@as(usize, 1), Seen.losts);
+        try testing.expectEqual(@as(u64, 2000), Seen.runtime);
+        // The foreground command outranks the recorded shell, as on re-attach.
+        try testing.expectEqualStrings("claude --resume", Seen.cmd_buf[0..Seen.cmd_len.?]);
+        // The watching viewer draws its own boundary: nothing is appended to the
+        // stream it is already standing at the end of.
+        try testing.expectEqual(watched_to, s.out_offset.value);
+        try testing.expect(!s.ring.endsWith(reboot_divider));
+        // Idempotent: a second nudge reports nothing more.
+        store.onChildOutput(s.channel, "");
+        try testing.expectEqual(@as(usize, 1), Seen.losts);
+    }
+
+    // Reaped by the per-tick sweep (no nudge ever arrived).
+    {
+        Seen.reset();
+        var fake: FakeChild = .{ .alloc = alloc };
+        defer fake.deinit();
+        const s = try store.table.create(fake.child(), 4246, 24, 80, 1 << 16, 500);
+        s.setArgv("ping -n 5000 127.0.0.1");
+        s.setHolder("\\\\.\\pipe\\ghoztty-pty-host-x-1793b", 781, "stamp-1");
+        s.bound = true;
+        s.bridge_ctx = &ctx;
+        s.bridge_exit = Seen.onExit;
+        s.bridge_lost = Seen.onLost;
+        fake.exit_code = 1;
+        fake.fake_lost = true;
+        store.reapExited();
+
+        try testing.expect(!s.alive and s.relaunchable);
+        try testing.expectEqual(@as(usize, 0), Seen.exits);
+        try testing.expectEqual(@as(usize, 1), Seen.losts);
+        try testing.expectEqualStrings("ping -n 5000 127.0.0.1", Seen.cmd_buf[0..Seen.cmd_len.?]);
+    }
+
+    // The same death under a bound viewer that did NOT negotiate it is still the
+    // plain exit T1771 pinned: that viewer closes the pane, and a tombstone would
+    // outlive it as a Resume row.
+    {
+        Seen.reset();
+        var fake: FakeChild = .{ .alloc = alloc };
+        defer fake.deinit();
+        const s = try store.table.create(fake.child(), 4247, 24, 80, 1 << 16, 500);
+        s.setHolder("\\\\.\\pipe\\ghoztty-pty-host-x-1793c", 782, "stamp-1");
+        s.bound = true;
+        s.bridge_ctx = &ctx;
+        s.bridge_exit = Seen.onExit;
+        fake.exit_code = 1;
+        fake.fake_lost = true;
+        store.reapExited();
+        try testing.expect(!s.alive and !s.relaunchable);
+        try testing.expectEqual(@as(usize, 1), Seen.exits);
+        try testing.expectEqual(@as(usize, 0), Seen.losts);
+    }
 }
 
 // -----------------------------------------------------------------------------

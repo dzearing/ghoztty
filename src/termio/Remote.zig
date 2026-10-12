@@ -143,6 +143,12 @@ exit_code: ?u32 = null,
 /// queueWrite), so no synchronization is needed.
 awaiting_relaunch: bool = false,
 
+/// With `awaiting_relaunch`, set when the pane is waiting IN PLACE after its
+/// session's host died (T1793): it still shows everything up to this stream
+/// offset, so the consented `RELAUNCH` replays only from here. Null on the
+/// re-attach path, where the replay is the only copy of the history.
+awaiting_relaunch_from: ?u64 = null,
+
 /// When true, `threadExit` sends `CLOSE` (terminate the remote child + free the
 /// session) instead of the default `DETACH` (keep-alive for re-attach). Set via
 /// `Surface.setSessionCloseIntent` when the USER closes the pane/window — an
@@ -1787,6 +1793,8 @@ fn performAwaitedRelaunch(self: *Remote, td: *termio.Termio.ThreadData) void {
 
     // Clear the flag first so a second keystroke racing in cannot double-fire.
     self.awaiting_relaunch = false;
+    const replay_from = self.awaiting_relaunch_from;
+    self.awaiting_relaunch_from = null;
 
     const rows: u16 = @intCast(@min(self.grid_size.rows, std.math.maxInt(u16)));
     const cols: u16 = @intCast(@min(self.grid_size.columns, std.math.maxInt(u16)));
@@ -1815,6 +1823,10 @@ fn performAwaitedRelaunch(self: *Remote, td: *termio.Termio.ThreadData) void {
             // T824: same replay mode reset as the rerun path, and for the same
             // reason — the agent replays this tombstone's ring here too.
             .notice = if (agent_owns_notice) self.relaunch_policy.streamNotice() else null,
+            // A pane waiting in place after its host died (T1793) already shows
+            // the session's history; only an agent that sent it `EXIT{lost}` —
+            // which therefore honors this — ever puts it here.
+            .replay_from = replay_from,
         },
         &self.canceller,
     ) catch |err| {
@@ -1873,6 +1885,140 @@ fn performAwaitedRelaunch(self: *Remote, td: *termio.Termio.ThreadData) void {
     if (res.replayed and !agent_owns_notice) {
         @call(.always_inline, termio.Termio.processOutput, .{ rd.io, replay_mode_reset });
     }
+}
+
+/// The session's HOST died while this pane was showing it (T1793): the agent
+/// kept it as an interrupted tombstone and said so with `EXIT{lost}`. Before
+/// this the pane got an ordinary EXIT and closed, exactly as if the program had
+/// finished - the user's work vanished and nothing said why.
+///
+/// Instead the pane stays, and gets what a re-attached interrupted pane gets,
+/// by the same `session-relaunch` policy:
+///   * `restore` (default): the dead program's screen is kept as history, the
+///     "Session interrupted" notice is written above a FRESH shell (never the
+///     recorded command), and the sticky banner repeats it;
+///   * `rerun`: the recorded command is respawned under a restart divider;
+///   * `prompt`: the pane waits for a keystroke, as on re-attach.
+/// Every respawn is IN PLACE on the same channel, replaying from where this pane
+/// already stands, so nothing on screen arrives twice.
+///
+/// Returns false when the respawn could not be made — the caller then closes the
+/// pane the way it always did, which is the honest fallback for a pane with no
+/// child behind it. Runs on the IO thread, in the drain, after the dead
+/// program's final output has rendered.
+fn respawnLostInPlace(self: *Remote, td: *termio.Termio.ThreadData, ch: *inbound_ring.Channel) bool {
+    assert(td.backend == .remote);
+    const rd = &td.backend.remote;
+    const io = rd.io;
+
+    var cmd_buf: [inbound_ring.Channel.max_lost_command_len]u8 = undefined;
+    const command: ?[]const u8 = if (ch.lostCommand()) |c| blk: {
+        @memcpy(cmd_buf[0..c.len], c);
+        break :blk cmd_buf[0..c.len];
+    } else null;
+    // Where this pane stands in the session's stream: everything before it is
+    // already on screen. Read before anything local is painted (local paints do
+    // not advance it, but the order makes that irrelevant).
+    const replay_from = self.appliedOffset();
+    const runtime_ms = ch.runtime_ms;
+    // The exit belonged to the dead child; re-arm for the respawned one's.
+    ch.clearExit();
+    log.warn("the session's host died under this pane; respawning in place policy={s} at={d}", .{
+        @tagName(self.relaunch_policy),
+        replay_from,
+    });
+
+    // The dead program's screen becomes history, its modes are undone.
+    paintLostScreen(io, td.alloc);
+
+    switch (self.relaunch_policy) {
+        .prompt => {
+            const prompt =
+                "\r\n\x1b[1mSession ended:\x1b[0m \x1b[2mpress any key to relaunch\x1b[0m\r\n";
+            @call(.always_inline, termio.Termio.processOutput, .{ io, prompt });
+            self.awaiting_relaunch_from = replay_from;
+            self.awaiting_relaunch = true;
+            return true;
+        },
+        .rerun => @call(.always_inline, termio.Termio.processOutput, .{ io, restart_divider }),
+        .restore => {
+            var notice_buf: [session_notice.max_len]u8 = undefined;
+            @call(.always_inline, termio.Termio.processOutput, .{
+                io, session_notice.formatFor(&notice_buf, .host_lost, command),
+            });
+            io.armNoticeFold();
+            if (!self.pane_banner_restored) {
+                var banner_buf: [session_notice.max_len]u8 = undefined;
+                @call(.always_inline, termio.Termio.processOutput, .{
+                    io, session_notice.formatBannerFor(&banner_buf, .host_lost, command),
+                });
+            }
+        },
+    }
+
+    const fresh = self.relaunch_policy == .restore;
+    const res = rd.conn.sendRelaunchOnPane(
+        rd.pane,
+        @intCast(@min(self.grid_size.rows, std.math.maxInt(u16))),
+        @intCast(@min(self.grid_size.columns, std.math.maxInt(u16))),
+        @intCast(@min(self.screen_size.width, std.math.maxInt(u16))),
+        @intCast(@min(self.screen_size.height, std.math.maxInt(u16))),
+        .{
+            .env = self.env,
+            .term = self.term,
+            // A fresh shell gets the shell-integration rewrite and never the
+            // keep-alive invocation, which carries the command it must not re-run.
+            .argv = if (fresh) self.argv else (self.command_argv orelse self.argv),
+            .fresh_shell = fresh,
+            .replay_from = replay_from,
+        },
+        &self.canceller,
+    ) catch |err| {
+        log.warn("in-place respawn after a lost host failed err={}", .{err});
+        ch.signalExit(1, runtime_ms);
+        return false;
+    };
+    if (!res.ok) {
+        log.warn("in-place respawn after a lost host not ok found={}", .{res.found});
+        // Put the exit back so the caller closes the pane as it always did.
+        ch.signalExit(1, runtime_ms);
+        return false;
+    }
+    log.info("respawned in place after a lost host pid={}", .{res.pid});
+    self.publishProcessInfo(rd.pane);
+
+    // The notice fold (restore) moves the old screen into the scrollback on the
+    // shell's first byte. The divider (rerun) has no fold, so park the screen
+    // now, as `performAwaitedRelaunch` does, before the shell's repaint erases it.
+    if (!fresh and history_guard.enabledFor(self.child_pty_flavor)) parkRestoredScreen(io);
+    return true;
+}
+
+/// Turn whatever a dead program left on screen into history (T1793): a
+/// full-screen program's last frame is copied onto the primary screen, where it
+/// can scroll away instead of vanishing with the alternate screen, and the modes
+/// it armed are undone so the fresh prompt reads keys and the pointer normally.
+fn paintLostScreen(io: *termio.Termio, gpa: Allocator) void {
+    const frame: ?[]u8 = frame: {
+        io.renderer_state.mutex.lock();
+        defer io.renderer_state.mutex.unlock();
+        break :frame restore_history.liveAltFrame(gpa, &io.terminal) catch |err| {
+            log.warn("could not keep the dead program's full-screen frame err={}", .{err});
+            break :frame null;
+        };
+    };
+    defer if (frame) |f| gpa.free(f);
+    const on_alt = alt: {
+        io.renderer_state.mutex.lock();
+        defer io.renderer_state.mutex.unlock();
+        break :alt io.terminal.screens.active_key == .alternate;
+    };
+    if (on_alt) @call(.always_inline, termio.Termio.processOutput, .{ io, restore_history.alt_screen_exit });
+    if (frame) |f| {
+        @call(.always_inline, termio.Termio.processOutput, .{ io, "\x1b[0m\r\n" });
+        @call(.always_inline, termio.Termio.processOutput, .{ io, f });
+    }
+    @call(.always_inline, termio.Termio.processOutput, .{ io, replay_mode_reset });
 }
 
 pub fn childExitedAbnormally(
@@ -2560,6 +2706,13 @@ fn drainRing(td: *termio.Termio.ThreadData) void {
             log.debug("agent pushed cwd={s}", .{cwd});
             applyAgentCwd(rd.io, td.alloc, &rd.io.backend.remote.canceller, cwd);
         }
+    }
+
+    // T1793: the session's HOST died, not its program. Respawn in place under a
+    // notice instead of closing; only a respawn that cannot be made falls through
+    // to the ordinary close below.
+    if (!rd.exited and ch.isExited() and ch.exitWasLost()) {
+        if (rd.io.backend.remote.respawnLostInPlace(td, ch)) return;
     }
 
     if (!rd.exited and ch.isExited()) {

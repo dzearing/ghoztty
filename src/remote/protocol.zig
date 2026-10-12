@@ -55,6 +55,7 @@
 //! | v1 | `attach_failed` | `ATTACH_FAILED` 0x07 (ATTACH the agent cannot answer) | silence ⇒ client times out |
 //! | v1 | `repaint_data` | `DATA_REPAINT` 0x15 (injected repaint, advances no offset) | repaint counted as stream bytes |
 //! | v1 | `relaunch_notice` | `RELAUNCH.notice` spliced into the replay stream | viewer injects it locally (races the child) |
+//! | v1 | `holder_lost` | `EXIT.lost` for a bound session whose host died; `RELAUNCH.fresh_shell` / `.replay_from` | the pane closes as if its program finished |
 //!
 //! Two rules make that table load-bearing rather than decorative:
 //!
@@ -839,6 +840,23 @@ pub const capability = struct {
     /// sides so `negotiate`'s intersection contract has no exception. It gates a
     /// SENTENCE, never a frame, so both skew directions are safe by construction.
     pub const sharing_reconcile = "sharing_reconcile";
+
+    /// **A lost host is not an exit** (T1793): when a bound session's per-pane
+    /// holder dies under it, the agent keeps the session as a relaunchable
+    /// tombstone and says so with `EXIT{lost = true, command}` instead of an
+    /// ordinary exit, and the viewer respawns a fresh shell IN PLACE with
+    /// `RELAUNCH{fresh_shell, replay_from}` under a "Session interrupted" notice.
+    ///
+    /// Gated because BOTH halves change behavior, not just a field. A viewer that
+    /// does not understand `lost` would close the pane on the EXIT and leave the
+    /// tombstone behind as a Resume row for a pane that no longer exists — so an
+    /// agent marks the session lost for a bound peer only when that peer
+    /// negotiated this, and otherwise sends today's plain EXIT. And a viewer that
+    /// sends `fresh_shell`/`replay_from` to an agent that ignores them would get
+    /// the recorded command re-run and the whole ring replayed into a pane that
+    /// already shows it; it never has to, because only an agent that advertises
+    /// this ever sends `lost`.
+    pub const holder_lost = "holder_lost";
 };
 
 /// The kind of pseudo-terminal a peer spawns its children on. Wire-visible
@@ -1047,6 +1065,12 @@ pub const Negotiated = struct {
     /// the share toggle tells the user that sharing starts once the agent's
     /// pending update lands rather than claiming the machine is already served.
     sharing_reconcile: bool = false,
+
+    /// True iff BOTH peers advertised `capability.holder_lost` (T1793) — the
+    /// agent may answer a bound session's lost host with `EXIT{lost}`, and the
+    /// viewer will respawn it in place. False against either older peer, which
+    /// keeps the plain EXIT and the pane closing on it.
+    holder_lost: bool = false,
 };
 
 /// True iff `caps` contains the capability string `name`.
@@ -1097,6 +1121,8 @@ pub fn negotiate(local: Hello, remote: Hello) ProtocolError!Negotiated {
             hasCapability(remote.capabilities, capability.agent_handoff),
         .sharing_reconcile = hasCapability(local.capabilities, capability.sharing_reconcile) and
             hasCapability(remote.capabilities, capability.sharing_reconcile),
+        .holder_lost = hasCapability(local.capabilities, capability.holder_lost) and
+            hasCapability(remote.capabilities, capability.holder_lost),
     };
 }
 
@@ -1463,6 +1489,18 @@ pub const Signal = struct {
 pub const Exit = struct {
     code: i64,
     runtime_ms: u64 = 0,
+
+    /// The child did not exit: the process HOSTING it (the per-pane holder) died
+    /// out from under it (T1793). The session is a relaunchable tombstone, and
+    /// the viewer should say the session was interrupted and respawn it in place
+    /// rather than close the pane. Sent only to a peer that negotiated
+    /// `capability.holder_lost`; absent (an older agent) ⇒ an ordinary exit.
+    lost: bool = false,
+
+    /// With `lost`: what was running when the host died — the sampled foreground
+    /// command, else the recorded argv label — so the notice can name it. Null
+    /// when the agent never recorded one.
+    command: ?[]const u8 = null,
 };
 
 /// `META` (0x21). All fields optional; `listening_ports` powers auto-forward
@@ -1749,6 +1787,20 @@ pub const Relaunch = struct {
     /// older agent that ignores it just leaves the client's fallback standing.
     /// Bounded by `max_notice_bytes` on the agent side.
     notice: ?[]const u8 = null,
+
+    /// Spawn the default interactive shell and NEVER the recorded command
+    /// (T1793) — the `restore` policy's answer, applied in place. Without it a
+    /// RELAUNCH with no `argv` runs the recorded command label, which is the
+    /// `rerun` policy. Honored by agents that advertise `capability.holder_lost`;
+    /// a viewer sends it only to one.
+    fresh_shell: bool = false,
+
+    /// Replay only the retained bytes at or after this stream offset (T1793).
+    /// An in-place respawn of a pane that is still showing everything up to its
+    /// own stream position passes that position, so nothing it already shows
+    /// arrives twice. Null ⇒ replay everything retained (the reboot path, where
+    /// the viewer has nothing). Same capability as `fresh_shell`.
+    replay_from: ?u64 = null,
 
     /// Hard cap on `notice` the agent will append. It is a short control-sequence
     /// prelude plus at most one line of UI text, and the ring it lands in is the
@@ -3208,6 +3260,64 @@ test "T824 relaunch_notice negotiates on the intersection and the field is addit
     );
     defer legacy.deinit();
     try testing.expect(legacy.value.notice == null);
+}
+
+test "T1793 holder_lost negotiates on the intersection; EXIT.lost and the RELAUNCH fields are additive" {
+    const alloc = testing.allocator;
+    const both = [_][]const u8{capability.holder_lost};
+    const other = [_][]const u8{capability.rpc};
+
+    try testing.expect((try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+    )).holder_lost);
+    // Either side older: false, so the agent keeps its plain EXIT and the viewer
+    // never asks for an in-place respawn.
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+        .{ .transfer_encoding = .raw, .capabilities = &other },
+    )).holder_lost);
+    try testing.expect(!(try negotiate(
+        .{ .transfer_encoding = .raw, .capabilities = &other },
+        .{ .transfer_encoding = .raw, .capabilities = &both },
+    )).holder_lost);
+
+    // An older agent's EXIT, which carries neither field, is an ordinary exit.
+    var legacy_exit = try parseJson(Exit, alloc,
+        \\{"code":0,"runtime_ms":5}
+    );
+    defer legacy_exit.deinit();
+    try testing.expect(!legacy_exit.value.lost);
+    try testing.expect(legacy_exit.value.command == null);
+
+    const lost = try encodeJson(alloc, Exit{ .code = 0, .lost = true, .command = "claude" });
+    defer alloc.free(lost);
+    var lp = try parseJson(Exit, alloc, lost);
+    defer lp.deinit();
+    try testing.expect(lp.value.lost);
+    try testing.expectEqualStrings("claude", lp.value.command.?);
+
+    // RELAUNCH: an older client's payload parses to "replay everything, rerun the
+    // recording" — exactly today's meaning.
+    var legacy_rl = try parseJson(Relaunch, alloc,
+        \\{"session_id":"abc","rows":24,"cols":80}
+    );
+    defer legacy_rl.deinit();
+    try testing.expect(!legacy_rl.value.fresh_shell);
+    try testing.expect(legacy_rl.value.replay_from == null);
+
+    const rl = try encodeJson(alloc, Relaunch{
+        .session_id = "abc",
+        .rows = 24,
+        .cols = 80,
+        .fresh_shell = true,
+        .replay_from = 4096,
+    });
+    defer alloc.free(rl);
+    var rp = try parseJson(Relaunch, alloc, rl);
+    defer rp.deinit();
+    try testing.expect(rp.value.fresh_shell);
+    try testing.expectEqual(@as(?u64, 4096), rp.value.replay_from);
 }
 
 test "HELLO parse ignores unknown fields (forward-compat)" {
