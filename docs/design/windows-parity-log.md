@@ -35354,3 +35354,19 @@ moved to T1814.
 - **Filed.** T1870: show arm H going red against a build without the
   capability. T1871: session-reboot-tui's TUI stream once never started in a
   batch run (B3/B4 at a bare prompt for 361s).
+
+## 2026-10-12 — T1802: viewer panes showing a file get a Reveal in File Explorer button
+
+- **What landed.** A folder button beside Home (main d31fbeec6) for a pane
+  showing a local file; hidden for web and diff panes, follows navigation
+  (pushed from `pushAddress`). One nearest-surviving-folder fallback
+  (`banner_link.revealTarget`) now serves the button, the viewer link menu and
+  banner path links. First command folded into the "..." menu.
+- **Surprise.** viewer-narrow-pane section E caught the address field growing
+  as the pane narrowed past the first fold (a latent slot leak); the compact
+  field is now pinned at its minimum, with a per-pixel monotone unit test.
+- **Validation.** All four floor lanes; viewer-worktree (extended, 50),
+  viewer-panes, -worktree-port, -close, -narrow-pane, -nav-pin, pane-banner,
+  six audits, docs-routing, feedback-user-report and the harness floor green.
+  The button is not clicked on the box (Explorer would surface on the user's
+  desktop); the click path is asserted through the link sink. Commit cf120a7a2.
