@@ -136,6 +136,9 @@ function Start-Arm($name, $tint) {
     $err = Join-Path $dir 'stderr.txt'
     $app = Start-OnTestDesktop -Exe $Exe -Arguments @(
         '--config-default-files=false', '--session-persistence=false',
+        # Solid panes (T1833): A8/B6 read the pane's own tint, which a glass
+        # pane (the default) mixes 40/60 with the window's gradient.
+        '--macos-pane-glass=false',
         "--title=t1690-$name") -StdErr $err
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 30000
     & $Exe +new-window "--target=lost$name" "--color=$tint" | Out-Null

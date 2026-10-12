@@ -195,6 +195,19 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// of the background image buffer whenever we change it.
         bg_image_buffer_modified: usize = 0,
 
+        /// A backdrop the apprt paints behind the terminal (the win32 glass
+        /// panes, T1833): the slice of the window's gradient this pane covers,
+        /// drawn through the background-image pipeline at `opacity` over the
+        /// terminal's background. Owned (RGBA, `alloc`). A configured
+        /// `background-image` takes precedence; this stands in when there is
+        /// none.
+        pane_backdrop: ?struct {
+            data: []u8,
+            width: u32,
+            height: u32,
+            opacity: f32,
+        } = null,
+
         /// Graphics API state.
         api: GraphicsAPI,
 
@@ -833,6 +846,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             self.images.deinit(self.alloc);
 
             if (self.bg_image) |img| img.deinit(self.alloc);
+            if (self.pane_backdrop) |b| self.alloc.free(b.data);
 
             self.deinitShaders();
 
@@ -2033,11 +2047,58 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 } else {
                     self.bg_image = image;
                 }
+            } else if (self.pane_backdrop) |b| {
+                // No configured image: the apprt's backdrop stands in. The
+                // pending image owns its data, so it gets its own copy.
+                const data = try self.alloc.dupe(u8, b.data);
+                const image: imagepkg.Image = .{ .pending = .{
+                    .width = b.width,
+                    .height = b.height,
+                    .pixel_format = .rgba,
+                    .data = data.ptr,
+                } };
+                if (self.bg_image) |*img| {
+                    img.markForReplace(self.alloc, image);
+                } else {
+                    self.bg_image = image;
+                }
             } else {
                 // If we don't have a background image path, mark our
                 // background image for unload if we currently have one.
                 if (self.bg_image) |*img| img.markForUnload();
             }
+        }
+
+        /// Whether the background-image pipeline is drawing the apprt's
+        /// backdrop rather than a configured image.
+        fn backdropActive(self: *const Self) bool {
+            return self.config.bg_image == null and self.pane_backdrop != null;
+        }
+
+        /// Replace (or, with null, drop) the apprt's backdrop. Takes
+        /// ownership of `v.data`, which was allocated with `v.alloc`.
+        pub fn setPaneBackdrop(self: *Self, v: ?renderer.Message.PaneBackdrop) !void {
+            self.draw_mutex.lock();
+            defer self.draw_mutex.unlock();
+
+            if (self.pane_backdrop) |b| self.alloc.free(b.data);
+            self.pane_backdrop = null;
+            if (v) |b| {
+                defer b.alloc.free(b.data);
+                if (b.width == 0 or b.height == 0 or
+                    b.data.len != @as(usize, b.width) * b.height * 4) return;
+                self.pane_backdrop = .{
+                    .data = try self.alloc.dupe(u8, b.data),
+                    .width = b.width,
+                    .height = b.height,
+                    .opacity = b.opacity,
+                };
+            }
+            // A configured image keeps the pipeline; nothing to swap.
+            if (self.config.bg_image != null) return;
+            try self.prepBackgroundImage();
+            self.updateBgImageBuffer();
+            self.markDirty();
         }
 
         fn uploadBackgroundImage(self: *Self) !void {
@@ -2119,7 +2180,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
             if (bg_image_changed) try self.prepBackgroundImage();
 
             // If our background image config changed, update the vertex buffer.
-            if (bg_image_config_changed) self.updateBgImageBuffer();
+            // (A path appearing or going away also swaps the apprt's backdrop
+            // in or out, whose buffer differs.)
+            if (bg_image_config_changed or bg_image_changed) self.updateBgImageBuffer();
 
             // Reset our viewport to force a rebuild, in case of a font change.
             self.markDirty();
@@ -2203,6 +2266,16 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         ///
         /// Caller must hold the draw mutex.
         fn updateBgImageBuffer(self: *Self) void {
+            if (self.backdropActive()) {
+                // The backdrop is exactly this pane's slice: stretched over
+                // the whole surface, once.
+                self.bg_image_buffer = .{
+                    .opacity = self.pane_backdrop.?.opacity,
+                    .info = .{ .position = .mc, .fit = .stretch, .repeat = false },
+                };
+                self.bg_image_buffer_modified +%= 1;
+                return;
+            }
             self.bg_image_buffer = .{
                 .opacity = self.config.bg_image_opacity,
                 .info = .{

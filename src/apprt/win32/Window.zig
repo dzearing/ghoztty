@@ -2251,6 +2251,20 @@ pub fn paneStyle(self: *const Window) pane_elevation.Style {
     };
 }
 
+/// Mac's `macos-pane-glass` (T1833), read under the same key: in the
+/// elevated style every pane is a glass sheet - the terminal's background at
+/// `pane_elevation.GLASS_TINT` over the desk - rather than a solid card.
+///
+/// Off in a translucent window (`background-opacity` below 1): there the
+/// desk is still opaque (T1852), so a glass pane would trade the desktop
+/// showing through for the desk, and the panes keep the see-through
+/// background T1787 gave them.
+pub fn paneGlass(self: *const Window) bool {
+    return self.paneStyle() == .elevated and
+        self.app.config.@"macos-pane-glass" and
+        !self.translucent;
+}
+
 /// The rect the split GRID is laid out in: the surface rect, inside the
 /// elevated style's margin (T1831; Mac pads the whole grid by
 /// `PaneElevation.margin`). Every walk of the split tree - placement, paint,
@@ -6647,11 +6661,75 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     };
     const bg = self.app.config.background;
     const fill: color_math.Rgb = .{ .r = bg.r, .g = bg.g, .b = bg.b };
+    const glass = self.paneGlass();
     self.pane_desk.paint(hdc, area.left, area.top, w, h, cards[0..n], .{
         .fill = fill,
         .is_light = color_math.isLight(fill),
         .scale = self.scale,
+        .glass = glass,
     }, self.desk_variant);
+    self.syncGlassBackdrops(slots[0..n], area, glass, color_math.isLight(fill));
+}
+
+/// A glass pane's renderer draws the desk itself (T1833). A pane child is
+/// its own GL window, so the parent's desk can never show through it: the
+/// terminal is instead handed the slice of the gradient its child covers,
+/// and paints `GLASS_TINT` of its background over that (the renderer's
+/// background-image pipeline), the same mix the card's rim gets here.
+///
+/// Every terminal the grid shows is brought up to date; one that moved,
+/// or whose desk changed, gets a new slice. Off-grid panes (other tabs,
+/// stashed, zoomed away) keep theirs until they are placed again. With glass
+/// off, every pane that holds a slice is told to drop it.
+fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, glass: bool, is_light: bool) void {
+    const parent = self.hwnd orelse return;
+    const fw = area.right - area.left;
+    const fh = area.bottom - area.top;
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| {
+            const s = entry.view.surface() orelse continue;
+            if (!glass) {
+                if (entry.view.glass_backdrop_key != 0) {
+                    if (s.setPaneBackdrop(null)) entry.view.glass_backdrop_key = 0;
+                }
+                continue;
+            }
+            const on_grid = for (slots) |slot| {
+                if (slot.view == entry.view) break true;
+            } else false;
+            if (!on_grid) continue;
+            const h = s.hwnd orelse continue;
+            var wr: w32.RECT = undefined;
+            // A pane child has no frame: its window rect is its client area.
+            if (w32.GetWindowRect(h, &wr) == 0) continue;
+            var pts = [2]w32.POINT{ .{ .x = wr.left, .y = wr.top }, .{ .x = wr.right, .y = wr.bottom } };
+            _ = w32.ScreenToClient(parent, &pts[0]);
+            _ = w32.ScreenToClient(parent, &pts[1]);
+            const r: [4]i32 = .{
+                pts[0].x - area.left, pts[0].y - area.top,
+                pts[1].x - area.left, pts[1].y - area.top,
+            };
+            if (r[2] <= r[0] or r[3] <= r[1]) continue;
+            const words = [_]u64{
+                @bitCast(@as(i64, r[0])),                     @bitCast(@as(i64, r[1])),
+                @bitCast(@as(i64, r[2])),                     @bitCast(@as(i64, r[3])),
+                @bitCast(@as(i64, fw)),                       @bitCast(@as(i64, fh)),
+                if (self.desk_variant) |v| v.seed else 0,     @intFromBool(is_light),
+            };
+            const key = std.hash.Wyhash.hash(0x1833, std.mem.sliceAsBytes(&words)) | 1;
+            if (entry.view.glass_backdrop_key == key) continue;
+            // A terminal still starting up has no renderer to tell; its key
+            // stays stale so the next paint tries again.
+            if (!s.setPaneBackdrop(.{
+                .rect = r,
+                .full_w = fw,
+                .full_h = fh,
+                .palette = desk_palette.Palette.forWindow(self.desk_variant, is_light),
+            })) continue;
+            entry.view.glass_backdrop_key = key;
+        }
+    }
 }
 
 fn paintDividerNode(

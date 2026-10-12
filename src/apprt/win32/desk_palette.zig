@@ -274,6 +274,42 @@ pub fn renderDesk(buf: []u32, w: usize, h: usize, full_w: f32, full_h: f32, pal:
     }
 }
 
+/// Render the part of a `full_w` x `full_h` window's desk that lies under
+/// the window rect (`rx`, `ry`, `rw`, `rh`) into a `w` x `h` RGBA buffer
+/// (rows top-down, alpha 255) - a glass pane's backdrop (T1833): the
+/// renderer stretches it over the pane, so each texel is sampled at the
+/// centre of the window area it will cover, and the pane's gradient meets
+/// the desk around it without a seam.
+pub fn renderDeskRegionRgba(
+    out: []u8,
+    w: usize,
+    h: usize,
+    full_w: f32,
+    full_h: f32,
+    rx: f32,
+    ry: f32,
+    rw: f32,
+    rh: f32,
+    pal: Palette,
+) void {
+    std.debug.assert(out.len >= w * h * 4);
+    if (w == 0 or h == 0) return;
+    const fx = rw / @as(f32, @floatFromInt(w));
+    const fy = rh / @as(f32, @floatFromInt(h));
+    for (0..h) |row| {
+        const y = ry + (@as(f32, @floatFromInt(row)) + 0.5) * fy;
+        for (0..w) |col| {
+            const x = rx + (@as(f32, @floatFromInt(col)) + 0.5) * fx;
+            const p = pal.at(x, y, full_w, full_h).pack();
+            const i = (row * w + col) * 4;
+            out[i] = @intCast((p >> 16) & 0xFF);
+            out[i + 1] = @intCast((p >> 8) & 0xFF);
+            out[i + 2] = @intCast(p & 0xFF);
+            out[i + 3] = 255;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 
 fn sum(c: Rgbf) f32 {
@@ -399,4 +435,19 @@ test "T1832: threeStopAlpha matches SwiftUI's even stops" {
     try testing.expectApproxEqAbs(@as(f32, 0.45), threeStopAlpha(0.5, 0.45), 1e-6);
     try testing.expectEqual(@as(f32, 0), threeStopAlpha(1, 0.45));
     try testing.expectApproxEqAbs(@as(f32, 0.225), threeStopAlpha(0.75, 0.45), 1e-6);
+}
+
+test "T1833: a pane's backdrop is the desk under its rect, as RGBA" {
+    const pal = Palette.ocean(false);
+    var out: [3 * 2 * 4]u8 = undefined;
+    // A 300x200 pane at (100, 50) in a 1000x600 window, at a 100 px texel.
+    renderDeskRegionRgba(&out, 3, 2, 1000, 600, 100, 50, 300, 200, pal);
+    const first = pal.at(150, 100, 1000, 600).pack();
+    try testing.expectEqual(@as(u8, @intCast((first >> 16) & 0xFF)), out[0]);
+    try testing.expectEqual(@as(u8, @intCast((first >> 8) & 0xFF)), out[1]);
+    try testing.expectEqual(@as(u8, @intCast(first & 0xFF)), out[2]);
+    try testing.expectEqual(@as(u8, 255), out[3]);
+    const last = pal.at(350, 200, 1000, 600).pack();
+    try testing.expectEqual(@as(u8, @intCast(last & 0xFF)), out[5 * 4 + 2]);
+    try testing.expectEqual(@as(u8, 255), out[5 * 4 + 3]);
 }

@@ -12,6 +12,9 @@ const input = @import("../../input.zig");
 const terminal = @import("../../terminal/main.zig");
 const termio = @import("../../termio.zig");
 const CoreSurface = @import("../../Surface.zig");
+const rendererpkg = @import("../../renderer.zig");
+const desk_palette = @import("desk_palette.zig");
+const pane_elevation = @import("pane_elevation.zig");
 const internal_os = @import("../../os/main.zig");
 const remote_connection = @import("../../remote/connection.zig");
 const gl_loader = @import("../../renderer/gl_loader.zig");
@@ -4822,6 +4825,56 @@ pub fn applyBackgroundTint(
     }
 
     self.core_surface.renderer_thread.wakeup.notify() catch {};
+}
+
+/// Where a glass pane sits on its window's desk (T1833): the terminal
+/// child's rect and the desk's size, in content-area pixels, and the desk's
+/// palette.
+pub const GlassBackdrop = struct {
+    rect: [4]i32,
+    full_w: i32,
+    full_h: i32,
+    palette: desk_palette.Palette,
+};
+
+/// Hand the renderer this pane's slice of the desk to draw its glass sheet
+/// over (T1833), or (null) take it away. The slice is rendered at a quarter
+/// of the pane's size: the gradient has no detail to lose, the texture is
+/// sampled linearly, and a divider drag re-sends it every frame the pane
+/// moves. False when the renderer is not up yet - nothing was sent.
+pub fn setPaneBackdrop(self: *Surface, spec: ?GlassBackdrop) bool {
+    if (!self.core_surface_ready) return false;
+    const alloc = self.app.core_app.alloc;
+    const msg: ?rendererpkg.Message.PaneBackdrop = if (spec) |b| blk: {
+        const rw = b.rect[2] - b.rect[0];
+        const rh = b.rect[3] - b.rect[1];
+        if (rw <= 0 or rh <= 0) return false;
+        const bw: usize = @intCast(@max(@divFloor(rw + 3, 4), 1));
+        const bh: usize = @intCast(@max(@divFloor(rh + 3, 4), 1));
+        const data = alloc.alloc(u8, bw * bh * 4) catch return false;
+        desk_palette.renderDeskRegionRgba(
+            data,
+            bw,
+            bh,
+            @floatFromInt(b.full_w),
+            @floatFromInt(b.full_h),
+            @floatFromInt(b.rect[0]),
+            @floatFromInt(b.rect[1]),
+            @floatFromInt(rw),
+            @floatFromInt(rh),
+            b.palette,
+        );
+        break :blk .{
+            .alloc = alloc,
+            .data = data,
+            .width = @intCast(bw),
+            .height = @intCast(bh),
+            .opacity = 1 - pane_elevation.GLASS_TINT,
+        };
+    } else null;
+    _ = self.core_surface.renderer_thread.mailbox.push(.{ .pane_backdrop = msg }, .{ .forever = {} });
+    self.core_surface.renderer_thread.wakeup.notify() catch {};
+    return true;
 }
 
 /// Context menu "Background Color..." (T67): the common color dialog seeded

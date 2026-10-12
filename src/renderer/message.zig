@@ -69,6 +69,13 @@ pub const Message = union(enum) {
     /// configured `minimum-contrast` so it can only strengthen it.
     min_contrast: f32,
 
+    /// Paint `rgba` behind the terminal through the background-image
+    /// pipeline, stretched over the surface at `opacity` over the
+    /// terminal's background - or, with null, stop. The win32 glass panes
+    /// (T1833) send the slice of the window's gradient a pane covers; a
+    /// configured `background-image` takes precedence.
+    pane_backdrop: ?PaneBackdrop,
+
     /// Activate or deactivate the inspector.
     inspector: bool,
 
@@ -78,6 +85,17 @@ pub const Message = union(enum) {
     pub const SearchMatches = struct {
         arena: ArenaAllocator,
         matches: []const terminal.highlight.Flattened,
+    };
+
+    pub const PaneBackdrop = struct {
+        /// Allocator `data` was allocated with; the receiver frees it.
+        alloc: Allocator,
+        /// `width` x `height` RGBA, rows top-down.
+        data: []u8,
+        width: u32,
+        height: u32,
+        /// How much of the backdrop shows over the terminal's background.
+        opacity: f32,
     };
 
     pub const SearchMatch = struct {
@@ -112,6 +130,8 @@ pub const Message = union(enum) {
                 v.alloc.destroy(v.impl);
                 v.alloc.destroy(v.thread);
             },
+
+            .pane_backdrop => |v| if (v) |b| b.alloc.free(b.data),
 
             else => {},
         }

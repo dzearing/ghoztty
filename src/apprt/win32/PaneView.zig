@@ -66,6 +66,12 @@ stash_seq: u64 = 0,
 /// did not change, so a divider drag does not re-cut every pane every frame.
 card_region_key: u64 = 0,
 
+/// The desk slice this pane's terminal was last handed as its glass
+/// backdrop (T1833): a hash of where the pane sits on which desk, or 0 for
+/// none. `Window.syncGlassBackdrops` owns it, so a paint that moved nothing
+/// re-sends nothing.
+glass_backdrop_key: u64 = 0,
+
 /// Wrap an existing Surface as a terminal pane. Takes one reference on the
 /// surface, which is released when this PaneView is freed. The surface's
 /// back-pointer is set here so `Surface` destroy paths can find the leaf.

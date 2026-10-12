@@ -490,6 +490,10 @@ fn drainMailbox(self: *Thread) !void {
 
             .min_contrast => |v| self.renderer.setMinContrast(v),
 
+            .pane_backdrop => |v| if (@hasDecl(rendererpkg.Renderer, "setPaneBackdrop")) {
+                try self.renderer.setPaneBackdrop(v);
+            } else if (v) |b| b.alloc.free(b.data),
+
             .inspector => |v| {
                 self.flags.has_inspector = v;
             },

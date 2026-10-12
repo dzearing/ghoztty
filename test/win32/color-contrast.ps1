@@ -189,7 +189,10 @@ $step2 = Join-Path $env:TEMP "ghoztty-t150-$PID-step2.txt"
 # restored pane brings back a previous run's screen.
 Start-TestForegroundWatch
 $td = New-TestDesktop -Interactive:$Interactive
-$app = Start-OnTestDesktop -Exe $exe -Arguments @('--background=#101014', '--session-persistence=off')
+$app = Start-OnTestDesktop -Exe $exe -Arguments @('--background=#101014', '--session-persistence=off',
+    # Solid panes (T1833): the contrast floors are measured against the known
+    # background, which a glass pane (the default) mixes with the gradient.
+    '--macos-pane-glass=false')
 $proc = $app.Process
 Start-Sleep -Seconds 3
 if ($proc -and $proc.HasExited) {

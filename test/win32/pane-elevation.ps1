@@ -28,6 +28,18 @@
 #   LIVE RELOAD. A config file flipped from flat to elevated and reloaded
 #   (ctrl+shift+,) re-lays the open window out as cards, as on Mac.
 #
+#   GLASS (T1833). `macos-pane-glass` (default on) makes each pane a glass
+#   sheet: 40% of the terminal background over the desk. The pane's OWN
+#   pixels are read through the debug `capture-pane` IPC (lib\PaneCapture.ps1;
+#   PrintWindow returns the GL child as a flat fill): on a black terminal the
+#   blank bottom of the pane is the desk's blue-over-red, and its two ends
+#   differ because the gradient does. The pane's right edge is checked against
+#   the desk in the margin beside it, mixed the way the renderer mixes - 60%
+#   of the desk, in linear light - so the pane and its card meet without a
+#   seam. `--macos-pane-glass=false` and a translucent window
+#   (`background-opacity` below 1, where the desk is still opaque - T1852)
+#   keep the solid black pane.
+#
 # Runs on a background desktop (test/win32/lib/TestDesktop.ps1): nothing here
 # takes the user's foreground, which is asserted at the end.
 #
@@ -47,6 +59,8 @@ $conf = Join-Path $env:TEMP "ghoztty-pane-elevation-$PID.conf"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+. (Join-Path $PSScriptRoot 'lib\PaneCapture.ps1')
+. (Join-Path $PSScriptRoot 'lib\WindowComposite.ps1')
 
 $script:pass = 0
 $script:fail = 0
@@ -101,6 +115,59 @@ function Start-Gui([string]$label, [string[]]$extraArgs, [switch]$Split) {
     if ($panes.Count -ne $want) { Stop-Process -Id $app.Pid -Force -ErrorAction SilentlyContinue; exit 1 }
     $scale = (Get-TestWindowDpi -Window $top) / 96.0
     [pscustomobject]@{ App = $app; Top = $top; Panes = $panes; Scale = $scale }
+}
+
+# A glass pane over desk colour $c on a black terminal: 60% of the desk,
+# mixed in linear light (pane_elevation.glassMix, and the renderer's own
+# background-image blend under the default linear alpha-blending).
+function Get-GlassExpect($c) {
+    $out = @()
+    foreach ($v in @($c.R, $c.G, $c.B)) {
+        $x = $v / 255.0
+        $lin = if ($x -le 0.04045) { $x / 12.92 } else { [math]::Pow(($x + 0.055) / 1.055, 2.4) }
+        $l = $lin * 0.6
+        $sr = if ($l -le 0.0031308) { $l * 12.92 } else { 1.055 * [math]::Pow($l, 1 / 2.4) - 0.055 }
+        $out += [int][math]::Round($sr * 255)
+    }
+    return $out
+}
+
+# The pane's own pixels (capture-pane), sampled where the shell draws
+# nothing: the bottom tenth, near each end. Returns $null with the reason
+# printed when the capture is unavailable.
+function Get-GlassSamples([IntPtr]$top, [string]$label, [int]$Index = 0) {
+    $targets = @()
+    for ($t = 0; $t -lt 20 -and $targets.Count -le $Index; $t++) {
+        $targets = @(Get-TestWindowPaneTargets -Window $top -Exe $exe)
+        if ($targets.Count -le $Index) { Start-Sleep -Milliseconds 300 }
+    }
+    if ($targets.Count -le $Index) { Write-Host "      $label`: the window listed no terminal pane #$Index"; return $null }
+    $shot = $null
+    for ($t = 0; $t -lt 20 -and $null -eq $shot; $t++) {
+        $shot = Get-TestPaneCapture -Target $targets[$Index]
+        if ($null -eq $shot) { Start-Sleep -Milliseconds 300 }
+    }
+    if ($null -eq $shot) { Write-Host "      $label`: capture failed: $(Get-LastPaneCaptureError)"; return $null }
+    try {
+        $y = [int]($shot.Height * 0.9)
+        $l = $shot.Bitmap.GetPixel([int]($shot.Width * 0.1), $y)
+        $r = $shot.Bitmap.GetPixel([int]($shot.Width * 0.9), $y)
+        $e = $shot.Bitmap.GetPixel($shot.Width - 3, [int]($shot.Height / 2))
+        Write-Host "      $label`: pane $($shot.Width)x$($shot.Height) bottom-left=$($l.R),$($l.G),$($l.B) bottom-right=$($r.R),$($r.G),$($r.B) right-edge=$($e.R),$($e.G),$($e.B)"
+        return [pscustomobject]@{ Left = $l; Right = $r; Edge = $e; EdgeY = [int]($shot.Height / 2) }
+    } finally { Close-TestPaneCapture $shot }
+}
+
+# The desk seen through a glass pane on a black terminal: 60% of the desk,
+# so dimmer than Test-DeskPixel's margin - but never the terminal black, and
+# still blue above red.
+function Test-GlassPixel($c) {
+    if ($null -eq $c) { return $false }
+    return (($c.R + $c.G + $c.B) -ge 24) -and ($c.B -ge $c.R + 4)
+}
+
+function Get-ColorDistance($a, $b) {
+    return [math]::Abs($a.R - $b.R) + [math]::Abs($a.G - $b.G) + [math]::Abs($a.B - $b.B)
 }
 
 # The client rect in SCREEN coordinates (Get-TestChildWindows reports screen).
@@ -207,6 +274,71 @@ Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'elevated: no crash
 Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------------------
+# Run 1b: glass panes (T1833) - the default.
+# ---------------------------------------------------------------------------
+$g = Start-Gui 'glass' $common
+$launched += $script:GhozttyTestDesktopPids
+$top = $g.Top
+$p = $g.Panes[0]
+$i = Get-InsetPx $g.Scale
+Start-Sleep -Milliseconds 800
+$gs = Get-GlassSamples $top 'glass'
+if ($null -eq $gs) {
+    $script:skipped++; Write-Host 'SKIP  glass probes: no pane capture'
+} else {
+    Assert (Test-GlassPixel $gs.Left) 'glass: the blank bottom-left of a black pane is the desk showing through'
+    Assert (Test-GlassPixel $gs.Right) 'glass: so is the bottom-right'
+    Assert ((Get-ColorDistance $gs.Left $gs.Right) -ge 6) 'glass: the two ends differ - the gradient runs through the pane'
+    # The seam: the pane's right edge against 60% of the desk just outside
+    # the card, at the same height (the margin's desk, past the rim).
+    $shot = Get-TestWindowPixels -Window $top -Sync
+    try {
+        $mx = [int]($p.Right + $i + 2)
+        $my = [int]($p.Top + $gs.EdgeY)
+        $d = Get-TestPixel -Shot $shot -X $mx -Y $my
+        if ($null -eq $d -or -not (Test-DeskPixel $d)) {
+            $script:skipped++; Write-Host "SKIP  glass seam: no desk pixel beside the pane ($mx,$my)"
+        } else {
+            $want = Get-GlassExpect $d
+            $diff = [math]::Abs($gs.Edge.R - $want[0]) + [math]::Abs($gs.Edge.G - $want[1]) + [math]::Abs($gs.Edge.B - $want[2])
+            Write-Host "      desk beside the pane ($mx,$my) = $($d.R),$($d.G),$($d.B); glass over it = $($want -join ','); pane edge off by $diff"
+            Assert ($diff -le 12) 'glass: the pane edge is 40% black over the desk beside it, in linear light - no seam'
+        }
+    } finally { Close-TestWindowPixels $shot }
+}
+# A pane a split creates is glass too, and so is the one it halved - the
+# new terminal's renderer comes up after the paint that placed it, so this
+# is the case where a backdrop could be missed.
+& $exe +split --direction=down | Out-Null
+Start-Sleep -Milliseconds 1500
+foreach ($ix in 0, 1) {
+    $ss = Get-GlassSamples $top "glass split #$ix" -Index $ix
+    if ($null -eq $ss) {
+        $script:skipped++; Write-Host "SKIP  glass split #$ix probe: no pane capture"
+    } else {
+        Assert ((Test-GlassPixel $ss.Left) -and (Test-GlassPixel $ss.Right)) "glass: after a split, pane #$ix shows the desk through it"
+    }
+}
+Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'glass: no crash'
+Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
+
+foreach ($case in @(
+        @{ Label = 'solid'; Args = @('--macos-pane-glass=false'); Why = '--macos-pane-glass=false' },
+        @{ Label = 'translucent'; Args = @('--background-opacity=0.85'); Why = 'a translucent window' })) {
+    $g = Start-Gui $case.Label ($common + $case.Args)
+    $launched += $script:GhozttyTestDesktopPids
+    Start-Sleep -Milliseconds 800
+    $gs = Get-GlassSamples $g.Top $case.Label
+    if ($null -eq $gs) {
+        $script:skipped++; Write-Host "SKIP  $($case.Label) probe: no pane capture"
+    } else {
+        $black = [pscustomobject]@{ R = 0; G = 0; B = 0 }
+        Assert (((Get-ColorDistance $gs.Left $black) -le 6) -and ((Get-ColorDistance $gs.Right $black) -le 6)) "$($case.Label): $($case.Why) keeps the pane the solid terminal black"
+    }
+    Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
+}
+
+# ---------------------------------------------------------------------------
 # Run 2: flat is the classic geometry, unchanged.
 # ---------------------------------------------------------------------------
 $g = Start-Gui 'flat' ($common + '--macos-pane-style=flat') -Split
@@ -243,6 +375,15 @@ for ($t = 0; $t -lt 25; $t++) {
     if ($A -and [int]($cs.Right - $A.Right) -eq $m + $i) { $flipped = $true; break }
 }
 Assert $flipped 'reload: the open window re-laid out as elevated cards'
+# Elevated means glass by default (T1833): the open panes take their desk
+# slices on the reload, not only panes made after it.
+Start-Sleep -Milliseconds 800
+$rs = Get-GlassSamples $top 'reload glass'
+if ($null -eq $rs) {
+    $script:skipped++; Write-Host 'SKIP  reload glass probe: no pane capture'
+} else {
+    Assert ((Test-GlassPixel $rs.Left) -and (Test-GlassPixel $rs.Right)) 'reload: the open pane turned to glass with the flip'
+}
 Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'reload: no crash'
 Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 

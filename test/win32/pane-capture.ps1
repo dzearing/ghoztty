@@ -110,7 +110,10 @@ try {
 # `+new-window --target=` idempotent against the LAST run's pane, so every
 # capture below would be of a window this run never created (T248).
 $app = Start-OnTestDesktop -Exe $exe -Arguments @(
-    '--config-default-files=false', '--session-persistence=false', '--background=#101014')
+    # Solid panes (T1833): this script measures the pane's own tint, which a
+    # glass pane (the default) mixes 40/60 with the window's gradient.
+    '--config-default-files=false', '--session-persistence=false', '--background=#101014',
+    '--macos-pane-glass=false')
 $appPid = [int]$app.Pid
 Start-Sleep -Seconds 3
 if ($app.Process -and $app.Process.HasExited) {

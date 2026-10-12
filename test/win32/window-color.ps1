@@ -180,7 +180,12 @@ try {
 # run's pane, so the fixtures below would measure a window this run never
 # created (T248).
 $app = Start-OnTestDesktop -Exe $exe -Arguments @(
-    '--config-default-files=false', '--session-persistence=false', '--background=#101014')
+    # The flat style: this script is about the terminal TINT. In the elevated
+    # default `--color=random` picks the window's gradient instead (T1832,
+    # covered by desk-variant.ps1), and a glass pane mixes its tint 40/60
+    # with that gradient (T1833).
+    '--config-default-files=false', '--session-persistence=false', '--background=#101014',
+    '--macos-pane-style=flat')
 $appPid = [int]$app.Pid
 $launched += $appPid
 Start-Sleep -Seconds 3

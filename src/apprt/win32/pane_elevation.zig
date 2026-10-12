@@ -124,6 +124,23 @@ pub fn shadows(is_light: bool, scale: f32) [2]Shadow {
     };
 }
 
+/// Mac `PaneGlass.tint` (0d8de3436): how much of the terminal's background
+/// a glass sheet keeps - chosen as 50% in the mock, lowered to 40% after the
+/// user lived with it - so the desk's light and shade read through the pane
+/// while text keeps its contrast (T1833).
+pub const GLASS_TINT: f32 = 0.4;
+
+/// Mac `PaneGlass`'s pre-Liquid-Glass shadow (`radius: 9, y: 6`, black 20%
+/// dark / 6% light). SwiftUI casts it from the sheet's own alpha, so it
+/// reaches the desk at the tint's strength.
+pub fn glassShadow(is_light: bool, scale: f32) Shadow {
+    return .{
+        .sigma = 4.5 * scale,
+        .dy = 6 * scale,
+        .opacity = (if (is_light) @as(f32, 0.06) else 0.2) * GLASS_TINT,
+    };
+}
+
 /// How far past the card a shadow layer can still be seen.
 pub fn shadowReachPx(scale: f32) i32 {
     const s = shadows(false, scale)[1];
@@ -155,11 +172,55 @@ fn blend(dst: u32, src: Rgbf, a: f32) u32 {
 
 const black: Rgbf = .{ .r = 0, .g = 0, .b = 0 };
 
+// sRGB <-> linear light, as tables: the glass mix runs per pixel over every
+// card on every paint, a divider drag included.
+const srgb_to_linear: [256]f32 = blk: {
+    @setEvalBranchQuota(100_000);
+    var t: [256]f32 = undefined;
+    for (0..256) |i| {
+        const c: f32 = @as(f32, @floatFromInt(i)) / 255.0;
+        t[i] = if (c <= 0.04045) c / 12.92 else std.math.pow(f32, (c + 0.055) / 1.055, 2.4);
+    }
+    break :blk t;
+};
+const LINEAR_STEPS = 4096;
+const linear_to_srgb: [LINEAR_STEPS]u8 = blk: {
+    @setEvalBranchQuota(1_000_000);
+    var t: [LINEAR_STEPS]u8 = undefined;
+    for (0..LINEAR_STEPS) |i| {
+        const l: f32 = @as(f32, @floatFromInt(i)) / (LINEAR_STEPS - 1);
+        const c = if (l <= 0.0031308) l * 12.92 else 1.055 * std.math.pow(f32, l, 1.0 / 2.4) - 0.055;
+        t[i] = @intFromFloat(@round(std.math.clamp(c, 0, 1) * 255.0));
+    }
+    break :blk t;
+};
+
+fn mixChannel(desk: u32, tint_lin: f32, t: f32) u32 {
+    const l = srgb_to_linear[desk] * (1 - t) + tint_lin * t;
+    const idx: usize = @intFromFloat(@round(std.math.clamp(l, 0, 1) * (LINEAR_STEPS - 1)));
+    return linear_to_srgb[idx];
+}
+
+/// A glass sheet over one desk pixel: `t` of the tint over the desk, mixed
+/// in linear light - the blend the terminal's renderer makes inside the
+/// pane under Windows' default `alpha-blending` (linear-corrected), so the
+/// card's rim and corners meet the pane's own pixels without a seam.
+pub fn glassMix(desk: u32, tint: color_math.Rgb, t: f32) u32 {
+    return (mixChannel((desk >> 16) & 0xFF, srgb_to_linear[tint.r], t) << 16) |
+        (mixChannel((desk >> 8) & 0xFF, srgb_to_linear[tint.g], t) << 8) |
+        mixChannel(desk & 0xFF, srgb_to_linear[tint.b], t);
+}
+
 pub const CardStyle = struct {
     /// The card's fill - the terminal background.
     fill: color_math.Rgb,
     is_light: bool,
     scale: f32,
+    /// A glass sheet (`macos-pane-glass`, T1833): the fill is `GLASS_TINT`
+    /// of `fill` over the desk rather than `fill` itself, with Mac
+    /// `PaneGlass`'s single soft shadow, kept off the sheet, and its
+    /// brighter rim.
+    glass: bool = false,
 };
 
 /// Paint every card's shadows, then every card, over the desk already in
@@ -171,7 +232,9 @@ pub const CardStyle = struct {
 pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: CardStyle) void {
     std.debug.assert(buf.len >= w * h);
     const radius: f32 = @floatFromInt(radiusPx(style.scale));
-    const layers = shadows(style.is_light, style.scale);
+    const solid_layers = shadows(style.is_light, style.scale);
+    const glass_layer = [1]Shadow{glassShadow(style.is_light, style.scale)};
+    const layers: []const Shadow = if (style.glass) &glass_layer else &solid_layers;
     const reach = shadowReachPx(style.scale);
     const ri: i32 = radiusPx(style.scale);
     const wi: i32 = @intCast(w);
@@ -194,12 +257,18 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
                 }
                 const fx = @as(f32, @floatFromInt(x)) + 0.5;
                 const fy = @as(f32, @floatFromInt(y)) + 0.5;
-                if (roundRectDistance(fx, fy, c, radius) <= -1) continue;
+                const d0 = roundRectDistance(fx, fy, c, radius);
+                if (d0 <= -1) continue;
+                // A glass sheet shows the desk, so its shadow is kept to
+                // the desk around it: under the sheet it would read as a
+                // smudge through the glass.
+                const outside: f32 = if (style.glass) std.math.clamp(0.5 + d0, 0, 1) else 1;
+                if (outside <= 0) continue;
                 const i: usize = @intCast(y * wi + x);
                 var p = buf[i];
                 for (layers) |s| {
                     const d = roundRectDistance(fx, fy - s.dy, c, radius);
-                    p = blend(p, black, shadowAlpha(d, s));
+                    p = blend(p, black, shadowAlpha(d, s) * outside);
                 }
                 buf[i] = p;
             }
@@ -212,9 +281,12 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
         .b = @floatFromInt(style.fill.b),
     };
     const fill_px = fill.pack();
-    // Mac's rim: white 7% on a dark card, black 6% on a light one.
+    // Mac's rim: white 7% on a dark card, black 6% on a light one; a glass
+    // sheet's is brighter (white 10%, black 8%).
     const rim_rgb: Rgbf = if (style.is_light) black else .{ .r = 255, .g = 255, .b = 255 };
-    const rim_a: f32 = if (style.is_light) 0.06 else 0.07;
+    const rim_a: f32 = if (style.glass)
+        (if (style.is_light) @as(f32, 0.08) else 0.10)
+    else if (style.is_light) @as(f32, 0.06) else 0.07;
     const rim_w = RIM_DIP * style.scale;
     const rim_c = Rgbf.lerp(fill, rim_rgb, rim_a);
     // The inner edge of the band an antialiased rim pixel can sit in.
@@ -233,7 +305,7 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
             while (x < x1) : (x += 1) {
                 const i: usize = @intCast(y * wi + x);
                 if (sides and x >= c.left + edge and x < c.right - edge) {
-                    buf[i] = fill_px;
+                    buf[i] = if (style.glass) glassMix(buf[i], style.fill, GLASS_TINT) else fill_px;
                     continue;
                 }
                 const fx = @as(f32, @floatFromInt(x)) + 0.5;
@@ -244,10 +316,13 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
                 const inner = std.math.clamp(0.5 - (d + rim_w), 0, 1);
                 // The pixel is card, of which `outer - inner` is rim.
                 const ring = outer - inner;
+                // Glass: the sheet's own colour over THIS pixel of desk.
+                const base = if (style.glass) unpack(glassMix(buf[i], style.fill, GLASS_TINT)) else fill;
+                const rim_px = if (style.glass) Rgbf.lerp(base, rim_rgb, rim_a) else rim_c;
                 const col = if (outer > 0)
-                    Rgbf.lerp(fill, rim_c, ring / outer)
+                    Rgbf.lerp(base, rim_px, ring / outer)
                 else
-                    fill;
+                    base;
                 buf[i] = blend(buf[i], col, outer);
             }
         }
@@ -344,4 +419,52 @@ test "T1831: paintCards leaves the desk alone when there are no cards" {
     @memset(&buf, 0x123456);
     paintCards(&buf, 4, 4, &.{}, .{ .fill = .{ .r = 0, .g = 0, .b = 0 }, .is_light = false, .scale = 1 });
     for (buf) |p| try testing.expectEqual(@as(u32, 0x123456), p);
+}
+
+test "T1833: glassMix keeps 40% of the tint over the desk, in linear light" {
+    const desk = packRgb(200, 100, 50);
+    const tint: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
+    // The ends are exact: nothing of the tint, all of it.
+    try testing.expectEqual(desk, glassMix(desk, tint, 0));
+    try testing.expectEqual(packRgb(30, 30, 30), glassMix(desk, tint, 1));
+    // In between, the mix is in linear light: brighter than the sRGB lerp.
+    const m = unpack(glassMix(desk, tint, GLASS_TINT));
+    const srgb_r: f32 = 200 * 0.6 + 30 * 0.4;
+    try testing.expect(m.r > srgb_r + 10 and m.r < 200);
+    // A desk the tint's own colour is unchanged by it.
+    try testing.expectEqual(packRgb(30, 30, 30), glassMix(packRgb(30, 30, 30), tint, GLASS_TINT));
+}
+
+test "T1833: a glass card shows the desk through its fill and keeps its shadow off the sheet" {
+    const w = 120;
+    const h = 100;
+    var buf: [w * h]u32 = undefined;
+    var desk: [w * h]u32 = undefined;
+    // A desk with a gradient across it, so "through" is observable.
+    for (0..h) |y| for (0..w) |x| {
+        desk[y * w + x] = packRgb(@intCast(x * 2), 80, @intCast(y * 2));
+    };
+    @memcpy(&buf, &desk);
+    const bg: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
+    const card: Card = .{ .left = 20, .top = 20, .right = 100, .bottom = 70 };
+    paintCards(&buf, w, h, &.{card}, .{ .fill = bg, .is_light = false, .scale = 1.0, .glass = true });
+
+    // Interior: the glass mix of exactly the desk pixel under it - no
+    // shadow darkened it first - and two interior pixels differ, because
+    // the desk under them does.
+    const a = 45 * w + 30;
+    const b = 45 * w + 90;
+    try testing.expectEqual(glassMix(desk[a], bg, GLASS_TINT), buf[a]);
+    try testing.expectEqual(glassMix(desk[b], bg, GLASS_TINT), buf[b]);
+    try testing.expect(buf[a] != buf[b]);
+    // Below the card: still a shadow on the desk.
+    const below = 74 * w + 60;
+    try testing.expect(unpack(buf[below]).g < unpack(desk[below]).g);
+    // Far away: the desk, untouched.
+    try testing.expectEqual(desk[5 * w + 5], buf[5 * w + 5]);
+
+    // The solid card, for contrast, is the terminal background exactly.
+    @memcpy(&buf, &desk);
+    paintCards(&buf, w, h, &.{card}, .{ .fill = bg, .is_light = false, .scale = 1.0 });
+    try testing.expectEqual(packRgb(30, 30, 30), buf[a]);
 }

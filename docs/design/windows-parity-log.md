@@ -35602,3 +35602,30 @@ moved to T1814.
   relaunched pane exports the name its window holds, and the loser of the
   collision gets `window-3` (ALL PASS 30). The floor (lib/none/win32/agent)
   passes, as do the 17 harnesses the edit made due and the harness floor.
+
+## 2026-10-12 — T1833: glass panes
+
+- **What changed.** In the elevated style a Windows terminal pane is now a
+  sheet of glass, as on Mac (`macos-pane-glass`, default on): 40% of the
+  terminal background over the window's gradient, so the gradient's light
+  and shade read through every pane. The card's rim, corners and shadow are
+  painted as glass too.
+- **How a GL child shows the desk.** A pane is its own OpenGL window, so the
+  parent's desk can never show through it. The window instead hands each
+  terminal the slice of the gradient it covers, through a new renderer
+  message (`pane_backdrop`). The renderer draws the slice through its
+  background-image pipeline at 0.6 over the terminal background, which is
+  exactly Mac's 40% tint. The parent mixes the rim pixels the same way, in
+  linear light (the Windows default blending), so the edge has no seam.
+- **Kept solid:** `macos-pane-glass = false`, and translucent windows, whose
+  desk is still opaque (T1852). A configured `background-image` wins.
+- **Validation.** `pane-elevation.ps1` gains a glass run. It reads the
+  pane's own pixels over `capture-pane`, and the window's pixels with
+  PrintWindow. The desk shows through the pane, and the two ends of the pane
+  differ. The pane's edge is 3 levels from the computed glass over the desk
+  beside it. Both halves of a split are glass, and so is a pane after a live
+  flat-to-elevated reload. The solid and translucent cases stay black, and
+  the negative control fails. Unit tests cover the linear mix, the glass
+  card and the desk slice.
+- **Filed** the rest of Mac's glass: T1884 (banner/header bands), T1885
+  (viewer pages), T1886 (title bar), T1887 (sidebar overlay card).
