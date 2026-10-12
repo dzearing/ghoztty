@@ -35337,3 +35337,20 @@ moved to T1814.
   `process-family`. Harness floor, soak-daemon (51), test-binary-soak (88),
   floor-lane-releasesafe, upgrade-no-fork, chooser-close-chord, guard-due and
   go-loop-guard green. Script-only change: no zig lane touched.
+
+## 2026-10-11 — T1793: a pane whose host dies while you watch says so instead of closing
+
+- **What landed.** New capability `holder_lost`. A bound session whose holder
+  dies is kept as an interrupted tombstone and its viewer gets
+  `EXIT{lost, command}`; the pane keeps the dead program's output (a full-screen
+  frame is copied off the alternate screen), writes "Session interrupted: the
+  process hosting this session stopped unexpectedly" to scrollback and banner,
+  and RELAUNCHes a fresh shell in place (`fresh_shell`, `replay_from`), per
+  `session-relaunch`. Older agent or app: the old close, unchanged.
+- **Evidence.** Floor lanes ALL PASS, P1-P3 ALL PASS, new arm H of
+  `session-relaunch-notify.ps1` (full run ALL PASS, 147), harness floor and all
+  twelve guard-due harnesses green (session-reboot-tui green on a solo re-run).
+  Commit c1c11dc04.
+- **Filed.** T1870: show arm H going red against a build without the
+  capability. T1871: session-reboot-tui's TUI stream once never started in a
+  batch run (B3/B4 at a bare prompt for 361s).
