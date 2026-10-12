@@ -35514,3 +35514,21 @@ moved to T1814.
   script is ALL PASS (14), and `-NegativeControl` fails as it should.
   persistence-flag needed a `# persistence:` marker on the new launch; it is
   ALL PASS (29), and the harness floor is green.
+
+## 2026-10-12 — T1829: the pane sidebar's all-windows outline
+
+- **What changed.** A button beside the sidebar's pin switches it to every
+  window. Each window (each tab, on Windows) is a heading with its panes
+  indented beneath. The list is sorted by name, and `<project>: <worktree>`
+  windows are grouped under a project heading that folds. Clicking another
+  window's pane focuses it there, restoring it if it was stashed. Clicking a
+  window's heading raises that window. The list follows renames and closes in
+  other windows.
+- **Split out.** Search (T1877), scrolling with sticky project headers (T1878;
+  found here, because the sidebar never scrolled), cross-window drag (T1879),
+  and motion (T1880).
+- **Validation.** New `pane-sidebar-all-windows.ps1` is ALL PASS (43), and its
+  `-NegativeControl` run fails. The pure tests in `pane_sidebar_outline.zig`
+  and `pane_sidebar.zig` pass. The floor (lib/none/win32/agent) and P1-P3 are
+  ALL PASS. All 22 harnesses the edit made due are ALL PASS, and so are the
+  harness floor and the self-spawn audit.

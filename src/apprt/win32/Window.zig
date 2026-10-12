@@ -2282,6 +2282,10 @@ pub fn syncPaneSidebar(self: *Window) void {
     rc.right = rc.left + self.paneSidebarColumnPx();
     sb.refresh();
     sb.place(rc, self.paneSidebarMode(), self.scale);
+    // Whatever changed here may be on another window's all-windows list
+    // (T1829): every caller of this - layout, focus, titles, activity - is
+    // exactly the set of things those lists show.
+    PaneSidebar.refreshScopes(self.app.windows.items, self);
 }
 
 /// `toggle_pane_sidebar` (Mac Ctrl+Cmd+S, here Ctrl+Shift+S): hide or show
@@ -8434,6 +8438,8 @@ pub fn setTitleOverride(self: *Window, title: ?[]const u8) void {
     // merged, the painted title lives in the STRIP's half.
     self.invalidateCaption();
     self.app.markLayoutDirty(); // T89f: window title pin changed → re-persist
+    // The pin is the window's name on every all-windows list (T1829).
+    self.syncPaneSidebar();
 }
 
 /// Called when a pane's title changes. Updates the stored tab title
@@ -8504,6 +8510,7 @@ pub fn setTabTitlePin(self: *Window, tab_idx: usize, title: ?[]const u8) void {
     self.tab_sticky_key = null;
     self.invalidateTabBar();
     self.app.markLayoutDirty(); // T89f: tab title pin changed → re-persist
+    self.syncPaneSidebar(); // a tab's name on the all-windows lists (T1829)
 }
 
 /// Update tab bar visibility based on config and tab count.
@@ -11546,6 +11553,9 @@ fn onDestroy(self: *Window) void {
             break;
         }
     }
+    // Its group leaves every all-windows list now (T1829) - before anything
+    // could click a row that names it.
+    PaneSidebar.refreshScopes(app.windows.items, null);
     // T1003: a stand-in window the user closed first is no longer the deferred
     // restore's to close.
     if (app.restore_placeholder_window == self) app.restore_placeholder_window = null;

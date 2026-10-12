@@ -526,9 +526,60 @@ pub const Rect = struct {
 pub const Item = struct {
     section: Section,
     two_line: bool = false,
+    /// The all-windows outline (T1829): which window group the pane is in -
+    /// the rail draws a hairline where it changes - and whether that group is
+    /// THIS window's, whose stash alone is a drop target here.
+    group: u16 = 0,
+    own: bool = true,
 };
 
 pub const max_items: usize = 64;
+
+/// One line of the all-windows outline the panel lays out
+/// (`pane_sidebar_outline.buildLines` makes them).
+pub const LineKind = enum { project, window, pane, rule, stashed_caption };
+pub const Line = struct {
+    kind: LineKind,
+    /// A pane line's item; a head's (or stashed caption's) window group.
+    index: usize = 0,
+    /// Outline level: a project head and a lone window are 0, a window in a
+    /// project 1, a window's panes one deeper than the window.
+    depth: u8 = 0,
+};
+
+pub const HeadKind = enum { project, window };
+
+/// A project or window header row of the outline.
+pub const Head = struct {
+    kind: HeadKind,
+    /// The window group it heads (a project: its first window's).
+    index: usize,
+    depth: u8,
+    /// The row's fill (hit across the panel's width, as a row is).
+    rect: Rect,
+    /// The disclosure chevron's box.
+    chevron: Rect,
+    /// Where the name starts.
+    label_x: i32,
+};
+
+/// A STASHED caption inside a window group.
+pub const Caption = struct {
+    rect: Rect,
+    x: i32,
+    /// The window group whose stash it captions.
+    index: usize,
+};
+
+pub const max_heads: usize = 48;
+pub const max_marks: usize = 64;
+
+/// The outline's geometry (Mac `PaneSidebarOutline`): a header's chevron
+/// sits where a row's label starts, and each level indents by one chevron
+/// and its gap, so a window's pane icons line up under the window's name.
+pub const chevron_dip: f32 = 12;
+pub const chevron_gap_dip: f32 = 5;
+pub const outline_step_dip: f32 = chevron_dip + chevron_gap_dip;
 
 /// The measured text metrics the expanded panel lays out against: one line of
 /// the row title, one of the subtitle/caption.
@@ -549,6 +600,24 @@ pub const Layout = struct {
     card: Rect = .{},
     /// The pin button's painted square.
     pin: Rect = .{},
+    /// The all-windows toggle, left of the pin (panel and open card; Mac
+    /// drops its header buttons from the rail).
+    scope: Rect = .{},
+    /// Laid out as the all-windows outline (T1829).
+    outline: bool = false,
+    /// THIS window's stashed items are `first_stashed..stash_end` - the rows
+    /// a drop into the stash positions itself among.
+    stash_end: usize = 0,
+    /// Each item's content indent (outline level), in pixels.
+    indent: [max_items]i32 = [_]i32{0} ** max_items,
+    heads: [max_heads]Head = undefined,
+    head_count: usize = 0,
+    /// The outline's hairlines and STASHED captions (the single-window
+    /// layout uses `section_rule` / `stashed_caption`).
+    rules: [max_marks]Rect = undefined,
+    rule_count: usize = 0,
+    captions: [max_marks]Caption = undefined,
+    caption_count: usize = 0,
     /// The header band (expanded) holding the "PANES" caption.
     header: Rect = .{},
     /// Where the "PANES" caption starts (expanded).
@@ -571,6 +640,18 @@ pub const Layout = struct {
         return self.items[i];
     }
 
+    /// Whether item `i` has a place on screen: a pane in a folded group of
+    /// the outline has none in the panel (the rail still shows it).
+    pub fn shown(self: *const Layout, i: usize) bool {
+        return self.items[i].width() > 0;
+    }
+
+    fn addRule(self: *Layout, r: Rect) void {
+        if (self.rule_count == max_marks) return;
+        self.rules[self.rule_count] = r;
+        self.rule_count += 1;
+    }
+
     /// An expanded row's hover button (stash / restore): the compact square
     /// at the row's trailing edge, `sm` inside its fill.
     pub fn rowButton(self: *const Layout, i: usize, scale: f32) Rect {
@@ -591,22 +672,46 @@ pub fn rowHeight(two_line: bool, tm: TextMetrics, scale: f32) i32 {
 
 /// Lay the sidebar out in a `w` x `h` client area.
 pub fn layout(m: Mode, w: i32, h: i32, items: []const Item, tm: TextMetrics, scale: f32) Layout {
+    return layoutWith(m, w, h, items, null, tm, scale);
+}
+
+/// `layout`, or - given the outline's `lines` (T1829) - the all-windows
+/// outline: the panel lays out the lines, the rail every item with a hairline
+/// between window groups.
+pub fn layoutWith(m: Mode, w: i32, h: i32, items: []const Item, lines: ?[]const Line, tm: TextMetrics, scale: f32) Layout {
     var l: Layout = .{ .mode = m, .width = w, .height = h };
     const n = @min(items.len, max_items);
     l.count = n;
+    l.outline = lines != null;
+    findStash(&l, items[0..n]);
+    switch (m) {
+        .hidden => l.count = 0,
+        .expanded => if (lines) |ls| {
+            const area: Rect = .{ .right = w, .bottom = h };
+            layoutHeader(&l, area, tm, scale);
+            layoutLines(&l, area, items[0..n], ls, tm, scale);
+        } else layoutRows(&l, .{ .right = w, .bottom = h }, items[0..n], tm, scale),
+        .mini => layoutMini(&l, items[0..n], scale),
+    }
+    return l;
+}
+
+/// THIS window's stashed items: the single roster's stashed tail, or the
+/// outline's own group's (contiguous: a group lists its grid, then its stash).
+fn findStash(l: *Layout, items: []const Item) void {
+    const n = items.len;
     l.first_stashed = n;
-    for (items[0..n], 0..) |it, i| {
-        if (it.section == .stashed) {
+    l.stash_end = n;
+    for (items, 0..) |it, i| {
+        if (it.section == .stashed and it.own) {
             l.first_stashed = i;
             break;
         }
     }
-    switch (m) {
-        .hidden => l.count = 0,
-        .expanded => layoutRows(&l, .{ .right = w, .bottom = h }, items[0..n], tm, scale),
-        .mini => layoutMini(&l, scale),
-    }
-    return l;
+    if (!l.outline) return;
+    var e = l.first_stashed;
+    while (e < n and items[e].own and items[e].section == .stashed) e += 1;
+    l.stash_end = e;
 }
 
 /// The window the open card is drawn in: the rail's margin, the panel's
@@ -622,35 +727,46 @@ pub fn openWidthPx(panel_w_dip: f32, scale: f32) i32 {
 /// window (`w` from `openWidthPx`): the raised card at the rail's margins,
 /// as wide as the panel, holding the panel's header and rows.
 pub fn layoutOpen(w: i32, h: i32, items: []const Item, tm: TextMetrics, scale: f32) Layout {
+    return layoutOpenWith(w, h, items, null, tm, scale);
+}
+
+pub fn layoutOpenWith(w: i32, h: i32, items: []const Item, lines: ?[]const Line, tm: TextMetrics, scale: f32) Layout {
     var l: Layout = .{ .mode = .mini, .open = true, .width = w, .height = h };
     const n = @min(items.len, max_items);
     l.count = n;
-    l.first_stashed = n;
-    for (items[0..n], 0..) |it, i| {
-        if (it.section == .stashed) {
-            l.first_stashed = i;
-            break;
-        }
-    }
+    l.outline = lines != null;
+    findStash(&l, items[0..n]);
     const margin = px(rail_margin_dip, scale);
     l.card = .{ .left = margin, .top = margin, .right = @max(w - margin, margin), .bottom = @max(h - margin, margin) };
-    layoutRows(&l, l.card, items[0..n], tm, scale);
+    if (lines) |ls| {
+        layoutHeader(&l, l.card, tm, scale);
+        layoutLines(&l, l.card, items[0..n], ls, tm, scale);
+    } else layoutRows(&l, l.card, items[0..n], tm, scale);
     return l;
+}
+
+/// The header band: the caption at the TOC's header padding, the pin with
+/// `sm` clear above and below it - whichever is taller, since the band is
+/// sized to its control, never the reverse (design system §0) - and the
+/// all-windows toggle beside the pin.
+fn layoutHeader(l: *Layout, area: Rect, tm: TextMetrics, scale: f32) void {
+    const sm = px(sm_dip, scale);
+    const btn = px(button_dip, scale);
+    const header_h = @max(toc.headerHeight(tm.caption_h, scale), btn + 2 * sm);
+    l.header = .{ .left = area.left, .top = area.top, .right = area.right, .bottom = area.top + header_h };
+    l.caption_x = area.left + px(toc.label_inset_dip, scale);
+    const pin_top = area.top + @divTrunc(header_h - btn, 2);
+    l.pin = .{ .left = area.right - sm - btn, .top = pin_top, .right = area.right - sm, .bottom = pin_top + btn };
+    // Mac's header buttons sit 2 pt apart.
+    const gap = px(2, scale);
+    l.scope = .{ .left = l.pin.left - gap - btn, .top = pin_top, .right = l.pin.left - gap, .bottom = pin_top + btn };
 }
 
 /// The panel's header and rows inside `area`: the pinned panel's whole
 /// window, or the open card.
 fn layoutRows(l: *Layout, area: Rect, items: []const Item, tm: TextMetrics, scale: f32) void {
     const sm = px(sm_dip, scale);
-    const btn = px(button_dip, scale);
-    // The header band holds the caption at the TOC's header padding and the
-    // pin with `sm` clear above and below it, whichever is taller - the band
-    // is sized to its control, never the reverse (design system §0).
-    const header_h = @max(toc.headerHeight(tm.caption_h, scale), btn + 2 * sm);
-    l.header = .{ .left = area.left, .top = area.top, .right = area.right, .bottom = area.top + header_h };
-    l.caption_x = area.left + px(toc.label_inset_dip, scale);
-    const pin_top = area.top + @divTrunc(header_h - btn, 2);
-    l.pin = .{ .left = area.right - sm - btn, .top = pin_top, .right = area.right - sm, .bottom = pin_top + btn };
+    layoutHeader(l, area, tm, scale);
 
     const fill = px(toc.fill_inset_dip, scale);
     const gap = @max(px(1, scale), 1);
@@ -672,7 +788,85 @@ fn layoutRows(l: *Layout, area: Rect, items: []const Item, tm: TextMetrics, scal
     }
 }
 
-fn layoutMini(l: *Layout, scale: f32) void {
+/// The all-windows outline's lines inside `area`, below the header (T1829;
+/// Mac `PaneSidebarWindowHeader` / `PaneSidebarProjectHeader` / the outline
+/// rows). A window head is a one-line row; a project head is the caption-size
+/// label with Mac's 10 DIP above (4 for the very first line) and 5 below. A
+/// pane row's FILL spans the panel, as a row's does; only its content is
+/// indented, by one chevron and its gap per level. Items no line names - the
+/// panes of a folded group - get an empty rect.
+fn layoutLines(l: *Layout, area: Rect, items: []const Item, lines: []const Line, tm: TextMetrics, scale: f32) void {
+    const sm = px(sm_dip, scale);
+    const fill = px(toc.fill_inset_dip, scale);
+    const label = px(toc.label_inset_dip, scale);
+    const hair = @max(px(1, scale), 1);
+    const step = px(outline_step_dip, scale);
+    const chev = px(chevron_dip, scale);
+    const chev_gap = px(chevron_gap_dip, scale);
+    for (0..l.count) |i| {
+        l.items[i] = .{};
+        l.indent[i] = 0;
+    }
+    var y = l.header.bottom;
+    var prev: ?LineKind = null;
+    for (lines) |ln| {
+        const depth: i32 = ln.depth;
+        switch (ln.kind) {
+            .project, .window => {
+                const is_project = ln.kind == .project;
+                const top_pad = if (is_project) px(if (prev == null) 4 else 10, scale) else 0;
+                const text_h = if (is_project) tm.caption_h else tm.title_h;
+                const h = if (is_project) top_pad + tm.caption_h + px(5, scale) else rowHeight(false, tm, scale);
+                if (!is_project and prev == .pane) y += hair;
+                const text_top = if (is_project) y + top_pad else y + @divTrunc(h - text_h, 2);
+                const cx = area.left + label + depth * step;
+                const cy = text_top + @divTrunc(text_h - chev, 2);
+                if (l.head_count < max_heads) {
+                    l.heads[l.head_count] = .{
+                        .kind = if (is_project) .project else .window,
+                        .index = ln.index,
+                        .depth = ln.depth,
+                        .rect = .{ .left = area.left + fill, .top = y, .right = area.right - fill, .bottom = y + h },
+                        .chevron = .{ .left = cx, .top = cy, .right = cx + chev, .bottom = cy + chev },
+                        .label_x = cx + chev + chev_gap,
+                    };
+                    l.head_count += 1;
+                }
+                y += h;
+            },
+            .pane => {
+                if (prev == .pane) y += hair;
+                if (ln.index >= l.count) continue;
+                const rh = rowHeight(items[ln.index].two_line, tm, scale);
+                l.items[ln.index] = .{ .left = area.left + fill, .top = y, .right = area.right - fill, .bottom = y + rh };
+                l.indent[ln.index] = depth * step;
+                y += rh;
+            },
+            .rule => {
+                // Mac's divider: 8 above (here `sm` on both sides, as the
+                // single roster's section rule), inset to the label column.
+                const rule_y = y + sm;
+                l.addRule(.{ .left = area.left + label + depth * step, .top = rule_y, .right = area.right - label, .bottom = rule_y + hair });
+                y = rule_y + hair + sm;
+            },
+            .stashed_caption => {
+                const cap_h = toc.headerHeight(tm.caption_h, scale);
+                if (l.caption_count < max_marks) {
+                    l.captions[l.caption_count] = .{
+                        .rect = .{ .left = area.left, .top = y, .right = area.right, .bottom = y + cap_h },
+                        .x = area.left + label + depth * step,
+                        .index = ln.index,
+                    };
+                    l.caption_count += 1;
+                }
+                y += cap_h;
+            },
+        }
+        prev = ln.kind;
+    }
+}
+
+fn layoutMini(l: *Layout, items: []const Item, scale: f32) void {
     const margin = px(rail_margin_dip, scale);
     const card_w = px(rail_card_dip, scale);
     l.card = .{ .left = margin, .top = margin, .right = margin + card_w, .bottom = @max(l.height - margin, margin + card_w) };
@@ -685,11 +879,20 @@ fn layoutMini(l: *Layout, scale: f32) void {
     const gap = px(tile_gap_dip, scale);
     var y = l.pin.bottom + px(rail_group_gap_dip, scale);
     for (0..l.count) |i| {
-        if (i == l.first_stashed and i != 0) {
+        // A hairline between this window's grid and its stash; in the
+        // outline, also between one window's tiles and the next's (Mac: "in
+        // the mini rail, windows are separated by a hairline").
+        const breaks = if (l.outline)
+            i != 0 and (items[i].group != items[i - 1].group or
+                (items[i].section == .stashed and items[i - 1].section != .stashed))
+        else
+            i == l.first_stashed and i != 0;
+        if (breaks) {
             // The hairline sits in the middle of an `md` gap.
             const group = px(rail_group_gap_dip, scale);
             const rule_y = y - gap + @divTrunc(group, 2);
-            l.section_rule = .{ .left = x, .top = rule_y, .right = x + tile, .bottom = rule_y + @max(px(1, scale), 1) };
+            const rule: Rect = .{ .left = x, .top = rule_y, .right = x + tile, .bottom = rule_y + @max(px(1, scale), 1) };
+            if (l.outline) l.addRule(rule) else l.section_rule = rule;
             y += group - gap;
         }
         l.items[i] = .{ .left = x, .top = y, .right = x + tile, .bottom = y + tile };
@@ -704,6 +907,9 @@ fn layoutMini(l: *Layout, scale: f32) void {
 /// tile on the rail. A no-op when something is stashed or nothing is shown.
 pub fn addDropSlot(l: *Layout, tm: TextMetrics, scale: f32) void {
     if (l.mode == .hidden) return;
+    // The outline places no empty slot: its own group sits among others, and
+    // the whole sidebar is the stash target either way.
+    if (l.outline) return;
     if (l.first_stashed != l.count) return;
     const sm = px(sm_dip, scale);
     const hair = @max(px(1, scale), 1);
@@ -737,28 +943,41 @@ pub const Hit = union(enum) {
     item: usize,
     /// An expanded row's hover button.
     item_button: usize,
+    /// The all-windows toggle.
+    scope,
+    /// An outline header's body (an index into the layout's heads).
+    head: usize,
+    /// An outline header's chevron column: fold, never raise.
+    head_fold: usize,
 };
 
 pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
     if (l.mode == .hidden) return .none;
     if (l.pin.contains(x, y)) return .pin;
     const rows = l.mode == .expanded or l.open;
+    if (rows and l.scope.contains(x, y)) return .scope;
+    for (l.heads[0..l.head_count], 0..) |hd, k| {
+        const hit_r = rowHitRect(l, hd.rect);
+        if (!hit_r.contains(x, y)) continue;
+        return if (x < hd.label_x) .{ .head_fold = k } else .{ .head = k };
+    }
     for (0..l.count) |i| {
-        const r = l.items[i];
-        // Rows span to the panel's (or the open card's) edges for hit
-        // purposes - the fill inset is paint, and a click in it still means
-        // that row.
-        const hit_r: Rect = if (l.mode == .expanded)
-            .{ .left = 0, .top = r.top, .right = l.width, .bottom = r.bottom }
-        else if (l.open)
-            .{ .left = l.card.left, .top = r.top, .right = l.card.right, .bottom = r.bottom }
-        else
-            r;
+        if (!l.shown(i)) continue;
+        const hit_r = rowHitRect(l, l.items[i]);
         if (!hit_r.contains(x, y)) continue;
         if (rows and l.rowButton(i, scale).contains(x, y)) return .{ .item_button = i };
         return .{ .item = i };
     }
     return .none;
+}
+
+/// Rows span to the panel's (or the open card's) edges for hit purposes -
+/// the fill inset is paint, and a click in it still means that row. A rail
+/// tile is just its square.
+fn rowHitRect(l: *const Layout, r: Rect) Rect {
+    if (l.mode == .expanded) return .{ .left = 0, .top = r.top, .right = l.width, .bottom = r.bottom };
+    if (l.open) return .{ .left = l.card.left, .top = r.top, .right = l.card.right, .bottom = r.bottom };
+    return r;
 }
 
 // ---------------------------------------------------------------------------
@@ -1055,4 +1274,136 @@ test "pane_sidebar: no drop slot once something is stashed, or while hidden (T18
     var h = layout(.hidden, 240, 600, &grid, tm, 1.0);
     addDropSlot(&h, tm, 1.0);
     try testing.expectEqual(@as(?Rect, null), h.drop_slot);
+}
+
+// ---------------------------------------------------------------------------
+// The all-windows outline (T1829)
+
+fn outlineFixture(s: f32) struct { items: [5]Item, lines: [11]Line, tm: TextMetrics } {
+    // Two lone windows: this one (2 grid + 1 stashed) and another (2 grid).
+    return .{
+        .items = .{
+            .{ .section = .grid, .group = 0 },
+            .{ .section = .grid, .group = 0, .two_line = true },
+            .{ .section = .stashed, .group = 0 },
+            .{ .section = .grid, .group = 1, .own = false },
+            .{ .section = .grid, .group = 1, .own = false },
+        },
+        .lines = .{
+            .{ .kind = .window, .index = 0 },
+            .{ .kind = .pane, .index = 0, .depth = 1 },
+            .{ .kind = .pane, .index = 1, .depth = 1 },
+            .{ .kind = .rule, .depth = 1 },
+            .{ .kind = .stashed_caption, .index = 0, .depth = 1 },
+            .{ .kind = .pane, .index = 2, .depth = 1 },
+            .{ .kind = .rule },
+            .{ .kind = .window, .index = 1 },
+            .{ .kind = .pane, .index = 3, .depth = 1 },
+            .{ .kind = .pane, .index = 4, .depth = 1 },
+            // A trailing line past the items is ignored, not a crash.
+            .{ .kind = .pane, .index = 9, .depth = 1 },
+        },
+        .tm = .{ .title_h = px(19, s), .caption_h = px(16, s) },
+    };
+}
+
+test "pane_sidebar: the outline stacks heads, indented rows, rules and captions in order" {
+    for (scales) |s| {
+        const f = outlineFixture(s);
+        const w = px(240, s);
+        const l = layoutWith(.expanded, w, px(900, s), &f.items, &f.lines, f.tm, s);
+        try testing.expect(l.outline);
+        try testing.expectEqual(@as(usize, 2), l.head_count);
+        try testing.expectEqual(@as(usize, 2), l.rule_count);
+        try testing.expectEqual(@as(usize, 1), l.caption_count);
+        // Everything below the header, top to bottom.
+        try testing.expect(l.heads[0].rect.top >= l.header.bottom);
+        try testing.expect(l.items[0].top >= l.heads[0].rect.bottom);
+        try testing.expect(l.items[1].top > l.items[0].bottom);
+        try testing.expect(l.captions[0].rect.top > l.items[1].bottom);
+        try testing.expect(l.items[2].top >= l.captions[0].rect.bottom);
+        try testing.expect(l.rules[1].top > l.items[2].bottom);
+        try testing.expect(l.heads[1].rect.top > l.rules[1].bottom);
+        try testing.expect(l.items[3].top >= l.heads[1].rect.bottom);
+        // A two-line row is taller.
+        try testing.expect(l.items[1].height() > l.items[0].height());
+        // Fills span the panel; only the content is indented, one step.
+        try testing.expectEqual(l.items[0].left, l.heads[0].rect.left);
+        try testing.expectEqual(px(outline_step_dip, s), l.indent[0]);
+        // The chevron sits on the label column; the name right after it.
+        try testing.expectEqual(px(toc.label_inset_dip, s), l.heads[0].chevron.left);
+        try testing.expect(l.heads[0].label_x > l.heads[0].chevron.right);
+        // The pane icons line up under the window's name.
+        try testing.expectEqual(l.heads[0].label_x, l.items[0].left + px(toc.text_inset_dip, s) + l.indent[0]);
+        // Only this window's stash is a drop target.
+        try testing.expectEqual(@as(usize, 2), l.first_stashed);
+        try testing.expectEqual(@as(usize, 3), l.stash_end);
+        // The all-windows toggle sits left of the pin, inside the header.
+        try testing.expect(l.scope.right <= l.pin.left);
+        try testing.expect(l.scope.top >= l.header.top and l.scope.bottom <= l.header.bottom);
+    }
+}
+
+test "pane_sidebar: a folded group's panes get no row and no hit" {
+    const s: f32 = 1.0;
+    const f = outlineFixture(s);
+    // Fold the other window: its pane lines go.
+    const lines = f.lines[0..8];
+    const l = layoutWith(.expanded, 240, 900, &f.items, lines, f.tm, s);
+    try testing.expect(l.shown(0));
+    try testing.expect(!l.shown(3));
+    try testing.expect(!l.shown(4));
+    // Nothing below the last head hits a hidden pane.
+    const y = l.heads[1].rect.bottom + 4;
+    try testing.expect(hitTest(&l, 100, y, s) == .none);
+}
+
+test "pane_sidebar: hit testing the outline finds heads, chevrons, rows and the scope toggle" {
+    const s: f32 = 1.0;
+    const f = outlineFixture(s);
+    const l = layoutWith(.expanded, 240, 900, &f.items, &f.lines, f.tm, s);
+    const h0 = l.heads[0];
+    try testing.expectEqual(Hit{ .head_fold = 0 }, hitTest(&l, h0.chevron.centerX(), h0.rect.centerY(), s));
+    try testing.expectEqual(Hit{ .head = 0 }, hitTest(&l, h0.label_x + 10, h0.rect.centerY(), s));
+    try testing.expectEqual(Hit{ .head = 1 }, hitTest(&l, 200, l.heads[1].rect.centerY(), s));
+    try testing.expectEqual(Hit{ .item = 3 }, hitTest(&l, 60, l.items[3].centerY(), s));
+    try testing.expectEqual(@as(Hit, .scope), hitTest(&l, l.scope.centerX(), l.scope.centerY(), s));
+    try testing.expectEqual(@as(Hit, .pin), hitTest(&l, l.pin.centerX(), l.pin.centerY(), s));
+}
+
+test "pane_sidebar: the open card lays the outline out inside the card" {
+    const s: f32 = 1.5;
+    const f = outlineFixture(s);
+    const w = openWidthPx(240, s);
+    const l = layoutOpenWith(w, px(900, s), &f.items, &f.lines, f.tm, s);
+    try testing.expect(l.open and l.outline);
+    try testing.expectEqual(@as(usize, 2), l.head_count);
+    try testing.expect(l.heads[0].rect.left >= l.card.left and l.heads[0].rect.right <= l.card.right);
+    try testing.expect(l.items[4].bottom <= l.card.bottom);
+}
+
+test "pane_sidebar: the outline's rail draws a hairline between windows and before a stash" {
+    for (scales) |s| {
+        const f = outlineFixture(s);
+        const l = layoutWith(.mini, px(68, s), px(900, s), &f.items, &f.lines, f.tm, s);
+        // Every pane is a tile, folded or not.
+        for (0..5) |i| try testing.expect(l.shown(i));
+        // Two breaks: grid -> stash in this window, then window -> window.
+        try testing.expectEqual(@as(usize, 2), l.rule_count);
+        try testing.expect(l.section_rule == null);
+        try testing.expect(l.rules[0].top > l.items[1].bottom and l.rules[0].bottom <= l.items[2].top);
+        try testing.expect(l.rules[1].top > l.items[2].bottom and l.rules[1].bottom <= l.items[3].top);
+        // No header buttons on the rail beyond the pin.
+        try testing.expectEqual(@as(i32, 0), l.scope.width());
+        try testing.expectEqual(@as(usize, 0), l.head_count);
+    }
+}
+
+test "pane_sidebar: the outline never adds the empty drop slot" {
+    const s: f32 = 1.0;
+    var f = outlineFixture(s);
+    f.items[2].section = .grid; // nothing stashed here
+    var l = layoutWith(.expanded, 240, 900, &f.items, f.lines[0..3], f.tm, s);
+    addDropSlot(&l, f.tm, s);
+    try testing.expect(l.drop_slot == null);
 }

@@ -39,6 +39,8 @@ const Allocator = std.mem.Allocator;
 
 const w32 = @import("win32.zig");
 const pane_sidebar = @import("pane_sidebar.zig");
+const outline = @import("pane_sidebar_outline.zig");
+const IpcHandlers = @import("IpcHandlers.zig");
 const hov = @import("pane_sidebar_hover.zig");
 const overlay_zorder = @import("overlay_zorder.zig");
 const toc = @import("viewer_toc_layout.zig");
@@ -84,11 +86,38 @@ fn toolItem(i: usize) usize {
 fn toolButton(i: usize) usize {
     return 1 + pane_sidebar.max_items + i;
 }
+fn toolHead(k: usize) usize {
+    return 1 + 2 * pane_sidebar.max_items + k;
+}
+const tool_scope: usize = 1 + 2 * pane_sidebar.max_items + pane_sidebar.max_heads;
 
 /// What new windows start from: the most recently chosen pin and hidden
 /// flags, the way a Finder window's sidebar does (Mac `rememberForNewWindows`).
 /// Process lifetime for now; surviving a restart is T1847.
 pub var remembered: struct { pinned: bool = false, hidden: bool = false } = .{};
+
+/// A window group of the outline: one tab of one top-level window (a Mac
+/// window is a tab here - see `pane_sidebar_outline.zig`).
+const Group = struct {
+    window: *Window,
+    tab: usize,
+    /// The tab's stable identity, hashed - the fold key, and how a click
+    /// finds the tab again after a reorder.
+    key: u64,
+    /// The header's text: the worktree inside a project, else the name.
+    label: []u16,
+    /// The project it is grouped under, as shown (upper-cased), or empty.
+    project: []u16,
+    project_key: u64,
+    /// How many windows the project holds (on its first window only).
+    project_size: usize,
+    panes: usize,
+    stashed: usize,
+    question: bool,
+    own: bool,
+    /// The top-level has other tabs: "This Tab" rather than "This Window".
+    tabbed: bool,
+};
 
 /// Fluent / MDL2 codepoints (the same faces `icon_button_paint` probes).
 const glyph_terminal: u16 = 0xE756; // CommandPrompt
@@ -100,9 +129,21 @@ const glyph_pin: u16 = 0xE718; // Pin (unpinned: offer to pin)
 const glyph_pinned: u16 = 0xE840; // Pinned
 const glyph_stash: u16 = 0xE921; // ChromeMinimize: "put this away"
 const glyph_restore: u16 = 0xE7A7; // Undo: "bring it back"
+const glyph_windows: u16 = 0xE7C4; // TaskView: "every window"
+const glyph_chevron_down: u16 = 0xE70D;
+const glyph_chevron_right: u16 = 0xE76C;
 
 const Entry = struct {
     pane: *PaneView,
+    /// The window and tab the pane lives in: this sidebar's own, or - in the
+    /// all-windows scope (T1829) - any. Pointers to ask about, never to use
+    /// unchecked: another window can close between a refresh and a click.
+    window: *Window,
+    tab: usize,
+    /// Its window group in the outline (0 in the single roster), and whether
+    /// that group is THIS window's active tab.
+    group: u16 = 0,
+    own: bool = true,
     section: pane_sidebar.Section,
     title: []u16,
     subtitle: []u16,
@@ -118,6 +159,16 @@ alloc: Allocator,
 
 entries: std.ArrayListUnmanaged(Entry) = .{},
 signature: u64 = 0,
+
+// The all-windows scope (T1829). Not persisted, as Mac's is not: the switch,
+// and what is folded, belong to one look at every window.
+all_windows: bool = false,
+/// One per window group, in outline order.
+groups: std.ArrayListUnmanaged(Group) = .{},
+/// The panel's lines (`pane_sidebar_outline.buildLines`).
+lines: std.ArrayListUnmanaged(pane_sidebar.Line) = .{},
+/// Folded window groups (by tab identity) and projects (by name), as keys.
+folded: std.AutoHashMapUnmanaged(u64, void) = .{},
 
 mode: pane_sidebar.Mode = .hidden,
 scale: f32 = 1.0,
@@ -145,10 +196,14 @@ open_armed: bool = false,
 tip: ?w32.HWND = null,
 tip_text: [pane_sidebar.max_items][hov.tip_cap]u16 = undefined,
 tip_items: [2]usize = .{ 0, 0 },
+tip_heads: [2]usize = .{ 0, 0 },
 tip_log: [256]u8 = undefined,
 tip_log_len: usize = 0,
 
 title_font: ?*anyopaque = null,
+/// A window header's name: the body size at the weight a sidebar gives a
+/// group (Mac's 12 semibold).
+title_bold_font: ?*anyopaque = null,
 caption_font: ?*anyopaque = null,
 caption_bold_font: ?*anyopaque = null,
 font_scale: f32 = 0,
@@ -248,6 +303,10 @@ pub fn destroy(self: *PaneSidebar) void {
     _ = w32.DestroyWindow(self.hwnd);
     self.clearEntries();
     self.entries.deinit(self.alloc);
+    self.clearGroups();
+    self.groups.deinit(self.alloc);
+    self.lines.deinit(self.alloc);
+    self.folded.deinit(self.alloc);
     self.rail_card.release();
     self.open_card.release();
     self.releaseFonts();
@@ -302,18 +361,21 @@ pub fn place(self: *PaneSidebar, rect: w32.RECT, mode: pane_sidebar.Mode, scale:
     }
     if (changed) _ = w32.InvalidateRect(self.hwnd, null, 0);
     if (moved or changed) self.syncTips();
+    if (changed) self.logOutline();
     // A relayout under the open card (a split, a stash from its own row
     // button) moves the column it grows from: keep it glued there.
     if (self.card_open) self.positionCard();
 }
 
-/// Re-read the roster from the window's active tab. Cheap when nothing it
-/// shows has changed; repaints only when something did.
+/// Re-read the roster: this window's active tab, or - in the all-windows
+/// scope - every tab of every window. Cheap when nothing it shows has
+/// changed; repaints only when something did.
 pub fn refresh(self: *PaneSidebar) void {
+    if (self.all_windows) return self.refreshAll();
     const win = self.window;
     if (win.tab_count == 0) {
-        if (self.entries.items.len != 0) {
-            self.clearEntries();
+        if (self.entries.items.len != 0 or self.groups.items.len != 0) {
+            self.clearAll();
             self.signature = 0;
             _ = w32.InvalidateRect(self.hwnd, null, 0);
         }
@@ -325,33 +387,44 @@ pub fn refresh(self: *PaneSidebar) void {
     const n = pane_sidebar.roster(tree, &views);
 
     var h = std.hash.Wyhash.init(0);
+    h.update("one");
     h.update(std.mem.asBytes(&n));
-    for (views[0..n]) |v| {
-        h.update(std.mem.asBytes(&v));
-        h.update(std.mem.asBytes(&v.stash_seq));
-        const sel: u8 = @intFromBool(v == active);
-        h.update(std.mem.asBytes(&sel));
-        if (v.title()) |t| h.update(t);
-        h.update("\x00");
-        switch (v.kind) {
-            .terminal => |s| {
-                h.update(std.mem.asBytes(&s.activity_state));
-                if (s.banner_text) |b| h.update(b);
-                h.update("\x00");
-                if (s.pwd) |p| h.update(p);
-            },
-            .viewer => |vp| {
-                h.update(std.mem.asBytes(&vp.mode));
-                if (vp.location) |l| h.update(l);
-            },
-        }
-        h.update("\x01");
-    }
+    for (views[0..n]) |v| hashView(&h, v, v == active);
     const sig = h.final();
     if (sig == self.signature) return;
     self.signature = sig;
-    self.rebuild(views[0..n], active);
+    self.clearAll();
+    self.appendEntries(views[0..n], win, win.active_tab, 0, true, active);
+    self.rosterChanged();
+}
+
+/// What a row shows about `v`, into the roster's signature.
+fn hashView(h: *std.hash.Wyhash, v: *PaneView, selected: bool) void {
+    h.update(std.mem.asBytes(&v));
+    h.update(std.mem.asBytes(&v.stash_seq));
+    const sel: u8 = @intFromBool(selected);
+    h.update(std.mem.asBytes(&sel));
+    if (v.title()) |t| h.update(t);
+    h.update("\x00");
+    switch (v.kind) {
+        .terminal => |s| {
+            h.update(std.mem.asBytes(&s.activity_state));
+            if (s.banner_text) |b| h.update(b);
+            h.update("\x00");
+            if (s.pwd) |p| h.update(p);
+        },
+        .viewer => |vp| {
+            h.update(std.mem.asBytes(&vp.mode));
+            if (vp.location) |l| h.update(l);
+        },
+    }
+    h.update("\x01");
+}
+
+/// The roster changed: repaint, re-glue the open card, re-sync the tips.
+fn rosterChanged(self: *PaneSidebar) void {
     _ = w32.InvalidateRect(self.hwnd, null, 0);
+    self.logOutline();
     if (self.card_open) {
         // More or fewer rows: the card is as tall as before, but its region
         // and rows are re-derived with it.
@@ -359,6 +432,196 @@ pub fn refresh(self: *PaneSidebar) void {
         if (self.card_hwnd) |c| _ = w32.InvalidateRect(c, null, 0);
     }
     self.syncTips();
+}
+
+/// Where the outline put everything, in the column's client coordinates -
+/// once per roster or mode change, all-windows scope only. A background
+/// desktop cannot be photographed row by row, so the acceptance script
+/// clicks from this: heads (`W`indow / `P`roject + group), shown items
+/// (group, `g`rid / `s`tashed), the hairline count and the scope toggle.
+fn logOutline(self: *PaneSidebar) void {
+    if (!self.all_windows or self.mode == .hidden) return;
+    const l = self.currentLayout();
+    var buf: [4096]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    const w = fbs.writer();
+    w.print("mode={s} heads=", .{@tagName(l.mode)}) catch {};
+    for (l.heads[0..l.head_count]) |hd| {
+        const k: u8 = if (hd.kind == .project) 'P' else 'W';
+        w.print("{c}{d}@{d},{d};", .{ k, hd.index, hd.rect.centerX(), hd.rect.centerY() }) catch break;
+    }
+    w.writeAll(" items=") catch {};
+    for (self.entries.items[0..@min(l.count, self.entries.items.len)], 0..) |e, i| {
+        if (!l.shown(i)) continue;
+        const sec: u8 = if (e.section == .stashed) 's' else 'g';
+        w.print("g{d}{c}@{d},{d};", .{ e.group, sec, l.items[i].centerX(), l.items[i].centerY() }) catch break;
+    }
+    const rules = l.rule_count + @intFromBool(l.section_rule != null);
+    w.print(" rules={d} scope={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY() }) catch {};
+    log.info("pane sidebar outline {s}", .{fbs.getWritten()});
+}
+
+const TabRef = struct { window: *Window, tab: usize };
+const name_cap = 768; // a 256-unit tab title as UTF-8
+
+/// The all-windows roster (T1829): every tab of every window as a group, in
+/// outline order (`pane_sidebar_outline.outlineOrder`), each listing its
+/// panes the way this window's own roster does.
+fn refreshAll(self: *PaneSidebar) void {
+    const max_heads = pane_sidebar.max_heads;
+    var refs: [max_heads]TabRef = undefined;
+    var names_buf: [max_heads][name_cap]u8 = undefined;
+    var names: [max_heads][]const u8 = undefined;
+    var nref: usize = 0;
+    gather: for (self.window.app.windows.items) |w| {
+        if (w.closing or w.is_quick_terminal) continue;
+        for (0..w.tab_count) |t| {
+            if (nref == max_heads) break :gather;
+            refs[nref] = .{ .window = w, .tab = t };
+            names[nref] = groupName(w, t, &names_buf[nref]);
+            nref += 1;
+        }
+    }
+    var placed: [max_heads]outline.Placed = undefined;
+    const np = outline.outlineOrder(names[0..nref], &placed);
+
+    const Span = struct { start: usize, grid: usize, stashed: usize };
+    var views: [pane_sidebar.max_items]*PaneView = undefined;
+    var spans: [max_heads]Span = undefined;
+    var nv: usize = 0;
+    var h = std.hash.Wyhash.init(0);
+    h.update("all");
+    h.update(std.mem.asBytes(&np));
+    for (placed[0..np], 0..) |p, gi| {
+        const r = refs[p.index];
+        const own = self.isOwn(r);
+        const active = r.window.tab_active_pane[r.tab];
+        const got = pane_sidebar.roster(r.window.tab_trees[r.tab], views[nv..]);
+        var grid: usize = 0;
+        for (views[nv .. nv + got]) |v| {
+            if (v.stash_seq == 0) grid += 1;
+        }
+        spans[gi] = .{ .start = nv, .grid = grid, .stashed = got - grid };
+        h.update(std.mem.asBytes(&r.window));
+        h.update(std.mem.asBytes(&r.tab));
+        h.update(names[p.index]);
+        h.update("\x00");
+        const o: u8 = @intFromBool(own);
+        h.update(std.mem.asBytes(&o));
+        const q: u8 = @intFromBool(r.window.tab_count > 1);
+        h.update(std.mem.asBytes(&q));
+        h.update(std.mem.asBytes(&got));
+        for (views[nv .. nv + got]) |v| hashView(&h, v, own and v == active);
+        nv += got;
+    }
+    var fold_acc: u64 = 0;
+    var fit = self.folded.keyIterator();
+    while (fit.next()) |k| fold_acc ^= k.*;
+    h.update(std.mem.asBytes(&fold_acc));
+    const sig = h.final();
+    if (sig == self.signature) return;
+    self.signature = sig;
+
+    self.clearAll();
+    var specs: [max_heads]outline.GroupSpec = undefined;
+    for (placed[0..np], 0..) |p, gi| {
+        const r = refs[p.index];
+        const own = self.isOwn(r);
+        const sp = spans[gi];
+        const key = tabKey(r.window, r.tab);
+        const project_key: u64 = if (p.project) |pr| projectKey(pr) else 0;
+        self.appendGroup(.{
+            .window = r.window,
+            .tab = r.tab,
+            .key = key,
+            .label = &.{},
+            .project = &.{},
+            .project_key = project_key,
+            .project_size = if (outline.opensProject(placed[0..np], gi)) outline.projectSize(placed[0..np], gi) else 0,
+            .panes = sp.grid + sp.stashed,
+            .stashed = sp.stashed,
+            .question = treeHasQuestion(r.window, r.tab),
+            .own = own,
+            .tabbed = r.window.tab_count > 1,
+        }, p.label, p.project);
+        self.appendEntries(views[sp.start .. sp.start + sp.grid + sp.stashed], r.window, r.tab, @intCast(gi), own, r.window.tab_active_pane[r.tab]);
+        specs[gi] = .{
+            .project = p.project,
+            .grid = sp.grid,
+            .stashed = sp.stashed,
+            .folded = self.folded.contains(key),
+            .project_folded = p.project != null and self.folded.contains(project_key),
+        };
+    }
+    var lines: [pane_sidebar.max_heads * 5 + pane_sidebar.max_items]pane_sidebar.Line = undefined;
+    const nl = outline.buildLines(specs[0..np], &lines);
+    self.lines.appendSlice(self.alloc, lines[0..nl]) catch {};
+    // The order, for the acceptance script: `project/worktree` or the name.
+    var ob: [1024]u8 = undefined;
+    var ofs = std.io.fixedBufferStream(&ob);
+    for (placed[0..np], 0..) |p, gi| {
+        const sep: []const u8 = if (gi == 0) "" else "|";
+        if (p.project) |pr| {
+            ofs.writer().print("{s}{s}/{s}", .{ sep, pr, p.label }) catch break;
+        } else ofs.writer().print("{s}{s}", .{ sep, p.label }) catch break;
+    }
+    log.info("pane sidebar all-windows groups={d} panes={d} lines={d} order={s}", .{ np, nv, nl, ofs.getWritten() });
+    self.rosterChanged();
+}
+
+fn isOwn(self: *const PaneSidebar, r: TabRef) bool {
+    return r.window == self.window and r.tab == self.window.active_tab;
+}
+
+/// A window's name as a person would say it (Mac `windowTitle(of:)`): a title
+/// the user set - the window's, else the tab's - and otherwise what its
+/// focused pane is called. Never the raw title with its activity suffix.
+fn groupName(w: *Window, t: usize, buf: *[name_cap]u8) []const u8 {
+    if (w.title_override) |o| {
+        if (o.len > 0) return o;
+    }
+    if (w.tab_title_pinned[t]) {
+        const n = std.unicode.utf16LeToUtf8(buf, w.tab_titles[t][0..w.tab_title_lens[t]]) catch 0;
+        if (n > 0) return buf[0..n];
+    }
+    const pane = w.tab_active_pane[t];
+    const pwd: ?[]const u8 = if (pane.surface()) |s| (if (s.pwd) |p| p else null) else null;
+    return pane_sidebar.displayTitle(if (pane.title()) |x| x else null, pwd, "Window");
+}
+
+fn tabKey(w: *const Window, t: usize) u64 {
+    return std.hash.Wyhash.hash(0x746162, &w.tab_uuid[t]);
+}
+
+fn projectKey(name: []const u8) u64 {
+    return std.hash.Wyhash.hash(0x70726f6a, name);
+}
+
+fn treeHasQuestion(w: *Window, t: usize) bool {
+    var it = w.tab_trees[t].iterator();
+    while (it.next()) |entry| {
+        if (entry.view.surface()) |s| {
+            if (s.activity_state == .needs_input) return true;
+        }
+    }
+    return false;
+}
+
+fn appendGroup(self: *PaneSidebar, g_in: Group, label8: []const u8, project8: ?[]const u8) void {
+    var g = g_in;
+    g.label = std.unicode.utf8ToUtf16LeAlloc(self.alloc, label8) catch return;
+    var up: [name_cap]u8 = undefined;
+    const p8 = project8 orelse "";
+    const pn = @min(p8.len, up.len);
+    for (p8[0..pn], 0..) |c, i| up[i] = std.ascii.toUpper(c);
+    g.project = std.unicode.utf8ToUtf16LeAlloc(self.alloc, up[0..pn]) catch {
+        self.alloc.free(g.label);
+        return;
+    };
+    self.groups.append(self.alloc, g) catch {
+        self.alloc.free(g.label);
+        self.alloc.free(g.project);
+    };
 }
 
 fn clearEntries(self: *PaneSidebar) void {
@@ -370,8 +633,21 @@ fn clearEntries(self: *PaneSidebar) void {
     self.entries.clearRetainingCapacity();
 }
 
-fn rebuild(self: *PaneSidebar, views: []const *PaneView, active: *PaneView) void {
+fn clearGroups(self: *PaneSidebar) void {
+    for (self.groups.items) |g| {
+        self.alloc.free(g.label);
+        self.alloc.free(g.project);
+    }
+    self.groups.clearRetainingCapacity();
+}
+
+fn clearAll(self: *PaneSidebar) void {
     self.clearEntries();
+    self.clearGroups();
+    self.lines.clearRetainingCapacity();
+}
+
+fn appendEntries(self: *PaneSidebar, views: []const *PaneView, window: *Window, tab: usize, group: u16, own: bool, active: *PaneView) void {
     var home_buf: [512]u8 = undefined;
     const home = std.process.getEnvVarOwned(self.alloc, "USERPROFILE") catch null;
     defer if (home) |hm| self.alloc.free(hm);
@@ -413,18 +689,35 @@ fn rebuild(self: *PaneSidebar, views: []const *PaneView, active: *PaneView) void
         };
         self.entries.append(self.alloc, .{
             .pane = v,
+            .window = window,
+            .tab = tab,
+            .group = group,
+            .own = own,
             .section = if (v.stash_seq != 0) .stashed else .grid,
             .title = title,
             .subtitle = subtitle,
             .mono = mono,
             .icon = iconFor(v),
             .state = if (v.surface()) |s| s.activity_state else .idle,
-            .selected = v == active,
+            // Only THIS window has a selection (Mac 55352e377): another
+            // window's focus is not focus here.
+            .selected = own and v == active,
         }) catch {
             self.alloc.free(title);
             self.alloc.free(subtitle);
             self.alloc.free(mono);
         };
+    }
+}
+
+/// Every OTHER sidebar showing all windows re-reads its roster: something in
+/// `except` (or a window that just closed, with `except` null) changed what
+/// they list. Cheap - each hashes and returns when nothing it shows moved.
+pub fn refreshScopes(windows: []const *Window, except: ?*Window) void {
+    for (windows) |w| {
+        if (w == except or w.closing) continue;
+        const sb = w.sidebar orelse continue;
+        if (sb.all_windows) sb.refresh();
     }
 }
 
@@ -460,12 +753,13 @@ fn layoutFor(self: *PaneSidebar, which: Surface) pane_sidebar.Layout {
     var items: [pane_sidebar.max_items]pane_sidebar.Item = undefined;
     const n = @min(self.entries.items.len, items.len);
     for (self.entries.items[0..n], 0..) |e, i| {
-        items[i] = .{ .section = e.section, .two_line = e.subtitle.len > 0 };
+        items[i] = .{ .section = e.section, .two_line = e.subtitle.len > 0, .group = e.group, .own = e.own };
     }
     self.ensureFonts();
+    const lines: ?[]const pane_sidebar.Line = if (self.all_windows) self.lines.items else null;
     var l = switch (which) {
-        .rail => pane_sidebar.layout(self.mode, r.right - r.left, r.bottom - r.top, items[0..n], self.metrics, self.scale),
-        .card => pane_sidebar.layoutOpen(r.right - r.left, r.bottom - r.top, items[0..n], self.metrics, self.scale),
+        .rail => pane_sidebar.layoutWith(self.mode, r.right - r.left, r.bottom - r.top, items[0..n], lines, self.metrics, self.scale),
+        .card => pane_sidebar.layoutOpenWith(r.right - r.left, r.bottom - r.top, items[0..n], lines, self.metrics, self.scale),
     };
     if (self.drag_active) pane_sidebar.addDropSlot(&l, self.metrics, self.scale);
     return l;
@@ -504,7 +798,10 @@ pub fn dropGeometry(self: *PaneSidebar, rows_out: []pane_drop.Rect) ?DropGeometr
     if (which == .card) area.right = @max(area.right, origin.x + l.card.right);
     var n: usize = 0;
     var i = l.first_stashed;
-    while (i < l.count and n < rows_out.len) : (i += 1) {
+    const end = if (l.outline) l.stash_end else l.count;
+    while (i < end and n < rows_out.len) : (i += 1) {
+        // A stashed row folded out of sight is no place to drop between.
+        if (!l.shown(i)) continue;
         rows_out[n] = toScreen(l.items[i], origin);
         n += 1;
     }
@@ -540,6 +837,10 @@ fn maybeStartRowDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
     };
     if (!drop_highlight.exceedsThreshold(x - self.press_x, y - self.press_y, drop_highlight.thresholdPx(self.scale))) return false;
     if (i >= self.entries.items.len) return false;
+    // Another window's pane is not dragged from here yet: dropping it into
+    // this grid or onto another window's group is the cross-window move,
+    // which is its own follow-up (T1829 split).
+    if (!self.entries.items[i].own) return false;
     const pane = self.entries.items[i].pane;
     self.pressed = .none;
     _ = w32.InvalidateRect(hwnd, null, 0);
@@ -577,6 +878,7 @@ fn ensureFonts(self: *PaneSidebar) void {
     const body = type_ramp.body(self.scale);
     const cap = type_ramp.caption(self.scale);
     self.title_font = makeFont(body.height, body.weight);
+    self.title_bold_font = makeFont(body.height, type_ramp.weight_semibold);
     self.caption_font = makeFont(cap.height, cap.weight);
     self.caption_bold_font = makeFont(cap.height, type_ramp.weight_semibold);
     self.font_scale = self.scale;
@@ -602,7 +904,7 @@ fn lineHeight(hdc: w32.HDC, font: ?*anyopaque) i32 {
 }
 
 fn releaseFonts(self: *PaneSidebar) void {
-    inline for (.{ "title_font", "caption_font", "caption_bold_font" }) |name| {
+    inline for (.{ "title_font", "title_bold_font", "caption_font", "caption_bold_font" }) |name| {
         if (@field(self, name)) |f| _ = w32.DeleteObject(@ptrCast(f));
         @field(self, name) = null;
     }
@@ -748,15 +1050,21 @@ fn paintOpen(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
 /// The header (caption + pin), the section rule and caption, and the rows -
 /// shared by the pinned panel and the open card, whose layouts place them.
 fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
-    // Header: "PANES" on the label inset, the pin at the trailing edge.
+    // Header: "PANES" (or "ALL WINDOWS") on the label inset, the
+    // all-windows toggle and the pin at the trailing edge.
     if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-    drawText(hdc, std.unicode.utf8ToUtf16LeStringLiteral("PANES"), .{
+    const caption = if (self.all_windows)
+        std.unicode.utf8ToUtf16LeStringLiteral("ALL WINDOWS")
+    else
+        std.unicode.utf8ToUtf16LeStringLiteral("PANES");
+    drawText(hdc, caption, .{
         .left = l.caption_x,
         .top = l.header.top,
-        .right = l.pin.left - pane_sidebar.px(pane_sidebar.sm_dip, self.scale),
+        .right = l.scope.left - pane_sidebar.px(pane_sidebar.sm_dip, self.scale),
         .bottom = l.header.bottom,
     }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
     self.paintPin(hdc, l, t);
+    self.paintScope(hdc, l, t);
 
     if (l.section_rule) |r| fillRect(hdc, r, rgb(shade(t.surface, if (t.dark) 24 else -24)));
     if (l.stashed_caption) |cap| {
@@ -768,10 +1076,12 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
         drawText(hdc, wbuf[0..wn], .{ .left = l.caption_x, .top = cap.top, .right = cap.right, .bottom = cap.bottom }, t.secondary, w32.DT_VCENTER);
     }
+    if (l.outline) self.paintOutline(hdc, l, t);
 
     const emphasized = self.isEmphasized();
     const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
     for (self.entries.items[0..l.count], 0..) |e, i| {
+        if (!l.shown(i)) continue;
         const r = l.items[i];
         const hovered = self.hoverIs(.{ .item = i }) or self.hoverIs(.{ .item_button = i });
         const sel = list_selection.rowPaint(t.surface, t.accent, .{
@@ -795,10 +1105,12 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         const pad_v = pane_sidebar.px(toc.row_v_pad_dip, self.scale);
         const icon_box = pane_sidebar.px(16, self.scale);
         const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
+        // The outline indents a row's content, never its fill (Mac).
+        const content = r.left + text_inset + l.indent[i];
         const icon_r: pane_sidebar.Rect = .{
-            .left = r.left + text_inset,
+            .left = content,
             .top = r.top + pad_v,
-            .right = r.left + text_inset + icon_box,
+            .right = content + icon_box,
             .bottom = r.top + pad_v + self.metrics.title_h,
         };
         glyph(hdc, self.scale, icon_r, e.icon, 12, ink);
@@ -836,6 +1148,120 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         }
     }
     self.paintDropSlot(hdc, l, t);
+}
+
+/// The all-windows toggle (Mac's `macwindow.on.rectangle` header button).
+/// Mac reads on/off from a filled glyph; the icon font has no filled twin,
+/// so on is the Windows toggle-button vocabulary instead: the button stays
+/// filled, as a checked toolbar toggle does.
+fn paintScope(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
+    if (l.scope.width() <= 0) return;
+    const state: icon_button.State = if (self.hoverIs(.scope))
+        (if (std.meta.eql(self.pressed, pane_sidebar.Hit.scope)) .pressed else .hover)
+    else
+        .normal;
+    const inset = pane_sidebar.px(2, self.scale); // design system: fill inset xs
+    const f: pane_sidebar.Rect = .{ .left = l.scope.left + inset, .top = l.scope.top + inset, .right = l.scope.right - inset, .bottom = l.scope.bottom - inset };
+    if (self.all_windows) {
+        const checked: icon_button.State = if (state == .normal) .hover else .pressed;
+        fillRound(hdc, f, pane_sidebar.px(4, self.scale), rgb(shade(t.surface, icon_button.fillDelta(checked, t.dark) * 2)));
+    } else if (icon_button.paintsFill(state)) {
+        fillRound(hdc, f, pane_sidebar.px(4, self.scale), rgb(shade(t.surface, icon_button.fillDelta(state, t.dark))));
+    }
+    glyph(hdc, self.scale, l.scope, glyph_windows, 12, t.text);
+}
+
+/// The outline's own furniture (T1829): the hairlines between windows and
+/// before a stash, each window's STASHED caption, and the project and window
+/// headers. Rows are painted by the caller, as in the single roster.
+fn paintOutline(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
+    const rule_color = rgb(shade(t.surface, if (t.dark) 24 else -24));
+    for (l.rules[0..l.rule_count]) |r| fillRect(hdc, r, rule_color);
+    for (l.captions[0..l.caption_count]) |cap| {
+        const stashed = if (cap.index < self.groups.items.len) self.groups.items[cap.index].stashed else 0;
+        var buf: [32]u8 = undefined;
+        const text8 = std.fmt.bufPrint(&buf, "STASHED \u{00B7} {d}", .{stashed}) catch "STASHED";
+        var wbuf: [32]u16 = undefined;
+        const wn = std.unicode.utf8ToUtf16Le(&wbuf, text8) catch 0;
+        if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+        drawText(hdc, wbuf[0..wn], .{ .left = cap.x, .top = cap.rect.top, .right = cap.rect.right, .bottom = cap.rect.bottom }, t.secondary, w32.DT_VCENTER);
+    }
+    for (l.heads[0..l.head_count], 0..) |hd, k| {
+        if (hd.index >= self.groups.items.len) continue;
+        self.paintHead(hdc, hd, k, self.groups.items[hd.index], t);
+    }
+}
+
+/// A window header (Mac `PaneSidebarWindowHeader`) or a project header
+/// (`PaneSidebarProjectHeader`): chevron, name, and at the trailing edge the
+/// window's pane count - or its question badge - or the project's window
+/// count. Another window's header lights on hover, since a click raises it.
+fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, g: Group, t: Theme) void {
+    const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
+    const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
+    const hovered = self.hoverIs(.{ .head = k }) or self.hoverIs(.{ .head_fold = k });
+    const project = hd.kind == .project;
+    if (hovered and (project or !g.own)) {
+        const sel = list_selection.rowPaint(t.surface, t.accent, .{ .selected = false, .focused = false, .hovered = true, .focus_visible = false });
+        if (sel.fill) |f| fillRound(hdc, hd.rect, pane_sidebar.px(toc.row_corner_dip, self.scale), rgb(f));
+    }
+    const folded = if (project) self.folded.contains(g.project_key) else self.folded.contains(g.key);
+    glyph(hdc, self.scale, hd.chevron, if (folded) glyph_chevron_right else glyph_chevron_down, 8, t.secondary);
+
+    // The trailing count (or badge) first, so the name knows its room.
+    var right = hd.rect.right - text_inset;
+    const text_r: pane_sidebar.Rect = .{ .left = hd.label_x, .top = hd.chevron.top - pane_sidebar.px(6, self.scale), .right = right, .bottom = hd.chevron.bottom + pane_sidebar.px(6, self.scale) };
+    if (!project and g.question) {
+        const badge = pane_sidebar.px(16, self.scale);
+        const br: pane_sidebar.Rect = .{ .left = right - badge, .top = hd.chevron.centerY() - @divTrunc(badge, 2), .right = right, .bottom = hd.chevron.centerY() - @divTrunc(badge, 2) + badge };
+        self.paintBadge(hdc, br, .needs_input, t);
+        right = br.left - sm;
+    } else {
+        var nb: [16]u8 = undefined;
+        const count8 = std.fmt.bufPrint(&nb, "{d}", .{if (project) g.project_size else g.panes}) catch "";
+        var cw: [16]u16 = undefined;
+        const cn = std.unicode.utf8ToUtf16Le(&cw, count8) catch 0;
+        if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+        const w = textWidth(hdc, cw[0..cn]);
+        drawText(hdc, cw[0..cn], .{ .left = right - w, .top = text_r.top, .right = right, .bottom = text_r.bottom }, t.secondary, w32.DT_VCENTER | w32.DT_RIGHT);
+        right -= w + sm;
+    }
+
+    if (project) {
+        if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+        drawText(hdc, g.project, .{ .left = hd.label_x, .top = text_r.top, .right = right, .bottom = text_r.bottom }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+        return;
+    }
+    // The PARENT row: the window's name at a group's weight, then - on
+    // this window's - a quiet "This Window" (a tab of a tabbed window says
+    // "This Tab": its window's other tabs are listed beside it).
+    if (self.title_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+    const tag = if (g.tabbed) std.unicode.utf8ToUtf16LeStringLiteral("This Tab") else std.unicode.utf8ToUtf16LeStringLiteral("This Window");
+    var name_right = right;
+    var tag_w: i32 = 0;
+    if (g.own) {
+        if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+        tag_w = textWidth(hdc, tag);
+        if (self.title_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+        const gap = pane_sidebar.px(5, self.scale);
+        const name_w = textWidth(hdc, g.label);
+        // The name takes what it needs; the tag gives way first.
+        name_right = @min(right, hd.label_x + name_w);
+        if (name_right + gap + tag_w > right) name_right = @max(hd.label_x, right - gap - tag_w);
+    }
+    drawText(hdc, g.label, .{ .left = hd.label_x, .top = text_r.top, .right = name_right, .bottom = text_r.bottom }, t.text, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+    if (g.own) {
+        if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+        const left = name_right + pane_sidebar.px(5, self.scale);
+        drawText(hdc, tag, .{ .left = left, .top = text_r.top, .right = right, .bottom = text_r.bottom }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+    }
+}
+
+fn textWidth(hdc: w32.HDC, text: []const u16) i32 {
+    if (text.len == 0) return 0;
+    var r = w32.RECT{ .left = 0, .top = 0, .right = 100000, .bottom = 0 };
+    _ = w32.DrawTextW(hdc, text.ptr, @intCast(text.len), &r, w32.DT_CALCRECT | w32.DT_SINGLELINE | w32.DT_NOPREFIX);
+    return r.right - r.left;
 }
 
 /// The empty "Drop to stash" slot (T1844), shown during a drag with nothing
@@ -910,6 +1336,7 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
 
     self.paintPin(hdc, l, t);
     if (l.section_rule) |r| fillRect(hdc, r, rgb(shade(t.surface, if (t.dark) 24 else -24)));
+    for (l.rules[0..l.rule_count]) |r| fillRect(hdc, r, rgb(shade(t.surface, if (t.dark) 24 else -24)));
 
     const emphasized = self.isEmphasized();
     const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
@@ -1304,6 +1731,12 @@ const tip_focus = W(hov.rowHint(.grid));
 const tip_restore = W(hov.rowHint(.stashed));
 const tip_stash_btn = W(hov.buttonTip(.grid));
 const tip_restore_btn = W(hov.buttonTip(.stashed));
+// Mac's `.help` strings for the all-windows scope (T1829).
+const tip_scope_on = W("Show panes from all windows");
+const tip_scope_off = W("Show only this window\u{2019}s panes");
+const tip_head_this = W("This window \u{2014} click to hide or show its panes");
+const tip_head_other = W("Raise this window");
+const tip_head_project = W("Hide or show this project\u{2019}s windows");
 
 /// Bring both windows' tools in line with their layouts. Idempotent; cheap
 /// enough for every place/refresh (a handful of tool messages).
@@ -1321,22 +1754,44 @@ fn syncTips(self: *PaneSidebar) void {
             };
             const l = self.layoutFor(which);
             const n = if (live) @min(l.count, self.entries.items.len) else 0;
-            // Drop the tools of rows that are gone.
+            // Drop the tools of rows and heads that are gone.
             if (self.tip_items[slot] > n) for (n..self.tip_items[slot]) |i| {
                 delTool(tip, hwnd, toolItem(i));
                 delTool(tip, hwnd, toolButton(i));
             };
+            const nh = if (live) l.head_count else 0;
+            if (self.tip_heads[slot] > nh) for (nh..self.tip_heads[slot]) |k| delTool(tip, hwnd, toolHead(k));
+            self.tip_heads[slot] = nh;
             if (!live) {
                 delTool(tip, hwnd, tool_pin);
+                delTool(tip, hwnd, tool_scope);
             } else {
                 addTool(tip, hwnd, tool_pin, l.pin, if (self.window.pane_sidebar_pinned) tip_unpin else tip_pin);
                 const rows = l.mode == .expanded or l.open;
+                if (rows) {
+                    addTool(tip, hwnd, tool_scope, l.scope, if (self.all_windows) tip_scope_off else tip_scope_on);
+                } else delTool(tip, hwnd, tool_scope);
+                for (l.heads[0..nh], 0..) |hd, k| {
+                    const own = hd.index < self.groups.items.len and self.groups.items[hd.index].own;
+                    const text = if (hd.kind == .project) tip_head_project else if (own) tip_head_this else tip_head_other;
+                    addTool(tip, hwnd, toolHead(k), hd.rect, text);
+                }
                 for (self.entries.items[0..n], 0..) |e, i| {
+                    if (!l.shown(i)) {
+                        // Folded away: no row, so no tip.
+                        delTool(tip, hwnd, toolItem(i));
+                        delTool(tip, hwnd, toolButton(i));
+                        continue;
+                    }
                     if (rows) {
                         addTool(tip, hwnd, toolItem(i), l.items[i], if (e.section == .stashed) tip_restore else tip_focus);
                         addTool(tip, hwnd, toolButton(i), l.rowButton(i, self.scale), if (e.section == .stashed) tip_restore_btn else tip_stash_btn);
                     } else {
-                        const len = hov.tileTip(&self.tip_text[i], e.title, e.section);
+                        // Another window's tile names its window too (Mac: "in
+                        // the mini rail ... the hover label names the window").
+                        var named: [hov.tip_cap]u16 = undefined;
+                        const title = self.tileTitle(e, &named);
+                        const len = hov.tileTip(&self.tip_text[i], title, e.section);
                         addTool(tip, hwnd, toolItem(i), l.items[i], self.tip_text[i][0..len :0]);
                         delTool(tip, hwnd, toolButton(i));
                     }
@@ -1373,19 +1828,101 @@ fn logTips(self: *PaneSidebar, counts: []const u8) void {
     log.info("pane sidebar tips{s}", .{line});
 }
 
-fn activate(self: *PaneSidebar, hit: pane_sidebar.Hit) void {
+/// A rail tile's tip title: the pane's, and for another window's pane also
+/// " \u{2014} <window>".
+fn tileTitle(self: *const PaneSidebar, e: Entry, buf: *[hov.tip_cap]u16) []const u16 {
+    if (e.own or e.group >= self.groups.items.len) return e.title;
+    const label = self.groups.items[e.group].label;
+    const sep = std.unicode.utf8ToUtf16LeStringLiteral(" \u{2014} ");
+    var n: usize = 0;
+    for ([_][]const u16{ e.title, sep, label }) |part| {
+        const take = @min(part.len, buf.len - n);
+        @memcpy(buf[n .. n + take], part[0..take]);
+        n += take;
+    }
+    return buf[0..n];
+}
+
+fn activate(self: *PaneSidebar, which: Surface, hit: pane_sidebar.Hit) void {
     switch (hit) {
         .none => {},
         .pin => self.window.togglePaneSidebarPin(),
+        .scope => self.toggleScope(),
         .item => |i| {
             if (i >= self.entries.items.len) return;
-            self.window.paneSidebarActivate(self.entries.items[i].pane);
+            const e = self.entries.items[i];
+            if (e.own) self.window.paneSidebarActivate(e.pane) else self.focusForeign(e);
         },
         .item_button => |i| {
             if (i >= self.entries.items.len) return;
-            self.window.paneSidebarToggleStash(self.entries.items[i].pane);
+            const e = self.entries.items[i];
+            if (e.own) return self.window.paneSidebarToggleStash(e.pane);
+            // Another window's pane is stashed or restored in ITS window; a
+            // pane in a background tab there is left alone (its window's own
+            // check refuses it).
+            if (!self.window.app.hasWindow(e.window)) return;
+            e.window.paneSidebarToggleStash(e.pane);
         },
+        .head, .head_fold => |k| self.activateHead(which, k, std.meta.activeTag(hit) == .head_fold),
     }
+}
+
+/// The all-windows switch (T1829). Folds survive a round trip, as Mac's do;
+/// nothing is persisted.
+fn toggleScope(self: *PaneSidebar) void {
+    self.all_windows = !self.all_windows;
+    self.hover = .none;
+    self.signature = 0;
+    log.info("pane sidebar scope all_windows={}", .{self.all_windows});
+    self.refresh();
+}
+
+/// A header click: a project header folds its windows; a window header's
+/// chevron - or THIS window's header anywhere - folds its panes; another
+/// window's header raises that window (Mac `PaneSidebarWindowHeader`).
+fn activateHead(self: *PaneSidebar, which: Surface, k: usize, fold: bool) void {
+    const l = self.layoutFor(which);
+    if (k >= l.head_count) return;
+    const hd = l.heads[k];
+    if (hd.index >= self.groups.items.len) return;
+    const g = self.groups.items[hd.index];
+    if (hd.kind == .project) return self.toggleFold(g.project_key);
+    if (fold or g.own) return self.toggleFold(g.key);
+    self.raiseGroup(g);
+}
+
+fn toggleFold(self: *PaneSidebar, key: u64) void {
+    if (self.folded.remove(key)) {
+        log.info("pane sidebar unfold", .{});
+    } else {
+        self.folded.put(self.alloc, key, {}) catch return;
+        log.info("pane sidebar fold", .{});
+    }
+    self.refresh();
+}
+
+/// Raise another window and show the tab the group is (`ghoztty://focus`'s
+/// own verb, `IpcHandlers.focusTarget`). The tab is found again by its
+/// identity: tabs reorder, and the window may have closed since the refresh.
+fn raiseGroup(self: *PaneSidebar, g: Group) void {
+    if (!self.window.app.hasWindow(g.window)) return;
+    const w = g.window;
+    const tab = for (0..w.tab_count) |t| {
+        if (tabKey(w, t) == g.key) break t;
+    } else return;
+    log.info("pane sidebar raise window tab={d} active={d}", .{ tab, w.active_tab });
+    IpcHandlers.focusTarget(.{ .window = w });
+    if (tab != w.active_tab) w.selectTabIndex(tab);
+}
+
+/// Another window's row: raise that window and focus the pane - restoring it
+/// there if it is stashed, selecting its tab if it is in the background - the
+/// same verb as `ghoztty://focus` (Mac `IPCServer.focusTarget`).
+fn focusForeign(self: *PaneSidebar, e: Entry) void {
+    if (!self.window.app.hasWindow(e.window)) return;
+    if (e.window.tabIndexOfPane(e.pane) == null) return;
+    log.info("pane sidebar focus other window section={s}", .{@tagName(e.section)});
+    IpcHandlers.focusTarget(.{ .pane = e.pane });
 }
 
 fn xOf(lparam: isize) i32 {
@@ -1486,7 +2023,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             const pressed = self.pressed;
             self.pressed = .none;
             _ = w32.InvalidateRect(hwnd, null, 0);
-            if (std.meta.eql(hit, pressed)) self.activate(hit);
+            if (std.meta.eql(hit, pressed)) self.activate(which, hit);
             // Let go off the card while it was held open: the grace period
             // the hold deferred starts now.
             if (which == .card and self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();

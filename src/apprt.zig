@@ -108,6 +108,12 @@ test {
     // Imports only pane_sidebar.zig. Every lane.
     _ = @import("apprt/win32/pane_sidebar_hover.zig");
 
+    // Pure win32 pane sidebar all-windows outline (T1829): the
+    // `<project>: <worktree>` split, Finder's name order, the grouping, the
+    // outline's line stream and the search terms. Imports only
+    // pane_sidebar.zig. Every lane.
+    _ = @import("apprt/win32/pane_sidebar_outline.zig");
+
     // Pure win32 erase-vs-preserve rule for the resize paint path (T1031),
     // same no-OS-imports deal.
     _ = @import("apprt/win32/resize_paint.zig");

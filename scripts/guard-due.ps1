@@ -4265,6 +4265,22 @@ $GuardTable = @(
             'test\win32\pane-sidebar-drag.ps1'
         )
     },
+    # The sidebar's all-windows scope (T1829): the split, order, grouping and
+    # line stream are unit-tested in every lane; whether every window's tabs
+    # are gathered, the outline is laid out and painted, a click on another
+    # window's row or header reaches THAT window, folds take, and the list
+    # follows a rename and a close elsewhere is only answered on the box.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-all-windows'
+        Script = 'test\win32\pane-sidebar-all-windows.ps1'
+        Stamp  = 'test\win32\pane-sidebar-all-windows.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar.zig',
+            'src\apprt\win32\pane_sidebar_outline.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-all-windows.ps1'
+        )
+    },
     # The build-mode gate itself (T350, tightened by T1158). BuildMode.ps1 was
     # only ever covered by the build-fresh row above, whose script grades the
     # FRESHNESS half - so the gate's own harness, build-mode-guard.ps1, had no

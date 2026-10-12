@@ -1,10 +1,9 @@
 {
     "guard":  "cli-focus-policy",
     "script":  "test/win32/cli-focus-policy.ps1",
-    "generated":  "2026-10-12T05:02:47-07:00",
-    "commit":  "9637ff6d4",
+    "generated":  "2026-10-12T08:58:31-07:00",
+    "commit":  "91f061c61",
     "uncommitted":  [
-                        "src/apprt/win32/App.zig",
                         "src/apprt/win32/Window.zig"
                     ],
     "files":  {
@@ -12,7 +11,7 @@
                   "src/apprt/win32/App.zig":  "41a06101df4f3ccab2fa24f45fcf9159bac743cab8966afce55daf00488329a5",
                   "src/apprt/win32/background_zorder.zig":  "f365d4f6606a4f32c237ae49721ba46b6a7239e253fb205598df7a668e75d823",
                   "src/apprt/win32/IpcHandlers.zig":  "ff7188efa39137da0a1f33a689f3936d030020e3ca9348095a8d313137b2111f",
-                  "src/apprt/win32/Window.zig":  "d6433c50d4599e169958dd7e4e709496f83d753559d918ea76a331b5bd7ca004",
+                  "src/apprt/win32/Window.zig":  "496703471e391df7bd0d083ee5417ba32fe47094b6bc7fec12124f7e1afdff0c",
                   "test/win32/cli-focus-policy.ps1":  "e2a64a514c82bed115563af1625b71f9eea10efd4c4077c1ee26a1f531c969af"
               }
 }
