@@ -32,7 +32,7 @@ call `+list` to figure it out.
 | Variable | What it is |
 |---|---|
 | `$GHOZTTY_PANE_ID` | This pane's stable id (a UUID). Accepted directly by every `--target`/`--name`/`--pane` with no prior registration or `+list`. Stable for the pane's whole life, across app relaunch and session restore. |
-| `$GHOZTTY_WINDOW_NAME` | The name of the window this pane is in, when it has one. |
+| `$GHOZTTY_WINDOW_NAME` | The name of the window this pane is in, as of when the pane's process started. A snapshot: if you need the window *now*, look your pane up by `$GHOZTTY_PANE_ID` in `ghoztty +list --json`. |
 | `$GHOZTTY_IPC_SOCKET` | The IPC socket of the app instance that owns this pane. The CLI reads it automatically — you never pass it, but it is why commands reach *this* app (e.g. a debug build) rather than whichever build is on `$PATH`. |
 
 The CLI reads `$GHOZTTY_PANE_ID` automatically too: a `+split` or `+rearrange`

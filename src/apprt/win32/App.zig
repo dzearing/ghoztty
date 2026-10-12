@@ -4859,7 +4859,12 @@ fn restoreWindow(
     const window = self.createWindow(.{
         .surface_overrides = if (first_viewer) null else &ov0,
         .viewer_open = if (first_viewer) restoreViewerOpen(first_leaf) else null,
-        .ipc_name = win.ipc_name,
+        // A local restore re-adopts its persisted target (a held one falls back
+        // to a fresh name in `Window.init`); a cross-machine one mints fresh,
+        // since that name is the far machine's (T1883). Either way every pane
+        // bakes the name the window ends up HOLDING as `GHOZTTY_WINDOW_NAME`
+        // (T492), which is what an agent RELAUNCH of a tombstone forwards.
+        .ipc_name = session_layout.adoptableName(win.ipc_name, tr.local_agent),
         // Re-adopt the layout identity (T338) so the rebuilt window keeps
         // pushing to the key its predecessor used, instead of orphaning that
         // blob and adding a duplicate under a fresh one. Applies to both
@@ -4968,7 +4973,7 @@ fn restoreBuildSubtree(
     if (depth > nodes.len or idx >= nodes.len) return error.CorruptLayout;
     const node = nodes[idx];
     if (node.leaf) |lf| {
-        if (lf.ipc_name) |n|
+        if (session_layout.adoptableName(lf.ipc_name, tr.local_agent)) |n|
             self.ipcRegister(n, .{ .pane = anchor }) catch |err|
                 log.warn("session-restore: pane IPC register '{s}' failed err={}", .{ n, err });
         restoreLeafPresentation(anchor, lf);

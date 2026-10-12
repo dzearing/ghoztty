@@ -35584,3 +35584,21 @@ moved to T1814.
   and the Mac reader of Windows layouts needs `desk_variant` (T1882, Mac seat).
   The other two new main commits (3ac40dc8b, a5c0841be) are left for
   tomorrow's intake.
+
+## 2026-10-12 — T1883: restored panes keep their window name after a reboot
+
+- **What main fixed.** On Mac, a pane brought back after the agent restarted
+  (a reboot) had no `GHOZTTY_WINDOW_NAME`, so `/wt-delete` could not close its
+  window (main 1342e7af5).
+- **Windows already had it.** The window claims its name before its first pane
+  exists (T121) and every pane bakes the name the window actually holds (T492),
+  and both relaunch paths forward that env. The one difference left: a
+  cross-machine restore re-adopted the far machine's window and pane names.
+  Mac mints a fresh local name there, and now Windows does too
+  (`session_layout.adoptableName`). The skill row now calls the variable a
+  snapshot from when the pane started, in both skill copies.
+- **Validation.** New section E of `window-name-env.ps1` kills the app AND the
+  agent, edits the manifest so two windows claim one name, and restores. Each
+  relaunched pane exports the name its window holds, and the loser of the
+  collision gets `window-3` (ALL PASS 30). The floor (lib/none/win32/agent)
+  passes, as do the 17 harnesses the edit made due and the harness floor.

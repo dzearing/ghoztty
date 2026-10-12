@@ -697,6 +697,28 @@ pub fn shownHere(
     return sessionsClaimed(live_sessions, win);
 }
 
+/// The persisted IPC name (a window target or a pane name) a restored window
+/// may re-adopt, or null when it must take a fresh one (T1883; Mac's
+/// `restoredWindowName`, main 1342e7af5). Only a LOCAL restore — this box's
+/// own agent — re-adopts: a cross-machine rebuild's names belong to the other
+/// machine's IPC namespace, so the window mints `window-N` the way the Mac's
+/// does. An empty name is no name (T896). Whether a live window already holds
+/// the name is decided at registration (`Window.init`'s claim loop), which is
+/// also what the pane's baked `GHOZTTY_WINDOW_NAME` reads, so a held name can
+/// never be baked into a second window's panes.
+pub fn adoptableName(persisted: ?[]const u8, local: bool) ?[]const u8 {
+    if (!local) return null;
+    const n = persisted orelse return null;
+    return if (n.len == 0) null else n;
+}
+
+test "T1883: only a local restore re-adopts a persisted name" {
+    try std.testing.expectEqualStrings("dev", adoptableName("dev", true).?);
+    try std.testing.expect(adoptableName("dev", false) == null);
+    try std.testing.expect(adoptableName("", true) == null);
+    try std.testing.expect(adoptableName(null, true) == null);
+}
+
 /// Record every session id `win` references as spoken for.
 fn claimSessions(
     alloc: Allocator,

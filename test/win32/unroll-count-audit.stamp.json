@@ -1,11 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-12T12:31:42-07:00",
-    "commit":  "791cf112e",
+    "generated":  "2026-10-12T13:33:53-07:00",
+    "commit":  "124b96a27",
     "uncommitted":  [
-                        "scripts/guard-due.ps1",
-                        "test/win32/desk-variant.ps1"
+                        "test/win32/window-name-env.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -513,7 +512,7 @@
                   "test/win32/window-color.ps1":  "3b8c5d85c60fad07747da53240ffaf56f75d255d993461163774c30644010fac",
                   "test/win32/window-composite.ps1":  "6c0d5db49768df61f631b24c83a47d55e1781b372bb23e74c5a68c613aa747d7",
                   "test/win32/window-modal-block.ps1":  "5a2962e9dd1d3c9a39d35c3aa82bae16be5f62d4067e2b68145cb954ae45dfd5",
-                  "test/win32/window-name-env.ps1":  "c7c104c6015b4d434126f10943fbd0bac1b194dad564f8f1a4571ffbee5be27a",
+                  "test/win32/window-name-env.ps1":  "e1eb0ac089c31d33e7e1cc5c5357bb038d1f0e17630bc11c3b2ee9962a4ec000",
                   "test/win32/window-name-restore.ps1":  "b4d08e4d9e79ee0a596ec6880999923235a7e1b985939002a6c5a19825c7fb74",
                   "test/win32/window-placement-isolation.ps1":  "20d8b605382eb89ef87c19898b48f0c3a195236f29a7ff46d82f92a2ff87e560",
                   "test/win32/window-size-memory.ps1":  "02ff1ad3e3602b2233ebb1d6867168238fad6ec68f6e36293a3eaaec754e1bb1",

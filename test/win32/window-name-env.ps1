@@ -310,6 +310,95 @@ Assert 'D3 the re-attached split shell still exports that window name' (
     $envE -ne '' -and $envE -eq $targetB)
 
 # ============================================================================
+"== E: an AGENT restart RELAUNCHes each pane with the name its window HOLDS (T1883)"
+# ============================================================================
+# D kept the agent, so its shells kept the env they were born with. Here the
+# agent dies too (a reboot): every shell is gone, the next agent materializes
+# tombstones from sessions.json, and `--session-relaunch=rerun` respawns each
+# one with the env its restored surface forwards. Main 1342e7af5 found the Mac
+# respawning those panes with no GHOZTTY_WINDOW_NAME at all.
+#
+# The collision half: the manifest is edited so the t492c window claims
+# $targetB too. Whichever window restores second must NOT take a name another
+# live window holds - it mints a fresh window-N, and its panes must carry THAT
+# one, or `+close --target=$GHOZTTY_WINDOW_NAME` inside it closes the other.
+# Raw-text edit on purpose: the manifest carries a u64 gradient seed (T1832)
+# that a ConvertFrom-Json/ConvertTo-Json round trip in PS5.1 would mangle.
+$mPath = Join-Path $tmpA 'ghoztty\session-layout-debug.json'
+$mObj = $null
+try { $mObj = [IO.File]::ReadAllText($mPath) | ConvertFrom-Json } catch { }
+function Manifest-FirstPaneId($m, $ipcName) {
+    foreach ($w in @($m.windows)) {
+        if ([string]$w.ipc_name -ne $ipcName) { continue }
+        foreach ($t in @($w.tabs)) {
+            foreach ($n in @($t.nodes)) {
+                if ($null -ne $n.leaf -and [string]$n.leaf.pane_id -ne '') { return [string]$n.leaf.pane_id }
+            }
+        }
+    }
+    return ''
+}
+$paneIdB = Manifest-FirstPaneId $mObj $targetB
+$paneIdC = Manifest-FirstPaneId $mObj 't492c'
+Assert "E1 the manifest recorded a pane id for both colliding windows" (
+    $paneIdB -ne '' -and $paneIdC -ne '' -and $paneIdB -ne $paneIdC)
+
+Stop-TestProcs   # app AND agent: only sessions.json + rings survive
+$agentLeft = @(Get-CimInstance Win32_Process -Filter "Name='ghoztty-agent.exe'" |
+        Where-Object { $_.ExecutablePath -eq $AgentExe }).Count
+Assert "E2 the agent is gone, so every shell must come back by RELAUNCH" ($agentLeft -eq 0)
+
+$raw = [IO.File]::ReadAllText($mPath)
+$edited = [regex]::Replace($raw, '"ipc_name"\s*:\s*"t492c"', "`"ipc_name`":`"$targetB`"")
+[IO.File]::WriteAllText($mPath, $edited)   # .NET default: UTF-8, no BOM
+Assert "E3 the manifest now names two windows '$targetB'" (
+    $edited -ne $raw -and ([regex]::Matches($edited, "`"ipc_name`"\s*:\s*`"$targetB`"")).Count -ge 2)
+
+Launch $tmpA 't492-e' $true
+$winsF = @(Wait-Windows $tmpA 'f0' 4 60)
+Assert "E4 restore rebuilt the windows after the agent restart" ($winsF.Count -ge 4)
+
+function Window-OfPane($tree, $paneId) {
+    foreach ($w in @(Get-Windows $tree)) {
+        foreach ($l in @(Window-Leaves $w)) { if ([string]$l.id -eq $paneId) { return $w } }
+    }
+    return $null
+}
+$treeF = Get-List $tmpA 'f1'
+$wB = Window-OfPane $treeF $paneIdB
+$wC = Window-OfPane $treeF $paneIdC
+$tB = if ($null -ne $wB) { [string]$wB.target } else { '' }
+$tC = if ($null -ne $wC) { [string]$wC.target } else { '' }
+$targetsF = @(Get-Windows $treeF | ForEach-Object { [string]$_.target })
+Assert "E5 both windows came back and hold DIFFERENT names ('$tB' / '$tC')" (
+    $tB -ne '' -and $tC -ne '' -and $tB -ne $tC)
+$holdersB = 0
+foreach ($t in $targetsF) { if ($t -eq $targetB) { $holdersB++ } }
+$loser = if ($tB -eq $targetB) { $tC } elseif ($tC -eq $targetB) { $tB } else { '' }
+Assert "E6 exactly one window holds '$targetB' ($holdersB); the other minted a fresh auto name ('$loser')" (
+    $holdersB -eq 1 -and $loser -match "^$AUTO_RE$" -and $loser -ne $targetB)
+
+# The split proves the RELAUNCH path rather than a live re-attach: the rerun
+# divider only prints over a respawned shell.
+$relaunched = $false
+$deadlineF = (Get-Date).AddSeconds(30)
+while ((Get-Date) -lt $deadlineF) {
+    Run-Cli '+read --name=bsplit --lines=800' "$tmpA\f-read.txt" 15 | Out-Null
+    if ((Stripped "$tmpA\f-read.txt") -match 'sessionrestarted') { $relaunched = $true; break }
+    Start-Sleep -Milliseconds 700
+}
+Assert "E7 the split pane was RELAUNCHed (rerun divider present)" $relaunched
+
+$envFs = Probe-PaneEnv $tmpA 'bsplit' 'GHOZTTY_WINDOW_NAME' $AUTO_RE 'fs' 35
+$wS = Window-ByTarget $treeF $envFs
+$sInB = ($null -ne $wS) -and (@(Window-Leaves $wS | Where-Object { [string]$_.id -eq $paneIdB }).Count -eq 1)
+Assert "E8 the relaunched split exports its window's held name ('$envFs' vs '$tB')" (
+    $envFs -ne '' -and $envFs -eq $tB -and $sInB)
+$envFc = Probe-PaneEnv $tmpA $paneIdC 'GHOZTTY_WINDOW_NAME' $AUTO_RE 'fc' 35
+Assert "E9 the colliding window's relaunched pane exports ITS name, never the other's ('$envFc' vs '$tC')" (
+    $envFc -ne '' -and $envFc -eq $tC)
+
+# ============================================================================
 "== cleanup"
 Stop-TestProcs
 if ($null -ne $savedWindowName) { $env:GHOZTTY_WINDOW_NAME = $savedWindowName }
