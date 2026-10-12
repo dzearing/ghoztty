@@ -27,6 +27,10 @@
 #   R  +new-remote-window               same, over a loopback agent (the remote open tail)
 #   G  +split while typing in Ghoztty   the keyboard stays on the caller's pane
 #   H  +split --view while typing       same
+#   L  +rearrange a BACKGROUND window while typing   keyboard + active window stay (T1810)
+#   M  +close a pane of a background window while typing   same (T1810)
+#   N  +rearrange a background window, user in another app   nothing activated (T1810)
+#   O  +close a pane there, user in another app             nothing activated (T1810)
 #   I  +split --focus                   POSITIVE: the new pane takes the keyboard
 #   J  +new-window --focus              POSITIVE: the new window activates
 #   K  +new-window --target=<existing> --focus   POSITIVE: the existing one activates
@@ -222,6 +226,22 @@ try {
     Assert ($wr -ne 0) 'R: the remote window opened'
     Assert-Background $wr 'R:'
 
+    # ---- L/M setup (T1810): a background window with named panes to move ----
+    Enter-ForeignApp
+    $before = @(Get-Tops | ForEach-Object { $_.Hwnd })
+    [void](Invoke-Cli @('+new-window', '--target=rbg'))
+    $wR = Wait-NewTop $before 'L setup'
+    foreach ($nm in 'ra', 'rb', 'rc') {
+        [void](Invoke-Cli @('+split', '--target=rbg', "--name=$nm", '--direction=right'))
+        Start-Sleep -Milliseconds 700
+    }
+    Assert ((Count-Panes $wR) -eq 4) "L setup: the background window holds 4 panes ($(Count-Panes $wR))"
+
+    # PS 5.1 native-arg passing eats embedded quotes; escape them for Win32.
+    function Invoke-Rearrange([string]$layout) {
+        Invoke-Cli @('+rearrange', '--target=rbg', ('--layout=' + ($layout -replace '"', '\"')))
+    }
+
     # ---- G/H: the user is typing in Ghoztty --------------------------------
     if (-not (Focus-TestWindow -Window ([IntPtr]$script:w1) -Child ([IntPtr]$p1))) {
         Write-Host 'SETUP FAIL: could not put the keyboard in the first pane'; exit 1
@@ -239,6 +259,38 @@ try {
     Start-Sleep -Seconds 2
     Assert ((Count-Panes $script:w1) -eq $n + 2) 'H: the viewer split landed'
     Assert ((Focused) -eq $p1) "H: the keyboard stayed on the pane it was in (focus=$(Focused))"
+
+    # ---- L: +rearrange a BACKGROUND window while typing in Ghoztty (T1810) ---
+    # The post-swap focus restore aims at a pane of the rearranged window; if
+    # it fired, SetFocus on a child of an inactive top-level would activate it.
+    $out = Invoke-Rearrange '{"direction":"horizontal","ratio":40,"left":{"pane":"rc"},"right":{"direction":"vertical","ratio":50,"left":{"pane":"rb"},"right":{"pane":"ra"}}}'
+    Write-Host "      +rearrange --target=rbg: $out"
+    Start-Sleep -Milliseconds 1200
+    Assert ((Count-Panes $wR) -eq 3) "L: the rearrange landed (the omitted pane closed; $(Count-Panes $wR) panes)"
+    Assert ((Active) -eq $script:w1) "L: the window being typed in stayed active (active=$(Active), wanted $script:w1, rearranged=$wR)"
+    Assert ((Focused) -eq $p1) "L: the keyboard stayed on the pane it was in (focus=$(Focused), wanted $p1)"
+
+    # ---- M: +close a pane of a BACKGROUND window while typing (T1810) -------
+    [void](Invoke-Cli @('+close', '--target=ra'))
+    Start-Sleep -Milliseconds 1200
+    Assert ((Count-Panes $wR) -eq 2) "M: the close landed ($(Count-Panes $wR) panes)"
+    Assert ((Active) -eq $script:w1) "M: the window being typed in stayed active (active=$(Active))"
+    Assert ((Focused) -eq $p1) "M: the keyboard stayed on the pane it was in (focus=$(Focused), wanted $p1)"
+
+    # ---- N/O: the same two while the user is in another app ----------------
+    Enter-ForeignApp
+    $out = Invoke-Rearrange '{"direction":"horizontal","ratio":50,"left":{"pane":"rb"},"right":{"pane":"rc"}}'
+    Write-Host "      +rearrange --target=rbg (user elsewhere): $out"
+    Start-Sleep -Milliseconds 1200
+    Assert-Background 0 'N:'
+    [void](Invoke-Cli @('+close', '--target=rb'))
+    Start-Sleep -Milliseconds 1200
+    Assert ((Count-Panes $wR) -eq 1) "O: the close landed ($(Count-Panes $wR) panes)"
+    Assert-Background 0 'O:'
+    if (-not (Focus-TestWindow -Window ([IntPtr]$script:w1) -Child ([IntPtr]$p1))) {
+        Write-Host 'SETUP FAIL: could not put the keyboard back in the first pane'; exit 1
+    }
+    Start-Sleep -Milliseconds 400
 
     # ---- I/J/K: --focus is the opt-in (positive controls) ------------------
     $termsBefore = @(Get-TestChildWindows -Window ([IntPtr]$script:w1) -Class 'GhozttyTerminal' | ForEach-Object { $_.Hwnd })
@@ -288,4 +340,4 @@ if ($script:fail -eq 0 -and -not $NegativeControl) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'cli-focus-policy' -MinPass 35
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'cli-focus-policy' -MinPass 50

@@ -35392,3 +35392,20 @@ moved to T1814.
 - **Filed.** T1872: Ctrl+C copies the picture in an image pane. T1873: a
   performable binding that cannot perform is swallowed rather than handed back
   to the page.
+
+## 2026-10-12 — T1810: a script rearranging or closing panes in a background window never takes your keyboard (now measured)
+
+- **Already fixed at the source.** Every deferred focus, including the
+  `+rearrange` post-swap restore and `closeSplitPane`'s next-pane focus, runs
+  through `App.performDeferredFocus`. That function drops the assert unless the
+  target's window is the foreground one (or the GUI thread's active window on
+  a background desktop). The guard is T105's `beb91b43f`, extended by T215's
+  `5e86eab08`. No product change.
+- **Deliverable is the test.** `cli-focus-policy.ps1` gains arms L/M
+  (rearrange / close in a background window while typing in another Ghoztty
+  window) and N/O (same, user in another app). ALL PASS, 51 assertions. A
+  throwaway build with the guard removed scored 6 FAILURES on those arms, so
+  they measure the guard.
+- **Validation.** All four floor lanes, P1-P3, and the harness floor green.
+  The first harness run tripped three stale-build refusals because restoring
+  App.zig after the negative build bumped its mtime. A rebuild cleared them.
