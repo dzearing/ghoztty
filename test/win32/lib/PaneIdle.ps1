@@ -27,13 +27,15 @@
 # Every live descendant pid of $Root, from the OS process table.
 function Get-DescendantPids([int]$Root) {
     if ($Root -le 0) { return @() }
-    $all = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Select-Object ProcessId, ParentProcessId, Name
+    $all = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Select-Object ProcessId, ParentProcessId, Name, CreationDate
     $byParent = @{}
     foreach ($p in $all) {
         $key = [int]$p.ParentProcessId
         if (-not $byParent.ContainsKey($key)) { $byParent[$key] = @() }
         $byParent[$key] += $p
     }
+    $born = @{}
+    foreach ($p in $all) { $born[[int]$p.ProcessId] = $p.CreationDate }
     $out = @()
     $queue = New-Object System.Collections.Queue
     $queue.Enqueue($Root)
@@ -43,6 +45,10 @@ function Get-DescendantPids([int]$Root) {
         if ($seen.ContainsKey($cur)) { continue }
         $seen[$cur] = $true
         foreach ($child in $byParent[$cur]) {
+            # Older than the parent it names = a stranger adopted through a
+            # reused pid (T1840/T1867); it would read an idle shell as busy.
+            if ($null -ne $born[$cur] -and $null -ne $child.CreationDate -and
+                [datetime]$child.CreationDate -lt [datetime]$born[$cur]) { continue }
             $out += $child
             $queue.Enqueue([int]$child.ProcessId)
         }

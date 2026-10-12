@@ -2517,7 +2517,28 @@ $GuardTable = @(
             # than `fail=`. An edit to the classifier that never re-ran this
             # harness is the same hole T877 itself was, one layer down.
             'scripts\lib\CrashDiag.ps1',
+            # Its workers die through Stop-ProcessFamily (T1867).
+            'scripts\lib\ProcessFamily.ps1',
             'test\win32\test-binary-soak.ps1'
+        )
+    },
+    # T1867: every process-tree walk that could adopt a stranger through a
+    # reused parent pid. Two of them KILL what they walk, so a guard that
+    # quietly stopped holding would be discovered as a user's app dying. The
+    # harness lifts each walk out of the file it lives in, which is why those
+    # files are covered here as well as by their own rows.
+    [pscustomobject]@{
+        Name   = 'process-family'
+        Script = 'test\win32\process-family.ps1'
+        Stamp  = 'test\win32\process-family.stamp.json'
+        Covers = @(
+            'scripts\lib\ProcessFamily.ps1',
+            'scripts\soak-daemon.ps1',
+            'scripts\test-binary-soak.ps1',
+            'scripts\go-loop-pane-probe.ps1',
+            'scripts\loop-session.ps1',
+            'test\win32\lib\PaneIdle.ps1',
+            'test\win32\process-family.ps1'
         )
     },
     # The idle-time soak (T841) is the same class again, one step further out:

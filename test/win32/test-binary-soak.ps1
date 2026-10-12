@@ -414,6 +414,7 @@ Check 'a later soak does not delete the earlier soak''s crash evidence' `
 
 . "$Repo\scripts\lib\CrashCatch.ps1"
 . "$Repo\scripts\lib\CrashDiag.ps1"
+. "$Repo\scripts\lib\ProcessFamily.ps1"
 $soakAst = [System.Management.Automation.Language.Parser]::ParseFile($soak, [ref]$null, [ref]$null)
 function Get-SoakFunctionText {
     param([string]$Name)

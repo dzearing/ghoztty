@@ -63,10 +63,17 @@ function Resolve-LoopClaudePid {
         if ($stamp -and $stamp.Name -like 'claude*') { return $envPid }
     }
     $walk = $PID
+    $child = $null
     for ($i = 0; $i -lt 8 -and $walk -gt 0; $i++) {
         $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$walk" -ErrorAction SilentlyContinue
         if (-not $proc) { break }
+        # An ancestor is OLDER than its child. A younger process at the parent
+        # pid is a stranger that reused a dead ancestor's pid (T1840/T1867);
+        # climbing through it could name somebody else's claude as ours.
+        if ($null -ne $child -and $null -ne $proc.CreationDate -and $null -ne $child.CreationDate -and
+            $proc.CreationDate -gt $child.CreationDate) { break }
         if ($proc.Name -like 'claude*') { return [int]$proc.ProcessId }
+        $child = $proc
         $walk = [int]$proc.ParentProcessId
     }
     return 0

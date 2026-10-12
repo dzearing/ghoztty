@@ -1,10 +1,12 @@
 {
     "guard":  "command-resolve",
     "script":  "test/win32/command-resolve-audit.ps1",
-    "generated":  "2026-10-11T20:43:38-07:00",
-    "commit":  "327637739",
+    "generated":  "2026-10-11T21:17:46-07:00",
+    "commit":  "9128ca433",
     "uncommitted":  [
-                        "test/win32/floor-lane-leak-sweep.ps1"
+                        "test/win32/lib/PaneIdle.ps1",
+                        "test/win32/process-family.ps1",
+                        "test/win32/test-binary-soak.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -228,7 +230,7 @@
                   "test/win32/lib/NeuterAudit.ps1":  "c06f3a9c39d1f1a76d9a496844053bb051c8c4ae046da95348963c91faad5f77",
                   "test/win32/lib/paint-blocks.ps1":  "c3b9ec5522cf016fe072c425c05969a0d4fab11cd3fdecb9d67b8b25c7b4702d",
                   "test/win32/lib/PaneCapture.ps1":  "9086543a9bb1c1013d0c5cd987b5f22c55cdd0e918b524fdbcabc746066a61d5",
-                  "test/win32/lib/PaneIdle.ps1":  "1011bc73bcc58cda253193e9e8c7843d302ced045ae00771bf1506938e980a9e",
+                  "test/win32/lib/PaneIdle.ps1":  "d4f72b019a04fadbd308a08f89445ac1d009c9660842c5c079feeaeaae776697",
                   "test/win32/lib/PaneLiveness.ps1":  "d6e189f9d6336ccf01f67a4c971f82c2ef65833f99250200e7f7655ac54f52fd",
                   "test/win32/lib/PersistenceSweep.ps1":  "ffb1e4fe255bf7987957cd61460e03ee446e20ee6724b7f82d95fd0b9465d34b",
                   "test/win32/lib/PipeBridge.ps1":  "5ae297c7cf5206a4533f905501158607d360fe6e87308048a6838e3f3b35a4b1",
@@ -292,6 +294,7 @@
                   "test/win32/persistence-flag.ps1":  "338f60f1d67c918dfc4cdf77aa360f2f491f2b3a9f8114e15aa8c62859b96356",
                   "test/win32/printclient-audit.ps1":  "4a24bbd0e3ee2f47aed2c53e5996cb792e92b94082be61dcd4b0799338f84418",
                   "test/win32/probe-topmost-restore.ps1":  "b2e3afe3d1e5db7cd3555160771e966e8e7c7d5260e1ca4f9fe2c304fd53540a",
+                  "test/win32/process-family.ps1":  "d66e2ac7f288c8ace90f538a8fe7796160d8e605850814041893d7918055e0c2",
                   "test/win32/profile-latency.ps1":  "ca0e6053bcf6bd4ea2de39f1f8aa6037405765ff41f58a35071eba89b21918b5",
                   "test/win32/pty-holder.ps1":  "ac9811305a50f2a86dca0af16b2725c8414ed78ebe26c84572ca6599326af88e",
                   "test/win32/pty-host.ps1":  "87026bc360b873c55bfae3fc3056f8590d75bde54c995a131e680b9e7e2c8f21",
@@ -373,7 +376,7 @@
                   "test/win32/target-staleness.ps1":  "25c28c99d39716155584ecda6f7a826dae310b3adaad3ae6dbb962c38f7f7d80",
                   "test/win32/task-dashboard.ps1":  "c676c3f475745b47a7a661e6ee9d80631ae1951b6995d006d3e2dd52c95c2d0d",
                   "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3",
-                  "test/win32/test-binary-soak.ps1":  "30b5cf96c2b3327944009926cb274799a23dd1552d183a9ee6b2127d4a0c51ae",
+                  "test/win32/test-binary-soak.ps1":  "9bfac3b5cf78dcb7daf763090e978cf8d37ff44cbf6657ddcdccf25763be0377",
                   "test/win32/test-client-build.ps1":  "57d43fa496cfb634e8b4bf3a96fd6f57c9dcf860009cf6e901bcd702093ceb0f",
                   "test/win32/test-desktop-harness.ps1":  "230d1749ac15c137aa1bde6dce2e0939e5f4cf0173387761201a4f86b3fcf689",
                   "test/win32/test-desktop-spike.ps1":  "3a2e8af4d5697753864971808d4f547bae589eb68b27fd04ad30ef55febe4f1c",

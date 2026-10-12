@@ -204,6 +204,7 @@ param(
 $ErrorActionPreference = 'Continue'
 . "$PSScriptRoot\lib\CrashCatch.ps1"
 . "$PSScriptRoot\lib\CrashDiag.ps1"
+. "$PSScriptRoot\lib\ProcessFamily.ps1"
 
 # ------------------------------------------------------------- what to run
 
@@ -706,26 +707,11 @@ function Stop-SoakProcessTree {
     # respawn; a dead parent's children keep their stale ParentProcessId on
     # Windows, so passes over a fresh snapshot keep finding the family until
     # no member is left alive.
-    try { Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue } catch {}
-    $family = @($Id)
-    foreach ($pass in 1..4) {
-        $snap = @()
-        try { $snap = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue) } catch {}
-        # Transitive closure: anything whose parent chain reaches the family.
-        $grew = $true
-        while ($grew) {
-            $grew = $false
-            foreach ($p in $snap) {
-                if (($family -contains [int]$p.ParentProcessId) -and -not ($family -contains [int]$p.ProcessId)) {
-                    $family += [int]$p.ProcessId
-                    $grew = $true
-                }
-            }
-        }
-        [array]$alive = @($family | Where-Object { $_ -ne $Id -and (Get-Process -Id $_ -ErrorAction SilentlyContinue) })
-        if ($alive.Count -eq 0) { break }
-        foreach ($procId in $alive) { try { Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue } catch {} }
-    }
+    # The walk adopts a child only if it is no older than the member it names
+    # (T1867): pids are recycled and ParentProcessId never rewritten, so a
+    # pid-only walk force-killed any long-lived program whose dead parent's pid
+    # a worker had since been handed. scripts\lib\ProcessFamily.ps1.
+    $null = Stop-ProcessFamily -Id $Id -PauseMs 0
 }
 
 function Get-SoakLoadAlive {

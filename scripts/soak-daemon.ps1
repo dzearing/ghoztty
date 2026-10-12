@@ -167,6 +167,7 @@ if ($LaneList.Count -eq 0) { $LaneList = @('agent', 'none', 'none-releasesafe', 
 # Rounds run on a background desktop, so a test window never reaches the
 # user's screen (T1813).
 . (Join-Path $PSScriptRoot 'lib\LaneDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\ProcessFamily.ps1')
 
 $IgnoreList = @($IgnorePids -split ',' | ForEach-Object { $_.Trim() } |
     Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
@@ -318,27 +319,10 @@ function Get-BoxBusyReason {
 # test-binary-soak.ps1 documents (T858): kill the parent before its children or
 # the loop above them spawns a replacement inside the teardown window.
 function Stop-Tree {
+    # Root first, then its descendants, never adopting a stranger through a
+    # reused parent pid (T1867): scripts\lib\ProcessFamily.ps1.
     param([int]$Id)
-    try { Stop-Process -Id $Id -Force -ErrorAction SilentlyContinue } catch { }
-    for ($pass = 0; $pass -lt 4; $pass++) {
-        $snap = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
-        $family = @($Id)
-        $grew = $true
-        while ($grew) {
-            $grew = $false
-            foreach ($p in $snap) {
-                if ($family -contains $p.ParentProcessId -and -not ($family -contains $p.ProcessId)) {
-                    $family += $p.ProcessId; $grew = $true
-                }
-            }
-        }
-        $alive = @($family | Where-Object { $_ -ne $PID })
-        if ($alive.Count -le 1) { break }
-        foreach ($id in $alive) {
-            try { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue } catch { }
-        }
-        Start-Sleep -Milliseconds 300
-    }
+    $null = Stop-ProcessFamily -Id $Id
 }
 
 # ----------------------------------------------------------------- a round

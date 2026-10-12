@@ -340,6 +340,8 @@ function Find-ClaudeDescendant {
     # BFS with a seen-set: Windows reuses pids, so a stale snapshot can contain
     # a parent "cycle"; without the guard that is an infinite loop.
     $seen = @{ $ShellPid = $true }
+    $born = @{}
+    foreach ($p in $Procs) { $born[[int]$p.ProcessId] = $p.CreationDate }
     $queue = New-Object System.Collections.Queue
     $queue.Enqueue($ShellPid)
     while ($queue.Count -gt 0) {
@@ -348,6 +350,11 @@ function Find-ClaudeDescendant {
         foreach ($p in $kids[$cur]) {
             $cpid = [int]$p.ProcessId
             if ($seen.ContainsKey($cpid)) { continue }
+            # A child older than the parent it names is a stranger whose real
+            # parent died before this pid was reused (T1840/T1867): another
+            # pane's Claude must not make this pane read as busy.
+            if ($null -ne $born[$cur] -and $null -ne $p.CreationDate -and
+                [datetime]$p.CreationDate -lt [datetime]$born[$cur]) { continue }
             $seen[$cpid] = $true
             if (($p.Name -ieq 'claude.exe') -or ($p.Name -ieq 'claude')) {
                 if (([string]$p.CommandLine) -notmatch 'chrome-native-host') { return $cpid }
@@ -370,7 +377,7 @@ function Test-ClaudeInPane {
     $procs = $null
     try {
         $procs = @(Get-CimInstance Win32_Process -ErrorAction Stop |
-            Select-Object ProcessId, ParentProcessId, Name, CommandLine)
+            Select-Object ProcessId, ParentProcessId, Name, CommandLine, CreationDate)
     } catch { return $false }
     return ((Find-ClaudeDescendant -ShellPid $shell -Procs $procs) -gt 0)
 }

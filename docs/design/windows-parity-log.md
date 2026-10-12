@@ -35317,3 +35317,23 @@ moved to T1814.
   floor green.
 - **Filed.** T1868: the stall-sampling negative control flaked once (a zero-CPU wedge tree), green on re-run. T1867: the soak scripts' `Stop-Tree` has the same flaw in a KILL
   path, so there it could force-kill a user's app.
+
+## 2026-10-11 — T1867: the soak scripts' cleanup can no longer kill a user's program
+
+- **What landed.** `scripts/lib/ProcessFamily.ps1` walks and kills a process
+  family once, for everyone: a child is adopted only if it is no older than
+  the member it names, a later-born process now holding a member's pid is
+  treated as an impostor (its children are its own), the root is never
+  re-killed by a pid somebody else may now hold, and members persist across
+  passes so an orphan of an already-dead member is still reached.
+  `soak-daemon.ps1` `Stop-Tree` and `test-binary-soak.ps1`
+  `Stop-SoakProcessTree` both delegate to it; before, both walked by parent
+  pid alone and `Stop-Process -Force`d anything that matched (T1840's flaw,
+  in a kill path). The read-only walks in `go-loop-pane-probe.ps1`,
+  `loop-session.ps1` and `test/win32/lib/PaneIdle.ps1` carry the same rule.
+- **Evidence.** New `test/win32/process-family.ps1` ALL PASS (38), a negative
+  control on every walk (undated rows fall back to adopting the stranger), the
+  kill path driven through its seams plus one real two-process tree; guard row
+  `process-family`. Harness floor, soak-daemon (51), test-binary-soak (88),
+  floor-lane-releasesafe, upgrade-no-fork, chooser-close-chord, guard-due and
+  go-loop-guard green. Script-only change: no zig lane touched.
