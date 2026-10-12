@@ -266,6 +266,11 @@ const TipSubject = enum { none, tab, pill };
 /// longer and the gesture reads as broken.
 const TAB_DWELL_TIMER_ID: usize = 0x5457; // 'TW'
 const TAB_DWELL_MS: u32 = 500;
+
+/// The focused-pane glow's fade clock (T1834): ~16ms, alive only for the
+/// `pane_elevation.GLOW_FADE_MS` after a focus change.
+const FOCUS_GLOW_TIMER_ID: usize = 0x4647; // 'FG'
+const FOCUS_GLOW_TICK_MS: u32 = 16;
 pub const HERO_SLIDE_MS: f32 = 350.0;
 const HERO_RECENTER_MS: f32 = 300.0;
 
@@ -557,6 +562,13 @@ desk_variant: ?desk_palette.Variant = null,
 /// The pane style the current layout was computed for, so a config reload
 /// that flips it relayouts rather than only recolouring.
 applied_pane_style: pane_elevation.Style = .elevated,
+/// The focused-pane glow (T1834): the pane it is moving to, the pane it is
+/// leaving, and when the move started. Compared by address against the
+/// grid's live slots and never dereferenced, so a pane closed mid-fade
+/// simply stops matching.
+glow_to: ?*PaneView = null,
+glow_from: ?*PaneView = null,
+glow_t0_ms: i64 = 0,
 
 /// Split divider drag state.
 dragging_split: bool = false,
@@ -6253,6 +6265,56 @@ pub fn updateDimOverlays(self: *Window) void {
     self.updateKeyStateIndicators();
     // ...and the pane sidebar's selection and roster (T1828).
     self.syncPaneSidebar();
+    // ...and the focused card's glow (T1834).
+    self.syncFocusGlow();
+}
+
+/// The pane the elevated style lights as focused (T1834): the active tab's
+/// focused pane, but only among siblings - Mac's `isSplit && isFocusedPane`,
+/// since a lone pane (a single leaf, a zoomed one, a hero tab) has nothing
+/// to stand out from.
+fn focusGlowTarget(self: *Window) ?*PaneView {
+    if (self.paneStyle() != .elevated) return null;
+    if (self.tab_count == 0) return null;
+    const tab = self.active_tab;
+    if (self.tab_hero_active[tab]) return null;
+    const tree = self.tab_trees[tab];
+    if (!pane_stash.isVisiblySplit(tree) or tree.zoomed != null) return null;
+    return self.tab_active_pane[tab];
+}
+
+/// Start the glow's move when the lit pane changes; the fade clock does the
+/// repainting. Idempotent, so it rides every `updateDimOverlays` trigger.
+fn syncFocusGlow(self: *Window) void {
+    const target = self.focusGlowTarget();
+    if (target == self.glow_to) return;
+    const hwnd = self.hwnd orelse return;
+    self.glow_from = self.glow_to;
+    self.glow_to = target;
+    self.glow_t0_ms = std.time.milliTimestamp();
+    _ = w32.SetTimer(hwnd, FOCUS_GLOW_TIMER_ID, FOCUS_GLOW_TICK_MS, null);
+    self.repaintPaneDesk();
+}
+
+fn focusGlowTick(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    if (std.time.milliTimestamp() - self.glow_t0_ms >= pane_elevation.GLOW_FADE_MS) {
+        _ = w32.KillTimer(hwnd, FOCUS_GLOW_TIMER_ID);
+        self.glow_from = null;
+    }
+    self.repaintPaneDesk();
+}
+
+/// Repaint the window-owned desk pixels now - the same `GetDC` pass a
+/// layout makes, for a change that moved nothing (the glow's fade).
+fn repaintPaneDesk(self: *Window) void {
+    if (self.closing) return;
+    if (self.paneStyle() != .elevated) return;
+    const hwnd = self.hwnd orelse return;
+    if (w32.GetDC(hwnd)) |dc| {
+        self.paintAlphaCorrect(dc, paintMovedBands);
+        _ = w32.ReleaseDC(hwnd, dc);
+    }
 }
 
 /// Show/reposition/hide every pane's key-state pill (T446). Rides the same
@@ -6659,6 +6721,20 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         .right = slot.rect.right - area.left,
         .bottom = slot.rect.bottom - area.top,
     };
+    // The focused card's glow (T1834), and mid-fade the one it is leaving.
+    var glows: [2]pane_elevation.Glow = undefined;
+    var ng: usize = 0;
+    const level = pane_elevation.fadeLevel(std.time.milliTimestamp() - self.glow_t0_ms);
+    for (slots[0..n], 0..) |slot, i| {
+        if (ng >= glows.len) break;
+        if (self.glow_to != null and slot.view == self.glow_to.?) {
+            glows[ng] = .{ .card = i, .level = level };
+            ng += 1;
+        } else if (self.glow_from != null and slot.view == self.glow_from.? and level < 1) {
+            glows[ng] = .{ .card = i, .level = 1 - level };
+            ng += 1;
+        }
+    }
     const bg = self.app.config.background;
     const fill: color_math.Rgb = .{ .r = bg.r, .g = bg.g, .b = bg.b };
     const glass = self.paneGlass();
@@ -6667,6 +6743,7 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         .is_light = color_math.isLight(fill),
         .scale = self.scale,
         .glass = glass,
+        .glows = glows[0..ng],
     }, self.desk_variant);
     self.syncGlassBackdrops(slots[0..n], area, glass, color_math.isLight(fill));
 }
@@ -12105,6 +12182,10 @@ pub fn windowWndProc(
             }
             if (wparam == TAB_DWELL_TIMER_ID) {
                 window.onTabDwell();
+                return 0;
+            }
+            if (wparam == FOCUS_GLOW_TIMER_ID) {
+                window.focusGlowTick();
                 return 0;
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);

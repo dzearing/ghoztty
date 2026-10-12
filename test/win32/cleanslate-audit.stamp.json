@@ -1,14 +1,10 @@
 {
     "guard":  "cleanslate",
     "script":  "test/win32/cleanslate-audit.ps1",
-    "generated":  "2026-10-12T14:48:04-07:00",
-    "commit":  "6726f2a3f",
+    "generated":  "2026-10-12T15:47:57-07:00",
+    "commit":  "2984eae6f",
     "uncommitted":  [
-                        "test/win32/color-contrast.ps1",
-                        "test/win32/gl-device-lost.ps1",
-                        "test/win32/pane-capture.ps1",
-                        "test/win32/pane-elevation.ps1",
-                        "test/win32/window-color.ps1"
+                        "test/win32/pane-elevation.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -283,7 +279,7 @@
                   "test/win32/palette-order.ps1":  "731a1befc660ba2625618e809ab7e30eb0106959586260c3d78eedc6da12bced",
                   "test/win32/pane-banner.ps1":  "97459372b44628ab97f9b89c301619e37dac15e0b07b1c3c3819ed84b5e170e4",
                   "test/win32/pane-capture.ps1":  "e3388a98b380901071b2050f9afa8cdaae4765ab1f4413b92ae26fd0edc8ca6f",
-                  "test/win32/pane-elevation.ps1":  "e2c4dc568eafed37e4a70ad3207fc0fc0368c226e7b0c2d1db30386a7c8d9b28",
+                  "test/win32/pane-elevation.ps1":  "ca2e76e9c615aa5fb9e8831d0d40d11281143dda9aac5ae1c2e89919068bd93c",
                   "test/win32/pane-grab-handle.ps1":  "750e331e6cffdad15489ff1023167b296f6e171d5e08e4be2dc0b6cdac858011",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "0c722d4f0cb52d3567b2d070362fa2cf825aafc952a81b1bcf01768203181161",

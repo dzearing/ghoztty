@@ -211,6 +211,83 @@ pub fn glassMix(desk: u32, tint: color_math.Rgb, t: f32) u32 {
         mixChannel(desk & 0xFF, srgb_to_linear[tint.b], t);
 }
 
+// ---------------------------------------------------------------------------
+// The focused pane's glow (T1834; Mac `PaneFocusGlow`, main 9755dc1f7 /
+// 51573daf0 / 7966780ae): among several panes, the focused card is backlit -
+// a white stroke along its edge, blurred, masked off the card so the light
+// lands only on the desk around it - and its rim is a touch brighter.
+
+/// Mac `.stroke(lineWidth: 4)`: the band is centred on the card's edge.
+pub const GLOW_STROKE_DIP: f32 = 4;
+/// Mac `.blur(radius: 4)`. SwiftUI's blur radius is read the way `shadows`
+/// reads a shadow radius, sigma = radius / 2: with the band's outer half
+/// that puts the light's end ~8pt past the edge (2 + 3 sigma), which is
+/// exactly what 9755dc1f7 tuned it to - and short of the 10pt gap, so a
+/// neighbouring pane is never lit from behind.
+pub const GLOW_SIGMA_DIP: f32 = 2;
+/// How long the glow takes to move to a newly focused pane (Mac
+/// `.animation(.easeOut(duration: 0.25), value: isFocused)`).
+pub const GLOW_FADE_MS: i64 = 250;
+
+/// The glow's peak strength: white 24% on a dark theme, 50% on a light one
+/// (7966780ae's softer value).
+pub fn glowOpacity(is_light: bool) f32 {
+    return if (is_light) 0.5 else 0.24;
+}
+
+/// How far past the card the glow can still be seen, in physical pixels.
+pub fn glowReachPx(scale: f32) i32 {
+    return @intFromFloat(@ceil((GLOW_STROKE_DIP / 2 + 3 * GLOW_SIGMA_DIP) * scale));
+}
+
+/// The glow's alpha at signed distance `d` from the card's edge (negative
+/// inside): the blurred band's profile across a straight edge, times the
+/// share of the pixel that lies OUTSIDE the card - nothing lights the pane
+/// itself.
+pub fn glowAlpha(d: f32, is_light: bool, scale: f32) f32 {
+    const outside = std.math.clamp(0.5 + d, 0, 1);
+    if (outside <= 0) return 0;
+    const hw = GLOW_STROKE_DIP / 2 * scale;
+    const k = GLOW_SIGMA_DIP * scale * std.math.sqrt2;
+    const band = 0.5 * (erfc((d - hw) / k) - erfc((d + hw) / k));
+    return glowOpacity(is_light) * band * outside;
+}
+
+/// The glow's strength `elapsed_ms` into a focus change, 0 -> 1 on Mac's
+/// `.easeOut` (CSS `ease-out`, cubic-bezier(0, 0, 0.58, 1)). The pane
+/// losing focus fades on `1 - fadeLevel`.
+pub fn fadeLevel(elapsed_ms: i64) f32 {
+    if (elapsed_ms <= 0) return 0;
+    if (elapsed_ms >= GLOW_FADE_MS) return 1;
+    const x: f32 = @as(f32, @floatFromInt(elapsed_ms)) / @as(f32, @floatFromInt(GLOW_FADE_MS));
+    return cubicBezierY(0, 0.58, x);
+}
+
+/// y at x on a CSS timing curve with control points (x1, 0), (x2, 1): solve
+/// x(t) by bisection (monotonic for x1, x2 in [0, 1]), then evaluate y(t).
+fn cubicBezierY(x1: f32, x2: f32, x: f32) f32 {
+    const bez = struct {
+        fn at(a: f32, b: f32, t: f32) f32 {
+            const u = 1 - t;
+            return 3 * u * u * t * a + 3 * u * t * t * b + t * t * t;
+        }
+    };
+    var lo: f32 = 0;
+    var hi: f32 = 1;
+    for (0..24) |_| {
+        const mid = (lo + hi) / 2;
+        if (bez.at(x1, x2, mid) < x) lo = mid else hi = mid;
+    }
+    return bez.at(0, 1, (lo + hi) / 2);
+}
+
+/// One lit card: `card` indexes the `cards` slice, `level` is how far into
+/// its fade it is (1 = fully focused).
+pub const Glow = struct {
+    card: usize,
+    level: f32 = 1,
+};
+
 pub const CardStyle = struct {
     /// The card's fill - the terminal background.
     fill: color_math.Rgb,
@@ -221,7 +298,65 @@ pub const CardStyle = struct {
     /// `PaneGlass`'s single soft shadow, kept off the sheet, and its
     /// brighter rim.
     glass: bool = false,
+    /// The focused card (T1834) - two of them mid-fade, one coming up and
+    /// one going down. Empty for a lone pane: it has nothing to stand out
+    /// from.
+    glows: []const Glow = &.{},
 };
+
+/// The rim's strength. Mac: white 7% on a dark card, black 6% on a light
+/// one; a glass sheet's is brighter (white 10%, black 8%); and the focused
+/// card's brighter again (51573daf0) - solid 16% / 10%, glass 20% / 12%.
+pub fn rimAlpha(glass: bool, is_light: bool, focus: f32) f32 {
+    const rest: f32, const lit: f32 = if (glass)
+        (if (is_light) .{ 0.08, 0.12 } else .{ 0.10, 0.20 })
+    else if (is_light) .{ 0.06, 0.10 } else .{ 0.07, 0.16 };
+    return rest + (lit - rest) * std.math.clamp(focus, 0, 1);
+}
+
+/// Light the desk around each glowing card. Runs before any shadow, the way
+/// Mac's glow is the card's backmost layer.
+fn paintGlows(buf: []u32, wi: i32, hi: i32, cards: []const Card, style: CardStyle) void {
+    const radius: f32 = @floatFromInt(radiusPx(style.scale));
+    const reach = glowReachPx(style.scale);
+    const ri: i32 = radiusPx(style.scale);
+    const edge: i32 = @as(i32, @intFromFloat(@ceil(GLOW_STROKE_DIP / 2 * style.scale))) + 1;
+    const white: Rgbf = .{ .r = 255, .g = 255, .b = 255 };
+    for (style.glows) |g| {
+        if (g.card >= cards.len or g.level <= 0) continue;
+        const c = cards[g.card];
+        const y0: i32 = @max(c.top - reach, 0);
+        const y1: i32 = @min(c.bottom + reach, hi);
+        const x0: i32 = @max(c.left - reach, 0);
+        const x1: i32 = @min(c.right + reach, wi);
+        var y = y0;
+        while (y < y1) : (y += 1) {
+            // The card's interior is never lit; skip it on a straight row.
+            const sides = y >= c.top + ri and y < c.bottom - ri;
+            var x = x0;
+            while (x < x1) : (x += 1) {
+                if (sides and x >= c.left + edge and x < c.right - edge) {
+                    x = c.right - edge - 1;
+                    continue;
+                }
+                const fx = @as(f32, @floatFromInt(x)) + 0.5;
+                const fy = @as(f32, @floatFromInt(y)) + 0.5;
+                const a = glowAlpha(roundRectDistance(fx, fy, c, radius), style.is_light, style.scale);
+                if (a <= 0) continue;
+                const i: usize = @intCast(y * wi + x);
+                buf[i] = blend(buf[i], white, a * std.math.clamp(g.level, 0, 1));
+            }
+        }
+    }
+}
+
+fn focusOf(style: CardStyle, card: usize) f32 {
+    var f: f32 = 0;
+    for (style.glows) |g| {
+        if (g.card == card) f = @max(f, g.level);
+    }
+    return f;
+}
 
 /// Paint every card's shadows, then every card, over the desk already in
 /// `buf` (a `w` x `h` window-content buffer). Shadows go down first for ALL
@@ -239,6 +374,8 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
     const ri: i32 = radiusPx(style.scale);
     const wi: i32 = @intCast(w);
     const hi: i32 = @intCast(h);
+
+    paintGlows(buf, wi, hi, cards, style);
 
     for (cards) |c| {
         const y0: i32 = @max(c.top - reach, 0);
@@ -281,18 +418,14 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
         .b = @floatFromInt(style.fill.b),
     };
     const fill_px = fill.pack();
-    // Mac's rim: white 7% on a dark card, black 6% on a light one; a glass
-    // sheet's is brighter (white 10%, black 8%).
     const rim_rgb: Rgbf = if (style.is_light) black else .{ .r = 255, .g = 255, .b = 255 };
-    const rim_a: f32 = if (style.glass)
-        (if (style.is_light) @as(f32, 0.08) else 0.10)
-    else if (style.is_light) @as(f32, 0.06) else 0.07;
     const rim_w = RIM_DIP * style.scale;
-    const rim_c = Rgbf.lerp(fill, rim_rgb, rim_a);
     // The inner edge of the band an antialiased rim pixel can sit in.
     const edge: i32 = @as(i32, @intFromFloat(@ceil(rim_w))) + 1;
 
-    for (cards) |c| {
+    for (cards, 0..) |c, ci| {
+        const rim_a = rimAlpha(style.glass, style.is_light, focusOf(style, ci));
+        const rim_c = Rgbf.lerp(fill, rim_rgb, rim_a);
         const y0: i32 = @max(c.top, 0);
         const y1: i32 = @min(c.bottom, hi);
         var y = y0;
@@ -467,4 +600,111 @@ test "T1833: a glass card shows the desk through its fill and keeps its shadow o
     @memcpy(&buf, &desk);
     paintCards(&buf, w, h, &.{card}, .{ .fill = bg, .is_light = false, .scale = 1.0 });
     try testing.expectEqual(packRgb(30, 30, 30), buf[a]);
+}
+
+/// Mac `PaneFocusGlowTests`, on a 300x240 buffer with a 200x140 card at
+/// (50, 50): the light lands OUTSIDE the card, never inside it, and has died
+/// out by the 10pt gap to the next pane.
+fn renderGlowFixture(buf: []u32, focused: bool, glass: bool) void {
+    @memset(buf, packRgb(26, 31, 28)); // Mac's test desk, 0.1/0.12/0.11
+    const card: Card = .{ .left = 50, .top = 50, .right = 250, .bottom = 190 };
+    const glows = [_]Glow{.{ .card = 0 }};
+    paintCards(buf, 300, 240, &.{card}, .{
+        .fill = .{ .r = 28, .g = 31, .b = 36 },
+        .is_light = false,
+        .scale = 1.0,
+        .glass = glass,
+        .glows = if (focused) &glows else &.{},
+    });
+}
+
+fn brightness(p: u32) f32 {
+    const c = unpack(p);
+    return @max(c.r, @max(c.g, c.b)) / 255.0;
+}
+
+test "T1834: the focused pane lights the desk around it, never itself, never the next pane" {
+    var lit: [300 * 240]u32 = undefined;
+    var dark: [300 * 240]u32 = undefined;
+    for ([_]bool{ true, false }) |glass| {
+        renderGlowFixture(&lit, true, glass);
+        renderGlowFixture(&dark, false, glass);
+        const row = 120 * 300;
+        // 3pt outside the card's right edge (card spans x 50..250).
+        try testing.expect(brightness(lit[row + 253]) > brightness(dark[row + 253]) + 0.02);
+        // Nothing lights the pane itself: 6pt inside the same edge.
+        try testing.expect(@abs(brightness(lit[row + 244]) - brightness(dark[row + 244])) < 0.01);
+        // Tight: gone by the 10pt gap, where the next pane would start.
+        try testing.expect(@abs(brightness(lit[row + 260]) - brightness(dark[row + 260])) < 0.01);
+        // Far from the card, the desk is untouched.
+        try testing.expectEqual(dark[row + 296], lit[row + 296]);
+        // And the other sides too: above the top edge, left of the left one.
+        try testing.expect(brightness(lit[47 * 300 + 150]) > brightness(dark[47 * 300 + 150]) + 0.02);
+        try testing.expect(brightness(lit[row + 47]) > brightness(dark[row + 47]) + 0.02);
+    }
+}
+
+test "T1834: the glow's reach is ~8pt and scales with DPI" {
+    try testing.expectEqual(@as(i32, 8), glowReachPx(1.0));
+    try testing.expectEqual(@as(i32, 12), glowReachPx(1.5));
+    // Within reach of the gap, never past it.
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |s| {
+        try testing.expect(glowReachPx(s) < gapPx(.elevated, s).?);
+        const at_gap: f32 = @floatFromInt(gapPx(.elevated, s).?);
+        try testing.expect(glowAlpha(at_gap, false, s) < 0.001);
+        try testing.expect(glowAlpha(-1, false, s) == 0);
+    }
+    // A light theme's glow is stronger (white on light needs more to show).
+    try testing.expect(glowAlpha(2, true, 1) > glowAlpha(2, false, 1));
+}
+
+test "T1834: the focused rim is brighter, in both styles and both themes" {
+    for ([_]bool{ true, false }) |glass| for ([_]bool{ true, false }) |light| {
+        try testing.expect(rimAlpha(glass, light, 1) > rimAlpha(glass, light, 0));
+    };
+    try testing.expectApproxEqAbs(@as(f32, 0.20), rimAlpha(true, false, 1), 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.10), rimAlpha(true, false, 0), 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.16), rimAlpha(false, false, 1), 1e-6);
+    try testing.expectApproxEqAbs(@as(f32, 0.12), rimAlpha(true, true, 1), 1e-6);
+
+    // And painted: the focused card's top rim row is lighter than the
+    // unfocused one's.
+    var lit: [300 * 240]u32 = undefined;
+    var dark: [300 * 240]u32 = undefined;
+    renderGlowFixture(&lit, true, false);
+    renderGlowFixture(&dark, false, false);
+    try testing.expect(unpack(lit[50 * 300 + 150]).r > unpack(dark[50 * 300 + 150]).r);
+    // ...while the interior is the terminal background, exactly, either way.
+    try testing.expectEqual(dark[120 * 300 + 150], lit[120 * 300 + 150]);
+}
+
+test "T1834: fadeLevel eases out over 250ms" {
+    try testing.expectEqual(@as(f32, 0), fadeLevel(0));
+    try testing.expectEqual(@as(f32, 1), fadeLevel(GLOW_FADE_MS));
+    try testing.expectEqual(@as(f32, 1), fadeLevel(10_000));
+    // Ease-out: well past halfway by the halfway mark, and monotonic.
+    try testing.expect(fadeLevel(125) > 0.6);
+    var prev: f32 = 0;
+    var t: i64 = 0;
+    while (t <= GLOW_FADE_MS) : (t += 10) {
+        const v = fadeLevel(t);
+        try testing.expect(v >= prev);
+        prev = v;
+    }
+}
+
+test "T1834: a half-faded glow is weaker, and an out-of-range card index is ignored" {
+    var full: [300 * 240]u32 = undefined;
+    var half: [300 * 240]u32 = undefined;
+    const card: Card = .{ .left = 50, .top = 50, .right = 250, .bottom = 190 };
+    const base: CardStyle = .{ .fill = .{ .r = 28, .g = 31, .b = 36 }, .is_light = false, .scale = 1 };
+    for ([_]*[300 * 240]u32{ &full, &half }) |b| @memset(b, packRgb(26, 31, 28));
+    var s = base;
+    s.glows = &.{.{ .card = 0, .level = 1 }};
+    paintCards(&full, 300, 240, &.{card}, s);
+    s.glows = &.{ .{ .card = 0, .level = 0.5 }, .{ .card = 7 } };
+    paintCards(&half, 300, 240, &.{card}, s);
+    const p = 120 * 300 + 253;
+    try testing.expect(brightness(half[p]) < brightness(full[p]));
+    try testing.expect(brightness(half[p]) > 26.0 / 255.0 + 0.005);
 }

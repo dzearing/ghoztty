@@ -40,6 +40,9 @@
 #   (`background-opacity` below 1, where the desk is still opaque - T1852)
 #   keep the solid black pane.
 #
+#   FOCUS GLOW (T1834). Of two cards, only the focused one lights the desk
+#   just past its edge, and a goto_split moves the light to the other card.
+#
 # Runs on a background desktop (test/win32/lib/TestDesktop.ps1): nothing here
 # takes the user's foreground, which is asserted at the end.
 #
@@ -337,6 +340,64 @@ foreach ($case in @(
     }
     Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 }
+
+# ---------------------------------------------------------------------------
+# Run 1c: the focused pane's glow (T1834). Among two cards exactly one lights
+# the desk just outside its right edge - measured as that pixel's brightness
+# over the desk's at the far side of the margin, past the glow's ~8pt reach,
+# so the gradient itself cancels out - and moving focus moves the light.
+# ---------------------------------------------------------------------------
+$g = Start-Gui 'glow' ($common + '--keybind=ctrl+alt+f9=goto_split:next') -Split
+$launched += $script:GhozttyTestDesktopPids
+$top = $g.Top
+$m = Get-MarginPx $g.Scale
+$i = Get-InsetPx $g.Scale
+function Get-GlowLift($shot, $pane) {
+    $cardRight = [int]$pane.Right + $i
+    $y = [int](($pane.Top + $pane.Bottom) / 2)
+    $near = Get-TestPixel -Shot $shot -X ($cardRight + (Round-Away (3 * $g.Scale))) -Y $y
+    $far = Get-TestPixel -Shot $shot -X ($cardRight + $m - 1) -Y $y
+    if ($null -eq $near -or $null -eq $far) { return $null }
+    return ($near.R + $near.G + $near.B) - ($far.R + $far.G + $far.B)
+}
+function Get-GlowState([string]$label) {
+    $panes = @(Get-Panes $top | Sort-Object Top)
+    $shot = Get-TestWindowPixels -Window $top -Sync
+    try {
+        if ((Get-TestDistinctColors -Shot $shot) -lt 4) { return $null }
+        $lifts = @($panes | ForEach-Object { Get-GlowLift $shot $_ })
+    } finally { Close-TestWindowPixels $shot }
+    Write-Host "      $label glow lift (near - far, channel sum): top=$($lifts[0]) bottom=$($lifts[1])"
+    return [pscustomobject]@{ Panes = $panes; Lifts = $lifts }
+}
+Start-Sleep -Milliseconds 600
+$s1 = Get-GlowState 'before'
+if ($null -eq $s1 -or $s1.Lifts.Count -ne 2 -or $null -eq $s1.Lifts[0] -or $null -eq $s1.Lifts[1]) {
+    $script:skipped++; Write-Host 'SKIP  glow probes: empty capture'
+} else {
+    $litIx = if ($s1.Lifts[0] -gt $s1.Lifts[1]) { 0 } else { 1 }
+    $dimIx = 1 - $litIx
+    if ($NegativeControl) {
+        Write-Host 'NEGATIVE CONTROL: asserting neither card is lit - this run MUST fail'
+        Assert ([math]::Abs($s1.Lifts[0] - $s1.Lifts[1]) -lt 15) 'glow: no card stands out (negative control)'
+    } else {
+        Assert (($s1.Lifts[$litIx] - $s1.Lifts[$dimIx]) -ge 15) 'glow: exactly one of two cards lights the desk beside it'
+    }
+    Assert ([math]::Abs($s1.Lifts[$dimIx]) -lt 12) 'glow: the other card leaves the desk beside it alone'
+    # Move focus to the other pane; after the 250ms fade the light follows.
+    Assert (Send-TestKeys -Window $top -Target ([IntPtr]$s1.Panes[$litIx].Hwnd) -Modifiers ctrl, alt -Key f9) 'glow: goto_split chord delivered'
+    $moved = $false
+    for ($t = 0; $t -lt 10 -and -not $moved; $t++) {
+        Start-Sleep -Milliseconds 300
+        $s2 = Get-GlowState "after focus move #$t"
+        if ($null -ne $s2 -and $s2.Lifts.Count -eq 2) {
+            $moved = ($s2.Lifts[$dimIx] - $s2.Lifts[$litIx]) -ge 15
+        }
+    }
+    Assert $moved 'glow: moving focus to the other pane moves the light with it'
+}
+Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'glow: no crash'
+Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------------------
 # Run 2: flat is the classic geometry, unchanged.

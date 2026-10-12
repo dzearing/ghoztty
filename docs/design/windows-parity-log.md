@@ -35629,3 +35629,23 @@ moved to T1814.
   card and the desk slice.
 - **Filed** the rest of Mac's glass: T1884 (banner/header bands), T1885
   (viewer pages), T1886 (title bar), T1887 (sidebar overlay card).
+
+## 2026-10-12 — T1834: the focused pane's glow
+
+- **What changed.** In the elevated style, with several panes, the focused
+  pane's card is now softly backlit, as on Mac. A faint white light spills
+  about 8pt onto the desk around it and stops short of the 10pt gap, so the
+  next pane is never lit. Its hairline rim is a touch brighter. A lone,
+  zoomed or hero pane gets no glow, matching Mac's `isSplit && isFocusedPane`.
+- **Values.** The values are Mac's final ones (7966780ae): a 4pt stroke
+  blurred at sigma 2, white 24% on dark and 50% on light, masked off the
+  card. The focused rim is 16%/10% solid and 20%/12% glass, against
+  7%/6% and 10%/8% at rest. The light moves on Mac's 0.25s ease-out. A 16ms
+  timer runs only during the fade, and the old card fades down while the
+  new one comes up.
+- **Validation.** Mac's `PaneFocusGlowTests` is mirrored as a unit test for
+  both solid and glass cards, alongside reach-per-DPI, rim, fade and
+  half-fade tests (50/50). `pane-elevation.ps1` run 1c works on the test
+  desktop. Exactly one of two cards lifts the desk beside it (+31 against
+  -2), and a goto_split moves the light (-2 against +27). The run passes
+  ALL PASS (50), and the negative control fails. The floor lanes are green.
