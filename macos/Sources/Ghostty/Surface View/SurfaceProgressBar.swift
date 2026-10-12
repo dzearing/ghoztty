@@ -1,4 +1,7 @@
 import SwiftUI
+#if canImport(AppKit)
+import AppKit
+#endif
 
 /// The progress bar to show a surface progress report. We implement this from scratch because the
 /// standard ProgressView is broken on macOS 26 and this is simple anyways and gives us a ton of
@@ -110,3 +113,137 @@ private struct BouncingProgressBar: View {
     }
 }
 
+
+#if canImport(AppKit)
+/// The busy indicator for a progress report with no percentage (what an
+/// agent reports while it works): a soft highlight that travels around the
+/// pane's border, instead of a bar bouncing along its top edge.
+///
+/// Core Animation, not a SwiftUI animation: the rotation runs in the render
+/// server, so a window full of busy agents costs no per-frame view updates,
+/// and no enclosing `.transaction { $0.animation = nil }` (the pane sidebar's
+/// container has one, and it froze the bouncing bar) can stop it.
+struct SurfaceBusyBorder: NSViewRepresentable {
+    let report: Ghostty.Action.ProgressReport
+    /// The pane's corner radius, so the light follows the card's edge.
+    let cornerRadius: CGFloat
+
+    /// True when the report has a percentage to show, which the bar still
+    /// does better than a border.
+    static func usesBar(_ report: Ghostty.Action.ProgressReport) -> Bool {
+        report.progress != nil || report.state == .pause
+    }
+
+    private var color: NSColor {
+        switch report.state {
+        case .error: return .systemRed
+        default: return .controlAccentColor
+        }
+    }
+
+    func makeNSView(context: Context) -> BusyBorderView {
+        let view = BusyBorderView()
+        view.setAccessibilityElement(true)
+        view.setAccessibilityRole(.progressIndicator)
+        view.setAccessibilityLabel(report.state == .error
+            ? "Terminal progress - Error" : "Terminal progress - In progress")
+        return view
+    }
+
+    func updateNSView(_ view: BusyBorderView, context: Context) {
+        view.color = color
+        view.cornerRadius = cornerRadius
+    }
+}
+
+final class BusyBorderView: NSView {
+    var color: NSColor = .controlAccentColor { didSet { applyColors() } }
+    var cornerRadius: CGFloat = 0 { didSet { needsLayout = true } }
+
+    /// One revolution.
+    private static let period: CFTimeInterval = 2.4
+
+    /// A crisp line and a wide, faint halo around it: together they read as a
+    /// soft light rather than a drawn stroke.
+    private let rings: [(ring: CALayer, sweep: CAGradientLayer, mask: CAShapeLayer, width: CGFloat, alpha: CGFloat)] = [
+        (CALayer(), CAGradientLayer(), CAShapeLayer(), 6, 0.35),
+        (CALayer(), CAGradientLayer(), CAShapeLayer(), 1.5, 0.9),
+    ]
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        for r in rings {
+            r.sweep.type = .conic
+            r.sweep.startPoint = CGPoint(x: 0.5, y: 0.5)
+            r.sweep.endPoint = CGPoint(x: 0.5, y: 0)
+            r.mask.fillColor = nil
+            r.mask.strokeColor = NSColor.black.cgColor
+            r.mask.lineWidth = r.width
+            r.ring.mask = r.mask
+            r.ring.addSublayer(r.sweep)
+            layer?.addSublayer(r.ring)
+        }
+        applyColors()
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not supported for this view")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    /// A tail that fades in over a third of the turn up to a bright head.
+    private func applyColors() {
+        for r in rings {
+            let c = color.withAlphaComponent(r.alpha).cgColor
+            let clear = color.withAlphaComponent(0).cgColor
+            r.sweep.colors = [clear, clear, c, clear]
+            r.sweep.locations = [0, 0.62, 0.97, 1]
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        // Square and big enough to cover the pane at every angle.
+        let side = hypot(bounds.width, bounds.height)
+        for r in rings {
+            r.ring.frame = bounds
+            r.mask.frame = bounds
+            let inset = bounds.insetBy(dx: r.width / 2, dy: r.width / 2)
+            let radius = Swift.max(0, cornerRadius - r.width / 2)
+            r.mask.path = inset.width > 0 && inset.height > 0
+                ? CGPath(roundedRect: inset, cornerWidth: radius, cornerHeight: radius, transform: nil)
+                : nil
+            r.sweep.bounds = CGRect(x: 0, y: 0, width: side, height: side)
+            r.sweep.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        }
+        CATransaction.commit()
+        startSpinning()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        startSpinning()
+    }
+
+    private func startSpinning() {
+        guard window != nil else { return }
+        // Shared start time so the line and its halo stay in step.
+        let begin = CACurrentMediaTime()
+        for r in rings where r.sweep.animation(forKey: "spin") == nil {
+            let spin = CABasicAnimation(keyPath: "transform.rotation.z")
+            // Clockwise on screen (layers are y-up).
+            spin.fromValue = 0
+            spin.toValue = -2 * Double.pi
+            spin.duration = Self.period
+            spin.repeatCount = .infinity
+            spin.beginTime = begin
+            spin.isRemovedOnCompletion = false
+            r.sweep.add(spin, forKey: "spin")
+        }
+    }
+}
+#endif

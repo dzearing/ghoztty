@@ -51,6 +51,9 @@ struct PaneSidebarContainer<Content: View>: View {
                            ? column + SidePanelResizeHandle.grabWidth / 2
                            : insets.leading + state.width + insets.trailing)
                     .frame(maxHeight: .infinity)
+                    // Up beside the tab bar, which then starts at the
+                    // sidebar's edge: the sidebar runs the window's height.
+                    .padding(.top, -state.tabRowHeight)
             }
         }
     }
@@ -171,6 +174,10 @@ final class PaneSidebarHostView: NSView {
             hosting.rootView = root
         } else {
             let hosting = NSHostingView(rootView: root)
+            // Beside the tab bar this view reaches up under the titlebar,
+            // and its own insets for that (`tabRowHeight`) are the only ones
+            // it should apply — not the window's safe area on top of them.
+            if #available(macOS 13.3, *) { hosting.safeAreaRegions = [] }
             hosting.translatesAutoresizingMaskIntoConstraints = false
             addSubview(hosting)
             NSLayoutConstraint.activate([
@@ -325,6 +332,7 @@ private struct PaneSidebarChrome: View {
                 PaneSidebarView(
                     controller: controller, state: state, geometry: geometry,
                     isRail: false, isFlat: true)
+                    .padding(.top, state.tabRowHeight)
                     // Exactly the column: the host reaches half a grab width
                     // further only so the resize handle's outer half is live.
                     .frame(width: state.width)
@@ -359,6 +367,7 @@ private struct PaneSidebarChrome: View {
                 PaneSidebarView(
                     controller: controller, state: state, geometry: geometry,
                     isRail: !open, isFlat: false)
+                    .padding(.top, state.tabRowHeight)
                     .modifier(SidePanelCard(
                         width: open ? state.width : PaneSidebarState.railCardWidth,
                         maxHeight: .infinity,

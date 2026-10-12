@@ -202,6 +202,8 @@ extension Ghostty {
                                 text: banner,
                                 background: paneBackgroundColor,
                                 paneWidth: geo.size.width,
+                                cornerRadius: ghostty.config.macosPaneStyle == .elevated
+                                    ? PaneElevation.nestedCardCornerRadius : GlassCard.cornerRadius,
                                 linkSurface: surfaceView)
                             #if canImport(AppKit)
                                 // The terminal is inset below the banner, so
@@ -233,13 +235,22 @@ extension Ghostty {
 
                 // Progress report
                 if let progressReport = surfaceView.progressReport, progressReport.state != .remove {
-                    VStack(spacing: 0) {
-                        SurfaceProgressBar(report: progressReport)
-                        Spacer()
+#if canImport(AppKit)
+                    // Busy with no percentage: a light circling the pane's
+                    // border (the elevated style's card corners, or square).
+                    if !SurfaceBusyBorder.usesBar(progressReport) {
+                        SurfaceBusyBorder(
+                            report: progressReport,
+                            cornerRadius: ghostty.config.macosPaneStyle == .elevated
+                                ? PaneElevation.cornerRadius : 0)
+                            .allowsHitTesting(false)
+                            .transition(.opacity)
+                    } else {
+                        progressBar(progressReport)
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
+#else
+                    progressBar(progressReport)
+#endif
                 }
 
 #if canImport(AppKit)
@@ -332,6 +343,17 @@ extension Ghostty {
                 SurfaceGrabHandle(surfaceView: surfaceView)
                 #endif
             }
+        }
+
+        /// A report with a percentage: the bar along the pane's top edge.
+        private func progressBar(_ report: Ghostty.Action.ProgressReport) -> some View {
+            VStack(spacing: 0) {
+                SurfaceProgressBar(report: report)
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .allowsHitTesting(false)
+            .transition(.opacity)
         }
     }
 

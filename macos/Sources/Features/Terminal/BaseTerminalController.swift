@@ -110,8 +110,18 @@ class BaseTerminalController: NSWindowController,
     /// Terminal has no chrome for one.
     var hasPaneSidebar: Bool { true }
 
+    /// A titled terminal window carries the strip in its titlebar instead.
+    var showsDebugBuildWarningInContent: Bool {
+        DebugBuildWarningView.isShown && (window as? TerminalWindow)?.hostsDebugBuildWarning != true
+    }
+
     /// Live only while rearrange mode is on. See `installRearrangeEscapeMonitor`.
     private var rearrangeEscapeMonitor: Any?
+
+    /// Rearrange mode forced the tab bar on and ended while the window was in
+    /// a tab group (a pane dropped on the tab bar made one), so the bar could
+    /// not be collapsed then. It is, once the window is alone again.
+    private var collapseForcedTabBarWhenAlone = false
     private var heroSelectionCancellable: AnyCancellable?
 
     /// This can be set to show/hide the command palette.
@@ -1801,7 +1811,9 @@ class BaseTerminalController: NSWindowController,
         // a bar the user already had must survive the mode.
         var forcedTabBar = false
         if let window, window.tabGroup?.isTabBarVisible != true {
-            window.toggleTabBar(nil)
+            TabBarVisibilityPreference.preservingPersistedVisibility {
+                window.toggleTabBar(nil)
+            }
             forcedTabBar = true
         }
 
@@ -1816,8 +1828,23 @@ class BaseTerminalController: NSWindowController,
         guard restoreTabBar else { return }
         guard let window, window.tabGroup?.isTabBarVisible == true else { return }
         // Only ever collapses a bar that is showing a single tab; a real tab
-        // group keeps its bar.
+        // group keeps its bar — until the group is down to this window.
         if (window.tabGroup?.windows.count ?? 1) <= 1 {
+            TabBarVisibilityPreference.preservingPersistedVisibility {
+                window.toggleTabBar(nil)
+            }
+        } else {
+            collapseForcedTabBarWhenAlone = true
+        }
+    }
+
+    /// See `collapseForcedTabBarWhenAlone`.
+    private func collapseForcedTabBarIfAlone() {
+        guard collapseForcedTabBarWhenAlone, !rearrangeModeState.isActive,
+              let window, (window.tabGroup?.windows.count ?? 1) <= 1 else { return }
+        collapseForcedTabBarWhenAlone = false
+        guard window.tabGroup?.isTabBarVisible == true else { return }
+        TabBarVisibilityPreference.preservingPersistedVisibility {
             window.toggleTabBar(nil)
         }
     }
@@ -2476,6 +2503,9 @@ class BaseTerminalController: NSWindowController,
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        // Closing the window's last other tab makes it key again.
+        collapseForcedTabBarIfAlone()
+
         // If when we become key our first responder is the window itself, then we
         // want to move focus to our focused terminal surface. This works around
         // various weirdness with moving surfaces around.

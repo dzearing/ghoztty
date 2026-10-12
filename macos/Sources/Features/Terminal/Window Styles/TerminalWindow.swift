@@ -24,6 +24,12 @@ class TerminalWindow: NSWindow {
     /// Update notification UI in titlebar
     private let updateAccessory = NSTitlebarAccessoryViewController()
 
+    /// The debug build warning, as a titlebar row: the very top of the
+    /// window's UI, above the tab bar (itself a titlebar accessory, which
+    /// no content view can sit above) and so above the pane sidebar too.
+    private let debugBuildWarningAccessory = NSTitlebarAccessoryViewController()
+    private(set) var hostsDebugBuildWarning = false
+
     /// Hostname pill shown at the trailing edge of the titlebar for remote
     /// windows. Absent (hidden) for local windows.
     private let machinePillAccessory = NSTitlebarAccessoryViewController()
@@ -191,6 +197,16 @@ class TerminalWindow: NSWindow {
                 }))
             addTitlebarAccessoryViewController(resetZoomAccessory)
             resetZoomAccessory.view.translatesAutoresizingMaskIntoConstraints = false
+
+            if DebugBuildWarningView.isShown {
+                let strip = NSHostingView(rootView: DebugBuildWarningView())
+                strip.frame.size = strip.fittingSize
+                debugBuildWarningAccessory.identifier = .init("_ghosttyDebugBuildWarning")
+                debugBuildWarningAccessory.layoutAttribute = .bottom
+                debugBuildWarningAccessory.view = strip
+                addTitlebarAccessoryViewController(debugBuildWarningAccessory)
+                hostsDebugBuildWarning = true
+            }
 
             // Create update notification accessory
             if supportsUpdateAccessory {
@@ -388,6 +404,8 @@ class TerminalWindow: NSWindow {
 
         // We don't need to do this with the update accessory. I don't know why but
         // everything works fine.
+
+        tabBarVisibilityDidChange(visible: true)
     }
 
     private func tabBarDidDisappear() {
@@ -396,7 +414,13 @@ class TerminalWindow: NSWindow {
                 addTitlebarAccessoryViewController(resetZoomAccessory)
             }
         }
+
+        tabBarVisibilityDidChange(visible: false)
     }
+
+    /// The tab bar was attached, or is being removed (it is still in the view
+    /// hierarchy when this is called with `false`). For styles that place it.
+    func tabBarVisibilityDidChange(visible: Bool) {}
 
     // MARK: Tab Key Equivalents
 
@@ -666,6 +690,9 @@ class TerminalWindow: NSWindow {
         /// window's gradient runs up under the titlebar, which must not paint
         /// over it.
         let paneGlass: Bool
+        /// `macos-pane-style = elevated`: the tab bar sits one pane gap
+        /// above the grid, beside the pane sidebar.
+        let paneElevated: Bool
 
         init() {
             self.title = nil
@@ -676,6 +703,7 @@ class TerminalWindow: NSWindow {
             self.macosTitlebarStyle = .default
             self.windowCornerRadius = 16
             self.paneGlass = false
+            self.paneElevated = false
         }
 
         init(_ config: Ghostty.Config) {
@@ -686,6 +714,7 @@ class TerminalWindow: NSWindow {
             self.backgroundBlur = config.backgroundBlur
             self.macosTitlebarStyle = config.macosTitlebarStyle
             self.paneGlass = config.paneGlass
+            self.paneElevated = config.macosPaneStyle == .elevated
 
             // Set corner radius based on macos-titlebar-style
             // Native, transparent, and hidden styles use 16pt radius
