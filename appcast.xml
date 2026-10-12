@@ -668,5 +668,58 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.39.0/Ghoztty-1.39.0-arm64.dmg" type="application/octet-stream" sparkle:edSignature="5Mz0JsBFGptYs5je+4um1KuTc/IYsjAbqOV8ZZ2EUfS0wdRkD4wX1U5v0qS0WqCoBaK3IehaFiSg9k5/S2V3Cw==" length="26362688" />
         </item>
+        <item>
+            <title>Version 1.39.1</title>
+            <sparkle:version>1.39.1</sparkle:version>
+            <sparkle:shortVersionString>1.39.1</sparkle:shortVersionString>
+            <pubDate>Mon, 12 Oct 2026 19:12:41 +0000</pubDate>
+            <description>{
+  "version": "1.39.1",
+  "sections": [
+    {
+      "title": "Tabs",
+      "items": [
+        {
+          "title": "The tab bar only shows when you have tabs",
+          "text": "A window with one tab no longer spends a row on a tab bar. Press **Cmd+T** and it appears. Rearrange mode still shows it while you drag, since it's a drop target, and that no longer sticks around after you leave the mode."
+        },
+        {
+          "title": "Tabs sit beside the sidebar",
+          "text": "The pane sidebar now runs the full height of the window, with the tabs starting at its edge, and the gap between the tabs and your panes is the same spacing used everywhere else."
+        }
+      ]
+    },
+    {
+      "title": "Progress",
+      "items": [
+        {
+          "title": "A soft glow while a pane is busy",
+          "text": "A pane that's working without a percentage now has a thin light circling its border, trailing off behind a glowing tip, instead of a bar bouncing along the top. A percentage shows as a thin glowing line across the top of the pane. Both are white in dark mode and charcoal in light mode, rather than your accent color."
+        }
+      ]
+    },
+    {
+      "title": "Banners",
+      "items": [
+        {
+          "title": "Rounded corners that match the pane",
+          "text": "A pane banner's corners now curve in step with the raised pane around it."
+        }
+      ]
+    },
+    {
+      "title": "Session persistence",
+      "items": [
+        {
+          "title": "Restored panes know their window again",
+          "text": "After a reboot, panes that came back were missing `GHOZTTY_WINDOW_NAME`, so tools that close \"this window\" (like a worktree cleanup) couldn't find it. Restored panes now get their window's name, and never one that belongs to another open window."
+        }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.39.1/Ghoztty-1.39.1-arm64.dmg" type="application/octet-stream" sparkle:edSignature="Ugnk8D10z08DY35Z2pDKHGmNJf9T4wVyEBXDeXVXmtrPVPE82BDLMvFGukd14kq8Il8bS23uH8RcdeW14hKwAg==" length="26394967" />
+        </item>
     </channel>
 </rss>
