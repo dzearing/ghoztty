@@ -193,7 +193,10 @@ redirect obtain the authorization code locally, the code goes to the relay's
 `/oauth/exchange` (the relay holds the client secret and talks to Google
 server-side), and the returned opaque **relay session token** + expiry + email
 + relay base are stored — macOS in the Keychain, Windows **DPAPI-encrypted** at
-`%LOCALAPPDATA%\ghoztty\account.dat` (owner-only DACL). No Google token or
+`%LOCALAPPDATA%\ghoztty\account.dat` (owner-only DACL; a **debug** build uses
+`account-debug.dat` instead, so a dev or test run starts signed out and can never
+read or renew the user's real sign-in - T1859; `GHOSTTY_ACCOUNT_STORE` overrides
+either). No Google token or
 client secret ever touches the machine. The flow runs on a background thread so
 the window never blocks while the browser is open; the app renews the session
 at the stored relay via `/oauth/renew` as it nears expiry (renewal rotates the

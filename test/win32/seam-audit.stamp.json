@@ -1,18 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-12T05:46:21-07:00",
-    "commit":  "9637ff6d4",
+    "generated":  "2026-10-12T06:34:39-07:00",
+    "commit":  "2719cf4bf",
     "uncommitted":  [
-                        "src/apprt/win32/App.zig",
-                        "src/apprt/win32/close_undo.zig",
-                        "src/apprt/win32/CloseUndo.zig",
-                        "src/apprt/win32/commands.zig",
-                        "src/apprt/win32/menu_bar.zig",
-                        "src/apprt/win32/msg_timer.zig",
-                        "src/apprt/win32/Window.zig",
-                        "test/win32/close-undo.ps1",
-                        "test/win32/menu-bar.ps1"
+                        "src/remote/relay_account.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -417,7 +409,7 @@
                   "src/remote/pipe_stream.zig":  "6e75c5df447ba72acc87d0ae4110b86b9a1a782e382e10afb93ef44bb6c196f0",
                   "src/remote/protocol.zig":  "b83a701e634ca0a30de11b76c3193f32eaded5580ae753a697e8e253de4e36c4",
                   "src/remote/pty_job_name.zig":  "613abf1c9722bb3e78ff7e3221f5995373a5b0c30df36709b75740fcd4c969df",
-                  "src/remote/relay_account.zig":  "6869fbe6a84bc751f8eb8982d3387790cd626d332ae8a5b322703a3afe5cb62d",
+                  "src/remote/relay_account.zig":  "0073c9a5f825d624e6976c7847721c8bae7806427199a5065214451fd609a234",
                   "src/remote/relay_dial.zig":  "f7d24bc69e8063100a4dc5a1b72f417e22265410bd9fb915efb704e7d5c6f137",
                   "src/remote/relay_directory.zig":  "69b406e2f41856cf317780028cca84c214d7e8a8a30193f45de94e35c8c514a0",
                   "src/remote/relay_revoke.zig":  "e9764bbd76227c72232a403cf0bcda01f44ad5cedd2c1a4de421dbe89e16cb77",

@@ -35456,3 +35456,22 @@ moved to T1814.
   should. `chooser-sessions.ps1` 3b now runs the lingering case for real
   (`lingering attached: True`). Also green: `session-close.ps1`, the four
   floor lanes, P1-P3 and the harness floor.
+
+## 2026-10-12 — T1859: a dev or test build keeps its own relay sign-in
+
+- **What changed.** `relay_account.accountPath()` now names the store by build
+  lineage: `account.dat` for a release build, `account-debug.dat` for a debug
+  one (`build_config.is_debug`, the same split as the IPC pipe, the local
+  agent's state dir and the viewer prefs). Every reader goes through it, so the
+  CLI's signed-in check, sign-in, renew and the suspend probe all moved at once.
+  `GHOSTTY_ACCOUNT_STORE` still overrides it.
+- **Why.** The account was the one piece of the user's live state a debug run
+  could still reach. T1837 caught ipc-relay dialing with the user's real token,
+  and a renew would have rotated it underneath the installed app. Mac's debug
+  app cannot read the release Keychain item silently, so this was a Windows-only
+  hole. A debug build now starts signed out.
+- **Validation.** Two unit tests (none lane, `-Filter T1859`), red under a
+  negative control that gives the debug lineage the release name. Floor all
+  PASS, ipc-p1/p2/p3 ALL PASS, and the guards the edit made due (relay-account,
+  thread-join, self-spawn, seam-audit, docs-routing) ALL PASS. The user's
+  `account.dat` hash was identical before and after the whole run.

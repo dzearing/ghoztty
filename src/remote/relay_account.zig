@@ -38,6 +38,7 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const build_config = @import("../build_config.zig");
 const Allocator = std.mem.Allocator;
 const relay_session = @import("relay_session.zig");
 const win_acl = @import("win_acl.zig");
@@ -88,30 +89,45 @@ pub const Error = error{
     Legacy,
 };
 
-/// Resolve the account.dat path:
+/// The store's file name for a build lineage (T1859). A debug build gets its
+/// own, the same split as the IPC pipe, the local agent's state dir and the
+/// viewer prefs: those are all derived from the build mode so a dev or test
+/// run never drives the user's terminal, and the account was the one piece of
+/// the user's live state left out. Without it any debug run that did not set
+/// `GHOSTTY_ACCOUNT_STORE` read the signed-in user's relay credential, dialed
+/// with it, and could RENEW it (`/oauth/renew` rotates the token and the
+/// rotation is written back) underneath the installed app. A debug build now
+/// starts signed out; signing in from it writes only its own file.
+pub fn storeFileName(debug: bool) []const u8 {
+    return if (debug) "account-debug.dat" else "account.dat";
+}
+
+/// Resolve the account store path:
 ///   1. `GHOSTTY_ACCOUNT_STORE` (explicit full-path override; tests use this),
-///   2. Windows: `%LOCALAPPDATA%\ghoztty\account.dat`,
-///   3. else `$XDG_CONFIG_HOME/ghoztty/account.dat`, falling back to
-///      `$HOME/.config/ghoztty/account.dat` (non-Windows test builds only).
-/// Owned by the caller.
+///   2. Windows: `%LOCALAPPDATA%\ghoztty\<storeFileName>`,
+///   3. else `$XDG_CONFIG_HOME/ghoztty/<storeFileName>`, falling back to
+///      `$HOME/.config/ghoztty/<storeFileName>` (non-Windows test builds only).
+/// `<storeFileName>` is `account.dat` for a release build and
+/// `account-debug.dat` for a debug one. Owned by the caller.
 pub fn accountPath(alloc: Allocator) ![]u8 {
     if (std.process.getEnvVarOwned(alloc, "GHOSTTY_ACCOUNT_STORE")) |p| {
         if (p.len > 0) return p;
         alloc.free(p);
     } else |_| {}
 
+    const name = storeFileName(build_config.is_debug);
     if (builtin.os.tag == .windows) {
         const local = try std.process.getEnvVarOwned(alloc, "LOCALAPPDATA");
         defer alloc.free(local);
-        return std.fs.path.join(alloc, &.{ local, "ghoztty", "account.dat" });
+        return std.fs.path.join(alloc, &.{ local, "ghoztty", name });
     } else {
         if (std.process.getEnvVarOwned(alloc, "XDG_CONFIG_HOME")) |xdg| {
             defer alloc.free(xdg);
-            if (xdg.len > 0) return std.fs.path.join(alloc, &.{ xdg, "ghoztty", "account.dat" });
+            if (xdg.len > 0) return std.fs.path.join(alloc, &.{ xdg, "ghoztty", name });
         } else |_| {}
         const home = try std.process.getEnvVarOwned(alloc, "HOME");
         defer alloc.free(home);
-        return std.fs.path.join(alloc, &.{ home, ".config", "ghoztty", "account.dat" });
+        return std.fs.path.join(alloc, &.{ home, ".config", "ghoztty", name });
     }
 }
 
@@ -462,6 +478,30 @@ test "account store: delete removes the file (idempotent)" {
         tmp.dir.statFile("account.dat.00112233aabbccdd.tmp"),
     );
     delete(path); // idempotent: no error on a second delete
+}
+
+test "T1859: a debug build's account store is not the release one" {
+    try testing.expectEqualStrings("account.dat", storeFileName(false));
+    try testing.expectEqualStrings("account-debug.dat", storeFileName(true));
+    try testing.expect(!std.mem.eql(u8, storeFileName(false), storeFileName(true)));
+}
+
+test "T1859: accountPath picks the store for this build's lineage" {
+    const alloc = testing.allocator;
+    // An explicit override wins by design; this test is about the default.
+    if (std.process.getEnvVarOwned(alloc, "GHOSTTY_ACCOUNT_STORE")) |p| {
+        alloc.free(p);
+        return error.SkipZigTest;
+    } else |_| {}
+
+    const path = try accountPath(alloc);
+    defer alloc.free(path);
+    try testing.expectEqualStrings(storeFileName(build_config.is_debug), std.fs.path.basename(path));
+    // Test lanes build in Debug: the path a dev or test run resolves must
+    // never be the signed-in user's file.
+    if (build_config.is_debug) {
+        try testing.expect(!std.mem.eql(u8, "account.dat", std.fs.path.basename(path)));
+    }
 }
 
 test "isFresh honors the 60s leeway" {
