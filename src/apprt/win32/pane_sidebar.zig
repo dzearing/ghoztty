@@ -562,6 +562,10 @@ pub const Layout = struct {
     count: usize = 0,
     /// The grid/stashed boundary for the rail and the panel.
     first_stashed: usize = 0,
+    /// The empty "Drop to stash" slot a drag with nothing stashed shows
+    /// (T1844, `addDropSlot`): a row below the grid rows, or a tile on the
+    /// rail.
+    drop_slot: ?Rect = null,
 
     pub fn item(self: *const Layout, i: usize) Rect {
         return self.items[i];
@@ -691,6 +695,39 @@ fn layoutMini(l: *Layout, scale: f32) void {
         l.items[i] = .{ .left = x, .top = y, .right = x + tile, .bottom = y + tile };
         y += tile + gap;
     }
+}
+
+/// Add the empty "Drop to stash - it keeps running" slot below the grid
+/// rows (T1844, Mac's empty stash target): shown only during a pane drag
+/// with nothing stashed, so the target is visible. Behind the same section
+/// rule a stash would have; a one-line row in the panel and the open card, a
+/// tile on the rail. A no-op when something is stashed or nothing is shown.
+pub fn addDropSlot(l: *Layout, tm: TextMetrics, scale: f32) void {
+    if (l.mode == .hidden) return;
+    if (l.first_stashed != l.count) return;
+    const sm = px(sm_dip, scale);
+    const hair = @max(px(1, scale), 1);
+    const rows = l.mode == .expanded or l.open;
+    if (rows) {
+        const area: Rect = if (l.open) l.card else .{ .right = l.width, .bottom = l.height };
+        const fill = px(toc.fill_inset_dip, scale);
+        const below = if (l.count > 0) l.items[l.count - 1].bottom else l.header.bottom;
+        const rule_y = below + sm;
+        l.section_rule = .{ .left = area.left + fill, .top = rule_y, .right = area.right - fill, .bottom = rule_y + hair };
+        const top = rule_y + hair + sm;
+        l.drop_slot = .{ .left = area.left + fill, .top = top, .right = area.right - fill, .bottom = top + rowHeight(false, tm, scale) };
+        return;
+    }
+    const tile = px(tile_dip, scale);
+    const group = px(rail_group_gap_dip, scale);
+    const x = l.pin.left;
+    // The same spacing a stashed group gets: `md` below the last tile, the
+    // hairline in the middle of it.
+    const below = if (l.count > 0) l.items[l.count - 1].bottom else l.pin.bottom;
+    const rule_y = below + @divTrunc(group, 2);
+    l.section_rule = .{ .left = x, .top = rule_y, .right = x + tile, .bottom = rule_y + hair };
+    const top = below + group;
+    l.drop_slot = .{ .left = x, .top = top, .right = x + tile, .bottom = top + tile };
 }
 
 pub const Hit = union(enum) {
@@ -978,4 +1015,44 @@ test "pane_sidebar: hit testing the open card finds rows across the card, button
     try testing.expectEqual(Hit{ .item_button = 1 }, hitTest(&o, b.centerX(), b.centerY(), s));
     // The trailing margin is the grid's, not the card's.
     try testing.expectEqual(Hit.none, hitTest(&o, o.card.right + 2, o.items[0].centerY(), s));
+}
+
+test "pane_sidebar: a drag with nothing stashed shows the drop slot below the grid (T1844)" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .grid, .two_line = true } };
+    for (scales) |s| {
+        const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
+        // The panel: a one-line row behind a rule, under the last row.
+        var l = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+        addDropSlot(&l, tm, s);
+        const slot = l.drop_slot.?;
+        const rule = l.section_rule.?;
+        try testing.expect(rule.top >= l.items[1].bottom and slot.top >= rule.bottom);
+        try testing.expectEqual(rowHeight(false, tm, s), slot.height());
+        try testing.expectEqual(l.items[1].left, slot.left);
+        try testing.expectEqual(l.items[1].right, slot.right);
+        // The rail: a tile on the tiles' column, spaced like a stashed group.
+        var m = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
+        addDropSlot(&m, tm, s);
+        const tile = m.drop_slot.?;
+        try testing.expectEqual(m.items[0].left, tile.left);
+        try testing.expectEqual(m.items[0].width(), tile.width());
+        try testing.expectEqual(m.items[1].bottom + px(rail_group_gap_dip, s), tile.top);
+        try testing.expect(m.section_rule.?.top > m.items[1].bottom and m.section_rule.?.bottom <= tile.top);
+        // The open card: inside the card.
+        var o = layoutOpen(openWidthPx(240, s), px(600, s), &items, tm, s);
+        addDropSlot(&o, tm, s);
+        try testing.expect(o.drop_slot.?.left >= o.card.left and o.drop_slot.?.right <= o.card.right);
+    }
+}
+
+test "pane_sidebar: no drop slot once something is stashed, or while hidden (T1844)" {
+    const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
+    const stashed = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
+    var l = layout(.expanded, 240, 600, &stashed, tm, 1.0);
+    addDropSlot(&l, tm, 1.0);
+    try testing.expectEqual(@as(?Rect, null), l.drop_slot);
+    const grid = [_]Item{.{ .section = .grid }};
+    var h = layout(.hidden, 240, 600, &grid, tm, 1.0);
+    addDropSlot(&h, tm, 1.0);
+    try testing.expectEqual(@as(?Rect, null), h.drop_slot);
 }

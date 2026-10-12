@@ -1,16 +1,17 @@
 {
     "guard":  "rearrange-restore",
     "script":  "test/win32/rearrange-restore.ps1",
-    "generated":  "2026-10-11T17:51:04-07:00",
-    "commit":  "3ad7b1721",
+    "generated":  "2026-10-11T20:20:58-07:00",
+    "commit":  "01b3b43ca",
     "uncommitted":  [
+                        "src/apprt/win32/App.zig",
                         "src/apprt/win32/Window.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/App.zig":  "e3706413bfcdce00836b31cce7bfc76523a5ed9090675724ea6621fc5db2d192",
+                  "src/apprt/win32/App.zig":  "3b534b0be96f283f073120c9d09f8d528ec2fe50100dde05baadaca64569bdd0",
                   "src/apprt/win32/pane_relocate.zig":  "0d806e2f94ef8bc4321c5fdef02f99f6716bb77b6033a7a2dc45094cf32d85d0",
                   "src/apprt/win32/session_layout.zig":  "4fe4efd5886b9d9eb9be7906ca89826d601ad2bf2b8dd6fea82d56a1d5938876",
-                  "src/apprt/win32/Window.zig":  "d08804a01f5f1dc31482072557e1beb2f6512f6ea35167ba70bde9322cc126c5",
+                  "src/apprt/win32/Window.zig":  "a4f103ad80bd6888fc9e22bdab29ccc1f587ed2e7934736b3445ad3ad66b475d",
                   "test/win32/rearrange-restore.ps1":  "10599663f761d0ae7386320ae1d54d5956f45f2bba31a4f93fdc80fa0a253e35"
               }
 }

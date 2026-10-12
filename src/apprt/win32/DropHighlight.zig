@@ -131,8 +131,8 @@ pub fn show(
 
     const want_alpha: u8 = switch (hl.kind) {
         .swap => alpha_swap,
-        .split, .top_level, .new_window => alpha_insert,
-        .new_tab => alpha_caret,
+        .split, .top_level, .new_window, .stash_slot => alpha_insert,
+        .new_tab, .stash => alpha_caret,
     };
     if (want_alpha != self.alpha) {
         _ = w32.SetLayeredWindowAttributes(self.hwnd, 0, want_alpha, w32.LWA_ALPHA);

@@ -52,6 +52,13 @@ pub const Kind = enum {
     /// `top_level` — the window is about to exist and the user is entitled to
     /// know where.
     new_window,
+    /// The dragged pane will be STASHED in the pane sidebar, at this gap
+    /// between stashed rows (T1844). An insertion caret across the sidebar,
+    /// like `new_tab`'s in the strip: a stashed pane has no footprint.
+    stash,
+    /// Stashed with nothing else in the stash: the sidebar's empty "Drop to
+    /// stash" slot, washed as the place it lands.
+    stash_slot,
 };
 
 pub const Highlight = struct {
@@ -96,6 +103,17 @@ pub const Context = struct {
     /// Null ⇒ nothing is promised for that drop, which is what a caller that
     /// cannot answer must say.
     new_window_frame: ?Rect = null,
+
+    /// The pane sidebar's drop geometry (T1844): the sidebar itself, its
+    /// stashed rows top to bottom, and the empty "Drop to stash" slot it
+    /// shows during a drag with nothing stashed.
+    sidebar_rect: ?Rect = null,
+    stash_rows: []const Rect = &.{},
+    stash_slot: ?Rect = null,
+
+    /// Whether a stash drop is one this window will HONOUR: stashing the last
+    /// pane on screen is refused, so it is not previewed either.
+    can_stash: bool = false,
 };
 
 /// The preview for `target`, or null when there is nothing to draw in
@@ -142,9 +160,37 @@ pub fn forTarget(target: ?Target, ctx: Context) ?Highlight {
                 .kind = .new_tab,
             };
         },
+        .stash => |s| blk: {
+            if (!ctx.can_stash) break :blk null;
+            const sidebar = ctx.sidebar_rect orelse break :blk null;
+            if (ctx.stash_rows.len == 0) break :blk .{
+                .rect = ctx.stash_slot orelse sidebar,
+                .kind = .stash_slot,
+            };
+            break :blk .{
+                .rect = stashCaret(ctx.stash_rows, s.index, ctx.scale),
+                .kind = .stash,
+            };
+        },
         // Answered above, before the per-window arms are reached.
         .new_window => unreachable,
     };
+}
+
+/// The insertion caret for a stash drop at `index`: a slim bar as wide as the
+/// rows, centred on the gap above row `index` - or below the last row when
+/// the drop appends. `rows` must not be empty.
+pub fn stashCaret(rows: []const Rect, index: usize, scale: f32) Rect {
+    const h = caretPx(scale);
+    const first = rows[0];
+    const y: i32 = if (index == 0)
+        first.top
+    else if (index >= rows.len)
+        rows[rows.len - 1].bottom
+    else
+        @divFloor(rows[index - 1].bottom + rows[index].top, 2);
+    const top = y - @divFloor(h, 2);
+    return .{ .left = first.left, .top = top, .right = first.right, .bottom = top + h };
 }
 
 /// How thick the new-tab insertion caret is, in DIP.
@@ -473,4 +519,60 @@ test "T1531: the threshold scales with the monitor and never rounds to zero" {
     try testing.expectEqual(@as(i32, 6), thresholdPx(1.25));
     try testing.expectEqual(@as(i32, 10), thresholdPx(2.0));
     try testing.expectEqual(@as(i32, 1), thresholdPx(0.01));
+}
+
+// -- the stash (T1844) ------------------------------------------------------
+
+const t_sidebar: Rect = .{ .left = 0, .top = 0, .right = 200, .bottom = 800 };
+const t_rows = [_]Rect{
+    .{ .left = 8, .top = 400, .right = 192, .bottom = 440 },
+    .{ .left = 8, .top = 442, .right = 192, .bottom = 482 },
+};
+
+fn stashCtx(rows: []const Rect, slot: ?Rect) Context {
+    return .{
+        .window = win,
+        .content_rect = content,
+        .sidebar_rect = t_sidebar,
+        .stash_rows = rows,
+        .stash_slot = slot,
+        .can_stash = true,
+    };
+}
+
+test "T1844: a stash between rows is a caret on the gap, as wide as the rows" {
+    const hl = forTarget(.{ .stash = .{ .window = win, .index = 1 } }, stashCtx(&t_rows, null)).?;
+    try testing.expectEqual(Kind.stash, hl.kind);
+    try testing.expectEqual(@as(i32, 8), hl.rect.left);
+    try testing.expectEqual(@as(i32, 192), hl.rect.right);
+    // The gap is 440..442, centred at 441; the caret is 4px tall at 1.0.
+    try testing.expectEqual(@as(i32, 439), hl.rect.top);
+    try testing.expectEqual(@as(i32, 443), hl.rect.bottom);
+}
+
+test "T1844: the top and the end of the stash put the caret on the outer edges" {
+    const top = forTarget(.{ .stash = .{ .window = win, .index = 0 } }, stashCtx(&t_rows, null)).?;
+    try testing.expectEqual(@as(i32, 398), top.rect.top);
+    const end = forTarget(.{ .stash = .{ .window = win, .index = 2 } }, stashCtx(&t_rows, null)).?;
+    try testing.expectEqual(@as(i32, 480), end.rect.top);
+    const past = forTarget(.{ .stash = .{ .window = win, .index = 9 } }, stashCtx(&t_rows, null)).?;
+    try testing.expectEqual(end.rect, past.rect);
+}
+
+test "T1844: an empty stash washes the drop slot, or the sidebar without one" {
+    const slot: Rect = .{ .left = 8, .top = 300, .right = 192, .bottom = 340 };
+    const hl = forTarget(.{ .stash = .{ .window = win, .index = 0 } }, stashCtx(&.{}, slot)).?;
+    try testing.expectEqual(Kind.stash_slot, hl.kind);
+    try testing.expectEqual(slot, hl.rect);
+    const bare = forTarget(.{ .stash = .{ .window = win, .index = 0 } }, stashCtx(&.{}, null)).?;
+    try testing.expectEqual(t_sidebar, bare.rect);
+}
+
+test "T1844: a stash the window would refuse is not previewed" {
+    var c = stashCtx(&t_rows, null);
+    c.can_stash = false;
+    try testing.expectEqual(@as(?Highlight, null), forTarget(.{ .stash = .{ .window = win, .index = 0 } }, c));
+    var hidden = stashCtx(&t_rows, null);
+    hidden.sidebar_rect = null;
+    try testing.expectEqual(@as(?Highlight, null), forTarget(.{ .stash = .{ .window = win, .index = 0 } }, hidden));
 }

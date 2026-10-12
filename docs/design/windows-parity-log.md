@@ -35279,3 +35279,25 @@ moved to T1814.
   tooltip, created OWNED by every window, lifted a background-opened window
   above the frontmost one. The tooltip is now unowned, and arm R is green.
   Filed T1866 to measure the other owned tooltips the same way.
+
+## 2026-10-11 — T1844: panes drag into and out of the Windows pane sidebar
+
+- **What landed.** The sidebar is a drop target and its rows/rail tiles are
+  drag sources, on the one pane-drag machinery (Mac 597a193cc "Drop
+  resolution"). Dropping on the sidebar stashes at the gap nearest the
+  pointer (the grid section = top of the stash); dragging a stashed tile onto
+  the grid restores it there in one step; onto another window's sidebar moves
+  and stashes it there in one step. An empty "Drop to stash" slot shows in
+  every sidebar during a drag with nothing stashed; the last pane on screen is
+  refused and not previewed; the open card does not fold away mid-drag; Escape
+  cancels a sidebar drag (rearrange mode keeps its own Escape).
+- **Evidence.** New `pane-sidebar-drag.ps1` ALL PASS (57), negative control
+  red; 16 new unit tests across pane_drop / drop_highlight / pane_stash /
+  pane_sidebar. Floor lib/none/win32/agent PASS; P1-P3 ALL PASS; the 17
+  harnesses Window.zig's edit made due all PASS, rearrange-drag included.
+- **Caught by a harness.** rearrange-drag went red: the new Escape hook
+  cancelled a rearrange-mode drag WITHOUT leaving the mode, which the T1531
+  contract does. The hook now stands aside in rearrange mode. unroll-count
+  caught four vacuous `.Count`s in the new script before it shipped.
+- **Not here.** The all-windows scope's drop-on-another-window's-group (T1829)
+  and a grab handle outside rearrange mode (T1830) reuse this target unchanged.

@@ -1842,6 +1842,12 @@ pub fn run(self: *App) !void {
         if (msg.message == w32.WM_KEYDOWN and msg.hwnd != null) {
             const vk: u16 = @intCast(msg.wParam & 0xFFFF);
 
+            // Escape cancels a live pane drag (T1844, Mac's dragging session
+            // does). The window holds the mouse capture but the keyboard is
+            // still on whatever pane had it - a drag from the sidebar starts
+            // without rearrange mode, whose own Escape would not apply.
+            if (vk == w32.VK_ESCAPE and self.cancelPaneDrag()) continue :loop;
+
             // Modal "Rename Window" dialog: Enter/Escape/Tab are handled
             // by our code; every other key reaches the native controls
             // via Translate/Dispatch below. Checked first and exclusive —
@@ -6394,6 +6400,15 @@ pub fn createEmptyWindow(self: *App, opts: Window.InitOptions) !*Window {
 pub fn hasWindow(self: *const App, window: *const Window) bool {
     for (self.windows.items) |w| {
         if (w == window) return true;
+    }
+    return false;
+}
+
+/// Cancel whichever window's pane drag is live (T1844). One drag at a time
+/// exists - it holds the mouse capture - so the first one found is it.
+fn cancelPaneDrag(self: *App) bool {
+    for (self.windows.items) |w| {
+        if (w.cancelPaneDrag()) return true;
     }
     return false;
 }

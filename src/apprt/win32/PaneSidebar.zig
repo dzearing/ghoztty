@@ -51,6 +51,8 @@ const list_selection = @import("list_selection.zig");
 const icon_button = @import("icon_button.zig");
 const icon_button_paint = @import("icon_button_paint.zig");
 const split_geometry = @import("split_geometry.zig");
+const pane_drop = @import("pane_drop.zig");
+const drop_highlight = @import("drop_highlight.zig");
 const PaneView = @import("PaneView.zig");
 const Window = @import("Window.zig");
 const ActivityState = @import("../../terminal/main.zig").osc.Command.ActivityState;
@@ -122,6 +124,14 @@ scale: f32 = 1.0,
 hover: pane_sidebar.Hit = .none,
 pressed: pane_sidebar.Hit = .none,
 tracking: bool = false,
+/// Where the held press went down, in the pressed surface's client
+/// coordinates: a press on a row that travels past the drag threshold hands
+/// the pane to the window's drag (T1844).
+press_x: i32 = 0,
+press_y: i32 = 0,
+/// A pane drag is live somewhere (T1844): the empty "Drop to stash" slot
+/// shows while nothing is stashed, and the open card does not contract.
+drag_active: bool = false,
 
 // The hover-open card (T1842).
 card_hwnd: ?w32.HWND = null,
@@ -453,10 +463,93 @@ fn layoutFor(self: *PaneSidebar, which: Surface) pane_sidebar.Layout {
         items[i] = .{ .section = e.section, .two_line = e.subtitle.len > 0 };
     }
     self.ensureFonts();
-    return switch (which) {
+    var l = switch (which) {
         .rail => pane_sidebar.layout(self.mode, r.right - r.left, r.bottom - r.top, items[0..n], self.metrics, self.scale),
         .card => pane_sidebar.layoutOpen(r.right - r.left, r.bottom - r.top, items[0..n], self.metrics, self.scale),
     };
+    if (self.drag_active) pane_sidebar.addDropSlot(&l, self.metrics, self.scale);
+    return l;
+}
+
+// -------------------------------------------------------------------------
+// Drag and drop (T1844)
+// -------------------------------------------------------------------------
+
+/// The sidebar as a pane-drop target, in screen coordinates.
+pub const DropGeometry = struct {
+    /// Anywhere on it means stash: the column, widened to the open card.
+    sidebar: pane_drop.Rect,
+    /// The stashed rows (rail tiles), top to bottom.
+    rows: []const pane_drop.Rect,
+    /// The empty "Drop to stash" slot, while a drag shows one.
+    slot: ?pane_drop.Rect,
+};
+
+/// The drop target this sidebar presents right now, or null while it is
+/// hidden (Mac: a sidebar hidden outright is not a target; the rail always
+/// is). Rows are written into `rows_out` and borrowed by the answer.
+pub fn dropGeometry(self: *PaneSidebar, rows_out: []pane_drop.Rect) ?DropGeometry {
+    if (self.mode == .hidden) return null;
+    if (w32.IsWindowVisible(self.hwnd) == 0) return null;
+    var col: w32.RECT = undefined;
+    if (w32.GetWindowRect(self.hwnd, &col) == 0) return null;
+    const which: Surface = if (self.card_open and self.card_hwnd != null) .card else .rail;
+    const hwnd = self.surfaceHwnd(which) orelse return null;
+    var origin = w32.POINT{ .x = 0, .y = 0 };
+    _ = w32.ClientToScreen(hwnd, &origin);
+    const l = self.layoutFor(which);
+    var area: pane_drop.Rect = .{ .left = col.left, .top = col.top, .right = col.right, .bottom = col.bottom };
+    // The open card hangs over the grid; all of it is the sidebar. Its
+    // trailing margin is not (the region leaves it to the grid).
+    if (which == .card) area.right = @max(area.right, origin.x + l.card.right);
+    var n: usize = 0;
+    var i = l.first_stashed;
+    while (i < l.count and n < rows_out.len) : (i += 1) {
+        rows_out[n] = toScreen(l.items[i], origin);
+        n += 1;
+    }
+    return .{
+        .sidebar = area,
+        .rows = rows_out[0..n],
+        .slot = if (l.drop_slot) |sl| toScreen(sl, origin) else null,
+    };
+}
+
+fn toScreen(r: pane_sidebar.Rect, origin: w32.POINT) pane_drop.Rect {
+    return .{ .left = r.left + origin.x, .top = r.top + origin.y, .right = r.right + origin.x, .bottom = r.bottom + origin.y };
+}
+
+/// A pane drag started or ended (in any window: every sidebar is a target).
+pub fn setDragActive(self: *PaneSidebar, on: bool) void {
+    if (self.drag_active == on) return;
+    self.drag_active = on;
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    if (self.card_hwnd) |c| _ = w32.InvalidateRect(c, null, 0);
+    // The grace period the drag deferred starts once it is let go.
+    if (!on and self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();
+}
+
+/// A press on a row that has travelled far enough is a DRAG of that pane:
+/// hand it to the window's pane drag (the one resolver, the one preview).
+/// True when it did, and the press is no longer this sidebar's.
+fn maybeStartRowDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
+    if (w32.GetCapture() != hwnd) return false;
+    const i = switch (self.pressed) {
+        .item => |i| i,
+        else => return false,
+    };
+    if (!drop_highlight.exceedsThreshold(x - self.press_x, y - self.press_y, drop_highlight.thresholdPx(self.scale))) return false;
+    if (i >= self.entries.items.len) return false;
+    const pane = self.entries.items[i].pane;
+    self.pressed = .none;
+    _ = w32.InvalidateRect(hwnd, null, 0);
+    var press = w32.POINT{ .x = self.press_x, .y = self.press_y };
+    _ = w32.ClientToScreen(hwnd, &press);
+    var cur = w32.POINT{ .x = x, .y = y };
+    _ = w32.ClientToScreen(hwnd, &cur);
+    log.info("pane sidebar row drag start item={d} section={s}", .{ i, @tagName(self.entries.items[i].section) });
+    self.window.beginSidebarDrag(pane, press, cur);
+    return true;
 }
 
 fn makeFont(height: i32, weight: i32) ?*anyopaque {
@@ -742,6 +835,32 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
             }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
         }
     }
+    self.paintDropSlot(hdc, l, t);
+}
+
+/// The empty "Drop to stash" slot (T1844), shown during a drag with nothing
+/// stashed: a recessed well with the stash glyph - and, as a row, Mac's
+/// label - so the target is visible before anything is in it.
+fn paintDropSlot(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
+    const r = l.drop_slot orelse return;
+    const radius = pane_sidebar.px(toc.row_corner_dip, self.scale);
+    fillRound(hdc, r, radius, rgb(shade(t.surface, if (t.dark) 10 else -10)));
+    const rows = l.mode == .expanded or l.open;
+    if (!rows) {
+        glyph(hdc, self.scale, r, glyph_stash, 12, t.secondary);
+        return;
+    }
+    const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
+    const icon_box = pane_sidebar.px(16, self.scale);
+    const icon_r: pane_sidebar.Rect = .{ .left = r.left + text_inset, .top = r.top, .right = r.left + text_inset + icon_box, .bottom = r.bottom };
+    glyph(hdc, self.scale, icon_r, glyph_stash, 12, t.secondary);
+    if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+    drawText(hdc, std.unicode.utf8ToUtf16LeStringLiteral("Drop to stash \u{2014} it keeps running"), .{
+        .left = icon_r.right + pane_sidebar.px(8, self.scale),
+        .top = r.top,
+        .right = r.right - text_inset,
+        .bottom = r.bottom,
+    }, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
 }
 
 fn paintRowButton(self: *PaneSidebar, hdc: w32.HDC, i: usize, b: pane_sidebar.Rect, section: pane_sidebar.Section, t: Theme) void {
@@ -821,6 +940,7 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
             self.paintBadge(hdc, corner, e.state, t);
         }
     }
+    self.paintDropSlot(hdc, l, t);
 }
 
 fn ensureCardCache(cache: *CardCache, hdc: w32.HDC, w: i32, h: i32, bg: color_math.Rgb, scale: f32) void {
@@ -1101,7 +1221,7 @@ fn onCloseTimer(self: *PaneSidebar) void {
     if (!self.card_open) return;
     // A press held on the card (a click in progress; later a drag, T1844, or
     // a menu, T1845) keeps it open until it is let go.
-    const held = w32.GetCapture() == c;
+    const held = w32.GetCapture() == c or self.drag_active;
     switch (hov.closeVerdict(self.pointerOn(.card, null), held)) {
         .stay => {},
         .retry => self.scheduleClose(),
@@ -1311,6 +1431,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         w32.WM_MOUSEMOVE => {
             const x = xOf(lparam);
             const y = yOf(lparam);
+            if (self.maybeStartRowDrag(hwnd, x, y)) return 0;
             self.setHover(which, self.hitAt(which, x, y));
             const tracked = switch (which) {
                 .rail => &self.tracking,
@@ -1352,7 +1473,9 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         w32.WM_LBUTTONDOWN => {
             // Activation is on the up over the same target (the standard
             // button affordance), so a press that slides off does nothing.
-            self.pressed = self.hitAt(which, xOf(lparam), yOf(lparam));
+            self.press_x = xOf(lparam);
+            self.press_y = yOf(lparam);
+            self.pressed = self.hitAt(which, self.press_x, self.press_y);
             _ = w32.SetCapture(hwnd);
             _ = w32.InvalidateRect(hwnd, null, 0);
             return 0;

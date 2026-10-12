@@ -4194,6 +4194,23 @@ $GuardTable = @(
             'test\win32\pane-sidebar.ps1'
         )
     },
+    # Dragging panes into and out of the sidebar (T1844): the `.stash` drop
+    # target and the row drag source. The resolver, preview and stash-order
+    # rules are unit-tested in every lane; whether a posted drag from a row
+    # actually stashes, reorders, restores and crosses windows is only answered
+    # on the box. Window.zig is left out for the ipc-stash row's reason.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-drag'
+        Script = 'test\win32\pane-sidebar-drag.ps1'
+        Stamp  = 'test\win32\pane-sidebar-drag.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_drop.zig',
+            'src\apprt\win32\drop_highlight.zig',
+            'src\apprt\win32\pane_stash.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-drag.ps1'
+        )
+    },
     # The build-mode gate itself (T350, tightened by T1158). BuildMode.ps1 was
     # only ever covered by the build-fresh row above, whose script grades the
     # FRESHNESS half - so the gate's own harness, build-mode-guard.ps1, had no

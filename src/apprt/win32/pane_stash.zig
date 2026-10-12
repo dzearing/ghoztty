@@ -55,6 +55,44 @@ pub fn mark(view: anytype) void {
     next_seq += 1;
 }
 
+/// The most stashed leaves `markAt` will reorder; past it the pane goes on
+/// top, which is still a stash, just not at the gap it was dropped on.
+pub const max_reorder: usize = 128;
+
+/// Mark `view` stashed at `index` in the stash, 0 being the top (T1844, Mac
+/// `stashing(_:at:)`): a drop between two stashed rows lands between them.
+/// An index past the end appends at the bottom. Re-stashing a stashed pane
+/// moves it to `index` among the OTHERS - the gap it was dropped on, counted
+/// without itself. The order is all a stash has, so the others are renumbered
+/// bottom-first with fresh numbers; their relative order is unchanged. Like
+/// `mark`, does not check the invariants.
+pub fn markAt(tree: anytype, view: anytype, index: usize) void {
+    const View = @TypeOf(view.*);
+    var others: [max_reorder]*View = undefined;
+    var n: usize = 0;
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        if (entry.view == view or !isStashed(entry.view)) continue;
+        if (n == others.len) return mark(view);
+        others[n] = entry.view;
+        n += 1;
+    }
+    // Top first: the larger number is nearer the top.
+    std.mem.sort(*View, others[0..n], {}, struct {
+        fn topFirst(_: void, a: *View, b: *View) bool {
+            return a.stash_seq > b.stash_seq;
+        }
+    }.topFirst);
+    const at = @min(index, n);
+    // Bottom-first, so the top ends up the most recent.
+    var i: usize = n + 1;
+    while (i > 0) {
+        i -= 1;
+        const v: *View = if (i == at) view else if (i < at) others[i] else others[i - 1];
+        mark(v);
+    }
+}
+
 /// Put `view` back in the layout. A no-op on a pane that is not stashed.
 pub fn unmark(view: anytype) void {
     view.stash_seq = 0;
@@ -590,4 +628,51 @@ test "pane_stash: equalize on the visible tree lifts back, collapsed splits keep
     // would have given. The collapsed B/C split kept the 0.7 B left at.
     try std.testing.expectApproxEqAbs(@as(f32, 0.5), @as(f32, tree.nodes[0].split.ratio), 0.01);
     try std.testing.expectApproxEqAbs(@as(f32, 0.7), @as(f32, tree.nodes[bc.idx()].split.ratio), 0.01);
+}
+
+test "pane_stash: markAt stashes at a gap and keeps the others' order (T1844)" {
+    const alloc = std.testing.allocator;
+    var a: TestView = .{ .label = "A" };
+    var b: TestView = .{ .label = "B" };
+    var c: TestView = .{ .label = "C" };
+    var tree = try threePane(alloc, &a, &b, &c);
+    defer tree.deinit();
+
+    mark(&b);
+    mark(&c); // stash, top first: C, B
+    markAt(tree, &a, 1); // between them: C, A, B
+    try std.testing.expectEqual(@as(?usize, 0), stashIndex(tree, &c));
+    try std.testing.expectEqual(@as(?usize, 1), stashIndex(tree, &a));
+    try std.testing.expectEqual(@as(?usize, 2), stashIndex(tree, &b));
+
+    // An index past the end appends at the bottom.
+    unmark(&a);
+    markAt(tree, &a, 99);
+    try std.testing.expectEqual(@as(?usize, 2), stashIndex(tree, &a));
+    try std.testing.expectEqual(@as(?usize, 0), stashIndex(tree, &c));
+
+    // Index 0 is the top, the same as a plain stash.
+    markAt(tree, &a, 0);
+    try std.testing.expectEqual(@as(?usize, 0), stashIndex(tree, &a));
+    try std.testing.expectEqual(@as(?usize, 1), stashIndex(tree, &c));
+    try std.testing.expectEqual(@as(?usize, 2), stashIndex(tree, &b));
+}
+
+test "pane_stash: markAt on a stashed pane reorders it among the others (T1844)" {
+    const alloc = std.testing.allocator;
+    var a: TestView = .{ .label = "A" };
+    var b: TestView = .{ .label = "B" };
+    var c: TestView = .{ .label = "C" };
+    var tree = try threePane(alloc, &a, &b, &c);
+    defer tree.deinit();
+
+    mark(&a);
+    mark(&b); // B, A
+    markAt(tree, &b, 1); // dragged below A: A, B
+    try std.testing.expectEqual(@as(?usize, 0), stashIndex(tree, &a));
+    try std.testing.expectEqual(@as(?usize, 1), stashIndex(tree, &b));
+    try std.testing.expect(!isStashed(&c));
+    // Dropped back where it already is: nothing moves.
+    markAt(tree, &b, 1);
+    try std.testing.expectEqual(@as(?usize, 1), stashIndex(tree, &b));
 }

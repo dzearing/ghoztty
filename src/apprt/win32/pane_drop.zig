@@ -93,6 +93,10 @@ pub const Target = union(enum) {
     /// "released over nothing" means.
     new_window: Point,
 
+    /// Stash the dragged pane in this window's pane sidebar at `index`, 0
+    /// being the top of the stash (T1844, Mac `.stash(window:index:)`).
+    stash: struct { window: WindowRef, index: usize },
+
     /// The window this target lands in, or null for a brand new one.
     pub fn window(self: Target) ?WindowRef {
         return switch (self) {
@@ -101,6 +105,7 @@ pub const Target = union(enum) {
             .top_level => |s| s.window,
             .new_tab => |s| s.window,
             .new_window => null,
+            .stash => |s| s.window,
         };
     }
 };
@@ -145,6 +150,15 @@ pub const Candidate = struct {
 
     /// Tab buttons in visual order, left to right.
     tab_button_rects: []const Rect = &.{},
+
+    /// The pane sidebar (T1844): the pinned panel, the mini rail's column, or
+    /// the rail's card opened over the grid. Null while the sidebar is hidden
+    /// - a sidebar the user hid outright is not a target.
+    sidebar_rect: ?Rect = null,
+
+    /// The stashed rows (or rail tiles), top to bottom. Only their vertical
+    /// midpoints are read: the stash index is the gap nearest the pointer.
+    stash_row_rects: []const Rect = &.{},
 };
 
 /// The pixel distances the resolution rules are stated in.
@@ -233,6 +247,18 @@ pub fn resolve(
         return .{ .new_tab = .{
             .window = candidate.window,
             .index = tabIndexAt(candidate, point),
+        } };
+    }
+
+    // The sidebar next (T1844, Mac's precedence: tab bar, sidebar, edge band,
+    // panes). It is chrome over the content - the rail's card opens OVER the
+    // grid - so a point on it never also means a pane, and anywhere on it
+    // means stash. The grid section stashes at the top, so a drop on the
+    // sidebar never does nothing.
+    if (sidebarContains(candidate, point)) {
+        return .{ .stash = .{
+            .window = candidate.window,
+            .index = stashIndexAt(candidate.stash_row_rects, point),
         } };
     }
 
@@ -397,6 +423,24 @@ fn tabBarContains(c: Candidate, p: Point) bool {
     return r.contains(p);
 }
 
+fn sidebarContains(c: Candidate, p: Point) bool {
+    const r = c.sidebar_rect orelse return false;
+    return r.contains(p);
+}
+
+/// The gap between stashed rows nearest `point`: the number of rows whose
+/// vertical midpoint lies above it. A point above every row - the grid
+/// section, the header - is the top of the stash, and one below them all
+/// appends.
+pub fn stashIndexAt(rows: []const Rect, point: Point) usize {
+    var n: usize = 0;
+    for (rows) |r| {
+        const mid = r.top + @divFloor(r.height(), 2);
+        if (point.y >= mid) n += 1;
+    }
+    return n;
+}
+
 /// The lowest-z-order candidate `pred` accepts.
 ///
 /// Mac sorts the array up front; picking the minimum in one pass is the same
@@ -424,7 +468,7 @@ fn windowHit(c: Candidate, p: Point) bool {
     if (c.frame_rect) |f| {
         if (f.contains(p)) return true;
     }
-    return contentHit(c, p) or tabBarContains(c, p);
+    return contentHit(c, p) or tabBarContains(c, p) or sidebarContains(c, p);
 }
 
 /// Over a button: insert at that button's index. Over the strip's background
@@ -856,4 +900,105 @@ test "Target.window answers for every kind" {
     try testing.expectEqual(@as(?WindowRef, 3), top.window());
     try testing.expectEqual(@as(?WindowRef, 4), tab.window());
     try testing.expectEqual(@as(?WindowRef, null), win.window());
+}
+
+// -- the sidebar (T1844) ----------------------------------------------------
+
+/// A window whose content starts right of a 200px sidebar, with two stashed
+/// rows at y 400-440 and 440-480.
+const sidebar_rows = [_]Rect{
+    .{ .left = 0, .top = 400, .right = 200, .bottom = 440 },
+    .{ .left = 0, .top = 440, .right = 200, .bottom = 480 },
+};
+
+fn sidebarCandidate(panes: []const PaneRect, rows: []const Rect) Candidate {
+    return .{
+        .window = 1,
+        .z_order = 0,
+        .content_rect = .{ .left = 200, .top = 0, .right = 1200, .bottom = 800 },
+        .pane_rects = panes,
+        .sidebar_rect = .{ .left = 0, .top = 0, .right = 200, .bottom = 800 },
+        .stash_row_rects = rows,
+    };
+}
+
+test "anywhere on the sidebar means stash" {
+    const panes = [_]PaneRect{.{ .id = other_id, .rect = .{ .left = 200, .top = 0, .right = 1200, .bottom = 800 } }};
+    const cands = [_]Candidate{sidebarCandidate(&panes, &sidebar_rows)};
+    const t = resolve(.{ .x = 100, .y = 700 }, &cands, dragged_id, m1).?;
+    try testing.expect(t == .stash);
+    try testing.expectEqual(@as(WindowRef, 1), t.window().?);
+}
+
+test "the stash index is the gap between stashed rows nearest the pointer" {
+    const cands = [_]Candidate{sidebarCandidate(&.{}, &sidebar_rows)};
+    const cases = [_]struct { y: i32, index: usize }{
+        // The grid section, above every stashed row: the top of the stash.
+        .{ .y = 50, .index = 0 },
+        .{ .y = 405, .index = 0 }, // upper half of the first row
+        .{ .y = 425, .index = 1 }, // lower half of the first row
+        .{ .y = 445, .index = 1 }, // upper half of the second
+        .{ .y = 470, .index = 2 }, // lower half of the second
+        .{ .y = 790, .index = 2 }, // below them all: appends
+    };
+    for (cases) |c| {
+        const t = resolve(.{ .x = 100, .y = c.y }, &cands, dragged_id, m1).?;
+        try testing.expectEqual(c.index, t.stash.index);
+    }
+}
+
+test "with nothing stashed the sidebar stashes at the top" {
+    const cands = [_]Candidate{sidebarCandidate(&.{}, &.{})};
+    const t = resolve(.{ .x = 100, .y = 600 }, &cands, dragged_id, m1).?;
+    try testing.expectEqual(@as(usize, 0), t.stash.index);
+}
+
+test "the sidebar beats the edge band and the pane under it" {
+    // The open card sits OVER the grid: its rect overlaps the content's left
+    // edge band and the pane there, and a point on it is still a stash.
+    const panes = [_]PaneRect{.{ .id = other_id, .rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 } }};
+    var c = twoPaneCandidate(&panes);
+    c.sidebar_rect = .{ .left = 0, .top = 0, .right = 300, .bottom = 800 };
+    const cands = [_]Candidate{c};
+    const on_band = resolve(.{ .x = 5, .y = 400 }, &cands, dragged_id, m1).?;
+    try testing.expect(on_band == .stash);
+    const on_pane = resolve(.{ .x = 250, .y = 400 }, &cands, dragged_id, m1).?;
+    try testing.expect(on_pane == .stash);
+    // Past the card: the pane again.
+    const past = resolve(.{ .x = 500, .y = 400 }, &cands, dragged_id, m1).?;
+    try testing.expect(past == .swap);
+}
+
+test "the tab strip beats the sidebar where they overlap" {
+    var c = sidebarCandidate(&.{}, &.{});
+    c.tab_bar_rect = .{ .left = 0, .top = 0, .right = 1200, .bottom = 40 };
+    const cands = [_]Candidate{c};
+    const t = resolve(.{ .x = 100, .y = 20 }, &cands, dragged_id, m1).?;
+    try testing.expect(t == .new_tab);
+}
+
+test "a hidden sidebar resolves as before" {
+    const panes = [_]PaneRect{.{ .id = other_id, .rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 } }};
+    const cands = [_]Candidate{twoPaneCandidate(&panes)};
+    const t = resolve(.{ .x = 5, .y = 400 }, &cands, dragged_id, m1).?;
+    try testing.expect(t == .top_level);
+}
+
+test "a point on another window's sidebar stashes THERE" {
+    const panes = [_]PaneRect{.{ .id = dragged_id, .rect = .{ .left = 0, .top = 0, .right = 1000, .bottom = 800 } }};
+    var other = sidebarCandidate(&.{}, &.{});
+    other.window = 2;
+    other.z_order = 0;
+    other.content_rect = .{ .left = 2200, .top = 0, .right = 3000, .bottom = 800 };
+    other.sidebar_rect = .{ .left = 2000, .top = 0, .right = 2200, .bottom = 800 };
+    var own = twoPaneCandidate(&panes);
+    own.z_order = 1;
+    const cands = [_]Candidate{ own, other };
+    const t = resolve(.{ .x = 2100, .y = 300 }, &cands, dragged_id, m1).?;
+    try testing.expectEqual(@as(WindowRef, 2), t.stash.window);
+}
+
+test "Target.window answers for a stash" {
+    const s: Target = .{ .stash = .{ .window = 9, .index = 3 } };
+    try testing.expectEqual(@as(?WindowRef, 9), s.window());
 }

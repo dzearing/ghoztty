@@ -3545,6 +3545,9 @@ pub const RearrangeDrag = struct {
         /// Released over nothing: the pane becomes a window of its own, with
         /// its frame at this screen rect (T1538).
         new_window: drop_highlight.Rect,
+        /// Released on the pane sidebar: stash it there, at this index in
+        /// the stash (T1844).
+        stash: struct { index: usize },
     };
 };
 
@@ -3655,19 +3658,20 @@ fn paneById(self: *Window, tab: usize, id: []const u8) ?*PaneView {
 /// the caller's (temporary) candidate array.
 ///
 /// Which window it lands in is the caller's to record — it resolved the target
-/// against a candidate set and therefore already knows. Null for a new-tab
-/// drop the destination refuses (`can_new_tab`), and for the new-WINDOW drop,
-/// which carries a frame the caller measures rather than a pane id.
+/// against a candidate set and therefore already knows. Null for a new-tab or
+/// stash drop the destination refuses (`honoured`), and for the new-WINDOW
+/// drop, which carries a frame the caller measures rather than a pane id.
 fn ownedDrop(
     target: pane_drop.Target,
-    can_new_tab: bool,
+    honoured: bool,
 ) ?RearrangeDrag.Drop {
     return switch (target) {
         .split => |sp| .{ .split = .{ .pane = copyPaneId(sp.pane) orelse return null, .side = sp.side } },
         .swap => |sp| .{ .swap = .{ .pane = copyPaneId(sp.pane) orelse return null } },
         .top_level => |sp| .{ .top_level = .{ .side = sp.side } },
-        .new_tab => |sp| if (can_new_tab) .{ .new_tab = .{ .index = sp.index } } else null,
+        .new_tab => |sp| if (honoured) .{ .new_tab = .{ .index = sp.index } } else null,
         .new_window => null,
+        .stash => |sp| if (honoured) .{ .stash = .{ .index = sp.index } } else null,
     };
 }
 
@@ -3685,6 +3689,54 @@ fn dropDirection(side: pane_drop.Side) SplitTree(PaneView).Split.Direction {
         .up => .up,
         .down => .down,
     };
+}
+
+/// Start a pane drag from a pane sidebar row (T1844, Mac's rows are drag
+/// sources on the same machinery). The sidebar has already seen the press
+/// travel past the threshold, so the drag starts live at `cur`. Both points
+/// are in screen coordinates; the row names its pane explicitly because a
+/// stashed pane has no slot to find it through.
+pub fn beginSidebarDrag(self: *Window, pane: *PaneView, press: w32.POINT, cur: w32.POINT) void {
+    if (self.rearrange_drag != null) return;
+    if (!self.paneInActiveTab(pane)) return;
+    const hwnd = self.hwnd orelse return;
+    var p = press;
+    _ = w32.ScreenToClient(hwnd, &p);
+    var c = cur;
+    _ = w32.ScreenToClient(hwnd, &c);
+    self.beginRearrangeDrag(pane, p.x, p.y);
+    self.updateRearrangeDrag(c.x, c.y);
+}
+
+/// Escape during a live pane drag (T1844): cancel it. False when there is no
+/// live drag, so the key goes where it was going - and in rearrange mode,
+/// whose own Escape already cancels the drag by leaving the mode (T1531);
+/// swallowing it there would leave the mode on behind a cancelled drag.
+pub fn cancelPaneDrag(self: *Window) bool {
+    if (self.rearrange_mode) return false;
+    const d = self.rearrange_drag orelse return false;
+    if (!d.active) return false;
+    self.endRearrangeDrag(false);
+    return true;
+}
+
+/// Every window's sidebar shows its empty drop slot while a drag is live,
+/// so whichever window the pane is carried to shows its target (T1844).
+fn setSidebarsDragActive(self: *Window, on: bool) void {
+    for (self.app.windows.items) |win| {
+        if (win.sidebar) |sb| sb.setDragActive(on);
+    }
+}
+
+/// Will a stash drop into `dest` be HONOURED (T1844)? Stashing the last pane
+/// on screen is refused, so a drag of a tab's last visible pane onto its own
+/// sidebar previews nothing. Arriving from another tab or window always has
+/// something to stash: the pane lands beside the panes already there first.
+fn canStashDrop(self: *Window, view: *PaneView, source_tab: usize, dest: *Window) bool {
+    if (dest != self) return true;
+    if (source_tab != self.active_tab) return true;
+    if (pane_stash.isStashed(view)) return true;
+    return self.visibleLeafCount(source_tab) > 1;
 }
 
 /// Start a pane drag from a press on that pane's header (T1531).
@@ -3770,6 +3822,7 @@ fn dropCandidateFor(
     slots: []PaneSlot,
     rects: []pane_drop.PaneRect,
     tabs: []pane_drop.Rect,
+    stash_rows: []pane_drop.Rect,
 ) ?pane_drop.Candidate {
     if (win.hwnd == null) return null;
     const n = win.collectPaneSlots(slots);
@@ -3788,6 +3841,8 @@ fn dropCandidateFor(
             .bottom = wr.bottom,
         };
     }
+    // The pane sidebar (T1844). The quick terminal has none.
+    const sidebar: ?PaneSidebar.DropGeometry = if (win.sidebar) |sb| sb.dropGeometry(stash_rows) else null;
     return .{
         .window = win.dropWindowRef(),
         .z_order = z,
@@ -3796,6 +3851,8 @@ fn dropCandidateFor(
         .pane_rects = rects[0..n],
         .tab_bar_rect = if (strip) |st| st.band else null,
         .tab_button_rects = if (strip) |st| st.tabs else &.{},
+        .sidebar_rect = if (sidebar) |g| g.sidebar else null,
+        .stash_row_rects = if (sidebar) |g| g.rows else &.{},
     };
 }
 
@@ -3902,6 +3959,8 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
         d.active = true;
         // The press has become a drag: mark the pane being carried (T1536).
         self.repaintRearrangeHeaders();
+        // Every sidebar is a target now, and shows its empty slot (T1844).
+        self.setSidebarsDragActive(true);
     }
     // Every move, not only the first: the capture means no `WM_SETCURSOR`
     // arrives while the button is down, so nothing else would keep the
@@ -3914,15 +3973,17 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
     var own_slots: [MAX_DRAG_NODES]PaneSlot = undefined;
     var own_rects: [MAX_DRAG_NODES]pane_drop.PaneRect = undefined;
     var own_tabs: [MAX_TABS]pane_drop.Rect = undefined;
+    var own_stash: [pane_sidebar.max_items]pane_drop.Rect = undefined;
     var other_slots: [MAX_DROP_WINDOWS][MAX_DROP_PANES]PaneSlot = undefined;
     var other_rects: [MAX_DROP_WINDOWS][MAX_DROP_PANES]pane_drop.PaneRect = undefined;
     var other_tabs: [MAX_DROP_WINDOWS][MAX_DROP_TABS]pane_drop.Rect = undefined;
+    var other_stash: [MAX_DROP_WINDOWS][pane_sidebar.max_items]pane_drop.Rect = undefined;
 
     var cands: [MAX_DROP_WINDOWS + 1]pane_drop.Candidate = undefined;
     var cand_windows: [MAX_DROP_WINDOWS + 1]*Window = undefined;
     var n: usize = 0;
 
-    if (dropCandidateFor(self, d.self_depth, &own_slots, &own_rects, &own_tabs)) |c| {
+    if (dropCandidateFor(self, d.self_depth, &own_slots, &own_rects, &own_tabs, &own_stash)) |c| {
         cands[n] = c;
         cand_windows[n] = self;
         n += 1;
@@ -3938,6 +3999,7 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
             &other_slots[i],
             &other_rects[i],
             &other_tabs[i],
+            &other_stash[i],
         )) |c| {
             cands[n] = c;
             cand_windows[n] = win;
@@ -3968,30 +4030,47 @@ fn updateRearrangeDrag(self: *Window, x: i32, y: i32) void {
                 break :resolved;
             };
             const dest = cand_windows[i];
-            const can_new_tab = if (dest == self) switch (t) {
-                .new_tab => |sp| self.canNewTabDrop(d.source_tab, sp.index),
-                // Only a strip drop reads this answer.
+            const honoured = switch (t) {
+                .new_tab => |sp| if (dest == self)
+                    self.canNewTabDrop(d.source_tab, sp.index)
+                else
+                    // The pane is arriving from somewhere else entirely, so
+                    // "make it a tab here" always has something to do — even
+                    // when it is the source window's only pane, which is a
+                    // move that empties that window rather than a no-op.
+                    true,
+                .stash => self.canStashDrop(d.view, d.source_tab, dest),
+                // Only a strip or a sidebar drop reads this answer.
                 else => true,
-            } else
-                // The pane is arriving from somewhere else entirely, so "make
-                // it a tab here" always has something to do — even when it is
-                // the source window's only pane, which is a move that empties
-                // that window rather than a no-op.
-                true;
-            if (ownedDrop(t, can_new_tab)) |drop| {
+            };
+            if (ownedDrop(t, honoured)) |drop| {
                 d.drop = drop;
                 d.dest = if (dest == self) null else dest;
             }
+            // The sidebar's empty slot is not part of what the resolver
+            // reads, so it is asked for here, for the preview alone.
+            var slot_rows: [pane_sidebar.max_items]pane_drop.Rect = undefined;
+            const slot: ?pane_drop.Rect = if (t == .stash) blk: {
+                const sb = dest.sidebar orelse break :blk null;
+                const g = sb.dropGeometry(&slot_rows) orelse break :blk null;
+                break :blk g.slot;
+            } else null;
             d.highlight = drop_highlight.forTarget(t, .{
                 .window = cands[i].window,
                 .content_rect = cands[i].content_rect,
                 .pane_rects = cands[i].pane_rects,
                 .tab_strip = cands[i].tab_bar_rect,
                 .tab_rects = cands[i].tab_button_rects,
-                .can_new_tab = can_new_tab,
+                .can_new_tab = honoured,
+                .sidebar_rect = cands[i].sidebar_rect,
+                .stash_rows = cands[i].stash_row_rects,
+                .stash_slot = slot,
+                .can_stash = honoured,
                 .scale = self.scale,
             });
-            over_other_window = dest != self;
+            // A stash preview may lie over the sidebar's open card, which is
+            // a popup of its own and would otherwise cover it.
+            over_other_window = dest != self or t == .stash;
         } else {
             // Released over nothing: a window of its own (T1538). Refused for
             // a window's last pane — that trade closes one window and opens
@@ -4155,6 +4234,7 @@ fn endRearrangeDrag(self: *Window, commit: bool) void {
     // this.
     self.rearrange_drag = null;
     self.hideDropPreview();
+    if (d.active) self.setSidebarsDragActive(false);
     if (self.hwnd) |h| {
         _ = w32.KillTimer(h, TAB_DWELL_TIMER_ID);
         _ = w32.RemovePropW(h, DRAG_CURSOR_PROP);
@@ -4196,6 +4276,12 @@ fn commitRearrangeDrop(
         return;
     }
 
+    // The pane sidebar (T1844): stash, wherever the sidebar is.
+    if (drop == .stash) {
+        self.commitStashDrop(view, source_tab, at, drop.stash.index, dest_window);
+        return;
+    }
+
     // Another WINDOW (T1538). Re-validated here rather than trusted from the
     // move that resolved it: the pointer was recorded while the button was
     // down and the window behind it may have closed since.
@@ -4203,7 +4289,7 @@ fn commitRearrangeDrop(
         if (dest == self) return;
         if (!self.app.hasWindow(dest)) return;
         if (dest.closing or dest.hwnd == null or dest.tab_count == 0) return;
-        self.commitCrossWindowDrop(view, source_tab, at, dest, drop);
+        self.commitCrossWindowDrop(view, source_tab, at, dest, drop, null);
         return;
     }
 
@@ -4213,7 +4299,7 @@ fn commitRearrangeDrop(
     }
 
     if (source_tab != dest_tab) {
-        self.commitCrossTabDrop(view, source_tab, at, dest_tab, drop);
+        self.commitCrossTabDrop(view, source_tab, at, dest_tab, drop, null);
         return;
     }
 
@@ -4270,8 +4356,8 @@ fn commitRearrangeDrop(
                 return;
             };
         },
-        // Both handled above, before the same-tab path is even chosen.
-        .new_tab, .new_window => unreachable,
+        // All handled above, before the same-tab path is even chosen.
+        .new_tab, .new_window, .stash => unreachable,
     };
 
     // Swap-then-release (T1356), the rule every other tree mutation follows.
@@ -4281,6 +4367,54 @@ fn commitRearrangeDrop(
 
     self.tab_active_pane[source_tab] = view;
     self.finishRearrangeDrop(view);
+}
+
+/// Stash the dragged pane in a pane sidebar, at `index` in its stash (T1844,
+/// Mac `.stash(window:index:)`).
+///
+/// In its own tab this is `stashPane` - with its focus rules and its refusal
+/// of the last pane on screen - followed by the move to the gap it was dropped
+/// on; a pane that is already stashed is only reordered. From another tab or
+/// another window it is Mac's one-step "move and stash": the pane lands at the
+/// top level on the right, the slot a restore will bring it back to, and is
+/// stashed in the same commit, so it is never on screen there in between.
+fn commitStashDrop(
+    self: *Window,
+    view: *PaneView,
+    source_tab: usize,
+    at: SplitTree(PaneView).Node.Handle,
+    index: usize,
+    dest_window: ?*Window,
+) void {
+    const arrive: RearrangeDrag.Drop = .{ .top_level = .{ .side = .right } };
+    if (dest_window) |dest| {
+        if (dest == self) return;
+        if (!self.app.hasWindow(dest)) return;
+        if (dest.closing or dest.hwnd == null or dest.tab_count == 0) return;
+        if (dest.is_quick_terminal) return;
+        self.commitCrossWindowDrop(view, source_tab, at, dest, arrive, index);
+        log.info("pane drop stashed into another window index={d}", .{index});
+        return;
+    }
+    if (source_tab != self.active_tab) {
+        self.commitCrossTabDrop(view, source_tab, at, self.active_tab, arrive, index);
+        log.info("pane drop stashed into another tab index={d}", .{index});
+        return;
+    }
+    if (!pane_stash.isStashed(view)) {
+        self.stashPane(view) catch {
+            _ = w32.MessageBeep(0xFFFFFFFF);
+            return;
+        };
+    }
+    pane_stash.markAt(self.tab_trees[source_tab], view, index);
+    self.app.markLayoutDirty();
+    self.syncPaneSidebar();
+    log.info("pane drop stashed index={d} stash_index={?d} stashed={d}", .{
+        index,
+        pane_stash.stashIndex(self.tab_trees[source_tab], view),
+        pane_stash.stashedCount(self.tab_trees[source_tab]),
+    });
 }
 
 /// Move the dragged pane into a TAB OF ITS OWN, at `index` in the strip
@@ -4333,8 +4467,10 @@ fn commitNewTabDrop(
     old_tree.deinit();
 
     // The source tab's active pane cannot be the one that just left it.
-    self.tab_active_pane[source_tab] = self.firstLeaf(source_tab) orelse view;
+    self.settleLeftTab(source_tab, view);
 
+    // A stashed pane dragged out of the sidebar arrives on screen (T1844).
+    pane_stash.unmark(view);
     leaf_owned = false;
     self.insertPaneAsTabAt(view, leaf, @min(index, self.tab_count));
     self.app.markLayoutDirty();
@@ -4353,6 +4489,7 @@ fn commitCrossTabDrop(
     at: SplitTree(PaneView).Node.Handle,
     dest_tab: usize,
     drop: RearrangeDrag.Drop,
+    stash_at: ?usize,
 ) void {
     const alloc = self.app.core_app.alloc;
     const src = &self.tab_trees[source_tab];
@@ -4410,8 +4547,8 @@ fn commitCrossTabDrop(
                 return;
             };
         },
-        // Both handled by the caller, which never reaches this path with one.
-        .new_tab, .new_window => unreachable,
+        // All handled by the caller, which never reaches this path with one.
+        .new_tab, .new_window, .stash => unreachable,
     }
 
     var old_src = self.tab_trees[source_tab];
@@ -4421,7 +4558,9 @@ fn commitCrossTabDrop(
     old_src.deinit();
     old_dst.deinit();
 
-    self.tab_active_pane[dest_tab] = view;
+    // A stash drop (T1844) stashes the pane where it landed, and the tab
+    // keeps the pane it had in front.
+    if (stash_at) |i| pane_stash.markAt(self.tab_trees[dest_tab], view, i) else self.tab_active_pane[dest_tab] = view;
 
     // The source tab may have just lost its last pane - that is what carrying
     // a tab's only pane into another tab MEANS, and the empty slot has to go.
@@ -4430,7 +4569,7 @@ fn commitCrossTabDrop(
     if (self.tab_trees[source_tab].isEmpty()) {
         self.removeTabSlot(source_tab);
     } else {
-        self.tab_active_pane[source_tab] = self.firstLeaf(source_tab) orelse view;
+        self.settleLeftTab(source_tab, view);
         // A pane may have arrived in the BACKGROUND tab — a cross-tab SWAP
         // sends one there — and it was on screen a moment ago as part of the
         // tab the drop landed in. Nothing else would ever hide it: the layout
@@ -4438,7 +4577,7 @@ fn commitCrossTabDrop(
         // over the pane that replaced it until the next tab switch.
         if (source_tab != self.active_tab) self.setTabSurfacesVisible(source_tab, false);
     }
-    self.finishRearrangeDrop(view);
+    if (stash_at != null) self.finishStashDrop() else self.finishRearrangeDrop(view);
 }
 
 /// Move a live pane into ANOTHER top-level window (T1538).
@@ -4470,6 +4609,7 @@ fn commitCrossWindowDrop(
     at: SplitTree(PaneView).Node.Handle,
     dest: *Window,
     drop: RearrangeDrag.Drop,
+    stash_at: ?usize,
 ) void {
     const alloc = self.app.core_app.alloc;
     const dest_tab = dest.active_tab;
@@ -4541,7 +4681,7 @@ fn commitCrossWindowDrop(
                 return;
             };
         },
-        .new_tab, .new_window => unreachable,
+        .new_tab, .new_window, .stash => unreachable,
     }
 
     var old_src = self.tab_trees[source_tab];
@@ -4554,9 +4694,11 @@ fn commitCrossWindowDrop(
     adoptPane(view, dest);
     if (swapped_in) |other| adoptPane(other, self);
 
-    dest.tab_active_pane[dest_tab] = view;
+    // A stash drop (T1844): stashed where it landed, behind the panes the
+    // window already had in front.
+    if (stash_at) |i| pane_stash.markAt(dest.tab_trees[dest_tab], view, i) else dest.tab_active_pane[dest_tab] = view;
     self.collapseAfterRelocation(source_tab, swapped_in orelse view);
-    dest.finishRearrangeDrop(view);
+    if (stash_at != null) dest.finishStashDrop() else dest.finishRearrangeDrop(view);
     dest.raiseForDrop();
 }
 
@@ -4592,6 +4734,7 @@ fn commitCrossWindowNewTab(
 
     adoptPane(view, dest);
 
+    pane_stash.unmark(view); // T1844: a stashed pane arrives on screen
     leaf_owned = false;
     dest.insertPaneAsTabAt(view, leaf, @min(index, dest.tab_count));
     self.collapseAfterRelocation(source_tab, view);
@@ -4663,6 +4806,7 @@ fn commitPopOutDrop(
 
     adoptPane(view, win);
 
+    pane_stash.unmark(view); // T1844: a stashed pane arrives on screen
     leaf_owned = false;
     win_owned = false;
     win.insertPaneAsTabAt(view, leaf, 0);
@@ -4710,7 +4854,7 @@ fn collapseAfterRelocation(self: *Window, source_tab: usize, fallback: *PaneView
         self.removeTabSlot(source_tab);
         return;
     }
-    self.tab_active_pane[source_tab] = self.firstLeaf(source_tab) orelse fallback;
+    self.settleLeftTab(source_tab, fallback);
     // A pane may have arrived in a BACKGROUND tab - a cross-window swap sends
     // one into whatever tab this window is showing, which need not be the tab
     // the drag started in after a dwell switch.
@@ -4742,6 +4886,32 @@ fn raiseForDrop(self: *Window) void {
 }
 
 /// A tab's first leaf in tree order, or null for an empty tree.
+/// The tail of a stash drop that moved the pane between tabs or windows
+/// (T1844): re-lay out, persist, refresh the sidebar, and keep the keyboard
+/// on the pane the tab still shows - the dragged one is stashed.
+fn finishStashDrop(self: *Window) void {
+    self.layoutSplits();
+    self.app.markLayoutDirty();
+    self.syncPaneSidebar();
+    if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
+    if (self.tab_count == 0) return;
+    if (self.tab_active_pane[self.active_tab].hwnd()) |h| App.deferSetFocus(h); // T48
+}
+
+/// Repair the tab a pane just LEFT for the stash (T1844): if what left was
+/// its last pane on screen, the top of the stash comes back (invariant 1),
+/// and the tab's active pane becomes one that is actually on screen.
+fn settleLeftTab(self: *Window, tab: usize, fallback: *PaneView) void {
+    _ = pane_stash.normalize(&self.tab_trees[tab]);
+    var it = self.tab_trees[tab].leafIterator();
+    while (it.next()) |entry| {
+        if (pane_stash.isStashed(entry.view)) continue;
+        self.tab_active_pane[tab] = entry.view;
+        return;
+    }
+    self.tab_active_pane[tab] = self.firstLeaf(tab) orelse fallback;
+}
+
 fn firstLeaf(self: *Window, tab: usize) ?*PaneView {
     if (tab >= self.tab_count) return null;
     var it = self.tab_trees[tab].leafIterator();
@@ -4752,6 +4922,10 @@ fn firstLeaf(self: *Window, tab: usize) ?*PaneView {
 /// The shared tail of every rearrange commit: re-lay the window out, persist
 /// it, and put the keyboard back on the pane the user was carrying.
 fn finishRearrangeDrop(self: *Window, view: *PaneView) void {
+    // Placed anywhere but the stash, a stashed pane is restored in the same
+    // commit that placed it (T1844, Mac's `PaneMoveCoordinator.apply` rule),
+    // so a restore-by-drag is one step.
+    pane_stash.unmark(view);
     self.layoutSplits();
     self.app.markLayoutDirty(); // T110: a rearranged layout must survive restore
     if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
