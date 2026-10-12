@@ -27,9 +27,9 @@
 # `=`, `--clear=1` a switch given one); sections 20-22 cover that, +send-keys
 # included.
 #
-# Exit codes are read through cmd.exe redirection, not a PS 5.1 pipeline:
-# $LASTEXITCODE after a native command in a pipeline is not trustworthy here
-# (the standing reason on-box oracles gate on OUTPUT).
+# Exit codes are read from the harness's own process wait, not a PS 5.1
+# pipeline: $LASTEXITCODE after a native command in a pipeline is not
+# trustworthy here (the standing reason on-box oracles gate on OUTPUT).
 #
 #   powershell -NoProfile -File test\win32\cli-unknown-flag.ps1
 param(
@@ -53,14 +53,24 @@ Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
 $env:GHOZTTY_PIPE_SUFFIX = "-t489flags$PID"
 $tmp = Join-Path $env:TEMP "ghoztty-cli-unknown-flag-$PID"
 New-Item -ItemType Directory -Force $tmp | Out-Null
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+$td = New-TestDesktop
 
-# Runs the exe through cmd.exe, returns @{ exit; out } with out holding the
-# COMBINED stdout+stderr text.
+# Runs the exe, returns @{ exit; out } with out holding the COMBINED
+# stdout+stderr text.
+#
+# T1860: ON THE TEST DESKTOP. This used to be `cmd /c "$Exe" ...`. No line
+# here should get past argument parsing to an auto-launch, but the argv is
+# assembled at runtime (sections 13-18 build `+new-window ...` lines out of
+# tables), so nothing static can prove that - and if a parse regression ever
+# let one through, the app would open on the user's desktop. The `"..."`
+# groups in an argument line stay one argument; Invoke-OnTestDesktop
+# re-quotes them.
 function Invoke-Verb([string]$argsLine) {
-    $outFile = Join-Path $tmp "out.txt"
-    cmd /c "`"$Exe`" $argsLine > `"$outFile`" 2>&1"
-    $code = $LASTEXITCODE
-    $raw = Get-Content $outFile -Raw -ErrorAction SilentlyContinue
+    $argv = @([regex]::Matches($argsLine, '"[^"]*"|\S+') | ForEach-Object { $_.Value.Trim('"') })
+    $r = Invoke-OnTestDesktop -Exe $Exe -Arguments $argv -TimeoutSec 30
+    $code = if ($r.TimedOut) { $null } else { $r.ExitCode }
+    $raw = $r.Output
     if ($null -eq $raw) { $raw = '' }
     return @{ exit = $code; out = $raw }
 }
@@ -300,6 +310,7 @@ Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
     Remove-Item Env:\GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue
+    Remove-TestDesktop | Out-Null
 }
 
 # A green run stamps the covered files (T783) so guard-due can answer "has

@@ -72,17 +72,20 @@ function Stop-TestProcs {
     [void](Stop-RepoGhoztty -Exe $Exe -SettleMs 900)
 }
 
-# `ghoztty +verb > file` from PowerShell writes zero bytes (T245): route
-# through cmd.exe's redirection.
+# Run one CLI call; stdout+stderr -> $out, returns the exit code ($null on a
+# timeout).
+#
+# T1860: ON THE TEST DESKTOP. This used to be `cmd /c "$Exe" ...`, and section
+# A's `+new-window` auto-launches the app, so every run opened its windows on
+# the user's desktop - a shape the desktop-launch audit could not see until
+# T1860. The `"..."` groups in an argument line stay one argument;
+# Invoke-OnTestDesktop re-quotes them.
 function Run-Cli($argsLine, $out, $timeoutSec = 30) {
-    $p = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `
-        -ArgumentList "/c `"`"$Exe`" $argsLine > `"$out`" 2>&1`""
-    $null = $p.Handle   # before any wait, or ExitCode reads empty (lib\ExitCodeAudit.ps1)
-    if (-not $p.WaitForExit($timeoutSec * 1000)) {
-        Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-        return $null
-    }
-    return $p.ExitCode
+    $argv = @([regex]::Matches($argsLine, '"[^"]*"|\S+') | ForEach-Object { $_.Value.Trim('"') })
+    $r = Invoke-OnTestDesktop -Exe $Exe -Arguments $argv -TimeoutSec $timeoutSec
+    Set-Content -LiteralPath $out -Value $r.Output -Encoding UTF8
+    if ($r.TimedOut) { return $null }
+    return $r.ExitCode
 }
 function Out-Text($f) { if (Test-Path $f) { Get-Content $f -Raw } else { '' } }
 
@@ -157,6 +160,8 @@ $env:GHOSTTY_LOCAL_AGENT_BIN = $AgentExe
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 't151')
 Assert-GhozttyPrivateEndpoint -Exe $Exe
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+$td = New-TestDesktop
 
 # ============================================================================
 "== A: agent-backed --shell=powershell pane gets the integration rewrite"
@@ -230,8 +235,8 @@ Assert "B4 no integration argv leaked into the default pane" `
     ($null -ne $procB -and $procB.CommandLine -notmatch 'ghostty\.ps1' -and $procB.CommandLine -notmatch '-NoExit')
 
 # The env half. `set PROMPT` prints `PROMPT=<template>` out of cmd's own
-# environment — deliberately NOT `echo %PROMPT%`, which Run-Cli's own outer
-# cmd.exe would expand against the HARNESS's prompt and pass through as a
+# environment — deliberately NOT `echo %PROMPT%`, which a cmd.exe wrapper
+# around Run-Cli (as it had before T1860) would expand against the HARNESS's prompt and pass through as a
 # literal `$P$G` that passes every assertion below for the wrong reason.
 # The template reads back verbatim because `$E` is only interpreted by the
 # prompt renderer, never by `set`.
@@ -446,6 +451,7 @@ if ($null -eq $savedAgentBin) {
     $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin
 }
 Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+Remove-TestDesktop | Out-Null
 
 # A green run with no skipped sections stamps the covered files (T783) so
 # guard-due can answer "has this harness been run against shell_integration.zig

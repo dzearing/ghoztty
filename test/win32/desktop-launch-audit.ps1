@@ -33,10 +33,11 @@
       E. The sweep over `test\win32\*.ps1`: every launch site is declared, and
          every declaration still names a script that launches.
 
-    `-TeethCheck` proves the section-E assertion can fail: it writes two real
+    `-TeethCheck` proves the section-E assertion can fail: it writes three real
     violators into the swept directory - one bare `Start-Process $exe`, one raw
-    `& $exe +new-window` - both on no list, and requires the sweep to find each.
-    Run it after any change to the analyzer.
+    `& $exe +new-window`, and (T1860) a `cmd /c` wrapper called with
+    `+new-window`, the shape ipc-relay.ps1 used - all on no list, and requires
+    the sweep to find each. Run it after any change to the analyzer.
 
 .NOTES
     # persistence: launches no GUI - this scores scripts, it does not run them.
@@ -145,6 +146,40 @@ Assert 'B12 a verb the analyzer has never heard of is a finding' (@($s).Count -e
 $s = Sites @('& $Exe +new-window', '& $Exe +list', 'Start-Process $Exe')
 Assert 'B13 line numbers point at the site' (@($s | ForEach-Object { $_.Line }) -join ',' -eq '1,3')
 
+# T1860: the cmd.exe shapes - the invocation is a STRING cmd re-parses, which
+# is how ipc-relay.ps1 auto-launched onto the user's desktop with this audit
+# green.
+$s = Sites @('cmd /c "`"$Exe`" +new-window --name=a > nul 2>&1"')
+Assert 'B14 cmd /c of +new-window is a launch' (@($s).Count -eq 1 -and @($s)[0].Kind -eq 'new-window')
+
+$s = Sites @('cmd /c "`"$Exe`" +send-keys --target=a x > nul"', 'cmd /c mklink /J a b',
+             'Start-Process -FilePath cmd.exe -ArgumentList @(''/c'', ''ping -n 60 127.0.0.1 > nul'')')
+Assert 'B15 cmd /c of a quiet verb, or of no ghoztty at all, is not a launch' (@($s).Count -eq 0)
+
+$s = Sites @('Start-Process -FilePath cmd.exe -ArgumentList "/c `"`"$Exe`" > `"$o`" 2>&1`""')
+Assert 'B16 Start-Process cmd.exe of the bare exe is a launch' (@($s).Count -eq 1 -and @($s)[0].Kind -eq 'bare-launch')
+
+$wrap = @(
+    'function Run-Cli($argsLine, $out) {'
+    '    Start-Process -FilePath cmd.exe -PassThru -ArgumentList "/c `"`"$Exe`" $argsLine > `"$out`" 2>&1`""'
+    '}'
+    'Run-Cli ''+sessions'' a.txt'
+    'Run-Cli ''+new-window --target=x'' b.txt'
+    'Run-Cli -argsLine ''+list'' -out c.txt'
+)
+$s = Sites $wrap
+Assert 'B17 a cmd wrapper is scored at the CALL that passes +new-window' (
+    @($s).Count -eq 1 -and @($s)[0].Kind -eq 'new-window' -and @($s)[0].Line -eq 5)
+
+$s = Sites @('function Inv([string]$a) { cmd /c "`"$Exe`" $a" }', 'Inv "$($row.verb) --x"')
+Assert 'B18 a wrapper called with a runtime-built argv is UNKNOWN' (@($s).Count -eq 1 -and @($s)[0].Kind -eq 'unknown')
+
+$s = Sites @('cmd /c "`"$Exe`" $loose > nul"')
+Assert 'B19 a cmd line whose argv is a non-parameter variable is UNKNOWN' (@($s).Count -eq 1 -and @($s)[0].Kind -eq 'unknown')
+
+$s = Sites @('Write-Host "cmd /c `"$Exe`" +new-window is what this used to do"')
+Assert 'B20 prose ABOUT a cmd launch is not one' (@($s).Count -eq 0)
+
 # ---------------------------------------------------------------------------
 Write-Host ''
 Write-Host 'C. the quiet-verb list against the CLI'
@@ -204,7 +239,18 @@ try {
             '$Exe = "D:\git\ghoztty\zig-out\bin\ghoztty.exe"'
             '& $Exe +new-window --target=teeth'
         )
-        $planted = @($v1, $v2)
+        # T1860: ipc-relay.ps1's Run-Cli as it stood before T1837, verbatim
+        # in shape - the launch that put four windows on the user's desktop.
+        $v3 = Join-Path $Suite 'zz-desktop-launch-teeth-cmd.ps1'
+        Set-Content -LiteralPath $v3 -Encoding UTF8 -Value @(
+            '$Exe = "D:\git\ghoztty\zig-out\bin\ghoztty.exe"'
+            'function Run-Cli($argsLine, $outfile) {'
+            '    $p = Start-Process -FilePath cmd.exe -WindowStyle Hidden -PassThru `'
+            '        -ArgumentList "/c `"`"$Exe`" $argsLine > `"$env:TEMP\$outfile`" 2>&1`""'
+            '}'
+            'Run-Cli ''+new-window --target=teeth'' out.txt'
+        )
+        $planted = @($v1, $v2, $v3)
     }
 
     $findings = @(Get-DesktopLaunchAuditSweep $Suite)
@@ -215,6 +261,7 @@ try {
         $names = @($bad | ForEach-Object { Split-Path $_.Path -Leaf })
         Assert 'E0a the planted bare launch is found' ($names -contains 'zz-desktop-launch-teeth-bare.ps1')
         Assert 'E0b the planted +new-window is found' ($names -contains 'zz-desktop-launch-teeth-verb.ps1')
+        Assert 'E0c the planted cmd /c wrapper launch is found' ($names -contains 'zz-desktop-launch-teeth-cmd.ps1')
         $bad = @($bad | Where-Object { (Split-Path $_.Path -Leaf) -notlike 'zz-desktop-launch-teeth-*' })
     }
 
@@ -247,7 +294,7 @@ Complete-TestBody  # T1039: the run reached the end of its body
 
 # --- stamp (T783) ----------------------------------------------------------
 # Only a CLEAN green run records the covered files, and never a teeth check -
-# that run deliberately plants two violators, so its result says nothing about
+# that run deliberately plants three violators, so its result says nothing about
 # the suite as it stands. After Complete-TestBody, which is what the stamp gate
 # reads to tell a finished run from one that unwound.
 if ($script:fail -eq 0 -and -not $TeethCheck) {

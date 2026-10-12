@@ -43,11 +43,19 @@
 # CLI-driven script migrates by routing its `& $Exe` calls through
 # `Invoke-OnTestDesktop`, not by being rewritten around window handles.
 #
-# WHAT THIS CANNOT SEE, stated rather than implied. An invocation assembled as a
-# STRING and handed to another interpreter - `cmd /c "`"$Exe`" +new-window"`,
-# `Invoke-Expression` - is not a command in the AST and no textual rule can tell
-# it from prose about one. Every launch site in this suite has been a real
-# PowerShell command; the teeth check plants one of those. A file whose SUBJECT
+# THE cmd.exe SHAPES (T1860). `cmd /c "`"$Exe`" +new-window ..."` and
+# `Start-Process cmd.exe -ArgumentList "/c ..."` hand the invocation to cmd as a
+# string. This file used to call those unseeable, and that was wrong in the way
+# that matters: ipc-relay.ps1 put four windows on the user's desktop through
+# exactly that shape, every run, with this audit green (found in T1837). The
+# string is now scored - but only when cmd is the program being run, so prose
+# that mentions the exe is still not an invocation. When the argv inside it is a
+# parameter of the enclosing function (the `Run-Cli($argsLine)` wrapper), the
+# function's CALLS are scored instead, each at its own line.
+#
+# WHAT THIS STILL CANNOT SEE, stated rather than implied: `Invoke-Expression`
+# and other interpreters handed a string, and (until T1876) a splatted
+# `Start-Process @a` whose FilePath lives in a hashtable. A file whose SUBJECT
 # is these patterns carries the `# desktop-launch-audit:` marker below instead
 # of being scanned.
 #
@@ -203,6 +211,160 @@ function Get-DesktopLaunchAuditKind([string]$FirstArg) {
     return 'bare-launch'
 }
 
+# ---------------------------------------------------------------------------
+# The cmd.exe shapes (T1860). `cmd /c "`"$Exe`" +new-window ..."` hands the
+# whole invocation to cmd as ONE string, so the AST holds a string, not a
+# command - and ipc-relay.ps1 auto-launched the app onto the user's desktop
+# through exactly that while the audit stayed green. Text inside a string is
+# scored here only when cmd is the thing being run, so prose that merely
+# mentions the exe (B10) is still not an invocation.
+# ---------------------------------------------------------------------------
+
+# Does this command element name cmd.exe (bare, with extension, or by path)?
+function Test-DesktopLaunchAuditCmdRef($El) {
+    if ($null -eq $El) { return $false }
+    if ($El -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+        $El -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) {
+        return ($El.Value -match '(?i)(^|[\\/])cmd(\.exe)?$')
+    }
+    return $false
+}
+
+# The literal text of a string-valued element, as cmd would receive it with
+# PowerShell variables left as `$name` - $null for anything that is not a
+# string (a variable, a call), whose content cannot be known statically.
+function Get-DesktopLaunchAuditStringText($Node) {
+    if ($null -eq $Node) { return $null }
+    if ($Node -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+        $Node -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) {
+        return $Node.Value
+    }
+    if ($Node -is [System.Management.Automation.Language.ArrayLiteralAst]) {
+        $parts = @()
+        foreach ($e in @($Node.Elements)) {
+            $t = Get-DesktopLaunchAuditStringText $e
+            if ($null -ne $t) { $parts += $t }
+        }
+        return ($parts -join ' ')
+    }
+    if ($Node -is [System.Management.Automation.Language.ArrayExpressionAst]) {
+        $parts = @()
+        foreach ($st in @($Node.SubExpression.Statements)) {
+            if ($st -isnot [System.Management.Automation.Language.PipelineAst]) { continue }
+            $expr = $st.PipelineElements[0]
+            if ($expr -is [System.Management.Automation.Language.CommandExpressionAst]) {
+                $t = Get-DesktopLaunchAuditStringText $expr.Expression
+                if ($null -ne $t) { $parts += $t }
+            }
+        }
+        return ($parts -join ' ')
+    }
+    return $null
+}
+
+# The first argument after a ghoztty exe inside a cmd command line: '' when
+# the exe runs bare (end of line, or straight into a redirect/pipe), '<expr>'
+# when it is a PowerShell variable (`$argsLine`), else the token. $null when
+# the line is not a `/c` or `/k` run of the exe at all.
+function Get-DesktopLaunchAuditCmdLineFirst([string]$Line) {
+    if ([string]::IsNullOrEmpty($Line)) { return $null }
+    if ($Line -notmatch '(?i)(^|\s)/[ck](\s|$)') { return $null }
+    $rx = '(?i)\$\{?(?<v>[A-Za-z0-9_:]+)\}?|(?<lit>[^\s"'']*ghoztty(-agent)?\.exe)'
+    foreach ($m in [regex]::Matches($Line, $rx)) {
+        $isExe = $false
+        if ($m.Groups['lit'].Success) { $isExe = $true }
+        else {
+            $n = ($m.Groups['v'].Value -split ':')[-1]
+            $isExe = ($n -match '(?i)(^|[^a-z])exe(path|)$')
+        }
+        if (-not $isExe) { continue }
+        $rest = $Line.Substring($m.Index + $m.Length).TrimStart(' ', "`t", '"', "'")
+        if ($rest -eq '' -or $rest -match '^(\d?>|<|\||&)') { return '' }
+        # A variable comes back as itself (`$argsLine`) so the caller can
+        # resolve it through the wrapper's call sites.
+        return ($rest -split '[\s"'']', 2)[0]
+    }
+    return $null
+}
+
+# The sites one cmd command line contributes - none, one, or (through a
+# wrapper) one per launching call.
+function Get-DesktopLaunchAuditCmdSites {
+    param([string]$Line, $Cmd, $Ast, [string]$Prefix)
+    $first = Get-DesktopLaunchAuditCmdLineFirst $Line
+    if ($null -eq $first) { return @() }
+    if ($first.StartsWith('$')) {
+        $resolved = Resolve-DesktopLaunchAuditParamSites -Ast $Ast -Cmd $Cmd `
+            -VarName ($first.TrimStart('$').Trim('{', '}'))
+        if ($null -ne $resolved) { return @($resolved) }
+        $first = '<expr>'
+    }
+    $kind = Get-DesktopLaunchAuditKind $first
+    if ($null -eq $kind) { return @() }
+    return @([pscustomobject]@{
+        Line = $Cmd.Extent.StartLineNumber; Kind = $kind
+        What = ("$Prefix $first").Trim()
+    })
+}
+
+# The wrapper idiom - `function Run-Cli($argsLine) { cmd /c "`"$Exe`" $argsLine" }`
+# - hides the verb behind a parameter, and scoring it unknown would flag every
+# script whose wrapper only ever runs `+sessions`. So when the variable is a
+# parameter of the enclosing function, score that function's CALLS instead:
+# each call's argument for that parameter is classified like any other argv,
+# at the call's line. $null when the variable is not a parameter (the site
+# stays unknown); an empty list when no call can create a process.
+function Resolve-DesktopLaunchAuditParamSites {
+    param($Ast, $Cmd, [string]$VarName)
+    $fn = $Cmd.Parent
+    while ($null -ne $fn -and $fn -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) {
+        $fn = $fn.Parent
+    }
+    if ($null -eq $fn) { return $null }
+    $params = @()
+    if ($null -ne $fn.Parameters) { $params = @($fn.Parameters) }
+    elseif ($null -ne $fn.Body.ParamBlock) { $params = @($fn.Body.ParamBlock.Parameters) }
+    $names = @($params | ForEach-Object { $_.Name.VariablePath.UserPath })
+    $k = [array]::IndexOf([string[]]$names, $VarName)
+    if ($k -lt 0) {
+        for ($j = 0; $j -lt $names.Count; $j++) { if ($names[$j] -ieq $VarName) { $k = $j } }
+    }
+    if ($k -lt 0) { return $null }
+
+    $out = New-Object System.Collections.ArrayList
+    foreach ($call in @($Ast.FindAll({ param($n)
+        $n -is [System.Management.Automation.Language.CommandAst] -and
+        $n.GetCommandName() -ieq $fn.Name }, $true))) {
+        $els = @($call.CommandElements)
+        $argEl = $null
+        $positional = @()
+        for ($i = 1; $i -lt $els.Count; $i++) {
+            $el = $els[$i]
+            if ($el -is [System.Management.Automation.Language.CommandParameterAst]) {
+                $val = $el.Argument
+                $consumed = $false
+                if ($null -eq $val -and ($i + 1) -lt $els.Count) { $val = $els[$i + 1]; $consumed = $true }
+                if ($el.ParameterName -ieq $VarName) { $argEl = $val }
+                if ($consumed) { $i++ }
+                continue
+            }
+            $positional += $el
+        }
+        if ($null -eq $argEl -and $k -lt $positional.Count) { $argEl = $positional[$k] }
+        if ($null -eq $argEl) { continue }
+        $text = Get-DesktopLaunchAuditStringText $argEl
+        $tok = if ($null -eq $text) { '<expr>' } else { ($text.Trim() -split '\s+', 2)[0] }
+        if ($tok.StartsWith('$')) { $tok = '<expr>' }
+        $kind = Get-DesktopLaunchAuditKind $tok
+        if ($null -eq $kind) { continue }
+        [void]$out.Add([pscustomobject]@{
+            Line = $call.Extent.StartLineNumber; Kind = $kind
+            What = ("$($fn.Name) $tok").Trim()
+        })
+    }
+    return ,$out.ToArray()
+}
+
 function Get-DesktopLaunchAuditSites {
     param(
         [string]$Path,
@@ -228,6 +390,7 @@ function Get-DesktopLaunchAuditSites {
         # Shape 1 - Start-Process / [Diagnostics.Process]::Start.
         if ($name -and ($name -in @('Start-Process', 'saps', 'start'))) {
             $exeEl = $null
+            $cmdEl = $null
             $argsText = $null
             for ($i = 1; $i -lt $els.Count; $i++) {
                 $el = $els[$i]
@@ -237,12 +400,24 @@ function Get-DesktopLaunchAuditSites {
                     if ($null -eq $val -and ($i + 1) -lt $els.Count) { $val = $els[$i + 1] }
                     if ($pn -match '(?i)^(FilePath|Path)') {
                         if (Test-DesktopLaunchAuditGhozttyRef $val) { $exeEl = $val }
+                        elseif (Test-DesktopLaunchAuditCmdRef $val) { $cmdEl = $val }
                     } elseif ($pn -match '(?i)^Arg') {
                         $argsText = $val
                     }
                     continue
                 }
-                if ($null -eq $exeEl -and (Test-DesktopLaunchAuditGhozttyRef $el)) { $exeEl = $el }
+                if ($null -eq $exeEl -and $null -eq $cmdEl) {
+                    if (Test-DesktopLaunchAuditGhozttyRef $el) { $exeEl = $el }
+                    elseif (Test-DesktopLaunchAuditCmdRef $el) { $cmdEl = $el }
+                }
+            }
+            # Shape 1b (T1860) - `Start-Process cmd.exe -ArgumentList "/c `"$Exe`" ..."`:
+            # the exe sits inside the command line cmd re-parses, which is what
+            # ipc-relay.ps1's Run-Cli did until T1837.
+            if ($null -eq $exeEl -and $null -ne $cmdEl) {
+                foreach ($site in @(Get-DesktopLaunchAuditCmdSites -Line (Get-DesktopLaunchAuditStringText $argsText) `
+                        -Cmd $cmd -Ast $ast -Prefix 'Start-Process cmd.exe /c')) { [void]$sites.Add($site) }
+                continue
             }
             if ($null -eq $exeEl) { continue }
             $first = $null
@@ -254,6 +429,18 @@ function Get-DesktopLaunchAuditSites {
                     What = 'Start-Process ' + $exeEl.Extent.Text
                 })
             }
+            continue
+        }
+
+        # Shape 3 (T1860) - `cmd /c "`"$Exe`" +new-window ..."` run directly.
+        if (Test-DesktopLaunchAuditCmdRef $els[0]) {
+            $parts = @()
+            for ($i = 1; $i -lt $els.Count; $i++) {
+                $t = Get-DesktopLaunchAuditStringText $els[$i]
+                if ($null -ne $t) { $parts += $t }
+            }
+            foreach ($site in @(Get-DesktopLaunchAuditCmdSites -Line ($parts -join ' ') `
+                    -Cmd $cmd -Ast $ast -Prefix 'cmd /c')) { [void]$sites.Add($site) }
             continue
         }
 
@@ -383,6 +570,8 @@ function Get-DesktopLaunchAuditFindings {
             $first = @($sites | Sort-Object Line)[0]
             $how = if ($first.Kind -eq 'new-window') {
                 "auto-launches the app ($($first.What)) on the caller's desktop"
+            } elseif ($first.Kind -eq 'unknown') {
+                "runs the exe with an argv no static reading can classify ($($first.What)), which may launch the app on the caller's desktop,"
             } else {
                 "starts the app ($($first.What)) on the caller's desktop"
             }

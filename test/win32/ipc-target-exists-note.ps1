@@ -25,21 +25,32 @@ function Assert($name, $cond) {
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 't135')
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+$td = New-TestDesktop
 
 function Stop-DebugGhoztty {
     Reset-GhozttyTestState -Exe $Exe -SettleMs 1000 | Out-Null
 }
 
 # Run one CLI call with stdout/stderr split into files; returns the exit code.
+#
+# T1860: ON THE TEST DESKTOP. This used to be `cmd /c "$Exe" ...`, and the
+# first `+new-window` auto-launches the app, so every run opened its windows on
+# the user's desktop - a shape the desktop-launch audit could not see until
+# T1860. The `"..."` groups in an argument line stay one argument;
+# Invoke-OnTestDesktop re-quotes them.
 function Invoke-Cli([string]$CliArgs) {
-    cmd /c "`"$Exe`" $CliArgs > `"$tmp\out.txt`" 2> `"$tmp\err.txt`"" | Out-Null
-    return $LASTEXITCODE
+    $argv = @([regex]::Matches($CliArgs, '"[^"]*"|\S+') | ForEach-Object { $_.Value.Trim('"') })
+    $r = Invoke-OnTestDesktop -Exe $Exe -Arguments $argv -TimeoutSec 30
+    Set-Content -LiteralPath "$tmp\out.txt" -Value $r.StdOut -Encoding UTF8
+    Set-Content -LiteralPath "$tmp\err.txt" -Value $r.StdErr -Encoding UTF8
+    if ($r.TimedOut) { return $null }
+    return $r.ExitCode
 }
 function Get-CliErr { (Get-Content "$tmp\err.txt" -Raw -ErrorAction SilentlyContinue) }
 
 function Get-List {
-    cmd /c "`"$Exe`" +list > `"$tmp\list.txt`" 2>&1" | Out-Null
-    Get-Content "$tmp\list.txt" -Raw
+    (Invoke-OnTestDesktop -Exe $Exe -Arguments @('+list') -TimeoutSec 30).Output
 }
 function Wait-ListMatch([string]$Pattern, [int]$TimeoutSec = 20) {
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
@@ -123,6 +134,7 @@ Invoke-Cli "+close --target=t968pane" | Out-Null
 Invoke-Cli "+close --target=t135win" | Out-Null
 Stop-DebugGhoztty
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+Remove-TestDesktop | Out-Null
 
 } 2>&1 | Tee-Object -FilePath $transcript
 

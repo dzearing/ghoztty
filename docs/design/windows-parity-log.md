@@ -35475,3 +35475,23 @@ moved to T1814.
   PASS, ipc-p1/p2/p3 ALL PASS, and the guards the edit made due (relay-account,
   thread-join, self-spawn, seam-audit, docs-routing) ALL PASS. The user's
   `account.dat` hash was identical before and after the whole run.
+
+## 2026-10-12 — T1860: the never-pull-focus audit sees launches routed through cmd.exe
+
+- **What changed.** `lib\DesktopLaunchAudit.ps1` now scores the command line
+  handed to `cmd /c` and to `Start-Process cmd.exe -ArgumentList "/c ..."`, but
+  only when cmd is the program being run, so prose about the exe still does not
+  count. When the argv inside is a parameter of the enclosing function (the
+  `Run-Cli($argsLine)` idiom), it scores that function's calls instead, each at
+  its own line.
+- **Why.** ipc-relay.ps1 opened four windows on the user's desktop every run
+  through exactly that shape, and the audit stayed green (found in T1837).
+- **What the sweep found.** Four more scripts. `ipc-target-exists-note.ps1`,
+  `agent-shell-integration.ps1` and `cli-unknown-flag.ps1` now run their CLI on
+  the test desktop. `layout-blob-cross-lineage.ps1` also starts its app through
+  a splatted `Start-Process @a`, a second blind spot. It is declared pending
+  migration under T1876, which closes that one.
+- **Validation.** desktop-launch-audit ALL PASS (36) and `-TeethCheck` ALL PASS
+  (39, with a planted copy of the old ipc-relay wrapper). The pre-T1837
+  ipc-relay.ps1 scores red at its `+new-window` call. The three migrated scripts
+  are ALL PASS (21, 35, 156), and so are the guards the edit made due.
