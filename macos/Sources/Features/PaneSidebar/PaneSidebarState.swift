@@ -49,6 +49,13 @@ final class PaneSidebarState: ObservableObject {
     /// Folded project groups in the all-windows scope, by project name.
     @Published var foldedProjects: Set<String> = []
 
+    /// How far the sidebar's drawn chrome reaches up past the grid, beside
+    /// the window's tab bar (`TransparentTitlebarTerminalWindow` sets it to the
+    /// tab row's height while the tab bar is moved right of the sidebar; 0
+    /// otherwise). Drawing only: the titlebar owns every click in that strip,
+    /// so the rows themselves stay below it. Never persisted.
+    @Published var tabRowHeight: CGFloat = 0
+
     /// The flat panel's width. One preference shared by every window, like
     /// the viewer side panel's.
     @Published var width: CGFloat {

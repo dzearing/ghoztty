@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 /// A terminal window style that provides a transparent titlebar effect. With this effect, the titlebar
 /// matches the background color of the window.
@@ -15,6 +16,7 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
     deinit {
         tabGroupWindowsObservation?.invalidate()
         tabBarVisibleObservation?.invalidate()
+        if let tabBarFrameObserver { NotificationCenter.default.removeObserver(tabBarFrameObserver) }
     }
 
     // MARK: NSWindow
@@ -88,6 +90,9 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
         } else {
             syncAppearanceVentura(surfaceConfig)
         }
+
+        // The pane style, glass, or the tab bar itself may have changed.
+        placeTabBar()
     }
 
     @available(macOS 26.0, *)
@@ -139,6 +144,96 @@ class TransparentTitlebarTerminalWindow: TerminalWindow {
 
         // Necessary to not draw the border around the title
         titlebarAppearsTransparent = true
+    }
+
+    // MARK: Tab Bar Placement
+
+    /// Styles that move the tab bar somewhere else entirely (titlebar tabs)
+    /// opt out of `placeTabBar`.
+    var placesTabBar: Bool { true }
+
+    /// The tab bar view we watch, and its frame observer.
+    private weak var placedTabBar: NSView?
+    private var tabBarFrameObserver: NSObjectProtocol?
+    private var paneSidebarObservation: AnyCancellable?
+
+    override func tabBarVisibilityDidChange(visible: Bool) {
+        super.tabBarVisibilityDidChange(visible: visible)
+        placeTabBar(visible: visible)
+    }
+
+    /// The elevated style's tab bar.
+    ///
+    /// AppKit hangs the native tab bar in a titlebar accessory row with an
+    /// 8pt strip UNDER the tabs; on top of the grid's own margin that left
+    /// 18pt between the tabs and the first pane. The tabs move to the
+    /// bottom of their row, so the gap below them is the grid's margin — the
+    /// one spacing every other gutter in the style uses.
+    ///
+    /// And when the content runs up under the titlebar (glass panes), the
+    /// tabs start at the pane sidebar's edge rather than above it: the
+    /// sidebar's chrome reaches up through the tab row
+    /// (`PaneSidebarState.tabRowHeight`), so the sidebar runs the window's
+    /// height and the tab bar spans only the grid beside it. Without that
+    /// (no glass) nothing could fill the strip left of the tabs, so they keep
+    /// the full width.
+    func placeTabBar(visible: Bool? = nil) {
+        let controller = windowController as? BaseTerminalController
+        let state = controller?.paneSidebarState
+        guard visible ?? true,
+              placesTabBar,
+              derivedConfig.paneElevated,
+              let tabBar = tabBarView,
+              let row = tabBar.superview
+        else {
+            if let state, state.tabRowHeight != 0 { state.tabRowHeight = 0 }
+            return
+        }
+
+        observeTabBarPlacement(tabBar, state: state)
+
+        var inset: CGFloat = 0
+        if styleMask.contains(.fullSizeContentView),
+           let controller, controller.hasPaneSidebar, let state {
+            let mode = state.mode(windowWidth: contentView?.bounds.width ?? frame.width)
+            inset = PaneSidebarState.columnWidth(for: mode, panelWidth: state.width, elevated: true)
+        }
+
+        let target = NSRect(
+            x: inset, y: 0,
+            width: Swift.max(0, row.bounds.width - inset),
+            height: tabBar.frame.height)
+        if tabBar.frame != target { tabBar.frame = target }
+
+        let rowHeight = inset > 0 ? row.bounds.height : 0
+        if let state, state.tabRowHeight != rowHeight { state.tabRowHeight = rowHeight }
+    }
+
+    /// Re-place the tabs whenever AppKit lays the bar out again (a resize, a
+    /// tab added or closed) and whenever the sidebar's column changes.
+    private func observeTabBarPlacement(_ tabBar: NSView, state: PaneSidebarState?) {
+        if placedTabBar !== tabBar {
+            if let tabBarFrameObserver { NotificationCenter.default.removeObserver(tabBarFrameObserver) }
+            placedTabBar = tabBar
+            tabBar.postsFrameChangedNotifications = true
+            tabBarFrameObserver = NotificationCenter.default.addObserver(
+                forName: NSView.frameDidChangeNotification,
+                object: tabBar,
+                queue: .main
+            ) { [weak self] _ in
+                // A tick later: AppKit may still be mid-layout.
+                DispatchQueue.main.async { self?.placeTabBar() }
+            }
+        }
+
+        if paneSidebarObservation == nil, let state {
+            paneSidebarObservation = state.objectWillChange
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in
+                    guard let self, self.tabBarView != nil else { return }
+                    self.placeTabBar()
+                }
+        }
     }
 
     // MARK: View Finders

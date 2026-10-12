@@ -246,6 +246,10 @@ class AppDelegate: NSObject,
             // Manual autofill via the `Edit => AutoFill` menu item still work as expected.
             "NSAutoFillHeuristicControllerEnabled": false,
         ])
+
+        // Before any window reads it: older builds' rearrange mode left
+        // AppKit's "always show the tab bar" preference on.
+        TabBarVisibilityPreference.clearLeakedPreferenceOnce()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

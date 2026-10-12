@@ -48,6 +48,10 @@ protocol TerminalViewModel: ObservableObject {
 
     /// The update overlay should be visible.
     var updateOverlayIsVisible: Bool { get }
+
+    /// Show the debug build warning strip at the top of the content. False
+    /// when the window's titlebar already carries it (above the tab bar).
+    var showsDebugBuildWarningInContent: Bool { get }
 }
 
 /// The grid, beside the window's pane sidebar when it has one.
@@ -130,7 +134,7 @@ struct TerminalView<ViewModel: TerminalViewModel>: View {
                 VStack(spacing: 0) {
                     // If we're running in debug mode we show a warning so that users
                     // know that performance will be degraded.
-                    if Ghostty.info.mode == GHOSTTY_BUILD_MODE_DEBUG || Ghostty.info.mode == GHOSTTY_BUILD_MODE_RELEASE_SAFE {
+                    if viewModel.showsDebugBuildWarningInContent {
                         DebugBuildWarningView()
                     }
 
@@ -211,6 +215,11 @@ private struct UpdateOverlay: View {
 }
 
 struct DebugBuildWarningView: View {
+    /// Debug and ReleaseSafe builds show the strip.
+    static var isShown: Bool {
+        Ghostty.info.mode == GHOSTTY_BUILD_MODE_DEBUG || Ghostty.info.mode == GHOSTTY_BUILD_MODE_RELEASE_SAFE
+    }
+
     @State private var isPopover = false
 
     var body: some View {
