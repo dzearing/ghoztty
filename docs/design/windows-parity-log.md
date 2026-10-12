@@ -35431,3 +35431,28 @@ moved to T1814.
   8d (99), floor-lane-desktop D (20). Also green: process-family, soak-daemon,
   build-cache, the harness floor (after one fix to an unstringified capture in
   my own new line), all four floor lanes, and P1-P3.
+
+## 2026-10-12 — T1825: a closed pane or tab can be brought back on Windows
+
+- **What changed.** Closing a split or a tab no longer ends it on the spot.
+  For `undo-timeout` (5s by default) the pane is parked: hidden, still holding
+  its shell, its ConPTY and its agent attachment. Ctrl+Shift+Z brings it back
+  in the same place with the same pid, and Ctrl+Shift+Y closes it again. The
+  same pair is in Edit > Undo Close / Redo Close and in the command palette.
+  When the time runs out, the close happens exactly as it used to: CLOSE
+  intent, then the last unref. Close Other Tabs and Close Tabs to the Right
+  undo as one group. `+close` is undoable too, the same as on Mac.
+- **How.** `close_undo.zig` is the pure half, unit-tested in every lane: the
+  expiring per-window stack, plus the anchor. The anchor remembers the closed
+  leaf's sibling subtree and the parent split, so the restore is exact. If the
+  layout has changed since, the pane still lands beside a surviving neighbour.
+  `CloseUndo.zig` holds the parked entries. A closing window or a quitting app
+  ends its own entries first, while their HWNDs still exist.
+- **Left for later.** A whole-window close, including the last tab's close,
+  still ends at once: that is T1874. Mac's undo of new splits, tabs and
+  windows, and of pane moves, is T1875. The key choice is D95.
+- **Validation.** `close-undo.ps1` passes all 51 checks on local and
+  agent-backed panes, and its negative control (undo off) fails 12, as it
+  should. `chooser-sessions.ps1` 3b now runs the lingering case for real
+  (`lingering attached: True`). Also green: `session-close.ps1`, the four
+  floor lanes, P1-P3 and the harness floor.

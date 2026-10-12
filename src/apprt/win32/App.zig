@@ -41,6 +41,7 @@ const RenameDialog = @import("RenameDialog.zig");
 const BannerDialog = @import("BannerDialog.zig");
 const QuickTerminal = @import("QuickTerminal.zig");
 const PaneView = @import("PaneView.zig");
+const CloseUndo = @import("CloseUndo.zig");
 const Surface = @import("Surface.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const ViewerNavBar = @import("ViewerNavBar.zig");
@@ -595,6 +596,10 @@ ipc_server: ?IpcServer = null,
 /// to the live window list and app allocator.
 ipc_registry: IpcRegistry = .{},
 
+/// Parked pane/tab closes waiting out `undo-timeout` (T1825). Set in `init`
+/// once the App has its final address; see `CloseUndo.zig`.
+close_undo: CloseUndo = undefined,
+
 /// The panes the IPC request being dispatched RIGHT NOW created and whose
 /// agent session is still binding (T1612). Handlers add to it; the IPC server
 /// clears it before each dispatch and moves it into that request's `Pending`
@@ -788,6 +793,7 @@ pub fn init(
         .local_agent = LocalAgent.init(alloc),
         .machine_pool = MachineConnectionPool.init(alloc),
     };
+    self.close_undo = CloseUndo.init(self);
 
     // Register the window container class (GDI painting, no CS_OWNDC).
     // CS_DBLCLKS is required to receive WM_LBUTTONDBLCLK for divider equalize.
@@ -2141,6 +2147,11 @@ pub fn terminate(self: *App) void {
         alloc.destroy(window);
     }
     self.windows.deinit(alloc);
+
+    // Every window finalized its own parked closes on the way out (T1825);
+    // this ends anything left over, while the agent link is still up to
+    // carry the CLOSE.
+    self.close_undo.deinit();
 
     // Tear down the shared local-agent connection AFTER every window (and its
     // surfaces) that borrowed it is gone. This is a pipe disconnect, not a
@@ -8214,6 +8225,19 @@ pub fn performAction(
             },
         },
 
+        // Undo/redo a pane or tab close (T1825; Mac's NSUndoManager). A
+        // surface target scopes it to that window, as Mac's per-window undo
+        // manager does; the app target takes the most recent close anywhere.
+        // Nothing to undo answers "not performed".
+        .undo => return self.close_undo.undo(switch (target) {
+            .app => null,
+            .surface => |core_surface| core_surface.rt_surface.parent_window,
+        }),
+        .redo => return self.close_undo.redo(switch (target) {
+            .app => null,
+            .surface => |core_surface| core_surface.rt_surface.parent_window,
+        }),
+
         // Pane stash (T1827, main 597a193cc). A refused stash - the last
         // pane on screen - or an empty stash answers "not performed", the
         // Windows stand-in for Mac's beep, so the key is not swallowed.
@@ -8251,8 +8275,6 @@ pub fn performAction(
         .cell_size,
         // Platform-specific actions that don't apply on Windows:
         .secure_input, // macOS EnableSecureEventInput
-        .undo, // macOS NSUndoManager
-        .redo, // macOS NSUndoManager
         .show_gtk_inspector, // GTK-only
         .show_on_screen_keyboard, // GTK/mobile
         .inspector, // Not yet implemented (debug overlay)
@@ -12056,6 +12078,12 @@ fn msgWndProc(
 
     // Debounced session-layout write (T89f): the timer fired after the last
     // layout/frame/title mutation settled — capture the topology and persist.
+    // A parked close's `undo-timeout` ran out (T1825): end it for good.
+    if (msg == w32.WM_TIMER and wparam == CloseUndo.TIMER_ID) {
+        app.close_undo.onTimer();
+        return 0;
+    }
+
     if (msg == w32.WM_TIMER and wparam == LAYOUT_SYNC_TIMER_ID) {
         _ = w32.KillTimer(hwnd, LAYOUT_SYNC_TIMER_ID);
         // Every trigger that arms this timer moved the TOPOLOGY, not the

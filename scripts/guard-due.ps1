@@ -4216,6 +4216,22 @@ $GuardTable = @(
             'test\win32\ipc-stash.ps1'
         )
     },
+    # Close undo (T1825): the expiring stack and the re-insertion anchor are
+    # unit-tested in every lane, but whether a closed pane or tab is really
+    # parked (hidden, shell alive, session held at the agent), comes back in
+    # its slot on ctrl+shift+z, and is really ended when the undo expires is
+    # only answered on the box. Window.zig is left out for the ipc-stash row's
+    # reason.
+    [pscustomobject]@{
+        Name   = 'close-undo'
+        Script = 'test\win32\close-undo.ps1'
+        Stamp  = 'test\win32\close-undo.stamp.json'
+        Covers = @(
+            'src\apprt\win32\close_undo.zig',
+            'src\apprt\win32\CloseUndo.zig',
+            'test\win32\close-undo.ps1'
+        )
+    },
     # The pane sidebar (T1828): its rules and geometry are unit-tested in every
     # lane, but whether the column is placed, pushes the grid over, paints, and
     # routes its clicks, pin and chord is only answered on the box. Covers the

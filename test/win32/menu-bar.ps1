@@ -531,6 +531,9 @@ $expectedTree = @(
     "&File/Restart Ghoztty and Back&ground Sessions$EL"
     "&File/E&xit"
     '&Edit >'
+    "&Edit/Und&o Close"
+    "&Edit/&Redo Close"
+    '&Edit/---'
     "&Edit/&Copy"
     "&Edit/&Paste"
     "&Edit/Select &All"
@@ -811,6 +814,8 @@ if ($null -ne $tree) {
     # placeholder action's chord.
     $remote = Row $tree "&File/New &Remote Window"
     Assert ($null -ne $remote -and $remote.Accel -eq '') "B: New Remote Window (no binding) shows no chord (got '$($remote.Accel)')"
+    $undo = Row $tree "&Edit/Und&o Close"
+    Assert ($null -ne $undo -and $undo.Accel -eq 'Ctrl+Shift+Z') "B: Edit>Undo Close is labeled Ctrl+Shift+Z (got '$($undo.Accel)')"
     $about = Row $tree "&Help/&About Ghoztty"
     Assert ($null -ne $about -and $about.Accel -eq '') "B: About (no binding) shows no chord (got '$($about.Accel)')"
 }
@@ -818,6 +823,8 @@ if ($null -ne $tree) {
 # --- D: state gating, single pane / two tabs -------------------------------
 if ($null -ne $tree) {
     Assert ((Row-Flags $tree "&Edit/&Copy") -eq ':grayed') 'D: Copy is grayed with no selection'
+    # T1825: nothing has been closed yet, so there is nothing to bring back.
+    Assert ((Row-Flags $tree "&Edit/Und&o Close") -eq ':grayed') 'D: Undo Close is grayed with no close to undo'
     Assert ((Row-Flags $tree "&Window/&Zoom Split") -eq ':grayed') 'D: Zoom Split is grayed in a single-pane tab'
     Assert ((Row-Flags $tree "&Window/&Select Split/Select Split &Left") -eq ':grayed') 'D: Select Split rows are grayed in a single-pane tab'
     Assert ((Row-Flags $tree "&Window/&Resize Split/Move Divider &Up") -eq ':grayed') 'D: Move Divider rows are grayed in a single-pane tab'

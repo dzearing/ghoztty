@@ -128,6 +128,8 @@ pub const Id = enum {
     prompt_surface_title,
     prompt_surface_banner,
     select_all,
+    undo,
+    redo,
     command_palette,
     find,
     find_next,
@@ -317,6 +319,9 @@ pub const registry = [_]Command{
     .{ .id = .prompt_surface_title, .name = "Change Pane Title…", .action = .prompt_surface_title },
     .{ .id = .prompt_surface_banner, .name = "Set Pane Banner…", .action = .prompt_surface_banner },
     .{ .id = .select_all, .name = "Select All", .action = .select_all },
+    // Undo/redo a pane or tab close (T1825). The core's own palette titles.
+    .{ .id = .undo, .name = "Undo", .action = .undo },
+    .{ .id = .redo, .name = "Redo", .action = .redo },
     .{ .id = .command_palette, .name = "Command Palette", .action = .toggle_command_palette },
     .{ .id = .find, .name = "Find", .action = .start_search },
     .{ .id = .find_next, .name = "Find Next", .action = .{ .navigate_search = .next } },
@@ -418,14 +423,13 @@ pub fn coversDefault(cmd: input.Command) bool {
 /// it is not listed: Mac's `Ghostty.Command.isSupported` does the same with its
 /// own list (toggle_tab_overview, toggle_window_decorations,
 /// show_gtk_inspector), and the two lists differ exactly where the frontends
-/// do — win32 performs the first two, and has no secure input or undo manager.
+/// do — win32 performs the first two, and has no secure input. (Undo and redo
+/// left this list with T1825, which gave win32 its close undo.)
 ///
 /// Implementing one of these on Windows means removing it here, which the
 /// test below forces you to look at.
 pub const unsupported_actions = [_]input.Binding.Action.Key{
     .toggle_secure_input, // macOS EnableSecureEventInput
-    .undo, // macOS NSUndoManager
-    .redo, // macOS NSUndoManager
     .show_gtk_inspector, // GTK-only
     .show_on_screen_keyboard, // GTK/mobile
     .inspector, // the terminal inspector overlay is not built on win32
@@ -446,12 +450,10 @@ test "isSupported: each unsupported default is hidden, by name (T1753)" {
     // default for one of these (or a win32 implementation of one) shows up
     // here as a changed list rather than as a silent palette row.
     const expected = [_][]const u8{
-        "Redo",
         "Show On-Screen Keyboard",
         "Show the GTK Inspector",
         "Toggle Inspector",
         "Toggle Secure Input",
-        "Undo",
     };
     var hidden: [16][]const u8 = undefined;
     var n: usize = 0;
@@ -482,7 +484,9 @@ test "isSupported: every unsupported action has a default, and supported ones st
     try std.testing.expect(isSupported(.{ .action = .toggle_tab_overview, .title = "x" }));
     try std.testing.expect(isSupported(.{ .action = .new_tab, .title = "x" }));
     // A user's own command running an unsupported action is hidden too.
-    try std.testing.expect(!isSupported(.{ .action = .undo, .title = "My Undo" }));
+    try std.testing.expect(!isSupported(.{ .action = .toggle_secure_input, .title = "My Secure Input" }));
+    // Close undo is real on win32 (T1825).
+    try std.testing.expect(isSupported(.{ .action = .undo, .title = "My Undo" }));
 }
 
 test "coversDefault: a default the registry already offers is hidden (T1752)" {

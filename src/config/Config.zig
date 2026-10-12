@@ -2689,9 +2689,12 @@ keybind: Keybinds = .{},
 /// `1h1h` is equivalent to `2h`. This is confusing and should be avoided.
 /// A future update may disallow this.
 ///
-/// This configuration is only supported on macOS. Linux doesn't
-/// support undo operations at all so this configuration has no
-/// effect.
+/// On macOS and Windows, closing a split, tab or window (Windows: a split
+/// or tab) can be undone within this time; the closed pane's shell keeps
+/// running until the undo expires. On Windows the undo is `ctrl+shift+z`
+/// and the redo `ctrl+shift+y`, since `ctrl+z` belongs to the shell.
+/// Linux doesn't support undo operations at all so this configuration has
+/// no effect there.
 ///
 /// Available since: 1.2.0
 @"undo-timeout": Duration = .{ .duration = 5 * std.time.ns_per_s },
@@ -7219,6 +7222,23 @@ pub const Keybinds = struct {
                 alloc,
                 .{ .key = .{ .unicode = 'b' }, .mods = .{ .ctrl = true, .shift = true } },
                 .{ .prompt_surface_banner = {} },
+            );
+
+            // Undo/redo a pane or tab close (mac: cmd+z / cmd+shift+z, T1825).
+            // Plain ctrl+z belongs to the shell (EOF/suspend, see above), so
+            // the undo moves into Ghostty's ctrl+shift app-chord namespace,
+            // and redo takes Windows' own redo letter. Not performable: a
+            // chord that fell through with nothing to undo would reach the
+            // shell as ^Z and suspend the foreground job.
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 'z' }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .undo = {} },
+            );
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .unicode = 'y' }, .mods = .{ .ctrl = true, .shift = true } },
+                .{ .redo = {} },
             );
 
             // Windows convention: ctrl+f4 closes the current tab.

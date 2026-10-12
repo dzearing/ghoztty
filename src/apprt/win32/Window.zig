@@ -24,6 +24,7 @@ const Surface = @import("Surface.zig");
 const window_chord = @import("window_chord.zig");
 const paint_probe = @import("paint_probe.zig");
 const PaneView = @import("PaneView.zig");
+const CloseUndo = @import("CloseUndo.zig");
 const ViewerPane = @import("ViewerPane.zig");
 const viewer_accel = @import("viewer_accel.zig");
 const viewer_content = @import("viewer_content.zig");
@@ -1759,6 +1760,10 @@ pub fn deinit(self: *Window) void {
     if (self.banner_dialog) |dlg| dlg.cancel();
     if (self.machine_chooser) |ch| ch.cancel();
 
+    // App quit with a close still undoable (T1825): the user closed it, so
+    // it ENDS - unlike the live panes below, which detach for re-attach.
+    self.app.close_undo.finalizeWindow(self);
+
     // Drop IPC names pointing at this window before the memory can be
     // recycled.
     self.app.ipcForget(.{ .window = self });
@@ -2365,7 +2370,7 @@ pub fn findTabIndex(self: *Window, pane: *PaneView) ?usize {
 }
 
 /// Find the Node.Handle for a pane in a given tab's tree.
-fn findHandle(self: *Window, tab_idx: usize, pane: *PaneView) ?SplitTree(PaneView).Node.Handle {
+pub fn findHandle(self: *Window, tab_idx: usize, pane: *PaneView) ?SplitTree(PaneView).Node.Handle {
     var it = self.tab_trees[tab_idx].iterator();
     while (it.next()) |entry| {
         if (entry.view == pane) return entry.handle;
@@ -2781,7 +2786,7 @@ fn openViewerSplitFromLink(pv: *PaneView, location: []const u8, origin: ?[]const
 /// Takes ownership of `tree` and cannot fail. That is the point of the split —
 /// every fallible step happens before it, so each constructor owns its own
 /// cleanup and there is exactly one copy of the tab bookkeeping.
-fn insertPaneAsTab(self: *Window, pane: *PaneView, tree: SplitTree(PaneView)) void {
+pub fn insertPaneAsTab(self: *Window, pane: *PaneView, tree: SplitTree(PaneView)) void {
     // Determine insert position based on config.
     const pos: usize = switch (self.app.config.@"window-new-tab-position") {
         .current => if (self.tab_count > 0) self.active_tab + 1 else 0,
@@ -2846,7 +2851,7 @@ fn showInBackground(self: *Window, h: w32.HWND) void {
 /// The same, at an index the CALLER chose rather than the one the config
 /// implies: a pane dropped on the tab strip becomes a tab exactly where it was
 /// dropped (T1537), which is a position the user pointed at and not a policy.
-fn insertPaneAsTabAt(
+pub fn insertPaneAsTabAt(
     self: *Window,
     pane: *PaneView,
     tree: SplitTree(PaneView),
@@ -3101,6 +3106,13 @@ fn closeTabByIndex(self: *Window, idx: usize) void {
     if (idx >= self.tab_count) return;
     // Cancel any in-progress rename (the edit control may belong to this tab).
     self.cancelTabRename();
+    // T1825: with `undo-timeout` the tab is PARKED, not ended - its tree (and
+    // every session in it) waits, hidden, for an undo, and is ended when the
+    // undo expires. The entry owns the tree from here; only the slot goes.
+    if (self.app.close_undo.parkTab(self, idx)) {
+        self.removeTabSlot(idx);
+        return;
+    }
     var tree = self.tab_trees[idx];
     // T89e: user closed this tab → every pane's agent session must END
     // (CLOSE), not detach. Mark before deinit; the flag is read as each
@@ -3160,6 +3172,9 @@ pub fn closeTabMode(self: *Window, mode: apprt.action.CloseTabMode, pane: *PaneV
         .this => self.closeSplitPane(pane),
         .other => {
             var current = self.findTabIndex(pane) orelse return;
+            // One action, one undo (Mac's "Close Other Tabs" grouping).
+            self.app.close_undo.beginGroup();
+            defer self.app.close_undo.endGroup();
             var i: usize = self.tab_count;
             while (i > 0) {
                 i -= 1;
@@ -3171,6 +3186,8 @@ pub fn closeTabMode(self: *Window, mode: apprt.action.CloseTabMode, pane: *PaneV
         },
         .right => {
             const current = self.findTabIndex(pane) orelse return;
+            self.app.close_undo.beginGroup();
+            defer self.app.close_undo.endGroup();
             var i: usize = self.tab_count;
             while (i > current + 1) {
                 i -= 1;
@@ -3185,6 +3202,9 @@ pub fn closeTabMode(self: *Window, mode: apprt.action.CloseTabMode, pane: *PaneV
 pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
     const alloc = self.app.core_app.alloc;
     const tab = self.findTabIndex(pane) orelse {
+        // A pane parked for undo (T1825) is in no tree: this is its shell
+        // exiting while it waited, and the parked entry lets it go.
+        if (self.app.close_undo.paneGone(pane)) return;
         log.debug("closeSplitPane: pane not found in any tab", .{});
         return;
     };
@@ -3212,8 +3232,13 @@ pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
     };
     log.debug("closeSplitPane: has_next={}", .{next_pane != null});
 
+    // T1825: park the pane for `undo-timeout` instead of ending it. Read from
+    // the tree it is still in, so the anchor can put it back where it was.
+    const parked = self.app.close_undo.parkPane(self, tab, handle, pane);
+
     const new_tree = tree.remove(alloc, handle) catch {
         log.err("failed to remove pane from split tree", .{});
+        if (parked) self.app.close_undo.cancelPark(pane);
         return;
     };
     log.debug("closeSplitPane: remove returned, new_tree nodes={}", .{new_tree.nodes.len});
@@ -3222,8 +3247,9 @@ pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
     // detach. The surviving panes in `new_tree` keep their default (detach)
     // intent; only the removed `pane` is marked. old_tree.deinit() below
     // unrefs `pane` to zero, freeing it and reading this flag as its
-    // termio backend tears down.
-    pane.setSessionCloseIntent(true);
+    // termio backend tears down. A PARKED pane (T1825) is not marked: the
+    // undo entry holds it alive, and marks it when the undo expires.
+    if (parked) CloseUndo.hidePane(pane) else pane.setSessionCloseIntent(true);
 
     // Same swap-then-release order as `replaceTabRoot`, and here it is what
     // keeps the app alive (T1356): a viewer pane's `deinit` closes its
@@ -10448,6 +10474,8 @@ fn menuBarState(self: *Window) menu_bar.State {
         .pane_count = if (self.tab_count > 0) self.leafCount(self.active_tab) else 1,
         .session_persistence = self.app.config.@"session-persistence",
         .is_quick_terminal = self.is_quick_terminal,
+        .can_undo = self.app.close_undo.canUndo(self),
+        .can_redo = self.app.close_undo.canRedo(self),
     };
     // T191: read the topmost bit off the window rather than tracking it —
     // the OS owns it (it propagates to owned popups, and another process can
@@ -11422,6 +11450,9 @@ pub fn close(self: *Window) void {
     // (`closeTabByIndex`) ever raised it, so a title-bar X on a window that
     // still had tabs tore itself down with the flag still false.
     self.closing = true;
+    // Closes parked in this window (T1825) hide under its HWND: end them while
+    // it still exists, before the surfaces' GL contexts are torn down.
+    self.app.close_undo.finalizeWindow(self);
     self.markAllSessionsClose();
 
     // First, cleanly shut down all surfaces (renderer/IO threads, WGL, DC).

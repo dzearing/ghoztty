@@ -94,6 +94,10 @@ pub const State = struct {
     /// Mac, where `validateMenuItem` disables it for anything that is not a
     /// primary terminal window (`AppDelegate.swift`).
     is_quick_terminal: bool = false,
+    /// This window has a pane or tab close it can still undo, or an undo it
+    /// can still redo (T1825).
+    can_undo: bool = false,
+    can_redo: bool = false,
 };
 
 pub const Flags = struct {
@@ -137,6 +141,11 @@ const file_menu = [_]Node{
 };
 
 const edit_menu = [_]Node{
+    // Mac's Edit menu opens with Undo/Redo too. Here they bring back a closed
+    // pane or tab (T1825); grayed when there is none.
+    .{ .item = .{ .cmd = .undo, .title = u16lit("Und&o Close") } },
+    .{ .item = .{ .cmd = .redo, .title = u16lit("&Redo Close") } },
+    .separator,
     .{ .item = .{ .cmd = .copy_to_clipboard, .title = u16lit("&Copy") } },
     .{ .item = .{ .cmd = .paste_from_clipboard, .title = u16lit("&Paste") } },
     .{ .item = .{ .cmd = .select_all, .title = u16lit("Select &All") } },
@@ -408,6 +417,9 @@ pub fn flags(cmd: commands.Id, state: State) Flags {
         => .{ .enabled = state.pane_count > 1 },
 
         .toggle_readonly => .{ .checked = state.readonly },
+
+        .undo => .{ .enabled = state.can_undo },
+        .redo => .{ .enabled = state.can_redo },
 
         // A checkmark, and grayed on the one window that manages its own
         // topmost state.

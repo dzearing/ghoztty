@@ -93,6 +93,11 @@ test {
     // layout but not the tree. Imports only the shared split tree. Every lane.
     _ = @import("apprt/win32/pane_stash.zig");
 
+    // Pure win32 close undo (T1825): the expiring per-window stack and where
+    // a closed pane goes back in its split tree. Imports only the shared split
+    // tree. Every lane.
+    _ = @import("apprt/win32/close_undo.zig");
+
     // Pure win32 pane sidebar rules (T1828): modes, column widths, the rail
     // monogram, row text, roster order and the panel/rail geometry. Imports
     // only the TOC layout and the shared split tree. Every lane.
