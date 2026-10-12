@@ -305,6 +305,46 @@ try {
         catch { $bound = $false; $script:LastBindError = $_.Exception.Message }
         Check 'the empty sample can be handed straight to the self-spawn check' `
             ($bound -and $ids.Count -eq 0) "bound=$bound err=$($script:LastBindError)"
+
+        # -- 15b: a reused parent pid adopts nobody (T1840). Synthetic rows:
+        #         the lane root 26328 was born today; 39000 names 26328 as its
+        #         parent but was born a week earlier, so its real parent was an
+        #         older process that held the same pid. 41000 is a genuine
+        #         child, and 42000 is the stranger's own child, which must not
+        #         ride in through it.
+        $now = Get-Date
+        $synth = @(
+            [pscustomobject]@{ ProcessId = 26328; ParentProcessId = 1; Name = 'zig.exe'; CreationDate = $now.AddMinutes(-5); UserModeTime = [uint64]100; KernelModeTime = [uint64]0 }
+            [pscustomobject]@{ ProcessId = 41000; ParentProcessId = 26328; Name = 'test.exe'; CreationDate = $now.AddMinutes(-4); UserModeTime = [uint64]10; KernelModeTime = [uint64]0 }
+            [pscustomobject]@{ ProcessId = 39000; ParentProcessId = 26328; Name = 'Spotify.exe'; CreationDate = $now.AddDays(-8); UserModeTime = [uint64]5000000; KernelModeTime = [uint64]0 }
+            [pscustomobject]@{ ProcessId = 42000; ParentProcessId = 39000; Name = 'Spotify.exe'; CreationDate = $now.AddDays(-8).AddSeconds(2); UserModeTime = [uint64]7000000; KernelModeTime = [uint64]0 }
+        )
+        $walked = @(Get-ProcessTree -RootPid 26328 -Snapshot $synth | ForEach-Object { [int]$_.ProcessId } | Sort-Object)
+        Check 'a child older than the parent it names is not in the lane tree (T1840)' `
+            (-not ($walked -contains 39000) -and -not ($walked -contains 42000)) "walked=$($walked -join ',')"
+        Check 'a genuine younger child still is' `
+            (($walked -contains 26328) -and ($walked -contains 41000) -and $walked.Count -eq 2) "walked=$($walked -join ',')"
+        # Negative control: the same rows with no CreationDate fall back to the
+        # old pid-only walk, which DOES adopt the stranger -- so the check
+        # above is measuring the guard, not a walk that never adopts anything.
+        $undated = @($synth | ForEach-Object { $o = $_.PSObject.Copy(); $o.CreationDate = $null; $o })
+        $loose = @(Get-ProcessTree -RootPid 26328 -Snapshot $undated | ForEach-Object { [int]$_.ProcessId })
+        Check 'negative control: without creation dates the stranger is adopted' `
+            (($loose -contains 39000) -and ($loose -contains 42000)) "walked=$($loose -join ',')"
+
+        $cpuFn = @($laneAst.FindAll({
+                    param($n)
+                    $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                    $n.Name -eq 'Get-TreeCpu'
+                }, $true))
+        Check 'floor-lane defines Get-TreeCpu once' ($cpuFn.Count -eq 1) "found $($cpuFn.Count)"
+        if ($cpuFn.Count -eq 1) {
+            . ([scriptblock]::Create($cpuFn[0].Extent.Text))
+            $cpuTree = @(Get-ProcessTree -RootPid 26328 -Snapshot $synth)
+            $laneCpu = Get-TreeCpu -Tree $cpuTree -State @{}
+            Check "the adopted stranger's CPU is not lane progress (T1840)" `
+                ([uint64]$laneCpu -eq [uint64]110) "cpu=$laneCpu (want 110)"
+        }
     }
     $r = Invoke-LaneLeakSweep -Leaked $null -NoStack
     Check 'a null leak set counts zero, not one phantom leak' `

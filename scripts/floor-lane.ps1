@@ -356,10 +356,24 @@ function Get-ProcessTree {
         $cur = [int]$queue.Dequeue()
         if ($seen.ContainsKey($cur)) { continue }
         $seen[$cur] = $true
-        $self = $Snapshot | Where-Object { [int]$_.ProcessId -eq $cur }
+        $self = @($Snapshot | Where-Object { [int]$_.ProcessId -eq $cur })
         foreach ($s in $self) { $null = $out.Add($s) }
         if ($byParent.ContainsKey($cur)) {
-            foreach ($c in $byParent[$cur]) { $queue.Enqueue([int]$c.ProcessId) }
+            # A child must be YOUNGER than the parent it names (T1840). Windows
+            # reuses pids and never rewrites ParentProcessId, so a process
+            # whose real parent died days ago "becomes" the child of whatever
+            # lane process is later handed that pid. On 2026-10-11 that put
+            # the user's own Spotify in the win32 lane's tree: the T1813
+            # window check scored the lane red on it, its CPU counted as lane
+            # progress, and Stop-Tree would have killed it. A missing
+            # CreationDate on either side keeps the old answer (adopt).
+            $born = $null
+            if ($self.Count -gt 0) { $born = $self[0].CreationDate }
+            foreach ($c in $byParent[$cur]) {
+                if ($null -ne $born -and $null -ne $c.CreationDate -and
+                    [datetime]$c.CreationDate -lt [datetime]$born) { continue }
+                $queue.Enqueue([int]$c.ProcessId)
+            }
         }
     }
     # Plain return, no comma, and callers WRAP IN @() (T982): an empty result

@@ -1,10 +1,10 @@
 {
     "guard":  "job-teardown",
     "script":  "test/win32/job-teardown.ps1",
-    "generated":  "2026-10-11T20:08:00-07:00",
-    "commit":  "01b3b43ca",
+    "generated":  "2026-10-11T20:45:16-07:00",
+    "commit":  "327637739",
     "uncommitted":  [
-                        "test/win32/pane-sidebar-drag.ps1"
+                        "test/win32/floor-lane-leak-sweep.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -120,7 +120,7 @@
                   "test/win32/floor-lane-commit-headroom.ps1":  "63aed36ba60ecbd7af05f2349f050a390eccfa1f6768b52b416d9d27b60837ec",
                   "test/win32/floor-lane-compiler-crash.ps1":  "34827f1ed2d63df665d72275f13211f6a3f8273c44561b09396ffdc3f7505470",
                   "test/win32/floor-lane-desktop.ps1":  "99e84cf2d055c180a499e3c896abb9c4d30aa35dd3402af187ae3b5113614c0d",
-                  "test/win32/floor-lane-leak-sweep.ps1":  "808a7e97c678e8e9b9b997f2ccca91efa8e3acdb617490ee23347412de81fb1b",
+                  "test/win32/floor-lane-leak-sweep.ps1":  "0bc2ffdef054b434ddc199419cee8ade1a49a8027e550040632b14def5c7d6b8",
                   "test/win32/floor-lane-releasesafe.ps1":  "ecd2f326201dfeb9cd74d67f603ec6e06ea566182e28754acc08da1629784a84",
                   "test/win32/floor-lane-solo-confirm.ps1":  "2e7b8705867fd366ef614013d2cdd8e9e213136a4f8e9347ac049215944c0a50",
                   "test/win32/floor-lane-stall-sampling.ps1":  "1ffd9b4a466850f44fd49712ad9c82cf8a8e89ead999cea40903eb3ce0306418",

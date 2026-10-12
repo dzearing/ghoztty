@@ -35301,3 +35301,19 @@ moved to T1814.
   caught four vacuous `.Count`s in the new script before it shipped.
 - **Not here.** The all-windows scope's drop-on-another-window's-group (T1829)
   and a grab handle outside rearrange mode (T1830) reuse this target unchanged.
+
+## 2026-10-11 — T1840: floor-lane's tree walk no longer adopts strangers through reused pids
+
+- **What landed.** `Get-ProcessTree` in `scripts/floor-lane.ps1` only adopts a
+  child that is younger than the parent it names. Windows recycles pids and
+  never rewrites a process's parent pid, so the user's own Spotify (whose real
+  parent died a week earlier) read as a child of a lane process that later got
+  that pid: the T1813 window check scored a clean win32 lane red on it. The
+  same tree feeds the CPU-progress signal and `Stop-Tree`, so the stranger's
+  CPU no longer reads as lane progress and the cleanup can no longer kill it.
+- **Evidence.** `floor-lane-leak-sweep.ps1` arm 15b drives the shipped walk
+  and `Get-TreeCpu` over synthetic rows, with a negative control (undated rows
+  still adopt); ALL PASS (70). `floor-lane-desktop.ps1` ALL PASS (14); harness
+  floor green.
+- **Filed.** T1868: the stall-sampling negative control flaked once (a zero-CPU wedge tree), green on re-run. T1867: the soak scripts' `Stop-Tree` has the same flaw in a KILL
+  path, so there it could force-kill a user's app.
