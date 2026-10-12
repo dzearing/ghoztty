@@ -1619,6 +1619,12 @@ fn seatCard(self: *PaneSidebar, c: w32.HWND) void {
 /// (`hov.seatAfter`), or the top of the band.
 fn seatAfterHwnd(self: *PaneSidebar, c: w32.HWND) ?w32.HWND {
     const root = w32.GetAncestor(self.hwnd, w32.GA_ROOT) orelse return null;
+    return seatAfterFor(root, c);
+}
+
+/// The same seat for any popup `c` owned by `root` that has to sit above its
+/// sibling popups: the pane grab handle (T1830) is drawn over a pane's banner.
+pub fn seatAfterFor(root: w32.HWND, c: w32.HWND) ?w32.HWND {
     var steps: [64]hov.ZStep = undefined;
     var hwnds: [64]w32.HWND = undefined;
     var n: usize = 0;

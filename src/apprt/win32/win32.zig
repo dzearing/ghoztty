@@ -522,6 +522,10 @@ pub extern "user32" fn IsWindowVisible(
     hWnd: HWND,
 ) callconv(.winapi) i32;
 
+pub extern "user32" fn IsWindowEnabled(
+    hWnd: HWND,
+) callconv(.winapi) i32;
+
 pub extern "user32" fn IsWindow(
     hWnd: ?HWND,
 ) callconv(.winapi) i32;

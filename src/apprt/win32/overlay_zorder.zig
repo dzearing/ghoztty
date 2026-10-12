@@ -67,7 +67,10 @@
 //!     first visible window that is not the top-level's own
 //!     (`pane_sidebar_hover.seatAfter`), after the same stray-topmost check.
 //!     It is only ever visible under the pointer and contracts when the
-//!     pointer leaves, so it cannot linger over another app.
+//!     pointer leaves, so it cannot linger over another app. The pane grab
+//!     handle (`PaneGrabHandle`, T1830) is seated the same way and for the
+//!     same reasons: it is drawn over a pane's banner strip, and it hides the
+//!     moment the pointer is not over its window's own content.
 //!   - NOT OURS: the tooltips (`ViewerNavBar`, `ViewerFeedbackBar`,
 //!     `KeyStateIndicator`, `Window`) are system `TOOLTIPS_CLASS` windows the
 //!     OS places and tears down itself, and the modal dialogs

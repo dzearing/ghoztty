@@ -2021,6 +2021,14 @@ pub fn run(self: *App) !void {
             }
         }
 
+        // The pane grab handle (T1830) follows the pointer over ANY of a
+        // window's HWNDs - terminal surfaces, viewer bars, banner strips, the
+        // handle itself, the window's own chrome - so it is fed here rather
+        // than taught to a dozen WndProcs.
+        if (msg.hwnd != null and (msg.message == w32.WM_MOUSEMOVE or msg.message == w32.WM_NCMOUSEMOVE)) {
+            self.routeGrabPointer(msg.hwnd.?, msg.message, msg.lParam);
+        }
+
         // Skip TranslateMessage for keyboard events on terminal surface
         // windows: handleKeyEvent (and sendWin32InputEvent in Win32 input
         // mode) calls ToUnicode directly, and TranslateMessage's internal
@@ -2049,6 +2057,29 @@ pub fn run(self: *App) !void {
         };
         if (!skip_translate) _ = w32.TranslateMessage(&msg);
         _ = w32.DispatchMessageW(&msg);
+    }
+}
+
+/// Hand a mouse move to the grab handle of the window it happened in (T1830).
+/// The point is taken from the message, not the cursor, so posted input moves
+/// the handle the way real input does.
+fn routeGrabPointer(self: *App, hwnd: w32.HWND, msg: u32, lparam: isize) void {
+    var pt: w32.POINT = .{
+        .x = @as(i16, @truncate(lparam & 0xFFFF)),
+        .y = @as(i16, @truncate((lparam >> 16) & 0xFFFF)),
+    };
+    // WM_NCMOUSEMOVE already carries screen coordinates.
+    if (msg == w32.WM_MOUSEMOVE) _ = w32.ClientToScreen(hwnd, &pt);
+    const root = w32.GetAncestor(hwnd, w32.GA_ROOT) orelse return;
+    // A child's root is its window; a passive popup's (a banner strip, the
+    // handle itself) is its owner.
+    const owner = w32.GetWindow(root, w32.GW_OWNER);
+    for (self.windows.items) |win| {
+        const wh = win.hwnd orelse continue;
+        if (wh == root or (owner != null and wh == owner.?)) {
+            win.noteGrabPointer(pt);
+            return;
+        }
     }
 }
 

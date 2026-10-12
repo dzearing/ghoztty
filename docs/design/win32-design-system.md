@@ -804,7 +804,7 @@ The audit of every registered class, so this is not re-derived a third time:
 | `GhozttyViewerTOC` | `CS_HREDRAW\|CS_VREDRAW` | **yes** (T467) | Rounded card against its own bounds (the `SetWindowRgn` redraw is a side effect, not a contract) |
 | `ViewerPane` | `CS_HREDRAW\|CS_VREDRAW` | yes | Centered card |
 | `DimOverlay` | `0` | no | Flat fill — a partial repaint is indistinguishable |
-| `Scrollbar`, `KeyStateIndicator`, `ReadonlyBadge` | `0` | no | **Push-model**: painted by `UpdateLayeredWindow`, never `WM_PAINT`. The style would be inert; what matters is that every resize path calls their `repaint()`, and each does |
+| `Scrollbar`, `KeyStateIndicator`, `ReadonlyBadge`, `GhozttyPaneGrabHandle` (T1830) | `0` | no | **Push-model**: painted by `UpdateLayeredWindow`, never `WM_PAINT`. The style would be inert; what matters is that every resize path calls their `repaint()`, and each does |
 | Top-level `Window` | `CS_DBLCLKS` | no | `handleResize` invalidates the caption band and the tab strip by hand and deliberately, so a resize does not repaint the child-covered pane area |
 | Terminal surface | `CS_OWNDC` | no | The OpenGL renderer redraws the whole client every frame; `WM_PAINT` only wakes it |
 | `GhozttyCommandPalette`, `GhozttySearchBar` | `CS_HREDRAW\|CS_VREDRAW` | **yes** (T819) | Sized `<constant> * scale`, so a DPI change resizes them and invalidates everything they painted |

@@ -366,6 +366,22 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T1830: the hover grab handle - the band that reveals it on terminal and
+    # viewer panes, its published state, and the drag it starts. Covers the
+    # handle's pure rules and its window, the run-loop route that feeds it the
+    # pointer, and the window that answers its probe and holds the drag.
+    [pscustomobject]@{
+        Name   = 'pane-grab-handle'
+        Script = 'test\win32\pane-grab-handle.ps1'
+        Stamp  = 'test\win32\pane-grab-handle.stamp.json'
+        Covers = @(
+            'test\win32\pane-grab-handle.ps1',
+            'src\apprt\win32\pane_grab_handle.zig',
+            'src\apprt\win32\PaneGrabHandle.zig',
+            'src\apprt\win32\App.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # T1531: the drag itself - the gesture, the live preview and the tree
     # mutation it commits. Covers the harness, the pure preview geometry, the
     # overlay that draws it, the resolver it asks, the tree mutations it

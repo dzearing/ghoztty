@@ -1,13 +1,13 @@
 {
     "guard":  "overlay-zorder",
     "script":  "test/win32/overlay-zorder.ps1",
-    "generated":  "2026-10-11T17:18:35-07:00",
-    "commit":  "3ad7b1721",
+    "generated":  "2026-10-12T10:16:51-07:00",
+    "commit":  "70d7a31b8",
     "uncommitted":  [
                         "src/apprt/win32/overlay_zorder.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/overlay_zorder.zig":  "5f96ec00d233657bed55f124a44fc183c6bd849b39708f971d6bfcf9502ca3da",
+                  "src/apprt/win32/overlay_zorder.zig":  "ee673fd54c3deae3f0808e7c468a8b470d2da7501da4182650dac88fc6bd4f58",
                   "test/win32/overlay-zorder.ps1":  "62d995250f699e0b28745c9045f9ab8fd57b33e1b92b8802cf9f6a4dcc72003b"
               }
 }

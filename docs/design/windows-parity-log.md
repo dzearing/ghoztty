@@ -35532,3 +35532,26 @@ moved to T1814.
   and `pane_sidebar.zig` pass. The floor (lib/none/win32/agent) and P1-P3 are
   ALL PASS. All 22 harnesses the edit made due are ALL PASS, and so are the
   harness floor and the self-spawn audit.
+
+## 2026-10-12 — T1830: every pane gets a hover grab handle
+
+- **What changed.** With the pointer in the top fifth of any pane, a small
+  grip appears centered at its top edge, faint until you grab it and solid
+  while you do. Dragging it moves the pane exactly as a rearrange-mode header
+  does: into a split, onto another pane (swap), onto a tab, out to its own
+  window, or onto the pane sidebar. Viewer panes get it too, so a document or
+  web preview can be dragged at all without entering rearrange mode.
+- **How.** One layered popup per window (`PaneGrabHandle.zig`) moves to the
+  hovered pane; its rules, sizes and pixels are pure (`pane_grab_handle.zig`).
+  The run loop hands it every mouse move on the window's HWNDs, and a 50 ms
+  sample covers a viewer's page, which is another process's window. The press
+  starts the existing pane drag (`Window.beginGrabHandleDrag`).
+- **Deliberate differences from Mac.** Sizes are on the 4 DIP grid and the grip
+  sits inside the pane instead of overhanging it. Rearrange mode, hero tabs and
+  the Quick Terminal show no handle.
+- **Validation.** New `pane-grab-handle.ps1` is ALL PASS (34): reveal, hide,
+  follow, engage, click-is-a-click, terminal swap, rearrange suppression, and a
+  viewer swap. Its `-NegativeControl` run fails. The pure tests pass. The floor
+  (lib/none/win32/agent) and P1-P3 are ALL PASS, and so are all 42 harnesses
+  the edit made due, the harness floor included. On-screen look beside Mac is
+  NOT RUN (the user is present; never pull focus) - filed as T1881.

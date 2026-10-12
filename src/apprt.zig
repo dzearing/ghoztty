@@ -295,6 +295,10 @@ test {
     // no-OS-imports deal.
     _ = @import("apprt/win32/rearrange_header.zig");
 
+    // Pure win32 hover grab handle - the band that reveals it, its two
+    // states, and its pixels (T1830), same no-OS-imports deal.
+    _ = @import("apprt/win32/pane_grab_handle.zig");
+
     // Pure win32 cross-window pane relocation rules — what the window a pane
     // LEAVES has to do, and where a popped-out window lands (T1538), same
     // no-OS-imports deal.

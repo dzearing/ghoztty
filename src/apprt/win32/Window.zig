@@ -33,6 +33,8 @@ const pane_stash = @import("pane_stash.zig");
 const pane_sidebar = @import("pane_sidebar.zig");
 const pane_sidebar_hover = @import("pane_sidebar_hover.zig");
 const PaneSidebar = @import("PaneSidebar.zig");
+const PaneGrabHandle = @import("PaneGrabHandle.zig");
+const pane_grab_handle = @import("pane_grab_handle.zig");
 const terminal = @import("../../terminal/main.zig");
 const tcp_dial = @import("../../remote/tcp_dial.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
@@ -530,6 +532,10 @@ is_quick_terminal: bool = false,
 /// of the active tab. Created on the first layout; null on the Quick
 /// Terminal, which has no chrome for it (Mac leaves it out there too).
 sidebar: ?*PaneSidebar = null,
+/// The hover grab handle (T1830): one popup that sits on whichever pane's
+/// top band holds the pointer. Created on the first mouse move; null on the
+/// Quick Terminal, which has no other window or tab to drag a pane to.
+grab_handle: ?*PaneGrabHandle.PaneGrabHandle = null,
 /// Pinned = the flat panel; unpinned = the mini rail. Hidden = no column.
 /// Layout state, so new windows start from the last choice
 /// (`PaneSidebar.remembered`), as Mac's do.
@@ -3748,6 +3754,147 @@ pub fn cancelPaneDrag(self: *Window) bool {
     if (!d.active) return false;
     self.endRearrangeDrag(false);
     return true;
+}
+
+/// The pointer moved to `pt` (screen) over one of this window's HWNDs: the
+/// grab handle looks at it (T1830). Routed from the run loop, so it sees moves
+/// over the terminal, the banner, a viewer's bars and the window's own chrome
+/// without any of those windows knowing the handle exists.
+pub fn noteGrabPointer(self: *Window, pt: w32.POINT) void {
+    if (self.closing or self.is_quick_terminal) return;
+    const hwnd = self.hwnd orelse return;
+    if (self.grab_handle == null) {
+        self.grab_handle = PaneGrabHandle.PaneGrabHandle.create(
+            self.app.core_app.alloc,
+            self,
+            hwnd,
+            self.app.hinstance,
+        ) catch |err| {
+            log.warn("grab handle create failed err={}", .{err});
+            return;
+        };
+    }
+    self.grab_handle.?.poke(pt);
+}
+
+/// What the pointer at `pt` (screen) means for the grab handle (T1830).
+/// `handle_hwnd` is the handle itself, which is over this window by
+/// definition.
+pub fn grabHandleProbe(self: *Window, pt: w32.POINT, handle_hwnd: w32.HWND) PaneGrabHandle.Probe {
+    const hwnd = self.hwnd orelse return .{};
+    if (self.closing or self.tab_count == 0) return .{};
+    if (!self.pointerOverOwnContent(pt, hwnd, handle_hwnd)) return .{};
+
+    var probe: PaneGrabHandle.Probe = .{
+        .over_window = true,
+        .suppressed = pane_grab_handle.suppressed(
+            self.rearrange_mode,
+            self.tab_hero_active[self.active_tab],
+            self.is_fullscreen,
+            self.visibleLeafCount(self.active_tab),
+        ) or
+            // Another drag is in flight (a rearrange header, a sidebar row):
+            // a handle lighting up under it would be a second grip on the
+            // gesture already in hand. A drag FROM the handle is answered by
+            // the handle itself, which holds its pane through `grabDragging`.
+            self.rearrange_drag != null or
+            // A modal dialog has the window disabled.
+            w32.IsWindowEnabled(hwnd) == 0,
+    };
+
+    var c = pt;
+    _ = w32.ScreenToClient(hwnd, &c);
+    var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
+    const n = self.collectPaneSlots(&slots);
+    for (slots[0..n]) |s| {
+        const inner = self.cardInner(s.rect);
+        if (c.x < inner.left or c.x >= inner.right or c.y < inner.top or c.y >= inner.bottom) continue;
+        const t = self.grabTargetFor(s.view, inner);
+        const b = pane_grab_handle.band(.{
+            .left = inner.left,
+            .top = inner.top,
+            .right = inner.right,
+            .bottom = inner.bottom,
+        }, pane_grab_handle.Metrics.forScale(self.scale));
+        probe.hit = t;
+        probe.in_band = b.contains(c.x, c.y);
+        probe.over_viewer = s.view.kind == .viewer;
+        break;
+    }
+    return probe;
+}
+
+/// The handle's target for `view`, wherever the pointer is - the pane a held
+/// handle stays on through a drag. Null once the pane has left the grid.
+pub fn grabHandleTarget(self: *Window, view: *PaneView) ?PaneGrabHandle.Target {
+    if (self.closing or self.tab_count == 0) return null;
+    var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
+    const n = self.collectPaneSlots(&slots);
+    for (slots[0..n]) |s| {
+        if (s.view == view) return self.grabTargetFor(view, self.cardInner(s.rect));
+    }
+    return null;
+}
+
+fn grabTargetFor(self: *Window, view: *PaneView, inner_client: w32.RECT) PaneGrabHandle.Target {
+    const o = self.clientOrigin();
+    const config = &self.app.config;
+    const config_bg: color_math.Rgb = .{
+        .r = config.background.r,
+        .g = config.background.g,
+        .b = config.background.b,
+    };
+    const surface = view.surface();
+    return .{
+        .view = view,
+        .pane = .{
+            .left = inner_client.left + o.x,
+            .top = inner_client.top + o.y,
+            .right = inner_client.right + o.x,
+            .bottom = inner_client.bottom + o.y,
+        },
+        .bg = if (surface) |s| s.background_tint orelse config_bg else config_bg,
+        // A terminal hides the pointer while you type, and the handle with it
+        // (Mac `cursorVisible`); a viewer never does.
+        .cursor_visible = if (surface) |s| s.mouse_visible else true,
+    };
+}
+
+/// Is the pointer over this window's own panes, rather than over a dialog,
+/// the sidebar's open card, or another application in front?
+///
+/// `WindowFromPoint` names the topmost window at the point. Its root is this
+/// window for every child (terminal surfaces, viewer panes, the page inside a
+/// viewer - another process's window, but parented under ours), and for the
+/// window's passive popups (a pane's banner, the handle) the OWNER is: those
+/// are `WS_EX_NOACTIVATE`, which a dialog never is.
+fn pointerOverOwnContent(self: *Window, pt: w32.POINT, hwnd: w32.HWND, handle_hwnd: w32.HWND) bool {
+    const under = w32.WindowFromPoint(pt) orelse return false;
+    const root = w32.GetAncestor(under, w32.GA_ROOT) orelse return false;
+    if (root == hwnd or root == handle_hwnd) return true;
+    if (w32.GetWindow(root, w32.GW_OWNER) != hwnd) return false;
+    if (self.sidebar) |sb| if (sb.card_hwnd) |card| if (card == root) return false;
+    const ex: u32 = @bitCast(w32.GetWindowLongW(root, w32.GWL_EXSTYLE));
+    return ex & w32.WS_EX_NOACTIVATE != 0;
+}
+
+/// Whether `view` is being carried by a drag (armed or live). The handle
+/// stays on it, engaged, for as long as this is true.
+pub fn grabDragging(self: *const Window, view: *const PaneView) bool {
+    const d = self.rearrange_drag orelse return false;
+    return d.view == view;
+}
+
+/// A press on the grab handle (T1830): arm the pane drag at `pt` (screen).
+/// The same arming a rearrange header's press does - nothing moves until the
+/// pointer passes the threshold, so a click on the handle stays a click.
+pub fn beginGrabHandleDrag(self: *Window, view: *PaneView, pt: w32.POINT) void {
+    if (self.rearrange_drag != null) return;
+    if (!self.paneInActiveTab(view)) return;
+    const hwnd = self.hwnd orelse return;
+    var c = pt;
+    _ = w32.ScreenToClient(hwnd, &c);
+    self.beginRearrangeDrag(view, c.x, c.y);
 }
 
 /// Every window's sidebar shows its empty drop slot while a drag is live,
@@ -11544,6 +11691,12 @@ fn onDestroy(self: *Window) void {
     if (self.sidebar) |sb| {
         sb.destroy();
         self.sidebar = null;
+    }
+    // The grab handle is an owned popup DestroyWindow takes down with us
+    // (T1830); free it while its timer can still be killed.
+    if (self.grab_handle) |gh| {
+        gh.destroy();
+        self.grab_handle = null;
     }
 
     // Remove from App's window list.
