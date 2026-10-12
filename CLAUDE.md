@@ -498,6 +498,20 @@ registry-only, so every `--target=window-N` failed with `not found in
 registry` until something walked the tree — invisibly, for the many callers
 that discard stderr.)
 
+`$GHOZTTY_WINDOW_NAME` is baked at spawn, like every env var, and a session
+restore bakes it too: the restored window's name is settled **before** its
+panes are built, so an agent restart (reboot) RELAUNCHes each shell with it
+(`AppDelegate.sessionLayoutLeafConfig`; it used to come back with
+`GHOZTTY_PANE_ID` only). The name is the persisted target when it is still
+free, else a fresh `window-N` — never a name another window holds, which
+`+close --target=$GHOZTTY_WINDOW_NAME` would then close
+(`AppDelegate.restoredWindowName`; tests: `SessionLayoutRestoreTests`). A
+target name never changes after creation (`+rename` changes the title, not
+the target), but a process keeps the value it was spawned with, so a pane
+whose window could not re-adopt its name on restore holds a stale one. **The
+authoritative lookup is `+list --json`, keyed by `$GHOZTTY_PANE_ID`**; the
+env var is the cheap, usually-right shortcut.
+
 ### Pane identity
 
 Every pane has a **stable, ghoztty-owned pane id** (a UUID):

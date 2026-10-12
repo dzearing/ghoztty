@@ -1881,6 +1881,24 @@ class IPCServer {
         return IPCResponse(success: true, data: data)
     }
 
+    /// Whether a window target name is already held — registered, or the
+    /// display name of a live window other than `controller`. The restore
+    /// path asks BEFORE building a window's surfaces, because the name is
+    /// baked into each pane's `GHOZTTY_WINDOW_NAME` and must be the one the
+    /// window actually ends up with.
+    @MainActor
+    func isWindowNameTaken(_ name: String, excluding controller: TerminalController? = nil) -> Bool {
+        pruneStaleTargets()
+        // A live window can hold the name without being in the registry yet
+        // (fresh windows are only lazily registered on +list / first
+        // targeting) — check both, or the restored window would become a
+        // second holder of the same target name.
+        let heldByLiveWindow = TerminalController.all.contains {
+            $0 !== controller && $0.windowName == name
+        }
+        return targetRegistry[name] != nil || heldByLiveWindow
+    }
+
     /// Re-register a RESTORED remote window under the IPC target name
     /// persisted in its `RemoteSessionManifest` entry, so `+read` /
     /// `+send-keys` / `+close --target=<name>` keep working across a
@@ -1890,15 +1908,7 @@ class IPCServer {
     /// semantics — and the restored window is simply not re-registered.
     @MainActor
     func registerRestoredRemoteWindow(name: String, controller: TerminalController) {
-        pruneStaleTargets()
-        // A live window can hold the name without being in the registry yet
-        // (fresh windows are only lazily registered on +list / first
-        // targeting) — check both, or the restored window would become a
-        // second holder of the same target name.
-        let heldByLiveWindow = TerminalController.all.contains {
-            $0 !== controller && $0.windowName == name
-        }
-        guard targetRegistry[name] == nil, !heldByLiveWindow else {
+        guard !isWindowNameTaken(name, excluding: controller) else {
             Self.logger.info("IPC: restored remote window not re-registered — target '\(name)' already in use")
             return
         }
