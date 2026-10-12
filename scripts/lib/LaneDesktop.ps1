@@ -19,7 +19,7 @@
 # uses for the acceptance scripts; this is the headless half (no input
 # simulation, no capture), so it carries none of that file's weight.
 #
-# Two functions:
+# Three functions:
 #
 #   Start-LaneProcess -CommandLine <cmd>   launch on the lane desktop; returns a
 #                                          System.Diagnostics.Process with its
@@ -27,6 +27,8 @@
 #                                          survives the child's exit - the PS
 #                                          5.1 trap) and .LaneDesktop set to
 #                                          the desktop it landed on.
+#   Start-LaneRedirected -FilePath -StdOut  the same, for one program whose
+#                                          output goes to files (T1822).
 #   Get-LaneInputDesktopWindow -ProcessId  visible top-level windows those pids
 #                                          own on the INPUT desktop (or on a
 #                                          named desktop, for the harness).
@@ -199,6 +201,13 @@ function Start-LaneProcess {
         $p | Add-Member -NotePropertyName LaneDesktop -NotePropertyValue $DesktopName -Force
         return $p
     }
+    # A program that does not exist (ERROR_FILE_NOT_FOUND / PATH_NOT_FOUND) is
+    # not a desktop problem, and the fallback cannot start it either: throw, as
+    # Start-Process always did, rather than announce a desktop outage that did
+    # not happen (T1822 -- the soak's no-worker check hit exactly this).
+    if ([GhozttyLaneDesktop]::LastError -match '^CreateProcessW failed: (2|3)$') {
+        throw "cannot start '$CommandLine': program not found ($([GhozttyLaneDesktop]::LastError))"
+    }
     # The fallback is LOUD and it is the old behavior exactly: a hidden window
     # on the input desktop. The sampled window check still runs over it.
     Write-Host "  LANE DESKTOP UNAVAILABLE ($([GhozttyLaneDesktop]::LastError)) - running on the input desktop; test windows may reach the user's screen"
@@ -210,6 +219,30 @@ function Start-LaneProcess {
     $null = $p.Handle
     $p | Add-Member -NotePropertyName LaneDesktop -NotePropertyValue '' -Force
     return $p
+}
+
+# T1822: one program on the lane desktop with its output in files -- the shape
+# every investigation tool used Start-Process -Redirect*/-WindowStyle Hidden
+# for, which leaves the child on the caller's desktop. cmd does the
+# redirection; /s keeps the inner quoting verbatim. -StdErr omitted folds
+# stderr into -StdOut. The returned Process is cmd, whose exit code is the
+# program's; kill it as a TREE, or the program is orphaned on a desktop
+# nobody can see.
+function Start-LaneRedirected {
+    param(
+        [Parameter(Mandatory)][string]$FilePath,
+        [string]$ArgumentLine = '',
+        [Parameter(Mandatory)][string]$StdOut,
+        [string]$StdErr,
+        [string]$WorkingDirectory
+    )
+    $inner = '"' + $FilePath + '"'
+    if ($ArgumentLine) { $inner += ' ' + $ArgumentLine }
+    $inner += ' > "' + $StdOut + '"'
+    if ($StdErr) { $inner += ' 2> "' + $StdErr + '"' } else { $inner += ' 2>&1' }
+    $sp = @{ CommandLine = ('"' + $env:ComSpec + '" /s /c "' + $inner + '"') }
+    if ($WorkingDirectory) { $sp.WorkingDirectory = $WorkingDirectory }
+    return Start-LaneProcess @sp
 }
 
 # "exe" rest  ->  exe, rest. Only for the fallback, which hands Start-Process

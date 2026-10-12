@@ -1,17 +1,16 @@
 {
     "guard":  "test-binary-soak",
     "script":  "test/win32/test-binary-soak.ps1",
-    "generated":  "2026-10-11T21:37:48-07:00",
-    "commit":  "9128ca433",
+    "generated":  "2026-10-12T03:17:36-07:00",
+    "commit":  "033745c0c",
     "uncommitted":  [
-                        "scripts/lib/ProcessFamily.ps1",
                         "scripts/test-binary-soak.ps1",
                         "test/win32/test-binary-soak.ps1"
                     ],
     "files":  {
                   "scripts/lib/CrashDiag.ps1":  "97dd58c4d761668e6a1883654037e4fa199b04f5cbea3ff1d2b37f9edaa0fd49",
                   "scripts/lib/ProcessFamily.ps1":  "63beb65412f8da3f6cbc32d025be1adde445e46327e5ec2c5361bc0a6972cfac",
-                  "scripts/test-binary-soak.ps1":  "71abbeb54e61feca01f902d15476ae085957c5e6eb71b4f25de49d43528fec7c",
-                  "test/win32/test-binary-soak.ps1":  "9bfac3b5cf78dcb7daf763090e978cf8d37ff44cbf6657ddcdccf25763be0377"
+                  "scripts/test-binary-soak.ps1":  "2cc93833d651a51bc19eba0446827b48a75738f3ad4700f199e4cf522566fc2e",
+                  "test/win32/test-binary-soak.ps1":  "96c647eb2fcbdef023f99868ab73bec7341befc23f0a14f2a9eacd4aefa64f3c"
               }
 }

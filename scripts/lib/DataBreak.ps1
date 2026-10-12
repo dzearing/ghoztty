@@ -68,7 +68,9 @@
 .NOTES
     Dot-source AFTER CrashCatch.ps1 is loaded (it reuses Get-CdbPath,
     New-CdbScript, Read-CrashCatchLog, Get-LastProgressLine and
-    Remove-OldCrashCapture):
+    Remove-OldCrashCapture, and Start-LaneRedirected through CrashCatch's own
+    dot-source of LaneDesktop.ps1 -- every cdb here runs on the lane desktop,
+    T1822):
 
         . "$PSScriptRoot\lib\CrashCatch.ps1"
         . "$PSScriptRoot\lib\DataBreak.ps1"
@@ -123,11 +125,14 @@ function Invoke-CdbOnce {
     $prevSym = $env:_NT_SYMBOL_PATH
     $env:_NT_SYMBOL_PATH = (Split-Path -Parent $ExePath)
     try {
-        $p = Start-Process -FilePath $CdbPath -ArgumentList ('-c "' + $Command + '" "' + $ExePath + '"') `
-            -RedirectStandardOutput $out -RedirectStandardError $err -NoNewWindow -PassThru
+        # T1822: the lane desktop, like every other cdb here -- the debuggee
+        # inherits cdb's desktop.
+        $p = Start-LaneRedirected -FilePath $CdbPath -ArgumentLine ('-c "' + $Command + '" "' + $ExePath + '"') `
+            -StdOut $out -StdErr $err
         $null = $p.Handle
         if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
-            try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+            # The tree: $p is cmd, and killing it alone orphans cdb.
+            & taskkill.exe /T /F /PID $p.Id 2>&1 | Out-Null
             $p.WaitForExit(10000) | Out-Null
             return $null
         }
@@ -812,8 +817,11 @@ function Invoke-DataBreakPageWatch {
         (@($candidates | ForEach-Object { Format-RbpExpression -Offset $_ }) -join ', '), $probe.ModuleName, $probe.Symbol)
     if ($AttachPid -gt 0) { & $Writer ("databreak: attaching to pid {0}" -f $AttachPid) }
     $t0 = Get-Date
-    $p = Start-Process -FilePath $cdbPath -ArgumentList ($argList -join ' ') `
-        -RedirectStandardOutput $log -RedirectStandardError $errLog -NoNewWindow -PassThru
+    # T1822: on the lane desktop. A launched debuggee inherits cdb's desktop,
+    # so a win32 test binary run from here used to open its banner windows on
+    # the user's screen.
+    $p = Start-LaneRedirected -FilePath $cdbPath -ArgumentLine ($argList -join ' ') -StdOut $log -StdErr $errLog
+    if (-not $p.LaneDesktop) { & $Writer 'databreak: lane desktop unavailable -- cdb is on the INPUT desktop' }
     $null = $p.Handle
     if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
         # T836: the clock, not the program, ended this run -- record it on the
@@ -821,7 +829,8 @@ function Invoke-DataBreakPageWatch {
         # a verdict that then read exactly like a run that watched everything.
         $result.TimedOut = $true
         & $Writer "databreak: TIMEOUT after ${TimeoutSeconds}s -- killing"
-        try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+        # The tree: $p is cmd, and killing it alone orphans cdb and its debuggee.
+        & taskkill.exe /T /F /PID $p.Id 2>&1 | Out-Null
         $p.WaitForExit(10000) | Out-Null
     }
     $result.Seconds = [int]((Get-Date) - $t0).TotalSeconds
@@ -1057,8 +1066,9 @@ function Invoke-DataBreak {
         (@($offsets | ForEach-Object { Format-RbpExpression -Offset $_ }) -join ', '))
     if ($AttachPid -gt 0) { & $Writer ("databreak: attaching to pid {0}" -f $AttachPid) }
     $t0 = Get-Date
-    $p = Start-Process -FilePath $cdbPath -ArgumentList ($argList -join ' ') `
-        -RedirectStandardOutput $log -RedirectStandardError $errLog -NoNewWindow -PassThru
+    # T1822: on the lane desktop -- see Invoke-DataBreakPageWatch.
+    $p = Start-LaneRedirected -FilePath $cdbPath -ArgumentLine ($argList -join ' ') -StdOut $log -StdErr $errLog
+    if (-not $p.LaneDesktop) { & $Writer 'databreak: lane desktop unavailable -- cdb is on the INPUT desktop' }
     $null = $p.Handle
     if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
         # T836: see the same branch in Invoke-DataBreakPageWatch -- a run the
@@ -1066,7 +1076,8 @@ function Invoke-DataBreak {
         # complete one unless the result says so.
         $result.TimedOut = $true
         & $Writer "databreak: TIMEOUT after ${TimeoutSeconds}s -- killing"
-        try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+        # The tree: $p is cmd, and killing it alone orphans cdb and its debuggee.
+        & taskkill.exe /T /F /PID $p.Id 2>&1 | Out-Null
         $p.WaitForExit(10000) | Out-Null
     }
     $result.Seconds = [int]((Get-Date) - $t0).TotalSeconds

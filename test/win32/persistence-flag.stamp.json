@@ -1,10 +1,12 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-10-12T02:52:18-07:00",
-    "commit":  "f246b1b09",
+    "generated":  "2026-10-12T03:50:32-07:00",
+    "commit":  "033745c0c",
     "uncommitted":  [
-                        "test/win32/cli-focus-policy.ps1"
+                        "test/win32/crash-databreak.ps1",
+                        "test/win32/floor-lane-desktop.ps1",
+                        "test/win32/test-binary-soak.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -97,7 +99,7 @@
                   "test/win32/context-menu-real-input.ps1":  "9540c4d6dc06fe08e9db6e1a35fc3f281f4d47ca42bc5bf36bf964308344b387",
                   "test/win32/control-char-scan.ps1":  "7b6cdf8e7f672db0630aef5f181b4a15086b896c9926abf457078dba1179205c",
                   "test/win32/count-or-zero.ps1":  "569947be0dd433056f05a38d16eae3c81cf3a5a02e0710669458650ea6e5e0ad",
-                  "test/win32/crash-databreak.ps1":  "fc8413850cab470389fc3933a2320e065ea3ae37cc1d0f6af2e13bdc3125b22f",
+                  "test/win32/crash-databreak.ps1":  "1d4b6f42416ae9bc0e298bf5461be8f5df1f0448c96f3b6b9220230aa5e53f10",
                   "test/win32/crash-diagnostics.ps1":  "c09555c22faad0c3914229d756c7df9423369c0e13b2f32422e04d3eeaed8aca",
                   "test/win32/crash-first-chance.ps1":  "87ef370d66a61a2689c51f3d677589eab39e4ac1def7230cc320d4d72ef50a7e",
                   "test/win32/crash-stacks.ps1":  "d5bc3c0802b16f15d9c80804b0aa9dac36f533d542d6cad5c9daa86a42fbc5d0",
@@ -119,7 +121,7 @@
                   "test/win32/floor-lane-cache-heal.ps1":  "ec4e1b084b5ad032fa032d9cb6a6b8498122c0d75a59cdaaede7d390c49a450f",
                   "test/win32/floor-lane-commit-headroom.ps1":  "63aed36ba60ecbd7af05f2349f050a390eccfa1f6768b52b416d9d27b60837ec",
                   "test/win32/floor-lane-compiler-crash.ps1":  "34827f1ed2d63df665d72275f13211f6a3f8273c44561b09396ffdc3f7505470",
-                  "test/win32/floor-lane-desktop.ps1":  "99e84cf2d055c180a499e3c896abb9c4d30aa35dd3402af187ae3b5113614c0d",
+                  "test/win32/floor-lane-desktop.ps1":  "98ad27a978e7689f77af81c616bb81634f405d9a6cf27f30ce02d80e5e96d2fc",
                   "test/win32/floor-lane-leak-sweep.ps1":  "0bc2ffdef054b434ddc199419cee8ade1a49a8027e550040632b14def5c7d6b8",
                   "test/win32/floor-lane-releasesafe.ps1":  "ecd2f326201dfeb9cd74d67f603ec6e06ea566182e28754acc08da1629784a84",
                   "test/win32/floor-lane-solo-confirm.ps1":  "2e7b8705867fd366ef614013d2cdd8e9e213136a4f8e9347ac049215944c0a50",
@@ -314,7 +316,7 @@
                   "test/win32/target-staleness.ps1":  "25c28c99d39716155584ecda6f7a826dae310b3adaad3ae6dbb962c38f7f7d80",
                   "test/win32/task-dashboard.ps1":  "c676c3f475745b47a7a661e6ee9d80631ae1951b6995d006d3e2dd52c95c2d0d",
                   "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3",
-                  "test/win32/test-binary-soak.ps1":  "9bfac3b5cf78dcb7daf763090e978cf8d37ff44cbf6657ddcdccf25763be0377",
+                  "test/win32/test-binary-soak.ps1":  "96c647eb2fcbdef023f99868ab73bec7341befc23f0a14f2a9eacd4aefa64f3c",
                   "test/win32/test-client-build.ps1":  "57d43fa496cfb634e8b4bf3a96fd6f57c9dcf860009cf6e901bcd702093ceb0f",
                   "test/win32/test-desktop-harness.ps1":  "230d1749ac15c137aa1bde6dce2e0939e5f4cf0173387761201a4f86b3fcf689",
                   "test/win32/test-desktop-spike.ps1":  "3a2e8af4d5697753864971808d4f547bae589eb68b27fd04ad30ef55febe4f1c",

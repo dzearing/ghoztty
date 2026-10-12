@@ -280,13 +280,44 @@ if (-not $env:ZIG_GLOBAL_CACHE_DIR) {
     '}'
 ) | Set-Content -Path (Join-Path $work 'sleepy.zig') -Encoding ASCII
 
+# T1822: loopctl's shape, plus it names the desktop it runs on -- where an
+# armed run's debuggee lands, measured from inside it.
+@(
+    'const std = @import("std");',
+    'const W = std.os.windows;',
+    'extern "kernel32" fn GetCurrentThreadId() callconv(.winapi) W.DWORD;',
+    'extern "user32" fn GetThreadDesktop(id: W.DWORD) callconv(.winapi) ?W.HANDLE;',
+    'extern "user32" fn GetUserObjectInformationW(h: W.HANDLE, idx: c_int, buf: [*]u16, len: W.DWORD, needed: *W.DWORD) callconv(.winapi) W.BOOL;',
+    'noinline fn victim(a: u64, b: u64, c: u64) u64 {',
+    '    return a +% b *% 3 +% c;',
+    '}',
+    'pub fn main() !void {',
+    '    var sum: u64 = 0;',
+    '    var i: u64 = 0;',
+    '    while (i < 5) : (i += 1) sum +%= victim(i, 2, 3);',
+    '    var buf: [256]u16 = [_]u16{0} ** 256;',
+    '    var needed: W.DWORD = 0;',
+    '    if (GetThreadDesktop(GetCurrentThreadId())) |h| {',
+    '        _ = GetUserObjectInformationW(h, 2, &buf, buf.len * 2, &needed);',
+    '    }',
+    '    const n = std.mem.indexOfScalar(u16, &buf, 0) orelse 0;',
+    '    var out: [768]u8 = undefined;',
+    '    const len = try std.unicode.utf16LeToUtf8(&out, buf[0..n]);',
+    '    std.debug.print("DESKTOP={s} sum={x}\n", .{ out[0..len], sum });',
+    '}'
+) | Set-Content -Path (Join-Path $work 'deskloop.zig') -Encoding ASCII
+
 Push-Location $work
 foreach ($src in @('stompctl.zig', 'loopctl.zig', 'overload.zig', 'crashctl.zig', 'slowstomp.zig', 'bigframe.zig', 'pagewatch.zig', 'sleepy.zig')) {
     $b = & zig build-exe $src 2>&1
     if ($LASTEXITCODE -ne 0) { Write-Host ("build failed for {0}: {1}" -f $src, ($b -join ' ')) }
 }
+foreach ($src in @('deskloop.zig')) {
+    $b = & zig build-exe $src -luser32 2>&1
+    if ($LASTEXITCODE -ne 0) { Write-Host ("build failed for {0}: {1}" -f $src, ($b -join ' ')) }
+}
 Pop-Location
-foreach ($exe in @('stompctl.exe', 'loopctl.exe', 'overload.exe', 'crashctl.exe', 'slowstomp.exe', 'bigframe.exe', 'pagewatch.exe', 'sleepy.exe')) {
+foreach ($exe in @('stompctl.exe', 'loopctl.exe', 'overload.exe', 'crashctl.exe', 'slowstomp.exe', 'bigframe.exe', 'pagewatch.exe', 'sleepy.exe', 'deskloop.exe')) {
     Check "fixture $exe built" (Test-Path (Join-Path $work $exe))
 }
 if (-not (Test-Path (Join-Path $work 'stompctl.exe'))) {
@@ -626,6 +657,33 @@ Check 'a timed-out page-watch never says "no implausible write observed"' `
 ($text -notmatch 'no implausible write observed') ($text -replace '\s+', ' ')
 Check 'the page-watch cut-short verdict names its coverage' `
 ($text -match 'CUT SHORT' -and $text -match 'watched 4 address\(es\)') ($text -replace '\s+', ' ')
+
+# ------------------- 8d. the debuggee runs off the user's screen (T1822)
+#
+# An armed run executes the test binary under cdb, and a launched debuggee
+# inherits cdb's desktop. cdb used to be Start-Process'd from here, so a win32
+# test binary opened its banner windows on the user's screen. The control runs
+# the fixture straight from this process, which proves the probe can tell the
+# two desktops apart.
+
+$deskExe = Join-Path $work 'deskloop.exe'
+if (Test-Path $deskExe) {
+    $ctlFile = Join-Path $work 'desk-control.txt'
+    & cmd.exe /c "`"$deskExe`" > `"$ctlFile`" 2>&1"
+    $ctl = Get-Content -LiteralPath $ctlFile -Raw -ErrorAction SilentlyContinue
+    $ctlDesk = if ($ctl -match 'DESKTOP=(\S+)') { $Matches[1] } else { '' }
+    Check 'control: run directly, the fixture names a desktop' ($ctlDesk -ne '') "got: $ctl"
+    Check 'control: that desktop is not the lane desktop' ($ctlDesk -ne 'GhozttyLaneDesktop') "got '$ctlDesk'"
+
+    $dr = Invoke-DataBreak -Exe $deskExe -Symbol victim -OutDir (Join-Path $work 'dumps-desk') `
+        -KeepLog -TimeoutSeconds 180 -Writer { param($s) }
+    Check 'the armed run armed every call' ($dr.ArmCount -eq 5) "armed=$($dr.ArmCount) err=$($dr.Error)"
+    $errText = if ($dr.ErrLogPath) { Get-Content -LiteralPath $dr.ErrLogPath -Raw -ErrorAction SilentlyContinue } else { '' }
+    $runDesk = if ($errText -match 'DESKTOP=(\S+)') { $Matches[1] } else { '' }
+    Check 'the armed debuggee ran on GhozttyLaneDesktop' ($runDesk -eq 'GhozttyLaneDesktop') `
+        "got '$runDesk' from '$($dr.ErrLogPath)'"
+    Check 'the run''s exit code is still cdb''s, read through cmd' ($dr.ExitCode -eq 0) "got $($dr.ExitCode)"
+}
 
 # ---------------------------------------------- 9. bad input fails, not hangs
 

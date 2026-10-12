@@ -1,13 +1,13 @@
 {
     "guard":  "soak-daemon",
     "script":  "test/win32/soak-daemon.ps1",
-    "generated":  "2026-10-11T21:35:28-07:00",
-    "commit":  "9128ca433",
+    "generated":  "2026-10-12T03:23:22-07:00",
+    "commit":  "033745c0c",
     "uncommitted":  [
-                        "scripts/soak-daemon.ps1"
+                        "scripts/lib/LaneDesktop.ps1"
                     ],
     "files":  {
-                  "scripts/lib/LaneDesktop.ps1":  "734481613077a2c86e1c29a92dacb50e29b3000f3ab77dcb178a85035f362434",
+                  "scripts/lib/LaneDesktop.ps1":  "eba72a217797149f3d24226023a839ec9beb8ebccfbc25a94f10bfd248594353",
                   "scripts/soak-daemon.ps1":  "9b573c837b02c45c2be053a2f2d6f9f1024363ba531b35a5bf7c25a86b8df3ad",
                   "test/win32/soak-daemon.ps1":  "266cee53040004b1a1c4189de4a94d25521563339cda9927632decdc1006b1ac"
               }

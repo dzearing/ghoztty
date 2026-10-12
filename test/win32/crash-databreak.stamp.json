@@ -1,15 +1,17 @@
 {
     "guard":  "crash-databreak",
     "script":  "test/win32/crash-databreak.ps1",
-    "generated":  "2026-10-11T00:56:04-07:00",
-    "commit":  "fe9baf50c",
+    "generated":  "2026-10-12T03:21:17-07:00",
+    "commit":  "033745c0c",
     "uncommitted":  [
-                        "scripts/lib/CrashCatch.ps1"
+                        "scripts/crash-databreak.ps1",
+                        "scripts/lib/DataBreak.ps1",
+                        "test/win32/crash-databreak.ps1"
                     ],
     "files":  {
-                  "scripts/crash-databreak.ps1":  "60428758a92aed0c48be4a57d5c83de90dca9866001a9aa94c9d7578459eae6c",
+                  "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",
                   "scripts/lib/CrashCatch.ps1":  "9d9607d0fd750c0537ed48d7711902e29449d5798ff97406bf23d61f48cccf60",
-                  "scripts/lib/DataBreak.ps1":  "ff02a5bfc30365086dc896181bded69169bf9a0cd082589c11afd04bf98cad7f",
-                  "test/win32/crash-databreak.ps1":  "fc8413850cab470389fc3933a2320e065ea3ae37cc1d0f6af2e13bdc3125b22f"
+                  "scripts/lib/DataBreak.ps1":  "6175abb366946daab496a8943000e33417c7fff0a27d5e8756b48e938676613e",
+                  "test/win32/crash-databreak.ps1":  "1d4b6f42416ae9bc0e298bf5461be8f5df1f0448c96f3b6b9220230aa5e53f10"
               }
 }

@@ -143,6 +143,37 @@ try {
     Check 'C4 and the real configuration (input desktop watched) keeps the lane window off it: PASS' `
         ($e.Code -eq 0 -and $e.Text -notmatch 'SHOWED') $e.Text
 
+    Write-Host 'D. Start-LaneRedirected: one program, on the lane desktop, output in files (T1822)'
+    $psPath = (Get-Process -Id $PID).Path
+    $errExit = Join-Path $Sandbox 'errexit.ps1'
+    Set-Content -LiteralPath $errExit -Encoding ASCII -Value @(
+        ('& ''' + $where + ''''),
+        '[Console]::Error.WriteLine("ERRLINE")',
+        'exit 7')
+    $dOut = Join-Path $Sandbox 'd.out.log'
+    $dErr = Join-Path $Sandbox 'd.err.log'
+    $dp = Start-LaneRedirected -FilePath $psPath -ArgumentLine ('-NoProfile -ExecutionPolicy Bypass -File "' + $errExit + '"') `
+        -StdOut $dOut -StdErr $dErr
+    $null = $dp.WaitForExit(60000)
+    $dOutText = (Get-Content -LiteralPath $dOut -ErrorAction SilentlyContinue) -join "`n"
+    $dErrText = (Get-Content -LiteralPath $dErr -ErrorAction SilentlyContinue) -join "`n"
+    Check 'D1 the program ran on GhozttyLaneDesktop' ($dOutText -match '(?m)^DESKTOP=GhozttyLaneDesktop$') $dOutText
+    Check 'D2 stdout and stderr landed in their own files' `
+        ($dErrText -match 'ERRLINE' -and $dOutText -notmatch 'ERRLINE') "out=[$dOutText] err=[$dErrText]"
+    Check 'D3 the program''s exit code comes back through cmd' ($dp.ExitCode -eq 7) "got $($dp.ExitCode)"
+    $dBoth = Join-Path $Sandbox 'd.both.log'
+    $dp2 = Start-LaneRedirected -FilePath $psPath -ArgumentLine ('-NoProfile -ExecutionPolicy Bypass -File "' + $errExit + '"') -StdOut $dBoth
+    $null = $dp2.WaitForExit(60000)
+    $dBothText = (Get-Content -LiteralPath $dBoth -ErrorAction SilentlyContinue) -join "`n"
+    Check 'D4 with no -StdErr, stderr folds into -StdOut' ($dBothText -match 'ERRLINE' -and $dBothText -match 'DESKTOP=') $dBothText
+    $missing = Join-Path $Sandbox 'no-such-program.exe'
+    $threw = $false
+    $said = ''
+    try { $said = (& { Start-LaneProcess -CommandLine ('"' + $missing + '"') } *>&1 | ForEach-Object { $_.ToString() } | Out-String) }
+    catch { $threw = $true; $said += $_.Exception.Message }
+    Check 'D5 a program that does not exist throws, as Start-Process did' $threw $said
+    Check 'D6 and is not reported as a desktop outage' ($said -notmatch 'LANE DESKTOP UNAVAILABLE' -and $said -match 'program not found') $said
+
     Complete-TestBody  # T1039: the run reached the end of its body
 }
 finally {

@@ -340,8 +340,13 @@ function Start-Lane {
         "cd /d `"$Repo`"",
         "zig build $LaneArgLine"
     ) | Set-Content -LiteralPath $bat -Encoding ASCII
-    $p = Start-Process -FilePath $env:ComSpec -ArgumentList @('/c', "`"$bat`"") -PassThru -WindowStyle Hidden `
-        -RedirectStandardOutput $LogPath -RedirectStandardError ([IO.Path]::ChangeExtension($LogPath, '.err.log'))
+    # T1822: on the lane desktop, the way floor-lane runs it (T1813). A win32
+    # lane's banner tests open windows, and -WindowStyle Hidden hid only this
+    # cmd's console -- every test binary under it showed them on the user's
+    # screen. cdb attaches across desktops, so the armed run is unaffected.
+    $p = Start-LaneRedirected -FilePath $bat -StdOut $LogPath `
+        -StdErr ([IO.Path]::ChangeExtension($LogPath, '.err.log'))
+    if (-not $p.LaneDesktop) { Write-Host 'databreak: lane desktop unavailable -- the lane is on the INPUT desktop' }
     $null = $p.Handle
     return $p
 }

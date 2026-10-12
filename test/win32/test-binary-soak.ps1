@@ -637,6 +637,84 @@ $r = Invoke-Soak @{
 Check 'the win32 lane resolves that same binary' ($r.Text -match [regex]::Escape($wrongExe)) `
     ($r.Text -replace '\s+', ' ')
 
+# ------------------------- 7. every run is off the user's screen (T1822)
+
+# A soak re-runs win32 test binaries, and their banner tests open windows. The
+# runs used to be Start-Process -WindowStyle Hidden from this process, which
+# hid cmd's console and left the binary on the user's desktop. Where each
+# kind of child ran is measured from INSIDE it: the fixture prints the name of
+# the desktop it is on. The control runs it straight from here, which proves
+# the probe can tell the two desktops apart.
+$deskWork = Join-Path $work 'desk'
+New-Item -ItemType Directory -Path $deskWork -Force | Out-Null
+@(
+    'const std = @import("std");',
+    'const W = std.os.windows;',
+    'extern "kernel32" fn GetCurrentThreadId() callconv(.winapi) W.DWORD;',
+    'extern "user32" fn GetThreadDesktop(id: W.DWORD) callconv(.winapi) ?W.HANDLE;',
+    'extern "user32" fn GetUserObjectInformationW(h: W.HANDLE, idx: c_int, buf: [*]u16, len: W.DWORD, needed: *W.DWORD) callconv(.winapi) W.BOOL;',
+    'pub fn main() !void {',
+    '    var buf: [256]u16 = [_]u16{0} ** 256;',
+    '    var needed: W.DWORD = 0;',
+    '    if (GetThreadDesktop(GetCurrentThreadId())) |h| {',
+    '        _ = GetUserObjectInformationW(h, 2, &buf, buf.len * 2, &needed);',
+    '    }',
+    '    const n = std.mem.indexOfScalar(u16, &buf, 0) orelse 0;',
+    '    var out: [768]u8 = undefined;',
+    '    const len = try std.unicode.utf16LeToUtf8(&out, buf[0..n]);',
+    '    std.debug.print("DESKTOP={s}\n", .{out[0..len]});',
+    '}'
+) | Set-Content -Path (Join-Path $deskWork 'deskname.zig') -Encoding ASCII
+Push-Location $deskWork
+$b7 = & zig build-exe deskname.zig -luser32 2>&1
+Pop-Location
+$deskExe = Join-Path $deskWork 'deskname.exe'
+Check 'the desktop-reporting fixture built' (Test-Path $deskExe) "$b7"
+
+function Get-DeskName([string]$Path) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return '' }
+    $t = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+    if ($t -match 'DESKTOP=(\S+)') { return $Matches[1] }
+    return ''
+}
+
+if (Test-Path $deskExe) {
+    $ctlFile = Join-Path $deskWork 'control.txt'
+    & cmd.exe /c "`"$deskExe`" > `"$ctlFile`" 2>&1"
+    $ctlDesk = Get-DeskName $ctlFile
+    Check 'control: run directly, the fixture names a desktop' ($ctlDesk -ne '') "got '$ctlDesk'"
+    Check 'control: that desktop is not the lane desktop' ($ctlDesk -ne 'GhozttyLaneDesktop') "got '$ctlDesk'"
+
+    # Standalone: the run itself.
+    $deskOut = Join-Path $deskWork 'out'
+    $r = Invoke-Soak @{ Exe = $deskExe; Runs = 1; Label = 'sadesk'; OutDir = $deskOut }
+    Check 'a standalone desktop-probe soak passes' ($r.Text -match 'SOAK sadesk:.*pass=1 fail=0 crash=0') `
+        ($r.Text -replace '\s+', ' ')
+    $runLog = @(Get-ChildItem -Path $deskOut -Filter 'sadesk-*-deskname-01.log' -ErrorAction SilentlyContinue)[0]
+    $runDesk = Get-DeskName $(if ($runLog) { $runLog.FullName } else { '' })
+    Check 'a standalone soak run is on GhozttyLaneDesktop' ($runDesk -eq 'GhozttyLaneDesktop') `
+        "got '$runDesk' from $(if ($runLog) { $runLog.FullName } else { '(no run log)' })"
+
+    # Build-runner: floor-lane is still started from here, and it is floor-lane
+    # that places the lane -- so measure the lane, not the wrapper.
+    $r = Invoke-Soak @{ LaneCommand = $deskExe; Runs = 1; Label = 'brdesk'; NoCatch = $true; OutDir = $deskOut }
+    $laneLog = if ($r.Text -match 'lane log:\s*(\S+\.log)') { $Matches[1] } else { '' }
+    $laneDesk = Get-DeskName $laneLog
+    Check 'a build-runner round''s lane is on GhozttyLaneDesktop' ($laneDesk -eq 'GhozttyLaneDesktop') `
+        "got '$laneDesk' from '$laneLog'"
+
+    # A command-shaped load worker: -LoadCommand can be a win32 lane too.
+    $deskLoad = Join-Path $deskWork 'load'
+    $r = Invoke-Soak @{
+        LaneCommand = 'cmd /c exit 0'; Runs = 1; Label = 'wdesk'; LoadWorkers = 1
+        LoadCommand = $deskExe; LoadWorkDir = $deskLoad; OutDir = $deskOut
+    }
+    $wLog = @(Get-ChildItem -Path $deskLoad -Recurse -Filter 'worker.log' -ErrorAction SilentlyContinue)[0]
+    $wDesk = Get-DeskName $(if ($wLog) { $wLog.FullName } else { '' })
+    Check 'a load worker''s command is on GhozttyLaneDesktop' ($wDesk -eq 'GhozttyLaneDesktop') `
+        "got '$wDesk' from $(if ($wLog) { $wLog.FullName } else { '(no worker log)' })"
+}
+
 # --------------------------------------------------------------------- cleanup
 
 Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue

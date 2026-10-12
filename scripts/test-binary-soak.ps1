@@ -366,14 +366,15 @@ foreach ($t in $targets) {
             # anyone reads it -- that loss cost T238 a whole re-soak (T509).
             $exeBase = [IO.Path]::GetFileNameWithoutExtension($exeName)
             $log = Join-Path $OutDir ("{0}-{1}-{2}-{3:d2}.log" -f $tag, $stamp, $exeBase, $idx)
-            # ONE string, not an array: Start-Process does not quote the
-            # elements of -ArgumentList, so an array is re-tokenised on spaces
-            # (the T200 trap). The doubled outer quote is cmd's own /c rule --
-            # it strips the first and last quote of the remainder.
-            $cmdLine = '/c ""' + $t + '" ' + $argLine + ' > "' + $log + '" 2>&1"'
-            $p = Start-Process -FilePath $env:ComSpec -ArgumentList $cmdLine -PassThru -WindowStyle Hidden
+            # T1822: on the lane desktop, not the caller's. A win32 test binary
+            # opens banner windows, and Start-Process -WindowStyle Hidden hides
+            # only cmd's console -- the binary inherited the user's desktop
+            # and showed them there.
+            $p = Start-LaneRedirected -FilePath $t -ArgumentLine $argLine -StdOut $log
+            if (-not $p.LaneDesktop) { Write-Host '  lane desktop unavailable -- this run is on the INPUT desktop' }
             # Touch .Handle BEFORE the child can exit, or PS 5.1 hands back an
             # EMPTY ExitCode later and every crash silently classifies as PASS.
+            # (Start-LaneProcess has already cached it; this is belt and braces.)
             $null = $p.Handle
             $pending += [pscustomobject]@{
                 Index = $idx; Log = $log; Proc = $p; Since = (Get-Date)
@@ -384,7 +385,9 @@ foreach ($t in $targets) {
         foreach ($e in $pending) {
             if (-not $e.Proc.WaitForExit($TimeoutSeconds * 1000)) {
                 $e.TimedOut = $true
-                try { $e.Proc.Kill() } catch {}
+                # The family, not cmd alone: a hung binary left behind on the
+                # lane desktop is invisible, so nobody would ever close it.
+                try { $null = Stop-ProcessFamily -Id $e.Proc.Id -PauseMs 0 } catch {}
                 try { $null = $e.Proc.WaitForExit(10000) } catch {}
             }
             $e.Sw.Stop()
@@ -506,9 +509,8 @@ function Start-SoakLoadWorkers {
     $procs = @()
     for ($w = 0; $w -lt $Count; $w++) {
         try {
-            $p = Start-Process -FilePath $PsExe `
-                -ArgumentList ('-NoProfile -Command "' + $body + '"') `
-                -PassThru -WindowStyle Hidden
+            # On the lane desktop with the lane it loads (T1822).
+            $p = Start-LaneProcess -CommandLine ('"' + $PsExe + '" -NoProfile -Command "' + $body + '"')
             # PS 5.1: cache .Handle before the child can exit, or ExitCode and
             # HasExited come back empty later (the T473 trap).
             $null = $p.Handle
@@ -597,9 +599,10 @@ function Start-SoakCommandWorkers {
         ) -join "`r`n"
         Set-Content -LiteralPath $spec.Script -Value $body -Encoding ASCII
         try {
-            $p = Start-Process -FilePath $PsExe `
-                -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "' + $spec.Script + '"') `
-                -WorkingDirectory $Repo -PassThru -WindowStyle Hidden
+            # On the lane desktop (T1822): -LoadCommand is any command at all,
+            # a win32 lane included, and its windows inherit this desktop.
+            $p = Start-LaneProcess -CommandLine ('"' + $PsExe + '" -NoProfile -ExecutionPolicy Bypass -File "' + $spec.Script + '"') `
+                -WorkingDirectory $Repo
             # PS 5.1: cache .Handle before the child can exit (the T473 trap).
             $null = $p.Handle
             $procs += $p
@@ -829,7 +832,15 @@ if ($mode -eq 'build-runner') {
         else { $laneArgs += ' -Lane ' + $Lane }
         if ($NoCatch) { $laneArgs += ' -NoCatch' }
         if ($Filter) { $laneArgs += ' -Filter "' + $Filter + '"' }
-        # ONE string, and cmd's own doubled-outer-quote rule -- as above.
+        # ONE string, not an array: Start-Process does not quote the elements
+        # of -ArgumentList (the T200 trap). The doubled outer quote is cmd's
+        # own /c rule -- it strips the first and last quote of the remainder.
+        #
+        # This one stays on the caller's desktop on purpose (T1822): it starts
+        # floor-lane, which opens no window and itself puts the lane (T1813)
+        # and its cdb re-run (T1815) on the lane desktop, then samples the
+        # INPUT desktop for anything that leaked. The harness measures where
+        # the lane's own process lands (test-binary-soak.ps1 section 7).
         $cmdLine = '/c ""' + $psExe + '" ' + $laneArgs + ' > "' + $log + '" 2>&1"'
 
         $sw = [System.Diagnostics.Stopwatch]::StartNew()

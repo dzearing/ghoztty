@@ -1,14 +1,15 @@
 {
     "guard":  "lane-desktop",
     "script":  "test/win32/floor-lane-desktop.ps1",
-    "generated":  "2026-10-11T20:37:46-07:00",
-    "commit":  "327637739",
+    "generated":  "2026-10-12T03:42:03-07:00",
+    "commit":  "033745c0c",
     "uncommitted":  [
-                        "scripts/floor-lane.ps1"
+                        "scripts/lib/LaneDesktop.ps1",
+                        "test/win32/floor-lane-desktop.ps1"
                     ],
     "files":  {
                   "scripts/floor-lane.ps1":  "f118b5e9376ba80b2ffde6fafd49305a38e974f291efd9398c91bb7219daee33",
-                  "scripts/lib/LaneDesktop.ps1":  "734481613077a2c86e1c29a92dacb50e29b3000f3ab77dcb178a85035f362434",
-                  "test/win32/floor-lane-desktop.ps1":  "99e84cf2d055c180a499e3c896abb9c4d30aa35dd3402af187ae3b5113614c0d"
+                  "scripts/lib/LaneDesktop.ps1":  "eba72a217797149f3d24226023a839ec9beb8ebccfbc25a94f10bfd248594353",
+                  "test/win32/floor-lane-desktop.ps1":  "98ad27a978e7689f77af81c616bb81634f405d9a6cf27f30ce02d80e5e96d2fc"
               }
 }

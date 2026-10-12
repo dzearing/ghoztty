@@ -35409,3 +35409,25 @@ moved to T1814.
 - **Validation.** All four floor lanes, P1-P3, and the harness floor green.
   The first harness run tripped three stale-build refusals because restoring
   App.zig after the negative build bumped its mtime. A rebuild cleared them.
+
+## 2026-10-12 — T1822: the soak and data-breakpoint tools run their tests off your screen
+
+- **What changed.** The two hand-run crash-hunting tools started their test
+  binaries on the user's desktop, so a win32 soak or databreak run flashed
+  banner windows over whatever was in front. Every launch now goes onto
+  GhozttyLaneDesktop. That covers the soak's direct runs and its load
+  workers, plus databreak's lane build and all three of its cdb sessions.
+  A new `Start-LaneRedirected` helper in `LaneDesktop.ps1` does it. Kills
+  on timeout now take the whole process tree, so nothing is left running
+  on a desktop nobody can see.
+- **Kept on purpose.** The soak's build-runner round still starts
+  floor-lane from the caller's desktop. Floor-lane places its own lane and
+  re-run, and section 7 measures the lane there.
+- **Found in passing.** `Start-LaneProcess` reported a missing program as
+  "lane desktop unavailable" and retried on the user's desktop. It now
+  throws, as Start-Process did.
+- **Validation.** Placement is measured from inside each child, with a
+  direct-run control. Results: test-binary-soak section 7 (95), crash-databreak
+  8d (99), floor-lane-desktop D (20). Also green: process-family, soak-daemon,
+  build-cache, the harness floor (after one fix to an unstringified capture in
+  my own new line), all four floor lanes, and P1-P3.
