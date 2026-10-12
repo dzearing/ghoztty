@@ -431,3 +431,12 @@ as the digest that showed them.
 - Park a whole task at once (stash a named group of panes and restore the set with its layout)
 - Parked panes cost nothing (stashed panes stop drawing and poll output less; caught up on restore)
 - Readable glass, automatically (new angle on readable text over translucency: glass panes firm up while their output is dense)
+
+## 2026-10-12
+
+- "Pane closed - Undo", right where you closed it (a few-second note with an Undo button after a close, so undo is found when it is needed)
+- Peek at a parked pane without bringing it back (hovering a stashed pane's sidebar row shows a live miniature)
+- Busy panes lift off the desk (elevated cards rise with activity: higher when busy, higher still when waiting on you)
+- Recently closed, at the foot of the sidebar (new angle on reopening a closed pane: greyed rows for the last minute's closes, click to restore)
+- Cards shaped like Windows 11 windows (pane corner radius and shadow follow the system's own window chrome)
+- An undo that outlives a crash (a just-closed pane's session is kept for the undo window, so undo works after a crash or restart)
