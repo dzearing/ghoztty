@@ -35866,3 +35866,19 @@ moved to T1814.
 - **Validation.** Unit tests green. New `pane-busy-light.ps1` ALL PASS (15)
   through a real OSC 9;4 stream, `-NegativeControl` red. Floor lanes and the
   harness floor green. All 26 other due harnesses green.
+
+## 2026-10-13 — T1901: PowerShell can no longer pop an "open with" box
+
+- **What.** A third "How do you want to open this file?" picker appeared on
+  the user's desktop at 02:32:47. The T1895 turn had put the banner `.sh` in
+  a PowerShell call, the T1823 shape. T1823 fixed the help text, but the
+  installed hook script that writes that text was still from 2026-09-14, so
+  sessions kept getting the old instruction.
+- **Fix.** A project PreToolUse hook (`.claude/settings.json`, matcher
+  `PowerShell`) runs `scripts/hooks/deny-sh-from-powershell.ps1`. It parses
+  the command with PowerShell's parser and refuses a `.sh` launch, naming the
+  Bash tool as the remedy. Fail-open. Filed T1904: installed hook scripts
+  never refresh after an update, on either platform.
+- **Validation.** New `deny-sh-from-powershell.ps1` ALL PASS (20),
+  `-NegativeControl` red by exactly one. The refusal fired live in this
+  session. Harness floor run for the new script.

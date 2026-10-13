@@ -2204,6 +2204,19 @@ $GuardTable = @(
             'test\win32\focus-pull-scan.ps1'
         )
     },
+    # T1901: the gate in front of the PowerShell tool that keeps a .sh launch
+    # (the banner hook line) from popping that same picker in the first place.
+    # The scan above only reports a picker after the fact; this is the refusal.
+    [pscustomobject]@{
+        Name   = 'deny-sh-from-powershell'
+        Script = 'test\win32\deny-sh-from-powershell.ps1'
+        Stamp  = 'test\win32\deny-sh-from-powershell.stamp.json'
+        Covers = @(
+            'scripts\hooks\deny-sh-from-powershell.ps1',
+            '.claude\settings.json',
+            'test\win32\deny-sh-from-powershell.ps1'
+        )
+    },
     # The vendored agent assets (T866) rot silently: main edits its copy of a
     # skill or hook script and nothing here goes red until someone re-runs the
     # drift compare, and a banner-script or +json edit that breaks the jq-free

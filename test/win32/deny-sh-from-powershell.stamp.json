@@ -1,0 +1,16 @@
+{
+    "guard":  "deny-sh-from-powershell",
+    "script":  "test/win32/deny-sh-from-powershell.ps1",
+    "generated":  "2026-10-13T06:41:19-07:00",
+    "commit":  "cb0d6f57d",
+    "uncommitted":  [
+                        ".claude/settings.json",
+                        "scripts/hooks/deny-sh-from-powershell.ps1",
+                        "test/win32/deny-sh-from-powershell.ps1"
+                    ],
+    "files":  {
+                  ".claude/settings.json":  "d16b50ec18be55755a010b204a9d2551b33bdd9086686da2b952f15e15d766fa",
+                  "scripts/hooks/deny-sh-from-powershell.ps1":  "c57a03626abcfbdcaaa4e633d8fd46fb4135b4298027451ef02a1f2238e642d8",
+                  "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e"
+              }
+}
