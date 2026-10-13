@@ -65,6 +65,7 @@ const provenance = @import("provenance.zig");
 const about_links = @import("about_links.zig");
 const color_math = @import("color_math.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
+const busy_light = @import("busy_light.zig");
 
 const log = std.log.scoped(.win32);
 
@@ -114,6 +115,13 @@ core_surface_ready: bool = false,
 /// CLOSE-on-free marking is refused. See `session_disconnect.DetachPin` for the
 /// ordering problem this exists to solve.
 detach_pin: session_disconnect.DetachPin = .{},
+
+/// The last progress report (OSC 9;4) a program in this pane sent, and
+/// when (T1899): the pane draws it as its own busy light or percentage line,
+/// and a report not renewed for `busy_light.EXPIRE_MS` is dropped the way
+/// Mac drops it. Null when nothing is in progress.
+progress: ?busy_light.Report = null,
+progress_at_ms: i64 = 0,
 
 /// Whether core_surface.init() completed successfully (ever).
 /// Different from core_surface_ready which is cleared during shutdown.
@@ -508,6 +516,21 @@ pub fn eql(self: *const Surface, other: *const Surface) bool {
 }
 
 /// This pane's stable id (T113). Valid from the top of `init` onward.
+/// Record a progress report (T1899) and let the window redraw the pane's
+/// light. `remove` clears it.
+pub fn setProgress(self: *Surface, report: busy_light.Report) void {
+    self.progress = if (report.state == .remove) null else report;
+    self.progress_at_ms = std.time.milliTimestamp();
+    self.parent_window.syncBusyLights();
+}
+
+/// The report still in force, or null once it has expired.
+pub fn liveProgress(self: *const Surface, now_ms: i64) ?busy_light.Report {
+    const r = self.progress orelse return null;
+    if (now_ms - self.progress_at_ms >= busy_light.EXPIRE_MS) return null;
+    return r;
+}
+
 pub fn paneId(self: *const Surface) []const u8 {
     return &self.pane_id;
 }

@@ -295,6 +295,9 @@ test {
     // Pure win32 elevated-pane geometry, desk gradient and card raster
     // (T1831), same no-OS-imports deal.
     _ = @import("apprt/win32/pane_elevation.zig");
+    // A pane's own progress light - the ring circling a busy pane and the
+    // percentage line across its top (T1899) - same deal.
+    _ = @import("apprt/win32/busy_light.zig");
     // The desk's palettes - the ocean and a window's own seeded gradient
     // (T1832) - same deal.
     _ = @import("apprt/win32/desk_palette.zig");

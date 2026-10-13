@@ -8430,13 +8430,24 @@ pub fn performAction(
         },
 
         .progress_report => {
-            // Reflect shell/TUI progress (OSC 9;4) on the taskbar button, the
-            // Windows equivalent of the macOS Dock progress. Gated on
-            // progress-style; the win32 apprt has no progress bar of its own.
+            // Reflect shell/TUI progress (OSC 9;4) in the pane itself - a light
+            // circling its border, or a line across its top (T1899) - and on
+            // the taskbar button, the Windows equivalent of the macOS Dock
+            // progress. Gated on progress-style, as on Mac.
             if (!self.config.@"progress-style") return true;
             switch (target) {
                 .app => {},
                 .surface => |core_surface| {
+                    core_surface.rt_surface.setProgress(.{
+                        .state = switch (value.state) {
+                            .remove => .remove,
+                            .set => .set,
+                            .@"error" => .@"error",
+                            .indeterminate => .indeterminate,
+                            .pause => .pause,
+                        },
+                        .progress = value.progress,
+                    });
                     const hwnd = core_surface.rt_surface.parent_window.hwnd orelse
                         return true;
                     const tb = self.taskbarList() orelse return true;

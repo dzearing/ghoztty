@@ -148,6 +148,7 @@ const opacity_mode = @import("opacity_mode.zig");
 const blur_backdrop = @import("blur_backdrop.zig");
 const split_geometry = @import("split_geometry.zig");
 const pane_elevation = @import("pane_elevation.zig");
+const busy_light = @import("busy_light.zig");
 const PaneDesk = @import("PaneDesk.zig");
 const desk_palette = @import("desk_palette.zig");
 const rearrange_header = @import("rearrange_header.zig");
@@ -271,6 +272,12 @@ const TAB_DWELL_MS: u32 = 500;
 /// `pane_elevation.GLOW_FADE_MS` after a focus change.
 const FOCUS_GLOW_TIMER_ID: usize = 0x4647; // 'FG'
 const FOCUS_GLOW_TICK_MS: u32 = 16;
+
+/// The busy light's clock (T1899): `busy_light.FRAME_MS` while a light
+/// circles, `busy_light.IDLE_TICK_MS` when Animation effects are off (only
+/// the report's expiry needs a clock then), and not running at all while no
+/// visible pane reports progress.
+const BUSY_LIGHT_TIMER_ID: usize = 0x424C; // 'BL'
 pub const HERO_SLIDE_MS: f32 = 350.0;
 const HERO_RECENTER_MS: f32 = 300.0;
 
@@ -569,6 +576,13 @@ applied_pane_style: pane_elevation.Style = .elevated,
 glow_to: ?*PaneView = null,
 glow_from: ?*PaneView = null,
 glow_t0_ms: i64 = 0,
+/// The busy light (T1899): the interval its timer runs at (0 = stopped),
+/// the signature of what the last sync saw lit - which panes, which shape,
+/// which state - so a report that changes nothing visible costs no repaint,
+/// and the clock every light in this window turns on.
+busy_timer_ms: u32 = 0,
+busy_sig: u64 = 0,
+busy_t0_ms: i64 = 0,
 
 /// Split divider drag state.
 dragging_split: bool = false,
@@ -6427,6 +6441,8 @@ pub fn updateDimOverlays(self: *Window) void {
     self.syncPaneSidebar();
     // ...and the focused card's glow (T1834).
     self.syncFocusGlow();
+    // ...and the busy panes' lights (T1899).
+    self.syncBusyLights();
 }
 
 /// The pane the elevated style lights as focused (T1834): the active tab's
@@ -6463,6 +6479,93 @@ fn focusGlowTick(self: *Window) void {
         self.glow_from = null;
     }
     self.repaintPaneDesk();
+}
+
+/// A pane's progress report as its light should show it now (T1899): null
+/// for a viewer, a pane with nothing in progress, or a report that expired.
+fn busyReportFor(view: *PaneView, now_ms: i64) ?busy_light.Report {
+    const s = view.surface() orelse return null;
+    return s.liveProgress(now_ms);
+}
+
+/// Start, retime or stop the busy light's clock for what the active tab
+/// shows, and repaint the desk when the set of lights changed. Idempotent
+/// and cheap, so it rides every report, every layout and every tick.
+pub fn syncBusyLights(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    if (self.closing) return;
+    const now = std.time.milliTimestamp();
+    var sig: u64 = 0;
+    var lit: usize = 0;
+    if (self.paneStyle() == .elevated) {
+        var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
+        const n = self.collectPaneSlots(&slots);
+        var h = std.hash.Wyhash.init(0);
+        for (slots[0..n]) |slot| {
+            const r = busyReportFor(slot.view, now) orelse continue;
+            const shape = busy_light.shapeFor(r) orelse continue;
+            lit += 1;
+            h.update(std.mem.asBytes(&@intFromPtr(slot.view)));
+            h.update(std.mem.asBytes(&r.state));
+            switch (shape) {
+                .ring => h.update("ring"),
+                .bar => |pct| h.update(&[_]u8{ 'b', pct }),
+            }
+        }
+        if (lit > 0) sig = h.final() | 1;
+    }
+    const want: u32 = if (lit == 0)
+        0
+    else if (App.clientAreaAnimationsEnabled())
+        busy_light.FRAME_MS
+    else
+        busy_light.IDLE_TICK_MS;
+    if (want != self.busy_timer_ms) {
+        if (want == 0) {
+            _ = w32.KillTimer(hwnd, BUSY_LIGHT_TIMER_ID);
+        } else {
+            if (self.busy_timer_ms == 0) self.busy_t0_ms = now;
+            _ = w32.SetTimer(hwnd, BUSY_LIGHT_TIMER_ID, want, null);
+        }
+        self.busy_timer_ms = want;
+    }
+    if (sig != self.busy_sig) {
+        if ((sig == 0) != (self.busy_sig == 0))
+            log.info("busy light {s} lit={d}", .{ if (sig == 0) "off" else "on", lit });
+        self.busy_sig = sig;
+        self.repaintPaneDesk();
+    }
+}
+
+/// Where every light's head is right now.
+fn busyHead(self: *const Window) f32 {
+    return busy_light.headAt(std.time.milliTimestamp() - self.busy_t0_ms, self.busy_timer_ms == busy_light.FRAME_MS);
+}
+
+fn busyLightTick(self: *Window) void {
+    // Expiry and anything else that changed first; it repaints in full when
+    // the set of lights moved.
+    self.syncBusyLights();
+    if (self.busy_timer_ms != busy_light.FRAME_MS) return;
+    const hwnd = self.hwnd orelse return;
+    // Nobody can see a minimised window turn.
+    if (w32.IsIconic(hwnd) != 0) return;
+    if (self.pane_desk.lightCount() == 0) return;
+    if (w32.GetDC(hwnd)) |dc| {
+        defer _ = w32.ReleaseDC(hwnd, dc);
+        // Narrow the clip to the lights, so a translucent window's
+        // alpha-correct pass buffers only that much.
+        if (self.pane_desk.lightBounds()) |b| {
+            const area = self.deskRect();
+            _ = w32.IntersectClipRect(dc, area.left + b.left, area.top + b.top, area.left + b.right, area.top + b.bottom);
+        }
+        self.paintAlphaCorrect(dc, paintBusyLightFrame);
+    }
+}
+
+fn paintBusyLightFrame(self: *Window, hdc: w32.HDC) void {
+    const area = self.deskRect();
+    self.pane_desk.paintLightFrame(hdc, area.left, area.top, self.busyHead());
 }
 
 /// Repaint the window-owned desk pixels now - the same `GetDC` pass a
@@ -6927,13 +7030,29 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     const bg = self.app.config.background;
     const fill: color_math.Rgb = .{ .r = bg.r, .g = bg.g, .b = bg.b };
     const glass = self.paneGlass();
+    // Each busy pane's light (T1899), round its whole card.
+    var lights: [PaneDesk.MAX_LIGHTS]PaneDesk.Light = undefined;
+    var nl: usize = 0;
+    const now = std.time.milliTimestamp();
+    for (slots[0..n], 0..) |slot, i| {
+        if (nl >= lights.len) break;
+        const r = busyReportFor(slot.view, now) orelse continue;
+        const shape = busy_light.shapeFor(r) orelse continue;
+        lights[nl] = .{
+            .key = @intFromPtr(slot.view),
+            .card = cards[i],
+            .shape = shape,
+            .color = busy_light.lightColor(r.state, color_math.isLight(fill)),
+        };
+        nl += 1;
+    }
     self.pane_desk.paint(hdc, area.left, area.top, w, h, cards[0..n], .{
         .fill = fill,
         .is_light = color_math.isLight(fill),
         .scale = self.scale,
         .glass = glass,
         .glows = glows[0..ng],
-    }, self.desk_variant);
+    }, self.desk_variant, lights[0..nl], self.busyHead());
     self.syncGlassBackdrops(slots[0..n], area, glass, color_math.isLight(fill));
     if (self.sidebar) |sb| sb.deskPainted(self.pane_desk.desk_gen);
 }
@@ -6979,10 +7098,10 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
             };
             if (r[2] <= r[0] or r[3] <= r[1]) continue;
             const words = [_]u64{
-                @bitCast(@as(i64, r[0])),                     @bitCast(@as(i64, r[1])),
-                @bitCast(@as(i64, r[2])),                     @bitCast(@as(i64, r[3])),
-                @bitCast(@as(i64, fw)),                       @bitCast(@as(i64, fh)),
-                if (self.desk_variant) |v| v.seed else 0,     @intFromBool(is_light),
+                @bitCast(@as(i64, r[0])),                 @bitCast(@as(i64, r[1])),
+                @bitCast(@as(i64, r[2])),                 @bitCast(@as(i64, r[3])),
+                @bitCast(@as(i64, fw)),                   @bitCast(@as(i64, fh)),
+                if (self.desk_variant) |v| v.seed else 0, @intFromBool(is_light),
             };
             const key = std.hash.Wyhash.hash(0x1833, std.mem.sliceAsBytes(&words)) | 1;
             if (entry.view.glass_backdrop_key == key) continue;
@@ -7606,17 +7725,20 @@ fn snapshotNodes(self: *Window, out: []split_resize.Node) usize {
                     .{ .pass = @intFromEnum(s.right) }
                 else
                     .leaf
-            else .{ .split = .{
-                // Exhaustive on purpose: a new SplitTree layout variant has to
-                // become a compile error here rather than a silent axis.
-                .layout = switch (s.layout) {
-                    .horizontal => .horizontal,
-                    .vertical => .vertical,
+            else
+                .{
+                    .split = .{
+                        // Exhaustive on purpose: a new SplitTree layout variant has to
+                        // become a compile error here rather than a silent axis.
+                        .layout = switch (s.layout) {
+                            .horizontal => .horizontal,
+                            .vertical => .vertical,
+                        },
+                        .ratio = @floatCast(s.ratio),
+                        .left = @intFromEnum(s.left),
+                        .right = @intFromEnum(s.right),
+                    },
                 },
-                .ratio = @floatCast(s.ratio),
-                .left = @intFromEnum(s.left),
-                .right = @intFromEnum(s.right),
-            } },
         };
     }
     return tree.nodes.len;
@@ -12424,6 +12546,10 @@ pub fn windowWndProc(
             }
             if (wparam == FOCUS_GLOW_TIMER_ID) {
                 window.focusGlowTick();
+                return 0;
+            }
+            if (wparam == BUSY_LIGHT_TIMER_ID) {
+                window.busyLightTick();
                 return 0;
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);

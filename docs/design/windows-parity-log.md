@@ -35850,3 +35850,19 @@ moved to T1814.
   harnesses green. `pane-banner.ps1`'s corner probe moved to the band's left
   margin, because (2,2) is now cut away: ALL PASS (150). Filed T1897 (a tinted
   pane's card) and T1898 (a website's real page colour).
+
+## 2026-10-13 — T1899: a busy pane lights its own border
+
+- **What.** A program reporting progress (OSC 9;4) was visible on Windows
+  only on the taskbar button. Mac draws it in the pane: a light circling the
+  border while busy, a glowing top line for a percentage.
+- **Fix.** `busy_light.zig` (pure) holds the shapes, colours, Mac's comet
+  ramp and a per-geometry cache of the ring's pixels. `PaneDesk` keeps one
+  cache per busy pane, rebases it after each full desk paint, and a 30fps
+  frame re-blends only the ring and blits its four strips. `Surface` keeps
+  the report with Mac's 15s expiry. The line sits on the card's rim and the
+  glow falls on the desk outside the pane; D96 asks whether it should be
+  inside as on Mac. Elevated style only (T1903 for flat).
+- **Validation.** Unit tests green. New `pane-busy-light.ps1` ALL PASS (15)
+  through a real OSC 9;4 stream, `-NegativeControl` red. Floor lanes and the
+  harness floor green. All 26 other due harnesses green.

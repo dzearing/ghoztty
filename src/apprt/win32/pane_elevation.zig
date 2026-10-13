@@ -181,7 +181,7 @@ pub fn shadowAlpha(d: f32, s: Shadow) f32 {
 }
 
 /// Abramowitz & Stegun 7.1.26 (|error| < 1.5e-7) - shadows need no better.
-fn erfc(x: f32) f32 {
+pub fn erfc(x: f32) f32 {
     const z = @abs(x);
     const t = 1 / (1 + 0.3275911 * z);
     const poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));

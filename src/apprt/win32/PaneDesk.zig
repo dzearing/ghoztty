@@ -16,6 +16,11 @@
 //! The window paints with `WS_CLIPCHILDREN`, so the blit only reaches the
 //! pixels no pane child covers: the gutters, the margin, and the rounded
 //! corners each child's window region gives back.
+//!
+//! A pane's progress light (T1899) is painted onto `comp` as well, from ring
+//! caches kept here: a full paint rebuilds or rebases them and draws the
+//! light, and an animation frame (`paintLightFrame`) redraws only the ring
+//! pixels and blits only the four strips they lie in.
 
 const PaneDesk = @This();
 
@@ -23,6 +28,8 @@ const std = @import("std");
 const w32 = @import("win32.zig");
 const pane_elevation = @import("pane_elevation.zig");
 const desk_palette = @import("desk_palette.zig");
+const busy_light = @import("busy_light.zig");
+const color_math = @import("color_math.zig");
 
 const log = std.log.scoped(.pane_desk);
 
@@ -77,6 +84,43 @@ const Dib = struct {
     }
 };
 
+/// One pane's progress light, as the window hands it over (T1899). `key`
+/// identifies the pane across paints (its address; compared, never
+/// dereferenced); `card` is in content-area pixels.
+pub const Light = struct {
+    key: usize,
+    card: pane_elevation.Card,
+    shape: busy_light.Shape,
+    color: color_math.Rgb,
+};
+
+/// More busy panes than this in one tab are drawn without a light; a grid
+/// that big has no room for one to read anyway.
+pub const MAX_LIGHTS: usize = 16;
+
+/// A light's ring, cached for the geometry it was built for.
+const LightCache = struct {
+    key: usize = 0,
+    card: pane_elevation.Card = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+    shape: busy_light.Shape = .ring,
+    color: color_math.Rgb = .{ .r = 0, .g = 0, .b = 0 },
+    scale: f32 = 0,
+    /// The buffer size the ring's indices are for; 0 = not built.
+    w: i32 = 0,
+    h: i32 = 0,
+    px: std.ArrayListUnmanaged(busy_light.RingPx) = .empty,
+
+    fn sameGeometry(self: *const LightCache, l: Light, scale: f32, w: i32, h: i32) bool {
+        return self.w == w and self.h == h and self.scale == scale and
+            std.meta.eql(self.card, l.card) and std.meta.eql(self.shape, l.shape);
+    }
+};
+
+const light_alloc = std.heap.page_allocator;
+
+lights: [MAX_LIGHTS]LightCache = [_]LightCache{.{}} ** MAX_LIGHTS,
+light_n: usize = 0,
+
 desk: ?Dib = null,
 desk_light: bool = false,
 desk_variant: ?desk_palette.Variant = null,
@@ -105,6 +149,7 @@ pub fn backdrop(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_
 }
 
 pub fn deinit(self: *PaneDesk) void {
+    for (&self.lights) |*c| c.px.deinit(light_alloc);
     if (self.desk) |d| d.destroy();
     if (self.comp) |c| c.destroy();
     // Keep counting across a reset, so no later desk reuses a generation a
@@ -124,13 +169,113 @@ pub fn paint(
     cards: []const pane_elevation.Card,
     style: pane_elevation.CardStyle,
     variant: ?desk_palette.Variant,
+    lights: []const Light,
+    head: f32,
 ) void {
     if (w <= 0 or h <= 0) return;
     const desk = self.ensureDesk(w, h, style.is_light, variant) orelse return;
     const comp = self.ensureComp(w, h) orelse return;
     @memcpy(comp.pixels(), desk.pixels());
     pane_elevation.paintCards(comp.pixels(), @intCast(w), @intCast(h), cards, style);
+    self.syncLights(comp, lights, style.scale);
+    for (self.lights[0..self.light_n]) |*c| busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
     _ = w32.BitBlt(hdc, origin_x, origin_y, w, h, comp.dc, 0, 0, w32.SRCCOPY);
+}
+
+/// Match the ring caches to `lights` - keeping the ring of a pane whose
+/// card has not moved, rebuilding the rest - and re-read the light-free
+/// pixels under every ring from `comp`, which was just repainted without
+/// them.
+fn syncLights(self: *PaneDesk, comp: Dib, lights: []const Light, scale: f32) void {
+    const n = @min(lights.len, MAX_LIGHTS);
+    var next: [MAX_LIGHTS]LightCache = [_]LightCache{.{}} ** MAX_LIGHTS;
+    var claimed = [_]bool{false} ** MAX_LIGHTS;
+    var placed = [_]bool{false} ** MAX_LIGHTS;
+    // A pane that already had a light keeps its own cache...
+    for (lights[0..n], 0..) |l, i| {
+        for (self.lights[0..self.light_n], 0..) |c, j| {
+            if (claimed[j] or c.key != l.key) continue;
+            next[i] = c;
+            claimed[j] = true;
+            placed[i] = true;
+            break;
+        }
+    }
+    // ...a new one reuses a retired cache's buffer, invalidated...
+    var spare: usize = 0;
+    for (0..n) |i| {
+        if (placed[i]) continue;
+        while (spare < self.light_n and claimed[spare]) spare += 1;
+        if (spare < self.light_n) {
+            next[i] = self.lights[spare];
+            claimed[spare] = true;
+        }
+        next[i].w = 0;
+    }
+    // ...and what nobody took is freed.
+    for (self.lights[0..self.light_n], 0..) |*c, j| {
+        if (!claimed[j]) c.px.deinit(light_alloc);
+    }
+    for (lights[0..n], 0..) |l, i| {
+        const c = &next[i];
+        c.key = l.key;
+        c.color = l.color;
+        if (!c.sameGeometry(l, scale, comp.w, comp.h)) {
+            c.card = l.card;
+            c.shape = l.shape;
+            c.scale = scale;
+            c.w = comp.w;
+            c.h = comp.h;
+            busy_light.build(light_alloc, &c.px, comp.w, comp.h, l.card, l.shape, scale) catch {
+                log.warn("busy light ring build failed", .{});
+                c.px.clearRetainingCapacity();
+                c.w = 0;
+            };
+        }
+        busy_light.rebase(comp.pixels(), c.px.items);
+    }
+    self.lights = next;
+    self.light_n = n;
+}
+
+/// One animation frame of every light (T1899): redraw the ring pixels over
+/// their bases in `comp` and blit just the strips they lie in. The window's
+/// `WS_CLIPCHILDREN` DC keeps the blit off the panes. A no-op until a full
+/// paint has built the caches for the current size.
+pub fn paintLightFrame(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, head: f32) void {
+    const comp = self.comp orelse return;
+    for (self.lights[0..self.light_n]) |*c| {
+        if (c.w != comp.w or c.h != comp.h) continue;
+        busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
+        for (busy_light.strips(c.card, c.shape, c.scale, comp.w, comp.h)) |r| {
+            if (r.right <= r.left or r.bottom <= r.top) continue;
+            _ = w32.BitBlt(hdc, origin_x + r.left, origin_y + r.top, r.right - r.left, r.bottom - r.top, comp.dc, r.left, r.top, w32.SRCCOPY);
+        }
+    }
+}
+
+/// How many lights the last full paint drew.
+pub fn lightCount(self: *const PaneDesk) usize {
+    return self.light_n;
+}
+
+/// The smallest content-area rectangle holding every light's strips, or
+/// null with no light: what a frame's clip is narrowed to.
+pub fn lightBounds(self: *const PaneDesk) ?busy_light.Rect {
+    const comp = self.comp orelse return null;
+    var out: ?busy_light.Rect = null;
+    for (self.lights[0..self.light_n]) |*c| {
+        for (busy_light.strips(c.card, c.shape, c.scale, comp.w, comp.h)) |r| {
+            if (r.right <= r.left or r.bottom <= r.top) continue;
+            out = if (out) |o| .{
+                .left = @min(o.left, r.left),
+                .top = @min(o.top, r.top),
+                .right = @max(o.right, r.right),
+                .bottom = @max(o.bottom, r.bottom),
+            } else r;
+        }
+    }
+    return out;
 }
 
 fn ensureComp(self: *PaneDesk, w: i32, h: i32) ?Dib {

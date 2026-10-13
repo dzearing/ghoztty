@@ -2872,6 +2872,20 @@ $GuardTable = @(
             'test\win32\pane-elevation.ps1'
         )
     },
+    # T1899: a pane's own progress light - the ring circling a busy pane and
+    # the percentage line - driven by a real OSC 9;4 stream and read off the
+    # window's paint. The unit tests own the ring maths; this row owns the
+    # claim that a report reaches the pane, moves, turns red, and goes dark.
+    [pscustomobject]@{
+        Name   = 'pane-busy-light'
+        Script = 'test\win32\pane-busy-light.ps1'
+        Stamp  = 'test\win32\pane-busy-light.stamp.json'
+        Covers = @(
+            'src\apprt\win32\busy_light.zig',
+            'src\apprt\win32\PaneDesk.zig',
+            'test\win32\pane-busy-light.ps1'
+        )
+    },
     # T1832: a window's own gradient - `+new-window --color=random`, the New
     # Window action, and the seed surviving a restart. The unit tests own the
     # palette maths; this row owns the claim that the right windows get one, the
