@@ -721,5 +721,31 @@
 </description>
             <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.39.1/Ghoztty-1.39.1-arm64.dmg" type="application/octet-stream" sparkle:edSignature="Ugnk8D10z08DY35Z2pDKHGmNJf9T4wVyEBXDeXVXmtrPVPE82BDLMvFGukd14kq8Il8bS23uH8RcdeW14hKwAg==" length="26394967" />
         </item>
+        <item>
+            <title>Version 1.39.2</title>
+            <sparkle:version>1.39.2</sparkle:version>
+            <sparkle:shortVersionString>1.39.2</sparkle:shortVersionString>
+            <pubDate>Tue, 13 Oct 2026 22:04:09 +0000</pubDate>
+            <description>{
+  "version": "1.39.2",
+  "sections": [
+    {
+      "title": "Pane sidebar",
+      "items": [
+        {
+          "title": "All windows starts tidy",
+          "text": "Switching the sidebar to **All windows** now shows every other window folded, with only the one you're in open, so you get an overview instead of a wall of panes. A search still unfolds everything, and the **ALL WINDOWS** caption shows how many windows you have."
+        },
+        {
+          "title": "Smooth scrolling with busy panes",
+          "text": "The busy shimmer and the question badge no longer redraw the whole sidebar on every frame. With lots of windows and busy panes open, the sidebar scrolls smoothly, and Ghoztty sits near idle instead of keeping a CPU core busy."
+        }
+      ]
+    }
+  ]
+}
+</description>
+            <enclosure url="https://github.com/dzearing/ghoztty/releases/download/v1.39.2/Ghoztty-1.39.2-arm64.dmg" type="application/octet-stream" sparkle:edSignature="iNtpW5j34OiujHLGkc53P36pmp2LAVQLk051j7mycVyOuTzu4ZspCoyTxiHvPfKBP3ISyTc9PnrerQZrrCcgAQ==" length="26394852" />
+        </item>
     </channel>
 </rss>
