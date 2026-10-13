@@ -403,6 +403,31 @@ pub fn paneChord(vk: u16, mods: input.Mods) ?PaneChord {
     };
 }
 
+/// The Windows copy chords: ctrl+C, and ctrl+Insert, which every native edit
+/// control answers to as well. Exact modifiers — ctrl+shift+C is the default
+/// `copy_to_clipboard` binding on a terminal and means nothing here.
+///
+/// Consulted by an IMAGE pane alone (T1872), which claims these from the page
+/// because the page has nothing to copy; every other viewer mode leaves them to
+/// the page's own selection (`pageOwns`).
+pub fn copyChord(vk: u16, mods: input.Mods) bool {
+    if (!mods.ctrl or mods.shift or mods.alt or mods.super) return false;
+    return vk == 0x43 or vk == 0x2D; // 'C', VK_INSERT
+}
+
+test "copyChord: ctrl+C and ctrl+Insert, exact modifiers" {
+    const ctrl: input.Mods = .{ .ctrl = true };
+    try testing.expect(copyChord(0x43, ctrl));
+    try testing.expect(copyChord(0x2D, ctrl));
+    try testing.expect(!copyChord(0x43, .{}));
+    try testing.expect(!copyChord(0x43, .{ .ctrl = true, .shift = true }));
+    try testing.expect(!copyChord(0x43, .{ .ctrl = true, .alt = true }));
+    try testing.expect(!copyChord(0x56, ctrl)); // ctrl+V
+    // The page still owns ctrl+C everywhere else, which is why an image pane
+    // has to ask before `pageOwns` is consulted.
+    try testing.expect(pageOwns(0x43, ctrl));
+}
+
 // ---------------------------------------------------------------- composer
 
 /// A chord that belongs to the viewer's FEEDBACK COMPOSER (T634) — live only

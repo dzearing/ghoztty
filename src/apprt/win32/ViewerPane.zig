@@ -94,6 +94,7 @@ const internal_os = @import("../../os/main.zig");
 const pane_id_mod = @import("pane_id.zig");
 const banner_link = @import("banner_link.zig");
 const clipboard_open = @import("clipboard_open.zig");
+const image_copy = @import("image_copy.zig");
 const utf16_text = @import("utf16_text.zig");
 const DimOverlay = @import("DimOverlay.zig").DimOverlay;
 const PaneView = @import("PaneView.zig");
@@ -5604,6 +5605,25 @@ fn handleZoom(self: *ViewerPane, action: viewer_accel.ZoomAction) void {
     self.pushZoom();
 }
 
+/// ctrl+C at an image pane (T1872): decode the viewed file and put the picture
+/// on the clipboard (`image_copy.zig` says which formats and why).
+///
+/// The log line is the acceptance script's oracle: `viewer-image.ps1` section
+/// K reads the clipboard back too, but a copy that never ran and a copy that
+/// ran and was then overwritten look the same from the clipboard alone.
+fn copyImage(self: *ViewerPane) void {
+    const path = self.file_path orelse return;
+    const p = self.pending orelse return;
+    const result = image_copy.copyFile(p.alloc, path) orelse {
+        log.info("viewer image copy pane={s} ok=false", .{self.paneId()});
+        return;
+    };
+    log.info(
+        "viewer image copy pane={s} ok=true size={d}x{d} png={s} png_bytes={d}",
+        .{ self.paneId(), result.width, result.height, @tagName(result.png), result.png_bytes },
+    );
+}
+
 /// Perform a pane-scoped chord (T161) — Mac's `handle(_:)`.
 pub fn handlePaneChord(self: *ViewerPane, chord: viewer_accel.PaneChord) void {
     switch (chord) {
@@ -5830,6 +5850,12 @@ fn findEscapeAction(
 /// table (design doc P7's ordering — ctrl+d must reach the address bar, not
 /// the global split-right), and the app table before the page.
 fn claimsChord(self: *ViewerPane, vk: u16, extended: bool, mods: inputpkg.Mods) bool {
+    // ctrl+C at an image pane copies the PICTURE (T1872), Mac's
+    // `ViewerImageSurface.copy`. Ahead of everything, `pageOwns` included: the
+    // page holds a bare `<img>` and has nothing to copy, so leaving the chord
+    // to it is the silent no-op this exists to fix. Every other mode keeps
+    // ctrl+C for the page's own selection.
+    if (self.mode == .image and viewer_accel.copyChord(vk, mods)) return true;
     if (viewer_accel.zoomAction(vk, mods) != null) return true;
     if (viewer_accel.paneChord(vk, mods) != null) return true;
     // Escape closes find from the PAGE, not only from the card's field
@@ -6770,6 +6796,10 @@ pub fn wndProc(
             // chords, then the app keybind table. Both pane legs act on
             // `self` and return — only the app-action leg below has the
             // "nothing may touch self afterwards" hazard.
+            if (self.mode == .image and viewer_accel.copyChord(vk, mods)) {
+                self.copyImage();
+                return 0;
+            }
             if (viewer_accel.zoomAction(vk, mods)) |za| {
                 self.handleZoom(za);
                 return 0;

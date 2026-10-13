@@ -60,6 +60,9 @@ test {
     // showed the lane had skipped it. Its assertions need real GDI+, so the
     // win32 lane is the only one that can host them.
     _ = @import("win32/gdiplus_decode.zig");
+    // The WIC decode behind an image pane's ctrl+C (T1872). Same reason: its
+    // assertions need the real codec registry.
+    _ = @import("win32/image_copy.zig");
     // The COM callback object every WebView2 handler is an instance of
     // (T376). Listed in its own right, not just as webview2.zig's import:
     // its refcount and interface matching are the part a fifth handler would

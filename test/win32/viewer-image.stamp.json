@@ -1,15 +1,19 @@
 {
     "guard":  "viewer-image",
     "script":  "test/win32/viewer-image.ps1",
-    "generated":  "2026-09-12T23:34:01-07:00",
-    "commit":  "aa208cbe7",
+    "generated":  "2026-10-13T11:04:36-07:00",
+    "commit":  "3129cd470",
     "uncommitted":  [
+                        "src/apprt/win32/image_clipboard.zig",
+                        "src/apprt/win32/image_copy.zig",
                         "test/win32/viewer-image.ps1"
                     ],
     "files":  {
+                  "src/apprt/win32/image_clipboard.zig":  "e76981edec22b838e3c21ae8c0f64779232eac05ef6e8fd6b593e068bf11fabb",
+                  "src/apprt/win32/image_copy.zig":  "cb1d4de5b007e0926fca3841312f9d242810617dc0e07f01edcbd24f7ff9381f",
                   "src/apprt/win32/viewer_image.zig":  "4c4b1f180d0acb94ed9eb36fe63e8c754de8eb775547bfd91398cb1520ac459d",
                   "src/viewer/image.js":  "f6b373c9641514b955ad259eaa1a69dc101a94b9d2f7a983da6404a2265aa75e",
                   "src/viewer/viewer.js":  "9f31bee745c39495c77dd73ae44e703328b02c60d64c83e6365762a5f0d16151",
-                  "test/win32/viewer-image.ps1":  "c584b0496233252501de2a2464442480615529f1654427ee8f9d86644377e132"
+                  "test/win32/viewer-image.ps1":  "107abe5d3e34856e8a0559ebd1e126ac3dfa3c8eda242e4ab0286267fe114fdb"
               }
 }

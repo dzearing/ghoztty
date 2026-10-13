@@ -723,6 +723,9 @@ $GuardTable = @(
         Covers = @(
             'test\win32\viewer-image.ps1',
             'src\apprt\win32\viewer_image.zig',
+            # ctrl+C copies the picture (T1872): section K.
+            'src\apprt\win32\image_copy.zig',
+            'src\apprt\win32\image_clipboard.zig',
             'src\viewer\image.js',
             'src\viewer\viewer.js'
         )

@@ -20,6 +20,9 @@
 #   - a corrupt/undecodable image gets the pane's own error card naming the
 #     file, rather than a blank matte.
 #   - a `.txt` control in the same run produces NONE of it.
+#   - ctrl+C (and ctrl+Insert) at an image pane copies the PICTURE (T1872):
+#     the size is read back off the clipboard, a PNG file is published
+#     verbatim as the "PNG" format, and a text pane keeps the page's own copy.
 #
 # ORACLE, and why it is the log. This runs on the background test desktop,
 # where CopyFromScreen and SendInput are dead (T233), so nothing out here can
@@ -395,6 +398,158 @@ try {
         'I: a .txt pane never fetched a picture'
     Assert (@(Get-ImageStates $errlog $txtPane).Count -eq 0) `
         'I: ...and never decided an image zoom'
+
+    # --- K. ctrl+C at an image pane copies the PICTURE (T1872) ---------------
+    # Mac's image pane answers Cmd-C with the image itself; before T1872 the
+    # Windows page had nothing selected and copied nothing. Each press is
+    # preceded by a SENTINEL text on the clipboard, so a pass cannot come from
+    # an earlier copy, and the user's own clipboard is put back afterwards
+    # (the test desktop shares the window station's clipboard with them).
+    #
+    # Two oracles, because either alone can lie: the pane's own log line says
+    # the copy RAN and what it chose, and the clipboard read back says it
+    # LANDED - through .NET's reader, which takes CF_DIB, so it also proves the
+    # system synthesised a DIB from the CF_DIBV5 the pane wrote.
+    if ([Threading.Thread]::CurrentThread.ApartmentState -ne 'STA') {
+        $script:skipped++
+        Write-Host 'SKIP  K: the clipboard API needs an STA thread and this host is MTA'
+    } else {
+        Add-Type -AssemblyName System.Windows.Forms
+        $savedText = $null; $savedImg = $null
+        try {
+            if ([Windows.Forms.Clipboard]::ContainsText()) { $savedText = [Windows.Forms.Clipboard]::GetText() }
+            elseif ([Windows.Forms.Clipboard]::ContainsImage()) { $savedImg = [Windows.Forms.Clipboard]::GetImage() }
+        } catch { }
+
+        function Set-Sentinel([string]$s) {
+            for ($t = 0; $t -lt 10; $t++) {
+                try { [Windows.Forms.Clipboard]::SetText($s); return } catch { Start-Sleep -Milliseconds 100 }
+            }
+        }
+        function Get-ClipShape {
+            for ($t = 0; $t -lt 10; $t++) {
+                try {
+                    $o = [Windows.Forms.Clipboard]::GetDataObject()
+                    $img = [Windows.Forms.Clipboard]::GetImage()
+                    $txt = if ([Windows.Forms.Clipboard]::ContainsText()) { [Windows.Forms.Clipboard]::GetText() } else { '' }
+                    $shape = [pscustomobject]@{
+                        W       = if ($img) { $img.Width } else { 0 }
+                        H       = if ($img) { $img.Height } else { 0 }
+                        HasPng  = ($o -and (@($o.GetFormats()) -contains 'PNG'))
+                        Text    = $txt
+                    }
+                    if ($img) { $img.Dispose() }
+                    return $shape
+                } catch { Start-Sleep -Milliseconds 100 }
+            }
+            return [pscustomobject]@{ W = 0; H = 0; HasPng = $false; Text = '' }
+        }
+        function Get-CopyLines($paneId) {
+            if (-not $paneId -or -not (Test-Path $errlog)) { return @() }
+            return @(Select-String -Path $errlog -Pattern ('viewer image copy pane=' + [regex]::Escape($paneId) + ' ') |
+                ForEach-Object { $_.Line })
+        }
+        # Open a viewer in a NEW top-level window and return the window, its
+        # viewer host and the Chromium input child the chord is posted at.
+        function Open-ViewerTop([string]$target, [string]$path) {
+            $before = @(Get-TestWindows -ProcessId $appPid | ForEach-Object { $_.Hwnd })
+            $rr = Invoke-Verb @('+new-window', "--target=$target", "--view=$path")
+            $top = [IntPtr]::Zero; $chrome = [IntPtr]::Zero; $viewHost = [IntPtr]::Zero
+            for ($t = 0; $t -lt 50 -and $chrome -eq [IntPtr]::Zero; $t++) {
+                $new = @(Get-TestWindows -ProcessId $appPid | Where-Object { $before -notcontains $_.Hwnd })
+                if ($new.Count -ge 1) {
+                    $top = [IntPtr]$new[0].Hwnd
+                    foreach ($h in @(Get-TestChildWindows -Window $top -Class 'GhozttyViewer')) {
+                        $widget = @(Get-TestChildWindows -Window ([IntPtr][int64]$h.Hwnd) -Class '*' |
+                            Where-Object { $_.Class -eq 'Chrome_WidgetWin_1' })
+                        if ($widget.Count -ge 1) {
+                            $chrome = [IntPtr][int64]$widget[0].Hwnd
+                            $viewHost = [IntPtr][int64]$h.Hwnd
+                        }
+                    }
+                }
+                if ($chrome -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 200 }
+            }
+            $lf = Get-OnlyPane $target
+            return [pscustomobject]@{
+                Code = $rr.Code; Top = $top; Chrome = $chrome; Host = $viewHost
+                Pane = if ($lf) { $lf.id } else { $null }
+            }
+        }
+        function Send-Copy($v, [string]$key = 'C') {
+            Focus-TestWindow -Window $v.Top -Child $v.Host | Out-Null
+            Start-Sleep -Milliseconds 400
+            Send-TestViewerChord -Window $v.Top -Target $v.Chrome -Key $key -Modifiers ctrl | Out-Null
+        }
+        function Wait-CopyLine($paneId, [int]$AtLeast = 1) {
+            for ($t = 0; $t -lt 40; $t++) {
+                $l = @(Get-CopyLines $paneId)
+                if ($l.Count -ge $AtLeast) { return $l[-1] }
+                Start-Sleep -Milliseconds 250
+            }
+            return $null
+        }
+
+        try {
+            # K1. a PNG: the picture lands, and the "PNG" format is the file itself.
+            $kp = Open-ViewerTop 't1872png' $bigPath
+            Assert ($kp.Code -eq 0 -and $kp.Chrome -ne [IntPtr]::Zero) 'K: the PNG pane opened in its own window with a Chromium child'
+            [void](Wait-Loaded $errlog $kp.Pane)
+            Set-Sentinel 't1872-sentinel-1'
+            Send-Copy $kp
+            $line = Wait-CopyLine $kp.Pane
+            $pngLen = (Get-Item $bigPath).Length
+            Assert ($line -match 'ok=true size=4000x3000 png=verbatim png_bytes=(\d+)' -and [int64]$Matches[1] -eq $pngLen) `
+                "K1: ctrl+C copied the 4000x3000 PNG, publishing the file's own $pngLen bytes as PNG (log: '$line')"
+            $clip = Get-ClipShape
+            Assert ($clip.W -eq 4000 -and $clip.H -eq 3000) `
+                "K1: the clipboard now holds a 4000x3000 picture (read back $($clip.W)x$($clip.H))"
+            Assert $clip.HasPng 'K1: ...with a PNG format alongside the bitmap'
+            Assert ($clip.Text -ne 't1872-sentinel-1') 'K1: ...and the sentinel text is gone'
+
+            # K2. a JPEG: opaque and not a PNG, so the bitmap alone.
+            $kj = Open-ViewerTop 't1872jpg' $jpgPath
+            [void](Wait-Loaded $errlog $kj.Pane)
+            Set-Sentinel 't1872-sentinel-2'
+            Send-Copy $kj
+            $line = Wait-CopyLine $kj.Pane
+            Assert ($line -match 'ok=true size=800x400 png=none') "K2: ctrl+C copied the 800x400 JPEG as a bitmap (log: '$line')"
+            $clip = Get-ClipShape
+            Assert ($clip.W -eq 800 -and $clip.H -eq 400) "K2: the clipboard holds an 800x400 picture (read back $($clip.W)x$($clip.H))"
+            Assert (-not $clip.HasPng) 'K2: ...and no PNG re-encode of an opaque photo'
+
+            # K3. ctrl+Insert is the same copy.
+            Set-Sentinel 't1872-sentinel-3'
+            Send-Copy $kj 'Insert'
+            $line = Wait-CopyLine $kj.Pane 2
+            Assert ($null -ne $line) 'K3: ctrl+Insert at an image pane copies too'
+
+            # K4. the control: a TEXT pane keeps the page's own copy. Select all,
+            # copy, and the file's text lands - with no image copy logged.
+            $kt = Open-ViewerTop 't1872txt' $txtPath
+            Start-Sleep -Seconds 2
+            Set-Sentinel 't1872-sentinel-4'
+            Focus-TestWindow -Window $kt.Top -Child $kt.Host | Out-Null
+            Start-Sleep -Milliseconds 400
+            Send-TestViewerChord -Window $kt.Top -Target $kt.Chrome -Key 'A' -Modifiers ctrl | Out-Null
+            Start-Sleep -Milliseconds 400
+            Send-TestViewerChord -Window $kt.Top -Target $kt.Chrome -Key 'C' -Modifiers ctrl | Out-Null
+            $got = ''
+            for ($t = 0; $t -lt 20; $t++) {
+                $got = (Get-ClipShape).Text
+                if ($got -match 'T1183 control') { break }
+                Start-Sleep -Milliseconds 250
+            }
+            Assert ($got -match 'T1183 control') "K4: ctrl+C in a text pane is still the page's own copy (clipboard: '$got')"
+            Assert (@(Get-CopyLines $kt.Pane).Count -eq 0) 'K4: ...and the image copy never ran there'
+        } finally {
+            try {
+                if ($null -ne $savedText) { [Windows.Forms.Clipboard]::SetText($savedText) }
+                elseif ($null -ne $savedImg) { [Windows.Forms.Clipboard]::SetImage($savedImg) }
+                else { [Windows.Forms.Clipboard]::Clear() }
+            } catch { }
+        }
+    }
 
     # --- J. the app survived all of it ---------------------------------------
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'GUI process alive after all scenarios'

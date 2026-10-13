@@ -488,6 +488,10 @@ test {
     // actually start (T637), same no-OS-imports deal.
     _ = @import("apprt/win32/dib_packed.zig");
 
+    // Pure win32 image COPY — the CF_DIBV5 block and which "PNG" bytes an image
+    // pane's ctrl+C publishes (T1872), same no-OS-imports deal.
+    _ = @import("apprt/win32/image_clipboard.zig");
+
     // Pure win32 deferred pane-HWND reap gate — whether a posted reap is still
     // aimed at the dead pane window that posted it (T681), same no-OS-imports
     // deal.

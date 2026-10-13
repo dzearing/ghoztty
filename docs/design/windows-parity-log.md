@@ -35938,3 +35938,22 @@ moved to T1814.
   (impossible on a layered window off-desktop) became the card's own
   `card layer` log line (11k partial-alpha pixels on an 826 px card). The
   on-screen look beside Mac is NOT RUN (user present); filed T1908.
+
+## 2026-10-13 — T1872: Ctrl+C in an image pane copies the picture
+
+- **Gap.** Mac's image pane copies the image on Cmd-C (main 1d513083a). On
+  Windows the pane is a WebView2 page holding a bare `<img>`, so Ctrl+C with
+  nothing selected copied nothing.
+- **Fix.** An image-mode `ViewerPane` claims ctrl+C / ctrl+Insert
+  (`viewer_accel.copyChord`) before `pageOwns` is asked. The new `image_copy.zig`
+  decodes the viewed file with WIC, which handles WebP/AVIF/HEIF where GDI+
+  cannot, and publishes `CF_DIBV5`. It also publishes `"PNG"`: the file's own
+  bytes for a PNG, a fresh encode for a see-through non-PNG, and nothing for an
+  opaque photo. The packing and that choice live in the pure
+  `image_clipboard.zig`.
+- **Validation.** New unit tests in the none and win32 lanes, all four floor
+  lanes, and a new section K in viewer-image.ps1 (51 assertions). K reads the
+  pictures back off the clipboard: a 4000x3000 PNG and an 800x400 JPEG. It also
+  checks ctrl+Insert, and that a text pane keeps the page's own copy.
+  Follow-ups: T1909 (file half of Mac's copy), T1910 (EXIF orientation),
+  T1911 (SVG).

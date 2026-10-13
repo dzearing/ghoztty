@@ -102,7 +102,7 @@ fn open(owner: ?w32.HWND) bool {
 
 /// The registered `"PNG"` format id, resolved once. Zero when it could not be
 /// registered, which `IsClipboardFormatAvailable` treats as "no".
-fn pngFormat() u32 {
+pub fn pngFormat() u32 {
     const State = struct {
         var id: u32 = 0;
         var tried: bool = false;
