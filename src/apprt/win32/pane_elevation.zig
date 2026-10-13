@@ -597,6 +597,10 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
         const y1: i32 = @min(c.bottom, hi);
         const x0: i32 = @max(c.left, 0);
         const x1: i32 = @min(c.right, wi);
+        // A card wholly off the buffer, or one with no width - a transient
+        // layout mid-split - has nothing to fill, and the interior clamp
+        // below needs x0 <= x1 (T1912).
+        if (x1 <= x0 or y1 <= y0) continue;
         var y = y0;
         while (y < y1) : (y += 1) {
             // This row's card colour (T1851): a header or nav band, a
@@ -819,6 +823,42 @@ test "T1831: paintCards leaves the desk alone when there are no cards" {
     var buf: [16]u32 = undefined;
     @memset(&buf, 0x123456);
     paintCards(&buf, 4, 4, &.{}, .{ .fill = .{ .r = 0, .g = 0, .b = 0 }, .is_light = false, .scale = 1 });
+    for (buf) |p| try testing.expectEqual(@as(u32, 0x123456), p);
+}
+
+test "T1912: paintCards skips a card whose rect misses the buffer instead of asserting" {
+    const w = 40;
+    const h = 60;
+    // Tall cards, so every buffer row is one of a card's straight sides -
+    // the rows that clamp the interior span against the clipped rect.
+    const cards = [_]Card{
+        // Just right of the buffer: its shadow reaches in, its rect does not.
+        .{ .left = w + 2, .top = -50, .right = w + 80, .bottom = h + 50 },
+        // Just left of it.
+        .{ .left = -80, .top = -50, .right = -2, .bottom = h + 50 },
+        // No width at all.
+        .{ .left = 20, .top = -50, .right = 20, .bottom = h + 50 },
+        // Wholly below.
+        .{ .left = 0, .top = h + 3, .right = w, .bottom = h + 90 },
+    };
+    for ([_]bool{ false, true }) |glass| {
+        var buf: [w * h]u32 = undefined;
+        @memset(&buf, 0x123456);
+        paintCards(&buf, w, h, &cards, .{
+            .fill = .{ .r = 30, .g = 30, .b = 30 },
+            .is_light = false,
+            .scale = 1,
+            .glass = glass,
+        });
+    }
+    // And a card far off every edge touches nothing, shadow included.
+    var buf: [w * h]u32 = undefined;
+    @memset(&buf, 0x123456);
+    paintCards(&buf, w, h, &.{.{ .left = 500, .top = 500, .right = 600, .bottom = 600 }}, .{
+        .fill = .{ .r = 30, .g = 30, .b = 30 },
+        .is_light = false,
+        .scale = 1,
+    });
     for (buf) |p| try testing.expectEqual(@as(u32, 0x123456), p);
 }
 

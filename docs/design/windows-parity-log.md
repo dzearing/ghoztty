@@ -35957,3 +35957,14 @@ moved to T1814.
   checks ctrl+Insert, and that a text pane keeps the page's own copy.
   Follow-ups: T1909 (file half of Mac's copy), T1910 (EXIF orientation),
   T1911 (SVG).
+
+## 2026-10-13 — T1912: splitting a pane no longer crashes a debug build
+
+- **What.** The raised-card painter's fill pass clamped each row's interior
+  against the card's clipped rect, and that clamp asserts when the rect is
+  empty - a card momentarily off the buffer or zero-wide mid-split. It now
+  skips such a card, as the shadow and glow passes already did. Release
+  builds were never affected (the assert compiles out).
+- **Validation.** New win32-lane unit test that crashes with the guard
+  removed and passes with it; viewer-panes.ps1 back to ALL PASS (195, was
+  17 failures); all four floor lanes, P1-P3, and the due guard harnesses green.
