@@ -1,4 +1,4 @@
-//! Undo for closing a pane or a tab, on the desktop (T1825).
+//! Undo for closing a pane, a tab or a window, on the desktop (T1825, T1874).
 //!
 //! Mac's close registers an undo for `undo-timeout` (default 5s); within it
 //! Cmd+Z brings the pane back with its shell still running and its agent
@@ -10,6 +10,15 @@
 //!     and `close_undo.Anchor` records where in the tree it sat.
 //!   * A tab closed out of a window keeps its whole tree (and therefore every
 //!     pane's reference), hidden, plus the tab's title, colour and identity.
+//!   * A closed WINDOW (T1874) is kept whole: its HWND is hidden and it leaves
+//!     `App.windows` - so `+list`, IPC targeting, the session layout and the
+//!     sidebars all see it gone - while every tab, pane and session in it stays
+//!     exactly as it was. Undo shows it again at the same frame. Its entry is
+//!     owned by `shared_owner`, because the window it would be scoped to is
+//!     the one that closed: any other window's undo reaches it, in recency
+//!     order with that window's own closes. The last window is never parked -
+//!     with nothing left on screen there is nowhere to press undo, and the app
+//!     quits with it.
 //!
 //! Nothing below the pane can tell it was closed: its shell keeps running, its
 //! ConPTY or agent session stays attached, and the agent keeps reporting it
@@ -34,6 +43,8 @@ const Window = @import("Window.zig");
 const PaneView = @import("PaneView.zig");
 const SplitTree = @import("../../datastruct/split_tree.zig").SplitTree;
 const close_undo = @import("close_undo.zig");
+const IpcRegistry = @import("IpcRegistry.zig");
+const PaneSidebar = @import("PaneSidebar.zig");
 const msg_timer = @import("msg_timer.zig");
 const pane_id = @import("pane_id.zig");
 const tab_color = @import("tab_color.zig");
@@ -46,11 +57,25 @@ pub const TIMER_ID: usize = msg_timer.close_undo;
 const Tree = SplitTree(PaneView);
 const Anchor = close_undo.Anchor(PaneView);
 
-/// A closed pane or tab, held for its undo.
+/// A closed pane, tab or window, held for its undo.
 pub const Parked = union(enum) {
     pane: ParkedPane,
     tab: ParkedTab,
+    window: ParkedWindow,
 };
+
+const ParkedWindow = struct {
+    /// Hidden, out of `App.windows`, otherwise untouched.
+    window: *Window,
+    /// Every IPC name that pointed at the window or one of its panes: the
+    /// registry prunes them while the window is out of the live set, and an
+    /// undo registers them again. Owned.
+    names: []IpcRegistry.Saved,
+};
+
+/// The owner key of an entry no window scopes: a closed window's own close.
+/// Never a real window's key (`owner` is a pointer).
+const shared_owner: usize = 0;
 
 const ParkedPane = struct {
     /// Holds ONE reference: the one the tree used to.
@@ -83,6 +108,9 @@ const ParkedTab = struct {
 pub const Reclose = union(enum) {
     pane: pane_id.Buf,
     tab: pane_id.Buf,
+    /// The window by pointer AND its first tab's identity: the pointer alone
+    /// could name a later window allocated at the same address.
+    window: struct { ptr: usize, tab0: pane_id.Buf },
 };
 
 app: *App,
@@ -110,6 +138,7 @@ pub fn init(app: *App) CloseUndo {
 /// App teardown: every window has already finalized its own entries on its
 /// way out; anything left is ended here rather than leaked.
 pub fn deinit(self: *CloseUndo) void {
+    self.finalizeParkedWindows();
     while (self.undo_stack.takeAny()) |item| self.finalize(item.payload);
     const alloc = self.app.core_app.alloc;
     self.undo_stack.deinit(alloc);
@@ -231,11 +260,89 @@ pub fn parkTab(self: *CloseUndo, window: *Window, idx: usize) bool {
     return true;
 }
 
+/// Park `window`, which the user just closed (T1874). True means it is now
+/// hidden and out of `App.windows`, with every tab and session in it intact,
+/// and the caller must NOT run the close; false means close it as before.
+///
+/// Refused - so the close is the immediate one it always was - when undo is
+/// off, for the quick terminal, for a window already parked, when nothing in
+/// it is still running, and for the last window: with no other window on
+/// screen there is nowhere to press undo, and the app is about to quit.
+pub fn parkWindow(self: *CloseUndo, window: *Window) bool {
+    if (!self.parkable(window)) return false;
+    if (window.is_quick_terminal or window.parked_for_undo) return false;
+    const hwnd = window.hwnd orelse return false;
+    if (!self.app.hasWindow(window)) return false;
+    const others = for (self.app.windows.items) |w| {
+        if (w != window and !w.closing) break true;
+    } else false;
+    if (!others) return false;
+    var any_live = false;
+    for (window.tab_trees[0..window.tab_count]) |*tree| {
+        var it = tree.iterator();
+        while (it.next()) |entry| {
+            if (!exited(entry.view)) any_live = true;
+        }
+    }
+    if (!any_live) return false;
+
+    const alloc = self.app.core_app.alloc;
+    const names = self.app.ipc_registry.save(alloc, window, ownsTarget) catch return false;
+    self.pushOwned(shared_owner, .{ .window = .{ .window = window, .names = names } }) catch {
+        IpcRegistry.freeSaved(alloc, names);
+        return false;
+    };
+
+    // Anything modal on it goes first: each re-enables and refocuses this
+    // HWND, which is about to vanish.
+    if (window.rename_dialog) |dlg| dlg.cancel();
+    if (window.banner_dialog) |dlg| dlg.cancel();
+    if (window.machine_chooser) |ch| ch.cancel();
+    window.cancelTabRename();
+
+    // `closing` is the window's own "I am gone" flag - input is dropped and no
+    // layout is maintained while it is up, which is exactly right for a
+    // window nobody can see. An undo lowers it again.
+    window.parked_for_undo = true;
+    window.closing = true;
+    window.setActiveTabVisible(false);
+    _ = w32.ShowWindow(hwnd, w32.SW_HIDE);
+    self.removeFromApp(window);
+    log.info("parked closed window for undo", .{});
+    return true;
+}
+
+/// Whether an IPC registration points at `window` or at a pane inside it.
+fn ownsTarget(window: *Window, target: IpcRegistry.Target) bool {
+    return switch (target) {
+        .window => |w| w == window,
+        .pane => |p| window.findTabIndex(p) != null,
+    };
+}
+
+/// Take a parked window off every live list, as its WM_DESTROY would.
+fn removeFromApp(self: *CloseUndo, window: *Window) void {
+    const app = self.app;
+    for (app.windows.items, 0..) |w, i| {
+        if (w == window) {
+            _ = app.windows.orderedRemove(i);
+            break;
+        }
+    }
+    PaneSidebar.refreshScopes(app.windows.items, null);
+    if (app.restore_placeholder_window == window) app.restore_placeholder_window = null;
+    app.markLayoutDirty();
+}
+
 fn push(self: *CloseUndo, window: *Window, payload: Parked) Allocator.Error!void {
+    return self.pushOwned(owner(window), payload);
+}
+
+fn pushOwned(self: *CloseUndo, key: usize, payload: Parked) Allocator.Error!void {
     const ms = self.timeoutMs() orelse unreachable; // parkable() checked
     try self.undo_stack.push(self.app.core_app.alloc, .{
         .payload = payload,
-        .owner = owner(window),
+        .owner = key,
         .deadline = now() +| ms,
         .group = self.group,
     });
@@ -260,8 +367,14 @@ fn hideTree(tree: *const Tree) void {
 /// Bring back the most recent close in `window` (or, with no window, the most
 /// recent close anywhere). False when there is nothing to undo.
 pub fn undo(self: *CloseUndo, window: ?*Window) bool {
-    const key = if (window) |w| owner(w) else self.undo_stack.topOwner() orelse return false;
-    const first = self.undo_stack.popFor(key) orelse return false;
+    // A window's undo also reaches a closed window's entry (shared_owner).
+    const first = if (window) |w|
+        self.undo_stack.popForEither(owner(w), shared_owner) orelse return false
+    else blk: {
+        const top = self.undo_stack.topOwner() orelse return false;
+        break :blk self.undo_stack.popFor(top) orelse return false;
+    };
+    const key = first.owner;
     self.replaying = true;
     defer self.replaying = false;
 
@@ -284,8 +397,13 @@ pub fn undo(self: *CloseUndo, window: ?*Window) bool {
 
 /// Close again what the last undo in `window` brought back.
 pub fn redo(self: *CloseUndo, window: ?*Window) bool {
-    const key = if (window) |w| owner(w) else self.redo_stack.topOwner() orelse return false;
-    const first = self.redo_stack.popFor(key) orelse return false;
+    const first = if (window) |w|
+        self.redo_stack.popForEither(owner(w), shared_owner) orelse return false
+    else blk: {
+        const top = self.redo_stack.topOwner() orelse return false;
+        break :blk self.redo_stack.popFor(top) orelse return false;
+    };
+    const key = first.owner;
     self.replaying = true;
     defer self.replaying = false;
 
@@ -308,11 +426,11 @@ fn takeGroupId(self: *CloseUndo) u64 {
 }
 
 pub fn canUndo(self: *const CloseUndo, window: *const Window) bool {
-    return self.undo_stack.hasFor(owner(window));
+    return self.undo_stack.hasFor(owner(window)) or self.undo_stack.hasFor(shared_owner);
 }
 
 pub fn canRedo(self: *const CloseUndo, window: *const Window) bool {
-    return self.redo_stack.hasFor(owner(window));
+    return self.redo_stack.hasFor(owner(window)) or self.redo_stack.hasFor(shared_owner);
 }
 
 fn findWindow(self: *CloseUndo, key: usize) ?*Window {
@@ -321,6 +439,13 @@ fn findWindow(self: *CloseUndo, key: usize) ?*Window {
 }
 
 fn closeAgain(self: *CloseUndo, key: usize, what: Reclose) void {
+    if (what == .window) {
+        const w = self.findWindow(what.window.ptr) orelse return;
+        if (w.tab_count == 0 or !pane_id.eql(w.tabUuid(0), &what.window.tab0)) return;
+        // No confirmation: a redo repeats a close the user already made.
+        w.close();
+        return;
+    }
     const window = self.findWindow(key) orelse return;
     switch (what) {
         .pane => |id| {
@@ -342,6 +467,7 @@ fn closeAgain(self: *CloseUndo, key: usize, what: Reclose) void {
                 }
             }
         },
+        .window => unreachable, // handled above
     }
 }
 
@@ -352,7 +478,47 @@ fn restore(self: *CloseUndo, parked: Parked) ?Reclose {
     switch (parked) {
         .pane => |p| return self.restorePane(p),
         .tab => |t| return self.restoreTab(t),
+        .window => |w| return self.restoreWindow(w),
     }
+}
+
+fn restoreWindow(self: *CloseUndo, parked: ParkedWindow) ?Reclose {
+    const app = self.app;
+    const alloc = app.core_app.alloc;
+    const window = parked.window;
+    defer IpcRegistry.freeSaved(alloc, parked.names);
+
+    const hwnd = window.hwnd orelse return null;
+    app.windows.append(alloc, window) catch |err| {
+        log.warn("undo: window restore failed: {}", .{err});
+        window.parked_for_undo = false;
+        window.closeNow();
+        return null;
+    };
+    window.parked_for_undo = false;
+    window.closing = false;
+    for (parked.names) |n| app.ipcRegister(n.name, n.target) catch {};
+    PaneSidebar.refreshScopes(app.windows.items, null);
+
+    // Back where it was: SW_HIDE kept the frame and the maximized state, so
+    // showing it is the whole restore. A window closed while minimized comes
+    // back restored - undo is asking to see it.
+    _ = w32.ShowWindow(hwnd, if (w32.IsIconic(hwnd) != 0) w32.SW_RESTORE else w32.SW_SHOW);
+    _ = w32.SetForegroundWindow(hwnd);
+    window.setActiveTabVisible(true);
+    window.layoutSplits();
+    window.invalidateTabBar();
+    if (window.tab_count > 0) {
+        if (window.tab_active_pane[window.active_tab].hwnd()) |h| App.deferSetFocus(h);
+    }
+    app.stopQuitTimer();
+    app.markLayoutDirty();
+    log.info("undo: window restored with {} tab(s)", .{window.tab_count});
+
+    if (window.tab_count == 0) return null;
+    var again: Reclose = .{ .window = .{ .ptr = owner(window), .tab0 = undefined } };
+    @memcpy(&again.window.tab0, window.tabUuid(0)[0..pane_id.len]);
+    return again;
 }
 
 fn restorePane(self: *CloseUndo, parked: ParkedPane) ?Reclose {
@@ -457,7 +623,45 @@ fn finalize(self: *CloseUndo, parked: Parked) void {
             while (it.next()) |entry| entry.view.setSessionCloseIntent(true);
             tree.deinit();
         },
+        .window => |w| {
+            IpcRegistry.freeSaved(alloc, w.names);
+            // The close the user asked for, run now: every session ends and
+            // the HWND is destroyed (whose WM_DESTROY frees the window).
+            w.window.parked_for_undo = false;
+            w.window.closeNow();
+        },
     }
+}
+
+/// App teardown: every parked window is closed for real while `App.windows`
+/// and the agent link still exist (its WM_DESTROY reads both). Called before
+/// the live windows are torn down.
+pub fn finalizeParkedWindows(self: *CloseUndo) void {
+    const pred = struct {
+        fn f(_: void, p: *const Parked) bool {
+            return p.* == .window;
+        }
+    }.f;
+    while (self.undo_stack.takeMatching({}, pred)) |item| self.finalize(item.payload);
+}
+
+/// A parked window is being closed for real by something other than its
+/// expiry (its last shell exited while it waited): drop its entry without
+/// running the close, which the caller is already doing.
+pub fn forgetParkedWindow(self: *CloseUndo, window: *Window) void {
+    const pred = struct {
+        fn f(target: *Window, p: *const Parked) bool {
+            return switch (p.*) {
+                .window => |w| w.window == target,
+                else => false,
+            };
+        }
+    }.f;
+    if (self.undo_stack.takeMatching(window, pred)) |item| {
+        IpcRegistry.freeSaved(self.app.core_app.alloc, item.payload.window.names);
+    }
+    window.parked_for_undo = false;
+    self.arm();
 }
 
 /// The expiry timer fired: finalize everything whose undo ran out.
@@ -490,7 +694,7 @@ pub fn cancelPark(self: *CloseUndo, pane: *PaneView) void {
         fn f(target: *PaneView, p: *const Parked) bool {
             return switch (p.*) {
                 .pane => |pp| pp.pane == target,
-                .tab => false,
+                .tab, .window => false,
             };
         }
     }.f;
@@ -511,7 +715,7 @@ pub fn paneGone(self: *CloseUndo, pane: *PaneView) bool {
         fn f(target: *PaneView, p: *const Parked) bool {
             return switch (p.*) {
                 .pane => |pp| pp.pane == target,
-                .tab => false,
+                .tab, .window => false,
             };
         }
     }.f;
@@ -525,7 +729,7 @@ pub fn paneGone(self: *CloseUndo, pane: *PaneView) bool {
     const alloc = self.app.core_app.alloc;
     for (self.undo_stack.items.items, 0..) |*item, i| {
         switch (item.payload) {
-            .pane => {},
+            .pane, .window => {},
             .tab => |*t| {
                 var it = t.tree.iterator();
                 const handle = while (it.next()) |entry| {

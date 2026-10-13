@@ -92,6 +92,21 @@ pub fn Stack(comptime P: type) type {
             return null;
         }
 
+        /// The most recent entry owned by `owner` OR by `shared`, removed.
+        /// A closed window (T1874) belongs to no window any more, so its
+        /// entry is owned by the shared key and every window's undo reaches
+        /// it - in recency order with that window's own closes, the way
+        /// Mac's one app-wide undo manager would order them.
+        pub fn popForEither(self: *Self, owner: usize, shared: usize) ?Item {
+            var i = self.items.items.len;
+            while (i > 0) {
+                i -= 1;
+                const o = self.items.items[i].owner;
+                if (o == owner or o == shared) return self.items.orderedRemove(i);
+            }
+            return null;
+        }
+
         /// The most recent entry owned by `owner`, removed only when it
         /// belongs to `group` - how the rest of a group is collected after
         /// its first member was popped. A zero group never continues.
@@ -370,6 +385,23 @@ test "close_undo: undo is per window and last-in first-out" {
     try testing.expectEqual(@as(u8, 'a'), s.popFor(1).?.payload);
     try testing.expectEqual(@as(?Stack(u8).Item, null), s.popFor(1));
     try testing.expectEqual(@as(u8, 'b'), s.popFor(2).?.payload);
+}
+
+test "close_undo: a shared entry is reached from any window, in recency order" {
+    const alloc = testing.allocator;
+    var s: Stack(u8) = .{};
+    defer s.deinit(alloc);
+    const shared: usize = 0;
+    try s.push(alloc, .{ .payload = 'a', .owner = 1, .deadline = 10 });
+    try s.push(alloc, .{ .payload = 'w', .owner = shared, .deadline = 20 }); // a closed window
+    try s.push(alloc, .{ .payload = 'b', .owner = 2, .deadline = 30 });
+
+    // Window 1's newest is the closed window, not its own older close.
+    try testing.expectEqual(@as(u8, 'w'), s.popForEither(1, shared).?.payload);
+    try testing.expectEqual(@as(u8, 'a'), s.popForEither(1, shared).?.payload);
+    try testing.expectEqual(@as(?Stack(u8).Item, null), s.popForEither(1, shared));
+    // Window 2's own close was never touched.
+    try testing.expectEqual(@as(u8, 'b'), s.popForEither(2, shared).?.payload);
 }
 
 test "close_undo: a group comes back as one, and only its own members" {

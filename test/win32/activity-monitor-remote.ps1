@@ -839,9 +839,18 @@ try {
     # still holding a `*Surface` freed moments later (read back through
     # OPENGL32's wglWndProc subclass). The panel was only the trigger's
     # passenger, so the arm belongs on the sequence that reaches it.
+    #
+    # Since T1874 a closed window waits out `undo-timeout` (5s by default)
+    # before it is torn down, and the transport stays live with it - so the
+    # notice comes at that expiry, not at the close. Poll past it.
     cmd /c "`"$exe`" +close --target=remact > nul 2>&1" | Out-Null
-    Start-Sleep -Seconds 4
-    Assert (Select-String -Path $errlog -Pattern 'borrowed connection is going away' -Quiet) 'G4 the closing window told the panel to let go of its connection'
+    $noticeDeadline = (Get-Date).AddSeconds(15)
+    $noticeG4 = $false
+    while (-not $noticeG4 -and (Get-Date) -lt $noticeDeadline) {
+        Start-Sleep -Milliseconds 500
+        $noticeG4 = [bool](Select-String -Path $errlog -Pattern 'borrowed connection is going away' -Quiet)
+    }
+    Assert $noticeG4 'G4 the closing window told the panel to let go of its connection'
     $aliveG4 = $null -ne (Get-Process -Id $app.Pid -ErrorAction SilentlyContinue)
     Assert $aliveG4 'G4 the app survived closing the borrowed-from window (T613)'
     if ($aliveG4) {

@@ -1,6 +1,7 @@
 # T1825 acceptance: closing a pane or a tab can be undone on Windows, the way
 # Mac's undo-timeout does it - the closed pane comes back in the same place
 # with its shell still running, and only when the undo expires is it ended.
+# T1874 extends it to a whole WINDOW (sections 4w-4y and 8).
 #
 # Phase A (session-persistence off, --undo-timeout=6s; local ConPTY panes):
 #   1. +close a split: it leaves +list and its HWND is hidden, NOT destroyed,
@@ -9,6 +10,12 @@
 #      the same rectangle it left, and its --name resolves again.
 #   3. ctrl+shift+y (redo) closes it again; ctrl+shift+z brings it back again.
 #   4. A single-pane TAB closed with +close comes back as a tab, same pid.
+#   4w. A second WINDOW closed with +close is hidden, not destroyed, and leaves
+#      +list; ctrl+shift+z in the FIRST window brings it back at the same
+#      frame with the same shell and its name; redo closes it again.
+#   4x. Closing the last pane of that window's only tab parks the whole window
+#      the same way, and undo brings it back.
+#   4y. Expiry: the parked window's HWND is destroyed and its shell exits.
 #   5. Expiry: close it and wait out the timeout - the HWND is destroyed, the
 #      shell has exited, and ctrl+shift+z has nothing to bring back.
 # Phase B (session-persistence on, private agent lineage, --undo-timeout=5s):
@@ -16,6 +23,8 @@
 #      still alive AND attached (held for us); undo re-shows the same pane on
 #      the same session.
 #   7. Close it again and wait: the agent ends the session (one left alive).
+#   8. A closed agent-backed WINDOW holds its session for the undo, and the
+#      agent ends it when the undo expires.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -94,6 +103,15 @@ function Get-TabCount {
     $n = 0
     foreach ($w in @($windows)) { $n += @($w.tabs).Count }
     return $n
+}
+# Windows in `+list --json`.
+function Get-WindowCount {
+    [void](Invoke-Cli '+list --json')
+    $raw = Get-CliOut
+    if ([string]::IsNullOrWhiteSpace($raw)) { return -1 }
+    try { $j = $raw | ConvertFrom-Json } catch { return -1 }
+    $windows = if ($null -ne $j.data) { $j.data.windows } else { $j.windows }
+    return @($windows).Count
 }
 function Test-ProcAlive([int]$ProcId) {
     if ($ProcId -le 0) { return $false }
@@ -225,6 +243,62 @@ try {
     Assert "same pane, same shell pid" ($null -ne $tb -and [int]$tb.pid -eq $tabPid)
     Assert "its HWND is shown again" ($hT -and (Wait-Until { $p = Get-Pane $top $hT; $null -ne $p -and $p.Visible }))
 
+    "== 4w: a closed window is parked, and undo in another window brings it back"
+    $winsBefore = Get-WindowCount
+    $leavesBefore = Get-Leaves; $idsBefore = @($leavesBefore | ForEach-Object { $_.id })
+    $code = Invoke-Cli "+new-window --target=w2"
+    Assert "+new-window w2 exit 0 ($(Get-CliErr))" ($code -eq 0)
+    Assert "a second window opened" (Wait-Until { (Get-WindowCount) -eq $winsBefore + 1 } 10)
+    $w2Top = [IntPtr]::Zero
+    [void](Wait-Until { $script:w2Top = Get-TestWindow -ProcessId $app.Pid -Exclude $top; $script:w2Top -ne [IntPtr]::Zero })
+    $w2Top = $script:w2Top
+    $w2Leaf = $null
+    [void](Wait-Until { $all = Get-Leaves; $script:w2Leaf = $all | Where-Object { $idsBefore -notcontains $_.id } | Select-Object -First 1; $null -ne $script:w2Leaf })
+    $w2Leaf = $script:w2Leaf
+    $w2Id = if ($null -ne $w2Leaf) { $w2Leaf.id } else { '' }
+    $w2Pid = if ($null -ne $w2Leaf) { [int]$w2Leaf.pid } else { 0 }
+    Assert "setup: w2's window and pane found (pid $w2Pid)" ($w2Top -ne [IntPtr]::Zero -and $w2Id -ne '' -and (Test-ProcAlive $w2Pid))
+    $w2Rect = if ($w2Top -ne [IntPtr]::Zero) { Get-TestWindowRect -Window $w2Top } else { $null }
+
+    $code = Invoke-Cli "+close --target=w2"
+    Assert "+close w2 exit 0 ($(Get-CliErr))" ($code -eq 0)
+    Assert "w2 left +list" (Wait-Until { (Get-WindowCount) -eq $winsBefore -and $null -eq (Get-LeafById $w2Id) })
+    Assert "w2's HWND still exists, hidden" ((Test-TestWindowExists -Window $w2Top) -and -not (Test-TestWindowVisible -Window $w2Top))
+    Assert "w2's shell is still running" (Test-ProcAlive $w2Pid)
+    Assert "ctrl+shift+z in the first window delivered" (Send-Chord $top $hP 'Z')
+    Assert "w2 is listed again" (Wait-Until { (Get-WindowCount) -eq $winsBefore + 1 -and $null -ne (Get-LeafById $w2Id) })
+    $w2Back = Get-LeafById $w2Id
+    Assert "same shell pid ($w2Pid -> $(if ($w2Back) { $w2Back.pid }))" ($null -ne $w2Back -and [int]$w2Back.pid -eq $w2Pid)
+    Assert "same HWND, visible again" ((Test-TestWindowExists -Window $w2Top) -and (Test-TestWindowVisible -Window $w2Top))
+    $w2Now = Get-TestWindowRect -Window $w2Top
+    Assert "at the frame it left" ($null -ne $w2Rect -and $w2Now.Left -eq $w2Rect.Left -and $w2Now.Top -eq $w2Rect.Top -and `
+            $w2Now.Width -eq $w2Rect.Width -and $w2Now.Height -eq $w2Rect.Height)
+    [void](Invoke-Cli '+list --json')
+    Assert "its --target name w2 is listed again" ((Get-CliOut) -match '"w2"')
+    Assert "ctrl+shift+y in the first window delivered" (Send-Chord $top $hP 'Y')
+    Assert "redo closed w2 again (hidden, shell alive)" ((Wait-Until { (Get-WindowCount) -eq $winsBefore }) -and `
+            -not (Test-TestWindowVisible -Window $w2Top) -and (Test-ProcAlive $w2Pid))
+    Assert "ctrl+shift+z delivered (window, after redo)" (Send-Chord $top $hP 'Z')
+    Assert "undo after redo brought w2 back" (Wait-Until { (Get-WindowCount) -eq $winsBefore + 1 -and (Test-TestWindowVisible -Window $w2Top) })
+
+    "== 4x: closing a window's last pane parks the whole window"
+    $code = Invoke-Cli "+close --target=$w2Id"
+    Assert "+close w2's only pane exit 0" ($code -eq 0)
+    Assert "the window left +list" (Wait-Until { (Get-WindowCount) -eq $winsBefore })
+    Assert "its HWND still exists, hidden, shell alive" ((Test-TestWindowExists -Window $w2Top) -and `
+            -not (Test-TestWindowVisible -Window $w2Top) -and (Test-ProcAlive $w2Pid))
+    Assert "ctrl+shift+z delivered (last pane)" (Send-Chord $top $hP 'Z')
+    Assert "the window is back with the same pane and shell" (Wait-Until {
+            $l = Get-LeafById $w2Id; $null -ne $l -and [int]$l.pid -eq $w2Pid -and (Test-TestWindowVisible -Window $w2Top) })
+
+    "== 4y: when a window's undo expires, it closes for real"
+    $code = Invoke-Cli "+close --target=w2"
+    Assert "+close w2 exit 0 (expiry)" ($code -eq 0)
+    Assert "w2 left +list (expiry)" (Wait-Until { (Get-WindowCount) -eq $winsBefore })
+    Assert "w2's HWND is destroyed once the 6s undo runs out" (Wait-Until { -not (Test-TestWindowExists -Window $w2Top) } 14)
+    Assert "w2's shell has exited" (Wait-Until { -not (Test-ProcAlive $w2Pid) } 6)
+    Assert "the first window is untouched" ((Test-TestWindowVisible -Window $top) -and $null -ne (Get-LeafById $u1Id))
+
     "== 5: when the undo expires, the close happens for real"
     $code = Invoke-Cli "+close --target=u1"
     Assert "+close u1 exit 0 (expiry)" ($code -eq 0)
@@ -279,11 +353,27 @@ try {
     Assert "after the 5s undo the session is gone (one alive)" (Wait-Until {
             @(Get-Sessions | Where-Object { $_.alive -eq $true }).Count -eq 1 -and
             @(Get-Sessions | Where-Object { $_.id -eq $sessId -and $_.alive -eq $true }).Count -eq 0 } 15)
+
+    "== 8: a closed window holds its session for the undo, then ends it"
+    $aliveBefore = @(Get-Sessions | Where-Object { $_.alive -eq $true } | ForEach-Object { $_.id })
+    $code = Invoke-Cli "+new-window --target=bw"
+    Assert "+new-window bw exit 0" ($code -eq 0)
+    Assert "setup: bw has its own live session (two alive)" (Wait-Until { @(Get-Sessions | Where-Object { $_.alive -eq $true }).Count -eq 2 } 15)
+    $bwSess = @(Get-Sessions | Where-Object { $_.alive -eq $true -and $aliveBefore -notcontains $_.id }) | Select-Object -First 1
+    $bwSessId = if ($null -ne $bwSess) { $bwSess.id } else { '' }
+    Assert "setup: bw's session found ($bwSessId)" ($bwSessId -ne '')
+    $code = Invoke-Cli "+close --target=bw"
+    Assert "+close bw exit 0" ($code -eq 0)
+    $heldW = @(Get-Sessions) | Where-Object { $_.id -eq $bwSessId } | Select-Object -First 1
+    Assert "right after the close its session is alive and attached" ($null -ne $heldW -and $heldW.alive -eq $true -and $heldW.attached -eq $true)
+    Assert "after the 5s undo the agent ends it (one alive)" (Wait-Until {
+            @(Get-Sessions | Where-Object { $_.id -eq $bwSessId -and $_.alive -eq $true }).Count -eq 0 -and
+            @(Get-Sessions | Where-Object { $_.alive -eq $true }).Count -eq 1 } 15)
     Assert "no crash (phase B)" (-not ($appB.Process -and $appB.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids
     $script:reachedEnd = $true
 } catch {
-    "  FAIL body threw: $($_.Exception.Message)"
+    "  FAIL body threw: $($_.Exception.Message) (line $($_.InvocationInfo.ScriptLineNumber): $($_.InvocationInfo.Line.Trim()))"
     $script:failures++
 } finally {
     Remove-TestDesktop

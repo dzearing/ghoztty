@@ -719,6 +719,12 @@ hover_split: ?SplitTree(PaneView).Node.Handle = null,
 /// new-tab "+" button calling addTab()).
 closing: bool = false,
 
+/// True while the user's close of this window is waiting out its undo
+/// (T1874): the HWND is hidden, the window is out of `App.windows`, and every
+/// tab and session in it is intact. `closing` is up alongside it. Only
+/// `CloseUndo` raises or lowers it.
+parked_for_undo: bool = false,
+
 /// Set by `WM_APP_SHIFT_CLOSE` for exactly the SC_CLOSE it sends, and consumed
 /// by the WM_CLOSE that SC_CLOSE produces (T1806): that close takes Disconnect
 /// instead of asking. Never left set — WM_CLOSE clears it before anything else.
@@ -3342,6 +3348,9 @@ fn closeTabByIndex(self: *Window, idx: usize) void {
     if (idx >= self.tab_count) return;
     // Cancel any in-progress rename (the edit control may belong to this tab).
     self.cancelTabRename();
+    // T1874: the LAST tab closing closes its window, so it is the window
+    // that waits for the undo - whole, with this tab still in it.
+    if (self.tab_count == 1 and self.app.close_undo.parkWindow(self)) return;
     // T1825: with `undo-timeout` the tab is PARKED, not ended - its tree (and
     // every session in it) waits, hidden, for an undo, and is ended when the
     // undo expires. The entry owns the tree from here; only the slot goes.
@@ -3523,7 +3532,7 @@ pub fn closeSplitPane(self: *Window, pane: *PaneView) void {
 /// Set the visibility (occlusion) of every surface in the active tab. Used on
 /// window minimize/restore so the renderer stops rebuilding frames while the
 /// window is minimized.
-fn setActiveTabVisible(self: *Window, visible: bool) void {
+pub fn setActiveTabVisible(self: *Window, visible: bool) void {
     if (self.active_tab >= self.tab_count) return;
     var it = self.tab_trees[self.active_tab].iterator();
     while (it.next()) |entry| entry.view.setVisible(visible);
@@ -12147,6 +12156,22 @@ fn pinDisconnect(self: *Window) void {
 /// because Win32 destroys child HWNDs during DestroyWindow and the
 /// OpenGL driver crashes if contexts are still active on destroyed windows.
 pub fn close(self: *Window) void {
+    // T1874: with `undo-timeout`, the window is PARKED - hidden, with all of
+    // its tabs and sessions intact - and only ended when the undo expires.
+    // A window that is already parked and is closed again (its last shell
+    // exited while it waited) drops its undo and closes for real.
+    if (self.parked_for_undo) {
+        self.app.close_undo.forgetParkedWindow(self);
+    } else if (self.app.close_undo.parkWindow(self)) {
+        return;
+    }
+    self.closeNow();
+}
+
+/// The immediate close: every session ends and the HWND is destroyed. What
+/// `close` always did; `CloseUndo` runs it when a parked window's undo
+/// expires.
+pub fn closeNow(self: *Window) void {
     // T89e: this is a USER window-close (title-bar X, Alt+F4, close_window,
     // close_all_windows, +close window). Every pane's agent session must END
     // (CLOSE), not detach. Mark before cleanupAllSurfaces reads the flag.

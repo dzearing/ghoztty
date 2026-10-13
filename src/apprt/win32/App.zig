@@ -2125,6 +2125,12 @@ pub fn terminate(self: *App) void {
     // it records must be the ones the user was actually looking at (T412).
     self.syncSessionLayout(.fresh);
 
+    // A window the user closed and could still have undone (T1874) is closed
+    // for real now - its sessions END, unlike the live windows' below - while
+    // the window list, the message window and the agent link its teardown
+    // reads are all still up.
+    self.close_undo.finalizeParkedWindows();
+
     if (self.update_latest_ver) |v| {
         self.core_app.alloc.free(v);
         self.update_latest_ver = null;
@@ -4514,8 +4520,9 @@ fn retireRestorePlaceholder(self: *App, restored: bool) void {
     }
     log.info("session-restore: closing the launch's untouched blank window; the restored windows replace it", .{});
     // A real close, not a discard: the pane has a shell (and, with an agent,
-    // a session) behind it, and both must end with the window.
-    window.close();
+    // a session) behind it, and both must end with the window. Not the
+    // user's close, so nothing to undo (T1874).
+    window.closeNow();
 }
 
 /// Read what `restore_placeholder.shouldClose` needs about `window`.
@@ -6973,7 +6980,8 @@ pub fn suspendRelayWindowsForSignOut(self: *App) usize {
         };
 
         relay_signout.pinDetachAll(window);
-        window.close();
+        // Sign-out's close, not the user's: nothing to undo (T1874).
+        window.closeNow();
         closed += 1;
     }
 
@@ -8167,6 +8175,10 @@ pub fn performAction(
             // the app stays up with that window. The quit timer starts on
             // its own once the last window is gone.
             //
+            // Not undoable (T1874): the last window can never be parked, so
+            // the app quits with it and the parked rest would end with it.
+            // They end now instead of waiting on a timer nobody can answer.
+            //
             // Iterate over a snapshot: Window.close destroys the HWND, whose
             // WM_DESTROY handler removes it from self.windows.
             const alloc = self.core_app.alloc;
@@ -8175,6 +8187,8 @@ pub fn performAction(
                 return true;
             };
             defer alloc.free(snapshot);
+            self.close_undo.bypass = true;
+            defer self.close_undo.bypass = false;
             for (snapshot) |window| {
                 if (window.confirmCloseIfNeeded()) window.close();
             }

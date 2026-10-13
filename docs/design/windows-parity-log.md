@@ -35968,3 +35968,22 @@ moved to T1814.
 - **Validation.** New win32-lane unit test that crashes with the guard
   removed and passes with it; viewer-panes.ps1 back to ALL PASS (195, was
   17 failures); all four floor lanes, P1-P3, and the due guard harnesses green.
+## 2026-10-13 — T1874: closing a whole window can be undone
+
+- **What.** A window the user closes (title-bar X, Alt+F4, `close_window`,
+  `+close` on the window, or its last tab) is now parked for `undo-timeout`
+  rather than ended: hidden, taken off `App.windows`, with its IPC names
+  saved, and everything inside it left running. Ctrl+Shift+Z in any other
+  window brings it back at the same frame with the same tabs and shells, and
+  redo closes it again. When the undo expires the old immediate close
+  (`Window.closeNow`) runs. The last window, Close All Windows, relay sign-out
+  and the launch placeholder still close at once. Whether the last window
+  should get an undo too is decision D97, which needs the user's call.
+- **Validation.** close-undo.ps1 ALL PASS (84) with new sections 4w/4x/4y
+  (local) and 8 (agent session held, then ended). Its negative control fails
+  24, as it must. There are new unit tests for `popForEither` and
+  `IpcRegistry.save`, and all four floor lanes, P1-P3, session-close, the
+  harness floor and the 21 due GUI guards are green. The only harness that
+  needed a change was activity-monitor-remote G4: a closed window now hands
+  back its borrowed connection when its undo expires, not at the close, so
+  the check polls past that point instead of waiting a fixed 4s.

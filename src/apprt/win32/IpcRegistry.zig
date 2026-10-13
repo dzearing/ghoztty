@@ -135,6 +135,46 @@ pub fn nameOf(self: *IpcRegistry, target: Target) ?[]const u8 {
     return null;
 }
 
+/// A registration copied out of the registry: the name is owned by the copy.
+pub const Saved = struct {
+    name: []u8,
+    target: Target,
+};
+
+/// Copy out every registration whose target `pred` accepts (oldest-key order
+/// is not kept; names are unique). For a target that leaves the live set for
+/// a while and comes back - a window parked for undo (T1874) is pruned like a
+/// dead one meanwhile - so its names can be registered again afterwards.
+/// The caller owns the slice and every name in it (`freeSaved`).
+pub fn save(
+    self: *IpcRegistry,
+    alloc: Allocator,
+    ctx: anytype,
+    comptime pred: fn (@TypeOf(ctx), Target) bool,
+) Allocator.Error![]Saved {
+    var out: std.ArrayListUnmanaged(Saved) = .empty;
+    errdefer {
+        for (out.items) |s| alloc.free(s.name);
+        out.deinit(alloc);
+    }
+    var it = self.targets.iterator();
+    while (it.next()) |entry| {
+        if (!pred(ctx, entry.value_ptr.*)) continue;
+        const name = try alloc.dupe(u8, entry.key_ptr.*);
+        out.append(alloc, .{ .name = name, .target = entry.value_ptr.* }) catch |err| {
+            alloc.free(name);
+            return err;
+        };
+    }
+    return out.toOwnedSlice(alloc);
+}
+
+/// Free what `save` returned: every name, then the slice.
+pub fn freeSaved(alloc: Allocator, saved: []Saved) void {
+    for (saved) |s| alloc.free(s.name);
+    alloc.free(saved);
+}
+
 /// Drop every registration pointing at `target`. Called from Window and
 /// Surface destroy paths so names can never reach a recycled allocation.
 pub fn forget(self: *IpcRegistry, alloc: Allocator, target: Target) void {
@@ -326,4 +366,33 @@ test "registering a name a different target holds reports already_held" {
         try reg.register(alloc, &live, "window-3", .{ .window = b }),
     );
     try testing.expect(reg.lookup(alloc, &live, "window-3").?.eql(.{ .window = a }));
+}
+
+test "save copies out a target's names so a pruned target can have them back" {
+    const alloc = testing.allocator;
+    var reg: IpcRegistry = .{};
+    defer reg.deinit(alloc);
+
+    const a: *Window = @ptrFromInt(0x1000);
+    const b: *Window = @ptrFromInt(0x2000);
+    const both = [_]*Window{ a, b };
+    _ = try reg.register(alloc, &both, "keep", .{ .window = a });
+    _ = try reg.register(alloc, &both, "other", .{ .window = b });
+
+    const pred = struct {
+        fn f(want: *Window, t: Target) bool {
+            return t.eql(.{ .window = want });
+        }
+    }.f;
+    const saved = try reg.save(alloc, a, pred);
+    defer freeSaved(alloc, saved);
+    try testing.expectEqual(@as(usize, 1), saved.len);
+    try testing.expectEqualStrings("keep", saved[0].name);
+
+    // `a` leaves the live set (parked): its name is pruned like a dead one...
+    const only_b = [_]*Window{b};
+    try testing.expectEqual(@as(?Target, null), reg.lookup(alloc, &only_b, "keep"));
+    // ...and comes back with it once re-registered from the copy.
+    for (saved) |s| _ = try reg.register(alloc, &both, s.name, s.target);
+    try testing.expect(reg.lookup(alloc, &both, "keep").?.eql(.{ .window = a }));
 }
