@@ -124,6 +124,12 @@ test {
     // Imports only std. Every lane.
     _ = @import("apprt/win32/pane_sidebar_motion.zig");
 
+    // Pure win32 pane sidebar open-card layer (T1865): the per-pixel alpha
+    // that lets the hover-open card's antialiased corners and soft shadow
+    // fall on the grid, and the shape its clicks follow. Imports only
+    // banner_card.zig. Every lane.
+    _ = @import("apprt/win32/pane_sidebar_layer.zig");
+
     // Pure win32 pane sidebar row actions (T1845): what a click, an
     // Alt-click and the right-click menu do, and trash mode's Escape rule.
     // Imports only pane_sidebar.zig. Every lane.

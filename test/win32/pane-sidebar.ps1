@@ -324,19 +324,22 @@ try {
         $cr = Get-TestWindowRect -Window $card
         $m = Px 12
         $midY = [int]($cr.Height / 2)
-        # Region: the column paints, the card's middle paints, the trailing
-        # margin and the card's rounded top-right corner do not.
-        $hits = Get-TestWindowRegionHits -Window $card -Points @(
-            [int]((Px 68) / 2), 2,
-            [int]($cr.Width / 2), $midY,
-            ($cr.Width - [int]($m / 2)), $midY,
-            ($cr.Width - $m - 1), $m)
-        Assert "the card has a region (rounded, not a square popup)" ($null -ne $hits)
-        if ($null -ne $hits) {
-            Assert "the column strip is part of the card" $hits[0]
-            Assert "the card's middle is part of it" $hits[1]
-            Assert "the trailing margin is NOT - the grid shows through" (-not $hits[2])
-            Assert "the card's top-right corner is rounded off" (-not $hits[3])
+        # T1865: the card is a per-pixel-alpha layer, not a region-clipped
+        # popup - a region is a 1-bit edge and cut the card's shadow off at
+        # the card. So: no region, and clicks follow the card's SHAPE through
+        # its hit test. The column and the card's middle are the card's; the
+        # trailing margin (where the shadow falls) and the rounded-off
+        # top-right corner pass through to the pane underneath.
+        Assert "the card is a layered window (per-pixel alpha, WS_EX_LAYERED)" (((Get-TestWindowStyle -Window $card -ExStyle) -band 0x00080000) -ne 0)
+        Assert "the card has no window region (its shape is its alpha)" ($null -eq (Get-TestWindowRegionHits -Window $card -Points @(0, 0)))
+        $pts = @(
+            @{ Name = 'the column strip is the card''s'; X = [int]((Px 68) / 2); Y = 2; Want = 1 },
+            @{ Name = 'the card''s middle is the card''s'; X = [int]($cr.Width / 2); Y = $midY; Want = 1 },
+            @{ Name = 'the trailing margin passes the click to the grid'; X = ($cr.Width - [int]($m / 2)); Y = $midY; Want = -1 },
+            @{ Name = 'the card''s rounded top-right corner passes it too'; X = ($cr.Width - $m - 1); Y = $m; Want = -1 })
+        foreach ($p in $pts) {
+            $route = Get-TestMouseRoute -Window $top -Target $card -X ($cr.Left + $p.X) -Y ($cr.Top + $p.Y)
+            Assert "$($p.Name) (hit $($route.Code), want $($p.Want))" ($route.Code -eq $p.Want)
         }
     }
     Assert "with the pointer elsewhere it contracted after the grace period (log)" ($null -ne $closeLine)
@@ -364,18 +367,25 @@ try {
     $closedEarly = @($new | Where-Object { $_ -match 'pane sidebar card close' }).Count
     Assert "held: no close after 3x the grace period ($closedEarly)" ($closedEarly -eq 0)
     Assert "held: the card is still on screen" ((Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard') -ne [IntPtr]::Zero)
-    $c = $null
-    if ($card -ne [IntPtr]::Zero) {
-        try {
-            $shot = Get-TestWindowPixels -Window $card -Sync
-            $path = Join-Path $env:TEMP 't1842-open-card.png'
-            $shot.Bitmap.Save($path, [System.Drawing.Imaging.ImageFormat]::Png)
-            $c = Get-TestCaptureContent -Shot $shot
-            Close-TestWindowPixels -Shot $shot
-            "  (saved $path; distinct=$($c.Distinct))"
-        } catch { "  capture failed: $($_.Exception.Message)" }
+    # T1865: the card is layered, and a layered window's pixels cannot be
+    # read back off the test desktop (readonly-badge.ps1's CAPTURE LIMIT), so
+    # the card logs what it handed the window manager on its first present:
+    # solid pixels with real content, and partial-alpha ones - the
+    # antialiased edge and the shadow that falls on the grid.
+    $layerLine = $new | Where-Object { $_ -match 'pane sidebar card layer \d+x\d+ solid=' } | Select-Object -Last 1
+    "  $layerLine"
+    $lm = [regex]::Match([string]$layerLine, 'layer (\d+)x(\d+) solid=(\d+) partial=(\d+) distinct=(\d+)')
+    Assert "the open card presented a layer (log)" $lm.Success
+    if ($lm.Success) {
+        $lw = [int]$lm.Groups[1].Value; $lh = [int]$lm.Groups[2].Value
+        $solid = [int]$lm.Groups[3].Value; $partial = [int]$lm.Groups[4].Value
+        Assert "the open card paints content, not one flat fill (distinct=$($lm.Groups[5].Value))" ([int]$lm.Groups[5].Value -ge 3)
+        Assert "the column and the card are solid ($solid)" ($solid -gt (Px 68) * $lh)
+        # The shadow runs down the card's whole trailing edge and along its
+        # bottom: at least a few pixels deep over the card's height.
+        Assert "the shadow and the antialiased edge are partial alpha ($partial over a ${lh}px card)" ($partial -ge 2 * $lh)
+        Assert "and the rest of the margin is clear ($($lw * $lh - $solid - $partial) clear)" (($solid + $partial) -lt $lw * $lh)
     }
-    Assert "the open card paints content, not one flat fill" ($null -ne $c -and $c.Distinct -ge 3)
     # Let go in the trailing margin - off the card.
     $cr = Get-TestWindowRect -Window $card
     if ($card -ne [IntPtr]::Zero) { [void](Send-TestMouse -Window $top -Target $card -X ($cr.Right - (Px 4)) -Y $hy -Action up) }

@@ -804,6 +804,22 @@ pub fn openWidthPxIn(panel_w_dip: f32, scale: f32, insets: RailInsets) i32 {
     return insets.leadingPx(scale) + px(clampWidth(panel_w_dip), scale) + insets.trailingPx(scale);
 }
 
+/// How much room the open card leaves trailing for its drop shadow to fall
+/// on the grid (T1865): the banner card's 8 DIP blur. The flat style's rail
+/// margin (12 DIP) already covers it; the elevated style's rail has no
+/// trailing inset at all, so without this its card's shadow stopped dead at
+/// the window's right edge.
+pub const open_shadow_room_dip: f32 = 8;
+
+/// The open card's insets: the rail's, with at least `open_shadow_room_dip`
+/// trailing. Pass these to `openWidthPxIn`, `openCardRect` and
+/// `layoutOpenIn` for the open card.
+pub fn openInsets(insets: RailInsets) RailInsets {
+    var o = insets;
+    o.trailing = @max(o.trailing, open_shadow_room_dip);
+    return o;
+}
+
 /// The open card's rect in its `w` x `h` window.
 pub fn openCardRect(w: i32, h: i32, scale: f32, insets: RailInsets) Rect {
     const lead = insets.leadingPx(scale);
@@ -1351,11 +1367,21 @@ test "T1850: the elevated rail takes the panes' margin leading, top and bottom, 
         try testing.expectEqual(l.card.top, o.card.top);
         try testing.expectEqual(l.card.bottom, o.card.bottom);
         try testing.expectEqual(ow, o.card.right);
+
+        // T1865: the open card's own insets leave its shadow room to fall on
+        // the grid, and the card itself stays the panel's width.
+        const oi = openInsets(ins);
+        const sw = openWidthPxIn(240, s, oi);
+        try testing.expectEqual(margin + px(240, s) + px(open_shadow_room_dip, s), sw);
+        const so = layoutOpenIn(sw, h, &items, null, tm, s, oi);
+        try testing.expectEqual(o.card, so.card);
     }
-    // Flat is the pre-T1850 geometry exactly.
+    // Flat is the pre-T1850 geometry exactly, and its 12 DIP margin already
+    // holds the shadow, so `openInsets` leaves it alone.
     for (scales) |s| {
         try testing.expectEqual(px(68, s), columnPx(.mini, 240, s));
         try testing.expectEqual(2 * px(rail_margin_dip, s) + px(240, s), openWidthPx(240, s));
+        try testing.expectEqual(openWidthPx(240, s), openWidthPxIn(240, s, openInsets(railInsets(false))));
     }
 }
 

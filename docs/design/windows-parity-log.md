@@ -35918,3 +35918,23 @@ moved to T1814.
   microbench 20.7 -> 8.1ms solid, 35.9 -> 6.8ms glass. drag-perf's two failures
   are the same at HEAD: T1854, plus the untimed 40ms per move, now T1906.
   Filed T1907: the glass backdrop slice is re-rendered for each pane on every move.
+
+## 2026-10-13 — T1865: the hover-open sidebar card floats with a soft shadow
+
+- **Defect.** The open card was a GDI popup clipped by a window region: a
+  1-bit mask, so its rounded corners were stair-stepped and the banner-card
+  shadow stopped dead at the card instead of falling on the grid as Mac's
+  glass card does.
+- **Fix.** The card is now `WS_EX_LAYERED`, fed by `UpdateLayeredWindow`
+  (`presentCard`). The new pure `pane_sidebar_layer.zig` builds a cached alpha
+  mask (column opaque, card antialiased, banner-card shadow as black partial
+  alpha) and premultiplies the painted pixels. `WM_NCHITTEST` answers
+  HTTRANSPARENT off the column and the card's shape, so the shadow and the
+  trailing margin still pass clicks to the pane. The elevated style, which has
+  no trailing inset, gets 8 DIP of shadow room (`pane_sidebar.openInsets`).
+- **Validation.** 7 new unit tests; all floor lanes, the harness lane and all
+  seven pane-sidebar acceptance scripts green. pane-sidebar.ps1 section 7 now
+  asserts layered and no region, plus the per-point hit test. 7b's pixel capture
+  (impossible on a layered window off-desktop) became the card's own
+  `card layer` log line (11k partial-alpha pixels on an 826 px card). The
+  on-screen look beside Mac is NOT RUN (user present); filed T1908.

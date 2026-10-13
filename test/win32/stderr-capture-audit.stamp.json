@@ -1,10 +1,10 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-10-13T08:12:03-07:00",
-    "commit":  "17e3481c1",
+    "generated":  "2026-10-13T10:23:31-07:00",
+    "commit":  "26d54a06d",
     "uncommitted":  [
-                        "test/win32/pane-elevation.ps1"
+                        "test/win32/pane-sidebar.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "72e71dd3e9cc038a9d91cac58273f2e095c831a78fac3333e4780027afed3f30",
@@ -288,7 +288,7 @@
                   "test/win32/pane-id.ps1":  "0c722d4f0cb52d3567b2d070362fa2cf825aafc952a81b1bcf01768203181161",
                   "test/win32/pane-ingest-ab.ps1":  "4beb60eb9823ba66d04bda7b10f59e4aaebb85e930b1c6c5eafe018b70f9c74e",
                   "test/win32/pane-ingest-lag.ps1":  "a5c9ffcbdeae28c26b54d98d09586137bcba9be70691c2b2634c781b3fdf9768",
-                  "test/win32/pane-sidebar.ps1":  "0256bfd7a0c5ecc7a0ed531fe733fc030b112b89614f975d17ee9d1c3381f0b7",
+                  "test/win32/pane-sidebar.ps1":  "c99ade8ebe4ff7aecf73a4a7bc634d045c2cea9d1846d7841a346067d0578c57",
                   "test/win32/pane-sidebar-actions.ps1":  "180b25bd4a5e21b7618faf3d5f5ca542174c7d7c1ff4585c3c489088260e9ac6",
                   "test/win32/pane-sidebar-activity.ps1":  "13e236a4cbbb8b57ce49ede4a4c17d7e4527471c0ecb4a6676032f4bd3ab3a22",
                   "test/win32/pane-sidebar-all-windows.ps1":  "1644c0a3fb81f271feed3564a3eb6145d4e36b16a09ebc9e2cc78cca577ab125",

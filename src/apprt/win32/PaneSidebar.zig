@@ -45,6 +45,7 @@ const hov = @import("pane_sidebar_hover.zig");
 const sidebar_prefs = @import("pane_sidebar_prefs.zig");
 const row_menu = @import("pane_sidebar_menu.zig");
 const motion = @import("pane_sidebar_motion.zig");
+const layer = @import("pane_sidebar_layer.zig");
 const App = @import("App.zig");
 const overlay_zorder = @import("overlay_zorder.zig");
 const toc = @import("viewer_toc_layout.zig");
@@ -232,6 +233,12 @@ menu_open: bool = false,
 card_hwnd: ?w32.HWND = null,
 card_open: bool = false,
 card_tracking: bool = false,
+/// The open card's per-pixel alpha (T1865), built for `layer_key` and
+/// reused by every repaint until the card's shape changes.
+layer_cells: []layer.Cell = &.{},
+layer_key: ?LayerKey = null,
+/// The first present after an open logs what it sent (`layer.stats`).
+layer_logged: bool = false,
 open_armed: bool = false,
 
 // Tooltips: one control, tools on both windows. A tile's text names its pane,
@@ -292,6 +299,16 @@ const CardCache = struct {
         if (self.bmp) |b| _ = w32.DeleteObject(b);
         self.* = .{};
     }
+};
+
+/// What the open card's alpha mask was built from: a change to any of it is a
+/// new shape.
+const LayerKey = struct {
+    w: i32,
+    h: i32,
+    column_w: i32,
+    card: banner_card.Rect,
+    radius: f32,
 };
 
 var class_registered: bool = false;
@@ -374,6 +391,7 @@ pub fn destroy(self: *PaneSidebar) void {
     self.folded.deinit(self.alloc);
     self.rail_card.release();
     self.open_card.release();
+    if (self.layer_cells.len > 0) self.alloc.free(self.layer_cells);
     self.glass_panel.release();
     self.releaseFonts();
     self.alloc.destroy(self);
@@ -440,7 +458,7 @@ pub fn place(self: *PaneSidebar, rect: w32.RECT, mode: pane_sidebar.Mode, scale:
 /// window's desk, T1850) though nothing on the list did.
 pub fn repaint(self: *PaneSidebar) void {
     _ = w32.InvalidateRect(self.hwnd, null, 0);
-    if (self.card_hwnd) |c| _ = w32.InvalidateRect(c, null, 0);
+    if (self.card_hwnd) |c| self.invalidate(c);
 }
 
 /// The window just painted desk generation `gen`. A new one (a resize - the
@@ -514,7 +532,7 @@ fn rosterChanged(self: *PaneSidebar) void {
         // More or fewer rows: the card is as tall as before, but its region
         // and rows are re-derived with it.
         self.positionCard();
-        if (self.card_hwnd) |c| _ = w32.InvalidateRect(c, null, 0);
+        if (self.card_hwnd) |c| self.invalidate(c);
     }
     self.syncTips();
 }
@@ -884,7 +902,7 @@ fn layoutFor(self: *PaneSidebar, which: Surface) pane_sidebar.Layout {
     const insets = self.window.paneSidebarInsets();
     var l = switch (which) {
         .rail => pane_sidebar.layoutIn(self.mode, r.right - r.left, r.bottom - r.top, items[0..n], lines, self.metrics, self.scale, insets),
-        .card => pane_sidebar.layoutOpenIn(r.right - r.left, r.bottom - r.top, items[0..n], lines, self.metrics, self.scale, insets),
+        .card => pane_sidebar.layoutOpenIn(r.right - r.left, r.bottom - r.top, items[0..n], lines, self.metrics, self.scale, pane_sidebar.openInsets(insets)),
     };
     if (self.drag_active) pane_sidebar.addDropSlot(&l, self.metrics, self.scale);
     l.quick_kill = self.quick_kill;
@@ -947,7 +965,7 @@ pub fn setDragActive(self: *PaneSidebar, on: bool) void {
     if (self.drag_active == on) return;
     self.drag_active = on;
     _ = w32.InvalidateRect(self.hwnd, null, 0);
-    if (self.card_hwnd) |c| _ = w32.InvalidateRect(c, null, 0);
+    if (self.card_hwnd) |c| self.invalidate(c);
     // The grace period the drag deferred starts once it is let go.
     if (!on and self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();
 }
@@ -969,7 +987,7 @@ fn maybeStartRowDrag(self: *PaneSidebar, hwnd: w32.HWND, x: i32, y: i32) bool {
     if (!self.entries.items[i].own) return false;
     const pane = self.entries.items[i].pane;
     self.pressed = .none;
-    _ = w32.InvalidateRect(hwnd, null, 0);
+    self.invalidate(hwnd);
     var press = w32.POINT{ .x = self.press_x, .y = self.press_y };
     _ = w32.ClientToScreen(hwnd, &press);
     var cur = w32.POINT{ .x = x, .y = y };
@@ -1155,7 +1173,7 @@ fn onMotionTick(self: *PaneSidebar, which: Surface) void {
     const root = w32.GetAncestor(hwnd, w32.GA_ROOT);
     const seen = w32.IsWindowVisible(hwnd) != 0 and !(root != null and w32.IsIconic(root.?) != 0);
     if (seen and self.marks[k].moving(App.clientAreaAnimationsEnabled())) {
-        _ = w32.InvalidateRect(hwnd, null, 0);
+        self.invalidate(hwnd);
         return;
     }
     _ = w32.KillTimer(hwnd, TIMER_ANIM);
@@ -1291,13 +1309,13 @@ fn paintExpanded(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout
 
 /// The unpinned card opened over the grid (T1842): the column as the rail
 /// leaves it - terminal background - and on it the raised card at the
-/// panel's width, holding the panel's header and rows. The window's region
-/// keeps everything right of the column to the card itself, so the grid shows
-/// through the trailing margin.
+/// panel's width, holding the panel's header and rows. Painted opaque;
+/// `presentCard` then keeps everything right of the column to the card and
+/// its shadow (T1865), so the grid shows through the trailing margin.
 fn paintOpen(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
     // Elevated (T1850): the column under the card is the desk, as the rail's.
     const desk = self.window.deskBackdrop();
-    ensureMaterial(&self.open_card, hdc, l.width, l.height, t.bg, self.scale, .card, desk, if (desk != null) self.window.paneSidebarInsets() else null);
+    ensureMaterial(&self.open_card, hdc, l.width, l.height, t.bg, self.scale, .card, desk, if (desk != null) pane_sidebar.openInsets(self.window.paneSidebarInsets()) else null);
     if (self.open_card.dc) |mem| {
         _ = w32.BitBlt(hdc, 0, 0, l.width, l.height, mem, 0, 0, w32.SRCCOPY);
     } else {
@@ -1812,7 +1830,7 @@ fn hitAt(self: *PaneSidebar, which: Surface, x: i32, y: i32) pane_sidebar.Hit {
 fn setHover(self: *PaneSidebar, which: Surface, hit: pane_sidebar.Hit) void {
     if (std.meta.eql(self.hover, hit)) return;
     self.hover = hit;
-    if (self.surfaceHwnd(which)) |h| _ = w32.InvalidateRect(h, null, 0);
+    if (self.surfaceHwnd(which)) |h| self.invalidate(h);
 }
 
 // -------------------------------------------------------------------------
@@ -1930,9 +1948,12 @@ fn ensureCardWindow(self: *PaneSidebar) ?w32.HWND {
     // A passive popup OWNED by the top-level: it never takes activation (a
     // click on a row must not pull the window's focus around), it hides and
     // minimizes with its owner, and as an owned window it sits above the
-    // panes' own popups once seated (`seatCard`).
+    // panes' own popups once seated (`seatCard`). Layered (T1865): its
+    // pixels go up through `presentCard` with per-pixel alpha, so the card's
+    // corners are antialiased and its shadow falls on the grid. Deliberately
+    // not WS_EX_TRANSPARENT - clicks are decided per point in WM_NCHITTEST.
     const h = w32.CreateWindowExW(
-        w32.WS_EX_NOACTIVATE | w32.WS_EX_TOOLWINDOW,
+        w32.WS_EX_LAYERED | w32.WS_EX_NOACTIVATE | w32.WS_EX_TOOLWINDOW,
         CARD_CLASS_NAME,
         std.unicode.utf8ToUtf16LeStringLiteral(""),
         w32.WS_POPUP,
@@ -1958,11 +1979,11 @@ pub fn openCard(self: *PaneSidebar, reason: CardReason) void {
     self.disarm();
     const was_open = self.card_open;
     self.card_open = true;
+    if (!was_open) self.layer_logged = false;
     self.hover = .none;
     self.pressed = .none;
     self.positionCard();
     if (self.card_hwnd) |c| {
-        _ = w32.InvalidateRect(c, null, 0);
         // A leave is owed whether or not a move ever arrives: tracking
         // starts now, so a pointer that is not on the card (an unpin from
         // the keyboard, a pin clicked and left in one motion) still gets its
@@ -2011,31 +2032,18 @@ fn logCard(self: *PaneSidebar, what: []const u8, reason: CardReason) void {
 }
 
 /// Glue the card to the column it grows from: same top-left and height, the
-/// panel's width plus the rail's margins, clipped to the column plus the
-/// rounded card, and seated above the window's other popups.
+/// panel's width plus the rail's margins (and room for its shadow), seated
+/// above the window's other popups, then drawn. What shows of that window is
+/// the column, the card and its shadow - the layer's alpha (T1865), where a
+/// window region used to clip it to a hard edge.
 fn positionCard(self: *PaneSidebar) void {
     const c = self.card_hwnd orelse return;
     var col: w32.RECT = undefined;
     if (w32.GetWindowRect(self.hwnd, &col) == 0) return;
-    const insets = self.window.paneSidebarInsets();
+    const insets = pane_sidebar.openInsets(self.window.paneSidebarInsets());
     const w = pane_sidebar.openWidthPxIn(self.window.pane_sidebar_width_dip, self.scale, insets);
     const h = col.bottom - col.top;
     if (h <= 0) return;
-
-    // The region: the rail's column, plus the open card's rounded rect.
-    const col_rgn = w32.CreateRectRgn(0, 0, col.right - col.left, h);
-    const card = pane_sidebar.openCardRect(w, h, self.scale, insets);
-    const radius = @as(i32, @intFromFloat(@round(banner_card.RADIUS * self.scale)));
-    const card_rgn = w32.CreateRoundRectRgn(card.left, card.top, card.right + 1, card.bottom + 1, 2 * radius, 2 * radius);
-    if (col_rgn) |a| {
-        if (card_rgn) |b| {
-            _ = w32.CombineRgn(a, a, b, w32.RGN_OR);
-            _ = w32.DeleteObject(b);
-        }
-        // The system owns the region from here (also on a repeat call: the
-        // previous one is released by SetWindowRgn itself).
-        if (w32.SetWindowRgn(c, a, 1) == 0) _ = w32.DeleteObject(a);
-    } else if (card_rgn) |b| _ = w32.DeleteObject(b);
 
     self.seatCard(c);
     _ = w32.SetWindowPos(
@@ -2047,6 +2055,105 @@ fn positionCard(self: *PaneSidebar) void {
         h,
         w32.SWP_NOACTIVATE | w32.SWP_SHOWWINDOW,
     );
+    self.presentCard();
+}
+
+/// The banner-card metrics the open card's material is rendered with in a
+/// `w` x `h` window - the flat style's uniform margin, or the elevated
+/// style's insets - so the layer's alpha edge lands on the painted edge.
+fn openCardMetrics(self: *PaneSidebar, w: i32, h: i32) banner_card.Metrics {
+    var m = banner_card.Metrics.init(w, h, self.scale);
+    if (self.window.deskBackdrop() != null) {
+        const in = pane_sidebar.openInsets(self.window.paneSidebarInsets());
+        const v: f32 = @floatFromInt(in.verticalPx(self.scale));
+        m.insets = .{
+            .left = @floatFromInt(in.leadingPx(self.scale)),
+            .top = v,
+            .right = @floatFromInt(in.trailingPx(self.scale)),
+            .bottom = v,
+        };
+    }
+    return m;
+}
+
+/// Build the open card's alpha mask for a `w` x `h` window, or keep the one
+/// already built for the same shape. False when there is none to use.
+fn ensureLayer(self: *PaneSidebar, w: i32, h: i32) bool {
+    var col: w32.RECT = undefined;
+    if (w32.GetWindowRect(self.hwnd, &col) == 0) return false;
+    const g = layer.Geometry.init(col.right - col.left, self.openCardMetrics(w, h));
+    const key = LayerKey{ .w = w, .h = h, .column_w = g.column_w, .card = g.card, .radius = g.radius };
+    if (self.layer_key) |k| {
+        if (std.meta.eql(k, key)) return true;
+    }
+    const n: usize = @intCast(w * h);
+    if (self.layer_cells.len != n) {
+        if (self.layer_cells.len > 0) self.alloc.free(self.layer_cells);
+        self.layer_cells = &.{};
+        self.layer_key = null;
+        self.layer_cells = self.alloc.alloc(layer.Cell, n) catch return false;
+    }
+    layer.buildMask(self.layer_cells, w, h, g);
+    self.layer_key = key;
+    return true;
+}
+
+/// Draw the open card and hand its pixels to the window manager with their
+/// alpha (`UpdateLayeredWindow`). This is the card's paint: a layered window
+/// that is fed this way gets no WM_PAINT worth drawing in, so every repaint
+/// of the card comes through here (`invalidate`).
+fn presentCard(self: *PaneSidebar) void {
+    const c = self.card_hwnd orelse return;
+    if (!self.card_open) return;
+    var wr: w32.RECT = undefined;
+    if (w32.GetWindowRect(c, &wr) == 0) return;
+    const w = wr.right - wr.left;
+    const h = wr.bottom - wr.top;
+    if (w <= 0 or h <= 0) return;
+    if (!self.ensureLayer(w, h)) return;
+
+    const screen_dc = w32.GetDC(null) orelse return;
+    defer _ = w32.ReleaseDC(null, screen_dc);
+    const mem_dc = w32.CreateCompatibleDC(screen_dc) orelse return;
+    defer _ = w32.DeleteDC(mem_dc);
+    var bmi = std.mem.zeroes(w32.BITMAPINFO);
+    bmi.bmiHeader.biSize = @sizeOf(w32.BITMAPINFOHEADER);
+    bmi.bmiHeader.biWidth = w;
+    bmi.bmiHeader.biHeight = -h; // top-down
+    bmi.bmiHeader.biPlanes = 1;
+    bmi.bmiHeader.biBitCount = 32;
+    var bits: ?*anyopaque = null;
+    const bmp = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse return;
+    defer _ = w32.DeleteObject(bmp);
+    const raw = bits orelse return;
+    const old = w32.SelectObject(mem_dc, bmp);
+    defer _ = w32.SelectObject(mem_dc, old);
+
+    self.paint(mem_dc, .card, w, h);
+    _ = w32.GdiFlush();
+    const pixels = @as([*]u32, @ptrCast(@alignCast(raw)))[0..@intCast(w * h)];
+    layer.apply(pixels, self.layer_cells);
+    if (!self.layer_logged) {
+        self.layer_logged = true;
+        const s = layer.stats(pixels);
+        log.info("pane sidebar card layer {d}x{d} solid={d} partial={d} distinct={d}", .{ w, h, s.solid, s.partial, s.distinct });
+    }
+
+    const dst_pt = w32.POINT{ .x = wr.left, .y = wr.top };
+    const dst_size = w32.SIZE{ .cx = w, .cy = h };
+    const src_pt = w32.POINT{ .x = 0, .y = 0 };
+    const blend = w32.BLENDFUNCTION{ .SourceConstantAlpha = 255 };
+    _ = w32.UpdateLayeredWindow(c, screen_dc, &dst_pt, &dst_size, mem_dc, &src_pt, 0, &blend, w32.ULW_ALPHA);
+}
+
+/// Repaint one of the sidebar's surfaces: the column by invalidating it, the
+/// open card by presenting it again (it is layered, T1865).
+fn invalidate(self: *PaneSidebar, hwnd: w32.HWND) void {
+    if (self.card_hwnd != null and self.card_hwnd.? == hwnd) {
+        self.presentCard();
+    } else {
+        _ = w32.InvalidateRect(hwnd, null, 0);
+    }
 }
 
 /// Clear a stray topmost bit before seating (`overlay_zorder.isStray`): the
@@ -2360,7 +2467,7 @@ pub fn setQuickKill(self: *PaneSidebar, on: bool) void {
     self.hover = .none;
     log.info("pane sidebar trash mode on={}", .{on});
     _ = w32.InvalidateRect(self.hwnd, null, 0);
-    if (self.card_hwnd) |c| _ = w32.InvalidateRect(c, null, 0);
+    if (self.card_hwnd) |c| self.invalidate(c);
     self.syncTips();
 }
 
@@ -2525,9 +2632,26 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             var ps: w32.PAINTSTRUCT = undefined;
             const hdc = w32.BeginPaint(hwnd, &ps) orelse return 0;
             defer _ = w32.EndPaint(hwnd, &ps);
+            // The card is layered: it draws in `presentCard`, and a paint
+            // here would only be thrown away.
+            if (which == .card) return 0;
             var r: w32.RECT = undefined;
             if (w32.GetClientRect(hwnd, &r) != 0) self.paintBuffered(hdc, which, r.right - r.left, r.bottom - r.top);
             return 0;
+        },
+        // The open card takes clicks on its column and its own shape only
+        // (T1865): its shadow and the trailing margin are visible but belong
+        // to the pane underneath, which the window region used to say.
+        w32.WM_NCHITTEST => {
+            if (which != .card) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+            var pt = w32.POINT{ .x = xOf(lparam), .y = yOf(lparam) };
+            _ = w32.ScreenToClient(hwnd, &pt);
+            var wr: w32.RECT = undefined;
+            if (w32.GetClientRect(hwnd, &wr) == 0) return w32.HTTRANSPARENT;
+            var col: w32.RECT = undefined;
+            if (w32.GetWindowRect(self.hwnd, &col) == 0) return w32.HTTRANSPARENT;
+            const g = layer.Geometry.init(col.right - col.left, self.openCardMetrics(wr.right, wr.bottom));
+            return if (layer.hits(g, pt.x, pt.y)) w32.HTCLIENT else w32.HTTRANSPARENT;
         },
         // The same column into a caller's DC, so a pixel probe can photograph
         // it synchronously (the TOC card's T835 reason).
@@ -2619,7 +2743,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             // up first).
             self.press_alt = altDown();
             _ = w32.SetCapture(hwnd);
-            _ = w32.InvalidateRect(hwnd, null, 0);
+            self.invalidate(hwnd);
             return 0;
         },
         w32.WM_LBUTTONUP => {
@@ -2637,7 +2761,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             const hit = self.hitAt(which, xOf(lparam), yOf(lparam));
             const pressed = self.pressed;
             self.pressed = .none;
-            _ = w32.InvalidateRect(hwnd, null, 0);
+            self.invalidate(hwnd);
             const alt = self.press_alt or altDown();
             self.press_alt = false;
             if (std.meta.eql(hit, pressed)) self.activate(which, hit, alt);
