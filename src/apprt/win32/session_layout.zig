@@ -306,6 +306,12 @@ pub const Window = struct {
     /// default ocean desk, and an older build ignores it. Mac's spelling is
     /// `deskVariant: {seed}`.
     desk_variant: ?u64 = null,
+    /// The pane sidebar's pin (flat panel vs mini rail) and hidden flags
+    /// (T1847). Additive: absent in a manifest written before them, and the
+    /// restore then leaves the window on the new-window defaults. Mac's
+    /// spellings are `paneSidebarPinned` / `paneSidebarHidden`.
+    pane_sidebar_pinned: ?bool = null,
+    pane_sidebar_hidden: ?bool = null,
 };
 
 /// The whole file. `windows` is a present (possibly empty) array so a reader
@@ -1011,6 +1017,31 @@ test "T1832: a window's own gradient round-trips as its seed, past i64" {
     defer parsed.deinit();
     try testing.expectEqual(@as(?u64, 0xF00D_CAFE_DEAD_BEEF), parsed.value.windows[0].desk_variant);
     try testing.expectEqual(@as(?u64, null), parsed.value.windows[1].desk_variant);
+}
+
+test "T1847: a window's pane sidebar pin and hidden flags round-trip" {
+    const alloc = testing.allocator;
+    const nodes = [_]Node{.{ .leaf = .{ .session_id = "0123456789abcdef0123456789abcdef" } }};
+    const tabs = [_]Tab{.{ .nodes = &nodes, .active = true }};
+    const windows = [_]Window{
+        .{ .id = "win-0", .tabs = &tabs, .pane_sidebar_pinned = true, .pane_sidebar_hidden = false },
+        .{ .id = "win-1", .tabs = &tabs, .pane_sidebar_pinned = false, .pane_sidebar_hidden = true },
+        .{ .id = "win-2", .tabs = &tabs },
+    };
+    const body = try serialize(alloc, .{ .windows = &windows });
+    defer alloc.free(body);
+    // A window with no recorded flags writes none.
+    try testing.expectEqual(@as(usize, 2), std.mem.count(u8, body, "pane_sidebar_pinned"));
+
+    var parsed = try parse(alloc, body);
+    defer parsed.deinit();
+    const w = parsed.value.windows;
+    try testing.expectEqual(@as(?bool, true), w[0].pane_sidebar_pinned);
+    try testing.expectEqual(@as(?bool, false), w[0].pane_sidebar_hidden);
+    try testing.expectEqual(@as(?bool, false), w[1].pane_sidebar_pinned);
+    try testing.expectEqual(@as(?bool, true), w[1].pane_sidebar_hidden);
+    try testing.expectEqual(@as(?bool, null), w[2].pane_sidebar_pinned);
+    try testing.expectEqual(@as(?bool, null), w[2].pane_sidebar_hidden);
 }
 
 test "T422: a pre-banner manifest still loads, with a null banner" {

@@ -4310,6 +4310,21 @@ $GuardTable = @(
             'test\win32\pane-sidebar-resize.ps1'
         )
     },
+    # The sidebar's pin, hidden flag and width surviving a restart (T1847):
+    # the new-window defaults file, the per-window session-layout fields and
+    # which of the two a restore obeys. The parse/format and the manifest
+    # round-trip are unit-tested; this is the relaunch.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-persist'
+        Script = 'test\win32\pane-sidebar-persist.ps1'
+        Stamp  = 'test\win32\pane-sidebar-persist.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar_prefs.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'src\apprt\win32\session_layout.zig',
+            'test\win32\pane-sidebar-persist.ps1'
+        )
+    },
     # The sidebar's activity marks (T1843): a busy pane's mark shimmers, a
     # row's question badge breathes, the rail's corner "?" holds still, and a
     # stashed pane whose bell rang keeps a dot until it is looked at. The

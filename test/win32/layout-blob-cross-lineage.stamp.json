@@ -1,14 +1,14 @@
 {
     "guard":  "layout-blob-cross-lineage",
     "script":  "test/win32/layout-blob-cross-lineage.ps1",
-    "generated":  "2026-10-12T11:59:57-07:00",
-    "commit":  "791cf112e",
+    "generated":  "2026-10-12T22:31:04-07:00",
+    "commit":  "ec1e42a7a",
     "uncommitted":  [
                         "src/apprt/win32/mac_layout_blob.zig"
                     ],
     "files":  {
                   "src/apprt/win32/layout_blobs.zig":  "0aa66783a8d060eade2dbdac90586ab5bddc866c40346fec85af32b6f1ceb7be",
-                  "src/apprt/win32/mac_layout_blob.zig":  "384ffa08494aa45557ece3790f500055eab8b4d29ccfddda90b639133a676197",
+                  "src/apprt/win32/mac_layout_blob.zig":  "73f97786102994382c10171bdfcb9b5d90fa1be572c284c0475e41d003d4049d",
                   "src/apprt/win32/restore_frame.zig":  "3bc784601a5c07ff4bd0548114024d85d2c185d42c0a7b629f9a924c6235d9d9",
                   "test/win32/layout-blob-cross-lineage.ps1":  "8856f0fbe0bff9a2c4b6c71a138ac77a009a335a935f92a8892dd45b065fb6cb"
               }

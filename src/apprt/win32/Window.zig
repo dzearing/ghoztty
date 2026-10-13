@@ -1452,6 +1452,8 @@ fn createPillFont(self: *Window) void {
 
 /// Initialize the Window by creating the top-level HWND and tab bar font.
 pub fn init(self: *Window, app: *App, options: InitOptions) !void {
+    // The new-window sidebar defaults persist across a restart (T1847).
+    PaneSidebar.loadRemembered(app.core_app.alloc);
     self.* = .{
         .app = app,
         .is_quick_terminal = options.is_quick_terminal,
@@ -2377,9 +2379,24 @@ pub fn setPaneSidebarWidth(self: *Window, dip: f32) void {
     }
 }
 
+/// A restored window takes back the pin and hidden flags its session layout
+/// recorded (T1847; Mac `SessionLayoutRestore` sets `isPinned`/`isHidden`).
+/// Absent in a manifest written before the fields existed, and then the
+/// new-window defaults the window opened with stand. Like Mac's setters, a
+/// restored choice also becomes the default for the next new window.
+pub fn restorePaneSidebar(self: *Window, pinned: ?bool, hidden: ?bool) void {
+    const p = pinned orelse self.pane_sidebar_pinned;
+    const h = hidden orelse self.pane_sidebar_hidden;
+    if (p == self.pane_sidebar_pinned and h == self.pane_sidebar_hidden) return;
+    self.pane_sidebar_pinned = p;
+    self.pane_sidebar_hidden = h;
+    self.paneSidebarLayoutChanged();
+}
+
 fn paneSidebarLayoutChanged(self: *Window) void {
     PaneSidebar.remembered.pinned = self.pane_sidebar_pinned;
     PaneSidebar.remembered.hidden = self.pane_sidebar_hidden;
+    PaneSidebar.saveRemembered(self.app.core_app.alloc);
     self.layoutSplits();
     self.syncPaneSidebar();
     self.app.markLayoutDirty();

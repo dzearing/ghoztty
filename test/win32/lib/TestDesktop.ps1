@@ -2560,11 +2560,19 @@ scripts resolve to THEIR dir, not the user's. Only ever the `-debug` file: a
 release build writes `window_placement`, which belongs to the user's installed
 Ghoztty (the `Clear-DebugSessionLayout` rule in lib\CleanSlate.ps1).
 
-Returns $true if a file was removed.
+The pane sidebar's new-window defaults (`pane_sidebar-debug`, T1847: the last
+pin/hidden choice and the panel width) are the same kind of memory and go with
+it: a script that ends pinned would otherwise open every later script's window
+pinned, and pane-sidebar.ps1's "the rail is up by default" would turn on run
+order.
+
+Returns $true if the placement file was removed.
 #>
 function Clear-TestWindowPlacement {
     $local = $env:LOCALAPPDATA
     if (-not $local) { return $false }
+    $sidebar = Join-Path $local 'ghoztty\pane_sidebar-debug'
+    if (Test-Path $sidebar) { Remove-Item $sidebar -Force -ErrorAction SilentlyContinue }
     $path = Join-Path $local 'ghoztty\window_placement-debug'
     if (-not (Test-Path $path)) { return $false }
     Remove-Item $path -Force -ErrorAction SilentlyContinue

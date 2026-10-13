@@ -35729,3 +35729,28 @@ moved to T1814.
 - **Validation.** New `test/win32/pane-sidebar-resize.ps1`: ALL PASS (33);
   the negative control fails. Floor lanes, the harness floor and the 24
   harnesses this made due are green.
+
+## 2026-10-12 — T1847: the pane sidebar remembers itself across a restart
+
+- **What changed.** The Windows pane sidebar's pin, hidden flag and panel
+  width now survive quitting the app, as Mac's do. New windows open the way
+  the sidebar was last left, and a window brought back by session restore
+  comes back with its own pin and hidden flags.
+- **How.** New pure `pane_sidebar_prefs.zig`: one small file
+  (`%LOCALAPPDATA%\ghoztty\pane_sidebar[-debug]`, `<pinned> <hidden>
+  <width>`) holding Mac's UserDefaults keys. `PaneSidebar.remembered` loads
+  it before the first window and writes it on every pin/hide change and when
+  an edge drag ends. `session_layout.Window` gains optional
+  `pane_sidebar_pinned`/`pane_sidebar_hidden`, captured per window and
+  restored through `Window.restorePaneSidebar`; a restored choice also
+  becomes the next default, as Mac's setters do. Mac-written blobs
+  (`paneSidebarPinned`/`paneSidebarHidden`) translate. The test launcher now
+  clears the debug defaults file with the window-placement memory, so
+  scripts that share the real LOCALAPPDATA stay independent of run order.
+- **Validation.** Unit tests for the file format, the manifest round-trip
+  and the Mac blob. New `test/win32/pane-sidebar-persist.ps1`: ALL PASS (30)
+  across four relaunches; its negative control fails. Floor lanes green.
+  The 52 harnesses this made due ran through `suite-run.ps1`: 50 green;
+  `persistence-flag.ps1` caught this script building its flag by
+  interpolation (fixed); `pane-sidebar.ps1` went red only in-suite after a
+  leaked process and was green alone (filed T1892). Harness floor run.

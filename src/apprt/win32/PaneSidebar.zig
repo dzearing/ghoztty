@@ -42,6 +42,7 @@ const pane_sidebar = @import("pane_sidebar.zig");
 const outline = @import("pane_sidebar_outline.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
 const hov = @import("pane_sidebar_hover.zig");
+const sidebar_prefs = @import("pane_sidebar_prefs.zig");
 const row_menu = @import("pane_sidebar_menu.zig");
 const motion = @import("pane_sidebar_motion.zig");
 const App = @import("App.zig");
@@ -100,13 +101,24 @@ const tool_trash: usize = tool_scope + 1;
 /// What new windows start from: the most recently chosen pin and hidden
 /// flags, the way a Finder window's sidebar does (Mac `rememberForNewWindows`),
 /// and the panel width - one preference shared by every window (Mac
-/// `PaneSidebarWidth`, T1846). Process lifetime for now; surviving a restart
-/// is T1847.
-pub var remembered: struct {
-    pinned: bool = false,
-    hidden: bool = false,
-    width_dip: f32 = pane_sidebar.default_width_dip,
-} = .{};
+/// `PaneSidebarWidth`, T1846). Loaded from `pane_sidebar_prefs` before the
+/// first window opens and written back on every user change, so it survives
+/// a restart (T1847).
+pub var remembered: sidebar_prefs.Prefs = .{};
+var remembered_loaded = false;
+
+/// Read the persisted defaults into `remembered`, once per process. Called
+/// by `Window.init` before it seeds a window from them.
+pub fn loadRemembered(alloc: std.mem.Allocator) void {
+    if (remembered_loaded) return;
+    remembered_loaded = true;
+    if (sidebar_prefs.load(alloc)) |p| remembered = p;
+}
+
+/// Write `remembered` back. Best-effort, like every chrome preference.
+pub fn saveRemembered(alloc: std.mem.Allocator) void {
+    sidebar_prefs.save(alloc, remembered);
+}
 
 /// A window group of the outline: one tab of one top-level window (a Mac
 /// window is a tab here - see `pane_sidebar_outline.zig`).
@@ -1750,6 +1762,9 @@ fn edgeMove(self: *PaneSidebar, which: Surface, hwnd: w32.HWND, x: i32, y: i32) 
 fn edgeEnd(self: *PaneSidebar) void {
     if (self.edge == null) return;
     self.edge = null;
+    // The drag moved `remembered.width_dip` live; the file is written once,
+    // when it settles (T1847).
+    saveRemembered(self.window.app.core_app.alloc);
     log.info("pane sidebar edge drag end pinned={} width={d:.0}", .{ self.window.pane_sidebar_pinned, self.window.pane_sidebar_width_dip });
 }
 

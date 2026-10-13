@@ -3252,6 +3252,8 @@ fn captureWindow(
         .active_tab = @intCast(win.active_tab),
         .tabs = tabs,
         .desk_variant = if (win.desk_variant) |v| v.seed else null,
+        .pane_sidebar_pinned = win.pane_sidebar_pinned,
+        .pane_sidebar_hidden = win.pane_sidebar_hidden,
     };
 }
 
@@ -4918,6 +4920,7 @@ fn restoreWindow(
 
     // Window-level presentation: title pin, active tab, outer placement.
     if (win.title_override) |t| window.setTitleOverride(t);
+    window.restorePaneSidebar(win.pane_sidebar_pinned, win.pane_sidebar_hidden);
     if (window.tab_count > 0) {
         const active: usize = @min(@as(usize, win.active_tab), window.tab_count - 1);
         window.selectTabIndex(active);

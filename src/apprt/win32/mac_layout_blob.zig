@@ -89,6 +89,10 @@ pub const Entry = struct {
     /// `Entry.deskVariant.seed` (T1832): the window's own gradient. Null is
     /// the default desk.
     desk_variant: ?u64 = null,
+    /// `Entry.paneSidebarPinned` / `paneSidebarHidden` (T1847): the window's
+    /// pane sidebar layout. Null when the blob predates them.
+    pane_sidebar_pinned: ?bool = null,
+    pane_sidebar_hidden: ?bool = null,
     /// The tree, flattened to win32's `nodes[0] = root` representation.
     nodes: []const session_layout.Node = &.{},
 };
@@ -138,6 +142,8 @@ pub fn parseEntry(arena: Allocator, v: std.json.Value) !Entry {
         .window_title = str(obj.get("windowTitleOverride")),
         .ipc_name = str(obj.get("ipcName")),
         .desk_variant = deskSeed(obj.get("deskVariant")),
+        .pane_sidebar_pinned = boolean(obj.get("paneSidebarPinned")),
+        .pane_sidebar_hidden = boolean(obj.get("paneSidebarHidden")),
         .nodes = try nodes.toOwnedSlice(arena),
     };
 }
@@ -190,6 +196,8 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
         var window_title: ?[]const u8 = null;
         var ipc_name: ?[]const u8 = null;
         var desk_variant: ?u64 = null;
+        var sidebar_pinned: ?bool = null;
+        var sidebar_hidden: ?bool = null;
         for (g.items, 0..) |entry, ti| {
             tabs[ti] = .{
                 .nodes = entry.nodes,
@@ -202,6 +210,10 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
             if (window_title == null) window_title = entry.window_title;
             if (ipc_name == null) ipc_name = entry.ipc_name;
             if (desk_variant == null) desk_variant = entry.desk_variant;
+            // Mac records the sidebar per controller, which every tab of a
+            // group shares, so any entry speaks for the group.
+            if (sidebar_pinned == null) sidebar_pinned = entry.pane_sidebar_pinned;
+            if (sidebar_hidden == null) sidebar_hidden = entry.pane_sidebar_hidden;
         }
 
         try out.append(arena, .{
@@ -215,6 +227,8 @@ pub fn groupIntoWindows(arena: Allocator, entries: []const Entry) ![]session_lay
             .active_tab = 0,
             .tabs = tabs,
             .desk_variant = desk_variant,
+            .pane_sidebar_pinned = sidebar_pinned,
+            .pane_sidebar_hidden = sidebar_hidden,
         });
     }
     return out.toOwnedSlice(arena);
@@ -365,6 +379,15 @@ fn deskSeed(v: ?std.json.Value) ?u64 {
         else => return null,
     };
     return if (seed == 0) null else seed;
+}
+
+/// A JSON boolean, else null (T1847): Swift's `Bool?` encodes as `true` /
+/// `false` or not at all.
+fn boolean(v: ?std.json.Value) ?bool {
+    return switch (v orelse return null) {
+        .bool => |b| b,
+        else => null,
+    };
 }
 
 fn int(v: ?std.json.Value) ?i64 {
@@ -533,6 +556,35 @@ test "T337: a nested Mac tree flattens to win32's indexed nodes array" {
     try testing.expectEqualStrings("bbbb", right.session_id.?);
     try testing.expectEqualStrings("logs", right.ipc_name.?);
     try testing.expect(right.title == null);
+}
+
+test "T1847: a Mac window's pane sidebar pin and hidden flags come across" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const blob =
+        \\{"id":"e","paneSidebarPinned":true,"paneSidebarHidden":false,
+        \\"tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+    ;
+    const e = try translate(arena, blob);
+    try testing.expectEqual(@as(?bool, true), e.pane_sidebar_pinned);
+    try testing.expectEqual(@as(?bool, false), e.pane_sidebar_hidden);
+    const windows = try groupIntoWindows(arena, &.{e});
+    try testing.expectEqual(@as(?bool, true), windows[0].pane_sidebar_pinned);
+    try testing.expectEqual(@as(?bool, false), windows[0].pane_sidebar_hidden);
+
+    // A blob from before the fields, or one with a non-boolean, says nothing.
+    const older =
+        \\{"id":"e","tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+    ;
+    const garbled =
+        \\{"id":"e","paneSidebarPinned":1,"paneSidebarHidden":"yes","tree":{"leaf":{"_0":{"sessionID":"aaaa"}}}}
+    ;
+    for ([_][]const u8{ older, garbled }) |text| {
+        const old = try translate(arena, text);
+        try testing.expectEqual(@as(?bool, null), old.pane_sidebar_pinned);
+        try testing.expectEqual(@as(?bool, null), old.pane_sidebar_hidden);
+    }
 }
 
 test "T1832: a Mac window's deskVariant seed comes across, whatever its size" {
