@@ -36007,3 +36007,23 @@ moved to T1814.
   (`pane_sidebar_search.zig`), the accent fold, and the field's layout and hit
   testing. All four floor lanes, P1-P3, the seven pane-sidebar GUI harnesses
   and the harness floor are green.
+## 2026-10-13 — T1878: the pane sidebar scrolls
+
+- **What.** The Windows pane sidebar no longer cuts a long list off at the
+  bottom. The pinned panel, the hover card and the rail scroll with the wheel
+  and with a thin draggable thumb on the trailing edge. Switching to a pane
+  whose row is out of view scrolls it in, and a drag scrolls the empty "Drop to
+  stash" slot into view. In the all-windows outline a project's header stays
+  pinned at the top while its windows scroll under it, until the next
+  top-level header pushes it out (Mac b4a3216cc). Rows scrolled out of view
+  stop being click targets, drop rows and tooltips.
+- **How.** One pure pass (`pane_sidebar_scroll.zig`) turns the full-height
+  layout into the scrolled one inside `PaneSidebar.layoutFor`, the funnel that
+  painting, hit testing, drop geometry and tooltips already shared, so none of
+  them can disagree about where a row is. The 64-pane roster cap is unchanged
+  and filed as T1914.
+- **Validation.** New pane-sidebar-scroll.ps1 ALL PASS (42): the panel, a click
+  past the fold, reveal on focus, the thumb drag, the sticky header, and the
+  rail. Its negative control fails, as it must. Seven new unit tests for the
+  scroll pass. All eight pane-sidebar GUI harnesses, the four floor lanes,
+  P1-P3 and the harness floor were run (results in the task file).
