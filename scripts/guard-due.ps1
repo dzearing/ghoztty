@@ -4327,6 +4327,23 @@ $GuardTable = @(
             'test\win32\pane-sidebar-drag.ps1'
         )
     },
+    # Acting on a pane from the sidebar (T1845): what a click, an Alt-click
+    # and the right-click menu do is unit-tested in every lane; whether the
+    # menu actually opens on a row, each choice reaches its verb, the swap
+    # re-marks the stash, a trash-mode kill skips confirmation and undo, and
+    # Escape leaves trash mode only answers on the box. Window.zig is left
+    # out for the ipc-stash row's reason.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-actions'
+        Script = 'test\win32\pane-sidebar-actions.ps1'
+        Stamp  = 'test\win32\pane-sidebar-actions.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar_menu.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'src\apprt\win32\CloseUndo.zig',
+            'test\win32\pane-sidebar-actions.ps1'
+        )
+    },
     # The sidebar's all-windows scope (T1829): the split, order, grouping and
     # line stream are unit-tested in every lane; whether every window's tabs
     # are gathered, the outline is laid out and painted, a click on another

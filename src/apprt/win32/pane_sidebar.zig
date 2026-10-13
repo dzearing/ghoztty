@@ -58,6 +58,8 @@ pub const rail_group_gap_dip: f32 = 8;
 pub const button_dip: f32 = 28;
 /// The compact button a row's hover action is drawn as (dense list rows).
 pub const row_button_dip: f32 = 20;
+/// Trash mode's x disc on a rail tile (Mac's 13 pt kill button).
+pub const tile_kill_dip: f32 = 13;
 /// The design system's default inset (`sm`).
 pub const sm_dip: f32 = 4;
 
@@ -600,9 +602,15 @@ pub const Layout = struct {
     card: Rect = .{},
     /// The pin button's painted square.
     pin: Rect = .{},
-    /// The all-windows toggle, left of the pin (panel and open card; Mac
-    /// drops its header buttons from the rail).
+    /// The all-windows toggle, left of the trash button (panel and open
+    /// card; Mac drops its header buttons from the rail).
     scope: Rect = .{},
+    /// The trash-mode toggle, between the all-windows toggle and the pin -
+    /// Mac's header order (T1845).
+    trash: Rect = .{},
+    /// Trash mode is on (T1845): a rail tile's corner x is a hit target. Set
+    /// by the caller - the layout itself does not depend on it.
+    quick_kill: bool = false,
     /// Laid out as the all-windows outline (T1829).
     outline: bool = false,
     /// THIS window's stashed items are `first_stashed..stash_end` - the rows
@@ -654,6 +662,16 @@ pub const Layout = struct {
 
     /// An expanded row's hover button (stash / restore): the compact square
     /// at the row's trailing edge, `sm` inside its fill.
+    /// Trash mode's x on a rail tile (T1845): a small disc on the tile's
+    /// top-left corner, overhanging it the way the question badge overhangs
+    /// the top-right one - so the two never cover each other.
+    pub fn tileKill(self: *const Layout, i: usize, scale: f32) Rect {
+        const r = self.items[i];
+        const d = px(tile_kill_dip, scale);
+        const over = px(2, scale);
+        return .{ .left = r.left - over, .top = r.top - over, .right = r.left - over + d, .bottom = r.top - over + d };
+    }
+
     pub fn rowButton(self: *const Layout, i: usize, scale: f32) Rect {
         const r = self.items[i];
         const b = px(row_button_dip, scale);
@@ -759,7 +777,8 @@ fn layoutHeader(l: *Layout, area: Rect, tm: TextMetrics, scale: f32) void {
     l.pin = .{ .left = area.right - sm - btn, .top = pin_top, .right = area.right - sm, .bottom = pin_top + btn };
     // Mac's header buttons sit 2 pt apart.
     const gap = px(2, scale);
-    l.scope = .{ .left = l.pin.left - gap - btn, .top = pin_top, .right = l.pin.left - gap, .bottom = pin_top + btn };
+    l.trash = .{ .left = l.pin.left - gap - btn, .top = pin_top, .right = l.pin.left - gap, .bottom = pin_top + btn };
+    l.scope = .{ .left = l.trash.left - gap - btn, .top = pin_top, .right = l.trash.left - gap, .bottom = pin_top + btn };
 }
 
 /// The panel's header and rows inside `area`: the pinned panel's whole
@@ -945,6 +964,8 @@ pub const Hit = union(enum) {
     item_button: usize,
     /// The all-windows toggle.
     scope,
+    /// The trash-mode toggle (T1845).
+    trash,
     /// An outline header's body (an index into the layout's heads).
     head: usize,
     /// An outline header's chevron column: fold, never raise.
@@ -956,6 +977,11 @@ pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
     if (l.pin.contains(x, y)) return .pin;
     const rows = l.mode == .expanded or l.open;
     if (rows and l.scope.contains(x, y)) return .scope;
+    if (rows and l.trash.contains(x, y)) return .trash;
+    // Trash mode's corner x on a tile wins over the tile it sits on.
+    if (!rows and l.quick_kill) for (0..l.count) |i| {
+        if (l.tileKill(i, scale).contains(x, y)) return .{ .item_button = i };
+    };
     for (l.heads[0..l.head_count], 0..) |hd, k| {
         const hit_r = rowHitRect(l, hd.rect);
         if (!hit_r.contains(x, y)) continue;
@@ -1406,4 +1432,39 @@ test "pane_sidebar: the outline never adds the empty drop slot" {
     var l = layoutWith(.expanded, 240, 900, &f.items, f.lines[0..3], f.tm, s);
     addDropSlot(&l, f.tm, s);
     try testing.expect(l.drop_slot == null);
+}
+
+test "pane_sidebar: the header reads all-windows, trash, pin - Mac's order - and each is its own hit (T1845)" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
+    for (scales) |s| {
+        const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
+        const l = layout(.expanded, px(240, s), px(600, s), &items, tm, s);
+        try testing.expect(l.scope.right <= l.trash.left);
+        try testing.expect(l.trash.right <= l.pin.left);
+        try testing.expect(l.trash.width() > 0);
+        try testing.expect(l.trash.top >= l.header.top and l.trash.bottom <= l.header.bottom);
+        try testing.expectEqual(@as(Hit, .trash), hitTest(&l, l.trash.centerX(), l.trash.centerY(), s));
+        try testing.expectEqual(@as(Hit, .scope), hitTest(&l, l.scope.centerX(), l.scope.centerY(), s));
+        try testing.expectEqual(@as(Hit, .pin), hitTest(&l, l.pin.centerX(), l.pin.centerY(), s));
+    }
+}
+
+test "pane_sidebar: on the rail, a tile's corner x is a target only in trash mode (T1845)" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
+    for (scales) |s| {
+        const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
+        var l = layout(.mini, columnPx(.mini, 240, s), px(600, s), &items, tm, s);
+        // The rail has no header buttons, so no trash toggle either.
+        try testing.expectEqual(@as(i32, 0), l.trash.width());
+        const k = l.tileKill(1, s);
+        const kx = k.centerX();
+        const ky = k.centerY();
+        // Inside the tile's own square, so a plain click there is the tile.
+        try testing.expect(l.items[1].contains(kx, ky));
+        try testing.expectEqual(Hit{ .item = 1 }, hitTest(&l, kx, ky, s));
+        l.quick_kill = true;
+        try testing.expectEqual(Hit{ .item_button = 1 }, hitTest(&l, kx, ky, s));
+        // The rest of the tile is still the tile.
+        try testing.expectEqual(Hit{ .item = 1 }, hitTest(&l, l.items[1].right - 2, l.items[1].bottom - 2, s));
+    }
 }

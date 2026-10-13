@@ -2377,6 +2377,8 @@ pub extern "user32" fn SetMenuItemInfoW(
 pub const TPM_LEFTALIGN: u32 = 0x0000;
 pub const TPM_TOPALIGN: u32 = 0x0000;
 pub const TPM_RETURNCMD: u32 = 0x0100;
+/// Items track the right button too (a menu opened by a right-click).
+pub const TPM_RIGHTBUTTON: u32 = 0x0002;
 
 pub extern "user32" fn CreatePopupMenu() callconv(.winapi) ?HMENU;
 

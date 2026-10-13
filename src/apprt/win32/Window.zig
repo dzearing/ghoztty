@@ -2399,6 +2399,90 @@ pub fn paneSidebarToggleStash(self: *Window, pane: *PaneView) void {
     self.syncPaneSidebar();
 }
 
+/// Alt-click on a stashed row (T1845, Mac `exchangeStashedPane`): `pane`
+/// takes the focused pane's slot, and the focused pane takes `pane`'s place
+/// in the stash. With nothing to swap with - the focused pane is `pane`, or a
+/// stashed one - it is an ordinary restore, as Mac's guard falls back to.
+pub fn paneSidebarExchange(self: *Window, pane: *PaneView) void {
+    if (!self.paneInActiveTab(pane)) return;
+    const tab = self.active_tab;
+    const focused = self.tab_active_pane[tab];
+    if (!pane_stash.isStashed(pane) or focused == pane or pane_stash.isStashed(focused)) {
+        return self.paneSidebarActivate(pane);
+    }
+    const new_tree = pane_stash.exchange(self.tab_trees[tab], self.app.core_app.alloc, pane, focused) catch |err| {
+        log.err("pane sidebar swap failed: {}", .{err});
+        return self.paneSidebarActivate(pane);
+    };
+    // Swap-then-release, as `swapSplit` (T1356).
+    var old_tree = self.tab_trees[tab];
+    self.tab_trees[tab] = new_tree;
+    old_tree.deinit();
+    self.tab_active_pane[tab] = pane;
+    self.heroOnTreeChanged(tab);
+    self.layoutSplits();
+    // Focus moves to the pane swapped in, as Mac's `moveFocusTo` does.
+    if (pane.hwnd()) |h| App.deferSetFocus(h); // T48
+    self.app.markLayoutDirty();
+    log.info("pane sidebar swapped stashed pane in tab={} visible={}", .{ tab, self.visibleLeafCount(tab) });
+    self.syncPaneSidebar();
+}
+
+/// The sidebar menu's Close Pane (T1845, Mac `closePaneFromSidebar`): the
+/// ordinary interactive close. A terminal goes through its own close binding,
+/// so a running process is confirmed and a remote pane offers Disconnect
+/// exactly as Ctrl+Shift+W does; a viewer owns no process and just closes.
+/// May free `pane` before returning.
+pub fn paneSidebarClose(self: *Window, pane: *PaneView) void {
+    if (self.findTabIndex(pane) == null) return;
+    if (pane.surface()) |s| {
+        if (s.core_surface_ready) {
+            log.info("pane sidebar close pane (interactive)", .{});
+            _ = s.core_surface.performBindingAction(.close_surface) catch |err| {
+                log.err("pane sidebar close failed err={}", .{err});
+            };
+            return;
+        }
+    }
+    log.info("pane sidebar close pane (no process)", .{});
+    self.closeSplitPane(pane);
+}
+
+/// Trash mode's red x (T1845, Mac `killPane`): close `pane` NOW - no
+/// confirmation and no undo window, so nothing holds the pane and its session
+/// ends with it. A window's last pane takes its window with it, which is what
+/// "kill" means there too. May free `pane` before returning.
+pub fn paneSidebarKill(self: *Window, pane: *PaneView) void {
+    if (self.findTabIndex(pane) == null) return;
+    log.info("pane sidebar kill pane", .{});
+    self.app.close_undo.bypass = true;
+    defer self.app.close_undo.bypass = false;
+    self.closeSplitPane(pane);
+}
+
+/// The sidebar menu's Move to New Window (T1845): the header pop-out's verb
+/// (T1538) for a row. A stashed pane arrives on screen in its new window.
+pub fn paneSidebarPopOut(self: *Window, pane: *PaneView) void {
+    if (!self.paneSidebarCanPopOut(pane)) return;
+    log.info("pane sidebar move pane to new window", .{});
+    self.popOutPane(pane);
+}
+
+/// Whether Move to New Window applies to `pane` (Mac `canPopOut`): only for
+/// a pane in its window's active tab, and never a window's only pane.
+pub fn paneSidebarCanPopOut(self: *Window, pane: *PaneView) bool {
+    return self.paneInActiveTab(pane) and self.canPopOutPane();
+}
+
+/// Whether Stash Pane applies to `pane`: on screen, and not the last pane on
+/// screen in its tab (Mac disables the item there).
+pub fn paneSidebarCanStash(self: *Window, pane: *PaneView) bool {
+    if (self.is_quick_terminal) return false;
+    const tab = self.findTabIndex(pane) orelse return false;
+    if (pane_stash.isStashed(pane)) return false;
+    return self.visibleLeafCount(tab) > 1;
+}
+
 /// Returns the currently active pane, or null if there are no tabs.
 pub fn getActivePane(self: *Window) ?*PaneView {
     if (self.tab_count == 0) return null;

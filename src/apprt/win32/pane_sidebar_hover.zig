@@ -102,6 +102,11 @@ pub fn rowHint(section: pane_sidebar.Section) []const u8 {
     };
 }
 
+/// A stashed row's tooltip in the panel (T1845, Mac `rowHelp`): the click
+/// hint, and the Alt-click swap beside it - the panel row has the room a
+/// rail tile's two-line tip does not.
+pub const stashed_row_tip = "Click to restore \u{00B7} Alt-click to swap with the focused pane";
+
 /// A row's hover button.
 pub fn buttonTip(section: pane_sidebar.Section) []const u8 {
     return switch (section) {
@@ -208,6 +213,8 @@ test "pane_sidebar_hover: the card seats above its siblings and below the first 
 test "pane_sidebar_hover: tooltip wording" {
     try testing.expectEqualStrings("Click to focus", rowHint(.grid));
     try testing.expectEqualStrings("Click to restore", rowHint(.stashed));
+    try testing.expect(std.mem.startsWith(u8, stashed_row_tip, rowHint(.stashed)));
+    try testing.expect(std.mem.indexOf(u8, stashed_row_tip, "Alt-click to swap") != null);
     try testing.expectEqualStrings("Stash", buttonTip(.grid));
     try testing.expectEqualStrings("Restore", buttonTip(.stashed));
     try testing.expect(std.mem.startsWith(u8, pinTip(true), "Unpin"));

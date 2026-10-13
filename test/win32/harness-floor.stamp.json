@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-12T18:42:40-07:00",
-    "commit":  "318d7d00c",
+    "generated":  "2026-10-12T20:37:28-07:00",
+    "commit":  "98a4e0ece",
     "uncommitted":  [
-                        "test/win32/pane-sidebar-activity.ps1"
+                        "test/win32/pane-sidebar-actions.ps1",
+                        "test/win32/pane-sidebar-all-windows.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
@@ -289,8 +290,9 @@
                   "test/win32/pane-ingest-ab.ps1":  "4beb60eb9823ba66d04bda7b10f59e4aaebb85e930b1c6c5eafe018b70f9c74e",
                   "test/win32/pane-ingest-lag.ps1":  "a5c9ffcbdeae28c26b54d98d09586137bcba9be70691c2b2634c781b3fdf9768",
                   "test/win32/pane-sidebar.ps1":  "0256bfd7a0c5ecc7a0ed531fe733fc030b112b89614f975d17ee9d1c3381f0b7",
+                  "test/win32/pane-sidebar-actions.ps1":  "180b25bd4a5e21b7618faf3d5f5ca542174c7d7c1ff4585c3c489088260e9ac6",
                   "test/win32/pane-sidebar-activity.ps1":  "13e236a4cbbb8b57ce49ede4a4c17d7e4527471c0ecb4a6676032f4bd3ab3a22",
-                  "test/win32/pane-sidebar-all-windows.ps1":  "1f2532f0ed17ae3b7dfe4a248269ae3225c2499b5fa558009e76bf13ef1a811a",
+                  "test/win32/pane-sidebar-all-windows.ps1":  "1644c0a3fb81f271feed3564a3eb6145d4e36b16a09ebc9e2cc78cca577ab125",
                   "test/win32/pane-sidebar-drag.ps1":  "36eb78616d344e05dbeb5d760fdb19933e8f169593b4c588e2898bf2f5d257cd",
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",
                   "test/win32/parity-sweep.ps1":  "2251497104f8df5a8b1146441bd2b5e3ebb38a495c7d7fe16a9f64a05c801044",

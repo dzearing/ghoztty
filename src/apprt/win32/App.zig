@@ -49,6 +49,7 @@ const ViewerFindBar = @import("ViewerFindBar.zig");
 const webview2 = @import("webview2.zig");
 const Window = @import("Window.zig");
 const desk_palette = @import("desk_palette.zig");
+const pane_sidebar_menu = @import("pane_sidebar_menu.zig");
 const dial_failure = @import("dial_failure.zig");
 const relay_dial = @import("../../remote/relay_dial.zig");
 const relay_signout = @import("relay_signout.zig");
@@ -1854,6 +1855,10 @@ pub fn run(self: *App) !void {
             // still on whatever pane had it - a drag from the sidebar starts
             // without rearrange mode, whose own Escape would not apply.
             if (vk == w32.VK_ESCAPE and self.cancelPaneDrag()) continue :loop;
+
+            // Escape leaves the pane sidebar's trash mode (T1845) - only in
+            // the window the key is for, and only after a drag had its turn.
+            if (vk == w32.VK_ESCAPE and self.leaveSidebarTrash(msg.hwnd.?)) continue :loop;
 
             // Modal "Rename Window" dialog: Enter/Escape/Tab are handled
             // by our code; every other key reaches the native controls
@@ -6474,6 +6479,21 @@ pub fn hasWindow(self: *const App, window: *const Window) bool {
 
 /// Cancel whichever window's pane drag is live (T1844). One drag at a time
 /// exists - it holds the mouse capture - so the first one found is it.
+/// Escape in trash mode (T1845, Mac's escape monitor): the window the key
+/// was posted into leaves it, and the key is consumed. Any other window's
+/// sidebar, and every window not in trash mode, leaves the key alone.
+fn leaveSidebarTrash(self: *App, target: w32.HWND) bool {
+    const root = w32.GetAncestor(target, w32.GA_ROOT) orelse return false;
+    for (self.windows.items) |w| {
+        const sb = w.sidebar orelse continue;
+        const mine = w.hwnd != null and w.hwnd.? == root;
+        if (!pane_sidebar_menu.escapeLeavesTrash(sb.quick_kill, mine, sb.drag_active)) continue;
+        sb.setQuickKill(false);
+        return true;
+    }
+    return false;
+}
+
 fn cancelPaneDrag(self: *App) bool {
     for (self.windows.items) |w| {
         if (w.cancelPaneDrag()) return true;

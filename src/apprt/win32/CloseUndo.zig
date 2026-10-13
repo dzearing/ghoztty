@@ -98,6 +98,11 @@ next_group: u64 = 1,
 /// throw away the redo history the way a fresh close does.
 replaying: bool = false,
 
+/// True while the pane sidebar's trash mode is killing a pane (T1845): that
+/// close is immediate by definition - no undo window, so nothing holds the
+/// pane and its session ends now rather than when the window would expire.
+bypass: bool = false,
+
 pub fn init(app: *App) CloseUndo {
     return .{ .app = app };
 }
@@ -140,6 +145,7 @@ pub fn endGroup(self: *CloseUndo) void {
 /// going away cannot hold anything.
 fn parkable(self: *const CloseUndo, window: *const Window) bool {
     if (self.timeoutMs() == null) return false;
+    if (self.bypass) return false;
     if (window.closing) return false;
     return true;
 }

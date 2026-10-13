@@ -150,7 +150,9 @@ function Get-PinCenter($sb, [string]$Mode) {
 }
 # The all-windows toggle: the 28 DIP button 2 DIP left of the pin.
 function Get-ScopeCenter($sb) {
-    return @{ X = $sb.Width - (Px 4) - (Px 28) - (Px 2) - [int]((Px 28) / 2); Y = Px 18 }
+    # Mac's header order, trailing edge first: pin, trash (T1845), then this
+    # toggle - two 28 DIP buttons and two 2 DIP gaps in from the pin's sm inset.
+    return @{ X = $sb.Width - (Px 4) - 2 * ((Px 28) + (Px 2)) - [int]((Px 28) / 2); Y = Px 18 }
 }
 
 . (Join-Path $PSScriptRoot 'lib\Transcript.ps1')

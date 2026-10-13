@@ -98,6 +98,35 @@ pub fn unmark(view: anytype) void {
     view.stash_seq = 0;
 }
 
+/// Swap a stashed pane with one on screen (T1845, Mac
+/// `SplitTree.exchanging(stashed:with:)`, the sidebar's Alt-click): `stashed`
+/// takes `visible`'s slot in the layout, and `visible` takes `stashed`'s place
+/// in the stash - the same position in its order, not the top. Returns the
+/// new tree; the caller swaps it in and deinits the old one. Nothing is
+/// re-marked until the new tree exists, so a failed allocation changes
+/// nothing.
+pub fn exchange(
+    tree: anytype,
+    gpa: std.mem.Allocator,
+    stashed: anytype,
+    visible: anytype,
+) (StashError || std.mem.Allocator.Error)!@TypeOf(tree) {
+    if (!isStashed(stashed) or isStashed(visible) or stashed == visible) return error.NotInTree;
+    var hs: ?@TypeOf(tree).Node.Handle = null;
+    var hv: ?@TypeOf(tree).Node.Handle = null;
+    var it = tree.iterator();
+    while (it.next()) |entry| {
+        if (entry.view == stashed) hs = entry.handle;
+        if (entry.view == visible) hv = entry.handle;
+    }
+    const a = hs orelse return error.NotInTree;
+    const b = hv orelse return error.NotInTree;
+    const out = try tree.swap(gpa, a, b);
+    visible.stash_seq = stashed.stash_seq;
+    stashed.stash_seq = 0;
+    return out;
+}
+
 /// Whether `view` is a leaf of `tree`.
 pub fn contains(tree: anytype, view: anytype) bool {
     var it = tree.iterator();
@@ -675,4 +704,55 @@ test "pane_stash: markAt on a stashed pane reorders it among the others (T1844)"
     // Dropped back where it already is: nothing moves.
     markAt(tree, &b, 1);
     try std.testing.expectEqual(@as(?usize, 1), stashIndex(tree, &b));
+}
+
+test "pane_stash: exchange puts the stashed pane in the visible one's slot, and the visible one in its stash place (T1845)" {
+    const alloc = std.testing.allocator;
+    var a: TestView = .{ .label = "A" };
+    var b: TestView = .{ .label = "B" };
+    var c: TestView = .{ .label = "C" };
+    var tree = try threePane(alloc, &a, &b, &c);
+    defer tree.deinit();
+
+    // B under C in the stash: C on top.
+    mark(&b);
+    mark(&c);
+    try std.testing.expectEqual(@as(?usize, 1), stashIndex(tree, &b));
+
+    // A's slot, by handle: the leaf B must occupy after the swap.
+    var slot_a: ?Tree.Node.Handle = null;
+    var it0 = tree.iterator();
+    while (it0.next()) |entry| if (entry.view == &a) {
+        slot_a = entry.handle;
+    };
+
+    var swapped = try exchange(tree, alloc, &b, &a);
+    defer swapped.deinit();
+    // B is on screen, in A's slot (the root's left leaf), and A is stashed
+    // exactly where B was: second, under C.
+    try std.testing.expect(!isStashed(&b));
+    try std.testing.expect(isStashed(&a));
+    try std.testing.expectEqual(@as(?usize, 1), stashIndex(swapped, &a));
+    try std.testing.expectEqual(@as(?usize, 0), stashIndex(swapped, &c));
+    try std.testing.expectEqual(@as(*TestView, &b), swapped.nodes[slot_a.?.idx()].leaf);
+    try std.testing.expectEqual(@as(usize, 1), visibleLeafCount(swapped));
+}
+
+test "pane_stash: exchange refuses two visible panes, two stashed ones, or a pane outside the tree (T1845)" {
+    const alloc = std.testing.allocator;
+    var a: TestView = .{ .label = "A" };
+    var b: TestView = .{ .label = "B" };
+    var c: TestView = .{ .label = "C" };
+    var stranger: TestView = .{ .label = "X" };
+    var tree = try threePane(alloc, &a, &b, &c);
+    defer tree.deinit();
+
+    try std.testing.expectError(error.NotInTree, exchange(tree, alloc, &a, &b));
+    mark(&b);
+    mark(&c);
+    try std.testing.expectError(error.NotInTree, exchange(tree, alloc, &b, &c));
+    mark(&stranger);
+    try std.testing.expectError(error.NotInTree, exchange(tree, alloc, &stranger, &a));
+    // Nothing was re-marked by a refusal.
+    try std.testing.expect(isStashed(&b) and isStashed(&c) and !isStashed(&a));
 }

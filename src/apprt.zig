@@ -119,6 +119,11 @@ test {
     // Imports only std. Every lane.
     _ = @import("apprt/win32/pane_sidebar_motion.zig");
 
+    // Pure win32 pane sidebar row actions (T1845): what a click, an
+    // Alt-click and the right-click menu do, and trash mode's Escape rule.
+    // Imports only pane_sidebar.zig. Every lane.
+    _ = @import("apprt/win32/pane_sidebar_menu.zig");
+
     // Pure win32 erase-vs-preserve rule for the resize paint path (T1031),
     // same no-OS-imports deal.
     _ = @import("apprt/win32/resize_paint.zig");

@@ -35690,3 +35690,24 @@ moved to T1814.
   idle or for the rail's "?". The bell tally and dot appear on a stashed
   BEL and clear once the pane is focused. ALL PASS (31); the negative
   control fails. Filed T1889 (Mac's row badge is a "question" capsule).
+
+## 2026-10-12 — T1845: sidebar right-click menu, Alt-click swap, trash mode
+
+- **What changed.** The Windows pane sidebar now acts on panes the way Mac's
+  does. Right-click a row (or a rail tile) for Stash Pane / Move to New
+  Window / Close Pane; a stashed row offers Restore and "Swap with Focused
+  Pane" first. Alt-click a stashed row to swap it with the focused pane.
+  The header's new trash button (between the all-windows toggle and the
+  pin) puts a red x on every row and tile that kills its pane at once.
+  Escape or the button leaves trash mode, and it is never saved.
+- **How.** Pure rules in `pane_sidebar_menu.zig`; the swap is
+  `pane_stash.exchange` (leaves swapped, stash place handed over). Close
+  Pane runs the pane's own close binding, so confirmation and remote
+  Disconnect are the usual ones. A kill raises `CloseUndo.bypass`, so
+  nothing is parked for undo. Alt is read at the press. The open card holds
+  open under its menu.
+- **Validation.** New `test/win32/pane-sidebar-actions.ps1`: ALL PASS (39);
+  the negative control fails. Floor lanes, the harness floor and the 44
+  harnesses this touched are green. `pane-sidebar-all-windows.ps1` now
+  finds the all-windows button two slots from the pin. Filed T1891 (Mac's
+  wording for another window's row tooltips).
