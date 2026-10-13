@@ -10945,7 +10945,13 @@ fn menuBarState(self: *Window) menu_bar.State {
         .is_quick_terminal = self.is_quick_terminal,
         .can_undo = self.app.close_undo.canUndo(self),
         .can_redo = self.app.close_undo.canRedo(self),
+        .has_pane_sidebar = !self.is_quick_terminal,
+        .pane_sidebar_hidden = self.pane_sidebar_hidden,
     };
+    if (self.tab_count > 0) {
+        state.visible_pane_count = self.visibleLeafCount(self.active_tab);
+        state.stashed_count = pane_stash.stashedCount(self.tab_trees[self.active_tab]);
+    }
     // T191: read the topmost bit off the window rather than tracking it —
     // the OS owns it (it propagates to owned popups, and another process can
     // set it), so a mirrored flag could only ever be a second version of the

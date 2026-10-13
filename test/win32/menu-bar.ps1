@@ -568,6 +568,10 @@ $expectedTree = @(
     "&Window/&Zoom Split"
     "&Window/Toggle Hero &Mode"
     "&Window/Toggle Re&arrange Mode"
+    '&Window/---'
+    "&Window/Hide Pane S&idebar"
+    "&Window/Stash Pan&e"
+    "&Window/Restore Stashe&d Pane"
     "&Window/Select &Previous Split"
     "&Window/Select &Next Split"
     '&Window/&Select Split >'
@@ -592,7 +596,7 @@ $expectedTree = @(
     "&Window/Next Ta&b"
     "&Window/&Last Tab"
     '&Window/---'
-    "&Window/Return To &Default Size"
+    "&Window/Return To Defa&ult Size"
     "&Window/Fl&oat on Top"
     '&Help >'
     "&Help/Ghoztty &Help"
@@ -818,6 +822,14 @@ if ($null -ne $tree) {
     Assert ($null -ne $undo -and $undo.Accel -eq 'Ctrl+Shift+Z') "B: Edit>Undo Close is labeled Ctrl+Shift+Z (got '$($undo.Accel)')"
     $about = Row $tree "&Help/&About Ghoztty"
     Assert ($null -ne $about -and $about.Accel -eq '') "B: About (no binding) shows no chord (got '$($about.Accel)')"
+    # T1848: the pane sidebar rows carry their Windows chords, and the
+    # restore - unbound by default, as on Mac - carries none.
+    $sbRow = Row $tree "&Window/Hide Pane S&idebar"
+    Assert ($null -ne $sbRow -and $sbRow.Accel -eq 'Ctrl+Shift+S') "B(T1848): Hide Pane Sidebar is labeled Ctrl+Shift+S (got '$($sbRow.Accel)')"
+    $stRow = Row $tree "&Window/Stash Pan&e"
+    Assert ($null -ne $stRow -and $stRow.Accel -eq 'Ctrl+Shift+M') "B(T1848): Stash Pane is labeled Ctrl+Shift+M (got '$($stRow.Accel)')"
+    $rsRow = Row $tree "&Window/Restore Stashe&d Pane"
+    Assert ($null -ne $rsRow -and $rsRow.Accel -eq '') "B(T1848): Restore Stashed Pane (unbound) shows no chord (got '$($rsRow.Accel)')"
 }
 
 # --- D: state gating, single pane / two tabs -------------------------------
@@ -828,6 +840,11 @@ if ($null -ne $tree) {
     Assert ((Row-Flags $tree "&Window/&Zoom Split") -eq ':grayed') 'D: Zoom Split is grayed in a single-pane tab'
     Assert ((Row-Flags $tree "&Window/&Select Split/Select Split &Left") -eq ':grayed') 'D: Select Split rows are grayed in a single-pane tab'
     Assert ((Row-Flags $tree "&Window/&Resize Split/Move Divider &Up") -eq ':grayed') 'D: Move Divider rows are grayed in a single-pane tab'
+    # T1848, Mac's validateMenuItem gates: the sidebar row is always live, a
+    # stash needs a second pane on screen, a restore needs something stashed.
+    Assert ((Row-Flags $tree "&Window/Hide Pane S&idebar") -eq '') 'D(T1848): Hide Pane Sidebar is enabled'
+    Assert ((Row-Flags $tree "&Window/Stash Pan&e") -eq ':grayed') 'D(T1848): Stash Pane is grayed in a single-pane tab'
+    Assert ((Row-Flags $tree "&Window/Restore Stashe&d Pane") -eq ':grayed') 'D(T1848): Restore Stashed Pane is grayed with nothing stashed'
     # Run 1 opened a second tab in section A, so the tab rows are live - and
     # that PREMISE is asserted here rather than assumed (T1110). With one tab,
     # Close Tab and tab cycling being grayed is CORRECT behaviour, so the two
@@ -853,6 +870,30 @@ Assert (Test-MenuGone $g.Pid 2500) 'C: choosing Select All closes the menu'
 Start-Sleep -Milliseconds 600
 $tree = Open-Menu $g
 Assert ($null -ne $tree -and (Row-Flags $tree "&Edit/&Copy") -eq '') 'C/D: Copy is enabled after menu>Edit>Select All (dispatch AND live state)'
+Close-Menu $g
+
+# --- C(T1848): Window>Hide Pane Sidebar dispatches and the row retitles -----
+[void](Click-MenuHost $g.Top)
+$m = Wait-Menu $g.Pid 3000
+Assert ($m -ne [IntPtr]::Zero) 'C(T1848): menu opens for the sidebar toggle'
+Send-MenuKey $g.Top 'W'  # Window submenu
+Start-Sleep -Milliseconds 300
+Send-MenuKey $g.Top 'I'  # Hide Pane S&idebar
+Assert (Test-MenuGone $g.Pid 2500) 'C(T1848): choosing Hide Pane Sidebar closes the menu'
+Start-Sleep -Milliseconds 600
+$tree = Open-Menu $g
+Assert ($null -ne $tree -and $null -ne (Row $tree "&Window/Show Pane S&idebar")) 'C(T1848): after hiding, the row offers Show Pane Sidebar (dispatch AND retitle)'
+Close-Menu $g
+# Put it back, so later sections see the window they were written against.
+[void](Click-MenuHost $g.Top)
+$m = Wait-Menu $g.Pid 3000
+Send-MenuKey $g.Top 'W'
+Start-Sleep -Milliseconds 300
+Send-MenuKey $g.Top 'I'
+[void](Test-MenuGone $g.Pid 2500)
+Start-Sleep -Milliseconds 600
+$tree = Open-Menu $g
+Assert ($null -ne $tree -and $null -ne (Row $tree "&Window/Hide Pane S&idebar")) 'C(T1848): choosing it again shows the sidebar and the row reads Hide again'
 Close-Menu $g
 
 # --- C: File>New Tab dispatches -------------------------------------------

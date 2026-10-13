@@ -104,6 +104,9 @@ pub const Id = enum {
     toggle_split_zoom,
     toggle_hero_mode,
     toggle_rearrange_mode,
+    toggle_pane_sidebar,
+    stash_pane,
+    restore_stashed_pane,
     equalize_splits,
     move_divider_up,
     move_divider_down,
@@ -292,6 +295,12 @@ pub const registry = [_]Command{
     .{ .id = .toggle_split_zoom, .name = "Toggle Split Zoom", .action = .toggle_split_zoom },
     .{ .id = .toggle_hero_mode, .name = "Toggle Hero Mode", .action = .toggle_hero_mode },
     .{ .id = .toggle_rearrange_mode, .name = "Toggle Rearrange Mode", .action = .toggle_rearrange_mode },
+    // The pane sidebar and its stash (T1848). The core's own palette titles
+    // (`src/input/command.zig`), so the registry row replaces the default
+    // rather than sitting beside it (`coversDefault`).
+    .{ .id = .toggle_pane_sidebar, .name = "Toggle Pane Sidebar", .action = .toggle_pane_sidebar },
+    .{ .id = .stash_pane, .name = "Stash Pane", .action = .stash_pane },
+    .{ .id = .restore_stashed_pane, .name = "Restore Stashed Pane", .action = .restore_stashed_pane },
     .{ .id = .equalize_splits, .name = "Equalize Splits", .action = .equalize_splits },
     .{ .id = .move_divider_up, .name = "Move Divider Up", .action = .{ .resize_split = .{ .up, DIVIDER_STEP } } },
     .{ .id = .move_divider_down, .name = "Move Divider Down", .action = .{ .resize_split = .{ .down, DIVIDER_STEP } } },

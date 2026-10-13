@@ -5687,7 +5687,7 @@ esize-flicker.ps1` is the acceptance (16 assertions, guarded by
   agent's own relay links - inherits the bound with no changes. Tested with
   silent-accept endpoints at three levels (socket_rw / ws_client /
   relay_dial), each bounded at 500ms deadlines. Verified: floor 4/4,
-  chooser-sessions-remote ALL PASS (20) + NegativeControl (13), P1-P3 green.
+  chooser-sessions-remote ALL PASS (20) + NegativeControl (13), P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
   Filed T859 (roster retry-on-fresh-dial is now safe to reintroduce).
   Commit 75ac7fefb.
 - 2026-08-15 - **T508 - the "concurrent savers never error" promise now
@@ -6822,7 +6822,7 @@ esize-flicker.ps1` is the acceptance (16 assertions, guarded by
   whose subject was not touched, and nothing records when a script was last
   green. Validation: `chooser-restore-all-remote.ps1` ALL PASS (35),
   `chooser-restore-all.ps1` ALL PASS (30), `chooser-sessions-remote.ps1` ALL PASS
-  (20), `relay-account.ps1` ALL PASS, all three zig lanes and P1-P3 green.
+  (20), `relay-account.ps1` ALL PASS, all three zig lanes and P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 
 - 2026-08-08 - **T356 done - a cross-machine pane stops asking to confirm a
   close it does not need to ask about**. T41 skips the confirmation for an idle
@@ -7163,7 +7163,7 @@ esize-flicker.ps1` is the acceptance (16 assertions, guarded by
   real-pty unit test to run on Windows too (cmd `/d /k echo` marker); new
   `test\win32\agent-shell-integration.ps1` ALL PASS (rewrite on the child's
   command line, GHOSTTY_POWERSHELL in-pane, +list follows an in-pane `cd` via
-  OSC 7, default pane stays clean cmd.exe); floor lanes + P1-P3 green.
+  OSC 7, default pane stays clean cmd.exe); floor lanes + P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
   Filed: T513 (detection never strips `.exe` for bash/nu/zsh/fish, so
   `--shell=bash.exe`/full git-bash paths still get nothing), T514 (a config
   `command = <shell>` nests under cmd.exe on agent panes and loses
@@ -10097,7 +10097,7 @@ T146). Next: **T174**, then T142.
   launcher's), so nothing can pass vacuously. **Negative control**
   (`T144_NEUTERED`): 8 assertions fail and they read as the user's report -
   every persistence-ON shell in `c:\windows\system32`, persistence-OFF fine.
-  Both lanes, `test-agent` and P1-P3 green.
+  Both lanes, `test-agent` and P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 - Harness trap worth keeping: **PowerShell unrolls a one-element array on
   return**, and a lone `PSCustomObject` has no usable `.Count` in PS 5.1, so
   `(Windows-Of $tree).Count -ge 1` was *always false* for a single-window app -
@@ -10677,7 +10677,7 @@ since posted messages skip hit testing), `Wait-TestPopupMenu`, and
 `dark-menus.ps1` ALL PASS (10) x3 with stable readings (dark 52/49, light
 240/244), `-NegativeControl` fails 2 of 8 as required, isolation asserted per
 launch and across the run. Floor: both `zig build test` lanes, `test-agent`,
-P1-P3 green.
+P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 
 ## 2026-07-31 - T217 batch 1: four keyboard-only scripts off the user's desktop
 
@@ -10717,7 +10717,7 @@ result then arrives as a scalar whose `.Count` is `$null`, which reads as
 All four ALL PASS x3 (12 runs), negative controls fail as required, and every
 run asserts - not assumes - that no test-desktop app ever took foreground on
 the interactive desktop. Floor: both `zig build test` lanes, `test-agent`,
-P1-P3 green.
+P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 
 ## 2026-07-31 - T217 batch 2: three more scripts off the user's desktop
 
@@ -10826,7 +10826,7 @@ the pane ctrl+n actually inherits from. Batch 3 used that pairing to pick the
 right pane within a window; here it picks the right **window**, where every
 pane is an indistinguishable `cmd.exe`.
 
-Floor: both `zig build test` lanes, `test-agent`, P1-P3 green.
+Floor: both `zig build test` lanes, `test-agent`, P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 
 ## 2026-07-31 - T217 batch 6: two more scripts, and a product bug the move found
 
@@ -10875,7 +10875,7 @@ assertion inverts rather than merely weakening - and it measures input latency
 through `SendInput`, which a posted-key port would turn into a different
 quantity. Decide that deliberately rather than converting it mechanically.
 
-Floor: both `zig build test` lanes, `test-agent`, P1-P3 green.
+Floor: both `zig build test` lanes, `test-agent`, P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 
 ## 2026-07-31 - T217 batch 7: relay-account + ipc-machine-chooser onto the test desktop
 
@@ -11037,7 +11037,7 @@ script's positive control fails, check the product's current geometry BEFORE
 weakening the assertion - twice out of three here the script was wrong and the
 product was right.
 
-Floor: both `zig build test` lanes, `test-agent`, P1-P3 green.
+Floor: both `zig build test` lanes, `test-agent`, P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 
 ## 2026-07-31 - T218 batch 3: the pointer pair, and two oracles a background desktop cannot hold
 
@@ -11086,7 +11086,7 @@ cursor. And a posted down/moves/up drag on the TOP-LEVEL window is a faithful
 divider drag, because `updateDividerDrag` reads the WM_MOUSEMOVE lparam and
 consults neither MK_LBUTTON nor the cursor.
 
-Floor: both `zig build test` lanes, `test-agent`, P1-P3 green.
+Floor: both `zig build test` lanes, `test-agent`, P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 
 ## 2026-07-31 - T218 batch 4: the popup-menu pair, and a constant the product left behind
 
@@ -11334,7 +11334,7 @@ Proved rather than argued: same scenario, old watchdog `ACTION
 restart-in-pane`, new watchdog `ACTION nudge`. `go-loop-guard.ps1` ALL PASS
 (103), with N2/N3 as the positive control that a genuine shell prompt still
 gets the shim; its GUI sections now run on the T211 background desktop. Both
-test lanes + test-agent + P1-P3 green.
+test lanes + test-agent + P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 
 ## 2026-07-31 - T240: the menu was there, the workflow just never reached it
 
@@ -11374,7 +11374,7 @@ this class of defect. That script's section D asserted the old behavior as
 "Mac parity"; it is inverted, gated on the fixture printing `MOUSEMODE-ON`,
 and paired with a new D2 (reporting + `paste` = no menu) so "a menu appeared"
 can no longer pass on a fixture whose console mode never landed. Both test
-lanes + test-agent + P1-P3 green.
+lanes + test-agent + P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 
 ## 2026-07-31 - T150: the picker set a background and left the text behind
 
@@ -17172,7 +17172,7 @@ kill with no settle delay, assert the manifest on disk already holds the new
 frame, relaunch and assert the restored size - x3. ALL PASS (23); with the
 fix reverted it fails 6/6 on exactly the two race assertions. Filed T554
 (seat: mac) - the Mac scheduleSync debounce has the same shape - and D23 for
-the keep-geometry-in-the-manifest call. Floor lanes + P1-P3 green.
+the keep-geometry-in-the-manifest call. Floor lanes + P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 
 
 ## 2026-08-07 - T341 done: Action.cval no longer hands apprts undefined union bytes
@@ -20798,7 +20798,7 @@ PowerShell's own calendar, not by the code under test. Teeth-checked with
 `-TeethCheck`, which collapses both fabrications onto the running stamp: exactly
 the C/D/E status arms go red (8 failures) and nothing else moves. 13 unit tests
 in the `none` lane, teeth-checked there too by breaking one assertion and
-watching the lane name it. Floor lanes and P1-P3 green.
+watching the lane name it. Floor lanes and P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 
 ## 2026-08-10 — the screenshot picker can now be driven entirely from the keyboard (T671)
 
@@ -20853,7 +20853,7 @@ the announcement itself rather than a test-only side channel; it read
 tracks rather than answering a constant. 17 unit tests in `region_select.zig`
 cover the pure half (step sizes, clamping — far edge inclusive, so the last
 column is selectable — Shift-extend, the caret box at 1.0/1.25/1.5/2.0, and
-that every status line fits the card's template). Floor lanes and P1-P3 green.
+that every status line fits the card's template). Floor lanes and P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 Filed T706: the caret starts on the *pointer's* monitor, which says nothing
 about where a keyboard-only user is looking.
 
@@ -29464,7 +29464,7 @@ right end it is 5760,1080 - the centres of the two real monitors on this box,
 with the pointer untouched in between. `capture=begin` now carries
 `home=<rect> source=owner|pointer|desktop`, which is both the oracle and the
 line that makes a multi-monitor report readable. ALL PASS (92); four floor lanes
-and P1-P3 green.
+and P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 
 **T1510** filed on the way past, and it is worth reading. Writing that arm hit a
 PowerShell error mid-run - `$home` is read-only - and the script skipped 78 of
@@ -33628,7 +33628,7 @@ text buffer on creation AFTER both show paths had loaded it, so the first tip
 of a window's life (and the first after a theme reset) was a blank bubble; both
 paths fixed. `remote-pill.ps1` section 6 ALL PASS (19) - connected and dropped
 tips shown, placed inside the window, no show without a hover; negative
-control exits 1; tab-tooltip ALL PASS (29); floor ALL LANES PASS; P1-P3 green.
+control exits 1; tab-tooltip ALL PASS (29); floor ALL LANES PASS; P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 The caption buttons' own tips are T1733.
 
 ## 2026-09-24 - T1734: the harness floor's load-only red, and a red row that says why
@@ -34619,7 +34619,7 @@ only the background is see-through. GDI chrome goes through paintAlphaCorrect
 blend - a plain blit let the divider pass erase the caption); the viewer host
 and tab-rename box are opaque layered children. New input-desktop harness
 translucent-window.ps1 (checker-vs-blue see-through oracle) ALL PASS 11, 5 FAIL
-on the pre-fix build. Floor lanes, harness floor, 22 due guards, P1-P3 green.
+on the pre-fix build. Floor lanes, harness floor, 22 due guards, P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
 Filed T1789 (reload ignores opacity), T1790 (toggled-opaque bg premultiplied).
 
 ## 2026-09-27 — T1760: chooser session cards drop the redundant "open" chip
@@ -35754,3 +35754,23 @@ moved to T1814.
   `persistence-flag.ps1` caught this script building its flag by
   interpolation (fixed); `pane-sidebar.ps1` went red only in-suite after a
   leaked process and was green alone (filed T1892). Harness floor run.
+
+## 2026-10-13 — T1848: the pane sidebar and stash are in the Windows menu
+
+- **What changed.** The menu button's Window submenu now has Mac's three
+  pane-sidebar rows after Toggle Rearrange Mode, behind a separator: Hide /
+  Show Pane Sidebar (Ctrl+Shift+S), Stash Pane (Ctrl+Shift+M) and Restore
+  Stashed Pane (no default chord, as on Mac). Until now they could only be
+  reached by chord or palette.
+- **How.** Three new `commands.zig` registry rows using the core's palette
+  titles (so they replace the default palette rows instead of duplicating
+  them), placed in `menu_bar.zig` and gated as Mac's `validateMenuItem` does:
+  no sidebar (quick terminal) grays all three, Stash needs a second pane on
+  screen, Restore needs something stashed, and the sidebar row retitles
+  Show/Hide. `Window.menuBarState` supplies the visible and stashed counts.
+  Return To Default Size moved its mnemonic from D to u, because Restore
+  Stashed Pane has no other free letter at that level.
+- **Validation.** New menu_bar unit tests (gating, retitle, placement).
+  `menu-bar.ps1` ALL PASS (93), including new B/C/D checks that choose the
+  row from the menu and read it back retitled. Floor lanes, harness floor,
+  P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).

@@ -98,6 +98,16 @@ pub const State = struct {
     /// can still redo (T1825).
     can_undo: bool = false,
     can_redo: bool = false,
+    /// This window has a pane sidebar at all (T1848) — every window but the
+    /// quick terminal (Mac `hasPaneSidebar`).
+    has_pane_sidebar: bool = false,
+    /// The sidebar is hidden outright, so its row offers to SHOW it.
+    pane_sidebar_hidden: bool = false,
+    /// Panes ON SCREEN in the active tab: `pane_count` minus the stashed
+    /// ones. Stashing the last of them is refused, so the row grays.
+    visible_pane_count: usize = 1,
+    /// Panes in the active tab's stash.
+    stashed_count: usize = 0,
 };
 
 pub const Flags = struct {
@@ -215,6 +225,13 @@ const window_menu = [_]Node{
     .{ .item = .{ .cmd = .toggle_split_zoom, .title = u16lit("&Zoom Split") } },
     .{ .item = .{ .cmd = .toggle_hero_mode, .title = u16lit("Toggle Hero &Mode") } },
     .{ .item = .{ .cmd = .toggle_rearrange_mode, .title = u16lit("Toggle Re&arrange Mode") } },
+    // T1848: Mac's three pane-sidebar rows, in Mac's place — a separator
+    // after Toggle Rearrange Mode, then straight into Select Previous Split
+    // (`MainMenu.xib`). The sidebar row's title flips Show/Hide (`title`).
+    .separator,
+    .{ .item = .{ .cmd = .toggle_pane_sidebar, .title = u16lit("Show Pane S&idebar") } },
+    .{ .item = .{ .cmd = .stash_pane, .title = u16lit("Stash Pan&e") } },
+    .{ .item = .{ .cmd = .restore_stashed_pane, .title = u16lit("Restore Stashe&d Pane") } },
     .{ .item = .{ .cmd = .focus_split_previous, .title = u16lit("Select &Previous Split") } },
     .{ .item = .{ .cmd = .focus_split_next, .title = u16lit("Select &Next Split") } },
     .{ .submenu = .{ .title = u16lit("&Select Split"), .items = &select_split_menu } },
@@ -227,7 +244,9 @@ const window_menu = [_]Node{
     .{ .item = .{ .cmd = .next_tab, .title = u16lit("Next Ta&b") } },
     .{ .item = .{ .cmd = .last_tab, .title = u16lit("&Last Tab") } },
     .separator,
-    .{ .item = .{ .cmd = .reset_window_size, .title = u16lit("Return To &Default Size") } },
+    // `D` went to Restore Stashed Pane (T1848), whose title has no other
+    // free letter at this level.
+    .{ .item = .{ .cmd = .reset_window_size, .title = u16lit("Return To Defa&ult Size") } },
     // Mac's Window menu puts Float on Top directly after Return To Default
     // Size (`MainMenu.xib`), and it is a checkable row there — so it is one
     // here. `F` and `T` are already spoken for at this level, hence `o`.
@@ -418,6 +437,13 @@ pub fn flags(cmd: commands.Id, state: State) Flags {
 
         .toggle_readonly => .{ .checked = state.readonly },
 
+        // The pane sidebar rows (T1848), gated exactly as Mac's
+        // `validateMenuItem` gates them: no sidebar, no rows; a stash needs a
+        // pane to leave on screen; a restore needs something stashed.
+        .toggle_pane_sidebar => .{ .enabled = state.has_pane_sidebar },
+        .stash_pane => .{ .enabled = state.has_pane_sidebar and state.visible_pane_count > 1 },
+        .restore_stashed_pane => .{ .enabled = state.has_pane_sidebar and state.stashed_count > 0 },
+
         .undo => .{ .enabled = state.can_undo },
         .redo => .{ .enabled = state.can_redo },
 
@@ -440,6 +466,9 @@ pub fn title(item: Item, state: State) [:0]const u16 {
     // the app is the one place a user needs to be told that.
     if (item.cmd == .quit and state.session_persistence)
         return u16lit("E&xit (keep sessions)");
+    // Mac retitles this row from the sidebar's state (`validateMenuItem`).
+    if (item.cmd == .toggle_pane_sidebar and !state.pane_sidebar_hidden)
+        return u16lit("Hide Pane S&idebar");
     return item.title;
 }
 
@@ -640,6 +669,41 @@ test "float on top sits where Mac puts it, at the foot of the Window menu (T191)
     const prev = window_menu[window_menu.len - 2];
     try std.testing.expectEqual(commands.Id.toggle_float_on_top, last.item.cmd);
     try std.testing.expectEqual(commands.Id.reset_window_size, prev.item.cmd);
+}
+
+test "pane sidebar rows gate and retitle the way Mac's do (T1848)" {
+    const on: State = .{ .has_pane_sidebar = true };
+    // The quick terminal has no sidebar: all three gray.
+    try std.testing.expect(!flags(.toggle_pane_sidebar, .{}).enabled);
+    try std.testing.expect(!flags(.stash_pane, .{ .visible_pane_count = 3 }).enabled);
+    try std.testing.expect(!flags(.restore_stashed_pane, .{ .stashed_count = 1 }).enabled);
+    // A sidebar can always be shown or hidden.
+    try std.testing.expect(flags(.toggle_pane_sidebar, on).enabled);
+    // Stash needs a pane left on screen afterwards.
+    try std.testing.expect(!flags(.stash_pane, on).enabled);
+    try std.testing.expect(flags(.stash_pane, .{ .has_pane_sidebar = true, .visible_pane_count = 2 }).enabled);
+    // Restore needs something stashed.
+    try std.testing.expect(!flags(.restore_stashed_pane, on).enabled);
+    try std.testing.expect(flags(.restore_stashed_pane, .{ .has_pane_sidebar = true, .stashed_count = 1 }).enabled);
+
+    const item: Item = .{ .cmd = .toggle_pane_sidebar, .title = u16lit("Show Pane S&idebar") };
+    try std.testing.expectEqualSlices(u16, u16lit("Hide Pane S&idebar"), title(item, on));
+    try std.testing.expectEqualSlices(
+        u16,
+        u16lit("Show Pane S&idebar"),
+        title(item, .{ .has_pane_sidebar = true, .pane_sidebar_hidden = true }),
+    );
+}
+
+test "pane sidebar rows sit where Mac puts them, after Toggle Rearrange Mode (T1848)" {
+    const at = for (window_menu, 0..) |n, i| {
+        if (n == .item and n.item.cmd == .toggle_rearrange_mode) break i;
+    } else return error.TestUnexpectedResult;
+    try std.testing.expect(window_menu[at + 1] == .separator);
+    try std.testing.expectEqual(commands.Id.toggle_pane_sidebar, window_menu[at + 2].item.cmd);
+    try std.testing.expectEqual(commands.Id.stash_pane, window_menu[at + 3].item.cmd);
+    try std.testing.expectEqual(commands.Id.restore_stashed_pane, window_menu[at + 4].item.cmd);
+    try std.testing.expectEqual(commands.Id.focus_split_previous, window_menu[at + 5].item.cmd);
 }
 
 test "read-only is a checkmark, not a gray-out" {

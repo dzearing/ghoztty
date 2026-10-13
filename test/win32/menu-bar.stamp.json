@@ -1,16 +1,16 @@
 {
     "guard":  "menu-bar",
     "script":  "test/win32/menu-bar.ps1",
-    "generated":  "2026-10-12T05:19:36-07:00",
-    "commit":  "9637ff6d4",
+    "generated":  "2026-10-12T23:54:39-07:00",
+    "commit":  "18cfa2b8e",
     "uncommitted":  [
                         "src/apprt/win32/commands.zig",
                         "src/apprt/win32/menu_bar.zig",
                         "test/win32/menu-bar.ps1"
                     ],
     "files":  {
-                  "src/apprt/win32/commands.zig":  "e0c94253c89ab45a3e51970c9c82cf42dd304d4396d1d7b0644c6fe642108132",
-                  "src/apprt/win32/menu_bar.zig":  "78f68f7b41d2802637cf5e04187ec3ffded33f0c2bb9db87eca826b477bef900",
-                  "test/win32/menu-bar.ps1":  "bae52e73c5665f879e464d51549f4d691435e27bd6d814812888d66cf3999124"
+                  "src/apprt/win32/commands.zig":  "f0acd99283ee58d1c9b4f5d09dbd9ae6e7bf6726bdb48ed13e53b227c7cf0dce",
+                  "src/apprt/win32/menu_bar.zig":  "a22b497abe5cbd5ab5ad2d83f30f9fd7ba4688a66e3392d4bf3616afa0c37b3f",
+                  "test/win32/menu-bar.ps1":  "180015c8696ec61d25ea7bb5fd4249fb148201b86e3ce1fab799892899e53d37"
               }
 }
