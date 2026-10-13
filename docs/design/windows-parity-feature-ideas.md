@@ -440,3 +440,12 @@ as the digest that showed them.
 - Recently closed, at the foot of the sidebar (new angle on reopening a closed pane: greyed rows for the last minute's closes, click to restore)
 - Cards shaped like Windows 11 windows (pane corner radius and shadow follow the system's own window chrome)
 - An undo that outlives a crash (a just-closed pane's session is kept for the undo window, so undo works after a crash or restart)
+
+## 2026-10-13
+
+- The light finishes its lap (new angle on finish notices: a busy pane's border light runs one bright lap when it stops, then a faint edge until you look)
+- Busy tabs glow too (a thin moving light under a tab whose pane is busy)
+- Hover a link, see where it goes (hover card for URLs and file paths: page title, first lines, or not found)
+- Copy a pane as a picture (new angle on copy-as-image: the whole pane card with corners and gradient)
+- How long it has been working (busy pane's sidebar row shows elapsed time)
+- A busy light that costs nothing (border light drawn by the compositor, not by redrawing the terminal)
