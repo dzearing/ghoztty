@@ -77,7 +77,14 @@ struct PaneSidebarView: View {
             if state.isQuickKill {
                 SidePanelCaption(text: "Click × to kill", color: Color(nsColor: .systemRed))
             } else {
-                SidePanelCaption(text: state.showsAllWindows ? "All windows" : "Panes")
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    SidePanelCaption(text: state.showsAllWindows ? "All windows" : "Panes")
+                    if state.showsAllWindows {
+                        // How many WINDOWS, styled as a project header's count.
+                        PaneSidebarCount(value: allControllers.count)
+                            .accessibilityLabel("\(allControllers.count) windows")
+                    }
+                }
             }
         }
     }
@@ -155,12 +162,18 @@ struct PaneSidebarView: View {
         }
     }
 
+    /// Every terminal window with a sidebar, this one included even before
+    /// it is visible.
+    private var allControllers: [BaseTerminalController] {
+        let controllers = roster.controllers
+        return controllers.contains { $0 === controller } ? controllers : [controller] + controllers
+    }
+
     /// Every window, sorted by name; `<project>: <worktree>` windows grouped
     /// under a collapsible, sticky project header (`PaneSidebarWindowGrouping`).
     @ViewBuilder
     private var allWindows: some View {
-        let controllers = roster.controllers.contains { $0 === controller }
-            ? roster.controllers : [controller] + roster.controllers
+        let controllers = allControllers
         let byID = Dictionary(uniqueKeysWithValues: controllers.map { (ObjectIdentifier($0), $0) })
         let titled = controllers.map { (id: ObjectIdentifier($0), title: PaneSidebarText.windowTitle(of: $0)) }
         let matches = searchMatches(controllers, titles: Dictionary(uniqueKeysWithValues: titled.map { ($0.id, $0.title) }))
@@ -229,7 +242,9 @@ struct PaneSidebarView: View {
         indent: CGFloat = 0,
         matches: Set<ObjectIdentifier>? = nil
     ) -> some View {
-        let folded = matches == nil && state.foldedWindows.contains(ObjectIdentifier(owner))
+        let id = ObjectIdentifier(owner)
+        let folded = PaneSidebarState.isWindowFolded(
+            isThisWindow: isThisWindow, isToggled: state.toggledWindows.contains(id), isSearching: matches != nil)
         return VStack(alignment: .leading, spacing: 0) {
             if isRail {
                 PaneSidebarDivider(isRail: true)
@@ -244,8 +259,8 @@ struct PaneSidebarView: View {
                     isDropTarget: isJoinTarget(owner),
                     onFold: {
                         withAnimation(PaneSidebarOutline.foldAnimation) {
-                            if folded { state.foldedWindows.remove(ObjectIdentifier(owner)) }
-                            else { state.foldedWindows.insert(ObjectIdentifier(owner)) }
+                            if state.toggledWindows.contains(id) { state.toggledWindows.remove(id) }
+                            else { state.toggledWindows.insert(id) }
                         }
                     })
             }
@@ -260,13 +275,22 @@ struct PaneSidebarView: View {
                 .transition(PaneSidebarOutline.foldTransition)
             }
         }
-        .background(GeometryReader { proxy in
-            Color.clear.preference(
-                key: PaneSidebarGroupFrames.self,
-                value: isThisWindow ? [] : [.init(
-                    window: PaneDropWindowRef(owner),
-                    frame: proxy.frame(in: .named(PaneSidebarGeometry.space)))])
-        })
+        .background {
+            // Only while a drag is in flight: the frames are in the panel's
+            // space, outside the scroll view, so they change on every frame
+            // of a scroll — and each change sends SwiftUI through a rebuild
+            // of the window's key-view loop. Measured as the largest cost
+            // left in scrolling a fully expanded list.
+            if dragSession.isDragging && !isThisWindow {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: PaneSidebarGroupFrames.self,
+                        value: [.init(
+                            window: PaneDropWindowRef(owner),
+                            frame: proxy.frame(in: .named(PaneSidebarGeometry.space)))])
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -297,9 +321,7 @@ struct PaneSidebarView: View {
                     SidePanelCaption(text: "Stashed")
                     Spacer()
                     if !stashed.isEmpty {
-                        Text("\(stashed.count)")
-                            .font(.system(size: 10.5, weight: .medium).monospacedDigit())
-                            .foregroundStyle(.tertiary)
+                        PaneSidebarCount(value: stashed.count)
                     }
                 }
                 .padding(.leading, SidePanelRow.labelInset + indent)
@@ -340,13 +362,16 @@ struct PaneSidebarView: View {
             isQuickKill: state.isQuickKill,
             isBeingDragged: dragSession.isDragging(pane),
             indent: indent)
-        .background(GeometryReader { proxy in
-            Color.clear.preference(
-                key: PaneSidebarRowFrames.self,
-                value: isThisWindow && isStashed
-                    ? [.init(id: pane.id, frame: proxy.frame(in: .named(PaneSidebarGeometry.space)))]
-                    : [])
-        })
+        .background {
+            // Only during a drag, for the same reason as a group's frame.
+            if dragSession.isDragging && isThisWindow && isStashed {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: PaneSidebarRowFrames.self,
+                        value: [.init(id: pane.id, frame: proxy.frame(in: .named(PaneSidebarGeometry.space)))])
+                }
+            }
+        }
     }
 
     // MARK: Search
@@ -373,8 +398,7 @@ struct PaneSidebarView: View {
 
     /// Return in the search field: go to the first match, as clicking it would.
     private func revealFirstMatch() {
-        let controllers = roster.controllers.contains { $0 === controller }
-            ? roster.controllers : [controller] + roster.controllers
+        let controllers = allControllers
         let titled = controllers.map { (id: ObjectIdentifier($0), title: PaneSidebarText.windowTitle(of: $0)) }
         guard let matches = searchMatches(
             controllers, titles: Dictionary(uniqueKeysWithValues: titled.map { ($0.id, $0.title) })) else { return }
@@ -526,9 +550,7 @@ private struct PaneSidebarWindowHeader: View {
             if hasQuestion {
                 PaneSidebarQuestionBadge(isOnAccent: false)
             } else {
-                Text("\(owner.surfaceTree.count)")
-                    .font(.system(size: 10.5, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                PaneSidebarCount(value: owner.surfaceTree.count)
             }
 
             if showsKill {
@@ -595,9 +617,7 @@ private struct PaneSidebarProjectHeader: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                 Spacer(minLength: 4)
-                Text("\(windowCount)")
-                    .font(.system(size: 10.5, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                PaneSidebarCount(value: windowCount)
             }
             .padding(.leading, PaneSidebarOutline.headerLeading)
             .padding(.trailing, SidePanelRow.textInset)
@@ -641,6 +661,18 @@ enum PaneSidebarOutline {
     static var headerLeading: CGFloat { SidePanelRow.textInset }
     /// How far a window's pane rows are indented: one chevron and its gap.
     static var childIndent: CGFloat { chevronWidth + chevronSpacing }
+}
+
+/// A group's count — panes, windows, stashed panes — in the sidebar's one
+/// style for it.
+struct PaneSidebarCount: View {
+    let value: Int
+
+    var body: some View {
+        Text("\(value)")
+            .font(.system(size: 10.5, weight: .medium).monospacedDigit())
+            .foregroundStyle(.tertiary)
+    }
 }
 
 struct PaneSidebarDivider: View {
@@ -709,7 +741,6 @@ struct PaneSidebarQuestionBadge: View {
     let isOnAccent: Bool
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var pulse = false
 
     var body: some View {
         let accent = Color(nsColor: .controlAccentColor)
@@ -719,16 +750,12 @@ struct PaneSidebarQuestionBadge: View {
             .frame(height: 15)
             .foregroundStyle(isOnAccent ? accent : .white)
             .background(Capsule().fill(isOnAccent ? Color.white : accent))
-            .background(
+            .background {
                 // A soft ring that breathes, so a question in an otherwise
-                // quiet list is the thing that draws the eye.
-                Capsule()
-                    .stroke(accent.opacity(pulse ? 0.22 : 0), lineWidth: 3)
-                    .padding(-1.5))
-            .onAppear {
-                guard !reduceMotion, !isOnAccent else { return }
-                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                    pulse = true
+                // quiet list is the thing that draws the eye. On Core
+                // Animation — see `PaneSidebarShimmerLayer` for why.
+                if !reduceMotion && !isOnAccent {
+                    PaneSidebarPulseRing(color: accent).padding(-1.5)
                 }
             }
             .accessibilityLabel("Has a question")
@@ -761,40 +788,33 @@ struct PaneSidebarKillButton: View {
 /// A busy pane's icon: the glyph drawn dim, with a brighter band sweeping
 /// across it. The whole busy signal — no spinner, no glow (both were tried
 /// in the design mock and dropped). See `PaneSidebarShimmer` for the timing.
+///
+/// The sweep is a Core Animation layer under a mask of the glyph, drawn once
+/// (`PaneSidebarShimmerLayer` says why it is not SwiftUI). `maskKey` names
+/// the glyph, so the mask is redrawn only when the glyph changes.
 struct PaneSidebarGlyph<Content: View>: View {
     let isBusy: Bool
     let color: Color
+    let maskKey: AnyHashable
     @ViewBuilder let content: Content
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         if isBusy && !reduceMotion {
-            TimelineView(.animation) { context in
-                let progress = PaneSidebarShimmer.bandPosition(at: context.date.timeIntervalSinceReferenceDate)
-                // A SOLID base under the band, so the glyph is never partly
-                // blank — the band only ever adds light on top.
-                content
-                    .foregroundStyle(color.opacity(PaneSidebarShimmer.baseOpacity))
-                    .overlay {
-                        GeometryReader { proxy in
-                            let width = proxy.size.width
-                            LinearGradient(
-                                stops: [
-                                    .init(color: color.opacity(0), location: 0.35),
-                                    .init(color: color, location: 0.5),
-                                    .init(color: color.opacity(0), location: 0.65),
-                                ],
-                                startPoint: UnitPoint(x: 0, y: 0.35),
-                                endPoint: UnitPoint(x: 1, y: 0.65))
-                            .frame(width: width * PaneSidebarShimmer.bandWidthFactor)
-                            .offset(x: PaneSidebarShimmer.offset(position: progress, width: width))
-                        }
-                        .mask(content)
-                        .allowsHitTesting(false)
+            // The glyph only sizes the slot; the layer draws it.
+            content
+                .hidden()
+                .overlay {
+                    PaneSidebarShimmerLayer(color: color, maskKey: maskKey) { size, scale in
+                        let renderer = ImageRenderer(content: content
+                            .foregroundStyle(Color.black)
+                            .frame(width: size.width, height: size.height))
+                        renderer.scale = scale
+                        return renderer.cgImage
                     }
-            }
-            .accessibilityLabel("Busy")
+                }
+                .accessibilityLabel("Busy")
         } else {
             content.foregroundStyle(color)
         }

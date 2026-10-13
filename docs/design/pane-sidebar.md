@@ -366,6 +366,16 @@ In the mini rail the three stack vertically at the top of the card.
     slid within left the icon clipped for most of each sweep). The title does
     not shimmer, so a list of several busy agents stays calm. Under Reduce
     Motion the glyph is drawn plain.
+  - **Both endless animations — the shimmer and the question badge's
+    breathing ring — run on Core Animation**, not SwiftUI
+    (`PaneSidebarAnimationLayers.swift`): the glyph is drawn once into a mask
+    and the band is a CA keyframe animation under it. A SwiftUI animation that
+    never ends (`TimelineView(.animation)`, `.repeatForever`) re-runs the whole
+    sidebar's update on the main thread every frame, in every window with a
+    busy pane. Measured with ~40 windows and a dozen busy panes, that alone
+    held the main thread at 86–99% of a core with nothing happening, and
+    scrolling the all-windows list cost 31–50 ms of main-thread time a step;
+    on CA it is under 1% at rest and ~8 ms a step with every window expanded.
   - `needs_input`: a **question** badge in the accent color — the same label
     the title suffix shows — gently pulsing on a stashed row. A stashed pane
     that goes from `busy` to `needs_input` is the row to look at next.
@@ -449,6 +459,23 @@ to every Ghoztty window, so window management can happen from one list.
   activity suffix — its pane count, and a **question** badge when any pane in
   it has one. Click it to raise the window; the chevron folds the group.
   Windows are separated by a hairline.
+- **Windows start folded** — one row per window, the overview this scope is
+  for — except **this window**, which starts open: it holds the selection
+  and the pane you are in. That is decided only when the list opens; focus
+  moving later never unfolds anything, or the list would jump under the
+  pointer. A window opened while the list is showing arrives folded. The
+  state records the windows the user *flipped* from that default
+  (`toggledWindows`, `PaneSidebarState.isWindowFolded`), and is forgotten
+  when the scope is left, so each look starts from the default. **A search
+  unfolds everything**, since a hit hidden inside a fold reads as no hit.
+  Project groups still start open.
+- The **ALL WINDOWS** caption carries a count of windows (not panes), in the
+  same style as a project header's count.
+- **Drop geometry is reported only during a drag.** Rows and groups publish
+  their frames (for the drag resolver) in the panel's coordinate space,
+  outside the scroll view, so the values change on every frame of a scroll,
+  and each change rebuilt the window's key-view loop. Nothing reads them
+  outside a drag.
 - **Only this window has a selection.** The first build drew another window's
   focused pane in the gray pill; among its siblings that read as a "primary"
   pane with the others nested under it, so other windows show no selection.
