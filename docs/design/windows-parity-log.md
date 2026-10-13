@@ -35900,3 +35900,21 @@ moved to T1814.
   floor ALL LANES PASS; `pane-elevation.ps1` ALL PASS (75), new run 1b2 reads
   the margin at 0.488x the toggled-opaque desk at opacity 0.5. The on-screen
   look over a real desktop is NOT RUN (input desktop only; user present).
+
+## 2026-10-13 — T1856: the elevated desk paints in a fraction of the time
+
+- **Cost.** Every divider-drag move ran `roundRectDistance` + `erfc` per pixel
+  across every card's shadow and glow reach, and the default glass card ran
+  `glassMix` on every interior pixel. drag-perf: 42ms of paint per move (Debug).
+- **Fix.** The rounded-rect distance is separable off its corner squares, so
+  shadow and glow alpha now come from a per-column table and a per-row scalar
+  (`Frame`, which `roundRectDistance` itself is now written through). A solid
+  interior is a row `memset`, and a glass interior is a byte-LUT
+  (`GlassLut`). The pixels are identical: the old rasteriser stays in the
+  tests as the bit-for-bit oracle.
+- **Validation.** New equivalence test (6 scales, glass/solid, light/dark,
+  glows, bands, off-buffer and tiny cards); drag-perf paint 42.1ms -> 16.2ms,
+  move 87.8 -> 60.5ms against a HEAD build on the same box; ReleaseFast
+  microbench 20.7 -> 8.1ms solid, 35.9 -> 6.8ms glass. drag-perf's two failures
+  are the same at HEAD: T1854, plus the untimed 40ms per move, now T1906.
+  Filed T1907: the glass backdrop slice is re-rendered for each pane on every move.

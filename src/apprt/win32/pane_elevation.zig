@@ -117,21 +117,66 @@ pub const Card = struct {
 
 /// Signed distance from (x, y) to a rounded rectangle; negative inside.
 pub fn roundRectDistance(x: f32, y: f32, c: Card, radius: f32) f32 {
-    const l: f32 = @floatFromInt(c.left);
-    const t: f32 = @floatFromInt(c.top);
-    const r: f32 = @floatFromInt(c.right);
-    const b: f32 = @floatFromInt(c.bottom);
-    const cx = (l + r) / 2;
-    const cy = (t + b) / 2;
-    const hw = (r - l) / 2;
-    const hh = (b - t) / 2;
-    const rad = @min(radius, @min(hw, hh));
-    const qx = @abs(x - cx) - (hw - rad);
-    const qy = @abs(y - cy) - (hh - rad);
-    const ox = @max(qx, 0);
-    const oy = @max(qy, 0);
-    return @sqrt(ox * ox + oy * oy) + @min(@max(qx, qy), 0) - rad;
+    const f = Frame.of(c, radius);
+    return f.dist(f.qx(x), f.qy(y));
 }
+
+/// `roundRectDistance` in its two halves (T1856). The distance is a function
+/// of a horizontal term `qx` (x alone) and a vertical one `qy` (y alone), and
+/// it couples them only in the four corner squares, where both are positive.
+/// Everywhere else it is the distance to ONE straight edge - `dist(m, m)`
+/// with `m = max(qx, qy)` - which is what lets `paintCards` pay for a
+/// shadow's `erfc` once per column and once per row instead of once per
+/// pixel. The same arithmetic `roundRectDistance` runs, so a value read from
+/// a table is the value the per-pixel call would have computed, to the bit.
+const Frame = struct {
+    cx: f32,
+    cy: f32,
+    ex: f32,
+    ey: f32,
+    rad: f32,
+
+    fn of(c: Card, radius: f32) Frame {
+        const l: f32 = @floatFromInt(c.left);
+        const t: f32 = @floatFromInt(c.top);
+        const r: f32 = @floatFromInt(c.right);
+        const b: f32 = @floatFromInt(c.bottom);
+        const hw = (r - l) / 2;
+        const hh = (b - t) / 2;
+        const rad = @min(radius, @min(hw, hh));
+        return .{ .cx = (l + r) / 2, .cy = (t + b) / 2, .ex = hw - rad, .ey = hh - rad, .rad = rad };
+    }
+
+    fn qx(f: Frame, x: f32) f32 {
+        return @abs(x - f.cx) - f.ex;
+    }
+
+    fn qy(f: Frame, y: f32) f32 {
+        return @abs(y - f.cy) - f.ey;
+    }
+
+    fn dist(f: Frame, qx_: f32, qy_: f32) f32 {
+        const ox = @max(qx_, 0);
+        const oy = @max(qy_, 0);
+        return @sqrt(ox * ox + oy * oy) + @min(@max(qx_, qy_), 0) - f.rad;
+    }
+
+    /// The distance where `q` is the larger term and the other is not
+    /// positive: off the corners, the only case a table is consulted for.
+    fn edge(f: Frame, q: f32) f32 {
+        return f.dist(q, @min(q, 0));
+    }
+};
+
+/// Per-row/per-column tables over one card's reach (T1856): `q[i]` is the
+/// axis term at pixel centre `lo + i`, and `a[k][i]` the alpha layer `k`
+/// gives a pixel whose distance is `Frame.edge(q[i])`.
+const MAX_TABLE_LAYERS = 2;
+const AxisTable = struct {
+    lo: i32,
+    q: []f32,
+    a: [MAX_TABLE_LAYERS][]f32,
+};
 
 /// One SwiftUI `.shadow` layer, in physical pixels. SwiftUI's `radius` is
 /// a blur radius; the Gaussian under it has sigma = radius / 2.
@@ -241,6 +286,38 @@ pub fn glassMix(desk: u32, tint: color_math.Rgb, t: f32) u32 {
         mixChannel(desk & 0xFF, srgb_to_linear[tint.b], t);
 }
 
+/// `glassMix` at `GLASS_TINT` for one tint, and the coverage a sheet leaves,
+/// as byte tables (T1856): the sheet covers every pixel of a glass card's
+/// interior, and a table lookup per channel is the same answer as the mix.
+const GlassLut = struct {
+    r: [256]u32,
+    g: [256]u32,
+    b: [256]u32,
+    cover: [256]u32,
+
+    fn init(tint: color_math.Rgb) GlassLut {
+        var l: GlassLut = undefined;
+        for (0..256) |i| {
+            const c: u32 = @intCast(i);
+            l.r[i] = mixChannel(c, srgb_to_linear[tint.r], GLASS_TINT) << 16;
+            l.g[i] = mixChannel(c, srgb_to_linear[tint.g], GLASS_TINT) << 8;
+            l.b[i] = mixChannel(c, srgb_to_linear[tint.b], GLASS_TINT);
+            l.cover[i] = desk_palette.withCoverage(0, desk_palette.coverOver(desk_palette.coverage(c << 24), GLASS_TINT));
+        }
+        return l;
+    }
+
+    /// `glassMix(p, tint, GLASS_TINT)`.
+    fn mix(l: *const GlassLut, p: u32) u32 {
+        return l.r[(p >> 16) & 0xFF] | l.g[(p >> 8) & 0xFF] | l.b[p & 0xFF];
+    }
+
+    /// The sheet over `p`, coverage included.
+    fn sheet(l: *const GlassLut, p: u32) u32 {
+        return l.mix(p) | l.cover[p >> 24];
+    }
+};
+
 // ---------------------------------------------------------------------------
 // The focused pane's glow (T1834; Mac `PaneFocusGlow`, main 9755dc1f7 /
 // 51573daf0 / 7966780ae): among several panes, the focused card is backlit -
@@ -346,7 +423,7 @@ pub fn rimAlpha(glass: bool, is_light: bool, focus: f32) f32 {
 
 /// Light the desk around each glowing card. Runs before any shadow, the way
 /// Mac's glow is the card's backmost layer.
-fn paintGlows(buf: []u32, wi: i32, hi: i32, cards: []const Card, style: CardStyle) void {
+fn paintGlows(buf: []u32, wi: i32, hi: i32, cards: []const Card, style: CardStyle, cols: ?[]f32) void {
     const radius: f32 = @floatFromInt(radiusPx(style.scale));
     const reach = glowReachPx(style.scale);
     const ri: i32 = radiusPx(style.scale);
@@ -355,12 +432,23 @@ fn paintGlows(buf: []u32, wi: i32, hi: i32, cards: []const Card, style: CardStyl
     for (style.glows) |g| {
         if (g.card >= cards.len or g.level <= 0) continue;
         const c = cards[g.card];
+        const f = Frame.of(c, radius);
         const y0: i32 = @max(c.top - reach, 0);
         const y1: i32 = @min(c.bottom + reach, hi);
         const x0: i32 = @max(c.left - reach, 0);
         const x1: i32 = @min(c.right + reach, wi);
+        if (x1 <= x0) continue;
+        // Per column: the horizontal term, and the glow a pixel gets where
+        // that term is the distance (T1856).
+        const t = columnTable(cols, x0, x1, f);
+        if (t) |tab| for (tab.q, 0..) |q, k| {
+            tab.a[0][k] = glowAlpha(f.edge(q), style.is_light, style.scale);
+        };
         var y = y0;
         while (y < y1) : (y += 1) {
+            const fy = @as(f32, @floatFromInt(y)) + 0.5;
+            const qy = f.qy(fy);
+            const row_a = glowAlpha(f.edge(qy), style.is_light, style.scale);
             // The card's interior is never lit; skip it on a straight row.
             const sides = y >= c.top + ri and y < c.bottom - ri;
             var x = x0;
@@ -369,15 +457,35 @@ fn paintGlows(buf: []u32, wi: i32, hi: i32, cards: []const Card, style: CardStyl
                     x = c.right - edge - 1;
                     continue;
                 }
-                const fx = @as(f32, @floatFromInt(x)) + 0.5;
-                const fy = @as(f32, @floatFromInt(y)) + 0.5;
-                const a = glowAlpha(roundRectDistance(fx, fy, c, radius), style.is_light, style.scale);
+                const k: usize = @intCast(x - x0);
+                const qx = if (t) |tab| tab.q[k] else f.qx(@as(f32, @floatFromInt(x)) + 0.5);
+                const a = if (qx > 0 and qy > 0)
+                    glowAlpha(f.dist(qx, qy), style.is_light, style.scale)
+                else if (qx >= qy)
+                    (if (t) |tab| tab.a[0][k] else glowAlpha(f.edge(qx), style.is_light, style.scale))
+                else
+                    row_a;
                 if (a <= 0) continue;
                 const i: usize = @intCast(y * wi + x);
                 buf[i] = blend(buf[i], white, a * std.math.clamp(g.level, 0, 1));
             }
         }
     }
+}
+
+/// The column half of a card's distance over `[x0, x1)`, carved out of
+/// `scratch` (null when there is none, and every value is then computed per
+/// pixel instead - the same numbers, slower). The alpha rows are left for
+/// the caller to fill.
+fn columnTable(scratch: ?[]f32, x0: i32, x1: i32, f: Frame) ?AxisTable {
+    const s = scratch orelse return null;
+    const n: usize = @intCast(x1 - x0);
+    const stride = s.len / (1 + MAX_TABLE_LAYERS);
+    if (n > stride) return null;
+    var t: AxisTable = .{ .lo = x0, .q = s[0..n], .a = undefined };
+    for (0..MAX_TABLE_LAYERS) |k| t.a[k] = s[(k + 1) * stride ..][0..n];
+    for (t.q, 0..) |*q, k| q.* = f.qx(@as(f32, @floatFromInt(x0 + @as(i32, @intCast(k)))) + 0.5);
+    return t;
 }
 
 fn focusOf(style: CardStyle, card: usize) f32 {
@@ -394,6 +502,15 @@ fn focusOf(style: CardStyle, card: usize) f32 {
 ///
 /// Only pixels a card can affect are visited: each card's shadow reach,
 /// minus the interior a card fill covers anyway.
+///
+/// This runs on every mouse move of a divider drag (T1856), so the per-pixel
+/// work is kept to table reads: a shadow's or glow's `erfc` is paid once per
+/// column and once per row (`Frame`), except in the corner squares where the
+/// distance really is two-dimensional; a solid card's interior is a row
+/// `memset`; and a glass card's interior is four byte lookups a pixel
+/// (`GlassLut`). The pixels are the ones the direct per-pixel arithmetic
+/// produces, to the bit - the "matches the direct rasteriser" test holds it
+/// to that.
 pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: CardStyle) void {
     std.debug.assert(buf.len >= w * h);
     const radius: f32 = @floatFromInt(radiusPx(style.scale));
@@ -405,15 +522,36 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
     const wi: i32 = @intCast(w);
     const hi: i32 = @intCast(h);
 
-    paintGlows(buf, wi, hi, cards, style);
+    const alloc = std.heap.page_allocator;
+    const scratch: ?[]f32 = alloc.alloc(f32, (1 + MAX_TABLE_LAYERS) * w) catch null;
+    defer if (scratch) |s| alloc.free(s);
+
+    paintGlows(buf, wi, hi, cards, style, scratch);
 
     for (cards) |c| {
+        const f = Frame.of(c, radius);
         const y0: i32 = @max(c.top - reach, 0);
         const y1: i32 = @min(c.bottom + reach, hi);
         const x0: i32 = @max(c.left - reach, 0);
         const x1: i32 = @min(c.right + reach, wi);
+        if (x1 <= x0) continue;
+        const t = columnTable(scratch, x0, x1, f);
+        if (t) |tab| for (layers, 0..) |s, l| {
+            for (tab.q, 0..) |q, k| tab.a[l][k] = shadowAlpha(f.edge(q), s);
+        };
         var y = y0;
         while (y < y1) : (y += 1) {
+            const fy = @as(f32, @floatFromInt(y)) + 0.5;
+            const qy0 = f.qy(fy);
+            const row_d0 = f.edge(qy0);
+            // Each layer's vertical term (its offset is vertical only, so
+            // the horizontal term is shared) and its alpha off the corners.
+            var qyl: [MAX_TABLE_LAYERS]f32 = undefined;
+            var row_a: [MAX_TABLE_LAYERS]f32 = undefined;
+            for (layers, 0..) |s, l| {
+                qyl[l] = f.qy(fy - s.dy);
+                row_a[l] = shadowAlpha(f.edge(qyl[l]), s);
+            }
             // A row through the card's straight sides skips its interior.
             const sides = y >= c.top + ri and y < c.bottom - ri;
             var x = x0;
@@ -422,9 +560,9 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
                     x = c.right - 1;
                     continue;
                 }
-                const fx = @as(f32, @floatFromInt(x)) + 0.5;
-                const fy = @as(f32, @floatFromInt(y)) + 0.5;
-                const d0 = roundRectDistance(fx, fy, c, radius);
+                const k: usize = @intCast(x - x0);
+                const qx = if (t) |tab| tab.q[k] else f.qx(@as(f32, @floatFromInt(x)) + 0.5);
+                const d0 = if (qx > 0 and qy0 > 0) f.dist(qx, qy0) else if (qx >= qy0) f.edge(qx) else row_d0;
                 if (d0 <= -1) continue;
                 // A glass sheet shows the desk, so its shadow is kept to
                 // the desk around it: under the sheet it would read as a
@@ -433,9 +571,14 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
                 if (outside <= 0) continue;
                 const i: usize = @intCast(y * wi + x);
                 var p = buf[i];
-                for (layers) |s| {
-                    const d = roundRectDistance(fx, fy - s.dy, c, radius);
-                    p = blend(p, black, shadowAlpha(d, s) * outside);
+                for (layers, 0..) |s, l| {
+                    const a = if (qx > 0 and qyl[l] > 0)
+                        shadowAlpha(f.dist(qx, qyl[l]), s)
+                    else if (qx >= qyl[l])
+                        (if (t) |tab| tab.a[l][k] else shadowAlpha(f.edge(qx), s))
+                    else
+                        row_a[l];
+                    p = blend(p, black, a * outside);
                 }
                 buf[i] = p;
             }
@@ -445,11 +588,15 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
     const rim_w = RIM_DIP * style.scale;
     // The inner edge of the band an antialiased rim pixel can sit in.
     const edge: i32 = @as(i32, @intFromFloat(@ceil(rim_w))) + 1;
+    const lut: ?GlassLut = if (style.glass) GlassLut.init(style.fill) else null;
 
     for (cards, 0..) |c, ci| {
+        const f = Frame.of(c, radius);
         const focus = focusOf(style, ci);
         const y0: i32 = @max(c.top, 0);
         const y1: i32 = @min(c.bottom, hi);
+        const x0: i32 = @max(c.left, 0);
+        const x1: i32 = @min(c.right, wi);
         var y = y0;
         while (y < y1) : (y += 1) {
             // This row's card colour (T1851): a header or nav band, a
@@ -471,33 +618,34 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
             const rim_c = Rgbf.lerp(fill, rim_rgb, rim_a);
             const sides = y >= c.top + ri and y < c.bottom - ri and
                 y >= c.top + edge and y < c.bottom - edge;
-            const x0: i32 = @max(c.left, 0);
-            const x1: i32 = @min(c.right, wi);
+            const fy = @as(f32, @floatFromInt(y)) + 0.5;
+            const qy = f.qy(fy);
+            const row: usize = @intCast(y * wi);
+            // A straight row's interior, in one go: the solid fill, or the
+            // sheet over whatever is under it.
+            const in0: i32 = if (sides) std.math.clamp(c.left + edge, x0, x1) else x1;
+            const in1: i32 = if (sides) std.math.clamp(c.right - edge, in0, x1) else x1;
+            if (in1 > in0) {
+                const span = buf[row + @as(usize, @intCast(in0)) .. row + @as(usize, @intCast(in1))];
+                if (glass) {
+                    for (span) |*p| p.* = lut.?.sheet(p.*);
+                } else @memset(span, fill_px | 0xFF00_0000);
+            }
             var x = x0;
             while (x < x1) : (x += 1) {
-                const i: usize = @intCast(y * wi + x);
-                if (sides and x >= c.left + edge and x < c.right - edge) {
-                    // A glass sheet hides the desk only by its tint; a solid
-                    // card hides it entirely (T1852).
-                    buf[i] = if (glass)
-                        desk_palette.withCoverage(
-                            glassMix(buf[i], style.fill, GLASS_TINT),
-                            desk_palette.coverOver(desk_palette.coverage(buf[i]), GLASS_TINT),
-                        )
-                    else
-                        fill_px | 0xFF00_0000;
+                if (x == in0 and in1 > in0) {
+                    x = in1 - 1;
                     continue;
                 }
-                const fx = @as(f32, @floatFromInt(x)) + 0.5;
-                const fy = @as(f32, @floatFromInt(y)) + 0.5;
-                const d = roundRectDistance(fx, fy, c, radius);
+                const i: usize = row + @as(usize, @intCast(x));
+                const d = f.dist(f.qx(@as(f32, @floatFromInt(x)) + 0.5), qy);
                 const outer = std.math.clamp(0.5 - d, 0, 1);
                 if (outer <= 0) continue;
                 const inner = std.math.clamp(0.5 - (d + rim_w), 0, 1);
                 // The pixel is card, of which `outer - inner` is rim.
                 const ring = outer - inner;
                 // Glass: the sheet's own colour over THIS pixel of desk.
-                const base = if (glass) unpack(glassMix(buf[i], style.fill, GLASS_TINT)) else fill;
+                const base = if (glass) unpack(lut.?.mix(buf[i])) else fill;
                 const rim_px = if (glass) Rgbf.lerp(base, rim_rgb, rim_a) else rim_c;
                 const col = if (outer > 0)
                     Rgbf.lerp(base, rim_px, ring / outer)
@@ -829,4 +977,224 @@ test "T1834: a half-faded glow is weaker, and an out-of-range card index is igno
     const p = 120 * 300 + 253;
     try testing.expect(brightness(half[p]) < brightness(full[p]));
     try testing.expect(brightness(half[p]) > 26.0 / 255.0 + 0.005);
+}
+
+// The rasteriser as it was before T1856 factored the distance into tables:
+// every pixel's distance, shadow and glow computed directly. Kept as the
+// oracle the fast path is held to, bit for bit.
+/// Light the desk around each glowing card. Runs before any shadow, the way
+/// Mac's glow is the card's backmost layer.
+fn refPaintGlows(buf: []u32, wi: i32, hi: i32, cards: []const Card, style: CardStyle) void {
+    const radius: f32 = @floatFromInt(radiusPx(style.scale));
+    const reach = glowReachPx(style.scale);
+    const ri: i32 = radiusPx(style.scale);
+    const edge: i32 = @as(i32, @intFromFloat(@ceil(GLOW_STROKE_DIP / 2 * style.scale))) + 1;
+    const white: Rgbf = .{ .r = 255, .g = 255, .b = 255 };
+    for (style.glows) |g| {
+        if (g.card >= cards.len or g.level <= 0) continue;
+        const c = cards[g.card];
+        const y0: i32 = @max(c.top - reach, 0);
+        const y1: i32 = @min(c.bottom + reach, hi);
+        const x0: i32 = @max(c.left - reach, 0);
+        const x1: i32 = @min(c.right + reach, wi);
+        var y = y0;
+        while (y < y1) : (y += 1) {
+            // The card's interior is never lit; skip it on a straight row.
+            const sides = y >= c.top + ri and y < c.bottom - ri;
+            var x = x0;
+            while (x < x1) : (x += 1) {
+                if (sides and x >= c.left + edge and x < c.right - edge) {
+                    x = c.right - edge - 1;
+                    continue;
+                }
+                const fx = @as(f32, @floatFromInt(x)) + 0.5;
+                const fy = @as(f32, @floatFromInt(y)) + 0.5;
+                const a = glowAlpha(roundRectDistance(fx, fy, c, radius), style.is_light, style.scale);
+                if (a <= 0) continue;
+                const i: usize = @intCast(y * wi + x);
+                buf[i] = blend(buf[i], white, a * std.math.clamp(g.level, 0, 1));
+            }
+        }
+    }
+}
+
+
+/// Paint every card's shadows, then every card, over the desk already in
+/// `buf` (a `w` x `h` window-content buffer). Shadows go down first for ALL
+/// cards so one card's drop shadow never lands on top of its neighbour.
+///
+/// Only pixels a card can affect are visited: each card's shadow reach,
+/// minus the interior a card fill covers anyway.
+fn refPaintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: CardStyle) void {
+    std.debug.assert(buf.len >= w * h);
+    const radius: f32 = @floatFromInt(radiusPx(style.scale));
+    const solid_layers = shadows(style.is_light, style.scale);
+    const glass_layer = [1]Shadow{glassShadow(style.is_light, style.scale)};
+    const layers: []const Shadow = if (style.glass) &glass_layer else &solid_layers;
+    const reach = shadowReachPx(style.scale);
+    const ri: i32 = radiusPx(style.scale);
+    const wi: i32 = @intCast(w);
+    const hi: i32 = @intCast(h);
+
+    refPaintGlows(buf, wi, hi, cards, style);
+
+    for (cards) |c| {
+        const y0: i32 = @max(c.top - reach, 0);
+        const y1: i32 = @min(c.bottom + reach, hi);
+        const x0: i32 = @max(c.left - reach, 0);
+        const x1: i32 = @min(c.right + reach, wi);
+        var y = y0;
+        while (y < y1) : (y += 1) {
+            // A row through the card's straight sides skips its interior.
+            const sides = y >= c.top + ri and y < c.bottom - ri;
+            var x = x0;
+            while (x < x1) : (x += 1) {
+                if (sides and x >= c.left and x < c.right) {
+                    x = c.right - 1;
+                    continue;
+                }
+                const fx = @as(f32, @floatFromInt(x)) + 0.5;
+                const fy = @as(f32, @floatFromInt(y)) + 0.5;
+                const d0 = roundRectDistance(fx, fy, c, radius);
+                if (d0 <= -1) continue;
+                // A glass sheet shows the desk, so its shadow is kept to
+                // the desk around it: under the sheet it would read as a
+                // smudge through the glass.
+                const outside: f32 = if (style.glass) std.math.clamp(0.5 + d0, 0, 1) else 1;
+                if (outside <= 0) continue;
+                const i: usize = @intCast(y * wi + x);
+                var p = buf[i];
+                for (layers) |s| {
+                    const d = roundRectDistance(fx, fy - s.dy, c, radius);
+                    p = blend(p, black, shadowAlpha(d, s) * outside);
+                }
+                buf[i] = p;
+            }
+        }
+    }
+
+    const rim_w = RIM_DIP * style.scale;
+    // The inner edge of the band an antialiased rim pixel can sit in.
+    const edge: i32 = @as(i32, @intFromFloat(@ceil(rim_w))) + 1;
+
+    for (cards, 0..) |c, ci| {
+        const focus = focusOf(style, ci);
+        const y0: i32 = @max(c.top, 0);
+        const y1: i32 = @min(c.bottom, hi);
+        var y = y0;
+        while (y < y1) : (y += 1) {
+            // This row's card colour (T1851): a header or nav band, a
+            // viewer's page, or the terminal - glass only for the last.
+            const own = c.colorAt(y);
+            const glass = style.glass and own == null;
+            const row_rgb = own orelse style.fill;
+            const fill: Rgbf = .{
+                .r = @floatFromInt(row_rgb.r),
+                .g = @floatFromInt(row_rgb.g),
+                .b = @floatFromInt(row_rgb.b),
+            };
+            const fill_px = fill.pack();
+            // The rim reads against the colour it edges, so a light page in a
+            // dark window is rimmed the way a light card is.
+            const light = if (own != null) color_math.isLight(row_rgb) else style.is_light;
+            const rim_rgb: Rgbf = if (light) black else .{ .r = 255, .g = 255, .b = 255 };
+            const rim_a = rimAlpha(glass, light, focus);
+            const rim_c = Rgbf.lerp(fill, rim_rgb, rim_a);
+            const sides = y >= c.top + ri and y < c.bottom - ri and
+                y >= c.top + edge and y < c.bottom - edge;
+            const x0: i32 = @max(c.left, 0);
+            const x1: i32 = @min(c.right, wi);
+            var x = x0;
+            while (x < x1) : (x += 1) {
+                const i: usize = @intCast(y * wi + x);
+                if (sides and x >= c.left + edge and x < c.right - edge) {
+                    // A glass sheet hides the desk only by its tint; a solid
+                    // card hides it entirely (T1852).
+                    buf[i] = if (glass)
+                        desk_palette.withCoverage(
+                            glassMix(buf[i], style.fill, GLASS_TINT),
+                            desk_palette.coverOver(desk_palette.coverage(buf[i]), GLASS_TINT),
+                        )
+                    else
+                        fill_px | 0xFF00_0000;
+                    continue;
+                }
+                const fx = @as(f32, @floatFromInt(x)) + 0.5;
+                const fy = @as(f32, @floatFromInt(y)) + 0.5;
+                const d = roundRectDistance(fx, fy, c, radius);
+                const outer = std.math.clamp(0.5 - d, 0, 1);
+                if (outer <= 0) continue;
+                const inner = std.math.clamp(0.5 - (d + rim_w), 0, 1);
+                // The pixel is card, of which `outer - inner` is rim.
+                const ring = outer - inner;
+                // Glass: the sheet's own colour over THIS pixel of desk.
+                const base = if (glass) unpack(glassMix(buf[i], style.fill, GLASS_TINT)) else fill;
+                const rim_px = if (glass) Rgbf.lerp(base, rim_rgb, rim_a) else rim_c;
+                const col = if (outer > 0)
+                    Rgbf.lerp(base, rim_px, ring / outer)
+                else
+                    base;
+                const under = buf[i];
+                buf[i] = blend(under, col, outer);
+                // `col` already holds the desk a glass sheet shows, so the
+                // sheet covers only its tint's worth of it.
+                if (glass) buf[i] = desk_palette.withCoverage(
+                    buf[i],
+                    desk_palette.coverOver(desk_palette.coverage(under), outer * GLASS_TINT),
+                );
+            }
+        }
+    }
+}
+
+test "T1856: the table-driven paint matches the direct rasteriser bit for bit" {
+    const w = 260;
+    const h = 190;
+    var desk: [w * h]u32 = undefined;
+    var prng = std.Random.DefaultPrng.init(1856);
+    const rnd = prng.random();
+    for (&desk) |*p| p.* = rnd.int(u32) & 0x00FF_FFFF;
+    var fast: [w * h]u32 = undefined;
+    var slow: [w * h]u32 = undefined;
+    const layouts = [_][]const Card{
+        // Two side by side, a divider between them.
+        &.{
+            .{ .left = 15, .top = 15, .right = 121, .bottom = 175 },
+            .{ .left = 136, .top = 15, .right = 245, .bottom = 175 },
+        },
+        // A grid with a header band, a viewer page, one card hanging off the
+        // buffer's edges, and one smaller than its own corners.
+        &.{
+            .{ .left = -30, .top = -12, .right = 90, .bottom = 80, .head = .{ .r = 50, .g = 52, .b = 60 }, .head_bottom = 10 },
+            .{ .left = 105, .top = 15, .right = 280, .bottom = 90, .fill = .{ .r = 250, .g = 250, .b = 245 }, .head = .{ .r = 230, .g = 230, .b = 235 }, .head_bottom = 40 },
+            .{ .left = 15, .top = 105, .right = 33, .bottom = 120 },
+            .{ .left = 48, .top = 105, .right = 245, .bottom = 200 },
+        },
+    };
+    const glows = [_]Glow{ .{ .card = 1, .level = 0.6 }, .{ .card = 0, .level = 0.4 } };
+    for ([_]f32{ 1.0, 1.1, 1.25, 1.5, 1.75, 2.0 }) |scale| {
+        for ([_]bool{ false, true }) |glass| {
+            for ([_]bool{ false, true }) |is_light| {
+                for (layouts) |cards| {
+                    const style: CardStyle = .{
+                        .fill = if (is_light) .{ .r = 247, .g = 246, .b = 240 } else .{ .r = 29, .g = 31, .b = 33 },
+                        .is_light = is_light,
+                        .scale = scale,
+                        .glass = glass,
+                        .glows = &glows,
+                    };
+                    fast = desk;
+                    slow = desk;
+                    paintCards(&fast, w, h, cards, style);
+                    refPaintCards(&slow, w, h, cards, style);
+                    for (fast, slow, 0..) |a, b, i| {
+                        if (a != b) {
+                            std.debug.print("scale={d} glass={} light={} pixel ({d},{d}): {x} != {x}\n", .{ scale, glass, is_light, i % w, i / w, a, b });
+                            return error.TestUnexpectedResult;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
