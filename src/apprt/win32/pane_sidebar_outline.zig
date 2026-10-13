@@ -232,9 +232,9 @@ fn push(out: []Line, n: *usize, line: Line) bool {
 }
 
 // ---------------------------------------------------------------------------
-// Search (Mac `PaneSidebarFilter`) - the rules, ahead of the field (T1829
-// follow-up): whitespace-separated terms, ALL of which must appear somewhere
-// in what a pane's row says about it, ignoring ASCII case.
+// Search (Mac `PaneSidebarFilter`; the field is T1877, `pane_sidebar_search`):
+// whitespace-separated terms, ALL of which must appear somewhere in what a
+// pane's row says about it, ignoring case and diacritics.
 
 pub const TermIter = std.mem.TokenIterator(u8, .any);
 
@@ -242,13 +242,26 @@ pub fn terms(query: []const u8) TermIter {
     return std.mem.tokenizeAny(u8, query, " \t\r\n");
 }
 
+/// The most fields one pane is searched by (Mac `searchFields` plus its
+/// window's title).
+pub const max_fields: usize = 8;
+/// Bytes of each field (and term) the fold looks at.
+pub const fold_cap: usize = 1024;
+
 pub fn matches(query: []const u8, fields: []const ?[]const u8) bool {
+    var bufs: [max_fields][fold_cap]u8 = undefined;
+    var folded: [max_fields]?[]const u8 = undefined;
+    const nf = @min(fields.len, max_fields);
+    for (fields[0..nf], 0..) |f, i| folded[i] = if (f) |s| fold(s, &bufs[i]) else null;
+    var tb: [fold_cap]u8 = undefined;
     var it = terms(query);
-    while (it.next()) |t| {
+    while (it.next()) |raw| {
+        const t = fold(raw, &tb);
+        if (t.len == 0) continue; // a term that was only combining marks
         var hit = false;
-        for (fields) |f| {
+        for (folded[0..nf]) |f| {
             const s = f orelse continue;
-            if (std.ascii.indexOfIgnoreCase(s, t) != null) {
+            if (std.mem.indexOf(u8, s, t) != null) {
                 hit = true;
                 break;
             }
@@ -256,6 +269,67 @@ pub fn matches(query: []const u8, fields: []const ?[]const u8) bool {
         if (!hit) return false;
     }
     return true;
+}
+
+/// `s` folded for search into `buf` (Mac `.caseInsensitive,
+/// .diacriticInsensitive`): ASCII lower-cased, the accented Latin letters of
+/// Latin-1 and Latin Extended-A to their lower-case base letter, combining
+/// marks (U+0300-U+036F - a decomposed `é` is `e` and one) dropped. Anything
+/// else - other scripts, an invalid byte - passes through unchanged, which is
+/// still an exact match for the same text. Never longer than `s`; cut at
+/// `buf`'s end.
+pub fn fold(s: []const u8, buf: []u8) []const u8 {
+    var n: usize = 0;
+    var i: usize = 0;
+    while (i < s.len and n < buf.len) {
+        const len = std.unicode.utf8ByteSequenceLength(s[i]) catch 1;
+        if (len == 1 or i + len > s.len) {
+            buf[n] = std.ascii.toLower(s[i]);
+            n += 1;
+            i += 1;
+            continue;
+        }
+        const cp = std.unicode.utf8Decode(s[i .. i + len]) catch {
+            buf[n] = s[i];
+            n += 1;
+            i += 1;
+            continue;
+        };
+        if (cp >= 0x300 and cp <= 0x36F) {
+            i += len;
+            continue;
+        }
+        if (baseLetter(cp)) |b| {
+            buf[n] = std.ascii.toLower(b);
+            n += 1;
+        } else {
+            if (n + len > buf.len) break;
+            @memcpy(buf[n .. n + len], s[i .. i + len]);
+            n += len;
+        }
+        i += len;
+    }
+    return buf[0..n];
+}
+
+/// U+00C0-U+00FF and U+0100-U+017F by offset; '.' is a letter with no base
+/// to fold to (a ligature, a letter of its own, a sign).
+const latin1_bases = "AAAAAA.CEEEEIIII.NOOOOO.OUUUUY..aaaaaa.ceeeeiiii.nooooo.ouuuuy.y";
+const ext_a_bases = "AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIi..JjKk.LlLlLlLlLlNnNnNnn..OoOoOo..RrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyYZzZzZzs";
+
+fn baseLetter(cp: u21) ?u8 {
+    const b: u8 = if (cp >= 0xC0 and cp <= 0xFF)
+        latin1_bases[cp - 0xC0]
+    else if (cp >= 0x100 and cp <= 0x17F)
+        ext_a_bases[cp - 0x100]
+    else
+        return null;
+    return if (b == '.') null else b;
+}
+
+comptime {
+    std.debug.assert(latin1_bases.len == 0x40);
+    std.debug.assert(ext_a_bases.len == 0x80);
 }
 
 // ---------------------------------------------------------------------------
@@ -415,4 +489,34 @@ test "search: every term must match somewhere" {
     try testing.expectEqualStrings("a", it.next().?);
     try testing.expectEqualStrings("b", it.next().?);
     try testing.expect(it.next() == null);
+}
+
+test "search: diacritics and case fold, both ways (T1877)" {
+    // Mac's `.diacriticInsensitive`: an accent in either the query or the
+    // text does not stop the match.
+    try testing.expect(matches("resume", &.{"R\u{00E9}sum\u{00E9} notes"}));
+    try testing.expect(matches("R\u{00C9}SUM\u{00C9}", &.{"resume notes"}));
+    try testing.expect(matches("zurich", &.{"Z\u{00FC}rich office"}));
+    try testing.expect(matches("lodz", &.{"\u{0141}\u{00F3}d\u{017A}"}));
+    // Decomposed (a macOS path is NFD): the combining mark is dropped.
+    try testing.expect(matches("cafe", &.{"cafe\u{0301}"}));
+    try testing.expect(matches("caf\u{00E9}", &.{"cafe\u{0301}"}));
+    // Not a fold: a different letter is still a different letter.
+    try testing.expect(!matches("strasse", &.{"Stra\u{00DF}e"}));
+    // Other scripts match themselves exactly.
+    try testing.expect(matches("\u{03C0}\u{03B1}\u{03BD}", &.{"\u{03C0}\u{03B1}\u{03BD}\u{03B5}\u{03BB}"}));
+    // A term that is nothing but a mark constrains nothing.
+    try testing.expect(matches("\u{0301}", &.{"x"}));
+}
+
+test "search: the fold never grows its input and stops at the buffer" {
+    var buf: [4]u8 = undefined;
+    try testing.expectEqualStrings("abcd", fold("ABCDEF", &buf));
+    var b2: [16]u8 = undefined;
+    try testing.expectEqualStrings("eo\u{4E2D}", fold("\u{00C9}\u{014C}\u{4E2D}", &b2));
+    // A stray continuation byte passes through.
+    try testing.expectEqualStrings("a\x80b", fold("A\x80B", &b2));
+    // A multi-byte character that would not fit whole is left out.
+    var b3: [2]u8 = undefined;
+    try testing.expectEqualStrings("a", fold("a\u{4E2D}", &b3));
 }

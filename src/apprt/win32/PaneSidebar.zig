@@ -44,6 +44,7 @@ const IpcHandlers = @import("IpcHandlers.zig");
 const hov = @import("pane_sidebar_hover.zig");
 const sidebar_prefs = @import("pane_sidebar_prefs.zig");
 const row_menu = @import("pane_sidebar_menu.zig");
+const search_field = @import("pane_sidebar_search.zig");
 const motion = @import("pane_sidebar_motion.zig");
 const layer = @import("pane_sidebar_layer.zig");
 const App = @import("App.zig");
@@ -99,6 +100,8 @@ fn toolHead(k: usize) usize {
 }
 const tool_scope: usize = 1 + 2 * pane_sidebar.max_items + pane_sidebar.max_heads;
 const tool_trash: usize = tool_scope + 1;
+const tool_search: usize = tool_trash + 1;
+const tool_search_clear: usize = tool_trash + 2;
 
 /// What new windows start from: the most recently chosen pin and hidden
 /// flags, the way a Finder window's sidebar does (Mac `rememberForNewWindows`),
@@ -158,6 +161,7 @@ const glyph_restore: u16 = 0xE7A7; // Undo: "bring it back"
 const glyph_windows: u16 = 0xE7C4; // TaskView: "every window"
 const glyph_trash: u16 = 0xE74D; // Delete: trash mode (T1845)
 const glyph_kill: u16 = 0xE711; // Cancel: trash mode's x
+const glyph_search: u16 = 0xE721; // Search: the field's magnifier (T1877)
 const glyph_chevron_down: u16 = 0xE70D;
 const glyph_chevron_right: u16 = 0xE76C;
 
@@ -199,6 +203,11 @@ groups: std.ArrayListUnmanaged(Group) = .{},
 lines: std.ArrayListUnmanaged(pane_sidebar.Line) = .{},
 /// Folded window groups (by tab identity) and projects (by name), as keys.
 folded: std.AutoHashMapUnmanaged(u64, void) = .{},
+/// The all-windows search (T1877, Mac `PaneSidebarFilter`): the field's text
+/// and caret, and whether the column holds the keyboard for it. Like the
+/// scope, never persisted; turning the scope off empties it.
+search: search_field.Field = .{},
+search_focus: bool = false,
 
 mode: pane_sidebar.Mode = .hidden,
 scale: f32 = 1.0,
@@ -418,6 +427,10 @@ pub fn place(self: *PaneSidebar, rect: w32.RECT, mode: pane_sidebar.Mode, scale:
         self.disarm();
         self.closeCard(if (mode == .hidden) .hidden else .mode);
     }
+    // T1877: a field that is no longer on screen gives the caret back, and a
+    // query filters the panel but never the rail - a mode change re-asks.
+    if (self.search_focus and !self.searchShown()) self.releaseSearchFocus();
+    if (changed and !self.search.isEmpty()) self.refresh();
     if (mode == .hidden or rect.right <= rect.left or rect.bottom <= rect.top) {
         _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
         return;
@@ -567,6 +580,11 @@ fn logOutline(self: *PaneSidebar) void {
     }
     const rules = l.rule_count + @intFromBool(l.section_rule != null);
     w.print(" rules={d} scope={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY() }) catch {};
+    // The search field (T1877): where to click it, and whether the "No
+    // matching panes" note is up.
+    if (l.search.width() > 0) {
+        w.print(" search={d},{d} nomatch={d}", .{ l.search.centerX(), l.search.centerY(), @intFromBool(l.no_match != null) }) catch {};
+    }
     log.info("pane sidebar outline {s}", .{fbs.getWritten()});
 }
 
@@ -623,25 +641,50 @@ fn refreshAll(self: *PaneSidebar) void {
             nref += 1;
         }
     }
-    var placed: [max_heads]outline.Placed = undefined;
-    const np = outline.outlineOrder(names[0..nref], &placed);
+    var all_placed: [max_heads]outline.Placed = undefined;
+    const n_all = outline.outlineOrder(names[0..nref], &all_placed);
+
+    // Searching (T1877): only the panes the query matches, only the windows
+    // holding one, and nothing folded - a hit inside a folded group would
+    // read as no hit (Mac `allWindows`).
+    var q_buf: [search_field.cap * 3]u8 = undefined;
+    const query: ?[]const u8 = if (self.filterActive()) self.search.utf8(&q_buf) else null;
+    const home = if (query != null) std.process.getEnvVarOwned(self.alloc, "USERPROFILE") catch null else null;
+    defer if (home) |hm| self.alloc.free(hm);
 
     const Span = struct { start: usize, grid: usize, stashed: usize };
     var views: [pane_sidebar.max_items]*PaneView = undefined;
     var spans: [max_heads]Span = undefined;
+    var placed: [max_heads]outline.Placed = undefined;
+    var np: usize = 0;
     var nv: usize = 0;
     var h = std.hash.Wyhash.init(0);
     h.update("all");
-    h.update(std.mem.asBytes(&np));
-    for (placed[0..np], 0..) |p, gi| {
+    h.update(std.mem.asBytes(&n_all));
+    if (query) |q| {
+        h.update("search\x00");
+        h.update(q);
+    }
+    for (all_placed[0..n_all]) |p| {
         const r = refs[p.index];
         const own = self.isOwn(r);
         const active = r.window.tab_active_pane[r.tab];
-        const got = pane_sidebar.roster(r.window.tab_trees[r.tab], views[nv..]);
+        const listed = pane_sidebar.roster(r.window.tab_trees[r.tab], views[nv..]);
+        // Keep the hits, in roster order (the grid, then the stash).
+        var got: usize = 0;
         var grid: usize = 0;
-        for (views[nv .. nv + got]) |v| {
+        for (views[nv .. nv + listed]) |v| {
+            if (query) |q| {
+                if (!paneMatches(q, names[p.index], v, home)) continue;
+            }
+            views[nv + got] = v;
+            got += 1;
             if (v.stash_seq == 0) grid += 1;
         }
+        if (query != null and got == 0) continue;
+        const gi = np;
+        placed[gi] = p;
+        np += 1;
         spans[gi] = .{ .start = nv, .grid = grid, .stashed = got - grid };
         h.update(std.mem.asBytes(&r.window));
         h.update(std.mem.asBytes(&r.tab));
@@ -690,8 +733,8 @@ fn refreshAll(self: *PaneSidebar) void {
             .project = p.project,
             .grid = sp.grid,
             .stashed = sp.stashed,
-            .folded = self.folded.contains(key),
-            .project_folded = p.project != null and self.folded.contains(project_key),
+            .folded = query == null and self.folded.contains(key),
+            .project_folded = query == null and p.project != null and self.folded.contains(project_key),
         };
     }
     var lines: [pane_sidebar.max_heads * 5 + pane_sidebar.max_items]pane_sidebar.Line = undefined;
@@ -706,8 +749,43 @@ fn refreshAll(self: *PaneSidebar) void {
             ofs.writer().print("{s}{s}/{s}", .{ sep, pr, p.label }) catch break;
         } else ofs.writer().print("{s}{s}", .{ sep, p.label }) catch break;
     }
-    log.info("pane sidebar all-windows groups={d} panes={d} lines={d} order={s}", .{ np, nv, nl, ofs.getWritten() });
+    const terms = if (query) |q| countTerms(q) else 0;
+    log.info("pane sidebar all-windows groups={d} panes={d} lines={d} search={d} order={s}", .{ np, nv, nl, terms, ofs.getWritten() });
     self.rosterChanged();
+}
+
+fn countTerms(q: []const u8) usize {
+    var n: usize = 0;
+    var it = outline.terms(q);
+    while (it.next()) |_| n += 1;
+    return n;
+}
+
+/// Whether the search filters the roster now (`pane_sidebar_search.filters`).
+fn filterActive(self: *const PaneSidebar) bool {
+    return search_field.filters(!self.search.isEmpty(), self.all_windows, self.mode == .expanded, self.card_open);
+}
+
+/// Whether `query` matches pane `v` of the window called `window_name`: every
+/// term in the window's name or in what the pane's row says about it - its
+/// title, its banner line, and its directory or location both as shown and
+/// in full (Mac `PaneSidebarText.searchFields`), so `~\git` and
+/// `C:\Users\me\git` each find it.
+fn paneMatches(query: []const u8, window_name: []const u8, v: *PaneView, home: ?[]const u8) bool {
+    const kind_name: []const u8 = if (v.isViewer()) "Viewer" else "Terminal";
+    const pwd: ?[]const u8 = if (v.surface()) |s| (if (s.pwd) |p| p else null) else null;
+    const title8 = pane_sidebar.displayTitle(if (v.title()) |t| t else null, pwd, kind_name);
+    var line_buf: [512]u8 = undefined;
+    const banner: ?[]const u8 = switch (v.kind) {
+        .terminal => |s| pane_sidebar.bannerLine(if (s.banner_text) |b| b else null, &line_buf),
+        .viewer => null,
+    };
+    const location: ?[]const u8 = if (v.viewer()) |vp| (if (vp.location) |l| l else null) else null;
+    var pwd_buf: [512]u8 = undefined;
+    var loc_buf: [512]u8 = undefined;
+    const pwd_short: ?[]const u8 = if (pwd) |p| pane_sidebar.abbreviatePath(p, home, &pwd_buf) else null;
+    const loc_short: ?[]const u8 = if (location) |l| pane_sidebar.abbreviatePath(l, home, &loc_buf) else null;
+    return outline.matches(query, &.{ window_name, title8, banner, pwd, pwd_short, location, loc_short });
 }
 
 fn isOwn(self: *const PaneSidebar, r: TabRef) bool {
@@ -906,6 +984,7 @@ fn layoutFor(self: *PaneSidebar, which: Surface) pane_sidebar.Layout {
     };
     if (self.drag_active) pane_sidebar.addDropSlot(&l, self.metrics, self.scale);
     l.quick_kill = self.quick_kill;
+    l.search_text = !self.search.isEmpty();
     return l;
 }
 
@@ -1348,6 +1427,12 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     self.paintPin(hdc, l, t);
     self.paintScope(hdc, l, t);
     self.paintTrash(hdc, l, t);
+    self.paintSearch(hdc, l, t);
+    if (l.no_match) |r| {
+        // Mac's tertiary note: information, not an error.
+        if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+        drawText(hdc, std.unicode.utf8ToUtf16LeStringLiteral("No matching panes"), r, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+    }
 
     if (l.section_rule) |r| fillRect(hdc, r, rgb(shade(t.surface, if (t.dark) 24 else -24)));
     if (l.stashed_caption) |cap| {
@@ -1453,6 +1538,101 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         }
     }
     self.paintDropSlot(hdc, l, t);
+}
+
+/// The search field's text box: right of the magnifier, left of the clear
+/// button (or the field's own `sm` inset while there is nothing to clear).
+fn searchTextBox(self: *const PaneSidebar, l: *const pane_sidebar.Layout) pane_sidebar.Rect {
+    const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
+    const r = l.search;
+    const left = r.left + sm + pane_sidebar.px(pane_sidebar.row_button_dip, self.scale) + sm;
+    const right = if (l.search_text) l.search_clear.left - sm else r.right - sm;
+    return .{ .left = left, .top = r.top, .right = @max(right, left), .bottom = r.bottom };
+}
+
+/// How far the query is scrolled left so the caret stays in view, measured
+/// with `hdc`'s current font.
+fn searchScroll(self: *const PaneSidebar, hdc: w32.HDC, box: pane_sidebar.Rect) i32 {
+    const caret_x = textWidth(hdc, self.search.text()[0..self.search.caret]);
+    return search_field.scrollFor(caret_x, box.width() - 1);
+}
+
+/// The all-windows search field (T1877): Mac's soft capsule in the design
+/// system's input shape - a 4 DIP rounded well a step off the surface, the
+/// viewer find card's field - with the magnifier leading, the "Search"
+/// placeholder or the query, and the clear button once there is one. While
+/// the column holds the keyboard the caret shows and the well carries the
+/// accent underline a Windows text box shows when it is focused.
+fn paintSearch(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
+    const r = l.search;
+    if (r.width() <= 0) return;
+    const s = self.scale;
+    const sm = pane_sidebar.px(pane_sidebar.sm_dip, s);
+    const radius = pane_sidebar.px(4, s);
+    const well = shade(t.surface, if (t.dark) -14 else 14);
+    fillRound(hdc, r, radius, rgb(well));
+    if (self.search_focus) {
+        const line = @max(pane_sidebar.px(2, s), 1);
+        fillRect(hdc, .{ .left = r.left + radius, .top = r.bottom - line, .right = r.right - radius, .bottom = r.bottom }, rgb(t.accent));
+    }
+
+    const box = pane_sidebar.px(pane_sidebar.row_button_dip, s);
+    const gtop = r.top + @divTrunc(r.height() - box, 2);
+    // The magnifier labels the field; it is not a button.
+    glyph(hdc, s, .{ .left = r.left + sm, .top = gtop, .right = r.left + sm + box, .bottom = gtop + box }, glyph_search, 11, t.secondary);
+
+    const tb = self.searchTextBox(l);
+    if (self.title_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+    const text = self.search.text();
+    var off: i32 = 0;
+    if (text.len == 0) {
+        drawText(hdc, std.unicode.utf8ToUtf16LeStringLiteral("Search"), tb, t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+    } else {
+        off = self.searchScroll(hdc, tb);
+        const saved = w32.SaveDC(hdc);
+        _ = w32.IntersectClipRect(hdc, tb.left, tb.top, tb.right, tb.bottom);
+        drawText(hdc, text, .{ .left = tb.left - off, .top = tb.top, .right = tb.left - off + 100000, .bottom = tb.bottom }, t.text, w32.DT_VCENTER);
+        _ = w32.RestoreDC(hdc, saved);
+    }
+    if (self.search_focus) {
+        const cx = tb.left + textWidth(hdc, text[0..self.search.caret]) - off;
+        const ch = self.metrics.title_h;
+        const ctop = r.top + @divTrunc(r.height() - ch, 2);
+        fillRect(hdc, .{ .left = cx, .top = ctop, .right = cx + @max(pane_sidebar.px(1, s), 1), .bottom = ctop + ch }, t.text);
+    }
+
+    if (l.search_text) {
+        const b = l.search_clear;
+        const state: icon_button.State = if (self.hoverIs(.search_clear))
+            (if (std.meta.eql(self.pressed, pane_sidebar.Hit.search_clear)) .pressed else .hover)
+        else
+            .normal;
+        if (icon_button.paintsFill(state)) {
+            fillRound(hdc, b, radius, rgb(shade(well, icon_button.fillDelta(state, t.dark))));
+        }
+        glyph(hdc, s, b, glyph_kill, 10, t.secondary);
+    }
+}
+
+/// The caret index a click at `x` (in `which`'s client coordinates) lands on:
+/// the boundary nearest the point, measured the way `paintSearch` lays the
+/// text out.
+fn searchCaretAt(self: *PaneSidebar, which: Surface, x: i32) usize {
+    const l = self.layoutFor(which);
+    const tb = self.searchTextBox(&l);
+    const dc = w32.CreateCompatibleDC(null) orelse return self.search.len;
+    defer _ = w32.DeleteDC(dc);
+    if (self.title_font) |f| _ = w32.SelectObject(dc, @ptrCast(f));
+    const off = self.searchScroll(dc, tb);
+    const text = self.search.text();
+    const target = x - tb.left + off;
+    var prev: i32 = 0;
+    for (1..text.len + 1) |i| {
+        const wdt = textWidth(dc, text[0..i]);
+        if (wdt >= target) return if (target - prev < wdt - target) i - 1 else i;
+        prev = wdt;
+    }
+    return text.len;
 }
 
 /// The all-windows toggle (Mac's `macwindow.on.rectangle` header button).
@@ -1982,6 +2162,8 @@ pub fn openCard(self: *PaneSidebar, reason: CardReason) void {
     if (!was_open) self.layer_logged = false;
     self.hover = .none;
     self.pressed = .none;
+    // A query the rail ignored filters again on the card (T1877).
+    if (!was_open and !self.search.isEmpty()) self.refresh();
     self.positionCard();
     if (self.card_hwnd) |c| {
         // A leave is owed whether or not a move ever arrives: tracking
@@ -2013,6 +2195,10 @@ pub fn closeCard(self: *PaneSidebar, reason: CardReason) void {
         if (w32.GetCapture() == c) _ = w32.ReleaseCapture();
         _ = w32.ShowWindow(c, w32.SW_HIDE);
     }
+    // The field went with the card unless the panel shows it now (T1877):
+    // the caret goes back, and the rail lists every pane again.
+    if (self.search_focus and self.mode != .expanded) self.releaseSearchFocus();
+    if (!self.search.isEmpty()) self.refresh();
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     self.logCard("close", reason);
 }
@@ -2022,12 +2208,18 @@ fn logCard(self: *PaneSidebar, what: []const u8, reason: CardReason) void {
     _ = w32.GetWindowRect(self.hwnd, &col);
     var card: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
     if (self.card_hwnd) |c| _ = w32.GetWindowRect(c, &card);
-    log.info("pane sidebar card {s} reason={s} column={d},{d},{d},{d} card={d},{d},{d},{d}", .{
+    // Where the card's search field is (T1877), in its client coordinates: a
+    // script clicks it before the card's grace period runs out.
+    var sf: pane_sidebar.Rect = .{};
+    if (self.card_open) sf = self.layoutFor(.card).search;
+    log.info("pane sidebar card {s} reason={s} column={d},{d},{d},{d} card={d},{d},{d},{d} search={d},{d},{d},{d}", .{
         what,      @tagName(reason),
         col.left,  col.top,
         col.right, col.bottom,
         card.left, card.top,
         card.right, card.bottom,
+        sf.left,   sf.top,
+        sf.right,  sf.bottom,
     });
 }
 
@@ -2205,7 +2397,9 @@ fn onCloseTimer(self: *PaneSidebar) void {
     if (!self.card_open) return;
     // A press held on the card (a click in progress; later a drag, T1844, or
     // a menu, T1845) keeps it open until it is let go.
-    const held = w32.GetCapture() == c or self.drag_active or self.menu_open;
+    // So does the caret in its search field (Mac: the card stays open while
+    // the field is focused) - typing must not lose the field under it.
+    const held = w32.GetCapture() == c or self.drag_active or self.menu_open or self.search_focus;
     switch (hov.closeVerdict(self.pointerOn(.card, null), held)) {
         .stay => {},
         .retry => self.scheduleClose(),
@@ -2294,6 +2488,8 @@ const tip_scope_off = W("Show only this window\u{2019}s panes");
 const tip_head_this = W("This window \u{2014} click to hide or show its panes");
 const tip_head_other = W("Raise this window");
 const tip_head_project = W("Hide or show this project\u{2019}s windows");
+const tip_search = W("Search windows and panes \u{2014} every word must match");
+const tip_search_clear = W("Clear search");
 // Trash mode (T1845).
 const tip_trash_on = W(row_menu.trashTip(true));
 const tip_trash_off = W(row_menu.trashTip(false));
@@ -2324,6 +2520,20 @@ fn syncTips(self: *PaneSidebar) void {
             const nh = if (live) l.head_count else 0;
             if (self.tip_heads[slot] > nh) for (nh..self.tip_heads[slot]) |k| delTool(tip, hwnd, toolHead(k));
             self.tip_heads[slot] = nh;
+            // The search field (T1877, Mac's `.toolTip` and "Clear search"):
+            // the field's tip stops short of the clear button, so the two
+            // never claim the same point.
+            if (live and l.search.width() > 0) {
+                var field = l.search;
+                if (l.search_text) {
+                    field.right = l.search_clear.left;
+                    addTool(tip, hwnd, tool_search_clear, l.search_clear, tip_search_clear);
+                } else delTool(tip, hwnd, tool_search_clear);
+                addTool(tip, hwnd, tool_search, field, tip_search);
+            } else {
+                delTool(tip, hwnd, tool_search);
+                delTool(tip, hwnd, tool_search_clear);
+            }
             if (!live) {
                 delTool(tip, hwnd, tool_pin);
                 delTool(tip, hwnd, tool_scope);
@@ -2422,6 +2632,11 @@ fn activate(self: *PaneSidebar, which: Surface, hit: pane_sidebar.Hit, alt: bool
         .pin => self.window.togglePaneSidebarPin(),
         .scope => self.toggleScope(),
         .trash => self.setQuickKill(!self.quick_kill),
+        .search => self.focusSearch(),
+        .search_clear => {
+            log.info("pane sidebar search cleared by button", .{});
+            self.searchEdited(self.search.clear());
+        },
         .item => |i| {
             if (i >= self.entries.items.len) return;
             const e = self.entries.items[i];
@@ -2454,6 +2669,12 @@ fn toggleScope(self: *PaneSidebar) void {
     self.all_windows = !self.all_windows;
     self.hover = .none;
     self.signature = 0;
+    // The search belongs to the scope (Mac clears the filter with it): off,
+    // the field is gone, so its query and its caret go too.
+    if (!self.all_windows) {
+        if (self.search_focus) self.releaseSearchFocus();
+        _ = self.search.clear();
+    }
     log.info("pane sidebar scope all_windows={}", .{self.all_windows});
     self.refresh();
 }
@@ -2469,6 +2690,112 @@ pub fn setQuickKill(self: *PaneSidebar, on: bool) void {
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     if (self.card_hwnd) |c| self.invalidate(c);
     self.syncTips();
+}
+
+// -------------------------------------------------------------------------
+// The all-windows search field (T1877)
+// -------------------------------------------------------------------------
+
+/// The field is on screen: the all-windows scope, in the panel or the open
+/// card (the rail has no room for it).
+fn searchShown(self: *const PaneSidebar) bool {
+    return self.all_windows and (self.mode == .expanded or self.card_open);
+}
+
+/// A click in the field: the column takes the keyboard. Through the loop's
+/// deferred focus (T48) like every other focus move - never a synchronous
+/// SetFocus from inside a click. The open card never activates its window,
+/// so a click on it while another app is in front brings this one forward
+/// first, or the keys would go to that app.
+fn focusSearch(self: *PaneSidebar) void {
+    if (!self.searchShown()) return;
+    if (w32.GetAncestor(self.hwnd, w32.GA_ROOT)) |root| {
+        if (!w32.windowIsActive(root)) _ = w32.SetForegroundWindow(root);
+    }
+    App.deferSetFocus(self.hwnd);
+    self.repaint();
+}
+
+/// Give the caret back to this window's focused pane (Mac: Escape on an empty
+/// field resigns it).
+fn releaseSearchFocus(self: *PaneSidebar) void {
+    // Cleared up front, not on the WM_KILLFOCUS the deferred move brings:
+    // the activation below relays the window out, which places this column
+    // again, and that must not ask for the release a second time.
+    self.search_focus = false;
+    self.repaint();
+    if (w32.GetFocus() != self.hwnd) return;
+    log.info("pane sidebar search released the caret", .{});
+    if (self.window.getActivePane()) |p| self.window.paneSidebarActivate(p);
+}
+
+/// The query or the caret changed: re-filter when the text did, repaint
+/// either way.
+fn searchEdited(self: *PaneSidebar, text_changed: bool) void {
+    if (text_changed and self.all_windows) self.refresh();
+    self.repaint();
+}
+
+/// Return in the field: go to the first hit, as clicking its row would (Mac
+/// `revealFirstMatch`). Searching, the roster IS the hits in outline order.
+fn submitSearch(self: *PaneSidebar) void {
+    if (!self.filterActive() or self.entries.items.len == 0) return;
+    log.info("pane sidebar search reveal first hit own={}", .{self.entries.items[0].own});
+    self.activate(.rail, .{ .item = 0 }, false);
+}
+
+/// A key while the column holds the keyboard. True when the field used it.
+fn searchKey(self: *PaneSidebar, vk: u16, wparam: usize, lparam: isize) bool {
+    const ctrl = w32.GetKeyState(@as(i32, w32.VK_CONTROL)) < 0;
+    const shift = w32.GetKeyState(@as(i32, w32.VK_SHIFT)) < 0;
+    switch (vk) {
+        w32.VK_RETURN => self.submitSearch(),
+        w32.VK_ESCAPE => switch (search_field.escapeVerb(self.search.isEmpty())) {
+            .clear => {
+                log.info("pane sidebar search cleared by escape", .{});
+                self.searchEdited(self.search.clear());
+            },
+            .release => self.releaseSearchFocus(),
+        },
+        w32.VK_BACK => self.searchEdited(self.search.backspace(ctrl)),
+        w32.VK_DELETE => self.searchEdited(self.search.delete(ctrl)),
+        w32.VK_LEFT, w32.VK_RIGHT, w32.VK_HOME, w32.VK_END => {
+            const m: search_field.Move = switch (vk) {
+                w32.VK_LEFT => if (ctrl) .word_left else .left,
+                w32.VK_RIGHT => if (ctrl) .word_right else .right,
+                w32.VK_HOME => .home,
+                else => .end,
+            };
+            if (self.search.move(m)) self.repaint();
+        },
+        'V' => {
+            if (!ctrl) return false;
+            self.pasteSearch();
+        },
+        else => {
+            // The window's own chords (Ctrl+Shift+...) still work with the
+            // caret here, as they do from the tab-rename and palette edits.
+            // Plain Ctrl chords stay with the field: Ctrl+C or Ctrl+D handed
+            // to a shell would interrupt or end it.
+            if (!(ctrl and shift)) return false;
+            const s = self.window.getActiveSurface() orelse return false;
+            s.handleKeyEvent(wparam, lparam, .press);
+        },
+    }
+    return true;
+}
+
+/// Ctrl+V: the clipboard's text, as one line (`Field.insert`).
+fn pasteSearch(self: *PaneSidebar) void {
+    if (w32.OpenClipboard(self.hwnd) == 0) return;
+    defer _ = w32.CloseClipboard();
+    const mem = w32.GetClipboardData(w32.CF_UNICODETEXT) orelse return;
+    const p = w32.GlobalLock(mem) orelse return;
+    defer _ = w32.GlobalUnlock(mem);
+    const units: [*]const u16 = @ptrCast(@alignCast(p));
+    var n: usize = 0;
+    while (n < 4 * search_field.cap and units[n] != 0) n += 1;
+    self.searchEdited(self.search.insert(units[0..n]));
 }
 
 /// The window an entry's pane lives in, if it is still open: this sidebar's
@@ -2669,9 +2996,16 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
                 return 1;
             }
             var pt: w32.POINT = undefined;
-            if (w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(hwnd, &pt) != 0 and self.onEdgeAt(which, pt.x, pt.y)) {
-                setSizeCursor();
-                return 1;
+            if (w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(hwnd, &pt) != 0) {
+                if (self.onEdgeAt(which, pt.x, pt.y)) {
+                    setSizeCursor();
+                    return 1;
+                }
+                // The search field's text takes the text cursor (T1877).
+                if (self.hitAt(which, pt.x, pt.y) == .search) {
+                    _ = w32.SetCursor(w32.LoadCursorW(null, w32.IDC_IBEAM));
+                    return 1;
+                }
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
         },
@@ -2764,10 +3098,47 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             self.invalidate(hwnd);
             const alt = self.press_alt or altDown();
             self.press_alt = false;
-            if (std.meta.eql(hit, pressed)) self.activate(which, hit, alt);
+            if (std.meta.eql(hit, pressed)) {
+                // A click in the search field puts the caret where it landed.
+                if (hit == .search) self.search.setCaret(self.searchCaretAt(which, xOf(lparam)));
+                self.activate(which, hit, alt);
+            }
             // Let go off the card while it was held open: the grace period
             // the hold deferred starts now.
             if (which == .card and self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();
+            return 0;
+        },
+        // The search field's keyboard (T1877). Only the column ever takes
+        // focus (the card never activates), so the keys arrive here whichever
+        // surface shows the field.
+        w32.WM_SETFOCUS => {
+            if (which == .rail and self.searchShown()) {
+                self.search_focus = true;
+                log.info("pane sidebar search focus=true", .{});
+                self.repaint();
+            }
+            return 0;
+        },
+        w32.WM_KILLFOCUS => {
+            if (which == .rail and self.search_focus) {
+                self.search_focus = false;
+                log.info("pane sidebar search focus=false", .{});
+                self.repaint();
+                if (self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();
+            }
+            return 0;
+        },
+        w32.WM_KEYDOWN => {
+            if (which == .rail and self.searchShown() and self.searchKey(@intCast(wparam & 0xFFFF), wparam, lparam)) return 0;
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+        w32.WM_CHAR => {
+            if (which != .rail or !self.searchShown()) return 0;
+            const unit: u16 = @truncate(wparam);
+            // Return / Escape / Backspace arrive here too, translated from
+            // their key: the key handler already acted on them.
+            if (unit < 0x20 or unit == 0x7F) return 0;
+            self.searchEdited(self.search.insert(&.{unit}));
             return 0;
         },
         // The row menu opens on the release, the Windows convention (a

@@ -663,6 +663,17 @@ pub const Layout = struct {
     /// The trash-mode toggle, between the all-windows toggle and the pin -
     /// Mac's header order (T1845).
     trash: Rect = .{},
+    /// The all-windows search field under the header (T1877; outline in the
+    /// panel and the open card only - empty otherwise), and its clear
+    /// button at the trailing edge.
+    search: Rect = .{},
+    search_clear: Rect = .{},
+    /// The field holds a query, so its clear button is a hit target. Set by
+    /// the caller, as `quick_kill` is.
+    search_text: bool = false,
+    /// "No matching panes": the outline has no line to show (a search with
+    /// no hit - an unfiltered outline always lists this window).
+    no_match: ?Rect = null,
     /// Trash mode is on (T1845): a rail tile's corner x is a hit target. Set
     /// by the caller - the layout itself does not depend on it.
     quick_kill: bool = false,
@@ -767,6 +778,7 @@ pub fn layoutIn(m: Mode, w: i32, h: i32, items: []const Item, lines: ?[]const Li
         .expanded => if (lines) |ls| {
             const area: Rect = .{ .right = w, .bottom = h };
             layoutHeader(&l, area, tm, scale);
+            layoutSearch(&l, area, tm, scale);
             layoutLines(&l, area, items[0..n], ls, tm, scale);
         } else layoutRows(&l, .{ .right = w, .bottom = h }, items[0..n], tm, scale),
         .mini => layoutMini(&l, items[0..n], scale, insets),
@@ -847,6 +859,7 @@ pub fn layoutOpenIn(w: i32, h: i32, items: []const Item, lines: ?[]const Line, t
     l.card = openCardRect(w, h, scale, insets);
     if (lines) |ls| {
         layoutHeader(&l, l.card, tm, scale);
+        layoutSearch(&l, l.card, tm, scale);
         layoutLines(&l, l.card, items[0..n], ls, tm, scale);
     } else layoutRows(&l, l.card, items[0..n], tm, scale);
     return l;
@@ -868,6 +881,30 @@ fn layoutHeader(l: *Layout, area: Rect, tm: TextMetrics, scale: f32) void {
     const gap = px(2, scale);
     l.trash = .{ .left = l.pin.left - gap - btn, .top = pin_top, .right = l.pin.left - gap, .bottom = pin_top + btn };
     l.scope = .{ .left = l.trash.left - gap - btn, .top = pin_top, .right = l.trash.left - gap, .bottom = pin_top + btn };
+}
+
+/// The all-windows search field, under the header (T1877; Mac's capsule
+/// under the header, inset like a row's fill, with room below it). A field of
+/// the design system's input shape: one body line with `sm` above and below,
+/// never shorter than the standard 28 DIP control, so it sits on the same
+/// frame as the header's buttons. The clear button is the compact 20 DIP
+/// square, `sm` in from the field's trailing edge.
+fn layoutSearch(l: *Layout, area: Rect, tm: TextMetrics, scale: f32) void {
+    const sm = px(sm_dip, scale);
+    const fill = px(toc.fill_inset_dip, scale);
+    const h = @max(tm.title_h + 2 * sm, px(button_dip, scale));
+    const top = l.header.bottom;
+    l.search = .{ .left = area.left + fill, .top = top, .right = area.right - fill, .bottom = top + h };
+    const b = px(row_button_dip, scale);
+    const bt = top + @divTrunc(h - b, 2);
+    l.search_clear = .{ .left = l.search.right - sm - b, .top = bt, .right = l.search.right - sm, .bottom = bt + b };
+}
+
+/// Where the outline's lines start: below the search field when there is
+/// one, else below the header.
+fn bodyTop(l: *const Layout, scale: f32) i32 {
+    if (l.search.width() > 0) return l.search.bottom + px(sm_dip, scale);
+    return l.header.bottom;
 }
 
 /// The panel's header and rows inside `area`: the pinned panel's whole
@@ -915,7 +952,12 @@ fn layoutLines(l: *Layout, area: Rect, items: []const Item, lines: []const Line,
         l.items[i] = .{};
         l.indent[i] = 0;
     }
-    var y = l.header.bottom;
+    var y = bodyTop(l, scale);
+    if (lines.len == 0) {
+        // Mac's note: on the label inset, a row's padding around one line.
+        l.no_match = .{ .left = area.left + label, .top = y, .right = area.right - label, .bottom = y + rowHeight(false, tm, scale) };
+        return;
+    }
     var prev: ?LineKind = null;
     for (lines) |ln| {
         const depth: i32 = ln.depth;
@@ -1056,6 +1098,9 @@ pub const Hit = union(enum) {
     scope,
     /// The trash-mode toggle (T1845).
     trash,
+    /// The all-windows search field, and its clear button (T1877).
+    search,
+    search_clear,
     /// An outline header's body (an index into the layout's heads).
     head: usize,
     /// An outline header's chevron column: fold, never raise.
@@ -1068,6 +1113,9 @@ pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
     const rows = l.mode == .expanded or l.open;
     if (rows and l.scope.contains(x, y)) return .scope;
     if (rows and l.trash.contains(x, y)) return .trash;
+    if (rows and l.search.contains(x, y)) {
+        return if (l.search_text and l.search_clear.contains(x, y)) .search_clear else .search;
+    }
     // Trash mode's corner x on a tile wins over the tile it sits on.
     if (!rows and l.quick_kill) for (0..l.count) |i| {
         if (l.tileKill(i, scale).contains(x, y)) return .{ .item_button = i };
@@ -1606,6 +1654,61 @@ test "pane_sidebar: hit testing the outline finds heads, chevrons, rows and the 
     try testing.expectEqual(Hit{ .item = 3 }, hitTest(&l, 60, l.items[3].centerY(), s));
     try testing.expectEqual(@as(Hit, .scope), hitTest(&l, l.scope.centerX(), l.scope.centerY(), s));
     try testing.expectEqual(@as(Hit, .pin), hitTest(&l, l.pin.centerX(), l.pin.centerY(), s));
+}
+
+test "pane_sidebar: the all-windows search field sits under the header, the outline under it (T1877)" {
+    for (scales) |s| {
+        const f = outlineFixture(s);
+        const sm = px(sm_dip, s);
+        var l = layoutWith(.expanded, px(240, s), px(900, s), &f.items, &f.lines, f.tm, s);
+        // Under the header, inset like a row's fill, at least the standard
+        // control height, the clear button inside it with sm to spare.
+        try testing.expectEqual(l.header.bottom, l.search.top);
+        try testing.expectEqual(px(toc.fill_inset_dip, s), l.search.left);
+        try testing.expectEqual(px(240, s) - px(toc.fill_inset_dip, s), l.search.right);
+        try testing.expect(l.search.height() >= px(button_dip, s));
+        try testing.expect(l.search.height() >= f.tm.title_h + 2 * sm);
+        try testing.expectEqual(px(row_button_dip, s), l.search_clear.width());
+        try testing.expectEqual(l.search.right - sm, l.search_clear.right);
+        try testing.expect(l.search_clear.top - l.search.top >= @divTrunc(sm, 2));
+        try testing.expect(l.search.bottom - l.search_clear.bottom >= @divTrunc(sm, 2));
+        // Nothing touches it: the first head is `sm` below the field.
+        try testing.expect(l.heads[0].rect.top >= l.search.bottom + sm);
+        try testing.expect(l.no_match == null);
+        // Hits: the field, and its clear button only while there is text.
+        const cx = l.search_clear.centerX();
+        const cy = l.search_clear.centerY();
+        try testing.expectEqual(@as(Hit, .search), hitTest(&l, l.search.left + px(30, s), l.search.centerY(), s));
+        try testing.expectEqual(@as(Hit, .search), hitTest(&l, cx, cy, s));
+        l.search_text = true;
+        try testing.expectEqual(@as(Hit, .search_clear), hitTest(&l, cx, cy, s));
+        // The open card carries it too, inside the card.
+        const o = layoutOpenWith(openWidthPx(240, s), px(900, s), &f.items, &f.lines, f.tm, s);
+        try testing.expect(o.search.left >= o.card.left and o.search.right <= o.card.right);
+        try testing.expectEqual(o.header.bottom, o.search.top);
+    }
+}
+
+test "pane_sidebar: no field outside the outline, and none on the rail (T1877)" {
+    const s: f32 = 1.0;
+    const f = outlineFixture(s);
+    const rail = layoutWith(.mini, px(68, s), px(900, s), &f.items, &f.lines, f.tm, s);
+    try testing.expectEqual(@as(i32, 0), rail.search.width());
+    try testing.expect(hitTest(&rail, 30, 30, s) != .search);
+    const one = layout(.expanded, 240, 900, &f.items, f.tm, s);
+    try testing.expectEqual(@as(i32, 0), one.search.width());
+}
+
+test "pane_sidebar: an outline with no lines says No matching panes under the field (T1877)" {
+    for (scales) |s| {
+        const f = outlineFixture(s);
+        const l = layoutWith(.expanded, px(240, s), px(900, s), &f.items, &.{}, f.tm, s);
+        const r = l.no_match.?;
+        try testing.expect(r.top >= l.search.bottom + px(sm_dip, s));
+        try testing.expectEqual(px(toc.label_inset_dip, s), r.left);
+        try testing.expectEqual(@as(usize, 0), l.head_count);
+        for (0..l.count) |i| try testing.expect(!l.shown(i));
+    }
 }
 
 test "pane_sidebar: the open card lays the outline out inside the card" {

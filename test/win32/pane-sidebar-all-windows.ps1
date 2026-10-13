@@ -22,9 +22,13 @@
 #   5. A click on the project header folds its windows away, and back.
 #   6. Renaming B moves it in the order; closing D drops it from the list -
 #      the list follows other windows, not only its own.
+#   6b. The search field (T1877): every word must match (window, pane,
+#      banner, folder), accents fold, "No matching panes" when empty, Escape
+#      clears, Return reveals the first hit through the click's own path.
 #   7. Unpinned, the rail shows every pane as a tile with a hairline between
 #      windows and no header rows.
-#   8. The toggle switches back to this window's panes only.
+#   8. The toggle switches back to this window's panes only, and clears a
+#      query: back on, every window is listed (T1877).
 #
 # Geometry comes from the `pane sidebar outline` log line (heads, items,
 # rules, the toggle, in the column's client coordinates): a background
@@ -293,6 +297,63 @@ try {
     "  $g"
     Assert "closing D dropped it from A's list" ($g -match 'order=alpha\|ghoztty/feature-2\|zeta$')
 
+    "== 6b: the search field filters by every word, Escape clears, Return reveals (T1877)"
+    # Windows now: alpha (b1, b2), ghoztty: feature-2 (c1), zeta (P, s1).
+    $o = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' 0 1000)
+    $line = Wait-Log 'pane sidebar outline mode=expanded' 0 1000
+    $sp = $null
+    if ($line -match ' search=(-?\d+),(-?\d+) nomatch=(\d)') { $sp = @{ X = [int]$Matches[1]; Y = [int]$Matches[2] } }
+    Assert "the outline logs a search field under the header" ($null -ne $sp -and $null -ne $o -and @($o.Heads | Where-Object { $_.Y -le $sp.Y }).Count -eq 0)
+    # A real click activates its window (WM_MOUSEACTIVATE); a posted one off
+    # the input desktop cannot, and section 3 raised another window.
+    Assert "setup: window A is the active window again" (Set-TestActiveWindow -Window $top)
+    $mark = Get-LogCount
+    if ($sp) { [void](ClickAt $top $sb $sp) }
+    Assert "a click in the field gives the column the keyboard (log)" ($null -ne (Wait-Log 'pane sidebar search focus=true' $mark 3000))
+    # Escape on an EMPTY field gives the caret back to the pane (Mac).
+    $mark = Get-LogCount
+    [void](Send-TestControlKey -Control ([IntPtr]$sb.Hwnd) -Key Escape)
+    Assert "Escape on an empty field releases the caret (log)" ($null -ne (Wait-Log 'pane sidebar search released the caret' $mark 2000))
+    # The keyboard itself, read back from the thread (focus is asynchronous).
+    $focusedAway = $false
+    for ($i = 0; $i -lt 20 -and -not $focusedAway; $i++) {
+        $fh = Get-TestFocusedWindow -Window $top
+        $focusedAway = ($fh -ne [IntPtr]::Zero -and $fh -ne [IntPtr]$sb.Hwnd)
+        if (-not $focusedAway) { Start-Sleep -Milliseconds 100 }
+    }
+    Assert "...and the keyboard really left the column for the pane" $focusedAway
+    $mark = Get-LogCount
+    if ($sp) { [void](ClickAt $top $sb $sp) }
+    Assert "a second click takes it back" ($null -ne (Wait-Log 'pane sidebar search focus=true' $mark 3000))
+    $mark = Get-LogCount
+    [void](Send-TestControlText -Control ([IntPtr]$sb.Hwnd) -Text 'feature')
+    $g = Wait-Log 'pane sidebar all-windows groups=1 .*search=1 ' $mark
+    "  $g"
+    Assert "'feature' keeps only the window it names" ($g -match 'panes=1 .*order=ghoztty/feature-2$')
+    $mark = Get-LogCount
+    [void](Send-TestControlText -Control ([IntPtr]$sb.Hwnd) -Text ' zeta')
+    $g = Wait-Log 'pane sidebar all-windows groups=0 ' $mark
+    Assert "every word must match: 'feature zeta' matches nothing" ($null -ne $g -and $g -match 'lines=0 search=2')
+    Assert "the empty result says No matching panes" ($null -ne (Wait-Log 'pane sidebar outline mode=expanded.* nomatch=1' $mark 2000))
+    $mark = Get-LogCount
+    [void](Send-TestControlKey -Control ([IntPtr]$sb.Hwnd) -Key Escape)
+    Assert "Escape clears the query (log)" ($null -ne (Wait-Log 'pane sidebar search cleared by escape' $mark 2000))
+    $g = Wait-Log 'pane sidebar all-windows groups=3 .*search=0 ' $mark
+    Assert "cleared: every window is listed again" ($null -ne $g)
+    $mark = Get-LogCount
+    # Diacritics fold both ways (Mac's .diacriticInsensitive): 'f`u{00EB}ature'.
+    [void](Send-TestControlText -Control ([IntPtr]$sb.Hwnd) -Text ("f" + [char]0x00EB + "ature"))
+    $g = Wait-Log 'pane sidebar all-windows groups=1 .*search=1 ' $mark
+    Assert "an accented query still finds feature-2" ($null -ne $g -and $g -match 'order=ghoztty/feature-2$')
+    $mark = Get-LogCount
+    [void](Send-TestControlKey -Control ([IntPtr]$sb.Hwnd) -Key Enter)
+    Assert "Return reveals the first hit (log)" ($null -ne (Wait-Log 'pane sidebar search reveal first hit own=false' $mark 2000))
+    Assert "...through the other-window focus path, as a click would" ($null -ne (Wait-Log 'pane sidebar focus other window section=grid' $mark 2000))
+    Assert "...and the field let go of the keyboard as the other window took it" ($null -ne (Wait-Log 'pane sidebar search focus=false' $mark 3000))
+    $mark = Get-LogCount
+    [void](Send-TestControlKey -Control ([IntPtr]$sb.Hwnd) -Key Escape)
+    Assert "Escape clears it again" ($null -ne (Wait-Log 'pane sidebar all-windows groups=3 .*search=0 ' $mark))
+
     "== 7: unpinned, the rail shows every pane with a hairline between windows"
     $mark = Get-LogCount
     [void](ClickAt $top $sb (Get-PinCenter $sb 'expanded'))
@@ -303,14 +364,60 @@ try {
     Assert "every pane is a tile (5) and there are no header rows" ($null -ne $o6 -and $o6.Items.Count -eq 5 -and $o6.Heads.Count -eq 0)
     Assert "two hairlines between the three windows ($($o6.Rules))" ($null -ne $o6 -and $o6.Rules -eq 2)
 
+    "== 7b: the open card carries the field, and stays open while it has the caret (T1877)"
+    Start-Sleep -Milliseconds 900   # section 7's card has contracted
+    $o7 = Wait-Log 'pane sidebar card open reason=unpin' 0 1000
+    $fx = $null; $fy = $null
+    if ($o7 -match 'search=(-?\d+),(-?\d+),(-?\d+),(-?\d+)') {
+        $fx = [int](([int]$Matches[1] + [int]$Matches[3]) / 2); $fy = [int](([int]$Matches[2] + [int]$Matches[4]) / 2)
+        Assert "the open card lays out a search field ($($Matches[1])..$($Matches[3]))" ([int]$Matches[3] -gt [int]$Matches[1])
+    } else { Assert "the open card logged its search field" $false }
+    [void](ClickAt $top $sb (Get-PinCenter $sb 'mini'))   # pin
+    Start-Sleep -Milliseconds 600
+    $sb = Get-Sidebar $top
+    Assert "setup: window A is active for the card's click" (Set-TestActiveWindow -Window $top)
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb (Get-PinCenter $sb 'expanded'))   # unpin: the card opens
+    # The click in its field must beat the 280 ms grace period the open
+    # started, so it is the very next thing (pane-sidebar.ps1 7b's shape).
+    $card = Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard'
+    $clicked = $false
+    if ($card -ne [IntPtr]::Zero -and $null -ne $fx) {
+        $cr = Get-TestWindowRect -Window $card
+        $clicked = Send-TestMouse -Window $top -Target $card -X ($cr.Left + $fx) -Y ($cr.Top + $fy) -Action click
+    }
+    Assert "the click reached the open card's field" $clicked
+    Assert "...and the column took the keyboard for it (log)" ($null -ne (Wait-Log 'pane sidebar search focus=true' $mark 2000))
+    Start-Sleep -Milliseconds 900
+    $closedEarly = @(Get-Content $script:errlog -ErrorAction SilentlyContinue | Select-Object -Skip $mark | Where-Object { $_ -match 'pane sidebar card close' }).Count
+    Assert "with the caret in its field the card did not contract in 3x the grace period ($closedEarly)" ($closedEarly -eq 0)
+    $mark = Get-LogCount
+    [void](Send-TestControlText -Control ([IntPtr]$sb.Hwnd) -Text 'zeta')
+    Assert "the card's field filters its outline" ($null -ne (Wait-Log 'pane sidebar all-windows groups=1 .*search=1 order=zeta$' $mark))
+    [void](Send-TestControlKey -Control ([IntPtr]$sb.Hwnd) -Key Escape)   # clears
+    [void](Send-TestControlKey -Control ([IntPtr]$sb.Hwnd) -Key Escape)   # gives the caret back
+    $closeLine = Wait-Log 'pane sidebar card close reason=left' $mark 3000
+    Assert "with the caret given back, the card contracted (log)" ($null -ne $closeLine)
+    $g = Wait-Log 'pane sidebar all-windows groups=' $mark
+    Assert "...and the rail lists every pane again" ($null -ne $g -and $g -match 'search=0 ')
+
     "== 8: the toggle switches back to this window's panes"
     Start-Sleep -Milliseconds 900   # let the unpin's open card contract
     [void](ClickAt $top $sb (Get-PinCenter $sb 'mini'))
     Start-Sleep -Milliseconds 700
     $sb = Get-Sidebar $top
     $mark = Get-LogCount
+    [void](Send-TestControlText -Control ([IntPtr]$sb.Hwnd) -Text 'zeta')
+    Assert "re-pinned, a query filters the panel again" ($null -ne (Wait-Log 'pane sidebar all-windows groups=1 .*search=1 order=zeta$' $mark))
+    $mark = Get-LogCount
     [void](ClickAt $top $sb (Get-ScopeCenter $sb))
     Assert "the toggle turned the scope off (log)" ($null -ne (Wait-Log 'pane sidebar scope all_windows=false' $mark 2000))
+    # Turning the scope off clears the filter (Mac): back on, nothing is hidden.
+    $mark = Get-LogCount
+    [void](ClickAt $top $sb (Get-ScopeCenter $sb))
+    $g = Wait-Log 'pane sidebar all-windows groups=' $mark
+    "  $g"
+    Assert "the scope came back with no filter" ($null -ne $g -and $g -match 'groups=3 .*search=0 ')
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

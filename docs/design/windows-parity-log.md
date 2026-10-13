@@ -35987,3 +35987,23 @@ moved to T1814.
   needed a change was activity-monitor-remote G4: a closed window now hands
   back its borrowed connection when its undo expires, not at the close, so
   the check polls past that point instead of waiting a fixed 4s.
+## 2026-10-13 — T1877: the all-windows sidebar has a search field
+
+- **What.** In the pane sidebar's all-windows view, a "Search" field now sits
+  under the header, in the pinned panel and in the hover card. Typing keeps
+  only the panes whose window name, pane name, banner line or folder contains
+  every word, ignoring case and accents. Windows without a hit drop out and
+  nothing stays folded while searching. An empty result says "No matching
+  panes". Enter jumps to the first hit the way clicking its row would; Escape
+  clears, and on an empty field gives the keyboard back to the pane. The hover
+  card stays open while the field has the caret, and switching the scope off
+  clears the search. The field is painted rather than a native EDIT because
+  the hover card is a layered popup, where a child control never renders. Text
+  selection and a blinking caret are not built yet (T1913, P3).
+- **Validation.** pane-sidebar-all-windows.ps1 ALL PASS (69) with new sections
+  6b and 7b and an extended section 8. 7b clicks the card's field before its
+  grace period ends and checks that it stays open. The negative control fails,
+  as it must. There are new unit tests for the editing model
+  (`pane_sidebar_search.zig`), the accent fold, and the field's layout and hit
+  testing. All four floor lanes, P1-P3, the seven pane-sidebar GUI harnesses
+  and the harness floor are green.

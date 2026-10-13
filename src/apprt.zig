@@ -135,6 +135,11 @@ test {
     // Imports only pane_sidebar.zig. Every lane.
     _ = @import("apprt/win32/pane_sidebar_menu.zig");
 
+    // Pure win32 pane sidebar search field (T1877): the one-line editing
+    // model, Escape's two verbs, and which surfaces filter. Imports only std.
+    // Every lane.
+    _ = @import("apprt/win32/pane_sidebar_search.zig");
+
     // Pure win32 erase-vs-preserve rule for the resize paint path (T1031),
     // same no-OS-imports deal.
     _ = @import("apprt/win32/resize_paint.zig");
