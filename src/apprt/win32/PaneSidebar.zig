@@ -98,9 +98,15 @@ const tool_scope: usize = 1 + 2 * pane_sidebar.max_items + pane_sidebar.max_head
 const tool_trash: usize = tool_scope + 1;
 
 /// What new windows start from: the most recently chosen pin and hidden
-/// flags, the way a Finder window's sidebar does (Mac `rememberForNewWindows`).
-/// Process lifetime for now; surviving a restart is T1847.
-pub var remembered: struct { pinned: bool = false, hidden: bool = false } = .{};
+/// flags, the way a Finder window's sidebar does (Mac `rememberForNewWindows`),
+/// and the panel width - one preference shared by every window (Mac
+/// `PaneSidebarWidth`, T1846). Process lifetime for now; surviving a restart
+/// is T1847.
+pub var remembered: struct {
+    pinned: bool = false,
+    hidden: bool = false,
+    width_dip: f32 = pane_sidebar.default_width_dip,
+} = .{};
 
 /// A window group of the outline: one tab of one top-level window (a Mac
 /// window is a tab here - see `pane_sidebar_outline.zig`).
@@ -192,6 +198,11 @@ press_x: i32 = 0,
 press_y: i32 = 0,
 /// Alt was down when the held press went down (T1845's Alt-click swap).
 press_alt: bool = false,
+/// An edge drag in progress (T1846): the width it measures from
+/// (`pane_sidebar.edgeStartDip`) and the screen x it went down at. Screen,
+/// not client, so the measure survives the rail turning into the panel
+/// under the pointer. Null otherwise.
+edge: ?struct { start_dip: f32, start_x: i32 } = null,
 /// A pane drag is live somewhere (T1844): the empty "Drop to stash" slot
 /// shows while nothing is stashed, and the open card does not contract.
 drag_active: bool = false,
@@ -1691,6 +1702,65 @@ fn setHover(self: *PaneSidebar, which: Surface, hit: pane_sidebar.Hit) void {
 }
 
 // -------------------------------------------------------------------------
+// Edge drag (T1846; Mac `PaneSidebarChrome.resizeHandle`)
+// -------------------------------------------------------------------------
+
+fn onEdgeAt(self: *PaneSidebar, which: Surface, x: i32, y: i32) bool {
+    const l = self.layoutFor(which);
+    return pane_sidebar.onEdge(&l, x, y, self.scale);
+}
+
+fn screenX(hwnd: w32.HWND, x: i32, y: i32) i32 {
+    var pt = w32.POINT{ .x = x, .y = y };
+    _ = w32.ClientToScreen(hwnd, &pt);
+    return pt.x;
+}
+
+fn setSizeCursor() void {
+    _ = w32.SetCursor(w32.LoadCursorW(null, w32.IDC_SIZEWE));
+}
+
+fn edgeBegin(self: *PaneSidebar, which: Surface, hwnd: w32.HWND, x: i32, y: i32) void {
+    self.disarm();
+    self.pressed = .none;
+    const start = pane_sidebar.edgeStartDip(self.mode, which == .card, self.window.pane_sidebar_width_dip);
+    self.edge = .{ .start_dip = start, .start_x = screenX(hwnd, x, y) };
+    _ = w32.SetCapture(hwnd);
+    setSizeCursor();
+    log.info("pane sidebar edge drag start surface={s} mode={s} from={d:.0}", .{ @tagName(which), @tagName(self.mode), start });
+}
+
+fn edgeMove(self: *PaneSidebar, which: Surface, hwnd: w32.HWND, x: i32, y: i32) void {
+    const d = self.edge orelse return;
+    setSizeCursor();
+    const dx = @as(f32, @floatFromInt(screenX(hwnd, x, y) - d.start_x)) / self.scale;
+    // The mode as it is NOW: a rail pinned earlier in this drag is the
+    // panel from here on, and its edge follows the pointer.
+    const open = which == .card and self.card_open;
+    switch (pane_sidebar.edgeDrag(self.mode, open, d.start_dip, dx) orelse return) {
+        .pin => if (!self.window.pane_sidebar_pinned) {
+            log.info("pane sidebar edge drag pinned dx={d:.0}", .{dx});
+            self.window.togglePaneSidebarPin();
+        },
+        .width => |w| if (w != self.window.pane_sidebar_width_dip) self.window.setPaneSidebarWidth(w),
+    }
+}
+
+/// The drag ended - released, or the capture was taken away.
+fn edgeEnd(self: *PaneSidebar) void {
+    if (self.edge == null) return;
+    self.edge = null;
+    log.info("pane sidebar edge drag end pinned={} width={d:.0}", .{ self.window.pane_sidebar_pinned, self.window.pane_sidebar_width_dip });
+}
+
+/// The shared panel width moved (another window's edge, or this one's open
+/// card): regrow the open card from it. The pinned panel is relaid out by
+/// the window, which owns its column.
+pub fn widthChanged(self: *PaneSidebar) void {
+    if (self.card_open) self.positionCard();
+}
+
+// -------------------------------------------------------------------------
 // Hover-open (T1842)
 // -------------------------------------------------------------------------
 
@@ -2350,11 +2420,35 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             self.paint(@ptrFromInt(wparam), which, r.right - r.left, r.bottom - r.top);
             return 0;
         },
+        // The edge's sizer (T1846): over the band, and for the whole drag.
+        w32.WM_SETCURSOR => {
+            if (self.edge != null) {
+                setSizeCursor();
+                return 1;
+            }
+            var pt: w32.POINT = undefined;
+            if (w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(hwnd, &pt) != 0 and self.onEdgeAt(which, pt.x, pt.y)) {
+                setSizeCursor();
+                return 1;
+            }
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+        w32.WM_CAPTURECHANGED => {
+            self.edgeEnd();
+            return 0;
+        },
         w32.WM_MOUSEMOVE => {
             const x = xOf(lparam);
             const y = yOf(lparam);
+            if (self.edge != null) {
+                self.edgeMove(which, hwnd, x, y);
+                return 0;
+            }
             if (self.maybeStartRowDrag(hwnd, x, y)) return 0;
-            self.setHover(which, self.hitAt(which, x, y));
+            // On the edge the pointer means the sizer, not the row under it,
+            // and not the rail's hover-open either.
+            const on_edge = self.onEdgeAt(which, x, y);
+            self.setHover(which, if (on_edge) .none else self.hitAt(which, x, y));
             const tracked = switch (which) {
                 .rail => &self.tracking,
                 .card => &self.card_tracking,
@@ -2369,7 +2463,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
                 if (w32.TrackMouseEvent(&tme) != 0) tracked.* = true;
             }
             switch (which) {
-                .rail => self.railPointer(x, y),
+                .rail => if (on_edge) self.disarm() else self.railPointer(x, y),
                 // Back on the card: the grace period is off.
                 .card => if (self.card_hwnd) |c| {
                     _ = w32.KillTimer(c, TIMER_CLOSE);
@@ -2397,6 +2491,10 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             // button affordance), so a press that slides off does nothing.
             self.press_x = xOf(lparam);
             self.press_y = yOf(lparam);
+            if (self.onEdgeAt(which, self.press_x, self.press_y)) {
+                self.edgeBegin(which, hwnd, self.press_x, self.press_y);
+                return 0;
+            }
             self.pressed = self.hitAt(which, self.press_x, self.press_y);
             // Alt is the click's modifier when it is down at the PRESS (a
             // swap the user started holding Alt is a swap even if Alt comes
@@ -2407,6 +2505,16 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             return 0;
         },
         w32.WM_LBUTTONUP => {
+            if (self.edge != null) {
+                // The release lands where the last move did; ending here
+                // rather than only on WM_CAPTURECHANGED keeps the log line
+                // ahead of anything the release triggers.
+                self.edgeMove(which, hwnd, xOf(lparam), yOf(lparam));
+                self.edgeEnd();
+                _ = w32.ReleaseCapture();
+                if (which == .card and self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();
+                return 0;
+            }
             _ = w32.ReleaseCapture();
             const hit = self.hitAt(which, xOf(lparam), yOf(lparam));
             const pressed = self.pressed;

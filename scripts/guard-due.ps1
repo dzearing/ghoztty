@@ -4295,6 +4295,21 @@ $GuardTable = @(
             'test\win32\pane-sidebar.ps1'
         )
     },
+    # Dragging the sidebar's edge (T1846): the pinned panel resizes between
+    # 180 and 380 DIP and never unpins, the rail pulled out pins, and the
+    # width is one preference for every window. The band and the drag rules
+    # are unit-tested in every lane; whether a posted drag reaches the column,
+    # relays the grid out and crosses windows is only answered on the box.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-resize'
+        Script = 'test\win32\pane-sidebar-resize.ps1'
+        Stamp  = 'test\win32\pane-sidebar-resize.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-resize.ps1'
+        )
+    },
     # The sidebar's activity marks (T1843): a busy pane's mark shimmers, a
     # row's question badge breathes, the rail's corner "?" holds still, and a
     # stashed pane whose bell rang keeps a dot until it is looked at. The

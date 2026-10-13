@@ -1459,6 +1459,7 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
         .background_first_show = options.background,
         .pane_sidebar_pinned = PaneSidebar.remembered.pinned,
         .pane_sidebar_hidden = PaneSidebar.remembered.hidden,
+        .pane_sidebar_width_dip = PaneSidebar.remembered.width_dip,
         .desk_variant = options.desk_variant,
     };
 
@@ -2359,8 +2360,26 @@ pub fn togglePaneSidebarPin(self: *Window) void {
     if (pane_sidebar_hover.openAfterPinToggle(self.pane_sidebar_pinned)) sb.openCard(.unpin) else sb.closeCard(.pin);
 }
 
+/// The panel's edge was dragged (T1846): set the panel width. It is ONE
+/// preference for every window (Mac `PaneSidebarState.width`), so every
+/// window takes it - a pinned panel relays its grid out, an open card
+/// regrows - and new windows start from it.
+pub fn setPaneSidebarWidth(self: *Window, dip: f32) void {
+    const w = pane_sidebar.clampWidth(dip);
+    PaneSidebar.remembered.width_dip = w;
+    for (self.app.windows.items) |win| {
+        if (win.closing or win.pane_sidebar_width_dip == w) continue;
+        win.pane_sidebar_width_dip = w;
+        if (win.paneSidebarMode() == .expanded) {
+            win.layoutSplits();
+            win.syncPaneSidebar();
+        } else if (win.sidebar) |sb| sb.widthChanged();
+    }
+}
+
 fn paneSidebarLayoutChanged(self: *Window) void {
-    PaneSidebar.remembered = .{ .pinned = self.pane_sidebar_pinned, .hidden = self.pane_sidebar_hidden };
+    PaneSidebar.remembered.pinned = self.pane_sidebar_pinned;
+    PaneSidebar.remembered.hidden = self.pane_sidebar_hidden;
     self.layoutSplits();
     self.syncPaneSidebar();
     self.app.markLayoutDirty();

@@ -35711,3 +35711,21 @@ moved to T1814.
   harnesses this touched are green. `pane-sidebar-all-windows.ps1` now
   finds the all-windows button two slots from the pin. Filed T1891 (Mac's
   wording for another window's row tooltips).
+
+## 2026-10-12 — T1846: drag the pane sidebar's edge
+
+- **What changed.** The pinned Windows pane sidebar's right edge now drags
+  its width between 180 and 380 DIP and stops there; pushing it narrow never
+  unpins it (Mac 7855941f7 dropped the old unpin-on-drag). Pulling the mini
+  rail's edge out past 120 DIP pins it open, and the open hover card's edge
+  drags the same width. The width is one preference for every window: open
+  windows follow a drag, new windows start from it.
+- **How.** Pure rules in `pane_sidebar.zig` (`onEdge`, `edgeStartDip`,
+  `edgeDrag`); the pin and row buttons keep their pixels inside the band.
+  `PaneSidebar.zig` captures the press and measures in screen x, so the drag
+  survives the rail turning into the panel. `Window.setPaneSidebarWidth`
+  fans the width out. Width lives in `PaneSidebar.remembered` for the
+  process; surviving a restart stays with T1847 (noted there).
+- **Validation.** New `test/win32/pane-sidebar-resize.ps1`: ALL PASS (33);
+  the negative control fails. Floor lanes, the harness floor and the 24
+  harnesses this made due are green.

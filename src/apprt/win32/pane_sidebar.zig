@@ -997,6 +997,69 @@ pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
     return .none;
 }
 
+// ---------------------------------------------------------------------------
+// Edge drag (T1846; Mac `PaneSidebarChrome.resizeHandle`)
+
+/// The resize handle's grab band (Mac `SidePanelResizeHandle.grabWidth`).
+pub const grab_dip: f32 = 7;
+/// A rail pulled out past this pins (Mac `expandThreshold`). A pinned panel
+/// dragged narrow just stops at `min_width_dip`: it never unpins itself
+/// under a drag, which read as the panel jumping away mid-resize.
+pub const expand_threshold_dip: f32 = 120;
+
+/// Whether (`x`, `y`) is on the edge that drags. The pinned panel's band
+/// sits inside its trailing edge (the column, and so this window, ends
+/// there); a card's - the rail's, or the open one's - straddles the card's
+/// trailing edge, as Mac's handle does.
+pub fn onEdge(l: *const Layout, x: i32, y: i32, scale: f32) bool {
+    const g = @max(px(grab_dip, scale), 1);
+    return switch (l.mode) {
+        .hidden => false,
+        .expanded => x >= l.width - g and x < l.width and y >= 0 and y < l.height and !onButton(l, x, y, scale),
+        .mini => blk: {
+            const left = l.card.right - @divTrunc(g, 2);
+            break :blk x >= left and x < left + g and y >= l.card.top and y < l.card.bottom;
+        },
+    };
+}
+
+/// The pin and the row buttons sit `sm` from the panel's edge, inside the
+/// band: a press on one of them is that button's, never a resize.
+fn onButton(l: *const Layout, x: i32, y: i32, scale: f32) bool {
+    if (l.pin.contains(x, y)) return true;
+    for (0..l.count) |i| {
+        if (l.shown(i) and l.rowButton(i, scale).contains(x, y)) return true;
+    }
+    return false;
+}
+
+/// What an edge drag measures from (Mac `currentWidth`): the rail's card,
+/// or the panel - pinned, or opened over the grid.
+pub fn edgeStartDip(m: Mode, open: bool, panel_w_dip: f32) f32 {
+    return if (m == .mini and !open) rail_card_dip else clampWidth(panel_w_dip);
+}
+
+pub const EdgeDrag = union(enum) {
+    /// The rail was pulled out far enough: pin it open.
+    pin,
+    /// The panel's new preferred width, already clamped.
+    width: f32,
+};
+
+/// An edge drag `dx_dip` from where it started at `start_dip`. The rail only
+/// pins (null until it is pulled past the threshold); a panel, pinned or
+/// open, takes the clamped width and stops at the bounds.
+pub fn edgeDrag(m: Mode, open: bool, start_dip: f32, dx_dip: f32) ?EdgeDrag {
+    const proposed = start_dip + dx_dip;
+    return switch (m) {
+        .hidden => null,
+        .mini => if (open)
+            .{ .width = clampWidth(proposed) }
+        else if (proposed > expand_threshold_dip) .pin else null,
+        .expanded => .{ .width = clampWidth(proposed) },
+    };
+}
+
 /// Rows span to the panel's (or the open card's) edges for hit purposes -
 /// the fill inset is paint, and a click in it still means that row. A rail
 /// tile is just its square.
@@ -1467,4 +1530,70 @@ test "pane_sidebar: on the rail, a tile's corner x is a target only in trash mod
         // The rest of the tile is still the tile.
         try testing.expectEqual(Hit{ .item = 1 }, hitTest(&l, l.items[1].right - 2, l.items[1].bottom - 2, s));
     }
+}
+
+test "pane_sidebar: the edge band sits inside the pinned panel's edge and straddles a card's" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .grid } };
+    for (scales) |s| {
+        const tm: TextMetrics = .{ .title_h = px(19, s), .caption_h = px(16, s) };
+        const g = px(grab_dip, s);
+        const w = px(240, s);
+        const h = px(600, s);
+        const e = layout(.expanded, w, h, &items, tm, s);
+        try testing.expect(onEdge(&e, w - 1, px(300, s), s));
+        try testing.expect(onEdge(&e, w - g, px(300, s), s));
+        try testing.expect(!onEdge(&e, w - g - 1, px(300, s), s));
+        // The panel's last pixel is the edge, not its row...
+        try testing.expect(onEdge(&e, w - 1, e.items[0].centerY(), s));
+        // ...but the pin and a row's button keep their own pixels.
+        try testing.expect(!onEdge(&e, e.pin.right - 1, e.pin.centerY(), s));
+        try testing.expect(onEdge(&e, w - 1, e.pin.centerY(), s));
+        const b = e.rowButton(0, s);
+        try testing.expect(!onEdge(&e, b.right - 1, b.centerY(), s));
+
+        const r = layout(.mini, px(railColumnDip(), s), h, &items, tm, s);
+        const y = r.card.centerY();
+        try testing.expect(onEdge(&r, r.card.right, y, s));
+        try testing.expect(onEdge(&r, r.card.right - 1, y, s));
+        try testing.expect(onEdge(&r, r.card.right + 1, y, s));
+        try testing.expect(!onEdge(&r, r.card.centerX(), y, s));
+        // Only along the card: the margin above it is the grid's.
+        try testing.expect(!onEdge(&r, r.card.right, r.card.top - 1, s));
+
+        const o = layoutOpen(openWidthPx(240, s), h, &items, tm, s);
+        try testing.expect(onEdge(&o, o.card.right - 1, o.card.centerY(), s));
+        try testing.expect(!onEdge(&o, o.card.left + 1, o.card.centerY(), s));
+
+        const hidden: Layout = .{ .mode = .hidden, .width = w, .height = h };
+        try testing.expect(!onEdge(&hidden, w - 1, 10, s));
+    }
+}
+
+test "pane_sidebar: dragging the rail out past 120 pins; a panel only resizes, clamped, and never unpins" {
+    // The rail measures from its card (Mac `railCardWidth`).
+    try testing.expectEqual(rail_card_dip, edgeStartDip(.mini, false, 300));
+    try testing.expectEqual(@as(f32, 300), edgeStartDip(.mini, true, 300));
+    try testing.expectEqual(@as(f32, 300), edgeStartDip(.expanded, false, 300));
+    try testing.expectEqual(max_width_dip, edgeStartDip(.expanded, false, 900));
+
+    // Rail: nothing until it passes the threshold, then pin.
+    try testing.expectEqual(@as(?EdgeDrag, null), edgeDrag(.mini, false, rail_card_dip, 40));
+    try testing.expectEqual(@as(?EdgeDrag, null), edgeDrag(.mini, false, rail_card_dip, expand_threshold_dip - rail_card_dip));
+    try testing.expectEqual(@as(?EdgeDrag, .pin), edgeDrag(.mini, false, rail_card_dip, expand_threshold_dip - rail_card_dip + 1));
+    // Pushing the rail in does nothing either.
+    try testing.expectEqual(@as(?EdgeDrag, null), edgeDrag(.mini, false, rail_card_dip, -30));
+
+    // Pinned panel: follows the pointer between the bounds and stops there.
+    try testing.expectEqual(@as(?EdgeDrag, .{ .width = 300 }), edgeDrag(.expanded, false, 240, 60));
+    try testing.expectEqual(@as(?EdgeDrag, .{ .width = max_width_dip }), edgeDrag(.expanded, false, 240, 500));
+    // Far below the old 140 collapse threshold: still pinned, at the minimum.
+    try testing.expectEqual(@as(?EdgeDrag, .{ .width = min_width_dip }), edgeDrag(.expanded, false, 240, -200));
+    // A rail pinned mid-drag keeps measuring from the rail's card, so the
+    // panel's edge then follows the pointer from the minimum up.
+    try testing.expectEqual(@as(?EdgeDrag, .{ .width = min_width_dip }), edgeDrag(.expanded, false, rail_card_dip, 100));
+    try testing.expectEqual(@as(?EdgeDrag, .{ .width = 260 }), edgeDrag(.expanded, false, rail_card_dip, 216));
+
+    // The card opened over the grid resizes the same preference.
+    try testing.expectEqual(@as(?EdgeDrag, .{ .width = 280 }), edgeDrag(.mini, true, 240, 40));
+    try testing.expectEqual(@as(?EdgeDrag, null), edgeDrag(.hidden, false, 240, 40));
 }

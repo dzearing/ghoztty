@@ -1,0 +1,16 @@
+{
+    "guard":  "pane-sidebar-resize",
+    "script":  "test/win32/pane-sidebar-resize.ps1",
+    "generated":  "2026-10-12T21:04:18-07:00",
+    "commit":  "21f64b3d6",
+    "uncommitted":  [
+                        "src/apprt/win32/pane_sidebar.zig",
+                        "src/apprt/win32/PaneSidebar.zig",
+                        "test/win32/pane-sidebar-resize.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/pane_sidebar.zig":  "c2c1dcff22f848c5b603143f687cbf4375f37edcc32b9b7de8106914079f2963",
+                  "src/apprt/win32/PaneSidebar.zig":  "ea4fc524bd8b12a9eaa88affd633c9094b7be4b4f593b401c43432d39f0151ad",
+                  "test/win32/pane-sidebar-resize.ps1":  "ce074ae17f3209e5630dab42c78ba539bba194fc048baa05f657ee415833e3f4"
+              }
+}
