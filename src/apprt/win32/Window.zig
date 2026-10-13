@@ -7378,7 +7378,19 @@ fn snapshotNodes(self: *Window, out: []split_resize.Node) usize {
     for (tree.nodes, 0..) |node, i| {
         out[i] = switch (node) {
             .leaf => .leaf,
-            .split => |s| .{ .split = .{
+            // T1839: a split with an all-stashed side is laid out collapsed
+            // (T1827), so the solver must see it collapsed too - its whole
+            // range belongs to the visible side, and its ratio (the slot a
+            // restored pane returns to) is never re-planned. The stashed side
+            // is still described, but nothing walks into it.
+            .split => |s| if (!pane_stash.splitShowing(tree, @as(SplitTree(PaneView).Node.Handle, @enumFromInt(i))))
+                if (pane_stash.subtreeVisible(tree, s.left))
+                    .{ .pass = @intFromEnum(s.left) }
+                else if (pane_stash.subtreeVisible(tree, s.right))
+                    .{ .pass = @intFromEnum(s.right) }
+                else
+                    .leaf
+            else .{ .split = .{
                 // Exhaustive on purpose: a new SplitTree layout variant has to
                 // become a compile error here rather than a silent axis.
                 .layout = switch (s.layout) {
@@ -7455,8 +7467,12 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
     // returns the dragged node's ratio first and the compensating ratios
     // behind it; a tree it cannot solve returns 0 and we resize just the one
     // node, which is what this did before.
-    var adjustments: [split_resize.MAX_ADJUSTMENTS]split_resize.Adjust = undefined;
-    const n = if (self.dragSnapshotMatches()) split_resize.plan(
+    // `replay`, not bare `plan` (T1839): each tick lands in the LIVE tree, so
+    // splits this tick does not re-pin go back to the snapshot rather than
+    // keeping an earlier tick's answer. Sized to the snapshot so the restores
+    // never truncate.
+    var adjustments: [MAX_DRAG_NODES]split_resize.Adjust = undefined;
+    const n = if (self.dragSnapshotMatches()) split_resize.replay(
         self.drag_nodes[0..self.drag_node_len],
         @intFromEnum(handle),
         start,

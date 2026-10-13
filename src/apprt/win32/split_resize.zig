@@ -64,6 +64,13 @@ pub const Layout = split_geometry.Layout;
 pub const Node = union(enum) {
     leaf,
     split: Split,
+    /// A split a stash COLLAPSED (T1839): one side holds only stashed panes,
+    /// so the window lays the other side out across the whole range and draws
+    /// no divider (T1827). Its whole range passes to this one child — the
+    /// index of the visible side. It has no boundary to pin and its ratio is
+    /// never planned, which is what returns a restored pane to its old slot;
+    /// the stashed side is never walked, so nothing off screen is moved.
+    pass: u16,
 
     pub const Split = struct {
         layout: Layout,
@@ -129,6 +136,7 @@ const Walker = struct {
         if (handle >= self.nodes.len) return;
         const s = switch (self.nodes[handle]) {
             .leaf => return,
+            .pass => |child| return self.walk(child, old, new, depth + 1),
             .split => |s| s,
         };
 
@@ -206,7 +214,8 @@ pub fn plan(
 ) usize {
     if (dragged >= nodes.len) return 0;
     const s = switch (nodes[dragged]) {
-        .leaf => return 0,
+        // A collapsed split has no divider on screen to grab.
+        .leaf, .pass => return 0,
         .split => |s| s,
     };
 
@@ -233,6 +242,49 @@ pub fn plan(
         1,
     );
     return w.len;
+}
+
+/// `plan` for a drag that is applied to the LIVE tree tick after tick (T1839):
+/// the plan, then the snapshot ratio for every other split the plan does not
+/// name.
+///
+/// `plan` prunes any subtree whose axis range did not move — measured against
+/// the snapshot. A mouse drag writes each tick's answer into the live tree, so
+/// that prune leaves behind whatever an EARLIER tick wrote there: drag out and
+/// back to the exact pixel you grabbed, the root's range is unchanged, nothing
+/// is re-pinned, and the nested divider keeps the ratio that held it for the
+/// tick before — sliding by (1 - ratio) of that tick's travel (8px measured on
+/// a 15px step). The keyboard gesture has always restored these
+/// (`restoreUnplanned`); this is the same rule for the mouse, unconditional
+/// because a drag keeps no fingerprint. Size `out` to the node count to never
+/// truncate the restores.
+pub fn replay(
+    nodes: []const Node,
+    dragged: u16,
+    region_start: i32,
+    region_end: i32,
+    new_ratio: f32,
+    scale: f32,
+    out: []Adjust,
+) usize {
+    const n = plan(nodes, dragged, region_start, region_end, new_ratio, scale, out);
+    if (n == 0) return 0;
+    var len = n;
+    for (nodes, 0..) |node, i| {
+        const ratio = switch (node) {
+            .leaf, .pass => continue,
+            .split => |sp| sp.ratio,
+        };
+        const handle: u16 = @intCast(i);
+        const planned = for (out[0..n]) |a| {
+            if (a.handle == handle) break true;
+        } else false;
+        if (planned) continue;
+        if (len >= out.len) break;
+        out[len] = .{ .handle = handle, .ratio = ratio };
+        len += 1;
+    }
+    return len;
 }
 
 /// The ratio that shifts a split's divider by `delta` physical pixels inside
@@ -322,8 +374,12 @@ pub const KeyboardGesture = struct {
         for (tree, self.nodes[0..self.len], self.expect[0..self.len]) |now, was, want| {
             switch (now) {
                 .leaf => if (was != .leaf) return false,
+                .pass => |a| switch (was) {
+                    .pass => |b| if (a != b) return false,
+                    else => return false,
+                },
                 .split => |a| switch (was) {
-                    .leaf => return false,
+                    .leaf, .pass => return false,
                     .split => |b| {
                         // Shape first: a tree rebuilt to the same node count is
                         // a different tree even when the ratios line up.
@@ -355,7 +411,7 @@ pub const KeyboardGesture = struct {
         if (!self.owns(tree, context, target, region_start, region_end)) {
             self.len = 0;
             if (tree.len == 0 or tree.len > self.nodes.len) return 0;
-            if (target >= tree.len or tree[target] == .leaf) return 0;
+            if (target >= tree.len or tree[target] != .split) return 0;
             @memcpy(self.nodes[0..tree.len], tree);
             self.len = tree.len;
             self.context = context;
@@ -368,7 +424,7 @@ pub const KeyboardGesture = struct {
 
         self.offset += delta;
         const base = switch (self.nodes[target]) {
-            .leaf => return 0,
+            .leaf, .pass => return 0,
             .split => |sp| sp.ratio,
         };
         const ratio = nudgeRatio(region_start, region_end, base, scale, self.offset);
@@ -397,7 +453,7 @@ pub const KeyboardGesture = struct {
     fn markUnmoved(self: *KeyboardGesture) void {
         for (self.nodes[0..self.len], 0..) |node, i| {
             self.expect[i] = switch (node) {
-                .leaf => 0,
+                .leaf, .pass => 0,
                 .split => |sp| @floatCast(sp.ratio),
             };
         }
@@ -410,7 +466,7 @@ pub const KeyboardGesture = struct {
         var len = n;
         for (self.nodes[0..self.len], 0..) |node, i| {
             const snapshot: f16 = switch (node) {
-                .leaf => continue,
+                .leaf, .pass => continue,
                 .split => |sp| @floatCast(sp.ratio),
             };
             if (self.expect[i] == snapshot) continue;
@@ -459,6 +515,7 @@ fn posWalk(
     if (handle >= nodes.len) return null;
     const s = switch (nodes[handle]) {
         .leaf => return null,
+        .pass => |child| return posWalk(nodes, target, child, range, layout, scale, depth + 1),
         .split => |s| s,
     };
     if (s.layout != layout) {
@@ -477,7 +534,7 @@ pub fn apply(nodes: []Node, adjustments: []const Adjust) void {
     for (adjustments) |a| {
         if (a.handle >= nodes.len) continue;
         switch (nodes[a.handle]) {
-            .leaf => {},
+            .leaf, .pass => {},
             // The real tree stores f16, so the round trip has to happen here
             // too or the tests would assert against a precision the product
             // does not have.
@@ -1070,4 +1127,138 @@ test "keyboard: a perpendicular divider is not disturbed" {
     for (0..6) |_| _ = keyboardStep(&g, &nodes, 0, 0, w, 1.0, 10, &out);
 
     try testing.expectEqual(before, dividerPos(&nodes, 2, 0, 0, h, .vertical, 1.0).?);
+}
+
+/// `split(r1) -> [p1, C]` where C = `split(0.5) -> [stashed, split(r2) -> [p2, p3]]`
+/// — three panes on screen in three columns, one more stashed inside the right
+/// subtree (T1839). `collapsed` picks how C is encoded: as the `.pass` the
+/// window's stash-aware snapshot emits, or as the plain split the snapshot used
+/// to emit before T1839, which is the control.
+fn stashedNested(r1: f32, r2: f32, collapsed: bool) [7]Node {
+    return .{
+        .{ .split = .{ .layout = .horizontal, .ratio = r1, .left = 1, .right = 2 } },
+        .leaf,
+        if (collapsed)
+            .{ .pass = 4 }
+        else
+            .{ .split = .{ .layout = .horizontal, .ratio = 0.5, .left = 3, .right = 4 } },
+        .leaf, // the stashed pane
+        .{ .split = .{ .layout = .horizontal, .ratio = r2, .left = 5, .right = 6 } },
+        .leaf,
+        .leaf,
+    };
+}
+
+test "stash: a collapsed split passes its whole range to the visible side" {
+    // On screen the nested divider sits r2 of the way across the root's right
+    // half — the stashed pane takes no room — and that is what `dividerPos`
+    // must report, or nothing pinned against it is pinned where the user sees.
+    const w: i32 = 2000;
+    const nodes = stashedNested(0.5, 0.5, true);
+    const pos = dividerPos(&nodes, 4, 0, 0, w, .horizontal, 1.0).?;
+    try testing.expect(@abs(pos - 1500) <= 2);
+    // And the collapsed split itself has no boundary to report.
+    try testing.expectEqual(@as(?i32, null), dividerPos(&nodes, 2, 0, 0, w, .horizontal, 1.0));
+}
+
+test "stash: dragging the root holds the visible nested divider (T1839)" {
+    for (SCALES) |scale| {
+        const w: i32 = 3110;
+        var nodes = stashedNested(0.5, 0.5, true);
+        const before = dividerPos(&nodes, 4, 0, 0, w, .horizontal, scale).?;
+
+        var out: [16]Adjust = undefined;
+        for ([_]f32{ 0.3, 0.2, 0.6, 0.25 }) |r| {
+            var tick = nodes;
+            const n = plan(&tick, 0, 0, w, r, scale, &out);
+            try testing.expect(n >= 2);
+            // The collapsed split's ratio is never planned: a restored pane
+            // comes back to the slot it left.
+            for (out[0..n]) |a| try testing.expect(a.handle != 2);
+            apply(&tick, out[0..n]);
+            try expectHeld(before, dividerPos(&tick, 4, 0, 0, w, .horizontal, scale).?);
+        }
+    }
+}
+
+test "stash: the full-tree snapshot is the control - it drifts and moves the hidden slot" {
+    // The pre-T1839 snapshot described the collapsed split as a real one, so
+    // the walk solved the nested divider against a range half the size of the
+    // one it occupies on screen, and re-planned the hidden split's ratio.
+    const w: i32 = 3110;
+    var full = stashedNested(0.5, 0.5, false);
+    var out: [16]Adjust = undefined;
+    const n = plan(&full, 0, 0, w, 0.2, 1.0, &out);
+    var touched_hidden = false;
+    for (out[0..n]) |a| touched_hidden = touched_hidden or a.handle == 2;
+    try testing.expect(touched_hidden);
+    apply(&full, out[0..n]);
+
+    // Measure where that plan puts the divider ON SCREEN: the same ratios,
+    // laid out the way the window actually lays them out.
+    const before = dividerPos(&stashedNested(0.5, 0.5, true), 4, 0, 0, w, .horizontal, 1.0).?;
+    var screen = stashedNested(0.2, 0.5, true);
+    screen[4].split.ratio = full[4].split.ratio;
+    const after = dividerPos(&screen, 4, 0, 0, w, .horizontal, 1.0).?;
+    try testing.expect(@abs(after - before) > 50);
+}
+
+test "stash: a collapsed split is not a divider to drag" {
+    const nodes = stashedNested(0.5, 0.5, true);
+    var out: [16]Adjust = undefined;
+    try testing.expectEqual(@as(usize, 0), plan(&nodes, 2, 0, 1000, 0.3, 1.0, &out));
+    var g: KeyboardGesture = .{};
+    try testing.expectEqual(@as(usize, 0), g.step(&nodes, 0, 2, 0, 1000, 1.0, 10, &out));
+}
+
+test "stash: a keyboard run holds the visible nested divider and keeps its gesture" {
+    const w: i32 = 2400;
+    var nodes = stashedNested(0.5, 0.5, true);
+    const before = dividerPos(&nodes, 4, 0, 0, w, .horizontal, 1.0).?;
+    var g: KeyboardGesture = .{};
+    var out: [64]Adjust = undefined;
+    for (0..8) |_| _ = keyboardStep(&g, &nodes, 0, 0, w, 1.0, -10, &out);
+    try expectHeld(before, dividerPos(&nodes, 4, 0, 0, w, .horizontal, 1.0).?);
+    // The run is ONE gesture across a `.pass` node: eight presses travelled
+    // eighty pixels from one snapshot rather than restarting each time.
+    try testing.expectEqual(@as(i32, -80), g.offset);
+    for (0..8) |_| _ = keyboardStep(&g, &nodes, 0, 0, w, 1.0, 10, &out);
+    try testing.expectEqual(@as(i32, 0), g.offset);
+    try expectHeld(before, dividerPos(&nodes, 4, 0, 0, w, .horizontal, 1.0).?);
+}
+
+test "replay: a drag applied to the live tree comes back to its grab pixel cleanly (T1839)" {
+    // The product writes every tick into the LIVE tree. Out one step and back
+    // to the grab pixel: `plan` prunes the unchanged root range on the way
+    // back and the nested ratio the first tick wrote stays behind.
+    for (SCALES) |scale| {
+        const w: i32 = 2000;
+        const snapshot = threeColumns(0.4, 0.5);
+        const d2 = dividerPos(&snapshot, 2, 0, 0, w, .horizontal, scale).?;
+        var out: [16]Adjust = undefined;
+
+        // Control: plan alone, onto the live tree.
+        var live = snapshot;
+        apply(&live, out[0..plan(&snapshot, 0, 0, w, 0.45, scale, &out)]);
+        apply(&live, out[0..plan(&snapshot, 0, 0, w, 0.4, scale, &out)]);
+        try testing.expect(@abs(dividerPos(&live, 2, 0, 0, w, .horizontal, scale).? - d2) > 20);
+
+        // replay: the same two ticks hold divider 2 and restore the snapshot.
+        live = snapshot;
+        apply(&live, out[0..replay(&snapshot, 0, 0, w, 0.45, scale, &out)]);
+        try expectHeld(d2, dividerPos(&live, 2, 0, 0, w, .horizontal, scale).?);
+        apply(&live, out[0..replay(&snapshot, 0, 0, w, 0.4, scale, &out)]);
+        try expectHeld(d2, dividerPos(&live, 2, 0, 0, w, .horizontal, scale).?);
+        try testing.expectEqual(@as(f16, 0.5), @as(f16, @floatCast(live[2].split.ratio)));
+    }
+}
+
+test "replay: a collapsed split and its stashed side are never written" {
+    const snapshot = stashedNested(0.5, 0.5, true);
+    var out: [16]Adjust = undefined;
+    const n = replay(&snapshot, 0, 0, 2000, 0.3, 1.0, &out);
+    try testing.expect(n >= 2);
+    for (out[0..n]) |a| try testing.expect(a.handle != 2 and a.handle != 3);
+    // Nothing for a leaf or a collapsed split, as with `plan`.
+    try testing.expectEqual(@as(usize, 0), replay(&snapshot, 2, 0, 2000, 0.3, 1.0, &out));
 }

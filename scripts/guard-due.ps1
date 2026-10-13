@@ -488,6 +488,21 @@ $GuardTable = @(
             'src\apprt\win32\Window.zig'
         )
     },
+    # T1839: a divider drag beside a STASHED pane holds the other visible
+    # dividers and leaves the stashed slot alone. The solver is
+    # `split_resize.zig` (the `.pass` node), the snapshot that feeds it is
+    # `Window.snapshotNodes`, and what counts as collapsed is `pane_stash`.
+    [pscustomobject]@{
+        Name   = 'stash-divider-drag'
+        Script = 'test\win32\stash-divider-drag.ps1'
+        Stamp  = 'test\win32\stash-divider-drag.stamp.json'
+        Covers = @(
+            'test\win32\stash-divider-drag.ps1',
+            'src\apprt\win32\split_resize.zig',
+            'src\apprt\win32\pane_stash.zig',
+            'src\apprt\win32\Window.zig'
+        )
+    },
     # Where a split starts (T760). The answer is assembled in `newSplitAt`
     # from three sources - a viewer parent's file directory, the agent's
     # GET_CWD, and the local process read - and the defect this guards was

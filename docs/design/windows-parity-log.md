@@ -35649,3 +35649,21 @@ moved to T1814.
   desktop. Exactly one of two cards lifts the desk beside it (+31 against
   -2), and a goto_split moves the light (-2 against +27). The run passes
   ALL PASS (50), and the negative control fails. The floor lanes are green.
+
+## 2026-10-12 — T1839: divider drags beside a stashed pane
+
+- **What changed.** Dragging a divider next to a stashed pane no longer
+  slides the other dividers, and the stashed pane comes back to the slot it
+  left. The drag solver now sees a split a stash collapsed as a
+  pass-through (`split_resize.Node.pass`), for the mouse and the keyboard.
+- **Found on the box.** A drag that ended on the exact pixel it started from
+  made a nested divider jump 8px, stash or no stash: that tick re-pinned
+  nothing and kept the previous tick's ratio. `split_resize.replay` puts
+  every split the tick does not re-pin back to its pre-drag ratio.
+- **Validation.** New `test/win32/stash-divider-drag.ps1` (test desktop):
+  the nested divider holds within 1px over a 120px out-and-back drag, and
+  the restored pane keeps its share (0.498 before and after). The negative
+  control fails. Unit tests cover the pass-through, the full-tree control
+  and the live-tree replay. Floor lanes green.
+- **Filed and closed** T1888 (a suspected band mismatch in the elevated
+  style): measured on the box at 1px, so not observable.
