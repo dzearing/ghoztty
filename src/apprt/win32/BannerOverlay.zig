@@ -286,6 +286,10 @@ pub const BannerOverlay = struct {
     divider: u32 = 0,
     bg_brush: ?w32.HBRUSH = null,
     alpha_set: bool = false,
+    /// The elevated card's corner diameter for the strip's top corners, 0
+    /// for square ones (T1851), and the region last applied for it.
+    card_corner: i32 = 0,
+    card_region_key: u64 = 0,
 
     /// Cached card backdrop (T131): the band background + elevation shadow
     /// + card fill/sheen/rim, rendered by `banner_card` into a DIB section
@@ -533,6 +537,9 @@ pub const BannerOverlay = struct {
         // where an already-shown popup cannot have moved in the z-order and
         // the walk is the fan-out's biggest per-pane cost (T1345).
         w32.healOverlayZOrderAfterMove(self.hwnd, self.owner, was_shown);
+        // A new size needs the corner region re-cut (T1851); the same size
+        // leaves it alone.
+        self.applyCardCorner();
     }
 
     /// The strip's natural height at `scale` in a `pane_w`-wide pane slot,
@@ -560,6 +567,40 @@ pub const BannerOverlay = struct {
 
     pub fn hide(self: *BannerOverlay) void {
         _ = w32.ShowWindow(self.hwnd, w32.SW_HIDE);
+    }
+
+    /// Round the strip's top corners with a `diameter` corner, or square
+    /// them with 0 (T1851). In the elevated pane style a banner with no
+    /// header above it IS the top of the pane's rounded card, and an opaque
+    /// rectangle there would lay square corners over the card's curve. The
+    /// window paints the card under it in the strip's own colour (the pane
+    /// background), so the region's staircase falls on matching pixels - the
+    /// same arrangement the pane child's region relies on.
+    pub fn setCardCorner(self: *BannerOverlay, diameter: i32) void {
+        if (diameter == self.card_corner) return;
+        self.card_corner = diameter;
+        self.applyCardCorner();
+    }
+
+    fn applyCardCorner(self: *BannerOverlay) void {
+        var wr: w32.RECT = undefined;
+        if (w32.GetWindowRect(self.hwnd, &wr) == 0) return;
+        const w = wr.right - wr.left;
+        const h = wr.bottom - wr.top;
+        const d = self.card_corner;
+        const key: u64 = if (d <= 0) 0 else (@as(u64, @intCast(@max(w, 0))) << 40) |
+            (@as(u64, @intCast(@max(h, 0))) << 16) | @as(u64, @intCast(@min(d, 0xFFFF)));
+        if (key == self.card_region_key) return;
+        self.card_region_key = key;
+        if (key == 0) {
+            _ = w32.SetWindowRgn(self.hwnd, null, 1);
+            return;
+        }
+        // The rounded rect runs a whole corner past the strip's bottom, so
+        // only its top corners fall inside the window.
+        const rgn = w32.CreateRoundRectRgn(0, 0, w + 1, h + d + 1, d, d) orelse return;
+        // The system owns the region from here; it is never deleted.
+        if (w32.SetWindowRgn(self.hwnd, rgn, 1) == 0) _ = w32.DeleteObject(rgn);
     }
 
     /// Total band height: the floating card (padding + content) plus the

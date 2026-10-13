@@ -35828,3 +35828,25 @@ moved to T1814.
   (150) with the fix. Viewer harnesses green, floor lanes green, harness floor
   green on the second run. The first run's `persistence-flag.ps1` in-suite red
   passed alone and is filed as T1896.
+
+## 2026-10-13 — T1851: the top of an elevated card follows its curve
+
+- **What.** On an elevated Windows pane, three things broke the rounded card.
+  The rearrange header and a pinned banner were drawn as square rectangles
+  over the card's top corners. A viewer pane also sat inside a dark rim,
+  because its card was painted in the terminal's colour.
+- **Fix.** A `pane_elevation.Card` can now carry a `head` band colour and its
+  own `fill`, so the card paint antialiases its corners in those colours. The
+  header fill leaves its two corner squares (`bandCornerPx`) for the card
+  paint to draw. While rearranging, a carried header repaints the desk too,
+  because carrying changes the band's colour. When no header sits above a
+  banner, `BannerOverlay.setCardCorner` cuts the banner strip's top corners
+  with a window region. `ViewerPane.cardColors` gives the nav bar colour and
+  the page colour: viewer.css's colour for the OS scheme, or white for a
+  website or a loose `.html` file.
+- **Validation.** `zig test pane_elevation.zig` 53/53. `pane-elevation.ps1` Run
+  4 checks the header corner, the banner region and the viewer rim: ALL PASS
+  (68), and `-NegativeControl` goes red. Floor lanes green. All 42 due
+  harnesses green. `pane-banner.ps1`'s corner probe moved to the band's left
+  margin, because (2,2) is now cut away: ALL PASS (150). Filed T1897 (a tinted
+  pane's card) and T1898 (a website's real page colour).

@@ -4600,7 +4600,13 @@ fn applyDragCursor(self: *Window, cursor: ?rearrange_header.Cursor) void {
 fn repaintRearrangeHeaders(self: *Window) void {
     const h = self.hwnd orelse return;
     const hdc = w32.GetDC(h) orelse return;
-    self.paintAlphaCorrect(hdc, paintRearrangeHeaders);
+    // Elevated (T1851): the card paint draws each band's rounded corners, in
+    // the band's colour - which a carried pane changes - so the desk goes
+    // down first, the way the post-layout pass paints it.
+    if (self.paneStyle() == .elevated)
+        self.paintAlphaCorrect(hdc, paintMovedBands)
+    else
+        self.paintAlphaCorrect(hdc, paintRearrangeHeaders);
     _ = w32.ReleaseDC(h, hdc);
 }
 
@@ -6613,10 +6619,14 @@ fn applyCardRegions(self: *Window, elevated: bool) void {
             var cw: i32 = 0;
             var ch: i32 = 0;
             var square_top = false;
+            // A banner with no header above it is the card's top, so its
+            // strip takes the card's top corners (T1851).
+            var banner_corner: i32 = 0;
             // Only a pane the grid placed in a card is in `slots`; a stashed,
             // hidden-by-zoom or other-tab pane keeps (or gets back) no region.
             for (slots[0..n]) |slot| {
                 if (slot.view != entry.view) continue;
+                if (self.rearrangeHeaderInset(slot.rect) == 0) banner_corner = d;
                 var wr: w32.RECT = undefined;
                 if (w32.GetWindowRect(h, &wr) == 0) break;
                 var pt: w32.POINT = .{ .x = wr.left, .y = wr.top };
@@ -6631,6 +6641,7 @@ fn applyCardRegions(self: *Window, elevated: bool) void {
                     (@as(u64, @intFromBool(square_top)) << 1) | 1;
                 break;
             }
+            if (entry.view.surface()) |s| s.setBannerCardCorner(banner_corner);
             if (entry.view.card_region_key == key) continue;
             entry.view.card_region_key = key;
             if (key == 0) {
@@ -6873,12 +6884,32 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
     var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
     const n = self.collectPaneSlots(&slots);
     var cards: [MAX_DRAG_NODES]pane_elevation.Card = undefined;
-    for (slots[0..n], 0..) |slot, i| cards[i] = .{
-        .left = slot.rect.left - area.left,
-        .top = slot.rect.top - area.top,
-        .right = slot.rect.right - area.left,
-        .bottom = slot.rect.bottom - area.top,
-    };
+    const pal = self.chromePalette();
+    for (slots[0..n], 0..) |slot, i| {
+        cards[i] = .{
+            .left = slot.rect.left - area.left,
+            .top = slot.rect.top - area.top,
+            .right = slot.rect.right - area.left,
+            .bottom = slot.rect.bottom - area.top,
+        };
+        // The card takes the colours of what sits at its edges (T1851): a
+        // header band's or a viewer's nav bar across the top, a viewer's
+        // page below - so its corners are curves in those colours, not a
+        // terminal-coloured rim round them.
+        const inner = self.cardInner(slot.rect);
+        if (self.rearrangeHeaderFor(slot.rect)) |l| {
+            cards[i].head = self.rearrangeBandRgb(slot.view, pal);
+            cards[i].head_bottom = l.band.bottom - area.top;
+        }
+        if (slot.view.viewer()) |v| {
+            const cc = v.cardColors();
+            cards[i].fill = cc.fill;
+            if (cards[i].head == null) if (cc.head) |hc| {
+                cards[i].head = hc;
+                cards[i].head_bottom = inner.top + cc.head_px - area.top;
+            };
+        }
+    }
     // The focused card's glow (T1834), and mid-fade the one it is leaving.
     var glows: [2]pane_elevation.Glow = undefined;
     var ng: usize = 0;
@@ -7057,6 +7088,20 @@ fn toWinRect(r: rearrange_header.Rect) w32.RECT {
     return .{ .left = r.left, .top = r.top, .right = r.right, .bottom = r.bottom };
 }
 
+/// Whether `view` is the pane in the user's hand (T1536). Only an ACTIVE drag:
+/// an armed press that has not travelled is still a click, and lighting the
+/// header on every click would be a flash.
+fn rearrangeCarried(self: *const Window, view: *const PaneView) bool {
+    return if (self.rearrange_drag) |d| d.active and d.view == view else false;
+}
+
+/// The colour of `view`'s header band: the chrome bar, or the accent while it
+/// is carried. One answer for the band's fill and the card paint that draws
+/// its rounded corners (T1851), so the two cannot disagree.
+fn rearrangeBandRgb(self: *const Window, view: *const PaneView, pal: chrome_theme.Palette) color_math.Rgb {
+    return if (self.rearrangeCarried(view)) pal.accent else pal.bar;
+}
+
 /// One pane's header: the chrome band, the grip, the title and the pop-out
 /// button.
 ///
@@ -7076,12 +7121,9 @@ fn paintRearrangeHeader(
         (if (h.view == view) h.part else .none)
     else
         .none;
-    // The pane in the user's hand is marked for as long as the drag is live
-    // (T1536). Only an ACTIVE drag: an armed press that has not travelled is
-    // still a click, and lighting the header on every click would be a flash.
-    const carried = if (self.rearrange_drag) |d| d.active and d.view == view else false;
+    const carried = self.rearrangeCarried(view);
     const look = rearrange_header.treatment(carried, hovered);
-    const band_rgb = if (look == .carried) pal.accent else pal.bar;
+    const band_rgb = self.rearrangeBandRgb(view, pal);
 
     // The band reads as chrome, so it is painted out of the chrome palette
     // rather than the terminal's background — Mac's `.regularMaterial`. The
@@ -7089,8 +7131,23 @@ fn paintRearrangeHeader(
     // it takes the ink that reads on the accent.
     if (w32.CreateSolidBrush(w32.RGB(band_rgb.r, band_rgb.g, band_rgb.b))) |brush| {
         defer _ = w32.DeleteObject(@ptrCast(brush));
-        var band = toWinRect(l.band);
-        _ = w32.FillRect(hdc, &band, brush);
+        const band = toWinRect(l.band);
+        // Elevated (T1851): the band is the top of a rounded card, and the
+        // card paint draws its corners - antialiased, in this same colour -
+        // so the fill leaves the two corner squares to it. Filling them
+        // would lay a square corner over the curve.
+        const k: i32 = if (self.paneStyle() == .elevated)
+            @min(pane_elevation.bandCornerPx(self.scale), @divTrunc(band.right - band.left, 2), band.bottom - band.top)
+        else
+            0;
+        var mid: w32.RECT = .{ .left = band.left + k, .top = band.top, .right = band.right - k, .bottom = band.bottom };
+        _ = w32.FillRect(hdc, &mid, brush);
+        if (k > 0) {
+            var lhs: w32.RECT = .{ .left = band.left, .top = band.top + k, .right = band.left + k, .bottom = band.bottom };
+            var rhs: w32.RECT = .{ .left = band.right - k, .top = band.top + k, .right = band.right, .bottom = band.bottom };
+            _ = w32.FillRect(hdc, &lhs, brush);
+            _ = w32.FillRect(hdc, &rhs, brush);
+        }
     }
 
     // The rule along the bottom is the same line the panes are separated by,

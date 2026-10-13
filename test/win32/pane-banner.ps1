@@ -441,11 +441,14 @@ try {
                 if ($NegativeControl) { $okBand = -not $okBand }
                 Assert $okBand "composited card is the white@6% wash (got $stripPx, want ~30,30,34)"
 
-                # The band's own top-left corner is OUTSIDE the card: it must
-                # read the pane background EXACTLY. A translucent overlay (the
-                # pre-T131 strip) leaks whatever is behind the band through here
-                # — that is the "text scrolls behind the banner" bug.
-                $cornerPx = Get-ShotPx $shot 2 2
+                # The band's left margin is OUTSIDE the card: it must read the
+                # pane background EXACTLY. A translucent overlay (the pre-T131
+                # strip) leaks whatever is behind the band through here — that
+                # is the "text scrolls behind the banner" bug. Sampled halfway
+                # down rather than at the very corner: in the elevated style the
+                # strip is the top of a rounded card and its corner is cut away
+                # (T1851), so (2,2) is no longer the strip's pixel at all.
+                $cornerPx = Get-ShotPx $shot 2 ([int]($oneLineH * 0.5))
                 Assert ($cornerPx -eq '16,16,20') "band corner is the pane background, and the card is inset by a margin (got $cornerPx)"
 
                 # Opacity, without a screen composite to compare against: the

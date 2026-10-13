@@ -1477,6 +1477,12 @@ pub fn bannerLayoutInset(self: *Surface, slot_w: i32, slot_h: i32) i32 {
     return inset;
 }
 
+/// Round the banner strip's top corners to the elevated card's curve, or
+/// square them (`diameter` 0) - T1851. See `BannerOverlay.setCardCorner`.
+pub fn setBannerCardCorner(self: *Surface, diameter: i32) void {
+    if (self.banner_overlay) |b| b.setCardCorner(diameter);
+}
+
 /// Re-derive the banner strip colors from the pane's effective background
 /// (per-pane tint or config background). Cheap and idempotent; called on
 /// set and from Window.updatePaneBanners so config reloads re-color live.

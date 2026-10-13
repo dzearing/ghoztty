@@ -72,6 +72,14 @@ pub fn childRadiusPx(scale: f32) i32 {
     return radiusPx(scale) - childInsetPx(.elevated, scale) + 1;
 }
 
+/// The square at each top corner of a band laid at the child's inset (a
+/// rearrange header, T1851) that the band's own fill must leave to the card
+/// paint: the card's curve runs through it, and only the card paint can
+/// antialias that curve in the band's colour.
+pub fn bandCornerPx(scale: f32) i32 {
+    return radiusPx(scale) - childInsetPx(.elevated, scale);
+}
+
 // The desk's colours and gradient live in `desk_palette.zig` (T1832: a
 // window may carry its own); the card painter shares its pixel helpers.
 
@@ -88,6 +96,23 @@ pub const Card = struct {
     top: i32,
     right: i32,
     bottom: i32,
+    /// The card's own colour when it is not the terminal's (T1851): a
+    /// viewer pane's page. Always solid - a page is opaque, so a glass
+    /// sheet's corners would ring it in the desk.
+    fill: ?color_math.Rgb = null,
+    /// An opaque band across the card's top in another colour (T1851): the
+    /// rearrange header, a viewer's nav bar. Rows above `head_bottom` take
+    /// it as the card's colour, so the band's top corners are the card's
+    /// own antialiased curve rather than a square laid over it.
+    head: ?color_math.Rgb = null,
+    head_bottom: i32 = 0,
+
+    /// The card's colour on row `y`, or null for the style's (glass-able)
+    /// terminal fill.
+    pub fn colorAt(self: Card, y: i32) ?color_math.Rgb {
+        if (self.head) |h| if (y < self.head_bottom) return h;
+        return self.fill;
+    }
 };
 
 /// Signed distance from (x, y) to a rounded rectangle; negative inside.
@@ -412,24 +437,33 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
         }
     }
 
-    const fill: Rgbf = .{
-        .r = @floatFromInt(style.fill.r),
-        .g = @floatFromInt(style.fill.g),
-        .b = @floatFromInt(style.fill.b),
-    };
-    const fill_px = fill.pack();
-    const rim_rgb: Rgbf = if (style.is_light) black else .{ .r = 255, .g = 255, .b = 255 };
     const rim_w = RIM_DIP * style.scale;
     // The inner edge of the band an antialiased rim pixel can sit in.
     const edge: i32 = @as(i32, @intFromFloat(@ceil(rim_w))) + 1;
 
     for (cards, 0..) |c, ci| {
-        const rim_a = rimAlpha(style.glass, style.is_light, focusOf(style, ci));
-        const rim_c = Rgbf.lerp(fill, rim_rgb, rim_a);
+        const focus = focusOf(style, ci);
         const y0: i32 = @max(c.top, 0);
         const y1: i32 = @min(c.bottom, hi);
         var y = y0;
         while (y < y1) : (y += 1) {
+            // This row's card colour (T1851): a header or nav band, a
+            // viewer's page, or the terminal - glass only for the last.
+            const own = c.colorAt(y);
+            const glass = style.glass and own == null;
+            const row_rgb = own orelse style.fill;
+            const fill: Rgbf = .{
+                .r = @floatFromInt(row_rgb.r),
+                .g = @floatFromInt(row_rgb.g),
+                .b = @floatFromInt(row_rgb.b),
+            };
+            const fill_px = fill.pack();
+            // The rim reads against the colour it edges, so a light page in a
+            // dark window is rimmed the way a light card is.
+            const light = if (own != null) color_math.isLight(row_rgb) else style.is_light;
+            const rim_rgb: Rgbf = if (light) black else .{ .r = 255, .g = 255, .b = 255 };
+            const rim_a = rimAlpha(glass, light, focus);
+            const rim_c = Rgbf.lerp(fill, rim_rgb, rim_a);
             const sides = y >= c.top + ri and y < c.bottom - ri and
                 y >= c.top + edge and y < c.bottom - edge;
             const x0: i32 = @max(c.left, 0);
@@ -438,7 +472,7 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
             while (x < x1) : (x += 1) {
                 const i: usize = @intCast(y * wi + x);
                 if (sides and x >= c.left + edge and x < c.right - edge) {
-                    buf[i] = if (style.glass) glassMix(buf[i], style.fill, GLASS_TINT) else fill_px;
+                    buf[i] = if (glass) glassMix(buf[i], style.fill, GLASS_TINT) else fill_px;
                     continue;
                 }
                 const fx = @as(f32, @floatFromInt(x)) + 0.5;
@@ -450,8 +484,8 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
                 // The pixel is card, of which `outer - inner` is rim.
                 const ring = outer - inner;
                 // Glass: the sheet's own colour over THIS pixel of desk.
-                const base = if (style.glass) unpack(glassMix(buf[i], style.fill, GLASS_TINT)) else fill;
-                const rim_px = if (style.glass) Rgbf.lerp(base, rim_rgb, rim_a) else rim_c;
+                const base = if (glass) unpack(glassMix(buf[i], style.fill, GLASS_TINT)) else fill;
+                const rim_px = if (glass) Rgbf.lerp(base, rim_rgb, rim_a) else rim_c;
                 const col = if (outer > 0)
                     Rgbf.lerp(base, rim_px, ring / outer)
                 else
@@ -545,6 +579,57 @@ test "T1831: paintCards - fill inside, desk outside, shadow below, rim on the ed
     // The rim lightens the card's outermost pixel row on a dark theme.
     const rim = unpack(buf[20 * w + 60]);
     try testing.expect(rim.r > 30);
+}
+
+test "T1851: a head band takes the card's curve in its own colour, and the rest keeps the fill" {
+    const w = 120;
+    const h = 100;
+    var buf: [w * h]u32 = undefined;
+    const desk = packRgb(40, 60, 90);
+    @memset(&buf, desk);
+    const head: color_math.Rgb = .{ .r = 200, .g = 100, .b = 50 };
+    const card: Card = .{ .left = 20, .top = 20, .right = 100, .bottom = 90, .head = head, .head_bottom = 50 };
+    const bg: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
+    paintCards(&buf, w, h, &.{card}, .{ .fill = bg, .is_light = false, .scale = 1.0 });
+
+    // Inside the band: the band's colour, exactly - including the corner
+    // zone a band fill leaves to the card paint (just inside the curve).
+    try testing.expectEqual(packRgb(200, 100, 50), buf[40 * w + 60]);
+    try testing.expectEqual(packRgb(200, 100, 50), buf[28 * w + 28]);
+    // Below the band: the terminal fill.
+    try testing.expectEqual(packRgb(30, 30, 30), buf[70 * w + 60]);
+    // The band's top-left corner is rounded: the square corner is desk-ish,
+    // and a pixel on the curve is a blend of band and desk, never the fill.
+    try testing.expect(buf[20 * w + 20] != packRgb(200, 100, 50));
+    const on_curve = unpack(buf[22 * w + 23]);
+    try testing.expect(on_curve.r > 40 and on_curve.r < 200);
+    // The bottom corners keep the terminal's colour.
+    try testing.expect(unpack(buf[87 * w + 23]).r < 60);
+}
+
+test "T1851: a card's own fill replaces the terminal's and is never glass" {
+    const w = 120;
+    const h = 100;
+    var buf: [w * h]u32 = undefined;
+    for (0..h) |y| for (0..w) |x| {
+        buf[y * w + x] = packRgb(@intCast(x * 2), 80, @intCast(y * 2));
+    };
+    const page: color_math.Rgb = .{ .r = 255, .g = 255, .b = 255 };
+    const card: Card = .{ .left = 20, .top = 20, .right = 100, .bottom = 90, .fill = page };
+    const bg: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
+    paintCards(&buf, w, h, &.{card}, .{ .fill = bg, .is_light = false, .scale = 1.0, .glass = true });
+    try testing.expectEqual(packRgb(255, 255, 255), buf[50 * w + 30]);
+    try testing.expectEqual(packRgb(255, 255, 255), buf[50 * w + 90]);
+    // The rim of a light page darkens it (black rim), as on a light card.
+    try testing.expect(unpack(buf[20 * w + 60]).r < 255);
+}
+
+test "T1851: the band corner square holds the whole curve the child inset leaves" {
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |s| {
+        const k = bandCornerPx(s);
+        try testing.expect(k > 0);
+        try testing.expectEqual(radiusPx(s), k + childInsetPx(.elevated, s));
+    }
 }
 
 test "T1831: paintCards leaves the desk alone when there are no cards" {

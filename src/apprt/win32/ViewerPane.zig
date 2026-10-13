@@ -6516,6 +6516,47 @@ fn fail(self: *ViewerPane, reason: webview2.Failure) void {
 // Painting
 // -------------------------------------------------------------------------
 
+/// What the elevated card around this pane shows at its edges (T1851), so the
+/// card's antialiased corners are drawn in the colours the pane itself has
+/// there rather than the terminal's: the nav bar's band across the top, and
+/// the page below it.
+pub const CardColors = struct {
+    /// The nav bar's band, and its height in pixels from the host's top;
+    /// null when no bar is shown.
+    head: ?color_math.Rgb,
+    head_px: i32,
+    fill: color_math.Rgb,
+};
+
+/// The page's own background once one is up: `viewer.css`'s light/dark body
+/// colour for the documents this app renders, and the browser's default white
+/// for a website or a loose `.html` file, which bring their own. Before a page
+/// exists (and over the error card) the host paints `bg`.
+pub fn cardColors(self: *const ViewerPane) CardColors {
+    var head: ?color_math.Rgb = null;
+    var head_px: i32 = 0;
+    if (self.nav) |nav| if (self.hwnd) |h| {
+        var r: w32.RECT = undefined;
+        if (w32.GetClientRect(h, &r) != 0) {
+            const width = @max(r.right - r.left, 0);
+            head_px = @min(nav_layout.Layout.init(self.scale, width, nav.shown()).bar_h, r.bottom - r.top);
+            if (head_px > 0) head = nav.bar_rgb;
+        }
+    };
+    const page: color_math.Rgb = switch (self.mode) {
+        .web, .html => .{ .r = 0xFF, .g = 0xFF, .b = 0xFF },
+        else => if (self.color_scheme == .dark)
+            .{ .r = 0x0D, .g = 0x11, .b = 0x17 }
+        else
+            .{ .r = 0xFF, .g = 0xFF, .b = 0xFF },
+    };
+    return .{
+        .head = head,
+        .head_px = head_px,
+        .fill = if (self.state == .ready) page else self.bg,
+    };
+}
+
 /// Paint the pane's own pixels: the background, plus the error card when there
 /// will be no content. Split out from `WM_PAINT` so it can be driven against
 /// any DC.

@@ -448,6 +448,140 @@ if ($null -eq $rs) {
 Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'reload: no crash'
 Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 
+# ---------------------------------------------------------------------------
+# Run 4 (T1851): what sits at the top of a card takes the card's curve.
+#
+#   HEADER. Rearrange mode puts a header band across the top of each card.
+#   Just inside the card's top-left corner - outside its curve - is the desk;
+#   one pixel inside the curve is the band's own colour. Before T1851 the band
+#   was a plain rectangle, so the corner pixel was the band's colour.
+#
+#   BANNER. A banner with no header above it is the card's top: its strip (a
+#   popup) is cut to the card's corners, and squared again when a header goes
+#   above it.
+#
+#   VIEWER. A viewer's card is the page's colour, not the terminal's: the
+#   card's bottom rim row reads as the page, on a terminal chosen to be the
+#   opposite of it.
+# ---------------------------------------------------------------------------
+$hdrArgs = $common + @('--macos-pane-glass=false', '--window-show-tab-bar=always',
+    '--keybind=ctrl+shift+f9=toggle_rearrange_mode')
+$g = Start-Gui 'corners' $hdrArgs
+$launched += $script:GhozttyTestDesktopPids
+$top = $g.Top
+$i = Get-InsetPx $g.Scale
+$r = [math]::Max((Round-Away (11.0 * $g.Scale)), 2)
+$k = $r - $i
+$p0 = $g.Panes[0]
+
+# The banner first, with no header: rounded top, square bottom.
+$bt = @(Get-TestWindowPaneTargets -Window $top -Exe $exe) | Select-Object -First 1
+& $exe +set-banner "--target=$bt" "corner probe" | Out-Null
+$ov = $null
+for ($t = 0; $t -lt 20 -and $null -eq $ov; $t++) {
+    Start-Sleep -Milliseconds 250
+    $ov = @(Get-TestWindows -ProcessId $g.App.Pid -Class 'GhozttyBannerOverlay') | Select-Object -First 1
+}
+Assert ($null -ne $ov) 'banner: the strip is up'
+if ($null -ne $ov) {
+    $bh = Get-TestWindowRegionHits -Window ([IntPtr]$ov.Hwnd) -Points @(0, 0, ($ov.Width - 1), 0, 0, ($ov.Height - 1), [int]($ov.Width / 2), [int]($ov.Height / 2))
+    Assert ($null -ne $bh) 'banner: with no header above it, the strip has a window region'
+    if ($null -ne $bh) {
+        Assert ((-not $bh[0]) -and (-not $bh[1])) "banner: the strip's top corners are cut to the card's curve"
+        Assert ($bh[2] -and $bh[3]) "banner: its bottom corners and centre are kept"
+    }
+}
+
+# Rearrange mode on: the header goes above the banner.
+$before = (Get-Panes $top)[0]
+Assert (Send-TestKeys -Window $top -Target ([IntPtr]$before.Hwnd) -Modifiers ctrl, shift -Key f9) 'header: toggle_rearrange_mode delivered'
+$after = $null
+for ($t = 0; $t -lt 20; $t++) {
+    Start-Sleep -Milliseconds 200
+    $after = (Get-Panes $top)[0]
+    if ($after.Top -gt $before.Top) { break }
+}
+Assert ($after.Top -gt $before.Top) 'header: the pane moved down for its header'
+if ($null -ne $ov) {
+    $bh = Get-TestWindowRegionHits -Window ([IntPtr]$ov.Hwnd) -Points @(0, 0)
+    Assert ($null -eq $bh) 'banner: under a header the strip is square again (no region)'
+}
+& $exe +set-banner "--target=$bt" --clear | Out-Null
+Start-Sleep -Milliseconds 700
+$p = (Get-Panes $top)[0]
+# The band starts where the card's inside does: the pane's old top less the
+# banner it had, i.e. the top it had before both - $p0.
+$bandL = [int]$p.Left; $bandT = [int]$p0.Top; $bandR = [int]$p.Right
+$shot = Get-TestWindowPixels -Window $top -Sync
+try {
+    if ((Get-TestDistinctColors -Shot $shot) -lt 4) {
+        $script:skipped++; Write-Host 'SKIP  header corner probes: empty capture'
+    } else {
+        $bar = Get-TestPixel -Shot $shot -X ([int](($bandL + $bandR) / 2)) -Y ($bandT + 1)
+        $corner = Get-TestPixel -Shot $shot -X $bandL -Y $bandT
+        $curve = Get-TestPixel -Shot $shot -X ($bandL + $k - 1) -Y ($bandT + $k - 1)
+        $rcorner = Get-TestPixel -Shot $shot -X ($bandR - 1) -Y $bandT
+        Write-Host "      band ($bandL,$bandT)-($bandR) k=$k bar=$($bar.R),$($bar.G),$($bar.B) corner=$($corner.R),$($corner.G),$($corner.B) right-corner=$($rcorner.R),$($rcorner.G),$($rcorner.B) inside-curve=$($curve.R),$($curve.G),$($curve.B)"
+        if ($NegativeControl) {
+            Write-Host 'NEGATIVE CONTROL: asserting the band corner is square - this run MUST fail'
+            Assert ((Get-ColorDistance $corner $bar) -le 6) 'header: the band corner is the band colour (negative control)'
+        } else {
+            Assert (Test-DeskPixel $corner) "header: outside the card's curve, the band's top-left corner is the desk"
+        }
+        Assert (Test-DeskPixel $rcorner) "header: and so is its top-right corner"
+        Assert ((Get-ColorDistance $curve $bar) -le 6) "header: just inside the curve is the band's own colour"
+    }
+} finally { Close-TestWindowPixels $shot }
+Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'corners: no crash'
+Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
+
+# The viewer: the page colour follows the OS scheme (viewer.css), so the
+# terminal is set to its opposite and the two cannot be confused.
+$lightOs = $true
+try {
+    $v = Get-ItemPropertyValue -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' -Name AppsUseLightTheme -ErrorAction Stop
+    $lightOs = ($v -ne 0)
+} catch { }
+$page = if ($lightOs) { [pscustomobject]@{ R = 255; G = 255; B = 255 } } else { [pscustomobject]@{ R = 13; G = 17; B = 23 } }
+$term = if ($lightOs) { '--background=#000000' } else { '--background=#ffffff' }
+$termRgb = if ($lightOs) { [pscustomobject]@{ R = 0; G = 0; B = 0 } } else { [pscustomobject]@{ R = 255; G = 255; B = 255 } }
+$md = Join-Path $env:TEMP "ghoztty-pane-elevation-$PID.md"
+Set-Content -Path $md -Value "# Corner probe`n`nA page." -Encoding Ascii
+$vArgs = @('--config-default-files=false', $term, '--unfocused-split-opacity=1',
+    '--session-persistence=false', '--macos-pane-glass=false')
+$g = Start-Gui 'viewer' $vArgs
+$launched += $script:GhozttyTestDesktopPids
+$top = $g.Top
+$i = Get-InsetPx $g.Scale
+& $exe +split --direction=right "--view=$md" | Out-Null
+$vw = $null
+for ($t = 0; $t -lt 40 -and $null -eq $vw; $t++) {
+    Start-Sleep -Milliseconds 250
+    $vw = @(Get-TestChildWindows -Window $top -Class 'GhozttyViewer' | Where-Object Visible) | Select-Object -First 1
+}
+Assert ($null -ne $vw) 'viewer: the viewer pane is up'
+if ($null -ne $vw) {
+    $ok = $false
+    $px = $null
+    # The page arrives when WebView2 does; the card follows it on the next paint.
+    for ($t = 0; $t -lt 40 -and -not $ok; $t++) {
+        Start-Sleep -Milliseconds 400
+        $shot = Get-TestWindowPixels -Window $top -Sync
+        try {
+            $px = Get-TestPixel -Shot $shot -X ([int](($vw.Left + $vw.Right) / 2)) -Y ([int]$vw.Bottom + $i - 1)
+        } finally { Close-TestWindowPixels $shot }
+        # The bottom rim row: the page under half a rim stroke, which the
+        # focused card brightens (up to 16%) - near the page, and far from the
+        # opposite-coloured terminal.
+        if ($null -ne $px) { $ok = ((Get-ColorDistance $px $page) -le 60) -and ((Get-ColorDistance $px $termRgb) -ge 300) }
+    }
+    if ($null -ne $px) { Write-Host "      viewer card bottom rim ($([int](($vw.Left + $vw.Right) / 2)),$([int]$vw.Bottom + $i - 1)) = $($px.R),$($px.G),$($px.B); page = $($page.R),$($page.G),$($page.B)" }
+    Assert $ok "viewer: the card under a viewer is the page's colour, not the terminal's"
+}
+Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'viewer: no crash'
+Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
+Remove-Item $md -ErrorAction SilentlyContinue
+
 } catch {
     $script:fail++
     Write-Host "FAIL  the run terminated: $($_.Exception.Message)" -ForegroundColor Red
