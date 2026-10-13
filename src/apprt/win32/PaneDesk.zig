@@ -17,6 +17,13 @@
 //! pixels no pane child covers: the gutters, the margin, and the rounded
 //! corners each child's window region gives back.
 //!
+//! On a translucent window (`background-opacity` below 1, T1852) a third,
+//! `out`, holds what is actually blitted: `comp` premultiplied with the desk
+//! at that opacity and every card, shadow and light at its own strength -
+//! `comp` keeps each pixel's coverage in its alpha byte for exactly this
+//! (`desk_palette.translucentPixel`). The blit then carries its own alpha,
+//! which is why the window hands it a DC its marker pass does not resolve.
+//!
 //! A pane's progress light (T1899) is painted onto `comp` as well, from ring
 //! caches kept here: a full paint rebuilds or rebases them and draws the
 //! light, and an animation frame (`paintLightFrame`) redraws only the ring
@@ -128,6 +135,8 @@ desk_variant: ?desk_palette.Variant = null,
 /// pane sidebar's, T1850) can tell it is stale without comparing pixels.
 desk_gen: u32 = 0,
 comp: ?Dib = null,
+/// `comp` as a translucent window shows it (T1852); only ever created there.
+out: ?Dib = null,
 
 /// The gradient alone, as the pane sidebar paints under itself (T1850): the
 /// desk runs under the sidebar's column, and the sidebar is a child window
@@ -152,6 +161,7 @@ pub fn deinit(self: *PaneDesk) void {
     for (&self.lights) |*c| c.px.deinit(light_alloc);
     if (self.desk) |d| d.destroy();
     if (self.comp) |c| c.destroy();
+    if (self.out) |o| o.destroy();
     // Keep counting across a reset, so no later desk reuses a generation a
     // sidebar cache may still hold.
     self.* = .{ .desk_gen = self.desk_gen +% 1 };
@@ -171,6 +181,9 @@ pub fn paint(
     variant: ?desk_palette.Variant,
     lights: []const Light,
     head: f32,
+    /// `background-opacity` as a byte when the window is translucent, null
+    /// when it is opaque (T1852).
+    opacity: ?u8,
 ) void {
     if (w <= 0 or h <= 0) return;
     const desk = self.ensureDesk(w, h, style.is_light, variant) orelse return;
@@ -179,6 +192,12 @@ pub fn paint(
     pane_elevation.paintCards(comp.pixels(), @intCast(w), @intCast(h), cards, style);
     self.syncLights(comp, lights, style.scale);
     for (self.lights[0..self.light_n]) |*c| busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
+    if (opacity) |o| {
+        const out = self.ensureOut(w, h) orelse return;
+        desk_palette.translucentSpan(out.pixels(), comp.pixels(), desk.pixels(), o);
+        _ = w32.BitBlt(hdc, origin_x, origin_y, w, h, out.dc, 0, 0, w32.SRCCOPY);
+        return;
+    }
     _ = w32.BitBlt(hdc, origin_x, origin_y, w, h, comp.dc, 0, 0, w32.SRCCOPY);
 }
 
@@ -242,14 +261,32 @@ fn syncLights(self: *PaneDesk, comp: Dib, lights: []const Light, scale: f32) voi
 /// their bases in `comp` and blit just the strips they lie in. The window's
 /// `WS_CLIPCHILDREN` DC keeps the blit off the panes. A no-op until a full
 /// paint has built the caches for the current size.
-pub fn paintLightFrame(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, head: f32) void {
+pub fn paintLightFrame(self: *PaneDesk, hdc: w32.HDC, origin_x: i32, origin_y: i32, head: f32, opacity: ?u8) void {
     const comp = self.comp orelse return;
+    // Translucent (T1852): each strip is re-premultiplied into `out` first,
+    // from the desk the last full paint used.
+    const tr: ?struct { out: Dib, desk: Dib, o: u8 } = if (opacity) |o| blk: {
+        const out = self.out orelse return;
+        const desk = self.desk orelse return;
+        if (out.w != comp.w or out.h != comp.h or desk.w != comp.w or desk.h != comp.h) return;
+        break :blk .{ .out = out, .desk = desk, .o = o };
+    } else null;
     for (self.lights[0..self.light_n]) |*c| {
         if (c.w != comp.w or c.h != comp.h) continue;
         busy_light.apply(comp.pixels(), c.px.items, c.shape, c.color, head);
         for (busy_light.strips(c.card, c.shape, c.scale, comp.w, comp.h)) |r| {
             if (r.right <= r.left or r.bottom <= r.top) continue;
-            _ = w32.BitBlt(hdc, origin_x + r.left, origin_y + r.top, r.right - r.left, r.bottom - r.top, comp.dc, r.left, r.top, w32.SRCCOPY);
+            const src = if (tr) |t| src: {
+                const cw: usize = @intCast(comp.w);
+                var y = r.top;
+                while (y < r.bottom) : (y += 1) {
+                    const a: usize = @as(usize, @intCast(y)) * cw + @as(usize, @intCast(r.left));
+                    const b: usize = a + @as(usize, @intCast(r.right - r.left));
+                    desk_palette.translucentSpan(t.out.pixels()[a..b], comp.pixels()[a..b], t.desk.pixels()[a..b], t.o);
+                }
+                break :src t.out.dc;
+            } else comp.dc;
+            _ = w32.BitBlt(hdc, origin_x + r.left, origin_y + r.top, r.right - r.left, r.bottom - r.top, src, r.left, r.top, w32.SRCCOPY);
         }
     }
 }
@@ -286,6 +323,16 @@ fn ensureComp(self: *PaneDesk, w: i32, h: i32) ?Dib {
     }
     self.comp = Dib.create(w, h);
     return self.comp;
+}
+
+fn ensureOut(self: *PaneDesk, w: i32, h: i32) ?Dib {
+    if (self.out) |o| {
+        if (o.w == w and o.h == h) return o;
+        o.destroy();
+        self.out = null;
+    }
+    self.out = Dib.create(w, h);
+    return self.out;
 }
 
 fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_palette.Variant) ?Dib {

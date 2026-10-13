@@ -35882,3 +35882,21 @@ moved to T1814.
 - **Validation.** New `deny-sh-from-powershell.ps1` ALL PASS (20),
   `-NegativeControl` red by exactly one. The refusal fired live in this
   session. Harness floor run for the new script.
+
+## 2026-10-13 — T1852: a see-through window's backdrop fades too
+
+- **Gap.** With `background-opacity` below 1 the elevated desk painted solid:
+  `paintAlphaCorrect` resolved every pixel the desk blit touched to opaque.
+  Mac's `PaneDesk` takes `.opacity(backgroundOpacity)`; the card bases do not.
+- **Fix.** The desk composite's spare alpha byte now carries per-pixel
+  COVERAGE (how much of the desk the cards, shadows, glow and busy light
+  hide), accumulated source-over by every blend. On a translucent window
+  `PaneDesk` premultiplies it into a new `out` DIB
+  (`desk_palette.translucentPixel`: `comp - (1-c)(1-o)desk`, alpha
+  `c + (1-c)o`), and the window hands the desk its REAL DC (`desk_hdc`) so the
+  marker pass leaves it alone. Opaque windows ignore the byte. Filed T1905:
+  the pane sidebar on a translucent window.
+- **Validation.** New `none`-lane tests for the pixel math and coverage;
+  floor ALL LANES PASS; `pane-elevation.ps1` ALL PASS (75), new run 1b2 reads
+  the margin at 0.488x the toggled-opaque desk at opacity 0.5. The on-screen
+  look over a real desktop is NOT RUN (input desktop only; user present).

@@ -189,10 +189,15 @@ pub fn erfc(x: f32) f32 {
     return if (x >= 0) r else 2 - r;
 }
 
+/// `src` at opacity `a` over `dst`, the coverage in the alpha byte
+/// accumulating with it (T1852, `desk_palette.coverage`).
 fn blend(dst: u32, src: Rgbf, a: f32) u32 {
     if (a <= 0) return dst;
-    if (a >= 1) return src.pack();
-    return Rgbf.lerp(unpack(dst), src, a).pack();
+    if (a >= 1) return src.pack() | 0xFF00_0000;
+    return desk_palette.withCoverage(
+        Rgbf.lerp(unpack(dst), src, a).pack(),
+        desk_palette.coverOver(desk_palette.coverage(dst), a),
+    );
 }
 
 const black: Rgbf = .{ .r = 0, .g = 0, .b = 0 };
@@ -472,7 +477,15 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
             while (x < x1) : (x += 1) {
                 const i: usize = @intCast(y * wi + x);
                 if (sides and x >= c.left + edge and x < c.right - edge) {
-                    buf[i] = if (glass) glassMix(buf[i], style.fill, GLASS_TINT) else fill_px;
+                    // A glass sheet hides the desk only by its tint; a solid
+                    // card hides it entirely (T1852).
+                    buf[i] = if (glass)
+                        desk_palette.withCoverage(
+                            glassMix(buf[i], style.fill, GLASS_TINT),
+                            desk_palette.coverOver(desk_palette.coverage(buf[i]), GLASS_TINT),
+                        )
+                    else
+                        fill_px | 0xFF00_0000;
                     continue;
                 }
                 const fx = @as(f32, @floatFromInt(x)) + 0.5;
@@ -490,7 +503,14 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
                     Rgbf.lerp(base, rim_px, ring / outer)
                 else
                     base;
-                buf[i] = blend(buf[i], col, outer);
+                const under = buf[i];
+                buf[i] = blend(under, col, outer);
+                // `col` already holds the desk a glass sheet shows, so the
+                // sheet covers only its tint's worth of it.
+                if (glass) buf[i] = desk_palette.withCoverage(
+                    buf[i],
+                    desk_palette.coverOver(desk_palette.coverage(under), outer * GLASS_TINT),
+                );
             }
         }
     }
@@ -555,6 +575,12 @@ test "T1831: a shadow is darkest under the card and gone past its reach" {
     try testing.expect(shadowAlpha(reach - s.dy, s) < 0.01);
 }
 
+/// A composite pixel's colour, without the coverage its alpha byte carries
+/// (T1852).
+fn rgbOf(p: u32) u32 {
+    return p & 0x00FF_FFFF;
+}
+
 test "T1831: paintCards - fill inside, desk outside, shadow below, rim on the edge" {
     const w = 120;
     const h = 100;
@@ -566,7 +592,7 @@ test "T1831: paintCards - fill inside, desk outside, shadow below, rim on the ed
     paintCards(&buf, w, h, &.{card}, .{ .fill = bg, .is_light = false, .scale = 1.0 });
 
     // Interior: the terminal background, exactly.
-    try testing.expectEqual(packRgb(30, 30, 30), buf[45 * w + 60]);
+    try testing.expectEqual(packRgb(30, 30, 30), rgbOf(buf[45 * w + 60]));
     // Far away: the desk, untouched.
     try testing.expectEqual(desk, buf[2 * w + 2]);
     // Below the card the drop shadow darkens the desk; above it, less so.
@@ -575,10 +601,19 @@ test "T1831: paintCards - fill inside, desk outside, shadow below, rim on the ed
     try testing.expect(below.b < 90);
     try testing.expect(below.b < above.b);
     // The square corner pixel is NOT card: the corner is rounded.
-    try testing.expect(buf[20 * w + 20] != packRgb(30, 30, 30));
+    try testing.expect(rgbOf(buf[20 * w + 20]) != packRgb(30, 30, 30));
     // The rim lightens the card's outermost pixel row on a dark theme.
     const rim = unpack(buf[20 * w + 60]);
     try testing.expect(rim.r > 30);
+
+    // Coverage (T1852): the card hides the desk entirely, bare desk not at
+    // all, and the shadow part way - more just below the card than far off.
+    try testing.expectEqual(@as(u32, 0xFF), buf[45 * w + 60] >> 24);
+    try testing.expectEqual(@as(u32, 0), buf[2 * w + 2] >> 24);
+    const sh_near = buf[72 * w + 60] >> 24;
+    const sh_far = buf[76 * w + 60] >> 24;
+    try testing.expect(sh_near > 0 and sh_near < 0xFF);
+    try testing.expect(sh_far > 0 and sh_far <= sh_near);
 }
 
 test "T1851: a head band takes the card's curve in its own colour, and the rest keeps the fill" {
@@ -594,13 +629,13 @@ test "T1851: a head band takes the card's curve in its own colour, and the rest 
 
     // Inside the band: the band's colour, exactly - including the corner
     // zone a band fill leaves to the card paint (just inside the curve).
-    try testing.expectEqual(packRgb(200, 100, 50), buf[40 * w + 60]);
-    try testing.expectEqual(packRgb(200, 100, 50), buf[28 * w + 28]);
+    try testing.expectEqual(packRgb(200, 100, 50), rgbOf(buf[40 * w + 60]));
+    try testing.expectEqual(packRgb(200, 100, 50), rgbOf(buf[28 * w + 28]));
     // Below the band: the terminal fill.
-    try testing.expectEqual(packRgb(30, 30, 30), buf[70 * w + 60]);
+    try testing.expectEqual(packRgb(30, 30, 30), rgbOf(buf[70 * w + 60]));
     // The band's top-left corner is rounded: the square corner is desk-ish,
     // and a pixel on the curve is a blend of band and desk, never the fill.
-    try testing.expect(buf[20 * w + 20] != packRgb(200, 100, 50));
+    try testing.expect(rgbOf(buf[20 * w + 20]) != packRgb(200, 100, 50));
     const on_curve = unpack(buf[22 * w + 23]);
     try testing.expect(on_curve.r > 40 and on_curve.r < 200);
     // The bottom corners keep the terminal's colour.
@@ -618,8 +653,8 @@ test "T1851: a card's own fill replaces the terminal's and is never glass" {
     const card: Card = .{ .left = 20, .top = 20, .right = 100, .bottom = 90, .fill = page };
     const bg: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
     paintCards(&buf, w, h, &.{card}, .{ .fill = bg, .is_light = false, .scale = 1.0, .glass = true });
-    try testing.expectEqual(packRgb(255, 255, 255), buf[50 * w + 30]);
-    try testing.expectEqual(packRgb(255, 255, 255), buf[50 * w + 90]);
+    try testing.expectEqual(packRgb(255, 255, 255), rgbOf(buf[50 * w + 30]));
+    try testing.expectEqual(packRgb(255, 255, 255), rgbOf(buf[50 * w + 90]));
     // The rim of a light page darkens it (black rim), as on a light card.
     try testing.expect(unpack(buf[20 * w + 60]).r < 255);
 }
@@ -672,9 +707,11 @@ test "T1833: a glass card shows the desk through its fill and keeps its shadow o
     // the desk under them does.
     const a = 45 * w + 30;
     const b = 45 * w + 90;
-    try testing.expectEqual(glassMix(desk[a], bg, GLASS_TINT), buf[a]);
-    try testing.expectEqual(glassMix(desk[b], bg, GLASS_TINT), buf[b]);
+    try testing.expectEqual(glassMix(desk[a], bg, GLASS_TINT), rgbOf(buf[a]));
+    try testing.expectEqual(glassMix(desk[b], bg, GLASS_TINT), rgbOf(buf[b]));
     try testing.expect(buf[a] != buf[b]);
+    // A sheet hides the desk by its tint only (T1852).
+    try testing.expect(@abs(@as(i32, @intCast(buf[a] >> 24)) - @as(i32, @intFromFloat(@round(GLASS_TINT * 255)))) <= 1);
     // Below the card: still a shadow on the desk.
     const below = 74 * w + 60;
     try testing.expect(unpack(buf[below]).g < unpack(desk[below]).g);
@@ -684,7 +721,7 @@ test "T1833: a glass card shows the desk through its fill and keeps its shadow o
     // The solid card, for contrast, is the terminal background exactly.
     @memcpy(&buf, &desk);
     paintCards(&buf, w, h, &.{card}, .{ .fill = bg, .is_light = false, .scale = 1.0 });
-    try testing.expectEqual(packRgb(30, 30, 30), buf[a]);
+    try testing.expectEqual(packRgb(30, 30, 30), rgbOf(buf[a]));
 }
 
 /// Mac `PaneFocusGlowTests`, on a 300x240 buffer with a 200x140 card at

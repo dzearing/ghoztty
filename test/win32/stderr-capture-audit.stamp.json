@@ -1,10 +1,10 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-10-13T06:51:15-07:00",
-    "commit":  "cb0d6f57d",
+    "generated":  "2026-10-13T08:12:03-07:00",
+    "commit":  "17e3481c1",
     "uncommitted":  [
-                        "test/win32/deny-sh-from-powershell.ps1"
+                        "test/win32/pane-elevation.ps1"
                     ],
     "files":  {
                   "docs/claude/testing.md":  "72e71dd3e9cc038a9d91cac58273f2e095c831a78fac3333e4780027afed3f30",
@@ -282,7 +282,7 @@
                   "test/win32/pane-banner.ps1":  "2b56b49bffa27cb8bf7f3e918eaf839ee033d1bd21673171ca68a70e55933d2e",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "e3388a98b380901071b2050f9afa8cdaae4765ab1f4413b92ae26fd0edc8ca6f",
-                  "test/win32/pane-elevation.ps1":  "56f6a6342977abc9fdbf3abe60f42f6b432fff3086e9afe88fb54cba62c19904",
+                  "test/win32/pane-elevation.ps1":  "6041a0246ae098f61f2c926f932b5f26c6bc5bef1cfe59c56fc76cb26d0207bf",
                   "test/win32/pane-grab-handle.ps1":  "750e331e6cffdad15489ff1023167b296f6e171d5e08e4be2dc0b6cdac858011",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "0c722d4f0cb52d3567b2d070362fa2cf825aafc952a81b1bcf01768203181161",

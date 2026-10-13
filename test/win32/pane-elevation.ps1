@@ -37,8 +37,12 @@
 #   the desk in the margin beside it, mixed the way the renderer mixes - 60%
 #   of the desk, in linear light - so the pane and its card meet without a
 #   seam. `--macos-pane-glass=false` and a translucent window
-#   (`background-opacity` below 1, where the desk is still opaque - T1852)
+#   (`background-opacity` below 1)
 #   keep the solid black pane.
+#
+#   TRANSLUCENT DESK (T1852). At `background-opacity = 0.5` the desk is
+#   blitted premultiplied at half strength; toggled opaque on the same window
+#   it reads full strength.
 #
 #   FOCUS GLOW (T1834). Of two cards, only the focused one lights the desk
 #   just past its edge, and a goto_split moves the light to the other card.
@@ -340,6 +344,50 @@ foreach ($case in @(
     }
     Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 }
+
+# ---------------------------------------------------------------------------
+# Run 1b2: a translucent window's desk takes background-opacity (T1852; Mac
+# `PaneDesk` is `.opacity(backgroundOpacity)`). The desk is blitted with its
+# own premultiplied alpha, so the window's own WM_PRINTCLIENT paint reads the
+# right margin at ~opacity x the opaque desk. Measured on ONE window, toggled
+# opaque with toggle_background_opacity, because every new window draws a
+# random desk variant. Before T1852 the marker pass made the desk opaque and
+# the two reads were equal.
+# ---------------------------------------------------------------------------
+$g = Start-Gui 'translucent-desk' ($common + @('--background-opacity=0.5', '--keybind=ctrl+alt+f8=toggle_background_opacity'))
+$launched += $script:GhozttyTestDesktopPids
+$top = $g.Top
+$m = Get-MarginPx $g.Scale
+$i = Get-InsetPx $g.Scale
+$p = $g.Panes[0]
+$mx = [int]($p.Right + [math]::Floor(($m + $i) / 2))
+$my = [int](($p.Top + $p.Bottom) / 2)
+function Get-MarginPixel([string]$label) {
+    $shot = Get-TestWindowPixels -Window $top -Sync
+    try {
+        $c = Get-TestPixel -Shot $shot -X $mx -Y $my
+        if ($null -ne $c) { Write-Host "      $label right-margin pixel ($mx,$my) = $($c.R),$($c.G),$($c.B)" }
+        return $c
+    } finally { Close-TestWindowPixels $shot }
+}
+Start-Sleep -Milliseconds 600
+$tr = Get-MarginPixel 'translucent'
+Assert (Send-TestKeys -Window $top -Target ([IntPtr]$p.Hwnd) -Modifiers ctrl, alt -Key f8) 'translucent desk: toggle_background_opacity delivered'
+Start-Sleep -Milliseconds 900
+$op = Get-MarginPixel 'toggled opaque'
+if ($null -eq $tr -or $null -eq $op) {
+    $script:skipped++; Write-Host 'SKIP  translucent desk probe: margin pixel off the capture'
+} else {
+    Assert (Test-DeskPixel $op) 'translucent desk: toggled opaque, the margin is the ocean desk'
+    $opSum = $op.R + $op.G + $op.B
+    $ratio = if ($opSum -gt 0) { ($tr.R + $tr.G + $tr.B) / $opSum } else { 1 }
+    Write-Host ("      translucent/opaque desk ratio = {0:N3} (opacity 0.5)" -f $ratio)
+    Assert (($ratio -gt 0.4) -and ($ratio -lt 0.6)) 'translucent desk: at background-opacity 0.5 the desk paints at half strength (premultiplied)'
+    $maxDev = [math]::Max([math]::Max([math]::Abs($tr.R - $op.R / 2), [math]::Abs($tr.G - $op.G / 2)), [math]::Abs($tr.B - $op.B / 2))
+    Assert ($maxDev -le 3) "translucent desk: every channel is half the opaque desk's (max deviation $maxDev)"
+}
+Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'translucent desk: no crash'
+Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 
 # ---------------------------------------------------------------------------
 # Run 1c: the focused pane's glow (T1834). Among two cards exactly one lights

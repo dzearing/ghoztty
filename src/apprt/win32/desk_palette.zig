@@ -70,6 +70,110 @@ pub fn packRgb(r: u8, g: u8, b: u8) u32 {
     return (@as(u32, r) << 16) | (@as(u32, g) << 8) | b;
 }
 
+// ---------------------------------------------------------------------------
+// Coverage (T1852). A pixel of the desk composite carries, in its otherwise
+// unused alpha byte, how much of the DESK the layers painted over it hide: 0
+// for bare desk, 255 under a card, in between under a shadow, a glow, a light
+// or an antialiased corner. An opaque window ignores the byte; a translucent
+// one needs it to give the desk `background-opacity` while the cards stay
+// what they are (`translucentPixel`) - Mac's `PaneDesk` takes `.opacity`, the
+// card's base does not.
+
+/// The coverage of `p`, 0..1.
+pub fn coverage(p: u32) f32 {
+    return @as(f32, @floatFromInt(p >> 24)) / 255;
+}
+
+/// `rgb` (alpha byte ignored) with coverage `c`.
+pub fn withCoverage(rgb: u32, c: f32) u32 {
+    const a: u32 = @intFromFloat(@round(std.math.clamp(c, 0, 1) * 255));
+    return (rgb & 0x00FF_FFFF) | (a << 24);
+}
+
+/// The coverage after a layer of opacity `a` is laid over a pixel already
+/// covered `c`: source-over, the way the colour itself is lerped.
+pub fn coverOver(c: f32, a: f32) f32 {
+    return a + c * (1 - a);
+}
+
+/// One composite pixel as a translucent window shows it: premultiplied, with
+/// the desk under it at `opacity` (0..255) and everything painted over the
+/// desk kept at its own strength.
+///
+/// `comp` is the composite over an OPAQUE desk - `(1-c)*desk + layers` per
+/// channel, coverage `c` in its alpha byte - and `desk` the bare desk pixel.
+/// Over a desk at opacity o the same layers give `(1-c)*o*desk + layers`,
+/// i.e. `comp - (1-c)*(1-o)*desk`, and alpha `c + (1-c)*o`. Bare desk comes
+/// out as `o*desk` at alpha o; a card pixel unchanged at alpha 255.
+pub fn translucentPixel(comp: u32, desk: u32, opacity: u8) u32 {
+    const k: u32 = 255 - (comp >> 24); // how much desk shows, 0..255
+    const o: u32 = opacity;
+    const alpha: u32 = (comp >> 24) + (k * o + 127) / 255;
+    const t: u32 = k * (255 - o); // 0..65025
+    var out: u32 = alpha << 24;
+    inline for (.{ 16, 8, 0 }) |sh| {
+        const cv: u32 = (comp >> sh) & 0xFF;
+        const dv: u32 = (desk >> sh) & 0xFF;
+        const sub: u32 = (t * dv + 32512) / 65025;
+        // Premultiplied: a channel never exceeds its alpha. A blend that was
+        // not a plain lerp (the glass mix is linear-light) can leave a hair
+        // over; clamp rather than wrap.
+        const v: u32 = @min(cv -| sub, alpha);
+        out |= v << sh;
+    }
+    return out;
+}
+
+/// `translucentPixel` over a whole row span: `out[i]` from `comp[i]`/`desk[i]`.
+pub fn translucentSpan(out: []u32, comp: []const u32, desk: []const u32, opacity: u8) void {
+    for (out, comp, desk) |*o, c, d| o.* = translucentPixel(c, d, opacity);
+}
+
+/// `background-opacity` as the byte `translucentPixel` takes.
+pub fn opacityByte(opacity: f64) u8 {
+    return @intFromFloat(@round(std.math.clamp(opacity, 0, 1) * 255));
+}
+
+test "T1852: bare desk takes the opacity, a card keeps its own colour" {
+    const desk: u32 = packRgb(200, 100, 50);
+    // Bare desk (coverage 0) at 50%: premultiplied half, alpha 128.
+    const bare = translucentPixel(desk, desk, 128);
+    try testing.expectEqual(@as(u32, 128), bare >> 24);
+    try testing.expectEqual(@as(u32, 100), (bare >> 16) & 0xFF);
+    try testing.expectEqual(@as(u32, 50), (bare >> 8) & 0xFF);
+    try testing.expectEqual(@as(u32, 25), bare & 0xFF);
+    // A card pixel (coverage 255) is the card, opaque, whatever the desk.
+    const card = withCoverage(packRgb(30, 30, 30), 1);
+    try testing.expectEqual(@as(u32, 0xFF1E1E1E), translucentPixel(card, desk, 128));
+    // An opaque desk changes nothing but the alpha byte.
+    try testing.expectEqual(desk | 0xFF00_0000, translucentPixel(desk, desk, 255));
+}
+
+test "T1852: a half-covered pixel composites like a layer over a translucent desk" {
+    // Black at 50% over white desk: opaque composite 128 grey, coverage 0.5.
+    const desk: u32 = packRgb(255, 255, 255);
+    const comp = withCoverage(packRgb(128, 128, 128), 0.5);
+    // Over the desk at 0 opacity only the black layer is left: alpha 0.5 of
+    // black, premultiplied 0.
+    const px0 = translucentPixel(comp, desk, 0);
+    try testing.expectEqual(@as(u32, 128), px0 >> 24);
+    try testing.expect((px0 & 0xFF) <= 1);
+    // At 50%: alpha 0.5 + 0.5*0.5 = 0.75, colour 0.5*0.5*255 = 64.
+    const px = translucentPixel(comp, desk, 128);
+    try testing.expect(@abs(@as(i32, @intCast(px >> 24)) - 191) <= 1);
+    try testing.expect(@abs(@as(i32, @intCast(px & 0xFF)) - 64) <= 1);
+    // Never a channel above its alpha (premultiplied invariant).
+    try testing.expect((px & 0xFF) <= (px >> 24));
+}
+
+test "T1852: coverage accumulates source-over" {
+    try testing.expectEqual(@as(f32, 0.5), coverOver(0, 0.5));
+    try testing.expectEqual(@as(f32, 0.75), coverOver(0.5, 0.5));
+    try testing.expectEqual(@as(f32, 1), coverOver(0.3, 1));
+    try testing.expectEqual(@as(u32, 0xFF), withCoverage(0x00123456, 1) >> 24);
+    try testing.expectEqual(@as(f32, 1), coverage(0xFF00_0000));
+}
+
 pub const Look = union(enum) {
     /// A pool of colour at the top-leading corner and another at the
     /// bottom-trailing one; each reach is a fraction of the window's longer

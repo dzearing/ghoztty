@@ -560,6 +560,12 @@ pane_sidebar_width_dip: f32 = pane_sidebar.default_width_dip,
 /// The elevated pane style's desk and card bitmaps (T1831). Empty until the
 /// first elevated paint; freed in `deinit`.
 pane_desk: PaneDesk = .{},
+/// The window's real DC while `paintAlphaCorrect` runs a painter into its
+/// marker buffer (T1852). The desk carries its own alpha - the gradient at
+/// `background-opacity`, the cards opaque - which the marker pass would
+/// flatten to opaque, so the desk is blitted here instead, underneath the
+/// chrome the buffer then blends over it.
+desk_hdc: ?w32.HDC = null,
 /// This window's OWN gradient (T1832; Mac `deskVariant`): set by
 /// `+new-window --color=random` and by a window opened by hand, in the
 /// elevated style. Null is the default ocean desk. Persisted (the seed) with
@@ -1261,7 +1267,11 @@ fn paintAlphaCorrect(
     // The painters work in client coordinates; shift so the clip box's
     // corner lands on the buffer's (0, 0).
     _ = w32.SetViewportOrgEx(mem_dc, -box.left, -box.top, null);
+    // The desk goes straight to the window with its own alpha (T1852); it
+    // leaves the buffer at the marker, which resolves to "leave it alone".
+    self.desk_hdc = hdc;
     painter(self, mem_dc);
+    self.desk_hdc = null;
     // GDI batches; its writes must be in the bits before they are read.
     _ = w32.GdiFlush();
     chrome_alpha.resolve(pixels, fill);
@@ -6565,7 +6575,15 @@ fn busyLightTick(self: *Window) void {
 
 fn paintBusyLightFrame(self: *Window, hdc: w32.HDC) void {
     const area = self.deskRect();
-    self.pane_desk.paintLightFrame(hdc, area.left, area.top, self.busyHead());
+    self.pane_desk.paintLightFrame(self.desk_hdc orelse hdc, area.left, area.top, self.busyHead(), self.deskOpacity());
+}
+
+/// The desk's opacity on a translucent window, as `PaneDesk` takes it; null
+/// on an opaque one, where it blits the composite as it is (T1852). Mac's
+/// `PaneDesk` takes `.opacity(backgroundOpacity)`; the card bases do not.
+fn deskOpacity(self: *const Window) ?u8 {
+    if (!self.translucent) return null;
+    return desk_palette.opacityByte(self.app.config.@"background-opacity");
 }
 
 /// Repaint the window-owned desk pixels now - the same `GetDC` pass a
@@ -7046,13 +7064,13 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         };
         nl += 1;
     }
-    self.pane_desk.paint(hdc, area.left, area.top, w, h, cards[0..n], .{
+    self.pane_desk.paint(self.desk_hdc orelse hdc, area.left, area.top, w, h, cards[0..n], .{
         .fill = fill,
         .is_light = color_math.isLight(fill),
         .scale = self.scale,
         .glass = glass,
         .glows = glows[0..ng],
-    }, self.desk_variant, lights[0..nl], self.busyHead());
+    }, self.desk_variant, lights[0..nl], self.busyHead(), self.deskOpacity());
     self.syncGlassBackdrops(slots[0..n], area, glass, color_math.isLight(fill));
     if (self.sidebar) |sb| sb.deskPainted(self.pane_desk.desk_gen);
 }

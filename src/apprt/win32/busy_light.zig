@@ -354,10 +354,14 @@ pub fn apply(buf: []u32, px: []const RingPx, shape: Shape, color: color_math.Rgb
             continue;
         }
         var c = Rgbf.unpack(p.base);
-        c = blend(c, src, @as(f32, @floatFromInt(p.wide)) / 255 * k);
-        c = blend(c, src, @as(f32, @floatFromInt(p.tight)) / 255 * k);
-        c = blend(c, src, @as(f32, @floatFromInt(p.line)) / 255 * k);
-        buf[p.idx] = c.pack();
+        // The light covers the desk as much as it shows (T1852).
+        var cov = desk_palette.coverage(p.base);
+        inline for (.{ p.wide, p.tight, p.line }) |layer| {
+            const a = @min(@as(f32, @floatFromInt(layer)) / 255 * k, 1);
+            c = blend(c, src, a);
+            if (a > 0) cov = desk_palette.coverOver(cov, a);
+        }
+        buf[p.idx] = desk_palette.withCoverage(c.pack(), cov);
     }
 }
 
