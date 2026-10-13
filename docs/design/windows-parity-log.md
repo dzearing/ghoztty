@@ -35774,3 +35774,17 @@ moved to T1814.
   `menu-bar.ps1` ALL PASS (93), including new B/C/D checks that choose the
   row from the menu and read it back retitled. Floor lanes, harness floor,
   P1-P3 green, and the 19 harnesses the Window.zig edit made due ran green through suite-run.ps1 (filed T1893: suite-run crashes on an -Include that matches nothing).
+
+## 2026-10-13 — T1849: the stash chords answer from a focused viewer
+
+- **What.** Ctrl+Shift+M pressed in a markdown, web or diff pane stashes that
+  pane, and a bound Restore Stashed Pane chord works from one too. The page no
+  longer swallows them.
+- **How.** Already fixed in passing by T1803 (1121071d6), which moved viewer
+  forwarding onto the core's action classification and gave both actions arms
+  that act on the viewer itself. Closed against that commit. This turn landed
+  the on-box proof the card was owed.
+- **Validation.** New arms S5/S6 in `viewer-window-chords.ps1` press the real
+  default stash chord and a bound restore chord at a live viewer, with
+  `+list --json`'s `stashed` flag as the oracle: ALL PASS (48). `-NegativeControl`
+  goes red on both new arms. Harness floor green.

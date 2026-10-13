@@ -53,6 +53,15 @@
 #       the page logs the ctrl+a. (Mac's page claims those before any binding
 #       is asked; WebView2's accelerator hop fires first, so it is spelled out.)
 #
+# T1849 asked the stash pair to answer from a focused viewer too (T1803 had
+# already admitted both; this is the on-box proof that card was owed):
+#   S5. ctrl+shift+m - the Windows DEFAULT stash_pane chord, not a --keybind -
+#       pressed at the viewer stashes the VIEWER (not the terminal the core
+#       would have performed it through), and the page never sees the M.
+#   S6. with the terminal stashed by +stash, ctrl+shift+f2 = restore_stashed_pane
+#       pressed at the viewer brings the terminal back.
+#   Oracle: the leaf's `stashed` flag in +list --json (ipc-stash.ps1's).
+#
 # Runs on the BACKGROUND test desktop; only touches ghoztty processes running
 # from this repo's zig-out*.
 #
@@ -212,6 +221,8 @@ try {
         '--background-opacity=0.9'
         '--keybind=ctrl+shift+f9=toggle_background_opacity'
         '--keybind=ctrl+a=toggle_maximize'
+        # T1849: restore has no Windows default; F2 is inert to Chromium.
+        '--keybind=ctrl+shift+f2=restore_stashed_pane'
     )
     $sp = @{ Exe = $exe; Arguments = $cliArgs }
     if (-not $ExePath) { $sp.StdErr = $errlog }
@@ -422,6 +433,69 @@ try {
     }
     if ($zoom4) { Send-AtViewer 'F8' 0x77 | Out-Null }
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'S4: no crash'
+
+    # --- SUBJECT 5/6: the stash pair from a focused viewer (T1849) ----------
+    function Get-AllLeaves {
+        $json = (& $exe +list --json 2>$null | Out-String).Trim()
+        if (-not $json) { return @() }
+        $out = @()
+        foreach ($w in @(($json | ConvertFrom-Json).data.windows)) {
+            foreach ($tab in @($w.tabs)) { $out += @(Get-Leaves $tab.splits) }
+        }
+        return $out
+    }
+    function Test-Stashed($leaf) {
+        return ($null -ne $leaf) -and ($leaf.PSObject.Properties.Name -contains 'stashed') -and ($leaf.stashed -eq $true)
+    }
+    function Get-ViewLeaf { @(Get-AllLeaves | Where-Object { $_.name -eq 't682view' })[0] }
+    function Get-TermLeaf { @(Get-AllLeaves | Where-Object { $_.name -ne 't682view' })[0] }
+    # Poll until $pred holds of a leaf (re-read each time), returning the verdict.
+    function Wait-Leaf([scriptblock]$get, [bool]$stashed, [int]$ms = 5000) {
+        for ($t = 0; $t -lt [int]($ms / 200); $t++) {
+            if ((Test-Stashed (& $get)) -eq $stashed) { return $true }
+            Start-Sleep -Milliseconds 200
+        }
+        return $false
+    }
+
+    $term = Get-TermLeaf
+    Assert ($null -ne $term -and $term.id) "S5: setup: the launch terminal has a pane id ($($term.id))"
+    Assert (-not (Test-Stashed (Get-ViewLeaf)) -and -not (Test-Stashed $term)) 'S5: setup: nothing is stashed yet'
+
+    $beforeS5 = Get-KeyLog
+    Assert ($beforeS5 -notmatch 'csM') 'S5: no earlier arm put a ctrl+shift+M in the page log'
+    Assert (Send-AtViewer 'M' 0x4D @('ctrl', 'shift')) 'S5: ctrl+shift+m reached the viewer accelerator hop'
+    $viewStashed = Wait-Leaf { Get-ViewLeaf } $true
+    $logS5 = Get-KeyLog
+    if ($NegativeControl) {
+        Assert (-not $viewStashed) 'S5 (inverted): the default stash chord at the viewer stashed nothing'
+        Assert ($logS5 -match 'csM') "S5 (inverted): ctrl+shift+m leaked into the page (log='$logS5')"
+    } else {
+        Assert $viewStashed 'S5: the default stash chord at a focused viewer stashed the VIEWER'
+        Assert (-not (Test-Stashed (Get-TermLeaf))) 'S5: ...not the terminal the core would have performed it through'
+        Assert ($logS5 -notmatch 'csM') "S5: ...and the page never saw the chord (log='$logS5')"
+    }
+
+    # Put the viewer back by CLI (not under test), then stash the terminal so
+    # the viewer is the only pane on screen and a restore has something to do.
+    if (Test-Stashed (Get-ViewLeaf)) { & $exe +restore --target=t682view 2>&1 | Out-Null }
+    Assert (Wait-Leaf { Get-ViewLeaf } $false) 'S6: setup: +restore put the viewer back on screen'
+    & $exe +stash "--target=$($term.id)" 2>&1 | Out-Null
+    Assert (Wait-Leaf { Get-TermLeaf } $true) 'S6: setup: +stash took the terminal out of the grid'
+
+    $beforeS6 = Get-KeyLog
+    Assert ($beforeS6 -notmatch 'csF2') 'S6: no earlier arm put a ctrl+shift+F2 in the page log'
+    Assert (Send-AtViewer 'F2' 0x71 @('ctrl', 'shift')) 'S6: ctrl+shift+f2 reached the viewer accelerator hop'
+    $termBack = Wait-Leaf { Get-TermLeaf } $false
+    $logS6 = Get-KeyLog
+    if ($NegativeControl) {
+        Assert (-not $termBack) 'S6 (inverted): restore_stashed_pane from the viewer restored nothing'
+        Assert ($logS6 -match 'csF2') "S6 (inverted): ctrl+shift+f2 leaked into the page (log='$logS6')"
+    } else {
+        Assert $termBack 'S6: restore_stashed_pane from a focused viewer brought the terminal back'
+        Assert ($logS6 -notmatch 'csF2') "S6: ...and the page never saw the chord (log='$logS6')"
+    }
+    Assert (-not ($app.Process -and $app.Process.HasExited)) 'S6: no crash'
 } finally {
     if ($script:pageJob) { Stop-Job $script:pageJob -ErrorAction SilentlyContinue; Remove-Job $script:pageJob -Force -ErrorAction SilentlyContinue }
     Remove-TestDesktop
