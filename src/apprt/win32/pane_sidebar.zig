@@ -709,6 +709,16 @@ pub const Layout = struct {
     /// (T1844, `addDropSlot`): a row below the grid rows, or a tile on the
     /// rail.
     drop_slot: ?Rect = null,
+    /// The scrolled region (T1878, `pane_sidebar_scroll.apply`): the rows
+    /// below the header and search field, or the rail's tiles below its pin.
+    /// Empty until a scroll pass ran, which leaves hit-testing unclipped.
+    viewport: Rect = .{},
+    /// How far the content is scrolled up, already clamped to `0..max_scroll`.
+    scroll: i32 = 0,
+    max_scroll: i32 = 0,
+    /// The project head pinned to the viewport's top (Mac's sticky section
+    /// header), an index into `heads`.
+    sticky: ?usize = null,
 
     pub fn item(self: *const Layout, i: usize) Rect {
         return self.items[i];
@@ -1116,6 +1126,9 @@ pub fn hitTest(l: *const Layout, x: i32, y: i32, scale: f32) Hit {
     if (rows and l.search.contains(x, y)) {
         return if (l.search_text and l.search_clear.contains(x, y)) .search_clear else .search;
     }
+    // Below the controls everything scrolls (T1878): what the scroll moved
+    // out of the viewport is out of reach, whatever its rect says.
+    if (l.viewport.height() > 0 and !l.viewport.contains(x, y)) return .none;
     // Trash mode's corner x on a tile wins over the tile it sits on.
     if (!rows and l.quick_kill) for (0..l.count) |i| {
         if (l.tileKill(i, scale).contains(x, y)) return .{ .item_button = i };

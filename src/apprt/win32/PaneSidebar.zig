@@ -45,6 +45,7 @@ const hov = @import("pane_sidebar_hover.zig");
 const sidebar_prefs = @import("pane_sidebar_prefs.zig");
 const row_menu = @import("pane_sidebar_menu.zig");
 const search_field = @import("pane_sidebar_search.zig");
+const scroll_mod = @import("pane_sidebar_scroll.zig");
 const motion = @import("pane_sidebar_motion.zig");
 const layer = @import("pane_sidebar_layer.zig");
 const App = @import("App.zig");
@@ -208,6 +209,16 @@ folded: std.AutoHashMapUnmanaged(u64, void) = .{},
 /// scope, never persisted; turning the scope off empties it.
 search: search_field.Field = .{},
 search_focus: bool = false,
+
+// Scrolling (T1878, `pane_sidebar_scroll`): each surface's wanted offset -
+// the column (rail or pinned panel) and the open card - clamped by every
+// layout, the wheel's carried remainder, a thumb drag in progress, and the
+// pane whose row was last brought into view (a NEW selection reveals; the
+// same one never fights the user's own scrolling).
+scroll: [2]i32 = .{ 0, 0 },
+wheel: [2]scroll_mod.Wheel = .{ .{}, .{} },
+thumb_drag: ?struct { which: Surface, grab: i32 } = null,
+revealed: ?*PaneView = null,
 
 mode: pane_sidebar.Mode = .hidden,
 scale: f32 = 1.0,
@@ -456,6 +467,9 @@ pub fn place(self: *PaneSidebar, rect: w32.RECT, mode: pane_sidebar.Mode, scale:
             w32.SWP_NOZORDER | w32.SWP_NOACTIVATE | w32.SWP_SHOWWINDOW,
         );
     }
+    // A new shape (the rail pinned into the panel, or back) shows the
+    // selected row in it (T1878).
+    if (changed) if (self.selectedIndex()) |i| self.revealItem(.rail, i);
     if (changed) _ = w32.InvalidateRect(self.hwnd, null, 0);
     if (moved or changed) self.syncTips();
     if (changed) self.logOutline();
@@ -538,6 +552,7 @@ fn hashView(h: *std.hash.Wyhash, v: *PaneView, selected: bool) void {
 
 /// The roster changed: repaint, re-glue the open card, re-sync the tips.
 fn rosterChanged(self: *PaneSidebar) void {
+    self.revealSelected();
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     self.logOutline();
     self.logMarks();
@@ -585,7 +600,16 @@ fn logOutline(self: *PaneSidebar) void {
     if (l.search.width() > 0) {
         w.print(" search={d},{d} nomatch={d}", .{ l.search.centerX(), l.search.centerY(), @intFromBool(l.no_match != null) }) catch {};
     }
+    logScroll(w, &l);
     log.info("pane sidebar outline {s}", .{fbs.getWritten()});
+}
+
+/// The scroll state (T1878) at the end of a geometry line: the offset of
+/// its range, the viewport's top and bottom, and the pinned head (`-` for
+/// none) - so the script can tell a row in view from one scrolled away.
+fn logScroll(w: anytype, l: *const pane_sidebar.Layout) void {
+    w.print(" scroll={d}/{d} view={d},{d} sticky=", .{ l.scroll, l.max_scroll, l.viewport.top, l.viewport.bottom }) catch return;
+    if (l.sticky) |k| w.print("{d}", .{k}) catch {} else w.writeAll("-") catch {};
 }
 
 fn logRows(self: *PaneSidebar) void {
@@ -601,6 +625,7 @@ fn logRows(self: *PaneSidebar) void {
     }
     const rules = l.rule_count + @intFromBool(l.section_rule != null);
     w.print(" rules={d} scope={d},{d} trash={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY(), l.trash.centerX(), l.trash.centerY() }) catch {};
+    logScroll(w, &l);
     log.info("pane sidebar rows {s}", .{fbs.getWritten()});
 }
 
@@ -966,7 +991,22 @@ fn surfaceHwnd(self: *const PaneSidebar, which: Surface) ?w32.HWND {
     };
 }
 
+/// `which`'s layout as it is on screen: laid out, then scrolled to that
+/// surface's offset (T1878) - which is clamped here, so a list that shrank
+/// never leaves the offset pointing past its end. Everything that paints,
+/// hits, drops or tips goes through this one funnel, so they cannot
+/// disagree about where a scrolled row is.
 fn layoutFor(self: *PaneSidebar, which: Surface) pane_sidebar.Layout {
+    var l = self.rawLayoutFor(which);
+    const k = @intFromEnum(which);
+    scroll_mod.apply(&l, self.scroll[k], self.scale);
+    self.scroll[k] = l.scroll;
+    return l;
+}
+
+/// `which`'s layout before the scroll pass: every row where it would sit in
+/// a column as tall as its content.
+fn rawLayoutFor(self: *PaneSidebar, which: Surface) pane_sidebar.Layout {
     const hwnd = self.surfaceHwnd(which) orelse return .{};
     var r: w32.RECT = undefined;
     if (w32.GetClientRect(hwnd, &r) == 0) return .{};
@@ -986,6 +1026,99 @@ fn layoutFor(self: *PaneSidebar, which: Surface) pane_sidebar.Layout {
     l.quick_kill = self.quick_kill;
     l.search_text = !self.search.isEmpty();
     return l;
+}
+
+// -------------------------------------------------------------------------
+// Scrolling (T1878)
+// -------------------------------------------------------------------------
+
+/// The selected pane's entry: this window's focused pane.
+fn selectedIndex(self: *const PaneSidebar) ?usize {
+    for (self.entries.items, 0..) |e, i| {
+        if (e.selected) return i;
+    }
+    return null;
+}
+
+/// Bring the selected row into view, once per NEW selection: focus moving
+/// to a pane whose row is past the fold scrolls to it (Mac's list follows
+/// the selection), while a roster refresh for anything else leaves the
+/// user's own scrolling alone.
+fn revealSelected(self: *PaneSidebar) void {
+    const i = self.selectedIndex() orelse return;
+    const pane = self.entries.items[i].pane;
+    if (self.revealed == pane) return;
+    self.revealed = pane;
+    self.revealItem(.rail, i);
+    if (self.card_open) self.revealItem(.card, i);
+}
+
+/// Scroll `which` the least that shows item `i` (a no-op when it shows).
+fn revealItem(self: *PaneSidebar, which: Surface, i: usize) void {
+    const raw = self.rawLayoutFor(which);
+    if (i >= raw.count or !raw.shown(i)) return;
+    const k = @intFromEnum(which);
+    const before = self.scroll[k];
+    self.scroll[k] = scroll_mod.revealOffset(&raw, raw.items[i], before, self.scale);
+    if (self.scroll[k] != before) log.info("pane sidebar reveal surface={s} item={d} scroll={d}", .{ @tagName(which), i, self.scroll[k] });
+}
+
+/// Scroll `which` to `want` (clamped), and follow everything that hangs off
+/// a row's position: the paint, the tips, the hover under a pointer that
+/// did not move, and the geometry line the acceptance script reads.
+fn scrollTo(self: *PaneSidebar, which: Surface, want: i32) void {
+    const k = @intFromEnum(which);
+    const before = self.scroll[k];
+    self.scroll[k] = want;
+    const l = self.layoutFor(which);
+    if (l.scroll == before) return;
+    const hwnd = self.surfaceHwnd(which) orelse return;
+    self.invalidate(hwnd);
+    self.syncTips();
+    log.info("pane sidebar scroll surface={s} offset={d}/{d}", .{ @tagName(which), l.scroll, l.max_scroll });
+    if (which == .rail) self.logOutline();
+    var pt: w32.POINT = undefined;
+    if (self.thumb_drag == null and w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(hwnd, &pt) != 0) {
+        var cr: w32.RECT = undefined;
+        if (w32.GetClientRect(hwnd, &cr) != 0 and pt.x >= 0 and pt.y >= 0 and pt.x < cr.right and pt.y < cr.bottom) {
+            self.setHover(which, self.hitAt(which, pt.x, pt.y));
+        }
+    }
+}
+
+const SPI_GETWHEELSCROLLLINES: u32 = 0x0068;
+const WHEEL_PAGESCROLL: u32 = 0xFFFF_FFFF;
+
+/// A wheel notch over `which`: the system's lines per notch, a line being a
+/// one-line row (a tile and its gap on the rail); "one screen" scrolls by
+/// the viewport.
+fn onWheel(self: *PaneSidebar, which: Surface, delta: i32) void {
+    const l = self.layoutFor(which);
+    if (l.max_scroll <= 0) return;
+    var lines: u32 = 3;
+    _ = w32.SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, @ptrCast(&lines), 0);
+    const rows = l.mode == .expanded or l.open;
+    var line_h = if (rows)
+        pane_sidebar.rowHeight(false, self.metrics, self.scale)
+    else
+        pane_sidebar.px(pane_sidebar.tile_dip + pane_sidebar.tile_gap_dip, self.scale);
+    if (lines == WHEEL_PAGESCROLL) {
+        lines = 1;
+        line_h = l.viewport.height();
+    }
+    const k = @intFromEnum(which);
+    self.scrollTo(which, self.scroll[k] + self.wheel[k].step(delta, lines, line_h));
+}
+
+/// Where in the thumb a press at (`x`, `y`) took it, or null off it. The
+/// target is wider than the thin thumb - out to the viewport's edge - and
+/// wins over the resize band on its own height only.
+fn thumbAt(self: *PaneSidebar, which: Surface, x: i32, y: i32) ?i32 {
+    const l = self.layoutFor(which);
+    const t = scroll_mod.thumb(&l, self.scale) orelse return null;
+    const slop = pane_sidebar.px(4, self.scale);
+    if (x < t.left - slop or x >= l.viewport.right or y < t.top or y >= t.bottom) return null;
+    return y - t.top;
 }
 
 // -------------------------------------------------------------------------
@@ -1023,15 +1156,22 @@ pub fn dropGeometry(self: *PaneSidebar, rows_out: []pane_drop.Rect) ?DropGeometr
     var i = l.first_stashed;
     const end = if (l.outline) l.stash_end else l.count;
     while (i < end and n < rows_out.len) : (i += 1) {
-        // A stashed row folded out of sight is no place to drop between.
+        // A stashed row folded out of sight - or scrolled out of it (T1878)
+        // - is no place to drop between; one half in view offers that half.
         if (!l.shown(i)) continue;
-        rows_out[n] = toScreen(l.items[i], origin);
+        const v = scroll_mod.visible(&l, l.items[i]);
+        if (v.height() <= 0) continue;
+        rows_out[n] = toScreen(v, origin);
         n += 1;
     }
+    const slot: ?pane_drop.Rect = if (l.drop_slot) |sl| blk: {
+        const v = scroll_mod.visible(&l, sl);
+        break :blk if (v.height() > 0) toScreen(v, origin) else null;
+    } else null;
     return .{
         .sidebar = area,
         .rows = rows_out[0..n],
-        .slot = if (l.drop_slot) |sl| toScreen(sl, origin) else null,
+        .slot = slot,
     };
 }
 
@@ -1043,6 +1183,14 @@ fn toScreen(r: pane_sidebar.Rect, origin: w32.POINT) pane_drop.Rect {
 pub fn setDragActive(self: *PaneSidebar, on: bool) void {
     if (self.drag_active == on) return;
     self.drag_active = on;
+    // The empty "Drop to stash" slot sits under the last row: a long list
+    // scrolls it into view, so the target is there to aim at (T1878).
+    if (on) inline for (.{ Surface.rail, Surface.card }) |which| {
+        if (self.surfaceHwnd(which) != null) {
+            const raw = self.rawLayoutFor(which);
+            if (raw.drop_slot) |sl| self.scroll[@intFromEnum(which)] = scroll_mod.revealOffset(&raw, sl, self.scroll[@intFromEnum(which)], self.scale);
+        }
+    };
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     if (self.card_hwnd) |c| self.invalidate(c);
     // The grace period the drag deferred starts once it is let go.
@@ -1428,6 +1576,12 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     self.paintScope(hdc, l, t);
     self.paintTrash(hdc, l, t);
     self.paintSearch(hdc, l, t);
+    // Below the controls, everything scrolls (T1878): clipped to the
+    // viewport, so a row passing under the header is cut there.
+    const saved = w32.SaveDC(hdc);
+    defer _ = w32.RestoreDC(hdc, saved);
+    const vp = l.viewport;
+    if (vp.height() > 0) _ = w32.IntersectClipRect(hdc, vp.left, vp.top, vp.right, vp.bottom);
     if (l.no_match) |r| {
         // Mac's tertiary note: information, not an error.
         if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
@@ -1538,6 +1692,35 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         }
     }
     self.paintDropSlot(hdc, l, t);
+    self.paintSticky(hdc, l, t);
+    self.paintThumb(hdc, l, t);
+}
+
+/// The pinned project header (T1878, Mac's sticky section header): painted
+/// last, on the panel's own material across the viewport's width, so the
+/// rows passing beneath it never show through its text.
+fn paintSticky(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
+    const k = l.sticky orelse return;
+    const hd = l.heads[k];
+    if (hd.index >= self.groups.items.len) return;
+    const band: pane_sidebar.Rect = .{ .left = l.viewport.left, .top = hd.rect.top, .right = l.viewport.right, .bottom = hd.rect.bottom };
+    // The material under it: the open card's, the elevated panel's glass,
+    // or the flat panel's solid surface.
+    const mem: ?w32.HDC = if (l.open) self.open_card.dc else if (self.window.deskBackdrop() != null) self.glass_panel.dc else null;
+    if (mem) |m| {
+        _ = w32.BitBlt(hdc, band.left, band.top, band.width(), band.height(), m, band.left, band.top, w32.SRCCOPY);
+    } else fillRect(hdc, band, rgb(t.surface));
+    self.paintHead(hdc, hd, k, self.groups.items[hd.index], t);
+}
+
+/// The overlay thumb on the scrolled region's trailing edge, while there is
+/// anything to scroll: the app's overlay scrollbar idiom (the Activity
+/// Monitor's), brighter while it is being dragged.
+fn paintThumb(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
+    const r = scroll_mod.thumb(l, self.scale) orelse return;
+    const dragging = self.thumb_drag != null;
+    const ink = if (dragging) shade(t.surface, if (t.dark) 96 else -96) else shade(t.surface, if (t.dark) 56 else -56);
+    fillRound(hdc, r, @divTrunc(r.width(), 2), rgb(ink));
 }
 
 /// The search field's text box: right of the magnifier, left of the clear
@@ -1712,6 +1895,8 @@ fn paintOutline(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout,
     }
     for (l.heads[0..l.head_count], 0..) |hd, k| {
         if (hd.index >= self.groups.items.len) continue;
+        // The pinned header is painted over the rows, by `paintSticky`.
+        if (l.sticky == k) continue;
         self.paintHead(hdc, hd, k, self.groups.items[hd.index], t);
     }
 }
@@ -1855,6 +2040,11 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     }
 
     self.paintPin(hdc, l, t);
+    // The tiles scroll under the pin (T1878), clipped to the card's inset.
+    const saved = w32.SaveDC(hdc);
+    defer _ = w32.RestoreDC(hdc, saved);
+    const vp = l.viewport;
+    if (vp.height() > 0) _ = w32.IntersectClipRect(hdc, vp.left, vp.top, vp.right, vp.bottom);
     if (l.section_rule) |r| fillRect(hdc, r, rgb(shade(t.surface, if (t.dark) 24 else -24)));
     for (l.rules[0..l.rule_count]) |r| fillRect(hdc, r, rgb(shade(t.surface, if (t.dark) 24 else -24)));
 
@@ -1887,6 +2077,7 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         if (self.quick_kill) self.paintKill(hdc, l.tileKill(i, self.scale), self.hoverIs(.{ .item_button = i }), t);
     }
     self.paintDropSlot(hdc, l, t);
+    self.paintThumb(hdc, l, t);
 }
 
 /// What a cache holds: the raised card (the rail's, or the open one's), or
@@ -2165,6 +2356,9 @@ pub fn openCard(self: *PaneSidebar, reason: CardReason) void {
     // A query the rail ignored filters again on the card (T1877).
     if (!was_open and !self.search.isEmpty()) self.refresh();
     self.positionCard();
+    // The card opens on the selected row (T1878), as the rail it grew from
+    // shows it.
+    if (!was_open) if (self.selectedIndex()) |i| self.revealItem(.card, i);
     if (self.card_hwnd) |c| {
         // A leave is owed whether or not a move ever arrives: tracking
         // starts now, so a pointer that is not on the card (an unpin from
@@ -2503,6 +2697,9 @@ fn syncTips(self: *PaneSidebar) void {
     var line: [256]u8 = undefined;
     var fbs = std.io.fixedBufferStream(&line);
     const lw = fbs.writer();
+    // How many rows and tiles got a tip because they are in view (T1878):
+    // a scrolled-away row has none. Logged ahead of the per-surface counts.
+    var in_view: [2]usize = .{ 0, 0 };
     inline for (.{ Surface.rail, Surface.card }) |which| {
         const slot = @intFromEnum(which);
         if (self.surfaceHwnd(which)) |hwnd| {
@@ -2551,11 +2748,14 @@ fn syncTips(self: *PaneSidebar) void {
                 for (l.heads[0..nh], 0..) |hd, k| {
                     const own = hd.index < self.groups.items.len and self.groups.items[hd.index].own;
                     const text = if (hd.kind == .project) tip_head_project else if (own) tip_head_this else tip_head_other;
-                    addTool(tip, hwnd, toolHead(k), hd.rect, text);
+                    // Only the part of a head in view tips (T1878).
+                    const v = scroll_mod.visible(&l, hd.rect);
+                    if (v.height() > 0) addTool(tip, hwnd, toolHead(k), v, text) else delTool(tip, hwnd, toolHead(k));
                 }
                 for (self.entries.items[0..n], 0..) |e, i| {
-                    if (!l.shown(i)) {
-                        // Folded away: no row, so no tip.
+                    if (!l.shown(i) or scroll_mod.visible(&l, l.items[i]).height() <= 0) {
+                        // Folded away, or scrolled out of view (T1878): no
+                        // row on screen, so no tip.
                         delTool(tip, hwnd, toolItem(i));
                         delTool(tip, hwnd, toolButton(i));
                         continue;
@@ -2563,16 +2763,19 @@ fn syncTips(self: *PaneSidebar) void {
                     if (rows) {
                         // Only this window's stashed rows can swap (T1845).
                         const row_tip = if (e.section != .stashed) tip_focus else if (e.own) tip_restore_row else tip_restore;
-                        addTool(tip, hwnd, toolItem(i), l.items[i], row_tip);
+                        addTool(tip, hwnd, toolItem(i), scroll_mod.visible(&l, l.items[i]), row_tip);
+                        in_view[slot] += 1;
                         const btn_tip = if (self.quick_kill) tip_kill else if (e.section == .stashed) tip_restore_btn else tip_stash_btn;
-                        addTool(tip, hwnd, toolButton(i), l.rowButton(i, self.scale), btn_tip);
+                        const b = scroll_mod.visible(&l, l.rowButton(i, self.scale));
+                        if (b.height() > 0) addTool(tip, hwnd, toolButton(i), b, btn_tip) else delTool(tip, hwnd, toolButton(i));
                     } else {
                         // Another window's tile names its window too (Mac: "in
                         // the mini rail ... the hover label names the window").
                         var named: [hov.tip_cap]u16 = undefined;
                         const title = self.tileTitle(e, &named);
                         const len = hov.tileTip(&self.tip_text[i], title, e.section);
-                        addTool(tip, hwnd, toolItem(i), l.items[i], self.tip_text[i][0..len :0]);
+                        addTool(tip, hwnd, toolItem(i), scroll_mod.visible(&l, l.items[i]), self.tip_text[i][0..len :0]);
+                        in_view[slot] += 1;
                         if (self.quick_kill) {
                             addTool(tip, hwnd, toolButton(i), l.tileKill(i, self.scale), tip_kill);
                         } else delTool(tip, hwnd, toolButton(i));
@@ -2583,7 +2786,9 @@ fn syncTips(self: *PaneSidebar) void {
             lw.print(" {s}={d}", .{ @tagName(which), if (live) n + 1 else 0 }) catch {};
         }
     }
-    self.logTips(line[0..fbs.pos]);
+    var full: [300]u8 = undefined;
+    const counts = std.fmt.bufPrint(&full, " view={d},{d}{s}", .{ in_view[0], in_view[1], line[0..fbs.pos] }) catch line[0..fbs.pos];
+    self.logTips(counts);
 }
 
 /// The tooltip set, once per CHANGE, for the acceptance script: tools are
@@ -2997,6 +3202,11 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             }
             var pt: w32.POINT = undefined;
             if (w32.GetCursorPos_(&pt) != 0 and w32.ScreenToClient(hwnd, &pt) != 0) {
+                // The thumb is a thumb, not the sizer under it (T1878).
+                if (self.thumb_drag != null or self.thumbAt(which, pt.x, pt.y) != null) {
+                    _ = w32.SetCursor(w32.LoadCursorW(null, w32.IDC_ARROW));
+                    return 1;
+                }
                 if (self.onEdgeAt(which, pt.x, pt.y)) {
                     setSizeCursor();
                     return 1;
@@ -3011,11 +3221,29 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         },
         w32.WM_CAPTURECHANGED => {
             self.edgeEnd();
+            if (self.thumb_drag != null) {
+                self.thumb_drag = null;
+                self.invalidate(hwnd);
+            }
+            return 0;
+        },
+        // The wheel scrolls the list under the pointer (T1878); always
+        // consumed, so it never falls through to the parent window's grid.
+        w32.WM_MOUSEWHEEL => {
+            const delta: i16 = @bitCast(@as(u16, @truncate(wparam >> 16)));
+            self.onWheel(which, delta);
             return 0;
         },
         w32.WM_MOUSEMOVE => {
             const x = xOf(lparam);
             const y = yOf(lparam);
+            if (self.thumb_drag) |d| {
+                if (d.which == which) {
+                    const l = self.layoutFor(which);
+                    self.scrollTo(which, scroll_mod.dragOffset(&l, y, d.grab, self.scale));
+                }
+                return 0;
+            }
             if (self.edge != null) {
                 self.edgeMove(which, hwnd, x, y);
                 return 0;
@@ -3067,6 +3295,15 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             // button affordance), so a press that slides off does nothing.
             self.press_x = xOf(lparam);
             self.press_y = yOf(lparam);
+            // The overlay thumb (T1878) takes the press on its own height,
+            // ahead of the resize band it overlaps.
+            if (self.thumbAt(which, self.press_x, self.press_y)) |grab| {
+                self.thumb_drag = .{ .which = which, .grab = grab };
+                _ = w32.SetCapture(hwnd);
+                self.invalidate(hwnd);
+                log.info("pane sidebar thumb drag start surface={s}", .{@tagName(which)});
+                return 0;
+            }
             if (self.onEdgeAt(which, self.press_x, self.press_y)) {
                 self.edgeBegin(which, hwnd, self.press_x, self.press_y);
                 return 0;
@@ -3081,6 +3318,15 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             return 0;
         },
         w32.WM_LBUTTONUP => {
+            if (self.thumb_drag != null) {
+                // Cleared here as well as on CAPTURECHANGED: a press whose
+                // SetCapture did not take never gets that message.
+                self.thumb_drag = null;
+                self.invalidate(hwnd);
+                _ = w32.ReleaseCapture();
+                if (which == .card and self.card_open and !self.pointerOn(.card, null)) self.scheduleClose();
+                return 0;
+            }
             if (self.edge != null) {
                 // The release lands where the last move did; ending here
                 // rather than only on WM_CAPTURECHANGED keeps the log line

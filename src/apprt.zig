@@ -140,6 +140,11 @@ test {
     // Every lane.
     _ = @import("apprt/win32/pane_sidebar_search.zig");
 
+    // Pure win32 pane sidebar scrolling (T1878): the viewport, the clamped
+    // offset, the sticky project header, revealing a row, the wheel and the
+    // overlay thumb. Imports only pane_sidebar.zig. Every lane.
+    _ = @import("apprt/win32/pane_sidebar_scroll.zig");
+
     // Pure win32 erase-vs-preserve rule for the resize paint path (T1031),
     // same no-OS-imports deal.
     _ = @import("apprt/win32/resize_paint.zig");

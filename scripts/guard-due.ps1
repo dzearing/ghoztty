@@ -4440,6 +4440,22 @@ $GuardTable = @(
             'test\win32\pane-sidebar-all-windows.ps1'
         )
     },
+    # The sidebar scrolls (T1878): the wheel, the overlay thumb, revealing
+    # the focused row, the sticky project header, and clicks and tips that
+    # follow the offset. The pure half is unit-tested in every lane; that a
+    # posted wheel and a thumb press reach the column, and that the logged
+    # geometry is where the clicks land, is only answered on the box.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-scroll'
+        Script = 'test\win32\pane-sidebar-scroll.ps1'
+        Stamp  = 'test\win32\pane-sidebar-scroll.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar.zig',
+            'src\apprt\win32\pane_sidebar_scroll.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-scroll.ps1'
+        )
+    },
     # The build-mode gate itself (T350, tightened by T1158). BuildMode.ps1 was
     # only ever covered by the build-fresh row above, whose script grades the
     # FRESHNESS half - so the gate's own harness, build-mode-guard.ps1, had no
