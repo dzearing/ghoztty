@@ -7758,14 +7758,20 @@ pub fn performAction(
         },
 
         .ring_bell => {
-            // Audio bell.
-            _ = w32.MessageBeep(0xFFFFFFFF);
-            // Visual bell: flash the taskbar button if the window owning
-            // this surface isn't currently the active window. Without
-            // this, BEL on a backgrounded terminal is invisible.
+            // `bell-features` as Mac reads it (AppDelegate.ringBell, T1843):
+            // `system` is the system alert sound - off by default, so a BEL
+            // is silent unless asked for - and `attention` flashes the
+            // taskbar button while the window is in the background.
+            const features = self.config.@"bell-features";
+            if (features.system) _ = w32.MessageBeep(0xFFFFFFFF);
             switch (target) {
                 .app => {},
                 .surface => |core_surface| {
+                    // The pane remembers it rang, whatever is enabled: a
+                    // stashed pane's sidebar row keeps a dot until it is
+                    // looked at (Mac SurfaceView.bell).
+                    core_surface.rt_surface.setBell(true);
+                    if (!features.attention) return true;
                     if (core_surface.rt_surface.parent_window.hwnd) |win_hwnd| {
                         if (!w32.windowIsActive(win_hwnd)) {
                             var fwi: w32.FLASHWINFO = .{

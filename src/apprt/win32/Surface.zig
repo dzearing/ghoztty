@@ -311,6 +311,12 @@ title_from_terminal: ?[:0]u8 = null,
 /// per-window (needs_input > busy > idle) into a title suffix.
 activity_state: terminal.osc.Command.ActivityState = .idle,
 
+/// The bell rang and nobody has looked since (Mac `SurfaceView.bell`): set by
+/// `ring_bell` whatever `bell-features` says, cleared when the pane gains
+/// focus or takes a key. A stashed pane's sidebar row shows it as a dot until
+/// the pane is back on screen (T1843).
+bell: bool = false,
+
 /// When false, WM_SETCURSOR sets the cursor to null (invisible). The
 /// core surface toggles this for typing-while-mouse-still etc.
 mouse_visible: bool = true,
@@ -4076,6 +4082,8 @@ pub fn handleKeyEvent(self: *Surface, wparam: usize, lparam: isize, action: inpu
     const disposition = translate_policy.keyDisposition(vk);
     if (disposition.clearsProducedText()) self.key_event_produced_text = false;
     if (disposition.dropsKey()) return;
+    // Mac unsets the bell on any keyDown.
+    if (action != .release) self.setBell(false);
 
     // F10 / a lone Alt press open the menu system (T190). Runs before the
     // key reaches the terminal so the disarm bookkeeping sees every key.
@@ -5427,8 +5435,17 @@ pub fn signalFrameDrawn(self: *Surface, width: u32, height: u32) void {
     }
 }
 
+/// Raise or clear the pane's bell mark, telling the sidebar only when it moved.
+pub fn setBell(self: *Surface, on: bool) void {
+    if (self.bell == on) return;
+    self.bell = on;
+    self.parent_window.syncPaneSidebar();
+}
+
 /// Handle WM_SETFOCUS / WM_KILLFOCUS.
 pub fn handleFocus(self: *Surface, focused: bool) void {
+    // Mac unsets the bell when the surface gains focus.
+    if (focused) self.setBell(false);
     // Focus changes are the other end of a lone Alt: alt+tab takes the alt
     // DOWN here and delivers its UP somewhere else, and the menu must not
     // open when focus comes back (T190). Cleared on both edges, and before

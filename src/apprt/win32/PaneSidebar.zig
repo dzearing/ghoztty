@@ -42,6 +42,8 @@ const pane_sidebar = @import("pane_sidebar.zig");
 const outline = @import("pane_sidebar_outline.zig");
 const IpcHandlers = @import("IpcHandlers.zig");
 const hov = @import("pane_sidebar_hover.zig");
+const motion = @import("pane_sidebar_motion.zig");
+const App = @import("App.zig");
 const overlay_zorder = @import("overlay_zorder.zig");
 const toc = @import("viewer_toc_layout.zig");
 const color_math = @import("color_math.zig");
@@ -69,6 +71,8 @@ pub const CARD_CLASS_NAME = std.unicode.utf8ToUtf16LeStringLiteral("GhozttyPaneS
 /// grace period on the card.
 const TIMER_OPEN: usize = 1;
 const TIMER_CLOSE: usize = 2;
+/// The motion clock (T1843), on whichever window shows something moving.
+const TIMER_ANIM: usize = 3;
 
 /// Which of the sidebar's two windows a message or a paint is for.
 const Surface = enum { rail, card };
@@ -150,6 +154,8 @@ const Entry = struct {
     mono: []u16,
     icon: u16,
     state: ActivityState,
+    /// The bell rang and the pane has not been looked at since.
+    bell: bool,
     selected: bool,
 };
 
@@ -208,6 +214,19 @@ caption_font: ?*anyopaque = null,
 caption_bold_font: ?*anyopaque = null,
 font_scale: f32 = 0,
 metrics: pane_sidebar.TextMetrics = .{ .title_h = 19, .caption_h = 16 },
+
+// Motion (T1843). Each paint counts the marks it drew into `paint_marks`
+// against one clock reading, and leaves the tally in `marks` for its surface:
+// the motion timer runs while the last paint of that surface drew something
+// that moves, and stops itself on the first tick after it did not.
+paint_marks: motion.Marks = .{},
+paint_ms: u64 = 0,
+paint_motion: bool = true,
+marks: [2]motion.Marks = .{ .{}, .{} },
+anim_armed: [2]bool = .{ false, false },
+/// The last roster tally logged (busy, question, bell), so the log says when
+/// it moved rather than on every refresh.
+logged_marks: [3]usize = .{ 0, 0, 0 },
 
 // The card material behind the rail and behind the open card, each cached
 // like the TOC card's (two caches, or the two sizes would thrash one).
@@ -409,6 +428,7 @@ fn hashView(h: *std.hash.Wyhash, v: *PaneView, selected: bool) void {
     switch (v.kind) {
         .terminal => |s| {
             h.update(std.mem.asBytes(&s.activity_state));
+            h.update(std.mem.asBytes(&s.bell));
             if (s.banner_text) |b| h.update(b);
             h.update("\x00");
             if (s.pwd) |p| h.update(p);
@@ -425,6 +445,7 @@ fn hashView(h: *std.hash.Wyhash, v: *PaneView, selected: bool) void {
 fn rosterChanged(self: *PaneSidebar) void {
     _ = w32.InvalidateRect(self.hwnd, null, 0);
     self.logOutline();
+    self.logMarks();
     if (self.card_open) {
         // More or fewer rows: the card is as tall as before, but its region
         // and rows are re-derived with it.
@@ -459,6 +480,22 @@ fn logOutline(self: *PaneSidebar) void {
     const rules = l.rule_count + @intFromBool(l.section_rule != null);
     w.print(" rules={d} scope={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY() }) catch {};
     log.info("pane sidebar outline {s}", .{fbs.getWritten()});
+}
+
+/// The roster's activity marks, logged when the tally moves: how many rows
+/// are busy, have a question, and carry a bell dot (a stashed pane whose bell
+/// rang). The acceptance script scores the bell from this line, since a dot
+/// is a few pixels on a background desktop.
+fn logMarks(self: *PaneSidebar) void {
+    var tally: [3]usize = .{ 0, 0, 0 };
+    for (self.entries.items) |e| {
+        if (e.state == .busy) tally[0] += 1;
+        if (e.state == .needs_input) tally[1] += 1;
+        if (e.bell and e.section == .stashed) tally[2] += 1;
+    }
+    if (std.mem.eql(usize, &tally, &self.logged_marks)) return;
+    self.logged_marks = tally;
+    log.info("pane sidebar marks busy={d} question={d} bell={d}", .{ tally[0], tally[1], tally[2] });
 }
 
 const TabRef = struct { window: *Window, tab: usize };
@@ -699,6 +736,7 @@ fn appendEntries(self: *PaneSidebar, views: []const *PaneView, window: *Window, 
             .mono = mono,
             .icon = iconFor(v),
             .state = if (v.surface()) |s| s.activity_state else .idle,
+            .bell = if (v.surface()) |s| s.bell else false,
             // Only THIS window has a selection (Mac 55352e377): another
             // window's focus is not focus here.
             .selected = own and v == active,
@@ -991,12 +1029,134 @@ fn paint(self: *PaneSidebar, hdc: w32.HDC, which: Surface, width: i32, height: i
     const t = self.theme();
     const l = self.layoutFor(which);
     _ = w32.SetBkMode(hdc, w32.TRANSPARENT);
-    if (l.open) return self.paintOpen(hdc, &l, t);
-    switch (l.mode) {
+    self.paint_marks = .{};
+    self.paint_ms = w32.GetTickCount64();
+    self.paint_motion = App.clientAreaAnimationsEnabled();
+    if (l.open) {
+        self.paintOpen(hdc, &l, t);
+    } else switch (l.mode) {
         .hidden => fillRect(hdc, .{ .right = width, .bottom = height }, rgb(t.bg)),
         .expanded => self.paintExpanded(hdc, &l, t),
         .mini => self.paintMini(hdc, &l, t),
     }
+    self.marks[@intFromEnum(which)] = self.paint_marks;
+    if (self.paint_marks.moving(self.paint_motion)) self.armMotion(which);
+}
+
+// -------------------------------------------------------------------------
+// Motion (T1843)
+// -------------------------------------------------------------------------
+
+/// Start the motion clock on `which`, if it is not already running.
+fn armMotion(self: *PaneSidebar, which: Surface) void {
+    const k = @intFromEnum(which);
+    if (self.anim_armed[k]) return;
+    const hwnd = self.surfaceHwnd(which) orelse return;
+    if (w32.SetTimer(hwnd, TIMER_ANIM, motion.frame_ms, null) == 0) return;
+    self.anim_armed[k] = true;
+    const m = self.marks[k];
+    log.info("pane sidebar motion on surface={s} busy={d} pulse={d}", .{ @tagName(which), m.busy, m.pulsing });
+}
+
+/// A motion frame: repaint while the last paint drew something that moves
+/// and the window can be seen; otherwise stop. A paint that draws something
+/// moving again re-arms it, so the clock never runs for a still column.
+fn onMotionTick(self: *PaneSidebar, which: Surface) void {
+    const k = @intFromEnum(which);
+    const hwnd = self.surfaceHwnd(which) orelse return;
+    const root = w32.GetAncestor(hwnd, w32.GA_ROOT);
+    const seen = w32.IsWindowVisible(hwnd) != 0 and !(root != null and w32.IsIconic(root.?) != 0);
+    if (seen and self.marks[k].moving(App.clientAreaAnimationsEnabled())) {
+        _ = w32.InvalidateRect(hwnd, null, 0);
+        return;
+    }
+    _ = w32.KillTimer(hwnd, TIMER_ANIM);
+    self.anim_armed[k] = false;
+    log.info("pane sidebar motion off surface={s}", .{@tagName(which)});
+}
+
+fn unrgb(c: u32) color_math.Rgb {
+    return .{ .r = @truncate(c), .g = @truncate(c >> 8), .b = @truncate(c >> 16) };
+}
+
+/// What a pane's mark is drawn with: an icon-font glyph, or the rail's
+/// monogram.
+const Mark = union(enum) { glyph: u16, text: []const u16 };
+
+fn drawMark(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, mark: Mark, color: u32) void {
+    switch (mark) {
+        .glyph => |cp| glyph(hdc, self.scale, r, cp, 12, color),
+        .text => |s| {
+            if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+            drawText(hdc, s, r, color, w32.DT_CENTER | w32.DT_VCENTER);
+        },
+    }
+}
+
+/// A pane's mark, shimmering while it is busy (Mac `PaneSidebarGlyph`): a
+/// solid dim base with a brighter band sweeping across it - the whole busy
+/// signal, no spinner and no glow. GDI has no gradient mask for text, so the
+/// mark is drawn in vertical slices, each in the band's color at that x over
+/// `under` (whatever the mark sits on); adjacent slices of one color are one
+/// draw. With motion off it is the plain mark in `ink`, as Mac's is.
+fn paintMarkFor(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, mark: Mark, ink: u32, under: color_math.Rgb, busy: bool) void {
+    if (!busy) return self.drawMark(hdc, r, mark, ink);
+    self.paint_marks.busy += 1;
+    if (!self.paint_motion or r.width() <= 0) return self.drawMark(hdc, r, mark, ink);
+
+    // The band runs across the mark itself, not the box it is centered in.
+    const w: i32 = switch (mark) {
+        .glyph => pane_sidebar.px(12, self.scale),
+        .text => |s| blk: {
+            if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+            break :blk @max(textWidth(hdc, s), 1);
+        },
+    };
+    const left = r.centerX() - @divTrunc(w, 2);
+    const pos = motion.bandPosition(self.paint_ms);
+    const fg = unrgb(ink);
+    const colorAt = struct {
+        fn f(x: i32, l0: i32, width: i32, p: f64, u: color_math.Rgb, c: color_math.Rgb) u32 {
+            const frac = (@as(f64, @floatFromInt(x - l0)) + 0.5) / @as(f64, @floatFromInt(width));
+            return rgb(color_math.mix(u, c, motion.shimmerAlpha(frac, p)));
+        }
+    }.f;
+    var x = r.left;
+    while (x < r.right) {
+        const color = colorAt(x, left, w, pos, under, fg);
+        var end = x + 1;
+        while (end < r.right and colorAt(end, left, w, pos, under, fg) == color) end += 1;
+        const saved = w32.SaveDC(hdc);
+        _ = w32.IntersectClipRect(hdc, x, r.top, end, r.bottom);
+        self.drawMark(hdc, r, mark, color);
+        _ = w32.RestoreDC(hdc, saved);
+        x = end;
+    }
+}
+
+/// The question badge with its breathing ring (Mac `PaneSidebarQuestionBadge`):
+/// a soft accent ring outside the disc, so a question in an otherwise quiet
+/// list is what draws the eye. `under` is what the ring fades into.
+fn paintQuestion(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, under: color_math.Rgb, t: Theme) void {
+    self.paint_marks.pulsing += 1;
+    if (self.paint_motion) {
+        const a = motion.pulseAlpha(self.paint_ms);
+        const ring = @max(pane_sidebar.px(motion.pulse_ring_dip, self.scale), 1);
+        // Below one shade step the ring is invisible: skip the fill.
+        if (a * 255 >= 1) {
+            const halo: pane_sidebar.Rect = .{ .left = r.left - ring, .top = r.top - ring, .right = r.right + ring, .bottom = r.bottom + ring };
+            fillRound(hdc, halo, @divTrunc(halo.width(), 2), rgb(color_math.mix(under, t.accent, a)));
+        }
+    }
+    self.paintBadge(hdc, r, .needs_input, t);
+}
+
+/// A stashed pane's bell (Mac: a 7 pt accent dot until it is restored).
+fn paintBellDot(self: *PaneSidebar, hdc: w32.HDC, cx: i32, cy: i32, t: Theme) void {
+    self.paint_marks.bells += 1;
+    const d = @max(pane_sidebar.px(7, self.scale), 3);
+    const dot: pane_sidebar.Rect = .{ .left = cx - @divTrunc(d, 2), .top = cy - @divTrunc(d, 2), .right = cx - @divTrunc(d, 2) + d, .bottom = cy - @divTrunc(d, 2) + d };
+    fillRound(hdc, dot, @divTrunc(d, 2), rgb(t.accent));
 }
 
 fn isEmphasized(self: *const PaneSidebar) bool {
@@ -1102,6 +1262,7 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         }
 
         const ink = if (e.selected) t.text else t.secondary;
+        const under = sel.fill orelse t.surface;
         const pad_v = pane_sidebar.px(toc.row_v_pad_dip, self.scale);
         const icon_box = pane_sidebar.px(16, self.scale);
         const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
@@ -1113,26 +1274,38 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
             .right = content + icon_box,
             .bottom = r.top + pad_v + self.metrics.title_h,
         };
-        glyph(hdc, self.scale, icon_r, e.icon, 12, ink);
+        // A busy pane's icon is in full ink, shimmering (Mac iconColor).
+        const busy = e.state == .busy;
+        self.paintMarkFor(hdc, icon_r, .{ .glyph = e.icon }, if (busy) t.text else ink, under, busy);
 
-        // The trailing edge: the hover button replaces the state badge while
-        // the pointer is on the row, so the two never crowd each other.
+        // The trailing edge: the hover button replaces the state accessories
+        // while the pointer is on the row, so the two never crowd each other.
         const button = l.rowButton(i, self.scale);
         const text_left = icon_r.right + pane_sidebar.px(8, self.scale);
         var text_right = r.right - text_inset;
+        const sm = pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
         if (hovered) {
-            text_right = button.left - pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
+            text_right = button.left - sm;
             self.paintRowButton(hdc, i, button, e.section, t);
-        } else if (e.state != .idle) {
-            const badge = pane_sidebar.px(16, self.scale);
-            const br: pane_sidebar.Rect = .{
-                .left = r.right - text_inset - badge,
-                .top = icon_r.top + @divTrunc(icon_r.height() - badge, 2),
-                .right = r.right - text_inset,
-                .bottom = icon_r.top + @divTrunc(icon_r.height() - badge, 2) + badge,
-            };
-            self.paintBadge(hdc, br, e.state, t);
-            text_right = br.left - pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
+        } else {
+            // Mac's accessories, trailing first: a stashed pane's bell dot,
+            // then the question badge before it.
+            if (e.bell and e.section == .stashed) {
+                const d = @max(pane_sidebar.px(7, self.scale), 3);
+                self.paintBellDot(hdc, text_right - @divTrunc(d, 2), icon_r.centerY(), t);
+                text_right -= d + sm;
+            }
+            if (e.state == .needs_input) {
+                const badge = pane_sidebar.px(16, self.scale);
+                const br: pane_sidebar.Rect = .{
+                    .left = text_right - badge,
+                    .top = icon_r.top + @divTrunc(icon_r.height() - badge, 2),
+                    .right = text_right,
+                    .bottom = icon_r.top + @divTrunc(icon_r.height() - badge, 2) + badge,
+                };
+                self.paintQuestion(hdc, br, under, t);
+                text_right = br.left - sm;
+            }
         }
 
         if (self.title_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
@@ -1201,9 +1374,13 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
     const text_inset = pane_sidebar.px(toc.text_inset_dip, self.scale);
     const hovered = self.hoverIs(.{ .head = k }) or self.hoverIs(.{ .head_fold = k });
     const project = hd.kind == .project;
+    var under = t.surface;
     if (hovered and (project or !g.own)) {
         const sel = list_selection.rowPaint(t.surface, t.accent, .{ .selected = false, .focused = false, .hovered = true, .focus_visible = false });
-        if (sel.fill) |f| fillRound(hdc, hd.rect, pane_sidebar.px(toc.row_corner_dip, self.scale), rgb(f));
+        if (sel.fill) |f| {
+            fillRound(hdc, hd.rect, pane_sidebar.px(toc.row_corner_dip, self.scale), rgb(f));
+            under = f;
+        }
     }
     const folded = if (project) self.folded.contains(g.project_key) else self.folded.contains(g.key);
     glyph(hdc, self.scale, hd.chevron, if (folded) glyph_chevron_right else glyph_chevron_down, 8, t.secondary);
@@ -1214,7 +1391,7 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
     if (!project and g.question) {
         const badge = pane_sidebar.px(16, self.scale);
         const br: pane_sidebar.Rect = .{ .left = right - badge, .top = hd.chevron.centerY() - @divTrunc(badge, 2), .right = right, .bottom = hd.chevron.centerY() - @divTrunc(badge, 2) + badge };
-        self.paintBadge(hdc, br, .needs_input, t);
+        self.paintQuestion(hdc, br, under, t);
         right = br.left - sm;
     } else {
         var nb: [16]u8 = undefined;
@@ -1300,25 +1477,15 @@ fn paintRowButton(self: *PaneSidebar, hdc: w32.HDC, i: usize, b: pane_sidebar.Re
 }
 
 /// A state badge: `needs_input` is the accent "?" disc (Mac's question
-/// badge); `busy` is a small accent dot until the shimmer lands (T1843).
+/// badge). Busy has no badge: its mark shimmers instead (T1843).
 fn paintBadge(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, state: ActivityState, t: Theme) void {
     switch (state) {
-        .idle => {},
+        .idle, .busy => {},
         .needs_input => {
             fillRound(hdc, r, @divTrunc(r.width(), 2), rgb(t.accent));
             const on = chrome_theme.textOn(t.accent);
             if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
             drawText(hdc, std.unicode.utf8ToUtf16LeStringLiteral("?"), r, rgb(on), w32.DT_CENTER | w32.DT_VCENTER);
-        },
-        .busy => {
-            const d = @max(pane_sidebar.px(6, self.scale), 2);
-            const dot: pane_sidebar.Rect = .{
-                .left = r.centerX() - @divTrunc(d, 2),
-                .top = r.centerY() - @divTrunc(d, 2),
-                .right = r.centerX() - @divTrunc(d, 2) + d,
-                .bottom = r.centerY() - @divTrunc(d, 2) + d,
-            };
-            fillRound(hdc, dot, @divTrunc(d, 2), rgb(t.accent));
         },
     }
 }
@@ -1349,22 +1516,19 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
             .focus_visible = false,
         });
         if (sel.fill) |f| fillRound(hdc, r, radius, rgb(f));
-        const ink = if (e.selected) t.text else t.secondary;
-        if (e.icon == glyph_terminal) {
-            if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
-            drawText(hdc, e.mono, r, ink, w32.DT_CENTER | w32.DT_VCENTER);
-        } else {
-            glyph(hdc, self.scale, r, e.icon, 12, ink);
-        }
-        // Activity rides as a corner badge (Mac): the question disc
-        // top-right, the busy dot bottom-right.
-        if (e.state != .idle) {
-            const d = pane_sidebar.px(if (e.state == .needs_input) 12 else 8, self.scale);
-            const corner: pane_sidebar.Rect = if (e.state == .needs_input)
-                .{ .left = r.right - d + pane_sidebar.px(2, self.scale), .top = r.top - pane_sidebar.px(2, self.scale), .right = r.right + pane_sidebar.px(2, self.scale), .bottom = r.top - pane_sidebar.px(2, self.scale) + d }
-            else
-                .{ .left = r.right - d, .top = r.bottom - d, .right = r.right, .bottom = r.bottom };
-            self.paintBadge(hdc, corner, e.state, t);
+        const busy = e.state == .busy;
+        const ink = if (e.selected or busy) t.text else t.secondary;
+        const mark: Mark = if (e.icon == glyph_terminal) .{ .text = e.mono } else .{ .glyph = e.icon };
+        self.paintMarkFor(hdc, r, mark, ink, sel.fill orelse t.surface, busy);
+        // The corner (Mac): the question disc top-right - still, unlike a
+        // row's - or else a stashed pane's bell dot.
+        const two = pane_sidebar.px(2, self.scale);
+        if (e.state == .needs_input) {
+            const d = pane_sidebar.px(12, self.scale);
+            self.paintBadge(hdc, .{ .left = r.right - d + two, .top = r.top - two, .right = r.right + two, .bottom = r.top - two + d }, .needs_input, t);
+        } else if (e.bell and e.section == .stashed) {
+            const d = @max(pane_sidebar.px(7, self.scale), 3);
+            self.paintBellDot(hdc, r.right - @divTrunc(d, 2) + @divTrunc(two, 2), r.top + @divTrunc(d, 2) - @divTrunc(two, 2), t);
         }
     }
     self.paintDropSlot(hdc, l, t);
@@ -1950,6 +2114,7 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
             switch (wparam) {
                 TIMER_OPEN => if (which == .rail) self.onOpenTimer(),
                 TIMER_CLOSE => if (which == .card) self.onCloseTimer(),
+                TIMER_ANIM => self.onMotionTick(which),
                 else => {},
             }
             return 0;

@@ -1,10 +1,10 @@
 {
     "guard":  "command-resolve",
     "script":  "test/win32/command-resolve-audit.ps1",
-    "generated":  "2026-10-12T17:10:14-07:00",
-    "commit":  "f437f19eb",
+    "generated":  "2026-10-12T18:32:02-07:00",
+    "commit":  "318d7d00c",
     "uncommitted":  [
-                        "test/win32/stash-divider-drag.ps1"
+                        "test/win32/pane-sidebar-activity.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -286,6 +286,7 @@
                   "test/win32/pane-ingest-ab.ps1":  "4beb60eb9823ba66d04bda7b10f59e4aaebb85e930b1c6c5eafe018b70f9c74e",
                   "test/win32/pane-ingest-lag.ps1":  "a5c9ffcbdeae28c26b54d98d09586137bcba9be70691c2b2634c781b3fdf9768",
                   "test/win32/pane-sidebar.ps1":  "0256bfd7a0c5ecc7a0ed531fe733fc030b112b89614f975d17ee9d1c3381f0b7",
+                  "test/win32/pane-sidebar-activity.ps1":  "13e236a4cbbb8b57ce49ede4a4c17d7e4527471c0ecb4a6676032f4bd3ab3a22",
                   "test/win32/pane-sidebar-all-windows.ps1":  "1f2532f0ed17ae3b7dfe4a248269ae3225c2499b5fa558009e76bf13ef1a811a",
                   "test/win32/pane-sidebar-drag.ps1":  "36eb78616d344e05dbeb5d760fdb19933e8f169593b4c588e2898bf2f5d257cd",
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",

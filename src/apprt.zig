@@ -114,6 +114,11 @@ test {
     // pane_sidebar.zig. Every lane.
     _ = @import("apprt/win32/pane_sidebar_outline.zig");
 
+    // Pure win32 pane sidebar motion (T1843): Mac's busy shimmer and
+    // question-ring timing, and when the column needs a clock at all.
+    // Imports only std. Every lane.
+    _ = @import("apprt/win32/pane_sidebar_motion.zig");
+
     // Pure win32 erase-vs-preserve rule for the resize paint path (T1031),
     // same no-OS-imports deal.
     _ = @import("apprt/win32/resize_paint.zig");

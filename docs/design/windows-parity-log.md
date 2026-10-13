@@ -35667,3 +35667,26 @@ moved to T1814.
   and the live-tree replay. Floor lanes green.
 - **Filed and closed** T1888 (a suspected band mismatch in the elevated
   style): measured on the box at 1px, so not observable.
+
+## 2026-10-12 — T1843: busy shimmer, question ring, stashed bell dot
+
+- **What changed.** The pane sidebar now shows activity the way Mac's does.
+  A busy pane's mark (the rail monogram, the panel row icon) is drawn dim
+  with a light band sweeping across it, replacing the static busy dot. A
+  question badge in a panel row or window header breathes a soft ring; the
+  rail's corner "?" holds still, as on Mac. A stashed pane whose bell rang
+  keeps an accent dot until it is focused or typed into.
+- **Bell.** The win32 surface now has Mac's `bell` flag. `ring_bell` also
+  honors `bell-features` for the first time: the system beep is behind
+  `system`, which is off by default as on Mac, and the taskbar flash is
+  behind `attention`. Audio files, the title glyph and the border are T1890.
+- **Motion.** `pane_sidebar_motion.zig` holds Mac's numbers, unit-tested.
+  Each paint tallies what it drew and arms a per-window 33ms timer only if
+  something moves. The timer stops itself on the first tick after nothing
+  does, or when the window is hidden or minimized. "Animation effects" off
+  draws the plain mark and no ring.
+- **Validation.** New `test/win32/pane-sidebar-activity.ps1` on the test
+  desktop: frames move while busy or asking in the panel, and stay still
+  idle or for the rail's "?". The bell tally and dot appear on a stashed
+  BEL and clear once the pane is focused. ALL PASS (31); the negative
+  control fails. Filed T1889 (Mac's row badge is a "question" capsule).

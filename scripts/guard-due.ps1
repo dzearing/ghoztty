@@ -4295,6 +4295,21 @@ $GuardTable = @(
             'test\win32\pane-sidebar.ps1'
         )
     },
+    # The sidebar's activity marks (T1843): a busy pane's mark shimmers, a
+    # row's question badge breathes, the rail's corner "?" holds still, and a
+    # stashed pane whose bell rang keeps a dot until it is looked at. The
+    # timing is unit-tested in pane_sidebar_motion.zig; this proves the clock
+    # really repaints, really stops, and that the bell reaches the row.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-activity'
+        Script = 'test\win32\pane-sidebar-activity.ps1'
+        Stamp  = 'test\win32\pane-sidebar-activity.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar_motion.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\pane-sidebar-activity.ps1'
+        )
+    },
     # Dragging panes into and out of the sidebar (T1844): the `.stash` drop
     # target and the row drag source. The resolver, preview and stash-order
     # rules are unit-tested in every lane; whether a posted drag from a row
