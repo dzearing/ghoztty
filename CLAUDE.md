@@ -1420,8 +1420,13 @@ the interactive mock settled).
   every row that kills with no confirmation and no undo window; Escape leaves
   it. Right-click → Close Pane is the ordinary confirmed close.
 - Activity: a **busy** pane's icon shimmers (no spinner, no glow); `needs_input`
-  shows a **question** badge — the human label, never the machine token.
+  shows a **question** badge — the human label, never the machine token. Both
+  animate on **Core Animation**, never an endless SwiftUI animation, which
+  re-renders the whole sidebar every frame (measured: ~90% of the main thread
+  at rest with 40 windows; `PaneSidebarAnimationLayers.swift`).
 - **All-windows** header toggle (off by default) groups every window's panes.
+  Its caption counts the windows. Every window starts **folded** except this
+  one (search unfolds all; `PaneSidebarState.isWindowFolded`).
   Windows are **sorted by name** (Finder order; stable as focus moves), and a
   window titled **`<project>: <worktree>`** is grouped under a collapsible,
   **sticky** project header and labeled by its worktree alone

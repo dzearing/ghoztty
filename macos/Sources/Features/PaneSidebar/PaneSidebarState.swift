@@ -9,7 +9,7 @@ import SwiftUI
 ///   which is part of the window's layout, so they persist (per window, in the
 ///   session-layout manifest) and are what new windows start from.
 /// - **Transient** — `isHoverOpen`, `isQuickKill`, `showsAllWindows`, and the
-///   folded window groups. Never persisted: a hover is over when the pointer
+///   all-windows folds. Never persisted: a hover is over when the pointer
 ///   leaves, and a window must never come back in kill mode.
 ///
 /// The stash itself is NOT here — it is part of the tree (`SplitTree.stashed`),
@@ -34,8 +34,14 @@ final class PaneSidebarState: ObservableObject {
 
     /// List panes from every window, grouped by window. Off by default.
     @Published var showsAllWindows: Bool = false {
-        // A filter belongs to one look at every window, not to the next one.
-        didSet { if !showsAllWindows { filter = "" } }
+        didSet {
+            // A filter belongs to one look at every window, not to the next
+            // one — and so do the folds: each look starts from the default.
+            if !showsAllWindows {
+                filter = ""
+                toggledWindows = []
+            }
+        }
     }
 
     /// The all-windows search (`PaneSidebarFilter`). Empty = no filter.
@@ -44,8 +50,11 @@ final class PaneSidebarState: ObservableObject {
     /// someone is typing in it, wherever the pointer wanders.
     @Published var isFilterFocused: Bool = false
 
-    /// Window groups folded closed in the all-windows list.
-    @Published var foldedWindows: Set<ObjectIdentifier> = []
+    /// Window groups whose fold the user flipped away from its default in the
+    /// all-windows list (`isWindowFolded`). Holding the flips rather than the
+    /// folds is what lets a window opened while the list is showing arrive
+    /// at the default — folded — with nothing to add.
+    @Published var toggledWindows: Set<ObjectIdentifier> = []
     /// Folded project groups in the all-windows scope, by project name.
     @Published var foldedProjects: Set<String> = []
 
@@ -130,6 +139,20 @@ final class PaneSidebarState: ObservableObject {
         if isHidden { return .hidden }
         if isPinned && windowWidth >= narrowWindowWidth { return .expanded }
         return .mini
+    }
+
+    /// Whether a window's panes are folded away in the all-windows list.
+    ///
+    /// Every window starts folded — one row per window, the overview that
+    /// scope is for — except THIS window, which starts open: it holds the
+    /// selection, the pane you are in, and is the one window whose panes the
+    /// list is otherwise showing you anyway. Only at the start: focus moving
+    /// later never unfolds anything, or the list would jump under the
+    /// pointer. A search unfolds everything, since a hit hidden inside a fold
+    /// reads as no hit.
+    nonisolated static func isWindowFolded(isThisWindow: Bool, isToggled: Bool, isSearching: Bool) -> Bool {
+        if isSearching { return false }
+        return isThisWindow == isToggled
     }
 
     func mode(windowWidth: CGFloat) -> Mode {
