@@ -35809,3 +35809,22 @@ moved to T1814.
   desk under the rail with a 1-unit seam, pinned glass within 2 of the formula
   over the desk beside it, no rule. `-NegativeControl` goes red. Floor lanes
   green; the due harnesses were run (see the task file).
+
+## 2026-10-13 — T1895: a closed viewer no longer becomes the window's pane again
+
+- **What.** `pane-banner.ps1` had been red for a day with 17 failures. After a
+  Ctrl+clicked link viewer was closed, every `+set-banner --target=<window>`
+  answered "is a viewer pane, not a terminal".
+- **Why.** A viewer page's got-focus notice (T1809) is a posted message. A
+  closed viewer is parked for undo (T1825), so it is still alive but in no
+  tree, and a notice that lands after the close ran `becomeActivePane`. That
+  wrote the parked pane back into `tab_active_pane`, which is the slot window
+  targets resolve through.
+- **Fix.** `becomeActivePane` now needs the pane in a tab's tree and uses that
+  tab. `ViewerPane.zig` is in the `pane-banner` guard row, and the T165
+  section asserts the close took. A `viewer-close.ps1` check was tried and
+  dropped because it passed on the unfixed build.
+- **Validation.** `pane-banner.ps1`: 17 FAIL on the unfixed build, ALL PASS
+  (150) with the fix. Viewer harnesses green, floor lanes green, harness floor
+  green on the second run. The first run's `persistence-flag.ps1` in-suite red
+  passed alone and is filed as T1896.

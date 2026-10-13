@@ -5533,11 +5533,18 @@ fn onGotFocus(
 /// WebView2 controller, and that close pumps messages: a focus change
 /// dispatched during it would ask a window whose panes are being freed to
 /// re-place every overlay it owns.
+///
+/// Only a pane that is IN a tab's tree (T1895). `GotFocus` arrives as a
+/// POSTED message, so it can land after the pane was closed: a closed pane
+/// is parked for undo (T1825), still alive and out of every tree, and making
+/// it the active pane pointed every window-targeted verb (`+set-banner
+/// --target=<window>`) at a pane nobody can see. The pane's own tab, not the
+/// active one, for the reason App.zig's terminal arm gives (T249).
 fn becomeActivePane(self: *ViewerPane) void {
     const pv = self.pane_view orelse return;
     const win = self.parent_window;
     if (win.closing) return;
-    const tab = win.active_tab;
+    const tab = win.tabIndexOfPane(pv) orelse return;
     win.tab_active_pane[tab] = pv;
     win.refreshTabTitle(tab);
     win.updateDimOverlays();

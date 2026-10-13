@@ -1485,10 +1485,17 @@ try {
         $w = Get-Win 'bw'
         if ($w) {
             foreach ($leaf in @(Get-Leaves $w.tabs[0].splits)) {
-                if ($leaf.type -eq 'viewer') { & $exe +close --target=$($leaf.id) | Out-Null }
+                if ($leaf.type -eq 'viewer') {
+                    # Each object stringified before Out-String (T526).
+                    $co = (& $exe +close --target=$($leaf.id) 2>&1 | ForEach-Object { $_.ToString() } | Out-String).Trim()
+                    Write-Host "INFO  T165 +close $($leaf.id): exit=$LASTEXITCODE '$co'"
+                }
             }
         }
         Start-Sleep -Milliseconds 800
+        $w = Get-Win 'bw'
+        $left = if ($w) { @(Get-Leaves $w.tabs[0].splits | Where-Object { $_.type -eq 'viewer' }).Count } else { -1 }
+        Assert ($left -eq 0) "T165: +close by leaf id takes the viewer away again (viewers left: $left)"
     }
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'T165 section: GUI alive'
     & $exe +set-banner --target=bw --clear | Out-Null
