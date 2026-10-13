@@ -22,6 +22,7 @@
 
 const std = @import("std");
 const toc = @import("viewer_toc_layout.zig");
+const pane_elevation = @import("pane_elevation.zig");
 
 // ---------------------------------------------------------------------------
 // Modes and the column
@@ -69,21 +70,75 @@ pub fn mode(pinned: bool, hidden: bool, window_w_dip: f32) Mode {
     return .mini;
 }
 
+/// The space around the raised rail card, and around the open card that
+/// grows from it (Mac `PaneSidebarState.RailInsets`, 557e4f978).
+pub const RailInsets = struct {
+    leading: f32,
+    vertical: f32,
+    trailing: f32,
+
+    /// In pixels: one rounding per edge, shared by the layout and the
+    /// card's material so the two cannot land a pixel apart.
+    pub fn leadingPx(self: RailInsets, scale: f32) i32 {
+        return px(self.leading, scale);
+    }
+    pub fn verticalPx(self: RailInsets, scale: f32) i32 {
+        return px(self.vertical, scale);
+    }
+    pub fn trailingPx(self: RailInsets, scale: f32) i32 {
+        return px(self.trailing, scale);
+    }
+};
+
+/// Flat: the card margin on every side. Elevated (T1850): the SAME margin
+/// the panes keep from the window's edge, and none trailing - the grid's own
+/// margin is already the gap there, and adding the card's on top of it left
+/// the rail further from the panes than from the window edge, with its ends
+/// out of line with theirs.
+pub fn railInsets(elevated: bool) RailInsets {
+    return if (elevated)
+        .{ .leading = pane_elevation.MARGIN_DIP, .vertical = pane_elevation.MARGIN_DIP, .trailing = 0 }
+    else
+        .{ .leading = rail_margin_dip, .vertical = rail_margin_dip, .trailing = rail_margin_dip };
+}
+
 pub fn railColumnDip() f32 {
-    return rail_margin_dip + rail_card_dip + rail_margin_dip;
+    return railColumnDipFor(false);
+}
+
+/// The rail's column: its insets and the card.
+pub fn railColumnDipFor(elevated: bool) f32 {
+    const in = railInsets(elevated);
+    return in.leading + rail_card_dip + in.trailing;
 }
 
 /// The width of the sidebar's COLUMN — what the grid is laid out beside.
 pub fn columnDip(m: Mode, panel_w_dip: f32) f32 {
+    return columnDipFor(m, panel_w_dip, false);
+}
+
+pub fn columnDipFor(m: Mode, panel_w_dip: f32, elevated: bool) f32 {
     return switch (m) {
         .hidden => 0,
         .expanded => clampWidth(panel_w_dip),
-        .mini => railColumnDip(),
+        .mini => railColumnDipFor(elevated),
     };
 }
 
 pub fn columnPx(m: Mode, panel_w_dip: f32, scale: f32) i32 {
-    return px(columnDip(m, panel_w_dip), scale);
+    return columnPxFor(m, panel_w_dip, scale, false);
+}
+
+pub fn columnPxFor(m: Mode, panel_w_dip: f32, scale: f32, elevated: bool) i32 {
+    return switch (m) {
+        // Summed from the rounded parts, so the column is exactly the
+        // card's pixels plus its insets' at every scale.
+        .mini => blk: {
+            const in = railInsets(elevated);
+            break :blk in.leadingPx(scale) + px(rail_card_dip, scale) + in.trailingPx(scale);
+        },
+        else => px(columnDipFor(m, panel_w_dip, elevated), scale),
+    };
 }
 
 pub fn clampWidth(w: f32) f32 {
@@ -697,6 +752,11 @@ pub fn layout(m: Mode, w: i32, h: i32, items: []const Item, tm: TextMetrics, sca
 /// outline: the panel lays out the lines, the rail every item with a hairline
 /// between window groups.
 pub fn layoutWith(m: Mode, w: i32, h: i32, items: []const Item, lines: ?[]const Line, tm: TextMetrics, scale: f32) Layout {
+    return layoutIn(m, w, h, items, lines, tm, scale, railInsets(false));
+}
+
+/// `layoutWith` with the rail card at `insets` (the window's pane style).
+pub fn layoutIn(m: Mode, w: i32, h: i32, items: []const Item, lines: ?[]const Line, tm: TextMetrics, scale: f32, insets: RailInsets) Layout {
     var l: Layout = .{ .mode = m, .width = w, .height = h };
     const n = @min(items.len, max_items);
     l.count = n;
@@ -709,7 +769,7 @@ pub fn layoutWith(m: Mode, w: i32, h: i32, items: []const Item, lines: ?[]const 
             layoutHeader(&l, area, tm, scale);
             layoutLines(&l, area, items[0..n], ls, tm, scale);
         } else layoutRows(&l, .{ .right = w, .bottom = h }, items[0..n], tm, scale),
-        .mini => layoutMini(&l, items[0..n], scale),
+        .mini => layoutMini(&l, items[0..n], scale, insets),
     }
     return l;
 }
@@ -737,8 +797,18 @@ fn findStash(l: *Layout, items: []const Item) void {
 /// state.width + insets.trailing`). Only the column and the card itself are
 /// ever painted or hit; the trailing margin belongs to the grid underneath.
 pub fn openWidthPx(panel_w_dip: f32, scale: f32) i32 {
-    const margin = px(rail_margin_dip, scale);
-    return margin + px(clampWidth(panel_w_dip), scale) + margin;
+    return openWidthPxIn(panel_w_dip, scale, railInsets(false));
+}
+
+pub fn openWidthPxIn(panel_w_dip: f32, scale: f32, insets: RailInsets) i32 {
+    return insets.leadingPx(scale) + px(clampWidth(panel_w_dip), scale) + insets.trailingPx(scale);
+}
+
+/// The open card's rect in its `w` x `h` window.
+pub fn openCardRect(w: i32, h: i32, scale: f32, insets: RailInsets) Rect {
+    const lead = insets.leadingPx(scale);
+    const v = insets.verticalPx(scale);
+    return .{ .left = lead, .top = v, .right = @max(w - insets.trailingPx(scale), lead), .bottom = @max(h - v, v) };
 }
 
 /// Lay out the unpinned card opened over the grid (T1842) in a `w` x `h`
@@ -749,13 +819,16 @@ pub fn layoutOpen(w: i32, h: i32, items: []const Item, tm: TextMetrics, scale: f
 }
 
 pub fn layoutOpenWith(w: i32, h: i32, items: []const Item, lines: ?[]const Line, tm: TextMetrics, scale: f32) Layout {
+    return layoutOpenIn(w, h, items, lines, tm, scale, railInsets(false));
+}
+
+pub fn layoutOpenIn(w: i32, h: i32, items: []const Item, lines: ?[]const Line, tm: TextMetrics, scale: f32, insets: RailInsets) Layout {
     var l: Layout = .{ .mode = .mini, .open = true, .width = w, .height = h };
     const n = @min(items.len, max_items);
     l.count = n;
     l.outline = lines != null;
     findStash(&l, items[0..n]);
-    const margin = px(rail_margin_dip, scale);
-    l.card = .{ .left = margin, .top = margin, .right = @max(w - margin, margin), .bottom = @max(h - margin, margin) };
+    l.card = openCardRect(w, h, scale, insets);
     if (lines) |ls| {
         layoutHeader(&l, l.card, tm, scale);
         layoutLines(&l, l.card, items[0..n], ls, tm, scale);
@@ -885,10 +958,11 @@ fn layoutLines(l: *Layout, area: Rect, items: []const Item, lines: []const Line,
     }
 }
 
-fn layoutMini(l: *Layout, items: []const Item, scale: f32) void {
-    const margin = px(rail_margin_dip, scale);
+fn layoutMini(l: *Layout, items: []const Item, scale: f32, insets: RailInsets) void {
+    const lead = insets.leadingPx(scale);
+    const v = insets.verticalPx(scale);
     const card_w = px(rail_card_dip, scale);
-    l.card = .{ .left = margin, .top = margin, .right = margin + card_w, .bottom = @max(l.height - margin, margin + card_w) };
+    l.card = .{ .left = lead, .top = v, .right = lead + card_w, .bottom = @max(l.height - v, v + card_w) };
     const tile = px(tile_dip, scale);
     // Centered in the card from ONE rounded inset, so the tile's left and
     // right clearances cannot round apart.
@@ -1017,7 +1091,10 @@ pub fn onEdge(l: *const Layout, x: i32, y: i32, scale: f32) bool {
         .hidden => false,
         .expanded => x >= l.width - g and x < l.width and y >= 0 and y < l.height and !onButton(l, x, y, scale),
         .mini => blk: {
-            const left = l.card.right - @divTrunc(g, 2);
+            // A card flush with the window's trailing edge (the elevated
+            // rail, T1850) keeps the whole band inside: half of it would
+            // otherwise fall past the window, where nothing receives it.
+            const left = @min(l.card.right - @divTrunc(g, 2), l.width - g);
             break :blk x >= left and x < left + g and y >= l.card.top and y < l.card.bottom;
         },
     };
@@ -1234,6 +1311,51 @@ test "pane_sidebar: rail tiles are centered in the card from one inset, at every
         // The card keeps the rail margin from the column's edges.
         try testing.expectEqual(px(rail_margin_dip, s), l.card.left);
         try testing.expectEqual(w - px(rail_margin_dip, s), l.card.right);
+    }
+}
+
+test "T1850: the elevated rail takes the panes' margin leading, top and bottom, and none trailing" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
+    const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
+    const ins = railInsets(true);
+    // Mac: 10 + 44 + 0.
+    try testing.expectEqual(@as(f32, 54), railColumnDipFor(true));
+    try testing.expectEqual(@as(f32, 68), railColumnDipFor(false));
+    try testing.expectEqual(@as(f32, 240), columnDipFor(.expanded, 240, true));
+    for (scales) |s| {
+        const w = columnPxFor(.mini, 240, s, true);
+        const h = px(600, s);
+        const margin = px(pane_elevation.MARGIN_DIP, s);
+        const l = layoutIn(.mini, w, h, &items, null, tm, s, ins);
+        // The window edge to the card is the margin the grid keeps from it.
+        try testing.expectEqual(margin, l.card.left);
+        try testing.expectEqual(margin, l.card.top);
+        try testing.expectEqual(h - margin, l.card.bottom);
+        // Flush with the column's trailing edge: the grid's own margin is
+        // the gap between the rail and the panes, so the two gutters match.
+        try testing.expectEqual(w, l.card.right);
+        try testing.expectEqual(px(rail_card_dip, s), l.card.width());
+        // Tiles stay centered in the card.
+        try testing.expect(@abs((l.items[0].left - l.card.left) - (l.card.right - l.items[0].right)) <= 1);
+        // The whole edge band is inside the window, so all of it grabs.
+        const g = px(grab_dip, s);
+        try testing.expect(onEdge(&l, w - 1, l.card.centerY(), s));
+        try testing.expect(onEdge(&l, w - g, l.card.centerY(), s));
+        try testing.expect(!onEdge(&l, w - g - 1, l.card.centerY(), s));
+
+        // The open card grows from the same spot and keeps none trailing.
+        const ow = openWidthPxIn(240, s, ins);
+        try testing.expectEqual(margin + px(240, s), ow);
+        const o = layoutOpenIn(ow, h, &items, null, tm, s, ins);
+        try testing.expectEqual(l.card.left, o.card.left);
+        try testing.expectEqual(l.card.top, o.card.top);
+        try testing.expectEqual(l.card.bottom, o.card.bottom);
+        try testing.expectEqual(ow, o.card.right);
+    }
+    // Flat is the pre-T1850 geometry exactly.
+    for (scales) |s| {
+        try testing.expectEqual(px(68, s), columnPx(.mini, 240, s));
+        try testing.expectEqual(2 * px(rail_margin_dip, s) + px(240, s), openWidthPx(240, s));
     }
 }
 

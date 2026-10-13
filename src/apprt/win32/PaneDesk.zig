@@ -80,12 +80,36 @@ const Dib = struct {
 desk: ?Dib = null,
 desk_light: bool = false,
 desk_variant: ?desk_palette.Variant = null,
+/// Bumped whenever `desk` is re-rendered, so a cache built from it (the
+/// pane sidebar's, T1850) can tell it is stale without comparing pixels.
+desk_gen: u32 = 0,
 comp: ?Dib = null,
+
+/// The gradient alone, as the pane sidebar paints under itself (T1850): the
+/// desk runs under the sidebar's column, and the sidebar is a child window
+/// the window's own blit never reaches.
+pub const Backdrop = struct {
+    dc: w32.HDC,
+    pixels: []const u32,
+    w: i32,
+    h: i32,
+    gen: u32,
+};
+
+/// The desk for a `w` x `h` content area, rendering it if it is not cached.
+/// The same bitmap the window's paint uses, so the two cannot disagree.
+pub fn backdrop(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_palette.Variant) ?Backdrop {
+    if (w <= 0 or h <= 0) return null;
+    const d = self.ensureDesk(w, h, is_light, variant) orelse return null;
+    return .{ .dc = d.dc, .pixels = d.pixels(), .w = d.w, .h = d.h, .gen = self.desk_gen };
+}
 
 pub fn deinit(self: *PaneDesk) void {
     if (self.desk) |d| d.destroy();
     if (self.comp) |c| c.destroy();
-    self.* = .{};
+    // Keep counting across a reset, so no later desk reuses a generation a
+    // sidebar cache may still hold.
+    self.* = .{ .desk_gen = self.desk_gen +% 1 };
 }
 
 /// Paint the desk and `cards` (in content-area pixels, i.e. relative to
@@ -171,6 +195,7 @@ fn ensureDesk(self: *PaneDesk, w: i32, h: i32, is_light: bool, variant: ?desk_pa
     // is `SRCCOPY` into an opaque window, but a per-pixel-alpha window would
     // read it, so keep the buffer's contract (0x00RRGGBB) exact.
     for (full.pixels()) |*p| p.* &= 0x00FF_FFFF;
+    self.desk_gen +%= 1;
     self.desk = full;
     self.desk_light = is_light;
     self.desk_variant = variant;

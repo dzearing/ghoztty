@@ -61,6 +61,7 @@ const pane_drop = @import("pane_drop.zig");
 const drop_highlight = @import("drop_highlight.zig");
 const PaneView = @import("PaneView.zig");
 const Window = @import("Window.zig");
+const PaneDesk = @import("PaneDesk.zig");
 const ActivityState = @import("../../terminal/main.zig").osc.Command.ActivityState;
 
 const log = std.log.scoped(.pane_sidebar);
@@ -269,6 +270,10 @@ logged_marks: [3]usize = .{ 0, 0, 0 },
 // like the TOC card's (two caches, or the two sizes would thrash one).
 rail_card: CardCache = .{},
 open_card: CardCache = .{},
+/// The pinned panel's glass over the desk, in the elevated style (T1850).
+glass_panel: CardCache = .{},
+/// The desk generation the window last told this sidebar about.
+last_desk_gen: u32 = 0,
 
 const CardCache = struct {
     dc: ?w32.HDC = null,
@@ -277,6 +282,10 @@ const CardCache = struct {
     h: i32 = 0,
     bg: color_math.Rgb = .{ .r = 0, .g = 0, .b = 0 },
     scale: f32 = 0,
+    /// The desk generation it was composited over (T1850); 0 = none, the
+    /// flat style's terminal background.
+    desk_gen: u32 = 0,
+    insets: [3]i32 = .{ 0, 0, 0 },
 
     fn release(self: *CardCache) void {
         if (self.dc) |dc| _ = w32.DeleteDC(dc);
@@ -365,6 +374,7 @@ pub fn destroy(self: *PaneSidebar) void {
     self.folded.deinit(self.alloc);
     self.rail_card.release();
     self.open_card.release();
+    self.glass_panel.release();
     self.releaseFonts();
     self.alloc.destroy(self);
 }
@@ -426,6 +436,23 @@ pub fn place(self: *PaneSidebar, rect: w32.RECT, mode: pane_sidebar.Mode, scale:
 /// Re-read the roster: this window's active tab, or - in the all-windows
 /// scope - every tab of every window. Cheap when nothing it shows has
 /// changed; repaints only when something did.
+/// Repaint the column and the open card: what they paint over changed (the
+/// window's desk, T1850) though nothing on the list did.
+pub fn repaint(self: *PaneSidebar) void {
+    _ = w32.InvalidateRect(self.hwnd, null, 0);
+    if (self.card_hwnd) |c| _ = w32.InvalidateRect(c, null, 0);
+}
+
+/// The window just painted desk generation `gen`. A new one (a resize - the
+/// gradient spans the whole width, so even one that leaves this column the
+/// same size moves its colours - or a new variant) needs this column's slice
+/// repainted, or the column and the grid's margin meet at a seam.
+pub fn deskPainted(self: *PaneSidebar, gen: u32) void {
+    if (self.last_desk_gen == gen) return;
+    self.last_desk_gen = gen;
+    self.repaint();
+}
+
 pub fn refresh(self: *PaneSidebar) void {
     if (self.all_windows) return self.refreshAll();
     const win = self.window;
@@ -854,9 +881,10 @@ fn layoutFor(self: *PaneSidebar, which: Surface) pane_sidebar.Layout {
     }
     self.ensureFonts();
     const lines: ?[]const pane_sidebar.Line = if (self.all_windows) self.lines.items else null;
+    const insets = self.window.paneSidebarInsets();
     var l = switch (which) {
-        .rail => pane_sidebar.layoutWith(self.mode, r.right - r.left, r.bottom - r.top, items[0..n], lines, self.metrics, self.scale),
-        .card => pane_sidebar.layoutOpenWith(r.right - r.left, r.bottom - r.top, items[0..n], lines, self.metrics, self.scale),
+        .rail => pane_sidebar.layoutIn(self.mode, r.right - r.left, r.bottom - r.top, items[0..n], lines, self.metrics, self.scale, insets),
+        .card => pane_sidebar.layoutOpenIn(r.right - r.left, r.bottom - r.top, items[0..n], lines, self.metrics, self.scale, insets),
     };
     if (self.drag_active) pane_sidebar.addDropSlot(&l, self.metrics, self.scale);
     l.quick_kill = self.quick_kill;
@@ -1241,6 +1269,16 @@ fn paintPin(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: 
 }
 
 fn paintExpanded(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
+    // Elevated (T1850, Mac 91ba7c08c): translucent, so the window's gradient
+    // runs under the panel and it reads as part of the surface the panes are
+    // raised from - and no rule, since the grid's margin already parts them.
+    if (self.window.deskBackdrop()) |desk| {
+        ensureMaterial(&self.glass_panel, hdc, l.width, l.height, t.bg, self.scale, .glass, desk, null);
+        if (self.glass_panel.dc) |mem| {
+            _ = w32.BitBlt(hdc, 0, 0, l.width, l.height, mem, 0, 0, w32.SRCCOPY);
+        } else fillRect(hdc, .{ .right = l.width, .bottom = l.height }, rgb(t.surface));
+        return self.paintRows(hdc, l, t);
+    }
     // The flat panel: the lifted surface, square, edge to edge.
     fillRect(hdc, .{ .right = l.width, .bottom = l.height }, rgb(t.surface));
     // The rule against the grid, in the split divider's own color and width,
@@ -1257,7 +1295,9 @@ fn paintExpanded(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout
 /// keeps everything right of the column to the card itself, so the grid shows
 /// through the trailing margin.
 fn paintOpen(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
-    ensureCardCache(&self.open_card, hdc, l.width, l.height, t.bg, self.scale);
+    // Elevated (T1850): the column under the card is the desk, as the rail's.
+    const desk = self.window.deskBackdrop();
+    ensureMaterial(&self.open_card, hdc, l.width, l.height, t.bg, self.scale, .card, desk, if (desk != null) self.window.paneSidebarInsets() else null);
     if (self.open_card.dc) |mem| {
         _ = w32.BitBlt(hdc, 0, 0, l.width, l.height, mem, 0, 0, w32.SRCCOPY);
     } else {
@@ -1604,9 +1644,11 @@ fn paintBadge(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, state: Act
 }
 
 fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t: Theme) void {
-    // The column is the terminal background; the rail is the raised card on
-    // it - the banner's material, so the two read as the same family.
-    ensureCardCache(&self.rail_card, hdc, l.width, l.height, t.bg, self.scale);
+    // The column is the terminal background - the desk, in the elevated
+    // style (T1850) - and the rail is the raised card on it: the banner's
+    // material, so the two read as the same family.
+    const desk = self.window.deskBackdrop();
+    ensureMaterial(&self.rail_card, hdc, l.width, l.height, t.bg, self.scale, .card, desk, if (desk != null) self.window.paneSidebarInsets() else null);
     if (self.rail_card.dc) |mem| {
         _ = w32.BitBlt(hdc, 0, 0, l.width, l.height, mem, 0, 0, w32.SRCCOPY);
     } else {
@@ -1649,9 +1691,31 @@ fn paintMini(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
     self.paintDropSlot(hdc, l, t);
 }
 
-fn ensureCardCache(cache: *CardCache, hdc: w32.HDC, w: i32, h: i32, bg: color_math.Rgb, scale: f32) void {
+/// What a cache holds: the raised card (the rail's, or the open one's), or
+/// the pinned panel's glass (elevated only).
+const Material = enum { card, glass };
+
+/// Build `cache` when anything it was built from changed. With a `desk`
+/// (the elevated style, T1850) the material is composited over the
+/// window's gradient - this window sits at the desk's left edge, so its
+/// pixels are the desk's first `w` columns - and the card takes `insets`;
+/// without one it is the card on the flat terminal background.
+fn ensureMaterial(
+    cache: *CardCache,
+    hdc: w32.HDC,
+    w: i32,
+    h: i32,
+    bg: color_math.Rgb,
+    scale: f32,
+    material: Material,
+    desk: ?PaneDesk.Backdrop,
+    insets: ?pane_sidebar.RailInsets,
+) void {
+    const gen: u32 = if (desk) |d| d.gen else 0;
+    const ins: [3]i32 = if (insets) |in| .{ in.leadingPx(scale), in.verticalPx(scale), in.trailingPx(scale) } else .{ 0, 0, 0 };
     const stale = cache.dc == null or cache.w != w or cache.h != h or
-        !std.meta.eql(cache.bg, bg) or cache.scale != scale;
+        !std.meta.eql(cache.bg, bg) or cache.scale != scale or
+        cache.desk_gen != gen or !std.meta.eql(cache.insets, ins);
     if (!stale) return;
     cache.release();
     if (w <= 0 or h <= 0) return;
@@ -1675,13 +1739,51 @@ fn ensureCardCache(cache: *CardCache, hdc: w32.HDC, w: i32, h: i32, bg: color_ma
         return;
     };
     _ = w32.SelectObject(mem_dc, bmp);
-    const pixels = @as([*]u32, @ptrCast(@alignCast(raw)));
-    // The banner card's margin IS the rail margin (12 DIP), so the card the
-    // material draws lands exactly on `layout().card` - the rail's, and the
-    // open card's (`layoutOpen` uses the same margin).
-    banner_card.render(pixels[0..@intCast(w * h)], banner_card.Metrics.init(w, h, scale), bg);
+    const pixels = @as([*]u32, @ptrCast(@alignCast(raw)))[0..@intCast(w * h)];
+    if (desk) |d| {
+        copyDesk(pixels, w, h, d, bg);
+        switch (material) {
+            .glass => banner_card.glassPanel(pixels, bg),
+            .card => {
+                // The card at the layout's own rounded insets, so it lands
+                // exactly on `layout().card` in this style too.
+                var m = banner_card.Metrics.init(w, h, scale);
+                m.insets = .{
+                    .left = @floatFromInt(ins[0]),
+                    .top = @floatFromInt(ins[1]),
+                    .right = @floatFromInt(ins[2]),
+                    .bottom = @floatFromInt(ins[1]),
+                };
+                banner_card.renderOn(pixels, m, bg);
+            },
+        }
+    } else {
+        // The banner card's margin IS the rail margin (12 DIP), so the card
+        // the material draws lands exactly on `layout().card` - the rail's,
+        // and the open card's (`layoutOpen` uses the same margin).
+        banner_card.render(pixels, banner_card.Metrics.init(w, h, scale), bg);
+    }
 
-    cache.* = .{ .dc = mem_dc, .bmp = bmp, .w = w, .h = h, .bg = bg, .scale = scale };
+    cache.* = .{ .dc = mem_dc, .bmp = bmp, .w = w, .h = h, .bg = bg, .scale = scale, .desk_gen = gen, .insets = ins };
+}
+
+/// The desk's first `w` x `h` pixels into `out` - the sidebar's column, and
+/// the open card that grows from it, start at the desk's left edge. Past the
+/// desk (a size change mid-flight) is the terminal background.
+fn copyDesk(out: []u32, w: i32, h: i32, d: PaneDesk.Backdrop, bg: color_math.Rgb) void {
+    const fill: u32 = (@as(u32, bg.r) << 16) | (@as(u32, bg.g) << 8) | bg.b;
+    const uw: usize = @intCast(w);
+    const dw: usize = @intCast(d.w);
+    for (0..@intCast(h)) |y| {
+        const row = out[y * uw ..][0..uw];
+        if (y >= @as(usize, @intCast(d.h))) {
+            @memset(row, fill);
+            continue;
+        }
+        const n = @min(uw, dw);
+        @memcpy(row[0..n], d.pixels[y * dw ..][0..n]);
+        if (n < uw) @memset(row[n..], fill);
+    }
 }
 
 /// Double-buffered: the whole column is drawn into a memory DC and blitted
@@ -1915,15 +2017,16 @@ fn positionCard(self: *PaneSidebar) void {
     const c = self.card_hwnd orelse return;
     var col: w32.RECT = undefined;
     if (w32.GetWindowRect(self.hwnd, &col) == 0) return;
-    const w = pane_sidebar.openWidthPx(self.window.pane_sidebar_width_dip, self.scale);
+    const insets = self.window.paneSidebarInsets();
+    const w = pane_sidebar.openWidthPxIn(self.window.pane_sidebar_width_dip, self.scale, insets);
     const h = col.bottom - col.top;
     if (h <= 0) return;
 
     // The region: the rail's column, plus the open card's rounded rect.
     const col_rgn = w32.CreateRectRgn(0, 0, col.right - col.left, h);
-    const margin = pane_sidebar.px(pane_sidebar.rail_margin_dip, self.scale);
+    const card = pane_sidebar.openCardRect(w, h, self.scale, insets);
     const radius = @as(i32, @intFromFloat(@round(banner_card.RADIUS * self.scale)));
-    const card_rgn = w32.CreateRoundRectRgn(margin, margin, w - margin + 1, @max(h - margin, margin) + 1, 2 * radius, 2 * radius);
+    const card_rgn = w32.CreateRoundRectRgn(card.left, card.top, card.right + 1, card.bottom + 1, 2 * radius, 2 * radius);
     if (col_rgn) |a| {
         if (card_rgn) |b| {
             _ = w32.CombineRgn(a, a, b, w32.RGN_OR);

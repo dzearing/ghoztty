@@ -4295,6 +4295,23 @@ $GuardTable = @(
             'test\win32\pane-sidebar.ps1'
         )
     },
+    # The sidebar in the elevated pane style (T1850): the desk runs under the
+    # column, the pinned panel is glass with no rule, and the rail takes the
+    # panes' margin with none trailing. The insets and the material are
+    # unit-tested in every lane; whether the sidebar's slice of the window's
+    # desk lines up with the grid's, on screen, is only answered on the box.
+    [pscustomobject]@{
+        Name   = 'pane-sidebar-elevated'
+        Script = 'test\win32\pane-sidebar-elevated.ps1'
+        Stamp  = 'test\win32\pane-sidebar-elevated.stamp.json'
+        Covers = @(
+            'src\apprt\win32\pane_sidebar.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'src\apprt\win32\PaneDesk.zig',
+            'src\apprt\win32\banner_card.zig',
+            'test\win32\pane-sidebar-elevated.ps1'
+        )
+    },
     # Dragging the sidebar's edge (T1846): the pinned panel resizes between
     # 180 and 380 DIP and never unpins, the rail pulled out pins, and the
     # width is one preference for every window. The band and the drag rules

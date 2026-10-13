@@ -1,0 +1,248 @@
+# T1850 acceptance: the pane sidebar in the elevated pane style (Mac main
+# 91ba7c08c + 557e4f978). Mac runs the window's gradient desk UNDER the
+# sidebar: the pinned panel is translucent over it with no rule against the
+# grid, and the mini rail takes the panes' own 10 DIP margin leading, top and
+# bottom and none trailing - the grid's margin is the gap on that side - so
+# the gutters either side of the rail are equal.
+#
+# What is asserted, and how (a PrintWindow of the top-level window, which
+# carries the sidebar's own GDI paint; the OpenGL panes come back flat):
+#
+#   1. RAIL GEOMETRY. The column is 10 + 44 DIP (Mac 54), and the first pane
+#      starts one grid margin (plus the card's rim) after it: the rail's card
+#      is flush with the column, so rail-to-pane equals edge-to-rail.
+#   2. THE DESK UNDER THE RAIL. The rail's leading inset is the ocean desk,
+#      not the terminal background; the card itself is the card material, not
+#      the desk; and just inside the column's trailing edge the colour meets
+#      the grid margin beside it without a seam.
+#   3. THE PINNED PANEL. Pinned, the column is the 240 DIP panel; its empty
+#      lower part lets the desk show through (blue over red on a black
+#      terminal), and just inside its trailing edge it is exactly the glass
+#      mix of the desk in the margin beside it - 38% terminal background, then
+#      the card's 6% wash - and there is no divider rule at that edge.
+#   4. Unpinning brings the 54 DIP rail back.
+#
+# Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
+# user's foreground - asserted by the foreground watcher, not assumed.
+# -NegativeControl expects the flat style's 68 DIP rail in step 1 and MUST
+# fail.
+#
+#   powershell -NoProfile -File test\win32\pane-sidebar-elevated.ps1
+param(
+    [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
+    [switch]$NegativeControl,
+    [switch]$Interactive
+)
+
+$ErrorActionPreference = 'Continue'
+$script:failures = 0
+$script:passes = 0
+$tmp = Join-Path $env:TEMP "ghoztty-t1850-$PID"
+New-Item -ItemType Directory -Force $tmp | Out-Null
+
+function Assert($name, $cond) {
+    if ($cond) { "  PASS $name"; $script:passes++ } else { "  FAIL $name"; $script:failures++ }
+}
+. (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+. (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
+[void](Set-GhozttyTestIsolation -Tag 't1850')
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+Add-Type -AssemblyName System.Drawing
+
+function Get-Panes($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible) }
+function Get-Sidebar($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyPaneSidebar') | Select-Object -First 1 }
+# Zig's @round is half-away-from-zero; .NET's default is banker's.
+function Px([double]$Dip) { [int][math]::Round($Dip * $script:scale, [MidpointRounding]::AwayFromZero) }
+# pane_elevation.zig: the margin/gap, and the card's rim inset.
+function Get-MarginPx { [math]::Max((Px 10), 1) }
+function Get-InsetPx { [math]::Max([int][math]::Ceiling(0.5 * $script:scale), 1) }
+
+# The ocean desk on a dark theme: dark, blue above red, and neither the black
+# terminal nor a neutral gray (pane-elevation.ps1's oracle).
+function Test-DeskPixel($c) {
+    if ($null -eq $c) { return $false }
+    $sum = $c.R + $c.G + $c.B
+    return ($c.B -gt $c.R + 12) -and ($sum -gt 45) -and ($sum -lt 3 * 140)
+}
+function Get-ColorDistance($a, $b) {
+    return [math]::Abs($a.R - $b.R) + [math]::Abs($a.G - $b.G) + [math]::Abs($a.B - $b.B)
+}
+function Fmt($c) { if ($null -eq $c) { 'null' } else { "$($c.R),$($c.G),$($c.B)" } }
+
+# The rail's pin (pane_sidebar.zig layoutMini) with the elevated insets.
+function Get-RailPinCenter($sb) {
+    $m = Get-MarginPx; $card = Px 44; $tile = Px 28
+    $inset = [int][math]::Truncate(($card - $tile) / 2)
+    return @{ X = $sb.Left + $m + $inset + [int]($tile / 2); Y = $sb.Top + $m + $inset + [int]($tile / 2) }
+}
+# The pinned panel's pin: 28 DIP, sm (4) from the trailing edge, 18 DIP down.
+function Get-PanelPinCenter($sb) {
+    return @{ X = $sb.Right - (Px 4) - [int]((Px 28) / 2); Y = $sb.Top + (Px 18) }
+}
+function Click($top, $target, $pt) {
+    return Send-TestMouse -Window $top -Target ([IntPtr]$target) -X $pt.X -Y $pt.Y -Action click
+}
+function Wait-SidebarWidth($top, [int]$Want, [int]$Ms = 4000) {
+    $deadline = (Get-Date).AddMilliseconds($Ms)
+    do {
+        $sb = Get-Sidebar $top
+        if ($null -ne $sb -and [math]::Abs($sb.Width - $Want) -le 1) { return $sb }
+        Start-Sleep -Milliseconds 200
+    } while ((Get-Date) -lt $deadline)
+    return (Get-Sidebar $top)
+}
+# A PrintWindow of the top-level window; $null (with the reason) when the
+# capture came back empty.
+function Get-Shot($top, [string]$Name) {
+    $shot = Get-TestWindowPixels -Window $top -Sync
+    $distinct = Get-TestDistinctColors -Shot $shot
+    if ($distinct -lt 4) {
+        Close-TestWindowPixels $shot
+        "  capture for $Name came back empty ($distinct colors)"
+        return $null
+    }
+    try { $shot.Bitmap.Save((Join-Path $env:TEMP "t1850-$Name.png"), [System.Drawing.Imaging.ImageFormat]::Png) } catch { }
+    return $shot
+}
+
+. (Join-Path $PSScriptRoot 'lib\Transcript.ps1')
+$transcript = New-TestTranscript -Name 't1850'
+
+Start-TestForegroundWatch
+$td = New-TestDesktop -Interactive:$Interactive
+$launched = @()
+$script:reachedEnd = $false
+$script:scale = 1.0
+
+& {
+try {
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
+    Assert-GhozttyPrivateEndpoint -Exe $Exe
+    $errlog = Join-Path $tmp 'app-stderr.log'
+    # The default style is elevated; a black terminal makes the desk the only
+    # blue thing in the window.
+    $app = Start-OnTestDesktop -Exe $Exe -StdErr $errlog -Arguments @('--config-default-files=false',
+        '--session-persistence=false', '--background=#000000', '--unfocused-split-opacity=1')
+    Start-Sleep -Seconds 3
+    $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
+    if ($top -eq [IntPtr]::Zero) { "  SETUP FAIL: top window not found"; $script:failures++; return }
+    Assert "window is NOT enumerable on the interactive desktop" (-not (Test-TestDesktopLeak -ProcessId $app.Pid))
+    $dpi = Get-TestWindowDpi -Window $top
+    if ($dpi -gt 0) { $script:scale = $dpi / 96.0 }
+    $m = Get-MarginPx; $i = Get-InsetPx
+    "  (window dpi $dpi, scale $($script:scale), margin $m, rim $i)"
+    # Wide enough for the pinned panel (>= 720 DIP).
+    [void](Set-TestWindowSize -Window $top -Width (Px 1100) -Height (Px 700))
+    Start-Sleep -Milliseconds 800
+
+    "== 1: the rail is 10 + 44 DIP, and the rail-to-pane gutter is the edge-to-rail one"
+    $sb = Get-Sidebar $top
+    Assert "a GhozttyPaneSidebar child exists and is visible" ($null -ne $sb -and $sb.Visible)
+    if ($null -eq $sb) { return }
+    $railW = (Get-MarginPx) + (Px 44)
+    if ($NegativeControl) {
+        "  NEGATIVE CONTROL: expecting the flat style's 68 DIP rail - this run MUST fail"
+        $railW = Px 68
+    }
+    Assert "the rail column is Mac's elevated 54 DIP ($($sb.Width) vs $railW)" ([math]::Abs($sb.Width - $railW) -le 1)
+    $panes = @(Get-Panes $top)
+    Assert "setup: one visible pane ($($panes.Count))" ($panes.Count -eq 1)
+    if ($panes.Count -lt 1) { return }
+    $p = $panes[0]
+    $gutter = $p.Left - $sb.Right - $i
+    Assert "the pane starts one grid margin after the rail ($gutter vs $m)" ($gutter -eq $m)
+
+    "== 2: the desk runs under the rail"
+    $shot = Get-Shot $top 'rail'
+    Assert "the window capture has content" ($null -ne $shot)
+    if ($null -ne $shot) {
+        try {
+            $midY = [int](($sb.Top + $sb.Bottom) / 2)
+            $lead = Get-TestPixel -Shot $shot -X ($sb.Left + [int][math]::Floor($m / 2)) -Y $midY
+            $card = Get-TestPixel -Shot $shot -X ($sb.Left + $m + (Px 22)) -Y ($sb.Bottom - (Px 60))
+            $y = $sb.Top + 2
+            $inCol = Get-TestPixel -Shot $shot -X ($sb.Right - 2) -Y $y
+            $inGrid = Get-TestPixel -Shot $shot -X ($sb.Right + 1) -Y $y
+            "  leading inset=$(Fmt $lead) card=$(Fmt $card) column-edge=$(Fmt $inCol) grid-margin=$(Fmt $inGrid)"
+            Assert "the rail's leading inset is the ocean desk, not the terminal background" (Test-DeskPixel $lead)
+            Assert "the rail's card is the card material, not the desk" (-not (Test-DeskPixel $card))
+            Assert "the column's top inset is the desk too" (Test-DeskPixel $inCol)
+            $d = Get-ColorDistance $inCol $inGrid
+            Assert "the column meets the grid margin without a seam (distance $d)" ($d -le 24)
+        } finally { Close-TestWindowPixels $shot }
+    }
+
+    "== 3: pinned, the panel is translucent over the desk, with no rule"
+    $r = Click $top $sb.Hwnd (Get-RailPinCenter $sb)
+    Assert "pin click delivered" $r
+    $sb = Wait-SidebarWidth $top (Px 240)
+    Assert "the pinned panel is 240 DIP ($($sb.Width) vs $(Px 240))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 240)) -le 1)
+    Start-Sleep -Milliseconds 500
+    $p = (@(Get-Panes $top))[0]
+    $gutter = $p.Left - $sb.Right - $i
+    Assert "the pane starts one grid margin after the panel ($gutter vs $m)" ($gutter -eq $m)
+    $shot = Get-Shot $top 'panel'
+    Assert "the window capture has content" ($null -ne $shot)
+    if ($null -ne $shot) {
+        try {
+            $y = $sb.Bottom - (Px 24)
+            $panel = Get-TestPixel -Shot $shot -X ($sb.Left + [int]($sb.Width / 2)) -Y $y
+            $edge = Get-TestPixel -Shot $shot -X ($sb.Right - 1) -Y $y
+            $inner = Get-TestPixel -Shot $shot -X ($sb.Right - (Px 8)) -Y $y
+            $desk = Get-TestPixel -Shot $shot -X ($sb.Right + 1) -Y $y
+            "  panel=$(Fmt $panel) trailing-edge=$(Fmt $edge) inside-edge=$(Fmt $inner) margin-desk=$(Fmt $desk)"
+            Assert "the desk shows through the panel (blue over red)" ($null -ne $panel -and $panel.B -ge $panel.R + 6)
+            # banner_card.glassPanel over the desk a few pixels away: black at
+            # 38%, then the card's 6% white wash (a dark terminal).
+            $want = $null
+            if ($null -ne $desk) {
+                $f = { param($v) [int][math]::Round(($v * 0.62) * 0.94 + 255 * 0.06) }
+                $want = [pscustomobject]@{ R = (& $f $desk.R); G = (& $f $desk.G); B = (& $f $desk.B) }
+            }
+            $dg = if ($null -ne $want -and $null -ne $inner) { Get-ColorDistance $inner $want } else { 999 }
+            "  glass expected beside the desk=$(Fmt $want) (distance $dg)"
+            Assert "the panel is the terminal background at 38% plus the wash over the desk (distance $dg)" ($dg -le 9)
+            $d = Get-ColorDistance $edge $inner
+            Assert "no divider rule at the panel's trailing edge (distance $d)" ($d -le 12)
+        } finally { Close-TestWindowPixels $shot }
+    }
+
+    "== 4: unpinning brings the 54 DIP rail back"
+    [void](Click $top $sb.Hwnd (Get-PanelPinCenter $sb))
+    $sb = Wait-SidebarWidth $top $railW
+    Assert "back to the rail ($($sb.Width))" ($null -ne $sb -and [math]::Abs($sb.Width - $railW) -le 1)
+
+    Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
+    $launched += $script:GhozttyTestDesktopPids
+    $script:reachedEnd = $true
+} catch {
+    "  FAIL body threw: $($_.Exception.Message)"
+    $script:failures++
+} finally {
+    Remove-TestDesktop
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
+}
+
+Assert "the body ran to its last section" ($script:reachedEnd -eq $true)
+$fgSeen = @(Stop-TestForegroundWatch)
+if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
+    $launched = @($launched | Select-Object -Unique)
+    Assert "the foreground watcher actually sampled (negative control)" ($fgSeen.Count -gt 0)
+    $leaked = @($launched | Where-Object { $fgSeen -contains $_ })
+    Assert "no test-desktop app ever became foreground on the interactive desktop" ($leaked.Count -eq 0)
+}
+Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
+
+} 2>&1 | Tee-Object -FilePath $transcript
+
+Complete-TestBody  # T1039: the run reached the end of its body
+
+if ($script:failures -eq 0 -and -not $NegativeControl) {
+    $repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard pane-sidebar-elevated -Repo $repo 2>&1 | ForEach-Object { "  $_" }
+}
+
+""
+exit (Complete-TestTranscript -Name 't1850' -Path $transcript `
+        -Label 'T1850 ACCEPTANCE' -Pass $script:passes -Fail $script:failures).Code

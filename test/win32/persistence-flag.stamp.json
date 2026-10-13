@@ -1,10 +1,10 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-10-13T00:49:15-07:00",
-    "commit":  "6a8c25468",
+    "generated":  "2026-10-13T02:05:28-07:00",
+    "commit":  "bef18f02d",
     "uncommitted":  [
-                        "test/win32/viewer-window-chords.ps1"
+                        "test/win32/pane-sidebar-elevated.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -230,6 +230,7 @@
                   "test/win32/pane-sidebar-activity.ps1":  "13e236a4cbbb8b57ce49ede4a4c17d7e4527471c0ecb4a6676032f4bd3ab3a22",
                   "test/win32/pane-sidebar-all-windows.ps1":  "1644c0a3fb81f271feed3564a3eb6145d4e36b16a09ebc9e2cc78cca577ab125",
                   "test/win32/pane-sidebar-drag.ps1":  "36eb78616d344e05dbeb5d760fdb19933e8f169593b4c588e2898bf2f5d257cd",
+                  "test/win32/pane-sidebar-elevated.ps1":  "a6bdd80eb1599939ed62976c27e6e8ba3c520bd0f2e64800f83fb000d7c555a1",
                   "test/win32/pane-sidebar-persist.ps1":  "628855c842f0944b4ddb67d688f3fb34677dc4450e67ea512975b4c3556fd673",
                   "test/win32/pane-sidebar-resize.ps1":  "ce074ae17f3209e5630dab42c78ba539bba194fc048baa05f657ee415833e3f4",
                   "test/win32/parity-decisions.ps1":  "05039eff3fcb43d262e34894717a2fc200e98d6e165e29a9eb17618ba54bd397",

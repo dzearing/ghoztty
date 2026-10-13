@@ -35788,3 +35788,24 @@ moved to T1814.
   default stash chord and a bound restore chord at a live viewer, with
   `+list --json`'s `stashed` flag as the oracle: ALL PASS (48). `-NegativeControl`
   goes red on both new arms. Harness floor green.
+
+## 2026-10-13 — T1850: the gradient runs under the pane sidebar in the elevated style
+
+- **What.** In the default (elevated) look the pane sidebar is no longer an
+  opaque slab. The window's gradient runs under it. The pinned panel is glass
+  (38% terminal background plus the card wash) with no rule against the grid.
+  The mini rail is 10 + 44 DIP: it takes the panes' margin leading, top and
+  bottom and none trailing, so the gutters either side of it match (Mac
+  91ba7c08c + 557e4f978). Flat is unchanged, byte for byte.
+- **How.** The window lays the desk out over `deskRect` (the column
+  included). The sidebar child paints its slice of the same `PaneDesk` bitmap,
+  through the new `PaneDesk.backdrop` and a `desk_gen` that tells its caches,
+  and the column, when to repaint. `banner_card` gained per-edge
+  `Metrics.insets`, `renderOn` (a card over existing pixels) and `glassPanel`.
+  `pane_sidebar.railInsets` holds the per-style geometry. The path monogram
+  half of the card had already landed with T1828.
+- **Validation.** New unit tests in `pane_sidebar.zig` and `banner_card.zig`.
+  New `pane-sidebar-elevated.ps1` ALL PASS (22): 54 DIP rail, equal gutters,
+  desk under the rail with a 1-unit seam, pinned glass within 2 of the formula
+  over the desk beside it, no rule. `-NegativeControl` goes red. Floor lanes
+  green; the due harnesses were run (see the task file).

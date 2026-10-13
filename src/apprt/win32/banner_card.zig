@@ -122,6 +122,28 @@ pub fn fillColor(bg: Rgb) Rgb {
     return color_math.wash(bg, if (color_math.isLight(bg)) FILL_DARKEN else FILL_LIGHTEN);
 }
 
+/// How much of the terminal background the pinned pane sidebar keeps over
+/// the elevated style's gradient desk (Mac 91ba7c08c,
+/// `background.opacity(elevated ? 0.38 : 1)`).
+pub const PANEL_TINT: f32 = 0.38;
+
+/// The pinned pane sidebar's material in the elevated style (T1850): `bg` at
+/// `PANEL_TINT` over whatever `pixels` already hold - the window's desk -
+/// and the card's wash over that, the way Mac stacks `GlassCard.fill` on the
+/// translucent background. The wash leans the way `fillColor`'s does, by the
+/// TERMINAL background's lightness, so the panel's text colour (chosen
+/// against `fillColor(bg)`) keeps reading on it. Over a backdrop of `bg`
+/// itself this IS `fillColor(bg)`.
+pub fn glassPanel(pixels: []u32, bg: Rgb) void {
+    const light = color_math.isLight(bg);
+    const toward: Frgb = if (light) BLACK else WHITE;
+    const a: f32 = if (light) FILL_DARKEN else FILL_LIGHTEN;
+    const tint = Frgb.from(bg);
+    for (pixels) |*p| {
+        p.* = Frgb.unpack(p.*).over(tint, PANEL_TINT).over(toward, a).pack();
+    }
+}
+
 /// Scaled-pixel geometry of one card inside its band.
 pub const Metrics = struct {
     /// Band size in px (the overlay window's client area).
@@ -132,6 +154,12 @@ pub const Metrics = struct {
     radius: f32,
     shadow_blur: f32 = SHADOW_BLUR,
     shadow_dy: f32 = SHADOW_DY,
+    /// Per-edge margins in px, when they are not all `margin` (the pane
+    /// sidebar's rail in the elevated style, T1850: the panes' margin
+    /// leading, top and bottom, and none trailing).
+    insets: ?Insets = null,
+
+    pub const Insets = struct { left: f32, top: f32, right: f32, bottom: f32 };
 
     /// Metrics for a band of `w` × `h` px at DPI `scale`.
     pub fn init(w: i32, h: i32, scale: f32) Metrics {
@@ -151,11 +179,12 @@ pub const Metrics = struct {
     pub fn card(self: Metrics) Rect {
         const w: f32 = @floatFromInt(self.w);
         const h: f32 = @floatFromInt(self.h);
+        const in = self.insets orelse Insets{ .left = self.margin, .top = self.margin, .right = self.margin, .bottom = self.margin };
         return .{
-            .left = @min(self.margin, @max(w - 1, 0)),
-            .top = @min(self.margin, @max(h - 1, 0)),
-            .right = @max(w - self.margin, @min(self.margin, w) + 1),
-            .bottom = @max(h - self.margin, @min(self.margin, h) + 1),
+            .left = @min(in.left, @max(w - 1, 0)),
+            .top = @min(in.top, @max(h - 1, 0)),
+            .right = @max(w - in.right, @min(in.left, w) + 1),
+            .bottom = @max(h - in.bottom, @min(in.top, h) + 1),
         };
     }
 };
@@ -326,6 +355,14 @@ const Frgb = struct {
         };
     }
 
+    fn unpack(p: u32) Frgb {
+        return .{
+            .r = @floatFromInt((p >> 16) & 0xFF),
+            .g = @floatFromInt((p >> 8) & 0xFF),
+            .b = @floatFromInt(p & 0xFF),
+        };
+    }
+
     fn over(self: Frgb, top: Frgb, alpha: f32) Frgb {
         return .{
             .r = mix(self.r, top.r, alpha),
@@ -353,6 +390,20 @@ const BLACK = Frgb{ .r = 0, .g = 0, .b = 0 };
 /// `0x00RRGGBB`; `bg` is the pane's own background (what the band would
 /// otherwise show).
 pub fn render(pixels: []u32, m: Metrics, bg: Rgb) void {
+    renderImpl(pixels, m, bg, false);
+}
+
+/// `render` over whatever `pixels` already holds instead of a flat `bg`:
+/// the shadow and the card's antialiased edge composite onto it, and pixels
+/// the card and its shadow do not reach are left alone. The card's own fill
+/// is still `fillColor(bg)` - opaque - so the pane sidebar's rail reads the
+/// same on the elevated style's gradient desk as on the terminal background
+/// (T1850).
+pub fn renderOn(pixels: []u32, m: Metrics, bg: Rgb) void {
+    renderImpl(pixels, m, bg, true);
+}
+
+fn renderImpl(pixels: []u32, m: Metrics, bg: Rgb, on_existing: bool) void {
     if (m.w <= 0 or m.h <= 0) return;
     const w: usize = @intCast(m.w);
     const h: usize = @intCast(m.h);
@@ -410,7 +461,8 @@ pub fn render(pixels: []u32, m: Metrics, bg: Rgb) void {
                 }
             }
 
-            var c = bg_f;
+            if (on_existing and cov_card == 0.0 and cov_shadow == 0.0) continue;
+            var c = if (on_existing) Frgb.unpack(p.*) else bg_f;
             // Shadow, with the card's own interior masked out of it (Mac
             // masks the shape out of its blurred copy so the translucent
             // wash is not darkened from behind).
@@ -484,6 +536,62 @@ test "Metrics.card: degenerate band never inverts" {
     const c = m.card();
     try testing.expect(c.right > c.left);
     try testing.expect(c.bottom > c.top);
+}
+
+test "T1850: Metrics.card honors per-edge insets (the elevated rail: none trailing)" {
+    var m = Metrics.init(54, 600, 1.0);
+    m.insets = .{ .left = 10, .top = 10, .right = 0, .bottom = 10 };
+    const c = m.card();
+    try testing.expectEqual(@as(f32, 10), c.left);
+    try testing.expectEqual(@as(f32, 10), c.top);
+    try testing.expectEqual(@as(f32, 54), c.right);
+    try testing.expectEqual(@as(f32, 590), c.bottom);
+    // Uniform insets equal to the margin are the plain card, exactly.
+    var u = Metrics.init(400, 100, 1.0);
+    const plain = u.card();
+    u.insets = .{ .left = 12, .top = 12, .right = 12, .bottom = 12 };
+    try testing.expectEqual(plain, u.card());
+}
+
+test "T1850: renderOn keeps the backdrop where the card does not reach, and draws the same card" {
+    const m = Metrics.init(200, 80, 1.0);
+    var flat: [200 * 80]u32 = undefined;
+    render(&flat, m, DARK);
+    // A backdrop that is not the pane background - a gradient row by row.
+    var on: [200 * 80]u32 = undefined;
+    for (0..80) |y| for (0..200) |x| {
+        on[y * 200 + x] = (@as(u32, @intCast(40 + y)) << 16) | (@as(u32, @intCast(x / 2)) << 8) | 0x90;
+    };
+    const before = on;
+    renderOn(&on, m, DARK);
+    // Out of the card's and the shadow's reach: the backdrop, untouched.
+    try testing.expectEqual(before[0], at(&on, m, 0, 0));
+    try testing.expectEqual(before[40 * 200], at(&on, m, 0, 40));
+    // Deep inside the card: the opaque card, whatever was under it.
+    try testing.expectEqual(at(&flat, m, 100, 40), at(&on, m, 100, 40));
+    // The shadow under the card darkens the backdrop it falls on.
+    try testing.expect(lum(at(&on, m, 100, 70)) < lum(before[70 * 200 + 100]));
+}
+
+test "T1850: glassPanel is fillColor over a backdrop of bg, and lets a desk show through" {
+    for ([_]Rgb{ DARK, .{ .r = 240, .g = 240, .b = 236 } }) |bg| {
+        // Over the terminal background itself: exactly the flat panel.
+        var same = [_]u32{Frgb.from(bg).pack()} ** 4;
+        glassPanel(&same, bg);
+        const want = Frgb.from(fillColor(bg)).pack();
+        for (same) |p| {
+            const d = @abs(@as(i32, @intCast(lum(p))) - @as(i32, @intCast(lum(want))));
+            try testing.expect(d <= 3);
+        }
+    }
+    // Over two different desk colours the panel differs: the desk shows
+    // through (62% of it), so the gradient runs under the sidebar.
+    var desk = [_]u32{ 0x00204080, 0x00106050 };
+    glassPanel(&desk, DARK);
+    try testing.expect(desk[0] != desk[1]);
+    // ...and the terminal background pulls each toward itself.
+    const blue_before: u32 = 0x80;
+    try testing.expect((desk[0] & 0xFF) < blue_before);
 }
 
 test "sdRoundRect: inside negative, outside positive, corner clipped" {

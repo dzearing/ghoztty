@@ -2241,8 +2241,35 @@ pub fn surfaceRect(self: *const Window) w32.RECT {
 /// for, not to paint behind the cycle's back).
 fn invalidateContentArea(self: *Window) void {
     const hwnd = self.hwnd orelse return;
-    var r = self.surfaceRect();
+    var r = self.deskRect();
     _ = w32.InvalidateRect(hwnd, &r, 0);
+    // The sidebar paints its own slice of the desk (T1850), and a child
+    // window is not repainted by its parent's invalidation.
+    if (self.sidebar) |sb| sb.repaint();
+}
+
+/// What the elevated style's desk covers (T1850): the content area under the
+/// chrome, the pane sidebar's column INCLUDED - Mac runs the gradient under
+/// the sidebar, which then paints its own slice of this same desk.
+/// `surfaceRect` is the part the grid may use; this is the part the desk does.
+pub fn deskRect(self: *const Window) w32.RECT {
+    const hwnd = self.hwnd orelse return .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+    var rect: w32.RECT = undefined;
+    if (w32.GetClientRect(hwnd, &rect) == 0) {
+        return .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
+    }
+    rect.top += self.chromeHeight();
+    return rect;
+}
+
+/// The desk under `deskRect`, for the pane sidebar to paint its slice of
+/// (T1850). Null in the flat style, where there is no desk.
+pub fn deskBackdrop(self: *Window) ?PaneDesk.Backdrop {
+    if (self.paneStyle() != .elevated) return null;
+    const area = self.deskRect();
+    const bg = self.app.config.background;
+    const is_light = color_math.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b });
+    return self.pane_desk.backdrop(area.right - area.left, area.bottom - area.top, is_light, self.desk_variant);
 }
 
 /// Give the window its own gradient, or (null) the ocean back (T1832). Only
@@ -2252,6 +2279,7 @@ pub fn setDeskVariant(self: *Window, variant: ?desk_palette.Variant) void {
     if (std.meta.eql(self.desk_variant, variant)) return;
     self.desk_variant = variant;
     if (self.hwnd) |hwnd| _ = w32.InvalidateRect(hwnd, null, 0);
+    if (self.sidebar) |sb| sb.repaint();
     self.app.markLayoutDirty();
 }
 
@@ -2319,7 +2347,13 @@ pub fn paneSidebarMode(self: *const Window) pane_sidebar.Mode {
 
 /// The width the sidebar's column takes from the grid, in pixels.
 pub fn paneSidebarColumnPx(self: *const Window) i32 {
-    return pane_sidebar.columnPx(self.paneSidebarMode(), self.pane_sidebar_width_dip, self.scale);
+    return pane_sidebar.columnPxFor(self.paneSidebarMode(), self.pane_sidebar_width_dip, self.scale, self.paneStyle() == .elevated);
+}
+
+/// The space around the sidebar's raised card in this window's pane style
+/// (T1850).
+pub fn paneSidebarInsets(self: *const Window) pane_sidebar.RailInsets {
+    return pane_sidebar.railInsets(self.paneStyle() == .elevated);
 }
 
 /// Bring the sidebar up to date with the window: create it on first use,
@@ -6828,7 +6862,11 @@ fn paintDividers(self: *Window, hdc: w32.HDC) void {
 /// A visible pane's card is its whole slot, header and banner band included:
 /// on Mac those are inside the pane's card too.
 fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
-    const area = self.surfaceRect();
+    // The whole desk, the sidebar's column included (T1850): the window's
+    // blit cannot reach under the sidebar child, but the gradient has to be
+    // laid out across the full width for the sidebar's slice of it to join
+    // the grid's seamlessly.
+    const area = self.deskRect();
     const w = area.right - area.left;
     const h = area.bottom - area.top;
     if (w <= 0 or h <= 0) return;
@@ -6866,6 +6904,7 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         .glows = glows[0..ng],
     }, self.desk_variant);
     self.syncGlassBackdrops(slots[0..n], area, glass, color_math.isLight(fill));
+    if (self.sidebar) |sb| sb.deskPainted(self.pane_desk.desk_gen);
 }
 
 /// A glass pane's renderer draws the desk itself (T1833). A pane child is
