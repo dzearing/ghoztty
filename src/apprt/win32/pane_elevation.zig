@@ -110,7 +110,8 @@ pub const Card = struct {
     /// band (T1884): with glass on, its rows are `head` at `HEAD_MATERIAL`
     /// over the sheet, so the desk reads through it. Mac's rearrange header is
     /// `.regularMaterial` over the pane's card, which on a glass pane is the
-    /// sheet. A viewer's nav bar keeps its own opaque band.
+    /// sheet. A viewer's nav bar is the same material on glass (T1916; Mac
+    /// `ChromeBarBackground`).
     head_glass: bool = false,
 
     /// The card's colour on row `y`, or null for the style's (glass-able)
@@ -355,6 +356,27 @@ pub fn glassSheetRegion(
             ).pack());
         }
     }
+}
+
+/// `glassSheetRegion` with a head band's material laid over it: each pixel is
+/// `glassHeadMix` of the desk there (T1916). A viewer's nav bar is a window of
+/// its own on the pane's sheet, so it paints its band this way itself - the
+/// same pixels the card paint gives a glass head's corners round it.
+pub fn glassHeadRegion(
+    out: []u32,
+    w: usize,
+    h: usize,
+    rx: i32,
+    ry: i32,
+    full_w: i32,
+    full_h: i32,
+    pal: desk_palette.Palette,
+    fill: color_math.Rgb,
+    head: color_math.Rgb,
+) void {
+    glassSheetRegion(out, w, h, rx, ry, full_w, full_h, pal, fill);
+    const lut = GlassLut.init(head, HEAD_MATERIAL, HEAD_COVER);
+    for (out[0 .. w * h]) |*p| p.* = lut.mix(p.*);
 }
 
 /// `glassMix` at `t` for one tint, and the coverage a sheet leaves, as byte
@@ -1002,6 +1024,25 @@ test "T1884: glassSheetRegion is the sheet over the desk at those pixels" {
     var far: [1]u32 = undefined;
     glassSheetRegion(&far, 1, 1, 700, 500, 800, 600, pal, tint);
     try testing.expect(far[0] != out[0]);
+}
+
+test "T1916: glassHeadRegion is the head material over the sheet at those pixels" {
+    const pal = desk_palette.Palette.ocean(false);
+    const fill: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
+    const head: color_math.Rgb = .{ .r = 44, .g = 46, .b = 52 };
+    var out: [6 * 4]u32 = undefined;
+    glassHeadRegion(&out, 6, 4, 100, 40, 800, 600, pal, fill, head);
+    for (0..4) |row| for (0..6) |col| {
+        const x: f32 = @as(f32, @floatFromInt(100 + col)) + 0.5;
+        const y: f32 = @as(f32, @floatFromInt(40 + row)) + 0.5;
+        try testing.expectEqual(glassHeadMix(pal.at(x, y, 800, 600).pack(), fill, head), out[row * 6 + col]);
+    };
+    // A material, not a band: the desk still moves it, and it is not the
+    // plain head colour anywhere.
+    var far: [1]u32 = undefined;
+    glassHeadRegion(&far, 1, 1, 700, 500, 800, 600, pal, fill, head);
+    try testing.expect(far[0] != out[0]);
+    try testing.expect(out[0] != packRgb(44, 46, 52));
 }
 
 test "T1833: glassMix keeps 40% of the tint over the desk, in linear light" {

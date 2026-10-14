@@ -4945,6 +4945,9 @@ pub fn setGlassBackdrop(self: *ViewerPane, spec: ?pane_elevation.GlassBackdrop) 
         self.refreshScheme();
     }
     if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
+    // The nav bar is a material over the same slice (T1916), and a child is
+    // not repainted by its parent's invalidation.
+    if (self.nav) |nav| _ = w32.InvalidateRect(nav.hwnd, null, 0);
 }
 
 /// Assign the content mode, keeping the web view's background in step when
@@ -6635,6 +6638,9 @@ pub const CardColors = struct {
     /// null when no bar is shown.
     head: ?color_math.Rgb,
     head_px: i32,
+    /// The band is a material over the glass sheet (T1916), which is how
+    /// the nav bar paints itself on a glass pane.
+    head_glass: bool = false,
     fill: color_math.Rgb,
 };
 
@@ -6663,6 +6669,7 @@ pub fn cardColors(self: *const ViewerPane) CardColors {
     return .{
         .head = head,
         .head_px = head_px,
+        .head_glass = head != null and self.glass != null,
         // A see-through page shows the sheet, which is the pane background
         // over the desk - the same tint as a terminal's card (T1885).
         .fill = if (self.state == .ready and !self.drawsOnGlass()) page else self.bg,
@@ -7813,6 +7820,43 @@ test "host floor: a real controller on a real window, on this box" {
             try testing.expect(want[0] != want[@as(usize, sw) * sh - 1]);
         }
 
+        // The nav bar is the chrome colour as a material over that same
+        // slice (T1916), photographed through its own WM_PRINTCLIENT; the
+        // card paint draws its corners the same way.
+        try testing.expect(pane.cardColors().head_glass);
+        const nav_row = struct {
+            fn shot(a: Allocator, nav: *ViewerNavBar) ![]u32 {
+                var nr: w32.RECT = undefined;
+                if (w32.GetClientRect(nav.hwnd, &nr) == 0) return error.Win32Error;
+                const nw = nr.right - nr.left;
+                const nh = nr.bottom - nr.top;
+                if (nw <= 0 or nh <= 0) return error.Win32Error;
+                const screen = w32.GetDC(null) orelse return error.Win32Error;
+                defer _ = w32.ReleaseDC(null, screen);
+                const dib = Dib32.create(screen, nw, nh) orelse return error.Win32Error;
+                defer dib.destroy();
+                _ = w32.SendMessageW(nav.hwnd, w32.WM_PRINTCLIENT, @intFromPtr(dib.dc), 0);
+                // The top row: above the field and every glyph, all band.
+                const row = try a.alloc(u32, @intCast(nw));
+                for (row, dib.pixels[0..@intCast(nw)]) |*o, p| o.* = p & 0x00FFFFFF;
+                return row;
+            }
+        }.shot;
+        {
+            const nav = pane.nav.?;
+            const got = try nav_row(alloc, nav);
+            defer alloc.free(got);
+            const want = try alloc.alloc(u32, got.len);
+            defer alloc.free(want);
+            pane_elevation.glassHeadRegion(want, got.len, 1, spec.rect[0], spec.rect[1], spec.full_w, spec.full_h, spec.palette, pane.bg, nav.bar_rgb);
+            for ([_]usize{ 0, got.len / 2, got.len - 1 }) |i| {
+                try testing.expectEqual(want[i], got[i]);
+            }
+            const solid: u32 = (@as(u32, nav.bar_rgb.r) << 16) | (@as(u32, nav.bar_rgb.g) << 8) | nav.bar_rgb.b;
+            try testing.expect(got[0] != solid);
+            log.warn("glass nav band: x0=0x{X:0>6} mid=0x{X:0>6} solid=0x{X:0>6}", .{ got[0], got[got.len / 2], solid });
+        }
+
         // What the browser's windows under the host are, for the record: the
         // sheet is laid under them on the strength of WebView2 showing the
         // host's pixels through a clear background.
@@ -7855,6 +7899,15 @@ test "host floor: a real controller on a real window, on this box" {
         try testing.expect(std.mem.startsWith(u8, probe.text[0..probe.len], "\"false|"));
         try testing.expect(!std.mem.endsWith(u8, probe.text[0..probe.len], "|rgba(0, 0, 0, 0)\""));
         try testing.expectEqual(iface.PreferredColorScheme.light, profile.preferredColorScheme().?);
+        // And the nav bar is a solid band again (T1916).
+        try testing.expect(!pane.cardColors().head_glass);
+        {
+            const nav = pane.nav.?;
+            const got = try nav_row(alloc, nav);
+            defer alloc.free(got);
+            const solid: u32 = (@as(u32, nav.bar_rgb.r) << 16) | (@as(u32, nav.bar_rgb.g) << 8) | nav.bar_rgb.b;
+            for ([_]usize{ 0, got.len / 2, got.len - 1 }) |i| try testing.expectEqual(solid, got[i]);
+        }
     }
 
     // ------------------------------------------------------------------

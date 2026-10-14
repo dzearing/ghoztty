@@ -36252,3 +36252,23 @@ moved to T1814.
   WIC. viewer-image.ps1 K5: the pane shows a tagged 800x400 JPEG at 400x800,
   and the copy log and the clipboard both read 400x800 (ALL PASS, 54). All
   four floor lanes, P1-P3 and the harness lane passed.
+
+## 2026-10-14 — T1916: the viewer nav bar is a material on a glass pane
+
+- **What changed.** On a glass pane the nav bar is no longer a solid strip.
+  It paints the chrome colour as a material over its slice of the desk, the
+  same `HEAD_MATERIAL` blend the rearrange header uses (T1884), through a new
+  `pane_elevation.glassHeadRegion`. `cardColors` reports the band as glass,
+  so the card's top corners are drawn the same way. A new desk slice now
+  invalidates the bar as well as the host. Off glass, the bar is solid again.
+- **Mac reference.** `ChromeBarBackground` (glass / `.ultraThinMaterial`) is
+  shared by the nav bar and the feedback composer. The composer half is filed
+  as T1926.
+- **Validation.** Unit test: `glassHeadRegion` equals `glassHeadMix` pixel for
+  pixel. Live host-floor test (win32 lane): the bar's top row, captured
+  through WM_PRINTCLIENT, matches the material at the left edge, middle and
+  right edge, and it is solid `bar_rgb` off glass. All four floor lanes pass,
+  and so do P1-P3. 28 of the 30 due harnesses passed on the first run. On a
+  rerun remote-disconnect passed 56/56 (flake filed as T1927). drag-perf's
+  one failure is T1854, which was already open. The on-screen composite was
+  NOT RUN because the user is present (T1915).

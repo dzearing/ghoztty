@@ -7160,6 +7160,7 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
             if (cards[i].head == null) if (cc.head) |hc| {
                 cards[i].head = hc;
                 cards[i].head_bottom = inner.top + cc.head_px - area.top;
+                cards[i].head_glass = cc.head_glass;
             };
         }
     }

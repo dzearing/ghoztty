@@ -33,6 +33,8 @@ const chrome_reposition = @import("chrome_reposition.zig");
 const color_math = @import("color_math.zig");
 const chrome_theme = @import("chrome_theme.zig");
 const banner_card = @import("banner_card.zig");
+const pane_elevation = @import("pane_elevation.zig");
+const Dib32 = @import("dib32.zig");
 const type_ramp = @import("type_ramp.zig");
 const icon_button = @import("icon_button.zig");
 const icon_paint = @import("icon_button_paint.zig");
@@ -934,11 +936,13 @@ fn openOverflowMenu(self: *ViewerNavBar) void {
 }
 
 fn paint(self: *ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) void {
-    const bar_ref = w32.RGB(self.bar_rgb.r, self.bar_rgb.g, self.bar_rgb.b);
-    if (w32.CreateSolidBrush(bar_ref)) |brush| {
-        defer _ = w32.DeleteObject(@ptrCast(brush));
-        var r = w32.RECT{ .left = 0, .top = 0, .right = width, .bottom = height };
-        _ = w32.FillRect(hdc, &r, brush);
+    if (!self.paintGlass(hdc, width, height)) {
+        const bar_ref = w32.RGB(self.bar_rgb.r, self.bar_rgb.g, self.bar_rgb.b);
+        if (w32.CreateSolidBrush(bar_ref)) |brush| {
+            defer _ = w32.DeleteObject(@ptrCast(brush));
+            var r = w32.RECT{ .left = 0, .top = 0, .right = width, .bottom = height };
+            _ = w32.FillRect(hdc, &r, brush);
+        }
     }
 
     const l = layout_mod.Layout.init(self.scale, width, self.shown());
@@ -978,6 +982,23 @@ fn paint(self: *ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) void {
         const color = if (enabled) self.text_ref else self.secondary_ref;
         icon_paint.glyph(hdc, m, icon_button.glyphTarget(m, box, glyph), glyph, color);
     }
+}
+
+/// On a glass pane the band is a material over the sheet rather than a solid
+/// band (T1916): Mac's `ChromeBarBackground` is glass / `.ultraThinMaterial`,
+/// so the desk's light reads through the bar the way it does through the
+/// rearrange header (T1884). The bar sits at the host's top-left
+/// (`place`), so its slice of the desk is the host's own. Website panes take
+/// it too - on Mac the chrome is glass whatever the page is. False off glass
+/// or when no buffer could be made: the caller fills `bar_rgb`.
+fn paintGlass(self: *const ViewerNavBar, hdc: w32.HDC, width: i32, height: i32) bool {
+    const g = self.pane.glass orelse return false;
+    if (width <= 0 or height <= 0) return true;
+    const dib = Dib32.create(hdc, width, height) orelse return false;
+    defer dib.destroy();
+    pane_elevation.glassHeadRegion(dib.pixels, @intCast(width), @intCast(height), g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, self.pane.bg, self.bar_rgb);
+    _ = w32.BitBlt(hdc, 0, 0, width, height, dib.dc, 0, 0, w32.SRCCOPY);
+    return true;
 }
 
 fn updateHover(self: *ViewerNavBar, x: i32, y: i32) void {
