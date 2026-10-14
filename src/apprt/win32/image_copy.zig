@@ -21,6 +21,13 @@
 //! ctrl+C answers `false` and logs why rather than putting a blank bitmap on
 //! the clipboard.
 //!
+//! ## Orientation
+//!
+//! WIC hands back the pixels as STORED. A phone stores a portrait photo in
+//! sensor order and records the turn in the EXIF Orientation tag, which the
+//! pane's browser applies, so the copy reads that tag and turns the pixels
+//! the same way (T1910) - otherwise the user pastes the photo sideways.
+//!
 //! ## Thread
 //!
 //! Called on the UI thread, which already has COM initialised (STA) — every
@@ -65,8 +72,11 @@ pub fn copyFile(alloc: Allocator, path: []const u8) ?Result {
     // The "PNG" format's bytes, per `pngPlan`.
     const file_bytes: ?[]u8 = std.fs.cwd().readFileAlloc(alloc, path, max_file_bytes) catch null;
     defer if (file_bytes) |b| alloc.free(b);
+    // A PNG that carries an orientation is not the picture the pane shows,
+    // so it is never published verbatim.
     const plan = image_clipboard.pngPlan(
-        if (file_bytes) |b| image_clipboard.isPng(b) else false,
+        decoded.orientation == .normal and
+            if (file_bytes) |b| image_clipboard.isPng(b) else false,
         image_clipboard.isOpaque(decoded.bgra),
     );
     var encoded: ?[]u8 = null;
@@ -141,9 +151,16 @@ fn globalCopy(bytes: []const u8) ?*anyopaque {
 
 // --------------------------------------------------------------------- WIC
 
-const Decoded = struct { bgra: []u8, width: u32, height: u32 };
+const Decoded = struct {
+    bgra: []u8,
+    width: u32,
+    height: u32,
+    /// What was applied to reach `bgra` from the stored pixels.
+    orientation: image_clipboard.Orientation = .normal,
+};
 
-/// Decode the first frame of `path` to top-down straight-alpha BGRA.
+/// Decode the first frame of `path` to top-down straight-alpha BGRA, turned
+/// upright per its EXIF orientation.
 fn decode(alloc: Allocator, path: []const u8) ?Decoded {
     const wpath = std.unicode.wtf8ToWtf16LeAllocZ(alloc, path) catch return null;
     defer alloc.free(wpath);
@@ -180,7 +197,7 @@ fn decode(alloc: Allocator, path: []const u8) ?Decoded {
     }
     defer _ = decoder.?.vtable.Release(decoder.?);
 
-    var frame: ?*IWICBitmapSource = null;
+    var frame: ?*IWICBitmapFrameDecode = null;
     if (com.failed(decoder.?.vtable.GetFrame(decoder.?, 0, &frame)) or frame == null) {
         log.warn("image copy: {s} has no first frame", .{path});
         return null;
@@ -190,9 +207,10 @@ fn decode(alloc: Allocator, path: []const u8) ?Decoded {
     var converter: ?*IWICFormatConverter = null;
     if (com.failed(factory.vtable.CreateFormatConverter(factory, &converter)) or converter == null) return null;
     defer _ = converter.?.vtable.Release(converter.?);
+    const orientation = readOrientation(frame.?);
     const init = converter.?.vtable.Initialize(
         converter.?,
-        frame.?,
+        @ptrCast(frame.?),
         &GUID_WICPixelFormat32bppBGRA,
         WICBitmapDitherTypeNone,
         null,
@@ -221,13 +239,49 @@ fn decode(alloc: Allocator, path: []const u8) ?Decoded {
         alloc.free(bgra);
         return null;
     }
-    return .{ .bgra = bgra, .width = width, .height = height };
+    if (orientation == .normal) return .{ .bgra = bgra, .width = width, .height = height };
+    defer alloc.free(bgra);
+    const turned = image_clipboard.orient(alloc, bgra, width, height, orientation) catch return null;
+    return .{ .bgra = turned.bgra, .width = turned.width, .height = turned.height, .orientation = orientation };
+}
+
+/// The frame's EXIF Orientation, `.normal` when it has none or the metadata
+/// cannot be read - a picture without the tag is shown as stored, by the
+/// browser and here alike.
+fn readOrientation(frame: *IWICBitmapFrameDecode) image_clipboard.Orientation {
+    var reader: ?*IWICMetadataQueryReader = null;
+    if (com.failed(frame.vtable.GetMetadataQueryReader(frame, &reader)) or reader == null) return .normal;
+    defer _ = reader.?.vtable.Release(reader.?);
+    // The photo policy name resolves per container (a JPEG's APP1 IFD, a
+    // TIFF's own IFD); the raw JPEG path is the fallback for a codec that
+    // does not map the policy.
+    const queries = [_][*:0]const u16{
+        std.unicode.utf8ToUtf16LeStringLiteral("System.Photo.Orientation"),
+        std.unicode.utf8ToUtf16LeStringLiteral("/app1/ifd/{ushort=274}"),
+    };
+    for (queries) |q| {
+        var v: PROPVARIANT = .{};
+        if (com.failed(reader.?.vtable.GetMetadataByName(reader.?, q, &v))) continue;
+        defer _ = PropVariantClear(&v);
+        if (v.vt == VT_UI2) return image_clipboard.Orientation.fromTag(@truncate(v.data[0]));
+    }
+    return .normal;
 }
 
 const GUID = w32.GUID;
 const HRESULT = w32.HRESULT;
 
 const GENERIC_READ: u32 = 0x80000000;
+const VT_UI2: u16 = 18;
+
+/// `PROPVARIANT`: a type tag, three reserved words, then a 16-byte union on
+/// 64-bit Windows. Only `VT_UI2` is read, from the low bytes of the union.
+const PROPVARIANT = extern struct {
+    vt: u16 = 0,
+    reserved: [3]u16 = .{ 0, 0, 0 },
+    data: [2]u64 = .{ 0, 0 },
+};
+extern "ole32" fn PropVariantClear(pv: *PROPVARIANT) callconv(.winapi) HRESULT;
 const WICDecodeMetadataCacheOnDemand: u32 = 0;
 const WICBitmapDitherTypeNone: u32 = 0;
 const WICBitmapPaletteTypeCustom: u32 = 0;
@@ -297,9 +351,9 @@ const IWICBitmapDecoder = extern struct {
         GetColorContexts: Unused,
         GetThumbnail: Unused,
         GetFrameCount: Unused,
-        /// Returns an `IWICBitmapFrameDecode`, which IS an
-        /// `IWICBitmapSource` for every slot used here.
-        GetFrame: *const fn (*IWICBitmapDecoder, u32, *?*IWICBitmapSource) callconv(.winapi) HRESULT,
+        /// An `IWICBitmapFrameDecode` is also an `IWICBitmapSource`, which is
+        /// how it is handed to the format converter.
+        GetFrame: *const fn (*IWICBitmapDecoder, u32, *?*IWICBitmapFrameDecode) callconv(.winapi) HRESULT,
     },
 };
 
@@ -308,6 +362,33 @@ const IWICBitmapSource = extern struct {
         QueryInterface: Unused,
         AddRef: Unused,
         Release: *const fn (*IWICBitmapSource) callconv(.winapi) u32,
+    },
+};
+
+const IWICBitmapFrameDecode = extern struct {
+    vtable: *const extern struct {
+        QueryInterface: Unused,
+        AddRef: Unused,
+        Release: *const fn (*IWICBitmapFrameDecode) callconv(.winapi) u32,
+        // IWICBitmapSource
+        GetSize: Unused,
+        GetPixelFormat: Unused,
+        GetResolution: Unused,
+        CopyPalette: Unused,
+        CopyPixels: Unused,
+        // IWICBitmapFrameDecode
+        GetMetadataQueryReader: *const fn (*IWICBitmapFrameDecode, *?*IWICMetadataQueryReader) callconv(.winapi) HRESULT,
+    },
+};
+
+const IWICMetadataQueryReader = extern struct {
+    vtable: *const extern struct {
+        QueryInterface: Unused,
+        AddRef: Unused,
+        Release: *const fn (*IWICMetadataQueryReader) callconv(.winapi) u32,
+        GetContainerFormat: Unused,
+        GetLocation: Unused,
+        GetMetadataByName: *const fn (*IWICMetadataQueryReader, [*:0]const u16, *PROPVARIANT) callconv(.winapi) HRESULT,
     },
 };
 
@@ -375,4 +456,73 @@ test "decode refuses a file that is not a picture" {
     const path = try tmp.dir.realpathAlloc(alloc, "x.png");
     defer alloc.free(path);
     try testing.expect(decode(alloc, path) == null);
+}
+
+/// `jpeg` with an EXIF APP1 segment carrying Orientation = `tag` spliced in
+/// right after its SOI marker. Caller frees.
+fn withExifOrientation(alloc: Allocator, jpeg: []const u8, tag: u8) ![]u8 {
+    const app1 = [_]u8{
+        0xFF, 0xE1, 0x00, 0x22, // APP1, length 34 (counts itself)
+        'E', 'x', 'i', 'f', 0, 0,
+        'I', 'I', 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00, // little-endian TIFF, IFD0 at 8
+        0x01, 0x00, // one entry
+        0x12, 0x01, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, tag, 0x00, 0x00, 0x00, // 274, SHORT, 1, tag
+        0x00, 0x00, 0x00, 0x00, // no next IFD
+    };
+    return std.mem.concat(alloc, u8, &.{ jpeg[0..2], &app1, jpeg[2..] });
+}
+
+/// Whether the BGRA pixel at (x, y) is clearly red (true) rather than blue.
+fn isRed(d: Decoded, x: u32, y: u32) bool {
+    const i = (@as(usize, y) * d.width + x) * 4;
+    return d.bgra[i + 2] > 150 and d.bgra[i] < 100;
+}
+
+test "decode turns a phone photo upright from its EXIF orientation (T1910)" {
+    if (@import("builtin").os.tag != .windows) return error.SkipZigTest;
+    _ = w32.CoInitializeEx(null, w32.COINIT_APARTMENTTHREADED);
+    const alloc = testing.allocator;
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Stored 32x16: the left half red, the right half blue.
+    const base = @embedFile("testdata/half-red-half-blue.jpg");
+
+    // No tag: as stored.
+    try tmp.dir.writeFile(.{ .sub_path = "plain.jpg", .data = base });
+    const plain_path = try tmp.dir.realpathAlloc(alloc, "plain.jpg");
+    defer alloc.free(plain_path);
+    const plain = decode(alloc, plain_path) orelse return error.TestUnexpectedResult;
+    defer alloc.free(plain.bgra);
+    try testing.expectEqual(image_clipboard.Orientation.normal, plain.orientation);
+    try testing.expectEqual(@as(u32, 32), plain.width);
+    try testing.expect(isRed(plain, 0, 0));
+    try testing.expect(!isRed(plain, 31, 0));
+
+    // 6, the portrait phone shot: a quarter turn clockwise, 16x32, the stored
+    // left (red) half now on top.
+    const six = try withExifOrientation(alloc, base, 6);
+    defer alloc.free(six);
+    try tmp.dir.writeFile(.{ .sub_path = "six.jpg", .data = six });
+    const six_path = try tmp.dir.realpathAlloc(alloc, "six.jpg");
+    defer alloc.free(six_path);
+    const r6 = decode(alloc, six_path) orelse return error.TestUnexpectedResult;
+    defer alloc.free(r6.bgra);
+    try testing.expectEqual(image_clipboard.Orientation.rotate_90, r6.orientation);
+    try testing.expectEqual(@as(u32, 16), r6.width);
+    try testing.expectEqual(@as(u32, 32), r6.height);
+    try testing.expect(isRed(r6, 0, 0));
+    try testing.expect(isRed(r6, 15, 0));
+    try testing.expect(!isRed(r6, 0, 31));
+
+    // 8, the other way: blue on top.
+    const eight = try withExifOrientation(alloc, base, 8);
+    defer alloc.free(eight);
+    try tmp.dir.writeFile(.{ .sub_path = "eight.jpg", .data = eight });
+    const eight_path = try tmp.dir.realpathAlloc(alloc, "eight.jpg");
+    defer alloc.free(eight_path);
+    const r8 = decode(alloc, eight_path) orelse return error.TestUnexpectedResult;
+    defer alloc.free(r8.bgra);
+    try testing.expectEqual(@as(u32, 16), r8.width);
+    try testing.expect(!isRed(r8, 0, 0));
+    try testing.expect(isRed(r8, 0, 31));
 }

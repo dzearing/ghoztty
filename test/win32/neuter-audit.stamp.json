@@ -1,12 +1,11 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-10-14T05:25:32-07:00",
-    "commit":  "1eff790c4",
+    "generated":  "2026-10-14T06:12:29-07:00",
+    "commit":  "191c1fd22",
     "uncommitted":  [
-                        "src/apprt/win32/desk_palette.zig",
-                        "src/apprt/win32/Surface.zig",
-                        "src/apprt/win32/Window.zig"
+                        "src/apprt/win32/image_clipboard.zig",
+                        "src/apprt/win32/image_copy.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -109,8 +108,8 @@
                   "src/apprt/win32/hover_capture.zig":  "81bb10df4764a185dc70726f520650052e43742937dfec0d10275ceb7caf31cf",
                   "src/apprt/win32/icon_button.zig":  "6a3a4f1eb1abe83ec20e99cf0bac21916ffc1de249530f199ba65cab4c421c08",
                   "src/apprt/win32/icon_button_paint.zig":  "82fc793331a79b8c9ed765976e8e7b7d7c4e93b4b020f8c898f50ef414c2aa24",
-                  "src/apprt/win32/image_clipboard.zig":  "e76981edec22b838e3c21ae8c0f64779232eac05ef6e8fd6b593e068bf11fabb",
-                  "src/apprt/win32/image_copy.zig":  "cb1d4de5b007e0926fca3841312f9d242810617dc0e07f01edcbd24f7ff9381f",
+                  "src/apprt/win32/image_clipboard.zig":  "e246e8ec082f089bb8dae081127d10116564680d39359c3a170454259b57fa9f",
+                  "src/apprt/win32/image_copy.zig":  "a03b3dd5ec16f2d0f73b0b66001200b85632e24025e2d898ab087bcbab3ae071",
                   "src/apprt/win32/image_freshness.zig":  "8edb6d86781716200a50df3157f8a1a396da5f2f265db20f470aa72f0f177f1c",
                   "src/apprt/win32/install_ca.zig":  "36cb6447141b865573ba3359f9163c7c5c64ce23724b31b27b78ffe08967f664",
                   "src/apprt/win32/install_location.zig":  "9a6320f5bd3191c1381dc7514d03c2ae1a6bd43176dd1019d2007bf6dc372eaf",

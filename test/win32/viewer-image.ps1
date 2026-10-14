@@ -23,6 +23,8 @@
 #   - ctrl+C (and ctrl+Insert) at an image pane copies the PICTURE (T1872):
 #     the size is read back off the clipboard, a PNG file is published
 #     verbatim as the "PNG" format, and a text pane keeps the page's own copy.
+#     A phone photo with an EXIF orientation copies upright, the way the
+#     pane shows it (T1910).
 #
 # ORACLE, and why it is the log. This runs on the background test desktop,
 # where CopyFromScreen and SendInput are dead (T233), so nothing out here can
@@ -228,6 +230,21 @@ try {
     $g.Dispose()
     $jpg.Save($jpgPath, [System.Drawing.Imaging.ImageFormat]::Jpeg)
 } finally { $jpg.Dispose() }
+
+# A phone photo (T1910): stored 800x400 in sensor order with EXIF Orientation
+# 6, so it is SHOWN 400x800. PropertyItem has no public constructor; an
+# uninitialised one is how System.Drawing is handed a new tag.
+$phonePath = Join-Path $dir 'phone.jpg'
+$phone = New-Object System.Drawing.Bitmap 800, 400
+try {
+    $g = [System.Drawing.Graphics]::FromImage($phone)
+    $g.Clear([System.Drawing.Color]::DarkOrange)
+    $g.Dispose()
+    $tag = [System.Runtime.Serialization.FormatterServices]::GetUninitializedObject([System.Drawing.Imaging.PropertyItem])
+    $tag.Id = 0x0112; $tag.Type = 3; $tag.Len = 2; $tag.Value = [byte[]](6, 0)
+    $phone.SetPropertyItem($tag)
+    $phone.Save($phonePath, [System.Drawing.Imaging.ImageFormat]::Jpeg)
+} finally { $phone.Dispose() }
 
 # Vector art with an intrinsic size, which is what makes 100% mean something
 # different for it.
@@ -523,6 +540,19 @@ try {
             Send-Copy $kj 'Insert'
             $line = Wait-CopyLine $kj.Pane 2
             Assert ($null -ne $line) 'K3: ctrl+Insert at an image pane copies too'
+
+            # K5. a phone photo (T1910): the pane shows it upright, so the copy
+            # is upright too - 400x800, not the 800x400 it is stored as.
+            $kr = Open-ViewerTop 't1910phone' $phonePath
+            $loaded = Wait-Loaded $errlog $kr.Pane
+            Assert ($loaded -and $loaded.NatW -eq 400 -and $loaded.NatH -eq 800) `
+                "K5: the pane shows the phone photo upright, 400x800 (page reports $($loaded.NatW)x$($loaded.NatH))"
+            Set-Sentinel 't1910-sentinel-5'
+            Send-Copy $kr
+            $line = Wait-CopyLine $kr.Pane
+            Assert ($line -match 'ok=true size=400x800 ') "K5: ctrl+C copied it upright, 400x800 (log: '$line')"
+            $clip = Get-ClipShape
+            Assert ($clip.W -eq 400 -and $clip.H -eq 800) "K5: the clipboard holds a 400x800 picture (read back $($clip.W)x$($clip.H))"
 
             # K4. the control: a TEXT pane keeps the page's own copy. Select all,
             # copy, and the file's text lands - with no image copy logged.

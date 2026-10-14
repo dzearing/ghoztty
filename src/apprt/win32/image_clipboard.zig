@@ -124,6 +124,79 @@ pub fn pngPlan(file_is_png: bool, is_opaque: bool) PngPlan {
     return if (is_opaque) .none else .encode;
 }
 
+/// The EXIF Orientation tag (274): how the STORED pixels must be turned to
+/// show the picture upright (T1910). A phone writes its photos in sensor
+/// order and records the turn here instead of rotating them; the pane's
+/// browser applies it (`image-orientation: from-image`, Chromium's default),
+/// so the copy must apply it too or the user pastes the photo sideways.
+pub const Orientation = enum(u16) {
+    normal = 1,
+    flip_horizontal = 2,
+    rotate_180 = 3,
+    flip_vertical = 4,
+    /// Mirrored across the top-left to bottom-right diagonal.
+    transpose = 5,
+    /// Turned a quarter clockwise to display — the usual portrait phone shot.
+    rotate_90 = 6,
+    /// Mirrored across the other diagonal.
+    transverse = 7,
+    rotate_270 = 8,
+
+    /// A tag value outside 1-8 is a malformed file; show it as stored, which
+    /// is also what the browser does.
+    pub fn fromTag(tag: u16) Orientation {
+        return std.meta.intToEnum(Orientation, tag) catch .normal;
+    }
+
+    /// Whether width and height trade places.
+    pub fn swapsAxes(self: Orientation) bool {
+        return @intFromEnum(self) >= 5;
+    }
+};
+
+/// `bgra` (top-down, `width` x `height`) turned upright per `o`. Returns the
+/// new buffer and its dimensions; `.normal` still copies, so the caller owns
+/// one buffer either way. Caller frees `.bgra`.
+pub fn orient(
+    alloc: Allocator,
+    bgra: []const u8,
+    width: u32,
+    height: u32,
+    o: Orientation,
+) Error!Oriented {
+    const w: usize = width;
+    const h: usize = height;
+    if (bgra.len != w * h * 4) return error.BadPixels;
+    const out = try alloc.alloc(u8, bgra.len);
+    errdefer alloc.free(out);
+    const ow: usize = if (o.swapsAxes()) h else w;
+    for (0..h) |y| {
+        for (0..w) |x| {
+            // Where the stored pixel (x, y) lands in the upright picture.
+            const dx: usize, const dy: usize = switch (o) {
+                .normal => .{ x, y },
+                .flip_horizontal => .{ w - 1 - x, y },
+                .rotate_180 => .{ w - 1 - x, h - 1 - y },
+                .flip_vertical => .{ x, h - 1 - y },
+                .transpose => .{ y, x },
+                .rotate_90 => .{ h - 1 - y, x },
+                .transverse => .{ h - 1 - y, w - 1 - x },
+                .rotate_270 => .{ y, w - 1 - x },
+            };
+            const src = (y * w + x) * 4;
+            const dst = (dy * ow + dx) * 4;
+            @memcpy(out[dst..][0..4], bgra[src..][0..4]);
+        }
+    }
+    return .{
+        .bgra = out,
+        .width = if (o.swapsAxes()) height else width,
+        .height = if (o.swapsAxes()) width else height,
+    };
+}
+
+pub const Oriented = struct { bgra: []u8, width: u32, height: u32 };
+
 /// BGRA → RGBA, the channel order `png_encode` takes. Caller frees.
 pub fn bgraToRgba(alloc: Allocator, bgra: []const u8) Allocator.Error![]u8 {
     const out = try alloc.alloc(u8, bgra.len);
@@ -215,4 +288,46 @@ test "bgraToRgba swaps red and blue and keeps alpha" {
     const out = try bgraToRgba(alloc, &[_]u8{ 10, 20, 30, 40 });
     defer alloc.free(out);
     try testing.expectEqualSlices(u8, &.{ 30, 20, 10, 40 }, out);
+}
+
+/// A 3x2 picture whose pixels are numbered 0..5 in reading order (the number
+/// sits in the blue byte), turned per `o` and read back as numbers.
+fn orientedIds(o: Orientation) ![6]u8 {
+    const alloc = testing.allocator;
+    var px: [6 * 4]u8 = undefined;
+    for (0..6) |i| px[i * 4 ..][0..4].* = .{ @intCast(i), 0, 0, 0xFF };
+    const r = try orient(alloc, &px, 3, 2, o);
+    defer alloc.free(r.bgra);
+    try testing.expectEqual(@as(u32, if (o.swapsAxes()) 2 else 3), r.width);
+    try testing.expectEqual(@as(u32, if (o.swapsAxes()) 3 else 2), r.height);
+    var ids: [6]u8 = undefined;
+    for (0..6) |i| ids[i] = r.bgra[i * 4];
+    return ids;
+}
+
+// Stored (3 wide, 2 tall):   0 1 2
+//                            3 4 5
+test "orient: every EXIF orientation turns the stored pixels upright" {
+    try testing.expectEqual([6]u8{ 0, 1, 2, 3, 4, 5 }, try orientedIds(.normal));
+    try testing.expectEqual([6]u8{ 2, 1, 0, 5, 4, 3 }, try orientedIds(.flip_horizontal));
+    try testing.expectEqual([6]u8{ 5, 4, 3, 2, 1, 0 }, try orientedIds(.rotate_180));
+    try testing.expectEqual([6]u8{ 3, 4, 5, 0, 1, 2 }, try orientedIds(.flip_vertical));
+    // Upright is 2 wide, 3 tall from here on.
+    try testing.expectEqual([6]u8{ 0, 3, 1, 4, 2, 5 }, try orientedIds(.transpose));
+    // A quarter turn clockwise: the stored left column becomes the top row,
+    // read from the bottom up.
+    try testing.expectEqual([6]u8{ 3, 0, 4, 1, 5, 2 }, try orientedIds(.rotate_90));
+    try testing.expectEqual([6]u8{ 5, 2, 4, 1, 3, 0 }, try orientedIds(.transverse));
+    try testing.expectEqual([6]u8{ 2, 5, 1, 4, 0, 3 }, try orientedIds(.rotate_270));
+}
+
+test "orient: a tag outside 1-8 shows the picture as stored" {
+    try testing.expectEqual(Orientation.normal, Orientation.fromTag(0));
+    try testing.expectEqual(Orientation.normal, Orientation.fromTag(9));
+    try testing.expectEqual(Orientation.rotate_90, Orientation.fromTag(6));
+}
+
+test "orient refuses a buffer that does not match its dimensions" {
+    const px = [_]u8{0} ** 8;
+    try testing.expectError(error.BadPixels, orient(testing.allocator, &px, 3, 2, .rotate_90));
 }

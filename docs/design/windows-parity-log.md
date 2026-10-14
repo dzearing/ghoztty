@@ -36233,3 +36233,22 @@ moved to T1814.
   remains is T1854 (pre-existing).
 - **Filed.** T1923: a glass viewer pane evaluates the gradient for every
   pixel, at full resolution, on every paint.
+
+## 2026-10-14 — T1910: a phone photo copied from an image pane comes out upright
+
+- **What.** Ctrl+C at an image pane decoded the file with WIC, which returns
+  the pixels as stored, while the pane's browser turns them by the EXIF
+  Orientation tag. So a portrait phone photo showed upright and pasted
+  sideways. The copy now reads the tag (`System.Photo.Orientation`, falling
+  back to `/app1/ifd/{ushort=274}`) and turns the pixels with a pure
+  `image_clipboard.orient`, which covers all eight orientations. A PNG that
+  carries an orientation is no longer published verbatim.
+- **Why this shape.** Turning the BGRA buffer ourselves keeps every
+  orientation case in the `none` lane. WIC's flip-rotator would have needed
+  its rotate-then-flip order to be right for the mirrored orientations
+  (5 and 7), and nothing here could pin that down.
+- **Validation.** Unit tests: the eight orientations against a numbered 3x2
+  grid, and a real JPEG fixture with tag 6 and tag 8 spliced in, read through
+  WIC. viewer-image.ps1 K5: the pane shows a tagged 800x400 JPEG at 400x800,
+  and the copy log and the clipboard both read 400x800 (ALL PASS, 54). All
+  four floor lanes, P1-P3 and the harness lane passed.
