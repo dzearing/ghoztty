@@ -497,6 +497,10 @@ fn logPerf(
     const ms = struct {
         fn f(later: std.time.Instant, earlier: ?std.time.Instant) u64 {
             const e = earlier orelse return 0;
+            // `gui_start` is stamped on the GUI thread and can belong to a
+            // request that is not this one, so `earlier` may be the later
+            // instant: `since` panics on that in Debug (T1906 hit it).
+            if (later.order(e) == .lt) return 0;
             return later.since(e) / std.time.ns_per_ms;
         }
     }.f;

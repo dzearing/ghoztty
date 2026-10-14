@@ -83,6 +83,9 @@ pub const Sample = struct {
     /// repainting the divider bands.
     place_us: u64 = 0,
     paint_us: u64 = 0,
+    /// Cutting the elevated style's rounded card regions after placement
+    /// (`applyCardRegions`, T1906): a `SetWindowRgn` per resized pane.
+    cards_us: u64 = 0,
     /// How many of those waits ran out the full timeout rather than being woken
     /// by a presented frame — the shape that costs the drag a whole frame each.
     timeouts: usize = 0,
@@ -140,6 +143,7 @@ pub const Stats = struct {
     layout_us: u64 = 0,
     place_us: u64 = 0,
     paint_us: u64 = 0,
+    cards_us: u64 = 0,
     /// The most chrome operations any single tick performed. Max rather than
     /// mean for the same reason `waits_max` is: the fan-out is a per-tick
     /// property and averaging it over a drag that started before the panes
@@ -167,6 +171,7 @@ pub const Stats = struct {
         self.layout_us += s.layout_us;
         self.place_us += s.place_us;
         self.paint_us += s.paint_us;
+        self.cards_us += s.cards_us;
         self.resize_us += s.resize_us;
         self.waits_total += s.waits;
         self.timeouts_total += s.timeouts;
@@ -203,6 +208,11 @@ pub const Stats = struct {
     pub fn meanPaintUs(self: Stats) u64 {
         if (self.ticks == 0) return 0;
         return self.paint_us / self.ticks;
+    }
+
+    pub fn meanCardsUs(self: Stats) u64 {
+        if (self.ticks == 0) return 0;
+        return self.cards_us / self.ticks;
     }
 
     pub fn meanOverlayUs(self: Stats) u64 {
@@ -280,6 +290,7 @@ test "stats accumulate mean, max, fps and the over-budget count" {
         .layout_us = 9_000,
         .place_us = 5_000,
         .paint_us = 100,
+        .cards_us = 40,
     });
     st.record(.{
         .tick_us = 30_000,
@@ -293,6 +304,7 @@ test "stats accumulate mean, max, fps and the over-budget count" {
         .layout_us = 29_000,
         .place_us = 25_000,
         .paint_us = 300,
+        .cards_us = 60,
     });
 
     // The wait COUNT is the machine-independent half of the measurement: how
@@ -307,6 +319,7 @@ test "stats accumulate mean, max, fps and the over-budget count" {
     try testing.expectEqual(@as(u64, 19_000), st.meanLayoutUs());
     try testing.expectEqual(@as(u64, 15_000), st.meanPlaceUs());
     try testing.expectEqual(@as(u64, 200), st.meanPaintUs());
+    try testing.expectEqual(@as(u64, 50), st.meanCardsUs());
 
     try testing.expectEqual(@as(u64, 2), st.ticks);
     try testing.expectEqual(@as(u64, 20_000), st.meanUs());

@@ -36191,3 +36191,27 @@ moved to T1814.
   and P1–P3.
   Verified by code reading only: hero tabs and the hidden sidebar keep the
   full-width strip.
+
+## 2026-10-14 — T1906: an elevated divider drag is three times faster
+
+- **Root cause.** The rounded-card region cut (`applyCardRegions`) ran after
+  the desk paint and called `SetWindowRgn(.., TRUE)` for every resized pane.
+  That redraw costs about 20 ms per GL pane. A new `cards=` term in the drag
+  line measured it at 41.5 ms of a 62.6 ms mouse move. That was the 40 ms no
+  timer had been counting.
+- **Fix.** `cutCardRegions` now runs right after the pane batch lands and
+  before the desk paint, with no redraw in the elevated style. The
+  `WS_CLIPCHILDREN` desk paint is clipped by the new regions, so it fills
+  the corners they give back. The flat style and the hero clear keep the
+  redraw.
+- **Result.** drag-perf batched mean went from 62.6 ms to 21.2 ms per move
+  (cards 0.6 ms), and "two frames or better" is green. Its other FAIL is
+  T1854, which is pre-existing.
+- **Also.** `IpcServer.logPerf` panicked in `Instant.since` when the GUI
+  thread's stamp landed after the listener's `now`. It crashed the first
+  drag-perf run and now reads 0 for that pair.
+- **Validation.** pane-elevation has new post-drag region assertions and
+  passes ALL PASS (116). A corner-pixel probe was tried and dropped: it
+  scored the broken order green too, because the test desktop's capture
+  re-renders the window. Watching it on the real desktop is NOT RUN while the
+  user is present, filed as T1922. All four floor lanes, the harness lane and 22 due guards passed.

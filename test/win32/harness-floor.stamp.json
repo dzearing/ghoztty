@@ -1,14 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-14T02:46:43-07:00",
-    "commit":  "5cbfb36f3",
+    "generated":  "2026-10-14T04:28:25-07:00",
+    "commit":  "afac20f1e",
     "uncommitted":  [
-                        "test/win32/lib/ChromeGeometry.ps1",
-                        "test/win32/pane-banner.ps1",
-                        "test/win32/pane-sidebar-elevated.ps1",
-                        "test/win32/tab-strip.ps1",
-                        "test/win32/tab-tooltip.ps1"
+                        "test/win32/drag-perf.ps1",
+                        "test/win32/pane-elevation.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
@@ -120,7 +117,7 @@
                   "test/win32/divergence-inventory.ps1":  "938a7b36a7170b1e2d20f7670d0945e3163c7245fcf51cc2322a8837047d630c",
                   "test/win32/docs-routing.ps1":  "0df33f259fc8eb88f4eb186c8f0fb216bfe5e929d3e8e85e59a9b3cbd4b6d821",
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",
-                  "test/win32/drag-perf.ps1":  "c9a8403c5c39980a8851c4f24ecc57613d1a50a29a2f748c80733ab19355a43f",
+                  "test/win32/drag-perf.ps1":  "875be82d973135e6ed3893325750da6cf82694beb916dacb8aad69215d5b14ef",
                   "test/win32/exit-reason.ps1":  "0ca75a25399950b555b7ba59118f8dab9a0313d5a4189296e88d4910e66e98ff",
                   "test/win32/fail-transcript.ps1":  "b64b16fd5433ae33842afa550ab62b9b8b845c755553bb4842af24132c3ae604",
                   "test/win32/false-positive-report.ps1":  "3e4c34e6b40b6b99969d38afbd1c055899802cfa119529c06f84c6ad24a4e981",
@@ -289,7 +286,7 @@
                   "test/win32/pane-banner.ps1":  "e6d14fb0d90c1f3a91c080e35344a21c86d3ca1508d6fecc29434fc6bd05a3ea",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "e3388a98b380901071b2050f9afa8cdaae4765ab1f4413b92ae26fd0edc8ca6f",
-                  "test/win32/pane-elevation.ps1":  "2d8f2d4eb29c9a17d71fdb6a109e7228b286817b8b953c1720651323a314c7df",
+                  "test/win32/pane-elevation.ps1":  "be44819e2bfe0b88ce4e0bcf7de0c99e848536c621d8eedc0f2bea1d3e6150bf",
                   "test/win32/pane-grab-handle.ps1":  "750e331e6cffdad15489ff1023167b296f6e171d5e08e4be2dc0b6cdac858011",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "0c722d4f0cb52d3567b2d070362fa2cf825aafc952a81b1bcf01768203181161",

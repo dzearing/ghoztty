@@ -280,6 +280,21 @@ if ($panes.Count -eq 2) {
     $grew = ($A2.Bottom - $A2.Top) - $h0
     Write-Host "      drag from mid-gap: top pane grew $grew px (asked 64)"
     Assert ([math]::Abs($grew - 64) -le 6) 'elevated: a drag from the middle of the gap moves the divider'
+
+    # T1906: the region was re-cut for the size the drag left, not the old one.
+    $aw = $A2.Right - $A2.Left; $ah = $A2.Bottom - $A2.Top
+    $hits = Get-TestWindowRegionHits -Window ([IntPtr]$A2.Hwnd) -Points @(0, ($ah - 1), ($aw - 1), ($ah - 1), [int]($aw / 2), ($ah - 4))
+    Assert ($null -ne $hits) 'elevated drag: the dragged pane still has a card region'
+    if ($null -ne $hits) {
+        Assert ((-not $hits[0]) -and (-not $hits[1])) "elevated drag: the region's bottom corners sit at the new size (${aw}x${ah})"
+        Assert $hits[2] "elevated drag: the region reaches the new bottom edge"
+    }
+    # NOT asserted: that the corners the drag gave back show the desk rather
+    # than stale pixels. The cut no longer asks for a redraw and relies on the
+    # desk paint that follows it; a capture on the test desktop re-renders the
+    # window instead of reading the composite, so it scored the broken order
+    # (cut AFTER the paint) green as well, and a check that cannot fail is not
+    # kept (T1906).
 }
 Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'elevated: no crash'
 Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue

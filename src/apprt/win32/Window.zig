@@ -686,6 +686,8 @@ frame_resize_us: u64 = 0,
 /// wait or the overlays.
 frame_place_us: u64 = 0,
 frame_paint_us: u64 = 0,
+/// The elevated style's card-region cut after placement (T1906).
+frame_cards_us: u64 = 0,
 /// The whole layout pass a motion tick triggered. Everything in the tick that
 /// is NOT this is the ratio solve and the drag's own bookkeeping.
 frame_layout_us: u64 = 0,
@@ -6174,7 +6176,7 @@ fn reportDragCost(self: *Window) void {
         "fps={d} panes={d} resizes_max={d} waits_max={d} waits_total={d} timeouts={d} " ++
         "stale={d} " ++
         "mean_layout_us={d} mean_place_us={d} mean_paint_us={d} " ++
-        "mean_overlay_us={d} mean_resize_us={d} " ++
+        "mean_overlay_us={d} mean_resize_us={d} mean_cards_us={d} " ++
         "chrome_moves={d} chrome_sb={d} chrome_dim={d} " ++
         "chrome_blits={d} chrome_heals={d} chrome_skipped={d} " ++
         "over_budget={d} wait={s} chrome={s} verdict={s}";
@@ -6195,6 +6197,7 @@ fn reportDragCost(self: *Window) void {
         st.meanPaintUs(),
         st.meanOverlayUs(),
         st.meanResizeUs(),
+        st.meanCardsUs(),
         st.chrome_moves_max,
         st.chrome_sb_moves_max,
         st.chrome_dim_moves_max,
@@ -6232,6 +6235,7 @@ fn beginFrameWaitBatch(self: *Window) void {
         self.frame_resize_us = 0;
         self.frame_place_us = 0;
         self.frame_paint_us = 0;
+        self.frame_cards_us = 0;
         // T1345: and the chrome fan-out this pass will pay for — the window
         // moves, layered blits and z-order walks the per-pane popups cost.
         chrome_fanout.state.counts.reset();
@@ -6401,7 +6405,7 @@ pub fn layoutSplits(self: *Window) void {
     if (self.tab_hero_active[self.active_tab]) {
         if (self.visibleLeafCount(self.active_tab) > 1) {
             // The carousel is its own presentation: no cards, no regions.
-            self.applyCardRegions(false);
+            self.applyCardRegions(false, .redraw);
             self.layoutHero(self.surfaceRect());
             return;
         }
@@ -6409,9 +6413,6 @@ pub fn layoutSplits(self: *Window) void {
     }
     self.applied_pane_style = self.paneStyle();
     const rect = self.gridRect();
-    // Card regions follow the placement below; the defer runs after the
-    // batch has landed so each region is cut for the size the pane now is.
-    defer self.applyCardRegions(self.applied_pane_style == .elevated);
     // Not in hero mode: stop the thumbnail heartbeat (harmless if it was
     // never started) and repaint the area the carousel used to own.
     if (self.hwnd) |h| _ = w32.KillTimer(h, HERO_SNAP_TIMER_ID);
@@ -6440,6 +6441,7 @@ pub fn layoutSplits(self: *Window) void {
             }
         }
         endPaneBatch(hdwp);
+        self.cutCardRegions();
         // The zoomed pane is a card on the desk too (T1831), and its corners
         // moved with it - the same moved-pixels argument as the grid's pass.
         if (self.applied_pane_style == .elevated) if (self.hwnd) |hwnd| {
@@ -6458,6 +6460,7 @@ pub fn layoutSplits(self: *Window) void {
     // bands are painted below (T1031).
     endPaneBatch(hdwp);
     if (place_timer) |*t| self.frame_place_us +|= t.read() / std.time.ns_per_us;
+    self.cutCardRegions();
 
     // Paint divider lines directly using GetDC (not BeginPaint, which
     // clips to the invalid region and misses the content area gaps).
@@ -6814,6 +6817,28 @@ fn placeLeaf(self: *Window, hdwp: *?w32.HDWP, view: *PaneView, h: w32.HWND, slot
     placePane(hdwp, h, inner.left, top + inset, @intCast(w), @intCast(ht), show);
 }
 
+/// Cut every pane's card region for the size the batch just gave it, BEFORE
+/// the desk paint that follows (T1906) - which is what lets the cut skip the
+/// redraw. Timed into the drag line's `cards` term.
+fn cutCardRegions(self: *Window) void {
+    var t = if (self.drag_perf_on) std.time.Timer.start() catch null else null;
+    // Only the elevated style paints a desk round the panes; a flat pass
+    // that drops a region it no longer wants still needs the redraw.
+    const elevated = self.applied_pane_style == .elevated;
+    self.applyCardRegions(elevated, if (elevated) .desk_paints_next else .redraw);
+    if (t) |*tt| self.frame_cards_us +|= tt.read() / std.time.ns_per_us;
+}
+
+/// Whether `applyCardRegions` asks the system to redraw what a region change
+/// exposed (T1906). `.redraw` is the self-contained shape. `.desk_paints_next`
+/// is for a layout pass that paints the desk through `GetDC` straight after:
+/// `WS_CLIPCHILDREN` clips that paint by the regions as they now stand, so the
+/// corners a region just gave back to the parent are painted by it, and the
+/// pane's own pixels come from the frame its resize is already waiting on.
+/// The redraw is not free on a GL child - about 20 ms a pane in Debug, which
+/// was two thirds of an elevated divider drag's mouse move.
+const CardRedraw = enum { redraw, desk_paints_next };
+
 /// Clip every visible pane child of the active tab to its card's rounded
 /// shape (T1831), or give every child back its plain rectangle.
 ///
@@ -6826,7 +6851,7 @@ fn placeLeaf(self: *Window, hdwp: *?w32.HDWP, view: *PaneView, h: w32.HWND, slot
 /// `SetWindowRgn` is a window-manager transaction, so a pane whose region is
 /// already the right one is left alone - a divider drag re-runs this every
 /// frame, and most panes do not change size on most frames.
-fn applyCardRegions(self: *Window, elevated: bool) void {
+fn applyCardRegions(self: *Window, elevated: bool, redraw: CardRedraw) void {
     if (self.tab_count == 0) return;
     const parent = self.hwnd orelse return;
     var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
@@ -6872,7 +6897,7 @@ fn applyCardRegions(self: *Window, elevated: bool) void {
             if (entry.view.card_region_key == key) continue;
             entry.view.card_region_key = key;
             if (key == 0) {
-                _ = w32.SetWindowRgn(h, null, 1);
+                _ = w32.SetWindowRgn(h, null, @intFromBool(redraw == .redraw));
                 continue;
             }
             // Square top: the rounded rect starts a whole corner ABOVE the
@@ -6880,7 +6905,7 @@ fn applyCardRegions(self: *Window, elevated: bool) void {
             const top: i32 = if (square_top) -d else 0;
             const rgn = w32.CreateRoundRectRgn(0, top, cw + 1, ch + 1, d, d) orelse continue;
             // The system owns the region from here; it is never deleted.
-            if (w32.SetWindowRgn(h, rgn, 1) == 0) _ = w32.DeleteObject(rgn);
+            if (w32.SetWindowRgn(h, rgn, @intFromBool(redraw == .redraw)) == 0) _ = w32.DeleteObject(rgn);
         }
     }
 }
@@ -7961,6 +7986,7 @@ fn updateDividerDrag(self: *Window, x: i32, y: i32) void {
             .layout_us = self.frame_layout_us,
             .place_us = self.frame_place_us,
             .paint_us = self.frame_paint_us,
+            .cards_us = self.frame_cards_us,
             .chrome_moves = chrome_fanout.state.counts.moves,
             .chrome_sb_moves = chrome_fanout.state.counts.moveCount(.scrollbar),
             .chrome_dim_moves = chrome_fanout.state.counts.moveCount(.dim),

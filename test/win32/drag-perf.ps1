@@ -133,12 +133,12 @@ function Get-DragSamples([string]$log) {
                 'mean_wait_us=(\d+) fps=(\d+) panes=(\d+) resizes_max=(\d+) waits_max=(\d+) ' +
                 'waits_total=(\d+) timeouts=(\d+) stale=(\d+) mean_layout_us=(\d+) ' +
                 'mean_place_us=(\d+) mean_paint_us=(\d+) ' +
-                'mean_overlay_us=(\d+) mean_resize_us=(\d+) ' +
+                'mean_overlay_us=(\d+) mean_resize_us=(\d+) (?:mean_cards_us=\d+ )?' +
                 'chrome_moves=(\d+) chrome_sb=(\d+) chrome_dim=(\d+) ' +
                 'chrome_blits=(\d+) chrome_heals=(\d+) ' +
                 'chrome_skipped=(\d+) over_budget=(\d+) ' +
                 'wait=(\w+) chrome=(\w+) verdict=(\w+)')) {
-            $out += [pscustomobject]@{
+            $o = [pscustomobject]@{
                 Ticks       = [int]$Matches[1]
                 MeanUs      = [int]$Matches[2]
                 MaxUs       = [int]$Matches[3]
@@ -165,7 +165,12 @@ function Get-DragSamples([string]$log) {
                 Wait        = $Matches[24]
                 Chrome      = $Matches[25]
                 Verdict     = $Matches[26]
+                CardsUs     = 0
             }
+            # The card-region cut (T1906) - optional so an older build's
+            # line still parses.
+            if ($l -match 'mean_cards_us=(\d+)') { $o.CardsUs = [int]$Matches[1] }
+            $out += $o
         }
     }
     return @($out)
@@ -272,14 +277,14 @@ function Measure-DragShape([string]$mode, [int[]]$counts, [int]$moves) {
                 # One -f, one format string: concatenating it inline binds the
                 # last fragment to -f alone and prints the placeholders.
                 $line = '  {0,-8} panes={1,-2} ticks={2,-3} mean={3,6}us max={4,6}us ' +
-                'layout={13,6}us place={14,6}us paint={15,6}us wait={5,6}us overlay={7,6}us ~{8,4} fps ' +
+                'layout={13,6}us place={14,6}us paint={15,6}us cards={22,6}us wait={5,6}us overlay={7,6}us ~{8,4} fps ' +
                 'resizes/move={9,-2} waits/move={10,-2} timeouts={11,-3} ' +
                 'chrome move={16,-3}(sb {17,-2}/dim {18,-2}) blit={19,-2} heal={20,-3} skip={21,-3} {12}'
                 Rep ($line -f $mode, $s.Panes, $s.Ticks, $s.MeanUs, $s.MaxUs,
                     $s.MeanWaitUs, $s.ResizeUs, $s.OverlayUs, $s.Fps, $s.ResizesMax,
                     $s.WaitsMax, $s.Timeouts, $s.Verdict, $s.LayoutUs, $s.PlaceUs, $s.PaintUs,
                     $s.ChromeMoves, $s.ChromeSb, $s.ChromeDim, $s.ChromeBlits,
-                    $s.ChromeHeals, $s.ChromeSkip)
+                    $s.ChromeHeals, $s.ChromeSkip, $s.CardsUs)
                 $results[$want] = $s
             }
         }
