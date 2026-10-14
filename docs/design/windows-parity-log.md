@@ -36096,3 +36096,21 @@ moved to T1814.
   glass caption, the glass merged tab row and the solid chrome. The title ink
   measured 12.6:1 over the band. New `chrome_glass.zig` unit tests. Floor lanes
   and the due harnesses were run (results in the task file).
+## 2026-10-13 — T1887: the unpinned pane sidebar is a light glass sheet
+
+- **What.** With glass panes on (the default), the sidebar's rail and the
+  card it opens on hover are now Mac's lighter glass sheet (733b03e58): 30%
+  terminal background over what lies beneath, plus the card's sheen, rim and
+  shadows, and no lifting wash. They used to be opaque slabs. With
+  `macos-pane-glass = false` both stay opaque.
+- **How.** The open card is already a layered window (T1865), so its sheet is
+  real translucency over the live panes. The glass layer is built once per
+  shape (`pane_sidebar_layer.buildGlass`). The rows are painted twice, over
+  black and over white, and `composeOver` lays them on the sheet with the
+  coverage each pixel implies. The rail composites the same layers over the
+  desk in-process.
+- **Validation.** pane-sidebar-elevated.ps1 ALL PASS (32), with new steps 5
+  and 6. The rail measured within 3 levels of the 30% expectation. The open
+  card's middle logged alpha 84 with glass on and 255 with it off. Seven new
+  unit tests. Floor lanes, P1-P3, the harness floor and the due harnesses were
+  run (results in the task file).

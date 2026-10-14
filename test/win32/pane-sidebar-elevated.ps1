@@ -21,6 +21,16 @@
 #      mix of the desk in the margin beside it - 38% terminal background, then
 #      the card's 6% wash - and there is no divider rule at that edge.
 #   4. Unpinning brings the 54 DIP rail back.
+#   5. GLASS (T1887, Mac ec71db251 / 733b03e58). With glass panes on (the
+#      default) the unpinned card is Mac's lighter glass sheet: the rail's
+#      card is the desk under 30% terminal background (step 2 checks it
+#      against the desk at the same height), and the card the unpin opens is
+#      see-through - it is a layered window, whose pixels cannot be read back
+#      off the test desktop, so it logs the alpha it handed the window manager
+#      low in its empty middle (30% tint, plus the grounding shade: 70-100).
+#      A second launch with --macos-pane-glass=false keeps the opaque card:
+#      the rail is card material, not the desk, and the open card's middle is
+#      alpha 255.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -105,6 +115,20 @@ function Get-Shot($top, [string]$Name) {
     return $shot
 }
 
+# The open card's first present logs what it sent (PaneSidebar.presentCard):
+# the line carries `glass=<bool> interior_alpha=<n>`.
+function Get-GlassLine([string]$Log, [int]$Skip, [int]$Ms = 4000) {
+    $deadline = (Get-Date).AddMilliseconds($Ms)
+    $line = $null
+    do {
+        $line = @(Get-Content $Log -ErrorAction SilentlyContinue | Select-Object -Skip $Skip |
+            Where-Object { $_ -match 'pane sidebar card glass=' }) | Select-Object -Last 1
+        if ($line) { break }
+        Start-Sleep -Milliseconds 150
+    } while ((Get-Date) -lt $deadline)
+    return $line
+}
+
 . (Join-Path $PSScriptRoot 'lib\Transcript.ps1')
 $transcript = New-TestTranscript -Name 't1850'
 
@@ -159,13 +183,24 @@ try {
         try {
             $midY = [int](($sb.Top + $sb.Bottom) / 2)
             $lead = Get-TestPixel -Shot $shot -X ($sb.Left + [int][math]::Floor($m / 2)) -Y $midY
-            $card = Get-TestPixel -Shot $shot -X ($sb.Left + $m + (Px 22)) -Y ($sb.Bottom - (Px 60))
+            $cardY = $sb.Bottom - (Px 60)
+            $card = Get-TestPixel -Shot $shot -X ($sb.Left + $m + (Px 22)) -Y $cardY
+            $deskAtCard = Get-TestPixel -Shot $shot -X ($sb.Left + [int][math]::Floor($m / 2)) -Y $cardY
             $y = $sb.Top + 2
             $inCol = Get-TestPixel -Shot $shot -X ($sb.Right - 2) -Y $y
             $inGrid = Get-TestPixel -Shot $shot -X ($sb.Right + 1) -Y $y
             "  leading inset=$(Fmt $lead) card=$(Fmt $card) column-edge=$(Fmt $inCol) grid-margin=$(Fmt $inGrid)"
             Assert "the rail's leading inset is the ocean desk, not the terminal background" (Test-DeskPixel $lead)
-            Assert "the rail's card is the card material, not the desk" (-not (Test-DeskPixel $card))
+            # Glass (T1887): black at 30% over the desk, then the card's sheen
+            # and grounding shade (a few levels either way) - and no wash.
+            $want = $null
+            if ($null -ne $deskAtCard) {
+                $want = [pscustomobject]@{ R = [int]($deskAtCard.R * 0.7); G = [int]($deskAtCard.G * 0.7); B = [int]($deskAtCard.B * 0.7) }
+            }
+            $dg = if ($null -ne $want -and $null -ne $card) { Get-ColorDistance $card $want } else { 999 }
+            "  desk beside the card=$(Fmt $deskAtCard) glass expected=$(Fmt $want) (distance $dg)"
+            Assert "the rail's card is the desk under 30% terminal background - glass, no wash (distance $dg)" ($dg -le 15)
+            Assert "the desk shows through the rail's card (blue over red)" ($null -ne $card -and $card.B -ge $card.R + 6)
             Assert "the column's top inset is the desk too" (Test-DeskPixel $inCol)
             $d = Get-ColorDistance $inCol $inGrid
             Assert "the column meets the grid margin without a seam (distance $d)" ($d -le 24)
@@ -208,9 +243,54 @@ try {
     }
 
     "== 4: unpinning brings the 54 DIP rail back"
+    $logBefore = @(Get-Content $errlog -ErrorAction SilentlyContinue).Count
     [void](Click $top $sb.Hwnd (Get-PanelPinCenter $sb))
     $sb = Wait-SidebarWidth $top $railW
     Assert "back to the rail ($($sb.Width))" ($null -ne $sb -and [math]::Abs($sb.Width - $railW) -le 1)
+
+    "== 5: the card the unpin opens is a see-through glass sheet (T1887)"
+    $gl = Get-GlassLine $errlog $logBefore; "  $gl"
+    $gm = [regex]::Match([string]$gl, 'glass=(\w+) interior_alpha=(\d+)')
+    Assert "the open card logged its layer" $gm.Success
+    if ($gm.Success) {
+        Assert "the open card is glass" ($gm.Groups[1].Value -eq 'true')
+        $ia = [int]$gm.Groups[2].Value
+        Assert "its empty middle lets the panes through at Mac's 30% tint (alpha $ia of 255, want 70-100)" ($ia -ge 70 -and $ia -le 100)
+    }
+    Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
+
+    "== 6: --macos-pane-glass=false keeps the opaque card"
+    $errlog2 = Join-Path $tmp 'app-stderr-solid.log'
+    $app = Start-OnTestDesktop -Exe $Exe -StdErr $errlog2 -Arguments @('--config-default-files=false',
+        '--session-persistence=false', '--background=#000000', '--unfocused-split-opacity=1', '--macos-pane-glass=false')
+    Start-Sleep -Seconds 3
+    $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
+    if ($top -eq [IntPtr]::Zero) { "  SETUP FAIL: second top window not found"; $script:failures++; return }
+    [void](Set-TestWindowSize -Window $top -Width (Px 1100) -Height (Px 700))
+    Start-Sleep -Milliseconds 800
+    $sb = Get-Sidebar $top
+    $shot = Get-Shot $top 'rail-solid'
+    Assert "the solid window capture has content" ($null -ne $shot)
+    if ($null -ne $shot -and $null -ne $sb) {
+        try {
+            $card = Get-TestPixel -Shot $shot -X ($sb.Left + (Get-MarginPx) + (Px 22)) -Y ($sb.Bottom - (Px 60))
+            "  solid rail card=$(Fmt $card)"
+            Assert "the rail's card is the card material, not the desk" (-not (Test-DeskPixel $card))
+        } finally { Close-TestWindowPixels $shot }
+    }
+    [void](Click $top $sb.Hwnd (Get-RailPinCenter $sb))
+    $sb = Wait-SidebarWidth $top (Px 240)
+    Start-Sleep -Milliseconds 500
+    $logBefore = @(Get-Content $errlog2 -ErrorAction SilentlyContinue).Count
+    [void](Click $top $sb.Hwnd (Get-PanelPinCenter $sb))
+    $gl = Get-GlassLine $errlog2 $logBefore; "  $gl"
+    $gm = [regex]::Match([string]$gl, 'glass=(\w+) interior_alpha=(\d+)')
+    Assert "the solid open card logged its layer" $gm.Success
+    if ($gm.Success) {
+        Assert "the open card is not glass ($($gm.Groups[1].Value))" ($gm.Groups[1].Value -eq 'false')
+        Assert "its middle is opaque (alpha $($gm.Groups[2].Value))" ([int]$gm.Groups[2].Value -eq 255)
+    }
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

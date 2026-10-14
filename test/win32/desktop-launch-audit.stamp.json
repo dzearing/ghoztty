@@ -1,13 +1,10 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-10-13T19:54:34-07:00",
-    "commit":  "cb9f2a42a",
+    "generated":  "2026-10-13T21:21:33-07:00",
+    "commit":  "28ec44883",
     "uncommitted":  [
-                        "test/win32/caption-bar.ps1",
-                        "test/win32/chrome-merged-row.ps1",
-                        "test/win32/chrome-theme.ps1",
-                        "test/win32/pane-elevation.ps1"
+                        "test/win32/pane-sidebar-elevated.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "85048b74f8795c4f500ca8dd98fa52a24e92a94808ef1b16df34070b4cf6094d",
@@ -236,7 +233,7 @@
                   "test/win32/pane-sidebar-activity.ps1":  "13e236a4cbbb8b57ce49ede4a4c17d7e4527471c0ecb4a6676032f4bd3ab3a22",
                   "test/win32/pane-sidebar-all-windows.ps1":  "7e973ed3d59e99dbc93e82e9bc3328a9ccca4fb5a3164324203057062d84f953",
                   "test/win32/pane-sidebar-drag.ps1":  "36eb78616d344e05dbeb5d760fdb19933e8f169593b4c588e2898bf2f5d257cd",
-                  "test/win32/pane-sidebar-elevated.ps1":  "a6bdd80eb1599939ed62976c27e6e8ba3c520bd0f2e64800f83fb000d7c555a1",
+                  "test/win32/pane-sidebar-elevated.ps1":  "cb88122d938eb2f832de8186abb9911669f202f80b9715cab6712cb8c4f82944",
                   "test/win32/pane-sidebar-persist.ps1":  "628855c842f0944b4ddb67d688f3fb34677dc4450e67ea512975b4c3556fd673",
                   "test/win32/pane-sidebar-resize.ps1":  "ce074ae17f3209e5630dab42c78ba539bba194fc048baa05f657ee415833e3f4",
                   "test/win32/pane-sidebar-scroll.ps1":  "5aa2f6aa4e7f30afde28ff9a030d6938b9ab8218497fa37eba0f1c2d47369956",
