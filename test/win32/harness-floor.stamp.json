@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-14T14:42:49-07:00",
-    "commit":  "8c4aa3135",
+    "generated":  "2026-10-14T15:25:40-07:00",
+    "commit":  "0e4e43a92",
     "uncommitted":  [
-                        "test/win32/gate-negatives.ps1",
-                        "test/win32/ledger-dupes.ps1"
+                        "test/win32/upstream-stage.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
@@ -419,6 +418,7 @@
                   "test/win32/upgrade-resume-readiness.ps1":  "03583ba1a96392547dd5fa2b663b25588141de6e5362db46b7b169d283472f34",
                   "test/win32/upgrade-staleness.ps1":  "063d56d56dcad33ff4d22debde34efe5722697d1b291750f5c7f4c0b8f61cc01",
                   "test/win32/upstream-remote.ps1":  "483ebecd3ff0e427c13addaa2c1afe0e2229e27778ad080d365e3868e7f6c2c4",
+                  "test/win32/upstream-stage.ps1":  "18d15337939a38f04528f533b73e5e578d73bfab95254d3a31e133030b8a485e",
                   "test/win32/url-scheme.ps1":  "33fe6b3246d5e2ca17e5f68af88fac03d4eb50f8b2210c801fc7c2f0303909a6",
                   "test/win32/verdict-exit-audit.ps1":  "0a356320134c6a1f234067b806e439f64ba62573cd251f39c7adcf43ad51c91b",
                   "test/win32/verify-release-clean.ps1":  "756fee5cbd0b8a1ad8d3d01987658087b62efb6dd8327de4cb9aef10d5107dd3",

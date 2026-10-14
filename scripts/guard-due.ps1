@@ -223,6 +223,20 @@ $GuardTable = @(
             'docs\design\windows-parity-upstream-pull-plan.md'
         )
     },
+    # The pre-flight gate before an upstream pull stage (T1026). Like the row
+    # above, nothing exercises it until a stage is attempted - and a gate that
+    # stopped refusing would read exactly like a repo that was ready. It parses
+    # the plan's stage table, so the plan doc is an input here too.
+    [pscustomobject]@{
+        Name   = 'upstream-stage'
+        Script = 'test\win32\upstream-stage.ps1'
+        Stamp  = 'test\win32\upstream-stage.stamp.json'
+        Covers = @(
+            'test\win32\upstream-stage.ps1',
+            'scripts\upstream-stage.ps1',
+            'docs\design\windows-parity-upstream-pull-plan.md'
+        )
+    },
     # The cleanup screen (T1188). It DELETES things on the user's primary
     # machine on the strength of a classification it makes itself, and the two
     # behaviours that keep that safe - the ghost-registration refusal and

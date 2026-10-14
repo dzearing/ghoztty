@@ -314,6 +314,22 @@ preparation grounds; what it still waits on is the go/no-go in D80.
 
 ### Stage sequence and the gate after each
 
+**Before a stage branch is cut, run the pre-flight** (T1026):
+
+```
+powershell -NoProfile -File scripts\upstream-stage.ps1 preflight -Stage S1
+```
+
+It exits 0 only when the plan names the stage and its table is contiguous, the
+tree is clean, HEAD is pushed, `upstream-remote.ps1 check` passes (every sha
+here resolves and is anchored), the stage's FROM sha is already in HEAD and its
+TO sha is not, `fork-identity check` and `guard-due check` are clean on the
+base, and `floor-lane -Lane all` is green on it. The floor runs last, and not
+at all over a base that is already refused. A green base is what makes the gate
+AFTER the stage meaningful: every finding there is the merge's. `list` shows
+which stage is next. The script is a gate and never a starter - it cuts no
+branch and merges nothing, because whether to pull at all is D80's call.
+
 Every stage lands on a scratch branch, is gated, and only then fast-forwards:
 
 ```

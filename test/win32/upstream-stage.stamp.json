@@ -1,0 +1,16 @@
+{
+    "guard":  "upstream-stage",
+    "script":  "test/win32/upstream-stage.ps1",
+    "generated":  "2026-10-14T15:06:11-07:00",
+    "commit":  "0e4e43a92",
+    "uncommitted":  [
+                        "docs/design/windows-parity-upstream-pull-plan.md",
+                        "scripts/upstream-stage.ps1",
+                        "test/win32/upstream-stage.ps1"
+                    ],
+    "files":  {
+                  "docs/design/windows-parity-upstream-pull-plan.md":  "1afa4605b58020311557a8db8d7fb79cff97696782cbc325018d78c4dece5987",
+                  "scripts/upstream-stage.ps1":  "a51dc2a35a5f4e1dcec4f5e7e16b2b895ec39af1b6a25bea056c780dba6aa81f",
+                  "test/win32/upstream-stage.ps1":  "18d15337939a38f04528f533b73e5e578d73bfab95254d3a31e133030b8a485e"
+              }
+}
