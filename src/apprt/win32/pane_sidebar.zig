@@ -77,6 +77,12 @@ pub const RailInsets = struct {
     leading: f32,
     vertical: f32,
     trailing: f32,
+    /// How far, in pixels, the column reaches up beside the window's tab
+    /// strip (T1900; Mac `PaneSidebarState.tabRowHeight`): the card and the
+    /// panel run up through it, but their content starts below it - the
+    /// strip's row belongs to the caption, so nothing there takes a click.
+    /// 0 when the column starts under the chrome.
+    reach_px: i32 = 0,
 
     /// In pixels: one rounding per edge, shared by the layout and the
     /// card's material so the two cannot land a pixel apart.
@@ -815,12 +821,14 @@ pub fn layoutIn(m: Mode, w: i32, h: i32, items: []const Item, lines: ?[]const Li
     findStash(&l, items[0..n]);
     switch (m) {
         .hidden => l.count = 0,
-        .expanded => if (lines) |ls| {
-            const area: Rect = .{ .right = w, .bottom = h };
-            layoutHeader(&l, area, tm, scale);
-            layoutSearch(&l, area, tm, scale);
-            layoutLines(&l, area, items[0..n], ls, tm, scale);
-        } else layoutRows(&l, .{ .right = w, .bottom = h }, items[0..n], tm, scale),
+        .expanded => {
+            const area: Rect = .{ .top = @min(insets.reach_px, h), .right = w, .bottom = h };
+            if (lines) |ls| {
+                layoutHeader(&l, area, tm, scale);
+                layoutSearch(&l, area, tm, scale);
+                layoutLines(&l, area, items[0..n], ls, tm, scale);
+            } else layoutRows(&l, area, items[0..n], tm, scale);
+        },
         .mini => layoutMini(&l, items[0..n], scale, insets),
     }
     return l;
@@ -897,11 +905,14 @@ pub fn layoutOpenIn(w: i32, h: i32, items: []const Item, lines: ?[]const Line, t
     l.outline = lines != null;
     findStash(&l, items[0..n]);
     l.card = openCardRect(w, h, scale, insets);
+    // The card runs up beside the tab strip; its header starts below it.
+    var area = l.card;
+    area.top = @min(area.top + insets.reach_px, area.bottom);
     if (lines) |ls| {
-        layoutHeader(&l, l.card, tm, scale);
-        layoutSearch(&l, l.card, tm, scale);
-        layoutLines(&l, l.card, items[0..n], ls, tm, scale);
-    } else layoutRows(&l, l.card, items[0..n], tm, scale);
+        layoutHeader(&l, area, tm, scale);
+        layoutSearch(&l, area, tm, scale);
+        layoutLines(&l, area, items[0..n], ls, tm, scale);
+    } else layoutRows(&l, area, items[0..n], tm, scale);
     return l;
 }
 
@@ -1060,13 +1071,15 @@ fn layoutMini(l: *Layout, items: []const Item, scale: f32, insets: RailInsets) v
     const lead = insets.leadingPx(scale);
     const v = insets.verticalPx(scale);
     const card_w = px(rail_card_dip, scale);
-    l.card = .{ .left = lead, .top = v, .right = lead + card_w, .bottom = @max(l.height - v, v + card_w) };
+    l.card = .{ .left = lead, .top = v, .right = lead + card_w, .bottom = @max(l.height - v, v + insets.reach_px + card_w) };
     const tile = px(tile_dip, scale);
     // Centered in the card from ONE rounded inset, so the tile's left and
     // right clearances cannot round apart.
     const inset = @divTrunc(card_w - tile, 2);
     const x = l.card.left + inset;
-    l.pin = .{ .left = x, .top = l.card.top + inset, .right = x + tile, .bottom = l.card.top + inset + tile };
+    // The card runs up beside the tab strip (T1900); its tiles start below.
+    const content_top = l.card.top + insets.reach_px;
+    l.pin = .{ .left = x, .top = content_top + inset, .right = x + tile, .bottom = content_top + inset + tile };
     const gap = px(tile_gap_dip, scale);
     var y = l.pin.bottom + px(rail_group_gap_dip, scale);
     for (0..l.count) |i| {
@@ -1925,4 +1938,36 @@ test "T1889: the breathing ring follows the capsule, grown evenly on every side"
     try testing.expectEqual(c.centerY(), r.centerY());
     // Still wider than tall: a capsule's ring, not a disc's.
     try testing.expect(r.width() > r.height());
+}
+
+test "T1900: beside the tab strip the column reaches up, its content where it was" {
+    const items = [_]Item{ .{ .section = .grid }, .{ .section = .stashed } };
+    const tm: TextMetrics = .{ .title_h = 19, .caption_h = 16 };
+    for (scales) |s| {
+        const reach = px(40, s);
+        var up = railInsets(true);
+        up.reach_px = reach;
+        const h = px(600, s);
+        // The rail: the column is `reach` taller, the card runs the whole of
+        // it at the same margin, and every tile keeps its place beside the grid.
+        const w = columnPxFor(.mini, 240, s, true);
+        const a = layoutIn(.mini, w, h, &items, null, tm, s, railInsets(true));
+        const b = layoutIn(.mini, w, h + reach, &items, null, tm, s, up);
+        try testing.expectEqual(a.card.top, b.card.top);
+        try testing.expectEqual(a.card.bottom + reach, b.card.bottom);
+        try testing.expectEqual(a.pin.top + reach, b.pin.top);
+        for (0..items.len) |i| try testing.expectEqual(a.items[i].top + reach, b.items[i].top);
+        // The panel: its header starts below the strip's row.
+        const pw = columnPxFor(.expanded, 240, s, true);
+        const c = layoutIn(.expanded, pw, h, &items, null, tm, s, railInsets(true));
+        const d = layoutIn(.expanded, pw, h + reach, &items, null, tm, s, up);
+        try testing.expectEqual(c.header.top + reach, d.header.top);
+        try testing.expectEqual(c.items[0].top + reach, d.items[0].top);
+        // The open card grows from the rail: same card top, content below.
+        const ow = openWidthPxIn(240, s, openInsets(up));
+        const e = layoutOpenIn(ow, h, &items, null, tm, s, openInsets(railInsets(true)));
+        const f = layoutOpenIn(ow, h + reach, &items, null, tm, s, openInsets(up));
+        try testing.expectEqual(e.card.top, f.card.top);
+        try testing.expectEqual(e.header.top + reach, f.header.top);
+    }
 }

@@ -293,6 +293,10 @@ pub const BannerOverlay = struct {
     /// for square ones (T1851), and the region last applied for it.
     card_corner: i32 = 0,
     card_region_key: u64 = 0,
+    /// The banner sits inside an elevated pane's rounded card, so its own
+    /// card's corners are concentric with the pane's (T1900,
+    /// `banner_card.nestedRadius`) rather than the shared card radius.
+    nested: bool = false,
 
     /// Cached card backdrop (T131): the band background + elevation shadow
     /// + card fill/sheen/rim, rendered by `banner_card` into a DIB section
@@ -306,6 +310,8 @@ pub const BannerOverlay = struct {
     card_h: i32 = 0,
     card_bg: color_math.Rgb = .{ .r = 0, .g = 0, .b = 0 },
     card_scale: f32 = 0,
+    /// `nested` the cached backdrop was rendered for (T1900).
+    card_nested: bool = false,
     /// The glass the cached card was built over (T1884): the desk it was
     /// cut from and where on it the strip sat. A move on the desk is a new
     /// slice of the gradient, so it is a rebuild like a resize.
@@ -618,6 +624,20 @@ pub const BannerOverlay = struct {
         if (diameter == self.card_corner) return;
         self.card_corner = diameter;
         self.applyCardCorner();
+    }
+
+    /// Nest the card in an elevated pane (T1900), or (false) give it the
+    /// shared card radius back. Idempotent; a change repaints.
+    pub fn setNested(self: *BannerOverlay, nested: bool) void {
+        if (nested == self.nested) return;
+        self.nested = nested;
+        _ = w32.InvalidateRect(self.hwnd, null, 0);
+    }
+
+    /// The card's corner radius, unscaled px: concentric with an elevated
+    /// pane's corner when nested in one (T1900), else the shared radius.
+    fn cardRadius(self: *const BannerOverlay) f32 {
+        return if (self.nested) card.nestedRadius(pane_elevation.CORNER_RADIUS_DIP) else card.RADIUS;
     }
 
     /// Put the strip on the window's glass (T1884), or (null) back on the
@@ -1893,7 +1913,7 @@ pub const BannerOverlay = struct {
     /// callers then draw unclipped rather than not at all.
     fn cardClipRegion(self: *BannerOverlay, client: w32.RECT) ?*anyopaque {
         const margin = self.px(MARGIN);
-        const r = self.px(card.RADIUS);
+        const r = self.px(self.cardRadius());
         const left = client.left + margin;
         const top = client.top + margin;
         const right = client.right - margin;
@@ -1912,6 +1932,7 @@ pub const BannerOverlay = struct {
         const glass_at = self.glassAt();
         const stale = self.card_dc == null or self.card_w != w or self.card_h != h or
             !std.meta.eql(self.card_bg, self.pane_bg_rgb) or self.card_scale != self.scale or
+            self.card_nested != self.nested or
             !std.meta.eql(self.card_glass, if (glass_at != null) self.glass else null) or
             (glass_at != null and !std.meta.eql(glass_at.?, self.card_glass_at));
         if (stale) self.buildCardSurface(hdc, w, h, glass_at);
@@ -1948,7 +1969,9 @@ pub const BannerOverlay = struct {
 
         const pixels = @as([*]u32, @ptrCast(@alignCast(raw)));
         const count: usize = @intCast(w * h);
-        const metrics = card.Metrics.init(w, h, self.scale);
+        var metrics = card.Metrics.init(w, h, self.scale);
+        metrics.radius = self.cardRadius() * self.scale;
+        self.card_nested = self.nested;
         self.card_glass = null;
         self.glass_strip = null;
         if (glass_at) |at| {

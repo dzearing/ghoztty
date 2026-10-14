@@ -559,6 +559,9 @@ pane_sidebar_pinned: bool = false,
 pane_sidebar_hidden: bool = false,
 /// The pinned panel's preferred width.
 pane_sidebar_width_dip: f32 = pane_sidebar.default_width_dip,
+/// `tabBarLeft()` as the strip last saw it (T1900): the sidebar's column
+/// moving under a strip that starts at its edge moves the tabs too.
+pane_sidebar_strip_left: i32 = 0,
 
 /// The elevated pane style's desk and card bitmaps (T1831). Empty until the
 /// first elevated paint; freed in `deinit`.
@@ -2009,6 +2012,34 @@ fn stripClientWidth(self: *const Window, client_w: i32) i32 {
     return @max(l.band_left + tab_strip.Metrics.init(self.scale).strip_pad_r, 0);
 }
 
+/// Does the pane sidebar run up beside the tab strip (T1900)?
+///
+/// Mac's elevated style with glass panes (`placeTabBar`): the tabs start at
+/// the sidebar's edge and the sidebar reaches up through the tab row, so it
+/// runs the window's height. Only when the window is ONE surface - the
+/// desk under the chrome (glass, T1886) - since nothing else could fill the
+/// strip left of the tabs; and only on the merged row, the one place the
+/// strip is (one tab is no strip, T234). A hero tab's bar is solid, so it
+/// keeps the full-width strip too.
+pub fn sidebarBesideTabs(self: *const Window) bool {
+    if (!self.mergedChrome() or !self.paneGlass()) return false;
+    if (self.tab_count > 0 and self.tab_hero_active[self.active_tab]) return false;
+    return self.paneSidebarMode() != .hidden;
+}
+
+/// Client x where the tab strip begins: the sidebar's edge when it runs up
+/// beside the strip (T1900), else the window's left edge.
+pub fn tabBarLeft(self: *const Window) i32 {
+    if (!self.sidebarBesideTabs()) return 0;
+    return self.paneSidebarColumnPx();
+}
+
+/// How far the sidebar's column reaches up past the grid's top, beside the
+/// tab strip (T1900): the whole chrome row, or 0.
+pub fn paneSidebarReachPx(self: *const Window) i32 {
+    return if (self.sidebarBesideTabs()) self.chromeHeight() else 0;
+}
+
 /// The strip's clickable regions, in CLIENT coordinates (T231) — what
 /// `+list --json` publishes so a test can ask the product where the "+" is
 /// instead of re-deriving `tab_strip_layout` in PowerShell.
@@ -2035,8 +2066,9 @@ pub fn stripRegions(self: *const Window) ?StripRegions {
     if (!self.tab_bar_visible) return null;
     const top = self.tabBarTop();
     var out: StripRegions = .{
-        .band = tab_strip.contentBand(
+        .band = tab_strip.contentBandAt(
             tab_strip.Metrics.init(self.scale),
+            self.tabBarLeft(),
             self.stripClientWidth(self.clientWidth()),
             top,
         ),
@@ -2307,8 +2339,8 @@ fn deskTop(self: *const Window) i32 {
 }
 
 /// The desk under the content area, for the pane sidebar to paint its slice
-/// of (T1850): it starts at the sidebar's own top, below the chrome, even
-/// when the desk runs up under the chrome (T1886). Null in the flat style,
+/// of (T1850): it starts at the sidebar's own top - below the chrome, or up
+/// beside the tab strip (T1900) - wherever the desk itself starts (T1886). Null in the flat style,
 /// where there is no desk.
 pub fn deskBackdrop(self: *Window) ?PaneDesk.Backdrop {
     if (self.paneStyle() != .elevated) return null;
@@ -2316,7 +2348,7 @@ pub fn deskBackdrop(self: *Window) ?PaneDesk.Backdrop {
     const bg = self.app.config.background;
     const is_light = color_math.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b });
     const d = self.pane_desk.backdrop(area.right - area.left, area.bottom - area.top, is_light, self.desk_variant) orelse return null;
-    return d.below(self.chromeHeight() - self.deskTop());
+    return d.below(self.paneSidebarTop() - self.deskTop());
 }
 
 /// Fill `pixels` (`w` x `h`, top-down) with the desk under the chrome rows
@@ -2427,9 +2459,17 @@ pub fn paneSidebarColumnPx(self: *const Window) i32 {
 }
 
 /// The space around the sidebar's raised card in this window's pane style
-/// (T1850).
+/// (T1850), and how far it reaches up beside the tab strip (T1900).
 pub fn paneSidebarInsets(self: *const Window) pane_sidebar.RailInsets {
-    return pane_sidebar.railInsets(self.paneStyle() == .elevated);
+    var in = pane_sidebar.railInsets(self.paneStyle() == .elevated);
+    in.reach_px = self.paneSidebarReachPx();
+    return in;
+}
+
+/// Client y where the sidebar's column starts: under the chrome, or up
+/// beside the tab strip (T1900).
+pub fn paneSidebarTop(self: *const Window) i32 {
+    return self.chromeHeight() - self.paneSidebarReachPx();
 }
 
 /// Bring the sidebar up to date with the window: create it on first use,
@@ -2445,10 +2485,15 @@ pub fn syncPaneSidebar(self: *Window) void {
     const sb = self.sidebar orelse return;
     var rc: w32.RECT = undefined;
     if (w32.GetClientRect(hwnd, &rc) == 0) return;
-    rc.top += self.chromeHeight();
+    rc.top += self.paneSidebarTop();
     rc.right = rc.left + self.paneSidebarColumnPx();
     sb.refresh();
     sb.place(rc, self.paneSidebarMode(), self.scale);
+    const strip_left = self.tabBarLeft();
+    if (strip_left != self.pane_sidebar_strip_left) {
+        self.pane_sidebar_strip_left = strip_left;
+        self.invalidateChrome();
+    }
     // Whatever changed here may be on another window's all-windows list
     // (T1829): every caller of this - layout, focus, titles, activity - is
     // exactly the set of things those lists show.
@@ -6822,6 +6867,7 @@ fn applyCardRegions(self: *Window, elevated: bool) void {
             if (entry.view.surface()) |s| {
                 s.setBannerCardCorner(banner_corner);
                 s.setBannerGlass(banner_glass);
+                s.setBannerNested(elevated);
             }
             if (entry.view.card_region_key == key) continue;
             entry.view.card_region_key = key;
@@ -9485,13 +9531,16 @@ fn handleCaptionHitTest(self: *Window, lparam: isize) ?isize {
     };
     if (w32.ScreenToClient(hwnd, &pt) == 0) return null;
 
-    return switch (caption_layout.ncHitTest(
+    return switch (caption_layout.ncHitTestBeside(
         m,
         l,
         pt.x,
         pt.y,
         self.sysFrameY(),
         w32.IsZoomed(hwnd) != 0,
+        // Beside the pane sidebar (T1900) the strip starts at its edge, and
+        // the band left of it is caption the sidebar only draws on.
+        if (self.mergedChrome()) self.tabBarLeft() else 0,
         // The strip's own controls in the merged band, from the rect the
         // strip PUBLISHED at its last paint — the same rect
         // `handleTabBarClick` reads. Deriving a second copy here is how what
@@ -10419,7 +10468,10 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
     // stop at the seam, and `stripClientWidth` is the one place that width is
     // decided. Everything downstream — the chiclets, the "+", every published
     // hit rect — falls out of it unchanged.
-    const strip_client_w = self.stripClientWidth(client_w);
+    // Beside the pane sidebar (T1900) the run starts at its edge: laid out
+    // in the width that leaves, then moved over (`tab_strip.shiftX`).
+    const strip_left = @min(self.tabBarLeft(), self.stripClientWidth(client_w));
+    const strip_client_w = self.stripClientWidth(client_w) - strip_left;
     const has_menu = self.stripHasMenu();
 
     // T249: the widths handed to the layout are RATCHETED, not the raw
@@ -10468,7 +10520,8 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
             deferred,
         });
     }
-    const strip = tab_strip.layout(m, strip_client_w, has_menu, effective, &tabs);
+    var strip = tab_strip.layout(m, strip_client_w, has_menu, effective, &tabs);
+    tab_strip.shiftX(&strip, tabs[0..self.tab_count], strip_left);
 
     // Publish hit-test rects. Tabs past `strip.visible` did not fit and get a
     // ZERO rect on purpose — invisible and unhittable — instead of being laid

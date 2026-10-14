@@ -36159,3 +36159,35 @@ moved to T1814.
   reads the real caption text back and plays a generated silent wav. The
   negative control (`no-title`) fails with 2 failures. bell_math unit tests,
   all four floor lanes and P1–P3 passed.
+
+## 2026-10-14 — T1900: the tab strip starts at the pane sidebar's edge, with the sidebar beside it
+
+- **What changed.** Mac 3ac40dc8b (layout half). In the elevated look with
+  glass panes and a strip showing, the pane sidebar's column now starts at
+  the window's top and its card runs up beside the tabs; the rows stay where
+  they were. The tab run starts at the column's edge and follows it (rail,
+  pinned panel). That stretch of the title bar still drags the window: the
+  column is click-through there and the caption hit test calls it caption.
+  The tabs already sat one 10 DIP gap above the panes; that is now asserted.
+  A banner card inside an elevated pane gets Mac's concentric corner,
+  max(4, 11 - 12) = 4 DIP, instead of the shared 14.
+- **Not owed.** Mac's debug-build warning row has no Windows counterpart
+  (the T43 title suffix and chrome tint mark a debug build). The busy border
+  is T1899. The NSWindow tab-bar preference leak is AppKit-only.
+- **Harness fixes.** `lib\ChromeGeometry.ps1` measures where the strip starts
+  (`StripLeft`/`RunLeft`), so the tab scan no longer reads the sidebar card
+  as a tab. `tab-strip.ps1` is pinned to the flat style, as T1886 did for
+  caption-bar and chrome-merged-row. It had been red under the elevated
+  default since that landed: the guard did not cover those files.
+  `tab-tooltip.ps1` hovered at a fixed x that is now the sidebar card, and
+  it reported the miss as "release build?" SKIP. It now hovers from
+  `RunLeft`. Its viewer arm (D) also lacked `--focus`: a CLI split has not
+  moved focus by default since the CLI focus policy landed.
+- **Validation.** `pane-sidebar-elevated.ps1` section 7 + solid control: ALL
+  PASS (47). `pane-banner.ps1` corner probe: ALL PASS (152). Unit tests in
+  tab_strip_layout, caption_layout, pane_sidebar and banner_card. All four
+  floor lanes passed. The 49 due guard harnesses passed (tab-strip after
+  the pin, tab-tooltip 31/31 after its fixes), and so did the harness lane
+  and P1–P3.
+  Verified by code reading only: hero tabs and the hidden sidebar keep the
+  full-width strip.

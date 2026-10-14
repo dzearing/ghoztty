@@ -554,6 +554,23 @@ pub fn ncHitTest(
     /// clicks, and what `WM_NCHITTEST` hands to the client are one number.
     client_right: i32,
 ) NcHit {
+    return ncHitTestBeside(m, l, x, y, sys_frame, maximized, 0, client_right);
+}
+
+/// `ncHitTest` for a strip whose controls start `client_left` px in (T1900):
+/// beside the pane sidebar, the band left of the tabs is the caption's - the
+/// sidebar only draws there - so it drags the window and sizes from its top
+/// edge like any other empty stretch of the band.
+pub fn ncHitTestBeside(
+    m: Metrics,
+    l: Layout,
+    x: i32,
+    y: i32,
+    sys_frame: i32,
+    maximized: bool,
+    client_left: i32,
+    client_right: i32,
+) NcHit {
     if (y < 0 or y >= m.caption_h) return .client;
     // Outside the client area horizontally is the window's LEFT/RIGHT sizing
     // border, which `WM_NCCALCSIZE` deliberately left with the OS. Answering
@@ -574,7 +591,7 @@ pub fn ncHitTest(
         // and the corners. Falling through here (instead of returning .top)
         // hands these rows to the strip check below, which is what makes a
         // click near a tab's top select the tab instead of resizing.
-        if (x >= @min(client_right, l.band_left)) return .top;
+        if (x < client_left or x >= @min(client_right, l.band_left)) return .top;
     }
 
     // The strip's own controls, AFTER the corners (a tab at the window's edge
@@ -583,7 +600,7 @@ pub fn ncHitTest(
     // order means a stale `client_right` can never swallow the close button.
     // The top rows over the strip land here too (T266, above): the tab owns
     // its full height, the way WT's tabs do.
-    if (x < @min(client_right, l.band_left)) return .client;
+    if (x >= client_left and x < @min(client_right, l.band_left)) return .client;
 
     if (hitTest(m, l, x, y)) |b| return switch (b) {
         .pill => .pill,
@@ -1343,4 +1360,28 @@ test "a band too narrow for the pill drops it rather than clipping it" {
 test "command: the pill is the app's own; nothing else in the caption is" {
     try testing.expectEqual(Command.pill, command(.pill, false));
     try testing.expectEqual(Command.pill, command(.pill, true));
+}
+
+test "T1900: beside the pane sidebar the band left of the tabs is caption" {
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |scale| {
+        const m = Metrics.init(scale, .with_tabs);
+        const l = layout(m, 1400, .{});
+        const left: i32 = @intFromFloat(@round(210 * scale));
+        // The run ends well short of the caption's own cluster.
+        const right = l.band_left - @as(i32, @intFromFloat(@round(200 * scale)));
+        try testing.expect(right > left + 10);
+        const mid_y = @divTrunc(m.caption_h, 2);
+        const frame: i32 = @intFromFloat(@round(8 * scale));
+        // Left of the strip: a drag handle, not a terminal hit.
+        try testing.expectEqual(NcHit.caption, ncHitTestBeside(m, l, @divTrunc(left, 2), mid_y, frame, false, left, right));
+        // Its top rows still size the window.
+        try testing.expectEqual(NcHit.top, ncHitTestBeside(m, l, @divTrunc(left, 2), 0, frame, false, left, right));
+        // The strip itself is the client's, top row included (T266).
+        try testing.expectEqual(NcHit.client, ncHitTestBeside(m, l, left + 5, mid_y, frame, false, left, right));
+        try testing.expectEqual(NcHit.client, ncHitTestBeside(m, l, left + 5, 0, frame, false, left, right));
+        // Past the strip: caption again.
+        try testing.expectEqual(NcHit.caption, ncHitTestBeside(m, l, right + 5, mid_y, frame, false, left, right));
+        // With no inset it is exactly `ncHitTest`.
+        try testing.expectEqual(ncHitTest(m, l, 20, mid_y, frame, false, right), ncHitTestBeside(m, l, 20, mid_y, frame, false, 0, right));
+    }
 }

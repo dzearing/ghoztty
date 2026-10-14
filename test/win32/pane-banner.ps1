@@ -475,9 +475,25 @@ try {
                     if ($sum -lt $darkest) { $darkest = $sum; $shadowPx = $s }
                 }
                 Assert ($darkest -lt 52) "elevation shadow darkens the band under the card (darkest $shadowPx vs bg 16,16,20)"
+
+                # T1900: inside an elevated pane the card's corner is concentric
+                # with the pane's - Mac's max(4, 11 - 12) = 4 DIP, not the shared
+                # 14. Along the bottom-left corner's diagonal, 3 px in is already
+                # card at 4 DIP (it would still be cut away at 14, which needs
+                # ~5 px at 100%), while the very corner pixel is still cut away
+                # (the corner is rounded, not square).
+                $bs = (Get-TestWindowDpi -Window ([IntPtr]$ov.Hwnd)) / 96.0
+                $bm = Get-TestChromeDip -Dip 12.0 -Scale $bs
+                $cy = $ov.Height - $bm - 1
+                $sumAt = { param($x, $y) $q = (Get-ShotPx $shot $x $y) -split ','; if ($q.Count -ne 3) { -1 } else { [int]$q[0] + [int]$q[1] + [int]$q[2] } }
+                $inSum = & $sumAt ($bm + 3) ($cy - 3)
+                $tipSum = & $sumAt $bm $cy
+                "      card corner: 3px in sum=$inSum, corner pixel sum=$tipSum (bg 52)"
+                Assert ($inSum -gt 67) "T1900: the card's corner is Mac's tight nested 4 DIP - card 3 px in along the diagonal (sum $inSum)"
+                Assert ($tipSum -ge 0 -and $tipSum -lt $inSum - 10) "T1900: and still rounded - the corner pixel itself is cut away (sum $tipSum)"
             } finally { Close-TestWindowPixels -Shot $shot }
         } else {
-            $script:fail += 5
+            $script:fail += 7
         }
     } else {
         $script:fail += 6

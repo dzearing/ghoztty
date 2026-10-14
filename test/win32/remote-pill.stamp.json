@@ -1,13 +1,13 @@
 {
     "guard":  "remote-pill",
     "script":  "test/win32/remote-pill.ps1",
-    "generated":  "2026-09-24T17:15:55-07:00",
-    "commit":  "aeb63f862",
+    "generated":  "2026-10-14T01:33:21-07:00",
+    "commit":  "5cbfb36f3",
     "uncommitted":  [
-                        "test/win32/remote-pill.ps1"
+                        "src/apprt/win32/caption_layout.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/caption_layout.zig":  "66d3eded5ac783fe68c1dee896ac28188df4c5d79941371ad81773eb38797aa4",
+                  "src/apprt/win32/caption_layout.zig":  "787f2a9f6747b245d2eef7d3b5b089b5accd0ba43d61e319bb8885622f6beb44",
                   "src/apprt/win32/remote_pill.zig":  "6997259de405ee7fecb4e29c179ba56380c4ce423cf48e09bba95f0a249e6286",
                   "test/win32/remote-pill.ps1":  "dc5d1cdcebbe758f4ffdad2200fa2fb8b0924f637992132f5e55084b831dac39"
               }

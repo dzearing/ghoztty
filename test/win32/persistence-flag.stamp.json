@@ -1,10 +1,13 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-10-14T00:04:14-07:00",
-    "commit":  "3568e00af",
+    "generated":  "2026-10-14T02:23:17-07:00",
+    "commit":  "5cbfb36f3",
     "uncommitted":  [
-                        "test/win32/bell-features.ps1"
+                        "test/win32/pane-banner.ps1",
+                        "test/win32/pane-sidebar-elevated.ps1",
+                        "test/win32/tab-strip.ps1",
+                        "test/win32/tab-tooltip.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -219,7 +222,7 @@
                   "test/win32/palette-grid-size.ps1":  "503b63cbcb1bc6763c2d2800245923385ce4a4b5bb5a8e1649e5ddfe48f265b1",
                   "test/win32/palette-jump.ps1":  "ee11e403b39036691fbaf1f12aab1820f9a98ca96fc0d9a04f94e50200c1d7a7",
                   "test/win32/palette-order.ps1":  "731a1befc660ba2625618e809ab7e30eb0106959586260c3d78eedc6da12bced",
-                  "test/win32/pane-banner.ps1":  "97847ad5f2dc741510074aa86a2edbe47313689bf0f0778a2dbf9711e5d25aaf",
+                  "test/win32/pane-banner.ps1":  "e6d14fb0d90c1f3a91c080e35344a21c86d3ca1508d6fecc29434fc6bd05a3ea",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "e3388a98b380901071b2050f9afa8cdaae4765ab1f4413b92ae26fd0edc8ca6f",
                   "test/win32/pane-elevation.ps1":  "2d8f2d4eb29c9a17d71fdb6a109e7228b286817b8b953c1720651323a314c7df",
@@ -233,7 +236,7 @@
                   "test/win32/pane-sidebar-activity.ps1":  "1b0a5053db2c58cd2065c75a6e52e22c83185bf3146aeabb5c4224740d801455",
                   "test/win32/pane-sidebar-all-windows.ps1":  "7e973ed3d59e99dbc93e82e9bc3328a9ccca4fb5a3164324203057062d84f953",
                   "test/win32/pane-sidebar-drag.ps1":  "36eb78616d344e05dbeb5d760fdb19933e8f169593b4c588e2898bf2f5d257cd",
-                  "test/win32/pane-sidebar-elevated.ps1":  "cb88122d938eb2f832de8186abb9911669f202f80b9715cab6712cb8c4f82944",
+                  "test/win32/pane-sidebar-elevated.ps1":  "222268f3bb7793fe727c9c4069131c24440265f1830c3d030f4d4b8330ae80c9",
                   "test/win32/pane-sidebar-persist.ps1":  "628855c842f0944b4ddb67d688f3fb34677dc4450e67ea512975b4c3556fd673",
                   "test/win32/pane-sidebar-resize.ps1":  "ce074ae17f3209e5630dab42c78ba539bba194fc048baa05f657ee415833e3f4",
                   "test/win32/pane-sidebar-scroll.ps1":  "5aa2f6aa4e7f30afde28ff9a030d6938b9ab8218497fa37eba0f1c2d47369956",
@@ -322,9 +325,9 @@
                   "test/win32/suite-run.ps1":  "e5937c1bc5b01432e73f7c22a3ebe2ecfba2fad903dc367fa42890e1ddf88bf8",
                   "test/win32/tab-color.ps1":  "af75bcd47eeb68cf93ee056b7aa4e14e147314ab8b4adc3a9c0eb27dfb43f967",
                   "test/win32/tab-overview-action.ps1":  "a3b95f74746e0d8883991dbdf6f108acc57402fe69793026800c6ffe3f506d1d",
-                  "test/win32/tab-strip.ps1":  "69f262dc40f53ab1fe759518fb4ffeaa30d0691aa81aa7d70167130aa8e23ea1",
+                  "test/win32/tab-strip.ps1":  "04573b2ee4b0e1885ff2ec03bb5021ff95862eac72265b6be7f2b9903489e981",
                   "test/win32/tab-strip-autohide.ps1":  "18a71e8d3baf08f01dac56de94897f7ac7d116d625eccc4dd4f5cf13971e153e",
-                  "test/win32/tab-tooltip.ps1":  "d80524a444f142992bc2d4591ae9847615e0727a6b50838e0667546e9a8826c3",
+                  "test/win32/tab-tooltip.ps1":  "583d608a336d85012ce9199fb8102793bc02e6318335266ab7c1a432198ff16b",
                   "test/win32/target-staleness.ps1":  "25c28c99d39716155584ecda6f7a826dae310b3adaad3ae6dbb962c38f7f7d80",
                   "test/win32/task-dashboard.ps1":  "c676c3f475745b47a7a661e6ee9d80631ae1951b6995d006d3e2dd52c95c2d0d",
                   "test/win32/terminal-link-paths.ps1":  "6fd5a42894831216f8371205fb6ab089201ddbdfda7aace1ee4cf2b42eec67f3",

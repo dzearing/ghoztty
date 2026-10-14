@@ -31,6 +31,15 @@
 #      A second launch with --macos-pane-glass=false keeps the opaque card:
 #      the rail is card material, not the desk, and the open card's middle is
 #      alpha 255.
+#   7. BESIDE THE TAB STRIP (T1900, Mac 3ac40dc8b). With glass panes and the
+#      strip showing, the sidebar's column runs the window's height: it starts
+#      at the client's top, its card running up beside the tabs, and the strip
+#      starts at the column's edge (the published band, not a re-derivation).
+#      The tabs sit one 10 DIP gap above the panes. Up there the column only
+#      draws - WM_NCHITTEST on it is HTTRANSPARENT and the window answers
+#      HTCAPTION, so the stretch drags the window - while the rail's pin, now
+#      a strip's height lower, still pins; the strip follows the 240 DIP panel.
+#      Solid panes keep the column under the chrome and the strip full width.
 #
 # Runs on a BACKGROUND desktop (lib\TestDesktop.ps1) and never takes the
 # user's foreground - asserted by the foreground watcher, not assumed.
@@ -57,6 +66,7 @@ function Assert($name, $cond) {
 . (Join-Path $PSScriptRoot 'lib\Isolation.ps1')
 [void](Set-GhozttyTestIsolation -Tag 't1850')
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+. (Join-Path $PSScriptRoot 'lib\ChromeGeometry.ps1')
 Add-Type -AssemblyName System.Drawing
 
 function Get-Panes($top) { @(Get-TestChildWindows -Window $top -Class 'GhozttyTerminal' | Where-Object Visible) }
@@ -260,16 +270,88 @@ try {
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
 
+    "== 7: beside the tab strip the column runs the window's height (T1900)"
+    $errlog3 = Join-Path $tmp 'app-stderr-strip.log'
+    $app = Start-OnTestDesktop -Exe $Exe -StdErr $errlog3 -Arguments @('--config-default-files=false',
+        '--session-persistence=false', '--background=#000000', '--unfocused-split-opacity=1',
+        '--window-show-tab-bar=always')
+    Start-Sleep -Seconds 3
+    $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
+    if ($top -eq [IntPtr]::Zero) { "  SETUP FAIL: strip top window not found"; $script:failures++; return }
+    [void](Set-TestWindowSize -Window $top -Width (Px 1100) -Height (Px 700))
+    Start-Sleep -Milliseconds 800
+    $cr = Get-TestWindowRect -Window $top -Client
+    $sb = Get-Sidebar $top
+    $regions = Get-TestStripRegions -Window $top -Exe $Exe
+    $p = (@(Get-Panes $top))[0]
+    Assert "setup: a sidebar, a strip and a pane" ($null -ne $sb -and $null -ne $regions -and $null -ne $p)
+    if ($null -eq $sb -or $null -eq $regions -or $null -eq $p) { return }
+    $colRight = $sb.Right - $cr.Left
+    $wantTop = $cr.Top
+    if ($NegativeControl) { $wantTop = $cr.Top + $regions.Band.Bottom }
+    "  column top=$($sb.Top - $cr.Top) right=$colRight; band left=$($regions.Band.Left) bottom=$($regions.Band.Bottom); first tab=$($regions.Tabs[0].Left)"
+    Assert "the column starts at the client's top, beside the strip ($($sb.Top - $cr.Top))" ($sb.Top -eq $wantTop)
+    Assert "the strip starts at the column's edge (band $($regions.Band.Left) vs $colRight + $(Px 4))" ($regions.Band.Left -eq $colRight + (Px 4))
+    Assert "the first tab sits right of the column ($($regions.Tabs[0].Left) >= $colRight)" ($null -ne $regions.Tabs[0] -and $regions.Tabs[0].Left -ge $colRight)
+    $gap = ($p.Top - $i) - ($cr.Top + $regions.Band.Bottom)
+    Assert "the tabs sit one 10 DIP gap above the panes ($gap vs $m)" ($gap -eq $m)
+    # The strip's row of the column: a drag handle, not a sidebar click.
+    $hx = $sb.Left + [int]($sb.Width / 2); $hy = $cr.Top + [int]($regions.Band.Bottom / 2)
+    $lp = [IntPtr](([int64]($hy -band 0xFFFF) -shl 16) -bor [int64]($hx -band 0xFFFF))
+    $hitCol = [int](Invoke-TestMessage -Window ([IntPtr]$sb.Hwnd) -Message 0x0084 -LParam $lp)
+    $hitWin = [int](Invoke-TestMessage -Window $top -Message 0x0084 -LParam $lp)
+    Assert "the column is click-through beside the strip (HTTRANSPARENT, got $hitCol)" ($hitCol -eq -1)
+    Assert "the window answers HTCAPTION there, so it drags (got $hitWin)" ($hitWin -eq 2)
+    $shot = Get-Shot $top 'beside-strip'
+    Assert "the strip window capture has content" ($null -ne $shot)
+    if ($null -ne $shot) {
+        try {
+            # Halfway down the strip's row: the rail's card is there, with the
+            # desk in the column's leading inset. Not section 2's 30% formula:
+            # this high up the card's sheen lifts it, so the question is only
+            # whether the card's material is drawn here at all - without the
+            # reach this pixel is the strip's own glass, the desk a few pixels
+            # from the inset sample.
+            $card = Get-TestPixel -Shot $shot -X ($sb.Left + $m + (Px 22)) -Y $hy
+            $lead = Get-TestPixel -Shot $shot -X ($sb.Left + [int][math]::Floor($m / 2)) -Y $hy
+            $dg = if ($null -ne $lead -and $null -ne $card) { Get-ColorDistance $card $lead } else { 0 }
+            "  beside the strip: leading inset=$(Fmt $lead) card=$(Fmt $card) (distance $dg)"
+            Assert "the column's leading inset beside the strip is the desk" (Test-DeskPixel $lead)
+            Assert "the rail's card runs up beside the strip: its glass, not the bare desk (distance $dg)" ($dg -ge 15 -and $card.B -ge $card.R + 6)
+        } finally { Close-TestWindowPixels $shot }
+    }
+    # The pin is a strip's height lower than in section 3, and still pins.
+    $reach = $regions.Band.Bottom
+    $pin = Get-RailPinCenter $sb
+    $pin.Y += $reach
+    [void](Click $top $sb.Hwnd $pin)
+    $sb = Wait-SidebarWidth $top (Px 240)
+    Assert "the rail's pin, below the strip's row, still pins ($($sb.Width) vs $(Px 240))" ($null -ne $sb -and [math]::Abs($sb.Width - (Px 240)) -le 1)
+    Start-Sleep -Milliseconds 500
+    $regions = Get-TestStripRegions -Window $top -Exe $Exe
+    $colRight = $sb.Right - $cr.Left
+    Assert "the strip follows the pinned panel's edge (band $($regions.Band.Left) vs $colRight + $(Px 4))" ($null -ne $regions -and $regions.Band.Left -eq $colRight + (Px 4))
+    Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
+    [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
+
     "== 6: --macos-pane-glass=false keeps the opaque card"
     $errlog2 = Join-Path $tmp 'app-stderr-solid.log'
     $app = Start-OnTestDesktop -Exe $Exe -StdErr $errlog2 -Arguments @('--config-default-files=false',
-        '--session-persistence=false', '--background=#000000', '--unfocused-split-opacity=1', '--macos-pane-glass=false')
+        '--session-persistence=false', '--background=#000000', '--unfocused-split-opacity=1', '--macos-pane-glass=false',
+        '--window-show-tab-bar=always')
     Start-Sleep -Seconds 3
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow'
     if ($top -eq [IntPtr]::Zero) { "  SETUP FAIL: second top window not found"; $script:failures++; return }
     [void](Set-TestWindowSize -Window $top -Width (Px 1100) -Height (Px 700))
     Start-Sleep -Milliseconds 800
     $sb = Get-Sidebar $top
+    # T1900: solid panes keep the column under the chrome, the strip full width.
+    $cr = Get-TestWindowRect -Window $top -Client
+    $regions = Get-TestStripRegions -Window $top -Exe $Exe
+    if ($null -ne $sb -and $null -ne $regions) {
+        Assert "solid: the column starts under the strip ($($sb.Top - $cr.Top) vs $($regions.Band.Bottom))" ($sb.Top - $cr.Top -eq $regions.Band.Bottom)
+        Assert "solid: the strip starts at the window's edge (band $($regions.Band.Left))" ($regions.Band.Left -eq (Px 4))
+    } else { Assert "solid: a sidebar and a strip" $false }
     $shot = Get-Shot $top 'rail-solid'
     Assert "the solid window capture has content" ($null -ne $shot)
     if ($null -ne $shot -and $null -ne $sb) {

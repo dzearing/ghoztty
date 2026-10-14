@@ -244,8 +244,15 @@ function Get-TestChromeMetrics {
         $menuLeft = $null
         $plusLimit = $clientW - $padSm - $btnPaint
     }
-    $runW = $plusLimit - $gap - $padSm
-
+    # T1900: does the pane sidebar run up beside the strip? Its window then
+    # starts at the client's top while a strip is showing, and the run is
+    # laid out in the width right of it.
+    $stripLeft = 0
+    if ($stripShown) {
+        $sbw = @(Get-TestChildWindows -Window $Window -Class 'GhozttyPaneSidebar' -Desktop $Desktop | Where-Object Visible) | Select-Object -First 1
+        if ($null -ne $sbw -and $sbw.Top -le $cr.Top -and $sbw.Right -gt $cr.Left) { $stripLeft = $sbw.Right - $cr.Left }
+    }
+    $runW = $plusLimit - $gap - $padSm - $stripLeft
     return [pscustomobject]@{
         Dpi = $dpi
         Scale = $scale
@@ -313,6 +320,14 @@ function Get-TestChromeMetrics {
         # since T205 - merged, the strip IS the band and starts at 0.
         StripTopClient = $stripTopClient
         StripTop = ($cr.Top - $wr.Top) + $stripTopClient
+        # T1900: client x where the strip starts. 0, except in the elevated
+        # look with glass panes, where the pane sidebar runs up beside the
+        # strip and the run starts at its edge - MEASURED off the sidebar's
+        # own window (it reaches the client's top only in that layout), not
+        # derived from the config the script thinks it launched.
+        StripLeft = $stripLeft
+        # Where the first tab can start: StripLeft + strip_pad_l.
+        RunLeft = $stripLeft + $padSm
 
         # --- right-anchored band, client x -----------------------------------
         # $null on a caption window - the button does not exist there (T260).
@@ -519,7 +534,10 @@ function Get-TestTabExtents {
         $runStart = -1
         # Runs to RunRight inclusive-exclusive so a run touching the right end
         # is still closed off.
-        for ($x = $m.PadL; $x -le $m.RunRight; $x++) {
+        # From RunLeft, not PadL (T1900): beside the pane sidebar the strip
+        # starts at its edge, and the sidebar's card is not a tab.
+        $scanFrom = if ($null -ne $m.RunLeft) { $m.RunLeft } else { $m.PadL }
+        for ($x = $scanFrom; $x -le $m.RunRight; $x++) {
             $isTab = $false
             if ($x -lt $m.RunRight) {
                 $p = $shot.Bitmap.GetPixel($m.OffX + $x, $rowY)
@@ -571,7 +589,7 @@ function Get-TestTabRunRight {
     if (-not $m) { $m = Get-TestChromeMetrics -Window $Window -Desktop $Desktop -StripVisible $true }
 
     $tabs = @(Get-TestTabExtents -Window $Window -Shot $Shot -Metrics $m -Desktop $Desktop)
-    if ($tabs.Count -eq 0) { return $m.PadL }
+    if ($tabs.Count -eq 0) { return $(if ($null -ne $m.RunLeft) { $m.RunLeft } else { $m.PadL }) }
     return $tabs[$tabs.Count - 1].Right
 }
 

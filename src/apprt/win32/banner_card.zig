@@ -40,6 +40,20 @@ pub const MARGIN: f32 = 12.0;
 /// a continuous squircle; GDI has no squircle, so a plain rounded rect).
 pub const RADIUS: f32 = 14.0;
 
+/// The smallest corner a card nested in a rounded pane keeps, unscaled px.
+/// Mac: the floor in `PaneElevation.nestedCardCornerRadius`.
+pub const NESTED_RADIUS_FLOOR: f32 = 4.0;
+
+/// Corner radius, unscaled px, of a card floating inside a rounded pane of
+/// corner `pane_radius` (T1900): concentric with the pane's corner, so the
+/// gap around the corner matches the gap along the edges. The margin is
+/// wider than the elevated pane's radius, so truly concentric would be
+/// square; the floor keeps a hint of rounding. Mac:
+/// `max(4, PaneElevation.cornerRadius - GlassCard.outerMargin)`.
+pub fn nestedRadius(pane_radius: f32) f32 {
+    return @max(NESTED_RADIUS_FLOOR, pane_radius - MARGIN);
+}
+
 /// Uniform inner padding between the card edge and its content, unscaled px.
 /// Mac: `GlassCard.innerPadding`.
 pub const PADDING: f32 = 12.0;
@@ -863,4 +877,13 @@ test "render: degenerate sizes do not write out of bounds" {
     // A tiny but valid band paints.
     render(&px, Metrics.init(8, 8, 1.0), DARK);
     try testing.expect(px[0] != 0);
+}
+
+test "nestedRadius: concentric with the pane's corner, floored at 4" {
+    // The elevated pane's 11pt corner minus the 12pt margin is below zero,
+    // so the floor holds - Mac's `nestedCardCornerRadius` is 4 too.
+    try testing.expectEqual(@as(f32, 4), nestedRadius(11));
+    // A pane corner wide enough to clear the margin is truly concentric.
+    try testing.expectEqual(@as(f32, 8), nestedRadius(20));
+    try testing.expect(nestedRadius(11) < RADIUS);
 }

@@ -221,6 +221,8 @@ thumb_drag: ?struct { which: Surface, grab: i32 } = null,
 revealed: ?*PaneView = null,
 
 mode: pane_sidebar.Mode = .hidden,
+/// `Window.paneSidebarReachPx()` at the last `place` (T1900).
+reach: i32 = 0,
 scale: f32 = 1.0,
 hover: pane_sidebar.Hit = .none,
 pressed: pane_sidebar.Hit = .none,
@@ -492,7 +494,12 @@ pub fn place(self: *PaneSidebar, rect: w32.RECT, mode: pane_sidebar.Mode, scale:
     // A new shape (the rail pinned into the panel, or back) shows the
     // selected row in it (T1878).
     if (changed) if (self.selectedIndex()) |i| self.revealItem(.rail, i);
-    if (changed) _ = w32.InvalidateRect(self.hwnd, null, 0);
+    // Reaching up beside the tab strip, or no longer (T1900), moves every
+    // row by the strip's height inside a column that may not have resized.
+    const reach = self.window.paneSidebarReachPx();
+    const reached = reach != self.reach;
+    self.reach = reach;
+    if (changed or reached) _ = w32.InvalidateRect(self.hwnd, null, 0);
     if (moved or changed) self.syncTips();
     if (changed) self.logOutline();
     // A relayout under the open card (a split, a stash from its own row
@@ -3275,9 +3282,13 @@ fn wndProc(hwnd: w32.HWND, msg: u32, wparam: usize, lparam: isize) callconv(.win
         // (T1865): its shadow and the trailing margin are visible but belong
         // to the pane underneath, which the window region used to say.
         w32.WM_NCHITTEST => {
-            if (which != .card) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             var pt = w32.POINT{ .x = xOf(lparam), .y = yOf(lparam) };
             _ = w32.ScreenToClient(hwnd, &pt);
+            // Up beside the tab strip (T1900) the column only draws: the row
+            // is the caption's, so a drag there moves the window and a
+            // double-click maximizes it, as on the rest of the band.
+            if (pt.y < self.window.paneSidebarReachPx()) return w32.HTTRANSPARENT;
+            if (which != .card) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
             var wr: w32.RECT = undefined;
             if (w32.GetClientRect(hwnd, &wr) == 0) return w32.HTTRANSPARENT;
             var col: w32.RECT = undefined;

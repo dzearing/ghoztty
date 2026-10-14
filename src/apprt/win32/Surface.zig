@@ -1506,6 +1506,12 @@ pub fn setBannerCardCorner(self: *Surface, diameter: i32) void {
     if (self.banner_overlay) |b| b.setCardCorner(diameter);
 }
 
+/// Nest the banner's card in an elevated pane, so its corners are concentric
+/// with the pane's (T1900). See `BannerOverlay.setNested`.
+pub fn setBannerNested(self: *Surface, nested: bool) void {
+    if (self.banner_overlay) |b| b.setNested(nested);
+}
+
 /// Put the banner strip on the window's glass, or (null) take it off - T1884.
 /// See `BannerOverlay.setGlassDesk`.
 pub fn setBannerGlass(self: *Surface, desk: ?BannerOverlay.GlassDesk) void {

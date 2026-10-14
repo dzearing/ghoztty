@@ -540,6 +540,26 @@ pub fn clientRect(r: Rect, strip_top: i32) Rect {
     };
 }
 
+/// Move a resolved strip `dx` px right (T1900): `layout` always starts the run
+/// at x = 0, and in the elevated look with glass panes the strip starts at the
+/// pane sidebar's edge instead, the sidebar running up beside it (Mac
+/// `TransparentTitlebarTerminalWindow.placeTabBar`). Shifting the results,
+/// rather than translating every mouse coordinate, keeps the strip's x space
+/// the client's, so every hit test and published region follows unchanged.
+/// Empty rects stay empty for the same reason `clientRect` keeps them so.
+pub fn shiftX(strip: *Strip, out: []Rect, dx: i32) void {
+    if (dx == 0) return;
+    for (out) |*r| r.* = shiftRect(r.*, dx);
+    strip.new_tab = shiftRect(strip.new_tab, dx);
+    strip.menu = shiftRect(strip.menu, dx);
+    strip.tabs_right += dx;
+}
+
+fn shiftRect(r: Rect, dx: i32) Rect {
+    if (r.isEmpty()) return .{};
+    return .{ .left = r.left + dx, .top = r.top, .right = r.right + dx, .bottom = r.bottom };
+}
+
 /// The band the strip's CONTENT occupies, in CLIENT coordinates: inside both
 /// insets horizontally, and the buttons' own vertical band
 /// (`tab_top_pad`..`bar_h`) rather than the full bar — the same band
@@ -553,10 +573,17 @@ pub fn clientRect(r: Rect, strip_top: i32) Rect {
 /// about the band, and deriving it from DIP constants in a script is the rot
 /// this exists to remove.
 pub fn contentBand(m: Metrics, strip_client_w: i32, strip_top: i32) Rect {
+    return contentBandAt(m, 0, strip_client_w, strip_top);
+}
+
+/// `contentBand` for a strip that starts `strip_left` px in (T1900, `shiftX`)
+/// and ends at `strip_client_w`.
+pub fn contentBandAt(m: Metrics, strip_left: i32, strip_client_w: i32, strip_top: i32) Rect {
+    const left = strip_left + m.strip_pad_l;
     return .{
-        .left = m.strip_pad_l,
+        .left = left,
         .top = strip_top + m.tab_top_pad,
-        .right = @max(strip_client_w - m.strip_pad_r, m.strip_pad_l),
+        .right = @max(strip_client_w - m.strip_pad_r, left),
         .bottom = strip_top + m.bar_h,
     };
 }
@@ -1472,5 +1499,32 @@ test "T584: a content-sized tab is wider at the ramp size than at nothing" {
         const text_w = title_font.em(scale) * 8;
         try testing.expectEqual(text_w, m.preferredWidth(text_w) - m.preferredWidth(0));
         try testing.expect(m.preferredWidth(text_w) > m.min_tab_w);
+    }
+}
+
+test "shiftX: the run starts at the sidebar's edge, absent regions stay absent" {
+    for ([_]f32{ 1.0, 1.25, 1.5, 2.0 }) |scale| {
+        const m = Metrics.init(scale);
+        var base: [3]Rect = undefined;
+        var moved: [3]Rect = undefined;
+        const prefer = [_]i32{ 120, 120, 120 };
+        const a = layout(m, 900, false, &prefer, &base);
+        var b = layout(m, 900, false, &prefer, &moved);
+        shiftX(&b, &moved, 210);
+        try testing.expectEqual(a.visible, b.visible);
+        for (base[0..a.visible], moved[0..a.visible]) |x, y| {
+            try testing.expectEqual(x.left + 210, y.left);
+            try testing.expectEqual(x.right + 210, y.right);
+            try testing.expectEqual(x.top, y.top);
+            try testing.expectEqual(x.bottom, y.bottom);
+        }
+        try testing.expectEqual(a.new_tab.left + 210, b.new_tab.left);
+        try testing.expectEqual(a.tabs_right + 210, b.tabs_right);
+        // No menu on this strip: still absent, not a phantom at x = 210.
+        try testing.expect(b.menu.isEmpty());
+        // The band starts where the run does.
+        const band = contentBandAt(m, 210, 900 + 210, 0);
+        try testing.expectEqual(base[0].left + 210, band.left);
+        try testing.expectEqual(contentBand(m, 900, 0).right + 210, band.right);
     }
 }

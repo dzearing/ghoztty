@@ -141,7 +141,9 @@ function Wait-PaneCwd($needle, $tag, $timeoutSec = 30) {
 function Probe-TipText($top, $m, $errlog, $tries = 6) {
     for ($i = 0; $i -lt $tries; $i++) {
         Clear-Content $errlog -ErrorAction SilentlyContinue
-        $x = $m.ClientLeft + 40
+        # From the run's measured start (T1900): beside the pane sidebar the
+        # strip starts at its edge, and client x 40 is the sidebar's card.
+        $x = $m.ClientLeft + $m.RunLeft + 40
         $y = $m.ClientTop + $m.StripTopClient + $m.StripBtnTop + [int]($m.BtnPaint / 2)
         [void](Send-TestMouse -Window $top -Target $top -X $x -Y $y -Action move)
         Start-Sleep -Milliseconds 400
@@ -329,13 +331,14 @@ try {
         Start-Sleep -Milliseconds 1200
 
         # -------------------------------------------------------------------
-        # D: a viewer pane reports its location. The split takes focus, so
-        # tab 0's focused pane becomes the viewer and the same probe answers
-        # for it.
+        # D: a viewer pane reports its location. The split takes focus - asked
+        # for with --focus, since a CLI split leaves focus where it was by
+        # default (docs/claude/cli.md) - so tab 0's focused pane becomes the
+        # viewer and the same probe answers for it.
         # -------------------------------------------------------------------
         $md = Join-Path $root 'tipdoc.md'
         Set-Content -Path $md -Value '# tip doc' -Encoding utf8
-        Run-CliArgs @('+split', "--target=$pane", '--name=tipvw', "--view=$md") "$root\vw.txt" 20 | Out-Null
+        Run-CliArgs @('+split', "--target=$pane", '--name=tipvw', "--view=$md", '--focus') "$root\vw.txt" 20 | Out-Null
         Start-Sleep -Seconds 3
         $probe = Probe-TipText $top2 $m2 $errlog2
         Assert ($probe -like '*tipdoc.md*') "D: a viewer pane's tooltip names its location ($probe)"

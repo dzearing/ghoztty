@@ -159,10 +159,17 @@ try {
     # out - that section then skips rather than lying.
     $errlog = Join-Path $env:TEMP 'ghoztty-tabstrip-stderr.log'
     Remove-Item $errlog -ErrorAction SilentlyContinue
+    # Pinned to the flat pane style (T1900, after T1886 pinned caption-bar and
+    # chrome-merged-row the same way): this script measures the strip against
+    # a solid bar and the pane directly under the strip. The elevated default
+    # puts a 10 DIP margin under the strip, a gradient behind it and, with
+    # glass, the pane sidebar beside it - pane-sidebar-elevated.ps1 section 7
+    # owns that layout.
     $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments @(
         '--config-default-files=false',
         '--background=#000000',
         '--window-show-tab-bar=always',
+        '--macos-pane-style=flat',
         '--session-persistence=false'
     )
     Start-Sleep -Seconds 4
@@ -241,7 +248,9 @@ try {
     $btnPad   = $m.BtnPad
     $btnW    = $m.BtnW
     $gap     = $m.Gap
-    $padL    = $m.PadL
+    # Where the first tab starts: the strip's left inset, measured from the
+    # pane sidebar's edge when it runs up beside the strip (T1900).
+    $padL    = $m.RunLeft
     $padR    = $m.PadR   # the strip is inset the SAME at both ends
     $minTabW = $m.MinTabW
     # A tab's SLOT includes the inter-tab gap; the drawn chiclet gives it up
@@ -1291,6 +1300,7 @@ try {
         '--config-default-files=false',
         '--background=#000000',
         '--window-show-tab-bar=always',
+        '--macos-pane-style=flat',
         '--session-persistence=false',
         '-e', 'cmd.exe', '/K', 'title', $longTitle
     )
