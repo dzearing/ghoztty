@@ -36318,3 +36318,14 @@ moved to T1814.
   pane-sidebar-scroll passed 42/42. All four floor lanes pass. drag-perf is
   still red, from T1854 (an open task, reproduced twice). The perf half of the
   Mac commit is T1925.
+
+## 2026-10-14 — T1017: the title-bar check's blank-capture flake was already fixed
+
+- **What it was.** The 2026-08-20 "capture is UNIFORM" failure came from a
+  maximized window (3858x2118), not from too short a retry. The blank check
+  sampled on a coarse grid that never touched the 40 px title bar. T1282
+  (f5c995bd9) fixed that grid on 2026-09-02, so this closes against that
+  commit and adds no new code.
+- **Validation.** caption-bar passed 38/38 on all five runs: three idle, and
+  two with all 32 cores pinned. drag-perf is still red from T1854 (an open
+  task), so this commit uses -NoGuardDue.
