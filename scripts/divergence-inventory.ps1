@@ -9,7 +9,9 @@
   computes all three sets mechanically and writes a committed report so the
   dashboard and digests can cite it.
 
-  Mechanics: fetch the upstream ref (or resolve a local ref with -NoFetch,
+  Mechanics: fetch the upstream ref through the permanent `upstream` remote
+  (upstream-remote.ps1 ensure, T1024) and resolve upstream/<ref> - so the
+  shas the report cites stay reachable - (or resolve a local ref with -NoFetch,
   which is how the acceptance test runs against a synthetic repo), find the
   fork point with `git merge-base`, diff each side against it with
   `--name-status -M`, and tally per-file commit counts with one
@@ -52,6 +54,10 @@
 param(
     [string]$UpstreamUrl = 'https://github.com/ghostty-org/ghostty.git',
     [string]$UpstreamRef = 'main',
+    # The permanent remote the fetch goes through (T1024; kept by
+    # upstream-remote.ps1). A name git refuses is how the test reaches the
+    # URL-fetch fallback.
+    [string]$UpstreamRemote = 'upstream',
     [switch]$NoFetch,
     [string]$OurRef = 'HEAD',
     [string]$RepoRoot,
@@ -217,11 +223,46 @@ if ($NoFetch) {
     $upstreamLabel = $UpstreamRef
 }
 else {
-    Invoke-Git @('fetch', '--quiet', $UpstreamUrl, $UpstreamRef) | Out-Null
-    # @(...) at every call site: a 1-line git answer unrolls to a bare string
-    # on return, and [0] on a string is its first CHARACTER (PS 5.1).
-    $upSha = @(Invoke-Git @('rev-parse', 'FETCH_HEAD'))[0]
-    $upstreamLabel = '{0} {1}' -f $UpstreamUrl, $UpstreamRef
+    # Fetch through the permanent remote (T1024), not by URL: a URL fetch lands
+    # in FETCH_HEAD and keeps no ref, so every sha this report cites was
+    # reachable from nothing the moment the next fetch overwrote it - the exact
+    # condition upstream-remote.ps1 (T957) exists to end. `ensure` adds the
+    # remote when missing, corrects a drifted URL, fetches (-Force: a monthly
+    # inventory wants today's upstream, not the claim's last fetch) and anchors
+    # the plan shas, so the result is a ref this repo keeps.
+    $helper = Join-Path $PSScriptRoot 'upstream-remote.ps1'
+    # stderr from either native call is a normal answer (no such remote), and
+    # under 'Stop' PS 5.1 turns it into a terminating NativeCommandError.
+    $ErrorActionPreference = 'Continue'
+    $ensure = @(& powershell -NoProfile -File $helper ensure -Repo $RepoRoot -Url $UpstreamUrl -Remote $UpstreamRemote -Force 2>$null)
+    $remoteUrl = @(& git -C $RepoRoot remote get-url $UpstreamRemote 2>$null)
+    $hasRemote = ($LASTEXITCODE -eq 0 -and $remoteUrl.Count -gt 0)
+    $ErrorActionPreference = 'Stop'
+    if ($hasRemote) {
+        if (@($ensure | Where-Object { $_ -match '^WARNING upstream fetch failed' }).Count -gt 0) {
+            # Same answer the URL fetch gave before: an inventory of a stale
+            # upstream would read as current, so it is an error, not a report.
+            Write-Host ("ERROR: fetching remote '{0}' failed:" -f $UpstreamRemote)
+            $ensure | ForEach-Object { Write-Host ("  " + $_) }
+            exit 1
+        }
+        $trackRef = 'refs/remotes/{0}/{1}' -f $UpstreamRemote, $UpstreamRef
+        $upSha = Resolve-Commit $trackRef
+        if (-not $upSha) { Write-Host ("ERROR: cannot resolve '{0}' after fetching remote '{1}'" -f $trackRef, $UpstreamRemote); exit 2 }
+        $upstreamLabel = '{0}/{1} ({2})' -f $UpstreamRemote, $UpstreamRef, $remoteUrl[0]
+    }
+    else {
+        # The remote genuinely could not be added (ensure says why). Fall back
+        # to the old URL fetch so the inventory still runs, and say so: these
+        # shas are anchored by nothing.
+        Write-Host ("WARNING: remote '{0}' unavailable; fetching {1} into FETCH_HEAD (no ref keeps these shas)" -f $UpstreamRemote, $UpstreamUrl)
+        $ensure | ForEach-Object { Write-Host ("  " + $_) }
+        Invoke-Git @('fetch', '--quiet', $UpstreamUrl, $UpstreamRef) | Out-Null
+        # @(...) at every call site: a 1-line git answer unrolls to a bare string
+        # on return, and [0] on a string is its first CHARACTER (PS 5.1).
+        $upSha = @(Invoke-Git @('rev-parse', 'FETCH_HEAD'))[0]
+        $upstreamLabel = '{0} {1} (FETCH_HEAD, unanchored)' -f $UpstreamUrl, $UpstreamRef
+    }
 }
 
 $mbOut = @(& git -C $RepoRoot merge-base $ourSha $upSha)

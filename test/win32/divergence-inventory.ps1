@@ -24,6 +24,10 @@
        nothing was ever recorded, and writes nothing;
     F. a report written before the history existed is the baseline, so the
        first monthly run still has a delta to report.
+    G. without -NoFetch the fetch goes through the permanent `upstream`
+       remote (T1024): it is added, upstream/<ref> is a real ref the cited
+       sha stays reachable from, an un-addable remote falls back to the URL
+       fetch and says so, and a remote that cannot fetch is an ERROR.
 
   No network, no GUI, no ghoztty processes - safe on the background desktop.
 
@@ -210,6 +214,48 @@ try {
     Check 'F4 the legacy baseline becomes the first history record' `
         (($lruns.Count -eq 2) -and ($lruns[0].date -eq '2026-01-01') -and (@($lruns[0].riskSet).Count -eq 1)) ("runs=" + $lruns.Count)
 
+    # --- G. the fetch goes through the permanent remote (T1024) -------------
+    # A bare copy of the fixture stands in for ghostty-org, reached by local
+    # path so no network is involved. Each client is a fresh clone with no
+    # 'upstream' remote, which is the fresh-clone / Mac-seat starting point.
+    $srv = Join-Path $tmp 'srv.git'
+    $null = & git clone --quiet --bare $tmp $srv 2>$null
+    $upTip = @(Invoke-TmpGit $tmp @('rev-parse', 'upstreamref'))[0]
+
+    $cli = Join-Path $tmp 'cli'
+    $null = & git clone --quiet $tmp $cli 2>$null
+    $gReport = Join-Path $tmp 'g.md'
+    $r = Invoke-Inventory @('-RepoRoot', $cli, '-OurRef', 'origin/fork', '-UpstreamUrl', $srv, '-UpstreamRef', 'upstreamref', '-OutFile', $gReport, '-Now', '2026-02-01')
+    Check 'G1 fetch run exits 0 and writes the report' (($r.Code -eq 0) -and (Test-Path -LiteralPath $gReport)) ("exit=" + $r.Code + " " + $r.Text)
+    $gUrl = @(& git -C $cli remote get-url upstream 2>$null)
+    Check 'G2 the run added the upstream remote' (($gUrl.Count -gt 0) -and ($gUrl[0] -eq $srv)) ("url=" + ($gUrl -join ','))
+    $gTrack = @(& git -C $cli rev-parse --verify --quiet 'refs/remotes/upstream/upstreamref^{commit}')
+    Check 'G3 upstream/<ref> is a real ref at upstream''s tip' (($gTrack.Count -gt 0) -and ($gTrack[0] -eq $upTip)) ("track=" + ($gTrack -join ','))
+    Check 'G4 the report names the remote ref it resolved' `
+        ($r.Text -match ('upstream {0} \(upstream/upstreamref \(' -f $upTip.Substring(0, 9))) $r.Text
+    Check 'G5 no FETCH_HEAD-only warning on the remote path' ($r.Text -notmatch 'FETCH_HEAD') $r.Text
+    $null = Invoke-TmpGit $cli @('fetch', '--quiet', 'origin')
+    $gHolds = @(& git -C $cli for-each-ref --contains $upTip --format='%(refname)')
+    Check 'G6 the cited sha is still reachable from a ref after another fetch' ($gHolds.Count -gt 0) ("refs=" + ($gHolds -join ','))
+
+    # Fallback: a remote name git refuses cannot be added, so the run falls
+    # back to the URL fetch and says the shas are unanchored.
+    $cli2 = Join-Path $tmp 'cli2'
+    $null = & git clone --quiet $tmp $cli2 2>$null
+    $g2Report = Join-Path $tmp 'g2.md'
+    $r = Invoke-Inventory @('-RepoRoot', $cli2, '-OurRef', 'origin/fork', '-UpstreamUrl', $srv, '-UpstreamRef', 'upstreamref', '-UpstreamRemote', 'bad name', '-OutFile', $g2Report, '-Now', '2026-02-01')
+    Check 'G7 an un-addable remote falls back to the URL fetch and still reports' `
+        (($r.Code -eq 0) -and (Test-Path -LiteralPath $g2Report) -and ($r.Text -match ('upstream {0} ' -f $upTip.Substring(0, 9)))) ("exit=" + $r.Code + " " + $r.Text)
+    Check 'G8 the fallback says it is unanchored' `
+        (($r.Text -match "WARNING: remote 'bad name' unavailable") -and ($r.Text -match 'FETCH_HEAD, unanchored')) $r.Text
+
+    # A remote that adds but cannot fetch is an ERROR, never a report of a
+    # stale upstream that reads as current.
+    $g3Report = Join-Path $tmp 'g3.md'
+    $r = Invoke-Inventory @('-RepoRoot', $cli2, '-OurRef', 'origin/fork', '-UpstreamUrl', (Join-Path $tmp 'no-such-server.git'), '-UpstreamRef', 'upstreamref', '-UpstreamRemote', 'gone', '-OutFile', $g3Report, '-Now', '2026-02-01')
+    Check 'G9 a failed fetch exits 1 with ERROR and writes no report' `
+        (($r.Code -eq 1) -and ($r.Text -match "ERROR: fetching remote 'gone' failed") -and -not (Test-Path -LiteralPath $g3Report)) ("exit=" + $r.Code + " " + $r.Text)
+
     # --- C. error paths -----------------------------------------------------
     $badReport = Join-Path $tmp 'bad.md'
     $r = Invoke-Inventory @('-RepoRoot', $tmp, '-OurRef', 'fork', '-UpstreamRef', 'no-such-ref', '-NoFetch', '-OutFile', $badReport)
@@ -243,4 +289,4 @@ if ($script:failures -eq 0) {
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:passes -Fail $script:failures -MinPass 33
+Write-TestVerdict -Pass $script:passes -Fail $script:failures -MinPass 42
