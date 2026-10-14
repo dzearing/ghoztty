@@ -15,7 +15,8 @@
 #   3. A question in the RAIL holds still, as Mac's corner "?" does: the
 #      tally says question=1, no clock starts, frames are identical.
 #   4. A question in the pinned PANEL breathes: the clock starts with
-#      pulse=1 and the frames move.
+#      pulse=1 and the frames move. Its badge is Mac's "question" capsule
+#      (T1889): the status chip's height and a word wide, logged once.
 #   5. A bell on a STASHED pane leaves a dot: s1 stashed, a BEL printed in
 #      it, the tally says bell=1 and the panel picture changed. Then
 #      `+restore --focus` looks at it - the bell clears on focus, as Mac's
@@ -179,6 +180,8 @@ try {
     $started = Wait-Log $mark 'pane sidebar motion on' 200
     Assert "no clock for the rail's corner badge" ($null -eq $started)
     Assert "the rail holds still ($(Get-Distinct $frames) distinct)" ((Get-Distinct $frames) -eq 1)
+    # T1889: the rail's corner keeps Mac's small disc - no "question" chip.
+    Assert "the rail paints no question chip (log)" ($null -eq (Wait-Log $mark 'pane sidebar question chip' 100))
 
     "== 4: in the pinned panel the question badge breathes"
     $mark = Get-LogCount
@@ -189,6 +192,14 @@ try {
     $on = Wait-Log $mark 'pane sidebar motion on surface=rail busy=0 pulse=1'
     "  $on"
     Assert "the motion clock started for the ring (log)" ($null -ne $on)
+    # T1889: in a row it is Mac's "question" capsule, not the rail's disc -
+    # the status chip's height, and a word wide.
+    $chip = Wait-Log $mark 'pane sidebar question chip w=\d+ h=\d+'
+    "  $chip"
+    $cw = 0; $ch = 0
+    if ($chip -match 'w=(\d+) h=(\d+)') { $cw = [int]$Matches[1]; $ch = [int]$Matches[2] }
+    Assert "the row's badge is the status chip's height ($ch, want $((Px 12) + (Px 4)))" ($ch -eq ((Px 12) + (Px 4)))
+    Assert "the row's badge is a capsule holding a word, not a disc ($cw x $ch, want w >= 2h)" ($ch -gt 0 -and $cw -ge 2 * $ch)
     $frames = Get-Frames $sb 8 175
     Assert "the panel moves while it asks ($(Get-Distinct $frames) distinct, want >= 3)" ((Get-Distinct $frames) -ge 3)
     $mark = Get-LogCount

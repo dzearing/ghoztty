@@ -23,6 +23,7 @@
 const std = @import("std");
 const toc = @import("viewer_toc_layout.zig");
 const pane_elevation = @import("pane_elevation.zig");
+const type_ramp = @import("type_ramp.zig");
 
 // ---------------------------------------------------------------------------
 // Modes and the column
@@ -577,6 +578,35 @@ pub const Rect = struct {
         return self.top + @divTrunc(self.height(), 2);
     }
 };
+
+/// The question chip (T1889, Mac `PaneSidebarQuestionBadge` in a row or a
+/// window header): the word "question" in an accent capsule. A STATUS CHIP
+/// by design system §3.1's named exception, so it is the chooser's chip
+/// exactly - one caption line plus `sm` tall (Mac's 15 pt), `sm` of padding
+/// either side of the word (Mac's 6 pt, onto the scale), radius half its
+/// height. The rail's corner keeps its small "?" disc, as Mac's does.
+pub const question_label = "question";
+pub const question_chip_pad_dip: f32 = sm_dip;
+
+pub fn questionChipHeight(scale: f32) i32 {
+    return px(type_ramp.caption_dip, scale) + px(sm_dip, scale);
+}
+
+/// The chip for a label `text_w` pixels wide, ending at `right` and centred
+/// on `center_y`. Never narrower than it is tall, so it is always a capsule.
+pub fn questionChip(right: i32, center_y: i32, text_w: i32, scale: f32) Rect {
+    const h = questionChipHeight(scale);
+    const w = @max(@max(text_w, 0) + 2 * px(question_chip_pad_dip, scale), h);
+    const top = center_y - @divTrunc(h, 2);
+    return .{ .left = right - w, .top = top, .right = right, .bottom = top + h };
+}
+
+/// The breathing ring around a chip (Mac: a 3 pt stroke padded 1.5 pt out):
+/// the chip grown by `ring` on every side, so its radius - half ITS height -
+/// keeps it the chip's shape rather than a disc's.
+pub fn questionRing(chip: Rect, ring: i32) Rect {
+    return .{ .left = chip.left - ring, .top = chip.top - ring, .right = chip.right + ring, .bottom = chip.bottom + ring };
+}
 
 /// What the layout needs to know about each item: its section, and whether
 /// the expanded row carries a subtitle line.
@@ -1860,4 +1890,39 @@ test "pane_sidebar: dragging the rail out past 120 pins; a panel only resizes, c
     // The card opened over the grid resizes the same preference.
     try testing.expectEqual(@as(?EdgeDrag, .{ .width = 280 }), edgeDrag(.mini, true, 240, 40));
     try testing.expectEqual(@as(?EdgeDrag, null), edgeDrag(.hidden, false, 240, 40));
+}
+
+test "T1889: the question chip is the status chip - caption line plus sm tall, sm padding, ending at its right edge" {
+    for (scales) |s| {
+        const text_w = px(46, s);
+        const c = questionChip(200, 50, text_w, s);
+        try testing.expectEqual(px(12, s) + px(4, s), c.height());
+        try testing.expectEqual(questionChipHeight(s), c.height());
+        try testing.expectEqual(@as(i32, 200), c.right);
+        try testing.expectEqual(text_w + 2 * px(4, s), c.width());
+        // Centred on the line it sits beside (within the odd pixel).
+        try testing.expect(@abs(c.centerY() - 50) <= 1);
+        // A word, so a capsule wider than tall - not the rail's disc.
+        try testing.expect(c.width() > c.height());
+    }
+}
+
+test "T1889: a chip never gets narrower than it is tall" {
+    for (scales) |s| {
+        const c = questionChip(100, 20, 0, s);
+        try testing.expectEqual(c.height(), c.width());
+        const neg = questionChip(100, 20, -10, s);
+        try testing.expectEqual(neg.height(), neg.width());
+    }
+}
+
+test "T1889: the breathing ring follows the capsule, grown evenly on every side" {
+    const c = questionChip(200, 50, 46, 1.0);
+    const r = questionRing(c, 2);
+    try testing.expectEqual(c.width() + 4, r.width());
+    try testing.expectEqual(c.height() + 4, r.height());
+    try testing.expectEqual(c.centerX(), r.centerX());
+    try testing.expectEqual(c.centerY(), r.centerY());
+    // Still wider than tall: a capsule's ring, not a disc's.
+    try testing.expect(r.width() > r.height());
 }

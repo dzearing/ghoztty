@@ -36114,3 +36114,18 @@ moved to T1814.
   card's middle logged alpha 84 with glass on and 255 with it off. Seven new
   unit tests. Floor lanes, P1-P3, the harness floor and the due harnesses were
   run (results in the task file).
+
+## 2026-10-13 — T1889: a waiting pane's sidebar row says "question", as on Mac
+
+- **What changed.** A row (and an all-windows window header) whose pane is
+  waiting for input now shows Mac's "question" capsule instead of the rail's
+  round "?" disc. The breathing ring follows the capsule's shape. The rail's
+  corner keeps the disc, as Mac's does.
+- **How.** The capsule is the design system's status chip: caption semibold,
+  one caption line plus 4 DIP tall, 4 DIP padding, radius half its height.
+  Geometry is pure (`pane_sidebar.questionChip` / `questionRing`). Windows has
+  no accent selection pill, so Mac's inverted variant has no counterpart.
+- **Validation.** pane-sidebar-activity.ps1 ALL PASS (34), with new checks
+  for the chip's size and for no chip on the rail. Three new unit tests. The
+  floor lanes, harness floor and the pane-sidebar family passed. chrome-theme
+  went red on a test-fixture literal that T1884/T1885 added, filed as T1918.

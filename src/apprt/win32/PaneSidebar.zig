@@ -285,6 +285,9 @@ title_font: ?*anyopaque = null,
 title_bold_font: ?*anyopaque = null,
 caption_font: ?*anyopaque = null,
 caption_bold_font: ?*anyopaque = null,
+/// The question chip's last logged size (w, h), so the log names it once
+/// per change rather than every frame the ring breathes.
+logged_chip: [2]i32 = .{ 0, 0 },
 font_scale: f32 = 0,
 metrics: pane_sidebar.TextMetrics = .{ .title_h = 19, .caption_h = 16 },
 
@@ -1486,21 +1489,37 @@ fn paintMarkFor(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, mark: Ma
     }
 }
 
-/// The question badge with its breathing ring (Mac `PaneSidebarQuestionBadge`):
-/// a soft accent ring outside the disc, so a question in an otherwise quiet
-/// list is what draws the eye. `under` is what the ring fades into.
-fn paintQuestion(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, under: color_math.Rgb, t: Theme) void {
+/// The question chip with its breathing ring (Mac `PaneSidebarQuestionBadge`
+/// in a row or a window header, T1889): the word "question" in an accent
+/// capsule ending at `right` and centred on `center_y`, with a soft accent
+/// ring around the capsule so a question in an otherwise quiet list is what
+/// draws the eye. `under` is what the ring fades into. Returns the chip, so
+/// the caller knows where its text has to stop.
+///
+/// Mac inverts the chip on its accent selection pill; Windows has no accent
+/// pill (design system: selection is a neutral fill plus the accent bar), so
+/// the chip is always accent-on-surface and always breathes.
+fn paintQuestion(self: *PaneSidebar, hdc: w32.HDC, right: i32, center_y: i32, under: color_math.Rgb, t: Theme) pane_sidebar.Rect {
+    const label = std.unicode.utf8ToUtf16LeStringLiteral(pane_sidebar.question_label);
+    if (self.caption_bold_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+    const chip = pane_sidebar.questionChip(right, center_y, textWidth(hdc, label), self.scale);
+    if (chip.width() != self.logged_chip[0] or chip.height() != self.logged_chip[1]) {
+        self.logged_chip = .{ chip.width(), chip.height() };
+        log.info("pane sidebar question chip w={d} h={d}", .{ chip.width(), chip.height() });
+    }
     self.paint_marks.pulsing += 1;
     if (self.paint_motion) {
         const a = motion.pulseAlpha(self.paint_ms);
         const ring = @max(pane_sidebar.px(motion.pulse_ring_dip, self.scale), 1);
         // Below one shade step the ring is invisible: skip the fill.
         if (a * 255 >= 1) {
-            const halo: pane_sidebar.Rect = .{ .left = r.left - ring, .top = r.top - ring, .right = r.right + ring, .bottom = r.bottom + ring };
-            fillRound(hdc, halo, @divTrunc(halo.width(), 2), rgb(color_math.mix(under, t.accent, a)));
+            const halo = pane_sidebar.questionRing(chip, ring);
+            fillRound(hdc, halo, @divTrunc(halo.height(), 2), rgb(color_math.mix(under, t.accent, a)));
         }
     }
-    self.paintBadge(hdc, r, .needs_input, t);
+    fillRound(hdc, chip, @divTrunc(chip.height(), 2), rgb(t.accent));
+    drawText(hdc, label, chip, rgb(chrome_theme.textOn(t.accent)), w32.DT_CENTER | w32.DT_VCENTER);
+    return chip;
 }
 
 /// A stashed pane's bell (Mac: a 7 pt accent dot until it is restored).
@@ -1692,15 +1711,8 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
                 text_right -= d + sm;
             }
             if (e.state == .needs_input) {
-                const badge = pane_sidebar.px(16, self.scale);
-                const br: pane_sidebar.Rect = .{
-                    .left = text_right - badge,
-                    .top = icon_r.top + @divTrunc(icon_r.height() - badge, 2),
-                    .right = text_right,
-                    .bottom = icon_r.top + @divTrunc(icon_r.height() - badge, 2) + badge,
-                };
-                self.paintQuestion(hdc, br, under, t);
-                text_right = br.left - sm;
+                const chip = self.paintQuestion(hdc, text_right, icon_r.centerY(), under, t);
+                text_right = chip.left - sm;
             }
         }
 
@@ -1952,10 +1964,8 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
     var right = hd.rect.right - text_inset;
     const text_r: pane_sidebar.Rect = .{ .left = hd.label_x, .top = hd.chevron.top - pane_sidebar.px(6, self.scale), .right = right, .bottom = hd.chevron.bottom + pane_sidebar.px(6, self.scale) };
     if (!project and g.question) {
-        const badge = pane_sidebar.px(16, self.scale);
-        const br: pane_sidebar.Rect = .{ .left = right - badge, .top = hd.chevron.centerY() - @divTrunc(badge, 2), .right = right, .bottom = hd.chevron.centerY() - @divTrunc(badge, 2) + badge };
-        self.paintQuestion(hdc, br, under, t);
-        right = br.left - sm;
+        const chip = self.paintQuestion(hdc, right, hd.chevron.centerY(), under, t);
+        right = chip.left - sm;
     } else {
         var nb: [16]u8 = undefined;
         const count8 = std.fmt.bufPrint(&nb, "{d}", .{if (project) g.project_size else g.panes}) catch "";
@@ -2039,8 +2049,9 @@ fn paintRowButton(self: *PaneSidebar, hdc: w32.HDC, i: usize, b: pane_sidebar.Re
     glyph(hdc, self.scale, b, if (section == .stashed) glyph_restore else glyph_stash, 10, t.text);
 }
 
-/// A state badge: `needs_input` is the accent "?" disc (Mac's question
-/// badge). Busy has no badge: its mark shimmers instead (T1843).
+/// The rail tile's corner badge: `needs_input` is the accent "?" disc (Mac's
+/// rail corner; rows and headers get the "question" chip, `paintQuestion`).
+/// Busy has no badge: its mark shimmers instead (T1843).
 fn paintBadge(self: *PaneSidebar, hdc: w32.HDC, r: pane_sidebar.Rect, state: ActivityState, t: Theme) void {
     switch (state) {
         .idle, .busy => {},
