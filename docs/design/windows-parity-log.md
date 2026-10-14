@@ -36378,3 +36378,9 @@ moved to T1814.
   docs-routing, body-complete, argv-hazard and unroll-count all passed.
   drag-perf is still red from T1854. The guard row now records that it is
   known-blocked by T1854, and this commit uses -NoGuardDue.
+
+## 2026-10-14 — T1021: the machine chooser's shape test now re-runs whenever its layout changes
+
+- **What changed.** A new `chooser-shape` guard row ties `ipc-machine-chooser.ps1`, the only test of the New Remote Window picker's shape, to the files that decide that shape: `chooser_layout.zig`, `chooser_rows.zig` and `MachineChooser.zig`. The task's suggested name `machine-chooser` was already used by the T990 text-field row. The harness now stamps itself after a clean run with no skipped sections.
+- **MachineChooser.zig is covered.** The wash, the rule and the footer are painted there from the layout's numbers, and the run takes about a minute. That follows the `chooser-selection` precedent; the `chooser-resume` objection was about a four-minute harness.
+- **Validation.** `ipc-machine-chooser.ps1` passed 81/81 in 62 s and stamped. Appending a line to `chooser_layout.zig` made the row DUE, and removing it byte-exact made it CURRENT again. The harness-floor lane passed and stamped, and guard-due passed 128/128. The first floor run went red on three audits because the probe edit had left the source newer than the exe. A content-identical rebuild does not relink, so caller-anchor was re-run with `GHOZTTY_TEST_REBUILD_STALE=1`, and then all three passed. drag-perf is still due under T1854, so this commit uses -NoGuardDue. No Zig source changed, so the Zig lanes were not run.

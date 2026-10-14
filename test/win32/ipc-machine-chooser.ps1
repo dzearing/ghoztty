@@ -968,6 +968,16 @@ if ($NegativeControl -and -not $script:negReached3) {
     Assert $false 'NEGATIVE CONTROL never reached its inverted assertion (monogram)'
 }
 
+# --- stamp (T783 / T1021) ---------------------------------------------------
+# A clean green run records the covered files so scripts\guard-due.ps1 can
+# answer "has anyone run this harness against the code as it now stands?"
+# (row `chooser-shape`). A run with a skipped section asserted less than the
+# whole shape, so it does not stamp.
+if ($script:fail -eq 0 -and $script:skip -eq 0 -and -not $NegativeControl) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
+        update -Guard chooser-shape -Repo $repo 2>&1 | ForEach-Object { Write-Host "  $($_.ToString())" }
+}
+
 Write-Host ''
 if ($script:skip -gt 0) { Write-Host "($($script:skip) section(s) SKIPPED)" }
 if ($script:fail -eq 0) {

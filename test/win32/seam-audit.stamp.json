@@ -1,11 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-14T12:01:01-07:00",
-    "commit":  "db61a44c6",
+    "generated":  "2026-10-14T12:41:30-07:00",
+    "commit":  "c52608cbc",
     "uncommitted":  [
-                        "test/win32/dip-rounding-audit.ps1",
-                        "test/win32/lib/DipRoundingAudit.ps1"
+                        "test/win32/ipc-machine-chooser.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -651,7 +650,7 @@
                   "test/win32/ipc-floor-setup.ps1":  "36d11272495b125cd6bb2131ec1de28d185c8e5086994a8a929528bae2020ba1",
                   "test/win32/ipc-instance-addressability.ps1":  "c79c3315cb528318e4ba8532854be31dbba60b2bcef48e5995b3063970a57c30",
                   "test/win32/ipc-list-session-id.ps1":  "191cea290a106a5b0610c258bc70a09453001d70108c243d991d42c69ac915c2",
-                  "test/win32/ipc-machine-chooser.ps1":  "bbd575343ac0aa7e971f79bab1d59aed296ff72af2c400abcc93cbf335973d9f",
+                  "test/win32/ipc-machine-chooser.ps1":  "88c74399d621c30095c3681996febcf2123f3a758ceacffd1ba085771e56c24b",
                   "test/win32/ipc-p1.ps1":  "a414e7de2771cec78fb8808095efa0240c43c77eb676d6294b8376253ef2f641",
                   "test/win32/ipc-p2.ps1":  "6c4936ffa14e56b5aaf8cb6da751fb423a2d13f3154e775f7e7692408cfe2ebf",
                   "test/win32/ipc-p3.ps1":  "2a547a5072718057f3f1d21d939867971e153782492bb36d3810fbee3f3d86a9",

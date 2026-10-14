@@ -3836,6 +3836,28 @@ $GuardTable = @(
             'test\win32\machine-chooser.ps1'
         )
     },
+    # The chooser's SHAPE (T175, row T1021): the fixed 840x540 client, the
+    # 260-wide washed machine column and its hairline rule, the detail pane
+    # following the selection, Cancel alone in the footer, and the status strip
+    # that wraps without clipping. Every one of those numbers is decided in
+    # chooser_layout.zig; chooser_rows.zig is the row model the pixel probes
+    # read. MachineChooser.zig IS here, on the chooser-selection precedent and
+    # against the chooser-resume one: the wash, the rule and the footer are
+    # PAINTED there from the layout's numbers, so a layout change the painter
+    # does not honour is exactly the hole this row closes - and the run is
+    # about a minute, not the four-minute harness the chooser-resume objection
+    # is about.
+    [pscustomobject]@{
+        Name   = 'chooser-shape'
+        Script = 'test\win32\ipc-machine-chooser.ps1'
+        Stamp  = 'test\win32\ipc-machine-chooser.stamp.json'
+        Covers = @(
+            'src\apprt\win32\chooser_layout.zig',
+            'src\apprt\win32\chooser_rows.zig',
+            'src\apprt\win32\MachineChooser.zig',
+            'test\win32\ipc-machine-chooser.ps1'
+        )
+    },
     # The picker's MODALITY (T712). Mac made the New Window picker modeless in
     # 78a21daa8 so you can keep working - and watch the roster react - while it
     # is up; the win32 half was one `EnableWindow(owner, 0)` in
