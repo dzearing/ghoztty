@@ -1,12 +1,11 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-14T11:31:28-07:00",
-    "commit":  "041117282",
+    "generated":  "2026-10-14T12:01:01-07:00",
+    "commit":  "db61a44c6",
     "uncommitted":  [
-                        "test/win32/chrome-theme.ps1",
-                        "test/win32/lib/ColorMath.ps1",
-                        "test/win32/viewer-error-card.ps1"
+                        "test/win32/dip-rounding-audit.ps1",
+                        "test/win32/lib/DipRoundingAudit.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -590,6 +589,7 @@
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",
                   "test/win32/desktop-launch-audit.ps1":  "3cacc5fce5628dd8501cdc2315698e7974c8b28d35159f7c67685f3e99ec57e1",
                   "test/win32/desk-variant.ps1":  "ad33dc758514da73416631f090514c0c34f9e15adeb7a2e087a2bba660911598",
+                  "test/win32/dip-rounding-audit.ps1":  "8a3979da25d92635db2d67c480af57699a7a61c55331b19d8e56a3fab18d5f5b",
                   "test/win32/divergence-inventory.ps1":  "938a7b36a7170b1e2d20f7670d0945e3163c7245fcf51cc2322a8837047d630c",
                   "test/win32/docs-routing.ps1":  "0df33f259fc8eb88f4eb186c8f0fb216bfe5e929d3e8e85e59a9b3cbd4b6d821",
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",
@@ -696,6 +696,7 @@
                   "test/win32/lib/count-resizes.ps1":  "bd9031b210198942ee1b7e9060d8bf46beebe35d217dd0f1abec75715802ce0e",
                   "test/win32/lib/DesktopCapability.ps1":  "d515c5b58b16aaaf2e077e22e86b8b6eb33fda4d639461ba0b133460b3cdf7e7",
                   "test/win32/lib/DesktopLaunchAudit.ps1":  "897d00a536c4707eca44bd869d7b86fb4c8e48eceb62b36c04009e33f3fc08a4",
+                  "test/win32/lib/DipRoundingAudit.ps1":  "def9e67665e72015ce65e1f74dea9a69eaf563271b682043df7191041f06e119",
                   "test/win32/lib/ExitCodeAudit.ps1":  "c6aa6eb8adbe8d682bdacc2a0034e4accf17ee1790b5867a856de3105ba6806c",
                   "test/win32/lib/FakeAgentRelay.ps1":  "75beb6bffdb603e237860dc7bcbda4cfc41ace110f7f12b13777395244c232c7",
                   "test/win32/lib/FakeRelay.ps1":  "c1d824a5de199369521042d5eadb2ca0c879b55d92104b709c98d17b880eee26",

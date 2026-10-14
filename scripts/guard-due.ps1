@@ -4624,6 +4624,9 @@ $GuardTable = @(
         Name   = 'drag-perf'
         Script = 'test\win32\drag-perf.ps1'
         Stamp  = 'test\win32\drag-perf.stamp.json'
+        # T1854: section C reads the 2-pane drag summary at 4 and 8 panes, so the
+        # "got worse with every split" control scores 2 vs 2 and cannot go green.
+        KnownBlockedBy = 'T1854'
         Covers = @(
             'src\apprt\win32\drag_perf.zig',
             # The chrome fan-out counters the harness asserts on since T1345 —
@@ -4982,6 +4985,23 @@ $GuardTable = @(
             'test\win32\lib\*.ps1',
             'scripts\*.ps1',
             'scripts\lib\*.ps1'
+        )
+    },
+
+    # T1020 - the DIP-rounding sweep. It watches every script in the tree, not
+    # just ChromeGeometry.ps1, because the defect arrives as a new script that
+    # converts a DIP length with a bare `[Math]::Round`: four subject-scoped
+    # hand sweeps each missed the one script they were not looking at.
+    [pscustomobject]@{
+        Name   = 'dip-rounding'
+        Script = 'test\win32\dip-rounding-audit.ps1'
+        Stamp  = 'test\win32\dip-rounding-audit.stamp.json'
+        Covers = @(
+            'test\win32\dip-rounding-audit.ps1',
+            'test\win32\lib\DipRoundingAudit.ps1',
+            'test\win32\dip-rounding-audit.baseline.json',
+            'test\win32\*.ps1',
+            'test\win32\lib\*.ps1'
         )
     },
 

@@ -36358,3 +36358,23 @@ moved to T1814.
   41/41. T1929 sweeps the other scripts for the same gap. drag-perf is still
   red from T1854, so this commit uses -NoGuardDue. T1930 was a duplicate of
   T1854 and is closed as skipped.
+
+## 2026-10-14 — T1020: the harness now sweeps for DIP conversions that round differently from the app
+
+- **What.** The app rounds a DIP length to pixels half away from zero;
+  PowerShell's bare `[Math]::Round` and an `[int]` cast round half to even.
+  Hand sweeps had found and fixed this four times, each in the script someone
+  happened to be reading. `test/win32/dip-rounding-audit.ps1` now sweeps every
+  script for the idiom (analyzer: `test/win32/lib/DipRoundingAudit.ps1`).
+- **Found.** The defect had spread to 54 sites in 33 scripts, far more than the
+  four the card named. Fixing them all in one turn would have re-dued about 30
+  GUI harnesses, so they are a per-file ratchet baseline and T1931 works them
+  down. New sites fail now, and so does a second `Get-TestChromeDip`. The audit
+  also showed the "they agree at 125%/150%" claim is not general (18 DIP at
+  125% gives 22 vs 23).
+- **Validation.** The audit passed 34/34. A file planted under test/win32 with a
+  bare Round made the run exit 1 without stamping. The harness-floor lane
+  passed, with the audit added as a member, and harness-floor, guard-due,
+  docs-routing, body-complete, argv-hazard and unroll-count all passed.
+  drag-perf is still red from T1854. The guard row now records that it is
+  known-blocked by T1854, and this commit uses -NoGuardDue.

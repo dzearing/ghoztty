@@ -758,6 +758,21 @@ T1617); a file above its baseline fails, and so does one below it. Acceptance:
 `test\win32\unroll-count-audit.ps1`, whose section B measures the trap on this
 interpreter before it scores anybody and whose `-TeethCheck` re-plants it.
 
+**A DIP length is converted to pixels with `Get-TestChromeDip`** (T1020). The
+layout modules round with Zig's `@round` (half away from zero); PowerShell's
+bare `[Math]::Round(x)` and an `[int]` cast both round half to even, so a
+script that converts with either measures a pixel the app never drew whenever
+`dip * scale` lands on .5 - 4 DIP at 112.5%, 18 DIP at 125%, any odd DIP at
+150%. `test\win32\lib\ChromeGeometry.ps1`'s `Get-TestChromeDip` is the one
+conversion. `test\win32\dip-rounding-audit.ps1` sweeps the idiom over every
+script (kinds `bare-round`, `int-cast`, and `shadow` for a second
+`Get-TestChromeDip`), lists private `Px` copies as an informational hoist
+list, and ratchets the existing population per file
+(`dip-rounding-audit.baseline.json`, worked down by T1931). Exemption:
+`# dip-audit: <reason>`. What it cannot catch: a number the module COMPOSES
+from separately-rounded terms must be composed the same way in the script -
+round each term, then add (T314's `text_x`).
+
 **A seam you SET is a statement that the unset case is untested** (T796). Every
 GUI section of `test\win32\relay-account.ps1` set `GHOSTTY_GOOGLE_CLIENT_ID` —
 legitimately, because a fake relay needs a fake id — and so the configuration

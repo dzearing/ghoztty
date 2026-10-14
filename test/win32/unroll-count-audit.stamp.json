@@ -1,12 +1,13 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-14T11:37:36-07:00",
-    "commit":  "041117282",
+    "generated":  "2026-10-14T12:21:24-07:00",
+    "commit":  "db61a44c6",
     "uncommitted":  [
-                        "test/win32/chrome-theme.ps1",
-                        "test/win32/lib/ColorMath.ps1",
-                        "test/win32/viewer-error-card.ps1"
+                        "scripts/guard-due.ps1",
+                        "scripts/lib/HarnessFloor.ps1",
+                        "test/win32/dip-rounding-audit.ps1",
+                        "test/win32/lib/DipRoundingAudit.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -36,7 +37,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "29cb0d7b4185a60de934c96a715628046341f4f2523b8898f66bab1c43365d4d",
+                  "scripts/guard-due.ps1":  "330add77c7aff336ee69e2e4a415f45e7bb0c9b1ec2309608ce4afd2c760483b",
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -51,7 +52,7 @@
                   "scripts/lib/DataBreak.ps1":  "6175abb366946daab496a8943000e33417c7fff0a27d5e8756b48e938676613e",
                   "scripts/lib/Duration.ps1":  "b9889f194a1af5fee4177fd4c87ea6f7d74be5bffac0828532b55ebaa1f4787c",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
-                  "scripts/lib/HarnessFloor.ps1":  "9806523e4e2aa42ca8e152eb03dc1b6d1f62f01236ed97b0f4b12cbe5b6e3af0",
+                  "scripts/lib/HarnessFloor.ps1":  "96d1bdd40cab7264985b0eaaf970ad21de2a7b6105394037f6140c7babd71b9f",
                   "scripts/lib/LaneDesktop.ps1":  "eba72a217797149f3d24226023a839ec9beb8ebccfbc25a94f10bfd248594353",
                   "scripts/lib/LaneLeak.ps1":  "6726edfdc47336ad70d6664990d976a49ac455a1f7ca3225a1725c4a839ac654",
                   "scripts/lib/LaneSolo.ps1":  "10feea32628e97345f5aaa156128261e5b597cea97d462590d75b6420d3401d4",
@@ -187,6 +188,7 @@
                   "test/win32/deny-sh-from-powershell.ps1":  "345a909a59c95edc61dc97247f3d94784431cae1203ca76951f5dbe755e25a8e",
                   "test/win32/desktop-launch-audit.ps1":  "3cacc5fce5628dd8501cdc2315698e7974c8b28d35159f7c67685f3e99ec57e1",
                   "test/win32/desk-variant.ps1":  "ad33dc758514da73416631f090514c0c34f9e15adeb7a2e087a2bba660911598",
+                  "test/win32/dip-rounding-audit.ps1":  "8a3979da25d92635db2d67c480af57699a7a61c55331b19d8e56a3fab18d5f5b",
                   "test/win32/divergence-inventory.ps1":  "938a7b36a7170b1e2d20f7670d0945e3163c7245fcf51cc2322a8837047d630c",
                   "test/win32/docs-routing.ps1":  "0df33f259fc8eb88f4eb186c8f0fb216bfe5e929d3e8e85e59a9b3cbd4b6d821",
                   "test/win32/dpi-change.ps1":  "ee556618b3c43764809203b4fa3d7da1cabb4135cdcba0d7e4bd8dabc4d54733",
@@ -293,6 +295,7 @@
                   "test/win32/lib/count-resizes.ps1":  "bd9031b210198942ee1b7e9060d8bf46beebe35d217dd0f1abec75715802ce0e",
                   "test/win32/lib/DesktopCapability.ps1":  "d515c5b58b16aaaf2e077e22e86b8b6eb33fda4d639461ba0b133460b3cdf7e7",
                   "test/win32/lib/DesktopLaunchAudit.ps1":  "897d00a536c4707eca44bd869d7b86fb4c8e48eceb62b36c04009e33f3fc08a4",
+                  "test/win32/lib/DipRoundingAudit.ps1":  "def9e67665e72015ce65e1f74dea9a69eaf563271b682043df7191041f06e119",
                   "test/win32/lib/ExitCodeAudit.ps1":  "c6aa6eb8adbe8d682bdacc2a0034e4accf17ee1790b5867a856de3105ba6806c",
                   "test/win32/lib/FakeAgentRelay.ps1":  "75beb6bffdb603e237860dc7bcbda4cfc41ace110f7f12b13777395244c232c7",
                   "test/win32/lib/FakeRelay.ps1":  "c1d824a5de199369521042d5eadb2ca0c879b55d92104b709c98d17b880eee26",
