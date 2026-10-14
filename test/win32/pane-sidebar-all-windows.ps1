@@ -220,6 +220,31 @@ try {
     "  $groups"
     Assert "four groups, every pane" ($groups -match 'groups=4 panes=6 ')
     Assert "name order, the project grouped: Build logs | ghoztty/feature-2 | ghoztty/main | zeta" ($groups -match 'order=Build logs\|ghoztty/feature-2\|ghoztty/main\|zeta$')
+    # T1924 (Mac 321e61d7c): the caption counts the windows, and every window
+    # but this one opens folded.
+    Assert "the ALL WINDOWS caption counts four windows" ($groups -match ' windows=4 ')
+    Assert "every other window opens folded, this one open (folded=3)" ($groups -match ' folded=3 ')
+    $o0 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
+    Assert "folded by default: only zeta's two rows show, under four window heads" ($null -ne $o0 -and $o0.Items.Count -eq 2 -and @($o0.Items | Where-Object Group -ne 3).Count -eq 0 -and @($o0.Heads | Where-Object Kind -eq 'W').Count -eq 4)
+    # A chevron unfolds another window without raising it.
+    $chevLine = Wait-Log 'pane sidebar outline mode=expanded' $mark
+    $chev = @()
+    if ($chevLine -match ' chev=(\S*)') { $chev = @($Matches[1] -split ';' | Where-Object { $_ } | ForEach-Object { $xy = $_ -split ','; @{ X = [int]$xy[0]; Y = [int]$xy[1] } }) }
+    Assert "each head logs its chevron ($($chev.Count) for $($o0.Heads.Count))" ($null -ne $o0 -and $chev.Count -eq $o0.Heads.Count)
+    foreach ($gi in 0, 1, 2) {
+        $o0 = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' 0 1000)
+        $chevLine = Wait-Log 'pane sidebar outline mode=expanded' 0 1000
+        $chev = @()
+        if ($chevLine -match ' chev=(\S*)') { $chev = @($Matches[1] -split ';' | Where-Object { $_ } | ForEach-Object { $xy = $_ -split ','; @{ X = [int]$xy[0]; Y = [int]$xy[1] } }) }
+        $k = -1
+        for ($j = 0; $j -lt $o0.Heads.Count; $j++) { if ($o0.Heads[$j].Kind -eq 'W' -and $o0.Heads[$j].Group -eq $gi) { $k = $j } }
+        $mark = Get-LogCount
+        if ($k -ge 0 -and $k -lt $chev.Count) { [void](ClickAt $top $sb $chev[$k]) }
+        Assert "group $($gi)'s chevron unfolded it (log)" ($null -ne (Wait-Log 'pane sidebar unfold' $mark 2000))
+        Assert "...without raising its window" ($null -eq (Wait-Log 'pane sidebar raise window' $mark 300))
+    }
+    $groups = Wait-Log 'pane sidebar all-windows groups=' $mark
+    Assert "unfolded: nothing is folded now" ($groups -match ' folded=0 ')
     $o = Read-Outline (Wait-Log 'pane sidebar outline mode=expanded' $mark)
     Assert "the outline geometry was logged" ($null -ne $o)
     if ($null -eq $o) { return }
@@ -291,6 +316,17 @@ try {
     $g = Wait-Log 'pane sidebar all-windows groups=4.*order=alpha\|' $mark
     "  $g"
     Assert "renamed B sorts first, out of the project" ($g -match 'order=alpha\|Build logs\|ghoztty/feature-2\|zeta$')
+    Assert "...and keeps the fold the user flipped (folded=0)" ($g -match ' folded=0 ')
+    # A window opened while the list shows arrives folded (T1924), and the
+    # caption's count follows it.
+    $mark = Get-LogCount
+    Assert "+new-window wE ($(Get-CliErr))" ((Invoke-Cli "+new-window --target=wE --name=e1 --title=`"mid`"") -eq 0)
+    $g = Wait-Log 'pane sidebar all-windows groups=5 ' $mark 6000
+    "  $g"
+    Assert "the new window arrives folded, and the caption counts five" ($null -ne $g -and $g -match ' windows=5 folded=1 ')
+    $mark = Get-LogCount
+    Assert "+close wE ($(Get-CliErr))" ((Invoke-Cli "+close --target=wE") -eq 0)
+    Assert "...and it leaves the list" ($null -ne (Wait-Log 'pane sidebar all-windows groups=4 .*windows=4 ' $mark 6000))
     $mark = Get-LogCount
     Assert "+close wD ($(Get-CliErr))" ((Invoke-Cli "+close --target=wD") -eq 0)
     $g = Wait-Log 'pane sidebar all-windows groups=3 ' $mark 6000
@@ -393,7 +429,7 @@ try {
     Assert "with the caret in its field the card did not contract in 3x the grace period ($closedEarly)" ($closedEarly -eq 0)
     $mark = Get-LogCount
     [void](Send-TestControlText -Control ([IntPtr]$sb.Hwnd) -Text 'zeta')
-    Assert "the card's field filters its outline" ($null -ne (Wait-Log 'pane sidebar all-windows groups=1 .*search=1 order=zeta$' $mark))
+    Assert "the card's field filters its outline" ($null -ne (Wait-Log 'pane sidebar all-windows groups=1 .*search=1 .*order=zeta$' $mark))
     [void](Send-TestControlKey -Control ([IntPtr]$sb.Hwnd) -Key Escape)   # clears
     [void](Send-TestControlKey -Control ([IntPtr]$sb.Hwnd) -Key Escape)   # gives the caret back
     $closeLine = Wait-Log 'pane sidebar card close reason=left' $mark 3000
@@ -408,7 +444,7 @@ try {
     $sb = Get-Sidebar $top
     $mark = Get-LogCount
     [void](Send-TestControlText -Control ([IntPtr]$sb.Hwnd) -Text 'zeta')
-    Assert "re-pinned, a query filters the panel again" ($null -ne (Wait-Log 'pane sidebar all-windows groups=1 .*search=1 order=zeta$' $mark))
+    Assert "re-pinned, a query filters the panel again" ($null -ne (Wait-Log 'pane sidebar all-windows groups=1 .*search=1 .*order=zeta$' $mark))
     $mark = Get-LogCount
     [void](ClickAt $top $sb (Get-ScopeCenter $sb))
     Assert "the toggle turned the scope off (log)" ($null -ne (Wait-Log 'pane sidebar scope all_windows=false' $mark 2000))
@@ -418,6 +454,7 @@ try {
     $g = Wait-Log 'pane sidebar all-windows groups=' $mark
     "  $g"
     Assert "the scope came back with no filter" ($null -ne $g -and $g -match 'groups=3 .*search=0 ')
+    Assert "...and the flipped folds forgotten: the other two windows fold again (T1924)" ($null -ne $g -and $g -match ' windows=3 folded=2 ')
 
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     $launched += $script:GhozttyTestDesktopPids

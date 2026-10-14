@@ -1,16 +1,17 @@
 {
     "guard":  "pane-sidebar-all-windows",
     "script":  "test/win32/pane-sidebar-all-windows.ps1",
-    "generated":  "2026-10-14T01:43:18-07:00",
-    "commit":  "5cbfb36f3",
+    "generated":  "2026-10-14T09:20:30-07:00",
+    "commit":  "99590020e",
     "uncommitted":  [
-                        "src/apprt/win32/pane_sidebar.zig",
-                        "src/apprt/win32/PaneSidebar.zig"
+                        "src/apprt/win32/pane_sidebar_outline.zig",
+                        "src/apprt/win32/PaneSidebar.zig",
+                        "test/win32/pane-sidebar-all-windows.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/pane_sidebar.zig":  "0b3c321e299b5c9ba41dc8788f22f5f9eb2bd19b78c19265d37729c93a24bd58",
-                  "src/apprt/win32/pane_sidebar_outline.zig":  "c8cfb5d575c6a798a2a918cf188ca24bd0c807430e85809875d9e7007e5cdad6",
-                  "src/apprt/win32/PaneSidebar.zig":  "1c195c40ff229c1fcf18734651922a5d812c65334e898d0d367899d2ba9c8743",
-                  "test/win32/pane-sidebar-all-windows.ps1":  "7e973ed3d59e99dbc93e82e9bc3328a9ccca4fb5a3164324203057062d84f953"
+                  "src/apprt/win32/pane_sidebar_outline.zig":  "46bb3347e234db8ac94d9e077487777e93b59ff49856962f611d3f7db4b46132",
+                  "src/apprt/win32/PaneSidebar.zig":  "a95347e23332594a105f62a18bac2ffb850d7a66277cfa2e80ca8b6b8cb879f8",
+                  "test/win32/pane-sidebar-all-windows.ps1":  "691d17863eb97e0837927d258a38d7165bfe06d8e0214d0c3439eada259f5757"
               }
 }

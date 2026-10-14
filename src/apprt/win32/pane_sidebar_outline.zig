@@ -224,6 +224,18 @@ pub fn buildLines(groups: []const GroupSpec, out: []Line) usize {
     return n;
 }
 
+/// Whether a window's panes are folded away (Mac 321e61d7c,
+/// `PaneSidebarState.isWindowFolded`). Every window starts folded - one row
+/// each, the overview the scope is for - except THIS window, which starts
+/// open: it holds the pane you are in. `toggled` is a flip away from that
+/// default, so a window that opens while the list shows arrives folded with
+/// nothing to record. A search unfolds everything: a hit inside a fold reads
+/// as no hit.
+pub fn windowFolded(is_this_window: bool, toggled: bool, searching: bool) bool {
+    if (searching) return false;
+    return is_this_window == toggled;
+}
+
 fn push(out: []Line, n: *usize, line: Line) bool {
     if (n.* == out.len) return false;
     out[n.*] = line;
@@ -470,6 +482,19 @@ test "lines: folding drops the panes, and a folded project drops its windows" {
     try testing.expectEqualStrings("WP-Wp", kinds(lines[0..n], &kb));
     // Items still count the folded panes: the last window's pane is item 4.
     try testing.expectEqual(@as(usize, 4), lines[4].index);
+}
+
+test "every window starts folded but this one; a flip inverts it; a search opens all (T1924)" {
+    // The defaults.
+    try testing.expect(windowFolded(false, false, false));
+    try testing.expect(!windowFolded(true, false, false));
+    // A flip away from them.
+    try testing.expect(!windowFolded(false, true, false));
+    try testing.expect(windowFolded(true, true, false));
+    // Searching opens everything, flipped or not.
+    for ([_]bool{ false, true }) |this| for ([_]bool{ false, true }) |flip| {
+        try testing.expect(!windowFolded(this, flip, true));
+    };
 }
 
 test "lines: a full buffer stops cleanly" {

@@ -1,15 +1,14 @@
 {
     "guard":  "pane-sidebar-resize",
     "script":  "test/win32/pane-sidebar-resize.ps1",
-    "generated":  "2026-10-14T01:39:04-07:00",
-    "commit":  "5cbfb36f3",
+    "generated":  "2026-10-14T10:09:55-07:00",
+    "commit":  "99590020e",
     "uncommitted":  [
-                        "src/apprt/win32/pane_sidebar.zig",
                         "src/apprt/win32/PaneSidebar.zig"
                     ],
     "files":  {
                   "src/apprt/win32/pane_sidebar.zig":  "0b3c321e299b5c9ba41dc8788f22f5f9eb2bd19b78c19265d37729c93a24bd58",
-                  "src/apprt/win32/PaneSidebar.zig":  "1c195c40ff229c1fcf18734651922a5d812c65334e898d0d367899d2ba9c8743",
+                  "src/apprt/win32/PaneSidebar.zig":  "a95347e23332594a105f62a18bac2ffb850d7a66277cfa2e80ca8b6b8cb879f8",
                   "test/win32/pane-sidebar-resize.ps1":  "ce074ae17f3209e5630dab42c78ba539bba194fc048baa05f657ee415833e3f4"
               }
 }

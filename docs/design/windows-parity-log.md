@@ -36299,3 +36299,22 @@ moved to T1814.
   already open. The harness lane caught an unwrapped `.Count` in the new
   script, and that is fixed. The on-screen composite was NOT RUN because the
   user is present.
+
+## 2026-10-14 — T1924: the all-windows list opens folded and counts windows
+
+- **What changed.** Mac 321e61d7c's fold rule is now on Windows. When the
+  sidebar's all-windows list opens, every window is folded to one row except
+  the one you are in. A window that opens while the list is up arrives folded.
+  A search still unfolds everything. Leaving the scope forgets the folds you
+  flipped, but project folds are kept, as on Mac. The ALL WINDOWS caption now
+  shows the window count, in the same style as a project header's count.
+  "This window" is the tab that was active when the list opened. A later tab
+  switch does not unfold anything, because Mac decides this only when the list
+  opens.
+- **Validation.** A unit test covers `windowFolded`. pane-sidebar-all-windows
+  passed 86/86, with new checks for: the default folds, a chevron unfolding
+  another window without raising it, a new window arriving folded, the count
+  at 4, 5 and 3, and flips being forgotten when the scope is left.
+  pane-sidebar-scroll passed 42/42. All four floor lanes pass. drag-perf is
+  still red, from T1854 (an open task, reproduced twice). The perf half of the
+  Mac commit is T1925.

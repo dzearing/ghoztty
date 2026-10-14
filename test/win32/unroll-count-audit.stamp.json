@@ -1,11 +1,10 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-14T08:51:16-07:00",
-    "commit":  "612bfcf4c",
+    "generated":  "2026-10-14T10:01:52-07:00",
+    "commit":  "99590020e",
     "uncommitted":  [
-                        "scripts/guard-due.ps1",
-                        "test/win32/bell-border.ps1"
+                        "test/win32/pane-sidebar-all-windows.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -367,7 +366,7 @@
                   "test/win32/pane-sidebar.ps1":  "c99ade8ebe4ff7aecf73a4a7bc634d045c2cea9d1846d7841a346067d0578c57",
                   "test/win32/pane-sidebar-actions.ps1":  "180b25bd4a5e21b7618faf3d5f5ca542174c7d7c1ff4585c3c489088260e9ac6",
                   "test/win32/pane-sidebar-activity.ps1":  "1b0a5053db2c58cd2065c75a6e52e22c83185bf3146aeabb5c4224740d801455",
-                  "test/win32/pane-sidebar-all-windows.ps1":  "7e973ed3d59e99dbc93e82e9bc3328a9ccca4fb5a3164324203057062d84f953",
+                  "test/win32/pane-sidebar-all-windows.ps1":  "691d17863eb97e0837927d258a38d7165bfe06d8e0214d0c3439eada259f5757",
                   "test/win32/pane-sidebar-drag.ps1":  "36eb78616d344e05dbeb5d760fdb19933e8f169593b4c588e2898bf2f5d257cd",
                   "test/win32/pane-sidebar-elevated.ps1":  "222268f3bb7793fe727c9c4069131c24440265f1830c3d030f4d4b8330ae80c9",
                   "test/win32/pane-sidebar-persist.ps1":  "628855c842f0944b4ddb67d688f3fb34677dc4450e67ea512975b4c3556fd673",

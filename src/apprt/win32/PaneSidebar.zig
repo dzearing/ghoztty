@@ -202,8 +202,20 @@ all_windows: bool = false,
 groups: std.ArrayListUnmanaged(Group) = .{},
 /// The panel's lines (`pane_sidebar_outline.buildLines`).
 lines: std.ArrayListUnmanaged(pane_sidebar.Line) = .{},
-/// Folded window groups (by tab identity) and projects (by name), as keys.
-folded: std.AutoHashMapUnmanaged(u64, void) = .{},
+/// Window groups (by tab identity) whose fold the user flipped away from its
+/// default (`pane_sidebar_outline.windowFolded`, T1924; Mac
+/// `toggledWindows`). Forgotten when the scope is left, like the search.
+toggled: std.AutoHashMapUnmanaged(u64, void) = .{},
+/// Folded projects (by name). These outlive the scope, as Mac's
+/// `foldedProjects` do.
+folded_projects: std.AutoHashMapUnmanaged(u64, void) = .{},
+/// THIS window's group as of when the scope opened: the one window that
+/// starts unfolded. Decided only then - a tab switch later never unfolds
+/// anything, or the list would jump under the pointer (Mac 321e61d7c).
+open_key: u64 = 0,
+/// How many windows the scope lists (every tab of every window, whatever
+/// the search) - the ALL WINDOWS caption's count.
+window_count: usize = 0,
 /// The all-windows search (T1877, Mac `PaneSidebarFilter`): the field's text
 /// and caret, and whether the column holds the keyboard for it. Like the
 /// scope, never persisted; turning the scope off empties it.
@@ -431,7 +443,8 @@ pub fn destroy(self: *PaneSidebar) void {
     self.clearGroups();
     self.groups.deinit(self.alloc);
     self.lines.deinit(self.alloc);
-    self.folded.deinit(self.alloc);
+    self.toggled.deinit(self.alloc);
+    self.folded_projects.deinit(self.alloc);
     self.rail_card.release();
     self.open_card.release();
     if (self.layer_cells.len > 0) self.alloc.free(self.layer_cells);
@@ -630,6 +643,12 @@ fn logOutline(self: *PaneSidebar) void {
         w.print(" search={d},{d} nomatch={d}", .{ l.search.centerX(), l.search.centerY(), @intFromBool(l.no_match != null) }) catch {};
     }
     logScroll(w, &l);
+    // Each head's chevron, in heads order: a click there folds even another
+    // window's group, where a click on the name raises it (T1924).
+    w.writeAll(" chev=") catch {};
+    for (l.heads[0..l.head_count]) |hd| {
+        w.print("{d},{d};", .{ hd.chevron.centerX(), hd.chevron.centerY() }) catch break;
+    }
     log.info("pane sidebar outline {s}", .{fbs.getWritten()});
 }
 
@@ -752,10 +771,14 @@ fn refreshAll(self: *PaneSidebar) void {
         for (views[nv .. nv + got]) |v| hashView(&h, v, own and v == active);
         nv += got;
     }
-    var fold_acc: u64 = 0;
-    var fit = self.folded.keyIterator();
-    while (fit.next()) |k| fold_acc ^= k.*;
-    h.update(std.mem.asBytes(&fold_acc));
+    inline for (.{ &self.toggled, &self.folded_projects }) |set| {
+        var fold_acc: u64 = 0;
+        var fit = set.keyIterator();
+        while (fit.next()) |k| fold_acc ^= k.*;
+        h.update(std.mem.asBytes(&fold_acc));
+    }
+    h.update(std.mem.asBytes(&self.open_key));
+    self.window_count = n_all;
     const sig = h.final();
     if (sig == self.signature) return;
     self.signature = sig;
@@ -787,8 +810,8 @@ fn refreshAll(self: *PaneSidebar) void {
             .project = p.project,
             .grid = sp.grid,
             .stashed = sp.stashed,
-            .folded = query == null and self.folded.contains(key),
-            .project_folded = query == null and p.project != null and self.folded.contains(project_key),
+            .folded = self.groupFolded(key, query != null),
+            .project_folded = query == null and p.project != null and self.folded_projects.contains(project_key),
         };
     }
     var lines: [pane_sidebar.max_heads * 5 + pane_sidebar.max_items]pane_sidebar.Line = undefined;
@@ -804,8 +827,15 @@ fn refreshAll(self: *PaneSidebar) void {
         } else ofs.writer().print("{s}{s}", .{ sep, p.label }) catch break;
     }
     const terms = if (query) |q| countTerms(q) else 0;
-    log.info("pane sidebar all-windows groups={d} panes={d} lines={d} search={d} order={s}", .{ np, nv, nl, terms, ofs.getWritten() });
+    var folds: usize = 0;
+    for (specs[0..np]) |s| folds += @intFromBool(s.folded);
+    log.info("pane sidebar all-windows groups={d} panes={d} lines={d} search={d} windows={d} folded={d} order={s}", .{ np, nv, nl, terms, n_all, folds, ofs.getWritten() });
     self.rosterChanged();
+}
+
+/// Whether window group `key` is folded now (`outline.windowFolded`).
+fn groupFolded(self: *const PaneSidebar, key: u64, searching: bool) bool {
+    return outline.windowFolded(key == self.open_key, self.toggled.contains(key), searching);
 }
 
 fn countTerms(q: []const u8) usize {
@@ -1617,12 +1647,26 @@ fn paintRows(self: *PaneSidebar, hdc: w32.HDC, l: *const pane_sidebar.Layout, t:
         std.unicode.utf8ToUtf16LeStringLiteral("ALL WINDOWS")
     else
         std.unicode.utf8ToUtf16LeStringLiteral("PANES");
+    const caption_right = l.scope.left - pane_sidebar.px(pane_sidebar.sm_dip, self.scale);
     drawText(hdc, caption, .{
         .left = l.caption_x,
         .top = l.header.top,
-        .right = l.scope.left - pane_sidebar.px(pane_sidebar.sm_dip, self.scale),
+        .right = caption_right,
         .bottom = l.header.bottom,
     }, if (self.quick_kill) rgb(chrome_theme.dangerInkOn(t.surface)) else t.secondary, w32.DT_VCENTER | w32.DT_END_ELLIPSIS);
+    // ALL WINDOWS carries how many windows, styled as a project header's
+    // count (T1924; Mac `PaneSidebarCount` beside the caption, 6pt after it).
+    if (self.all_windows and !self.quick_kill) {
+        var nb: [16]u8 = undefined;
+        const count8 = std.fmt.bufPrint(&nb, "{d}", .{self.window_count}) catch "";
+        var cw: [16]u16 = undefined;
+        const cn = std.unicode.utf8ToUtf16Le(&cw, count8) catch 0;
+        const left = l.caption_x + textWidth(hdc, caption) + pane_sidebar.px(6, self.scale);
+        if (self.caption_font) |f| _ = w32.SelectObject(hdc, @ptrCast(f));
+        if (left + textWidth(hdc, cw[0..cn]) <= caption_right) {
+            drawText(hdc, cw[0..cn], .{ .left = left, .top = l.header.top, .right = caption_right, .bottom = l.header.bottom }, t.secondary, w32.DT_VCENTER);
+        }
+    }
     self.paintPin(hdc, l, t);
     self.paintScope(hdc, l, t);
     self.paintTrash(hdc, l, t);
@@ -1964,7 +2008,7 @@ fn paintHead(self: *PaneSidebar, hdc: w32.HDC, hd: pane_sidebar.Head, k: usize, 
             under = f;
         }
     }
-    const folded = if (project) self.folded.contains(g.project_key) else self.folded.contains(g.key);
+    const folded = if (project) self.folded_projects.contains(g.project_key) else self.groupFolded(g.key, self.filterActive());
     glyph(hdc, self.scale, hd.chevron, if (folded) glyph_chevron_right else glyph_chevron_down, 8, t.secondary);
 
     // The trailing count (or badge) first, so the name knows its room.
@@ -2975,17 +3019,22 @@ fn activate(self: *PaneSidebar, which: Surface, hit: pane_sidebar.Hit, alt: bool
     }
 }
 
-/// The all-windows switch (T1829). Folds survive a round trip, as Mac's do;
-/// nothing is persisted.
+/// The all-windows switch (T1829). Nothing is persisted. Each look starts
+/// from the default folds (T1924): this window open, every other folded.
+/// Project folds survive a round trip, as Mac's do.
 fn toggleScope(self: *PaneSidebar) void {
     self.all_windows = !self.all_windows;
     self.hover = .none;
     self.signature = 0;
-    // The search belongs to the scope (Mac clears the filter with it): off,
-    // the field is gone, so its query and its caret go too.
-    if (!self.all_windows) {
+    if (self.all_windows) {
+        self.open_key = tabKey(self.window, self.window.active_tab);
+    } else {
+        // The search belongs to the scope (Mac clears the filter with it):
+        // off, the field is gone, so its query and its caret go too - and
+        // so do the window folds the user flipped.
         if (self.search_focus) self.releaseSearchFocus();
         _ = self.search.clear();
+        self.toggled.clearRetainingCapacity();
     }
     log.info("pane sidebar scope all_windows={}", .{self.all_windows});
     self.refresh();
@@ -3198,18 +3247,17 @@ fn activateHead(self: *PaneSidebar, which: Surface, k: usize, fold: bool) void {
     const hd = l.heads[k];
     if (hd.index >= self.groups.items.len) return;
     const g = self.groups.items[hd.index];
-    if (hd.kind == .project) return self.toggleFold(g.project_key);
-    if (fold or g.own) return self.toggleFold(g.key);
+    if (hd.kind == .project) return self.toggleFold(&self.folded_projects, g.project_key);
+    if (fold or g.own) return self.toggleFold(&self.toggled, g.key);
     self.raiseGroup(g);
 }
 
-fn toggleFold(self: *PaneSidebar, key: u64) void {
-    if (self.folded.remove(key)) {
-        log.info("pane sidebar unfold", .{});
-    } else {
-        self.folded.put(self.alloc, key, {}) catch return;
-        log.info("pane sidebar fold", .{});
-    }
+/// Flip `key` in `set` - a project's fold, or a window's flip away from its
+/// default fold (`groupFolded`).
+fn toggleFold(self: *PaneSidebar, set: *std.AutoHashMapUnmanaged(u64, void), key: u64) void {
+    if (!set.remove(key)) set.put(self.alloc, key, {}) catch return;
+    const folded = if (set == &self.toggled) self.groupFolded(key, self.filterActive()) else set.contains(key);
+    log.info("pane sidebar {s}", .{if (folded) "fold" else "unfold"});
     self.refresh();
 }
 
