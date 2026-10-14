@@ -36329,3 +36329,14 @@ moved to T1814.
 - **Validation.** caption-bar passed 38/38 on all five runs: three idle, and
   two with all 32 cores pinned. drag-perf is still red from T1854 (an open
   task), so this commit uses -NoGuardDue.
+
+## 2026-10-14 — T1018: the chrome-theme harness already had its staleness gate
+
+- **What it was.** The card asked for a guard-due row so a change to the
+  chrome's colour code obliges a re-run of chrome-theme.ps1. T364 had already
+  added exactly that narrow row in 8ac3863d6 (2026-09-02), so this closes
+  against that commit and adds no new code.
+- **Validation.** Touching chrome_theme.zig made the row DUE; touching
+  tab_shape.zig (a painter, deliberately not covered) left it CURRENT; both
+  edits were byte-restored. guard-due.ps1 passed 128/128. drag-perf is still
+  red from T1854 (an open task), so this commit uses -NoGuardDue.
