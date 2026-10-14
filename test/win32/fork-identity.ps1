@@ -45,6 +45,12 @@
 #     name, a .none arm in a switch that is not on app_runtime, and one that is
 #     but already has its own .win32 arm - and asserts the tree comes back
 #     byte-identical.
+# F - coverage (T1027). A-E only ever look for the upstream spelling a rule was
+#     written against, so a fork string nobody wrote a rule for is invisible to
+#     all of them. `coverage` diffs the fork point against HEAD and replays the
+#     rules over every identity-shaped pair; a fixture repo proves a new
+#     re-pointed string goes red past the known ledger, and the real repo is
+#     asserted to have outgrown nothing since the ledger was recorded.
 param(
     [string]$Repo,
     [switch]$NegativeControl
@@ -586,6 +592,99 @@ try {
         if ($eBefore[$f.FullName] -ne (Get-FileHashHex $f.FullName)) { $eMutated += $f.Name }
     }
     Assert 'E4 every must-survive file is byte-identical' ($eMutated.Count -eq 0) ($eMutated -join ', ')
+
+    # -----------------------------------------------------------------------
+    Say ''
+    Say 'F. coverage: identity the fork adds AFTER the rules were written is red (T1027)'
+    # -----------------------------------------------------------------------
+    # Every rule matches the upstream spelling it was written against, so A-E
+    # cannot see a fork string nobody wrote a rule for. `coverage` re-derives
+    # the question from the delta. This fixture is a two-commit repo whose
+    # second commit is "the fork": one pair a rule reproduces, one it does not,
+    # and three things that must not count as pairs at all.
+
+    $fRepo = Join-Path $sandbox 'coverage-repo'
+    New-Item -ItemType Directory -Force -Path $fRepo | Out-Null
+    $gitId = @('-c', 'user.name=fork-identity-test', '-c', 'user.email=test@invalid', '-c', 'core.autocrlf=false')
+    Invoke-GitIn $fRepo @('init', '-q') | Out-Null
+    Write-Fixture $fRepo 'src/global.zig' '        std.log.info("ghostty version={s}", .{build_config.version_string});' | Out-Null
+    Write-Fixture $fRepo 'macos/Sources/Help.swift' '    let docs = URL(string: "https://ghostty.org/docs")' | Out-Null
+    Write-Fixture $fRepo 'src/feature.zig' 'pub fn hello() void {}' | Out-Null
+    Write-Fixture $fRepo 'docs/notes.md' 'Ghostty notes' | Out-Null
+    # Untouched by the first fork commit; F8 re-points it later.
+    Write-Fixture $fRepo 'macos/Sources/Issues.swift' `
+        '    let issues = URL(string: "https://github.com/ghostty-org/ghostty/issues")' | Out-Null
+    Invoke-GitIn $fRepo (@($gitId) + @('add', '-A')) | Out-Null
+    Invoke-GitIn $fRepo (@($gitId) + @('commit', '-q', '-m', 'upstream')) | Out-Null
+    $fBase = (Invoke-GitIn $fRepo @('rev-parse', 'HEAD')).Text.Trim()
+
+    Write-Fixture $fRepo 'src/global.zig' '        std.log.info("ghoztty version={s}", .{build_config.version_string});' | Out-Null
+    Write-Fixture $fRepo 'macos/Sources/Help.swift' '    let docs = URL(string: "https://ghoztty.dev/docs")' | Out-Null
+    # A feature line that happens to name the product is not identity.
+    Write-Fixture $fRepo 'src/feature.zig' 'pub fn hello() void { ghoztty_ipc.serve(); }' | Out-Null
+    # docs/ is fork-only, and a file only the fork has never arrives from upstream.
+    Write-Fixture $fRepo 'docs/notes.md' 'Ghoztty notes' | Out-Null
+    Write-Fixture $fRepo 'macos/Sources/New.swift' '    let name = "Ghoztty"' | Out-Null
+    Invoke-GitIn $fRepo (@($gitId) + @('add', '-A')) | Out-Null
+    Invoke-GitIn $fRepo (@($gitId) + @('commit', '-q', '-m', 'fork')) | Out-Null
+
+    $fLedger = Join-Path $sandbox 'coverage-ledger.json'
+    function Invoke-Coverage {
+        param([string[]]$Extra)
+        $r = Invoke-Overlay (@('coverage', '-Path', $fRepo, '-Base', $fBase, '-Known', $fLedger, '-Json') + @($Extra))
+        $o = $null
+        try { $o = $r.Text | ConvertFrom-Json } catch { }
+        return [pscustomobject]@{ Code = $r.Code; Obj = $o; Text = $r.Text }
+    }
+
+    $f1 = Invoke-Coverage
+    Assert 'F1 coverage FAILS when the fork carries identity no rule reproduces' ($f1.Code -eq 1) "exit=$($f1.Code)"
+    Assert 'F2 it parses and counts exactly the two identity pairs' ($f1.Obj -and $f1.Obj.pairs -eq 2) `
+        "pairs=$($f1.Obj.pairs) $($f1.Text)"
+    $fOpen = @(); if ($f1.Obj) { $fOpen = @($f1.Obj.findings) }
+    Assert 'F3 the re-pointed URL is the unaccounted pair' `
+    ($fOpen.Count -eq 1 -and $fOpen[0].File -eq 'macos/Sources/Help.swift' -and $fOpen[0].Fork -match 'ghoztty\.dev') `
+    (@($fOpen | ForEach-Object { "$($_.File): $($_.Fork)" }) -join '; ')
+    Assert 'F4 the pair a rule reproduces is counted as covered' ($f1.Obj -and $f1.Obj.covered -eq 1) "covered=$($f1.Obj.covered)"
+
+    $f5 = Invoke-Coverage @('-Record')
+    Assert 'F5 the first -Record writes the ledger and the run is clean' `
+    ($f5.Code -eq 0 -and (Test-Path -LiteralPath $fLedger) -and $f5.Obj.known -eq 1) "exit=$($f5.Code) known=$($f5.Obj.known)"
+    $f6 = Invoke-Coverage
+    Assert 'F6 a recorded pair is KNOWN and does not fail the run' ($f6.Code -eq 0 -and $f6.Obj.known -eq 1) "exit=$($f6.Code)"
+    $f7 = Invoke-Coverage @('-Strict')
+    Assert 'F7 -Strict fails on a known pair' ($f7.Code -eq 1) "exit=$($f7.Code)"
+
+    # The outgrowth this task exists for: the fork re-points ANOTHER upstream
+    # string after the ledger was recorded, and no rule knows its shape.
+    Write-Fixture $fRepo 'macos/Sources/Issues.swift' `
+        '    let issues = URL(string: "https://github.com/dzearing/ghoztty/issues")' | Out-Null
+    Invoke-GitIn $fRepo (@($gitId) + @('commit', '-q', '-am', 'fork re-points the issue tracker')) | Out-Null
+
+    $ledgerBefore = Get-FileHashHex $fLedger
+    $f8 = Invoke-Coverage
+    $f8New = @(); if ($f8.Obj) { $f8New = @($f8.Obj.findings) }
+    Assert 'F8 a NEW unaccounted identity string fails the run past the ledger' `
+    ($f8.Code -eq 1 -and $f8New.Count -eq 1 -and $f8New[0].Fork -match 'dzearing/ghoztty/issues') `
+        "exit=$($f8.Code) new=$(@($f8New | ForEach-Object { $_.Fork }) -join '; ')"
+    $f9 = Invoke-Coverage @('-Record')
+    Assert 'F9 -Record refuses to grow an existing ledger' `
+    ($f9.Code -eq 1 -and (Get-FileHashHex $fLedger) -eq $ledgerBefore) "exit=$($f9.Code)"
+
+    # And the real tree: nothing the fork has added since the ledger was
+    # recorded is unaccounted. A red here is the rule table being outgrown.
+    $fr = Invoke-Overlay @('coverage', '-Path', $Repo, '-Json')
+    $frObj = $null
+    try { $frObj = $fr.Text | ConvertFrom-Json } catch { }
+    Assert 'F10 coverage on this repo finds no unaccounted pair beyond the ledger' `
+    ($fr.Code -eq 0 -and $frObj -and $frObj.unaccounted -eq 0) `
+    ("exit=$($fr.Code) " + (@($frObj.findings | ForEach-Object { "$($_.File):$($_.Line) $($_.Fork)" }) -join '; '))
+    if ($frObj) {
+        Say ("     repo: {0} identity pairs, {1} covered by a rule, {2} known, {3} stale ledger entries" -f `
+                $frObj.pairs, $frObj.covered, $frObj.known, $frObj.stale)
+    }
+    Assert 'F11 the repo sweep sees a substantial delta (it is not diffing nothing)' `
+    ($frObj -and $frObj.pairs -ge 100 -and $frObj.covered -ge 50) "pairs=$($frObj.pairs) covered=$($frObj.covered)"
 
     if ($NegativeControl) {
         Say ''

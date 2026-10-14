@@ -10,7 +10,7 @@ import OSLog
 @MainActor
 enum PaneMoveCoordinator {
     private static let logger = Logger(
-        subsystem: Bundle.main.bundleIdentifier!,
+        subsystem: Bundle.loggerSubsystem,
         category: "PaneMoveCoordinator")
 
     /// The undo action name every rearrange registers under, so a run of

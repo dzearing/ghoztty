@@ -1,12 +1,12 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-14T15:07:38-07:00",
-    "commit":  "0e4e43a92",
+    "generated":  "2026-10-14T16:09:30-07:00",
+    "commit":  "967c8af2d",
     "uncommitted":  [
+                        "scripts/fork-identity.ps1",
                         "scripts/guard-due.ps1",
-                        "scripts/upstream-stage.ps1",
-                        "test/win32/upstream-stage.ps1"
+                        "test/win32/fork-identity.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -26,7 +26,7 @@
                   "scripts/divergence-inventory.ps1":  "f299f907df872214375bd6f88b868bbbaf5db7125301d6481c6a39d44222ff61",
                   "scripts/floor-lane.ps1":  "f118b5e9376ba80b2ffde6fafd49305a38e974f291efd9398c91bb7219daee33",
                   "scripts/focus-pull-scan.ps1":  "ce1ebfa8aac19eed0eb7cc7578fb0a1df8b39974204777a9991ac2fea1eec8e8",
-                  "scripts/fork-identity.ps1":  "0388b582e6b11d201d099a81533fdd4f84790c87b658c8cd75f09a00e10be8ac",
+                  "scripts/fork-identity.ps1":  "3a6d62da446fa39923b07b6c4c36852016acb8db2d0cd4b4fd4e992c36bb4866",
                   "scripts/ghoztty-agent-watcher.ps1":  "51f93a125f8c81543a365acc9a990175f3b1b599184c19e2a87748b417559db4",
                   "scripts/ghoztty-cleanup.ps1":  "8fc0b036bb645aed4df88b6d108e355163b6cc36665a47495dece100e53b327f",
                   "scripts/git-commit-guard.ps1":  "e59f969e07f0607310fb4861f332e2c05f97d6f635197c00720a6d6bbc867961",
@@ -36,7 +36,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "468e8481ea2f65ec8d2919201747d2f86f7a05352868248a06d1effa6b99768b",
+                  "scripts/guard-due.ps1":  "8c1011c1984efa9f7f82dd5b16cc35e29c5403a8c154f1a58116852f6ce3d2f9",
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -215,7 +215,7 @@
                   "test/win32/focus-pull-scan.ps1":  "3976c83da8ce1fd4d88288908cffb66d69a003597d1e8759dc62957280023660",
                   "test/win32/font-inherit.ps1":  "f303affd8f1c72da77f48f09a10b18d0c7c72af845a4602455bf013662d8c257",
                   "test/win32/foreground-audit.ps1":  "f9d1b2caed851695f70fd1430a378506831ebfb54458b55068252d7984622b0d",
-                  "test/win32/fork-identity.ps1":  "9661dc44ad46212f55a3f65601c083cd0f1eebcba2e3a323f6fe4c4f44b62cbe",
+                  "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/gate-negatives.ps1":  "0c2eaa7356bd6e8eece62570fe3a1c2a49444b4f29bd9d17e8142acd0fe6156c",
                   "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",

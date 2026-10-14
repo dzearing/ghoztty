@@ -266,7 +266,10 @@ $GuardTable = @(
         Stamp  = 'test\win32\fork-identity.stamp.json'
         Covers = @(
             'test\win32\fork-identity.ps1',
-            'scripts\fork-identity.ps1'
+            'scripts\fork-identity.ps1',
+            # T1027: F10 asserts the repo against this ledger, so editing it
+            # changes what the harness proves.
+            'scripts\fork-identity-coverage.json'
         )
     },
     # The ghoztty:// URL scheme (T1124). The registration is a REGISTRY write

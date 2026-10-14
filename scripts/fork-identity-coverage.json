@@ -1,0 +1,601 @@
+{
+    "note":  "T1027. Identity pairs in the fork delta that no fork-identity rule reproduces and nobody has acknowledged, as of the recording. `scripts\\fork-identity.ps1 coverage` reports these as KNOWN and fails only on a pair missing from here. The ledger only shrinks (coverage -Record): close a pair by writing the rule, or acknowledge it in the script with a reason - never by adding it here.",
+    "base":  "063ac3ecc",
+    "pairs":  [
+                  {
+                      "file":  "macos/Ghostty.sdef",
+                      "upstream":  "\u003cclass name=\"application\" code=\"capp\" description=\"The Ghostty application.\"\u003e",
+                      "fork":  "\u003cclass name=\"application\" code=\"capp\" description=\"The Ghoztty application.\"\u003e"
+                  },
+                  {
+                      "file":  "macos/Ghostty.sdef",
+                      "upstream":  "\u003cdictionary title=\"Ghostty Scripting Dictionary\"\u003e",
+                      "fork":  "\u003cdictionary title=\"Ghoztty Scripting Dictionary\"\u003e"
+                  },
+                  {
+                      "file":  "macos/Ghostty.sdef",
+                      "upstream":  "\u003csuite name=\"Ghostty Suite\" code=\"Ghst\" description=\"Ghostty scripting support.\"\u003e",
+                      "fork":  "\u003csuite name=\"Ghoztty Suite\" code=\"Ghst\" description=\"Ghoztty scripting support.\"\u003e"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "A5B30531299BEAAA0047F10C /* Ghostty.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Ghostty.app; sourceTree = BUILT_PRODUCTS_DIR; };",
+                      "fork":  "A5B30531299BEAAA0047F10C /* Ghoztty.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Ghoztty.app; sourceTree = BUILT_PRODUCTS_DIR; };"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "A5B30531299BEAAA0047F10C /* Ghostty.app */,",
+                      "fork":  "A5B30531299BEAAA0047F10C /* Ghoztty.app */,"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "EXECUTABLE_NAME = ghostty;",
+                      "fork":  "EXECUTABLE_NAME = ghoztty;"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_CFBundleDisplayName = \"Ghostty Dock Tile Plugin\";",
+                      "fork":  "INFOPLIST_KEY_CFBundleDisplayName = \"Ghoztty Dock Tile Plugin\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_CFBundleDisplayName = \"Ghostty[DEBUG]\";",
+                      "fork":  "INFOPLIST_KEY_CFBundleDisplayName = \"Ghoztty[DEBUG]\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_CFBundleDisplayName = Ghostty;",
+                      "fork":  "INFOPLIST_KEY_CFBundleDisplayName = Ghoztty;"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSAppleEventsUsageDescription = \"A program running within Ghostty would like to use AppleScript.\";",
+                      "fork":  "INFOPLIST_KEY_NSAppleEventsUsageDescription = \"A program running within Ghoztty would like to use AppleScript.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSAudioCaptureUsageDescription = \"A program running within Ghostty would like to access your system\u0027s audio.\";",
+                      "fork":  "INFOPLIST_KEY_NSAudioCaptureUsageDescription = \"A program running within Ghoztty would like to access your system\u0027s audio.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = \"A program running within Ghostty would like to use Bluetooth.\";",
+                      "fork":  "INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = \"A program running within Ghoztty would like to use Bluetooth.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSCalendarsUsageDescription = \"A program running within Ghostty would like to access your Calendar.\";",
+                      "fork":  "INFOPLIST_KEY_NSCalendarsUsageDescription = \"A program running within Ghoztty would like to access your Calendar.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSCameraUsageDescription = \"A program running within Ghostty would like to use the camera.\";",
+                      "fork":  "INFOPLIST_KEY_NSCameraUsageDescription = \"A program running within Ghoztty would like to use the camera.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSContactsUsageDescription = \"A program running within Ghostty would like to access your Contacts.\";",
+                      "fork":  "INFOPLIST_KEY_NSContactsUsageDescription = \"A program running within Ghoztty would like to access your Contacts.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSLocalNetworkUsageDescription = \"A program running within Ghostty would like to access the local network.\";",
+                      "fork":  "INFOPLIST_KEY_NSLocalNetworkUsageDescription = \"A program running within Ghoztty would like to access the local network.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSLocationTemporaryUsageDescriptionDictionary = \"A program running within Ghostty would like to use your location temporarily.\";",
+                      "fork":  "INFOPLIST_KEY_NSLocationTemporaryUsageDescriptionDictionary = \"A program running within Ghoztty would like to use your location temporarily.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSLocationUsageDescription = \"A program running within Ghostty would like to access your location information.\";",
+                      "fork":  "INFOPLIST_KEY_NSLocationUsageDescription = \"A program running within Ghoztty would like to access your location information.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSMicrophoneUsageDescription = \"A program running within Ghostty would like to use your microphone.\";",
+                      "fork":  "INFOPLIST_KEY_NSMicrophoneUsageDescription = \"A program running within Ghoztty would like to use your microphone.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSMotionUsageDescription = \"A program running within Ghostty would like to access motion data.\";",
+                      "fork":  "INFOPLIST_KEY_NSMotionUsageDescription = \"A program running within Ghoztty would like to access motion data.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSPhotoLibraryUsageDescription = \"A program running within Ghostty would like to access your Photo Library.\";",
+                      "fork":  "INFOPLIST_KEY_NSPhotoLibraryUsageDescription = \"A program running within Ghoztty would like to access your Photo Library.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSRemindersUsageDescription = \"A program running within Ghostty would like to access your reminders.\";",
+                      "fork":  "INFOPLIST_KEY_NSRemindersUsageDescription = \"A program running within Ghoztty would like to access your reminders.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = \"A program running within Ghostty would like to use speech recognition.\";",
+                      "fork":  "INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = \"A program running within Ghoztty would like to use speech recognition.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "INFOPLIST_KEY_NSSystemAdministrationUsageDescription = \"A program running within Ghostty requires elevated privileges.\";",
+                      "fork":  "INFOPLIST_KEY_NSSystemAdministrationUsageDescription = \"A program running within Ghoztty requires elevated privileges.\";"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "PRODUCT_BUNDLE_IDENTIFIER = com.mitchellh.GhosttyTests;",
+                      "fork":  "PRODUCT_BUNDLE_IDENTIFIER = com.dzearing.GhozttyTests;"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "PRODUCT_BUNDLE_IDENTIFIER = com.mitchellh.GhosttyUITests;",
+                      "fork":  "PRODUCT_BUNDLE_IDENTIFIER = com.dzearing.GhozttyUITests;"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "productName = Ghostty;",
+                      "fork":  "productName = Ghoztty;"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "productReference = A5B30531299BEAAA0047F10C /* Ghostty.app */;",
+                      "fork":  "productReference = A5B30531299BEAAA0047F10C /* Ghoztty.app */;"
+                  },
+                  {
+                      "file":  "macos/Ghostty.xcodeproj/project.pbxproj",
+                      "upstream":  "TEST_HOST = \"$(BUILT_PRODUCTS_DIR)/Ghostty.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ghostty\";",
+                      "fork":  "TEST_HOST = \"$(BUILT_PRODUCTS_DIR)/Ghoztty.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/ghoztty\";"
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/AppDelegate.swift",
+                      "upstream":  "alert.addButton(withTitle: \"Close Ghostty\")",
+                      "fork":  "alert.addButton(withTitle: \"Close Ghoztty\")"
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/AppDelegate.swift",
+                      "upstream":  "alert.messageText = \"Allow Ghostty to execute \\\"\\(filename)\\\"?\"",
+                      "fork":  "alert.messageText = \"Allow Ghoztty to execute \\\"\\(filename)\\\"?\""
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/AppDelegate.swift",
+                      "upstream":  "alert.messageText = \"Quit Ghostty?\"",
+                      "fork":  "alert.messageText = \"Quit Ghoztty?\""
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/AppDelegate.swift",
+                      "upstream":  "guard let url = URL(string: \"https://ghostty.org/docs\") else { return }",
+                      "fork":  "guard let url = URL(string: \"https://dzearing.github.io/ghoztty/\") else { return }"
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/main.swift",
+                      "upstream":  "\"Ghostty failed to initialize! If you\u0027re executing Ghostty from the command line\\n\" +",
+                      "fork":  "\"Ghoztty failed to initialize! If you\u0027re executing Ghoztty from the command line\\n\" +"
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/main.swift",
+                      "upstream":  "\"View all available actions by running `ghostty +help`.\\n\")",
+                      "fork":  "\"View all available actions by running `ghoztty +help`.\\n\")"
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/main.swift",
+                      "upstream":  "// action is a command starting with a `+`, such as `ghostty +boo`.",
+                      "fork":  "// action is a command starting with a `+`, such as `ghoztty +boo`."
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/MainMenu.xib",
+                      "upstream":  "\u003cmenu key=\"submenu\" title=\"Ghostty\" systemMenu=\"apple\" id=\"uQy-DD-JDr\"\u003e",
+                      "fork":  "\u003cmenu key=\"submenu\" title=\"Ghoztty\" systemMenu=\"apple\" id=\"uQy-DD-JDr\"\u003e"
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/MainMenu.xib",
+                      "upstream":  "\u003cmenuItem title=\"About Ghostty\" id=\"5kV-Vb-QxS\"\u003e",
+                      "fork":  "\u003cmenuItem title=\"About Ghoztty\" id=\"5kV-Vb-QxS\"\u003e"
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/MainMenu.xib",
+                      "upstream":  "\u003cmenuItem title=\"Ghostty Help\" keyEquivalent=\"?\" id=\"FKE-Sm-Kum\"\u003e",
+                      "fork":  "\u003cmenuItem title=\"Ghoztty Help\" keyEquivalent=\"?\" id=\"FKE-Sm-Kum\"\u003e"
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/MainMenu.xib",
+                      "upstream":  "\u003cmenuItem title=\"Ghostty\" id=\"1Xt-HY-uBw\"\u003e",
+                      "fork":  "\u003cmenuItem title=\"Ghoztty\" id=\"1Xt-HY-uBw\"\u003e"
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/MainMenu.xib",
+                      "upstream":  "\u003cmenuItem title=\"Hide Ghostty\" keyEquivalent=\"h\" id=\"Olw-nP-bQN\"\u003e",
+                      "fork":  "\u003cmenuItem title=\"Hide Ghoztty\" keyEquivalent=\"h\" id=\"Olw-nP-bQN\"\u003e"
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/MainMenu.xib",
+                      "upstream":  "\u003cmenuItem title=\"Make Ghostty the Default Terminal\" id=\"b1t-oB-7MI\" userLabel=\"Set Ghostty as Default Terminal App\"\u003e",
+                      "fork":  "\u003cmenuItem title=\"Make Ghoztty the Default Terminal\" id=\"b1t-oB-7MI\" userLabel=\"Set Ghoztty as Default Terminal App\"\u003e"
+                  },
+                  {
+                      "file":  "macos/Sources/App/macOS/MainMenu.xib",
+                      "upstream":  "\u003cmenuItem title=\"Quit Ghostty\" id=\"4sb-4s-VLi\"\u003e",
+                      "fork":  "\u003cmenuItem title=\"Quit Ghoztty\" id=\"4sb-4s-VLi\"\u003e"
+                  },
+                  {
+                      "file":  "macos/Sources/Features/About/AboutView.swift",
+                      "upstream":  "private let docsURL = URL(string: \"https://ghostty.org/docs\")",
+                      "fork":  "private let docsURL = URL(string: \"https://dzearing.github.io/ghoztty/\")"
+                  },
+                  {
+                      "file":  "macos/Sources/Features/About/CyclingIconView.swift",
+                      "upstream":  ".accessibilityLabel(\"Ghostty Application Icon\")",
+                      "fork":  ".accessibilityLabel(\"Ghoztty Application Icon\")"
+                  },
+                  {
+                      "file":  "macos/Sources/Features/App Intents/GhosttyIntentError.swift",
+                      "upstream":  "case .appUnavailable: \"The Ghostty app isn\u0027t properly initialized.\"",
+                      "fork":  "case .appUnavailable: \"The Ghoztty app isn\u0027t properly initialized.\""
+                  },
+                  {
+                      "file":  "macos/Sources/Features/App Intents/GhosttyIntentError.swift",
+                      "upstream":  "case .permissionDenied: \"Ghostty doesn\u0027t allow Shortcuts.\"",
+                      "fork":  "case .permissionDenied: \"Ghoztty doesn\u0027t allow Shortcuts.\""
+                  },
+                  {
+                      "file":  "macos/Sources/Features/App Intents/IntentPermission.swift",
+                      "upstream":  "message: \"Allow Shortcuts to interact with Ghostty?\",",
+                      "fork":  "message: \"Allow Shortcuts to interact with Ghoztty?\","
+                  },
+                  {
+                      "file":  "macos/Sources/Features/AppleScript/AppDelegate+AppleScript.swift",
+                      "upstream":  "command.scriptErrorString = \"Ghostty app delegate is unavailable.\"",
+                      "fork":  "command.scriptErrorString = \"Ghoztty app delegate is unavailable.\""
+                  },
+                  {
+                      "file":  "macos/Sources/Features/Command Palette/TerminalCommandPalette.swift",
+                      "upstream":  "title = \"Update Ghostty and Restart\"",
+                      "fork":  "title = \"Update Ghoztty and Restart\""
+                  },
+                  {
+                      "file":  "macos/Sources/Features/Terminal/TerminalView.swift",
+                      "upstream":  ".accessibilityValue(\"Debug builds of Ghostty are very slow and you may experience performance problems. Debug builds are only recommended during development.\")",
+                      "fork":  ".accessibilityValue(\"Debug builds of Ghoztty are very slow and you may experience performance problems. Debug builds are only recommended during development.\")"
+                  },
+                  {
+                      "file":  "macos/Sources/Features/Terminal/TerminalView.swift",
+                      "upstream":  "Debug builds of Ghostty are very slow and you may experience",
+                      "fork":  "Debug builds of Ghoztty are very slow and you may experience"
+                  },
+                  {
+                      "file":  "macos/Sources/Features/Terminal/TerminalView.swift",
+                      "upstream":  "Text(\"You\u0027re running a debug build of Ghostty! Performance will be degraded.\")",
+                      "fork":  "Text(\"You\u0027re running a debug build of Ghoztty! Performance will be degraded.\")"
+                  },
+                  {
+                      "file":  "macos/Sources/Features/Update/UpdatePopoverView.swift",
+                      "upstream":  "Text(\"Ghostty can automatically check for updates in the background.\")",
+                      "fork":  "Text(\"Ghoztty can automatically check for updates in the background.\")"
+                  },
+                  {
+                      "file":  "macos/Sources/Features/Update/UpdateViewModel.swift",
+                      "upstream":  "} else if let url = URL(string: \"https://github.com/ghostty-org/ghostty/commit/\\(newHash)\") {",
+                      "fork":  "} else if let url = URL(string: \"https://github.com/dzearing/ghoztty/commit/\\(newHash)\") {"
+                  },
+                  {
+                      "file":  "macos/Sources/Features/Update/UpdateViewModel.swift",
+                      "upstream":  "if let url = URL(string: \"https://ghostty.org/docs/install/release-notes/\\(slug)\") {",
+                      "fork":  "if let url = URL(string: \"https://github.com/dzearing/ghoztty/releases/tag/v\\(semver)\") {"
+                  },
+                  {
+                      "file":  "macos/Sources/Features/Update/UpdateViewModel.swift",
+                      "upstream":  "let url = URL(string: \"https://github.com/ghostty-org/ghostty/compare/\\(currentHash)...\\(newHash)\") {",
+                      "fork":  "let url = URL(string: \"https://github.com/dzearing/ghoztty/compare/\\(currentHash)...\\(newHash)\") {"
+                  },
+                  {
+                      "file":  "macos/Sources/Helpers/Fullscreen.swift",
+                      "upstream":  "static let fullscreenDidEnter = Notification.Name(\"com.mitchellh.fullscreenDidEnter\")",
+                      "fork":  "static let fullscreenDidEnter = Notification.Name(\"com.dzearing.ghoztty.fullscreenDidEnter\")"
+                  },
+                  {
+                      "file":  "macos/Sources/Helpers/Fullscreen.swift",
+                      "upstream":  "static let fullscreenDidExit = Notification.Name(\"com.mitchellh.fullscreenDidExit\")",
+                      "fork":  "static let fullscreenDidExit = Notification.Name(\"com.dzearing.ghoztty.fullscreenDidExit\")"
+                  },
+                  {
+                      "file":  "macos/Tests/Update/ReleaseNotesTests.swift",
+                      "upstream":  "#expect(url.absoluteString == \"https://github.com/ghostty-org/ghostty/commit/1234567890abcdef1234567890abcdef12345678\")",
+                      "fork":  "#expect(url.absoluteString == \"https://github.com/dzearing/ghoztty/commit/1234567890abcdef1234567890abcdef12345678\")"
+                  },
+                  {
+                      "file":  "macos/Tests/Update/ReleaseNotesTests.swift",
+                      "upstream":  "#expect(url.absoluteString == \"https://github.com/ghostty-org/ghostty/commit/abc1234\")",
+                      "fork":  "#expect(url.absoluteString == \"https://github.com/dzearing/ghoztty/commit/abc1234\")"
+                  },
+                  {
+                      "file":  "macos/Tests/Update/ReleaseNotesTests.swift",
+                      "upstream":  "#expect(url.absoluteString == \"https://github.com/ghostty-org/ghostty/compare/def5678...abc1234\")",
+                      "fork":  "#expect(url.absoluteString == \"https://github.com/dzearing/ghoztty/compare/def5678...abc1234\")"
+                  },
+                  {
+                      "file":  "macos/Tests/Update/ReleaseNotesTests.swift",
+                      "upstream":  "#expect(url.absoluteString == \"https://ghostty.org/docs/install/release-notes/1-2-3\")",
+                      "fork":  "#expect(url.absoluteString == \"https://github.com/dzearing/ghoztty/releases/tag/v1.2.3\")"
+                  },
+                  {
+                      "file":  "README.md",
+                      "upstream":  "\u003cbr\u003eGhostty",
+                      "fork":  "\u003cbr\u003eGhoztty"
+                  },
+                  {
+                      "file":  "src/apprt/embedded.zig",
+                      "upstream":  "// Remove this so that running `ghostty` within Ghostty works.",
+                      "fork":  "// Remove this so that running `ghoztty` within Ghoztty works."
+                  },
+                  {
+                      "file":  "src/apprt/gtk/build/info.zig",
+                      "upstream":  "pub const resource_path = \"/com/mitchellh/ghostty\";",
+                      "fork":  "pub const resource_path = \"/com/dzearing/ghoztty\";"
+                  },
+                  {
+                      "file":  "src/apprt/gtk/ipc/new_window.zig",
+                      "upstream":  "// `ghostty +new-window -e echo hello` would be equivalent to the following command (on a release build):",
+                      "fork":  "// `ghoztty +new-window -e echo hello` would be equivalent to the following command (on a release build):"
+                  },
+                  {
+                      "file":  "src/apprt/gtk/ipc/new_window.zig",
+                      "upstream":  "// `ghostty +new-window` is equivalent to the following command (on a release build):",
+                      "fork":  "// `ghoztty +new-window` is equivalent to the following command (on a release build):"
+                  },
+                  {
+                      "file":  "src/apprt/gtk/ipc/new_window.zig",
+                      "upstream":  "// gdbus call --session --dest com.mitchellh.ghostty --object-path /com/mitchellh/ghostty --method org.gtk.Actions.Activate new-window [] []",
+                      "fork":  "// gdbus call --session --dest com.dzearing.ghoztty --object-path /com/dzearing/ghoztty --method org.gtk.Actions.Activate new-window [] []"
+                  },
+                  {
+                      "file":  "src/apprt/gtk/ipc/new_window.zig",
+                      "upstream":  "// gdbus call --session --dest com.mitchellh.ghostty --object-path /com/mitchellh/ghostty --method org.gtk.Actions.Activate new-window-command \u0027[\u003c@as [\"-e\" \"echo\" \"hello\"]\u003e]\u0027 []",
+                      "fork":  "// gdbus call --session --dest com.dzearing.ghoztty --object-path /com/dzearing/ghoztty --method org.gtk.Actions.Activate new-window-command \u0027[\u003c@as [\"-e\" \"echo\" \"hello\"]\u003e]\u0027 []"
+                  },
+                  {
+                      "file":  "src/build/GhosttyExe.zig",
+                      "upstream":  ".name = \"ghostty\",",
+                      "fork":  ".name = \"ghoztty\","
+                  },
+                  {
+                      "file":  "src/cli/edit_config.zig",
+                      "upstream":  "\\\\The `ghostty +edit-config` command is not supported on Windows.",
+                      "fork":  "\\\\The `ghoztty +edit-config` command is not supported on Windows."
+                  },
+                  {
+                      "file":  "src/cli/explain_config.zig",
+                      "upstream":  "///   ghostty +explain-config --keybind=copy_to_clipboard",
+                      "fork":  "///   ghoztty +explain-config --keybind=copy_to_clipboard"
+                  },
+                  {
+                      "file":  "src/cli/explain_config.zig",
+                      "upstream":  "///   ghostty +explain-config --option=font-size",
+                      "fork":  "///   ghoztty +explain-config --option=font-size"
+                  },
+                  {
+                      "file":  "src/cli/ghostty.zig",
+                      "upstream":  "// `ghostty +command -e +command` is invalid.",
+                      "fork":  "// `ghoztty +command -e +command` is invalid."
+                  },
+                  {
+                      "file":  "src/cli/ghostty.zig",
+                      "upstream":  "// `ghostty -e ghostty +command`. If we\u0027ve seen a command we",
+                      "fork":  "// `ghoztty -e ghoztty +command`. If we\u0027ve seen a command we"
+                  },
+                  {
+                      "file":  "src/cli/help.zig",
+                      "upstream":  "\\\\`ghostty -e top` will run the `top` command inside the terminal.",
+                      "fork":  "\\\\`ghoztty -e top` will run the `top` command inside the terminal."
+                  },
+                  {
+                      "file":  "src/cli/help.zig",
+                      "upstream":  "\\\\instead, or `open -na ghostty.app --args --foo=bar --baz=quz` to pass",
+                      "fork":  "\\\\instead, or `open -na Ghoztty.app --args --foo=bar --baz=quz` to pass"
+                  },
+                  {
+                      "file":  "src/cli/help.zig",
+                      "upstream":  "\\\\supported and only actions are supported. Use `open -na Ghostty.app`",
+                      "fork":  "\\\\supported and only actions are supported. Use `open -na Ghoztty.app`"
+                  },
+                  {
+                      "file":  "src/cli/list_themes.zig",
+                      "upstream":  ".{ .text = \"ghostty \", .style = color6 },",
+                      "fork":  ".{ .text = \"ghoztty \", .style = color6 },"
+                  },
+                  {
+                      "file":  "src/cli/new_window.zig",
+                      "upstream":  "///   * `--working-directory=\u003cdirectory\u003e`: The working directory to pass to Ghostty.",
+                      "fork":  "///   * `--working-directory=\u003cdirectory\u003e`: The working directory to pass to Ghoztty."
+                  },
+                  {
+                      "file":  "src/cli/new_window.zig",
+                      "upstream":  "/// directory that `ghostty +new-window` is run from will be passed to Ghostty.",
+                      "fork":  "/// directory that `ghoztty +new-window` is run from will be passed to Ghoztty."
+                  },
+                  {
+                      "file":  "src/cli/new_window.zig",
+                      "upstream":  "/// relative to the current working directory that the `ghostty +new-window`",
+                      "fork":  "/// relative to the current working directory that the `ghoztty +new-window`"
+                  },
+                  {
+                      "file":  "src/cli/show_config.zig",
+                      "upstream":  "/// documentation, run `ghostty +show-config --default --docs`.",
+                      "fork":  "/// documentation, run `ghoztty +show-config --default --docs`."
+                  },
+                  {
+                      "file":  "src/cli/ssh_cache.zig",
+                      "upstream":  "///   ghostty +ssh-cache                          # List all cached hosts",
+                      "fork":  "///   ghoztty +ssh-cache                          # List all cached hosts"
+                  },
+                  {
+                      "file":  "src/cli/ssh_cache.zig",
+                      "upstream":  "///   ghostty +ssh-cache --add=example.com        # Manually add host to cache",
+                      "fork":  "///   ghoztty +ssh-cache --add=example.com        # Manually add host to cache"
+                  },
+                  {
+                      "file":  "src/cli/ssh_cache.zig",
+                      "upstream":  "///   ghostty +ssh-cache --add=user@example.com   # Add user@host combination",
+                      "fork":  "///   ghoztty +ssh-cache --add=user@example.com   # Add user@host combination"
+                  },
+                  {
+                      "file":  "src/cli/ssh_cache.zig",
+                      "upstream":  "///   ghostty +ssh-cache --clear                  # Clear entire cache",
+                      "fork":  "///   ghoztty +ssh-cache --clear                  # Clear entire cache"
+                  },
+                  {
+                      "file":  "src/cli/ssh_cache.zig",
+                      "upstream":  "///   ghostty +ssh-cache --expire-days=30         # Set custom expiration period",
+                      "fork":  "///   ghoztty +ssh-cache --expire-days=30         # Set custom expiration period"
+                  },
+                  {
+                      "file":  "src/cli/ssh_cache.zig",
+                      "upstream":  "///   ghostty +ssh-cache --host=example.com       # Check if host is cached",
+                      "fork":  "///   ghoztty +ssh-cache --host=example.com       # Check if host is cached"
+                  },
+                  {
+                      "file":  "src/cli/ssh_cache.zig",
+                      "upstream":  "///   ghostty +ssh-cache --remove=example.com     # Remove host from cache",
+                      "fork":  "///   ghoztty +ssh-cache --remove=example.com     # Remove host from cache"
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "///     `ghostty +list-actions` command.",
+                      "fork":  "///     `ghoztty +list-actions` command."
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "///     ghostty +list-fonts",
+                      "fork":  "///     ghoztty +list-fonts"
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "///     Ghostty configuration. This is only supported on Linux builds.",
+                      "fork":  "///     Ghoztty configuration. This is only supported on Linux builds."
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "///     the `ghostty -e` command).",
+                      "fork":  "///     the `ghoztty -e` command)."
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "///   * `path` - Add Ghostty\u0027s binary directory to PATH. This ensures the `ghostty`",
+                      "fork":  "///   * `path` - Add Ghoztty\u0027s binary directory to PATH. This ensures the `ghoztty`"
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "/// arguments. For example, `ghostty -e fish --with --custom --args`.",
+                      "fork":  "/// arguments. For example, `ghoztty -e fish --with --custom --args`."
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "/// each new `ghostty` process launched will result in a new window if there is",
+                      "fork":  "/// each new `ghoztty` process launched will result in a new window if there is"
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "/// If `false`, each new ghostty process will launch a separate application.",
+                      "fork":  "/// If `false`, each new ghoztty process will launch a separate application."
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "/// If `true`, the Ghostty GTK application will run in single-instance mode:",
+                      "fork":  "/// If `true`, the Ghoztty GTK application will run in single-instance mode:"
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "/// If you\u0027re using the `ghostty` CLI there is also a shortcut to set this",
+                      "fork":  "/// If you\u0027re using the `ghoztty` CLI there is also a shortcut to set this"
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "/// in most shells. Example: ghostty --keybind=\u0027ctrl+a\u003en=new_window\u0027",
+                      "fork":  "/// in most shells. Example: ghoztty --keybind=\u0027ctrl+a\u003en=new_window\u0027"
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "/// The default is `ghostty`.",
+                      "fork":  "/// The default is `ghoztty`."
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "/// the documentation or using the `ghostty +list-actions` command.",
+                      "fork":  "/// the documentation or using the `ghoztty +list-actions` command."
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "/// To see a list of available themes, run `ghostty +list-themes`.",
+                      "fork":  "/// To see a list of available themes, run `ghoztty +list-themes`."
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "/// Warning: If you define a sequence as a CLI argument to `ghostty`,",
+                      "fork":  "/// Warning: If you define a sequence as a CLI argument to `ghoztty`,"
+                  },
+                  {
+                      "file":  "src/config/Config.zig",
+                      "upstream":  "/// with arguments directly: you can use the `-e` flag. For example: `ghostty -e",
+                      "fork":  "/// with arguments directly: you can use the `-e` flag. For example: `ghoztty -e"
+                  },
+                  {
+                      "file":  "src/input/Binding.zig",
+                      "upstream":  "/// found by running `ghostty +version`.",
+                      "fork":  "/// found by running `ghoztty +version`."
+                  },
+                  {
+                      "file":  "src/input/Binding.zig",
+                      "upstream":  "/// version can be found by running `ghostty +version`.",
+                      "fork":  "/// version can be found by running `ghoztty +version`."
+                  },
+                  {
+                      "file":  "src/main_c.zig",
+                      "upstream":  "std.log.err(\"failed to initialize ghostty error={}\", .{err});",
+                      "fork":  "std.log.err(\"failed to initialize ghoztty error={}\", .{err});"
+                  },
+                  {
+                      "file":  "src/main_ghostty.zig",
+                      "upstream":  "\"All valid CLI actions can be listed with `ghostty +help`\\n\",",
+                      "fork":  "\"All valid CLI actions can be listed with `ghoztty +help`\\n\","
+                  },
+                  {
+                      "file":  "src/main_ghostty.zig",
+                      "upstream":  "//! The main entrypoint for the `ghostty` application. This also serves",
+                      "fork":  "//! The main entrypoint for the `ghoztty` application. This also serves"
+                  },
+                  {
+                      "file":  "src/main_ghostty.zig",
+                      "upstream":  "\\\\(i.e. Ghostty.app on macOS). This CLI can be used to perform various",
+                      "fork":  "\\\\(i.e. Ghoztty.app on macOS). This CLI can be used to perform various"
+                  },
+                  {
+                      "file":  "src/main_ghostty.zig",
+                      "upstream":  "\\\\On macOS, the terminal can also be launched using `open -na Ghostty.app`,",
+                      "fork":  "\\\\On macOS, the terminal can also be launched using `open -na Ghoztty.app`,"
+                  },
+                  {
+                      "file":  "src/main_ghostty.zig",
+                      "upstream":  "\\\\or `open -na Ghostty.app --args --foo=bar --baz=qux` to pass arguments.",
+                      "fork":  "\\\\or `open -na Ghoztty.app --args --foo=bar --baz=qux` to pass arguments."
+                  },
+                  {
+                      "file":  "src/main_ghostty.zig",
+                      "upstream":  "\\\\This is the Ghostty helper CLI that accompanies the graphical Ghostty app.",
+                      "fork":  "\\\\This is the Ghoztty helper CLI that accompanies the graphical Ghoztty app."
+                  },
+                  {
+                      "file":  "src/main_ghostty.zig",
+                      "upstream":  "try stdout.print(\"Usage: ghostty +\u003caction\u003e [flags]\\n\\n\", .{});",
+                      "fork":  "try stdout.print(\"Usage: ghoztty +\u003caction\u003e [flags]\\n\\n\", .{});"
+                  },
+                  {
+                      "file":  "src/renderer/OpenGL.zig",
+                      "upstream":  "\"OpenGL version is too old. Ghostty requires OpenGL {d}.{d}\",",
+                      "fork":  "\"OpenGL version is too old. Ghoztty requires OpenGL {d}.{d}\","
+                  },
+                  {
+                      "file":  "src/termio/Exec.zig",
+                      "upstream":  "log.warn(\"ghostty terminfo not found, using xterm-256color\", .{});",
+                      "fork":  "log.warn(\"ghoztty terminfo not found, using xterm-256color\", .{});"
+                  }
+              ]
+}

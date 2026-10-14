@@ -1,10 +1,10 @@
 {
     "guard":  "verdict-exit",
     "script":  "test/win32/verdict-exit-audit.ps1",
-    "generated":  "2026-10-14T15:24:54-07:00",
-    "commit":  "0e4e43a92",
+    "generated":  "2026-10-14T16:25:42-07:00",
+    "commit":  "967c8af2d",
     "uncommitted":  [
-                        "test/win32/upstream-stage.ps1"
+                        "test/win32/fork-identity.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -137,7 +137,7 @@
                   "test/win32/focus-pull-scan.ps1":  "3976c83da8ce1fd4d88288908cffb66d69a003597d1e8759dc62957280023660",
                   "test/win32/font-inherit.ps1":  "f303affd8f1c72da77f48f09a10b18d0c7c72af845a4602455bf013662d8c257",
                   "test/win32/foreground-audit.ps1":  "f9d1b2caed851695f70fd1430a378506831ebfb54458b55068252d7984622b0d",
-                  "test/win32/fork-identity.ps1":  "9661dc44ad46212f55a3f65601c083cd0f1eebcba2e3a323f6fe4c4f44b62cbe",
+                  "test/win32/fork-identity.ps1":  "d150389bc74791d70f406cef6275fb9ec1e4d69ba52ba6f6382ca7a356a830a3",
                   "test/win32/gate-negatives.ps1":  "0c2eaa7356bd6e8eece62570fe3a1c2a49444b4f29bd9d17e8142acd0fe6156c",
                   "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",

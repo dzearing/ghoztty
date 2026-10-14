@@ -25,6 +25,16 @@
             theirs" for a U-file, `check` is what says the overlay is complete.
     rules   Print the rule table - name, scope, what it rewrites and why - so
             the plan's prose and the code cannot drift apart.
+    coverage
+            Ask whether the rule table still accounts for the fork (T1027).
+            `check` only looks for the upstream spelling each rule was written
+            against, so identity the fork adds later is invisible to it. This
+            diffs -Base (the fork point) against -Head, pairs each added line
+            carrying fork identity with the upstream line it replaced, replays
+            the rules over the upstream line, and reports every pair they do
+            not reproduce. Pairs already recorded in
+            scripts\fork-identity-coverage.json are reported as KNOWN; a pair
+            missing from it exits 1. The ledger only shrinks (-Record).
 
   WHAT IT DELIBERATELY DOES NOT DO
 
@@ -60,7 +70,7 @@
 #>
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('check', 'apply', 'rules')]
+    [ValidateSet('check', 'apply', 'rules', 'coverage')]
     [string]$Action = 'check',
 
     # Tree to operate on. Defaults to this repo, which is the regression case:
@@ -73,12 +83,32 @@ param(
 
     [switch]$DryRun,
     [switch]$Json,
-    [switch]$Quiet
+    [switch]$Quiet,
+
+    # coverage only: the two commits whose delta is swept. Base defaults to the
+    # fork point the upstream pull plan measures from.
+    [string]$Base = '063ac3ecc',
+    [string]$Head = 'HEAD',
+
+    # coverage only: the ledger of unaccounted pairs already known when it was
+    # recorded. Known pairs are reported and do not fail the run; a pair that
+    # is NOT in it does. -Strict fails on known pairs too. Pass -Known '' for
+    # no ledger at all.
+    [string]$Known,
+    [switch]$Strict,
+
+    # coverage only: rewrite the -Known ledger to the pairs still unaccounted.
+    # It may only SHRINK - a ledger that exists is never grown, because a new
+    # pair is either a rule to write or an $Acknowledged entry with a reason,
+    # and a ledger that absorbed it would be a silent acknowledgment. The one
+    # exception is the first recording, when there is no ledger yet.
+    [switch]$Record
 )
 
 $ErrorActionPreference = 'Stop'
 if (-not $Path) { $Path = Split-Path -Parent $PSScriptRoot }
 $Path = (Resolve-Path -LiteralPath $Path).Path
+if (-not $PSBoundParameters.ContainsKey('Known')) { $Known = Join-Path $PSScriptRoot 'fork-identity-coverage.json' }
 
 # ---------------------------------------------------------------------------
 # The rule table.
@@ -547,12 +577,332 @@ function Invoke-FileCheck {
 }
 
 # ---------------------------------------------------------------------------
+# Coverage (T1027): does the rule table still account for the fork's identity?
+#
+# Every rule matches the UPSTREAM spelling it was written against, which makes
+# `check` blind by construction to identity this fork introduces LATER: a new
+# branded URL, a second bundle-id-shaped constant, another apprt switch shape.
+# A merge stage would take such a file from upstream whole, `apply` would have
+# nothing to say about it, and `check` would be green - the fork's string
+# silently gone.
+#
+# So this re-derives the question from the live delta instead of the rule
+# table. It diffs Base..Head over the files upstream also has (modified, never
+# added: a file only the fork has never arrives from upstream), pairs each
+# added line that carries fork identity with the removed line it replaced, and
+# keeps the pairs that are IDENTITY-SHAPED - the line differs from its upstream
+# counterpart only by the identity it carries. Each such pair is then replayed:
+# the rules in scope for that file are run over the upstream line, and the pair
+# is accounted for only if that reproduces the fork line exactly. Whatever is
+# left is a string the overlay would lose at the next merge stage.
+#
+# A pair a human has to carry on purpose is listed in $script:Acknowledged
+# with its reason, which is the same contract as a rule's Allow list: narrow,
+# named, and visible in the output, never a silent skip.
+# ---------------------------------------------------------------------------
+
+# Identity this fork writes, and what it replaced.
+$script:ForkToken = '(?i)ghoztty|dzearing'
+$script:UpstreamToken = '(?i)ghostty|mitchellh'
+
+# Pairs that no rule mechanizes and that is deliberate. Each entry names the
+# file (a scope glob) and a pattern on the FORK line; both must match.
+$script:Acknowledged = @()
+
+# Run every in-scope rule over one line, exactly as `apply` would. The apprt
+# arm rule is structural in `apply`; at line level it is the same rewrite of a
+# `.none => void,` arm, which is all a single diff line can carry.
+function Invoke-RulesOnLine {
+    param([string]$Relative, [string]$Line)
+    $out = $Line
+    foreach ($rule in $script:Rules) {
+        if (-not (Test-Scope $Relative $rule.Include $rule.Exclude)) { continue }
+        if ($rule.Kind -eq 'apprt-arm') {
+            $m = [regex]::Match($out, $script:NoneArmPattern)
+            if ($m.Success) {
+                $out = ('{0}.none, .win32{1}=>{2}{3},{4}' -f `
+                        $m.Groups['indent'].Value, $m.Groups['sp'].Value, $m.Groups['sp2'].Value, `
+                        $m.Groups['body'].Value, $m.Groups['tail'].Value)
+            }
+            continue
+        }
+        if (Test-Allowed $out $rule.Allow) { continue }
+        foreach ($pair in $rule.Pairs) {
+            if ($out -cmatch $pair.Find) { $out = [regex]::Replace($out, $pair.Find, $pair.Replace) }
+        }
+    }
+    return $out
+}
+
+# The fork line with its identity spelled the upstream way. Equality with the
+# removed line is the strong form of "this pair differs only by identity".
+function ConvertTo-UpstreamForm {
+    param([string]$Line)
+    $s = $Line -creplace 'ghoztty', 'ghostty' -creplace 'Ghoztty', 'Ghostty' -creplace 'GHOZTTY', 'GHOSTTY'
+    $s = $s -creplace 'dzearing', 'mitchellh'
+    $s = $s -creplace ', \.win32\b', '' -creplace '\.win32, ', ''
+    return $s
+}
+
+# Classify a candidate pair. Strong: the fork line IS the upstream line with
+# identity substituted. Weak: the two share at least half their text, and the
+# part that differs carries fork identity on one side and upstream identity on
+# the other - the shape of a re-pointed URL, whose host and path both move.
+# Anything else is a feature line that happens to mention the product name.
+function Get-PairShape {
+    param([string]$Removed, [string]$Added)
+    if ((ConvertTo-UpstreamForm $Added) -ceq $Removed) { return 'strong' }
+    $p = 0
+    $max = [Math]::Min($Removed.Length, $Added.Length)
+    while ($p -lt $max -and $Removed[$p] -ceq $Added[$p]) { $p++ }
+    $s = 0
+    while ($s -lt ($max - $p) -and $Removed[$Removed.Length - 1 - $s] -ceq $Added[$Added.Length - 1 - $s]) { $s++ }
+    $longer = [Math]::Max($Removed.Length, $Added.Length)
+    if ($longer -eq 0 -or ($p + $s) -lt (0.5 * $longer)) { return $null }
+    # Widen the differing region out to whole words. `ghostty.org` and
+    # `ghoztty.dev` share `gho` and a common-prefix cut would leave `ztty` in
+    # the middle - which names neither side's identity.
+    while ($p -gt 0 -and [char]::IsLetterOrDigit($Added[$p - 1])) { $p-- }
+    while ($s -gt 0 -and [char]::IsLetterOrDigit($Added[$Added.Length - $s])) { $s-- }
+    $midA = $Added.Substring($p, $Added.Length - $p - $s)
+    $midR = $Removed.Substring($p, $Removed.Length - $p - $s)
+    if ($midA -match $script:ForkToken -and $midR -match $script:UpstreamToken) { return 'weak' }
+    return $null
+}
+
+function Test-Acknowledged {
+    param([string]$Relative, [string]$Added)
+    foreach ($a in $script:Acknowledged) {
+        if (-not ($Relative -match (ConvertTo-ScopeRegex $a.File))) { continue }
+        if ($Added -cmatch $a.Pattern) { return $a }
+    }
+    return $null
+}
+
+# Hunks of `git diff -U0 Base Head`, over files upstream also has.
+function Get-DeltaHunks {
+    $prevEnc = [Console]::OutputEncoding
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+    try {
+        $ErrorActionPreference = 'SilentlyContinue'
+        $pathspec = @('.') + @($script:GlobalExclude | ForEach-Object { ":(exclude,glob)$_" })
+        $raw = @(& git -C $Path -c core.quotepath=off diff --no-color --no-ext-diff -U0 `
+                    --diff-filter=M $Base $Head -- @pathspec 2>$null)
+        $code = $LASTEXITCODE
+    } finally { [Console]::OutputEncoding = $prevEnc }
+    if ($code -ne 0) { throw "git diff $Base $Head failed (exit $code) in $Path" }
+
+    $hunks = New-Object System.Collections.ArrayList
+    $file = $null
+    $cur = $null
+    $inHunk = $false
+    foreach ($l in $raw) {
+        if ($l.StartsWith('diff --git ')) {
+            $m = [regex]::Match($l, '^diff --git a/(.+) b/(.+)$')
+            $file = $null
+            if ($m.Success) { $file = $m.Groups[2].Value }
+            $inHunk = $false
+            continue
+        }
+        if ($l.StartsWith('@@')) {
+            $m = [regex]::Match($l, '\+(\d+)')
+            $cur = [pscustomobject]@{
+                File    = $file
+                NewLine = [int]$m.Groups[1].Value
+                Removed = New-Object System.Collections.ArrayList
+                Added   = New-Object System.Collections.ArrayList
+            }
+            [void]$hunks.Add($cur)
+            $inHunk = $true
+            continue
+        }
+        if (-not $inHunk -or $null -eq $file) { continue }
+        if ($l.StartsWith('-')) { [void]$cur.Removed.Add($l.Substring(1).TrimEnd("`r")) }
+        elseif ($l.StartsWith('+')) { [void]$cur.Added.Add($l.Substring(1).TrimEnd("`r")) }
+    }
+    return $hunks
+}
+
+# The known ledger is keyed by file and fork-line text, never by line number:
+# line numbers move with every unrelated edit above them, and a ledger that
+# churned on those would be rewritten on every run and read by nobody.
+function Get-PairKey {
+    param([pscustomobject]$Pair)
+    return ('{0}|{1}' -f $Pair.File, $Pair.Fork)
+}
+
+function Read-KnownLedger {
+    $set = @{}
+    if (-not $Known -or -not (Test-Path -LiteralPath $Known)) { return $null }
+    $doc = Get-Content -LiteralPath $Known -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($p in @($doc.pairs)) { $set[('{0}|{1}' -f $p.file, $p.fork)] = $true }
+    return $set
+}
+
+function Write-KnownLedger {
+    param([object[]]$Open)
+    $seen = @{}
+    $rows = New-Object System.Collections.ArrayList
+    foreach ($p in ($Open | Sort-Object File, Fork)) {
+        $k = Get-PairKey $p
+        if ($seen.ContainsKey($k)) { continue }
+        $seen[$k] = $true
+        [void]$rows.Add([ordered]@{ file = $p.File; upstream = $p.Upstream; fork = $p.Fork })
+    }
+    $doc = [ordered]@{
+        note  = 'T1027. Identity pairs in the fork delta that no fork-identity rule reproduces and nobody has acknowledged, as of the recording. `scripts\fork-identity.ps1 coverage` reports these as KNOWN and fails only on a pair missing from here. The ledger only shrinks (coverage -Record): close a pair by writing the rule, or acknowledge it in the script with a reason - never by adding it here.'
+        base  = $Base
+        pairs = $rows
+    }
+    $json = ($doc | ConvertTo-Json -Depth 5) -replace "`r`n", "`n"
+    [System.IO.File]::WriteAllText($Known, $json + "`n", (New-Object System.Text.UTF8Encoding($false)))
+    return $rows.Count
+}
+
+function Invoke-Coverage {
+    $pairs = New-Object System.Collections.ArrayList
+    foreach ($h in (Get-DeltaHunks)) {
+        if ($h.Removed.Count -eq 0) { continue }
+        $used = @{}
+        for ($ai = 0; $ai -lt $h.Added.Count; $ai++) {
+            $a = $h.Added[$ai]
+            if ($a -notmatch $script:ForkToken -and $a -cnotmatch '\.win32\b') { continue }
+
+            # Strong partner first; otherwise the weak partner sharing the most
+            # text. A removed line is consumed once, so two fork lines cannot
+            # both claim the same upstream line.
+            $best = -1; $bestShape = $null
+            for ($ri = 0; $ri -lt $h.Removed.Count; $ri++) {
+                if ($used.ContainsKey($ri)) { continue }
+                $shape = Get-PairShape $h.Removed[$ri] $a
+                if ($shape -eq 'strong') { $best = $ri; $bestShape = $shape; break }
+                if ($shape -eq 'weak' -and $best -lt 0) { $best = $ri; $bestShape = $shape }
+            }
+            if ($best -lt 0) { continue }
+            $used[$best] = $true
+            $r = $h.Removed[$best]
+
+            $replayed = Invoke-RulesOnLine $h.File $r
+            $verdict = 'unaccounted'
+            $why = $null
+            if ($replayed -ceq $a) { $verdict = 'covered' }
+            else {
+                $ack = Test-Acknowledged $h.File $a
+                if ($ack) { $verdict = 'acknowledged'; $why = $ack.Why }
+            }
+            [void]$pairs.Add([pscustomobject]@{
+                    File     = $h.File
+                    Line     = $h.NewLine + $ai
+                    Shape    = $bestShape
+                    Verdict  = $verdict
+                    Upstream = $r.Trim()
+                    Fork     = $a.Trim()
+                    Replayed = $replayed.Trim()
+                    Why      = $why
+                })
+        }
+    }
+    return $pairs
+}
+
+# ---------------------------------------------------------------------------
 
 function Write-Line { param([string]$M) if (-not $Quiet) { Write-Host $M } }
 
-$subjects = @(Get-SubjectFiles)
+$subjects = @()
+if ($Action -ne 'coverage') { $subjects = @(Get-SubjectFiles) }
 
 switch ($Action) {
+
+    'coverage' {
+        $pairs = @(Invoke-Coverage)
+        $ledger = Read-KnownLedger
+        foreach ($p in $pairs) {
+            if ($p.Verdict -eq 'unaccounted' -and $null -ne $ledger -and $ledger.ContainsKey((Get-PairKey $p))) {
+                $p.Verdict = 'known'
+            }
+        }
+        $new = @($pairs | Where-Object { $_.Verdict -eq 'unaccounted' })
+        $knownPairs = @($pairs | Where-Object { $_.Verdict -eq 'known' })
+        $acked = @($pairs | Where-Object { $_.Verdict -eq 'acknowledged' })
+        $covered = @($pairs | Where-Object { $_.Verdict -eq 'covered' })
+        $failing = $new.Count
+        if ($Strict) { $failing += $knownPairs.Count }
+
+        # A ledger entry no live pair matches any more was closed by a rule (or
+        # its line left the delta); -Record is how that progress is banked.
+        $stale = 0
+        if ($null -ne $ledger) {
+            $live = @{}
+            foreach ($p in $knownPairs) { $live[(Get-PairKey $p)] = $true }
+            $stale = @($ledger.Keys | Where-Object { -not $live.ContainsKey($_) }).Count
+        }
+
+        $recorded = $null
+        if ($Record) {
+            if ($null -ne $ledger -and $new.Count -gt 0) {
+                Write-Line ("FORK-IDENTITY COVERAGE: -Record REFUSED - {0} pair(s) are not in the ledger, and it only shrinks." -f $new.Count)
+                Write-Line '  write a rule for them, or acknowledge them in scripts\fork-identity.ps1 with a reason'
+                exit 1
+            }
+            $recorded = Write-KnownLedger (@($new) + @($knownPairs))
+            # Only reachable with new pairs on the FIRST recording; what was
+            # just written down is known from here on, in this run too.
+            foreach ($p in $new) { $p.Verdict = 'known' }
+            $knownPairs = @($pairs | Where-Object { $_.Verdict -eq 'known' })
+            $new = @()
+            $stale = 0
+            $failing = 0
+            if ($Strict) { $failing = $knownPairs.Count }
+        }
+
+        if ($Json) {
+            [pscustomobject]@{
+                action       = 'coverage'
+                path         = $Path
+                base         = $Base
+                head         = $Head
+                ledger       = $Known
+                pairs        = $pairs.Count
+                covered      = $covered.Count
+                acknowledged = $acked.Count
+                known        = $knownPairs.Count
+                stale        = $stale
+                unaccounted  = $new.Count
+                findings     = @($new)
+                knownPairs   = @($knownPairs)
+            } | ConvertTo-Json -Depth 5
+            if ($failing -gt 0) { exit 1 }
+            exit 0
+        }
+
+        Write-Line ''
+        $show = @($new)
+        if ($Strict) { $show += $knownPairs }
+        foreach ($x in $show) {
+            Write-Line ("  {0}:{1}  [{2}, {3}] no rule reproduces this fork identity" -f $x.File, $x.Line, $x.Shape, $x.Verdict)
+            Write-Line ("      upstream: {0}" -f $x.Upstream)
+            Write-Line ("      fork:     {0}" -f $x.Fork)
+            if ($x.Replayed -cne $x.Upstream) { Write-Line ("      rules give: {0}" -f $x.Replayed) }
+        }
+        $summary = ('{0} identity pair(s) in {1}..{2}: {3} reproduced by a rule, {4} acknowledged, {5} known' -f `
+                $pairs.Count, $Base, $Head, $covered.Count, $acked.Count, $knownPairs.Count)
+        if ($knownPairs.Count -gt 0 -and -not $Strict) {
+            Write-Line ("  {0} known pair(s) in {1} file(s) are still unaccounted (the ledger, {2}); -Strict lists them" -f `
+                    $knownPairs.Count, @($knownPairs | Group-Object File).Count, $Known)
+        }
+        if ($stale -gt 0) { Write-Line ("  {0} ledger entr(ies) no longer occur - bank that with: coverage -Record" -f $stale) }
+        if ($null -ne $recorded) { Write-Line ("  ledger recorded: {0} pair(s) -> {1}" -f $recorded, $Known) }
+        if ($failing -eq 0) {
+            Write-Line ("FORK-IDENTITY COVERAGE: CLEAN - {0}" -f $summary)
+            exit 0
+        }
+        Write-Line ("FORK-IDENTITY COVERAGE: {0} unaccounted in {1} file(s) - {2}" -f `
+                $failing, @($show | Group-Object File).Count, $summary)
+        Write-Line '  each one is identity the overlay would drop at the next merge stage:'
+        Write-Line '  add or widen a rule in scripts\fork-identity.ps1, or acknowledge it there with a reason'
+        exit 1
+    }
 
     'rules' {
         if ($Json) {
