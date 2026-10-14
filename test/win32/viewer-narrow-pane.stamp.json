@@ -1,17 +1,16 @@
 {
     "guard":  "viewer-narrow-pane",
     "script":  "test/win32/viewer-narrow-pane.ps1",
-    "generated":  "2026-10-12T00:18:34-07:00",
-    "commit":  "86ae8c657",
+    "generated":  "2026-10-13T18:34:13-07:00",
+    "commit":  "cf7190319",
     "uncommitted":  [
-                        "src/apprt/win32/viewer_nav_layout.zig",
-                        "src/apprt/win32/ViewerNavBar.zig"
+                        "src/apprt/win32/ViewerTOCPanel.zig"
                     ],
     "files":  {
                   "src/apprt/win32/viewer_nav_layout.zig":  "169666f4f29e3d7066727112f7ef7459fc401ce38f56ef2dfb6f34892900deea",
                   "src/apprt/win32/viewer_toc_layout.zig":  "2bb128b01b3a3ebe12a9e670cf824561be9ca2c6017a94709bb26b252f41508a",
                   "src/apprt/win32/ViewerNavBar.zig":  "9fbceab7f6fc172773d4422b83ca4b31456d03a05bb9678cb4b480c8687a34e0",
-                  "src/apprt/win32/ViewerTOCPanel.zig":  "a3aff2c12cec4449dcc0cf0ad3c62b7275784f9696ddb7b35b5ab5b561e3006b",
+                  "src/apprt/win32/ViewerTOCPanel.zig":  "64f22bf11a0e9022d45479435c5303471b0a047e4a312ae70088c4ef145724c4",
                   "test/win32/viewer-narrow-pane.ps1":  "fbcdcb2e4ca131f154aecba7cc8bc749d288fb0772a71e0bddd0230806683e11"
               }
 }

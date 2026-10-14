@@ -38,6 +38,7 @@ const Surface = @import("Surface.zig");
 const color_math = @import("color_math.zig");
 const desk_palette = @import("desk_palette.zig");
 const pane_elevation = @import("pane_elevation.zig");
+const Dib32 = @import("dib32.zig");
 const icon_button = @import("icon_button.zig");
 const icon_paint = @import("icon_button_paint.zig");
 const homedir = @import("../../os/homedir.zig");
@@ -1886,41 +1887,6 @@ pub const BannerOverlay = struct {
         _ = w32.BitBlt(hdc, rect.left, rect.top, w, h, dib.dc, 0, 0, w32.SRCCOPY);
         return true;
     }
-
-    /// A top-down 32bpp DIB section selected into its own memory DC.
-    const Dib32 = struct {
-        dc: w32.HDC,
-        bmp: *anyopaque,
-        pixels: []u32,
-
-        fn create(hdc: w32.HDC, w: i32, h: i32) ?Dib32 {
-            var bmi = std.mem.zeroes(w32.BITMAPINFO);
-            bmi.bmiHeader.biSize = @sizeOf(w32.BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = w;
-            bmi.bmiHeader.biHeight = -h; // top-down
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            const mem_dc = w32.CreateCompatibleDC(hdc) orelse return null;
-            var bits: ?*anyopaque = null;
-            const bmp = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse {
-                _ = w32.DeleteDC(mem_dc);
-                return null;
-            };
-            const raw = bits orelse {
-                _ = w32.DeleteObject(bmp);
-                _ = w32.DeleteDC(mem_dc);
-                return null;
-            };
-            _ = w32.SelectObject(mem_dc, bmp);
-            const n: usize = @intCast(w * h);
-            return .{ .dc = mem_dc, .bmp = bmp, .pixels = @as([*]u32, @ptrCast(@alignCast(raw)))[0..n] };
-        }
-
-        fn destroy(self: Dib32) void {
-            _ = w32.DeleteDC(self.dc);
-            _ = w32.DeleteObject(self.bmp);
-        }
-    };
 
     /// The card's rounded shape as a GDI region (client coords), for
     /// clipping content to it. Null when the region cannot be created —

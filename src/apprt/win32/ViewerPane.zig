@@ -100,6 +100,9 @@ const DimOverlay = @import("DimOverlay.zig").DimOverlay;
 const PaneView = @import("PaneView.zig");
 const Window = @import("Window.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
+const viewer_glass = @import("viewer_glass.zig");
+const pane_elevation = @import("pane_elevation.zig");
+const Dib32 = @import("dib32.zig");
 
 const log = std.log.scoped(.viewer_pane);
 
@@ -567,7 +570,15 @@ bg: color_math.Rgb = .{ .r = 0x28, .g = 0x2C, .b = 0x34 },
 
 /// What the page's `prefers-color-scheme` should say (T90a design §14).
 /// `auto` is also the degrade for a runtime too old to have a profile.
+/// The OS's report; on glass the page is told the sheet's instead
+/// (`pageScheme`).
 color_scheme: iface.PreferredColorScheme = .auto,
+
+/// This pane's slice of its window's desk while it sits on a glass sheet
+/// (T1885), handed over by the window on every desk paint; null off glass.
+/// The host paints the sheet over it, and our own pages go see-through so
+/// the sheet is their background, as it is a terminal's.
+glass: ?pane_elevation.GlassBackdrop = null,
 
 /// Live reload (T391): watches `file_path`'s directory and posts
 /// `WM_APP_VIEWER_RELOAD` at this pane's host window when the document
@@ -1841,7 +1852,7 @@ pub fn navigate(self: *ViewerPane, alloc: Allocator, requested: []const u8) Allo
     // the markdown template.
     const was_template = self.mode.usesTemplate();
     const was_diff = self.mode == .diff;
-    self.mode = content.modeFor(url);
+    self.setMode(content.modeFor(url));
     // The three diff controls exist only in a diff pane, so the strip's shape
     // moves with the mode (T817).
     self.pushDiffControls();
@@ -3728,6 +3739,7 @@ fn onNavigationCompleted(
     }
     // Web mode has nothing to inject — the page IS the content.
     if (!self.mode.usesTemplate()) return com.S_OK;
+    self.pushGlassToPage();
     self.renderFileContent();
     return com.S_OK;
 }
@@ -4875,6 +4887,11 @@ fn respondWith(
 /// controller arrives.
 pub fn setColorScheme(self: *ViewerPane, dark: bool) void {
     self.color_scheme = if (dark) .dark else .light;
+    self.refreshScheme();
+}
+
+/// Re-push the page's scheme and re-derive the chrome that follows it.
+fn refreshScheme(self: *ViewerPane) void {
     self.applyColorScheme();
     // The bar's palette derives from the pane background, which does not
     // move with the OS scheme — but re-deriving here is cheap and keeps the
@@ -4900,7 +4917,72 @@ fn applyColorScheme(self: *ViewerPane) void {
     defer v13.release();
     const profile = v13.profile() orelse return;
     defer profile.release();
-    _ = profile.setPreferredColorScheme(self.color_scheme);
+    _ = profile.setPreferredColorScheme(self.pageScheme());
+}
+
+/// The scheme the page is told: the OS's, or on glass the sheet's, since
+/// that is what its ink sits on (`viewer_glass.pageScheme`, T1885).
+pub fn pageScheme(self: *const ViewerPane) iface.PreferredColorScheme {
+    return viewer_glass.pageScheme(iface.PreferredColorScheme, self.color_scheme, self.glass != null, self.bg);
+}
+
+/// Whether the page is see-through over the glass sheet right now (Mac
+/// `ViewerView.drawsOnGlass`).
+pub fn drawsOnGlass(self: *const ViewerPane) bool {
+    return viewer_glass.drawsOnGlass(self.glass != null, self.mode);
+}
+
+/// Take this pane's slice of the desk, or (null) leave glass (T1885). The
+/// window calls this on every desk paint, so only a change does anything:
+/// a new slice repaints the sheet, and going on or off glass also turns
+/// the page see-through or back and moves its scheme.
+pub fn setGlassBackdrop(self: *ViewerPane, spec: ?pane_elevation.GlassBackdrop) void {
+    if (std.meta.eql(self.glass, spec)) return;
+    const was_on = self.glass != null;
+    self.glass = spec;
+    if (was_on != (spec != null)) {
+        self.applyGlass();
+        self.refreshScheme();
+    }
+    if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
+}
+
+/// Assign the content mode, keeping the web view's background in step when
+/// that moves the page on or off the sheet (a website opened from a
+/// markdown pane keeps its own white).
+fn setMode(self: *ViewerPane, m: content.Mode) void {
+    const was = self.drawsOnGlass();
+    self.mode = m;
+    if (self.drawsOnGlass() != was) self.applyGlass();
+}
+
+/// Mac `ViewerView.applyGlass`: the web view paints nothing under a page on
+/// the sheet - WebView2 then shows the host's pixels, where the sheet is -
+/// and the template drops its own background.
+fn applyGlass(self: *ViewerPane) void {
+    const clear = self.drawsOnGlass();
+    if (self.controller) |c| {
+        if (c.queryV3()) |c3| {
+            defer c3.release();
+            const want = viewer_glass.defaultBackground(clear);
+            if (!c3.setDefaultBackgroundColor(.{ .a = want.a, .r = want.r, .g = want.g, .b = want.b })) {
+                log.warn("viewer glass: DefaultBackgroundColor refused; the page stays opaque", .{});
+            }
+        } else {
+            log.debug("runtime has no ICoreWebView2Controller2; the page stays opaque on glass", .{});
+        }
+    }
+    self.pushGlassToPage();
+    if (self.hwnd) |h| _ = w32.InvalidateRect(h, null, 0);
+}
+
+/// The template's own background yields to the sheet (`viewer.css`
+/// `html.pane-glass`). Again on every load, since a fresh document starts
+/// without the class.
+fn pushGlassToPage(self: *ViewerPane) void {
+    if (!self.page_loaded or !self.mode.usesTemplate()) return;
+    const p = self.pending orelse return;
+    self.executeScript(p.alloc, viewer_glass.classToggleJs(self.drawsOnGlass()));
 }
 
 /// Re-read the host window's DPI and push it as the rasterization scale.
@@ -5352,6 +5434,8 @@ fn adoptController(self: *ViewerPane, c: *iface.ICoreWebView2Controller) void {
     self.syncBounds();
     _ = c.setVisible(self.visible);
     self.applyColorScheme();
+    // Before the first document, so a page on glass never flashes white.
+    self.applyGlass();
     self.subscribeNewWindowRequested();
     self.subscribeWindowCloseRequested();
     self.subscribeAcceleratorKey();
@@ -6367,7 +6451,7 @@ fn syncCommitted(self: *ViewerPane, alloc: Allocator, src: []const u8) void {
         // mode change and does need the work below.
         if (self.mode.usesTemplate()) return;
         const floc = self.file_location orelse return;
-        self.mode = content.modeFor(floc);
+        self.setMode(content.modeFor(floc));
         self.pushDiffControls();
         self.page_loaded = false;
         if (alloc.dupeZ(u8, floc)) |dup| {
@@ -6386,7 +6470,7 @@ fn syncCommitted(self: *ViewerPane, alloc: Allocator, src: []const u8) void {
         // file into the fresh template — nothing to do here but wait for it.
     } else if (viewMode(src) == .web) {
         const was_file = self.mode.isFile();
-        self.mode = .web;
+        self.setMode(.web);
         self.pushDiffControls();
         if (alloc.dupeZ(u8, src)) |dup| {
             if (self.location) |l| alloc.free(l);
@@ -6451,7 +6535,7 @@ fn syncCommittedPage(self: *ViewerPane, alloc: Allocator, src: []const u8) void 
     // be churn with no change behind it.
     if (self.file_path) |cur| if (content.samePath(cur, path)) return;
 
-    self.mode = .html;
+    self.setMode(.html);
     self.pushDiffControls();
     if (alloc.dupe(u8, path)) |dup| {
         if (self.file_path) |old| alloc.free(old);
@@ -6571,7 +6655,7 @@ pub fn cardColors(self: *const ViewerPane) CardColors {
     };
     const page: color_math.Rgb = switch (self.mode) {
         .web, .html => .{ .r = 0xFF, .g = 0xFF, .b = 0xFF },
-        else => if (self.color_scheme == .dark)
+        else => if (self.pageScheme() == .dark)
             .{ .r = 0x0D, .g = 0x11, .b = 0x17 }
         else
             .{ .r = 0xFF, .g = 0xFF, .b = 0xFF },
@@ -6579,7 +6663,9 @@ pub fn cardColors(self: *const ViewerPane) CardColors {
     return .{
         .head = head,
         .head_px = head_px,
-        .fill = if (self.state == .ready) page else self.bg,
+        // A see-through page shows the sheet, which is the pane background
+        // over the desk - the same tint as a terminal's card (T1885).
+        .fill = if (self.state == .ready and !self.drawsOnGlass()) page else self.bg,
     };
 }
 
@@ -6587,16 +6673,71 @@ pub fn cardColors(self: *const ViewerPane) CardColors {
 /// will be no content. Split out from `WM_PAINT` so it can be driven against
 /// any DC.
 pub fn paint(self: *ViewerPane, hdc: w32.HDC, width: i32, height: i32) void {
-    const bg_brush = w32.CreateSolidBrush(w32.RGB(self.bg.r, self.bg.g, self.bg.b));
-    defer if (bg_brush) |b| {
-        _ = w32.DeleteObject(b);
-    };
-    var full: w32.RECT = .{ .left = 0, .top = 0, .right = width, .bottom = height };
-    if (bg_brush) |b| _ = w32.FillRect(hdc, &full, b);
+    if (!self.paintGlass(hdc, width, height)) {
+        const bg_brush = w32.CreateSolidBrush(w32.RGB(self.bg.r, self.bg.g, self.bg.b));
+        defer if (bg_brush) |b| {
+            _ = w32.DeleteObject(b);
+        };
+        var full: w32.RECT = .{ .left = 0, .top = 0, .right = width, .bottom = height };
+        if (bg_brush) |b| _ = w32.FillRect(hdc, &full, b);
+    }
 
     const failure = self.failure orelse return;
     if (self.state != .failed) return;
     paintErrorCard(hdc, width, height, self.scale, self.bg, failure);
+}
+
+/// On glass, the host's pixels are the sheet over the pane's slice of the
+/// desk (T1885) - what a see-through page shows, and what is on screen
+/// before a page or around the error card, as it is under a terminal. False
+/// off glass, or when no buffer could be made: the caller fills `bg`.
+fn paintGlass(self: *const ViewerPane, hdc: w32.HDC, width: i32, height: i32) bool {
+    const g = self.glass orelse return false;
+    if (width <= 0 or height <= 0) return true;
+    const dib = Dib32.create(hdc, width, height) orelse return false;
+    defer dib.destroy();
+    pane_elevation.glassSheetRegion(dib.pixels, @intCast(width), @intCast(height), g.rect[0], g.rect[1], g.full_w, g.full_h, g.palette, self.bg);
+    _ = w32.BitBlt(hdc, 0, 0, width, height, dib.dc, 0, 0, w32.SRCCOPY);
+    return true;
+}
+
+/// Lay the sheet UNDER the web view too (T1885). A transparent WebView2
+/// shows the host window's own pixels beneath it, and `WS_CLIPCHILDREN`
+/// keeps `BeginPaint` off exactly those, so the area would hold whatever was
+/// there before the browser's window arrived. This DC reaches under
+/// children; our own child windows (the nav bar, the contents card, the
+/// find and feedback bars) are cut out of it, since they paint themselves
+/// and nothing would tell them they had been painted over. They are told
+/// apart by class (`isOwnChrome`): the browser's window is in this process
+/// too, so the process cannot say which is which.
+fn paintUnderPage(self: *ViewerPane) void {
+    if (self.glass == null) return;
+    const h = self.hwnd orelse return;
+    var r: w32.RECT = undefined;
+    if (w32.GetClientRect(h, &r) == 0) return;
+    const dc = w32.GetDCEx(h, null, w32.DCX_CACHE | w32.DCX_CLIPSIBLINGS) orelse return;
+    defer _ = w32.ReleaseDC(h, dc);
+    var child = w32.GetWindow(h, w32.GW_CHILD);
+    while (child) |c| : (child = w32.GetWindow(c, w32.GW_HWNDNEXT)) {
+        if (w32.IsWindowVisible(c) == 0 or !isOwnChrome(c)) continue;
+        var wr: w32.RECT = undefined;
+        if (w32.GetWindowRect(c, &wr) == 0) continue;
+        var pts = [2]w32.POINT{ .{ .x = wr.left, .y = wr.top }, .{ .x = wr.right, .y = wr.bottom } };
+        _ = w32.ScreenToClient(h, &pts[0]);
+        _ = w32.ScreenToClient(h, &pts[1]);
+        _ = w32.ExcludeClipRect(dc, pts[0].x, pts[0].y, pts[1].x, pts[1].y);
+    }
+    self.paint(dc, r.right - r.left, r.bottom - r.top);
+}
+
+/// Whether a child of the host is one of our own GDI windows - every class
+/// this app registers is named `Ghoztty...` - rather than the browser's.
+fn isOwnChrome(child: w32.HWND) bool {
+    const prefix = std.unicode.utf8ToUtf16LeStringLiteral("Ghoztty");
+    var cls: [64]u16 = undefined;
+    const n = w32.GetClassNameW(child, &cls, cls.len);
+    if (n <= 0) return false;
+    return std.mem.startsWith(u16, cls[0..@intCast(n)], prefix);
 }
 
 /// The native, owner-painted error card (T90a design §2). Free function taking
@@ -6943,11 +7084,15 @@ pub fn wndProc(
         w32.WM_PAINT => {
             var ps: w32.PAINTSTRUCT = undefined;
             const hdc = w32.BeginPaint(hwnd, &ps) orelse return 0;
-            defer _ = w32.EndPaint(hwnd, &ps);
+            // On glass the whole client is painted once, under the web view
+            // as well, by `paintUnderPage` - after EndPaint, whose DC is
+            // clipped away from exactly the part that needs it.
             var r: w32.RECT = undefined;
-            if (w32.GetClientRect(hwnd, &r) != 0) {
+            if (self.glass == null and w32.GetClientRect(hwnd, &r) != 0) {
                 self.paint(hdc, r.right - r.left, r.bottom - r.top);
             }
+            _ = w32.EndPaint(hwnd, &ps);
+            self.paintUnderPage();
             return 0;
         },
         // The same page into a caller's DC, so a pixel probe can photograph
@@ -7568,6 +7713,148 @@ test "host floor: a real controller on a real window, on this box" {
         // the whole point of the test and cannot be read off a pass count.
         log.warn("font probe: {s}", .{probe.text[0..probe.len]});
         try testing.expectEqualStrings("\"true,true,true,true\"", probe.text[0..probe.len]);
+    }
+
+    // ------------------------------------------------------------------
+    // T1885: on a glass sheet the page is see-through and the host paints
+    // the sheet
+    // ------------------------------------------------------------------
+    //
+    // Mac's oracle is the page's own computed background (PaneSidebar's
+    // `pane-glass|rgba(0, 0, 0, 0)|...`), read the same way here: the class
+    // reached the document AND the template's sheet honoured it. The web
+    // view's own background must be clear too, or the page is transparent
+    // over an opaque white the runtime paints beneath it.
+    {
+        const Probe = struct {
+            done: bool = false,
+            ok: bool = false,
+            text: [256]u8 = undefined,
+            len: usize = 0,
+
+            fn onDone(p: *@This(), result: com.HRESULT, value: ?[*:0]const u16) com.HRESULT {
+                p.done = true;
+                p.ok = !com.failed(result);
+                if (value) |v| p.len = utf16_text.toUtf8Truncating(&p.text, std.mem.span(v));
+                return com.S_OK;
+            }
+        };
+        const ProbeHandler = com.Callback(iface.IID_ExecuteScriptCompletedHandler, Probe.onDone);
+        const js = std.unicode.utf8ToUtf16LeStringLiteral(
+            \\[document.documentElement.classList.contains('pane-glass'),
+            \\ getComputedStyle(document.documentElement).backgroundColor,
+            \\ getComputedStyle(document.body).backgroundColor,
+            \\ getComputedStyle(document.querySelector('.markdown-body')).backgroundColor].join('|')
+        );
+        const desk_palette = @import("desk_palette.zig");
+        const page_probe = struct {
+            fn run(a: Allocator, w: *iface.ICoreWebView2, m: *w32.MSG, script: [*:0]const u16, out: *Probe) !void {
+                out.* = .{};
+                const handler = try ProbeHandler.create(a, out);
+                defer handler.release();
+                try testing.expect(w.executeScript(script, @ptrCast(handler)));
+                var t = try std.time.Timer.start();
+                while (t.read() < 15 * std.time.ns_per_s and !out.done) {
+                    while (w32.PeekMessageW(m, null, 0, 0, w32.PM_REMOVE) != 0) {
+                        _ = w32.TranslateMessage(m);
+                        _ = w32.DispatchMessageW(m);
+                    }
+                    std.Thread.sleep(10 * std.time.ns_per_ms);
+                }
+                try testing.expect(out.done and out.ok);
+            }
+        }.run;
+
+        // The OS says light; the terminal background under the sheet is dark.
+        pane.setColorScheme(false);
+        const spec: pane_elevation.GlassBackdrop = .{
+            .rect = .{ 40, 30, 360, 230 },
+            .full_w = 800,
+            .full_h = 600,
+            .palette = desk_palette.Palette.forWindow(null, color_math.isLight(pane.bg)),
+        };
+        pane.setGlassBackdrop(spec);
+        try testing.expect(pane.drawsOnGlass());
+        try testing.expectEqual(@as(?u8, 0), if (c3.defaultBackgroundColor()) |col| col.a else null);
+
+        var probe: Probe = .{};
+        try page_probe(alloc, web, &msg, js, &probe);
+        log.warn("glass page probe: {s}", .{probe.text[0..probe.len]});
+        try testing.expectEqualStrings(
+            "\"true|rgba(0, 0, 0, 0)|rgba(0, 0, 0, 0)|rgba(0, 0, 0, 0)\"",
+            probe.text[0..probe.len],
+        );
+
+        // Ink follows the sheet, not the OS: a light OS over the dark default
+        // terminal would otherwise be dark text on a dark sheet.
+        const sheet_scheme: iface.PreferredColorScheme = if (color_math.isLight(pane.bg)) .light else .dark;
+        try testing.expectEqual(sheet_scheme, profile.preferredColorScheme().?);
+        // The card's corners and rim are the sheet's tint, like a terminal's.
+        try testing.expectEqual(pane.bg, pane.cardColors().fill);
+
+        // The host's pixels are the sheet over its slice of the desk, exactly
+        // as `glassSheetRegion` lays it - photographed through `paint` into a
+        // DIB, the way WM_PRINTCLIENT would.
+        {
+            const sw: i32 = 320;
+            const sh: i32 = 200;
+            const screen = w32.GetDC(null) orelse return error.Win32Error;
+            defer _ = w32.ReleaseDC(null, screen);
+            const dib = Dib32.create(screen, sw, sh) orelse return error.Win32Error;
+            defer dib.destroy();
+            pane.paint(dib.dc, sw, sh);
+            const want = try alloc.alloc(u32, sw * sh);
+            defer alloc.free(want);
+            pane_elevation.glassSheetRegion(want, sw, sh, spec.rect[0], spec.rect[1], spec.full_w, spec.full_h, spec.palette, pane.bg);
+            for ([_]usize{ 0, sw - 1, @as(usize, sw) * (sh / 2) + sw / 2, @as(usize, sw) * sh - 1 }) |i| {
+                try testing.expectEqual(want[i], dib.pixels[i] & 0x00FFFFFF);
+            }
+            // And the sheet is not a flat fill: the desk runs through it.
+            try testing.expect(want[0] != want[@as(usize, sw) * sh - 1]);
+        }
+
+        // What the browser's windows under the host are, for the record: the
+        // sheet is laid under them on the strength of WebView2 showing the
+        // host's pixels through a clear background.
+        {
+            var browser_windows: usize = 0;
+            var child = w32.GetWindow(pane.hwnd.?, w32.GW_CHILD);
+            while (child) |ch| : (child = w32.GetWindow(ch, w32.GW_HWNDNEXT)) {
+                var cls: [64]u16 = undefined;
+                const n: usize = @intCast(@max(w32.GetClassNameW(ch, &cls, cls.len), 0));
+                var cls8: [128]u8 = undefined;
+                const cl = utf16_text.toUtf8Truncating(&cls8, cls[0..n]);
+                const own = isOwnChrome(ch);
+                log.warn("glass host child class={s} own_chrome={} exstyle=0x{X:0>8}", .{
+                    cls8[0..cl],
+                    own,
+                    w32.GetWindowLongW(ch, w32.GWL_EXSTYLE),
+                });
+                // The browser's window is the one the sheet must reach
+                // under, so it must never be cut out of the DC.
+                if (std.mem.startsWith(u8, cls8[0..cl], "Chrome_")) {
+                    try testing.expect(!own);
+                    browser_windows += 1;
+                } else try testing.expect(own);
+            }
+            try testing.expect(browser_windows >= 1);
+            // Must not trip over any of them. What it lays down cannot be
+            // read back here: this parent is never shown, so its surface
+            // holds nothing (measured: a paint and a read through one DC
+            // came back black) - the on-screen check is a follow-up.
+            pane.paintUnderPage();
+        }
+
+        // Off glass again: the class goes, the page is opaque again, and the
+        // OS scheme is back.
+        pane.setGlassBackdrop(null);
+        try testing.expect(!pane.drawsOnGlass());
+        try testing.expectEqual(@as(?u8, 0xFF), if (c3.defaultBackgroundColor()) |col| col.a else null);
+        try page_probe(alloc, web, &msg, js, &probe);
+        log.warn("solid page probe: {s}", .{probe.text[0..probe.len]});
+        try testing.expect(std.mem.startsWith(u8, probe.text[0..probe.len], "\"false|"));
+        try testing.expect(!std.mem.endsWith(u8, probe.text[0..probe.len], "|rgba(0, 0, 0, 0)\""));
+        try testing.expectEqual(iface.PreferredColorScheme.light, profile.preferredColorScheme().?);
     }
 
     // ------------------------------------------------------------------

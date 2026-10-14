@@ -474,7 +474,7 @@ pub fn setScale(self: *ViewerTOCPanel, scale: f32) void {
 /// Re-derive every color from the pane's color scheme. The card sits on the
 /// DOCUMENT, so its composite base is the page background, not the terminal's.
 pub fn applyTheme(self: *ViewerTOCPanel) void {
-    self.dark = self.pane.color_scheme != .light;
+    self.dark = self.pane.pageScheme() != .light;
     self.doc_bg = documentBackground(self.dark);
     self.card_fill = banner_card.fillColor(self.doc_bg);
     const text = chrome_theme.textOn(self.card_fill);

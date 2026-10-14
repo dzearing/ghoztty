@@ -1514,6 +1514,9 @@ pub const ICoreWebView2Controller = extern struct {
     }
 };
 
+/// `COREWEBVIEW2_COLOR`: alpha first, then red, green, blue - one byte each.
+pub const Color = extern struct { a: u8, r: u8, g: u8, b: u8 };
+
 /// Revision 3 of the controller: DPI. Its vtable is `ICoreWebView2Controller`'s
 /// 26 slots, then revision 2's two background-color slots, then its own eight.
 ///
@@ -1532,9 +1535,10 @@ pub const ICoreWebView2Controller3 = extern struct {
         /// Slots 3..25: `ICoreWebView2Controller`'s own methods. Reached
         /// through the base interface, never through this one.
         controller: [23]*const anyopaque,
-        /// Slots 26..27: `ICoreWebView2Controller2`.
-        get_DefaultBackgroundColor: *const anyopaque,
-        put_DefaultBackgroundColor: *const anyopaque,
+        /// Slots 26..27: `ICoreWebView2Controller2`. The colour goes BY
+        /// VALUE - a 4-byte struct, so in a register (T1885).
+        get_DefaultBackgroundColor: *const fn (*ICoreWebView2Controller3, *Color) callconv(.winapi) HRESULT,
+        put_DefaultBackgroundColor: *const fn (*ICoreWebView2Controller3, Color) callconv(.winapi) HRESULT,
         get_RasterizationScale: *const fn (*ICoreWebView2Controller3, *f64) callconv(.winapi) HRESULT,
         put_RasterizationScale: *const fn (*ICoreWebView2Controller3, f64) callconv(.winapi) HRESULT,
         get_ShouldDetectMonitorScaleChanges: *const fn (*ICoreWebView2Controller3, *BOOL) callconv(.winapi) HRESULT,
@@ -1547,6 +1551,18 @@ pub const ICoreWebView2Controller3 = extern struct {
 
     pub fn release(self: *ICoreWebView2Controller3) void {
         _ = self.vtable.Release(self);
+    }
+
+    /// What the runtime paints under the page (T1885). Alpha 0 is the only
+    /// non-opaque value it accepts, and shows the host window beneath.
+    pub fn setDefaultBackgroundColor(self: *ICoreWebView2Controller3, c: Color) bool {
+        return !com.failed(self.vtable.put_DefaultBackgroundColor(self, c));
+    }
+
+    pub fn defaultBackgroundColor(self: *ICoreWebView2Controller3) ?Color {
+        var out: Color = .{ .a = 0, .r = 0, .g = 0, .b = 0 };
+        if (com.failed(self.vtable.get_DefaultBackgroundColor(self, &out))) return null;
+        return out;
     }
 
     pub fn setRasterizationScale(self: *ICoreWebView2Controller3, scale: f64) bool {
@@ -1709,6 +1725,9 @@ test "the slots we actually call sit where the header puts them" {
     try testing.expectEqual(24 * ptr, @offsetOf(ICoreWebView2Controller.Vtbl, "Close"));
     try testing.expectEqual(25 * ptr, @offsetOf(ICoreWebView2Controller.Vtbl, "get_CoreWebView2"));
 
+    // Controller2's background pair (T1885), then Controller3's DPI pair.
+    try testing.expectEqual(27 * ptr, @offsetOf(ICoreWebView2Controller3.Vtbl, "put_DefaultBackgroundColor"));
+    try testing.expectEqual(@as(usize, 4), @sizeOf(Color));
     // Controller3's DPI pair sits AFTER Controller's 26 and Controller2's 2.
     try testing.expectEqual(29 * ptr, @offsetOf(ICoreWebView2Controller3.Vtbl, "put_RasterizationScale"));
     try testing.expectEqual(31 * ptr, @offsetOf(ICoreWebView2Controller3.Vtbl, "put_ShouldDetectMonitorScaleChanges"));

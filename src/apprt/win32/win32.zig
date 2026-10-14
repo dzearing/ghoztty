@@ -608,6 +608,18 @@ pub extern "user32" fn ReleaseDC(
     hDC: HDC,
 ) callconv(.winapi) i32;
 
+/// A DC on `hWnd` whose clipping is exactly what `flags` asks for - without
+/// `DCX_CLIPCHILDREN` it reaches under child windows even when the window
+/// was created `WS_CLIPCHILDREN` (the viewer's glass sheet under its
+/// see-through web view, T1885).
+pub extern "user32" fn GetDCEx(
+    hWnd: ?HWND,
+    hrgnClip: ?*anyopaque,
+    flags: u32,
+) callconv(.winapi) ?HDC;
+pub const DCX_CACHE: u32 = 0x00000002;
+pub const DCX_CLIPSIBLINGS: u32 = 0x00000010;
+
 /// The window a DC belongs to, or null for a memory DC. This is how a paint
 /// routine can OBSERVE whether it is drawing straight onto the screen or into
 /// an offscreen buffer, rather than restating the flag that decided it (T1344).
@@ -2062,6 +2074,7 @@ pub extern "gdi32" fn SelectClipRgn(hdc: HDC, hrgn: ?*anyopaque) callconv(.winap
 /// to restore, which un-clips everything rather than what the caller added —
 /// `SaveDC`/`RestoreDC` around this pair is what puts the previous clip back.
 pub extern "gdi32" fn IntersectClipRect(hdc: HDC, left: i32, top: i32, right: i32, bottom: i32) callconv(.winapi) i32;
+pub extern "gdi32" fn ExcludeClipRect(hdc: HDC, left: i32, top: i32, right: i32, bottom: i32) callconv(.winapi) i32;
 pub extern "gdi32" fn SaveDC(hdc: HDC) callconv(.winapi) i32;
 pub extern "gdi32" fn RestoreDC(hdc: HDC, state: i32) callconv(.winapi) i32;
 pub extern "gdi32" fn RoundRect(hdc: HDC, left: i32, top: i32, right: i32, bottom: i32, width: i32, height: i32) callconv(.winapi) i32;
@@ -2628,6 +2641,7 @@ pub const GW_HWNDFIRST: u32 = 0;
 pub const GW_HWNDNEXT: u32 = 2;
 pub const GW_HWNDPREV: u32 = 3;
 pub const GW_OWNER: u32 = 4;
+pub const GW_CHILD: u32 = 5;
 
 /// Re-parent a child window onto a different parent, keeping the window and
 /// everything it owns alive (T1538: a pane moving between top-level windows).

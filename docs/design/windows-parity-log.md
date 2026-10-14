@@ -36053,3 +36053,28 @@ moved to T1814.
   exact-colour checks. New unit tests in `pane_elevation.zig` and
   `banner_card.zig`. Four floor lanes, the harness floor and the due rearrange,
   pane and audit harnesses were run (results in the task file).
+## 2026-10-13 — T1885: viewer pages are see-through on a glass pane
+
+- **What.** With glass panes on (the default), a markdown, code, diff or image
+  viewer pane no longer sits on a solid dark or white page: the page is
+  see-through, so the same tinted glass a terminal pane shows is its
+  background (Mac 8174d96fc). Websites and opened `.html` pages keep their own
+  background. On glass the page's light/dark follows the terminal background
+  the ink now sits on, rather than the OS setting, as Mac's web view follows
+  the window's appearance.
+- **How.** The window hands each viewer the same desk slice it hands a
+  terminal (`syncGlassBackdrops`; `GlassBackdrop` moved to `pane_elevation`).
+  The viewer host paints `glassSheetRegion` over it, and also under the web
+  view, through a DC that reaches under children and cuts out only our own
+  `Ghoztty*` windows. WebView2's `Chrome_WidgetWin_0` turned out to live in
+  our own process, so a test by process would have skipped it. WebView2's
+  `DefaultBackgroundColor` is clear for our pages, and the template gets
+  `html.pane-glass`. Rules are in `viewer_glass.zig`. The banner's DIB helper
+  is now the shared `dib32.zig`.
+- **Validation.** The live WebView2 host-floor test reads the page back as
+  `true|rgba(0, 0, 0, 0)|...` (Mac's oracle). It also checks the clear
+  background, the host's sheet pixels, the scheme following the sheet, and
+  that everything reverts off glass. Four floor lanes, P1-P3 and the due
+  harnesses were run (results in the task file). NOT RUN: the on-screen
+  composite, because the user is present and off-desktop surfaces can't be read
+  back. Filed as T1915; the nav bar material is T1916.

@@ -7111,11 +7111,20 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
     for (0..self.tab_count) |tab| {
         var it = self.tab_trees[tab].iterator();
         while (it.next()) |entry| {
-            const s = entry.view.surface() orelse continue;
-            s.setBannerGlass(banner_glass);
+            // A viewer takes the same slice and paints the sheet itself
+            // (T1885): its page goes see-through over it.
+            const s = entry.view.surface();
+            const vw = entry.view.viewer();
+            if (s == null and vw == null) continue;
+            if (s) |sf| sf.setBannerGlass(banner_glass);
             if (!glass) {
                 if (entry.view.glass_backdrop_key != 0) {
-                    if (s.setPaneBackdrop(null)) entry.view.glass_backdrop_key = 0;
+                    if (s) |sf| {
+                        if (sf.setPaneBackdrop(null)) entry.view.glass_backdrop_key = 0;
+                    } else {
+                        vw.?.setGlassBackdrop(null);
+                        entry.view.glass_backdrop_key = 0;
+                    }
                 }
                 continue;
             }
@@ -7123,7 +7132,7 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
                 if (slot.view == entry.view) break true;
             } else false;
             if (!on_grid) continue;
-            const h = s.hwnd orelse continue;
+            const h = (if (s) |sf| sf.hwnd else vw.?.hwnd) orelse continue;
             var wr: w32.RECT = undefined;
             // A pane child has no frame: its window rect is its client area.
             if (w32.GetWindowRect(h, &wr) == 0) continue;
@@ -7143,14 +7152,17 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
             };
             const key = std.hash.Wyhash.hash(0x1833, std.mem.sliceAsBytes(&words)) | 1;
             if (entry.view.glass_backdrop_key == key) continue;
-            // A terminal still starting up has no renderer to tell; its key
-            // stays stale so the next paint tries again.
-            if (!s.setPaneBackdrop(.{
+            const spec: Surface.GlassBackdrop = .{
                 .rect = r,
                 .full_w = fw,
                 .full_h = fh,
                 .palette = desk_palette.Palette.forWindow(self.desk_variant, is_light),
-            })) continue;
+            };
+            if (s) |sf| {
+                // A terminal still starting up has no renderer to tell; its
+                // key stays stale so the next paint tries again.
+                if (!sf.setPaneBackdrop(spec)) continue;
+            } else vw.?.setGlassBackdrop(spec);
             entry.view.glass_backdrop_key = key;
         }
     }

@@ -4870,15 +4870,9 @@ pub fn applyBackgroundTint(
     self.core_surface.renderer_thread.wakeup.notify() catch {};
 }
 
-/// Where a glass pane sits on its window's desk (T1833): the terminal
-/// child's rect and the desk's size, in content-area pixels, and the desk's
-/// palette.
-pub const GlassBackdrop = struct {
-    rect: [4]i32,
-    full_w: i32,
-    full_h: i32,
-    palette: desk_palette.Palette,
-};
+/// Where a glass pane sits on its window's desk (T1833); shared with the
+/// viewer pane, which paints the same sheet (T1885).
+pub const GlassBackdrop = pane_elevation.GlassBackdrop;
 
 /// Hand the renderer this pane's slice of the desk to draw its glass sheet
 /// over (T1833), or (null) take it away. The slice is rendered at a quarter

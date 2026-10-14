@@ -410,6 +410,11 @@ test {
     // no-OS-imports deal.
     _ = @import("apprt/win32/viewer_image.zig");
 
+    // Pure win32 viewer-on-glass rules — which pages go see-through over a
+    // glass pane, and whose light/dark the page then follows (T1885), same
+    // no-OS-imports deal.
+    _ = @import("apprt/win32/viewer_glass.zig");
+
     // Pure win32 viewer byte-range rules — which slice of a page resource a
     // `Range` header asks for, and the headers that describe it, so a video
     // in a rendered page can seek (T1580), same no-OS-imports deal.

@@ -205,6 +205,17 @@ pub fn shadows(is_light: bool, scale: f32) [2]Shadow {
     };
 }
 
+/// Where a glass pane sits on its window's desk (T1833): the pane child's
+/// rect and the desk's size, in content-area pixels, and the desk's palette.
+/// A terminal hands it to its renderer; a viewer paints the sheet itself
+/// (T1885).
+pub const GlassBackdrop = struct {
+    rect: [4]i32,
+    full_w: i32,
+    full_h: i32,
+    palette: desk_palette.Palette,
+};
+
 /// Mac `PaneGlass.tint` (0d8de3436): how much of the terminal's background
 /// a glass sheet keeps - chosen as 50% in the mock, lowered to 40% after the
 /// user lived with it - so the desk's light and shade read through the pane
