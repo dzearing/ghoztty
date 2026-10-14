@@ -70,6 +70,9 @@ test {
     // Pure win32 unfocused-split dim logic (T74), same no-OS-imports deal.
     _ = @import("apprt/win32/dim_math.zig");
 
+    // Pure win32 bell title glyph and sound commands (T1890), same deal.
+    _ = @import("apprt/win32/bell_math.zig");
+
     // Pure win32 alpha-correct chrome rule for per-pixel-alpha windows
     // (T1787), same no-OS-imports deal.
     _ = @import("apprt/win32/chrome_alpha.zig");

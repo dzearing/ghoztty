@@ -19,6 +19,7 @@ const relay_suspend = @import("../../remote/relay_suspend.zig");
 const AgentIntegrationsDialog = @import("AgentIntegrationsDialog.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
 const DarkMode = @import("DarkMode.zig");
+const bell_audio = @import("bell_audio.zig");
 const PathInstaller = @import("PathInstaller.zig");
 const IpcRegistry = @import("IpcRegistry.zig");
 const IpcServer = @import("IpcServer.zig");
@@ -2107,6 +2108,9 @@ pub fn terminate(self: *App) void {
     // Same argument for the What's New window (T624): its own top-level
     // window holding notes parsed out of the app allocator.
     WhatsNewWindow.closeAll();
+
+    // The bell sound device (T1890), if a bell ever played one.
+    bell_audio.deinit(self.core_app.alloc);
 
     // Flush the session-layout manifest while every window/surface is still
     // alive (T89f). Quit DETACHES sessions (they survive under the agent), so
@@ -7795,6 +7799,14 @@ pub fn performAction(
             // taskbar button while the window is in the background.
             const features = self.config.@"bell-features";
             if (features.system) _ = w32.MessageBeep(0xFFFFFFFF);
+            // `audio` plays the user's own sound file at its own volume
+            // (T1890), alongside `system` when both are on, as on Mac.
+            if (features.audio) if (self.config.@"bell-audio-path") |p| {
+                const path = switch (p) {
+                    .optional, .required => |s| s,
+                };
+                bell_audio.play(self.core_app.alloc, path, self.config.@"bell-audio-volume");
+            };
             switch (target) {
                 .app => {},
                 .surface => |core_surface| {

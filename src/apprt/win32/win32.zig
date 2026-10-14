@@ -775,6 +775,15 @@ pub extern "kernel32" fn LoadLibraryW(
     lpLibFileName: [*:0]const u16,
 ) callconv(.winapi) ?HINSTANCE;
 
+/// Search only System32 for the named DLL (and its dependencies).
+pub const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x800;
+
+pub extern "kernel32" fn LoadLibraryExW(
+    lpLibFileName: [*:0]const u16,
+    hFile: ?*anyopaque,
+    dwFlags: u32,
+) callconv(.winapi) ?HINSTANCE;
+
 /// lpProcName is either a name or an ordinal packed as a pointer
 /// (MAKEINTRESOURCEA semantics).
 pub extern "kernel32" fn GetProcAddress(

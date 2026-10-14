@@ -1,10 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-13T23:04:40-07:00",
-    "commit":  "60852253e",
+    "generated":  "2026-10-14T00:11:47-07:00",
+    "commit":  "3568e00af",
     "uncommitted":  [
-                        "test/win32/chrome-theme.ps1"
+                        "test/win32/bell-features.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
@@ -45,6 +45,7 @@
                   "test/win32/auto-launch-cwd.ps1":  "eec10c5396d125e017edde1280851d1fce687337742a64ca5f34da9eee36bec3",
                   "test/win32/background-blur.ps1":  "dffab046e7560e606416751d4441733b0b9acd8630dcf61d3da36389b04edc9a",
                   "test/win32/banner-resize-repaint.ps1":  "499fac53076f7641063f8ce3dab59a859ee9a947ce44ca6f2b05b08767c677f8",
+                  "test/win32/bell-features.ps1":  "8e4282148bae932f6cf792520c381559de087a3527901e48111a334e2fae7990",
                   "test/win32/body-complete-audit.ps1":  "ad5462f3989f2efbd5f3447b4fa9dd0cf5d56d69a89d7730816c7ad2baf4fc4f",
                   "test/win32/build-cache.ps1":  "69ab9348d80343993a44e2f1a56e81056866346c044b4760cb691d8ab279547c",
                   "test/win32/build-fresh-guard.ps1":  "a6322b905a335d1d381951e5946017e6cdf881999b22ba2530f8c63005973ee9",

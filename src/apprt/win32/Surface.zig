@@ -5464,11 +5464,12 @@ pub fn signalFrameDrawn(self: *Surface, width: u32, height: u32) void {
     }
 }
 
-/// Raise or clear the pane's bell mark, telling the sidebar only when it moved.
+/// Raise or clear the pane's bell mark, telling the window (sidebar dot, title
+/// glyph) only when it moved.
 pub fn setBell(self: *Surface, on: bool) void {
     if (self.bell == on) return;
     self.bell = on;
-    self.parent_window.syncPaneSidebar();
+    self.parent_window.onPaneBellChanged();
 }
 
 /// Handle WM_SETFOCUS / WM_KILLFOCUS.

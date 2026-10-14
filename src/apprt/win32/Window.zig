@@ -144,6 +144,7 @@ const HeroCarousel = @import("HeroCarousel.zig");
 const hero_math = @import("hero_math.zig");
 const hero_snap_schedule = @import("hero_snap_schedule.zig");
 const dim_math = @import("dim_math.zig");
+const bell_math = @import("bell_math.zig");
 const chrome_alpha = @import("chrome_alpha.zig");
 const opacity_mode = @import("opacity_mode.zig");
 const blur_backdrop = @import("blur_backdrop.zig");
@@ -9177,21 +9178,49 @@ pub fn activityAggregate(self: *Window) terminal.osc.Command.ActivityState {
     return aggregate;
 }
 
+/// The bell glyph tab `i`'s title leads with, or nothing (T1890). Keyed on the
+/// tab's focused pane, the one whose title the tab shows - Mac reads the bell
+/// of the surface it takes the title from.
+fn tabBellPrefix(self: *const Window, i: usize) []const u16 {
+    const surface = self.tab_active_pane[i].surface() orelse return &.{};
+    return bell_math.titlePrefix(self.app.config.@"bell-features".title, surface.bell);
+}
+
+/// A pane's bell mark moved (T1890): the sidebar dot, and - when that pane is
+/// the one a tab is titled after - the window title and its tab's label.
+pub fn onPaneBellChanged(self: *Window) void {
+    self.updateWindowTitle(); // also re-syncs the sidebar
+    if (self.tab_count > 0) log.info("bell title prefix={} tab={d}", .{
+        self.tabBellPrefix(self.active_tab).len > 0,
+        self.active_tab,
+    });
+    self.invalidateTabBar();
+}
+
 pub fn updateWindowTitle(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     // An activity change lands here from both the OSC and the CLI paths; the
     // sidebar shows it per pane (T1828).
     defer self.syncPaneSidebar();
 
-    // Base title: the override if set, else the active tab's title.
-    var buf: [280]u16 = undefined;
+    // A rung pane's bell glyph leads the title (`bell-features = title`,
+    // T1890) - over a pinned title too, as Mac's computeTitle does.
+    var buf: [288]u16 = undefined;
     var len: usize = 0;
+    if (self.tab_count > 0) {
+        const prefix = self.tabBellPrefix(self.active_tab);
+        @memcpy(buf[0..prefix.len], prefix);
+        len = prefix.len;
+    }
+
+    // Base title: the override if set, else the active tab's title.
     if (self.title_override) |override| {
-        len = std.unicode.utf8ToUtf16Le(buf[0..256], override) catch 0;
+        len += std.unicode.utf8ToUtf16Le(buf[len..][0..256], override) catch 0;
     } else {
         if (self.tab_count == 0) return;
-        len = self.tab_title_lens[self.active_tab];
-        @memcpy(buf[0..len], self.tab_titles[self.active_tab][0..len]);
+        const n = self.tab_title_lens[self.active_tab];
+        @memcpy(buf[len..][0..n], self.tab_titles[self.active_tab][0..n]);
+        len += n;
     }
 
     // Activity suffix (`+set-state` / OSC 7777), matching the Mac's
@@ -9674,6 +9703,14 @@ fn titleFontEm(self: *Window) i32 {
 /// than measuring the raw string — a tab measured one way and painted the
 /// other is sized for a layout it does not use, which is the T235 inverse
 /// (`preferredWidth`/`titleRect`) breaking from the outside.
+/// Plain extent of `text` in the DC's current font; 0 for an empty string.
+fn textWidth(hdc: w32.HDC, text: []const u16) i32 {
+    if (text.len == 0) return 0;
+    var size: w32.SIZE = undefined;
+    if (w32.GetTextExtentPoint32W(hdc, text.ptr, @intCast(text.len), &size) == 0) return 0;
+    return size.cx;
+}
+
 fn measureTitleText(hdc: w32.HDC, title: []const u16, em: i32) i32 {
     if (title.len == 0) return 0;
     const s = title_spinner.forPaint(title);
@@ -10373,7 +10410,10 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
     var prefer: [MAX_TABS]i32 = undefined;
     for (0..self.tab_count) |i| {
         const title_len = self.tab_title_lens[i];
-        prefer[i] = m.preferredWidth(measureTitleText(mem_dc, self.tab_titles[i][0..title_len], em));
+        prefer[i] = m.preferredWidth(
+            textWidth(mem_dc, self.tabBellPrefix(i)) +
+                measureTitleText(mem_dc, self.tab_titles[i][0..title_len], em),
+        );
     }
     // NOT `client_w` when the caption shares this row (T205): the run has to
     // stop at the seam, and `stripClientWidth` is the one place that width is
@@ -10523,12 +10563,29 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
 
         // Draw tab title text.
         const title_len = self.tab_title_lens[i];
+        var title_rect = stripRect(m.titleRect(tab));
+        // A rung pane's bell glyph leads the label (T1890). Drawn on its own
+        // so the title after it keeps its animated-glyph cell (T60): a
+        // prefixed string would no longer START with the spinner.
+        const bell_prefix = self.tabBellPrefix(i);
+        if (bell_prefix.len > 0) {
+            _ = w32.SetTextColor(mem_dc, if (is_active) active_text_color else inactive_text_color);
+            var pr = title_rect;
+            _ = w32.DrawTextW(
+                mem_dc,
+                bell_prefix.ptr,
+                @intCast(bell_prefix.len),
+                &pr,
+                w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_NOPREFIX,
+            );
+            title_rect.left = @min(title_rect.left + textWidth(mem_dc, bell_prefix), title_rect.right);
+        }
         if (title_len > 0) {
             _ = w32.SetTextColor(mem_dc, if (is_active) active_text_color else inactive_text_color);
             drawTitleText(
                 mem_dc,
                 self.tab_titles[i][0..title_len],
-                stripRect(m.titleRect(tab)),
+                title_rect,
                 em,
                 w32.DT_LEFT | w32.DT_VCENTER | w32.DT_SINGLELINE | w32.DT_END_ELLIPSIS | w32.DT_NOPREFIX,
             );

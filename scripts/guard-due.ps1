@@ -4390,6 +4390,20 @@ $GuardTable = @(
             'test\win32\pane-sidebar-activity.ps1'
         )
     },
+    # A bell's `title` and `audio` features (T1890): the glyph in front of the
+    # caption while the rung pane is unlooked-at, and the sound file played at
+    # its volume. The strings and the volume mapping are unit-tested in
+    # bell_math.zig; this proves a real BEL reaches the caption and the player.
+    [pscustomobject]@{
+        Name   = 'bell-features'
+        Script = 'test\win32\bell-features.ps1'
+        Stamp  = 'test\win32\bell-features.stamp.json'
+        Covers = @(
+            'src\apprt\win32\bell_math.zig',
+            'src\apprt\win32\bell_audio.zig',
+            'test\win32\bell-features.ps1'
+        )
+    },
     # Dragging panes into and out of the sidebar (T1844): the `.stash` drop
     # target and the row drag source. The resolver, preview and stash-order
     # rules are unit-tested in every lane; whether a posted drag from a row

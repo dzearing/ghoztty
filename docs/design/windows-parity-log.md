@@ -36142,3 +36142,20 @@ moved to T1814.
 - **Validation.** chrome-theme.ps1 ALL PASS (137). A new in-harness probe
   checks that only the paint-code lines count. Its first run went red on a
   `return ,` unroll bug, so it can fail. The harness floor passed.
+
+## 2026-10-13 — T1890: a bell plays its sound file and puts a bell in the title
+
+- **What changed.** With `bell-features` `audio`, a bell now plays
+  `bell-audio-path` at `bell-audio-volume`. With `title`, which is on by
+  default, the window caption and the tab label start with the bell emoji.
+  It stays until the pane is focused or gets a key, as on Mac.
+- **How.** The sound plays through MCI's `mpegvideo` device, because
+  `PlaySoundW` is wav-only and has no volume. winmm is loaded from System32
+  only when a bell first plays. The glyph follows the tab's focused pane,
+  the same pane Mac takes the title from. It is painted as its own run so a
+  title spinner keeps its fixed cell.
+- **Split.** `border` needs a new overlay window and is now T1919.
+- **Validation.** New `test/win32/bell-features.ps1`: ALL PASS (16). It
+  reads the real caption text back and plays a generated silent wav. The
+  negative control (`no-title`) fails with 2 failures. bell_math unit tests,
+  all four floor lanes and P1–P3 passed.
