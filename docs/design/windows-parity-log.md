@@ -36215,3 +36215,21 @@ moved to T1814.
   scored the broken order green too, because the test desktop's capture
   re-renders the window. Watching it on the real desktop is NOT RUN while the
   user is present, filed as T1922. All four floor lanes, the harness lane and 22 due guards passed.
+
+## 2026-10-14 — T1907: a glass terminal copies its slice of the desk instead of redrawing it
+
+- **What.** On every divider-drag move, each resized glass terminal used to
+  evaluate the gradient again for its quarter-size backdrop slice. It now
+  crops the slice out of the desk the window has just painted
+  (`PaneDesk.backdrop` → `desk_palette.cropDeskRegionRgba`, one pixel read per
+  texel). The analytic render is kept as the fallback for when there is no
+  desk at that size.
+- **Why this option.** Of the task's three options, this one keeps the glass
+  seam-free (the slice is the very pixels around the card) and adds no
+  per-pane GPU copy of the whole desk. Deferring the slice to drag end would
+  have left a stale sheet under the moving edge.
+- **Result.** drag-perf, batched, 2 panes: paint went from 17.2 to 14.9 ms
+  and the mean from 21.2 to 18.9 ms a move (47 → 52 fps). The FAIL that
+  remains is T1854 (pre-existing).
+- **Filed.** T1923: a glass viewer pane evaluates the gradient for every
+  pixel, at full resolution, on every paint.

@@ -15,6 +15,7 @@ const CoreSurface = @import("../../Surface.zig");
 const rendererpkg = @import("../../renderer.zig");
 const desk_palette = @import("desk_palette.zig");
 const pane_elevation = @import("pane_elevation.zig");
+const PaneDesk = @import("PaneDesk.zig");
 const internal_os = @import("../../os/main.zig");
 const remote_connection = @import("../../remote/connection.zig");
 const gl_loader = @import("../../renderer/gl_loader.zig");
@@ -4881,11 +4882,14 @@ pub fn applyBackgroundTint(
 pub const GlassBackdrop = pane_elevation.GlassBackdrop;
 
 /// Hand the renderer this pane's slice of the desk to draw its glass sheet
-/// over (T1833), or (null) take it away. The slice is rendered at a quarter
-/// of the pane's size: the gradient has no detail to lose, the texture is
-/// sampled linearly, and a divider drag re-sends it every frame the pane
-/// moves. False when the renderer is not up yet - nothing was sent.
-pub fn setPaneBackdrop(self: *Surface, spec: ?GlassBackdrop) bool {
+/// over (T1833), or (null) take it away. The slice is a quarter of the
+/// pane's size: the gradient has no detail to lose, the texture is sampled
+/// linearly, and a divider drag re-sends it every frame the pane moves.
+/// `desk` is the window's rendered desk when it has one at `spec`'s size: the
+/// slice is then cropped out of it rather than evaluated again (T1907), which
+/// is 4.7ms a large pane in Debug on every drag move. False when the renderer
+/// is not up yet - nothing was sent.
+pub fn setPaneBackdrop(self: *Surface, spec: ?GlassBackdrop, desk: ?PaneDesk.Backdrop) bool {
     if (!self.core_surface_ready) return false;
     const alloc = self.app.core_app.alloc;
     const msg: ?rendererpkg.Message.PaneBackdrop = if (spec) |b| blk: {
@@ -4895,7 +4899,22 @@ pub fn setPaneBackdrop(self: *Surface, spec: ?GlassBackdrop) bool {
         const bw: usize = @intCast(@max(@divFloor(rw + 3, 4), 1));
         const bh: usize = @intCast(@max(@divFloor(rh + 3, 4), 1));
         const data = alloc.alloc(u8, bw * bh * 4) catch return false;
-        desk_palette.renderDeskRegionRgba(
+        const rendered: ?PaneDesk.Backdrop = if (desk) |d|
+            (if (d.w == b.full_w and d.h == b.full_h) d else null)
+        else
+            null;
+        if (rendered) |d| desk_palette.cropDeskRegionRgba(
+            data,
+            bw,
+            bh,
+            d.pixels,
+            @intCast(d.w),
+            @intCast(d.h),
+            @floatFromInt(b.rect[0]),
+            @floatFromInt(b.rect[1]),
+            @floatFromInt(rw),
+            @floatFromInt(rh),
+        ) else desk_palette.renderDeskRegionRgba(
             data,
             bw,
             bh,

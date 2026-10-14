@@ -7233,6 +7233,10 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
     // The banner strips' glass follows the same desk (T1884); a variant or
     // a glass toggle reaches them here, a layout in `applyCardRegions`.
     const banner_glass = if (glass) self.bannerGlass() else null;
+    // The desk the paint just blitted (T1907): a terminal's slice is cropped
+    // out of it instead of evaluating the gradient again for every pane on
+    // every divider-drag move. Cached, so this renders nothing.
+    const desk = if (glass) self.pane_desk.backdrop(fw, fh, is_light, self.desk_variant) else null;
     for (0..self.tab_count) |tab| {
         var it = self.tab_trees[tab].iterator();
         while (it.next()) |entry| {
@@ -7245,7 +7249,7 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
             if (!glass) {
                 if (entry.view.glass_backdrop_key != 0) {
                     if (s) |sf| {
-                        if (sf.setPaneBackdrop(null)) entry.view.glass_backdrop_key = 0;
+                        if (sf.setPaneBackdrop(null, null)) entry.view.glass_backdrop_key = 0;
                     } else {
                         vw.?.setGlassBackdrop(null);
                         entry.view.glass_backdrop_key = 0;
@@ -7286,7 +7290,7 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
             if (s) |sf| {
                 // A terminal still starting up has no renderer to tell; its
                 // key stays stale so the next paint tries again.
-                if (!sf.setPaneBackdrop(spec)) continue;
+                if (!sf.setPaneBackdrop(spec, desk)) continue;
             } else vw.?.setGlassBackdrop(spec);
             entry.view.glass_backdrop_key = key;
         }

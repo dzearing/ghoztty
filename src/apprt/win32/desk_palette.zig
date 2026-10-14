@@ -414,6 +414,58 @@ pub fn renderDeskRegionRgba(
     }
 }
 
+/// `renderDeskRegionRgba` read out of a desk that is already rendered (T1907):
+/// `src` is the window's whole desk, `src_w` x `src_h` pixels of 0x00RRGGBB
+/// (top-down), and each texel takes the desk pixel under its centre. Nothing
+/// is evaluated, so a divider drag that re-sends both resized panes' slices
+/// every mouse move pays a copy rather than the gradient twice over - and the
+/// slice is the very pixels the window paints round the card, so the two
+/// meet without a seam. Rect coordinates outside the desk clamp to its edge.
+pub fn cropDeskRegionRgba(
+    out: []u8,
+    w: usize,
+    h: usize,
+    src: []const u32,
+    src_w: usize,
+    src_h: usize,
+    rx: f32,
+    ry: f32,
+    rw: f32,
+    rh: f32,
+) void {
+    std.debug.assert(out.len >= w * h * 4);
+    std.debug.assert(src.len >= src_w * src_h);
+    if (w == 0 or h == 0 or src_w == 0 or src_h == 0) return;
+    const fx = rw / @as(f32, @floatFromInt(w));
+    const fy = rh / @as(f32, @floatFromInt(h));
+    // The column each texel reads is the same on every row: work it out once.
+    var cols_buf: [1024]usize = undefined;
+    const cols: ?[]usize = if (w <= cols_buf.len) cols_buf[0..w] else null;
+    if (cols) |c| {
+        for (c, 0..) |*sx, col| sx.* = srcIndex(rx + (@as(f32, @floatFromInt(col)) + 0.5) * fx, src_w);
+    }
+    for (0..h) |row| {
+        const sy = srcIndex(ry + (@as(f32, @floatFromInt(row)) + 0.5) * fy, src_h);
+        const line = src[sy * src_w ..][0..src_w];
+        for (0..w) |col| {
+            const sx = if (cols) |c| c[col] else srcIndex(rx + (@as(f32, @floatFromInt(col)) + 0.5) * fx, src_w);
+            const p = line[sx];
+            const i = (row * w + col) * 4;
+            out[i] = @intCast((p >> 16) & 0xFF);
+            out[i + 1] = @intCast((p >> 8) & 0xFF);
+            out[i + 2] = @intCast(p & 0xFF);
+            out[i + 3] = 255;
+        }
+    }
+}
+
+/// The pixel a window coordinate falls in, clamped to `0..n-1`.
+fn srcIndex(v: f32, n: usize) usize {
+    if (!(v > 0)) return 0;
+    const i: usize = @intFromFloat(@floor(v));
+    return @min(i, n - 1);
+}
+
 // ---------------------------------------------------------------------------
 
 fn sum(c: Rgbf) f32 {
@@ -554,4 +606,42 @@ test "T1833: a pane's backdrop is the desk under its rect, as RGBA" {
     const last = pal.at(350, 200, 1000, 600).pack();
     try testing.expectEqual(@as(u8, @intCast(last & 0xFF)), out[5 * 4 + 2]);
     try testing.expectEqual(@as(u8, 255), out[5 * 4 + 3]);
+}
+
+test "T1907: a slice cropped from the rendered desk is the desk under each texel's centre" {
+    const pal = Palette.ocean(false);
+    const fw = 400;
+    const fh = 240;
+    const desk = try testing.allocator.alloc(u32, fw * fh);
+    defer testing.allocator.free(desk);
+    renderDesk(desk, fw, fh, fw, fh, pal);
+    // A 120x80 pane at (37, 21), at a quarter of its size.
+    const bw = 30;
+    const bh = 20;
+    var crop: [bw * bh * 4]u8 = undefined;
+    var eval: [bw * bh * 4]u8 = undefined;
+    cropDeskRegionRgba(&crop, bw, bh, desk, fw, fh, 37, 21, 120, 80);
+    renderDeskRegionRgba(&eval, bw, bh, fw, fh, 37, 21, 120, 80, pal);
+    // Texel (0, 0) covers window (37..41, 21..25); its centre is in pixel (39, 23).
+    const p = desk[23 * fw + 39];
+    try testing.expectEqual(@as(u8, @intCast((p >> 16) & 0xFF)), crop[0]);
+    try testing.expectEqual(@as(u8, @intCast((p >> 8) & 0xFF)), crop[1]);
+    try testing.expectEqual(@as(u8, @intCast(p & 0xFF)), crop[2]);
+    // And everywhere the crop reads what evaluating the gradient would, to
+    // within the half pixel between a texel centre and its pixel's centre.
+    for (crop, eval, 0..) |a, b, i| {
+        if (i % 4 == 3) {
+            try testing.expectEqual(@as(u8, 255), a);
+            continue;
+        }
+        try testing.expect(@abs(@as(i16, a) - @as(i16, b)) <= 2);
+    }
+}
+
+test "T1907: a crop past the desk's edge reads the edge pixel" {
+    var desk = [_]u32{ 0x00010203, 0x00040506, 0x00070809, 0x000A0B0C };
+    var out: [2 * 2 * 4]u8 = undefined;
+    // A 2x2 desk; a rect hanging off every side of it.
+    cropDeskRegionRgba(&out, 2, 2, &desk, 2, 2, -10, -10, 40, 40);
+    try testing.expectEqualSlices(u8, &.{ 1, 2, 3, 255, 10, 11, 12, 255 }, &.{ out[0], out[1], out[2], out[3], out[12], out[13], out[14], out[15] });
 }
