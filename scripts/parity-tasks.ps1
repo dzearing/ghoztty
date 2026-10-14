@@ -1877,6 +1877,29 @@ switch ($Command) {
             }
         }
 
+        # T1025: a doubled entry in a union-merged ledger. T957 put the log and
+        # the feature-ideas ledger under git's union driver, which never
+        # conflicts - so a rebase that replays an entry already in the file, or
+        # one entry edited on both seats, comes out twice and nothing stops. This
+        # is the "somebody looks at it" half the conflict used to provide. Same
+        # fixture arrangement as the control-character check above:
+        # GHOZTTY_LEDGER_DUPES_REPO points it at a fixture tree; unset in every
+        # real run.
+        if (-not $TaskDirGiven -or $env:GHOZTTY_LEDGER_DUPES_REPO) {
+            $ldScript = Join-Path $PSScriptRoot 'ledger-dupes.ps1'
+            $ldRepo = $RepoRoot
+            if ($env:GHOZTTY_LEDGER_DUPES_REPO) { $ldRepo = $env:GHOZTTY_LEDGER_DUPES_REPO }
+            if (Test-Path -LiteralPath $ldScript) {
+                $ldOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $ldScript -Repo $ldRepo -Quiet 2>&1 | Out-String
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "DUPLICATED LEDGER ENTRY: a union-merged ledger holds the same entry twice (T1025)"
+                    foreach ($line in ($ldOut -split "`r?`n")) { if ($line.Trim()) { Write-Host ("  " + $line.TrimEnd()) } }
+                    Write-Host "  (ask it directly: scripts\ledger-dupes.ps1)"
+                    $problems++
+                }
+            }
+        }
+
         # T566: the decisions filed beside these tasks. They had no gate of
         # their own, so a decision with no task link, a status outside
         # open/resolved, or an option list with no Pros/Cons was found only when

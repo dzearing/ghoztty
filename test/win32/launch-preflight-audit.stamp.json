@@ -1,10 +1,11 @@
 {
     "guard":  "launch-preflight",
     "script":  "test/win32/launch-preflight-audit.ps1",
-    "generated":  "2026-10-14T13:33:49-07:00",
-    "commit":  "f9c107ee5",
+    "generated":  "2026-10-14T14:31:42-07:00",
+    "commit":  "8c4aa3135",
     "uncommitted":  [
-                        "test/win32/divergence-inventory.ps1"
+                        "test/win32/gate-negatives.ps1",
+                        "test/win32/ledger-dupes.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -138,7 +139,7 @@
                   "test/win32/font-inherit.ps1":  "f303affd8f1c72da77f48f09a10b18d0c7c72af845a4602455bf013662d8c257",
                   "test/win32/foreground-audit.ps1":  "f9d1b2caed851695f70fd1430a378506831ebfb54458b55068252d7984622b0d",
                   "test/win32/fork-identity.ps1":  "9661dc44ad46212f55a3f65601c083cd0f1eebcba2e3a323f6fe4c4f44b62cbe",
-                  "test/win32/gate-negatives.ps1":  "a8e6fd05663fa4faae6629c6db03599201b9221010500182a90795148b02a2fa",
+                  "test/win32/gate-negatives.ps1":  "0c2eaa7356bd6e8eece62570fe3a1c2a49444b4f29bd9d17e8142acd0fe6156c",
                   "test/win32/ghoztty-cleanup.ps1":  "81bfcb6cb5b018195e1056d6ce7203f18235763916bcec4cffcdafa811e73f76",
                   "test/win32/gl-device-lost.ps1":  "b96bff0c90995f6149f9a6871c618288919632559f24e2d556f2e5f8055c8e2b",
                   "test/win32/go-loop-guard.ps1":  "9f0ca6a4218a422c2bbda812d8ffa90e2d9aede177e0d55207ee8e566d284200",
@@ -198,6 +199,7 @@
                   "test/win32/layout-blob-cross-lineage.ps1":  "8856f0fbe0bff9a2c4b6c71a138ac77a009a335a935f92a8892dd45b065fb6cb",
                   "test/win32/layout-blobs.ps1":  "d91f5b4afad56f13d8fba4d6f00abf44539b9a5e93afadd26acaec53c5413b75",
                   "test/win32/layout-capture-cost.ps1":  "60a2c830f6bac395be0ea78847d0f07466cefca0c8bb9d86385ea27618628e8e",
+                  "test/win32/ledger-dupes.ps1":  "0af2ae7aac1c09692dc0f8a33164225a93808765fc732e91e4c6e9737df3935d",
                   "test/win32/lib/AgentLineage.ps1":  "ff0736a1353e2a08a20998bcc006ab20afa8f845e07033fe23b6e5ed5d486d45",
                   "test/win32/lib/ApplierSandbox.ps1":  "82870ff2c01dd3d3e36b1b1f8ff7ed7359059245db8e5d88ac9e30838e177bd8",
                   "test/win32/lib/ArgvHazardAudit.ps1":  "b5158017c82268ea108deb78d6233f98b9864b3ff31439a93a2c0c10fd4de518",

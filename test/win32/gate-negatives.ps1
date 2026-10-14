@@ -218,6 +218,12 @@ $Registry = @(
     [pscustomobject]@{ Label = 'CONTROL CHARACTERS'; Kind = 'gate'
         Demo = 'test\win32\control-char-scan.ps1'; Marker = 'CONTROL CHARACTERS'
     }
+    # T1025. A doubled entry in a union-merged ledger, which git's union driver
+    # produces without a conflict. Same shape as CONTROL CHARACTERS: validate's
+    # own headline, demonstrated where the scanner AND this relay are driven red.
+    [pscustomobject]@{ Label = 'DUPLICATED LEDGER ENTRY'; Kind = 'gate'
+        Demo = 'test\win32\ledger-dupes.ps1'; Marker = 'DUPLICATED LEDGER ENTRY'
+    }
     # T566. A malformed decision file, relayed from parity-decisions.ps1 under
     # validate's own headline (same shape as CONTROL CHARACTERS above). Its
     # demonstration is the decisions harness, whose section E drives THIS relay

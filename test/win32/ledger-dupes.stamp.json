@@ -1,0 +1,16 @@
+{
+    "guard":  "ledger-dupes",
+    "script":  "test/win32/ledger-dupes.ps1",
+    "generated":  "2026-10-14T14:23:13-07:00",
+    "commit":  "8c4aa3135",
+    "uncommitted":  [
+                        ".gitattributes",
+                        "scripts/ledger-dupes.ps1",
+                        "test/win32/ledger-dupes.ps1"
+                    ],
+    "files":  {
+                  ".gitattributes":  "4c2b5b8c6b9905463167f20108784baef60a21f84d87101e834fdcd935f08f62",
+                  "scripts/ledger-dupes.ps1":  "925bdaab83d54c0917554c09d98a48f3fb90e26c6e1c89be2d2570d6dbb224e2",
+                  "test/win32/ledger-dupes.ps1":  "0af2ae7aac1c09692dc0f8a33164225a93808765fc732e91e4c6e9737df3935d"
+              }
+}

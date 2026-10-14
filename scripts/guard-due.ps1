@@ -4096,6 +4096,23 @@ $GuardTable = @(
             'test\win32\control-char-scan.ps1'
         )
     },
+    # The doubled-ledger-entry check (T1025): git's union driver merges the two
+    # shared ledgers without ever conflicting, so a doubled entry is noticed here
+    # or nowhere. .gitattributes is covered because it IS the ledger list - the
+    # scanner reads its merge=union rows rather than naming files - and an edit
+    # there changes what is checked. The ledgers themselves are NOT covered: they
+    # change every turn, and validate already scans them on every commit. A few
+    # seconds.
+    [pscustomobject]@{
+        Name   = 'ledger-dupes'
+        Script = 'test\win32\ledger-dupes.ps1'
+        Stamp  = 'test\win32\ledger-dupes.stamp.json'
+        Covers = @(
+            '.gitattributes',
+            'scripts\ledger-dupes.ps1',
+            'test\win32\ledger-dupes.ps1'
+        )
+    },
     # The agent's BUILD STAMP vs what the agent is actually built from (T784).
     # The stamp is the binary's self-update identity, so a path list narrower
     # than the compiler's input set makes two different agents read as the same

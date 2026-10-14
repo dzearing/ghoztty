@@ -72,7 +72,10 @@ scripts/githooks/* text eol=lf
 # `git pull --rebase` on any turn where the other seat pushed first. Each entry
 # is a self-contained block, so union keeps both entries whole; the worst case
 # is two entries ordered by luck rather than by clock, against a hand
-# resolution of a file that is history-only by charter.
+# resolution of a file that is history-only by charter. Union CAN also leave one
+# entry in the file twice (two seats holding the same entries in a different
+# order is enough), and it never says so: scripts/ledger-dupes.ps1 reads the
+# .md rows below and parity-tasks.ps1 validate fails on a doubled entry (T1025).
 docs/design/windows-parity-log.md merge=union
 docs/design/windows-parity-feature-ideas.md merge=union
 
