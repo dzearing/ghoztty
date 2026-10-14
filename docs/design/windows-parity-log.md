@@ -36340,3 +36340,21 @@ moved to T1814.
   tab_shape.zig (a painter, deliberately not covered) left it CURRENT; both
   edits were byte-restored. guard-due.ps1 passed 128/128. drag-perf is still
   red from T1854 (an open task), so this commit uses -NoGuardDue.
+
+## 2026-10-14 — T1019: a dark or light window-theme is now proven to decide the title bar's shade
+
+- **What changed.** The card wanted a photo of the title bar Windows itself
+  draws. That bar has not existed since T254: the app paints its own title
+  bar. The gap that was still real is that every check ran only the default
+  `auto` theme, so a build that ignored `--window-theme=dark`/`light` for the
+  title bar would have passed. chrome-theme.ps1 now has a section H. It
+  launches each theme over a background on the opposite side, and the bar
+  must land on the theme's side at the exact colour it derives.
+- **Validation.** chrome-theme passed 151/151. Its -NegativeControl run goes
+  red on H/dark. The harness-floor lane passes.
+- **Found along the way.** viewer-error-card had been red since T1886 made
+  glass panes the default (13 failures), because it was measuring the desktop
+  behind the glass. It now runs with solid panes like chrome-theme and passes
+  41/41. T1929 sweeps the other scripts for the same gap. drag-perf is still
+  red from T1854, so this commit uses -NoGuardDue. T1930 was a duplicate of
+  T1854 and is closed as skipped.

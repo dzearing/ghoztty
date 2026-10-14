@@ -12,6 +12,8 @@
 
 # --- the amounts, by their Zig names ---------------------------------------
 $BAR_WASH = 0.08                # chrome_theme.bar_wash
+$SURFACE_LIGHT = @(0xF3, 0xF3, 0xF3)   # chrome_theme.surface_light
+$SURFACE_DARK = @(0x20, 0x20, 0x20)    # chrome_theme.surface_dark
 $TEXT_WASH = 0.90               # chrome_theme.text_wash
 $TEXT_SECONDARY_WASH = 0.55     # chrome_theme.text_secondary_wash
 $PANEL_HEADER_WASH = 0.04       # panel_theme.header_wash

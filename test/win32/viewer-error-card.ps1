@@ -237,9 +237,11 @@ function Start-Case([string]$Hex, [string]$Tag) {
     $errlog = Join-Path $env:TEMP "ghoztty-viewer-error-card-$Tag.log"
     Remove-Item $errlog -ErrorAction SilentlyContinue
     # --config-default-files=false so the user's own config cannot pick the
-    # background out from under the case.
+    # background out from under the case. Solid panes: the clearance band is
+    # scored as the configured background, and with glass panes (the default
+    # since T1886) it is the desk showing through instead.
     $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments @(
-        '--session-persistence=false', '--config-default-files=false', "--background=$Hex")
+        '--session-persistence=false', '--config-default-files=false', '--macos-pane-glass=false', "--background=$Hex")
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { return $null }
     $top = Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow' -TimeoutMs 15000

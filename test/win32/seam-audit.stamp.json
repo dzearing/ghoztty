@@ -1,12 +1,12 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-14T09:55:51-07:00",
-    "commit":  "99590020e",
+    "generated":  "2026-10-14T11:31:28-07:00",
+    "commit":  "041117282",
     "uncommitted":  [
-                        "src/apprt/win32/pane_sidebar_outline.zig",
-                        "src/apprt/win32/PaneSidebar.zig",
-                        "test/win32/pane-sidebar-all-windows.ps1"
+                        "test/win32/chrome-theme.ps1",
+                        "test/win32/lib/ColorMath.ps1",
+                        "test/win32/viewer-error-card.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -554,7 +554,7 @@
                   "test/win32/chooser-sessions-remote.ps1":  "00f7ab5ee0f8f066d1e5c7cce32a7099987d4d9ef4d7408dc8f583fab1e9b85a",
                   "test/win32/chooser-warm-list.ps1":  "c615a0de86c2debc15e196b56f97cc2021594a6548058fa4f9a48e991fca28f2",
                   "test/win32/chrome-merged-row.ps1":  "a64fea4d5b0544eeec0236bc3d313bfc479fc3b5a52fd4fb1cf6bc5fe99e7a8d",
-                  "test/win32/chrome-theme.ps1":  "3014832a35be3ee2ee5f9d8f5b1a8e23b314a7c1de21cc7c3f5fe8f46114326c",
+                  "test/win32/chrome-theme.ps1":  "d910d0060d4131b191be9c1567276f7c98747981c8f430b77cd543586dd4d051",
                   "test/win32/claude-fullscreen-env.ps1":  "4471ab86002e9dcb652e11b80adbc100c50e759fba9bed816ca7c2cdd57c6f1b",
                   "test/win32/claude-integration.ps1":  "a65c25e4bb1b51a50a227b72126a6feedb1a0c7443f3838d32888b9359c4090b",
                   "test/win32/cleanslate-audit.ps1":  "cb6bcd4aa4122ce79eec0f10213acc3ed0906e4b68d836df4ebcc89b13080244",
@@ -689,7 +689,7 @@
                   "test/win32/lib/ChromeGeometry.ps1":  "070bc30356ec1e6ac10382fbbfd7a1a812732ed0af83db7b80a36d11b1120a2a",
                   "test/win32/lib/CleanSlate.ps1":  "97b5dfd912243a94ef32ab285f4f905615a43767609d34fea3b27949e8d07860",
                   "test/win32/lib/CleanSlateAudit.ps1":  "5868a695cf3d6201454e27586289704a483a883133cd417b65f7b1bbc128ab30",
-                  "test/win32/lib/ColorMath.ps1":  "a825f6793a37181cb68b840042fa4403b08a60de696e36e677bb3d3cdda16e04",
+                  "test/win32/lib/ColorMath.ps1":  "e0b7cb256aa2322eed4d2d75d88c3557598eacf8ffcc825f659a071f36b3c0f7",
                   "test/win32/lib/CommandResolveAudit.ps1":  "9ed2f0925dfee89eb032a932ef0d0b046f5d5ed38a7e1a5c4cef19cb2109e424",
                   "test/win32/lib/ComposerSurface.ps1":  "7edd6dccc01fa8654f186ad97e64fb13bd9199305aa0424aebfbe7537e39d287",
                   "test/win32/lib/CountOrZero.ps1":  "becbcdc2dabc0728175ea276fc082a3e270df5637b659c434d93f3e407a9fa9c",
@@ -899,7 +899,7 @@
                   "test/win32/viewer-composer.ps1":  "884e11cadc3a85a60b400e48522b2c7c5e7ddad28d3f8e039338c62197eded23",
                   "test/win32/viewer-diff.ps1":  "432e3279ef54e088498f7e1fe0c9922e941f188ab83b6a8a3fd0d9f2c9172730",
                   "test/win32/viewer-diff-tree.ps1":  "5877f359c51ec7de7fdd91e626c11f008e99dac36fcece9733eafad7302a2661",
-                  "test/win32/viewer-error-card.ps1":  "bc486ca60cf4eaed7e2bb772a8e6dc80818ef04696f86ea7ea054238dacf2f4c",
+                  "test/win32/viewer-error-card.ps1":  "b3420dd27988c558825270dbe07959a2685ef7f29e90a5ceff4de126037933fd",
                   "test/win32/viewer-feedback.ps1":  "fa5765780089947c0a242fbcabc094ab72c7393fbe21370eaab86b2aa9bc5ec2",
                   "test/win32/viewer-feedback-alpha.ps1":  "7e3ed8de4c1caf1382b53ab1fa99ce89b4a3d9239263be65c7bbf80de97f34c1",
                   "test/win32/viewer-feedback-capture.ps1":  "bd538fda121fe8cf7f9f4ddbe1a44efa4ce8b60a921b8ede857c89de1da0e156",

@@ -115,6 +115,21 @@
 #      (T1133). G1 measures the card's quiet first, because a counter that
 #      ticks on its own scores nothing.
 #
+#   H. AN EXPLICIT WINDOW-THEME DECIDES WHICH SIDE THE TITLE BAR LANDS ON
+#      (T1019). A only ever runs the default `window-theme = auto`, where the
+#      band follows the background - so a build that ignored `dark`/`light`
+#      for the caption passed it. H launches each explicit theme AGAINST a
+#      background on the opposite side (`dark` over `#ffffff`, `light` over
+#      `#1e1e1e`) and the band must land on the THEME's side, at the exact
+#      `wash(chrome_theme.surface_*, bar_wash)` it derives. The contradiction
+#      is the control that the capture is the caption: a blank bitmap, a
+#      client-area rect, or a band that followed the background lands on the
+#      wrong side. There is no DWM-drawn title bar left to photograph: since
+#      T254 every decorated window paints its own caption band, and
+#      `DWMWA_USE_IMMERSIVE_DARK_MODE` reaches only the system frame border.
+#      That attribute and this band are the same `chrome_theme.isDark`
+#      decision (T309), which the none lane's "isDark" sweep holds together.
+#
 # The candidate that failed for a related reason is written down so the next
 # attempt does not re-derive it, and it is why G watches the card rather than
 # the window: the hero carousel's accent-outlined selected tile measured PASS
@@ -576,6 +591,61 @@ try {
                 Assert ($ratio -ge $TEXT_FLOOR) `
                     ("A/$($case.Name) caption text clears $TEXT_FLOOR" + ':1 against the band (' + ('{0:n2}' -f $ratio) + ':1, ' + (Format-Rgb $text) + ')')
                 Assert ($band.Distinct -ge 3) "A/$($case.Name) the band capture holds real content ($($band.Distinct) distinct colors)"
+            } finally {
+                Close-TestWindowPixels -Shot $shot
+            }
+        } finally {
+            Kill-RepoInstances
+        }
+    }
+
+    # =======================================================================
+    # H. An explicit window-theme decides the title bar's side (T1019)
+    # =======================================================================
+    #
+    # Each theme over a background on the OTHER side, so the band can only
+    # pass by following the theme. Expected fill is derived the way A derives
+    # it, from the OS surface `chromeBase` puts an explicit theme on.
+    foreach ($case in @(
+            @{ Name = 'dark'; Theme = 'dark'; Bg = @(0xFF, 0xFF, 0xFF); Surface = $SURFACE_DARK },
+            @{ Name = 'light'; Theme = 'light'; Bg = @(0x1E, 0x1E, 0x1E); Surface = $SURFACE_LIGHT })) {
+
+        $hex = Format-Rgb $case.Bg
+        $g = Start-Gui @("--window-theme=$($case.Theme)", "--background=$hex")
+        if (-not $g) { Write-Host "SETUP FAIL: GUI did not come up for window-theme=$($case.Theme)"; exit 1 }
+        try {
+            Assert (-not (Test-TestDesktopLeak -ProcessId $g.Pid)) "H/$($case.Name) window is NOT on the interactive desktop"
+            $m = Get-TestChromeMetrics -Window $g.Top -StripVisible $false
+            Assert ($m.CaptionH -gt 0) "H/$($case.Name) the window paints its own caption band"
+
+            $shot = Get-TestWindowPixels -Window $g.Top -Sync
+            try {
+                $band = Measure-Box $shot ($m.ClientLeft + 1) ($m.ClientTop + 1) `
+                    ($m.ClientLeft + $m.ClientW - 1) ($m.ClientTop + $m.CaptionH - 1)
+                Assert ($null -ne $band) "H/$($case.Name) the caption band captured"
+                if ($null -eq $band) { continue }
+
+                $base = if ($isDebugBuild) { Get-DebugChromeBase $case.Surface } else { , $case.Surface }
+                $want = Get-Wash $base $BAR_WASH
+                Assert ($band.Mode[0] -eq $want[0] -and $band.Mode[1] -eq $want[1] -and $band.Mode[2] -eq $want[2]) `
+                    ("H/$($case.Name) band fill is wash(surface_$($case.Theme), bar_wash) = $(Format-Rgb $want) (measured $(Format-Rgb $band.Mode))")
+
+                # The side, which is the user-visible claim. `-NegativeControl`
+                # asserts the dark-themed band followed its white background
+                # instead - the regression this section exists for - and MUST
+                # fail here.
+                $bandLight = Test-IsLight $band.Mode[0] $band.Mode[1] $band.Mode[2]
+                $wantLight = ($case.Theme -eq 'light')
+                if ($NegativeControl -and $case.Name -eq 'dark') { $wantLight = -not $wantLight }
+                Assert ($bandLight -eq $wantLight) `
+                    ("H/$($case.Name) the title bar measures $(if ($wantLight) { 'LIGHT' } else { 'DARK' }) over a " +
+                     "$(if ($case.Theme -eq 'dark') { 'light' } else { 'dark' }) background (band $(Format-Rgb $band.Mode))")
+
+                $text = if ($bandLight) { $band.Darkest } else { $band.Lightest }
+                $ratio = Get-Contrast $text $band.Mode
+                Assert ($ratio -ge $TEXT_FLOOR) `
+                    ("H/$($case.Name) caption text clears $TEXT_FLOOR" + ':1 against the band (' + ('{0:n2}' -f $ratio) + ':1, ' + (Format-Rgb $text) + ')')
+                Assert ($band.Distinct -ge 3) "H/$($case.Name) the band capture holds real content ($($band.Distinct) distinct colors)"
             } finally {
                 Close-TestWindowPixels -Shot $shot
             }
