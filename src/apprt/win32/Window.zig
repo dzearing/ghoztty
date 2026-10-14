@@ -19,6 +19,7 @@ const activity_borrow = @import("activity_borrow.zig");
 const ConfirmDialog = @import("ConfirmDialog.zig");
 const RenameDialog = @import("RenameDialog.zig");
 const BannerDialog = @import("BannerDialog.zig");
+const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
 const resize_paint = @import("resize_paint.zig");
 const Surface = @import("Surface.zig");
 const window_chord = @import("window_chord.zig");
@@ -6741,6 +6742,8 @@ fn applyCardRegions(self: *Window, elevated: bool) void {
     var slots: [MAX_DRAG_NODES]PaneSlot = undefined;
     const n = if (elevated) self.collectPaneSlots(&slots) else 0;
     const d = 2 * pane_elevation.childRadiusPx(self.scale);
+    // Glass panes put their banner strips on the desk too (T1884).
+    const banner_glass = if (elevated) self.bannerGlass() else null;
     for (0..self.tab_count) |tab| {
         var it = self.tab_trees[tab].iterator();
         while (it.next()) |entry| {
@@ -6771,7 +6774,10 @@ fn applyCardRegions(self: *Window, elevated: bool) void {
                     (@as(u64, @intFromBool(square_top)) << 1) | 1;
                 break;
             }
-            if (entry.view.surface()) |s| s.setBannerCardCorner(banner_corner);
+            if (entry.view.surface()) |s| {
+                s.setBannerCardCorner(banner_corner);
+                s.setBannerGlass(banner_glass);
+            }
             if (entry.view.card_region_key == key) continue;
             entry.view.card_region_key = key;
             if (key == 0) {
@@ -7030,6 +7036,7 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         if (self.rearrangeHeaderFor(slot.rect)) |l| {
             cards[i].head = self.rearrangeBandRgb(slot.view, pal);
             cards[i].head_bottom = l.band.bottom - area.top;
+            cards[i].head_glass = self.rearrangeBandGlass(slot.view);
         }
         if (slot.view.viewer()) |v| {
             const cc = v.cardColors();
@@ -7098,10 +7105,14 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
     const parent = self.hwnd orelse return;
     const fw = area.right - area.left;
     const fh = area.bottom - area.top;
+    // The banner strips' glass follows the same desk (T1884); a variant or
+    // a glass toggle reaches them here, a layout in `applyCardRegions`.
+    const banner_glass = if (glass) self.bannerGlass() else null;
     for (0..self.tab_count) |tab| {
         var it = self.tab_trees[tab].iterator();
         while (it.next()) |entry| {
             const s = entry.view.surface() orelse continue;
+            s.setBannerGlass(banner_glass);
             if (!glass) {
                 if (entry.view.glass_backdrop_key != 0) {
                     if (s.setPaneBackdrop(null)) entry.view.glass_backdrop_key = 0;
@@ -7143,6 +7154,24 @@ fn syncGlassBackdrops(self: *Window, slots: []const PaneSlot, area: w32.RECT, gl
             entry.view.glass_backdrop_key = key;
         }
     }
+}
+
+/// Where a glass pane's banner strip finds the desk it lies on (T1884), or
+/// null when the panes are not glass.
+fn bannerGlass(self: *Window) ?BannerOverlay.GlassDesk {
+    if (!self.paneGlass()) return null;
+    const parent = self.hwnd orelse return null;
+    const area = self.deskRect();
+    if (area.right <= area.left or area.bottom <= area.top) return null;
+    const bg = self.app.config.background;
+    return .{
+        .parent = parent,
+        .left = area.left,
+        .top = area.top,
+        .full_w = area.right - area.left,
+        .full_h = area.bottom - area.top,
+        .palette = desk_palette.Palette.forWindow(self.desk_variant, color_math.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b })),
+    };
 }
 
 fn paintDividerNode(
@@ -7248,6 +7277,16 @@ fn rearrangeBandRgb(self: *const Window, view: *const PaneView, pal: chrome_them
     return if (self.rearrangeCarried(view)) pal.accent else pal.bar;
 }
 
+/// Whether `view`'s header band is a material over the glass sheet rather
+/// than an opaque band (T1884): Mac's header is `.regularMaterial`, which on
+/// a glass pane lets the desk through. The carried pane's accent band stays
+/// solid - it is a signal, and the ink on it was chosen for the accent.
+/// When true the card paint draws the whole band, so the header paint lays
+/// no fill of its own over it.
+fn rearrangeBandGlass(self: *const Window, view: *const PaneView) bool {
+    return self.paneGlass() and !self.rearrangeCarried(view);
+}
+
 /// One pane's header: the chrome band, the grip, the title and the pop-out
 /// button.
 ///
@@ -7274,8 +7313,9 @@ fn paintRearrangeHeader(
     // The band reads as chrome, so it is painted out of the chrome palette
     // rather than the terminal's background — Mac's `.regularMaterial`. The
     // carried pane's band takes the accent instead, and everything drawn on
-    // it takes the ink that reads on the accent.
-    if (w32.CreateSolidBrush(w32.RGB(band_rgb.r, band_rgb.g, band_rgb.b))) |brush| {
+    // it takes the ink that reads on the accent. On glass the desk paint
+    // already laid the band down as a material over the sheet (T1884).
+    if (!self.rearrangeBandGlass(view)) if (w32.CreateSolidBrush(w32.RGB(band_rgb.r, band_rgb.g, band_rgb.b))) |brush| {
         defer _ = w32.DeleteObject(@ptrCast(brush));
         const band = toWinRect(l.band);
         // Elevated (T1851): the band is the top of a rounded card, and the
@@ -7294,7 +7334,7 @@ fn paintRearrangeHeader(
             _ = w32.FillRect(hdc, &lhs, brush);
             _ = w32.FillRect(hdc, &rhs, brush);
         }
-    }
+    };
 
     // The rule along the bottom is the same line the panes are separated by,
     // resolved once in `dividerConfiguredColor` so the window has ONE divider

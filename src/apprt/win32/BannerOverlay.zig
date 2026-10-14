@@ -36,6 +36,8 @@ const banner_link = @import("banner_link.zig");
 const type_ramp = @import("type_ramp.zig");
 const Surface = @import("Surface.zig");
 const color_math = @import("color_math.zig");
+const desk_palette = @import("desk_palette.zig");
+const pane_elevation = @import("pane_elevation.zig");
 const icon_button = @import("icon_button.zig");
 const icon_paint = @import("icon_button_paint.zig");
 const homedir = @import("../../os/homedir.zig");
@@ -303,6 +305,22 @@ pub const BannerOverlay = struct {
     card_h: i32 = 0,
     card_bg: color_math.Rgb = .{ .r = 0, .g = 0, .b = 0 },
     card_scale: f32 = 0,
+    /// The glass the cached card was built over (T1884): the desk it was
+    /// cut from and where on it the strip sat. A move on the desk is a new
+    /// slice of the gradient, so it is a rebuild like a resize.
+    card_glass: ?GlassDesk = null,
+    card_glass_at: [2]i32 = .{ 0, 0 },
+
+    /// The window's desk while its panes are glass (T1884), null otherwise.
+    /// Mac draws no base fill under a glass pane's banner, so the band round
+    /// the card is the pane's glass sheet and the card is a wash over it;
+    /// this window is a popup of its own over the pane's card, so it lays
+    /// that sheet down itself from the same gradient.
+    glass: ?GlassDesk = null,
+    /// The card's colour at its middle when it was last built over glass -
+    /// what the marks drawn on the card (a checkbox, secondary ink, the
+    /// collapse fade) blend against in place of the solid card fill.
+    glass_strip: ?color_math.Rgb = null,
 
     /// Lazy font cache: size class (0 base, 1–6 headings) × style bits
     /// (bold | italic<<1 | ul<<2 | code<<3).
@@ -331,6 +349,18 @@ pub const BannerOverlay = struct {
         rect: w32.RECT,
         /// Arena-owned (lives until the next setText).
         url: []const u8,
+    };
+
+    /// Where a window's desk lies (T1884): `parent` is the top-level window,
+    /// (`left`, `top`) the desk's origin in its client area, and the desk is
+    /// `full_w` x `full_h` of `palette`.
+    pub const GlassDesk = struct {
+        parent: w32.HWND,
+        left: i32,
+        top: i32,
+        full_w: i32,
+        full_h: i32,
+        palette: desk_palette.Palette,
     };
 
     pub fn create(
@@ -540,6 +570,13 @@ pub const BannerOverlay = struct {
         // A new size needs the corner region re-cut (T1851); the same size
         // leaves it alone.
         self.applyCardCorner();
+        // On glass a MOVE restyles every pixel too: the strip now sits over
+        // another part of the gradient (T1884). The kept blit is the old
+        // slice, so repaint.
+        if (self.glassAt()) |at| {
+            if (self.card_glass != null and !std.meta.eql(at, self.card_glass_at))
+                _ = w32.InvalidateRect(self.hwnd, null, 0);
+        }
     }
 
     /// The strip's natural height at `scale` in a `pane_w`-wide pane slot,
@@ -580,6 +617,32 @@ pub const BannerOverlay = struct {
         if (diameter == self.card_corner) return;
         self.card_corner = diameter;
         self.applyCardCorner();
+    }
+
+    /// Put the strip on the window's glass (T1884), or (null) back on the
+    /// pane's solid background. Idempotent; a change repaints.
+    pub fn setGlassDesk(self: *BannerOverlay, desk: ?GlassDesk) void {
+        if (std.meta.eql(self.glass, desk)) return;
+        self.glass = desk;
+        if (desk == null) self.glass_strip = null;
+        _ = w32.InvalidateRect(self.hwnd, null, 0);
+    }
+
+    /// The strip's top-left on the desk, or null without glass (or a window
+    /// that cannot be measured).
+    fn glassAt(self: *const BannerOverlay) ?[2]i32 {
+        const g = self.glass orelse return null;
+        var wr: w32.RECT = undefined;
+        if (w32.GetWindowRect(self.hwnd, &wr) == 0) return null;
+        var pt: w32.POINT = .{ .x = wr.left, .y = wr.top };
+        if (w32.ScreenToClient(g.parent, &pt) == 0) return null;
+        return .{ pt.x - g.left, pt.y - g.top };
+    }
+
+    /// The colour the card's marks blend against: the card over glass when
+    /// it was last built there, else the solid card fill.
+    fn stripRgb(self: *const BannerOverlay) color_math.Rgb {
+        return self.glass_strip orelse self.bg_rgb;
     }
 
     fn applyCardCorner(self: *BannerOverlay) void {
@@ -743,10 +806,11 @@ pub const BannerOverlay = struct {
                 return @intFromFloat(@max(0.0, @min(255.0, @round(v))));
             }
         };
+        const s = self.stripRgb();
         return w32.RGB(
-            blend.ch(c.r, self.bg_rgb.r, t),
-            blend.ch(c.g, self.bg_rgb.g, t),
-            blend.ch(c.b, self.bg_rgb.b, t),
+            blend.ch(c.r, s.r, t),
+            blend.ch(c.g, s.g, t),
+            blend.ch(c.b, s.b, t),
         );
     }
 
@@ -898,7 +962,8 @@ pub const BannerOverlay = struct {
         const top = y + @divTrunc(line_h - side, 2);
         const radius = self.px(3.0);
 
-        const fill_ref = if (checked) self.overStrip(GREEN, 0.16) else self.bg;
+        const strip = self.stripRgb();
+        const fill_ref = if (checked) self.overStrip(GREEN, 0.16) else w32.RGB(strip.r, strip.g, strip.b);
         const border_ref = if (checked)
             self.overStrip(GREEN, 0.55)
         else
@@ -1795,6 +1860,8 @@ pub const BannerOverlay = struct {
     /// than the window (T149): every settled paint has the card backdrop
     /// covering every pixel of the client already.
     fn fillBand(self: *BannerOverlay, hdc: w32.HDC, rect: w32.RECT) void {
+        // On glass the band is the pane's sheet, not a colour (T1884).
+        if (self.glassAt()) |at| if (self.fillGlass(hdc, rect, at)) return;
         const brush = w32.CreateSolidBrush(w32.RGB(
             self.pane_bg_rgb.r,
             self.pane_bg_rgb.g,
@@ -1804,6 +1871,56 @@ pub const BannerOverlay = struct {
         var r = rect;
         _ = w32.FillRect(hdc, &r, brush);
     }
+
+    /// Lay the glass sheet over `rect` (client coords) from the strip's
+    /// slice of the desk at `at` (T1884). False when no buffer could be made,
+    /// and the caller falls back to the flat fill.
+    fn fillGlass(self: *BannerOverlay, hdc: w32.HDC, rect: w32.RECT, at: [2]i32) bool {
+        const g = self.glass orelse return false;
+        const w = rect.right - rect.left;
+        const h = rect.bottom - rect.top;
+        if (w <= 0 or h <= 0) return true;
+        const dib = Dib32.create(hdc, w, h) orelse return false;
+        defer dib.destroy();
+        pane_elevation.glassSheetRegion(dib.pixels, @intCast(w), @intCast(h), at[0] + rect.left, at[1] + rect.top, g.full_w, g.full_h, g.palette, self.pane_bg_rgb);
+        _ = w32.BitBlt(hdc, rect.left, rect.top, w, h, dib.dc, 0, 0, w32.SRCCOPY);
+        return true;
+    }
+
+    /// A top-down 32bpp DIB section selected into its own memory DC.
+    const Dib32 = struct {
+        dc: w32.HDC,
+        bmp: *anyopaque,
+        pixels: []u32,
+
+        fn create(hdc: w32.HDC, w: i32, h: i32) ?Dib32 {
+            var bmi = std.mem.zeroes(w32.BITMAPINFO);
+            bmi.bmiHeader.biSize = @sizeOf(w32.BITMAPINFOHEADER);
+            bmi.bmiHeader.biWidth = w;
+            bmi.bmiHeader.biHeight = -h; // top-down
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 32;
+            const mem_dc = w32.CreateCompatibleDC(hdc) orelse return null;
+            var bits: ?*anyopaque = null;
+            const bmp = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse {
+                _ = w32.DeleteDC(mem_dc);
+                return null;
+            };
+            const raw = bits orelse {
+                _ = w32.DeleteObject(bmp);
+                _ = w32.DeleteDC(mem_dc);
+                return null;
+            };
+            _ = w32.SelectObject(mem_dc, bmp);
+            const n: usize = @intCast(w * h);
+            return .{ .dc = mem_dc, .bmp = bmp, .pixels = @as([*]u32, @ptrCast(@alignCast(raw)))[0..n] };
+        }
+
+        fn destroy(self: Dib32) void {
+            _ = w32.DeleteDC(self.dc);
+            _ = w32.DeleteObject(self.bmp);
+        }
+    };
 
     /// The card's rounded shape as a GDI region (client coords), for
     /// clipping content to it. Null when the region cannot be created —
@@ -1826,9 +1943,12 @@ pub const BannerOverlay = struct {
         const w = @max(client.right - client.left, 1);
         const h = @max(client.bottom - client.top, 1);
 
+        const glass_at = self.glassAt();
         const stale = self.card_dc == null or self.card_w != w or self.card_h != h or
-            !std.meta.eql(self.card_bg, self.pane_bg_rgb) or self.card_scale != self.scale;
-        if (stale) self.buildCardSurface(hdc, w, h);
+            !std.meta.eql(self.card_bg, self.pane_bg_rgb) or self.card_scale != self.scale or
+            !std.meta.eql(self.card_glass, if (glass_at != null) self.glass else null) or
+            (glass_at != null and !std.meta.eql(glass_at.?, self.card_glass_at));
+        if (stale) self.buildCardSurface(hdc, w, h, glass_at);
 
         if (self.card_dc) |mem| {
             _ = w32.BitBlt(hdc, 0, 0, w, h, mem, 0, 0, w32.SRCCOPY);
@@ -1837,7 +1957,7 @@ pub const BannerOverlay = struct {
         if (self.bg_brush) |brush| _ = w32.FillRect(hdc, &client, brush);
     }
 
-    fn buildCardSurface(self: *BannerOverlay, hdc: w32.HDC, w: i32, h: i32) void {
+    fn buildCardSurface(self: *BannerOverlay, hdc: w32.HDC, w: i32, h: i32, glass_at: ?[2]i32) void {
         self.releaseCardSurface();
 
         var bmi = std.mem.zeroes(w32.BITMAPINFO);
@@ -1862,11 +1982,26 @@ pub const BannerOverlay = struct {
 
         const pixels = @as([*]u32, @ptrCast(@alignCast(raw)));
         const count: usize = @intCast(w * h);
-        card.render(
-            pixels[0..count],
-            card.Metrics.init(w, h, self.scale),
-            self.pane_bg_rgb,
-        );
+        const metrics = card.Metrics.init(w, h, self.scale);
+        self.card_glass = null;
+        self.glass_strip = null;
+        if (glass_at) |at| {
+            // Glass (T1884): the pane's sheet over this slice of the desk,
+            // and the card as a wash over that.
+            const g = self.glass.?;
+            pane_elevation.glassSheetRegion(pixels[0..count], @intCast(w), @intCast(h), at[0], at[1], g.full_w, g.full_h, g.palette, self.pane_bg_rgb);
+            const mid = pixels[@as(usize, @intCast(@divTrunc(h, 2) * w + @divTrunc(w, 2)))];
+            card.renderGlassOn(pixels[0..count], metrics, self.pane_bg_rgb);
+            self.glass_strip = card.glassFillColor(.{
+                .r = @intCast((mid >> 16) & 0xFF),
+                .g = @intCast((mid >> 8) & 0xFF),
+                .b = @intCast(mid & 0xFF),
+            }, self.pane_bg_rgb);
+            self.card_glass = g;
+            self.card_glass_at = at;
+        } else {
+            card.render(pixels[0..count], metrics, self.pane_bg_rgb);
+        }
 
         self.card_dc = mem_dc;
         self.card_bmp = bmp;
@@ -1901,6 +2036,33 @@ pub const BannerOverlay = struct {
         const fade_top = card_top + @divTrunc(card_h * 45, 100);
         const fade_h = card_bottom - fade_top;
         if (fade_h <= 0) return;
+
+        // On glass the card is not one colour (T1884): fade into the card's
+        // own pixels, ramped row by row, instead of into a flat fill.
+        if (self.card_glass != null) if (self.card_bits) |bits| {
+            const w = client.right - client.left;
+            if (w > 0 and w == self.card_w and fade_top >= 0 and card_bottom <= self.card_h) {
+                const dib = Dib32.create(hdc, w, fade_h) orelse return;
+                defer dib.destroy();
+                const uw: usize = @intCast(w);
+                for (0..@intCast(fade_h)) |row| {
+                    const a: u32 = @min(255, (row * 255) / @as(usize, @intCast(fade_h)));
+                    const src = bits[(@as(usize, @intCast(fade_top)) + row) * uw ..][0..uw];
+                    for (dib.pixels[row * uw ..][0..uw], src) |*p, s| {
+                        // Premultiplied BGRA of the card pixel at alpha a.
+                        const r = (((s >> 16) & 0xFF) * a) / 255;
+                        const g = (((s >> 8) & 0xFF) * a) / 255;
+                        const b = ((s & 0xFF) * a) / 255;
+                        p.* = (a << 24) | (r << 16) | (g << 8) | b;
+                    }
+                }
+                _ = w32.AlphaBlend(hdc, client.left, fade_top, w, fade_h, dib.dc, 0, 0, w, fade_h, .{
+                    .SourceConstantAlpha = 255,
+                    .AlphaFormat = w32.AC_SRC_ALPHA,
+                });
+                return;
+            }
+        };
 
         var bmi = std.mem.zeroes(w32.BITMAPINFO);
         bmi.bmiHeader.biSize = @sizeOf(w32.BITMAPINFOHEADER);
@@ -1957,7 +2119,7 @@ pub const BannerOverlay = struct {
             // Shade from the CARD's fill, not the pane background: the
             // chevron sits on the card, so that is the surface its hover has
             // to lift off.
-            const base = card.fillColor(self.pane_bg_rgb);
+            const base = self.glass_strip orelse card.fillColor(self.pane_bg_rgb);
             const d = icon_button.fillDelta(state, !color_math.isLight(self.pane_bg_rgb));
             const color = w32.RGB(
                 icon_button.shadeChannel(base.r, d),

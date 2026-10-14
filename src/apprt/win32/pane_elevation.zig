@@ -106,12 +106,23 @@ pub const Card = struct {
     /// own antialiased curve rather than a square laid over it.
     head: ?color_math.Rgb = null,
     head_bottom: i32 = 0,
+    /// The head band is a material over the glass sheet rather than an opaque
+    /// band (T1884): with glass on, its rows are `head` at `HEAD_MATERIAL`
+    /// over the sheet, so the desk reads through it. Mac's rearrange header is
+    /// `.regularMaterial` over the pane's card, which on a glass pane is the
+    /// sheet. A viewer's nav bar keeps its own opaque band.
+    head_glass: bool = false,
 
     /// The card's colour on row `y`, or null for the style's (glass-able)
     /// terminal fill.
     pub fn colorAt(self: Card, y: i32) ?color_math.Rgb {
         if (self.head) |h| if (y < self.head_bottom) return h;
         return self.fill;
+    }
+
+    /// Whether row `y` is a glass head row under `glass` (T1884).
+    pub fn glassHeadAt(self: Card, y: i32, glass: bool) bool {
+        return glass and self.head_glass and self.head != null and y < self.head_bottom;
     }
 };
 
@@ -200,6 +211,15 @@ pub fn shadows(is_light: bool, scale: f32) [2]Shadow {
 /// while text keeps its contrast (T1833).
 pub const GLASS_TINT: f32 = 0.4;
 
+/// How much of the header band's colour a glass pane's rearrange header
+/// keeps over the sheet (T1884) - the stand-in for Mac's `.regularMaterial`,
+/// which is mostly its own colour with the backdrop's light carried through.
+/// Strong enough that the chrome ink chosen against the band still reads.
+pub const HEAD_MATERIAL: f32 = 0.7;
+
+/// What a glass head row covers of the desk: the sheet, then the material.
+pub const HEAD_COVER: f32 = 1 - (1 - GLASS_TINT) * (1 - HEAD_MATERIAL);
+
 /// Mac `PaneGlass`'s pre-Liquid-Glass shadow (`radius: 9, y: 6`, black 20%
 /// dark / 6% light). SwiftUI casts it from the sheet's own alpha, so it
 /// reaches the desk at the tint's strength.
@@ -286,28 +306,70 @@ pub fn glassMix(desk: u32, tint: color_math.Rgb, t: f32) u32 {
         mixChannel(desk & 0xFF, srgb_to_linear[tint.b], t);
 }
 
-/// `glassMix` at `GLASS_TINT` for one tint, and the coverage a sheet leaves,
-/// as byte tables (T1856): the sheet covers every pixel of a glass card's
-/// interior, and a table lookup per channel is the same answer as the mix.
+/// A glass header row's colour over one desk pixel (T1884): the sheet, then
+/// the band's material over it.
+pub fn glassHeadMix(desk: u32, fill: color_math.Rgb, head: color_math.Rgb) u32 {
+    return glassMix(glassMix(desk, fill, GLASS_TINT), head, HEAD_MATERIAL);
+}
+
+/// Fill `out` (`w` x `h`, `0x00RRGGBB`) with the glass sheet over the part of
+/// a `full_w` x `full_h` desk whose top-left is at (`rx`, `ry`) - what a
+/// glass pane shows at those pixels before anything is drawn on it (T1884).
+/// The pane banner is a window of its own over the pane's card, so it lays
+/// this down under its floating card; past the desk is the plain tint.
+pub fn glassSheetRegion(
+    out: []u32,
+    w: usize,
+    h: usize,
+    rx: i32,
+    ry: i32,
+    full_w: i32,
+    full_h: i32,
+    pal: desk_palette.Palette,
+    tint: color_math.Rgb,
+) void {
+    std.debug.assert(out.len >= w * h);
+    const fw: f32 = @floatFromInt(@max(full_w, 1));
+    const fh: f32 = @floatFromInt(@max(full_h, 1));
+    const lut = GlassLut.init(tint, GLASS_TINT, GLASS_TINT);
+    for (0..h) |row| {
+        const y = @as(f32, @floatFromInt(ry + @as(i32, @intCast(row)))) + 0.5;
+        for (0..w) |col| {
+            const x = @as(f32, @floatFromInt(rx + @as(i32, @intCast(col)))) + 0.5;
+            out[row * w + col] = lut.mix(pal.at(
+                std.math.clamp(x, 0, fw),
+                std.math.clamp(y, 0, fh),
+                fw,
+                fh,
+            ).pack());
+        }
+    }
+}
+
+/// `glassMix` at `t` for one tint, and the coverage a sheet leaves, as byte
+/// tables (T1856): the sheet covers every pixel of a glass card's interior,
+/// and a table lookup per channel is the same answer as the mix.
 const GlassLut = struct {
     r: [256]u32,
     g: [256]u32,
     b: [256]u32,
     cover: [256]u32,
 
-    fn init(tint: color_math.Rgb) GlassLut {
+    /// `t` is the mix; `cover_t` what the layer covers of the desk's
+    /// coverage, which for a head band is the sheet AND the material.
+    fn init(tint: color_math.Rgb, t: f32, cover_t: f32) GlassLut {
         var l: GlassLut = undefined;
         for (0..256) |i| {
             const c: u32 = @intCast(i);
-            l.r[i] = mixChannel(c, srgb_to_linear[tint.r], GLASS_TINT) << 16;
-            l.g[i] = mixChannel(c, srgb_to_linear[tint.g], GLASS_TINT) << 8;
-            l.b[i] = mixChannel(c, srgb_to_linear[tint.b], GLASS_TINT);
-            l.cover[i] = desk_palette.withCoverage(0, desk_palette.coverOver(desk_palette.coverage(c << 24), GLASS_TINT));
+            l.r[i] = mixChannel(c, srgb_to_linear[tint.r], t) << 16;
+            l.g[i] = mixChannel(c, srgb_to_linear[tint.g], t) << 8;
+            l.b[i] = mixChannel(c, srgb_to_linear[tint.b], t);
+            l.cover[i] = desk_palette.withCoverage(0, desk_palette.coverOver(desk_palette.coverage(c << 24), cover_t));
         }
         return l;
     }
 
-    /// `glassMix(p, tint, GLASS_TINT)`.
+    /// `glassMix(p, tint, t)`.
     fn mix(l: *const GlassLut, p: u32) u32 {
         return l.r[(p >> 16) & 0xFF] | l.g[(p >> 8) & 0xFF] | l.b[p & 0xFF];
     }
@@ -588,7 +650,7 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
     const rim_w = RIM_DIP * style.scale;
     // The inner edge of the band an antialiased rim pixel can sit in.
     const edge: i32 = @as(i32, @intFromFloat(@ceil(rim_w))) + 1;
-    const lut: ?GlassLut = if (style.glass) GlassLut.init(style.fill) else null;
+    const lut: ?GlassLut = if (style.glass) GlassLut.init(style.fill, GLASS_TINT, GLASS_TINT) else null;
 
     for (cards, 0..) |c, ci| {
         const f = Frame.of(c, radius);
@@ -601,12 +663,20 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
         // layout mid-split - has nothing to fill, and the interior clamp
         // below needs x0 <= x1 (T1912).
         if (x1 <= x0 or y1 <= y0) continue;
+        // A glass head band's material, over the sheet (T1884).
+        const head_lut: ?GlassLut = if (style.glass and c.head_glass and c.head != null)
+            GlassLut.init(c.head.?, HEAD_MATERIAL, HEAD_COVER)
+        else
+            null;
         var y = y0;
         while (y < y1) : (y += 1) {
             // This row's card colour (T1851): a header or nav band, a
-            // viewer's page, or the terminal - glass only for the last.
+            // viewer's page, or the terminal - glass only for the last,
+            // and for a header band that is a material over the sheet.
             const own = c.colorAt(y);
-            const glass = style.glass and own == null;
+            const glass_head = c.glassHeadAt(y, style.glass);
+            const glass = (style.glass and own == null) or glass_head;
+            const cover_t: f32 = if (glass_head) HEAD_COVER else GLASS_TINT;
             const row_rgb = own orelse style.fill;
             const fill: Rgbf = .{
                 .r = @floatFromInt(row_rgb.r),
@@ -631,7 +701,9 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
             const in1: i32 = if (sides) std.math.clamp(c.right - edge, in0, x1) else x1;
             if (in1 > in0) {
                 const span = buf[row + @as(usize, @intCast(in0)) .. row + @as(usize, @intCast(in1))];
-                if (glass) {
+                if (glass_head) {
+                    for (span) |*p| p.* = head_lut.?.mix(lut.?.mix(p.*)) | head_lut.?.cover[p.* >> 24];
+                } else if (glass) {
                     for (span) |*p| p.* = lut.?.sheet(p.*);
                 } else @memset(span, fill_px | 0xFF00_0000);
             }
@@ -649,7 +721,12 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
                 // The pixel is card, of which `outer - inner` is rim.
                 const ring = outer - inner;
                 // Glass: the sheet's own colour over THIS pixel of desk.
-                const base = if (glass) unpack(lut.?.mix(buf[i])) else fill;
+                const base = if (glass_head)
+                    unpack(head_lut.?.mix(lut.?.mix(buf[i])))
+                else if (glass)
+                    unpack(lut.?.mix(buf[i]))
+                else
+                    fill;
                 const rim_px = if (glass) Rgbf.lerp(base, rim_rgb, rim_a) else rim_c;
                 const col = if (outer > 0)
                     Rgbf.lerp(base, rim_px, ring / outer)
@@ -661,7 +738,7 @@ pub fn paintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Ca
                 // sheet covers only its tint's worth of it.
                 if (glass) buf[i] = desk_palette.withCoverage(
                     buf[i],
-                    desk_palette.coverOver(desk_palette.coverage(under), outer * GLASS_TINT),
+                    desk_palette.coverOver(desk_palette.coverage(under), outer * cover_t),
                 );
             }
         }
@@ -860,6 +937,60 @@ test "T1912: paintCards skips a card whose rect misses the buffer instead of ass
         .scale = 1,
     });
     for (buf) |p| try testing.expectEqual(@as(u32, 0x123456), p);
+}
+
+test "T1884: a glass pane's header band lets the desk through; a solid one and a viewer's bar do not" {
+    const w = 100;
+    const h = 80;
+    const head: color_math.Rgb = .{ .r = 44, .g = 46, .b = 52 };
+    const fill: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
+    const card: Card = .{ .left = 10, .top = 10, .right = 90, .bottom = 70, .head = head, .head_bottom = 30, .head_glass = true };
+    // Two desks, so "the desk reads through" is a difference, not a value.
+    const desks = [_]u32{ packRgb(20, 60, 120), packRgb(20, 110, 100) };
+    var out: [2]u32 = undefined;
+    for (desks, 0..) |d, k| {
+        var buf: [w * h]u32 = undefined;
+        @memset(&buf, d);
+        paintCards(&buf, w, h, &.{card}, .{ .fill = fill, .is_light = false, .scale = 1, .glass = true });
+        // A pixel inside the band, well clear of the rim.
+        out[k] = rgbOf(buf[20 * w + 50]);
+        try testing.expectEqual(glassHeadMix(d, fill, head), out[k]);
+        // The band is mostly its own colour...
+        const m = unpack(out[k]);
+        try testing.expect(@abs(m.r - 44) < 20 and @abs(m.g - 46) < 30 and @abs(m.b - 52) < 40);
+    }
+    // ...and the desk under it still shows.
+    try testing.expect(out[0] != out[1]);
+
+    // Without glass, or for a band that is not glass (a viewer's nav bar),
+    // the band is the opaque colour it always was.
+    for ([_]struct { glass: bool, head_glass: bool }{
+        .{ .glass = false, .head_glass = true },
+        .{ .glass = true, .head_glass = false },
+    }) |case| {
+        var buf: [w * h]u32 = undefined;
+        @memset(&buf, desks[0]);
+        var c = card;
+        c.head_glass = case.head_glass;
+        paintCards(&buf, w, h, &.{c}, .{ .fill = fill, .is_light = false, .scale = 1, .glass = case.glass });
+        try testing.expectEqual(packRgb(44, 46, 52), rgbOf(buf[20 * w + 50]));
+    }
+}
+
+test "T1884: glassSheetRegion is the sheet over the desk at those pixels" {
+    const pal = desk_palette.Palette.ocean(false);
+    const tint: color_math.Rgb = .{ .r = 30, .g = 30, .b = 30 };
+    var out: [6 * 4]u32 = undefined;
+    glassSheetRegion(&out, 6, 4, 100, 40, 800, 600, pal, tint);
+    for (0..4) |row| for (0..6) |col| {
+        const x: f32 = @as(f32, @floatFromInt(100 + col)) + 0.5;
+        const y: f32 = @as(f32, @floatFromInt(40 + row)) + 0.5;
+        try testing.expectEqual(glassMix(pal.at(x, y, 800, 600).pack(), tint, GLASS_TINT), out[row * 6 + col]);
+    };
+    // Different places on the desk give different glass.
+    var far: [1]u32 = undefined;
+    glassSheetRegion(&far, 1, 1, 700, 500, 800, 600, pal, tint);
+    try testing.expect(far[0] != out[0]);
 }
 
 test "T1833: glassMix keeps 40% of the tint over the desk, in linear light" {
@@ -1126,7 +1257,9 @@ fn refPaintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Car
             // This row's card colour (T1851): a header or nav band, a
             // viewer's page, or the terminal - glass only for the last.
             const own = c.colorAt(y);
-            const glass = style.glass and own == null;
+            const glass_head = c.glassHeadAt(y, style.glass);
+            const glass = (style.glass and own == null) or glass_head;
+            const cover_t: f32 = if (glass_head) HEAD_COVER else GLASS_TINT;
             const row_rgb = own orelse style.fill;
             const fill: Rgbf = .{
                 .r = @floatFromInt(row_rgb.r),
@@ -1150,7 +1283,12 @@ fn refPaintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Car
                 if (sides and x >= c.left + edge and x < c.right - edge) {
                     // A glass sheet hides the desk only by its tint; a solid
                     // card hides it entirely (T1852).
-                    buf[i] = if (glass)
+                    buf[i] = if (glass_head)
+                        desk_palette.withCoverage(
+                            glassHeadMix(buf[i], style.fill, c.head.?),
+                            desk_palette.coverOver(desk_palette.coverage(buf[i]), HEAD_COVER),
+                        )
+                    else if (glass)
                         desk_palette.withCoverage(
                             glassMix(buf[i], style.fill, GLASS_TINT),
                             desk_palette.coverOver(desk_palette.coverage(buf[i]), GLASS_TINT),
@@ -1168,7 +1306,12 @@ fn refPaintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Car
                 // The pixel is card, of which `outer - inner` is rim.
                 const ring = outer - inner;
                 // Glass: the sheet's own colour over THIS pixel of desk.
-                const base = if (glass) unpack(glassMix(buf[i], style.fill, GLASS_TINT)) else fill;
+                const base = if (glass_head)
+                    unpack(glassHeadMix(buf[i], style.fill, c.head.?))
+                else if (glass)
+                    unpack(glassMix(buf[i], style.fill, GLASS_TINT))
+                else
+                    fill;
                 const rim_px = if (glass) Rgbf.lerp(base, rim_rgb, rim_a) else rim_c;
                 const col = if (outer > 0)
                     Rgbf.lerp(base, rim_px, ring / outer)
@@ -1180,7 +1323,7 @@ fn refPaintCards(buf: []u32, w: usize, h: usize, cards: []const Card, style: Car
                 // sheet covers only its tint's worth of it.
                 if (glass) buf[i] = desk_palette.withCoverage(
                     buf[i],
-                    desk_palette.coverOver(desk_palette.coverage(under), outer * GLASS_TINT),
+                    desk_palette.coverOver(desk_palette.coverage(under), outer * cover_t),
                 );
             }
         }
@@ -1209,6 +1352,12 @@ test "T1856: the table-driven paint matches the direct rasteriser bit for bit" {
             .{ .left = 105, .top = 15, .right = 280, .bottom = 90, .fill = .{ .r = 250, .g = 250, .b = 245 }, .head = .{ .r = 230, .g = 230, .b = 235 }, .head_bottom = 40 },
             .{ .left = 15, .top = 105, .right = 33, .bottom = 120 },
             .{ .left = 48, .top = 105, .right = 245, .bottom = 200 },
+        },
+        // A glass rearrange header over a terminal, and one off the top
+        // edge (T1884).
+        &.{
+            .{ .left = 15, .top = 15, .right = 121, .bottom = 175, .head = .{ .r = 44, .g = 46, .b = 52 }, .head_bottom = 45, .head_glass = true },
+            .{ .left = 136, .top = -20, .right = 245, .bottom = 175, .head = .{ .r = 236, .g = 236, .b = 240 }, .head_bottom = 12, .head_glass = true },
         },
     };
     const glows = [_]Glow{ .{ .card = 1, .level = 0.6 }, .{ .card = 0, .level = 0.4 } };

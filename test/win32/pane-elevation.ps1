@@ -346,6 +346,137 @@ foreach ($case in @(
 }
 
 # ---------------------------------------------------------------------------
+# Run 1b1: the bands above a glass pane are glass too (T1884; Mac 8174d96fc
+# drops the banner strip's base fill, and its header is `.regularMaterial`
+# over the card). One window per mode, black terminal, rearrange mode on and a
+# banner set. Probed:
+#   HEADER - the parent's own paint (WM_PRINTCLIENT), mid-band, three
+#     quarters across: solid, it is the chrome bar colour; glass,
+#     it is 70% of that bar over the sheet over the desk beside the card, and
+#     so no longer the bar.
+#   BANNER - the strip's own paint: the margin round its floating card is the
+#     pane's black solid, or on glass the sheet over the desk beside it (60%
+#     of the desk); and the card itself carries the desk's blue through it.
+# ---------------------------------------------------------------------------
+function ConvertTo-Lin([double]$v) { $x = $v / 255.0; if ($x -le 0.04045) { $x / 12.92 } else { [math]::Pow(($x + 0.055) / 1.055, 2.4) } }
+function ConvertTo-Srgb([double]$l) { $s = if ($l -le 0.0031308) { $l * 12.92 } else { 1.055 * [math]::Pow($l, 1 / 2.4) - 0.055 }; [int][math]::Round([math]::Min([math]::Max($s, 0), 1) * 255) }
+# pane_elevation.glassHeadMix on a black terminal: the sheet (60% of the desk),
+# then the band's colour at HEAD_MATERIAL (0.7) over it, in linear light.
+function Get-GlassHeadExpect($desk, $bar) {
+    $sheet = Get-GlassExpect $desk
+    $out = @()
+    $bc = @($bar.R, $bar.G, $bar.B)
+    for ($k = 0; $k -lt 3; $k++) { $out += ConvertTo-Srgb (0.3 * (ConvertTo-Lin $sheet[$k]) + 0.7 * (ConvertTo-Lin $bc[$k])) }
+    return $out
+}
+function Get-ExpectDistance($c, $want) { [math]::Abs($c.R - $want[0]) + [math]::Abs($c.G - $want[1]) + [math]::Abs($c.B - $want[2]) }
+
+function Get-BandProbes([string]$label, [string[]]$extra) {
+    $g = Start-Gui $label ($common + $extra + @('--keybind=ctrl+shift+f9=toggle_rearrange_mode'))
+    $script:launched += $script:GhozttyTestDesktopPids
+    $top = $g.Top
+    $i = Get-InsetPx $g.Scale
+    $p0 = $g.Panes[0]
+    Start-Sleep -Milliseconds 600
+    $sent = Send-TestKeys -Window $top -Target ([IntPtr]$p0.Hwnd) -Modifiers ctrl, shift -Key f9
+    Assert $sent "$label`: toggle_rearrange_mode delivered"
+    $p1 = $null
+    for ($t = 0; $t -lt 15; $t++) {
+        Start-Sleep -Milliseconds 200
+        $p1 = @(Get-Panes $top)[0]
+        if ($p1.Top -gt $p0.Top) { break }
+    }
+    Assert ($p1.Top -gt $p0.Top) "$label`: rearrange mode grew a header band above the pane ($($p0.Top) -> $($p1.Top))"
+    $r = [pscustomobject]@{ Head = $null; HeadDesk = $null; Margin = $null; MarginDesk = $null; Card = $null }
+    $shot = Get-TestWindowPixels -Window $top -Sync
+    try {
+        if ((Get-TestDistinctColors -Shot $shot) -ge 4) {
+            # Half a 24 DIP band above the pane, three quarters across it: past
+            # the title, short of the pop-out button. Not measured from the
+            # pane's old top - entering the mode moves the card too.
+            $hy = [int]$p1.Top - (Round-Away (12 * $g.Scale))
+            $r.Head = Get-TestPixel -Shot $shot -X ([int]($p1.Right - ($p1.Right - $p1.Left) * 0.25)) -Y $hy
+            $r.HeadDesk = Get-TestPixel -Shot $shot -X ([int]$p1.Right + $i + 2) -Y $hy
+        }
+    } finally { Close-TestWindowPixels $shot }
+    # The pane's own id is the banner's target (`--target` is required).
+    $targets = @(Get-TestWindowPaneTargets -Window $top -Exe $exe)
+    Assert ($targets.Count -ge 1) "$label`: the window lists its pane"
+    if ($targets.Count -ge 1) { & $exe +set-banner "--target=$($targets[0])" 'T1884 glass band probe' | Out-Null }
+    $ov = $null
+    for ($t = 0; $t -lt 20 -and $null -eq $ov; $t++) {
+        Start-Sleep -Milliseconds 200
+        $ov = @(Get-TestWindows -ProcessId $g.App.Pid -Class 'GhozttyBannerOverlay' | Where-Object Visible) | Select-Object -First 1
+    }
+    Assert ($null -ne $ov) "$label`: the banner strip is up"
+    if ($null -ne $ov) {
+        Start-Sleep -Milliseconds 500
+        $my = [int](($ov.Top + $ov.Bottom) / 2)
+        $os = Get-TestWindowPixels -Window ([IntPtr]$ov.Hwnd) -Sync
+        try {
+            $r.Margin = Get-TestPixel -Shot $os -X ([int]$ov.Right - 3) -Y $my
+            # Low in the card, past the sheen, short of the bottom shade.
+            $r.Card = Get-TestPixel -Shot $os -X ([int]($ov.Left + ($ov.Right - $ov.Left) * 0.5)) -Y ([int]($ov.Top + ($ov.Bottom - $ov.Top) * 0.62))
+        } finally { Close-TestWindowPixels $os }
+        $ts = Get-TestWindowPixels -Window $top -Sync
+        try { $r.MarginDesk = Get-TestPixel -Shot $ts -X ([int]$ov.Right + $i + 2) -Y $my } finally { Close-TestWindowPixels $ts }
+    }
+    foreach ($k in 'Head', 'HeadDesk', 'Margin', 'MarginDesk', 'Card') {
+        $c = $r.$k
+        if ($null -ne $c) { Write-Host "      $label $k = $($c.R),$($c.G),$($c.B)" }
+    }
+    Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) "$label`: no crash"
+    Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
+    return $r
+}
+
+$solidBands = Get-BandProbes 'solid bands' @('--macos-pane-glass=false')
+$glassBands = Get-BandProbes 'glass bands' @()
+$black = [pscustomobject]@{ R = 0; G = 0; B = 0 }
+if ($null -eq $solidBands.Margin -or $null -eq $solidBands.Head) {
+    $script:skipped++; Write-Host 'SKIP  solid band probes: no capture'
+} else {
+    Assert ((Get-ColorDistance $solidBands.Margin $black) -le 3) 'solid bands: the margin round the banner card is the black pane background'
+}
+if ($null -eq $glassBands.Margin -or $null -eq $glassBands.MarginDesk -or -not (Test-DeskPixel $glassBands.MarginDesk)) {
+    $script:skipped++; Write-Host 'SKIP  glass banner probes: no capture or no desk beside the strip'
+} else {
+    $want = Get-GlassExpect $glassBands.MarginDesk
+    $d = Get-ExpectDistance $glassBands.Margin $want
+    Write-Host "      glass banner margin vs the sheet over the desk beside it ($($want -join ',')): off by $d"
+    if ($NegativeControl) {
+        Write-Host 'NEGATIVE CONTROL: asserting the banner margin is the black pane - this run MUST fail'
+        Assert ((Get-ColorDistance $glassBands.Margin $black) -le 3) 'glass bands: the banner margin is solid black (negative control)'
+    } else {
+        Assert (Test-GlassPixel $glassBands.Margin) 'glass bands: the margin round the banner card is the desk through glass, not the black pane'
+    }
+    Assert ($d -le 12) 'glass bands: the banner margin is the same sheet the pane is - no seam against the desk beside it'
+    if ($null -ne $glassBands.Card -and $null -ne $solidBands.Card) {
+        Assert (($glassBands.Card.B -ge $glassBands.Card.R + 4) -and ((Get-ColorDistance $glassBands.Card $solidBands.Card) -ge 6)) 'glass bands: the banner card is a wash over the glass, so the desk tints it'
+    }
+}
+if ($null -eq $glassBands.Head -or $null -eq $solidBands.Head -or $null -eq $glassBands.HeadDesk -or -not (Test-DeskPixel $glassBands.HeadDesk)) {
+    $script:skipped++; Write-Host 'SKIP  glass header probes: no capture or no desk beside the band'
+} else {
+    # The bar is mostly what the material is, so on a dark desk the glass
+    # band sits only a few levels off the bar: the claim is that it matches
+    # the glass model and is NEARER to it than to the opaque bar - which can
+    # only be told apart when the model itself is off the bar.
+    $bar = $solidBands.Head
+    $want = Get-GlassHeadExpect $glassBands.HeadDesk $bar
+    $sep = Get-ExpectDistance $bar $want
+    $dm = Get-ExpectDistance $glassBands.Head $want
+    $db = Get-ColorDistance $glassBands.Head $bar
+    Write-Host "      glass header: model (70% bar over the sheet over the desk beside it) = $($want -join ','), bar = $($bar.R),$($bar.G),$($bar.B); off the model by $dm, off the bar by $db (model-to-bar $sep)"
+    if ($sep -lt 3) {
+        $script:skipped++; Write-Host "SKIP  glass header: this desk is within $sep of the bar - glass and solid cannot be told apart here"
+    } else {
+        Assert ($dm -le 6) 'glass bands: the rearrange header is the bar as a material over the glass sheet'
+        Assert ($dm -lt $db) 'glass bands: the rearrange header is nearer the glass model than the opaque bar'
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Run 1b2: a translucent window's desk takes background-opacity (T1852; Mac
 # `PaneDesk` is `.opacity(backgroundOpacity)`). The desk is blitted with its
 # own premultiplied alpha, so the window's own WM_PRINTCLIENT paint reads the

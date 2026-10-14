@@ -390,7 +390,7 @@ const BLACK = Frgb{ .r = 0, .g = 0, .b = 0 };
 /// `0x00RRGGBB`; `bg` is the pane's own background (what the band would
 /// otherwise show).
 pub fn render(pixels: []u32, m: Metrics, bg: Rgb) void {
-    renderImpl(pixels, m, bg, false);
+    renderImpl(pixels, m, bg, .flat);
 }
 
 /// `render` over whatever `pixels` already holds instead of a flat `bg`:
@@ -400,18 +400,44 @@ pub fn render(pixels: []u32, m: Metrics, bg: Rgb) void {
 /// same on the elevated style's gradient desk as on the terminal background
 /// (T1850).
 pub fn renderOn(pixels: []u32, m: Metrics, bg: Rgb) void {
-    renderImpl(pixels, m, bg, true);
+    renderImpl(pixels, m, bg, .solid_on);
 }
 
-fn renderImpl(pixels: []u32, m: Metrics, bg: Rgb, on_existing: bool) void {
+/// `renderOn` for a glass pane (T1884), where the band under the banner is
+/// the pane's glass sheet: the card is Mac's translucent wash OVER whatever
+/// `pixels` hold rather than an opaque `fillColor(bg)`, so the desk reads
+/// through the card as well as around it. The wash leans by `bg`'s
+/// lightness, the way `fillColor`'s does, so text chosen against the pane
+/// background keeps reading.
+pub fn renderGlassOn(pixels: []u32, m: Metrics, bg: Rgb) void {
+    renderImpl(pixels, m, bg, .glass_on);
+}
+
+/// The card's colour over a glass sheet pixel `under` (T1884): what
+/// `renderGlassOn` puts at the card's flat middle, for the marks the banner
+/// shades against the card.
+pub fn glassFillColor(under: Rgb, bg: Rgb) Rgb {
+    const light = color_math.isLight(bg);
+    const c = Frgb.from(under).over(if (light) BLACK else WHITE, if (light) FILL_DARKEN else FILL_LIGHTEN);
+    const p = c.pack();
+    return .{ .r = @intCast((p >> 16) & 0xFF), .g = @intCast((p >> 8) & 0xFF), .b = @intCast(p & 0xFF) };
+}
+
+const Mode = enum { flat, solid_on, glass_on };
+
+fn renderImpl(pixels: []u32, m: Metrics, bg: Rgb, mode: Mode) void {
     if (m.w <= 0 or m.h <= 0) return;
     const w: usize = @intCast(m.w);
     const h: usize = @intCast(m.h);
     if (pixels.len < w * h) return;
 
+    const on_existing = mode != .flat;
     const bg_f = Frgb.from(bg);
     const bg_packed = bg_f.pack();
     const fill_f = Frgb.from(fillColor(bg));
+    const light = color_math.isLight(bg);
+    const wash_to = if (light) BLACK else WHITE;
+    const wash_a: f32 = if (light) FILL_DARKEN else FILL_LIGHTEN;
     const card = m.card();
 
     // Shadow shape: the card, pushed down. Blurred by a smoothstep of its
@@ -470,7 +496,7 @@ fn renderImpl(pixels: []u32, m: Metrics, bg: Rgb, on_existing: bool) void {
                 c = c.over(BLACK, SHADOW_ALPHA * cov_shadow * (1.0 - cov_card));
             }
             if (cov_card > 0.0) {
-                c = c.over(fill_f, cov_card);
+                c = if (mode == .glass_on) c.over(wash_to, wash_a * cov_card) else c.over(fill_f, cov_card);
                 const sheen_a = gradient(&SHEEN_STOPS, sheen_e.atRow(x, sheen_row));
                 if (sheen_a > 0.0) c = c.over(WHITE, sheen_a * cov_card);
                 if (sheen_dark > 0.0) c = c.over(BLACK, sheen_dark * cov_card);
@@ -571,6 +597,33 @@ test "T1850: renderOn keeps the backdrop where the card does not reach, and draw
     try testing.expectEqual(at(&flat, m, 100, 40), at(&on, m, 100, 40));
     // The shadow under the card darkens the backdrop it falls on.
     try testing.expect(lum(at(&on, m, 100, 70)) < lum(before[70 * 200 + 100]));
+}
+
+test "T1884: renderGlassOn's card is a wash over the sheet, so the desk reads through the card too" {
+    const m = Metrics.init(200, 80, 1.0);
+    // Two backdrops that differ only in blue.
+    var a = [_]u32{0x203060} ** (200 * 80);
+    var b = [_]u32{0x2030A0} ** (200 * 80);
+    renderGlassOn(&a, m, DARK);
+    renderGlassOn(&b, m, DARK);
+    const pa = at(&a, m, 100, 40);
+    const pb = at(&b, m, 100, 40);
+    // Deep inside the card, the difference under it survives the card...
+    try testing.expect((pb & 0xFF) > (pa & 0xFF) + 40);
+    // ...and the card is lighter than the sheet it lies on (a dark pane's
+    // wash is white), by about the wash plus the sheen.
+    try testing.expect(lum(pa) > lum(0x203060));
+    // Over the pane background itself it is the solid card, give or take
+    // rounding.
+    var on_bg = [_]u32{Frgb.from(DARK).pack()} ** (200 * 80);
+    var flat: [200 * 80]u32 = undefined;
+    renderGlassOn(&on_bg, m, DARK);
+    render(&flat, m, DARK);
+    const d = @abs(@as(i32, @intCast(lum(at(&on_bg, m, 100, 40)))) - @as(i32, @intCast(lum(at(&flat, m, 100, 40)))));
+    try testing.expect(d <= 2);
+    // And the colour it reports for the card's middle is that wash.
+    const f = glassFillColor(.{ .r = 0x20, .g = 0x30, .b = 0x60 }, DARK);
+    try testing.expect(f.r > 0x20 and f.b > 0x60);
 }
 
 test "T1850: glassPanel is fillColor over a backdrop of bg, and lets a desk show through" {

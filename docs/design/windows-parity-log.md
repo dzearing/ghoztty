@@ -36027,3 +36027,29 @@ moved to T1814.
   rail. Its negative control fails, as it must. Seven new unit tests for the
   scroll pass. All eight pane-sidebar GUI harnesses, the four floor lanes,
   P1-P3 and the harness floor were run (results in the task file).
+## 2026-10-13 — T1884: the bands above a glass pane are glass too
+
+- **What.** With glass panes on (the default), the strip a pane banner sits in
+  and the header rearrange mode adds above each pane no longer paint solid
+  blocks over the glass. The banner's margin is the pane's own glass, and its
+  floating card is a light wash over it, so the backdrop colour reads through
+  both (Mac 8174d96fc dropped the strip's base fill). The rearrange header is
+  the chrome bar colour as a material over the glass, Mac's
+  `.regularMaterial`. A pane being dragged keeps its solid accent header. Solid
+  panes and the flat style are unchanged.
+- **How.** The desk painter now draws a glass header band itself
+  (`Card.head_glass`: 70% bar over the sheet, bit-exact between the fast and
+  reference painters), and the window skips its opaque fill there. The banner
+  is a popup of its own, so the window hands it where the desk lies
+  (`BannerOverlay.GlassDesk`) and it renders the sheet over its own slice of
+  the gradient (`pane_elevation.glassSheetRegion`) under a card that is a wash
+  over that sheet (`banner_card.renderGlassOn`). Marks drawn on the card and the
+  collapse fade use the glass card's colour.
+- **Validation.** pane-elevation.ps1 ALL PASS (95), with a new glass-bands run:
+  the banner margin is the same glass as the pane (4 levels off the model), the
+  card is tinted by the desk, and the header matches the glass model exactly
+  and is nearer it than the opaque bar. Its negative control fails, as it
+  must. pane-banner.ps1 ALL PASS (150), now pinned to solid panes for its
+  exact-colour checks. New unit tests in `pane_elevation.zig` and
+  `banner_card.zig`. Four floor lanes, the harness floor and the due rearrange,
+  pane and audit harnesses were run (results in the task file).

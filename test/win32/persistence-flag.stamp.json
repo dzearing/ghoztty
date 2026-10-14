@@ -1,10 +1,11 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-10-13T15:36:54-07:00",
-    "commit":  "227eee31b",
+    "generated":  "2026-10-13T16:56:02-07:00",
+    "commit":  "27c6a0a70",
     "uncommitted":  [
-                        "test/win32/pane-sidebar-scroll.ps1"
+                        "test/win32/pane-banner.ps1",
+                        "test/win32/pane-elevation.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -218,10 +219,10 @@
                   "test/win32/palette-grid-size.ps1":  "503b63cbcb1bc6763c2d2800245923385ce4a4b5bb5a8e1649e5ddfe48f265b1",
                   "test/win32/palette-jump.ps1":  "ee11e403b39036691fbaf1f12aab1820f9a98ca96fc0d9a04f94e50200c1d7a7",
                   "test/win32/palette-order.ps1":  "731a1befc660ba2625618e809ab7e30eb0106959586260c3d78eedc6da12bced",
-                  "test/win32/pane-banner.ps1":  "2b56b49bffa27cb8bf7f3e918eaf839ee033d1bd21673171ca68a70e55933d2e",
+                  "test/win32/pane-banner.ps1":  "97847ad5f2dc741510074aa86a2edbe47313689bf0f0778a2dbf9711e5d25aaf",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "e3388a98b380901071b2050f9afa8cdaae4765ab1f4413b92ae26fd0edc8ca6f",
-                  "test/win32/pane-elevation.ps1":  "6041a0246ae098f61f2c926f932b5f26c6bc5bef1cfe59c56fc76cb26d0207bf",
+                  "test/win32/pane-elevation.ps1":  "86e0ef8e8c0a80337607804ce892304044b3c509b753301b5c89fd6fcc1c8d5f",
                   "test/win32/pane-grab-handle.ps1":  "750e331e6cffdad15489ff1023167b296f6e171d5e08e4be2dc0b6cdac858011",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "0c722d4f0cb52d3567b2d070362fa2cf825aafc952a81b1bcf01768203181161",

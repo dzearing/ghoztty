@@ -1506,6 +1506,12 @@ pub fn setBannerCardCorner(self: *Surface, diameter: i32) void {
     if (self.banner_overlay) |b| b.setCardCorner(diameter);
 }
 
+/// Put the banner strip on the window's glass, or (null) take it off - T1884.
+/// See `BannerOverlay.setGlassDesk`.
+pub fn setBannerGlass(self: *Surface, desk: ?BannerOverlay.GlassDesk) void {
+    if (self.banner_overlay) |b| b.setGlassDesk(desk);
+}
+
 /// Re-derive the banner strip colors from the pane's effective background
 /// (per-pane tint or config background). Cheap and idempotent; called on
 /// set and from Window.updatePaneBanners so config reloads re-color live.

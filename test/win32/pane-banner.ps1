@@ -348,7 +348,11 @@ try {
     # log.debug is compiled out - 6f3 then skips rather than lying.
     $errlog = Join-Path $env:TEMP 'ghoztty-pane-banner-stderr.log'
     Remove-Item $errlog -ErrorAction SilentlyContinue
-    $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments @('--background=#101014', '--session-persistence=false')
+    # Solid panes (`--macos-pane-glass=false`): every card oracle below is an
+    # exact colour over the flat pane background, and on glass (the default)
+    # the strip shows the desk instead (T1884). pane-elevation.ps1's glass
+    # bands run measures that.
+    $app = Start-OnTestDesktop -Exe $exe -StdErr $errlog -Arguments @('--background=#101014', '--session-persistence=false', '--macos-pane-glass=false')
     Start-Sleep -Seconds 3
     if ($app.Process -and $app.Process.HasExited) { Write-Host 'SETUP FAIL: GUI died at launch'; exit 1 }
     $appPid = $app.Pid
