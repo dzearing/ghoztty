@@ -449,3 +449,12 @@ as the digest that showed them.
 - Copy a pane as a picture (new angle on copy-as-image: the whole pane card with corners and gradient)
 - How long it has been working (busy pane's sidebar row shows elapsed time)
 - A busy light that costs nothing (border light drawn by the compositor, not by redrawing the terminal)
+
+## 2026-10-14
+
+- The sidebar sorts by who needs you (one toggle orders sidebar rows: waiting on a question, then busy, then idle, across every window)
+- Double-click a divider to even it out (equal halves; a second double-click restores your sizes)
+- Nudge a divider from the keyboard, with snap points (key-driven resize that pauses at halves and thirds)
+- A gradient you can keep (new angle on the window backdrop: reroll the random gradient or pin it across restarts)
+- Drag a picture out of an image pane (new angle on dragging out of a pane: the image itself into chat, email or Explorer)
+- A divider that never trails the mouse (panes show a clipped last frame during a drag and rewrap once on release)
