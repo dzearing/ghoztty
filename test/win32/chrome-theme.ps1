@@ -294,7 +294,10 @@ function Restore-Accent($Raw) {
 function Start-Gui([string[]]$ExtraArgs) {
     # NOT `$args`: that name is a read-only automatic in a PowerShell function
     # and assigning it is a terminating error, not a shadow.
-    $argv = @('--session-persistence=false') + $ExtraArgs
+    # Solid panes: this script scores the chrome BAR's exact colour, and with
+    # glass panes (the default) the caption band is the desk instead (T1886;
+    # pane-elevation.ps1 run 1b0 scores that).
+    $argv = @('--session-persistence=false', '--macos-pane-glass=false') + $ExtraArgs
     $script:app = Start-OnTestDesktop -Exe $exe -Arguments $argv -StdErr $errlog
     Start-Sleep -Seconds 3
     if ($script:app.Process -and $script:app.Process.HasExited) { return $null }

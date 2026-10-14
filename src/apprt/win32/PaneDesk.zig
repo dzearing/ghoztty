@@ -147,6 +147,18 @@ pub const Backdrop = struct {
     w: i32,
     h: i32,
     gen: u32,
+
+    /// The same desk from row `rows` down: the content area's slice when
+    /// the desk also runs up under a glass title bar (T1886). `dc` is the
+    /// whole desk's and is not moved.
+    pub fn below(self: Backdrop, rows: i32) ?Backdrop {
+        if (rows <= 0) return self;
+        if (rows >= self.h) return null;
+        var out = self;
+        out.pixels = self.pixels[@as(usize, @intCast(rows * self.w))..];
+        out.h = self.h - rows;
+        return out;
+    }
 };
 
 /// The desk for a `w` x `h` content area, rendering it if it is not cached.

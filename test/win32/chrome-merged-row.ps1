@@ -129,6 +129,10 @@ try {
     $app = Start-OnTestDesktop -Exe $exe -Arguments @(
         '--config-default-files=false',
         '--session-persistence=false',
+        # Flat panes: the row is measured from the pane's top edge and scanned
+        # for the bar colour - the elevated style's margin and glass chrome
+        # (T1831/T1886) move both, and pane-elevation.ps1 scores those.
+        '--macos-pane-style=flat',
         '--confirm-close-surface=false',
         '--background=#000000',
         '--window-show-tab-bar=always'

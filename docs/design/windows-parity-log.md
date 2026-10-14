@@ -36078,3 +36078,21 @@ moved to T1814.
   harnesses were run (results in the task file). NOT RUN: the on-screen
   composite, because the user is present and off-desktop surfaces can't be read
   back. Filed as T1915; the nav bar material is T1916.
+## 2026-10-13 — T1886: the title bar and tab strip are glass over a glass window
+
+- **What.** With glass panes on (the default), the window's gradient now runs
+  up under the title bar and the tab strip, as Mac's does under its cleared
+  titlebar (8174d96fc). The tabs, the "+" and the caption buttons draw over it,
+  and the title keeps its 4.5:1 floor. Solid panes, the flat style, translucent
+  windows and hero tabs keep the solid bar.
+- **How.** With glass, `deskRect` is the whole client area, so the gradient is
+  laid out over the window like Mac's. The desk blit is clipped off the chrome
+  rows. The caption (now a DIB) and the strip fill their rows from the same
+  cached desk through `chrome_glass.fillBand`. That function lays the bar over
+  the band in 10% steps only where the title would miss 4.5:1, which is never
+  with the default theme. The pane sidebar's slice is offset by the chrome
+  height (`Backdrop.below`).
+- **Validation.** pane-elevation.ps1 ALL PASS (113): a new run 1b0 covers the
+  glass caption, the glass merged tab row and the solid chrome. The title ink
+  measured 12.6:1 over the band. New `chrome_glass.zig` unit tests. Floor lanes
+  and the due harnesses were run (results in the task file).

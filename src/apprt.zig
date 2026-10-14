@@ -317,6 +317,9 @@ test {
     // The desk's palettes - the ocean and a window's own seeded gradient
     // (T1832) - same deal.
     _ = @import("apprt/win32/desk_palette.zig");
+    // The glass title bar's desk band and its contrast scrim (T1886), same
+    // deal.
+    _ = @import("apprt/win32/chrome_glass.zig");
 
     // Pure win32 rearrange-mode drop resolution — which of the five drops a
     // drag point means, across a SET of candidate windows (T1528), same

@@ -152,6 +152,7 @@ const pane_elevation = @import("pane_elevation.zig");
 const busy_light = @import("busy_light.zig");
 const PaneDesk = @import("PaneDesk.zig");
 const desk_palette = @import("desk_palette.zig");
+const chrome_glass = @import("chrome_glass.zig");
 const rearrange_header = @import("rearrange_header.zig");
 const pane_drop = @import("pane_drop.zig");
 const pane_relocate = @import("pane_relocate.zig");
@@ -2283,24 +2284,67 @@ fn invalidateContentArea(self: *Window) void {
 /// chrome, the pane sidebar's column INCLUDED - Mac runs the gradient under
 /// the sidebar, which then paints its own slice of this same desk.
 /// `surfaceRect` is the part the grid may use; this is the part the desk does.
+///
+/// With glass panes it is the whole client area (T1886): Mac runs the
+/// gradient up under a cleared titlebar, so the gradient is laid out over the
+/// whole window and the caption band and tab strip paint their slice of it
+/// (`glassChromeBand`) instead of the bar colour.
 pub fn deskRect(self: *const Window) w32.RECT {
     const hwnd = self.hwnd orelse return .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
     var rect: w32.RECT = undefined;
     if (w32.GetClientRect(hwnd, &rect) == 0) {
         return .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
     }
-    rect.top += self.chromeHeight();
+    rect.top += self.deskTop();
     return rect;
 }
 
-/// The desk under `deskRect`, for the pane sidebar to paint its slice of
-/// (T1850). Null in the flat style, where there is no desk.
+/// Where the desk starts in the client area: under the chrome, or at the
+/// very top when the chrome is glass over it (T1886).
+fn deskTop(self: *const Window) i32 {
+    return if (self.paneGlass()) 0 else self.chromeHeight();
+}
+
+/// The desk under the content area, for the pane sidebar to paint its slice
+/// of (T1850): it starts at the sidebar's own top, below the chrome, even
+/// when the desk runs up under the chrome (T1886). Null in the flat style,
+/// where there is no desk.
 pub fn deskBackdrop(self: *Window) ?PaneDesk.Backdrop {
     if (self.paneStyle() != .elevated) return null;
     const area = self.deskRect();
     const bg = self.app.config.background;
     const is_light = color_math.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b });
-    return self.pane_desk.backdrop(area.right - area.left, area.bottom - area.top, is_light, self.desk_variant);
+    const d = self.pane_desk.backdrop(area.right - area.left, area.bottom - area.top, is_light, self.desk_variant) orelse return null;
+    return d.below(self.chromeHeight() - self.deskTop());
+}
+
+/// Fill `pixels` (`w` x `h`, top-down) with the desk under the chrome rows
+/// starting at client row `y` - the glass title bar (T1886) - with the bar
+/// laid over it only where the title would miss its 4.5:1 floor
+/// (`chrome_glass`). False when the chrome is not glass, and the caller
+/// paints the solid bar as before.
+fn glassChromeBand(self: *Window, pixels: []u32, w: i32, h: i32, y: i32, pal: chrome_theme.Palette) bool {
+    if (!self.paneGlass()) return false;
+    // A hero tab's content is the carousel, not the desk.
+    if (self.tab_count > 0 and self.tab_hero_active[self.active_tab]) return false;
+    if (w <= 0 or h <= 0) return false;
+    const area = self.deskRect();
+    if (y < area.top) return false;
+    const bg = self.app.config.background;
+    const is_light = color_math.isLight(.{ .r = bg.r, .g = bg.g, .b = bg.b });
+    const d = self.pane_desk.backdrop(area.right - area.left, area.bottom - area.top, is_light, self.desk_variant) orelse return false;
+    _ = chrome_glass.fillBand(
+        pixels,
+        @intCast(w),
+        @intCast(h),
+        d.pixels,
+        @intCast(d.w),
+        @intCast(d.h),
+        @intCast(y - area.top),
+        pal.text,
+        pal.bar,
+    );
+    return true;
 }
 
 /// Give the window its own gradient, or (null) the ocean back (T1832). Only
@@ -7080,7 +7124,16 @@ fn paintPaneDesk(self: *Window, hdc: w32.HDC) void {
         };
         nl += 1;
     }
-    self.pane_desk.paint(self.desk_hdc orelse hdc, area.left, area.top, w, h, cards[0..n], .{
+    // A glass desk runs up under the chrome (T1886), whose painters lay
+    // their own slice of it under the tabs and the title: the blit stops at
+    // the chrome's bottom edge so it never paints over them.
+    const desk_dc = self.desk_hdc orelse hdc;
+    const saved = if (area.top < self.chromeHeight()) w32.SaveDC(desk_dc) else 0;
+    defer if (saved != 0) {
+        _ = w32.RestoreDC(desk_dc, saved);
+    };
+    if (saved != 0) _ = w32.IntersectClipRect(desk_dc, area.left, self.chromeHeight(), area.right, area.bottom);
+    self.pane_desk.paint(desk_dc, area.left, area.top, w, h, cards[0..n], .{
         .fill = fill,
         .is_light = color_math.isLight(fill),
         .scale = self.scale,
@@ -9703,12 +9756,26 @@ fn paintCaption(self: *Window, hdc_screen: w32.HDC) void {
 
     const mem_dc = w32.CreateCompatibleDC(hdc_screen) orelse return;
     defer _ = w32.DeleteDC(mem_dc);
-    const mem_bmp = w32.CreateCompatibleBitmap(hdc_screen, client_w, cap_h) orelse return;
+    // A DIB section, so a glass band (T1886) can be written as pixels; GDI
+    // draws the title and the buttons on top of the same memory.
+    var bits: ?*anyopaque = null;
+    const bmi = w32.BITMAPINFO{ .bmiHeader = .{
+        .biWidth = client_w,
+        .biHeight = -cap_h, // top-down
+        .biPlanes = 1,
+        .biBitCount = 32,
+        .biCompression = w32.BI_RGB,
+    } };
+    const mem_bmp = w32.CreateDIBSection(mem_dc, &bmi, w32.DIB_RGB_COLORS, &bits, null, 0) orelse return;
     const old_bmp = w32.SelectObject(mem_dc, mem_bmp);
     defer {
         _ = w32.SelectObject(mem_dc, old_bmp);
         _ = w32.DeleteObject(mem_bmp);
     }
+    const pixels: []u32 = if (bits) |p|
+        @as([*]u32, @ptrCast(@alignCast(p)))[0..@intCast(client_w * cap_h)]
+    else
+        return;
 
     // Same source as the strip's band: `chromePalette().bar`. Not a second
     // constant and no longer a second derivation — a caption that shaded from
@@ -9720,10 +9787,10 @@ fn paintCaption(self: *Window, hdc_screen: w32.HDC) void {
     const cap_g: u8 = pal.bar.g;
     const cap_b: u8 = pal.bar.b;
 
-    var band = w32.RECT{ .left = 0, .top = 0, .right = client_w, .bottom = cap_h };
-    if (w32.CreateSolidBrush(w32.RGB(cap_r, cap_g, cap_b))) |brush| {
-        _ = w32.FillRect(mem_dc, &band, brush);
-        _ = w32.DeleteObject(brush);
+    // With glass panes the band is the desk under it (T1886); written as
+    // pixels either way, so nothing GDI draws next can race the fill.
+    if (!self.glassChromeBand(pixels, client_w, cap_h, 0, pal)) {
+        @memset(pixels, (@as(u32, cap_r) << 16) | (@as(u32, cap_g) << 8) | cap_b);
     }
 
     // --- Title ---
@@ -10256,8 +10323,12 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
     // reads these pixels back, and GDI writes are not guaranteed visible to a
     // direct read without a GdiFlush. Writing them ourselves removes the
     // ordering hazard instead of documenting it.
-    const bar_packed: u32 = (@as(u32, bar_r) << 16) | (@as(u32, bar_g) << 8) | bar_b;
-    @memset(pixels, bar_packed);
+    // With glass panes the strip is the desk under it (T1886), and the tabs
+    // composite over that instead of over the bar.
+    if (!self.glassChromeBand(pixels, client_w, bar_h, self.tabBarTop(), pal)) {
+        const bar_packed: u32 = (@as(u32, bar_r) << 16) | (@as(u32, bar_g) << 8) | bar_b;
+        @memset(pixels, bar_packed);
+    }
 
     // --- Select font and set text mode ---
     var old_font: ?*anyopaque = null;

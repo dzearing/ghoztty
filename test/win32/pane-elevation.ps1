@@ -44,6 +44,10 @@
 #   blitted premultiplied at half strength; toggled opaque on the same window
 #   it reads full strength.
 #
+#   GLASS CHROME (T1886). With glass panes the caption band and the tab
+#   strip are the desk the gradient runs up under, not the bar colour, with
+#   the title still at 4.5:1; solid panes keep the bar.
+#
 #   FOCUS GLOW (T1834). Of two cards, only the focused one lights the desk
 #   just past its edge, and a goto_split moves the light to the other card.
 #
@@ -342,6 +346,92 @@ foreach ($case in @(
         $black = [pscustomobject]@{ R = 0; G = 0; B = 0 }
         Assert (((Get-ColorDistance $gs.Left $black) -le 6) -and ((Get-ColorDistance $gs.Right $black) -le 6)) "$($case.Label): $($case.Why) keeps the pane the solid terminal black"
     }
+    Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
+}
+
+# ---------------------------------------------------------------------------
+# Run 1b0: the title bar over glass panes is the desk (T1886; Mac 8174d96fc
+# runs the gradient up under a cleared titlebar). The parent's own paint
+# (WM_PRINTCLIENT) of the chrome rows - the caption band and, under it, the
+# strip - four samples each near the top edge and the chrome's bottom edge,
+# where no tab, title or button sits:
+#   solid - every sample is the chrome bar: one neutral grey, the same
+#     everywhere.
+#   glass - every sample is the ocean desk (blue over red), the left and
+#     right ends differ because the gradient does, and the chrome's bottom
+#     row joins the desk margin just under it with no step. The title still
+#     reads: its brightest ink is 4.5:1 over the band under it. Run once with
+#   the strip forced on (`--window-show-tab-bar=always`): the tabs composite
+#   over the same desk.
+# ---------------------------------------------------------------------------
+function Get-WcagLum($c) {
+    $f = { param($v) $s = $v / 255.0; if ($s -le 0.04045) { $s / 12.92 } else { [math]::Pow(($s + 0.055) / 1.055, 2.4) } }
+    return 0.2126 * (& $f $c.R) + 0.7152 * (& $f $c.G) + 0.0722 * (& $f $c.B)
+}
+function Get-ChromeProbe([IntPtr]$top, $pane, [double]$scale) {
+    $cs = Get-ClientScreen $top
+    $chromeBottom = [int]($pane.Top - (Get-MarginPx $scale) - (Get-InsetPx $scale))
+    $w = $cs.Right - $cs.Left
+    $shot = Get-TestWindowPixels -Window $top -Sync
+    try {
+        if ((Get-TestDistinctColors -Shot $shot) -lt 4) { return $null }
+        $ys = @(([int]$cs.Top + 1), ($chromeBottom - 2))
+        # Left of the caption buttons, right of where tabs and the title run.
+        $xs = @(([int]$cs.Left + [int]($w * 0.45)), ([int]$cs.Left + [int]($w * 0.55)), ([int]$cs.Left + [int]($w * 0.62)), ([int]$cs.Left + [int]($w * 0.68)))
+        $samples = @()
+        foreach ($y in $ys) { foreach ($x in $xs) { $samples += , (Get-TestPixel -Shot $shot -X $x -Y $y) } }
+        # The two ends of the band's top row, inside the window's edges.
+        $leftEnd = Get-TestPixel -Shot $shot -X ([int]$cs.Left + 4) -Y ([int]$cs.Top + 1)
+        $rightEnd = Get-TestPixel -Shot $shot -X ([int]$cs.Left + [int]($w * 0.68)) -Y ([int]$cs.Top + 1)
+        # Across the chrome's bottom edge, in the right margin's column.
+        $mx = [int]($pane.Right + [math]::Floor(((Get-MarginPx $scale) + (Get-InsetPx $scale)) / 2))
+        $above = Get-TestPixel -Shot $shot -X $mx -Y ($chromeBottom - 1)
+        $below = Get-TestPixel -Shot $shot -X $mx -Y ($chromeBottom + 1)
+        # The title's ink: the brightest pixel in the left part of the caption
+        # band (dark theme: light text).
+        $ink = $null; $inkLum = -1.0
+        for ($y = [int]$cs.Top + 4; $y -lt [int]$cs.Top + [int](26 * $scale); $y += 1) {
+            for ($x = [int]$cs.Left + 8; $x -lt [int]$cs.Left + [int]($w * 0.4); $x += 1) {
+                $c = Get-TestPixel -Shot $shot -X $x -Y $y
+                if ($null -eq $c) { continue }
+                $l = Get-WcagLum $c
+                if ($l -gt $inkLum) { $inkLum = $l; $ink = $c }
+            }
+        }
+        return [pscustomobject]@{ Samples = $samples; LeftEnd = $leftEnd; RightEnd = $rightEnd; Above = $above; Below = $below; Ink = $ink }
+    } finally { Close-TestWindowPixels $shot }
+}
+foreach ($case in @(
+        @{ Label = 'glass chrome'; Args = @(); Glass = $true },
+        @{ Label = 'glass strip'; Args = @('--window-show-tab-bar=always'); Glass = $true },
+        @{ Label = 'solid chrome'; Args = @('--macos-pane-glass=false'); Glass = $false })) {
+    $g = Start-Gui $case.Label ($common + $case.Args + @('--title=T1886 glass caption probe'))
+    $launched += $script:GhozttyTestDesktopPids
+    Start-Sleep -Milliseconds 800
+    $cp = Get-ChromeProbe $g.Top $g.Panes[0] $g.Scale
+    if ($null -eq $cp) {
+        $script:skipped++; Write-Host "SKIP  $($case.Label): empty capture"
+    } else {
+        $fmt = ($cp.Samples | ForEach-Object { "$($_.R),$($_.G),$($_.B)" }) -join ' '
+        Write-Host "      $($case.Label) samples: $fmt; ends $($cp.LeftEnd.R),$($cp.LeftEnd.G),$($cp.LeftEnd.B) / $($cp.RightEnd.R),$($cp.RightEnd.G),$($cp.RightEnd.B); edge $($cp.Above.R),$($cp.Above.G),$($cp.Above.B) | $($cp.Below.R),$($cp.Below.G),$($cp.Below.B)"
+        if ($case.Glass) {
+            $allDesk = @($cp.Samples | Where-Object { -not (Test-DeskPixel $_) }).Count -eq 0
+            if ($NegativeControl) { $allDesk = -not $allDesk }
+            Assert $allDesk "$($case.Label): the caption band and the strip are the desk, not the bar"
+            Assert ((Get-ColorDistance $cp.LeftEnd $cp.RightEnd) -ge 6) "$($case.Label): the band's two ends differ - the gradient runs under it"
+            Assert ((Get-ColorDistance $cp.Above $cp.Below) -le 9) "$($case.Label): the chrome's bottom row meets the desk under it with no step"
+            $bandLum = Get-WcagLum $cp.Samples[0]
+            $inkLum = Get-WcagLum $cp.Ink
+            $ratio = ([math]::Max($inkLum, $bandLum) + 0.05) / ([math]::Min($inkLum, $bandLum) + 0.05)
+            Write-Host ("      title ink {0},{1},{2} over band: {3:N2}:1" -f $cp.Ink.R, $cp.Ink.G, $cp.Ink.B, $ratio)
+            Assert ($ratio -ge 4.5) "$($case.Label): the title reads at 4.5:1 over the desk"
+        } else {
+            $s0 = $cp.Samples[0]
+            $same = @($cp.Samples | Where-Object { (Get-ColorDistance $_ $s0) -gt 3 }).Count -eq 0
+            Assert ($same -and -not (Test-DeskPixel $s0)) 'solid chrome: the caption band and the strip are the one bar colour'
+        }
+    }
+    Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) "$($case.Label): no crash"
     Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 }
 

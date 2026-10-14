@@ -191,6 +191,9 @@ try {
         # only and swallows the error, so `=off` silently leaves persistence ON
         # and this run restores the previous one's layout (T137).
         '--session-persistence=false',
+        # Solid panes: the band is scanned as the chrome BAR's colour; with glass
+        # panes (the default) it is the desk instead (T1886).
+        '--macos-pane-glass=false',
         '--background=#000000',
         # No strip: the row under the caption must be TERMINAL background, or
         # the band's bottom edge has no color boundary to scan for (the strip
@@ -505,7 +508,7 @@ try {
     Start-Sleep -Milliseconds 600
     $proc2 = Start-OnTestDesktop -Exe $exe -Arguments @(
         '--config-default-files=false', '--session-persistence=false',
-        '--background=#000000', '--window-show-tab-bar=never'
+        '--background=#000000', '--window-show-tab-bar=never', '--macos-pane-glass=false'
     )
     $h = Wait-TestWindow -ProcessId $proc2.Pid -Class 'GhozttyWindow' -TimeoutMs 25000
     if ($h -eq [IntPtr]::Zero) { throw 'SETUP FAIL: relaunch for the action section produced no window' }
