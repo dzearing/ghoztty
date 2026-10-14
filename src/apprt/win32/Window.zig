@@ -6548,6 +6548,8 @@ pub fn updateDimOverlays(self: *Window) void {
     self.updatePaneBanners();
     // ...and so does the read-only badge (T445).
     self.updateReadonlyBadges();
+    // ...and the bell frame (T1919).
+    self.updateBellBorders();
     // ...and the key-state pill (T446).
     self.updateKeyStateIndicators();
     // ...and the pane sidebar's selection and roster (T1828).
@@ -6721,6 +6723,20 @@ pub fn updateKeyStateIndicators(self: *Window) void {
 /// triggers as the dim overlays and the banners, which is what keeps a badge
 /// glued to its pane across a divider drag, a tab switch, a DPI change and a
 /// window move. A pane that is not read-only pays one bool test.
+/// Glue, fade or hide every pane's `bell-features = border` frame (T1919).
+/// Rides the dim-overlay triggers and every bell mark change.
+pub fn updateBellBorders(self: *Window) void {
+    if (self.closing) return;
+    for (0..self.tab_count) |tab| {
+        var it = self.tab_trees[tab].iterator();
+        while (it.next()) |entry| {
+            // A viewer has no terminal to ring.
+            const surface = entry.view.surface() orelse continue;
+            surface.updateBellBorder();
+        }
+    }
+}
+
 pub fn updateReadonlyBadges(self: *Window) void {
     for (0..self.tab_count) |tab| {
         var it = self.tab_trees[tab].iterator();
@@ -9263,10 +9279,12 @@ fn tabBellPrefix(self: *const Window, i: usize) []const u16 {
     return bell_math.titlePrefix(self.app.config.@"bell-features".title, surface.bell);
 }
 
-/// A pane's bell mark moved (T1890): the sidebar dot, and - when that pane is
-/// the one a tab is titled after - the window title and its tab's label.
+/// A pane's bell mark moved (T1890): the sidebar dot, the pane's frame (T1919),
+/// and - when that pane is the one a tab is titled after - the window title
+/// and its tab's label.
 pub fn onPaneBellChanged(self: *Window) void {
     self.updateWindowTitle(); // also re-syncs the sidebar
+    self.updateBellBorders();
     if (self.tab_count > 0) log.info("bell title prefix={} tab={d}", .{
         self.tabBellPrefix(self.active_tab).len > 0,
         self.active_tab,

@@ -1,16 +1,14 @@
 {
     "guard":  "bell-features",
     "script":  "test/win32/bell-features.ps1",
-    "generated":  "2026-10-13T23:38:17-07:00",
-    "commit":  "3568e00af",
+    "generated":  "2026-10-14T08:16:54-07:00",
+    "commit":  "612bfcf4c",
     "uncommitted":  [
-                        "src/apprt/win32/bell_audio.zig",
-                        "src/apprt/win32/bell_math.zig",
-                        "test/win32/bell-features.ps1"
+                        "src/apprt/win32/bell_math.zig"
                     ],
     "files":  {
                   "src/apprt/win32/bell_audio.zig":  "62fac1f75e392cebde66811ad0f7824931292e5ea76bac307847a6a854f40512",
-                  "src/apprt/win32/bell_math.zig":  "91617b142e0eec45add53b84d4d9d0cbea1cf76decde2a320e48ce13e4677b99",
+                  "src/apprt/win32/bell_math.zig":  "5df36ed1e5391ddcb531e6defbca5307066e028546336ae371fe619ecdffce6d",
                   "test/win32/bell-features.ps1":  "8e4282148bae932f6cf792520c381559de087a3527901e48111a334e2fae7990"
               }
 }

@@ -4404,6 +4404,19 @@ $GuardTable = @(
             'test\win32\bell-features.ps1'
         )
     },
+    # The `border` bell feature (T1919): the frame popup's placement, width,
+    # fade and teardown. Its pixels and curve are unit-tested in bell_math.zig;
+    # this proves which pane gets the frame and that it follows the pane.
+    [pscustomobject]@{
+        Name   = 'bell-border'
+        Script = 'test\win32\bell-border.ps1'
+        Stamp  = 'test\win32\bell-border.stamp.json'
+        Covers = @(
+            'src\apprt\win32\BellBorder.zig',
+            'src\apprt\win32\bell_math.zig',
+            'test\win32\bell-border.ps1'
+        )
+    },
     # Dragging panes into and out of the sidebar (T1844): the `.stash` drop
     # target and the row drag source. The resolver, preview and stash-order
     # rules are unit-tested in every lane; whether a posted drag from a row

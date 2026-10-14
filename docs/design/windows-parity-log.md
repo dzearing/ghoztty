@@ -36272,3 +36272,30 @@ moved to T1814.
   rerun remote-disconnect passed 56/56 (flake filed as T1927). drag-perf's
   one failure is T1854, which was already open. The on-screen composite was
   NOT RUN because the user is present (T1915).
+
+## 2026-10-14 — T1919: a rung pane gets Mac's bell border
+
+- **What changed.** With `bell-features = border`, a pane whose bell rang now
+  gets a soft yellow frame until it is looked at, as on Mac. The new
+  `BellBorder.zig` is a click-through layered popup owned by the pane. It is
+  painted with per-pixel alpha: a 3pt stroke of rgb(255,204,0) at 50%, with a
+  clear interior. It fades in and out over Mac's 0.3s easeInOut by stepping
+  the blend alpha on its own timer, without re-rendering. It follows the pane
+  through the same `updateDimOverlays` pass as the other pane chrome, it is
+  also driven by every bell-mark change, and it takes an elevated card's
+  rounded region.
+- **Validation.** `bell_math` unit tests cover the frame pixels, the stroke
+  width per scale, the bezier curve and fade retargeting. The new
+  `test\win32\bell-border.ps1` is ALL PASS (24). It checks that the frame sits
+  on the rung pane's exact rect, that the stroke is 4px at 120 dpi, and that
+  the frame follows a window resize and a move. It also checks that a key
+  fades the frame out and hides it, and that a launch without `border` shows
+  no frame. Its `-NegativeControl` fails 8 assertions. A pixel probe is not
+  possible for an UpdateLayeredWindow popup off the input desktop; the script
+  names this capture limit.
+  All four floor lanes pass, and so does the harness lane. 22 of the 24 due
+  harnesses passed in the suite. remote-disconnect passed 56/56 when re-run
+  alone (the T1927 flake). drag-perf's one failure is T1854, which was
+  already open. The harness lane caught an unwrapped `.Count` in the new
+  script, and that is fixed. The on-screen composite was NOT RUN because the
+  user is present.

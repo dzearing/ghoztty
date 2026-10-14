@@ -40,6 +40,7 @@ const utf16_text = @import("utf16_text.zig");
 const Scrollbar = @import("Scrollbar.zig").Scrollbar;
 const window_broadcast = @import("window_broadcast.zig");
 const DimOverlay = @import("DimOverlay.zig").DimOverlay;
+const BellBorder = @import("BellBorder.zig").BellBorder;
 const BannerOverlay = @import("BannerOverlay.zig").BannerOverlay;
 const ReadonlyBadge = @import("ReadonlyBadge.zig").ReadonlyBadge;
 const KeyStateIndicator = @import("KeyStateIndicator.zig").KeyStateIndicator;
@@ -218,6 +219,10 @@ scrollbar: ?*Scrollbar = null,
 /// Created lazily on first dim (single-pane windows never pay for one).
 /// Driven by Window.updateDimOverlays.
 dim_overlay: ?*DimOverlay = null,
+
+/// The `bell-features = border` frame (T1919), created on the first bell
+/// that wants it. Driven by Window.updateBellBorders.
+bell_border: ?*BellBorder = null,
 
 /// Sticky pane banner (T35): overlay strip above the terminal content,
 /// plus the raw markdown source (owned) so the editor can prefill it and
@@ -1109,6 +1114,11 @@ pub fn deinit(self: *Surface) void {
         d.destroy();
         self.dim_overlay = null;
     }
+    // ...and the bell frame, for the same reason (T1919).
+    if (self.bell_border) |b| {
+        b.destroy();
+        self.bell_border = null;
+    }
 
     // Close an open banner editor targeting this pane (T35) — e.g. an IPC
     // `+close` while the dialog is up; its surface pointer must not dangle.
@@ -1346,6 +1356,30 @@ pub fn hideDimOverlay(self: *Surface) void {
     if (self.dim_overlay) |d| d.hide();
 }
 
+/// Show, reposition, fade or hide this pane's bell frame (T1919): on while
+/// `bell-features` has `border` and the pane has rung since it was last
+/// looked at (Mac's `BellBorderOverlay(bell: surfaceView.bell)`). Driven from
+/// the state, like the read-only badge, so the frame follows the pane through
+/// every layout path. A pane that never rang pays one bool test.
+pub fn updateBellBorder(self: *Surface) void {
+    const want = self.bell and self.app.config.@"bell-features".border;
+    if (!want and self.bell_border == null) return;
+    const hwnd = self.hwnd orelse return;
+    if (self.bell_border == null) {
+        self.bell_border = BellBorder.create(
+            self.app.core_app.alloc,
+            hwnd,
+            self.app.hinstance,
+        ) catch |err| {
+            log.warn("bell border create failed err={}", .{err});
+            return;
+        };
+    }
+    const b = self.bell_border.?;
+    if (self.pane_view) |pv| b.matchOwnerRegion(pv.card_region_key);
+    b.update(want, self.scale);
+}
+
 /// Show, reposition or hide this pane's read-only badge to match
 /// `core_surface.readonly` (T445).
 ///
@@ -1425,6 +1459,7 @@ pub fn healOverlayZOrders(self: *Surface) void {
     const owner = self.hwnd orelse return;
     if (self.banner_overlay) |b| w32.healOverlayZOrder(b.hwnd, owner);
     if (self.dim_overlay) |d| w32.healOverlayZOrder(d.hwnd, owner);
+    if (self.bell_border) |b| w32.healOverlayZOrder(b.hwnd, owner);
     if (self.readonly_badge) |b| w32.healOverlayZOrder(b.hwnd, owner);
     if (self.key_state_indicator) |k| w32.healOverlayZOrder(k.hwnd, owner);
     if (self.scrollbar) |s| w32.healOverlayZOrder(s.hwnd, owner);
