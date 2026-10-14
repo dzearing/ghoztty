@@ -409,12 +409,40 @@ $RETIRED = @(
     @{ Rgb = 'RGB(45, 45, 45)'; Role = "the search bar's field" },
     @{ Rgb = 'RGB(200, 200, 200)'; Role = 'its label ramp' }
 )
+#
+# Unit-test blocks are out of scope (T1918). The match is case-insensitive on
+# purpose - a `packRgb(30, 30, 30)` in a surface's paint code is the same
+# retired fill in another spelling - but T1884/T1885's `test "..." { }`
+# fixtures use 30,30,30 as an arbitrary known colour, which paints nothing.
+# zig fmt puts a top-level `test` header and its closing `}` at column 0, so a
+# line scan is enough to tell the two apart.
+function Get-RetiredRgbHits([string[]]$Lines, [string]$Literal) {
+    $inTest = $false
+    $out = [System.Collections.Generic.List[int]]::new()
+    for ($i = 0; $i -lt $Lines.Count; $i++) {
+        $line = $Lines[$i]
+        if (-not $inTest -and $line -match '^test\b') { $inTest = $true }
+        if ($inTest) {
+            if ($line -match '^\}') { $inTest = $false }
+            continue
+        }
+        if ($line -match '^\s*(//|///)') { continue }
+        if ($line.IndexOf($Literal, [StringComparison]::OrdinalIgnoreCase) -ge 0) { $out.Add($i + 1) }
+    }
+    # Unrolled on purpose; every caller wraps it in @() (a `return ,` here
+    # nests the array inside @() and the probe below reads 'System.Int32[]').
+    return $out.ToArray()
+}
+
 $src = Join-Path $repo 'src\apprt\win32'
+$zigFiles = @(Get-ChildItem -Path $src -Filter '*.zig' -File | Where-Object { $_.Name -ne 'panel_theme.zig' })
 foreach ($lit in $RETIRED) {
-    $hits = @(Get-ChildItem -Path $src -Filter '*.zig' -File |
-        Where-Object { $_.Name -ne 'panel_theme.zig' } |
-        Select-String -SimpleMatch -Pattern $lit.Rgb |
-        Where-Object { $_.Line -notmatch '^\s*(//|///)' })
+    $hits = @(foreach ($f in $zigFiles) {
+            $lines = @(Get-Content -LiteralPath $f.FullName)
+            foreach ($n in @(Get-RetiredRgbHits $lines $lit.Rgb)) {
+                [pscustomobject]@{ Filename = $f.Name; LineNumber = $n }
+            }
+        })
     $where = ($hits | ForEach-Object { "$($_.Filename):$($_.LineNumber)" }) -join ', '
     Assert ($hits.Count -eq 0) `
         ("E no file still hardcodes $($lit.Rgb) - $($lit.Role)" +
@@ -428,6 +456,23 @@ foreach ($lit in $RETIRED) {
 # search works.
 $control = @(Select-String -Path (Join-Path $src 'panel_theme.zig') -SimpleMatch -Pattern 'RGB(32,32,32)')
 Assert ($control.Count -gt 0) 'E the sweep can find a literal at all (panel_theme.zig still names the retired ones)'
+
+# And the test-block exemption is no wider than a test block (T1918): the same
+# literal in paint code - either spelling, before or after a test - still
+# counts, while the one inside the test and the one in a comment do not.
+$probe = @(
+    'fn paint() void {',
+    '    const a = packRgb(30, 30, 30);',
+    '}',
+    'test "fixture" {',
+    '    try expectEqual(packRgb(30, 30, 30), x);',
+    '}',
+    '// RGB(30, 30, 30) was the old fill',
+    'const b = RGB(30, 30, 30);'
+)
+$probeHits = @(Get-RetiredRgbHits $probe 'RGB(30, 30, 30)')
+Assert (($probeHits -join ',') -eq '2,8') `
+    "E the sweep skips only test blocks and comments: non-test hits still fail (hit lines: $($probeHits -join ','), want 2,8)"
 
 Kill-RepoInstances
 Start-TestForegroundWatch

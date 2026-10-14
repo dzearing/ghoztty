@@ -36129,3 +36129,16 @@ moved to T1814.
   for the chip's size and for no chip on the rail. Three new unit tests. The
   floor lanes, harness floor and the pane-sidebar family passed. chrome-theme
   went red on a test-fixture literal that T1884/T1885 added, filed as T1918.
+
+## 2026-10-13 — T1918: the chrome-theme colour sweep ignores unit-test fixtures
+
+- **What changed.** Section E of `test/win32/chrome-theme.ps1` no longer
+  fails on `packRgb(30, 30, 30)` sample colours inside `test` blocks, which
+  T1884/T1885 added. A retired colour in real drawing code still fails it.
+- **Why it matched.** `Select-String -SimpleMatch` is case-insensitive, so
+  `RGB(30, 30, 30)` matched the tail of `packRgb(...)`. The match stays
+  case-insensitive on purpose; the scan now skips column-0 test blocks and
+  comments (`Get-RetiredRgbHits`).
+- **Validation.** chrome-theme.ps1 ALL PASS (137). A new in-harness probe
+  checks that only the paint-code lines count. Its first run went red on a
+  `return ,` unroll bug, so it can fail. The harness floor passed.
