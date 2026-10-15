@@ -197,9 +197,12 @@ try {
     Set-TestWindowSize -Window $top -Width 220 -Height 140 -Grow | Out-Null
     Start-Sleep -Milliseconds 400
     $before = Get-Client $top
+    # 800x600 DIP since T1971: the client pixels follow this monitor's scale.
+    $dpi = [int](Get-TestWindowDpi -Window $top)
+    $fb = '{0},{1}' -f [int][math]::Round(800 * $dpi / 96.0, [System.MidpointRounding]::AwayFromZero), [int][math]::Round(600 * $dpi / 96.0, [System.MidpointRounding]::AwayFromZero)
     Post-Key $top $pane 'F9' 1   # reset_window_size
-    $after = Wait-Client $top '800,600'
-    Assert ($after -eq '800,600') "fallback: reset with no configured size went to 800x600 (was $before, got $after)"
+    $after = Wait-Client $top $fb
+    Assert ($after -eq $fb) "fallback: reset with no configured size went to 800x600 DIP, $fb at $dpi dpi (was $before, got $after)"
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'fallback: no crash'
     $launched += $script:GhozttyTestDesktopPids
 } finally {

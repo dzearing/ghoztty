@@ -1,7 +1,7 @@
 //! Pure rules for replaying a restored window's PLACEMENT — its normal rect and
 //! its maximized state, which are one fact and have to travel together (T748).
 //!
-//! Two things live here, both of them the kind of detail that is invisible on
+//! Three things live here, all of them the kind of detail that is invisible on
 //! the box it was written on and wrong on somebody else's:
 //!
 //! 1. **The coordinate space.** `WINDOWPLACEMENT.rcNormalPosition` is NOT in
@@ -18,6 +18,9 @@
 //!    through the same pair of functions rather than each remembering the rule.
 //!
 //! 2. **Which show command a restore asks for.** Spelled out below.
+//!
+//! 3. **The scale a size was measured at** (T1971). Spelled out at
+//!    `fitToMonitor`.
 //!
 //! Deliberately free of win32 (the caller supplies the work-area origin), so the
 //! arithmetic runs in the none-runtime test lane.
@@ -83,6 +86,70 @@ pub fn show(maximized: bool) Show {
     return if (maximized) .maximized else .show_noactivate;
 }
 
+/// The scale a size was measured at (T1971). Every number this module
+/// and the manifest carry is a PHYSICAL pixel, and a physical pixel is only
+/// half the story: 1200 pixels is a comfortable window at 100% and a small one
+/// at 200%. Over Remote Desktop and Windows 365 the scale is a property of the
+/// CONNECTION — the same Cloud PC is 100% from one client and 200% from
+/// another — so a frame replayed as raw pixels comes back at whatever fraction
+/// of its size the two scales differ by. A size therefore travels with the DPI
+/// it was measured at, and is converted to the DPI it lands on. Mac never has
+/// this problem because its frames are in points, which is exactly what a
+/// pixel count over its DPI is.
+pub const BASE_DPI: u32 = 96;
+
+/// The built-in size of a window nobody has a record of, in device-independent
+/// pixels: 800x600 at 100%, scaled to the monitor it opens on. Before T1971
+/// these were physical pixels, so on a 200% desktop every such window opened
+/// at a quarter of the intended area.
+pub const DEFAULT_DIP_W: i32 = 800;
+pub const DEFAULT_DIP_H: i32 = 600;
+
+/// `v` measured at `from_dpi`, expressed at `to_dpi`, rounded to the nearest
+/// pixel. A zero DPI on either side (unknown, or a query that failed) leaves
+/// the value as recorded — replaying the number unchanged beats scaling by a
+/// guess, the same rule `Origin` follows.
+pub fn scaleDim(v: i32, from_dpi: u32, to_dpi: u32) i32 {
+    if (from_dpi == 0 or to_dpi == 0 or from_dpi == to_dpi) return v;
+    const num: i64 = @as(i64, v) * @as(i64, to_dpi);
+    const den: i64 = @intCast(from_dpi);
+    const half = @divTrunc(den, 2);
+    const rounded = if (num >= 0) @divTrunc(num + half, den) else @divTrunc(num - half, den);
+    return std.math.cast(i32, rounded) orelse (if (rounded < 0) std.math.minInt(i32) else std.math.maxInt(i32));
+}
+
+/// A recorded frame, sized for the monitor it is about to land on: the
+/// top-left stays where it was (it is a position on the virtual screen, which
+/// a scale change does not move), the size is converted from `saved_dpi` to
+/// `target_dpi`, and the result is fitted inside `work` (the target monitor's
+/// work area) — never larger than it, and shifted back on screen when the
+/// rescaled size would hang off its right or bottom edge.
+///
+/// The fit only runs when the scale actually CHANGED. A frame measured at the
+/// scale it lands on is replayed verbatim, the rule `restore_frame` keeps for
+/// this machine's own manifest: a window the user stretched across two
+/// monitors is a window they put there, not one to second-guess. A null
+/// `saved_dpi` (a manifest written before T1971), an unknown `target_dpi`, and
+/// a zero-sized `work` (a failed query) each leave their half of the rule out
+/// rather than guessing.
+pub fn fitToMonitor(r: Rect, saved_dpi: ?u32, target_dpi: u32, work: Rect) Rect {
+    const sd = saved_dpi orelse return r;
+    if (sd == 0 or target_dpi == 0 or sd == target_dpi) return r;
+    var out = r;
+    out.w = scaleDim(r.w, sd, target_dpi);
+    out.h = scaleDim(r.h, sd, target_dpi);
+    if (work.w <= 0 or work.h <= 0) return out;
+    if (out.w > work.w) out.w = work.w;
+    if (out.h > work.h) out.h = work.h;
+    const right = work.x +| work.w;
+    const bottom = work.y +| work.h;
+    if (out.x +| out.w > right) out.x = right -| out.w;
+    if (out.y +| out.h > bottom) out.y = bottom -| out.h;
+    if (out.x < work.x) out.x = work.x;
+    if (out.y < work.y) out.y = work.y;
+    return out;
+}
+
 // ---------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------
@@ -144,4 +211,76 @@ test "show: the recorded state decides, and only maximizing costs activation" {
     // state being asked for either way.
     try testing.expectEqual(Show.maximized, show(true));
     try testing.expectEqual(Show.show_noactivate, show(false));
+}
+
+test "scaleDim: a size measured at 100% doubles at 200% and rounds to the nearest pixel" {
+    try testing.expectEqual(@as(i32, 2400), scaleDim(1200, 96, 192));
+    try testing.expectEqual(@as(i32, 600), scaleDim(1200, 192, 96));
+    // 150%: 801 * 144 / 96 = 1201.5 -> 1202 (half rounds away from zero).
+    try testing.expectEqual(@as(i32, 1202), scaleDim(801, 96, 144));
+    try testing.expectEqual(@as(i32, -1202), scaleDim(-801, 96, 144));
+}
+
+test "scaleDim: an unknown DPI on either side replays the number unchanged" {
+    try testing.expectEqual(@as(i32, 1200), scaleDim(1200, 0, 192));
+    try testing.expectEqual(@as(i32, 1200), scaleDim(1200, 96, 0));
+    try testing.expectEqual(@as(i32, 1200), scaleDim(1200, 144, 144));
+}
+
+test "scaleDim saturates rather than wrapping" {
+    try testing.expectEqual(@as(i32, std.math.maxInt(i32)), scaleDim(std.math.maxInt(i32), 96, 192));
+}
+
+test "the built-in default is 800x600 at 100% and twice that at 200%" {
+    try testing.expectEqual(@as(i32, 1600), scaleDim(DEFAULT_DIP_W, BASE_DPI, 192));
+    try testing.expectEqual(@as(i32, 1200), scaleDim(DEFAULT_DIP_H, BASE_DPI, 192));
+    try testing.expectEqual(DEFAULT_DIP_W, scaleDim(DEFAULT_DIP_W, BASE_DPI, BASE_DPI));
+}
+
+test "fitToMonitor: the user's report - a 100% frame restored onto a 200% desktop keeps its DIP size" {
+    // Saved at 96 DPI as 1000x700 at (100,80); the Cloud PC now answers 192.
+    const work: Rect = .{ .x = 0, .y = 0, .w = 3840, .h = 2112 };
+    const out = fitToMonitor(.{ .x = 100, .y = 80, .w = 1000, .h = 700 }, 96, 192, work);
+    try testing.expectEqual(Rect{ .x = 100, .y = 80, .w = 2000, .h = 1400 }, out);
+}
+
+test "fitToMonitor: the reverse - a 200% frame on a 100% desktop halves instead of overflowing" {
+    const work: Rect = .{ .x = 0, .y = 0, .w = 1920, .h = 1032 };
+    const out = fitToMonitor(.{ .x = 200, .y = 100, .w = 2400, .h = 1600 }, 192, 96, work);
+    try testing.expectEqual(Rect{ .x = 200, .y = 100, .w = 1200, .h = 800 }, out);
+}
+
+test "fitToMonitor: same scale and on screen is the identity" {
+    const work: Rect = .{ .x = 0, .y = 0, .w = 1920, .h = 1032 };
+    const r: Rect = .{ .x = 10, .y = 20, .w = 900, .h = 700 };
+    try testing.expectEqual(r, fitToMonitor(r, 96, 96, work));
+    // A pre-T1971 manifest (no recorded DPI) is not scaled at all.
+    try testing.expectEqual(r, fitToMonitor(r, null, 192, work));
+    // An unknown landing scale is not a change either.
+    try testing.expectEqual(r, fitToMonitor(r, 96, 0, work));
+}
+
+test "fitToMonitor: a same-scale window the user stretched past the work area is left alone" {
+    // Spanning two monitors is an arrangement, not an error to clamp.
+    const work: Rect = .{ .x = 0, .y = 0, .w = 1920, .h = 1032 };
+    const r: Rect = .{ .x = 1000, .y = 0, .w = 2500, .h = 1000 };
+    try testing.expectEqual(r, fitToMonitor(r, 144, 144, work));
+}
+
+test "fitToMonitor: a rescaled window that would hang off the edge is pulled back inside" {
+    const work: Rect = .{ .x = 0, .y = 0, .w = 2560, .h = 1400 };
+    const out = fitToMonitor(.{ .x = 1500, .y = 600, .w = 1000, .h = 500 }, 96, 192, work);
+    // 2000x1000 at x=1500 would end at 3500: shifted so it ends at 2560.
+    try testing.expectEqual(Rect{ .x = 560, .y = 400, .w = 2000, .h = 1000 }, out);
+}
+
+test "fitToMonitor: larger than the work area shrinks to it, on a monitor left of primary" {
+    const work: Rect = .{ .x = -1920, .y = 0, .w = 1920, .h = 1040 };
+    const out = fitToMonitor(.{ .x = -1900, .y = 10, .w = 1500, .h = 900 }, 96, 192, work);
+    try testing.expectEqual(Rect{ .x = -1920, .y = 0, .w = 1920, .h = 1040 }, out);
+}
+
+test "fitToMonitor: an unreadable work area applies the scale and nothing else" {
+    const out = fitToMonitor(.{ .x = 5000, .y = 5000, .w = 400, .h = 300 }, 96, 192, .{ .x = 0, .y = 0, .w = 0, .h = 0 });
+    try testing.expectEqual(Rect{ .x = 5000, .y = 5000, .w = 800, .h = 600 }, out);
 }

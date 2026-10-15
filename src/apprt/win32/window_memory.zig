@@ -24,8 +24,12 @@
 //! - Quick-terminal windows neither read nor write the memory.
 //!
 //! Storage: one small text file, `%LOCALAPPDATA%\ghoztty\window_placement`
-//! (same area as `update_check_at`), format: `<width> <height> <0|1>\n`
-//! (outer pixels, maximized flag).
+//! (same area as `update_check_at`), format: `<width> <height> <0|1> <dpi>\n`
+//! (outer pixels, maximized flag, the DPI those pixels were measured at).
+//! The DPI is T1971's: over Remote Desktop the same machine is 100% from one
+//! client and 200% from another, so a size is converted from the scale it was
+//! measured at to the one the new window opens at. A three-token file (written
+//! before T1971) still loads, with no DPI, and is used unscaled as before.
 //!
 //! The parse/format/clamp logic below is pure (no OS imports) so its unit
 //! tests run in every app-runtime lane.
@@ -44,7 +48,14 @@ pub const Placement = struct {
     width: i32,
     height: i32,
     maximized: bool,
+    /// The DPI `width`/`height` were measured at (T1971); null when unknown.
+    dpi: ?u32 = null,
 };
+
+/// Sanity bounds for a recorded DPI: 50% to 1000% of 96. Outside is a corrupt
+/// or hand-edited file.
+pub const MIN_DPI: u32 = 48;
+pub const MAX_DPI: u32 = 960;
 
 /// Parse the persisted placement file content. Returns null on any
 /// malformed or out-of-bounds input.
@@ -53,6 +64,7 @@ pub fn parse(text: []const u8) ?Placement {
     const w_s = it.next() orelse return null;
     const h_s = it.next() orelse return null;
     const m_s = it.next() orelse return null;
+    const dpi_s = it.next();
     if (it.next() != null) return null;
 
     const w = std.fmt.parseInt(i32, w_s, 10) catch return null;
@@ -67,16 +79,22 @@ pub fn parse(text: []const u8) ?Placement {
     else
         return null;
 
-    return .{ .width = w, .height = h, .maximized = m };
+    const dpi: ?u32 = if (dpi_s) |d| blk: {
+        const v = std.fmt.parseInt(u32, d, 10) catch return null;
+        if (v < MIN_DPI or v > MAX_DPI) return null;
+        break :blk v;
+    } else null;
+
+    return .{ .width = w, .height = h, .maximized = m, .dpi = dpi };
 }
 
 /// Format a placement into `buf` in the on-disk format.
 pub fn format(buf: []u8, p: Placement) []const u8 {
-    return std.fmt.bufPrint(buf, "{d} {d} {d}\n", .{
-        p.width,
-        p.height,
-        @as(u1, if (p.maximized) 1 else 0),
-    }) catch unreachable; // 3 bounded ints always fit the caller's buffer
+    const m: u1 = if (p.maximized) 1 else 0;
+    return (if (p.dpi) |d|
+        std.fmt.bufPrint(buf, "{d} {d} {d} {d}\n", .{ p.width, p.height, m, d })
+    else
+        std.fmt.bufPrint(buf, "{d} {d} {d}\n", .{ p.width, p.height, m })) catch unreachable; // 4 bounded ints always fit the caller's buffer
 }
 
 /// Clamp a remembered size to a monitor work area so a size remembered on
@@ -149,7 +167,8 @@ test "parse: malformed" {
     const t = std.testing;
     try t.expectEqual(@as(?Placement, null), parse(""));
     try t.expectEqual(@as(?Placement, null), parse("1280 720"));
-    try t.expectEqual(@as(?Placement, null), parse("1280 720 0 9"));
+    try t.expectEqual(@as(?Placement, null), parse("1280 720 0 96 1"));
+    try t.expectEqual(@as(?Placement, null), parse("1280 720 0 abc"));
     try t.expectEqual(@as(?Placement, null), parse("abc 720 0"));
     try t.expectEqual(@as(?Placement, null), parse("1280 720 2"));
     try t.expectEqual(@as(?Placement, null), parse("1280 720 true"));
@@ -161,6 +180,9 @@ test "parse: bounds" {
     try t.expectEqual(@as(?Placement, null), parse("1280 199 0"));
     try t.expectEqual(@as(?Placement, null), parse("30001 720 0"));
     try t.expectEqual(@as(?Placement, null), parse("-500 720 0"));
+    // T1971: a DPI outside 48..960 is a corrupt file, not a scale.
+    try t.expectEqual(@as(?Placement, null), parse("1280 720 0 9"));
+    try t.expectEqual(@as(?Placement, null), parse("1280 720 0 961"));
     // Exactly on the bounds is accepted.
     try t.expect(parse("200 200 0") != null);
     try t.expect(parse("30000 30000 1") != null);
@@ -172,10 +194,21 @@ test "format round-trips through parse" {
     const cases = [_]Placement{
         .{ .width = 1280, .height = 720, .maximized = false },
         .{ .width = 200, .height = 30000, .maximized = true },
+        .{ .width = 2400, .height = 1400, .maximized = false, .dpi = 192 },
+        .{ .width = 30000, .height = 30000, .maximized = true, .dpi = MAX_DPI },
     };
     for (cases) |p| {
         try t.expectEqual(p, parse(format(&buf, p)).?);
     }
+}
+
+test "parse: T1971 - the DPI token is optional, and a pre-T1971 file has none" {
+    const t = std.testing;
+    try t.expectEqual(
+        Placement{ .width = 2400, .height = 1400, .maximized = false, .dpi = 192 },
+        parse("2400 1400 0 192\r\n").?,
+    );
+    try t.expectEqual(@as(?u32, null), parse("1280 720 0\n").?.dpi);
 }
 
 test "clampToWorkArea" {

@@ -190,6 +190,7 @@ const utf16_text = @import("utf16_text.zig");
 const title_font = @import("title_font.zig");
 const title_spinner = @import("title_spinner.zig");
 const window_memory = @import("window_memory.zig");
+const window_placement = @import("window_placement.zig");
 const pane_id = @import("pane_id.zig");
 const ProcessTree = @import("ProcessTree.zig");
 const host_defaults = @import("host_defaults.zig");
@@ -785,6 +786,12 @@ resize_seen_first: bool = false,
 /// Show the window maximized on its first ShowWindow (T85): set when the
 /// remembered placement was maximized or the `maximize` config is on.
 start_maximized: bool = false,
+
+/// Set while session restore places this window at a frame already sized for
+/// the monitor it lands on (T1971). A WM_DPICHANGED raised by that move keeps
+/// the new scale but NOT Windows' suggested rect, which would rescale the
+/// exact size a second time.
+placing_exact_frame: bool = false,
 
 /// Tracks the maximized state across WM_SIZE so only real
 /// maximize/restore TRANSITIONS persist the placement memory (T85) —
@@ -1577,13 +1584,26 @@ pub fn init(self: *Window, app: *App, options: InitOptions) !void {
     // (the core sends `initial_size` which resizes after creation, so keep
     // the plain default and let it), else the remembered last user-chosen
     // size (clamped to the primary work area), else the built-in default.
-    var width: i32 = 800;
-    var height: i32 = 600;
+    //
+    // Both sizes are converted to the scale the window opens at (T1971): the
+    // default is 800x600 DEVICE-INDEPENDENT pixels, and the memory records the
+    // DPI it was measured at. Before, both were raw pixels, so on a 200%
+    // desktop - the user's Cloud PC - every unrecorded window opened at a
+    // quarter of the intended area, and a size remembered from a 100% Remote
+    // Desktop connection came back at half size on the next one.
+    const open_dpi = creationDpi(app);
+    var width: i32 = window_placement.scaleDim(window_placement.DEFAULT_DIP_W, window_placement.BASE_DPI, open_dpi);
+    var height: i32 = window_placement.scaleDim(window_placement.DEFAULT_DIP_H, window_placement.BASE_DPI, open_dpi);
     if (!options.is_quick_terminal) {
         const config_sized = app.config.@"window-width" > 0 and
             app.config.@"window-height" > 0;
         if (!config_sized) {
-            if (window_memory.load(app.core_app.alloc)) |remembered| {
+            if (window_memory.load(app.core_app.alloc)) |loaded| {
+                var remembered = loaded;
+                if (loaded.dpi) |d| {
+                    remembered.width = window_placement.scaleDim(loaded.width, d, open_dpi);
+                    remembered.height = window_placement.scaleDim(loaded.height, d, open_dpi);
+                }
                 var work: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 };
                 const clamped = if (w32.SystemParametersInfoW(
                     w32.SPI_GETWORKAREA,
@@ -9301,7 +9321,9 @@ fn handleDpiChanged(self: *Window, hwnd: w32.HWND, dpi: u32, suggested: ?*const 
     // Panes first, so the relayout the resize below causes sizes every grid
     // with the new font rather than the old one.
     const panes = self.forwardToPanes(.dpi_changed, dpi);
-    if (suggested) |r| {
+    if (self.placing_exact_frame) {
+        log.debug("window dpi changed during an exact placement; keeping the placed rect", .{});
+    } else if (suggested) |r| {
         _ = w32.SetWindowPos(
             hwnd,
             null,
@@ -10971,8 +10993,13 @@ pub fn setClientSize(self: *Window, size: ClientSize) void {
 /// core surface) and the viewer-chord dispatch (which has no surface to
 /// address it through, T682), so the fallback is spelled exactly once.
 pub fn resetToDefaultSize(self: *Window) void {
-    self.setClientSize(self.default_client_size orelse
-        .{ .width = 800, .height = 600 });
+    // The fallback is 800x600 DIP at the window's own scale (T1971), the same
+    // default a new window opens at.
+    const dpi: u32 = if (self.hwnd) |h| w32.GetDpiForWindow(h) else 0;
+    self.setClientSize(self.default_client_size orelse .{
+        .width = @intCast(window_placement.scaleDim(window_placement.DEFAULT_DIP_W, window_placement.BASE_DPI, dpi)),
+        .height = @intCast(window_placement.scaleDim(window_placement.DEFAULT_DIP_H, window_placement.BASE_DPI, dpi)),
+    });
 }
 
 /// Toggle window decorations (title bar + borders) on/off.
@@ -11079,11 +11106,35 @@ fn savePlacement(self: *Window, maximized: bool) void {
     // eight busy panes' screens here measured 991 ms, which is the drag
     // visibly sticking when the user lets go.
     if (self.app.config.@"session-persistence") self.app.syncSessionLayout(.reuse);
+    const dpi = w32.GetDpiForWindow(hwnd);
     window_memory.save(self.app.core_app.alloc, .{
         .width = w,
         .height = h,
         .maximized = maximized,
+        // T1971: the scale these pixels mean, so the next window converts.
+        .dpi = if (dpi >= window_memory.MIN_DPI and dpi <= window_memory.MAX_DPI) dpi else null,
     });
+}
+
+/// The DPI a new top-level window will open at (T1971): the monitor of the
+/// window it cascades from when there is one, else the primary monitor - which
+/// is where `CW_USEDEFAULT` puts it - read as it is NOW. `GetDpiForSystem` is
+/// only the last resort: for a per-monitor-aware process it is the scale at
+/// sign-in, which a Remote Desktop reconnect at another scale leaves stale.
+fn creationDpi(app: *const App) u32 {
+    if (app.windows.items.len > 0) {
+        if (app.windows.items[app.windows.items.len - 1].hwnd) |ph| {
+            const d = w32.GetDpiForWindow(ph);
+            if (d != 0) return d;
+        }
+    }
+    if (w32.MonitorFromPoint(.{ .x = 0, .y = 0 }, w32.MONITOR_DEFAULTTOPRIMARY)) |mon| {
+        var dx: u32 = 0;
+        var dy: u32 = 0;
+        if (w32.GetDpiForMonitor(mon, w32.MDT_EFFECTIVE_DPI, &dx, &dy) == 0 and dx != 0) return dx;
+    }
+    const sys = w32.GetDpiForSystem();
+    return if (sys != 0) sys else window_placement.BASE_DPI;
 }
 
 /// Show the transient "columns × rows" overlay during a resize, honoring

@@ -705,6 +705,19 @@ pub extern "user32" fn GetDpiForWindow(
 /// screen anyway.
 pub extern "user32" fn GetDpiForSystem() callconv(.winapi) u32;
 
+/// The DPI of one monitor, as it is NOW (T1971). `GetDpiForSystem` is the DPI
+/// at sign-in and never moves for a per-monitor-aware process, so after a
+/// Remote Desktop reconnect at a different scale it answers the old one; this
+/// is the call that knows where a window is about to land. `dpiType` 0 is
+/// MDT_EFFECTIVE_DPI. Returns an HRESULT (0 = S_OK).
+pub const MDT_EFFECTIVE_DPI: u32 = 0;
+pub extern "shcore" fn GetDpiForMonitor(
+    hmonitor: HMONITOR,
+    dpiType: u32,
+    dpiX: *u32,
+    dpiY: *u32,
+) callconv(.winapi) i32;
+
 pub extern "user32" fn MessageBeep(
     uType: u32,
 ) callconv(.winapi) i32;

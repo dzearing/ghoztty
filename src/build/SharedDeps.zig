@@ -653,6 +653,10 @@ pub fn add(
                     // way to get a WebView2's pixels and it hands back an
                     // ENCODED image, so something has to decode it.
                     step.linkSystemLibrary2("gdiplus", .{});
+                    // T1971: GetDpiForMonitor, the scale a restored window
+                    // is about to land on (GetDpiForSystem goes stale across
+                    // a Remote Desktop reconnect).
+                    step.linkSystemLibrary2("shcore", .{});
                 }
             },
         }

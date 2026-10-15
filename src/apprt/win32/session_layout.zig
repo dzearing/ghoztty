@@ -294,6 +294,13 @@ pub const Window = struct {
     /// reader without it passes the origin through unconverted (the pre-T623
     /// vertically-mirrored fallback). Mac's spelling is `primaryScreenHeight`.
     primary_screen_height: ?i32 = null,
+    /// The DPI of the monitor `frame` was captured on (T1971). `frame` is in
+    /// physical pixels, and over Remote Desktop the same machine can be 100%
+    /// from one connection and 200% from the next, so a restore converts the
+    /// size from this DPI to the one the window lands on. Additive: absent in
+    /// older manifests and in Mac blobs (whose frames are points already), and
+    /// a reader without it replays the frame unscaled, as before.
+    frame_dpi: ?u32 = null,
     maximized: bool = false,
     title_override: ?[]const u8 = null,
     ipc_name: ?[]const u8 = null,
@@ -864,6 +871,7 @@ test "serialize + parse round-trip preserves windows, tabs, tree, order" {
         .{
             .id = "win-0",
             .frame = .{ .x = 10, .y = 20, .w = 800, .h = 600 },
+            .frame_dpi = 192,
             .maximized = false,
             .title_override = "My Window",
             .ipc_name = "dev",
@@ -897,6 +905,10 @@ test "serialize + parse round-trip preserves windows, tabs, tree, order" {
     try testing.expect(w0.frame != null);
     try testing.expectEqual(@as(i32, 10), w0.frame.?.x);
     try testing.expectEqual(@as(i32, 600), w0.frame.?.h);
+    // T1971: the scale the frame was measured at travels with it, and a
+    // window captured without one stays absent rather than reading as 0.
+    try testing.expectEqual(@as(?u32, 192), w0.frame_dpi);
+    try testing.expectEqual(@as(?u32, null), v.windows[1].frame_dpi);
     try testing.expect(!w0.maximized);
     try testing.expectEqualStrings("My Window", w0.title_override.?);
     try testing.expectEqualStrings("dev", w0.ipc_name.?);

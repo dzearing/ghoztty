@@ -3032,6 +3032,15 @@ fn captureFrame(hwnd_opt: ?w32.HWND) FrameCapture {
     };
 }
 
+/// The DPI a window is at right now, or null when there is no window or the
+/// query fails (T1971). Null rather than 0 so the manifest records nothing
+/// instead of a scale nobody measured.
+fn windowDpi(hwnd_opt: ?w32.HWND) ?u32 {
+    const hwnd = hwnd_opt orelse return null;
+    const dpi = w32.GetDpiForWindow(hwnd);
+    return if (dpi != 0) dpi else null;
+}
+
 /// The primary monitor's work-area origin — the offset between screen and
 /// `WINDOWPLACEMENT` workspace coordinates. An unreadable work area answers
 /// `(0, 0)`, which makes both conversions the identity: replaying the recorded
@@ -3413,6 +3422,9 @@ fn captureWindow(
         // Only meaningful next to a frame it can convert; a frameless capture
         // records nothing rather than a stray metric.
         .primary_screen_height = if (frame_max.frame != null) primaryScreenHeight() else null,
+        // T1971: the scale those pixels were measured at, so a restore onto a
+        // desktop at another scale (an RDP reconnect) converts the size.
+        .frame_dpi = if (frame_max.frame != null) windowDpi(win.hwnd) else null,
         .maximized = frame_max.maximized,
         .title_override = if (win.title_override) |t| try arena.dupe(u8, t) else null,
         .ipc_name = if (win.ipc_name) |n| try arena.dupe(u8, n) else null,
@@ -5093,7 +5105,7 @@ fn restoreWindow(
         const active: usize = @min(@as(usize, win.active_tab), window.tab_count - 1);
         window.selectTabIndex(active);
     }
-    applyRestoreFrame(window, win.frame, win.maximized, tr.reanchor);
+    applyRestoreFrame(window, win.frame, win.frame_dpi, win.maximized, tr.reanchor);
 }
 
 /// Rebuild one tab: replay the split tree onto its (already-created) first
@@ -6414,6 +6426,9 @@ fn liveNodeShapes(
 fn applyRestoreFrame(
     window: *Window,
     frame: ?session_layout.Frame,
+    /// The DPI `frame` was measured at (T1971); null for a manifest written
+    /// before it was recorded, which is replayed unscaled.
+    frame_dpi: ?u32,
     maximized: bool,
     /// Cross-machine (T336): clamp a frame authored on ANOTHER machine's
     /// monitors onto one of ours. Never for our own manifest — see
@@ -6426,7 +6441,7 @@ fn applyRestoreFrame(
     // would instead impose a state nobody measured.
     if (frame == null and !maximized) return;
 
-    const placed: ?session_layout.Frame = if (frame) |f| blk: {
+    const placed_raw: ?session_layout.Frame = if (frame) |f| blk: {
         if (!reanchor) break :blk f;
         const r = reanchorFrame(.{ .x = f.x, .y = f.y, .w = f.w, .h = f.h });
         if (r.x != f.x or r.y != f.y or r.w != f.w or r.h != f.h) {
@@ -6438,7 +6453,28 @@ fn applyRestoreFrame(
         break :blk .{ .x = r.x, .y = r.y, .w = r.w, .h = r.h };
     } else null;
 
-    log.debug("session-restore: placing window maximized={} frame={any}", .{ maximized, placed });
+    // T1971: the frame is physical pixels at `frame_dpi`; the monitor it lands
+    // on may be at another scale (a Remote Desktop reconnect changes it), so
+    // convert the size before anything is placed.
+    const placed: ?session_layout.Frame = if (placed_raw) |f| blk: {
+        const r = fitToLandingMonitor(.{ .x = f.x, .y = f.y, .w = f.w, .h = f.h }, frame_dpi);
+        if (r.w != f.w or r.h != f.h) log.info(
+            "session-restore: frame {d}x{d} measured at {?d} dpi lands at another scale, resized to {d},{d} {d}x{d}",
+            .{ f.w, f.h, frame_dpi, r.x, r.y, r.w, r.h },
+        );
+        break :blk .{ .x = r.x, .y = r.y, .w = r.w, .h = r.h };
+    } else null;
+
+    log.debug("session-restore: placing window maximized={} frame={any} frame_dpi={?d}", .{ maximized, placed, frame_dpi });
+
+    // Every placement below is EXACT: the size is already the one for the
+    // monitor it lands on. A move that crosses onto a monitor at another scale
+    // makes Windows send WM_DPICHANGED with a "suggested" rect that rescales
+    // the window again - by the ratio of the monitor it was CREATED on, which
+    // has nothing to do with the saved frame - so the window must keep the
+    // rect it was given rather than take that suggestion.
+    window.placing_exact_frame = true;
+    defer window.placing_exact_frame = false;
 
     // The manifest is authoritative for THIS window: the placement memory only
     // ever supplied a default for a window nobody had a record of. Set before
@@ -6505,6 +6541,34 @@ fn applyRestoreFrame(
         };
     }
     _ = w32.SetWindowPlacement(hwnd, &wp);
+}
+
+/// The win32 half of `window_placement.fitToMonitor` (T1971): find the monitor
+/// a frame lands on (the nearest one, so a frame just off every screen still
+/// gets a scale), its CURRENT scale and its work area, and fit. Any query that
+/// fails hands the pure rule a zero, which it reads as "leave that part out".
+fn fitToLandingMonitor(frame: restore_frame.Rect, saved_dpi: ?u32) restore_frame.Rect {
+    if (saved_dpi == null) return frame;
+    var rc: w32.RECT = .{
+        .left = frame.x,
+        .top = frame.y,
+        .right = frame.x +| frame.w,
+        .bottom = frame.y +| frame.h,
+    };
+    const mon = w32.MonitorFromRect(&rc, w32.MONITOR_DEFAULTTONEAREST) orelse return frame;
+    var dpi_x: u32 = 0;
+    var dpi_y: u32 = 0;
+    if (w32.GetDpiForMonitor(mon, w32.MDT_EFFECTIVE_DPI, &dpi_x, &dpi_y) != 0) dpi_x = 0;
+    var work: restore_frame.Rect = .{ .x = 0, .y = 0, .w = 0, .h = 0 };
+    var mi: w32.MONITORINFO = undefined;
+    mi.cbSize = @sizeOf(w32.MONITORINFO);
+    if (w32.GetMonitorInfoW(mon, &mi) != 0) work = .{
+        .x = mi.rcWork.left,
+        .y = mi.rcWork.top,
+        .w = mi.rcWork.right - mi.rcWork.left,
+        .h = mi.rcWork.bottom - mi.rcWork.top,
+    };
+    return window_placement.fitToMonitor(frame, saved_dpi, dpi_x, work);
 }
 
 /// The win32 half of `restore_frame.reanchor`: ask the OS the two questions the

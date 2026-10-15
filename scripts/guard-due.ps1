@@ -981,6 +981,24 @@ $GuardTable = @(
             'src\apprt\win32\session_layout.zig'
         )
     },
+    # A restored or remembered window size crosses a change of SCALE (T1971):
+    # frames and the placement memory are physical pixels plus the DPI they
+    # were measured at, converted to the monitor the window lands on. Over
+    # Remote Desktop the scale changes per connection, so getting the
+    # conversion wrong brings every window back small - which is how the user
+    # reported it. `window_placement.zig` holds the rule and `window_memory.zig`
+    # the memory's format; `App.zig`/`Window.zig` are left off for the reason
+    # the row above gives.
+    [pscustomobject]@{
+        Name   = 'restore-dpi-frame'
+        Script = 'test\win32\restore-dpi-frame.ps1'
+        Stamp  = 'test\win32\restore-dpi-frame.stamp.json'
+        Covers = @(
+            'test\win32\restore-dpi-frame.ps1',
+            'src\apprt\win32\window_placement.zig',
+            'src\apprt\win32\window_memory.zig'
+        )
+    },
     # A window asked for WHILE the local agent is still being resolved (T1688):
     # the nested IPC pump holds `+new-window` until the resolve returns, and
     # this is the only harness that drives a request into that gap - on

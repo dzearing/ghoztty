@@ -62,8 +62,13 @@ $fakeLocal = Join-Path $env:TEMP ("ghoztty-t85-" + [Guid]::NewGuid().ToString('N
 New-Item -ItemType Directory -Force -Path $fakeLocal | Out-Null
 $memFile = Join-Path $fakeLocal 'ghoztty\window_placement-debug'
 
+# The first three tokens: `<w> <h> <0|1>`. Since T1971 the file carries a
+# fourth, the DPI the size was measured at; restore-dpi-frame.ps1 is the
+# script that asserts it, so this one compares the size and state alone.
 function Read-Mem {
-    if (Test-Path $memFile) { (Get-Content $memFile -Raw).Trim() } else { '<absent>' }
+    if (-not (Test-Path $memFile)) { return '<absent>' }
+    $t = @((Get-Content $memFile -Raw).Trim() -split '\s+')
+    return ($t | Select-Object -First 3) -join ' '
 }
 
 function Kill-RepoInstances {
@@ -151,18 +156,24 @@ try {
     Launch @()
     Assert ((Read-Mem) -eq '<absent>') 'A: fresh profile has no memory file'
     $init = Get-Outer $top
-    Assert ($init -eq '800,600') "A: no config + no memory opens at the 800x600 default (got $init)"
+    # T1971: the default is 800x600 DIP (outer on open, client on reset), so its
+    # pixels follow this monitor's scale - 1000x750 at 120 dpi. The drag adds
+    # 150x100 px on top of it.
+    $dpi = [int](Get-TestWindowDpi -Window $top)
+    $defW = [int][math]::Round(800 * $dpi / 96.0, [System.MidpointRounding]::AwayFromZero); $defH = [int][math]::Round(600 * $dpi / 96.0, [System.MidpointRounding]::AwayFromZero)
+    $endW = $defW + 150; $endH = $defH + 100
+    Assert ($init -eq "$defW,$defH") "A: no config + no memory opens at the 800x600 default (got $init)"
 
     Invoke-TestDragResize -Window $top -DeltaWidth 150 -DeltaHeight 100 | Out-Null
-    $mem = Wait-Mem '950 700 0'
-    Assert ($mem -eq '950 700 0') "A: drag-resize persisted '950 700 0' (got '$mem')"
+    $mem = Wait-Mem "$endW $endH 0"
+    Assert ($mem -eq "$endW $endH 0") "A: drag-resize persisted '$endW $endH 0' (got '$mem')"
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'A: no crash'
     Stop-Instance
 
     # --- Case B: new window opens at the remembered size ----------------------
     Launch @()
     $outer = Get-Outer $top
-    Assert ($outer -eq '950,700') "B: relaunch opened at remembered 950,700 (got $outer)"
+    Assert ($outer -eq "$endW,$endH") "B: relaunch opened at remembered $endW,$endH (got $outer)"
 
     # Positive control: posted f8 (toggle_maximize) must zoom the window -
     # proves posted-key binding dispatch works before Case C's reset assert
@@ -175,35 +186,35 @@ try {
         Stop-Instance; exit 1
     }
     Write-Host 'OK    positive control: posted f8 maximized the window'
-    $mem = Wait-Mem '950 700 1'
-    Assert ($mem -eq '950 700 1') "B: maximize persisted flag + RESTORED size (got '$mem')"
+    $mem = Wait-Mem "$endW $endH 1"
+    Assert ($mem -eq "$endW $endH 1") "B: maximize persisted flag + RESTORED size (got '$mem')"
     Stop-Instance   # killed while maximized -> memory says maximized
 
     # --- Case C: maximized memory -> opens maximized, restores to normal size -
     Launch @()
     Assert (Test-TestWindowZoomed -Window $top) 'C: relaunch with maximized memory opened maximized'
     $normal = Get-Normal $top
-    Assert ($normal -eq '950,700') "C: restored size underneath is the remembered 950,700 (got $normal)"
+    Assert ($normal -eq "$endW,$endH") "C: restored size underneath is the remembered $endW,$endH (got $normal)"
     Send-TestSysCommand -Window $top -Command restore | Out-Null
-    $mem = Wait-Mem '950 700 0'
-    Assert ($mem -eq '950 700 0') "C: restore transition persisted maximized=0 (got '$mem')"
+    $mem = Wait-Mem "$endW $endH 0"
+    Assert ($mem -eq "$endW $endH 0") "C: restore transition persisted maximized=0 (got '$mem')"
     $outer = Get-Outer $top
-    Assert ($outer -eq '950,700') "C: restore returned to 950,700 (got $outer)"
+    Assert ($outer -eq "$endW,$endH") "C: restore returned to $endW,$endH (got $outer)"
 
     # reset_window_size is the escape hatch: client returns to the 800x600
     # default (no config), and the MEMORY FILE is untouched (programmatic).
     Post-Key 'F9'
     $client = ''
-    for ($t = 0; $t -lt 20; $t++) { Start-Sleep -Milliseconds 200; $client = Get-Client $top; if ($client -eq '800,600') { break } }
-    Assert ($client -eq '800,600') "C: reset_window_size still resets to the default client size (got $client)"
+    for ($t = 0; $t -lt 20; $t++) { Start-Sleep -Milliseconds 200; $client = Get-Client $top; if ($client -eq "$defW,$defH") { break } }
+    Assert ($client -eq "$defW,$defH") "C: reset_window_size still resets to the default client size (got $client)"
     $mem = Read-Mem
     # -NegativeControl inverts this expectation, so a passing run proves the
     # assertion still discriminates rather than being true of everything.
     if ($NegativeControl) {
         Write-Host 'NEGATIVE CONTROL: asserting the programmatic reset DID rewrite the memory - this run MUST fail'
-        Assert ($mem -ne '950 700 0') "C (inverted): reset rewrote the memory (got '$mem')"
+        Assert ($mem -ne "$endW $endH 0") "C (inverted): reset rewrote the memory (got '$mem')"
     } else {
-        Assert ($mem -eq '950 700 0') "C: reset did NOT rewrite the memory (got '$mem')"
+        Assert ($mem -eq "$endW $endH 0") "C: reset did NOT rewrite the memory (got '$mem')"
     }
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'C: no crash'
     Stop-Instance
@@ -213,10 +224,10 @@ try {
     Remove-Item $memFile -Force
     Launch @('--window-width=120', '--window-height=20')
     $cfgRef = Get-Client $top
-    Assert ($cfgRef -ne '800,600') "D: configured 120x20 produces a non-default client ($cfgRef)"
+    Assert ($cfgRef -ne "$defW,$defH") "D: configured 120x20 produces a non-default client ($cfgRef)"
     Stop-Instance
     # Same config with a very different memory: client must be identical.
-    Set-Content -Path $memFile -Value '950 700 0' -Encoding Ascii
+    Set-Content -Path $memFile -Value "$endW $endH 0" -Encoding Ascii
     Launch @('--window-width=120', '--window-height=20')
     $cfgMem = Get-Client $top
     Assert ($cfgMem -eq $cfgRef) "D: config beat the memory ($cfgMem == $cfgRef)"
@@ -239,7 +250,7 @@ try {
     Set-Content -Path $memFile -Value 'not a placement' -Encoding Ascii
     Launch @()
     $outer = Get-Outer $top
-    Assert ($outer -eq '800,600') "F: corrupt memory ignored, default used (got $outer)"
+    Assert ($outer -eq "$defW,$defH") "F: corrupt memory ignored, default used (got $outer)"
     Assert (-not ($app.Process -and $app.Process.HasExited)) 'F: no crash'
     Stop-Instance
 } finally {

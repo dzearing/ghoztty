@@ -70,8 +70,13 @@ New-Item -ItemType Directory -Force -Path $fakeLocal | Out-Null
 $memFile = Join-Path $fakeLocal 'ghoztty\window_placement-debug'
 $manifest = Join-Path $fakeLocal 'ghoztty\session-layout-debug.json'
 
+# The first three tokens: `<w> <h> <0|1>`. Since T1971 the file carries a
+# fourth, the DPI the size was measured at; restore-dpi-frame.ps1 is the
+# script that asserts it, so this one compares the size and state alone.
 function Read-Mem {
-    if (Test-Path $memFile) { (Get-Content $memFile -Raw).Trim() } else { '<absent>' }
+    if (-not (Test-Path $memFile)) { return '<absent>' }
+    $t = @((Get-Content $memFile -Raw).Trim() -split '\s+')
+    return ($t | Select-Object -First 3) -join ' '
 }
 
 function Read-Manifest {
@@ -142,9 +147,12 @@ try {
 
     Launch
     $init = Get-TestWindowRect -Window $top
-    Assert ($init.Width -eq 800 -and $init.Height -eq 600) "fresh profile opens at the 800x600 default (got $($init.Width)x$($init.Height))"
+    # 800x600 DIP since T1971: the pixels follow this monitor's scale.
+    $dpi = [int](Get-TestWindowDpi -Window $top)
+    $defW = [int][math]::Round(800 * $dpi / 96.0, [System.MidpointRounding]::AwayFromZero); $defH = [int][math]::Round(600 * $dpi / 96.0, [System.MidpointRounding]::AwayFromZero)
+    Assert ($init.Width -eq $defW -and $init.Height -eq $defH) "fresh profile opens at the 800x600 DIP default, ${defW}x${defH} at $dpi dpi (got $($init.Width)x$($init.Height))"
     Assert (-not (Test-TestWindowZoomed -Window $top)) 'fresh profile opens un-maximized'
-    Assert (-not (Test-FillsScreen $top)) 'negative control: an 800x600 window does NOT fill the screen'
+    Assert (-not (Test-FillsScreen $top)) 'negative control: a default-size window does NOT fill the screen'
 
     # The real maximize path (WM_SYSCOMMAND), which is what writes both stores:
     # manifest first, placement memory second - so the memory reading "... 1"

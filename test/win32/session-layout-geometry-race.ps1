@@ -53,8 +53,13 @@ New-Item -ItemType Directory -Force -Path $fakeLocal | Out-Null
 $memFile = Join-Path $fakeLocal 'ghoztty\window_placement-debug'
 $manifest = Join-Path $fakeLocal 'ghoztty\session-layout-debug.json'
 
+# The first three tokens: `<w> <h> <0|1>`. Since T1971 the file carries a
+# fourth, the DPI the size was measured at; restore-dpi-frame.ps1 is the
+# script that asserts it, so this one compares the size and state alone.
 function Read-Mem {
-    if (Test-Path $memFile) { (Get-Content $memFile -Raw).Trim() } else { '<absent>' }
+    if (-not (Test-Path $memFile)) { return '<absent>' }
+    $t = @((Get-Content $memFile -Raw).Trim() -split '\s+')
+    return ($t | Select-Object -First 3) -join ' '
 }
 
 function Kill-RepoInstances([switch]$Agent) {
@@ -105,7 +110,12 @@ try {
 
         Launch
         $init = Get-Outer $top
-        Assert ($init -eq '800,600') "[$iter] fresh profile opens at the 800x600 default (got $init)"
+        # The default is 800x600 DIP since T1971, so its pixels follow this
+        # monitor's scale (1000x750 at 120 dpi); the drag adds 150x100 px.
+        $dpi = [int](Get-TestWindowDpi -Window $top)
+        $defW = [int][math]::Round(800 * $dpi / 96.0, [System.MidpointRounding]::AwayFromZero); $defH = [int][math]::Round(600 * $dpi / 96.0, [System.MidpointRounding]::AwayFromZero)
+        $endW = $defW + 150; $endH = $defH + 100
+        Assert ($init -eq "$defW,$defH") "[$iter] fresh profile opens at the 800x600 DIP default, ${defW}x${defH} at $dpi dpi (got $init)"
 
         # The real drag message sequence: ENTERSIZEMOVE -> SetWindowPos ->
         # EXITSIZEMOVE. The handler syncs the manifest, THEN writes the
@@ -116,9 +126,9 @@ try {
         for ($t = 0; $t -lt 40; $t++) {
             Start-Sleep -Milliseconds 100
             $mem = Read-Mem
-            if ($mem -eq '950 700 0') { break }
+            if ($mem -eq "$endW $endH 0") { break }
         }
-        Assert ($mem -eq '950 700 0') "[$iter] drag-resize persisted the placement memory (got '$mem')"
+        Assert ($mem -eq "$endW $endH 0") "[$iter] drag-resize persisted the placement memory (got '$mem')"
 
         # Kill NOW - no settle sleep. Pre-T220 this lands inside the 250ms
         # manifest debounce and loses the frame update.
@@ -128,13 +138,13 @@ try {
         # Direct evidence: the manifest on disk already carries the resized
         # frame (it was written BEFORE the placement file this run keyed on).
         $mtext = if (Test-Path $manifest) { Get-Content $manifest -Raw } else { '<absent>' }
-        Assert ($mtext -match '"w"\s*:\s*950' -and $mtext -match '"h"\s*:\s*700') "[$iter] manifest frame is 950x700 after the kill"
+        Assert ($mtext -match ('"w"\s*:\s*' + $endW) -and $mtext -match ('"h"\s*:\s*' + $endH)) "[$iter] manifest frame is ${endW}x${endH} after the kill"
 
         # And the behavior: a relaunch restores the resized window, not the
         # pre-resize one.
         Launch
         $outer = Get-Outer $top
-        Assert ($outer -eq '950,700') "[$iter] relaunch restored the resized 950,700 frame (got $outer)"
+        Assert ($outer -eq "$endW,$endH") "[$iter] relaunch restored the resized $endW,$endH frame (got $outer)"
         Assert (-not ($app.Process -and $app.Process.HasExited)) "[$iter] no crash"
         Stop-Process -Id $script:app.Pid -Force -ErrorAction SilentlyContinue
         Start-Sleep -Milliseconds 400
