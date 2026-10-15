@@ -255,8 +255,11 @@ try {
     $stampBefore = if (Test-Path $floorStamp) { (Get-FileHash $floorStamp -Algorithm SHA256).Hash } else { '<absent>' }
 
     $realDir = Join-Path $work 'real'
+    # A scratch record path: the box's own last-full.json could be a red full
+    # run that this one-audit run would COMPLETE, and that writes the real stamp.
     $realOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner `
-        -Repo $Repo -Include 'printclient-audit.ps1' -OutDir $realDir 2>&1
+        -Repo $Repo -Include 'printclient-audit.ps1' -OutDir $realDir `
+        -RecordPath (Join-Path $work 'no-record.json') 2>&1
     $realCode = $LASTEXITCODE
     $realText = ($realOut | Out-String)
     Assert 'D1 a one-audit floor run exits 0' ($realCode -eq 0) "exit=$realCode`n$realText"
@@ -334,6 +337,115 @@ try {
     # document has to state it or the next row will be a GUI script.
     Assert 'F5 and the criterion a new row has to meet' (
         $readmeText -match 'static sweep') ''
+
+    # ========================================================================
+    ""
+    "== G: a green re-run of only the red rows completes a red full run (T1955)"
+    # ========================================================================
+
+    # The rule saves a 16-25 minute sweep on every turn that fixes one audit, so
+    # each way it must REFUSE is planted here: a gate that has only ever said
+    # yes is not a gate (T1133).
+    $fp = Get-HarnessFloorFingerprint $Repo
+    Assert 'G0 the fingerprint covers the suite and its shared libraries' (
+        $fp.Count -gt 50 -and $fp.ContainsKey('test\win32\lib\TestScore.ps1') -and
+        $fp.ContainsKey('scripts\lib\HarnessFloor.ps1')) "count=$($fp.Count)"
+
+    $redOnBeta = Get-HarnessFloorVerdict -Audits $twoAudits -Pending $noPending `
+        -Rows @((New-Row 'alpha.ps1' 'pass'), (New-Row 'beta.ps1' 'fail'))
+    $now = Get-Date
+    $mkRec = {
+        param($verdict, $fpr, $at)
+        # Through a JSON round trip, as the runner reads it back off disk.
+        (New-HarnessFloorRecord -Verdict $verdict -Fingerprint $fpr -Head 'abc1234' -FinishedAt $at |
+            ConvertTo-Json -Depth 5 | ConvertFrom-Json)
+    }
+    $rec = & $mkRec $redOnBeta $fp $now.AddMinutes(-20)
+    $betaGreen = Get-HarnessFloorVerdict -Audits @($twoAudits[1]) -Pending $noPending -Rows @((New-Row 'beta.ps1' 'pass'))
+    $alphaGreen = Get-HarnessFloorVerdict -Audits @($twoAudits[0]) -Pending $noPending -Rows @((New-Row 'alpha.ps1' 'pass'))
+
+    $c = Test-HarnessFloorCompletion -Record $rec -Selected @('beta.ps1') -Verdict $betaGreen -Fingerprint $fp -Now $now
+    Assert 'G1 a green re-run of exactly the red row completes the full run' ($c.Ok) $c.Reason
+    Assert 'G2 and names the row it completes' (@($c.Red) -contains 'beta.ps1') ($c.Red -join ',')
+
+    $c = Test-HarnessFloorCompletion -Record $rec -Selected @('alpha.ps1') -Verdict $alphaGreen -Fingerprint $fp -Now $now
+    Assert 'G3 a re-run of a DIFFERENT audit does not complete it (the red one is still red)' (
+        -not $c.Ok -and $c.Reason -match 'missing beta\.ps1') $c.Reason
+
+    $twoRed = Get-HarnessFloorVerdict -Audits $twoAudits -Pending $noPending `
+        -Rows @((New-Row 'alpha.ps1' 'fail'), (New-Row 'beta.ps1' 'fail'))
+    $rec2 = & $mkRec $twoRed $fp $now.AddMinutes(-20)
+    $c = Test-HarnessFloorCompletion -Record $rec2 -Selected @('beta.ps1') -Verdict $betaGreen -Fingerprint $fp -Now $now
+    Assert 'G4 fixing one of two red rows does not complete it' (-not $c.Ok -and $c.Reason -match 'alpha\.ps1') $c.Reason
+
+    $betaRed = Get-HarnessFloorVerdict -Audits @($twoAudits[1]) -Pending $noPending -Rows @((New-Row 'beta.ps1' 'fail'))
+    $c = Test-HarnessFloorCompletion -Record $rec -Selected @('beta.ps1') -Verdict $betaRed -Fingerprint $fp -Now $now
+    Assert 'G5 a re-run that is still red completes nothing' (-not $c.Ok) $c.Reason
+
+    $c = Test-HarnessFloorCompletion -Record $null -Selected @('beta.ps1') -Verdict $betaGreen -Fingerprint $fp -Now $now
+    Assert 'G6 with no full run on record there is nothing to complete' (-not $c.Ok) $c.Reason
+
+    $old = & $mkRec $redOnBeta $fp $now.AddHours(-5)
+    $c = Test-HarnessFloorCompletion -Record $old -Selected @('beta.ps1') -Verdict $betaGreen -Fingerprint $fp -Now $now
+    Assert 'G7 a full run older than the limit cannot be completed' (-not $c.Ok -and $c.Reason -match 'old') $c.Reason
+
+    $libMoved = @{}; foreach ($k in $fp.Keys) { $libMoved[$k] = $fp[$k] }
+    $libMoved['test\win32\lib\TestScore.ps1'] = 'CHANGED'
+    $c = Test-HarnessFloorCompletion -Record $rec -Selected @('beta.ps1') -Verdict $betaGreen -Fingerprint $libMoved -Now $now
+    Assert 'G8 a shared-library edit since the full run forces a full sweep' (
+        -not $c.Ok -and $c.Reason -match 'TestScore\.ps1') $c.Reason
+
+    $scriptMoved = @{}; foreach ($k in $fp.Keys) { $scriptMoved[$k] = $fp[$k] }
+    $scriptMoved['test\win32\harness-floor.ps1'] = 'CHANGED'
+    $c = Test-HarnessFloorCompletion -Record $rec -Selected @('beta.ps1') -Verdict $betaGreen -Fingerprint $scriptMoved -Now $now
+    Assert 'G9 a top-level script edit (the fix itself) is allowed, and listed' (
+        $c.Ok -and @($c.Changed) -contains 'test\win32\harness-floor.ps1') "$($c.Reason) changed=$($c.Changed -join ',')"
+
+    $structural = Get-HarnessFloorVerdict -Audits $twoAudits -Pending $noPending `
+        -Rows @((New-Row 'beta.ps1' 'fail'))
+    $recS = & $mkRec $structural $fp $now.AddMinutes(-20)
+    $c = Test-HarnessFloorCompletion -Record $recS -Selected @('beta.ps1') -Verdict $betaGreen -Fingerprint $fp -Now $now
+    Assert 'G10 a full run with a structural red (a member with no row) cannot be completed' (
+        -not $c.Ok -and $c.Reason -match 'structural') $c.Reason
+
+    $used = & $mkRec $redOnBeta $fp $now.AddMinutes(-20)
+    $used.consumed = $true
+    $c = Test-HarnessFloorCompletion -Record $used -Selected @('beta.ps1') -Verdict $betaGreen -Fingerprint $fp -Now $now
+    Assert 'G11 a full run completes once, never twice' (-not $c.Ok -and $c.Reason -match 'already been completed') $c.Reason
+
+    $recG = & $mkRec $green $fp $now.AddMinutes(-20)
+    $c = Test-HarnessFloorCompletion -Record $recG -Selected @('beta.ps1') -Verdict $betaGreen -Fingerprint $fp -Now $now
+    Assert 'G12 a green full run has nothing to complete' (-not $c.Ok) $c.Reason
+
+    # On the wire: a planted red full run naming one real, cheap audit, then the
+    # runner re-running only that audit. -DryRunStamp, because this run must
+    # never write the committed floor stamp.
+    $stampBeforeG = if (Test-Path $floorStamp) { (Get-FileHash $floorStamp -Algorithm SHA256).Hash } else { '<absent>' }
+    $pcRed = Get-HarnessFloorVerdict -Audits @([pscustomobject]@{ Name = 'printclient-audit.ps1'; Why = 'x' }) `
+        -Pending @{} -Rows @((New-Row 'printclient-audit.ps1' 'fail'))
+    $recPath = Join-Path $work 'last-full.json'
+    Write-HarnessFloorRecord -Path $recPath -Record (New-HarnessFloorRecord -Verdict $pcRed `
+            -Fingerprint (Get-HarnessFloorFingerprint $Repo) -Head 'abc1234' -FinishedAt (Get-Date).AddMinutes(-5))
+    $wOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner -Repo $Repo `
+        -Include 'printclient-audit.ps1' -OutDir (Join-Path $work 'g-real') -RecordPath $recPath -DryRunStamp 2>&1
+    $wCode = $LASTEXITCODE
+    $wText = ($wOut | Out-String)
+    Assert 'G13 the runner says the re-run completes the planted red full run' (
+        $wCode -eq 0 -and $wText -match 'HARNESS FLOOR COMPLETED: .*red only on printclient-audit\.ps1') "exit=$wCode`n$wText"
+    Assert 'G14 and the dry run wrote no stamp' ($wText -match 'DRY RUN: would stamp' -and
+        $(if (Test-Path $floorStamp) { (Get-FileHash $floorStamp -Algorithm SHA256).Hash } else { '<absent>' }) -eq $stampBeforeG) ''
+
+    # The same re-run against a record whose red row it does NOT cover.
+    $otherRed = Get-HarnessFloorVerdict -Audits @([pscustomobject]@{ Name = 'vt-escape-scan.ps1'; Why = 'x' }) `
+        -Pending @{} -Rows @((New-Row 'vt-escape-scan.ps1' 'fail'))
+    Write-HarnessFloorRecord -Path $recPath -Record (New-HarnessFloorRecord -Verdict $otherRed `
+            -Fingerprint (Get-HarnessFloorFingerprint $Repo) -Head 'abc1234' -FinishedAt (Get-Date).AddMinutes(-5))
+    $nOut = & powershell -NoProfile -ExecutionPolicy Bypass -File $runner -Repo $Repo `
+        -Include 'printclient-audit.ps1' -OutDir (Join-Path $work 'g-neg') -RecordPath $recPath -DryRunStamp 2>&1
+    $nText = ($nOut | Out-String)
+    Assert 'G15 a re-run that leaves another audit red is NOT a completion' (
+        $nText -match 'not a completion of the last full run: .*missing vt-escape-scan\.ps1' -and
+        $nText -notmatch 'HARNESS FLOOR COMPLETED') $nText
 
     if ($NegativeControl) {
         "  NEGATIVE CONTROL: one assertion is inverted below; this run MUST be red"

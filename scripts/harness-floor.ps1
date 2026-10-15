@@ -69,7 +69,19 @@ param(
     # Score an existing suite-run summary instead of running anything. This is
     # how the acceptance harness exercises the scoring against planted rows
     # without waiting fifteen minutes for a real sweep.
-    [string]$ScoreSummary
+    [string]$ScoreSummary,
+
+    # T1955: where a full run records what it found, so a green narrowed re-run
+    # of exactly its red rows can complete it. Default temp\harness-floor\
+    # last-full.json; the acceptance harness points it at a scratch file.
+    [string]$RecordPath,
+
+    # How old a red full run may be and still be completed by a re-run.
+    [double]$MaxAgeHours = 4,
+
+    # Say what a completion WOULD stamp and stamp nothing. For the acceptance
+    # harness, whose run must never write the committed floor stamp.
+    [switch]$DryRunStamp
 )
 
 $ErrorActionPreference = 'Stop'
@@ -149,7 +161,55 @@ Write-Host ''
 Write-Host '---- harness floor ----------------------------------------------------------'
 foreach ($line in @(Format-HarnessFloorVerdict -Verdict $verdict)) { Write-Host $line }
 
+if (-not $RecordPath) { $RecordPath = Get-HarnessFloorRecordPath $Repo }
+
+# T1955. A real FULL run records what it found - red or green - so that a fix to
+# one red member is proved by re-running that member, not the whole 16-25
+# minute sweep. Written on every full run, so the record always describes the
+# latest sweep and an old red one cannot be completed after a newer one.
+if (-not $Include -and -not $ScoreSummary) {
+    $head = (& git -C $Repo rev-parse --short HEAD 2>$null | Select-Object -Last 1)
+    $record = New-HarnessFloorRecord -Verdict $verdict -Head ([string]$head) `
+        -Fingerprint (Get-HarnessFloorFingerprint $Repo)
+    try { Write-HarnessFloorRecord -Path $RecordPath -Record $record } catch {
+        Write-Host "  (could not record this run for a targeted re-run: $($_.Exception.Message))"
+    }
+    if (-not $verdict.Ok -and -not $record.structural -and @($record.red).Count -gt 0) {
+        Write-Host ''
+        Write-Host '  Fix the red row(s), then re-run ONLY them - a green re-run completes this sweep and stamps the floor:'
+        Write-Host ("    powershell -NoProfile -File scripts\harness-floor.ps1 -Include '{0}'" -f (@($record.red) -join ','))
+    }
+}
+
 if (-not $verdict.Ok) { exit 1 }
+
+# A green narrowed re-run that covers every red row of the last full run
+# completes it (T1955; the rules are Test-HarnessFloorCompletion's).
+if ($Include -and -not $ScoreSummary) {
+    $selected = @($audits | ForEach-Object { [string]$_.Name })
+    $rec = Read-HarnessFloorRecord $RecordPath
+    $c = Test-HarnessFloorCompletion -Record $rec -Selected $selected -Verdict $verdict `
+        -Fingerprint (Get-HarnessFloorFingerprint $Repo) -MaxAgeHours $MaxAgeHours
+    Write-Host ''
+    if (-not $c.Ok) {
+        Write-Host "  not a completion of the last full run: $($c.Reason)"
+        exit 0
+    }
+    Write-Host ("HARNESS FLOOR COMPLETED: the full run of {0} (head {1}) was red only on {2}; all now green" -f `
+            $rec.finishedAt, $rec.head, (@($c.Red) -join ', '))
+    foreach ($ch in @($c.Changed)) { Write-Host "    edited since the full run: $ch" }
+    if ($DryRunStamp) {
+        Write-Host '  DRY RUN: would stamp harness-floor; nothing written'
+        exit 0
+    }
+    $rec.consumed = $true
+    try { Write-HarnessFloorRecord -Path $RecordPath -Record $rec } catch {
+        Write-Host "  (could not mark the record consumed: $($_.Exception.Message))"
+    }
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'guard-due.ps1') `
+        update -Guard harness-floor -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
+    exit 0
+}
 
 # A green FULL run stamps the covered files (T783), so guard-due can answer "has
 # anybody run the harness floor against the suite as it now stands?" - which is

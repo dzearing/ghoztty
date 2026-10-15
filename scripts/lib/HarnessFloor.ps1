@@ -258,3 +258,160 @@ function Format-HarnessFloorVerdict {
     }
     return @($out)
 }
+
+# ---------------------------------------------------------------- completion
+#
+# T1955. A full sweep is 16-25 minutes, and until this a one-line fix to ONE red
+# member forced a whole new sweep before the floor would stamp - on 2026-10-14
+# that was 23 floor runs for about 15 closes, ~20 minutes on half the turns. The
+# rule now: a full run that was red ONLY because of named member rows, followed
+# by a green narrowed re-run that covers every one of those rows, COMPLETES the
+# full run and stamps the floor. Nothing gets weaker in the part that matters -
+# every member still had to go green, and the red ones went green AFTER the fix.
+#
+# What it refuses, and why each is a refusal rather than a judgement call:
+#   * no full-run record, or the last full run was green  - nothing to complete;
+#   * the full run was red for a STRUCTURAL reason (stale exception, a member
+#     with no row, an orphan) - those are fixed in the floor set itself, and a
+#     narrowed run cannot see them;
+#   * the record is already consumed - one full run completes once, or a stream
+#     of single-audit re-runs could keep a floor current for a day of edits no
+#     full sweep has read;
+#   * the record is older than -MaxAgeHours - it describes a different turn;
+#   * a SHARED file changed since (test\win32\lib\, the floor runner and set,
+#     suite-run) - every member loads or obeys those, so a change there can turn
+#     any member red and only a full sweep can say it did not;
+#   * the re-run does not cover every red row, or is not itself green.
+#
+# Edits to top-level test scripts between the two runs are ALLOWED and listed:
+# that is the fix itself. A fix that breaks a different member is caught by the
+# next full sweep, which the next test-script edit makes due.
+
+function Get-HarnessFloorRecordPath([string]$Repo) {
+    return (Join-Path $Repo 'temp\harness-floor\last-full.json')
+}
+
+# Repo-relative path -> SHA256 for every file the floor's guard row watches,
+# plus suite-run (which every member runs under). Cheap: a few hundred small
+# files.
+function Get-HarnessFloorFingerprint([string]$Repo) {
+    $globs = @(
+        'test\win32\*.ps1',
+        'test\win32\lib\*.ps1',
+        'scripts\harness-floor.ps1',
+        'scripts\lib\HarnessFloor.ps1',
+        'scripts\vt-escape-scan.ps1',
+        'scripts\suite-run.ps1'
+    )
+    $map = @{}
+    foreach ($g in $globs) {
+        foreach ($f in @(Get-ChildItem -Path (Join-Path $Repo $g) -File -ErrorAction SilentlyContinue)) {
+            $rel = $f.FullName.Substring($Repo.TrimEnd('\').Length + 1)
+            $map[$rel] = (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash
+        }
+    }
+    return $map
+}
+
+# A shared file is anything in the fingerprint that is not a top-level
+# test\win32\<name>.ps1: libraries, the runner, the set, suite-run.
+function Test-HarnessFloorSharedPath([string]$Rel) {
+    return -not ($Rel -match '^test\\win32\\[^\\]+\.ps1$')
+}
+
+function New-HarnessFloorRecord {
+    param(
+        [Parameter(Mandatory)]$Verdict,
+        [hashtable]$Fingerprint,
+        [string]$Head,
+        [datetime]$FinishedAt = (Get-Date)
+    )
+    $structural = (@($Verdict.Stale).Count + @($Verdict.Missing).Count + @($Verdict.Orphan).Count) -gt 0
+    return [pscustomobject]@{
+        schema      = 'ghoztty-harness-floor-record/1'
+        finishedAt  = $FinishedAt.ToString('o')
+        head        = $Head
+        ok          = [bool]$Verdict.Ok
+        red         = @(@($Verdict.Red) | ForEach-Object { [string]$_.Name })
+        structural  = $structural
+        consumed    = $false
+        fingerprint = $Fingerprint
+    }
+}
+
+function Read-HarnessFloorRecord([string]$Path) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return $null }
+    try { return (Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json) } catch { return $null }
+}
+
+function Write-HarnessFloorRecord([string]$Path, $Record) {
+    $dir = Split-Path -Parent $Path
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+    ($Record | ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
+# Fingerprint as stored (a PSCustomObject after a JSON round trip) or live (a
+# hashtable) -> hashtable.
+function ConvertTo-HarnessFloorMap($fp) {
+    if ($null -eq $fp) { return @{} }
+    if ($fp -is [hashtable]) { return $fp }
+    $m = @{}
+    foreach ($p in $fp.PSObject.Properties) { $m[$p.Name] = [string]$p.Value }
+    return $m
+}
+
+<#
+.SYNOPSIS
+May this green narrowed re-run complete the last red full run? Pure: no I/O.
+
+.OUTPUTS
+{ Ok; Reason; Red (the rows it completes); Changed (top-level scripts edited
+in between - the fix) }
+#>
+function Test-HarnessFloorCompletion {
+    param(
+        $Record,
+        [string[]]$Selected,
+        [Parameter(Mandatory)]$Verdict,
+        [hashtable]$Fingerprint,
+        [datetime]$Now = (Get-Date),
+        [double]$MaxAgeHours = 4
+    )
+    $no = { param($why) [pscustomobject]@{ Ok = $false; Reason = $why; Red = @(); Changed = @() } }
+
+    if (-not $Verdict.Ok) { return (& $no 'this re-run is not green') }
+    if ($null -eq $Record) { return (& $no 'no full run is recorded on this box') }
+    if ($Record.ok) { return (& $no 'the last full run was already green') }
+    if ($Record.structural) {
+        return (& $no 'the last full run was red for a structural reason (stale, missing or orphan) - only a full run can clear that')
+    }
+    if ($Record.consumed) { return (& $no 'the last full run has already been completed once') }
+    $red = @(@($Record.red) | Where-Object { $_ })
+    if ($red.Count -eq 0) { return (& $no 'the last full run recorded no red row to complete') }
+
+    $finished = [datetime]::MinValue
+    if (-not [datetime]::TryParse([string]$Record.finishedAt, [ref]$finished)) {
+        return (& $no 'the full-run record has no readable finish time')
+    }
+    $age = ($Now - $finished).TotalHours
+    if ($age -gt $MaxAgeHours) {
+        return (& $no ('the last full run is {0:N1}h old (limit {1}h)' -f $age, $MaxAgeHours))
+    }
+
+    $uncovered = @($red | Where-Object { @($Selected) -notcontains $_ })
+    if ($uncovered.Count -gt 0) {
+        return (& $no ('this re-run does not cover every red row: missing ' + ($uncovered -join ', ')))
+    }
+
+    $thenMap = ConvertTo-HarnessFloorMap $Record.fingerprint
+    $liveMap = ConvertTo-HarnessFloorMap $Fingerprint
+    $changed = New-Object System.Collections.ArrayList
+    foreach ($k in @(@($thenMap.Keys) + @($liveMap.Keys) | Sort-Object -Unique)) {
+        if ($thenMap[$k] -ne $liveMap[$k]) { [void]$changed.Add($k) }
+    }
+    $shared = @($changed | Where-Object { Test-HarnessFloorSharedPath $_ })
+    if ($shared.Count -gt 0) {
+        return (& $no ('a shared file changed since the full run, so every member must re-run: ' + ($shared -join ', ')))
+    }
+    return [pscustomobject]@{ Ok = $true; Reason = 'completes the last full run'; Red = $red; Changed = @($changed) }
+}

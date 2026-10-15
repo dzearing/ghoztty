@@ -1,13 +1,14 @@
 {
     "guard":  "stderr-launch-capture",
     "script":  "test/win32/stderr-launch-capture.ps1",
-    "generated":  "2026-10-15T01:18:18-07:00",
-    "commit":  "6b7b0e8f4",
+    "generated":  "2026-10-15T02:22:26-07:00",
+    "commit":  "c60641a47",
     "uncommitted":  [
-
+                        "docs/claude/testing.md",
+                        "test/win32/harness-floor.ps1"
                     ],
     "files":  {
-                  "docs/claude/testing.md":  "63e4a3b3e4a8f9f1819704ccb179862fcd4f4b4eb2aba29ee3b0f0f904e52f86",
+                  "docs/claude/testing.md":  "536c540cbbc41aa03756c4238a0b568befdc12a36ecdc024ae4cfafd30cb58e0",
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",
@@ -149,7 +150,7 @@
                   "test/win32/gui-launch-command.ps1":  "f919dcf022ea99019000702d0029738ac91242a5ad464e8fab6c0731683c6c84",
                   "test/win32/gui-postmortem.ps1":  "5c63e9a8563ad9f82bb9c9888bbadbe650f41173508f0d124d83b840d4918077",
                   "test/win32/harness-exitcode-audit.ps1":  "9568a9718f2cfba7d2bc2b8f9813a74ba8767a062a20dea8f236fc56fa3ee4e5",
-                  "test/win32/harness-floor.ps1":  "870782ef1925cb901d1b718bbfe4a9d514956229ea846616534c6b781731a566",
+                  "test/win32/harness-floor.ps1":  "9513ea9e455a8095fbd33cff3cc8708442bf5ce05ba46bedfbb849cebb2ea248",
                   "test/win32/harness-process-leak.ps1":  "b46c6e53003f25b41da789d1b52d215d9864b2ce6020edf9cac7e6ada45f6b53",
                   "test/win32/hero-mode.ps1":  "51d56abd68a66aa4a5b94ddadde007f6e3faf02050afea1f4c264c50e8d000b8",
                   "test/win32/hero-nav.ps1":  "858be1aeef211b8b044f24aba30fef20ee540ba8241a017d8e279ad6c56735c3",

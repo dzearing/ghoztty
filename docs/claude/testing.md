@@ -933,6 +933,18 @@ powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness   # the same, u
   `-Lane all`: the answer can only change when the sources change, guard-due
   already detects exactly that, and paying fifteen minutes on every floor run
   would buy nothing.
+- **A red sweep is finished by re-running only its red rows** (T1955). Every
+  full run records what it found in `temp\harness-floor\last-full.json`, and
+  when it is red it prints the exact `harness-floor.ps1 -Include '<red rows>'`
+  command. Fix those, run that: a green re-run that covers every red row
+  COMPLETES the full run and stamps the floor (`HARNESS FLOOR COMPLETED ...`),
+  instead of costing another 16-25 minute sweep. It refuses — and says why —
+  when the re-run misses a red row or is still red, the sweep is over 4 h old
+  or already completed once, the red was structural (STALE / NOT RUN / ORPHAN),
+  or any SHARED file changed since (`test\win32\lib\`, the floor runner and
+  set, `suite-run.ps1`): every member loads those, so only a full sweep can
+  clear them. Edits to top-level scripts — the fix itself — are allowed and
+  listed.
 - Acceptance: `test\win32\harness-floor.ps1` (guard `harness-floor-teeth`),
   which plants summary rows to prove each verdict — unexcused red, excused red,
   stale exception, an audit that never ran, an exception for an audit not in the
