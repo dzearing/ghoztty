@@ -1,0 +1,18 @@
+{
+    "guard":  "title-churn-redraw",
+    "script":  "test/win32/title-churn-redraw.ps1",
+    "generated":  "2026-10-14T19:08:04-07:00",
+    "commit":  "35a6e7c58",
+    "uncommitted":  [
+                        "src/apprt/win32/PaneSidebar.zig",
+                        "src/renderer/generic.zig",
+                        "src/renderer/Thread.zig",
+                        "test/win32/title-churn-redraw.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/PaneSidebar.zig":  "e564d9706eb36e5170512b7e1f1a3cb5be009c531e711814c10baada8894a73a",
+                  "src/renderer/generic.zig":  "a5801968c50e6f3dfe77c74fde778501d223cfd6cb8832a8ec4424e28bf3bfa0",
+                  "src/renderer/Thread.zig":  "750aad999beca8d96dbe7fb6226300b9b998bb733ddd1d2fae3b2a2b87884253",
+                  "test/win32/title-churn-redraw.ps1":  "e76dd03723ce484c7b6fa8cfa96272bac7cdf8048bc900b9360624cc87855369"
+              }
+}

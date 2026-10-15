@@ -1,14 +1,15 @@
 {
     "guard":  "msg-timer-ids",
     "script":  "test/win32/msg-timer-ids.ps1",
-    "generated":  "2026-10-14T00:12:44-07:00",
-    "commit":  "3568e00af",
+    "generated":  "2026-10-14T18:40:41-07:00",
+    "commit":  "35a6e7c58",
     "uncommitted":  [
-                        "src/apprt/win32/App.zig"
+                        "src/apprt/win32/App.zig",
+                        "src/apprt/win32/msg_timer.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/App.zig":  "15651d790b0e17f380d4eee68dc6d7edc973db4e0ec75288f926255b71959415",
-                  "src/apprt/win32/msg_timer.zig":  "98be966926e526defd14017b79f0d46755402ebbcfe97f4398d7c84115c7ef08",
+                  "src/apprt/win32/App.zig":  "f26b384235f773910e2fa9e5de46681e85aa8beb3c8c40fc2fbbb96cf8f2555a",
+                  "src/apprt/win32/msg_timer.zig":  "37451419889b0c61dde56c6d5ee9219fb69409bcb991b3701b2334f79741bd05",
                   "src/apprt/win32/QuickTerminal.zig":  "78e8c52a60889d96114f5cf93f7c02331b1028124f9bc7d1833c576b3f646185",
                   "src/apprt/win32/RemoteReconnect.zig":  "e6d8c713bcf62325134f244262962ff94da85cb5cb68b54ceb7848c5a2f7f316",
                   "test/win32/msg-timer-ids.ps1":  "ec583de0fee83ffd3e9df2e2562483fa534a132cce4dc4cabecfceebb9578ef1"

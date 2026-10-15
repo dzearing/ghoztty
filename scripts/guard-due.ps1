@@ -1902,6 +1902,21 @@ $GuardTable = @(
             'test\win32\lib\ApplierSandbox.ps1'
         )
     },
+    # Whether a title that keeps changing costs frames or sidebar rebuilds
+    # (T1935). Claude Code animates its title in every pane; each change used
+    # to present a full frame and rebuild every sidebar, and twenty panes of it
+    # made typing lag everywhere. Nothing else measures either cost.
+    [pscustomobject]@{
+        Name   = 'title-churn-redraw'
+        Script = 'test\win32\title-churn-redraw.ps1'
+        Stamp  = 'test\win32\title-churn-redraw.stamp.json'
+        Covers = @(
+            'src\renderer\Thread.zig',
+            'src\renderer\generic.zig',
+            'src\apprt\win32\PaneSidebar.zig',
+            'test\win32\title-churn-redraw.ps1'
+        )
+    },
     # Whether a failed update SAYS anything (T1206). The update-apply row above
     # covers the same two files for a different question - did the applier get
     # to msiexec and back - and neither row can answer the other's. A change

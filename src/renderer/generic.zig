@@ -233,6 +233,18 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
         /// Whether or not we have custom shaders.
         has_custom_shaders: bool = false,
 
+        /// Whether the last `updateFrame` found anything a frame shows that
+        /// differs from the frame before it (T1935). False means presenting
+        /// would put the same pixels on screen again, which the render thread
+        /// may then skip. See `Thread.renderCallback`.
+        frame_changed: bool = true,
+
+        /// What the last frame showed that is not tracked by the render
+        /// state's dirty flags (the cursor, the blink phase, focus, the mouse,
+        /// the size), hashed, so the next `updateFrame` can tell whether any
+        /// of it moved (T1935).
+        frame_key: u64 = 0,
+
         /// Our shader pipelines.
         shaders: Shaders,
 
@@ -1278,6 +1290,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 overlay_features: []const Overlay.Feature,
             };
 
+            // Whether the kitty image state moved this frame (T1935).
+            var kitty_changed = false;
+
             // Update all our data as tightly as possible within the mutex.
             var critical: Critical = critical: {
                 // const start = try std.time.Instant.now();
@@ -1316,6 +1331,9 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 // If we're in a synchronized output state, we pause all rendering.
                 if (state.terminal.modes.get(.synchronized_output)) {
                     log.debug("synchronized output started, skipping render", .{});
+                    // The screen is held by the program, so there is nothing
+                    // new to present (T1935).
+                    self.frame_changed = false;
                     return;
                 }
 
@@ -1369,6 +1387,7 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                 // kitty state on every frame because any cell change can move
                 // an image.
                 if (self.images.kittyRequiresUpdate(state.terminal)) {
+                    kitty_changed = true;
                     // We need to grab the draw mutex since this updates
                     // our image state that drawFrame uses.
                     self.draw_mutex.lock();
@@ -1501,6 +1520,46 @@ pub fn Renderer(comptime GraphicsAPI: type) type {
                     };
                 }
             }
+
+            // Decide whether this frame differs from the last one (T1935),
+            // before the dirty state is reset below and the scrollbar is
+            // adopted. A title change, a bell or any other output that touches
+            // no cell lands here with nothing changed, and presenting it again
+            // is what kept every Claude pane's GL driver thread busy.
+            self.frame_changed = changed: {
+                const cur = &self.terminal_state.cursor;
+                var h = std.hash.Wyhash.init(0);
+                std.hash.autoHash(&h, cur.active);
+                std.hash.autoHash(&h, cur.viewport);
+                std.hash.autoHash(&h, cur.visible);
+                std.hash.autoHash(&h, cur.blinking);
+                std.hash.autoHash(&h, cur.visual_style);
+                std.hash.autoHash(&h, cur.password_input);
+                std.hash.autoHash(&h, self.terminal_state.colors.cursor);
+                std.hash.autoHash(&h, cursor_blink_visible);
+                std.hash.autoHash(&h, self.focused);
+                std.hash.autoHash(&h, critical.mouse.point);
+                std.hash.autoHash(&h, @as(
+                    @typeInfo(inputpkg.Mods).@"struct".backing_integer.?,
+                    @bitCast(critical.mouse.mods),
+                ));
+                std.hash.autoHash(&h, self.size);
+                const key = h.final();
+                defer self.frame_key = key;
+
+                if (key != self.frame_key) break :changed true;
+                if (self.terminal_state.dirty != .false) break :changed true;
+                if (kitty_changed) break :changed true;
+                if (self.has_custom_shaders) break :changed true;
+                if (critical.preedit != null) break :changed true;
+                if (critical.overlay_features.len > 0) break :changed true;
+                if (!self.scrollbar.eql(critical.scrollbar)) break :changed true;
+                // A hero thumbnail is captured from the frame it presents.
+                if (comptime apprt.runtime == apprt.win32) {
+                    if (self.rt_surface.heroSnapWanted() != null) break :changed true;
+                }
+                break :changed false;
+            };
 
             // From this point forward no more errors.
             errdefer comptime unreachable;

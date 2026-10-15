@@ -649,7 +649,7 @@ fn logOutline(self: *PaneSidebar) void {
     for (l.heads[0..l.head_count]) |hd| {
         w.print("{d},{d};", .{ hd.chevron.centerX(), hd.chevron.centerY() }) catch break;
     }
-    log.info("pane sidebar outline {s}", .{fbs.getWritten()});
+    log.debug("pane sidebar outline {s}", .{fbs.getWritten()});
 }
 
 /// The scroll state (T1878) at the end of a geometry line: the offset of
@@ -674,7 +674,7 @@ fn logRows(self: *PaneSidebar) void {
     const rules = l.rule_count + @intFromBool(l.section_rule != null);
     w.print(" rules={d} scope={d},{d} trash={d},{d}", .{ rules, l.scope.centerX(), l.scope.centerY(), l.trash.centerX(), l.trash.centerY() }) catch {};
     logScroll(w, &l);
-    log.info("pane sidebar rows {s}", .{fbs.getWritten()});
+    log.debug("pane sidebar rows {s}", .{fbs.getWritten()});
 }
 
 /// The roster's activity marks, logged when the tally moves: how many rows
@@ -829,7 +829,7 @@ fn refreshAll(self: *PaneSidebar) void {
     const terms = if (query) |q| countTerms(q) else 0;
     var folds: usize = 0;
     for (specs[0..np]) |s| folds += @intFromBool(s.folded);
-    log.info("pane sidebar all-windows groups={d} panes={d} lines={d} search={d} windows={d} folded={d} order={s}", .{ np, nv, nl, terms, n_all, folds, ofs.getWritten() });
+    log.debug("pane sidebar all-windows groups={d} panes={d} lines={d} search={d} windows={d} folded={d} order={s}", .{ np, nv, nl, terms, n_all, folds, ofs.getWritten() });
     self.rosterChanged();
 }
 
@@ -2963,7 +2963,7 @@ fn logTips(self: *PaneSidebar, counts: []const u8) void {
     if (key.len == self.tip_log_len and std.mem.eql(u8, self.tip_log[0..self.tip_log_len], key)) return;
     @memcpy(self.tip_log[0..key.len], key);
     self.tip_log_len = key.len;
-    log.info("pane sidebar tips{s}", .{line});
+    log.debug("pane sidebar tips{s}", .{line});
 }
 
 /// A rail tile's tip title: the pane's, and for another window's pane also

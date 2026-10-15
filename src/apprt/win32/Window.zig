@@ -281,6 +281,13 @@ const FOCUS_GLOW_TICK_MS: u32 = 16;
 /// the report's expiry needs a clock then), and not running at all while no
 /// visible pane reports progress.
 const BUSY_LIGHT_TIMER_ID: usize = 0x424C; // 'BL'
+
+/// The coalesced pane-sidebar refresh a title change asks for (T1935). Claude
+/// Code animates its title several times a second in every pane, and each
+/// change used to rebuild this window's sidebar and every all-windows list at
+/// once; now they land together at most every `SIDEBAR_SYNC_MS`.
+const SIDEBAR_SYNC_TIMER_ID: usize = 0x5353; // 'SS'
+pub const SIDEBAR_SYNC_MS: u32 = 250;
 pub const HERO_SLIDE_MS: f32 = 350.0;
 const HERO_RECENTER_MS: f32 = 300.0;
 
@@ -562,6 +569,10 @@ pane_sidebar_width_dip: f32 = pane_sidebar.default_width_dip,
 /// `tabBarLeft()` as the strip last saw it (T1900): the sidebar's column
 /// moving under a strip that starts at its edge moves the tabs too.
 pane_sidebar_strip_left: i32 = 0,
+
+/// A title-driven sidebar refresh is waiting on `SIDEBAR_SYNC_TIMER_ID`
+/// (T1935).
+sidebar_sync_armed: bool = false,
 
 /// The elevated pane style's desk and card bitmaps (T1831). Empty until the
 /// first elevated paint; freed in `deinit`.
@@ -2478,6 +2489,34 @@ pub fn paneSidebarTop(self: *const Window) i32 {
 /// place its column, and refresh its roster. Cheap when nothing changed, so
 /// every layout, focus and title event can call it.
 pub fn syncPaneSidebar(self: *Window) void {
+    self.syncPaneSidebarScoped(.now);
+}
+
+/// Ask for a sidebar refresh soon rather than now (T1935): the title-change
+/// path. A direct `syncPaneSidebar` before the timer fires takes its place.
+pub fn scheduleSidebarSync(self: *Window) void {
+    if (self.sidebar_sync_armed) return;
+    const hwnd = self.hwnd orelse return;
+    if (w32.SetTimer(hwnd, SIDEBAR_SYNC_TIMER_ID, SIDEBAR_SYNC_MS, null) == 0) {
+        self.syncPaneSidebar();
+        return;
+    }
+    self.sidebar_sync_armed = true;
+}
+
+fn sidebarSyncTimerFire(self: *Window) void {
+    // The other windows' lists are refreshed once for every window that asked
+    // in this interval, not once per window (T1935).
+    self.syncPaneSidebarScoped(.coalesced);
+}
+
+const ScopeRefresh = enum { now, coalesced };
+
+fn syncPaneSidebarScoped(self: *Window, scopes: ScopeRefresh) void {
+    if (self.sidebar_sync_armed) {
+        if (self.hwnd) |h| _ = w32.KillTimer(h, SIDEBAR_SYNC_TIMER_ID);
+        self.sidebar_sync_armed = false;
+    }
     if (self.closing or self.is_quick_terminal) return;
     const hwnd = self.hwnd orelse return;
     if (self.sidebar == null) {
@@ -2499,7 +2538,10 @@ pub fn syncPaneSidebar(self: *Window) void {
     // Whatever changed here may be on another window's all-windows list
     // (T1829): every caller of this - layout, focus, titles, activity - is
     // exactly the set of things those lists show.
-    PaneSidebar.refreshScopes(self.app.windows.items, self);
+    switch (scopes) {
+        .now => PaneSidebar.refreshScopes(self.app.windows.items, self),
+        .coalesced => self.app.schedulePaneScopes(),
+    }
 }
 
 /// `toggle_pane_sidebar` (Mac Ctrl+Cmd+S, here Ctrl+Shift+S): hide or show
@@ -9295,8 +9337,9 @@ pub fn onPaneBellChanged(self: *Window) void {
 pub fn updateWindowTitle(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     // An activity change lands here from both the OSC and the CLI paths; the
-    // sidebar shows it per pane (T1828).
-    defer self.syncPaneSidebar();
+    // sidebar shows it per pane (T1828). Coalesced (T1935): this runs on every
+    // title change, and a spinner title changes ten times a second.
+    defer self.scheduleSidebarSync();
 
     // A rung pane's bell glyph leads the title (`bell-features = title`,
     // T1890) - over a pinned title too, as Mac's computeTitle does.
@@ -9389,7 +9432,8 @@ pub fn setTitleOverride(self: *Window, title: ?[]const u8) void {
 /// word here — the exact thing `PaneView` exists to separate.
 pub fn onPaneTitleChanged(self: *Window, pane: *PaneView, title: [:0]const u8) void {
     // Every pane's title is on the sidebar, not only the focused one's (T1828).
-    self.syncPaneSidebar();
+    // Coalesced (T1935): a spinner title changes ten times a second.
+    self.scheduleSidebarSync();
     const tab_idx = self.findTabIndex(pane) orelse return;
     if (self.tab_title_pinned[tab_idx]) return;
     if (self.tab_active_pane[tab_idx] != pane) return;
@@ -12855,6 +12899,10 @@ pub fn windowWndProc(
             }
             if (wparam == HERO_SNAP_TIMER_ID) {
                 window.heroSnapTick();
+                return 0;
+            }
+            if (wparam == SIDEBAR_SYNC_TIMER_ID) {
+                window.sidebarSyncTimerFire();
                 return 0;
             }
             if (wparam == HERO_ANIM_TIMER_ID) {

@@ -4003,7 +4003,9 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
             _ = w32.ResetEvent(event);
         }
 
-        // Wake the renderer to redraw at the new size.
+        // Wake the renderer to redraw at the new size. Forced (T1935): the
+        // resize waits for this frame, so it must not be skipped as unchanged.
+        self.core_surface.renderer_thread.force_frame.store(true, .release);
         self.core_surface.renderer_thread.wakeup.notify() catch {};
 
         if (self.frame_event) |_| {
@@ -4029,6 +4031,7 @@ pub fn handleResize(self: *Surface, width: u32, height: u32) void {
     } else {
         // Outside live resize (programmatic resize, initial layout),
         // just wake the renderer asynchronously.
+        self.core_surface.renderer_thread.force_frame.store(true, .release);
         self.core_surface.renderer_thread.wakeup.notify() catch {};
     }
 }

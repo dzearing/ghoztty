@@ -49,6 +49,7 @@ const ViewerNavBar = @import("ViewerNavBar.zig");
 const ViewerFindBar = @import("ViewerFindBar.zig");
 const webview2 = @import("webview2.zig");
 const Window = @import("Window.zig");
+const PaneSidebar = @import("PaneSidebar.zig");
 const desk_palette = @import("desk_palette.zig");
 const pane_sidebar_menu = @import("pane_sidebar_menu.zig");
 const dial_failure = @import("dial_failure.zig");
@@ -300,6 +301,9 @@ const STALE_BUILD_CHECK_MS: u32 = 60_000;
 /// a file.
 const UPDATE_RECHECK_TIMER_ID: usize = msg_timer.update_recheck;
 
+/// The coalesced all-windows sidebar refresh (T1935). See `schedulePaneScopes`.
+const PANE_SCOPES_TIMER_ID: usize = msg_timer.pane_scopes;
+
 /// One-shot manual check armed by GHOZTTY_UPDATE_MANUAL_MS (Debug only,
 /// T1563). See where it is armed for why the acceptance script needs it.
 const UPDATE_MANUAL_TIMER_ID: usize = msg_timer.update_manual;
@@ -496,6 +500,10 @@ quit_timer_state: enum { off, active, expired } = .off,
 
 /// Whether quit has been requested.
 quit_requested: bool = false,
+
+/// A coalesced refresh of every all-windows pane sidebar is waiting on
+/// `PANE_SCOPES_TIMER_ID` (T1935).
+pane_scopes_armed: bool = false,
 
 /// The quick terminal instance (if active).
 quick_terminal: ?*QuickTerminal = null,
@@ -8281,6 +8289,9 @@ pub fn performAction(
                 .app => {},
                 .surface => |core_surface| {
                     if (core_surface.rt_surface.core_surface_ready) {
+                        // An explicit request for a frame: present it even if
+                        // nothing in the render state moved (T1935).
+                        core_surface.rt_surface.core_surface.renderer_thread.force_frame.store(true, .release);
                         core_surface.rt_surface.core_surface.renderer_thread.wakeup.notify() catch {};
                     }
                 },
@@ -9491,6 +9502,22 @@ fn refreshOutstandingOffer(self: *App) void {
     log.info("update affordance refreshed for win-v{s} (urgency={t})", .{
         pending.version, pending.urgency,
     });
+}
+
+/// Refresh every all-windows pane sidebar soon, once, however many windows ask
+/// before it runs (T1935). Each window's title-driven refresh asks; with a
+/// dozen spinner titles that was a dozen full rebuilds of every list per tick.
+pub fn schedulePaneScopes(self: *App) void {
+    if (self.pane_scopes_armed) return;
+    const mh = self.msg_hwnd orelse {
+        PaneSidebar.refreshScopes(self.windows.items, null);
+        return;
+    };
+    if (w32.SetTimer(mh, PANE_SCOPES_TIMER_ID, Window.SIDEBAR_SYNC_MS, null) == 0) {
+        PaneSidebar.refreshScopes(self.windows.items, null);
+        return;
+    }
+    self.pane_scopes_armed = true;
 }
 
 /// Read the persisted "last checked at" timestamp; return true if
@@ -11426,6 +11453,10 @@ fn surfaceWndProc(
             // grid needs a frame, which it does not (T742).
             _ = w32.ValidateRect(hwnd, null);
             if (drives_terminal and surface.core_surface_ready) {
+                // WM_PAINT: Windows says these pixels are gone (the window was
+                // uncovered, restored, moved), so the frame is presented even
+                // though nothing in the terminal changed (T1935).
+                surface.core_surface.renderer_thread.force_frame.store(true, .release);
                 surface.core_surface.renderer_thread.wakeup.notify() catch {};
             }
             return 0;
@@ -12281,6 +12312,14 @@ fn msgWndProc(
     // every gate the launch check answers to (install location, `auto-update =
     // off`, the one-per-hour network throttle) is re-answered here, so a tick
     // is usually a file read and nothing else.
+    // Timer ID 21: the coalesced all-windows sidebar refresh (T1935). One-shot.
+    if (msg == w32.WM_TIMER and wparam == PANE_SCOPES_TIMER_ID) {
+        _ = w32.KillTimer(hwnd, PANE_SCOPES_TIMER_ID);
+        app.pane_scopes_armed = false;
+        PaneSidebar.refreshScopes(app.windows.items, null);
+        return 0;
+    }
+
     if (msg == w32.WM_TIMER and wparam == UPDATE_RECHECK_TIMER_ID) {
         app.startUpdateCheck(.automatic);
         return 0;

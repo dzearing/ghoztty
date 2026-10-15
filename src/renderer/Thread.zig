@@ -98,6 +98,17 @@ app_mailbox: App.Mailbox,
 /// Configuration we need derived from the main config.
 config: DerivedConfig,
 
+/// Set by anything that asks for a frame for a reason the render state cannot
+/// see (T1935): a mailbox message (resize, focus, config, colors, ...), or an
+/// apprt that knows its pixels are gone (WM_PAINT). While it is false, a
+/// wakeup whose frame changed nothing is not presented.
+force_frame: std.atomic.Value(bool) = .init(true),
+
+/// When this thread last presented. Bounds how long an unchanged frame can be
+/// skipped, so an input the change test does not know about can leave the
+/// screen stale for at most `max_skip_ns`, never until the next change.
+last_present: ?std.time.Instant = null,
+
 flags: packed struct {
     /// This is true when a blinking cursor should be visible and false
     /// when it should not be visible. This is toggled on a timer by the
@@ -363,6 +374,7 @@ fn drainMailbox(self: *Thread) !void {
 
     while (self.mailbox.pop()) |message| {
         log.debug("mailbox message={}", .{message});
+        self.force_frame.store(true, .release);
         switch (message) {
             .crash => @panic("crash request, crashing intentionally"),
 
@@ -712,10 +724,56 @@ fn renderCallback(
     ) catch |err|
         log.warn("error rendering err={}", .{err});
 
+    // Present only what changed (T1935). Every chunk of output wakes this
+    // thread, including a title change, and a frame for one put the same
+    // pixels back on screen: twenty Claude panes animating their titles kept
+    // their GL driver threads near half a core each.
+    const now = std.time.Instant.now() catch null;
+    if (!t.shouldPresent(now)) return .disarm;
+    t.last_present = now;
+
     // Draw
     t.drawFrame(false);
 
     return .disarm;
+}
+
+/// How long an unchanged frame may go unpresented (T1935).
+const max_skip_ns: u64 = 500 * std.time.ns_per_ms;
+
+/// Whether the frame `updateFrame` just built should be presented: it changed,
+/// something forced it, or the last present is old enough that the safety
+/// bound says to present anyway.
+fn shouldPresent(t: *Thread, now: ?std.time.Instant) bool {
+    const forced = t.force_frame.swap(false, .acq_rel);
+    if (comptime !@hasField(rendererpkg.Renderer, "frame_changed")) return true;
+    return presentDecision(t.renderer.frame_changed, forced, t.last_present, now);
+}
+
+/// The pure half of `shouldPresent`.
+fn presentDecision(
+    changed: bool,
+    forced: bool,
+    last: ?std.time.Instant,
+    now: ?std.time.Instant,
+) bool {
+    if (changed or forced) return true;
+    const l = last orelse return true;
+    const n = now orelse return true;
+    return n.since(l) >= max_skip_ns;
+}
+
+test "presentDecision: an unchanged frame is skipped, within the bound" {
+    const testing = std.testing;
+    const t0 = try std.time.Instant.now();
+    // The same instant: no time has passed, so only a change or a force
+    // presents. (Waiting out `max_skip_ns` here would make a slow test.)
+    try testing.expect(!presentDecision(false, false, t0, t0));
+    try testing.expect(presentDecision(true, false, t0, t0));
+    try testing.expect(presentDecision(false, true, t0, t0));
+    // Nothing presented yet, or no clock: always present.
+    try testing.expect(presentDecision(false, false, null, t0));
+    try testing.expect(presentDecision(false, false, t0, null));
 }
 
 fn cursorTimerCallback(
