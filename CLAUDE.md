@@ -213,6 +213,21 @@ either by the owner pid baked into the filename or by a missed heartbeat past
 single *tool call*). `+set-state` is for *other* panes. Tests:
 `scripts/test-activity-state.sh`.
 
+**`needs_input` means a question is actually on screen.** It is set by
+`AskUserQuestion`/`ExitPlanMode` (PreToolUse), `PermissionRequest`, and only
+the `permission_prompt`/`elicitation_dialog` **Notification** types — never
+`idle_prompt`, which Claude fires ~60s after *every* turn ends with no input
+(pausing on it turned each idle pane into "question" a minute after it
+finished). The generated hook narrows Notification with a matcher
+(`ClaudeHookSpec.blockingNotificationMatcher`), and the script's `pause` also
+filters by `notification_type`, failing closed on an unknown or missing type,
+so a hook installed before the matcher is fixed by the script alone. A pause is
+undone by the next main-thread tool call **or by a submitted prompt** (a
+dismissed permission prompt or a question answered in prose runs no tool), and
+`session-start` drops a marker its pane's previous session left. `+list --json`
+reports each terminal pane's `state` (machine token); the human `+list` marks
+non-idle panes `[busy]` / `[question]`.
+
 Wired for Claude Code; Copilot CLI gets only the session-start sweep and the
 settle, because its event vocabulary for tool/subagent/permission hooks is not
 documented (see `CopilotHookSpec`).
