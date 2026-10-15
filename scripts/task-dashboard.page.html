@@ -1204,9 +1204,10 @@ function inflightRow(t) {
   if (t.goals && t.goals.length) kids.push(goalList(t));
   // The run so far, from the task's progress log — what a watcher (or the
   // next turn, after a crash) reads to know where the work actually is.
+  // Newest first (user, 2026-10-14): the line that matters is the latest one.
   if (t.progress && t.progress.length) {
     kids.push(h('div', { class: 'goals' }, [h('div', { class: 'goals-head', text: 'Run log' })]
-      .concat(t.progress.slice(-3).map(function (p) {
+      .concat(t.progress.slice(-3).reverse().map(function (p) {
         return h('div', { class: 'prog-line' }, [
           p.ts ? h('span', { class: 'prog-ts', text: fDay(p.ts) + ' ' + fTime(p.ts) }) : null,
           h('span', { text: p.text })
