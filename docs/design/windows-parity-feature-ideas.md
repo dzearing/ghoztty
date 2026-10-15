@@ -458,3 +458,12 @@ as the digest that showed them.
 - A gradient you can keep (new angle on the window backdrop: reroll the random gradient or pin it across restarts)
 - Drag a picture out of an image pane (new angle on dragging out of a pane: the image itself into chat, email or Explorer)
 - A divider that never trails the mouse (panes show a clipped last frame during a drag and rewrap once on release)
+
+## 2026-10-15
+
+- Answer a question from the sidebar (a waiting pane's hover card shows the question and its choices; press 1/2/3 to answer in place)
+- Light mode you can see and flip (a title-bar chip says effects are off for Remote Desktop or a weak GPU; click to bring glass back)
+- Pause a runaway pane (freeze a CPU-hungry program in place, resume later)
+- Twenty idle panes, one line (the sidebar folds idle panes into one "N idle" row)
+- Your machines in the new-tab menu (new angle on picking the shell from the new-tab button: online signed-in machines listed there)
+- Send only what changed over Remote Desktop (new angle on a usable window over RDP: redraw only changed rows so the link carries less)
