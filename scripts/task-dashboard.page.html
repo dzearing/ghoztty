@@ -13,41 +13,61 @@
    Status hues (warning/critical) are used ONLY for real statuses, never as
    extra series colors, and always beside a text label.
 --------------------------------------------------------------------------- */
+/* Backdrop + glass (user, 2026-10-14): the page sits on Ghoztty's elevated
+   style - one hue lit from the top centre, sky blue falling to deep ocean
+   toward the bottom - and every panel is a cloudy glass sheet over it.
+   --surface-1 stays OPAQUE (menus, dialogs, tooltips, sticky headers need a
+   solid back); --glass is the translucent panel fill. */
 :root {
   color-scheme: light;
-  --surface-1: #fcfcfb;
-  --surface-2: #f2f1ee;
-  --plane:     #f9f9f7;
-  --ink:       #0b0b0b;
-  --ink-2:     #52514e;
-  --muted:     #898781;
-  --grid:      #e1e0d9;
-  --axis:      #c3c2b7;
-  --hairline:  rgba(11, 11, 11, 0.10);
+  --surface-1: #f5f7fa;
+  --surface-2: rgba(40, 60, 90, 0.07);
+  --plane:     #dfe5ec;
+  --ink:       #0b1520;
+  --ink-2:     #3c4d5e;
+  --muted:     #6d7f90;
+  --grid:      rgba(20, 50, 90, 0.10);
+  --axis:      rgba(20, 50, 90, 0.20);
+  --hairline:  rgba(20, 50, 90, 0.12);
   --done:      #0ca30c;
   --open:      #2a78d6;
   --warning:   #fab219;
   --critical:  #d03b3b;
-  --shadow:    0 1px 2px rgba(11, 11, 11, 0.06);
-  --tint:      rgba(42, 120, 214, 0.10);
+  --shadow:    0 1px 1px rgba(255,255,255,0.7) inset, 0 8px 28px -10px rgba(20, 50, 90, 0.25);
+  --tint:      rgba(42, 120, 214, 0.12);
+  --backdrop:
+    radial-gradient(130% 75% at 50% -12%, #ffffff 0%, #e7ecf2 30%, #cbd4df 62%, #b2bdca 100%);
+  --glass:      linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.52));
+  --glass-rim:  rgba(255, 255, 255, 0.75);
+  --glass-blur: blur(22px) saturate(150%);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --surface-1: #1a1a19; --surface-2: #232322; --plane: #0d0d0d;
-    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
-    --grid: #2c2c2a; --axis: #383835; --hairline: rgba(255,255,255,0.10);
-    --done: #0ca30c; --open: #3987e5; --shadow: none;
-    --tint: rgba(57, 135, 229, 0.14);
+    --surface-1: #1d2733; --surface-2: rgba(190, 205, 225, 0.07); --plane: #0e141c;
+    --ink: #f3f6f9; --ink-2: #c8d1db; --muted: #93a1b0;
+    --grid: rgba(190, 205, 225, 0.09); --axis: rgba(190, 205, 225, 0.18); --hairline: rgba(205, 218, 235, 0.12);
+    --done: #0ca30c; --open: #3987e5;
+    --shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 10px 30px -12px rgba(0, 0, 0, 0.55);
+    --tint: rgba(140, 170, 210, 0.18);
+    --backdrop:
+      radial-gradient(150% 95% at 50% -8%, #a3b3c5 0%, #75879c 20%, #4b5b70 44%, #2a3646 70%, #131a24 100%);
+    --glass:      linear-gradient(180deg, rgba(205, 218, 235, 0.11), rgba(170, 185, 210, 0.05));
+    --glass-rim:  rgba(215, 228, 245, 0.14);
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --surface-1: #1a1a19; --surface-2: #232322; --plane: #0d0d0d;
-  --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
-  --grid: #2c2c2a; --axis: #383835; --hairline: rgba(255,255,255,0.10);
-  --done: #0ca30c; --open: #3987e5; --shadow: none;
-  --tint: rgba(57, 135, 229, 0.14);
+  --surface-1: #1d2733; --surface-2: rgba(190, 205, 225, 0.07); --plane: #0e141c;
+  --ink: #f3f6f9; --ink-2: #c8d1db; --muted: #93a1b0;
+  --grid: rgba(190, 205, 225, 0.09); --axis: rgba(190, 205, 225, 0.18); --hairline: rgba(205, 218, 235, 0.12);
+  --done: #0ca30c; --open: #3987e5;
+  --shadow: 0 1px 0 rgba(255,255,255,0.06) inset, 0 10px 30px -12px rgba(0, 0, 0, 0.55);
+  --tint: rgba(140, 170, 210, 0.18);
+  --backdrop:
+    radial-gradient(150% 95% at 50% -8%, #a3b3c5 0%, #75879c 20%, #4b5b70 44%, #2a3646 70%, #131a24 100%);
+  --glass:      linear-gradient(180deg, rgba(205, 218, 235, 0.11), rgba(170, 185, 210, 0.05));
+  --glass-rim:  rgba(215, 228, 245, 0.14);
 }
 
 * { box-sizing: border-box; }
@@ -56,7 +76,27 @@ body {
   margin: 0; padding: 0;
   background: var(--plane); color: var(--ink);
   font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  min-height: 100vh;
 }
+/* The backdrop is a fixed layer, not body's background-attachment, so it
+   never repaints on scroll. */
+body::before {
+  content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: var(--backdrop);
+}
+/* Cloudy glass: a milky translucent fill, a strong blur of what is behind,
+   a bright hairline rim and a soft drop. One rule for every panel kind. */
+.card, .tile, .dec, .ev {
+  background: var(--glass);
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  border-color: var(--glass-rim) !important;
+  box-shadow: var(--shadow);
+}
+/* Glass on glass reads as mud: a decision inside the decisions card is a
+   faint inner sheet, not a second blur. */
+.card .dec, .card .ev { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--surface-2); box-shadow: none; }
+.opt { background: var(--surface-2) !important; }
+.opt:hover { background: var(--tint) !important; }
 .shell { max-width: 1180px; margin: 0 auto; padding: 18px 16px 56px; display: grid; grid-template-columns: 168px 1fr; gap: 20px; align-items: start; }
 
 /* Side nav --------------------------------------------------------------- */
@@ -94,7 +134,35 @@ nav .badge {
 
 /* Cards ------------------------------------------------------------------- */
 .card { background: var(--surface-1); border: 1px solid var(--hairline); border-radius: 8px; padding: 16px; margin-bottom: 12px; box-shadow: var(--shadow); }
-.card > h2 { font-size: 13px; font-weight: 600; margin: 0; letter-spacing: 0.01em; }
+.card, .tile { border-radius: 14px; }
+.card > h2, .card-head > h2 { font-size: 13px; font-weight: 600; margin: 0; letter-spacing: 0.01em; }
+.card:focus { outline: none; }
+.card:focus-visible { outline: 2px solid var(--open); outline-offset: 2px; }
+
+/* Card header with a right-aligned control (the decisions pager). */
+.card-head { display: flex; align-items: center; gap: 12px; min-height: 28px; }
+.card-head > h2 { flex: 1; }
+.card-head + .sub { margin-top: 0; }
+.pager { display: flex; align-items: center; gap: 6px; }
+.pg-btn {
+  font: inherit; font-size: 18px; line-height: 1; cursor: pointer;
+  width: 28px; height: 28px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center; padding: 0 0 2px;
+  color: var(--ink-2); background: var(--surface-2); border: 1px solid var(--hairline);
+  transition: background .15s, color .15s, border-color .15s;
+}
+.pg-btn:hover { background: var(--tint); color: var(--ink); border-color: var(--glass-rim); }
+.pg-btn:focus-visible { outline: 2px solid var(--open); outline-offset: 1px; }
+.pg-dots { display: flex; align-items: center; gap: 5px; padding: 0 2px; }
+.pg-dot {
+  width: 7px; height: 7px; padding: 0; border: 0; border-radius: 4px; cursor: pointer;
+  background: var(--axis); transition: width .2s ease, background .2s ease;
+}
+.pg-dot:hover { background: var(--muted); }
+.pg-dot.on { width: 18px; background: var(--warning); }
+.pg-dot:focus-visible { outline: 2px solid var(--open); outline-offset: 2px; }
+.pg-count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 38px; text-align: center; }
+@media (max-width: 520px) { .pg-dots { display: none; } }
 .card > .sub { color: var(--muted); font-size: 12px; margin: 2px 0 14px; }
 h3.sec { font-size: 12px; font-weight: 600; color: var(--ink-2); text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 10px; }
 h3.sec + .sub { margin-top: -6px; }
@@ -167,7 +235,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; padding-
 .opt b { font-weight: 600; font-size: 13px; display: block; }
 .opt span { color: var(--muted); font-size: 12px; }
 .opt .chip.rec { background: rgba(12, 163, 12, .14); color: var(--done); font-weight: 600; margin-left: 8px; vertical-align: 1px; }
-.opt.recommended { border-color: color-mix(in srgb, var(--done) 45%, transparent); }
 .pc-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px; margin-top: 8px; }
 @media (max-width: 700px) { .pc-grid { grid-template-columns: 1fr; } }
 .pc-head { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 3px; }
@@ -489,7 +556,8 @@ var state = {
   digestDate: null,  // which digest is being read; null = newest
   digestTab: null,   // which category tab is open; null = first present
   digestCache: {},   // date -> body, so flipping between days does not refetch
-  shown: PAGE_SIZE // timeline paging
+  shown: PAGE_SIZE, // timeline paging
+  decIdx: 0        // which open decision "Needs your call" is showing
 };
 
 /* --- DOM helpers --------------------------------------------------------- */
@@ -1223,19 +1291,67 @@ function blockedCard(t) {
   return h('div', { class: 'dec blocked-dec', 'data-anim-key': 'blk:' + t.id }, kids);
 }
 
+/* "Needs your call" shows ONE decision at a time with a pager (user,
+   2026-10-14). The position is kept by decision id, not index, so resolving
+   the one on screen lands on its neighbour instead of jumping to the start. */
+function decisionsCard(open) {
+  var head = h('div', { class: 'card-head' }, [
+    h('h2', { text: open.length ? 'Needs your call' : 'Nothing needs your call' })
+  ]);
+  var sub = h('div', { class: 'sub', text: open.length
+    ? 'The loop made these calls and kept going. Confirm one, or pick the other option and it folds back into the task.'
+    : 'The loop files a decision here whenever it makes a judgement call you might want to overturn.' });
+  if (!open.length) {
+    return h('section', { class: 'card', 'data-anim-key': 'card:decisions' },
+      [head, sub, h('div', { class: 'empty', text: 'No open decisions.' })]);
+  }
+
+  var idx = 0;
+  for (var i = 0; i < open.length; i++) if (open[i].id === state.decId) { idx = i; break; }
+  if (state.decId && open[idx].id !== state.decId) idx = Math.min(state.decIdx || 0, open.length - 1);
+  state.decIdx = idx; state.decId = open[idx].id;
+
+  function show(n) {
+    var next = (n + open.length) % open.length;
+    if (next === idx) return;
+    state.decIdx = next; state.decId = open[next].id;
+    renderView();
+    var sec = document.querySelector('[data-anim-key="card:decisions"]');
+    if (sec) sec.focus({ preventScroll: true });
+  }
+
+  if (open.length > 1) {
+    head.appendChild(h('div', { class: 'pager', role: 'group', 'aria-label': 'Decisions' }, [
+      h('button', { class: 'pg-btn', type: 'button', 'aria-label': 'Previous decision', title: 'Previous (←)',
+        text: '‹', onclick: function () { show(idx - 1); } }),
+      h('div', { class: 'pg-dots' }, open.map(function (x, j) {
+        return h('button', { class: 'pg-dot' + (j === idx ? ' on' : ''), type: 'button',
+          'aria-label': x.id + ': ' + x.title, 'aria-current': j === idx ? 'true' : null, title: x.id + ' — ' + x.title,
+          onclick: function () { show(j); } });
+      })),
+      h('span', { class: 'pg-count', text: (idx + 1) + ' of ' + open.length }),
+      h('button', { class: 'pg-btn', type: 'button', 'aria-label': 'Next decision', title: 'Next (→)',
+        text: '›', onclick: function () { show(idx + 1); } })
+    ]));
+  }
+
+  return h('section', {
+    class: 'card', tabindex: '-1', 'data-anim-key': 'card:decisions',
+    onkeydown: function (e) {
+      var t = e.target.tagName;
+      if (open.length < 2 || t === 'TEXTAREA' || t === 'INPUT' || t === 'SELECT') return;
+      if (e.key === 'ArrowLeft') { e.preventDefault(); show(idx - 1); }
+      else if (e.key === 'ArrowRight') { e.preventDefault(); show(idx + 1); }
+    }
+  }, [head, sub, decisionCard(open[idx])]);
+}
+
 function activityView(d) {
   var out = [];
   var open = d.decisions.filter(function (x) { return x.status !== 'resolved'; });
 
-  var decHead = [
-    h('h2', { text: open.length ? 'Needs your call' : 'Nothing needs your call' }),
-    h('div', { class: 'sub', text: open.length
-      ? 'The loop made these calls and kept going. Confirm one, or pick the other option and it folds back into the task.'
-      : 'The loop files a decision here whenever it makes a judgement call you might want to overturn.' })
-  ];
-  var decBody = open.length ? open.map(decisionCard) : [h('div', { class: 'empty', text: 'No open decisions.' })];
-  out.push(h('section', { class: 'card', 'data-anim-key': 'card:decisions' }, decHead.concat(decBody)));
-
+  // Current activity leads (user, 2026-10-14): what the loop is doing right
+  // now, then what it is holding, and only then the calls waiting on you.
   var lc = loopCard(d);
   lc.setAttribute('data-anim-key', 'card:loop');
   out.push(lc);
@@ -1247,6 +1363,8 @@ function activityView(d) {
     ic.setAttribute('data-anim-key', 'card:inflight');
     out.push(ic);
   }
+
+  out.push(decisionsCard(open));
 
   var blocked = d.tasks.filter(function (t) { return t.bucket === 'blocked'; });
   var needsYou = blocked.filter(function (t) { return t.blockedOn !== 'event'; });
