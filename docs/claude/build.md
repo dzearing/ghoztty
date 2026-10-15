@@ -266,6 +266,14 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
   hand-rolled `Start-Process`) still drives a delivery to the dev install and
   the portable locations; `go.md` has the full protocol and the staleness gates.
 
+- **Symbols for a shipped build** (T1936): the packages carry no `.pdb`, so
+  every `win-v*` release publishes `Ghoztty-symbols-<version>-x64.zip`, a
+  symbol store built by `dist\windows-installer\build-symbols-zip.py`. That
+  script refuses an image/PDB pair whose GUID/age differ. To symbolize the
+  installed app (or a user's dump or WPR trace), run
+  `scripts\fetch-symbols.ps1` and use the `_NT_SYMBOL_PATH` it prints. The
+  full recipe is in HACKING.md, "Symbolizing an installed build".
+
 
 ## What is installed on this box, and how to clear it
 

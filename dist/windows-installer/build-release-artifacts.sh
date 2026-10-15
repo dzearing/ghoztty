@@ -17,6 +17,8 @@
 # Produces, in --out-dir (default zig-out):
 #   Ghoztty-<semver>-x64.msi           per-user installer (build-msi.sh)
 #   Ghoztty-portable-<semver>-x64.zip  no-installer layout (build-portable-zip.sh)
+#   Ghoztty-symbols-<semver>-x64.zip   PDBs + images as a symbol store
+#                                      (build-symbols-zip.py, T1936)
 #
 # Usage:
 #   dist/windows-installer/build-release-artifacts.sh --semver <X.Y.Z>
@@ -84,6 +86,7 @@ mkdir -p "$OUT_DIR"
 
 MSI="$OUT_DIR/Ghoztty-$SEMVER-x64.msi"
 ZIP="$OUT_DIR/Ghoztty-portable-$SEMVER-x64.zip"
+SYMBOLS="$OUT_DIR/Ghoztty-symbols-$SEMVER-x64.zip"
 
 # The FILEVERSION rule lives in build-msi.sh; ask for it (see its
 # --print-file-version) instead of keeping a second copy of the formula.
@@ -190,10 +193,22 @@ echo "==> portable ZIP"
 bash "$SCRIPT_DIR/build-portable-zip.sh" \
   --semver "$SEMVER" --stamp "$STAMP" --out "$ZIP"
 
+# -- 2b. symbols --------------------------------------------------------
+# The two packages above are PDB-free on purpose (D64), which left a shipped
+# build with no symbols anywhere: a stack from a user's hot or hung app was
+# bare ghoztty+0x... offsets for good (T1936). The PDBs are kept here
+# instead, as a third asset laid out as a symbol store. After signing, so the
+# images in the store are the exact bytes the packages carry. The script
+# refuses a PDB whose GUID/age is not the one the image names, so a stale
+# zig-out cannot publish symbols that resolve nothing.
+echo "==> symbols"
+BIN="$REPO_ROOT/zig-out/bin"
+python3 "$SCRIPT_DIR/build-symbols-zip.py" --out "$SYMBOLS"   --semver "$SEMVER" --commit "$HASH"   --pair "$BIN/ghoztty.exe" "$BIN/ghoztty.pdb"   --pair "$BIN/ghoztty.com" "$BIN/ghoztty.pdb"   --pair "$BIN/ghoztty-agent.exe" "$BIN/ghoztty-agent.pdb"
+
 # -- 3. report ------------------------------------------------------------
-for f in "$MSI" "$ZIP"; do
+for f in "$MSI" "$ZIP" "$SYMBOLS"; do
   [[ -f "$f" ]] || { echo "error: $f missing after build" >&2; exit 1; }
 done
 echo ""
 echo "== windows release artifacts for $SEMVER =="
-ls -lh "$MSI" "$ZIP" | sed 's/^/    /'
+ls -lh "$MSI" "$ZIP" "$SYMBOLS" | sed 's/^/    /'

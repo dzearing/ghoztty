@@ -73,6 +73,7 @@ $tag = "win-v$Version"
 $stamp = "$(Get-Date -Format yyyyMMdd)-$hash"
 $msi = Join-Path $repo "zig-out\Ghoztty-$Version-x64.msi"
 $zip = Join-Path $repo "zig-out\Ghoztty-portable-$Version-x64.zip"
+$symbols = Join-Path $repo "zig-out\Ghoztty-symbols-$Version-x64.zip"
 
 Write-Host "== publish $tag (commit $hash, stamp $stamp) =="
 
@@ -183,7 +184,7 @@ Invoke-InImage bash dist/windows-installer/build-release-artifacts.sh --skip-bui
     --semver $Version --build-num $BuildNum --stamp $stamp
 if ($LASTEXITCODE -ne 0) { throw 'build-release-artifacts.sh failed' }
 
-foreach ($artifact in @($msi, $zip)) {
+foreach ($artifact in @($msi, $zip, $symbols)) {
     if (-not (Test-Path $artifact)) { throw "$artifact missing after build" }
     $mb = [math]::Round((Get-Item $artifact).Length / 1MB, 1)
     Write-Host "artifact: $artifact (${mb} MB)"
@@ -216,6 +217,6 @@ Installed builds check this channel and show a notification when a newer
 }
 Write-Host "== gh release create $tag =="
 gh release create $tag --repo dzearing/ghoztty --target (git rev-parse HEAD).Trim() `
-    --title "Ghoztty for Windows v$Version" --latest=false @notesArgs $msi $zip
+    --title "Ghoztty for Windows v$Version" --latest=false @notesArgs $msi $zip $symbols
 if ($LASTEXITCODE -ne 0) { throw 'gh release create failed' }
 Write-Host "== published https://github.com/dzearing/ghoztty/releases/tag/$tag =="

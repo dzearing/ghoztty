@@ -176,6 +176,45 @@ destination with `no-` to disable it. Enabling and disabling destinations
 can be done at the same time. Setting `GHOSTTY_LOG` to `true` will enable all
 destinations. Setting `GHOSTTY_LOG` to `false` will disable all destinations.
 
+## Symbolizing an installed build (Windows)
+
+The MSI and the portable ZIP ship no `.pdb`, so a stack taken from an installed
+`ghoztty.exe` or `ghoztty-agent.exe` reads as bare `ghoztty+0x...` offsets.
+Every `win-v*` release from T1936 on carries a third asset,
+`Ghoztty-symbols-<version>-x64.zip`. It is a symbol store holding the PDBs and
+images of exactly that build, checked against each image's GUID/age before it
+was published. Releases from before that asset existed cannot be symbolized.
+
+1. **Get the symbols** that match the build you are looking at:
+
+   ```powershell
+   powershell -NoProfile -File scripts\fetch-symbols.ps1            # the installed app
+   powershell -NoProfile -File scripts\fetch-symbols.ps1 -Exe <path> # any other copy
+   ```
+
+   It reads the version from `ghoztty.com +version`, downloads that release's
+   symbols zip into `%LOCALAPPDATA%\ghoztty\symbols\<version>`, checks the
+   store holds the PDB the exe names (`MATCH` / `MISMATCH`), and prints the
+   `_NT_SYMBOL_PATH` line to set. Without the repo, download the asset from the
+   release page, unzip it anywhere, and use `srv*<that dir>` as the symbol path.
+
+2. **Capture.** Pick the tool that fits what is wrong:
+   - **Hot CPU or lag:** `wpr -start CPU`, reproduce for 10-20 seconds, then
+     `wpr -stop hot.etl`. WPR is part of Windows and needs an elevated prompt.
+     Open `hot.etl` in WPA (Windows Performance Analyzer, free from the
+     Microsoft Store or the Windows ADK) with the symbol path set, then load
+     symbols and use CPU Usage (Sampled) grouped by stack. The trace can be
+     read on a different machine from the one it was recorded on.
+   - **A hang or a single bad moment:** take a dump. Task Manager > Details >
+     right-click `ghoztty.exe` > *Create memory dump file*, or
+     `cdb -pv -p <pid> -c ".dump /ma hang.dmp; q"` if WinDbg is installed.
+     Open it with `cdb -z hang.dmp -y "<symbol path>" -i "<symbol path>"` and
+     run `~*k` for every thread. The `-i` points the debugger at the images in
+     the store, which a small dump needs in order to unwind.
+
+With the symbols in place, frames read `ghoztty!printRunningInstance+0x48c`
+instead of `ghoztty+0x11bf2c`.
+
 ## Linting
 
 ### Prettier

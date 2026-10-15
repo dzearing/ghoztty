@@ -134,6 +134,7 @@ jobs:
           echo "TAG=win-v$VERSION" >> $GITHUB_ENV
           echo "MSI=zig-out/Ghoztty-$VERSION-x64.msi" >> $GITHUB_ENV
           echo "ZIP=zig-out/Ghoztty-portable-$VERSION-x64.zip" >> $GITHUB_ENV
+          echo "SYMBOLS=zig-out/Ghoztty-symbols-$VERSION-x64.zip" >> $GITHUB_ENV
 
       - name: Build Windows artifacts
         env:
@@ -181,7 +182,7 @@ jobs:
           # The point of the release is the PAIR, at one version. Assert both
           # exist under their versioned names before anything is published --
           # a missing half is how a "successful" release ships one platform.
-          for f in "$MSI" "$ZIP"; do
+          for f in "$MSI" "$ZIP" "$SYMBOLS"; do
             [ -f "$f" ] || { echo "::error::$f was not produced"; exit 1; }
             echo "$(du -h "$f")"
           done
@@ -192,6 +193,7 @@ jobs:
           path: |
             ${{ env.MSI }}
             ${{ env.ZIP }}
+            ${{ env.SYMBOLS }}
 
       - name: Publish win-v release
         if: env.PUBLISH == 'true'
@@ -213,11 +215,15 @@ jobs:
           the MSI in the background, and offer to install and reopen when you click
           the notification. \`auto-update = off\` in your config turns the check off;
           \`auto-update = check\` downloads only when you ask.
+
+          **Debug symbols:** \`Ghoztty-symbols-$VERSION-x64.zip\` is a symbol store
+          for this build, for reading a crash dump or CPU profile. Most people never
+          need it; see HACKING.md, "Symbolizing an installed build".
           EOF
 
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "release $TAG exists -- replacing its assets"
-            gh release upload "$TAG" "$MSI" "$ZIP" --repo "$GITHUB_REPOSITORY" --clobber
+            gh release upload "$TAG" "$MSI" "$ZIP" "$SYMBOLS" --repo "$GITHUB_REPOSITORY" --clobber
           else
             # --target names the commit a NEW tag should be created at, and is
             # meaningless once the tag exists -- which it does whenever this
@@ -230,7 +236,7 @@ jobs:
               "${TARGET[@]}" \
               --title "Ghoztty for Windows v$VERSION" \
               --latest=false --notes-file "$NOTES" \
-              "$MSI" "$ZIP"
+              "$MSI" "$ZIP" "$SYMBOLS"
           fi
           echo "published $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
 

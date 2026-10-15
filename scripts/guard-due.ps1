@@ -1676,6 +1676,23 @@ $GuardTable = @(
             'dist\windows-installer\build-portable-zip.sh'
         )
     },
+    # The release symbols asset (T1936). The packager's identity check and the
+    # fetch script's MATCH/MISMATCH are the only thing between a release and a
+    # symbol store that looks complete and resolves nothing, and both run only
+    # inside a real release or a user's triage - no lane reaches either.
+    [pscustomobject]@{
+        Name   = 'release-symbols'
+        Script = 'test\win32\release-symbols.ps1'
+        Stamp  = 'test\win32\release-symbols.stamp.json'
+        Covers = @(
+            'dist\windows-installer\build-symbols-zip.py',
+            'dist\windows-installer\build-release-artifacts.sh',
+            'scripts\fetch-symbols.ps1',
+            '.github\workflows\release-windows.yml',
+            'scripts\publish-windows-release.ps1',
+            'test\win32\release-symbols.ps1'
+        )
+    },
     # The site's Windows downloads (T353). Both halves of the release's website
     # update -- the rewrite script and the gh-pages publish script it runs
     # inside -- only ever execute during a real release, and the publish

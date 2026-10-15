@@ -1,0 +1,22 @@
+{
+    "guard":  "release-symbols",
+    "script":  "test/win32/release-symbols.ps1",
+    "generated":  "2026-10-14T20:56:13-07:00",
+    "commit":  "8d74a91df",
+    "uncommitted":  [
+                        ".github/workflows/release-windows.yml",
+                        "dist/windows-installer/build-release-artifacts.sh",
+                        "dist/windows-installer/build-symbols-zip.py",
+                        "scripts/fetch-symbols.ps1",
+                        "scripts/publish-windows-release.ps1",
+                        "test/win32/release-symbols.ps1"
+                    ],
+    "files":  {
+                  ".github/workflows/release-windows.yml":  "37629d68b52a42a162419708c7d35fe95e3a29d83dd5e1d1c072722dd568e4c4",
+                  "dist/windows-installer/build-release-artifacts.sh":  "8f3e9bb3435bfc04ad5555c65b1285a2033014a50503c4eefeed914a434b4cf9",
+                  "dist/windows-installer/build-symbols-zip.py":  "b03fd147943cfcdaa8adb366d3e00e831e796ee21e70b73f68439622bbe377a5",
+                  "scripts/fetch-symbols.ps1":  "ef40b9f0b393b5662331bb7fdca267fe87d2dcf64f6ce9b83e99a3d7cc39c35a",
+                  "scripts/publish-windows-release.ps1":  "1cd6f75ffc5deddbb6699b4dfe84e1b8fad40ebb5271f802f1a31ee28613069a",
+                  "test/win32/release-symbols.ps1":  "d530f73700139554c08af65fd9a0031160711c21d2e5903ae8b522019c54429b"
+              }
+}
