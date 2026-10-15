@@ -134,6 +134,63 @@ enum MachineEnrollmentRevocation: Equatable {
     }
 }
 
+/// What THIS machine's relay agent should be doing, given its enrollment
+/// (`LocalMachineEnrollment.hostingVerdict`). Enrollment is the only opt-in:
+/// a machine enrolled to the signed-in account is listed in every chooser on
+/// that account, so it must also be reachable.
+enum MachineHostingVerdict: Equatable {
+    /// Serve this enrollment: run `ghoztty-agent --relay=<relayBase>`.
+    case host(relayBase: String)
+    /// Not ours to serve, or nothing to serve: no relay agent.
+    case stop
+    /// The relay couldn't say whether the credential is alive. Change
+    /// nothing — stopping a working host because the network blinked, or
+    /// starting one on a credential nobody vouched for, are both wrong.
+    case unchanged
+
+    /// The credential as the relay describes it.
+    enum CredentialState: Equatable {
+        /// Not asked: a pending revocation decides alone.
+        case unprobed
+        case absent
+        case dead
+        case alive(ownerEmail: String, relayBase: String)
+        case unknown
+    }
+
+    /// The whole policy, pure. Order matters: a pending revocation means the
+    /// account WALKED AWAY from this machine and outranks a credential the
+    /// relay still accepts — that credential is exactly the one being revoked.
+    static func decide(
+        pendingRevocation: Bool,
+        accountEmail: String?,
+        credential: CredentialState
+    ) -> MachineHostingVerdict {
+        if pendingRevocation { return .stop }
+        switch credential {
+        case .unprobed, .absent, .dead:
+            return .stop
+        case .unknown:
+            return .unchanged
+        case .alive where accountEmail == nil:
+            // A live credential and no account. Sign-out never gets here — it
+            // stops the agent itself (`RelayAccount.signOut`) — so this is a
+            // launch whose Keychain read failed (locked keychain, a denied ACL
+            // prompt after an update) or a machine enrolled by hand with
+            // `ghoztty-agent --enroll`. Neither is evidence the machine should
+            // go dark, and the app can't tell whose credential it is without
+            // an account to compare: leave whatever runs, start nothing new.
+            return .unchanged
+        case .alive(let owner, let relayBase):
+            guard let accountEmail else { return .unchanged }
+            // Another account's enrollment: the app is a guest on this host,
+            // and whoever enrolled it runs its agent their own way.
+            guard owner.caseInsensitiveCompare(accountEmail) == .orderedSame else { return .stop }
+            return .host(relayBase: relayBase)
+        }
+    }
+}
+
 // MARK: - relay.env
 
 /// The agent's persisted relay credential file, as the app reads and writes it.
@@ -732,6 +789,50 @@ final class LocalMachineEnrollment: MachineEnrollmentRevoking {
             Ghostty.logger.warning(
                 "machine enrollment: re-enroll on sign-in failed: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    // MARK: Hosting
+
+    /// Whether THIS machine should be serving its enrollment right now — the
+    /// question `RelayHostAgent` asks before starting or stopping the relay
+    /// agent. Answered from the same probe the revocation and the restore
+    /// use, inside the same serialized queue, so it can never race either of
+    /// them over one credential file.
+    ///
+    /// `accountEmail` is the signed-in account, or nil when signed out.
+    func hostingVerdict(accountEmail: String?) async -> MachineHostingVerdict {
+        await serialize { await self.hostingCore(accountEmail: accountEmail) }
+    }
+
+    private func hostingCore(accountEmail: String?) async -> MachineHostingVerdict {
+        let pending = store.pendingRevocationEmail != nil
+        // A pending revocation settles it without asking the relay anything.
+        let state: MachineHostingVerdict.CredentialState
+        if pending {
+            state = .unprobed
+        } else {
+            switch await probeCredential() {
+            case .absent: state = .absent
+            case .dead: state = .dead
+            case .unknown: state = .unknown
+            case .alive(let identity, let client, _):
+                // `client.base`, not the file's RELAY_BASE spelling: the probe
+                // already normalized it (ws→http, and the fallback when the
+                // file's line is unusable), and it is the relay that just
+                // answered for this credential.
+                state = .alive(ownerEmail: identity.email, relayBase: client.base.absoluteString)
+            }
+        }
+        let verdict = MachineHostingVerdict.decide(
+            pendingRevocation: pending, accountEmail: accountEmail, credential: state)
+        if case .dead = state {
+            // Removed from the account elsewhere (the chooser's "Remove from
+            // Account" on another Mac). The file can never authenticate
+            // again; drop it exactly as an already-revoked sign-out does.
+            // Any suspension record is left alone — see `revokeCore`.
+            envFile.delete()
+        }
+        return verdict
     }
 
     // MARK: Plumbing

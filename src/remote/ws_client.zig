@@ -106,6 +106,11 @@ pub const Options = struct {
 pub const ConnectError = error{
     /// The server did not return `101 Switching Protocols`.
     WebSocketUpgradeFailed,
+    /// The server refused the upgrade with `401 Unauthorized`: it does not
+    /// accept the credential sent. Distinct from `WebSocketUpgradeFailed` so a
+    /// relay agent can tell "my credential was revoked" from "the relay is
+    /// having a bad day" (`--exit-on-revoke`).
+    WebSocketUnauthorized,
     /// `Sec-WebSocket-Accept` was missing or did not match our key.
     WebSocketBadAccept,
     /// The HTTP response was malformed / too large for the handshake buffer.
@@ -336,6 +341,7 @@ pub const WsClient = struct {
         const status = try r.takeDelimiterInclusive('\n');
         if (!is101(status)) {
             log.warn("ws upgrade rejected: {s}", .{std.mem.trimRight(u8, status, "\r\n")});
+            if (statusCode(status) == 401) return ConnectError.WebSocketUnauthorized;
             return ConnectError.WebSocketUpgradeFailed;
         }
 
@@ -370,12 +376,18 @@ pub const WsClient = struct {
     }
 
     fn is101(status_line: []const u8) bool {
-        // e.g. "HTTP/1.1 101 Switching Protocols\r\n"
+        return statusCode(status_line) == 101;
+    }
+
+    /// The numeric code of an HTTP status line (e.g.
+    /// "HTTP/1.1 101 Switching Protocols\r\n" → 101), or null if malformed.
+    fn statusCode(status_line: []const u8) ?u16 {
         const s = std.mem.trimRight(u8, status_line, "\r\n");
         var it = std.mem.tokenizeScalar(u8, s, ' ');
-        _ = it.next() orelse return false; // HTTP/1.1
-        const code = it.next() orelse return false;
-        return std.mem.eql(u8, code, "101");
+        _ = it.next() orelse return null; // HTTP/1.1
+        const code = it.next() orelse return null;
+        if (code.len != 3) return null;
+        return std.fmt.parseInt(u16, code, 10) catch null;
     }
 
     fn splitHeader(line: []const u8) ?struct { name: []const u8, value: []const u8 } {
@@ -825,6 +837,14 @@ test "is101: status-line parsing" {
     try testing.expect(!WsClient.is101("HTTP/1.1 200 OK\r\n"));
     try testing.expect(!WsClient.is101("HTTP/1.1 401 Unauthorized\r\n"));
     try testing.expect(!WsClient.is101("garbage"));
+    try testing.expect(!WsClient.is101("HTTP/1.1 1010 nope\r\n"));
+}
+
+test "statusCode: a rejected upgrade's code is readable" {
+    try testing.expectEqual(@as(?u16, 401), WsClient.statusCode("HTTP/1.1 401 Unauthorized\r\n"));
+    try testing.expectEqual(@as(?u16, 503), WsClient.statusCode("HTTP/1.1 503\r\n"));
+    try testing.expectEqual(@as(?u16, null), WsClient.statusCode("HTTP/1.1\r\n"));
+    try testing.expectEqual(@as(?u16, null), WsClient.statusCode("HTTP/1.1 abc x\r\n"));
 }
 
 test "splitHeader: name/value split" {

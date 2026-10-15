@@ -478,8 +478,23 @@ base it was *started* with and only ever compares that field, so the machine can
 be perfectly reachable with a broken line in the file — the app falls back to its
 own relay rather than deleting the one credential that could revoke it.
 
+**An enrolled Mac hosts.** Enrollment is the only opt-in: while `relay.env`
+holds a credential the relay confirms belongs to the signed-in account, the
+app keeps a relay agent running as its own LaunchAgent
+(`com.dzearing.ghoztty[.debug].relay-agent`: `ghoztty-agent --relay=<base>
+--headless --exit-on-revoke`), so the Mac is online in every chooser it is
+listed in. It is separate from the session-persistence agent (a relay client
+must never see local panes; the session agent must never restart under live
+panes), and their single-instance guards are per role so they coexist.
+Sign-out stops it (awaited, before "signed out"), including when the
+revocation is only pending; a dead credential stops it and the agent exits by
+itself after two 401s; an unreachable relay changes nothing; a
+relay-disabled app (`GhosttyRelayDisable`) touches nothing. `RelayHostAgent`
+(`macos/Sources/Features/Remote/RelayHostAgent.swift`), policy
+`MachineHostingVerdict.decide`; design: `docs/design/mac-relay-host.md`.
+
 Client: `macos/Sources/Features/Remote/MachineEnrollment.swift`. Tests:
-`MachineEnrollmentTests`, `RelayAccountSignOutTests`, and
+`MachineEnrollmentTests`, `RelayHostAgentTests`, `RelayAccountSignOutTests`, and
 `relay/signout_revoke_test.go` (which pins both halves: `/oauth/signout` alone
 leaves the machine reachable, and de-enroll kills the live bridge).
 

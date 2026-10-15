@@ -93,8 +93,9 @@
 //!     grid reconstruction (so deep-scrollback eviction is invisible) is future.
 //!   - Authentication / TLS on the listener (see SECURITY above).
 //!   - Daemonization / detach (§4.1). (Single-instance IS enforced: the daemon
-//!     modes `--listen`/`--relay` take a per-USER guard — Global\ named mutex
-//!     keyed by SID on Windows, flock on POSIX — and a losing instance exits
+//!     modes `--listen`/`--listen-unix`/`--relay` take a per-USER, per-ROLE
+//!     guard — Global\ named mutex keyed by SID on Windows, flock on POSIX; a
+//!     relay agent and a session agent coexist — and a losing instance exits
 //!     with code 183 after verifying the holder is alive via its heartbeat
 //!     file; a stuck holder is killed and replaced, and `--force-replace`
 //!     (alias `--replace`) replaces even a healthy one. See
@@ -169,7 +170,7 @@ pub fn main() !void {
             blockSigterm();
             // DAEMON mode: enforce single-instance BEFORE anything user-visible
             // (bind, banner, tray icon). Exits the process on conflict.
-            var lock = acquireDaemonLockOrExit(alloc, l.force_replace);
+            var lock = acquireDaemonLockOrExit(alloc, .listen, l.force_replace);
             defer lock.release();
             try runListen(alloc, encoding, l.addr, l.headless, l.public, l.port_file, l.sessions_file);
         },
@@ -187,7 +188,7 @@ pub fn main() !void {
             blockSigterm();
             // DAEMON mode: single-instance BEFORE the bind (a losing instance
             // must not clobber the winner's socket node).
-            var lock = acquireDaemonLockOrExit(alloc, l.force_replace);
+            var lock = acquireDaemonLockOrExit(alloc, .listen_unix, l.force_replace);
             defer lock.release();
             try runListenUnix(alloc, encoding, l.path, l.headless, l.port_file, l.sessions_file);
         },
@@ -195,7 +196,7 @@ pub fn main() !void {
             // DAEMON mode: single-instance first (before the token lookup, long
             // before the tray could flash an icon — and before a first-run
             // auto-enroll could pop a browser from a doomed duplicate).
-            var lock = acquireDaemonLockOrExit(alloc, r.force_replace);
+            var lock = acquireDaemonLockOrExit(alloc, .relay, r.force_replace);
             defer lock.release();
             // The device token authenticates the relay WebSockets. Required.
             // Precedence: the GHOSTTY_DEVICE_TOKEN env var wins; otherwise fall
@@ -233,7 +234,7 @@ pub fn main() !void {
             };
             // Token ownership moves into runRelay's `Creds` (it must stay
             // alive as long as any connection borrows a snapshot of it).
-            try runRelay(alloc, encoding, r.base_url, ti.token, ti.source, r.headless);
+            try runRelay(alloc, encoding, r.base_url, ti.token, ti.source, r.headless, r.exit_on_revoke);
         },
         .enroll => |e| {
             // Self-enroll (browser-first, device-code fallback): register this
@@ -263,8 +264,10 @@ const DaemonLock = struct {
     }
 };
 
-/// Take the per-user daemon single-instance guard (named mutex on Windows,
-/// flock on POSIX — see `single_instance.zig`), running the TAKEOVER protocol
+/// Take the per-user daemon single-instance guard for `role` (named mutex on
+/// Windows, flock on POSIX — see `single_instance.zig`; one guard per ROLE, so
+/// a relay agent and a session-persistence agent coexist while two of either
+/// kind still exclude), running the TAKEOVER protocol
 /// on contention: a responsive holder wins (we exit 183), a stuck one — or
 /// any holder, under `--force-replace` — is killed and replaced. Outcomes:
 ///   - acquired (possibly after a takeover) → return the lock; the heartbeat
@@ -278,8 +281,8 @@ const DaemonLock = struct {
 ///     policy as tray failures).
 /// Called BEFORE any user-visible daemon setup (bind / banner / tray icon), so
 /// a losing instance never flashes a tray icon or steals the port.
-fn acquireDaemonLockOrExit(alloc: Allocator, force_replace: bool) DaemonLock {
-    const guard = single_instance.acquireWithTakeover(alloc, force_replace) catch |err| switch (err) {
+fn acquireDaemonLockOrExit(alloc: Allocator, role: single_instance.Role, force_replace: bool) DaemonLock {
+    const guard = single_instance.acquireWithTakeover(alloc, role, force_replace) catch |err| switch (err) {
         error.AlreadyRunning => {
             // std.debug.print writes stderr, which the supervisors (installer
             // launcher / deploy watcher) redirect to agent.err.log — visible
@@ -294,7 +297,7 @@ fn acquireDaemonLockOrExit(alloc: Allocator, force_replace: bool) DaemonLock {
     };
     // We are THE daemon: announce liveness. A heartbeat failure only costs
     // challenger-side takeover diagnostics, never the daemon.
-    return .{ .guard = guard, .heartbeat = single_instance.Heartbeat.start(alloc) };
+    return .{ .guard = guard, .heartbeat = single_instance.Heartbeat.start(alloc, role) };
 }
 
 /// How relay-daemon startup obtains its device credential — a PURE decision
@@ -419,6 +422,15 @@ const Relay = struct {
     base_url: []const u8,
     headless: bool = false,
     force_replace: bool = false,
+    /// `--exit-on-revoke`: exit 0 once the relay has rejected the device
+    /// credential (HTTP 401) on `revoked_after_rejections` consecutive control
+    /// dials, instead of redialing with a dead credential forever. For a
+    /// SUPERVISED agent whose supervisor owns the credential lifecycle — the
+    /// macOS app's relay LaunchAgent, which does not restart a clean exit and
+    /// re-launches the agent itself once the machine is enrolled again. The
+    /// Windows tray agent does not pass it: its tray Sign-in re-enrolls the
+    /// running daemon in place.
+    exit_on_revoke: bool = false,
 };
 
 /// TCP listen-daemon parameters. `headless` suppresses the Windows system-tray
@@ -493,6 +505,7 @@ fn parseArgs(alloc: Allocator) !Mode {
     var want_enroll = false;
     var no_browser = false;
     var force_replace = false;
+    var exit_on_revoke = false;
     var allow_public = false;
     var port_file_arg: ?[]const u8 = null;
     var sessions_file_arg: ?[]const u8 = null;
@@ -506,6 +519,7 @@ fn parseArgs(alloc: Allocator) !Mode {
                 std.mem.eql(u8, a, "--headless-enroll")) no_browser = true;
             if (std.mem.eql(u8, a, "--force-replace") or
                 std.mem.eql(u8, a, "--replace")) force_replace = true;
+            if (std.mem.eql(u8, a, "--exit-on-revoke")) exit_on_revoke = true;
             if (std.mem.eql(u8, a, allow_public_flag)) allow_public = true;
             if (std.mem.eql(u8, a, "--port-file")) {
                 j += 1;
@@ -561,6 +575,7 @@ fn parseArgs(alloc: Allocator) !Mode {
         if (std.mem.eql(u8, a, "--headless") or std.mem.eql(u8, a, "--enroll") or
             std.mem.eql(u8, a, "--no-browser") or std.mem.eql(u8, a, "--headless-enroll") or
             std.mem.eql(u8, a, "--force-replace") or std.mem.eql(u8, a, "--replace") or
+            std.mem.eql(u8, a, "--exit-on-revoke") or
             std.mem.eql(u8, a, allow_public_flag) or
             std.mem.startsWith(u8, a, "--port-file=") or
             std.mem.startsWith(u8, a, "--sessions-file=") or
@@ -604,11 +619,11 @@ fn parseArgs(alloc: Allocator) !Mode {
             // both relay and enroll modes need it past that.
             const url = try alloc.dupe(u8, args[i]);
             if (want_enroll) return .{ .enroll = .{ .base_url = url, .no_browser = no_browser } };
-            return .{ .relay = .{ .base_url = url, .headless = headless, .force_replace = force_replace } };
+            return .{ .relay = .{ .base_url = url, .headless = headless, .force_replace = force_replace, .exit_on_revoke = exit_on_revoke } };
         } else if (std.mem.startsWith(u8, a, "--relay=")) {
             const url = try alloc.dupe(u8, a["--relay=".len..]);
             if (want_enroll) return .{ .enroll = .{ .base_url = url, .no_browser = no_browser } };
-            return .{ .relay = .{ .base_url = url, .headless = headless, .force_replace = force_replace } };
+            return .{ .relay = .{ .base_url = url, .headless = headless, .force_replace = force_replace, .exit_on_revoke = exit_on_revoke } };
         } else {
             std.debug.print("ghoztty-agent: unknown argument '{s}'\n", .{a});
             return error.InvalidArgs;
@@ -709,6 +724,9 @@ fn printUsage() void {
         \\                                  the normal way to bring a machine online).
         \\  ghoztty-agent --enroll --relay=<url>
         \\                                  Enroll this machine to your account (browser sign-in).
+        \\  --exit-on-revoke                (with --relay) Exit 0 once the relay rejects the device
+        \\                                  credential, instead of redialing with a dead one. For
+        \\                                  supervisors that own the credential (the macOS app).
         \\  ghoztty-agent --version         Print the build version.
         \\
         \\Advanced / development:
@@ -1517,6 +1535,7 @@ fn runRelay(
     token: []u8,
     token_source: relay_creds.Source,
     headless: bool,
+    exit_on_revoke: bool,
 ) !void {
     // Convert the https/wss base to a clean `wss://host` prefix (no trailing
     // slash); the per-endpoint paths are appended by the loop/worker. Owned for
@@ -1621,6 +1640,7 @@ fn runRelay(
             .store = &store,
             .spawner = spawner.spawner(),
             .link = &link,
+            .exit_on_revoke = exit_on_revoke,
         };
         if (std.Thread.spawn(.{}, relayLoopThread, .{args})) |t| {
             if (tray.run(&store, agent_version, &link, &account, updater)) {
@@ -1636,7 +1656,7 @@ fn runRelay(
     }
 
     // Headless / non-windows / tray-fallback: run the control loop right here.
-    relayLoop(alloc, encoding, ws_base, &creds, &store, spawner.spawner(), &link);
+    relayLoop(alloc, encoding, ws_base, &creds, &store, spawner.spawner(), &link, exit_on_revoke);
 }
 
 /// Convert an `https://host[:port]` / `wss://host[:port]` base to a normalized
@@ -1671,10 +1691,11 @@ const RelayArgs = struct {
     store: *session.SessionStore,
     spawner: server.Spawner,
     link: *link_control.LinkControl,
+    exit_on_revoke: bool,
 };
 
 fn relayLoopThread(args: RelayArgs) void {
-    relayLoop(args.alloc, args.encoding, args.ws_base, args.creds, args.store, args.spawner, args.link);
+    relayLoop(args.alloc, args.encoding, args.ws_base, args.creds, args.store, args.spawner, args.link, args.exit_on_revoke);
 }
 
 /// THE RELAY DAEMON: hold the control WebSocket; on drop, back off and reconnect
@@ -1691,6 +1712,7 @@ fn relayLoop(
     store: *session.SessionStore,
     spawner: server.Spawner,
     link: *link_control.LinkControl,
+    exit_on_revoke: bool,
 ) void {
     const ctrl_url = std.fmt.allocPrint(alloc, "{s}/v1/agent/control", .{ws_base}) catch {
         std.debug.print("ghoztty-agent: relay: out of memory building control url\n", .{});
@@ -1714,9 +1736,34 @@ fn relayLoop(
         .spawner = spawner,
         .ctrl_url = ctrl_url,
         .host = maybe_host,
+        .exit_on_revoke = exit_on_revoke,
     };
     link_control.runLoop(link, transport.transport(), relay_backoff_ms);
 }
+
+/// Consecutive control dials the relay must reject with 401 before the
+/// credential counts as revoked. Two, not one: a single 401 is already an
+/// answer, but a supervisor that stops the agent for good on it should not be
+/// one odd response away from taking a machine offline.
+const revoked_after_rejections = 2;
+
+/// Counts consecutive credential rejections across control dials. Any
+/// successful dial — and any failure that is NOT a rejection (offline,
+/// relay 5xx, TLS) — resets it: "revoked" means the relay answered, twice in a
+/// row, that it no longer knows this credential. Pure; tested below.
+const RevocationStreak = struct {
+    rejections: u32 = 0,
+
+    /// Record a failed dial; true once the credential is revoked.
+    fn onDialFailed(self: *RevocationStreak, unauthorized: bool) bool {
+        self.rejections = if (unauthorized) self.rejections + 1 else 0;
+        return self.rejections >= revoked_after_rejections;
+    }
+
+    fn onConnected(self: *RevocationStreak) void {
+        self.rejections = 0;
+    }
+};
 
 /// One live relay control connection: the WebSocket plus its keepalive
 /// (dead-link detection) thread. Heap-allocated per dial so the keepalive's
@@ -1748,6 +1795,9 @@ const RelayTransport = struct {
     /// Hostname advertised on the control dial (X-Ghoztty-Hostname), if any.
     /// Borrowed from `relayLoop`'s frame (which outlives the loop).
     host: ?[]const u8,
+    /// `--exit-on-revoke` (see `Relay.exit_on_revoke`) and its streak.
+    exit_on_revoke: bool = false,
+    revocation: RevocationStreak = .{},
 
     fn transport(self: *RelayTransport) link_control.Transport {
         return .{ .ctx = self, .vtable = &vtable };
@@ -1782,9 +1832,17 @@ const RelayTransport = struct {
         }
 
         const ctrl = ws_client.WsClient.connectUrl(self.alloc, self.ctrl_url, headers_buf[0..n_headers]) catch |err| {
+            if (self.revocation.onDialFailed(err == error.WebSocketUnauthorized) and self.exit_on_revoke) {
+                std.debug.print(
+                    "ghoztty-agent: the relay rejected this machine's credential on {d} consecutive dials — it was revoked; exiting (--exit-on-revoke)\n",
+                    .{revoked_after_rejections},
+                );
+                std.process.exit(0);
+            }
             std.debug.print("ghoztty-agent: relay control connect failed ({s}); retrying (base {d}ms)\n", .{ @errorName(err), relay_backoff_ms });
             return null;
         };
+        self.revocation.onConnected();
         std.debug.print("ghoztty-agent: relay control connected\n", .{});
 
         const conn = self.alloc.create(RelayConn) catch {
@@ -1954,6 +2012,20 @@ test {
     _ = @import("relay_creds.zig");
     _ = @import("self_update.zig");
     _ = @import("single_instance.zig");
+}
+
+test "revocation streak: only consecutive credential rejections count" {
+    var r: RevocationStreak = .{};
+    try std.testing.expect(!r.onDialFailed(true)); // one 401: not yet
+    try std.testing.expect(r.onDialFailed(true)); // two in a row: revoked
+
+    r = .{};
+    try std.testing.expect(!r.onDialFailed(true));
+    try std.testing.expect(!r.onDialFailed(false)); // offline / 5xx breaks the streak
+    try std.testing.expect(!r.onDialFailed(true));
+    r.onConnected(); // a working credential breaks it too
+    try std.testing.expect(!r.onDialFailed(true));
+    try std.testing.expect(r.onDialFailed(true));
 }
 
 test "decideRelayCred: env token wins over relay.env" {
