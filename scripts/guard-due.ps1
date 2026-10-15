@@ -3391,6 +3391,22 @@ $GuardTable = @(
             'test\win32\parity-tasks-seat.ps1'
         )
     },
+    # The cross-lane claim ledger (T1981). Two loop lanes in two worktrees
+    # pick work and mint ids through `scripts\parity-tasks.ps1`, and the only
+    # thing keeping them off each other's task is `scripts\lib\LoopLedger.ps1`.
+    # Its failure mode is silent - two lanes building the same fix, or two
+    # tasks filed under one id - and nothing else races two lanes, so this
+    # harness (with its ledger-off negative control) is its only proof.
+    [pscustomobject]@{
+        Name   = 'parity-tasks-lanes'
+        Script = 'test\win32\parity-tasks-lanes.ps1'
+        Stamp  = 'test\win32\parity-tasks-lanes.stamp.json'
+        Covers = @(
+            'scripts\lib\LoopLedger.ps1',
+            'scripts\parity-tasks.ps1',
+            'test\win32\parity-tasks-lanes.ps1'
+        )
+    },
     # The decisions CLI (T566), for the same reason as the row above: nothing
     # in the zig lanes or the P1-P3 floor executes a line of
     # `scripts\parity-decisions.ps1`, and its failure mode is not a red test

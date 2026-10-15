@@ -59,6 +59,16 @@
   positive that refused to file would lose a mid-turn report, which is worse
   than a duplicate.
 
+  TWO LANES, ONE QUEUE (T1981). A second loop LANE runs in its own worktree,
+  and both used to decide from their own copy of the task files - so both
+  claimed the head of the queue and both minted the same next id. The facts
+  they must agree on now live in scripts\lib\LoopLedger.ps1's ledger outside
+  every worktree: `next` skips (and never RESUMEs) a task another live lane
+  holds, `-Claim` is an atomic check-and-set there, and `new` allocates past
+  the ledger's high-water mark. `ledger` prints it. GHOZTTY_LOOP_LEDGER=off
+  turns it off; a -TaskDir fixture run leaves it off unless
+  GHOZTTY_LOOP_LEDGER names a ledger, so no harness ever writes the real one.
+
 .EXAMPLE
   scripts\parity-tasks.ps1 list -Status todo
   scripts\parity-tasks.ps1 stale-scan -Top 40
@@ -78,7 +88,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('list', 'next', 'show', 'new', 'set-status', 'set-priority', 'set-order', 'set-tags', 'note', 'ack-stranded', 'stale-scan', 'similar', 'validate')]
+    [ValidateSet('list', 'next', 'show', 'new', 'set-status', 'set-priority', 'set-order', 'set-tags', 'note', 'ack-stranded', 'stale-scan', 'similar', 'validate', 'ledger')]
     [string]$Command,
 
     [Parameter(Position = 1)]
@@ -224,6 +234,17 @@ if (-not $TaskDir) {
 
 if (-not (Test-Path $TaskDir)) {
     throw "Task directory not found: $TaskDir"
+}
+
+# The cross-lane claim ledger (T1981). Off for a -TaskDir fixture run unless
+# the caller names a ledger: a harness claiming fixture T3 must never make the
+# real loop skip the real T3.
+. (Join-Path $PSScriptRoot 'lib\LoopLedger.ps1')
+$LedgerOn = [bool](Get-LedgerPath) -and -not ($TaskDirGiven -and -not $env:GHOZTTY_LOOP_LEDGER)
+$script:ThisLane = $null
+function Get-ThisLane {
+    if (-not $script:ThisLane) { $script:ThisLane = Get-LedgerLane -Root $RepoRoot }
+    return $script:ThisLane
 }
 
 # The seat a file with no `seat:` field belongs to. Absent means win, so the
@@ -1018,10 +1039,40 @@ switch ($Command) {
         # uncommitted changes nobody was told about (user, 2026-08-05).
         # `next -Claim` therefore RESUMES the stale task instead of picking a
         # new one; plain `next` stays a read-only question and only reports.
-        $inflight = @($ordered | Where-Object { $_.Status -match '^in-progress' -and (Test-SeatMatch $_.Seat $wantSeat) })
+        #
+        # T1981: "one agent" is now one agent PER LANE. An in-progress task
+        # another live lane holds in the ledger is not stale - somebody is on
+        # it - so it is reported and never resumed, and the same goes for a
+        # todo the other lane has already claimed but not yet pushed.
+        $heldElsewhere = @{}
+        if ($LedgerOn) { $heldElsewhere = Get-LedgerOtherLaneClaims -Lane (Get-ThisLane) }
+        $heldNames = @()
+        $sayHeld = {
+            param([string]$HeldId, $HeldClaim)
+            Write-Host ("HELD BY OTHER LANE: {0} (lane {1})" -f $HeldId, $HeldClaim.lane)
+        }
+        $inflight = @()
+        foreach ($t in @($ordered | Where-Object { $_.Status -match '^in-progress' -and (Test-SeatMatch $_.Seat $wantSeat) })) {
+            if ($heldElsewhere.ContainsKey($t.Id)) { & $sayHeld $t.Id $heldElsewhere[$t.Id]; $heldNames += $t.Id; continue }
+            $inflight += $t
+        }
         if ($inflight.Count -gt 0) {
+            $t = $null
             if ($Claim) {
-                $t = $inflight[0]
+                # The resume goes through the ledger's check-and-set too: two
+                # lanes that both see the same stale task must not both pick
+                # it up. Losing the race just means trying the next one.
+                foreach ($cand in $inflight) {
+                    if ($LedgerOn) {
+                        $r = Set-LedgerClaim -Id $cand.Id -Lane (Get-ThisLane) -Root $RepoRoot
+                        if (-not $r.Claimed) { & $sayHeld $cand.Id $r.Holder; $heldNames += $cand.Id; continue }
+                    }
+                    $t = $cand
+                    break
+                }
+            }
+            if ($t) {
+                $inflight = @($inflight | Where-Object { $_.Id -ne $t.Id })
                 Write-Host ("RESUME: {0} - {1}" -f $t.Id, $t.Title)
                 $pri = if ($t.Priority) { $t.Priority } else { 'untriaged' }
                 $ord = if ($null -ne $t.Order) { $t.Order } else { 'unordered' }
@@ -1029,20 +1080,28 @@ switch ($Command) {
                 Write-Host  "      Reassess before working: read its '## Progress log' and check git status/diff"
                 Write-Host  "      for its files. Then either resume it as this turn's task, or record why not"
                 Write-Host ("      (note {0} -Text ...) and set it back: set-status {0} -Status todo" -f $t.Id)
-                if ($inflight.Count -gt 1) {
-                    Write-Host ("      also in flight: " + (($inflight | Select-Object -Skip 1 | ForEach-Object { $_.Id }) -join ', ') + " (next turns get these)")
+                if ($inflight.Count -gt 0) {
+                    Write-Host ("      also in flight: " + (($inflight | ForEach-Object { $_.Id }) -join ', ') + " (next turns get these)")
                 }
                 Write-Host ("      file: docs/design/windows-parity-tasks/{0}.md" -f $t.Id)
                 Add-ProgressNote -Path $t.Path -SessionId $Session -NoteText 'stale in-progress claim picked up by a new turn; reassessing from this log and git status before resuming.'
                 exit 0
             }
-            Write-Host ("IN FLIGHT: " + (($inflight | ForEach-Object { $_.Id }) -join ', ') + " - in-progress with no agent on it; 'next -Claim' will resume it before offering new work.")
+            # With -Claim, reaching here means every in-flight task was lost
+            # to another lane's claim (each already named above), so fresh
+            # work is the right answer and there is nothing left to resume.
+            if (-not $Claim) {
+                Write-Host ("IN FLIGHT: " + (($inflight | ForEach-Object { $_.Id }) -join ', ') + " - in-progress with no agent on it; 'next -Claim' will resume it before offering new work.")
+            }
         }
 
         $blocked = @()
         foreach ($t in $ordered) {
             if ($t.Status -notmatch '^todo') { continue }
             if (-not (Test-SeatMatch $t.Seat $wantSeat)) { continue }
+            # T1981: another lane claimed this todo; its status flip just has
+            # not reached this worktree yet.
+            if ($heldElsewhere.ContainsKey($t.Id)) { & $sayHeld $t.Id $heldElsewhere[$t.Id]; $heldNames += $t.Id; continue }
             $unmet = @()
             foreach ($d in $t.Deps) {
                 # Resolves through skipped(split ...) parents (T382): a dep is
@@ -1056,6 +1115,14 @@ switch ($Command) {
                 else { $unmet += ("{0}[open: {1}]" -f $d, ($open -join '+')) }
             }
             if ($unmet.Count -eq 0) {
+                # T1981: the claim is decided in the ledger BEFORE anything is
+                # printed or written, as one atomic check-and-set. Two lanes
+                # that both reached this task race here; the loser names the
+                # winner and moves on to the next ready task.
+                if ($Claim -and $LedgerOn) {
+                    $r = Set-LedgerClaim -Id $t.Id -Lane (Get-ThisLane) -Root $RepoRoot
+                    if (-not $r.Claimed) { & $sayHeld $t.Id $r.Holder; $heldNames += $t.Id; continue }
+                }
                 Write-Host ("NEXT: {0} - {1}" -f $t.Id, $t.Title)
                 $pri = if ($t.Priority) { $t.Priority } else { 'untriaged' }
                 $ord = if ($null -ne $t.Order) { $t.Order } else { 'unordered' }
@@ -1099,6 +1166,7 @@ switch ($Command) {
         Write-Host ("No ready task for seat={0}: every todo has unmet deps, is another seat's, or nothing is todo." -f $wantSeat)
         if ($blocked.Count -gt 0) { Write-Host ("Blocked: {0}" -f ($blocked -join ', ')) }
         if ($otherSeat.Count -gt 0) { Write-Host ("Other seat: {0}" -f ($otherSeat -join ', ')) }
+        if ($heldNames.Count -gt 0) { Write-Host ("Held by another lane: {0}" -f ($heldNames -join ', ')) }
         exit 1
     }
 
@@ -1171,6 +1239,26 @@ switch ($Command) {
         }
         [System.IO.File]::WriteAllText($path, $new, (New-Object System.Text.UTF8Encoding $false))
         Write-Host ("{0} -> {1}" -f $tid, $Status)
+
+        # T1981: the ledger follows the status. in-progress is a claim; any
+        # other status releases this lane's claim so the other lane can have
+        # the task. Warn, never fail: the file write above is the record, and
+        # a ledger hiccup must not turn a status flip into an error.
+        if ($LedgerOn) {
+            try {
+                if ($Status -match '^in-progress') {
+                    $r = Set-LedgerClaim -Id $tid -Lane (Get-ThisLane) -Root $RepoRoot
+                    if (-not $r.Claimed) {
+                        Write-Host ("      WARNING: HELD BY OTHER LANE: {0} (lane {1}) - the status is written, but the ledger still gives it to that lane until its claim is released or expires." -f $tid, $r.Holder.lane)
+                    }
+                }
+                else {
+                    $r = Clear-LedgerClaim -Id $tid -Lane (Get-ThisLane)
+                    if ($r.Result -eq 'cleared') { Write-Host ("      ledger: released this lane's claim on {0}" -f $tid) }
+                }
+            }
+            catch { Write-Host ("      WARNING: ledger not updated for {0}: {1}" -f $tid, $_.Exception.Message) }
+        }
 
         # Journal the transition. A status change is the single most consequential
         # edit anyone makes to a task - it is what puts work into the queue and
@@ -1432,8 +1520,16 @@ switch ($Command) {
             if ($n -gt $max) { $max = $n }
         }
 
+        # T1981: the files on disk are only THIS worktree's view. Another lane
+        # may already have minted ids past them that it has not pushed, so the
+        # first candidate comes from the shared ledger, which reserves it
+        # before the lock is released. CreateNew below still guards this
+        # worktree's own races.
+        $first = $max + 1
+        if ($LedgerOn) { $first = Reserve-LedgerId -DiskMax $max }
+
         $created = $null
-        for ($n = $max + 1; $n -lt $max + 50; $n++) {
+        for ($n = $first; $n -lt $first + 49; $n++) {
             $tid = "T$n"
             $path = Join-Path $TaskDir "$tid.md"
             try {
@@ -1488,6 +1584,12 @@ switch ($Command) {
         }
 
         if (-not $created) { throw 'Could not allocate a task id.' }
+        # A CreateNew retry may have stepped past the reserved number; the
+        # ledger must never hand out an id below one that now exists.
+        if ($LedgerOn) {
+            try { [void](Set-LedgerMaxIdAtLeast -N ([int]$created.Substring(1))) }
+            catch { Write-Host ("      WARNING: ledger high-water mark not raised to {0}: {1}" -f $created, $_.Exception.Message) }
+        }
         Write-Host ("created {0}: docs/design/windows-parity-tasks/{0}.md" -f $created)
     }
 
@@ -1517,6 +1619,41 @@ switch ($Command) {
         $path = Get-TaskPath $tid
         Add-ProgressNote -Path $path -SessionId $Session -NoteText $Text
         Write-Host ("{0}: progress note added" -f $tid)
+        # T1981: a note is the loop's heartbeat on its task, so it keeps this
+        # lane's claim from ageing out. Silent when this lane holds nothing.
+        if ($LedgerOn) {
+            try { [void](Update-LedgerClaimTouch -Id $tid -Lane (Get-ThisLane)) }
+            catch { Write-Host ("      WARNING: ledger heartbeat not written for {0}: {1}" -f $tid, $_.Exception.Message) }
+        }
+    }
+
+    # T1981. What the cross-lane ledger says right now: the high-water mark,
+    # and which lane holds which task. Read-only - it never prunes or writes.
+    'ledger' {
+        $lp = Get-LedgerPath
+        if (-not $LedgerOn) {
+            $why = if (-not $lp) { 'GHOZTTY_LOOP_LEDGER=off' } else { '-TaskDir fixture run with no GHOZTTY_LOOP_LEDGER' }
+            Write-Host ("LEDGER OFF ({0}): next/new decide from this worktree's files alone." -f $why)
+            break
+        }
+        $l = Read-Ledger
+        $me = Get-ThisLane
+        Write-Host ("ledger:    {0}" -f $lp)
+        Write-Host ("this lane: {0}" -f $me)
+        Write-Host ("maxId:     T{0}" -f $l.maxId)
+        Write-Host ("ttl:       {0} min" -f (Get-LedgerTtlMinutes))
+        $keys = @($l.claims.Keys | Sort-Object { [int]([regex]::Match($_, '\d+').Value) }, { $_ })
+        if ($keys.Count -eq 0) { Write-Host 'claims:    none'; break }
+        Write-Host ("claims:    {0}" -f $keys.Count)
+        $now = (Get-Date).ToUniversalTime()
+        foreach ($k in $keys) {
+            $c = $l.claims[$k]
+            $t = ConvertTo-LedgerTime $c.touched
+            $age = if ($t) { '{0:N0}m ago' -f ($now - $t).TotalMinutes } else { 'unknown' }
+            $state = if (Test-LedgerClaimLive -Claim $c -Now $now) { 'live' } else { 'EXPIRED' }
+            $mine = if ($c.lane -eq $me) { ' [this lane]' } else { '' }
+            Write-Host ("  {0,-7} {1,-7} lane={2}{3}  touched {4}  root={5}" -f $k, $state, $c.lane, $mine, $age, $c.root)
+        }
     }
 
     'ack-stranded' {

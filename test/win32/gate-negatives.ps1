@@ -268,6 +268,12 @@ $Registry = @(
     [pscustomobject]@{ Label = 'NEXT'; Kind = 'status' }
     [pscustomobject]@{ Label = 'RESUME'; Kind = 'status' }
     [pscustomobject]@{ Label = 'IN FLIGHT'; Kind = 'status' }
+    # T1981's cross-lane ledger. Both are reports, never gates: `next` names a
+    # task another lane holds and picks other work, and `ledger` says when the
+    # ledger is switched off. test\win32\parity-tasks-lanes.ps1 holds them
+    # (A2/D2 for the first, E8 for the second).
+    [pscustomobject]@{ Label = 'HELD BY OTHER LANE'; Kind = 'status' }
+    [pscustomobject]@{ Label = 'LEDGER OFF'; Kind = 'status' }
     [pscustomobject]@{ Label = 'TODO'; Kind = 'status' }
 )
 
