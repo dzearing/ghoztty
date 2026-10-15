@@ -86,6 +86,11 @@ enum IPCData: Encodable {
         /// the layout, still running. Absent (not false) otherwise, like
         /// `banner` — an additive field older readers never see.
         var stashed: Bool? = nil
+        /// The pane's activity state as its machine token (`idle`, `busy`,
+        /// `needs_input` — the `+set-state` vocabulary, never the title's
+        /// human label). Terminal panes only; absent for viewers, which have
+        /// no activity state.
+        var state: String? = nil
 
         private enum CodingKeys: String, CodingKey {
             case id, title, working_directory, pid, tty, name, focused, exit_code
@@ -93,6 +98,7 @@ enum IPCData: Encodable {
             case url
             case banner
             case stashed
+            case state
         }
 
         func encode(to encoder: Encoder) throws {
@@ -109,6 +115,7 @@ enum IPCData: Encodable {
             try container.encode(url, forKey: .url)
             try container.encodeIfPresent(banner, forKey: .banner)
             try container.encodeIfPresent(stashed == true ? true : nil, forKey: .stashed)
+            try container.encodeIfPresent(state, forKey: .state)
         }
     }
 

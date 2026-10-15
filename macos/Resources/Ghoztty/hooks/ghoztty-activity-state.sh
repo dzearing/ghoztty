@@ -16,15 +16,20 @@
 #
 # Verbs:
 #   pause         -> needs_input. Anything blocking on the user: AskUserQuestion,
-#                    plan approval, a permission prompt, the idle notification.
+#                    plan approval, a permission prompt, an MCP elicitation.
+#                    NOT the idle notification: see the pause branch below.
 #   tool-tick     -> PostToolUse catch-all. On the main thread, undoes a pause.
+#   prompt-submit -> UserPromptSubmit. Undoes a pause: the user answered by
+#                    typing, which is not a tool call and so never reaches
+#                    tool-tick.
 #                    Inside a subagent, beats that agent's liveness marker.
 #   agent-start   -> record a running subagent (SubagentStart).
 #   agent-stop    -> clear that subagent (SubagentStop).
 #   settle        -> the Stop hook. Decide the final state for the turn.
 #   reset         -> forget every tracked agent for this session and re-settle.
 #                    Manual escape hatch for a pane stuck on busy.
-#   session-start -> drop this session's leftovers at startup.
+#   session-start -> drop this session's leftovers at startup, including a
+#                    question the pane's previous session left unanswered.
 #
 # Always exits 0 and stays silent: a hook that fails must never break the turn.
 set -u
@@ -89,14 +94,28 @@ owner_pid() {
   printf '%s' "$PPID"
 }
 
-# pause never touches the payload, so it skips the stdin read entirely.
+IFS= read -r -d '' payload 2>/dev/null || true
+
 if [ "$verb" = pause ]; then
+  # A Notification is only a pause when it is a prompt the user must answer.
+  # Claude fires `idle_prompt` ~60s after ANY turn ends with no input, which is
+  # the opposite of a question: pausing on it turned every idle pane into
+  # needs_input a minute after it finished, and nothing cleared it until the
+  # next turn ran a tool. The generated hook narrows Notification with a
+  # matcher too; this check is what fixes a hook installed before the matcher
+  # existed (it runs for every notification type), and it fails closed: an
+  # unknown or absent type is not a question.
+  if [ "$(json_str "hook_event_name hookEventName" "$payload")" = Notification ]; then
+    case "$(json_str "notification_type notificationType" "$payload")" in
+      permission_prompt|elicitation_dialog) ;;
+      *) exit 0 ;;
+    esac
+  fi
   : > "$marker" 2>/dev/null
   set_state needs_input
   exit 0
 fi
 
-IFS= read -r -d '' payload 2>/dev/null || true
 sid="$(json_str "session_id sessionId" "$payload")"
 aid="$(json_str "agent_id agentId" "$payload")"
 
@@ -151,6 +170,17 @@ case "$verb" in
     set_state busy
     ;;
 
+  prompt-submit)
+    # The user typed a reply. Whatever the pane was paused on has been
+    # answered -- a permission prompt dismissed with Escape, a plan rejected,
+    # or a question answered in prose -- and none of those run a tool, so
+    # tool-tick never sees them. Same marker guard as tool-tick, so an
+    # ordinary prompt costs no IPC call.
+    [ -f "$marker" ] || exit 0
+    rm -f "$marker" 2>/dev/null
+    set_state busy
+    ;;
+
   agent-start)
     [ -n "$sid" ] && [ -n "$aid" ] || exit 0
     mkdir -p "$agent_dir" 2>/dev/null
@@ -171,6 +201,13 @@ case "$verb" in
     # here leaked from a kill. Also sweep other sessions' dead owners.
     [ -n "$sid" ] && rm -rf "$agent_dir" 2>/dev/null
     reap_dead_owners
+    # A fresh session cannot be waiting on an answer, so a marker here was
+    # left by a session that ended mid-question (killed, or /clear). Left in
+    # place, the next settle would re-assert needs_input on an idle pane.
+    if [ -f "$marker" ]; then
+      rm -f "$marker" 2>/dev/null
+      set_state idle
+    fi
     ;;
 
   reset)

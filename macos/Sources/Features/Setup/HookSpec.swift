@@ -10,7 +10,7 @@ enum HookOwnership { case dedicatedFile, mergedFragment }
 /// `ghoztty-activity-state.sh`, which is the single owner of that ordering).
 enum HookPurpose {
     case sessionStart, promptSubmit, stop
-    case activitySessionStart, activityPause, activityToolTick
+    case activitySessionStart, activityPause, activityToolTick, activityPromptSubmit
     case activityAgentStart, activityAgentStop, activitySettle
 
     /// The verb this purpose passes to its script.
@@ -22,6 +22,7 @@ enum HookPurpose {
         case .activitySessionStart: "session-start"
         case .activityPause: "pause"
         case .activityToolTick: "tool-tick"
+        case .activityPromptSubmit: "prompt-submit"
         case .activityAgentStart: "agent-start"
         case .activityAgentStop: "agent-stop"
         case .activitySettle: "settle"

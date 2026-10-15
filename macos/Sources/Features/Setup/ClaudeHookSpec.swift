@@ -57,11 +57,22 @@ struct ClaudeHookSpec: HookSpec {
                 ["matcher": "startup|clear", "hooks": [command(.sessionStart)]],
                 ["hooks": [command(.activitySessionStart)]],
             ],
-            "UserPromptSubmit": entry(.promptSubmit),
+            // A typed prompt also answers whatever the pane was paused on —
+            // a dismissed permission prompt or a question answered in prose
+            // runs no tool, so PostToolUse alone would never un-pause it.
+            "UserPromptSubmit": [
+                ["hooks": [command(.promptSubmit)]],
+                ["hooks": [command(.activityPromptSubmit)]],
+            ],
             // Anything that blocks on the user outranks everything else.
             "PreToolUse": [["matcher": "AskUserQuestion|ExitPlanMode",
                             "hooks": [command(.activityPause)]]],
-            "Notification": entry(.activityPause),
+            // Only the notifications that ARE a question. Claude also notifies
+            // `idle_prompt` ~60s after every turn ends, and pausing on that
+            // marked every idle pane needs_input a minute later. (The script
+            // filters the same way, for hooks installed before this matcher.)
+            "Notification": [["matcher": Self.blockingNotificationMatcher,
+                              "hooks": [command(.activityPause)]]],
             "PermissionRequest": entry(.activityPause),
             // Catch-all: on the main thread this undoes a pause; inside a
             // subagent it only beats that agent's liveness marker.
@@ -74,6 +85,12 @@ struct ClaudeHookSpec: HookSpec {
             ],
         ]
     }
+
+    /// The Claude notification types that block on the user: a permission
+    /// prompt and an MCP elicitation dialog. Deliberately an allow-list — an
+    /// unknown future type must not paint the pane needs_input — and it must
+    /// match the `case` in the activity-state script's `pause` branch.
+    static let blockingNotificationMatcher = "permission_prompt|elicitation_dialog"
 
     /// Serialize a single hook element deterministically for signature matching
     /// and set comparison (sorted keys, literal slashes so the script path is

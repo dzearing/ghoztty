@@ -2039,7 +2039,8 @@ class IPCServer {
                 focused: view === focusedSurface,
                 exit_code: view.exitCode.map { Int($0) },
                 banner: view.paneBanner,
-                stashed: controller.surfaceTree.isStashed(pane)
+                stashed: controller.surfaceTree.isStashed(pane),
+                state: view.activityState.rawValue
             ))
         case .split(let split):
             let direction: String = switch split.direction {
