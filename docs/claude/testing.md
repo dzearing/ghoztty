@@ -907,9 +907,26 @@ been red for weeks with every floor run green.
 
 ```powershell
 powershell -NoProfile -File scripts\harness-floor.ps1 -List   # the set, and why each is in it
-powershell -NoProfile -File scripts\harness-floor.ps1         # run it (~15 min)
-powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness   # the same, under the lane watchdog
+powershell -NoProfile -File scripts\harness-floor.ps1         # the FULL sweep (~24 min)
+powershell -NoProfile -File scripts\harness-floor.ps1 -Scoped -PlanOnly   # what a per-turn sweep would run, and why
+powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness   # the per-turn SCOPED sweep, under the lane watchdog
+powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness -HarnessFull   # the daily full sweep (go.md 0.6)
 ```
+
+- **The per-turn sweep is SCOPED** (T1958). `-Lane harness` and the guard row's
+  run line both mean `harness-floor.ps1 -Scoped`, which compares the tree with
+  what the floor last verified green (`temp\harness-floor\verified.json`) and
+  runs every member except the two `daily` ones (`test-reach-audit`,
+  `command-resolve-audit`, ~11 min between them, 0 reds in 41 runs), plus any
+  member whose own script changed. Every turn member sweeps every script, so
+  that is the whole set that covers a script edit. It runs the FULL set instead
+  when nothing is verified on the box, when a shared file changed
+  (`test\win32\lib\`, the runner, the set, `suite-run.ps1`), or when the last
+  green full sweep is over 26 h old — so a missed daily sweep is paid by the
+  next turn, never skipped. Nothing changed since the last green sweep: no run,
+  and the floor stamps `CURRENT`. The daily full sweep runs from the digest step
+  (go.md 0.6); a green full sweep restarts that clock, a green scoped one only
+  advances the fingerprint.
 
 - **The set lives in `scripts\lib\HarnessFloor.ps1`**, one row per audit with
   the property it holds. Membership is a line: a static sweep over source or a
@@ -934,7 +951,7 @@ powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness   # the same, u
   already detects exactly that, and paying fifteen minutes on every floor run
   would buy nothing.
 - **A red sweep is finished by re-running only its red rows** (T1955). Every
-  full run records what it found in `temp\harness-floor\last-full.json`, and
+  full or scoped (T1958) run records what it found in `temp\harness-floor\last-full.json`, and
   when it is red it prints the exact `harness-floor.ps1 -Include '<red rows>'`
   command. Fix those, run that: a green re-run that covers every red row
   COMPLETES the full run and stamps the floor (`HARNESS FLOOR COMPLETED ...`),

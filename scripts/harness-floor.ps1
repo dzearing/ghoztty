@@ -47,6 +47,7 @@
   powershell -NoProfile -File scripts\harness-floor.ps1
   powershell -NoProfile -File scripts\harness-floor.ps1 -List
   powershell -NoProfile -File scripts\harness-floor.ps1 -Include 'skip-*,foreground-*'
+  powershell -NoProfile -File scripts\harness-floor.ps1 -Scoped -PlanOnly
 #>
 [CmdletBinding()]
 param(
@@ -81,7 +82,28 @@ param(
 
     # Say what a completion WOULD stamp and stamp nothing. For the acceptance
     # harness, whose run must never write the committed floor stamp.
-    [switch]$DryRunStamp
+    [switch]$DryRunStamp,
+
+    # T1958: the per-turn sweep. Run only what changed since the floor was last
+    # verified green - every turn-tier member plus any member whose own script
+    # changed - or the full set when a shared file changed or the last green
+    # full sweep is older than -MaxFullAgeHours. Nothing changed: no run. A
+    # bare invocation (no -Scoped, no -Include) is the FULL sweep, which is
+    # what the digest step runs daily.
+    [switch]$Scoped,
+
+    # Where the floor records what it last verified green. Default
+    # temp\harness-floor\verified.json; the acceptance harness points it at a
+    # scratch file.
+    [string]$VerifiedPath,
+
+    # How old the last green full sweep may be and still let a scoped sweep
+    # stand in for one. A day plus slack: the digest step runs the full sweep
+    # every morning.
+    [double]$MaxFullAgeHours = 26,
+
+    # With -Scoped: print what would run, and why, and run nothing.
+    [switch]$PlanOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -116,9 +138,71 @@ if ($List) {
     Write-Host "harness floor: $($audits.Count) audit(s)"
     foreach ($a in $audits) {
         $mark = if ($pending.ContainsKey($a.Name)) { "  [PENDING $($pending[$a.Name])]" } else { '' }
-        Write-Host ("  {0,-30} {1}{2}" -f $a.Name, $a.Why, $mark)
+        $tier = if ((Get-HarnessFloorTier $a) -eq 'daily') { '  [daily]' } else { '' }
+        Write-Host ("  {0,-30} {1}{2}{3}" -f $a.Name, $a.Why, $tier, $mark)
     }
     exit 0
+}
+
+if (-not $VerifiedPath) { $VerifiedPath = Get-HarnessFloorVerifiedPath $Repo }
+
+function Stamp-Floor {
+    if ($DryRunStamp) { Write-Host '  DRY RUN: would stamp harness-floor; nothing written'; return }
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'guard-due.ps1') `
+        update -Guard harness-floor -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
+}
+
+function Save-Verified([datetime]$FullAt) {
+    if ($DryRunStamp) { return }
+    $head = (& git -C $Repo rev-parse --short HEAD 2>$null | Select-Object -Last 1)
+    $v = New-HarnessFloorVerified -FullAt $FullAt -Fingerprint (Get-HarnessFloorFingerprint $Repo) -Head ([string]$head)
+    try { Write-HarnessFloorRecord -Path $VerifiedPath -Record $v } catch {
+        Write-Host "  (could not record what the floor verified: $($_.Exception.Message))"
+    }
+}
+
+# T1958: the scoped per-turn sweep. Decides the set, then falls through to the
+# ordinary run with -Include semantics (a scoped set) or none (a full sweep).
+$scopeMode = $null
+$scopeFullAt = $null
+if ($Scoped -and -not $Include -and -not $ScoreSummary) {
+    $verified = Read-HarnessFloorRecord $VerifiedPath
+    if ($null -eq $verified) {
+        # A box that has swept since T1955 but never since T1958 already holds
+        # the answer: a green (or completed) full-run record is a verified
+        # state as of when it ran. Its fingerprint predates any fix edits, so
+        # those read as changed - the conservative direction.
+        if (-not $RecordPath) { $RecordPath = Get-HarnessFloorRecordPath $Repo }
+        $last = Read-HarnessFloorRecord $RecordPath
+        if ($last -and (-not $last.kind -or $last.kind -eq 'full') -and ($last.ok -or $last.consumed)) {
+            $verified = [pscustomobject]@{
+                fullAt = $last.finishedAt; verifiedAt = $last.finishedAt; fingerprint = $last.fingerprint
+            }
+        }
+    }
+    $scope =Get-HarnessFloorScope -Verified $verified -Fingerprint (Get-HarnessFloorFingerprint $Repo) `
+        -Audits $audits -MaxFullAgeHours $MaxFullAgeHours
+    $scopeMode = $scope.Mode
+    Write-Host ("harness floor scope: {0} - {1}" -f $scope.Mode.ToUpper(), $scope.Reason)
+    foreach ($ch in @($scope.Changed)) { Write-Host "    changed since verified: $ch" }
+    if ($PlanOnly) {
+        foreach ($n in @($scope.Selected)) { Write-Host "    would run: $n" }
+        exit 0
+    }
+    if ($scope.Mode -eq 'current') {
+        Write-Host "HARNESS FLOOR CURRENT: verified green at $($verified.verifiedAt) (full sweep $($verified.fullAt)); nothing to run"
+        Stamp-Floor
+        exit 0
+    }
+    if ($scope.Mode -eq 'scoped') {
+        $scopeFullAt = $verified.fullAt
+        $Include = (@($scope.Selected) -join ',')
+        $selected = @($scope.Selected)
+        $audits = @($audits | Where-Object { $selected -contains [string]$_.Name })
+        $narrowed = @{}
+        foreach ($k in @($pending.Keys)) { if ($selected -contains $k) { $narrowed[$k] = $pending[$k] } }
+        $pending = $narrowed
+    }
 }
 
 # ---------------------------------------------------------------- the rows
@@ -163,13 +247,16 @@ foreach ($line in @(Format-HarnessFloorVerdict -Verdict $verdict)) { Write-Host 
 
 if (-not $RecordPath) { $RecordPath = Get-HarnessFloorRecordPath $Repo }
 
-# T1955. A real FULL run records what it found - red or green - so that a fix to
-# one red member is proved by re-running that member, not the whole 16-25
-# minute sweep. Written on every full run, so the record always describes the
-# latest sweep and an old red one cannot be completed after a newer one.
-if (-not $Include -and -not $ScoreSummary) {
+# T1955. A real sweep - full, or scoped (T1958) - records what it found, red or
+# green, so that a fix to one red member is proved by re-running that member,
+# not the whole sweep again. Written on every such run, so the record always
+# describes the latest sweep and an old red one cannot be completed after a
+# newer one.
+$isSweep = (-not $ScoreSummary) -and ((-not $Include) -or $scopeMode -eq 'scoped')
+$kind = if ($scopeMode -eq 'scoped') { 'scoped' } else { 'full' }
+if ($isSweep) {
     $head = (& git -C $Repo rev-parse --short HEAD 2>$null | Select-Object -Last 1)
-    $record = New-HarnessFloorRecord -Verdict $verdict -Head ([string]$head) `
+    $record = New-HarnessFloorRecord -Verdict $verdict -Head ([string]$head) -Kind $kind `
         -Fingerprint (Get-HarnessFloorFingerprint $Repo)
     try { Write-HarnessFloorRecord -Path $RecordPath -Record $record } catch {
         Write-Host "  (could not record this run for a targeted re-run: $($_.Exception.Message))"
@@ -183,8 +270,24 @@ if (-not $Include -and -not $ScoreSummary) {
 
 if (-not $verdict.Ok) { exit 1 }
 
-# A green narrowed re-run that covers every red row of the last full run
-# completes it (T1955; the rules are Test-HarnessFloorCompletion's).
+# A green sweep stamps the covered files (T783), so guard-due can answer "has
+# anybody run the harness floor against the suite as it now stands?" - which is
+# what makes the set standing rather than something a turn remembers. A FULL
+# sweep also restarts the daily clock; a SCOPED one (T1958) advances only the
+# fingerprint, so the daily members still owe their run within the day.
+if ($isSweep) {
+    if ($kind -eq 'full') { Save-Verified (Get-Date) }
+    else { Save-Verified ([datetime]$scopeFullAt) }
+    if ($kind -eq 'scoped') {
+        Write-Host ("HARNESS FLOOR SCOPED: {0} of {1} members green; the last full sweep ({2}) still stands" -f `
+                @($audits).Count, @(Get-HarnessFloorAudits).Count, $scopeFullAt)
+    }
+    Stamp-Floor
+    exit 0
+}
+
+# A green narrowed re-run that covers every red row of the last sweep completes
+# it (T1955; the rules are Test-HarnessFloorCompletion's).
 if ($Include -and -not $ScoreSummary) {
     $selected = @($audits | ForEach-Object { [string]$_.Name })
     $rec = Read-HarnessFloorRecord $RecordPath
@@ -195,8 +298,9 @@ if ($Include -and -not $ScoreSummary) {
         Write-Host "  not a completion of the last full run: $($c.Reason)"
         exit 0
     }
-    Write-Host ("HARNESS FLOOR COMPLETED: the full run of {0} (head {1}) was red only on {2}; all now green" -f `
-            $rec.finishedAt, $rec.head, (@($c.Red) -join ', '))
+    $recKind = if ($rec.kind) { [string]$rec.kind } else { 'full' }
+    Write-Host ("HARNESS FLOOR COMPLETED: the {0} run of {1} (head {2}) was red only on {3}; all now green" -f `
+            $recKind, $rec.finishedAt, $rec.head, (@($c.Red) -join ', '))
     foreach ($ch in @($c.Changed)) { Write-Host "    edited since the full run: $ch" }
     if ($DryRunStamp) {
         Write-Host '  DRY RUN: would stamp harness-floor; nothing written'
@@ -206,18 +310,14 @@ if ($Include -and -not $ScoreSummary) {
     try { Write-HarnessFloorRecord -Path $RecordPath -Record $rec } catch {
         Write-Host "  (could not mark the record consumed: $($_.Exception.Message))"
     }
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'guard-due.ps1') `
-        update -Guard harness-floor -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
+    # A completed full sweep is a green full sweep as of when it ran; a
+    # completed scoped one leaves the daily clock where it was (T1958).
+    if ($recKind -eq 'full') { Save-Verified ([datetime]$rec.finishedAt) }
+    else {
+        $prior = Read-HarnessFloorRecord $VerifiedPath
+        if ($prior -and $prior.fullAt) { Save-Verified ([datetime]$prior.fullAt) }
+    }
+    Stamp-Floor
     exit 0
-}
-
-# A green FULL run stamps the covered files (T783), so guard-due can answer "has
-# anybody run the harness floor against the suite as it now stands?" - which is
-# what makes the set standing rather than something a turn remembers. Only a
-# full run, and only a real one: a narrowed -Include measured part of the suite,
-# and -ScoreSummary measured nothing at all.
-if (-not $Include -and -not $ScoreSummary) {
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'guard-due.ps1') `
-        update -Guard harness-floor -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
 exit 0

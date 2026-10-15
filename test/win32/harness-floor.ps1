@@ -447,6 +447,105 @@ try {
         $nText -match 'not a completion of the last full run: .*missing vt-escape-scan\.ps1' -and
         $nText -notmatch 'HARNESS FLOOR COMPLETED') $nText
 
+    # ========================================================================
+    ""
+    "== H: the per-turn sweep is scoped to what changed (T1958)"
+    # ========================================================================
+
+    # Every way the scope must widen back to a full sweep is planted here, and
+    # the one way it narrows (a script edit leaves the daily members to the
+    # daily sweep) is pinned to exactly the two members it was measured on.
+    $daily = @($audits | Where-Object { (Get-HarnessFloorTier $_) -eq 'daily' } | ForEach-Object { [string]$_.Name })
+    Assert 'H1 exactly the two slow cross-suite audits are daily' (
+        $daily.Count -eq 2 -and $daily -contains 'test-reach-audit.ps1' -and $daily -contains 'command-resolve-audit.ps1') ($daily -join ',')
+    $turnNames = @($audits | Where-Object { (Get-HarnessFloorTier $_) -ne 'daily' } | ForEach-Object { [string]$_.Name })
+
+    $vNow = Get-Date
+    $mkVer = {
+        param($fpr, $at)
+        (New-HarnessFloorVerified -FullAt $at -Fingerprint $fpr -Head 'abc1234' | ConvertTo-Json -Depth 5 | ConvertFrom-Json)
+    }
+    $ver = & $mkVer $fp $vNow.AddHours(-2)
+    $edit = {
+        param([string[]]$paths)
+        $m = @{}; foreach ($k in $fp.Keys) { $m[$k] = $fp[$k] }
+        foreach ($p in $paths) { $m[$p] = 'CHANGED' }
+        return $m
+    }
+
+    $s = Get-HarnessFloorScope -Verified $null -Fingerprint $fp -Audits $audits -Now $vNow
+    Assert 'H2 nothing verified on this box: a FULL sweep' ($s.Mode -eq 'full' -and @($s.Selected).Count -eq $audits.Count) "$($s.Mode) $($s.Reason)"
+
+    $s = Get-HarnessFloorScope -Verified $ver -Fingerprint $fp -Audits $audits -Now $vNow
+    Assert 'H3 nothing changed since the floor was verified: CURRENT, nothing runs' (
+        $s.Mode -eq 'current' -and @($s.Selected).Count -eq 0) "$($s.Mode) $($s.Reason)"
+
+    $s = Get-HarnessFloorScope -Verified $ver -Fingerprint (& $edit @('test\win32\ipc-p1.ps1')) -Audits $audits -Now $vNow
+    $missingTurn = @($turnNames | Where-Object { @($s.Selected) -notcontains $_ })
+    Assert 'H4 one acceptance-script edit: SCOPED to every turn member, the daily ones left to the daily sweep' (
+        $s.Mode -eq 'scoped' -and $missingTurn.Count -eq 0 -and
+        @($s.Selected | Where-Object { $daily -contains $_ }).Count -eq 0) "$($s.Mode) sel=$(@($s.Selected).Count) missing=$($missingTurn -join ',') $($s.Reason)"
+
+    $s = Get-HarnessFloorScope -Verified $ver -Fingerprint (& $edit @('test\win32\test-reach-audit.ps1')) -Audits $audits -Now $vNow
+    Assert 'H5 an edit to a daily member''s own script runs that member in the scoped sweep' (
+        $s.Mode -eq 'scoped' -and @($s.Selected) -contains 'test-reach-audit.ps1' -and
+        @($s.Selected) -notcontains 'command-resolve-audit.ps1') "$($s.Mode) $($s.Selected -join ',')"
+
+    $s = Get-HarnessFloorScope -Verified $ver -Fingerprint (& $edit @('test\win32\ipc-p1.ps1', 'test\win32\lib\TestScore.ps1')) -Audits $audits -Now $vNow
+    Assert 'H6 a shared-library edit forces a FULL sweep, daily members included' (
+        $s.Mode -eq 'full' -and $s.Reason -match 'TestScore\.ps1' -and @($s.Selected) -contains 'test-reach-audit.ps1') "$($s.Mode) $($s.Reason)"
+
+    $s = Get-HarnessFloorScope -Verified ($ver = & $mkVer $fp $vNow.AddHours(-27)) -Fingerprint (& $edit @('test\win32\ipc-p1.ps1')) -Audits $audits -Now $vNow
+    Assert 'H7 a missed daily sweep (last green full sweep 27h old) forces a FULL sweep' (
+        $s.Mode -eq 'full' -and $s.Reason -match 'daily sweep is due') "$($s.Mode) $($s.Reason)"
+    $ver = & $mkVer $fp $vNow.AddHours(-2)
+
+    $s = Get-HarnessFloorScope -Verified $ver -Fingerprint (& $edit @('scripts\vt-escape-scan.ps1')) -Audits $audits -Now $vNow
+    Assert 'H8 a file a member Owns selects that member rather than forcing a full sweep' (
+        $s.Mode -eq 'scoped' -and @($s.Selected) -contains 'vt-escape-scan.ps1') "$($s.Mode) $($s.Reason)"
+
+    $s = Get-HarnessFloorScope -Verified $ver -Fingerprint (& $edit @('scripts\harness-floor.ps1')) -Audits $audits -Now $vNow
+    Assert 'H9 an edit to the floor runner itself forces a FULL sweep' ($s.Mode -eq 'full') "$($s.Mode) $($s.Reason)"
+
+    $recSc = (New-HarnessFloorRecord -Verdict $redOnBeta -Fingerprint $fp -Head 'abc1234' -Kind scoped -FinishedAt $now.AddMinutes(-20) |
+        ConvertTo-Json -Depth 5 | ConvertFrom-Json)
+    $c = Test-HarnessFloorCompletion -Record $recSc -Selected @('beta.ps1') -Verdict $betaGreen -Fingerprint $fp -Now $now
+    Assert 'H10 a red SCOPED sweep is completed by re-running its red row, like a full one' (
+        $c.Ok -and $recSc.kind -eq 'scoped') "$($c.Reason) kind=$($recSc.kind)"
+
+    # On the wire, through the runner, with -PlanOnly so nothing runs or stamps.
+    $verPath = Join-Path $work 'verified.json'
+    $noRec = Join-Path $work 'no-such-record.json'
+    $pOut = (& powershell -NoProfile -ExecutionPolicy Bypass -File $runner -Repo $Repo -Scoped -PlanOnly `
+            -VerifiedPath $verPath -RecordPath $noRec 2>&1 | ForEach-Object { "$_" } | Out-String)
+    Assert 'H11 the runner with nothing verified plans a FULL sweep of every member' (
+        $pOut -match 'scope: FULL' -and ([regex]::Matches($pOut, 'would run: ')).Count -eq $audits.Count) $pOut
+    Write-HarnessFloorRecord -Path $verPath -Record (New-HarnessFloorVerified -FullAt (Get-Date).AddHours(-1) -Fingerprint $fp)
+    $pOut = (& powershell -NoProfile -ExecutionPolicy Bypass -File $runner -Repo $Repo -Scoped -PlanOnly `
+            -VerifiedPath $verPath -RecordPath $noRec 2>&1 | ForEach-Object { "$_" } | Out-String)
+    Assert 'H12 and with the tree exactly as verified, plans nothing (CURRENT)' ($pOut -match 'scope: CURRENT') $pOut
+    $fpOld = @{}; foreach ($k in $fp.Keys) { $fpOld[$k] = $fp[$k] }; $fpOld['test\win32\ipc-p1.ps1'] = 'OLD'
+    Write-HarnessFloorRecord -Path $verPath -Record (New-HarnessFloorVerified -FullAt (Get-Date).AddHours(-1) -Fingerprint $fpOld)
+    $pOut = (& powershell -NoProfile -ExecutionPolicy Bypass -File $runner -Repo $Repo -Scoped -PlanOnly `
+            -VerifiedPath $verPath -RecordPath $noRec 2>&1 | ForEach-Object { "$_" } | Out-String)
+    Assert 'H13 and after one script edit, plans the turn members and not the daily ones' (
+        $pOut -match 'scope: SCOPED' -and $pOut -match 'changed since verified: test\\win32\\ipc-p1\.ps1' -and
+        ([regex]::Matches($pOut, 'would run: ')).Count -eq $turnNames.Count -and
+        $pOut -notmatch 'would run: test-reach-audit') $pOut
+
+    $dry = (& powershell -NoProfile -File (Join-Path $Repo 'scripts\floor-lane.ps1') -Lane harness -DryRun 2>&1 | ForEach-Object { "$_" } | Out-String)
+    $dryFull = (& powershell -NoProfile -File (Join-Path $Repo 'scripts\floor-lane.ps1') -Lane harness -DryRun -HarnessFull 2>&1 | ForEach-Object { "$_" } | Out-String)
+    Assert 'H14 floor-lane -Lane harness runs the scoped sweep; -HarnessFull runs the full one' (
+        $dry -match 'harness-floor\.ps1 -Scoped' -and $dryFull -match 'harness-floor\.ps1\s*$' -and $dryFull -notmatch '-Scoped') "$dry`n$dryFull"
+    $gdText = Get-Content -Raw (Join-Path $Repo 'scripts\guard-due.ps1')
+    Assert 'H15 the guard row names the scoped sweep as the command a due floor runs' (
+        $gdText -match "(?s)Name\s+=\s+'harness-floor'.{0,400}RunArgs = '-Scoped'") ''
+    $goText = Get-Content -Raw (Join-Path $Repo 'go.md')
+    $tsText = Get-Content -Raw (Join-Path $Repo 'docs\claude\testing.md')
+    Assert 'H16 go.md runs the full sweep in the daily digest step and says why (T1958)' (
+        $goText -match 'HarnessFull' -and $goText -match 'T1958') ''
+    Assert 'H17 testing.md states the scoped per-turn sweep (T1958)' ($tsText -match 'T1958' -and $tsText -match '-Scoped') ''
+
     if ($NegativeControl) {
         "  NEGATIVE CONTROL: one assertion is inverted below; this run MUST be red"
         Assert 'N1 (inverted) the floor set is empty' ($audits.Count -eq 0) "count=$($audits.Count)"

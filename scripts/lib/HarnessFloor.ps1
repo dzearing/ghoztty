@@ -36,6 +36,18 @@ Set-StrictMode -Off
 # Each row: the script under test\win32\, and one line saying what property of
 # the harness it holds. The Why is not decoration - it is what a turn reads when
 # the row goes red and it has to decide whether the audit or the code is wrong.
+#
+# Tier (T1958): a row with no Tier runs in every sweep, the per-turn scoped one
+# included. `daily` rows run only in a FULL sweep - the daily one from the
+# digest step, or any sweep a shared-file edit forces - plus any scoped sweep
+# in which their own script changed. The two daily rows are the cross-suite
+# audits that cost ~11 minutes between them and had 0 reds in 41 runs
+# (T1955's measurement); the accepted risk is that a script edit waits up to a
+# day for them, never longer, because a scoped sweep refuses to stand in for a
+# full one older than a day.
+#
+# Owns (T1958): files outside test\win32\ that only this member reads, so an
+# edit there selects this member instead of forcing a full sweep.
 $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'harness-exitcode-audit.ps1'; Why = 'a script exits the code its verdict implies (T197)' }
     [pscustomobject]@{ Name = 'verdict-exit-audit.ps1'; Why = 'a scorer cannot fall through without printing a verdict' }
@@ -53,9 +65,9 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'persistence-flag.ps1'; Why = 'a script states its persistence intent rather than inheriting one (T158)' }
     [pscustomobject]@{ Name = 'stderr-capture-audit.ps1'; Why = 'stderr is captured rather than thrown away (T883)' }
     [pscustomobject]@{ Name = 'stderr-launch-capture.ps1'; Why = 'every launch keeps what the app said on its way out (T689)' }
-    [pscustomobject]@{ Name = 'command-resolve-audit.ps1'; Why = 'a command a script depends on resolves, or the run says so' }
+    [pscustomobject]@{ Name = 'command-resolve-audit.ps1'; Why = 'a command a script depends on resolves, or the run says so'; Tier = 'daily' }
     [pscustomobject]@{ Name = 'argv-hazard-audit.ps1'; Why = 'free text reaches the CLI intact rather than shredded by PS 5.1 argv (T782)' }
-    [pscustomobject]@{ Name = 'test-reach-audit.ps1'; Why = 'an assertion reaches the code it claims to measure' }
+    [pscustomobject]@{ Name = 'test-reach-audit.ps1'; Why = 'an assertion reaches the code it claims to measure'; Tier = 'daily' }
     [pscustomobject]@{ Name = 'neuter-audit.ps1'; Why = 'a negative control has a live consumer, a shipped-value pin and a claim (T788)' }
     [pscustomobject]@{ Name = 'desktop-launch-audit.ps1'; Why = 'a GUI script launches on the test desktop, not the user''s' }
     [pscustomobject]@{ Name = 'printclient-audit.ps1'; Why = 'every painting window answers the screenshot path the tests read' }
@@ -66,7 +78,7 @@ $script:HARNESS_FLOOR_AUDITS = @(
     [pscustomobject]@{ Name = 'control-char-scan.ps1'; Why = 'no script carries a control character that breaks it on another box' }
     [pscustomobject]@{ Name = 'build-fresh-guard.ps1'; Why = 'a run measures the build it thinks it measures, not a stale one' }
     [pscustomobject]@{ Name = 'job-teardown.ps1'; Why = 'a job object a test creates is torn down with its processes (T1517)' }
-    [pscustomobject]@{ Name = 'vt-escape-scan.ps1'; Why = 'no script writes ``e for ESC, which under 5.1 is the letter e (T740)' }
+    [pscustomobject]@{ Name = 'vt-escape-scan.ps1'; Why = 'no script writes ``e for ESC, which under 5.1 is the letter e (T740)'; Owns = @('scripts\vt-escape-scan.ps1') }
 )
 
 # name -> the task id that converts it. RED TODAY AND TRACKED, never a permanent
@@ -80,6 +92,12 @@ $script:HARNESS_FLOOR_PENDING = @{
 }
 
 function Get-HarnessFloorAudits { return @($script:HARNESS_FLOOR_AUDITS) }
+
+# 'daily' or 'turn' (the default for a row that names none).
+function Get-HarnessFloorTier($Audit) {
+    if ($Audit -and $Audit.Tier) { return [string]$Audit.Tier }
+    return 'turn'
+}
 
 function Get-HarnessFloorPending { return $script:HARNESS_FLOOR_PENDING }
 
@@ -324,11 +342,16 @@ function New-HarnessFloorRecord {
         [Parameter(Mandatory)]$Verdict,
         [hashtable]$Fingerprint,
         [string]$Head,
-        [datetime]$FinishedAt = (Get-Date)
+        [datetime]$FinishedAt = (Get-Date),
+        # T1958: 'full' or 'scoped'. Completing a scoped sweep advances the
+        # verified fingerprint but is never a full sweep, so the daily clock
+        # does not move.
+        [ValidateSet('full', 'scoped')][string]$Kind = 'full'
     )
     $structural = (@($Verdict.Stale).Count + @($Verdict.Missing).Count + @($Verdict.Orphan).Count) -gt 0
     return [pscustomobject]@{
         schema      = 'ghoztty-harness-floor-record/1'
+        kind        = $Kind
         finishedAt  = $FinishedAt.ToString('o')
         head        = $Head
         ok          = [bool]$Verdict.Ok
@@ -414,4 +437,113 @@ function Test-HarnessFloorCompletion {
         return (& $no ('a shared file changed since the full run, so every member must re-run: ' + ($shared -join ', ')))
     }
     return [pscustomobject]@{ Ok = $true; Reason = 'completes the last full run'; Red = $red; Changed = @($changed) }
+}
+
+# ---------------------------------------------------------------- scope
+#
+# T1958. A full sweep is ~24 minutes, and until this any edit under test\win32\
+# paid all of it on the turn that made the edit. The per-turn sweep is now
+# SCOPED against the last state the floor verified green:
+#
+#   * VERIFIED is temp\harness-floor\verified.json: when the last green FULL
+#     sweep finished (`fullAt`), and the fingerprint of every file the floor
+#     reads as the last green sweep - full or scoped - saw it. A green full
+#     sweep (or a completed one) resets both; a green scoped sweep advances the
+#     fingerprint only.
+#   * A scoped sweep runs every turn-tier member plus any member whose own
+#     script (or Owns file) changed since the verified fingerprint. Every turn
+#     member sweeps every script, so that is exactly the set that covers a
+#     script edit; the daily members wait for the daily sweep.
+#   * It is a FULL sweep instead whenever skipping the daily members could hide
+#     a red that no later run would catch: nothing verified on this box, the
+#     last green full sweep older than -MaxFullAgeHours (the daily sweep did not
+#     happen), or a shared file changed (test\win32\lib\, the runner, the set,
+#     suite-run) - every member loads or obeys those.
+#   * Nothing changed since the verified fingerprint is CURRENT: no run at all.
+
+function Get-HarnessFloorVerifiedPath([string]$Repo) {
+    return (Join-Path $Repo 'temp\harness-floor\verified.json')
+}
+
+function New-HarnessFloorVerified {
+    param(
+        [Parameter(Mandatory)][datetime]$FullAt,
+        [hashtable]$Fingerprint,
+        [string]$Head
+    )
+    return [pscustomobject]@{
+        schema      = 'ghoztty-harness-floor-verified/1'
+        fullAt      = $FullAt.ToString('o')
+        verifiedAt  = (Get-Date).ToString('o')
+        head        = $Head
+        fingerprint = $Fingerprint
+    }
+}
+
+# Which member a changed path belongs to, or $null: test\win32\<Name> for every
+# member, plus each member's Owns list.
+function Get-HarnessFloorOwner([string]$Rel, [object[]]$Audits) {
+    foreach ($a in @($Audits)) {
+        if ($Rel -ieq ('test\win32\' + [string]$a.Name)) { return [string]$a.Name }
+        foreach ($o in @($a.Owns)) { if ($o -and $Rel -ieq [string]$o) { return [string]$a.Name } }
+    }
+    return $null
+}
+
+<#
+.SYNOPSIS
+What the per-turn sweep must run, against what the floor last verified. Pure.
+
+.OUTPUTS
+{ Mode = 'full' | 'scoped' | 'current'; Reason; Selected (member names, in set
+order); Changed (paths that differ from the verified fingerprint) }
+#>
+function Get-HarnessFloorScope {
+    param(
+        $Verified,
+        [hashtable]$Fingerprint,
+        [object[]]$Audits,
+        [datetime]$Now = (Get-Date),
+        [double]$MaxFullAgeHours = 26
+    )
+    if (-not $Audits) { $Audits = Get-HarnessFloorAudits }
+    $all = @(@($Audits) | ForEach-Object { [string]$_.Name })
+    $full = { param($why, $changed) [pscustomobject]@{ Mode = 'full'; Reason = $why; Selected = $all; Changed = @($changed) } }
+
+    if ($null -eq $Verified) { return (& $full 'no green full sweep is recorded on this box' @()) }
+    $fullAt = [datetime]::MinValue
+    if (-not [datetime]::TryParse([string]$Verified.fullAt, [ref]$fullAt)) {
+        return (& $full 'the verified record has no readable full-sweep time' @())
+    }
+    $age = ($Now - $fullAt).TotalHours
+    if ($age -gt $MaxFullAgeHours) {
+        return (& $full ('the last green full sweep is {0:N1}h old (limit {1}h) - the daily sweep is due' -f $age, $MaxFullAgeHours) @())
+    }
+
+    $thenMap = ConvertTo-HarnessFloorMap $Verified.fingerprint
+    $liveMap = ConvertTo-HarnessFloorMap $Fingerprint
+    $changed = New-Object System.Collections.ArrayList
+    foreach ($k in @(@($thenMap.Keys) + @($liveMap.Keys) | Sort-Object -Unique)) {
+        if ($thenMap[$k] -ne $liveMap[$k]) { [void]$changed.Add($k) }
+    }
+    if ($changed.Count -eq 0) {
+        return [pscustomobject]@{ Mode = 'current'; Reason = 'nothing the floor reads changed since it was last verified green'; Selected = @(); Changed = @() }
+    }
+
+    $owners = @{}
+    $shared = New-Object System.Collections.ArrayList
+    foreach ($c in $changed) {
+        $o = Get-HarnessFloorOwner $c $Audits
+        if ($o) { $owners[$o] = $true; continue }
+        if (Test-HarnessFloorSharedPath $c) { [void]$shared.Add($c) }
+    }
+    if ($shared.Count -gt 0) {
+        return (& $full ('a shared file changed, so every member must run: ' + ($shared -join ', ')) $changed)
+    }
+    $selected = @(@($Audits) | Where-Object {
+            (Get-HarnessFloorTier $_) -ne 'daily' -or $owners.ContainsKey([string]$_.Name)
+        } | ForEach-Object { [string]$_.Name })
+    $skipped = @($all | Where-Object { $selected -notcontains $_ })
+    $why = if ($skipped.Count -gt 0) { 'daily members wait for the daily sweep: ' + ($skipped -join ', ') } else { 'every member is selected' }
+    return [pscustomobject]@{ Mode = 'scoped'; Reason = $why; Selected = $selected; Changed = @($changed) }
 }

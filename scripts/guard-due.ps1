@@ -5087,6 +5087,9 @@ $GuardTable = @(
     [pscustomobject]@{
         Name   = 'harness-floor'
         Script = 'scripts\harness-floor.ps1'
+        # T1958: the per-turn sweep is scoped to what changed since the floor
+        # was last verified green; it runs everything itself when it must.
+        RunArgs = '-Scoped'
         Stamp  = 'test\win32\harness-floor.stamp.json'
         Covers = @(
             'test\win32\*.ps1',

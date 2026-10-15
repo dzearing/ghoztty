@@ -163,6 +163,10 @@ param(
     [ValidateSet('none', 'win32', 'agent', 'lib', 'harness',
         'none-releasesafe', 'win32-releasesafe', 'releasesafe', 'all')]
     [string]$Lane = 'all',
+    # T1958: `-Lane harness` runs the SCOPED sweep (what changed since the
+    # floor was last verified green). This runs the full set instead - the
+    # digest step's daily sweep (go.md 0.6).
+    [switch]$HarnessFull,
     [int]$TimeoutSeconds = 1800,
     # 420s, not 180: the agent lane was measured (2026-08-03) sitting in a
     # LEGITIMATE fully-blocked wait for ~173s -- a Chromium preconnect the test
@@ -1333,7 +1337,7 @@ else { @($Lane) }
 if ($DryRun) {
     foreach ($l in $lanes) {
         if ($l -eq 'harness') {
-            Write-Host ("DRY-RUN {0}: powershell -NoProfile -File scripts\harness-floor.ps1" -f $l)
+            Write-Host ("DRY-RUN {0}: powershell -NoProfile -File scripts\harness-floor.ps1{1}" -f $l, $(if (-not $HarnessFull) { ' -Scoped' }))
             continue
         }
         Write-Host ("DRY-RUN {0}: zig build {1}" -f $l, (Get-LaneBuildArgs -Name $l))
@@ -1354,7 +1358,8 @@ foreach ($l in $lanes) {
     # lane IS here) and nothing else.
     if ($l -eq 'harness') {
         $floorScript = Join-Path $Repo 'scripts\harness-floor.ps1'
-        $harnessCmd = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$floorScript`" -Repo `"$Repo`""
+        # T1958: scoped unless -HarnessFull (the digest step's daily sweep).
+        $harnessCmd = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$floorScript`" -Repo `"$Repo`"$(if (-not $HarnessFull) { ' -Scoped' })"
         for ($i = 1; $i -le $Repeat; $i++) {
             $r = Invoke-Lane -Name $l -Iteration $i -RawCommand $harnessCmd
             $summary += (Format-LaneSummaryToken -LaneName $l -Iteration $i -Result $r -LogPath $script:LastLaneLog)

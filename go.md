@@ -252,6 +252,19 @@ Concretely, in order, with no stops in between:
      arrives here. `-Format markdown` emits the `## Parity coverage` block —
      paste it into the intake note so the enumeration is the evidence rather
      than prose about it. Acceptance: `test\win32\parity-sweep.ps1`.
+   - **Daily full harness sweep** (T1958): run
+
+     ```
+     powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness -HarnessFull
+     ```
+
+     and put its `HARNESS FLOOR:` line in `## Task triage`. It is the one run a
+     day of the two `daily` members (`test-reach-audit`,
+     `command-resolve-audit`), which the per-turn scoped sweep leaves out, and a
+     green one restarts the 26-hour clock that lets the scoped sweep stand in for
+     a full one. Skip it and nothing is lost but time: the next turn's scoped
+     sweep sees the clock run out and runs everything itself. A red row is
+     fixed the T1955 way (re-run only the red rows), or filed as PENDING.
    - **Monthly upstream divergence** (T960): ask
      `powershell -NoProfile -File scripts\divergence-inventory.ps1 -Check`.
      Exit 3 (`DIVERGENCE DUE`, 30 days since the last run) means run the
@@ -528,6 +541,12 @@ Concretely, in order, with no stops in between:
    re-run of every red row completes the sweep and stamps it, unless a shared
    library changed in between (the rules are in `docs/claude/testing.md`). The set, and why each audit is in it, is
    `scripts\lib\HarnessFloor.ps1`; the story is in `docs/claude/testing.md`.
+   **And the per-turn sweep is scoped** (T1958): `-Lane harness` runs only what
+   changed since the floor was last verified green - every member except the
+   two slow daily ones, plus any member whose own script you edited - and runs
+   everything by itself when a shared library changed or the morning's full
+   sweep (step 0.6) did not happen. About 13 minutes instead of 24, or nothing
+   at all when nothing the floor reads changed.
 
    **Two lines you may see there mean something different** (T1189).
    `GUARD DUE (advisory) ...` is a row whose question this box cannot answer at
