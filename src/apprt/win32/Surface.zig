@@ -2295,6 +2295,17 @@ pub fn defaultTermioEnv(self: *const Surface) !std.process.EnvMap {
     var env = try internal_os.getEnvMap(alloc);
     errdefer env.deinit();
 
+    // T1972: the same user-environment merge the agent applies to every shell
+    // it spawns (T42). This is the exec path: persistence off, or the restore
+    // fallback when the local agent cannot be reached inside its bound (an
+    // installer just killed it, it is still coming up). The app's own
+    // environment is a snapshot of whoever launched it, and an app relaunched
+    // by msiexec / Restart Manager carries a PATH without the user's entries,
+    // so those restored panes found no user tools while a pane opened a minute
+    // later, through the agent, did. Additive, so it never weakens what the
+    // app already has.
+    internal_os.user_env.overlay(alloc, &env);
+
     // TERM and COLORTERM are set by termio/Exec.zig with platform-aware
     // logic (checking for terminfo, resources_dir, etc.). Do not set them here.
 

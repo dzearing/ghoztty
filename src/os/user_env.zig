@@ -565,6 +565,29 @@ test "createEnvBlockW: the empty map is exactly two NULs" {
     try testing.expectEqualSlices(u16, &[_]u16{ 0, 0 }, block);
 }
 
+/// Every place a SHELL is spawned on Windows, and therefore every place that
+/// must run `overlay` (T1972). A new spawn site belongs here; the test below
+/// fails if one of these stops calling it.
+///   - the agent's PTY child, which is every agent-backed pane: new, split,
+///     restore, relaunch, remote open, and the pty-host holder's spawn
+///   - the agent's hidden-process spawn (`proc_spawn`)
+///   - the app's exec backend, which a restored pane falls back to when the
+///     local agent cannot be reached at startup
+const shell_spawn_sites = [_]struct { path: []const u8, src: []const u8 }{
+    .{ .path = "remote/agent/pty_child.zig", .src = @embedFile("../remote/agent/pty_child.zig") },
+    .{ .path = "remote/agent/proc_spawn.zig", .src = @embedFile("../remote/agent/proc_spawn.zig") },
+    .{ .path = "apprt/win32/Surface.zig", .src = @embedFile("../apprt/win32/Surface.zig") },
+};
+
+test "every shell spawn site applies the user-environment overlay (T1972)" {
+    for (shell_spawn_sites) |site| {
+        if (std.mem.indexOf(u8, site.src, "user_env.overlay(") == null) {
+            std.debug.print("shell spawn site {s} no longer calls user_env.overlay\n", .{site.path});
+            return error.TestUnexpectedResult;
+        }
+    }
+}
+
 test "disabledBy: only 0 and off (any case) turn the overlay off" {
     const testing = std.testing;
     try testing.expect(disabledBy("0"));

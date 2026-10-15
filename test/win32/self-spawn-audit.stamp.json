@@ -1,16 +1,11 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-15T12:38:02-07:00",
-    "commit":  "add7eb18f",
+    "generated":  "2026-10-15T13:34:07-07:00",
+    "commit":  "b4b5d81d9",
     "uncommitted":  [
-                        "src/apprt/win32/App.zig",
-                        "src/apprt/win32/session_layout.zig",
-                        "src/apprt/win32/win32.zig",
-                        "src/apprt/win32/Window.zig",
-                        "src/apprt/win32/window_memory.zig",
-                        "src/apprt/win32/window_placement.zig",
-                        "src/build/SharedDeps.zig"
+                        "src/apprt/win32/Surface.zig",
+                        "src/os/user_env.zig"
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -299,7 +294,7 @@
                   "src/apprt/win32/split_resize.zig":  "b9386513ced76d2718903482e01880755b3797a6382a639bb6f6ce906c27095e",
                   "src/apprt/win32/stable_json.zig":  "a71caadbdf70b93bc1b39e1155fa69135a1e34b33693a82a7084a6f9a52656c8",
                   "src/apprt/win32/startup_error.zig":  "74fd9ffbe6b68742c2566085f84327a3fdd570e4e8544509adb1651d5f3fb9cf",
-                  "src/apprt/win32/Surface.zig":  "2a7bef77c34c6f704c73bf94a4b406125f9e2d0651229da03f0e71e5ee6018c3",
+                  "src/apprt/win32/Surface.zig":  "be73b9439d0eb2539af4892267f197734753e53d39d032181b7015179691e27b",
                   "src/apprt/win32/surface_reap.zig":  "ba55e7ecb6cec9383f704064427889dc276ac8dff7e46844f8a4a790e6b586e9",
                   "src/apprt/win32/surface_window_role.zig":  "5af08d4834c92f03c30c4a642d598f21e7961c8bf976b63c55d91f90bf652528",
                   "src/apprt/win32/system_colors.zig":  "0634f5778186d7f3a7359689523fc96b9b9c273bbc211b824951f19a69ebbe47",
@@ -672,7 +667,7 @@
                   "src/os/systemd.zig":  "960c99eb803736c3be632c9257cca624654c0cf847e3a97b0240ae51f9713405",
                   "src/os/TempDir.zig":  "286d2bf0f75a8cf91f42dc5ec7b182f31f0a3df94899a528f56f7ec8e0775360",
                   "src/os/uri.zig":  "ea8ae6f0e722086f848e2331e692572f0e46f37cbbc70c5054d75f52f22fd90f",
-                  "src/os/user_env.zig":  "e77c019eb2b5c97ae93aac92735599a6f000a3a447c4c06c75f0c3a215663516",
+                  "src/os/user_env.zig":  "627c53a9b88c647cbaa50bfcb01d98833174895ac5914cdc6476b512734de1bd",
                   "src/os/wasm.zig":  "2401a8b67d11fe69ddfb6979d2ddfd2e94cfc5133bbb137f03ce980747b17ab0",
                   "src/os/wasm/log.zig":  "d5973d2af54a3b23b015ec214cf495322c39cead2135737bbd5fe88ce09c4c00",
                   "src/os/wasm/target.zig":  "07528971020c03f8fa9601e6efc141d29233244484b5fd5645d829922acfc7ec",

@@ -3260,6 +3260,20 @@ $GuardTable = @(
             'test\win32\claude-fullscreen-env.ps1'
         )
     },
+    # The app-side half of the user-environment merge (T1972): an exec pane -
+    # persistence off, or a restore that fell back because the local agent was
+    # not reachable - must get the user's registry PATH like an agent pane
+    # does. The merge itself is user_env.zig; the call site is the win32
+    # Surface's defaultTermioEnv.
+    [pscustomobject]@{
+        Name   = 'exec-user-env'
+        Script = 'test\win32\exec-user-env.ps1'
+        Stamp  = 'test\win32\exec-user-env.stamp.json'
+        Covers = @(
+            'test\win32\exec-user-env.ps1',
+            'src\os\user_env.zig'
+        )
+    },
     # Shell-integration detection + the agent argv delivery (T151, T513):
     # detectShell's Windows spellings (.exe suffix, full paths, mixed case)
     # are proven end-to-end only by this harness — the none-lane unit tests
