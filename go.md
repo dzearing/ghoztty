@@ -523,7 +523,10 @@ Concretely, in order, with no stops in between:
    what makes it standing: touch any script under `test\win32\` and the floor is
    DUE, and step 6's `validate` refuses the commit until it has been run green.
    A member that is red against a filed task is reported as PENDING and does not
-   fail it; anything else red does. The set, and why each audit is in it, is
+   fail it; anything else red does. **A red sweep is not re-run whole** (T1955):
+   fix the red rows and run the `-Include` command the sweep printed — a green
+   re-run of every red row completes the sweep and stamps it, unless a shared
+   library changed in between (the rules are in `docs/claude/testing.md`). The set, and why each audit is in it, is
    `scripts\lib\HarnessFloor.ps1`; the story is in `docs/claude/testing.md`.
 
    **Two lines you may see there mean something different** (T1189).
