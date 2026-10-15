@@ -1,14 +1,13 @@
 {
     "guard":  "relaunch-guard",
     "script":  "test/win32/relaunch-guard.ps1",
-    "generated":  "2026-10-10T22:17:50-07:00",
-    "commit":  "acfe7cb72",
+    "generated":  "2026-10-15T09:57:38-07:00",
+    "commit":  "3d7de4015",
     "uncommitted":  [
-                        "src/apprt/win32/job_spawn.zig",
-                        "src/apprt/win32/relaunch_guard.zig"
+                        "src/apprt/win32/job_spawn.zig"
                     ],
     "files":  {
-                  "src/apprt/win32/job_spawn.zig":  "1f839b5b293fee5be784946b6ba2ca6bfcd4aeecde33c9c0226d33af9ebb2673",
+                  "src/apprt/win32/job_spawn.zig":  "fc29b31b0b0c07379fdfec6a60851d74c0aca08d4faf4d3459ad45421486649a",
                   "src/apprt/win32/relaunch_guard.zig":  "3cc0c7d3961eb984559da32e7e6ab36db57795d1e0165bc5fe9fe71104c2b847",
                   "test/win32/relaunch-guard.ps1":  "89e7e6c52462a0c0af5ff17f5d228f265e4166a41fefc02b5ac0b20068aa15e9"
               }

@@ -1,15 +1,10 @@
 {
     "guard":  "neuter-audit",
     "script":  "test/win32/neuter-audit.ps1",
-    "generated":  "2026-10-15T05:26:29-07:00",
-    "commit":  "654772ede",
+    "generated":  "2026-10-15T09:50:55-07:00",
+    "commit":  "3d7de4015",
     "uncommitted":  [
-                        "src/apprt/win32/App.zig",
-                        "src/apprt/win32/msg_timer.zig",
-                        "src/apprt/win32/update_apply.zig",
-                        "src/apprt/win32/update_auto_apply.zig",
-                        "src/apprt/win32/update_install.zig",
-                        "src/apprt/win32/win32.zig"
+                        "src/apprt/win32/job_spawn.zig"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -131,7 +126,7 @@
                   "src/apprt/win32/IpcServer.zig":  "e25ea9c45c17bf8338488b21927dd4d05d86fcb0f3737a23b7f4049030bb047a",
                   "src/apprt/win32/job_escape.zig":  "060f58a8a8739baf8246aaca8cf5d4a0e6113bfa69e981fdc2282ea8a060cb7e",
                   "src/apprt/win32/job_object.zig":  "67868621acb140f0ee2feaaafaf03b46f6e8c61a0e550ab5e3e2e7c3430b9dd1",
-                  "src/apprt/win32/job_spawn.zig":  "1f839b5b293fee5be784946b6ba2ca6bfcd4aeecde33c9c0226d33af9ebb2673",
+                  "src/apprt/win32/job_spawn.zig":  "fc29b31b0b0c07379fdfec6a60851d74c0aca08d4faf4d3459ad45421486649a",
                   "src/apprt/win32/key_state.zig":  "3424ddd3b0ead545111fed3f0360e70f030d27d7910a323253313a4193cd2921",
                   "src/apprt/win32/key_state_pill.zig":  "4f0a8df09557b1d0a08f23570654a66ad22a48d406288bc2f66be9959cf4bd50",
                   "src/apprt/win32/KeyStateIndicator.zig":  "4d807700a3bb74521d05a3f6342cb89a168367f0d5063b6f47a8cb70f764886a",

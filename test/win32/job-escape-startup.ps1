@@ -74,6 +74,10 @@ if (-not (Test-Path $Exe)) {
 
 . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
+# T1970: the in-session launcher (E-H) starts on a BACKGROUND desktop, so the
+# apps it launches - and their escaped twins, which job_spawn places on the
+# caller's own desktop - never open a window on the user's.
+. (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 Assert-GhozttyIsolatedBuild -Exe $Exe | Out-Null
 
 $agentExe = Join-Path (Split-Path -Parent $Exe) 'ghoztty-agent.exe'
@@ -107,6 +111,20 @@ public static class T675Job {
 }
 '@
 Add-Type -TypeDefinition $jobSig -ErrorAction SilentlyContinue
+
+# A limit block carrying `$Flags`. NOT `$info.BasicLimitInformation.LimitFlags = X`:
+# BasicLimitInformation is a STRUCT, so PowerShell assigns into a temporary copy
+# and the job is created with no limits at all. Every "kill-on-close" job this
+# script built before T1970 was flagless that way, and passed anyway, because the
+# escape fired on pane lineage or the named probe and every teardown here is
+# TerminateJobObject, which kills members whatever the flags say.
+function New-JobLimits([uint32]$Flags) {
+    $info = New-Object T675Job+JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    $basic = $info.BasicLimitInformation
+    $basic.LimitFlags = $Flags
+    $info.BasicLimitInformation = $basic
+    return $info
+}
 
 # This run USED to skip itself here when GetShellWindow() answered nothing:
 # breakaway is forbidden in the field shape this jail reproduces, the escape
@@ -193,18 +211,20 @@ $jobOuter = [IntPtr]::Zero
 $jobNamed = [IntPtr]::Zero
 $jobOuter2 = [IntPtr]::Zero
 $jobOther = [IntPtr]::Zero
+$jobH = [IntPtr]::Zero
+$jobHInner = [IntPtr]::Zero
 try {
     Stop-TestProcs
+    $null = New-TestDesktop
 
     # ========================================================================
     Say "== A: a jailed launcher whose children inherit the kill-on-close job"
     # ========================================================================
     $job = [T675Job]::CreateJobObject([IntPtr]::Zero, $null)
-    $jobInfo = New-Object T675Job+JOBOBJECT_EXTENDED_LIMIT_INFORMATION
     # KILL_ON_JOB_CLOSE (0x2000) and NOTHING else: the agent PTY job's exact
     # measured shape (T268) - members die on teardown, breakaway is forbidden,
     # so tier 1 is refused and the escape must ride the shell-parent hop.
-    $jobInfo.BasicLimitInformation.LimitFlags = 0x2000
+    $jobInfo = New-JobLimits 0x2000
     $jobLen = [System.Runtime.InteropServices.Marshal]::SizeOf($jobInfo)
     $jobSet = [T675Job]::SetInformationJobObject($job, 9, [ref]$jobInfo, $jobLen)
     Assert "A0 premise: a kill-on-close job exists (flags 0x2000, no breakaway)" `
@@ -339,8 +359,7 @@ Set-Content -Path '$appPidFile' -Value `$app.Id
         (Test-Path $comExe)
 
     $job2 = [T675Job]::CreateJobObject([IntPtr]::Zero, $null)
-    $jobInfo2 = New-Object T675Job+JOBOBJECT_EXTENDED_LIMIT_INFORMATION
-    $jobInfo2.BasicLimitInformation.LimitFlags = 0x2000
+    $jobInfo2 = New-JobLimits 0x2000
     $jobSet2 = [T675Job]::SetInformationJobObject($job2, 9, [ref]$jobInfo2, $jobLen)
     Assert "D1 premise: a second kill-on-close job exists (flags 0x2000)" `
         ($job2 -ne [IntPtr]::Zero -and $jobSet2)
@@ -495,11 +514,44 @@ Set-Content -Path '$victim2PidFile' -Value `$victim.Id
     # and E4 MEASURES what the flags query actually answered rather than
     # assuming it - so a runner whose own job is a killer fails loudly instead
     # of quietly turning E into a test of the old heuristic.
-    function Start-JailedApp($tag, $instanceValue, $jobs) {
+    # T1970: -BreakawayProbe also has the jailed launcher start one plain child
+    # WITH CREATE_BREAKAWAY_FROM_JOB and record its pid, which is section H's
+    # premise control: it shows where an accepted breakaway really lands.
+    function Start-JailedApp($tag, $instanceValue, $jobs, [switch]$BreakawayProbe) {
         $goF = Join-Path $root "go-$tag.marker"
         $pidF = Join-Path $root "app-$tag.pid"
         $errF = Join-Path $root "app-$tag.err.txt"
         $ps1 = Join-Path $root "launcher-$tag.ps1"
+        $probeF = Join-Path $root "breakaway-$tag.pid"
+        $probeBlock = ''
+        if ($BreakawayProbe) {
+            $probeBlock = @"
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class T1970Spawn {
+  [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)]
+  public struct SI { public int cb; public string r; public string d; public string t; public int x, y, w, h, cx, cy, fa, fl; public short sw, cr2; public IntPtr r2, i, o, e; }
+  [StructLayout(LayoutKind.Sequential)]
+  public struct PI { public IntPtr hp, ht; public int pid, tid; }
+  [DllImport("kernel32.dll", SetLastError=true, CharSet=CharSet.Unicode)]
+  public static extern bool CreateProcessW(string app, System.Text.StringBuilder cmd, IntPtr pa, IntPtr ta, bool inh, uint flags, IntPtr env, string cwd, ref SI si, out PI pi);
+  public static int Breakaway(string cmd) {
+    SI si = new SI(); si.cb = Marshal.SizeOf(typeof(SI)); PI pi;
+    // CREATE_BREAKAWAY_FROM_JOB | CREATE_NO_WINDOW
+    if (!CreateProcessW(null, new System.Text.StringBuilder(cmd), IntPtr.Zero, IntPtr.Zero, false, 0x09000000, IntPtr.Zero, null, ref si, out pi)) return -Marshal.GetLastWin32Error();
+    return pi.pid;
+  }
+  [StructLayout(LayoutKind.Sequential)] public struct BL { public long a,b; public uint LimitFlags; public UIntPtr c,d; public uint e; public UIntPtr f; public uint g,h; }
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool QueryInformationJobObject(IntPtr j, int c, ref BL i, int l, IntPtr r);
+  // The immediate job's flags, the way the app's NULL-handle probe reads them.
+  public static string Flags() { BL b = new BL(); if (!QueryInformationJobObject(IntPtr.Zero, 2, ref b, Marshal.SizeOf(typeof(BL)), IntPtr.Zero)) return "?"; return "0x" + b.LimitFlags.ToString("X"); }
+}
+'@
+Set-Content -Path '$probeF.flags' -Value ([T1970Spawn]::Flags())
+Set-Content -Path '$probeF' -Value ([T1970Spawn]::Breakaway('cmd.exe /c ping -n 120 127.0.0.1'))
+"@
+        }
         # NO GHOZTTY_PANE_ID: half the blind spot is the absence of lineage.
         @"
 `$env:LOCALAPPDATA = '$root'
@@ -510,22 +562,30 @@ Remove-Item env:GHOZTTY_PANE_ID -ErrorAction SilentlyContinue
 Remove-Item env:GHOZTTY_NO_STARTUP_ESCAPE -ErrorAction SilentlyContinue
 Remove-Item env:GHOZTTY_JOB_ESCAPED -ErrorAction SilentlyContinue
 while (-not (Test-Path '$goF')) { Start-Sleep -Milliseconds 200 }
+$probeBlock
 `$app = Start-Process -FilePath '$Exe' -ArgumentList '--title=$tag' -RedirectStandardError '$errF' -PassThru
 Set-Content -Path '$pidF' -Value `$app.Id
 "@ | Set-Content -Path $ps1 -Encoding ascii
 
-        $made = Start-Process -FilePath 'powershell.exe' `
-            -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $ps1 `
-            -WindowStyle Hidden -PassThru
-        $lp = if ($made) { [int]$made.Id } else { 0 }
+        # On the test desktop (T1970): the app this launcher starts inherits
+        # its desktop, and so does every escaped twin (job_spawn.ownDesktop).
+        $made = $null
+        try {
+            # A full path: the helper's CreateProcessW does no PATH search.
+            $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+            $made = Start-OnTestDesktop -Exe $psExe `
+                -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', $ps1)
+        } catch { Say "  launcher failed to start: $_" }
+        $lp = if ($made) { [int]$made.Pid } else { 0 }
         # With no jobs to assign (section G), "jailed" means only "the launcher
         # started" - there is nothing to be inside of.
         $jailed = $false
         if ($lp -ne 0) {
             try {
                 $lproc = Get-Process -Id $lp -ErrorAction Stop
-                # Order is load-bearing: the limitless job FIRST, so it is the
-                # first job joined and the one the flags query answers for.
+                # Order is load-bearing: each job assigned to a process already
+                # in one nests INSIDE it, and the flags query answers for the
+                # innermost (the last one listed).
                 foreach ($j in $jobs) {
                     [T675Job]::AssignProcessToJobObject($j, $lproc.Handle) | Out-Null
                 }
@@ -540,16 +600,17 @@ Set-Content -Path '$pidF' -Value `$app.Id
         New-Item -ItemType File -Path $goF -Force | Out-Null
         [void](Wait-File $pidF 25)
         $appPid = if (Test-Path $pidF) { [int](Get-Content $pidF | Select-Object -First 1) } else { 0 }
-        return [pscustomobject]@{ Jailed = $jailed; AppPid = $appPid; Err = $errF }
+        $probePid = if (Test-Path $probeF) { [int](Get-Content $probeF | Select-Object -First 1) } else { 0 }
+        return [pscustomobject]@{ Jailed = $jailed; AppPid = $appPid; Err = $errF; ProbePid = $probePid }
     }
 
-    # The outer job: NO limits at all. This is the compat job that sits in
-    # front of the killer and makes the flags query answer 0x0.
+    # The limitless job. This is the compat job nested INSIDE the killer that
+    # makes the flags query answer 0x0: that query reads the IMMEDIATE job
+    # (measured for T1970), so the limitless one has to be the inner one.
     $jobOuter = [T675Job]::CreateJobObject([IntPtr]::Zero, $null)
     # The killer, under the AGENT's name for this lineage.
     $jobNamed = [T675Job]::CreateJobObject([IntPtr]::Zero, $jobName)
-    $jobInfoE = New-Object T675Job+JOBOBJECT_EXTENDED_LIMIT_INFORMATION
-    $jobInfoE.BasicLimitInformation.LimitFlags = 0x2000
+    $jobInfoE = New-JobLimits 0x2000
     $setE = $false
     if ($jobNamed -ne [IntPtr]::Zero) {
         $setE = [T675Job]::SetInformationJobObject($jobNamed, 9, [ref]$jobInfoE, $jobLen)
@@ -557,8 +618,8 @@ Set-Content -Path '$pidF' -Value `$app.Id
     Assert "E0 premise: a limitless outer job and a NAMED kill-on-close job exist" `
         ($jobOuter -ne [IntPtr]::Zero -and $jobNamed -ne [IntPtr]::Zero -and $setE)
 
-    $e = Start-JailedApp 't902' $instance @($jobOuter, $jobNamed)
-    Assert "E1 premise: the launcher is inside BOTH jobs (killer nested behind the limitless one)" `
+    $e = Start-JailedApp 't902' $instance @($jobNamed, $jobOuter)
+    Assert "E1 premise: the launcher is inside BOTH jobs (a limitless one nested inside the killer)" `
         $e.Jailed
     Assert "E2 premise: the jailed launcher started the app" ($e.AppPid -ne 0)
 
@@ -621,7 +682,7 @@ Set-Content -Path '$pidF' -Value `$app.Id
     Assert "F0 premise: a kill-on-close job exists under ANOTHER lineage's name" `
         ($jobOuter2 -ne [IntPtr]::Zero -and $jobOther -ne [IntPtr]::Zero -and $setF)
 
-    $f = Start-JailedApp 't902x' $instance @($jobOuter2, $jobOther)
+    $f = Start-JailedApp 't902x' $instance @($jobOther, $jobOuter2)
     Assert "F1 premise: the launcher is inside both of THOSE jobs" $f.Jailed
 
     [void](Wait-LogMatch $f.Err 'startup job probe:' 30)
@@ -688,6 +749,76 @@ Set-Content -Path '$pidF' -Value `$app.Id
 
     Stop-TestProcs
 
+    # ========================================================================
+    Say "== H: a breakaway that only reaches an OUTER job is not an escape (T1970)"
+    # ========================================================================
+    # The field shape measured on 2026-10-15, in the user's own log: an app the
+    # installer relaunched sat in a breakaway-OK job nested inside a
+    # kill-on-close one. The startup escape's breakaway was ACCEPTED - it only
+    # needs the innermost job's permission - and with nested jobs that moves the
+    # child to the next job OUT. The twin logged `respawned ... (breakaway)` and
+    # then `STILL inside a kill-on-close job`, and so would every agent such an
+    # app spawned, along with every session that agent held.
+    #
+    # Built here as: the agent's NAMED kill-on-close job (so the exact probe
+    # fires the escape, as in E) with a breakaway-OK job nested inside it.
+    # H2 is the control that shows the trap is real on this box: a plain
+    # breakaway child of the same launcher lands in the killer.
+    Stop-TestProcs
+
+    $hInstance = "t1970-$PID"
+    $hName = "Local\GhozttyAgentPtyJob-$lineage-$hInstance"
+    $jobH = [T675Job]::CreateJobObject([IntPtr]::Zero, $hName)
+    $jobHInner = [T675Job]::CreateJobObject([IntPtr]::Zero, "$hName-inner")
+    $infoH = New-JobLimits 0x2000
+    $infoHInner = New-JobLimits 0x800
+    $setH = ($jobH -ne [IntPtr]::Zero) -and
+        [T675Job]::SetInformationJobObject($jobH, 9, [ref]$infoH, $jobLen) -and
+        ($jobHInner -ne [IntPtr]::Zero) -and
+        [T675Job]::SetInformationJobObject($jobHInner, 9, [ref]$infoHInner, $jobLen)
+    Assert "H0 premise: a named kill-on-close job and a breakaway-OK job exist" $setH
+
+    # Outer first, then inner: assigning a process that is already in a job
+    # to a second one nests the second inside the first.
+    $h = Start-JailedApp 't1970' $hInstance @($jobH, $jobHInner) -BreakawayProbe
+    $hFlagsF = Join-Path $root 'breakaway-t1970.pid.flags'
+    $hFlags = if (Test-Path $hFlagsF) { (Get-Content $hFlagsF | Select-Object -First 1) } else { '' }
+    Assert "H1 premise: the launcher's immediate job is the breakaway-OK one (read: '$hFlags')" `
+        ($hFlags -eq '0x800')
+    Start-Sleep -Milliseconds 500
+    Assert "H2 control: a plain breakaway child of that launcher is STILL in the killer job" `
+        ($h.ProbePid -gt 0 -and (Test-InJob $h.ProbePid $jobH) -eq $true)
+
+    Assert "H3 the app escaped, through a parent hop rather than the breakaway" `
+        (Wait-LogMatch $h.Err 'startup escape: respawned as pid \d+ \((shell-parent|jobless-parent)\)' 30)
+    Assert "H4 ... and its log names the nested-job trap it stepped around" `
+        ((Read-AppLog $h.Err) -match 'breakaway only reached an OUTER job')
+
+    $hTwinPid = if ((Read-AppLog $h.Err) -match 'startup escape: respawned as pid (\d+)') { [int]$Matches[1] } else { 0 }
+    $hTwin = $null
+    if ($hTwinPid -ne 0) {
+        $deadline = (Get-Date).AddSeconds(20)
+        while ((Get-Date) -lt $deadline) {
+            $hTwin = Get-Process -Id $hTwinPid -ErrorAction SilentlyContinue
+            if ($hTwin) { break }
+            Start-Sleep -Milliseconds 300
+        }
+    }
+    Assert "H5 the twin is alive and is NOT a member of the killer job" `
+        ($null -ne $hTwin -and (Test-InJob $hTwinPid $jobH) -eq $false)
+
+    [T675Job]::TerminateJobObject($jobH, 1) | Out-Null
+    [T675Job]::CloseHandle($jobH) | Out-Null
+    $jobH = [IntPtr]::Zero
+    Start-Sleep -Seconds 2
+    Assert "H6 the killer's teardown took the breakaway control and left the twin running" `
+        ($null -eq (Get-Process -Id $h.ProbePid -ErrorAction SilentlyContinue) -and
+         $hTwinPid -ne 0 -and $null -ne (Get-Process -Id $hTwinPid -ErrorAction SilentlyContinue))
+    [T675Job]::CloseHandle($jobHInner) | Out-Null
+    $jobHInner = [IntPtr]::Zero
+
+    Stop-TestProcs
+
     Complete-TestBody  # T1039: the run reached the end of its body
 } finally {
     if ($job -ne [IntPtr]::Zero) { [T675Job]::CloseHandle($job) | Out-Null }
@@ -695,10 +826,11 @@ Set-Content -Path '$pidF' -Value `$app.Id
     # T902's four handles. A named job outlives its creator as long as ANY
     # handle to it is open, so leaking one here would leave the name taken and
     # the next run's CreateJobObject would OPEN ours instead of making its own.
-    foreach ($h in @($jobOuter, $jobNamed, $jobOuter2, $jobOther)) {
-        if ($null -ne $h -and $h -ne [IntPtr]::Zero) { [T675Job]::CloseHandle($h) | Out-Null }
+    foreach ($jh in @($jobOuter, $jobNamed, $jobOuter2, $jobOther, $jobH, $jobHInner)) {
+        if ($null -ne $jh -and $jh -ne [IntPtr]::Zero) { [T675Job]::CloseHandle($jh) | Out-Null }
     }
     Stop-TestProcs
+    Remove-TestDesktop
     $env:LOCALAPPDATA = $savedLocalAppData
     if ($savedPipe) { $env:GHOZTTY_PIPE_SUFFIX = $savedPipe }
     else { Remove-Item env:GHOZTTY_PIPE_SUFFIX -ErrorAction SilentlyContinue }

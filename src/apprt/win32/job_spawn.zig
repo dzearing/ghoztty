@@ -48,6 +48,7 @@ pub const DETACHED_PROCESS: std.os.windows.DWORD = 0x00000008;
 pub const CREATE_NEW_PROCESS_GROUP: std.os.windows.DWORD = 0x00000200;
 pub const CREATE_NO_WINDOW: std.os.windows.DWORD = 0x08000000;
 pub const CREATE_BREAKAWAY_FROM_JOB: std.os.windows.DWORD = 0x01000000;
+const CREATE_SUSPENDED: std.os.windows.DWORD = 0x00000004;
 
 const PROCESS_CREATE_PROCESS: std.os.windows.DWORD = 0x0080;
 /// ProcThreadAttributeValue(ProcThreadAttributeParentProcess=0, false, true, false)
@@ -57,6 +58,9 @@ const PROC_THREAD_ATTRIBUTE_PARENT_PROCESS: std.os.windows.DWORD = 0x00020000;
 pub const Tier = enum {
     /// `CREATE_BREAKAWAY_FROM_JOB` was accepted: the child is in no job of ours.
     breakaway,
+    /// Breakaway was accepted, but our jobs are nested and it only moved the
+    /// child to the next job OUT; both parent hops failed (T1970).
+    breakaway_outer,
     /// The shell adopted it, so it is in the shell's job context, not ours.
     shell_parent,
     /// A jobless process found by enumeration adopted it — the headless
@@ -72,6 +76,7 @@ pub const Tier = enum {
     pub fn name(self: Tier) []const u8 {
         return switch (self) {
             .breakaway => "breakaway",
+            .breakaway_outer => "breakaway, OUTER JOB (degraded)",
             .shell_parent => "shell-parent",
             .jobless_parent => "jobless-parent",
             .in_job => "IN-JOB (degraded)",
@@ -79,7 +84,7 @@ pub const Tier = enum {
     }
 
     pub fn escaped(self: Tier) bool {
-        return self != .in_job;
+        return self != .in_job and self != .breakaway_outer;
     }
 };
 
@@ -109,37 +114,106 @@ pub fn spawnEscapedOnly(
     si.lpDesktop = ownDesktop(&desk_buf);
     var pi: windows.PROCESS_INFORMATION = undefined;
 
+    // SUSPENDED, so where the child landed can be checked before it runs a
+    // single instruction (T1970): an accepted breakaway is not proof of an
+    // escape when our jobs are NESTED.
+    var reserve: ?windows.PROCESS_INFORMATION = null;
     if (oswin.exp.kernel32.CreateProcessW(
         null,
         cmd_w,
         null,
         null,
         windows.FALSE,
-        base | CREATE_BREAKAWAY_FROM_JOB,
+        base | CREATE_BREAKAWAY_FROM_JOB | CREATE_SUSPENDED,
         null,
         null,
         &si,
         &pi,
-    ) != 0) return .{ .pi = pi, .tier = .breakaway };
-
-    const breakaway_err = windows.kernel32.GetLastError();
-    log.warn(
-        "{s}: breakaway spawn refused err={}; trying the shell-parent hop",
-        .{ tag, breakaway_err },
-    );
+    ) != 0) {
+        switch (breakawayVerdict(selfInJob(), processInJob(pi.hProcess))) {
+            .accept => {
+                _ = ResumeThread(pi.hThread);
+                return .{ .pi = pi, .tier = .breakaway };
+            },
+            .try_parent_hop => {
+                log.warn(
+                    "{s}: breakaway only reached an OUTER job (nested jobs); trying the shell-parent hop",
+                    .{tag},
+                );
+                reserve = pi;
+            },
+        }
+    } else {
+        const breakaway_err = windows.kernel32.GetLastError();
+        log.warn(
+            "{s}: breakaway spawn refused err={}; trying the shell-parent hop",
+            .{ tag, breakaway_err },
+        );
+    }
 
     if (spawnViaShellParent(arena, cmd_w, base, tag)) |shell_pi| {
+        discardReserve(reserve);
         return .{ .pi = shell_pi, .tier = .shell_parent };
     } else |err| {
         log.warn("{s}: shell-parent spawn unavailable err={}", .{ tag, err });
     }
 
     if (spawnViaJoblessDonor(arena, cmd_w, base, tag)) |donor_pi| {
+        discardReserve(reserve);
         return .{ .pi = donor_pi, .tier = .jobless_parent };
     } else |err| {
         log.warn("{s}: jobless-donor spawn unavailable err={}", .{ tag, err });
-        return error.NoEscape;
     }
+
+    // Neither hop worked. The child that broke away from our innermost job
+    // is still the best one on offer: it is in strictly fewer jobs than we
+    // are, which is what this tier always handed back before T1970. It is
+    // labelled for what it is rather than as a clean escape.
+    if (reserve) |r| {
+        log.warn(
+            "{s}: keeping the breakaway child; it is still inside an outer job",
+            .{tag},
+        );
+        _ = ResumeThread(r.hThread);
+        return .{ .pi = r, .tier = .breakaway_outer };
+    }
+    return error.NoEscape;
+}
+
+/// What to do with a child that tier 1 created suspended (T1970).
+pub const BreakawayVerdict = enum { accept, try_parent_hop };
+
+/// `CREATE_BREAKAWAY_FROM_JOB` succeeds when our INNERMOST job allows it, and
+/// with nested jobs it moves the child into the next job OUT rather than out
+/// of all of them. Measured on this box on 2026-10-15: an app relaunched by the
+/// installer sat in a breakaway-ok job nested in a kill-on-close one, the
+/// startup escape reported `respawned ... (breakaway)`, and the twin logged
+/// `STILL inside a kill-on-close job` - as did every agent such an app would
+/// spawn. A child that is still in a job, from a caller that was in one, is
+/// that case. Unknowns accept, which is the behavior before this check.
+pub fn breakawayVerdict(caller_in_job: ?bool, child_in_job: ?bool) BreakawayVerdict {
+    if (!(caller_in_job orelse false)) return .accept;
+    if (child_in_job orelse false) return .try_parent_hop;
+    return .accept;
+}
+
+fn selfInJob() ?bool {
+    return processInJob(GetCurrentProcess());
+}
+
+fn processInJob(h: std.os.windows.HANDLE) ?bool {
+    var b: std.os.windows.BOOL = 0;
+    if (IsProcessInJob(h, null, &b) == 0) return null;
+    return b != 0;
+}
+
+/// Kill the suspended tier-1 child once a parent hop produced a better one.
+/// It never ran an instruction, so nothing it would have done is lost.
+fn discardReserve(reserve: ?std.os.windows.PROCESS_INFORMATION) void {
+    const r = reserve orelse return;
+    _ = std.os.windows.kernel32.TerminateProcess(r.hProcess, 1);
+    std.os.windows.CloseHandle(r.hThread);
+    std.os.windows.CloseHandle(r.hProcess);
 }
 
 /// Spawn `cmd_w` with `base` flags, escaping the caller's job object if it can.
@@ -498,6 +572,7 @@ extern "kernel32" fn GetEnvironmentStringsW() callconv(.winapi) ?[*]u16;
 extern "kernel32" fn FreeEnvironmentStringsW(penv: [*]u16) callconv(.winapi) std.os.windows.BOOL;
 extern "kernel32" fn GetCurrentProcess() callconv(.winapi) std.os.windows.HANDLE;
 extern "kernel32" fn GetCurrentProcessId() callconv(.winapi) std.os.windows.DWORD;
+extern "kernel32" fn ResumeThread(hThread: std.os.windows.HANDLE) callconv(.winapi) std.os.windows.DWORD;
 extern "kernel32" fn ProcessIdToSessionId(
     dwProcessId: std.os.windows.DWORD,
     pSessionId: *std.os.windows.DWORD,
@@ -568,6 +643,27 @@ extern "kernel32" fn Process32NextW(
 // =============================================================================
 
 const testing = std.testing;
+
+test "breakawayVerdict: a nested breakaway that left the child in a job tries the parent hop (T1970)" {
+    // The measured case: we were in a job, the breakaway was accepted, and the
+    // child is STILL in one - it moved to the outer job, not out.
+    try testing.expectEqual(BreakawayVerdict.try_parent_hop, breakawayVerdict(true, true));
+    // A real escape: we were in a job and the child is in none.
+    try testing.expectEqual(BreakawayVerdict.accept, breakawayVerdict(true, false));
+    // A jobless caller: breakaway is a no-op and there is nothing to escape,
+    // whatever the child reports.
+    try testing.expectEqual(BreakawayVerdict.accept, breakawayVerdict(false, true));
+    try testing.expectEqual(BreakawayVerdict.accept, breakawayVerdict(false, false));
+    // Unknowns keep the behavior from before the check.
+    try testing.expectEqual(BreakawayVerdict.accept, breakawayVerdict(null, true));
+    try testing.expectEqual(BreakawayVerdict.accept, breakawayVerdict(true, null));
+}
+
+test "Tier.breakaway_outer is not an escape (T1970)" {
+    try testing.expect(!Tier.breakaway_outer.escaped());
+    try testing.expect(Tier.breakaway.escaped());
+    try testing.expect(!Tier.in_job.escaped());
+}
 
 test "ownDesktop names this thread's window station and desktop (T1804)" {
     if (@import("builtin").os.tag != .windows) return error.SkipZigTest;

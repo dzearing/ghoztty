@@ -1,15 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-15T08:53:14-07:00",
-    "commit":  "94e9c83cd",
+    "generated":  "2026-10-15T09:44:16-07:00",
+    "commit":  "3d7de4015",
     "uncommitted":  [
-                        "scripts/build-cache.ps1",
-                        "scripts/floor-lane.ps1",
-                        "scripts/guard-due.ps1",
-                        "scripts/lib/BuildCache.ps1",
-                        "scripts/lib/CrashDiag.ps1",
-                        "test/win32/floor-lane-parallel.ps1"
+                        "test/win32/job-escape-startup.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -273,7 +268,7 @@
                   "test/win32/ipc-version.ps1":  "09d5d1b7a53c70ebe20b8eb2a4e36f51d7c3ed8d5d542e61ba9101acfa34e145",
                   "test/win32/ipc-when-idle.ps1":  "9f4f4e064df51079fdd4dd86dfb8afad9b4f639e43f91f7bd557f75dc5fb50d6",
                   "test/win32/isolation-meta.ps1":  "0b47af0a0f91bf0aa2c838d571a4b3fcae69eb8134af6a87b2d3ffd289e8164a",
-                  "test/win32/job-escape-startup.ps1":  "abcc76e94b96212275eeb72c47b9085942b2aa55d5d4e868d360b3d490928a1c",
+                  "test/win32/job-escape-startup.ps1":  "5d14fe7f499bbbe6d87ed6d375d4d43abc8e22e2eed9e2e6a6c32c3de6dfc573",
                   "test/win32/job-teardown.ps1":  "caee876fa71416e56fb48c0688a54971ddbc0eabd851947f73b706e8fe14734b",
                   "test/win32/kb-actions.ps1":  "59a4c832fee92a2a76be5c9179b71ee8515cb19721ad7fe451c97cc174791771",
                   "test/win32/keybinds-t01.ps1":  "77d86dafe21d72ca1424579503a72fc62342e22097c50d16286df096d508b653",
