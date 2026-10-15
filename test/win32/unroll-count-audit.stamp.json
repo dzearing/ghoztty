@@ -1,12 +1,11 @@
 {
     "guard":  "unroll-count",
     "script":  "test/win32/unroll-count-audit.ps1",
-    "generated":  "2026-10-15T04:07:18-07:00",
-    "commit":  "693789836",
+    "generated":  "2026-10-15T05:35:04-07:00",
+    "commit":  "654772ede",
     "uncommitted":  [
                         "scripts/guard-due.ps1",
-                        "scripts/rdp-perf-probe.ps1",
-                        "test/win32/rdp-perf-probe.ps1"
+                        "test/win32/update-auto-apply.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -37,7 +36,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "55fc923d491bd3405b174f588801104a7a72f943fd28e18fab9d72887bedc5cc",
+                  "scripts/guard-due.ps1":  "2e5d0a640250f4f2e5c286f8a68b820abaf3dbdda126c5a7e8aabface4b97846",
                   "scripts/harness-floor.ps1":  "1fb86a86886554679ef133b4328419739d066de23751f152313bcad7898ee2d8",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -492,6 +491,7 @@
                   "test/win32/unroll-count-audit.baseline.json":  "3cced1c48fd0826aed2ffb4aa58013e65b5e2991c6dd97ef2fab540cb1783793",
                   "test/win32/unroll-count-audit.ps1":  "5a15b517652ed920fc273667422c7f8219aaff8bab3e9368b9b052d2c640f859",
                   "test/win32/update-apply.ps1":  "ed99645a2d9b0c9c005079cc3957df31bccc1b043e397f13315d6e4d1b4bb400",
+                  "test/win32/update-auto-apply.ps1":  "d8ce62a5b4deb188abfd7c9ee7b27901797885e8e140909aaa4d1973e3520903",
                   "test/win32/update-check.ps1":  "ef98ba03b9b8710d071b0e193cbd8b0865f74e29ae009cd14c02b73cf1cb4370",
                   "test/win32/update-failure-visible.ps1":  "1461a89d59acbfe5b8c66685cf50d786aa51c97e7d5bb64ae683ff6593773647",
                   "test/win32/update-graceful.ps1":  "8dd249a5f108c2f129a2673c857e68808115c8fd963d67ffaef7ab43a3c70944",

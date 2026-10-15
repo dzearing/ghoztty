@@ -237,6 +237,12 @@ test {
     // a balloon; every number that decides what the dot says is asserted here.
     _ = @import("apprt/win32/update_badge.zig");
 
+    // Pure win32 automatic-install timing (T1934): when a staged update
+    // installs itself without a click — at launch, after a few idle minutes,
+    // never silently with persistence off — and the per-version attempt record
+    // that keeps a rejected package from looping. Every lane, no OS imports.
+    _ = @import("apprt/win32/update_auto_apply.zig");
+
     // Pure win32 update-DOWNLOAD progress model (T1195): byte formatting, the
     // bar's fill, the marquee for an unknown total, and the movement tracker
     // that tells a stalled download from a merely slow one. Every lane, same

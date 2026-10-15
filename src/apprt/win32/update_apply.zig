@@ -110,6 +110,22 @@ pub fn looksLikeMsi(bytes: []const u8) bool {
 /// plus a little; anything under this is a truncated or empty download.
 pub const min_msi_bytes: usize = 4096;
 
+/// Whether a file in the staging directory is a superseded package that a new
+/// download may delete (T1934): any `.msi` other than the one just staged.
+pub fn isPrunableStaged(name: []const u8, keep: []const u8) bool {
+    if (!std.ascii.endsWithIgnoreCase(name, msi_extension)) return false;
+    return !std.ascii.eqlIgnoreCase(name, keep);
+}
+
+test "isPrunableStaged: superseded packages go, the new one and non-packages stay" {
+    try testing.expect(isPrunableStaged("Ghoztty-1.36.37-x64.msi", "Ghoztty-1.39.7-x64.msi"));
+    try testing.expect(isPrunableStaged("OLD.MSI", "Ghoztty-1.39.7-x64.msi"));
+    try testing.expect(!isPrunableStaged("Ghoztty-1.39.7-x64.msi", "Ghoztty-1.39.7-x64.msi"));
+    try testing.expect(!isPrunableStaged("ghoztty-1.39.7-X64.MSI", "Ghoztty-1.39.7-x64.msi"));
+    try testing.expect(!isPrunableStaged("ghoztty-updater.exe", "Ghoztty-1.39.7-x64.msi"));
+    try testing.expect(!isPrunableStaged("install.log", "Ghoztty-1.39.7-x64.msi"));
+}
+
 /// What the app is allowed to do about an available update, derived from the
 /// `auto-update` config (shared with macOS: off / check / download).
 pub const Policy = enum {

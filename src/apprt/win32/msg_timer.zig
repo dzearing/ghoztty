@@ -82,6 +82,10 @@ pub const notif_update_reopened: usize = 18;
 /// The soonest `undo-timeout` deadline of a parked pane/tab close (T1825).
 pub const close_undo: usize = 19;
 
+/// The periodic "is now a good moment to install the staged update?" check
+/// (T1934). Repeating; see `update_auto_apply.zig`.
+pub const update_auto_apply: usize = 20;
+
 /// The coalesced refresh of every all-windows pane sidebar (T1935).
 pub const pane_scopes: usize = 21;
 

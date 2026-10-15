@@ -1,10 +1,10 @@
 {
     "guard":  "dip-rounding",
     "script":  "test/win32/dip-rounding-audit.ps1",
-    "generated":  "2026-10-15T04:07:49-07:00",
-    "commit":  "693789836",
+    "generated":  "2026-10-15T05:22:01-07:00",
+    "commit":  "654772ede",
     "uncommitted":  [
-                        "test/win32/rdp-perf-probe.ps1"
+                        "test/win32/update-auto-apply.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -412,6 +412,7 @@
                   "test/win32/tui-copy-reflow.ps1":  "27aaf25b87bf115d160981b2a3cb856190ea4891ed0cd5abb2796247249d98ea",
                   "test/win32/unroll-count-audit.ps1":  "5a15b517652ed920fc273667422c7f8219aaff8bab3e9368b9b052d2c640f859",
                   "test/win32/update-apply.ps1":  "ed99645a2d9b0c9c005079cc3957df31bccc1b043e397f13315d6e4d1b4bb400",
+                  "test/win32/update-auto-apply.ps1":  "d8ce62a5b4deb188abfd7c9ee7b27901797885e8e140909aaa4d1973e3520903",
                   "test/win32/update-check.ps1":  "ef98ba03b9b8710d071b0e193cbd8b0865f74e29ae009cd14c02b73cf1cb4370",
                   "test/win32/update-failure-visible.ps1":  "1461a89d59acbfe5b8c66685cf50d786aa51c97e7d5bb64ae683ff6593773647",
                   "test/win32/update-graceful.ps1":  "8dd249a5f108c2f129a2673c857e68808115c8fd963d67ffaef7ab43a3c70944",

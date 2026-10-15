@@ -1,16 +1,17 @@
 {
     "guard":  "update-real-msi",
     "script":  "test/win32/update-real-msi.ps1",
-    "generated":  "2026-09-24T14:23:33-07:00",
-    "commit":  "866a86863",
+    "generated":  "2026-10-15T04:52:17-07:00",
+    "commit":  "654772ede",
     "uncommitted":  [
-                        "dist/windows-installer/build-msi.sh"
+                        "src/apprt/win32/update_apply.zig",
+                        "src/apprt/win32/update_install.zig"
                     ],
     "files":  {
                   "dist/windows-installer/build-msi.sh":  "f22512ebbd9967806b3184aabfafc7e294b402dd91c0a952a19a00f2fc8ac79d",
                   "scripts/msi-test-identity.ps1":  "375396ad262bf0cd1905b85707fa70f48604f9d8d79a14174311d968e428c2ac",
-                  "src/apprt/win32/update_apply.zig":  "74f3697471e258291f733b76ef3e667e63020e755484b931eda16b80d0e9a21f",
-                  "src/apprt/win32/update_install.zig":  "d46a6f766a57b16d799f7e21dce6f06a5c4de5e1cdd3853afe2a2d23dea2e153",
+                  "src/apprt/win32/update_apply.zig":  "19f1258534432a483421c0f1cdca1d68cb151387e08e02061e34cce043ad908f",
+                  "src/apprt/win32/update_install.zig":  "c7981dcd6b298ec9394269d9571dbd4717f3aa9b3c5c8aba6aecd128b222e60f",
                   "test/win32/lib/ThrowawayProduct.ps1":  "d0754fbb3791ee3d5fec2369a523df0c23ccb6d4738bad21dd37c25cf86c82fd",
                   "test/win32/update-real-msi.ps1":  "0637cd0a218dbe97f9d49cb4ee6c9361886b07426d595d06918a4f2768d75317"
               }
