@@ -83,6 +83,20 @@ pub fn fullyCovered(target: Rect, covers: []const Rect) bool {
     return false;
 }
 
+/// `GHOZTTY_TEST_NO_OCCLUSION=1` turns the hidden-window skip off, so a
+/// measurement can take the old behavior as its baseline. Read once.
+var disabled_cache: ?bool = null;
+
+pub fn disabled() bool {
+    if (disabled_cache) |d| return d;
+    var buf: [8]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const v = std.process.getEnvVarOwned(fba.allocator(), "GHOZTTY_TEST_NO_OCCLUSION") catch "";
+    const d = std.mem.eql(u8, v, "1");
+    disabled_cache = d;
+    return d;
+}
+
 /// Why a window is hidden, or `.visible`.
 pub const State = enum { visible, minimized, cloaked, covered };
 

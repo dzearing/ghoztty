@@ -1269,6 +1269,7 @@ pub fn onSessionChange(self: *App, code: usize) void {
 /// panes present only while somebody can see it.
 pub fn pollVisibility(self: *App) void {
     self.refreshLowPower();
+    if (occlusion.disabled()) return;
     for (self.windows.items) |w| {
         const h = w.hwnd orelse continue;
         const hidden = self.session_hidden or occlusion.windowHidden(h) != .visible;
@@ -11979,6 +11980,9 @@ fn surfaceWndProc(
         },
         w32.WM_KILLFOCUS => {
             if (!drives_terminal) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+            // A new pane's own "you start unfocused" (T1951), overtaken by a
+            // real focus while it waited in the queue.
+            if (lparam == Surface.initial_unfocus_tag and w32.GetFocus() == hwnd) return 0;
             surface.handleFocus(false);
             return 0;
         },

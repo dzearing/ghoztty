@@ -237,6 +237,12 @@
             "unset": "shipped-elsewhere",
             "note": "unset = a lost-device rebuild succeeds or fails on its own merits; gl-device-lost.ps1 arm A and every real reset run it that way."
         },
+        "GHOZTTY_LOW_POWER": {
+            "class": "non-default",
+            "unset": "armed",
+            "unsetArm": "test\\win32\\low-power-render.ps1::Remove-Item Env:\\GHOZTTY_LOW_POWER",
+            "note": "unset = low-power decided by the renderer and the session (T1951); low-power-render.ps1 runs 1 and 3 clear it and assert the app's own decision on the software and hardware paths."
+        },
         "GHOZTTY_GL_SIMULATE_RESET_AFTER": {
             "class": "fault",
             "unset": "shipped-elsewhere",

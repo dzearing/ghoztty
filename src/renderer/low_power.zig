@@ -33,8 +33,29 @@ pub const unfocused_ms: u64 = 250;
 var remote: std.atomic.Value(bool) = .init(false);
 var software: std.atomic.Value(bool) = .init(false);
 
+/// `GHOZTTY_LOW_POWER=on|off` pins the decision (a test seam: the measurement
+/// needs the same software path with the caps on and off). Read once.
+const Override = enum(u8) { unread, auto, on, off };
+var override: std.atomic.Value(Override) = .init(.unread);
+
+fn readOverride() Override {
+    const cur = override.load(.monotonic);
+    if (cur != .unread) return cur;
+    var buf: [16]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(&buf);
+    const v = std.process.getEnvVarOwned(fba.allocator(), "GHOZTTY_LOW_POWER") catch "";
+    const o: Override = if (std.mem.eql(u8, v, "on")) .on else if (std.mem.eql(u8, v, "off")) .off else .auto;
+    if (o != .auto) log.warn("low-power rendering pinned {s} by GHOZTTY_LOW_POWER", .{@tagName(o)});
+    override.store(o, .monotonic);
+    return o;
+}
+
 pub fn active() bool {
-    return remote.load(.monotonic) or software.load(.monotonic);
+    return switch (readOverride()) {
+        .on => true,
+        .off => false,
+        else => remote.load(.monotonic) or software.load(.monotonic),
+    };
 }
 
 pub fn isSoftware() bool {

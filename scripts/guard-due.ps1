@@ -2937,6 +2937,21 @@ $GuardTable = @(
             'test\win32\pane-elevation.ps1'
         )
     },
+    # T1951 (rescope, GitHub #13): on a software renderer the panes' presents
+    # are capped and a covered window presents nothing. The unit tests own the
+    # cap maths and the coverage test; this row owns the claim that the forced
+    # WARP path is detected and the frame rates actually move.
+    [pscustomobject]@{
+        Name   = 'low-power-render'
+        Script = 'test\win32\low-power-render.ps1'
+        Stamp  = 'test\win32\low-power-render.stamp.json'
+        Covers = @(
+            'src\renderer\low_power.zig',
+            'src\renderer\Thread.zig',
+            'src\apprt\win32\occlusion.zig',
+            'test\win32\low-power-render.ps1'
+        )
+    },
     # T1951: over Remote Desktop the expensive effects go off by themselves
     # and come back live on the console. The unit tests own which keys swap
     # and the user-set rule; this row owns the claim that a launch, a live

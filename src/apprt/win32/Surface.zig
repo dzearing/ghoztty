@@ -1015,6 +1015,18 @@ fn initOnce(
     self.core_surface_ready = true;
     self.core_surface_initialized = true;
 
+    // The core and its renderer start out FOCUSED, and focus is otherwise
+    // reported only on WM_SETFOCUS/WM_KILLFOCUS - so a pane that never held
+    // focus (a restored session, a split made in a background window) was
+    // drawn as the focused one forever, at the focused pane's frame rate
+    // (T1951). Say so when it is not the focused window - POSTED, because
+    // this runs inside window creation, and a direct focus call from here is
+    // a cycle in the error sets the compiler cannot resolve. The tag lets the
+    // handler drop it if the pane gained focus while it was queued.
+    if (self.hwnd) |h| if (w32.GetFocus() != h) {
+        _ = w32.PostMessageW(h, w32.WM_KILLFOCUS, 0, initial_unfocus_tag);
+    };
+
     // Seed the cached pwd HERE, not on the first `+list` (T111b). The value
     // is already final: `Termio.init` → `backend.initTerminal` sets the
     // initial pwd synchronously before this point, and every later change
@@ -5543,6 +5555,10 @@ pub fn setBell(self: *Surface, on: bool) void {
     self.bell = on;
     self.parent_window.onPaneBellChanged();
 }
+
+/// `lParam` of the WM_KILLFOCUS a new pane posts itself when it starts without
+/// focus (T1951). A real WM_KILLFOCUS carries 0 there.
+pub const initial_unfocus_tag: isize = 0x1951;
 
 /// Handle WM_SETFOCUS / WM_KILLFOCUS.
 pub fn handleFocus(self: *Surface, focused: bool) void {
