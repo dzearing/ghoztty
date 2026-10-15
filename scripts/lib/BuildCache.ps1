@@ -87,6 +87,40 @@ function Resolve-ZigGlobalCacheDir {
     return (Join-Path $drive '\zig-global-cache')
 }
 
+function Get-FloorLaneRoot {
+    <#
+        Where ONE floor lane builds when `floor-lane.ps1 -Lane all` runs the
+        lanes side by side (T1959): `<repo>\zig-lanes\<lane>`, holding that
+        lane's own `.zig-cache` and `zig-out`. One copy of the rule, because the
+        cache sweeper must find the same directories the lanes write.
+
+        Separate roots are what make concurrent lanes safe here, not a speed
+        trick: a lane's leak sweep and WebView sweep claim every test binary
+        under ITS build root (T1648), so two lanes sharing `<repo>\.zig-cache`
+        would each reap the other's running tests. The cache stays named
+        `.zig-cache` so the torn-entry healer (lib\CacheHeal.ps1), which keys on
+        that path segment, still recognizes it.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoPath,
+        [Parameter(Mandatory = $true)][string]$Lane
+    )
+    return (Join-Path (Join-Path $RepoPath 'zig-lanes') $Lane)
+}
+
+function Get-FloorLaneCacheDirs {
+    <# Every per-lane `.zig-cache` that exists under `<repo>\zig-lanes` (T1959). #>
+    param([Parameter(Mandatory = $true)][string]$RepoPath)
+    $base = Join-Path $RepoPath 'zig-lanes'
+    if (-not (Test-Path -LiteralPath $base)) { return @() }
+    $out = @()
+    foreach ($d in @(Get-ChildItem -LiteralPath $base -Directory -ErrorAction SilentlyContinue)) {
+        $c = Join-Path $d.FullName '.zig-cache'
+        if (Test-Path -LiteralPath $c) { $out += $c }
+    }
+    return $out
+}
+
 function Resolve-BuildTempDir {
     <#
         Where a BUILD should scratch. Same shape and the same reason as

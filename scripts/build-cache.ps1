@@ -83,6 +83,9 @@ if (-not $CacheDir -or $CacheDir.Count -eq 0) {
         (Join-Path $Repo '.zig-cache'),
         (Resolve-ZigGlobalCacheDir -RepoPath $Repo)
     )
+    # The per-lane caches the parallel floor builds into (T1959): one pile per
+    # lane, each growing like the repo cache, so each is swept like it.
+    $CacheDir += @(Get-FloorLaneCacheDirs -RepoPath $Repo)
 }
 # A repo whose global cache resolves onto the repo cache (or a caller passing
 # the same path twice) must not be cleared twice and counted twice.

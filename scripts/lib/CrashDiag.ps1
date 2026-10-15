@@ -63,6 +63,37 @@ $script:CRASHDIAG_TEST_EXES = @(
     'ghoztty-agent-test.exe'
 )
 
+# The build roots of the ONE lane this process is watching, when lanes run side
+# by side (floor-lane.ps1 -Lane all, T1959). Empty means "not isolated": every
+# record counts, which is the serial floor's behavior and every other caller's.
+# Set, a crash record naming one of the test binaries above counts only when
+# its image sits under one of these roots -- otherwise the `none` lane's crash
+# would turn the concurrent `win32` lane's wrong answer into CRASH, re-run the
+# wrong binary under cdb, and veto that lane's compiler-crash retry. A record
+# whose image path could not be read is kept: losing a real crash is worse than
+# a mislabelled one. zig.exe records are never filtered, since every lane runs
+# the same compiler and the image path cannot say whose it was.
+if (-not (Get-Variable -Name CRASHDIAG_LANE_ROOTS -Scope Script -ErrorAction SilentlyContinue)) {
+    $script:CRASHDIAG_LANE_ROOTS = @()
+}
+
+function Test-CrashRecordInLaneRoots {
+    param([string]$App, [string]$AppPath, [string[]]$Roots = $script:CRASHDIAG_LANE_ROOTS)
+    $live = @($Roots | Where-Object { $_ })
+    if ($live.Count -eq 0) { return $true }
+    if ($script:CRASHDIAG_TEST_EXES -notcontains $App) { return $true }
+    if (-not $AppPath -or $AppPath -eq '?') { return $true }
+    $p = $AppPath
+    try { $p = [System.IO.Path]::GetFullPath($AppPath) } catch {}
+    foreach ($r in $live) {
+        $full = $r
+        try { $full = [System.IO.Path]::GetFullPath($r) } catch {}
+        if (-not $full.EndsWith('\')) { $full += '\' }
+        if ($p.StartsWith($full, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
 function Get-NtStatusCandidate {
     <#
     .SYNOPSIS
@@ -114,6 +145,9 @@ function Get-ProcessCrashEvent {
         $m = $e.Message
         $app = if ($m -match 'Faulting application name:\s*([^,]+)') { $Matches[1].Trim() } else { '?' }
         if ($NameLike -and ($app -notlike $NameLike)) { continue }
+        $appPath = if ($m -match 'Faulting application path:\s*([^\r\n]+)') { $Matches[1].Trim() } else { '?' }
+        # Another concurrent lane's crash is not this lane's (T1959).
+        if (-not (Test-CrashRecordInLaneRoots -App $app -AppPath $appPath)) { continue }
         $exc = if ($m -match 'Exception code:\s*(0x[0-9a-fA-F]+)') { $Matches[1] } else { '?' }
         $mod = if ($m -match 'Faulting module name:\s*([^,]+)') { $Matches[1].Trim() } else { '?' }
         $off = if ($m -match 'Fault offset:\s*(0x[0-9a-fA-F]+)') { $Matches[1] } else { '?' }
@@ -129,6 +163,7 @@ function Get-ProcessCrashEvent {
         $out += [pscustomobject]@{
             Time          = $e.TimeCreated
             App           = $app
+            AppPath       = $appPath
             ExceptionCode = $exc
             ExceptionName = $excName
             Module        = $mod

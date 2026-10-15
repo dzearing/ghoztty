@@ -2579,6 +2579,24 @@ $GuardTable = @(
             'test\win32\floor-lane-releasesafe.ps1'
         )
     },
+    # `-Lane all` runs its lanes side by side in their own build roots
+    # (T1959). The scheduler, the per-lane roots, the crash attribution that
+    # keeps one lane's crash out of another's verdict and the sweeper that
+    # finds the lane caches are all wiring whose loss is silent: lanes reap
+    # each other's tests, or the "parallel" floor quietly runs serial. The
+    # harness plants its lanes and runs in about two minutes.
+    [pscustomobject]@{
+        Name   = 'lane-parallel'
+        Script = 'test\win32\floor-lane-parallel.ps1'
+        Stamp  = 'test\win32\floor-lane-parallel.stamp.json'
+        Covers = @(
+            'scripts\floor-lane.ps1',
+            'scripts\lib\CrashDiag.ps1',
+            'scripts\lib\BuildCache.ps1',
+            'scripts\build-cache.ps1',
+            'test\win32\floor-lane-parallel.ps1'
+        )
+    },
     # Lanes run on a background desktop, and a window a lane's tree shows on
     # the input desktop turns the lane red (T1813). Covers floor-lane.ps1 for
     # the same reason lane-releasesafe does: the launch and the check are

@@ -66,7 +66,11 @@
 
 .PARAMETER Lane
     none | win32 | agent | lib | harness | none-releasesafe | win32-releasesafe |
-    releasesafe | all. Default `all` runs the four zig lanes in sequence.
+    releasesafe | all. Default `all` runs the four zig lanes SIDE BY SIDE
+    (T1959): each is an `-Isolated` child with its own build root, scheduled
+    against free commit, and a lane that is not green beside the others is
+    re-run alone for its final verdict. `-Serial` runs them in sequence, the way
+    it ran before. See Invoke-ParallelFloor.
 
     `none-releasesafe` and `win32-releasesafe` are the `none` and `win32` lanes
     compiled the way real builds are compiled (T846). Every other lane here
@@ -239,6 +243,33 @@ param(
     # same reason -NoCatch is: "remember to pass a flag next time" means the
     # answer is gone until the flake comes back.
     [switch]$NoSoloConfirm,
+    # Run a multi-lane set (`all`, `releasesafe`) one lane after another, the
+    # way it ran before T1959. The default runs them SIDE BY SIDE: each lane is
+    # a child of this script with its own build root (`-Isolated`), the set
+    # finishes in the time of its slowest lane, and the verdict is the same
+    # FLOOR SUMMARY. See Invoke-ParallelFloor.
+    [switch]$Serial,
+    # Build this lane into its own root, `<repo>\zig-lanes\<lane>` (its own
+    # `--cache-dir` and `--prefix`), and judge crash records by that root
+    # (T1959). What a parallel parent passes to each child; useful by hand to
+    # reproduce exactly what one lane of a parallel run did.
+    [switch]$Isolated,
+    # Commit one lane is budgeted for when the parallel parent decides how many
+    # lanes fit at once. 16 GB is T453's measurement of a test lane; `lib` is a
+    # compile of one library and is budgeted at a quarter of it. A lane that
+    # does not fit waits for a running one to finish instead of starting into
+    # an allocation failure that reads as broken code.
+    [double]$LaneCommitGB = 16,
+    # zig's `-j<N>` for each lane. 0 (the default) lets zig use every core,
+    # which is right for a lane that has the box to itself. The parallel parent
+    # hands each child a SHARE: four cold builds each fanning out a clang per
+    # core for the same C dependencies died of SystemResources on 2026-10-15
+    # (T1959), where the same builds one at a time never have.
+    [int]$ZigJobs = 0,
+    # Other lanes are running beside this one (set by the parallel parent on
+    # its side-by-side children, never on the alone re-run). Keeps the cache
+    # heal out of the shared global cache; see the heal call below.
+    [switch]$Concurrent,
     [switch]$SelfTest
 )
 
@@ -600,6 +631,15 @@ function Get-LaneBuildArgs {
         $laneSeed = if ($Seed) { $Seed } else { '0x{0:x8}' -f (Get-Random -Minimum 1 -Maximum ([int]::MaxValue)) }
         $buildArgs = "$buildArgs --seed $laneSeed"
     }
+    # A lane of a parallel floor builds into its own root (T1959). Spelled as
+    # `--cache-dir` / `--prefix` on the command line on purpose: that is what
+    # Get-LaneBuildRoot reads to decide which test binaries and browser trees
+    # are this lane's, so the isolation and the attribution cannot disagree.
+    if ($Isolated) {
+        $root = Get-FloorLaneRoot -RepoPath $Repo -Lane $Name
+        $buildArgs = "$buildArgs --cache-dir `"$(Join-Path $root '.zig-cache')`" --prefix `"$(Join-Path $root 'zig-out')`""
+    }
+    if ($ZigJobs -gt 0) { $buildArgs = "$buildArgs -j$ZigJobs" }
     return $buildArgs
 }
 
@@ -1171,6 +1211,269 @@ function Invoke-LaneCrashCatch {
     }
 }
 
+# ------------------------------------------------ parallel floor (T1959)
+
+function Get-FakeLaneCommand {
+    <#
+    .SYNOPSIS
+        A planted command to run IN PLACE of one zig lane, or $null.
+    .DESCRIPTION
+        GHOZTTY_FLOOR_LANE_FAKE is a JSON object, lane name -> command line,
+        e.g. {"none":"exit /b 1","win32":"waitfor /t 600 Never"}. A named lane
+        runs that command under the whole watchdog instead of `zig build`, so
+        the parallel scheduler's verdicts (a red lane fails the set, a wedge is
+        STALL, two lanes really overlap) can be proved in seconds rather than a
+        floor's worth of compiling. Never set outside
+        test\win32\floor-lane-parallel.ps1.
+    #>
+    param([string]$Name)
+    if (-not $env:GHOZTTY_FLOOR_LANE_FAKE) { return $null }
+    try { $map = $env:GHOZTTY_FLOOR_LANE_FAKE | ConvertFrom-Json } catch { return $null }
+    $p = $map.PSObject.Properties[$Name]
+    if ($p -and $p.Value) { return [string]$p.Value }
+    return $null
+}
+
+function Get-ParallelChildArgs {
+    # Everything a child needs to judge its lane exactly the way this process
+    # would have. The preflights are switched OFF in the child on purpose: this
+    # process already ran them, and the commit gate in particular would refuse a
+    # second lane for memory the FIRST lane is legitimately using.
+    param([string]$Name, [bool]$Concurrent, [int]$Jobs)
+    $a = "-Lane $Name -Isolated -Repo `"$Repo`" -CacheDir `"$cacheDir`"" +
+    " -TimeoutSeconds $TimeoutSeconds -StallSeconds $StallSeconds -SampleSeconds $SampleSeconds" +
+    " -Repeat $Repeat -CatchAttempts $CatchAttempts -CatchTimeoutSeconds $CatchTimeoutSeconds" +
+    " -WebViewSettleSeconds $WebViewSettleSeconds -MinFreeGB 0 -MinCommitFreeGB 0 -WarnCommitFreeGB 0"
+    if ($Filter) { $a += " -Filter `"$Filter`"" }
+    if ($Seed) { $a += " -Seed $Seed" }
+    if ($NoSweep) { $a += ' -NoSweep' }
+    if ($NoCatch) { $a += ' -NoCatch' }
+    if ($NoSoloConfirm) { $a += ' -NoSoloConfirm' }
+    if ($Concurrent) { $a += ' -Concurrent' }
+    if ($Jobs -gt 0) { $a += " -ZigJobs $Jobs" }
+    return $a
+}
+
+function Start-ParallelChild {
+    # One child run of this script for one lane, hidden, its console to a file.
+    param([string]$Name, [string]$Tag, [bool]$Concurrent, [int]$Jobs)
+    $log = Join-Path $env:TEMP ("floor-lane-parallel-{0}-{1}-{2}.log" -f $Name, $Tag, (Get-Date -Format 'yyyyMMdd-HHmmss-fff'))
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = Join-Path $env:WINDIR 'System32\cmd.exe'
+    # /s: strip exactly the outer quotes and keep the rest verbatim.
+    $psi.Arguments = "/d /s /c `"powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" $(Get-ParallelChildArgs -Name $Name -Concurrent $Concurrent -Jobs $Jobs) > `"$log`" 2>&1`""
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $p = [System.Diagnostics.Process]::Start($psi)
+    # Cache the handle now: without it ExitCode reads empty once the child has
+    # exited (memory: ps-startprocess-exitcode-trap).
+    $null = $p.Handle
+    return [pscustomobject]@{ Proc = $p; Log = $log; Start = Get-Date; Weight = 0 }
+}
+
+function Wait-ParallelChild {
+    # Poll one running child. Returns $null while it runs, else its outcome.
+    param($Child, [int]$CapSeconds)
+    $secs = [int]((Get-Date) - $Child.Start).TotalSeconds
+    if ($Child.Proc.HasExited) {
+        $Child.Proc.WaitForExit()
+        return [pscustomobject]@{ Code = $Child.Proc.ExitCode; Log = $Child.Log; Seconds = $secs; Killed = $false }
+    }
+    if ($secs -ge $CapSeconds) {
+        Write-Host ("  the child running {0} went past {1}s - killing its tree" -f $Child.Log, $CapSeconds)
+        & taskkill.exe /PID $Child.Proc.Id /T /F 2>&1 | Out-Null
+        return [pscustomobject]@{ Code = $EXIT_TIMEOUT; Log = $Child.Log; Seconds = $secs; Killed = $true }
+    }
+    return $null
+}
+
+function Read-ParallelOutcome {
+    # A finished child, read back: its scrollback cut up, its exit code folded
+    # to the floor's set, and its summary tokens (or a token that says it died
+    # before writing any).
+    param([string]$Name, $Done)
+    $lines = @()
+    if (Test-Path -LiteralPath $Done.Log) { $lines = @(Get-Content -LiteralPath $Done.Log -ErrorAction SilentlyContinue) }
+    $cut = Split-ChildFloorOutput -Lines $lines
+    $code = if ($Done.Code -in 0, 1, 2, 3) { [int]$Done.Code } else { $EXIT_FAIL }
+    $tokens = $cut.Tokens
+    $detail = @($cut.Detail)
+    if (-not $tokens) {
+        # A child that died before its verdict is red whatever its exit code
+        # claims, and says where its output went.
+        $why = if ($Done.Killed) { 'TIMEOUT' } else { 'FAIL' }
+        $tokens = "$Name#1=$why"
+        $detail += "  lane ${Name}: $why - the child run ended without a FLOOR SUMMARY - $($Done.Log)"
+        $floorCode = if ($Done.Killed) { $EXIT_TIMEOUT } else { $EXIT_FAIL }
+        if ($code -lt $floorCode) { $code = $floorCode }
+    }
+    $word = [regex]::Match($tokens, '#\d+=(\w+)').Groups[1].Value
+    return [pscustomobject]@{ Code = $code; Tokens = $tokens; Word = $word; Body = $cut.Body; Detail = $detail; Done = $Done }
+}
+
+function Split-ChildFloorOutput {
+    <#
+    .SYNOPSIS
+        A child's console output, cut into the lane's own scrollback, its
+        FLOOR FAILURE DETAIL lines, and its FLOOR SUMMARY tokens.
+    .DESCRIPTION
+        The parent reprints the bodies lane by lane and then ONE detail block
+        and ONE summary line, so the tail a caller keeps under the context rule
+        is the same shape a serial run ends with (T776).
+    #>
+    param([string[]]$Lines)
+    $Lines = @($Lines)
+    $sumIdx = -1
+    for ($i = $Lines.Count - 1; $i -ge 0; $i--) { if ($Lines[$i] -like 'FLOOR SUMMARY:*') { $sumIdx = $i; break } }
+    $detIdx = -1
+    $stop = if ($sumIdx -ge 0) { $sumIdx } else { $Lines.Count }
+    for ($i = $stop - 1; $i -ge 0; $i--) { if ($Lines[$i] -like '-- FLOOR FAILURE DETAIL*') { $detIdx = $i; break } }
+    $bodyEnd = if ($detIdx -ge 0) { $detIdx } else { $stop }
+    $body = @(); for ($i = 0; $i -lt $bodyEnd; $i++) { $body += $Lines[$i] }
+    while ($body.Count -gt 0 -and -not $body[-1].Trim()) { $body = @($body | Select-Object -SkipLast 1) }
+    $detail = @()
+    if ($detIdx -ge 0) { for ($i = $detIdx + 1; $i -lt $stop; $i++) { if ($Lines[$i].Trim()) { $detail += $Lines[$i] } } }
+    $tokens = if ($sumIdx -ge 0) { $Lines[$sumIdx].Substring('FLOOR SUMMARY:'.Length).Trim() } else { '' }
+    return [pscustomobject]@{ Body = $body; Detail = $detail; Tokens = $tokens }
+}
+
+function Invoke-ParallelFloor {
+    <#
+    .SYNOPSIS
+        Run a multi-lane set side by side and return the floor's exit code.
+    .DESCRIPTION
+        T1959. Each lane is a CHILD run of this script with `-Isolated`: its own
+        watchdog, crash policies, cache heal and solo confirm, all unchanged,
+        and its own build root so nothing it reaps or blames can be another
+        lane's (lib\BuildCache.ps1 Get-FloorLaneRoot). The set then takes the
+        time of its slowest lane instead of the sum of all four.
+
+        How many run at once is a MEMORY decision. A test lane draws about
+        -LaneCommitGB of commit (T453), so lanes start in the serial order while
+        the free commit measured here, less the floor's own -MinCommitFreeGB,
+        still covers them; a lane that does not fit waits for one to finish.
+        With nothing running, the next lane always starts, so a tight box
+        degrades to the serial floor rather than refusing. Each side-by-side
+        child also gets a share of the cores as zig's `-j`, and runs
+        `-Concurrent` so its cache heal stays out of the shared global cache.
+
+        A lane that is not green side by side is RE-RUN ALONE once the others
+        are done, with the whole box and nothing beside it, and that run's
+        verdict is the lane's verdict. The first cold run of this scheduler is
+        why: four lanes compiling the same C dependencies at once failed on
+        SystemResources, which is the box and not the code. The re-run keeps
+        that from reading as red code, and the token says it happened
+        (`[side by side: FAIL]`), so contention is reported rather than
+        hidden. A genuine red is simply red twice.
+
+        The verdict has the serial shape: each lane's scrollback, ONE failure
+        detail block, ONE FLOOR SUMMARY, and the worst exit code (STALL and
+        TIMEOUT outrank FAIL exactly as they do serially).
+    #>
+    param([string[]]$Lanes)
+
+    $commit = Get-SystemCommit
+    $freeGB = if ($commit) { [math]::Round($commit.LimitGB - $commit.CommittedGB, 1) } else { $null }
+    $budget = if ($null -ne $freeGB) { $freeGB - [math]::Max(0, $MinCommitFreeGB) } else { [double]::MaxValue }
+    $budgetText = if ($null -ne $freeGB) { "{0:N1} GB of {1:N1} GB free commit" -f $budget, $freeGB } else { 'commit unreadable, no limit' }
+    # `lib` is one library compile and finishes in seconds once warm; the share
+    # is split between the lanes that actually hold the box.
+    $heavy = [math]::Max(1, @($Lanes | Where-Object { $_ -ne 'lib' }).Count)
+    $jobs = if ($ZigJobs -gt 0) { $ZigJobs } else { [math]::Max(2, [int][math]::Ceiling([Environment]::ProcessorCount / $heavy)) }
+    Write-Host "FLOOR PARALLEL: $($Lanes -join ', ') side by side, -j$jobs each; budget $budgetText at $LaneCommitGB GB a lane (T1959)"
+
+    # The parent's own cap: a child enforces -TimeoutSeconds per run itself, and
+    # may legitimately re-run once for a compiler crash, once for a cache heal
+    # and once narrowed for a solo confirm. This only catches a CHILD that hangs.
+    $capSeconds = ($TimeoutSeconds * 3 + 900) * [math]::Max(1, $Repeat)
+
+    $pending = New-Object System.Collections.Generic.List[string]
+    foreach ($l in $Lanes) { $pending.Add($l) }
+    $running = @{}
+    $first = @{}
+    $peak = 0
+    $wallStart = Get-Date
+
+    while ($pending.Count -gt 0 -or $running.Count -gt 0) {
+        while ($pending.Count -gt 0) {
+            $l = $pending[0]
+            $w = if ($l -eq 'lib') { $LaneCommitGB / 4 } else { $LaneCommitGB }
+            $inUse = 0; foreach ($r in $running.Values) { $inUse += $r.Weight }
+            if ($running.Count -gt 0 -and ($inUse + $w) -gt $budget) { break }
+            $child = Start-ParallelChild -Name $l -Tag 'side' -Concurrent $true -Jobs $jobs
+            $child.Weight = $w
+            $running[$l] = $child
+            $pending.RemoveAt(0)
+            Write-Host ("  started lane {0} (pid {1}, {2} running) log: {3}" -f $l, $child.Proc.Id, $running.Count, $child.Log)
+            if ($running.Count -gt $peak) { $peak = $running.Count }
+        }
+        Start-Sleep -Seconds 2
+        foreach ($l in @($running.Keys)) {
+            $d = Wait-ParallelChild -Child $running[$l] -CapSeconds $capSeconds
+            if (-not $d) { continue }
+            $running.Remove($l)
+            $first[$l] = Read-ParallelOutcome -Name $l -Done $d
+            Write-Host ("  lane {0}: {1} side by side in {2}s" -f $l, $first[$l].Word, $d.Seconds)
+        }
+    }
+    $sideWall = [int]((Get-Date) - $wallStart).TotalSeconds
+
+    # Anything not green side by side gets the box to itself, one at a time.
+    $final = @{}
+    $alone = @()
+    foreach ($l in $Lanes) {
+        if ($first[$l].Code -eq $EXIT_PASS) { $final[$l] = $first[$l]; continue }
+        $alone += $l
+        Write-Host ("  lane {0} was {1} side by side; re-running it alone, and that verdict is final" -f $l, $first[$l].Word)
+        $child = Start-ParallelChild -Name $l -Tag 'alone' -Concurrent $false -Jobs $ZigJobs
+        $d = $null
+        while (-not $d) { Start-Sleep -Seconds 2; $d = Wait-ParallelChild -Child $child -CapSeconds $capSeconds }
+        $final[$l] = Read-ParallelOutcome -Name $l -Done $d
+        Write-Host ("  lane {0}: {1} alone in {2}s" -f $l, $final[$l].Word, $d.Seconds)
+    }
+    $wall = [int]((Get-Date) - $wallStart).TotalSeconds
+
+    $worst = $EXIT_PASS
+    $tokens = @()
+    $details = @()
+    $laneSum = 0
+    $contention = @()
+    foreach ($l in $Lanes) {
+        $f = $first[$l]
+        $o = $final[$l]
+        $laneSum += $f.Done.Seconds
+        Write-Host ''
+        if ($alone -contains $l) {
+            Write-Host ("==== lane {0}: side by side {1} ({2}s, child log {3}); alone {4} ({5}s) ====" -f `
+                    $l, $f.Word, $f.Done.Seconds, $f.Done.Log, $o.Word, $o.Done.Seconds)
+            $tokens += "$($o.Tokens) [side by side: $($f.Word)]"
+            if ($o.Code -eq $EXIT_PASS) { $contention += $l }
+        }
+        else {
+            Write-Host ("==== lane {0} ({1}s, exit {2}, child log {3}) ====" -f $l, $f.Done.Seconds, $f.Done.Code, $f.Done.Log)
+            $tokens += $o.Tokens
+        }
+        foreach ($b in $o.Body) { Write-Host $b }
+        if ($o.Code -gt $worst) { $worst = $o.Code }
+        $details += $o.Detail
+    }
+
+    if ($details.Count -gt 0) {
+        Write-Host ''
+        Write-Host '-- FLOOR FAILURE DETAIL (read this, not the scrollback) --'
+        foreach ($x in $details) { Write-Host $x }
+    }
+    Write-Host ''
+    if ($contention.Count -gt 0) {
+        Write-Host ("FLOOR PARALLEL CONTENTION: {0} failed side by side and passed alone - the box, not the code; the side-by-side log is on its ==== line" -f ($contention -join ', '))
+    }
+    Write-Host ("FLOOR PARALLEL: wall {0}s for {1}s of lanes, up to {2} at once (side by side {3}s, alone re-runs: {4})" -f `
+            $wall, $laneSum, $peak, $sideWall, $(if ($alone.Count) { $alone -join ', ' } else { 'none' }))
+    Write-Host "FLOOR SUMMARY: $($tokens -join ' ')"
+    if ($worst -eq $EXIT_PASS) { Write-Host 'ALL LANES PASS' } else { Write-Host 'FLOOR NOT GREEN' }
+    return $worst
+}
+
 # --------------------------------------------------------------------- main
 
 $cacheDir = Resolve-CacheDir -RepoPath $Repo -Explicit $CacheDir
@@ -1334,7 +1637,15 @@ if ($MinCommitFreeGB -gt 0 -or $WarnCommitFreeGB -gt 0) {
 $lanes = if ($Lane -eq 'all') { @('lib', 'none', 'win32', 'agent') }
 elseif ($Lane -eq 'releasesafe') { @('none-releasesafe', 'win32-releasesafe') }
 else { @($Lane) }
+# Side by side unless told otherwise (T1959). Only a multi-lane set has
+# anything to overlap, and a child is never parallel itself. A fixture run that
+# names its own test binaries stays serial: that list does not cross a -File
+# command line intact, and the harness that uses it runs one lane anyway.
+$parallel = ($lanes.Count -gt 1) -and -not $Serial -and -not $Isolated -and
+    (@($ExtraTestExeNames | Where-Object { $_ }).Count -eq 0)
 if ($DryRun) {
+    # Print what each CHILD of a parallel run would build, isolation included.
+    if ($parallel) { $Isolated = [switch]$true }
     foreach ($l in $lanes) {
         if ($l -eq 'harness') {
             Write-Host ("DRY-RUN {0}: powershell -NoProfile -File scripts\harness-floor.ps1{1}" -f $l, $(if (-not $HarnessFull) { ' -Scoped' }))
@@ -1345,6 +1656,8 @@ if ($DryRun) {
     exit $EXIT_PASS
 }
 
+if ($parallel) { exit (Invoke-ParallelFloor -Lanes $lanes) }
+
 $worst = $EXIT_PASS
 $summary = @()
 # One entry per lane that did not pass, collected so the verdict can carry the
@@ -1352,14 +1665,20 @@ $summary = @()
 $failureDetails = @()
 
 foreach ($l in $lanes) {
+    # An isolated lane judges crash records by its own build root (T1959), so a
+    # concurrent lane's crash is not read as this one's. See lib\CrashDiag.ps1.
+    $script:CRASHDIAG_LANE_ROOTS = if ($Isolated) { @(Get-FloorLaneRoot -RepoPath $Repo -Lane $l) } else { @() }
+    $fakeCmd = Get-FakeLaneCommand -Name $l
     # The harness lane runs no compiler, so none of the zig-specific recovery
     # below applies to it: a cache heal, a compiler-crash retry and a solo
     # confirm all read a zig build log. It gets the watchdog (which is what a
-    # lane IS here) and nothing else.
-    if ($l -eq 'harness') {
+    # lane IS here) and nothing else. A planted fixture command (T1959) takes
+    # the same path, for the same reason.
+    if ($l -eq 'harness' -or $fakeCmd) {
         $floorScript = Join-Path $Repo 'scripts\harness-floor.ps1'
         # T1958: scoped unless -HarnessFull (the digest step's daily sweep).
         $harnessCmd = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$floorScript`" -Repo `"$Repo`"$(if (-not $HarnessFull) { ' -Scoped' })"
+        if ($fakeCmd) { $harnessCmd = $fakeCmd }
         for ($i = 1; $i -le $Repeat; $i++) {
             $r = Invoke-Lane -Name $l -Iteration $i -RawCommand $harnessCmd
             $summary += (Format-LaneSummaryToken -LaneName $l -Iteration $i -Result $r -LogPath $script:LastLaneLog)
@@ -1394,8 +1713,15 @@ foreach ($l in $lanes) {
         $r = $policy.Result
         $compilerRetriedThisLane = $policy.Retried
         $note = $policy.Note
+        # A lane with neighbours heals only its OWN cache (T1959). The global
+        # cache is shared with the lanes running beside it, and on 2026-10-15
+        # one lane deleting a package there "healed" the C sources three other
+        # lanes were mid-way through compiling, which turned one failure into
+        # four. A torn global entry still fails this lane, and the parent's
+        # alone re-run - no neighbours, so no -Concurrent - heals it.
+        $healGlobal = if ($Concurrent) { $null } else { $cacheDir }
         $heal = Invoke-CacheHealPolicy -Name $l -Result $r -AlreadyHealed $healedThisLane `
-            -LogPath $script:LastLaneLog -RepoPath $Repo -GlobalCacheDir $cacheDir `
+            -LogPath $script:LastLaneLog -RepoPath $Repo -GlobalCacheDir $healGlobal `
             -Rerun { Invoke-Lane -Name $l -Iteration $i }
         $r = $heal.Result
         $healedThisLane = $heal.Healed

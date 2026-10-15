@@ -484,7 +484,10 @@ Concretely, in order, with no stops in between:
 3. **Test it** — the task's own Validation, plus the standing floor (both
    `zig build test` lanes, `zig build test-agent`, the `lib` compile, P1–P3).
    Run the four zig lanes through `scripts\floor-lane.ps1 -Lane all` (T430)
-   rather than bare.
+   rather than bare. Since T1959 it runs them side by side, each in its own
+   build root, and re-runs any lane that is not green there alone. That
+   verdict stands. `-Serial` runs them one after another, the way it did
+   before.
 
    The fourth lane, `lib`, is a **build** rather than a test, and it is the
    only thing on this box that compiles the shared core — and the libghostty

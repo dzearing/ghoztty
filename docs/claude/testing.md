@@ -47,6 +47,23 @@ WebView2 hosts, log tail) instead of hanging forever with nothing to read. Exit
 0 pass / 1 fail / 2 wedged / 3 wall-clock cap; `-Lane <one>`, `-Repeat N`,
 `-Filter <test-filter>`, `-SelfTest` to prove the detector itself.
 
+**`-Lane all` runs its lanes side by side** (T1959). Each lane is an
+`-Isolated` child of the script with its own build root,
+`zig-lanes\<lane>\.zig-cache` and `zig-lanes\<lane>\zig-out`, and the set takes
+the time of its slowest lane. The roots must be separate: a lane's leak sweep
+reaps every test binary under its own root (T1648), so lanes sharing
+`.zig-cache` would kill each other's tests. Each lane must also judge only its
+own crashes (`lib\CrashDiag.ps1`). How many lanes start at once depends on free
+commit (about 16 GB a lane, T453), and each lane gets a share of the cores as
+zig's `-j`. A lane with neighbours never heals the shared global cache. A lane
+that is not green side by side is **re-run alone**, and that verdict stands. The
+summary token says `[side by side: FAIL]`, and `FLOOR PARALLEL CONTENTION` names
+any lane that passed only alone. That re-run exists because the first cold run
+failed on `SystemResources`, with four lanes compiling the same C dependencies
+at once. That was the box, not the code. `-Serial` runs the old path,
+unchanged. Acceptance: `test\win32\floor-lane-parallel.ps1`. Lanes beside lanes
+are fine. Lanes beside acceptance scripts are still not (T401).
+
 **The floor compiles its tests at Debug, and Debug provides correctness the
 shipping build does not** (T846). That is not a theory: T477 found two live
 defects at once behind 26 consecutive green Debug runs — a `free()` on an

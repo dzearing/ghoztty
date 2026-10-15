@@ -1,17 +1,19 @@
 {
     "guard":  "build-cache",
     "script":  "test/win32/build-cache.ps1",
-    "generated":  "2026-10-15T06:41:22-07:00",
-    "commit":  "58d19b306",
+    "generated":  "2026-10-15T08:08:42-07:00",
+    "commit":  "94e9c83cd",
     "uncommitted":  [
-                        "scripts/floor-lane.ps1"
+                        "scripts/build-cache.ps1",
+                        "scripts/floor-lane.ps1",
+                        "scripts/lib/BuildCache.ps1"
                     ],
     "files":  {
-                  "scripts/build-cache.ps1":  "14d6a476c9a306803a9310c9476f3e312fd42627debe1bcb6ef36e0611aed18b",
+                  "scripts/build-cache.ps1":  "6b722bb49cbca0465bc1a2449d46d386b47a4be61efaaf37ce342b399b22ba68",
                   "scripts/crash-databreak.ps1":  "ec45063075848cb962ca00262960aec8380bd5de3f0d9f9bc9f1d25c109e3b0d",
-                  "scripts/floor-lane.ps1":  "9ebf6edc4bc5306f0371879e92ca1f8428ec608ff9ae2a7f3364e3421311acc2",
+                  "scripts/floor-lane.ps1":  "073c146e3d933884cd56e883b24f45974c81b4ce686074b5ff43d344348f97c7",
                   "scripts/launch-upgrade.ps1":  "d357be9281d473c2956a27be889434330b154541d9b71ab56fc5c8d9c2df1583",
-                  "scripts/lib/BuildCache.ps1":  "ebee3835f917d3f4888df7af408815f912cefe1507a48f3daa12a8fdc9e94218",
+                  "scripts/lib/BuildCache.ps1":  "80ea732ee0458d094bf9eec6ae24d8260291db7f0211bfd2d048f1bb7fa2a20e",
                   "scripts/lib/HardDelete.ps1":  "78ca1c0b521f9ae991e6b8f5304eb2a4e30a7a8ef1e3ba93839de8b740ea88b2",
                   "scripts/publish-windows-release.ps1":  "1cd6f75ffc5deddbb6699b4dfe84e1b8fad40ebb5271f802f1a31ee28613069a",
                   "test/win32/build-cache.ps1":  "69ab9348d80343993a44e2f1a56e81056866346c044b4760cb691d8ab279547c",

@@ -15,6 +15,8 @@ zig-out-prof/
 # Ad-hoc per-task prefixes (zig-out-t206/ etc). Without this a `git add -A`
 # stages a whole build tree.
 zig-out-*/
+# Per-lane build roots of the parallel floor (scripts\floor-lane.ps1, T1959).
+zig-lanes/
 build-cmake/
 CMakeCache.txt
 CMakeFiles/

@@ -1,10 +1,10 @@
 {
     "guard":  "dip-rounding",
     "script":  "test/win32/dip-rounding-audit.ps1",
-    "generated":  "2026-10-15T06:49:21-07:00",
-    "commit":  "58d19b306",
+    "generated":  "2026-10-15T08:55:31-07:00",
+    "commit":  "94e9c83cd",
     "uncommitted":  [
-                        "test/win32/harness-floor.ps1"
+                        "test/win32/floor-lane-parallel.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -128,6 +128,7 @@
                   "test/win32/floor-lane-compiler-crash.ps1":  "34827f1ed2d63df665d72275f13211f6a3f8273c44561b09396ffdc3f7505470",
                   "test/win32/floor-lane-desktop.ps1":  "98ad27a978e7689f77af81c616bb81634f405d9a6cf27f30ce02d80e5e96d2fc",
                   "test/win32/floor-lane-leak-sweep.ps1":  "0bc2ffdef054b434ddc199419cee8ade1a49a8027e550040632b14def5c7d6b8",
+                  "test/win32/floor-lane-parallel.ps1":  "8405324d77254be1fc022b505cec25b3758849a5ffdd7f2e72fd49b500f815f0",
                   "test/win32/floor-lane-releasesafe.ps1":  "ecd2f326201dfeb9cd74d67f603ec6e06ea566182e28754acc08da1629784a84",
                   "test/win32/floor-lane-solo-confirm.ps1":  "2e7b8705867fd366ef614013d2cdd8e9e213136a4f8e9347ac049215944c0a50",
                   "test/win32/floor-lane-stall-sampling.ps1":  "1ffd9b4a466850f44fd49712ad9c82cf8a8e89ead999cea40903eb3ce0306418",
