@@ -135,8 +135,9 @@ now mean the same thing:
 | Credential owned by a **different** account | not started (the app is a guest; not its enrollment to serve) |
 | Credential dead (device removed from another client) | stopped; the dead `relay.env` is removed, like an already-revoked sign-out |
 | No credential (a client-only Mac — the common case) | not started; nothing installed |
-| `GhosttyRelayDisable` / `GHOSTTY_RELAY_DISABLE` | never started, nothing installed |
+| `GhosttyRelayDisable` / `GHOSTTY_RELAY_DISABLE` | **hands off**: that app starts nothing and stops nothing (see below) |
 | Relay can't be reached to confirm ownership | **no change** — whatever was installed stays as it was |
+| App launches reading as signed out, but `relay.env` holds a live credential | **no change** (a failed Keychain read must not take a host offline; explicit sign-out stops it by itself) |
 | `session-persistence = false` | irrelevant — the relay agent does not use or need the session agent |
 
 The Mac shows up in the other machine's Cmd-Shift-N chooser as online, and
@@ -146,10 +147,12 @@ for a Windows host.
 ### Why a second LaunchAgent, not a second mode on the session agent
 
 The relay agent is its own LaunchAgent job (`com.dzearing.ghoztty.relay-agent`,
-debug `com.dzearing.ghoztty.debug.relay-agent`), written by the same
-`LocalAgentManager` plist/launchctl machinery as the session agent, with its
-own state directory (`~/.config/ghoztty/relay-agent[-debug]/`, holding only its
-log). Not one process serving both, because:
+debug `com.dzearing.ghoztty.debug.relay-agent`), installed through the same
+`launchctl` helper as the session agent and following the same shape (pure
+`Paths`, plist written only when its stable part changed, volatile
+`PATH`/`SHELL`/`LANG` ignored in the comparison), with its own directory
+(`~/.config/ghoztty/relay-agent[-debug]/`, holding only its log). Not one
+process serving both, because:
 
 - **Sessions are a security boundary.** One agent serving `--listen-unix` and
   `--relay` shares one session store. A relay client could then list and
@@ -166,6 +169,21 @@ The two never contend: different roles (above), and the relay job sets no
 `GHOSTTY_AGENT_LOCK`, so it uses the relay role's default lock — the same one
 a hand-started `ghoztty-agent --relay` uses, so a manual relay agent and the
 app's are still mutually exclusive (one device token, one control connection).
+
+### One relay agent per machine
+
+`relay.env` and the relay role's lock belong to the machine, not to an app
+lineage. Distinct labels keep the release and debug apps from rewriting each
+other's plist, but a lineage that starts hosting first boots out the other
+lineage's relay job, and a stop stops both. Without that, two installed jobs
+would fight over the lock forever (the loser exits 183, launchd respawns it
+every throttle interval). In practice this only matters on a developer's Mac:
+the last app to start hosting owns the job.
+
+A relay-**disabled** app (`GhosttyRelayDisable`, set on the debug bundle to
+dodge the ad-hoc-signing Keychain prompt) reads as signed out but knows nothing
+about the machine's enrollment, so it neither starts a relay agent nor stops
+the one the other lineage runs. The debug build stays completely quiet.
 
 ### The job
 
@@ -189,6 +207,8 @@ ghoztty-agent --relay=<RELAY_BASE from relay.env> --headless --exit-on-revoke
   passes needs no capability negotiation.
 - `GHOSTTY_AGENT_NO_SELFUPDATE=1`: the bundle owns the binary, as for the
   session agent.
+- `GHOSTTY_RELAY_ENV=<the file the app reads>`: the agent and the app can
+  never disagree about which credential file this is.
 - The relay agent keeps watching `relay.env` (`relay_creds.zig`), so a
   restored credential is adopted without a restart.
 
@@ -198,27 +218,36 @@ ghoztty-agent --relay=<RELAY_BASE from relay.env> --headless --exit-on-revoke
 `LocalMachineEnrollment` — it does not re-implement it:
 
 ```
-disabled (GhosttyRelayDisable)               → stop
-pending revocation armed                     → stop
-not signed in                                → stop
-no credential in relay.env                   → stop
+disabled (GhosttyRelayDisable)               → do nothing at all
+pending revocation armed                     → stop (no network)
+no credential in relay.env                   → stop (no network)
 probe credential (whoami):
   alive, owner == signed-in account          → run
   alive, owner != signed-in account          → stop
+  alive, nobody signed in                    → leave as is
   dead (401)                                 → stop, delete relay.env
   unknown (offline / 5xx)                    → leave as is
 ```
 
-The decision is the pure `RelayHostAgent.decide` (unit-tested); the probe is
+The decision is the pure `MachineHostingVerdict.decide` (unit-tested); the probe is
 `LocalMachineEnrollment.hostingVerdict(accountEmail:)`, which reuses the same
 `probeCredential` the revocation and the restore already share, inside the
 same serialized queue — so a reconcile can never race a revocation against one
 credential file.
 
-**When it runs:** at launch (after the Keychain load), on sign-in (after the
-enrollment restore), on sign-out (after the revocation — both outcomes), when a
-pending revocation is armed, after every pending-revocation retry, and on every
-network-came-back transition.
+**When it runs:** at launch (after the Keychain load and the enrollment
+restore), on sign-in (after the restore), and on every network-came-back
+transition (so an offline launch's "leave as is" doesn't stick).
+
+**Sign-out doesn't reconcile — it stops.** Every outcome that lets sign-out
+proceed means no relay agent: revoked or already revoked (dead credential),
+another account's machine, and a pending revocation (armed by "sign out
+anyway"), where the credential is still alive and the stopped agent is the only
+thing keeping the machine dark until the retry lands. `RelayAccount.signOut`
+awaits `RelayHostAgent.stop` right after the revocation step, before the
+session is dropped and the UI says "signed out". A sign-out that throws
+(revocation failed, user didn't proceed) stays signed in, so the agent keeps
+running — the machine is still enrolled and still the user's.
 
 "Stop" is `launchctl bootout` + delete the plist. `bootout` sends SIGTERM and
 waits for the process, so when `signOut` returns the agent is gone — before
