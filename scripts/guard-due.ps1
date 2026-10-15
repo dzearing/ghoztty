@@ -2952,6 +2952,21 @@ $GuardTable = @(
             'test\win32\low-power-render.ps1'
         )
     },
+    # T1950: the probe the user runs inside a Remote Desktop session. Its
+    # numbers are the evidence that session work is judged by, so a CLI or log
+    # format change that silently zeroes them (its first draft printed 0/12
+    # echo samples over a wrong flag) must re-run this.
+    [pscustomobject]@{
+        Name   = 'rdp-perf-probe'
+        Script = 'test\win32\rdp-perf-probe.ps1'
+        Stamp  = 'test\win32\rdp-perf-probe.stamp.json'
+        Covers = @(
+            'scripts\rdp-perf-probe.ps1',
+            'src\renderer\low_power.zig',
+            'src\renderer\OpenGL.zig',
+            'test\win32\rdp-perf-probe.ps1'
+        )
+    },
     # T1951: over Remote Desktop the expensive effects go off by themselves
     # and come back live on the console. The unit tests own which keys swap
     # and the user-set rule; this row owns the claim that a launch, a live

@@ -1,12 +1,12 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-15T02:06:34-07:00",
-    "commit":  "c60641a47",
+    "generated":  "2026-10-15T04:05:34-07:00",
+    "commit":  "693789836",
     "uncommitted":  [
-                        "scripts/harness-floor.ps1",
-                        "scripts/lib/HarnessFloor.ps1",
-                        "test/win32/harness-floor.ps1"
+                        "scripts/guard-due.ps1",
+                        "scripts/rdp-perf-probe.ps1",
+                        "test/win32/rdp-perf-probe.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -37,7 +37,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "74ce5464afb13f984303691f0eb29818fa877bb759c08d591adde94571bd7c17",
+                  "scripts/guard-due.ps1":  "55fc923d491bd3405b174f588801104a7a72f943fd28e18fab9d72887bedc5cc",
                   "scripts/harness-floor.ps1":  "1fb86a86886554679ef133b4328419739d066de23751f152313bcad7898ee2d8",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -68,6 +68,7 @@
                   "scripts/parity-tasks.ps1":  "1bb68edfe057eab856d234bef8d1524ccf9a41c4c3f8ab0c4c2c4d2cfc1c9592",
                   "scripts/publish-windows-release.ps1":  "1cd6f75ffc5deddbb6699b4dfe84e1b8fad40ebb5271f802f1a31ee28613069a",
                   "scripts/publish-windows-tag.ps1":  "fbf416f550baf907a037646938e8c0eccb52ac6d47644cc31307aa08a44d5383",
+                  "scripts/rdp-perf-probe.ps1":  "b5e70fb1c4b8eb1ae74033ad8131b48e9aa20a3aacc7b4291d355d81c33b866a",
                   "scripts/report-false-positive.ps1":  "67875bcfc4d235afa9a8810294a7ea9d48fc7cb57f69e74c9617970b65d68534",
                   "scripts/ship-feature.ps1":  "5fcde228d19c43b887fe4ae42202a1c84c0f7e0a464fbe3caec600c39796663e",
                   "scripts/ship-readiness.ps1":  "1fcab42cac628cae5852b0d1bd93b266c0d9809b015ff996362f02c5895c84f7",
@@ -393,6 +394,7 @@
                   "test/win32/profile-latency.ps1":  "ca0e6053bcf6bd4ea2de39f1f8aa6037405765ff41f58a35071eba89b21918b5",
                   "test/win32/pty-holder.ps1":  "ac9811305a50f2a86dca0af16b2725c8414ed78ebe26c84572ca6599326af88e",
                   "test/win32/pty-host.ps1":  "87026bc360b873c55bfae3fc3056f8590d75bde54c995a131e680b9e7e2c8f21",
+                  "test/win32/rdp-perf-probe.ps1":  "d9a2438358328f459c637242375193fb1651d6b4ee3ba98358617290aa0bb183",
                   "test/win32/rdp-session.ps1":  "08c60f744321652a7a8d5ae6daacdad15493b0012fa57835d61ada4efb9b261c",
                   "test/win32/readonly-badge.ps1":  "be8e9c5793795ff3502b077f674c531a510b2755819fbe989237897e6076ae61",
                   "test/win32/rearrange-desktop-drop.ps1":  "28050df206eef9bcd4c121958224e0c29d05e6b8b4c34cea17b1955ede2b93d8",

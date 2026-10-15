@@ -274,6 +274,39 @@ zig build -Dapp-runtime=win32 -Doptimize=Debug      # -> zig-out\bin\ghoztty.exe
   `scripts\fetch-symbols.ps1` and use the `_NT_SYMBOL_PATH` it prints. The
   full recipe is in HACKING.md, "Symbolizing an installed build".
 
+- **Slow over Remote Desktop or on a Cloud PC** (T1950/T1951). With no GPU in
+  the session, Ghoztty falls back to the bundled Mesa (`<install>\gl\opengl32.dll`)
+  on WARP, so every present is drawn on the CPU and then encoded for the wire.
+  Since win-v1.39.10 the app detects that (a software `GL_RENDERER`, or
+  `SM_REMOTESESSION`) and enters **low-power rendering**: the focused pane
+  presents at up to ~30 fps, other panes at 4, hidden windows not at all, and
+  glass, blur, blink and the dim layer are off unless the user's config sets
+  them. The log says so (`low-power rendering on: renderer="..."`);
+  `GHOZTTY_LOW_POWER=on|off` pins it.
+
+  To find out what a session actually costs, copy `scripts\rdp-perf-probe.ps1`
+  to the remote machine and run it there (it is standalone):
+
+  ```powershell
+  powershell -NoProfile -ExecutionPolicy Bypass -File rdp-perf-probe.ps1            # snapshot, read-only
+  powershell -NoProfile -ExecutionPolicy Bypass -File rdp-perf-probe.ps1 -Measure   # + low-power off vs auto
+  ```
+
+  The snapshot reports the session, the adapters, and for each running
+  `ghoztty.exe` its version, loaded GL modules (system vs bundled Mesa), CPU in
+  cores, busy threads (the WARP pool shows as a crowd at ~10% each), memory,
+  windows/panes and the renderer's log lines. `-Measure` starts a separate
+  instance (own pipe, agent name and LOCALAPPDATA, persistence off) and records
+  fps, swap cost, CPU and echo latency with low-power off and on. Its echo
+  figure is the server half of a keystroke only, and it cannot resolve less
+  than the `+read alone ms` column. Acceptance: `test\win32\rdp-perf-probe.ps1`.
+
+  What the user can change on the remote side: the group policy "Use hardware
+  graphics adapters for all Remote Desktop Services sessions" (real GPU instead
+  of WARP), "Prioritize H.264/AVC 444 graphics mode", or better, run Ghoztty
+  locally and reach the machine with `ghoztty +new-remote-window`, so only
+  terminal bytes cross the wire.
+
 
 ## What is installed on this box, and how to clear it
 
