@@ -67,6 +67,7 @@ const update_check = @import("update_check.zig");
 const update_badge = @import("update_badge.zig");
 const install_location = @import("install_location.zig");
 const update_apply = @import("update_apply.zig");
+const update_auto_apply = @import("update_auto_apply.zig");
 const update_install = @import("update_install.zig");
 const update_reopen = @import("update_reopen.zig");
 const app_restart = @import("app_restart.zig");
@@ -303,6 +304,9 @@ const UPDATE_RECHECK_TIMER_ID: usize = msg_timer.update_recheck;
 /// One-shot manual check armed by GHOZTTY_UPDATE_MANUAL_MS (Debug only,
 /// T1563). See where it is armed for why the acceptance script needs it.
 const UPDATE_MANUAL_TIMER_ID: usize = msg_timer.update_manual;
+
+/// The automatic-install moment check (T1934). See `maybeAutoApplyUpdate`.
+const UPDATE_AUTO_APPLY_TIMER_ID: usize = msg_timer.update_auto_apply;
 
 /// How often the running app re-asks the release channel. Ten minutes is a
 /// tick, not a fetch: `shouldRunUpdateCheck` still throttles the network to
@@ -578,6 +582,16 @@ update_pending: bool = false,
 /// second click while the first is still fetching must not start a second
 /// 40MB transfer into the same staged path.
 update_download_inflight: bool = false,
+
+/// True while the "Install and Restart" dialog is up. The automatic install
+/// (T1934) runs off a timer that still fires inside that dialog's modal loop,
+/// and quitting out from under a dialog the user is reading is not "a moment
+/// that interrupts nobody".
+update_prompt_open: bool = false,
+
+/// The last automatic-install verdict logged (T1934), so a tick that reaches
+/// the same conclusion as the one before it stays out of the log.
+update_auto_apply_last: ?update_auto_apply.Reason = null,
 
 /// True once the stale-build balloon (T1205) has been shown for the build
 /// currently on disk. Notify ONCE and then be quiet: the condition is
@@ -994,16 +1008,18 @@ pub fn init(
     // thread: a sweep racing the check's background pre-download would delete
     // the package it just staged. It walks two small directories and treats
     // every failure as "not yet, try next launch".
-    update_install.sweep(self.core_app.alloc);
-
+    //
     // Restore a pending offer from the last run BEFORE the check goes out
     // (T1673). The check is a network round trip that may take seconds, may
     // fail, and in the state this task was filed from had already succeeded
     // eighteen times without the user ever seeing the result. The record is on
-    // disk, so the affordance can be up before the first packet leaves — and
-    // after the sweep above, which is what makes a staged path in the record
-    // trustworthy enough to `access`.
+    // disk, so the affordance can be up before the first packet leaves.
+    //
+    // The restore runs FIRST and the sweep spares the package it names
+    // (T1934): that package is what a launch-time automatic install hands to
+    // msiexec, and sweeping it left every launch with nothing to install.
     self.loadPendingUpdate();
+    update_install.sweep(self.core_app.alloc, self.update_staged_msi);
 
     self.startUpdateCheck(.automatic);
 
@@ -1030,6 +1046,14 @@ pub fn init(
     // there was anything to take.
     if (self.msg_hwnd) |mh| {
         _ = w32.SetTimer(mh, UPDATE_RECHECK_TIMER_ID, self.updateRecheckIntervalMs(), null);
+    }
+
+    // "Is now a good moment to install what is staged?" (T1934). Repeating.
+    // A downloaded update used to wait for a click on an offer shown once a
+    // day, and a terminal left open for weeks installed nothing.
+    if (self.msg_hwnd) |mh| {
+        const every = orphanEnvMs(self.core_app.alloc, "GHOZTTY_UPDATE_AUTO_APPLY_TICK_MS", update_auto_apply.tick_ms);
+        _ = w32.SetTimer(mh, UPDATE_AUTO_APPLY_TIMER_ID, @intCast(std.math.clamp(every, 200, std.math.maxInt(u32))), null);
     }
 
     // A MANUAL check, fired once on a timer, for the acceptance script that
@@ -1705,6 +1729,13 @@ pub fn run(self: *App) !void {
     // command would vanish with no window, no error and no log line — the
     // whole defect).
     const launch_command = self.config.@"initial-command" != null;
+
+    // A staged update installs NOW, before any window or shell exists (T1934):
+    // there is nothing open to interrupt, and the applier reopens the app on
+    // the new build a few seconds later. Returning ends this process, which is
+    // what the applier is waiting for.
+    if (self.maybeAutoApplyUpdate(.launch)) return;
+
     var startup_window: ?*Window = null;
     if (launch_command) {
         startup_window = try self.createWindow(.{});
@@ -10050,6 +10081,8 @@ pub fn offerUpdate(self: *App) bool {
     if (owner) |win| {
         if (win.hwnd) |wh| _ = w32.SetForegroundWindow(wh);
     }
+    self.update_prompt_open = true;
+    defer self.update_prompt_open = false;
     const result = ConfirmDialog.show(
         self,
         if (owner) |win| win.hwnd else null,
@@ -10143,6 +10176,150 @@ fn applyStagedUpdate(self: *App) void {
     recordUpdateClose(self.core_app.alloc, .updater);
     self.quit_requested = true;
     w32.PostQuitMessage(0);
+}
+
+/// Install the staged update without a click when this is a moment that
+/// interrupts nobody (T1934). Returns true when the applier was armed and this
+/// process is on its way out.
+///
+/// The timing rules are `update_auto_apply.decide`; this gathers the facts. A
+/// running app (`.tick`) quits through the message loop exactly as a click on
+/// "Install and Restart" does; at `.launch` the caller returns from `run`
+/// before a window exists. Either way the applier reopens the app on the new
+/// build, sessions re-attach from the agent, and `update_reopen` says what
+/// happened on the way back in.
+fn maybeAutoApplyUpdate(self: *App, moment: update_auto_apply.Moment) bool {
+    const alloc = self.core_app.alloc;
+    const now = std.time.milliTimestamp();
+    const version = self.update_latest_ver;
+    const msi = self.update_staged_msi;
+    const enabled = self.autoApplyEnabled();
+    const staged = self.update_pending and version != null and msi != null;
+
+    // The attempt record is only worth a file read once there is something
+    // the answer could release.
+    var attempted = false;
+    if (enabled and staged) {
+        if (self.autoApplyAttemptPath(alloc)) |path| {
+            defer alloc.free(path);
+            if (std.fs.cwd().readFileAlloc(alloc, path, 1024)) |text| {
+                defer alloc.free(text);
+                attempted = update_auto_apply.attemptedRecently(update_auto_apply.parseAttempt(text), version.?, now);
+            } else |_| {}
+        }
+    }
+
+    const idle = sessionIdleMs(alloc);
+    const fullscreen = fullscreenInFront(alloc);
+    const verdict = update_auto_apply.decide(.{
+        .moment = moment,
+        .enabled = enabled,
+        .staged = staged,
+        .persistence = self.config.@"session-persistence",
+        .launch_command = moment == .launch and self.config.@"initial-command" != null,
+        .busy = self.update_download_inflight or self.update_prompt_open or self.quit_requested,
+        .idle_ms = idle,
+        .fullscreen = fullscreen,
+        .offered_for_ms = if (self.update_first_offered_ms > 0) now -| self.update_first_offered_ms else 0,
+        .attempted_recently = attempted,
+    });
+
+    if (!verdict.apply) {
+        // Only a staged offer has a verdict worth reading; "nothing staged"
+        // and "disabled" are the normal state of almost every tick.
+        if (staged and self.update_auto_apply_last != verdict.reason) {
+            log.info("update auto-install ({t}) waiting for win-v{s}: {t} (idle={d}ms fullscreen={})", .{
+                moment, version.?, verdict.reason, idle, fullscreen,
+            });
+        }
+        self.update_auto_apply_last = verdict.reason;
+        return false;
+    }
+    self.update_auto_apply_last = verdict.reason;
+
+    // Recorded BEFORE arming, so an install that fails, hangs or is killed
+    // half way still holds the next automatic attempt off; a package msiexec
+    // rejects must not turn every launch into an install-and-reopen loop.
+    self.writeAutoApplyAttempt(alloc, version.?, now);
+
+    log.warn("update: installing win-v{s} automatically ({t}; moment={t} idle={d}ms persistence={})", .{
+        version.?, verdict.reason, moment, idle, self.config.@"session-persistence",
+    });
+    if (!update_install.arm(alloc, msi.?)) {
+        log.err("update: automatic install of win-v{s} could not be started; the offer stays up", .{version.?});
+        return false;
+    }
+    log.warn("update: applier armed, quitting to install", .{});
+    recordUpdateClose(alloc, .updater);
+    if (moment == .tick) {
+        self.quit_requested = true;
+        w32.PostQuitMessage(0);
+    }
+    return true;
+}
+
+/// Whether a staged update may install itself (T1934): `auto-update =
+/// download` (the default; `check` keeps the click), and only for an exe that
+/// updates itself at all - the same gate the automatic check answers to. A
+/// Debug build is never one of those, so an acceptance script opts in with
+/// GHOZTTY_UPDATE_AUTO_APPLY=1, compiled out of every release build.
+fn autoApplyEnabled(self: *const App) bool {
+    if (self.updatePolicy() != .download) return false;
+    if (comptime build_config.is_debug) {
+        const v = std.process.getEnvVarOwned(self.core_app.alloc, "GHOZTTY_UPDATE_AUTO_APPLY") catch return false;
+        defer self.core_app.alloc.free(v);
+        return std.mem.eql(u8, std.mem.trim(u8, v, " \t\r\n"), "1");
+    }
+    return self.autoUpdateCheckAllowed();
+}
+
+/// `%LOCALAPPDATA%\ghoztty\update-auto-apply[-debug].txt` - the last automatic
+/// attempt, by version. Suffixed for the same reason as `updateOfferPath`.
+fn autoApplyAttemptPath(self: *App, alloc: Allocator) ?[]u8 {
+    _ = self;
+    const dir = std.process.getEnvVarOwned(alloc, "LOCALAPPDATA") catch return null;
+    defer alloc.free(dir);
+    const name = if (comptime build_config.is_debug)
+        "update-auto-apply-debug.txt"
+    else
+        "update-auto-apply.txt";
+    return std.fs.path.join(alloc, &.{ dir, "ghoztty", name }) catch null;
+}
+
+fn writeAutoApplyAttempt(self: *App, alloc: Allocator, version: []const u8, now: i64) void {
+    const path = self.autoApplyAttemptPath(alloc) orelse return;
+    defer alloc.free(path);
+    var buf: [256]u8 = undefined;
+    const text = update_auto_apply.serializeAttempt(&buf, .{ .version = version, .at_ms = now }) orelse return;
+    if (std.fs.path.dirname(path)) |d| std.fs.cwd().makePath(d) catch {};
+    const f = std.fs.cwd().createFile(path, .{ .truncate = true }) catch return;
+    defer f.close();
+    f.writeAll(text) catch {};
+}
+
+/// Milliseconds since the last keyboard or mouse input anywhere in this
+/// session. Debug builds take GHOZTTY_UPDATE_IDLE_MS instead, because the
+/// background test desktop shares the user's input clock.
+fn sessionIdleMs(alloc: Allocator) u64 {
+    const forced = orphanEnvMs(alloc, "GHOZTTY_UPDATE_IDLE_MS", -1);
+    if (forced > 0) return @intCast(forced);
+    var lii: w32.LASTINPUTINFO = .{};
+    if (w32.GetLastInputInfo(&lii) == 0) return 0;
+    return w32.GetTickCount() -% lii.dwTime;
+}
+
+/// Whether a fullscreen app, a Direct3D game or presentation mode is in front.
+/// Unknown reads as "yes": the cost of a wrong yes is a later install, of a
+/// wrong no an installer over somebody's game. Debug builds take
+/// GHOZTTY_UPDATE_FULLSCREEN (1 = yes, 2 = no) for the same reason as above.
+fn fullscreenInFront(alloc: Allocator) bool {
+    const forced = orphanEnvMs(alloc, "GHOZTTY_UPDATE_FULLSCREEN", -1);
+    if (forced > 0) return forced == 1;
+    var state: i32 = 0;
+    if (w32.SHQueryUserNotificationState(&state) != 0) return true;
+    return state == w32.QUNS_BUSY or
+        state == w32.QUNS_RUNNING_D3D_FULL_SCREEN or
+        state == w32.QUNS_PRESENTATION_MODE;
 }
 
 /// Ask whether a newer build is on disk, and say so once when it is (T1205).
@@ -12283,6 +12460,13 @@ fn msgWndProc(
     // is usually a file read and nothing else.
     if (msg == w32.WM_TIMER and wparam == UPDATE_RECHECK_TIMER_ID) {
         app.startUpdateCheck(.automatic);
+        return 0;
+    }
+
+    // Timer ID 20: install the staged update if this is a moment that
+    // interrupts nobody (T1934). Repeating.
+    if (msg == w32.WM_TIMER and wparam == UPDATE_AUTO_APPLY_TIMER_ID) {
+        _ = app.maybeAutoApplyUpdate(.tick);
         return 0;
     }
 

@@ -2497,6 +2497,13 @@ pub const LASTINPUTINFO = extern struct {
 pub extern "user32" fn GetLastInputInfo(plii: *LASTINPUTINFO) callconv(.winapi) i32;
 pub extern "kernel32" fn GetTickCount() callconv(.winapi) u32;
 
+/// Whether the user can be interrupted right now (T1934): a fullscreen app, a
+/// Direct3D game or presentation mode answers BUSY / D3D / PRESENTATION.
+pub const QUNS_BUSY: i32 = 2;
+pub const QUNS_RUNNING_D3D_FULL_SCREEN: i32 = 3;
+pub const QUNS_PRESENTATION_MODE: i32 = 4;
+pub extern "shell32" fn SHQueryUserNotificationState(pquns: *i32) callconv(.winapi) i32;
+
 // Desktop objects. Only used to answer "am I on the INPUT desktop?" — a
 // process on a background desktop (CreateDesktopW, as the T211 acceptance
 // harness does) has no foreground window at all, so foreground-based guards

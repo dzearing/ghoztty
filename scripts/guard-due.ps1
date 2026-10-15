@@ -1919,6 +1919,21 @@ $GuardTable = @(
             'test\win32\lib\ApplierSandbox.ps1'
         )
     },
+    # Whether a staged update installs ITSELF, and only at a moment that
+    # interrupts nobody (T1934). Neither row above asks: both start from a
+    # click, and the defect was that nothing but a click ever reached msiexec -
+    # six weeks of releases downloaded and none installed.
+    [pscustomobject]@{
+        Name   = 'update-auto-apply'
+        Script = 'test\win32\update-auto-apply.ps1'
+        Stamp  = 'test\win32\update-auto-apply.stamp.json'
+        Covers = @(
+            'src\apprt\win32\update_auto_apply.zig',
+            'src\apprt\win32\update_install.zig',
+            'test\win32\update-auto-apply.ps1',
+            'test\win32\lib\ApplierSandbox.ps1'
+        )
+    },
     # The release-channel check itself (T24, T1171): does the app find a newly
     # published win-v release, and does it stay quiet about one it has already
     # offered? Nothing tied this harness to the code under it, and it drifted

@@ -137,7 +137,27 @@ pub fn download(
     try f.writeAll(body);
 
     log.info("update download: staged {d} bytes at {s}", .{ body.len, dest });
+    pruneStaged(dir, name);
     return try alloc.dupe(u8, dest);
+}
+
+/// Delete every staged package in `dir` except `keep` (T1934). A newer
+/// release supersedes the one staged before it, and an app that stays open
+/// for weeks used to keep them all: 800 MB of MSIs back to 1.36.37 on the box
+/// the task was filed from, because only a launch ever swept the directory.
+/// Only `.msi` files: the applier copy and the install log are not ours to
+/// clear while an update could be in flight.
+fn pruneStaged(dir: []const u8, keep: []const u8) void {
+    var d = std.fs.cwd().openDir(dir, .{ .iterate = true }) catch return;
+    defer d.close();
+    var it = d.iterate();
+    while (it.next() catch null) |entry| {
+        if (entry.kind != .file) continue;
+        if (!update_apply.isPrunableStaged(entry.name, keep)) continue;
+        if (d.deleteFile(entry.name)) |_| {
+            log.info("update download: pruned superseded package {s}", .{entry.name});
+        } else |_| {}
+    }
 }
 
 /// Read a URL into memory. `file://` is handled directly — WinINet's
@@ -232,7 +252,12 @@ pub fn isTruncated(received: u64, total: u64) bool {
 /// images, and staged packages. Called at startup, where "still in use" is
 /// the normal answer for a holder that has not restarted yet — every failure
 /// here is ignored on purpose, and the next launch tries again.
-pub fn sweep(alloc: Allocator) void {
+///
+/// `keep` is the package the pending offer still names (T1934). Sweeping it
+/// too meant a launch could never install what was already downloaded: the
+/// record's path failed its `access` check and the app fetched the same
+/// package again before it could offer anything.
+pub fn sweep(alloc: Allocator, keep: ?[]const u8) void {
     if (comptime builtin.os.tag != .windows) return;
 
     var arena_state = std.heap.ArenaAllocator.init(alloc);
@@ -245,8 +270,10 @@ pub fn sweep(alloc: Allocator) void {
         var d = std.fs.cwd().openDir(dir, .{ .iterate = true }) catch return;
         defer d.close();
         var it = d.iterate();
+        const keep_name: ?[]const u8 = if (keep) |k| std.fs.path.basename(k) else null;
         while (it.next() catch null) |entry| {
             if (entry.kind != .file) continue;
+            if (keep_name) |k| if (std.ascii.eqlIgnoreCase(entry.name, k)) continue;
             d.deleteFile(entry.name) catch continue;
         }
     } else |_| {}

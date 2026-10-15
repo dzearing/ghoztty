@@ -82,6 +82,10 @@ pub const notif_update_reopened: usize = 18;
 /// The soonest `undo-timeout` deadline of a parked pane/tab close (T1825).
 pub const close_undo: usize = 19;
 
+/// The periodic "is now a good moment to install the staged update?" check
+/// (T1934). Repeating; see `update_auto_apply.zig`.
+pub const update_auto_apply: usize = 20;
+
 // Fail the build if two ids above are equal. Every `pub const … : usize` in
 // this file is a timer id and is compared against every other one, so a new
 // entry is covered by adding it — there is no second list to keep in step.
