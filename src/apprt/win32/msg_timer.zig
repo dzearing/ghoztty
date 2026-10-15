@@ -85,6 +85,10 @@ pub const close_undo: usize = 19;
 /// The coalesced refresh of every all-windows pane sidebar (T1935).
 pub const pane_scopes: usize = 21;
 
+/// Who can see each window, and is the app in low-power mode (T1951): a
+/// repeating poll, because neither occlusion nor a DWM cloak has a message.
+pub const visibility: usize = 22;
+
 // Fail the build if two ids above are equal. Every `pub const … : usize` in
 // this file is a timer id and is compared against every other one, so a new
 // entry is covered by adding it — there is no second list to keep in step.

@@ -2937,6 +2937,20 @@ $GuardTable = @(
             'test\win32\pane-elevation.ps1'
         )
     },
+    # T1951: over Remote Desktop the expensive effects go off by themselves
+    # and come back live on the console. The unit tests own which keys swap
+    # and the user-set rule; this row owns the claim that a launch, a live
+    # switch either way and a user override reach the open window.
+    [pscustomobject]@{
+        Name   = 'remote-effects'
+        Script = 'test\win32\remote-effects.ps1'
+        Stamp  = 'test\win32\remote-effects.stamp.json'
+        Covers = @(
+            'src\apprt\win32\remote_session.zig',
+            'src\config\remote_effects.zig',
+            'test\win32\remote-effects.ps1'
+        )
+    },
     # T1899: a pane's own progress light - the ring circling a busy pane and
     # the percentage line - driven by a real OSC 9;4 stream and read off the
     # window's paint. The unit tests own the ring maths; this row owns the

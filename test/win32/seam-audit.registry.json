@@ -377,6 +377,11 @@
             "unset": "shipped-elsewhere",
             "note": "unset = the real byte <-> UTF-16 conversion, which every composer run including viewer-feedback-utf16.ps1's own default run uses; -BreakUtf16 is its teeth check (T1710)."
         },
+        "GHOZTTY_TEST_REMOTE_SESSION_FILE": {
+            "class": "isolation",
+            "unset": "shipped-elsewhere",
+            "note": "unset = GetSystemMetrics(SM_REMOTESESSION), which every other launch reads; on this console box that is the full-effects console state remote-effects.ps1 run 2 also asserts through the seam. A real Remote Desktop session cannot be originated here (T1256)."
+        },
         "GHOZTTY_TRAY_FAIL": {
             "class": "fault",
             "unset": "shipped-elsewhere",

@@ -12,6 +12,7 @@ const apprt = @import("../../apprt.zig");
 const input = @import("../../input.zig");
 
 const App = @import("App.zig");
+const remote_session = @import("remote_session.zig");
 const CoreApp = @import("../../App.zig");
 const MachineChooser = @import("MachineChooser.zig");
 const ActivityMonitor = @import("ActivityMonitor.zig");
@@ -555,6 +556,9 @@ is_quick_terminal: bool = false,
 /// of the active tab. Created on the first layout; null on the Quick
 /// Terminal, which has no chrome for it (Mac leaves it out there too).
 sidebar: ?*PaneSidebar = null,
+
+/// Set by `applyOcclusion` while nobody can see this window (T1951).
+occluded: bool = false,
 /// The hover grab handle (T1830): one popup that sits on whichever pane's
 /// top band holds the pointer. Created on the first mouse move; null on the
 /// Quick Terminal, which has no other window or tab to drag a pane to.
@@ -3671,6 +3675,29 @@ pub fn setActiveTabVisible(self: *Window, visible: bool) void {
     if (self.active_tab >= self.tab_count) return;
     var it = self.tab_trees[self.active_tab].iterator();
     while (it.next()) |entry| entry.view.setVisible(visible);
+}
+
+/// The app's visibility poll says whether anybody can see this window
+/// (T1951: covered by other windows, cloaked, minimized, or the session is
+/// locked or disconnected). Hidden, every pane of the active tab stops
+/// presenting - re-asserted on every poll, because a layout pass in between
+/// marks the panes visible again, and a repeated state costs nothing
+/// (`Surface.setVisible` and `ViewerPane.setVisible` forward only changes).
+/// Revealed, the panes come back and the layout re-derives which of them are
+/// really shown (a zoomed split, a stashed pane), so each draws once.
+pub fn applyOcclusion(self: *Window, hidden: bool) void {
+    const was = self.occluded;
+    self.occluded = hidden;
+    if (hidden) {
+        if (!was) log.debug("window hidden: panes stop presenting", .{});
+        self.setActiveTabVisible(false);
+        return;
+    }
+    if (!was) return;
+    log.debug("window revealed: panes present again", .{});
+    if (self.hwnd) |h| if (w32.IsIconic(h) != 0) return;
+    self.setActiveTabVisible(true);
+    self.layoutSplits();
 }
 
 pub fn selectTabIndex(self: *Window, idx: usize) void {
@@ -12800,6 +12827,16 @@ pub fn windowWndProc(
                 };
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
+
+        remote_session.WM_WTSSESSION_CHANGE => {
+            // Windows sends the real one to the app's message window, which
+            // registered for it (T1951). One that reaches a top-level window
+            // was posted by an acceptance script driving the test seam - the
+            // message window is not findable from another desktop - so hand
+            // it to the same handler.
+            window.app.onSessionChange(wparam);
+            return 0;
         },
 
         w32.WM_SETTINGCHANGE => {

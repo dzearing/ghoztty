@@ -1,10 +1,10 @@
 {
     "guard":  "persistence-flag",
     "script":  "test/win32/persistence-flag.ps1",
-    "generated":  "2026-10-14T20:55:11-07:00",
-    "commit":  "8d74a91df",
+    "generated":  "2026-10-14T22:53:28-07:00",
+    "commit":  "7c2d53f59",
     "uncommitted":  [
-                        "test/win32/release-symbols.ps1"
+                        "test/win32/remote-effects.ps1"
                     ],
     "files":  {
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
@@ -271,6 +271,7 @@
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",
                   "test/win32/release-symbols.ps1":  "d530f73700139554c08af65fd9a0031160711c21d2e5903ae8b522019c54429b",
                   "test/win32/remote-disconnect.ps1":  "141b5a35d6c9540813b75eb09729b64adc9a9f3a5607e12dc721729d132a0391",
+                  "test/win32/remote-effects.ps1":  "d2ab829dbdeb0fdbcd539ac035e0914c585eeb631b3ce8a44a98cc22f0ced1a7",
                   "test/win32/remote-inherit.ps1":  "51c3fd032cd9d40bd1318c0fe69c670dab65756103b4cf02cffe836c9009089a",
                   "test/win32/remote-pill.ps1":  "dc5d1cdcebbe758f4ffdad2200fa2fb8b0924f637992132f5e55084b831dac39",
                   "test/win32/remote-pill-relay-name.ps1":  "a0f08221e9ebcae3af2fb7281d92d5350a549957ba50c72c08fba136d833c996",

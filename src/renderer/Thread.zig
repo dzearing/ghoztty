@@ -8,6 +8,7 @@ const xev = @import("../global.zig").xev;
 const crash = @import("../crash/main.zig");
 const internal_os = @import("../os/main.zig");
 const rendererpkg = @import("../renderer.zig");
+const low_power = @import("low_power.zig");
 const apprt = @import("../apprt.zig");
 const configpkg = @import("../config.zig");
 const BlockingQueue = @import("../datastruct/main.zig").BlockingQueue;
@@ -108,6 +109,11 @@ force_frame: std.atomic.Value(bool) = .init(true),
 /// skipped, so an input the change test does not know about can leave the
 /// screen stale for at most `max_skip_ns`, never until the next change.
 last_present: ?std.time.Instant = null,
+
+/// When this thread last built a frame (`updateFrame`), presented or not. The
+/// low-power cap (T1951) is measured from here, so a pane whose output changes
+/// nothing on screen - a title spinner - still builds at most at the cap.
+last_build: ?std.time.Instant = null,
 
 flags: packed struct {
     /// This is true when a blinking cursor should be visible and false
@@ -639,6 +645,17 @@ fn wakeupCallback(
     t.drainMailbox() catch |err|
         log.err("error draining mailbox err={}", .{err});
 
+    // In low-power mode (T1951) output inside the pane's present cap waits
+    // for the cap rather than building a frame now: the timer below renders
+    // once with everything that arrived in between. A forced frame (resize,
+    // focus, config, a repaint) goes straight through.
+    if (t.lowPowerDelayMs()) |ms| {
+        if (t.render_c.state() != .active) {
+            t.render_h.run(&t.loop, &t.render_c, ms, Thread, t, renderCallback);
+        }
+        return .rearm;
+    }
+
     // Render immediately
     _ = renderCallback(t, undefined, undefined, {});
 
@@ -717,6 +734,8 @@ fn renderCallback(
         return .disarm;
     };
 
+    t.last_build = std.time.Instant.now() catch null;
+
     // Update our frame data
     t.renderer.updateFrame(
         t.state,
@@ -738,6 +757,19 @@ fn renderCallback(
     return .disarm;
 }
 
+/// How long to hold a frame woken by output, or null to build it now (T1951).
+fn lowPowerDelayMs(t: *Thread) ?u64 {
+    const on = low_power.active();
+    if (!on) return null;
+    const forced = t.force_frame.load(.acquire);
+    const since: ?u64 = since: {
+        const l = t.last_build orelse break :since null;
+        const n = std.time.Instant.now() catch break :since null;
+        break :since n.since(l);
+    };
+    return low_power.deferMs(on, t.flags.focused, forced, since);
+}
+
 /// How long an unchanged frame may go unpresented (T1935).
 const max_skip_ns: u64 = 500 * std.time.ns_per_ms;
 
@@ -747,7 +779,10 @@ const max_skip_ns: u64 = 500 * std.time.ns_per_ms;
 fn shouldPresent(t: *Thread, now: ?std.time.Instant) bool {
     const forced = t.force_frame.swap(false, .acq_rel);
     if (comptime !@hasField(rendererpkg.Renderer, "frame_changed")) return true;
-    return presentDecision(t.renderer.frame_changed, forced, t.last_present, now);
+    // In low-power mode an unfocused pane presents only what changed or was
+    // forced: the safety bound is a frame nobody asked for (T1951).
+    const bounded = low_power.safetyBound(low_power.active(), t.flags.focused);
+    return presentDecision(t.renderer.frame_changed, forced, t.last_present, now, bounded);
 }
 
 /// The pure half of `shouldPresent`.
@@ -756,8 +791,10 @@ fn presentDecision(
     forced: bool,
     last: ?std.time.Instant,
     now: ?std.time.Instant,
+    bounded: bool,
 ) bool {
     if (changed or forced) return true;
+    if (!bounded) return false;
     const l = last orelse return true;
     const n = now orelse return true;
     return n.since(l) >= max_skip_ns;
@@ -768,12 +805,16 @@ test "presentDecision: an unchanged frame is skipped, within the bound" {
     const t0 = try std.time.Instant.now();
     // The same instant: no time has passed, so only a change or a force
     // presents. (Waiting out `max_skip_ns` here would make a slow test.)
-    try testing.expect(!presentDecision(false, false, t0, t0));
-    try testing.expect(presentDecision(true, false, t0, t0));
-    try testing.expect(presentDecision(false, true, t0, t0));
+    try testing.expect(!presentDecision(false, false, t0, t0, true));
+    try testing.expect(presentDecision(true, false, t0, t0, true));
+    try testing.expect(presentDecision(false, true, t0, t0, true));
     // Nothing presented yet, or no clock: always present.
-    try testing.expect(presentDecision(false, false, null, t0));
-    try testing.expect(presentDecision(false, false, t0, null));
+    try testing.expect(presentDecision(false, false, null, t0, true));
+    try testing.expect(presentDecision(false, false, t0, null, true));
+    // Unbounded (a low-power unfocused pane, T1951): only change or force.
+    try testing.expect(!presentDecision(false, false, null, t0, false));
+    try testing.expect(presentDecision(true, false, null, t0, false));
+    try testing.expect(presentDecision(false, true, null, t0, false));
 }
 
 fn cursorTimerCallback(

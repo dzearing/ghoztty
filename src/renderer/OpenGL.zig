@@ -11,6 +11,7 @@ const font = @import("../font/main.zig");
 const configpkg = @import("../config.zig");
 const rendererpkg = @import("../renderer.zig");
 const gl_report = @import("gl_report.zig");
+const low_power = @import("low_power.zig");
 const gl_loader = @import("gl_loader.zig");
 const gl_robust = @import("gl_robust.zig");
 const build_config = @import("../build_config.zig");
@@ -263,6 +264,14 @@ fn prepareContext(getProcAddress: anytype) !void {
     report.major = major;
     report.minor = minor;
     gl_report.record(report);
+
+    // A renderer that rasterizes on the CPU turns on low-power rendering for
+    // the whole app (T1951): every present there is CPU time.
+    low_power.setSoftware(
+        low_power.isSoftwareRenderer(report.renderer.slice(), report.vendor.slice()),
+        report.renderer.slice(),
+        report.vendor.slice(),
+    );
 
     log.info("loaded OpenGL {}.{} renderer=\"{s}\" vendor=\"{s}\" impl={s}", .{
         major,

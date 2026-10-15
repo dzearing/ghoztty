@@ -112,6 +112,10 @@ core_surface: CoreSurface = undefined,
 /// core_surface is ready — handlers must check this flag.
 core_surface_ready: bool = false,
 
+/// The visibility last forwarded to the core (`setVisible`, T1951); null until
+/// the first one. The renderer starts out visible.
+reported_visible: ?bool = null,
+
 /// The user answered **Disconnect** for this pane (T1390): the window closes
 /// but its agent session must stay alive and resumable, so every later
 /// CLOSE-on-free marking is refused. See `session_disconnect.DetachPin` for the
@@ -1326,6 +1330,11 @@ pub fn setVisible(self: *Surface, visible: bool) void {
         if (self.link_preview_hwnd) |h| _ = w32.ShowWindow(h, w32.SW_HIDE);
     }
     if (!self.core_surface_ready) return;
+    // Forward changes only (T1951): the visibility poll re-asserts a hidden
+    // window's state four times a second, and every forward wakes the
+    // renderer to build a frame it then does not draw.
+    if (self.reported_visible == visible) return;
+    self.reported_visible = visible;
     self.core_surface.occlusionCallback(visible) catch |err| {
         log.warn("occlusionCallback failed err={}", .{err});
     };

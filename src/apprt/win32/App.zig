@@ -78,6 +78,10 @@ const install_maintenance = @import("install_maintenance.zig");
 const install_restart = @import("install_restart.zig");
 const utf16_text = @import("utf16_text.zig");
 const tray_notify = @import("tray_notify.zig");
+const remote_session = @import("remote_session.zig");
+const occlusion = @import("occlusion.zig");
+const low_power = @import("../../renderer/low_power.zig");
+const remote_effects = configpkg.remote_effects;
 const msg_timer = @import("msg_timer.zig");
 const orphan_notify = @import("orphan_notify.zig");
 const exit_reason = @import("exit_reason.zig");
@@ -303,6 +307,10 @@ const UPDATE_RECHECK_TIMER_ID: usize = msg_timer.update_recheck;
 
 /// The coalesced all-windows sidebar refresh (T1935). See `schedulePaneScopes`.
 const PANE_SCOPES_TIMER_ID: usize = msg_timer.pane_scopes;
+const VISIBILITY_TIMER_ID: usize = msg_timer.visibility;
+/// How often the visibility poll runs (T1951). Revealing a window that was
+/// covered shows its last frame for at most this long before it redraws.
+const VISIBILITY_POLL_MS: u32 = 250;
 
 /// One-shot manual check armed by GHOZTTY_UPDATE_MANUAL_MS (Debug only,
 /// T1563). See where it is armed for why the acceptance script needs it.
@@ -371,6 +379,9 @@ core_app: *CoreApp,
 /// The configuration for the application. Loaded during init and
 /// updated in response to config_change actions.
 config: Config,
+
+/// The session is locked or disconnected, so no window can be seen (T1951).
+session_hidden: bool = false,
 
 /// A message-only window used to receive WM_APP_WAKEUP.
 /// This is not a visible window; it just participates in the message loop.
@@ -756,6 +767,13 @@ pub fn init(
     };
     errdefer config.deinit();
 
+    // Over Remote Desktop, start with the expensive effects off and the
+    // renderers in low-power mode (T1951). A software renderer is only known
+    // once the first GL context exists; the visibility poll picks it up.
+    const remote_at_start = remote_session.isRemote();
+    low_power.setRemote(remote_at_start);
+    applyRemoteEffects(alloc, &config, remote_at_start);
+
     // Create a brush matching the configured background color so that
     // any exposed window area during resize matches the terminal
     // background, making the flash invisible.
@@ -912,6 +930,11 @@ pub fn init(
 
     // Store self pointer in msg_hwnd's GWLP_USERDATA for msgWndProc access
     _ = w32.SetWindowLongPtrW(self.msg_hwnd.?, w32.GWLP_USERDATA, @bitCast(@intFromPtr(self)));
+
+    // T1951: hear the session move between the console and Remote Desktop,
+    // and poll who can see each window (no message says "covered").
+    remote_session.register(self.msg_hwnd.?);
+    _ = w32.SetTimer(self.msg_hwnd.?, VISIBILITY_TIMER_ID, VISIBILITY_POLL_MS, null);
 
     // T992: every clipboard open in this process claims this window. It is the
     // one HWND with the right lifetime — a surface can be freed while a copy is
@@ -1201,6 +1224,96 @@ fn performSurfaceReap(hwnd: w32.HWND) void {
 /// expand) so the terminal band under the strip grows/shrinks to match.
 /// Resolves the Surface via GWLP_USERDATA with the same guard as
 /// surfaceWndProc; silently no-ops for anything else.
+/// Swap in the remote-session defaults when `remote` (T1951; see
+/// `config/remote_effects.zig`) and remember which state the config now
+/// reflects. Every config this app loads from disk goes through here, so the
+/// effects follow the session and a value the user set by name is left alone.
+fn applyRemoteEffects(alloc: Allocator, config: *Config, reduce: bool) void {
+    remote_session.setReduced(reduce);
+    const applied = remote_effects.apply(alloc, config, reduce) catch |err| {
+        log.warn("low-power: could not turn the effects off err={}", .{err});
+        return;
+    };
+    if (!reduce) return;
+    var buf: [256]u8 = undefined;
+    var w: std.Io.Writer = .fixed(&buf);
+    remote_effects.formatApplied(applied, &w) catch {};
+    log.info("low-power: visual effects off (swapped: {s})", .{w.buffered()});
+}
+
+/// Should the expensive effects be off? Over Remote Desktop, or when the GL
+/// the panes draw with is rasterized on the CPU (T1951).
+fn effectsReducedWanted() bool {
+    return remote_session.isRemote() or low_power.isSoftware();
+}
+
+/// `WM_WTSSESSION_CHANGE`: the session connected, disconnected, locked or
+/// unlocked. Nobody can see a locked or disconnected session, so every window
+/// stops presenting until it comes back; then re-check low-power mode.
+pub fn onSessionChange(self: *App, code: usize) void {
+    if (remote_session.sessionHiddenAfter(code)) |hidden| {
+        if (hidden != self.session_hidden) {
+            log.info("session {s}: windows {s}", .{
+                remote_session.eventName(code),
+                if (hidden) "stop presenting" else "present again",
+            });
+        }
+        self.session_hidden = hidden;
+    }
+    self.refreshLowPower();
+    self.pollVisibility();
+}
+
+/// The visibility poll (every `VISIBILITY_POLL_MS`, and on session changes):
+/// low-power mode follows the session and the renderer, and each window's
+/// panes present only while somebody can see it.
+pub fn pollVisibility(self: *App) void {
+    self.refreshLowPower();
+    for (self.windows.items) |w| {
+        const h = w.hwnd orelse continue;
+        const hidden = self.session_hidden or occlusion.windowHidden(h) != .visible;
+        w.applyOcclusion(hidden);
+    }
+}
+
+/// Bring the remote input of low-power mode, and the effects-off config, in
+/// line with what the session and the renderer say now. Re-reads the config
+/// and pushes it to every window and pane - live, no restart - only when the
+/// effects decision changes, and says so once.
+pub fn refreshLowPower(self: *App) void {
+    const remote = remote_session.isRemote();
+    const remote_changed = remote != low_power.isRemote();
+    low_power.setRemote(remote);
+    const want = remote or low_power.isSoftware();
+    if (want == remote_session.reduced()) return;
+    log.info("low-power: visual effects {s} ({s})", .{
+        if (want) "off" else "back on",
+        if (remote) "remote session" else if (low_power.isSoftware()) "software renderer" else "console",
+    });
+    const reduce = want;
+
+    const alloc = self.core_app.alloc;
+    var new_config = Config.load(alloc) catch |err| {
+        log.err("low-power: failed to reload config err={}", .{err});
+        return;
+    };
+    defer new_config.deinit();
+    applyRemoteEffects(alloc, &new_config, reduce);
+    self.core_app.updateConfig(self, &new_config) catch |err| {
+        log.err("low-power: config update error err={}", .{err});
+    };
+    // config_change re-laid every window out; the sidebar's shimmer reads the
+    // motion switch at paint, so ask it for one.
+    for (self.windows.items) |w| if (w.sidebar) |sb| sb.repaint();
+
+    // Say so on a live session switch only: a machine with no GPU is found
+    // to be one on every launch, and a balloon each time is noise.
+    if (remote_changed) {
+        const notice = remote_session.noticeText(reduce, remote);
+        self.showDesktopNotificationText(notice.title, notice.body);
+    }
+}
+
 /// Does the user want in-window motion at all? `SPI_GETCLIENTAREAANIMATION`
 /// is the OS switch behind Settings ▸ Accessibility ▸ Visual effects ▸
 /// "Animation effects" ("animate controls and elements inside windows"), and
@@ -1213,6 +1326,9 @@ fn performSurfaceReap(hwnd: w32.HWND) void {
 /// Fails OPEN — an SPI call that errors leaves animations on, which is the
 /// default every Windows install ships with.
 pub fn clientAreaAnimationsEnabled() bool {
+    // Over Remote Desktop every animated frame is a frame sent over the wire
+    // (T1951): motion stops there, the same as with the setting off.
+    if (remote_session.reduced()) return false;
     var enabled: i32 = 1;
     if (w32.SystemParametersInfoW(
         w32.SPI_GETCLIENTAREAANIMATION,
@@ -2187,6 +2303,7 @@ pub fn terminate(self: *App) void {
         // T992: stop handing this window out as the clipboard owner before it
         // is destroyed — a stale handle there would fail every later open.
         clipboard_open.setDefaultOwner(null);
+        remote_session.unregister(hwnd);
         // Clear GWLP_USERDATA before destroying so msgWndProc sees
         // userdata=0 and falls through to DefWindowProc for any
         // messages during destruction (e.g. WM_DESTROY).
@@ -8150,6 +8267,7 @@ pub fn performAction(
                     return true;
                 };
                 defer new_config.deinit();
+                applyRemoteEffects(alloc, &new_config, effectsReducedWanted());
                 self.core_app.updateConfig(self, &new_config) catch |err| {
                     log.err("config update error: {}", .{err});
                 };
@@ -11886,6 +12004,16 @@ fn msgWndProc(
         // message (its work might land after tick already drained).
         app.wakeup_pending.store(false, .release);
         app.tick();
+        return 0;
+    }
+
+    if (msg == remote_session.WM_WTSSESSION_CHANGE) {
+        app.onSessionChange(wparam);
+        return 0;
+    }
+
+    if (msg == w32.WM_TIMER and wparam == VISIBILITY_TIMER_ID) {
+        app.pollVisibility();
         return 0;
     }
 

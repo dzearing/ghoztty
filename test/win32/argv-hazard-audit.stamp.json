@@ -1,13 +1,11 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-14T20:58:12-07:00",
-    "commit":  "8d74a91df",
+    "generated":  "2026-10-14T22:56:38-07:00",
+    "commit":  "7c2d53f59",
     "uncommitted":  [
-                        "scripts/fetch-symbols.ps1",
                         "scripts/guard-due.ps1",
-                        "scripts/publish-windows-release.ps1",
-                        "test/win32/release-symbols.ps1"
+                        "test/win32/remote-effects.ps1"
                     ],
     "files":  {
                   "scripts/agent-stamp-inputs.ps1":  "44e9b28fcd5d1d597cce9e497b5c9db1a71e2d68de9eae6b29cfd4b16a5791cf",
@@ -38,7 +36,7 @@
                   "scripts/go-loop-lock.ps1":  "eda6fc5f2bc851e11a9718ddbdd529d9fb9a5ce06637703e93800f37ccc0a2bb",
                   "scripts/go-loop-pane-probe.ps1":  "2c2e30fa938449d405a1a0e9b7eafd44cbf9a1467468b76513bb4fd0417baad4",
                   "scripts/go-loop-watchdog.ps1":  "eded44630cdcceca55b3fdd60c7177884134799dfdace6253dded5d9756262da",
-                  "scripts/guard-due.ps1":  "fba96a27edc7967d461731e849b1570101072dff473d82c31bec22e7600685d4",
+                  "scripts/guard-due.ps1":  "ce670306727fcefbb32b1e0c3059fd2053b02bb290713fb0d50825fad8a9613a",
                   "scripts/harness-floor.ps1":  "a699222c45e21b742bc116c7b28b15dc3498a5550c213ce320bc299f652a673e",
                   "scripts/hw-integrity-stress.ps1":  "c95abd5e0a5137b7daf7292333f3cd661e14b3f9fef83efbdc3cf73dae0bed4e",
                   "scripts/install-ownership.ps1":  "bb3d63391db4f48257b56ba9c1235e177a66f2c3c20baae8017a903aca885d2c",
@@ -412,6 +410,7 @@
                   "test/win32/release-parity.ps1":  "92babe2c0e154c766dd02f9578073f6a04ec281ee706aa8a8dc83c505d579f9f",
                   "test/win32/release-symbols.ps1":  "d530f73700139554c08af65fd9a0031160711c21d2e5903ae8b522019c54429b",
                   "test/win32/remote-disconnect.ps1":  "141b5a35d6c9540813b75eb09729b64adc9a9f3a5607e12dc721729d132a0391",
+                  "test/win32/remote-effects.ps1":  "d2ab829dbdeb0fdbcd539ac035e0914c585eeb631b3ce8a44a98cc22f0ced1a7",
                   "test/win32/remote-inherit.ps1":  "51c3fd032cd9d40bd1318c0fe69c670dab65756103b4cf02cffe836c9009089a",
                   "test/win32/remote-pill.ps1":  "dc5d1cdcebbe758f4ffdad2200fa2fb8b0924f637992132f5e55084b831dac39",
                   "test/win32/remote-pill-relay-name.ps1":  "a0f08221e9ebcae3af2fb7281d92d5350a549957ba50c72c08fba136d833c996",

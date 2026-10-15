@@ -1,0 +1,16 @@
+{
+    "guard":  "remote-effects",
+    "script":  "test/win32/remote-effects.ps1",
+    "generated":  "2026-10-14T22:54:42-07:00",
+    "commit":  "7c2d53f59",
+    "uncommitted":  [
+                        "src/apprt/win32/remote_session.zig",
+                        "src/config/remote_effects.zig",
+                        "test/win32/remote-effects.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/remote_session.zig":  "a1d54cf9f433cd51ce4a6cb47c6c542cf35c5a68f2462ad5ca28deb3d96e65ec",
+                  "src/config/remote_effects.zig":  "c0ec54c78313f447144e77977ff8eeaa8708784de20c2aebeaac06371254442d",
+                  "test/win32/remote-effects.ps1":  "d2ab829dbdeb0fdbcd539ac035e0914c585eeb631b3ce8a44a98cc22f0ced1a7"
+              }
+}
