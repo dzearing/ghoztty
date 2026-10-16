@@ -123,6 +123,15 @@ $script:ApMainPatterns = [ordered]@{
     'Remove-Item\s+Env:\\?GHOZTTY_AGENT_INSTANCE|\$env:GHOZTTY_AGENT_INSTANCE\s*=\s*(\$null|''''|"")' = 'drops the agent lineage the worker gave it'
 }
 
+# T1994: which of those MAIN reasons mean "cannot run under an agent lineage at
+# all". All three do: a lineage moves the agent state dir AND the layout
+# manifest (`local-agent-debug-<inst>`, `session-layout-debug-<inst>`), and the
+# third drops the lineage outright. In the literal checkout that is harmless -
+# main runs under the box's default debug lineage - but in another checkout
+# (lane B) the default debug lineage is LANE A's agent, so such a script is
+# refused there rather than run against it. Keys of $script:ApMainPatterns.
+$script:ApLineageHostileKeys = @($script:ApMainPatterns.Keys)
+
 function Get-ApCodeText {
     <#
     .SYNOPSIS
@@ -202,9 +211,19 @@ function Get-AcceptanceScriptClass {
         if ($code -match "(?i)$k") { $exclusive += $script:ApExclusivePatterns[$k] }
     }
     $main = @()
+    $unscoped = @()
     foreach ($k in $script:ApMainPatterns.Keys) {
-        if ($code -match "(?i)$k") { $main += $script:ApMainPatterns[$k] }
+        if ($code -match "(?i)$k") {
+            $main += $script:ApMainPatterns[$k]
+            if ($script:ApLineageHostileKeys -contains $k) { $unscoped += $script:ApMainPatterns[$k] }
+        }
     }
+    # A pattern can match fixture TEXT in a script that never starts an agent
+    # (this runner's own harness writes 'local-agent-debug' into fixtures). Such
+    # a script declares `# @lineage-safe - <why>` and stays MAIN but is not
+    # refused in another checkout. The reason is mandatory: a bare marker is not
+    # a claim anybody checked.
+    if ($raw -match '(?m)^[ \t]*#[ \t]*@lineage-safe[ \t]+-[ \t]*\S') { $unscoped = @() }
     if ($code -match "(?i)$lit(?![\w.-])") { $main += "spells the repo's literal path ($RepoLiteral) outside an injectable parameter" }
 
     $class = if ($exclusive.Count -gt 0) { 'exclusive' } elseif ($main.Count -gt 0) { 'main' } else { 'parallel' }
@@ -215,6 +234,7 @@ function Get-AcceptanceScriptClass {
         Reasons = @($exclusive + $main)
         Inject  = $inject
         Pinned  = $pinned
+        Unscoped = @($unscoped)
     }
 }
 
@@ -443,6 +463,65 @@ function Get-AcceptanceWorkerEnv {
     }
 }
 
+function Get-AcceptanceMainEnv {
+    <#
+    .SYNOPSIS
+    The environment a NON-worker run (main, exclusive, serial, confirm) gets on
+    top of the caller's: nothing in the literal checkout, its own agent lineage
+    in any other (T1994).
+
+    .DESCRIPTION
+    The app pipe is already private per script (a run-unique
+    GHOZTTY_PIPE_SUFFIX), but the local agent's pipe, guard and state dir are
+    keyed by build mode plus GHOZTTY_AGENT_INSTANCE - and every debug build on
+    the box, lane A's and lane B's alike, derives the SAME default. A lane-B
+    persistence run therefore dialed lane A's debug agent, built from another
+    tree, and adopted (or was refused by) its sessions. A worker never had the
+    problem (Get-AcceptanceWorkerEnv mints a lineage); the phases that run from
+    -Repo itself did.
+
+    The literal checkout keeps the box's default lineage byte for byte - lane A
+    with one loop behaves exactly as it did - and a script that cannot honor a
+    lineage (Unscoped) is refused in the other checkout instead.
+    -Foreign is "this run's -Repo is not the literal one".
+    #>
+    param(
+        [Parameter(Mandatory = $true)][bool]$Foreign,
+        [int]$RunnerPid = $PID
+    )
+    if (-not $Foreign) { return [ordered]@{} }
+    return [ordered]@{ GHOZTTY_AGENT_INSTANCE = "apm-$RunnerPid" }
+}
+
+function Remove-ApLineageRunKeys {
+    <#
+    .SYNOPSIS
+    Delete the HKCU autostart values the given lineages may have written, both
+    spellings (`GhozttyAgent-<inst>`, `GhozttyAgent-debug-<inst>`). Returns the
+    count removed.
+
+    .DESCRIPTION
+    A lineage frees the agent to write its own Run value rather than clobber the
+    user's (T1168), and nothing else removes it once the run that minted the
+    lineage is over - here the runner minted it, so the runner removes it.
+    Deleting a value that was never written is a no-op.
+    #>
+    param([string[]]$Instances = @())
+    $sub = 'Software\Microsoft\Windows\CurrentVersion\Run'
+    $removed = 0
+    $k = $null
+    try { $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($sub, $true) } catch {}
+    if ($null -eq $k) { return 0 }
+    try {
+        foreach ($inst in @($Instances | Where-Object { $_ })) {
+            foreach ($n in @("GhozttyAgent-$inst", "GhozttyAgent-debug-$inst")) {
+                if ($null -ne $k.GetValue($n)) { $k.DeleteValue($n, $false); $removed++ }
+            }
+        }
+    } finally { $k.Close() }
+    return $removed
+}
+
 function Stop-ApWorkerProcess {
     <#
     .SYNOPSIS
@@ -548,8 +627,9 @@ function Invoke-AcceptanceRun {
             StaticClass = $cls.Class; Reasons = $cls.Reasons; Inject = $cls.Inject
             Timeout = $(if ($declared -gt 0) { $declared } else { $TimeoutSec })
         }
-        if ($foreign -and @($cls.Pinned).Count -gt 0) {
+        if ($foreign -and (@($cls.Pinned).Count -gt 0 -or @($cls.Unscoped).Count -gt 0)) {
             $item | Add-Member -NotePropertyName Pinned -NotePropertyValue @($cls.Pinned)
+            $item | Add-Member -NotePropertyName Unscoped -NotePropertyValue @($cls.Unscoped)
             $refusedItems += $item
         } else {
             [void]$queue.Add($item)
@@ -575,6 +655,12 @@ function Invoke-AcceptanceRun {
         }
     }
 
+    # T1994: and the phases that run from -Repo get a lineage of their own when
+    # -Repo is another checkout. Every lineage minted here is the runner's to
+    # clean up (Remove-ApLineageRunKeys, below).
+    $mainEnv = Get-AcceptanceMainEnv -Foreign $foreign
+    $minted = @($mainEnv['GHOZTTY_AGENT_INSTANCE']) + @($workers.Values | ForEach-Object { $_.Env['GHOZTTY_AGENT_INSTANCE'] })
+
     $results = New-Object System.Collections.ArrayList
     $stopped = $false
     foreach ($item in $refusedItems) {
@@ -582,7 +668,12 @@ function Invoke-AcceptanceRun {
         $row = [pscustomobject]@{
             Seq = $item.Seq; Name = $item.Name; Script = $item.Script; Args = $item.Args
             Class = $item.Class; Slot = 0; Phase = 'refused'; Kind = 'refused'
-            Line = "REFUSED in $Repo - its body resolves $RepoLiteral (another checkout's build), which no parameter can re-root: $(@($item.Pinned)[0])$(if (@($item.Pinned).Count -gt 1) { " (+$(@($item.Pinned).Count - 1) more)" })"
+            Line = $(if (@($item.Pinned).Count -gt 0) {
+                    "REFUSED in $Repo - its body resolves $RepoLiteral (another checkout's build), which no parameter can re-root: $(@($item.Pinned)[0])$(if (@($item.Pinned).Count -gt 1) { " (+$(@($item.Pinned).Count - 1) more)" })"
+                } else {
+                    # T1994: the default debug lineage here is the OTHER checkout's agent.
+                    "REFUSED in $Repo - it cannot run under its own agent lineage ($(@($item.Unscoped) -join '; ')), and the default debug lineage is $RepoLiteral's agent"
+                })
             ExitCode = -1; Started = $now; Ended = $now; Log = $null
         }
         & $OnResult $row | Out-Host
@@ -616,7 +707,8 @@ function Invoke-AcceptanceRun {
                 -Env $wk.Env -Unset @('GHOZTTY_IPC_SOCKET') -WorkingDirectory $wk.Root
         } else {
             $argList = @(& $addInject $item $Repo $argList)
-            $job = Start-ApJob -ScriptPath (Join-Path $Repo $item.Script) -ArgList $argList -LogBase $logBase -WorkingDirectory $Repo
+            $job = Start-ApJob -ScriptPath (Join-Path $Repo $item.Script) -ArgList $argList -LogBase $logBase `
+                -Env $mainEnv -WorkingDirectory $Repo
         }
         $job | Add-Member -NotePropertyName Item -NotePropertyValue $item
         $job | Add-Member -NotePropertyName Slot -NotePropertyValue $slot
@@ -714,6 +806,7 @@ function Invoke-AcceptanceRun {
             }
         }
     }
+    [void](Remove-ApLineageRunKeys -Instances $minted)
     return @($results)
 }
 

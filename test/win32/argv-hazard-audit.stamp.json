@@ -1,10 +1,10 @@
 {
     "guard":  "argv-hazard",
     "script":  "test/win32/argv-hazard-audit.ps1",
-    "generated":  "2026-10-16T07:23:12-07:00",
-    "commit":  "99ebd53f9",
+    "generated":  "2026-10-16T08:21:20-07:00",
+    "commit":  "d9575acaa",
     "uncommitted":  [
-                        "scripts/guard-due.ps1"
+                        "scripts/lib/AcceptanceParallel.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "f4efca8f46e8e810c9acb2b94d413d476e984f66956d36478b2185bf963edb46",
@@ -43,7 +43,7 @@
                   "scripts/launch-upgrade.ps1":  "b40fbe903eface94ada0064617d4371c35459af628fa8c26e894fb2df12bff92",
                   "scripts/ledger-dupes.ps1":  "925bdaab83d54c0917554c09d98a48f3fb90e26c6e1c89be2d2570d6dbb224e2",
                   "scripts/lib/AcceptanceFresh.ps1":  "6cca87511a61fdad80d2a407552895a85edd2134a0e0426cd6fa0f37ad055f8b",
-                  "scripts/lib/AcceptanceParallel.ps1":  "5c9103f80986f729b5eda7e64edcf038302289c3f9a2a76b5a8e96a4de6e3c5b",
+                  "scripts/lib/AcceptanceParallel.ps1":  "fe271fdabbf2487f5c0e71d7ef8aafe4742b59306284d5c99f00687d8b571cfd",
                   "scripts/lib/BuildCache.ps1":  "80ea732ee0458d094bf9eec6ae24d8260291db7f0211bfd2d048f1bb7fa2a20e",
                   "scripts/lib/CacheHeal.ps1":  "6cfed7ef0813d88fdbe457354757834a6e557c2172437f4d5022de79656f22f3",
                   "scripts/lib/CommitHeadroom.ps1":  "d0b9c51ed47e8c8fb890aaf75789ef824d5f6f4b4f906b942a6e9d0ad1873223",

@@ -50,6 +50,12 @@
        checkout it runs (positive control). The classifier's literal is the
        fixed D:\git\ghoztty, a sibling `<literal>-b` path is neither pinned nor
        injected, and a job that passes its own -Exe keeps it.
+       T1994 (G9-G13): in that other checkout every run - worker or not - has
+       an agent lineage of its own, because the box's default debug lineage is
+       lane A's agent; a script that hardcodes the unscoped agent state dir
+       cannot honor one and is refused there (never started), while in the
+       literal checkout it runs under the default (positive control); the
+       runner removes the Run-key values its lineages may have written.
 
   The "app" here is a renamed copy of ping.exe started with no window, and the
   scripts are fixtures written into a throwaway repo under %TEMP%, so the run
@@ -58,6 +64,7 @@
   Prints a single ALL PASS / N FAILURE(S) line, like every other script here.
   ASCII-only by design (PS 5.1 on this box mangles non-ASCII on rewrite).
 #>
+# @lineage-safe - 'local-agent-debug' appears only in fixture text; the "app" is a ping.exe copy and no agent ever starts
 [CmdletBinding()]
 param()
 
@@ -420,12 +427,15 @@ function Save-Record([string]$verdictKind, [int]$others) {
     $gParam = "param([string]`$Exe = '$aExe')`n"
     $gx = [ordered]@{
         'gpar'  = $gParam + $prologue + "Save-Record pass 0`n'ALL PASS'`n"
-        'gmain' = $gParam + $prologue + "`$d = 'local-agent-debug'`nSave-Record pass 0`n'ALL PASS'`n"
+        'gmain' = $gParam + $prologue + "`$t = '$litA\src\main.zig:9:1: error'`nSave-Record pass 0`n'ALL PASS'`n"
+        'gagent' = $gParam + $prologue + "`$d = 'local-agent-debug'`nSet-Content -LiteralPath (Join-Path `$env:AP_FIXTURE_LOG 'gagent-ran.txt') -Value ran`nSave-Record pass 0`n'ALL PASS'`n"
         'gexcl' = "# @parallel-unsafe`n" + $gParam + $prologue + "Save-Record pass 0`n'ALL PASS'`n"
         'gred'  = $gParam + $prologue + "Save-Record fail 0`n'1 FAILURE(S)'`nexit 1`n"
         'gpin'  = $gParam + "`$repo = '$litA'`nSet-Content -LiteralPath (Join-Path `$env:AP_FIXTURE_LOG 'gpin-ran.txt') -Value ran`n'ALL PASS'`n"
         'gself' = "`$repo = '$fake'`nSet-Content -LiteralPath (Join-Path `$env:AP_FIXTURE_LOG 'gself-ran.txt') -Value ran`n'ALL PASS'`n"
         'gdata' = $gParam + "`$t = '$litA\src\main.zig:9:1: error'`n`$u = '$litA' # @repo-literal-fixture`n`$s = '$litA-b\x'`n'ALL PASS'`n"
+        'gsafe' = "# @lineage-safe - fixture text only`n`$d = 'local-agent-debug'`n'ALL PASS'`n"
+        'gbare' = "# @lineage-safe`n`$d = 'local-agent-debug'`n'ALL PASS'`n"
         'gsib'  = "param([string]`$Exe = '$litA-b\zig-out\bin\ghoztty.exe')`n'ALL PASS'`n"
         'gdef'  = "param([string]`$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe')`n'ALL PASS'`n"
     }
@@ -455,7 +465,7 @@ function Save-Record([string]$verdictKind, [int]$others) {
     Check 'G4 negative control: run with no arguments, the fixture''s -Exe is lane A''s' `
         ($bare.Count -eq 1 -and $bare[0].exe -eq $aExe) ("exe=$($bare[0].exe)")
 
-    $gJobs = @('gpar', 'gmain', 'gexcl', 'gred', 'gpin') | ForEach-Object { [pscustomobject]@{ Script = "test\win32\$_.ps1"; Args = '' } }
+    $gJobs = @('gpar', 'gmain', 'gexcl', 'gred', 'gpin', 'gagent') | ForEach-Object { [pscustomobject]@{ Script = "test\win32\$_.ps1"; Args = '' } }
     foreach ($wd in 4, 1) {
         $gr = @(Invoke-AcceptanceRun -Repo $fake -Jobs $gJobs -Width $wd -LogDir (Join-Path $fixLog "g$wd") -TimeoutSec 120 -RepoLiteral $litA)
         $recsG = @(& $readRecs)
@@ -470,7 +480,42 @@ function Save-Record([string]$verdictKind, [int]$others) {
             ($pinRow.Count -eq 1 -and $pinRow[0].Kind -eq 'refused' -and $pinRow[0].Line -match 'REFUSED.*line 2' -and
             -not (Test-Path (Join-Path $fixLog 'gpin-ran.txt')) -and $fin.Count -eq 1 -and $fin[0].Kind -eq 'refused' -and
             @(Test-AcceptanceOverlap -Results $gr).Count -eq 0) ("rows=$($pinRow.Count) kind=$($pinRow[0].Kind) line=$($pinRow[0].Line)")
+        # T1994: the default debug lineage in another checkout is LANE A's agent.
+        $agRow = @($gr | Where-Object { $_.Name -eq 'gagent.ps1' })
+        Check "G9 width ${wd}: a script hardcoding the unscoped agent state dir is refused here - never started, scored red" `
+            ($agRow.Count -eq 1 -and $agRow[0].Kind -eq 'refused' -and $agRow[0].Line -match 'cannot run under its own agent lineage' -and
+            -not (Test-Path (Join-Path $fixLog 'gagent-ran.txt'))) ("rows=$($agRow.Count) kind=$($agRow[0].Kind) line=$($agRow[0].Line)")
+        $noInst = @($recsG | Where-Object { [string]$_.inst -notmatch '^(apm|apw\d+)-\d+$' })
+        Check "G10 width ${wd}: every run from this checkout - worker or not - had an agent lineage of its own (none on the box default)" `
+            ($recsG.Count -eq $want -and $noInst.Count -eq 0) ("lineages=" + (($recsG | ForEach-Object { "$($_.name)=$($_.inst)" }) -join ' '))
     }
+    $ownJobs = @('gagent') | ForEach-Object { [pscustomobject]@{ Script = "test\win32\$_.ps1"; Args = '' } }
+    $go = @(Invoke-AcceptanceRun -Repo $fake -Jobs $ownJobs -Width 1 -LogDir (Join-Path $fixLog 'gown') -TimeoutSec 120 -RepoLiteral $fake)
+    $or = @(& $readRecs)
+    Check 'G11 positive control: in the literal checkout the same script runs, under the box default lineage (lane A unchanged)' `
+        ($go.Count -eq 1 -and $go[0].Kind -eq 'pass' -and $or.Count -eq 1 -and -not $or[0].inst) ("kind=$($go[0].Kind) $($go[0].Line) inst=$($or[0].inst)")
+    Remove-Item -LiteralPath (Join-Path $fixLog 'gagent-ran.txt') -ErrorAction SilentlyContinue
+    $csafe = Get-AcceptanceScriptClass -Path (& $gpath 'gsafe') -RepoLiteral $litA
+    $cbare = Get-AcceptanceScriptClass -Path (& $gpath 'gbare') -RepoLiteral $litA
+    $cag = Get-AcceptanceScriptClass -Path (& $gpath 'gagent') -RepoLiteral $litA
+    Check 'G14 a reasoned # @lineage-safe clears the refusal (still main); a bare marker does not' `
+        (@($cag.Unscoped).Count -eq 1 -and @($csafe.Unscoped).Count -eq 0 -and $csafe.Class -eq 'main' -and @($cbare.Unscoped).Count -eq 1) `
+        ("gagent=[$(@($cag.Unscoped) -join ';')] gsafe=[$(@($csafe.Unscoped) -join ';')]/$($csafe.Class) gbare=[$(@($cbare.Unscoped) -join ';')]")
+    $mEnv = Get-AcceptanceMainEnv -Foreign $true -RunnerPid 4242
+    $lEnv = Get-AcceptanceMainEnv -Foreign $false
+    Check 'G12 the non-worker lineage is minted only for another checkout, run-unique, inside the 24-char cap' `
+        ($mEnv['GHOZTTY_AGENT_INSTANCE'] -eq 'apm-4242' -and $lEnv.Count -eq 0) ("foreign=$($mEnv['GHOZTTY_AGENT_INSTANCE']) literal-count=$($lEnv.Count)")
+    # The runner removes what its lineages may have left in the Run key (T1168's
+    # leak, for the lineages the RUNNER mints). A pid-unique value, planted here.
+    $rkSub = 'Software\Microsoft\Windows\CurrentVersion\Run'
+    $rkInst = "aptest$PID"
+    $rk = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($rkSub, $true)
+    try { $rk.SetValue("GhozttyAgent-debug-$rkInst", 'C:
+onexistent\ghoztty-agent.exe') } finally { $rk.Close() }
+    $rkGone = Remove-ApLineageRunKeys -Instances @($rkInst, $null)
+    $rk = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($rkSub, $false)
+    try { $rkLeft = $rk.GetValue("GhozttyAgent-debug-$rkInst") } finally { $rk.Close() }
+    Check 'G13 a runner-minted lineage''s autostart value is removed at the end (planted, then gone)' ($rkGone -eq 1 -and $null -eq $rkLeft) ("removed=$rkGone left=$rkLeft")
     $gs = @(Invoke-AcceptanceRun -Repo $fake -Jobs @([pscustomobject]@{ Script = 'test\win32\gself.ps1'; Args = '' }) -Width 1 -LogDir (Join-Path $fixLog 'gself') -TimeoutSec 120 -RepoLiteral $fake)
     Check 'G7 positive control: a script pinned to the checkout it runs from is not refused' `
         ($gs.Count -eq 1 -and $gs[0].Kind -eq 'pass' -and (Test-Path (Join-Path $fixLog 'gself-ran.txt'))) ("kind=$($gs[0].Kind) $($gs[0].Line)")
