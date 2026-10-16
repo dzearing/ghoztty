@@ -1,12 +1,11 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-16T07:23:17-07:00",
-    "commit":  "99ebd53f9",
+    "generated":  "2026-10-16T10:01:43-07:00",
+    "commit":  "545aa44e1",
     "uncommitted":  [
-                        "src/apprt/win32/job_object.zig",
-                        "src/apprt/win32/LocalAgent.zig",
-                        "src/remote/agent/main.zig"
+                        "src/os/log_gate.zig",
+                        "test/win32/seam-audit.registry.json"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -361,6 +360,7 @@
                   "src/os/kernel_info.zig":  "af3e484e231296b27ef7c2a76f4608c61a37bf5af01b968d3dbbf565d18de0e4",
                   "src/os/listening_pid.zig":  "931260af3ef2fbf2840abea3553cf79ca5d381fc03ccd1af9370b93613e91135",
                   "src/os/locale.zig":  "258581f92dcd6261444f528ecc1c29a6f8de23ffacebbec3b9d79aadcc9e3359",
+                  "src/os/log_gate.zig":  "f79dd88590f3265bb1a01e915f2489e76417d3c4af6f8cfa420661c0529432bc",
                   "src/os/log_rotate.zig":  "936b5078b87687926d5cb1bb135aad9b8e26f4741450ff294e7ae62a248c6b4f",
                   "src/os/log_stamp.zig":  "3473329b92837b3f42ca046a5733636846933794165b2f000ee1c416ab356756",
                   "src/os/mach.zig":  "c7f44fb3ba8e4b568cc098dddd9025e4b8ab1352905067b7d5c26f83705e9840",
@@ -492,6 +492,6 @@
                   "src/termio/Thread.zig":  "d2cd2a4fab35b32e02897f3b987e7bd74b467cda59e7bb3e6ffac5c2453bbeae",
                   "test/win32/lib/SeamAudit.ps1":  "209b551bd95a6e77fbd4c47f40dd4cd8401b81b6c43503acd9ca77534c171b82",
                   "test/win32/seam-audit.ps1":  "e7ef6b8614ad022f48f0cfa94c7183270545ba2d3f29fc2e0b14669429e6c586",
-                  "test/win32/seam-audit.registry.json":  "2ee675c18d84967b97a4e279ee358230bd0bb6df1009850f2c926544233eb993"
+                  "test/win32/seam-audit.registry.json":  "b8fd9ac512fc988f98dcd6b050810e7a024a439d65bdc262efccc21102d47c52"
               }
 }

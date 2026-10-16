@@ -202,6 +202,12 @@
             "unset": "unreachable",
             "note": "unset is the user's real Claude state directory."
         },
+        "GHOZTTY_CLI_LOG": {
+            "class": "non-default",
+            "unset": "armed",
+            "unsetArm": "test\\win32\\log-append.ps1::T1 a +list call writes no line into the shared sink by default",
+            "note": "T1998: =info puts a CLI call's info lines back into the shared log so the sink sections have a deterministic line source; section T removes it and proves the shipped default writes no info line and keeps every warning and error."
+        },
         "GHOZTTY_CONPTY_SYNC_HOLD": {
             "class": "non-default",
             "unset": "shipped-elsewhere",

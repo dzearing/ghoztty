@@ -1,12 +1,12 @@
 {
     "guard":  "self-spawn",
     "script":  "test/win32/self-spawn-audit.ps1",
-    "generated":  "2026-10-16T07:25:08-07:00",
-    "commit":  "99ebd53f9",
+    "generated":  "2026-10-16T10:04:34-07:00",
+    "commit":  "545aa44e1",
     "uncommitted":  [
-                        "src/apprt/win32/job_object.zig",
-                        "src/apprt/win32/LocalAgent.zig",
-                        "src/remote/agent/main.zig"
+                        "src/global.zig",
+                        "src/main_ghostty.zig",
+                        "src/os/log_gate.zig"
                     ],
     "files":  {
                   "src/agent_main.zig":  "b84f9e5afe70c8805ba8cb1f9c962d37651f7c0fcdc2d388c4897dbda7661b8b",
@@ -576,7 +576,7 @@
                   "src/font/sprite/draw/symbols_for_legacy_computing.zig":  "b5fe209b19ca1f95d46e9d2b1ad45cc121aebea9dabaa30ed90c6d7f860381f1",
                   "src/font/sprite/draw/symbols_for_legacy_computing_supplement.zig":  "0581e69175fb1ed9e9ec611846b6ae07518a87fd2d1b0c7477cfa5c6b12edd17",
                   "src/font/sprite/Face.zig":  "c5a1e3d94f83fe2becb2d1c49fec724365962bf78e201ed3b3ca672ae5b4422c",
-                  "src/global.zig":  "614b5512406a57487a1ee254c2fd5bdaa4ce12c882ba757ced4c26864645cf9c",
+                  "src/global.zig":  "8a0f9490ebc2dc44bebd358b9d24195c12da2246d5612b35fa43efc5b50a5694",
                   "src/helpgen.zig":  "222188e275aff76a869e6a3d35f0c4ec01fd960389e2cc524533aa3a493a2cc5",
                   "src/input.zig":  "3d81fcafc44d2d1378983e692392899c621083f90b711582f4adf9d76c0d8860",
                   "src/input/Binding.zig":  "12ab83478a4fb739d0f7243934b0d6426fcbdb5e574b1ec7d022be9b2f931250",
@@ -624,7 +624,7 @@
                   "src/main_build_data.zig":  "057898a4d826f478b8c0b35e7bb3583876d79284d90b1a2eaf50ec8526a87589",
                   "src/main_c.zig":  "446dc029137c35aaac0537dc6f92534bf6e9939313e1131191c22517a28768b8",
                   "src/main_gen.zig":  "a1d14fc86475679db33900bd73ffed319b1f4d6c15063cf4ebfe01ae75141316",
-                  "src/main_ghostty.zig":  "0b6ccd4884a5efc352a9b55e91036050a9133118d81c32a475a2575184405e92",
+                  "src/main_ghostty.zig":  "923770f857eee5f73610ff332b1a1d0e4ae44dcd09c3e2b30c8e427fe85a50d0",
                   "src/main_wasm.zig":  "d6be847915eb92b6314e954f238daf78a139a322fd938a20b2343fb95b27b20f",
                   "src/math.zig":  "2f1775a386a25810701eb4e7c316e877ef197458f7a00ad7dfedaffe1a087e49",
                   "src/os/args.zig":  "cca966e4cb921c688a8c6e3fae1e576562418a614997038c3a173dd5b8798d2d",
@@ -647,6 +647,7 @@
                   "src/os/kernel_info.zig":  "af3e484e231296b27ef7c2a76f4608c61a37bf5af01b968d3dbbf565d18de0e4",
                   "src/os/listening_pid.zig":  "931260af3ef2fbf2840abea3553cf79ca5d381fc03ccd1af9370b93613e91135",
                   "src/os/locale.zig":  "258581f92dcd6261444f528ecc1c29a6f8de23ffacebbec3b9d79aadcc9e3359",
+                  "src/os/log_gate.zig":  "f79dd88590f3265bb1a01e915f2489e76417d3c4af6f8cfa420661c0529432bc",
                   "src/os/log_rotate.zig":  "936b5078b87687926d5cb1bb135aad9b8e26f4741450ff294e7ae62a248c6b4f",
                   "src/os/log_stamp.zig":  "3473329b92837b3f42ca046a5733636846933794165b2f000ee1c416ab356756",
                   "src/os/mach.zig":  "c7f44fb3ba8e4b568cc098dddd9025e4b8ab1352905067b7d5c26f83705e9840",

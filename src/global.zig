@@ -128,18 +128,7 @@ pub const GlobalState = struct {
         };
 
         // Output some debug information right away
-        std.log.info("ghoztty version={s}", .{build_config.version_string});
-        std.log.info("ghoztty build optimize={s}", .{build_config.mode_string});
-        std.log.info("runtime={}", .{build_config.app_runtime});
-        std.log.info("font_backend={}", .{build_config.font_backend});
-        if (comptime build_config.font_backend.hasHarfbuzz()) {
-            std.log.info("dependency harfbuzz={s}", .{harfbuzz.versionString()});
-        }
-        if (comptime build_config.font_backend.hasFontconfig()) {
-            std.log.info("dependency fontconfig={d}", .{fontconfig.version()});
-        }
-        std.log.info("renderer={}", .{renderer.Renderer});
-        std.log.info("libxev default backend={t}", .{xev.backend});
+        logStartupBanner();
 
         // As early as possible, initialize our resource limits.
         self.rlimits = .init();
@@ -196,6 +185,25 @@ pub const GlobalState = struct {
             // the point at which it will output if there were safety violations.
             _ = value.deinit();
         }
+    }
+
+    /// The build facts every process logs at startup. Public so a CLI call
+    /// that becomes the master process can log them then (T1998): a `+verb`
+    /// call keeps its info lines out of the shared Windows log, so the banner
+    /// its init emitted never reached the file.
+    pub fn logStartupBanner() void {
+        std.log.info("ghoztty version={s}", .{build_config.version_string});
+        std.log.info("ghoztty build optimize={s}", .{build_config.mode_string});
+        std.log.info("runtime={}", .{build_config.app_runtime});
+        std.log.info("font_backend={}", .{build_config.font_backend});
+        if (comptime build_config.font_backend.hasHarfbuzz()) {
+            std.log.info("dependency harfbuzz={s}", .{harfbuzz.versionString()});
+        }
+        if (comptime build_config.font_backend.hasFontconfig()) {
+            std.log.info("dependency fontconfig={d}", .{fontconfig.version()});
+        }
+        std.log.info("renderer={}", .{renderer.Renderer});
+        std.log.info("libxev default backend={t}", .{xev.backend});
     }
 
     fn initSignals() void {

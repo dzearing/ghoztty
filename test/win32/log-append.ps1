@@ -83,6 +83,13 @@ $env:LOCALAPPDATA = $root
 # takes that on trust from a release-lineage run - and $root stays the
 # LOCALAPPDATA it already was, so $logPath is unchanged.
 [void](Set-GhozttyTestIsolation -Tag 'logappend' -ReleaseSandbox -SandboxRoot $root)
+# T1998: a `+verb` call keeps only warnings and errors in the shared sink by
+# default, so a `+list` writes nothing at all. The sections below measure the
+# SINK (append, prefix, rotation), and they need every writer to contribute a
+# deterministic handful of lines - the opt-in puts the CLI's startup banner
+# back. Section T at the end measures the default itself.
+$savedCliLog = $env:GHOZTTY_CLI_LOG
+$env:GHOZTTY_CLI_LOG = 'info'
 # T1033: the build-mode pre-flight, answered explicitly rather than skipped.
 # This script's SUBJECT is a release build - the file sink is compiled out of
 # Debug - and what makes that safe is above: its own LOCALAPPDATA (so the log
@@ -378,6 +385,68 @@ $raceComplete = $true
 }
 Assert "C7 the concurrent-rotation section ran to completion" $raceComplete
 
+# --- T1998: a CLI call keeps its info lines OUT of the shared sink ---------
+# Every agent read, banner post and window list is a `ghoztty +verb` call, and
+# until T1998 each one wrote the GUI's nine-line startup banner here - ~75% of
+# the user's log, which under the 4 MiB bound above pushed the app's own lines
+# out of both generations within hours. The contract: by default a CLI call
+# writes no info line, and every warning or error it raises still lands.
+$gateComplete = $false
+try {
+Remove-Item $logPath, $rotPath -Force -ErrorAction SilentlyContinue
+Remove-Item env:GHOZTTY_CLI_LOG -ErrorAction SilentlyContinue
+$badCfg = Join-Path $root 'bad.conf'
+[System.IO.File]::WriteAllText($badCfg, "font-size = banana`nnot-a-key = 1`n")
+# Both argvs are literal `+verb` calls (the desktop-launch audit reads them):
+# `+list`, or `+validate-config` on the bad config below.
+function RunCli([string]$tag, [switch]$Validate) {
+    # persistence: n/a - a CLI invocation, which opens no window.
+    if ($Validate) {
+        $q = Start-Process -FilePath $Exe -ArgumentList @('+validate-config', "--config-file=$badCfg") -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput (Join-Path $root "$tag.out") -RedirectStandardError (Join-Path $root "$tag.err")
+    } else {
+        $q = Start-Process -FilePath $Exe -ArgumentList @('+list') -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput (Join-Path $root "$tag.out") -RedirectStandardError (Join-Path $root "$tag.err")
+    }
+    $null = $q.Handle
+    $q.WaitForExit(30000) | Out-Null
+    return $q.Id
+}
+function LinesOf($procId) {
+    if (-not (Test-Path $logPath)) { return @() }
+    return @(Get-Content $logPath | Where-Object { $_ -match "^\S+ $procId " })
+}
+
+$quiet = RunCli 'gate-list'
+$quietLines = @(LinesOf $quiet)
+Say "    +list without the opt-in wrote $($quietLines.Count) line(s) (was $perProc with it)"
+Assert "T1 a +list call writes no line into the shared sink by default" ($quietLines.Count -eq 0)
+
+# A config the parser rejects: `+validate-config` raises warnings or errors on
+# its way out, which is the class of line a CLI call must still leave behind.
+$env:GHOZTTY_CLI_LOG = 'info'
+$loud = RunCli 'gate-loud' -Validate
+$loudLines = @(LinesOf $loud)
+Remove-Item env:GHOZTTY_CLI_LOG -ErrorAction SilentlyContinue
+$wantWarn = @($loudLines | Where-Object { $_ -match '^\S+ \d+ (warning|error)' })
+$loudInfo = @($loudLines | Where-Object { $_ -match '^\S+ \d+ info' })
+Assert "T2 premise: the failing CLI call raises at least one warning or error" ($wantWarn.Count -ge 1)
+Assert "T3 premise: the opt-in still writes that call's info lines" ($loudInfo.Count -ge 3)
+
+$fail = RunCli 'gate-fail' -Validate
+$failLines = @(LinesOf $fail)
+$failInfo = @($failLines | Where-Object { $_ -match '^\S+ \d+ info' })
+$failWarn = @($failLines | Where-Object { $_ -match '^\S+ \d+ (warning|error)' })
+Say "    failing CLI call: $($failWarn.Count) warning/error line(s) by default, $($wantWarn.Count) with the opt-in; $($failInfo.Count) info"
+Assert "T4 every warning and error a CLI call raises still reaches the sink" (
+    $failWarn.Count -eq $wantWarn.Count -and $failWarn.Count -ge 1)
+Assert "T5 ...and none of its info lines do" ($failInfo.Count -eq 0)
+$gateComplete = $true
+} catch {
+    Say "    CLI gate section threw: $_"
+}
+Assert "T6 the CLI-gate section ran to completion" $gateComplete
+
 }
 
 } catch {
@@ -387,6 +456,7 @@ Assert "C7 the concurrent-rotation section ran to completion" $raceComplete
 } finally {
     $env:LOCALAPPDATA = $saved.lad
     $env:GHOZTTY_PIPE_SUFFIX = $saved.pipe
+    $env:GHOZTTY_CLI_LOG = $savedCliLog
     Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
 }
 

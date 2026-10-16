@@ -1709,6 +1709,7 @@ $GuardTable = @(
         Covers = @(
             'src\os\log_stamp.zig',
             'src\os\log_rotate.zig',
+            'src\os\log_gate.zig',
             'test\win32\log-append.ps1'
         )
     },

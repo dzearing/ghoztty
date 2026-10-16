@@ -12,6 +12,7 @@ const macos = if (builtin.target.os.tag.isDarwin()) @import("macos") else undefi
 const cli = @import("cli.zig");
 const log_stamp = @import("os/log_stamp.zig");
 const log_rotate = @import("os/log_rotate.zig");
+const log_gate = @import("os/log_gate.zig");
 const renderer = @import("renderer.zig");
 const apprt = @import("apprt.zig");
 
@@ -208,6 +209,12 @@ pub fn main() !MainReturn {
             state.action = null;
             state.skip_cli_args = true;
             std.log.info("no running instance, becoming master process", .{});
+            // T1998: this process is the app now, and its startup banner was
+            // emitted while it was still a CLI call - which keeps info lines
+            // out of the shared Windows log. Log it again as the app. Only
+            // there: every other sink already took the first copy.
+            if (comptime builtin.os.tag == .windows and builtin.mode != .Debug)
+                @import("global.zig").GlobalState.logStartupBanner();
         } else {
             posix.exit(exit_code);
             return;
@@ -330,6 +337,20 @@ fn openAppendW(dir: std.fs.Dir, name_w: []const u16) !std.fs.File {
     }) };
 }
 
+/// `GHOZTTY_CLI_LOG=info` (T1998): whether a CLI process writes its info lines
+/// into the shared sink. Asked per line, which only happens for the info lines
+/// of a `+verb` call - a handful per process - so it is not worth caching.
+fn cliLogInfoOptIn() bool {
+    if (comptime builtin.os.tag != .windows) return false;
+    const w = std.process.getenvW(
+        std.unicode.utf8ToUtf16LeStringLiteral("GHOZTTY_CLI_LOG"),
+    ) orelse return false;
+    var buf: [16]u8 = undefined;
+    if (w.len > buf.len) return false;
+    const n = std.unicode.wtf16LeToWtf8(&buf, w);
+    return log_gate.cliInfoOptIn(buf[0..n]);
+}
+
 // The function std.log will call.
 fn logFn(
     comptime level: std.log.Level,
@@ -369,7 +390,12 @@ fn logFn(
     // subsystem and log to stderr like every other platform.)
     windows_file: {
         if (comptime !(builtin.os.tag == .windows and builtin.mode != .Debug)) break :windows_file;
-        if (level == .debug) break :windows_file;
+        // T1998: a `+verb` call keeps only warnings and errors in the shared
+        // sink, so the CLI's constant traffic does not bury the app's lines.
+        // The opt-in is read only for the lines it could change.
+        const cli_action = state.action != null;
+        const opt_in = level == .info and cli_action and cliLogInfoOptIn();
+        if (!log_gate.fileSinkAccepts(level, cli_action, opt_in)) break :windows_file;
 
         const localappdata_w = std.process.getenvW(
             std.unicode.utf8ToUtf16LeStringLiteral("LOCALAPPDATA"),
@@ -519,6 +545,7 @@ test {
     // tests in every lane on every platform.
     _ = @import("os/log_stamp.zig");
     _ = @import("os/log_rotate.zig");
+    _ = @import("os/log_gate.zig");
 
     // The exit ledger's line format and dangling-run audit (T1686): pure text
     // handling, reached only through the win32 apprt, so pull it in explicitly
