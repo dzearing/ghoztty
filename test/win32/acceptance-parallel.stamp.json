@@ -1,11 +1,10 @@
 {
     "guard":  "acceptance-parallel",
     "script":  "test/win32/acceptance-parallel.ps1",
-    "generated":  "2026-10-16T08:11:38-07:00",
-    "commit":  "d9575acaa",
+    "generated":  "2026-10-16T15:46:09-07:00",
+    "commit":  "31fb974a1",
     "uncommitted":  [
-                        "scripts/lib/AcceptanceParallel.ps1",
-                        "test/win32/acceptance-parallel.ps1"
+
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "f4efca8f46e8e810c9acb2b94d413d476e984f66956d36478b2185bf963edb46",
@@ -14,6 +13,6 @@
                   "scripts/lib/RunVerdict.ps1":  "a23842bebc540f3c3e7fb0477bad5816d3720e9adf91bfedd74a9ad0b5d6da07",
                   "test/win32/acceptance-parallel.ps1":  "2ceb8ec970c76059cfa99c89b21b25ef6e4e9eb6752f4dd5331b2ae95c833c1e",
                   "test/win32/lib/BuildFresh.ps1":  "0314737dc6419b7d45d9421584a37dc009939b0384ae609378701c0cb306e31b",
-                  "test/win32/lib/CleanSlate.ps1":  "80ada90e0245f817e902f45ae00944dd8f4d916864a49899ce0e0da07778788a"
+                  "test/win32/lib/CleanSlate.ps1":  "6c7fe0e7d3492b136034828cb7a2eb6565f36bf0b0fc9e477b69fe56539116ff"
               }
 }

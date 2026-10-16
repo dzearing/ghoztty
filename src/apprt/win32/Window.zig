@@ -160,6 +160,8 @@ const pane_drop = @import("pane_drop.zig");
 const pane_relocate = @import("pane_relocate.zig");
 const drop_highlight = @import("drop_highlight.zig");
 const DropHighlight = @import("DropHighlight.zig");
+const fullscreen_exit = @import("fullscreen_exit.zig");
+const FullscreenExit = @import("FullscreenExit.zig").FullscreenExit;
 const split_resize = @import("split_resize.zig");
 const drag_perf = @import("drag_perf.zig");
 
@@ -229,6 +231,14 @@ pub const WM_APP_OPEN_MENU: u32 = w32.WM_APP + 10;
 /// release build ignores it.
 pub const WM_APP_TEST_DPICHANGED: u32 = w32.WM_APP + 38;
 
+/// DEBUG BUILDS ONLY: where the full-screen reveal should believe the pointer
+/// is (T2011), as screen x/y in wparam/lparam. The background test desktop has
+/// no cursor to move, so without it no acceptance script could push the
+/// pointer against the top edge. Once one arrives the poll reads this point
+/// instead of the real cursor for the rest of the window's life. A release
+/// build ignores it.
+pub const WM_APP_TEST_FULLSCREEN_POINTER: u32 = w32.WM_APP + 41;
+
 /// Close the window the way a SHIFT-click on the caption X does (T1806): the
 /// Disconnect / Close question of a remote window is answered with its default,
 /// Disconnect, instead of being asked. The X posts it in place of SC_CLOSE when
@@ -289,6 +299,10 @@ const BUSY_LIGHT_TIMER_ID: usize = 0x424C; // 'BL'
 /// change used to rebuild this window's sidebar and every all-windows list at
 /// once; now they land together at most every `SIDEBAR_SYNC_MS`.
 const SIDEBAR_SYNC_TIMER_ID: usize = 0x5353; // 'SS'
+
+/// The full-screen reveal poll (T2011): `fullscreen_exit.POLL_MS`, alive only
+/// while this window is full screen.
+const FULLSCREEN_POLL_TIMER_ID: usize = 0x4653; // 'FS'
 pub const SIDEBAR_SYNC_MS: u32 = 250;
 pub const HERO_SLIDE_MS: f32 = 350.0;
 const HERO_RECENTER_MS: f32 = 300.0;
@@ -541,8 +555,26 @@ is_fullscreen: bool = false,
 /// Saved window style for restoring from fullscreen.
 saved_style: u32 = 0,
 
-/// Saved window rect for restoring from fullscreen.
-saved_rect: w32.RECT = .{ .left = 0, .top = 0, .right = 0, .bottom = 0 },
+/// Saved placement for restoring from fullscreen (T2011). A placement, not a
+/// rect: it carries the maximized state AND the normal rect behind it, so a
+/// window that was maximized comes back maximized and still un-maximizes to
+/// the size it had before.
+saved_placement: ?w32.WINDOWPLACEMENT = null,
+
+/// The "Exit full screen" button (T2011), created on first entry and kept
+/// for the next one.
+fullscreen_exit_btn: ?*FullscreenExit = null,
+
+/// When the entry notice expires, in `std.time.milliTimestamp` ms.
+fullscreen_notice_until_ms: i64 = 0,
+
+/// Who is asking for the NEXT fullscreen toggle, when it is not a keybind
+/// (T2011). The menu and the palette set it just before performing the
+/// action, and the toggle consumes it, so the log names the real trigger.
+fullscreen_trigger_hint: ?fullscreen_exit.Trigger = null,
+
+/// DEBUG BUILDS ONLY: the pointer a test posted (`WM_APP_TEST_FULLSCREEN_POINTER`).
+fullscreen_test_pointer: ?w32.POINT = null,
 
 /// Font used for painting the tab bar (Segoe UI).
 tab_font: ?*anyopaque = null,
@@ -1910,6 +1942,13 @@ pub fn deinit(self: *Window) void {
     if (self.pill_font) |font| {
         _ = w32.DeleteObject(font);
         self.pill_font = null;
+    }
+
+    // The full-screen exit button is owned by this HWND; destroy it first
+    // so its WndProc can never run against a freed window (T2011).
+    if (self.fullscreen_exit_btn) |b| {
+        b.destroy();
+        self.fullscreen_exit_btn = null;
     }
 
     // Clear GWLP_USERDATA before destroying to prevent stale pointer access.
@@ -9036,7 +9075,7 @@ pub fn performViewerBindingAction(
         },
         .restore_stashed_pane => return self.restoreTopStashedPane(),
 
-        .toggle_fullscreen => self.toggleFullscreen(),
+        .toggle_fullscreen => self.toggleFullscreenFrom(.viewer_chord),
         .toggle_maximize => {
             if (self.hwnd) |hwnd| {
                 _ = w32.ShowWindow(hwnd, if (w32.IsZoomed(hwnd) != 0)
@@ -9323,6 +9362,10 @@ fn handleDpiChanged(self: *Window, hwnd: w32.HWND, dpi: u32, suggested: ?*const 
     const panes = self.forwardToPanes(.dpi_changed, dpi);
     if (self.placing_exact_frame) {
         log.debug("window dpi changed during an exact placement; keeping the placed rect", .{});
+    } else if (self.is_fullscreen) {
+        // Full screen covers the monitor, not the size Windows suggests for
+        // a framed window there (T2011).
+        self.fitFullscreenToMonitor();
     } else if (suggested) |r| {
         _ = w32.SetWindowPos(
             hwnd,
@@ -10921,25 +10964,152 @@ fn paintTabBar(self: *Window, hdc_screen: w32.HDC) void {
     _ = w32.BitBlt(hdc_screen, 0, self.tabBarTop(), blit_w, bar_h, mem_dc, 0, 0, w32.SRCCOPY);
 }
 
-/// Toggle fullscreen mode on the top-level window.
-/// Saves/restores window style and placement.
+/// Toggle fullscreen mode on the top-level window. The trigger is a keybind
+/// (or other core action) unless the menu or palette said otherwise through
+/// `fullscreen_trigger_hint`.
 pub fn toggleFullscreen(self: *Window) void {
+    const trigger = self.fullscreen_trigger_hint orelse .action;
+    self.fullscreen_trigger_hint = null;
+    self.toggleFullscreenFrom(trigger);
+}
+
+pub fn toggleFullscreenFrom(self: *Window, trigger: fullscreen_exit.Trigger) void {
+    if (self.is_fullscreen) self.leaveFullscreen(trigger) else self.enterFullscreen(trigger);
+}
+
+/// Enter full screen: the caption and frame go and the window covers its
+/// monitor. That leaves nothing on screen that says how to leave, so this
+/// also puts up the entry notice and starts the top-edge reveal poll
+/// (T2011, `fullscreen_exit.zig`).
+///
+/// Raymond Chen's recipe: keep the window's own style minus the overlapped
+/// frame bits rather than replacing it wholesale, so WS_CLIPCHILDREN and the
+/// rest survive the round trip.
+fn enterFullscreen(self: *Window, trigger: fullscreen_exit.Trigger) void {
+    const hwnd = self.hwnd orelse return;
+    if (self.is_fullscreen) return;
+    var wp = std.mem.zeroes(w32.WINDOWPLACEMENT);
+    wp.length = @sizeOf(w32.WINDOWPLACEMENT);
+    self.saved_placement = if (w32.GetWindowPlacement(hwnd, &wp) != 0) wp else null;
+    self.saved_style = w32.GetWindowLongW(hwnd, w32.GWL_STYLE);
+    _ = w32.SetWindowLongW(hwnd, w32.GWL_STYLE, self.saved_style & ~w32.WS_OVERLAPPEDWINDOW);
+    self.is_fullscreen = true;
+    self.fitFullscreenToMonitor();
+    log.info("fullscreen enter trigger={t} placement_saved={}", .{ trigger, self.saved_placement != null });
+
+    self.fullscreen_notice_until_ms = std.time.milliTimestamp() + fullscreen_exit.NOTICE_MS;
+    _ = w32.SetTimer(hwnd, FULLSCREEN_POLL_TIMER_ID, fullscreen_exit.POLL_MS, null);
+    self.fullscreenPollTick();
+}
+
+/// Leave full screen: style, placement and frame back exactly as they were.
+pub fn leaveFullscreen(self: *Window, trigger: fullscreen_exit.Trigger) void {
+    const hwnd = self.hwnd orelse return;
+    if (!self.is_fullscreen) return;
+    _ = w32.KillTimer(hwnd, FULLSCREEN_POLL_TIMER_ID);
+    self.fullscreen_notice_until_ms = 0;
+    if (self.fullscreen_exit_btn) |b| b.hide();
+    self.is_fullscreen = false;
+
+    _ = w32.SetWindowLongW(hwnd, w32.GWL_STYLE, self.saved_style);
+    if (self.saved_placement) |wp| {
+        _ = w32.SetWindowPlacement(hwnd, &wp);
+    }
+    _ = w32.SetWindowPos(
+        hwnd,
+        null,
+        0,
+        0,
+        0,
+        0,
+        w32.SWP_NOMOVE | w32.SWP_NOSIZE | w32.SWP_NOZORDER | w32.SWP_NOOWNERZORDER | w32.SWP_FRAMECHANGED,
+    );
+    log.info("fullscreen exit trigger={t}", .{trigger});
+}
+
+/// Cover the window's monitor. Also re-run on a display or DPI change while
+/// full screen, so a Remote Desktop resize or reconnect never leaves the
+/// window at the old size with nothing to grab.
+fn fitFullscreenToMonitor(self: *Window) void {
+    const hwnd = self.hwnd orelse return;
+    if (!self.is_fullscreen) return;
+    const monitor = w32.MonitorFromWindow(hwnd, w32.MONITOR_DEFAULTTONEAREST);
+    var mi: w32.MONITORINFO = undefined;
+    mi.cbSize = @sizeOf(w32.MONITORINFO);
+    if (w32.GetMonitorInfoW(monitor, &mi) == 0) return;
+    _ = w32.SetWindowPos(
+        hwnd,
+        null,
+        mi.rcMonitor.left,
+        mi.rcMonitor.top,
+        mi.rcMonitor.right - mi.rcMonitor.left,
+        mi.rcMonitor.bottom - mi.rcMonitor.top,
+        w32.SWP_NOZORDER | w32.SWP_NOOWNERZORDER | w32.SWP_FRAMECHANGED,
+    );
+}
+
+/// One tick of the full-screen way-out (T2011): decide what the "Exit full
+/// screen" button shows, from the pointer and the notice clock, and show it.
+fn fullscreenPollTick(self: *Window) void {
     const hwnd = self.hwnd orelse return;
     if (!self.is_fullscreen) {
-        self.saved_style = w32.GetWindowLongW(hwnd, w32.GWL_STYLE);
-        _ = w32.GetWindowRect(hwnd, &self.saved_rect);
-        _ = w32.SetWindowLongW(hwnd, w32.GWL_STYLE, w32.WS_POPUP | w32.WS_VISIBLE_STYLE);
-        const monitor = w32.MonitorFromWindow(hwnd, w32.MONITOR_DEFAULTTONEAREST);
-        var mi: w32.MONITORINFO = undefined;
-        mi.cbSize = @sizeOf(w32.MONITORINFO);
-        if (w32.GetMonitorInfoW(monitor, &mi) != 0) {
-            _ = w32.SetWindowPos(hwnd, null, mi.rcMonitor.left, mi.rcMonitor.top, mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top, w32.SWP_NOZORDER | w32.SWP_FRAMECHANGED);
-        }
-    } else {
-        _ = w32.SetWindowLongW(hwnd, w32.GWL_STYLE, self.saved_style);
-        _ = w32.SetWindowPos(hwnd, null, self.saved_rect.left, self.saved_rect.top, self.saved_rect.right - self.saved_rect.left, self.saved_rect.bottom - self.saved_rect.top, w32.SWP_NOZORDER | w32.SWP_FRAMECHANGED);
+        _ = w32.KillTimer(hwnd, FULLSCREEN_POLL_TIMER_ID);
+        return;
     }
-    self.is_fullscreen = !self.is_fullscreen;
+    if (self.fullscreen_exit_btn == null) {
+        self.fullscreen_exit_btn = FullscreenExit.create(
+            self.app.core_app.alloc,
+            self,
+            hwnd,
+            self.app.hinstance,
+        ) catch |err| {
+            log.warn("fullscreen exit button create failed err={}", .{err});
+            return;
+        };
+    }
+    const btn = self.fullscreen_exit_btn.?;
+
+    var wr: w32.RECT = undefined;
+    if (w32.GetWindowRect(hwnd, &wr) == 0) return;
+    var pt = w32.POINT{ .x = 0, .y = 0 };
+    var over = false;
+    if (comptime builtin.mode == .Debug) {
+        if (self.fullscreen_test_pointer) |tp| {
+            pt = tp;
+            over = tp.x >= wr.left and tp.x < wr.right and tp.y >= wr.top and tp.y < wr.bottom;
+        }
+    }
+    if (self.fullscreen_test_pointer == null) {
+        if (w32.GetCursorPos_(&pt) != 0) {
+            if (w32.WindowFromPoint(pt)) |under| {
+                const root = w32.GetAncestor(under, w32.GA_ROOT) orelse under;
+                // The button is a top-level popup of its own; its owner is us.
+                over = root == hwnd or root == btn.hwnd;
+            }
+        }
+    }
+
+    const mode = fullscreen_exit.decide(btn.mode, .{
+        .fullscreen = true,
+        .pointer_over = over,
+        .pointer_y = pt.y - wr.top,
+        .now_ms = std.time.milliTimestamp(),
+        .notice_until_ms = self.fullscreen_notice_until_ms,
+        .card_bottom = btn.card_bottom,
+        .scale = self.scale,
+    });
+
+    var key_buf: [64]u8 = undefined;
+    const key: ?[]const u8 = if (self.app.config.keybind.set.getTrigger(.toggle_fullscreen)) |t|
+        key_buf[0..menu_label.formatTrigger(t, &key_buf)]
+    else
+        null;
+    const config = &self.app.config;
+    btn.show(mode, key, self.scale, .{
+        .r = config.background.r,
+        .g = config.background.g,
+        .b = config.background.b,
+    });
 }
 
 /// Resize so the CLIENT area is exactly `size` pixels, keeping position
@@ -12959,6 +13129,28 @@ pub fn windowWndProc(
             window.handleDpiChanged(hwnd, dpi, null);
             return 0;
         },
+        WM_APP_TEST_FULLSCREEN_POINTER => {
+            if (comptime builtin.mode != .Debug) return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+            window.fullscreen_test_pointer = .{
+                .x = @truncate(@as(isize, @bitCast(wparam))),
+                .y = @truncate(lparam),
+            };
+            window.fullscreenPollTick();
+            return 0;
+        },
+        w32.WM_DISPLAYCHANGE => {
+            // A resolution change - a Remote Desktop client resized or
+            // reconnected at a new size - leaves a full-screen window at the
+            // OLD monitor size: part of the screen uncovered, or the window
+            // hanging past the edge with nothing to grab. Re-cover the
+            // monitor (T2011). A framed window is the OS's to re-fit.
+            if (window.is_fullscreen) {
+                log.info("fullscreen refit on display change", .{});
+                window.fitFullscreenToMonitor();
+                window.fullscreenPollTick();
+            }
+            return w32.DefWindowProcW(hwnd, msg, wparam, lparam);
+        },
         w32.WM_DWMCOLORIZATIONCOLORCHANGED => {
             // The accent itself changed. DWM hands the new color in wparam,
             // but as the COMPOSED colorization value (blended with the
@@ -13011,6 +13203,10 @@ pub fn windowWndProc(
             }
             if (wparam == BUSY_LIGHT_TIMER_ID) {
                 window.busyLightTick();
+                return 0;
+            }
+            if (wparam == FULLSCREEN_POLL_TIMER_ID) {
+                window.fullscreenPollTick();
                 return 0;
             }
             return w32.DefWindowProcW(hwnd, msg, wparam, lparam);

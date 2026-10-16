@@ -3383,8 +3383,13 @@ pub fn performCommand(self: *Surface, id: commands.Id) void {
         .viewer_open_url => RenameDialog.open(self.parent_window, .viewer_url, self),
         .viewer_open_browser => self.openViewerSplitBeside("about:blank", true),
 
-        .binding => _ = self.core_surface.performBindingAction(cmd.action) catch |err| {
-            log.err("command action error id={s} err={}", .{ @tagName(id), err });
+        .binding => {
+            // So the fullscreen log names the menu or palette, not a key
+            // (T2011). The toggle consumes the hint.
+            if (cmd.action == .toggle_fullscreen) self.parent_window.fullscreen_trigger_hint = .command;
+            _ = self.core_surface.performBindingAction(cmd.action) catch |err| {
+                log.err("command action error id={s} err={}", .{ @tagName(id), err });
+            };
         },
     }
 }

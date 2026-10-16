@@ -1,0 +1,18 @@
+{
+    "guard":  "fullscreen-exit",
+    "script":  "test/win32/fullscreen-exit.ps1",
+    "generated":  "2026-10-16T15:16:32-07:00",
+    "commit":  "31fb974a1",
+    "uncommitted":  [
+                        "src/apprt/win32/fullscreen_exit.zig",
+                        "src/apprt/win32/FullscreenExit.zig",
+                        "src/apprt/win32/readonly_badge.zig",
+                        "test/win32/fullscreen-exit.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/fullscreen_exit.zig":  "df3be0c7f759b026eceff35fc5f8a7b48a055481191a759ba89464b8766e8a2d",
+                  "src/apprt/win32/FullscreenExit.zig":  "bbe98dfa8637d165b314fe1e9ec4143729dfabbb9862e956391f54e198d6718c",
+                  "src/apprt/win32/readonly_badge.zig":  "640c3f5404192858ae4657cb81a1e4acfe503949be797906b05461bbf2e53307",
+                  "test/win32/fullscreen-exit.ps1":  "42c2cf7649451430672620c75d7574796370fc7eb2dc7db507ed5ccc13cd98d1"
+              }
+}

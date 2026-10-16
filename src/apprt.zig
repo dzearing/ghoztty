@@ -306,6 +306,10 @@ test {
     // same no-OS-imports deal.
     _ = @import("apprt/win32/readonly_badge.zig");
 
+    // Pure win32 fullscreen way-out: reveal decision, entry notice, exit
+    // button chip (T2011), same no-OS-imports deal.
+    _ = @import("apprt/win32/fullscreen_exit.zig");
+
     // Pure win32 key-state model — the key-table stack and the pending key
     // sequence behind the indicator pill (T446), same no-OS-imports deal.
     _ = @import("apprt/win32/key_state.zig");

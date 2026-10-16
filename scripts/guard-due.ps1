@@ -2926,6 +2926,21 @@ $GuardTable = @(
             'test\win32\readonly-badge.ps1'
         )
     },
+    # The way out of full screen (T2011): the entry notice, the top-edge
+    # reveal, the chip click that restores the frame, F11, and the display-
+    # change refit. fullscreen-exit.ps1 is the only thing that toggles the
+    # mode on a real window and reads the frame and the chip back.
+    [pscustomobject]@{
+        Name   = 'fullscreen-exit'
+        Script = 'test\win32\fullscreen-exit.ps1'
+        Stamp  = 'test\win32\fullscreen-exit.stamp.json'
+        Covers = @(
+            'src\apprt\win32\FullscreenExit.zig',
+            'src\apprt\win32\fullscreen_exit.zig',
+            'src\apprt\win32\readonly_badge.zig',
+            'test\win32\fullscreen-exit.ps1'
+        )
+    },
     # The What's New window (T624). `whats-new.ps1` is the only thing that
     # drives the real anchor store, launches the real app and reads the split
     # back out of the store the window paints - which bundled version counts
@@ -3789,6 +3804,10 @@ $GuardTable = @(
         Name   = 'restore-all-remote'
         Script = 'test\win32\chooser-restore-all-remote.ps1'
         Stamp  = 'test\win32\chooser-restore-all-remote.stamp.json'
+        # T2016: Restore All of a remote machine rebuilds no window (5 red
+        # assertions, red on HEAD 161784011 with the script unchanged), so the
+        # row cannot go green until that lands.
+        KnownBlockedBy = 'T2016'
         Covers = @(
             'src\apprt\win32\RestoreAllRelay.zig',
             'test\win32\chooser-restore-all-remote.ps1'

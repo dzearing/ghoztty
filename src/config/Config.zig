@@ -7459,6 +7459,17 @@ pub const Keybinds = struct {
                 .{ .key = .{ .unicode = 's' }, .mods = .{ .ctrl = true, .shift = true } },
                 .{ .toggle_pane_sidebar = {} },
             );
+
+            // F11 toggles full screen, the Windows convention (Edge,
+            // Explorer, Windows Terminal), the way Mac adds Cmd+Ctrl+F
+            // "common to Mac programs" beside Cmd+Enter (T2011). It is put
+            // AFTER ctrl+enter on purpose: the reverse map keeps the last
+            // trigger, so the menu and the full-screen notice teach F11.
+            try self.set.put(
+                alloc,
+                .{ .key = .{ .physical = .f11 } },
+                .{ .toggle_fullscreen = {} },
+            );
         }
 
         // Mac-specific keyboard bindings.
@@ -11143,6 +11154,33 @@ test "default keybinds: windows shift+insert pastes from the standard clipboard"
     const leaf = entry.value_ptr.leaf;
     try testing.expectEqual(inputpkg.Binding.Action.paste_from_clipboard, leaf.action);
     try testing.expect(leaf.flags.performable);
+}
+
+// T2011: F11 is the Windows full-screen key, beside the inherited
+// ctrl+enter, and it is the trigger the menu and the entry notice name.
+test "default keybinds: windows f11 toggles fullscreen and is the taught trigger" {
+    if (comptime builtin.target.os.tag != .windows) return error.SkipZigTest;
+
+    const testing = std.testing;
+    const alloc = testing.allocator;
+
+    var cfg = try Config.default(alloc);
+    defer cfg.deinit();
+
+    const entry = cfg.keybind.set.get(.{
+        .key = .{ .physical = .f11 },
+    }) orelse return error.TestExpectedBinding;
+    try testing.expectEqual(inputpkg.Binding.Action.toggle_fullscreen, entry.value_ptr.leaf.action);
+
+    // ctrl+enter still toggles too, until the user decides otherwise.
+    const legacy = cfg.keybind.set.get(.{
+        .key = .{ .physical = .enter },
+        .mods = .{ .ctrl = true },
+    }) orelse return error.TestExpectedBinding;
+    try testing.expectEqual(inputpkg.Binding.Action.toggle_fullscreen, legacy.value_ptr.leaf.action);
+
+    const taught = cfg.keybind.set.getTrigger(.toggle_fullscreen) orelse return error.TestExpectedBinding;
+    try testing.expectEqual(inputpkg.Key.f11, taught.key.physical);
 }
 
 // T522: ctrl+insert is the classic Windows copy chord and must be

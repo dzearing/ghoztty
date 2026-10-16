@@ -317,14 +317,21 @@ pub fn layout(m: Metrics, pane_w: i32, pane_h: i32, text_w: i32, text_h: i32) La
 /// whatever the pane happens to be drawing — and only the drop shade and the
 /// antialiased edge are translucent.
 pub fn render(bgr: []u32, mask: []u8, m: Metrics, l: Layout, pane_bg: Rgb) void {
+    const fill = fillColor(pane_bg);
+    renderCard(bgr, mask, m, l, fill, borderColor(fill));
+}
+
+/// `render` with the card's two colors chosen by the caller. The fullscreen
+/// exit button (T2011) is the same chip in a NEUTRAL rim: orange is this
+/// badge's mode signal, and borrowing it would make "leave full screen" read
+/// as "this pane is read-only".
+pub fn renderCard(bgr: []u32, mask: []u8, m: Metrics, l: Layout, fill: Rgb, border: Rgb) void {
     if (l.hidden) return;
     const w: usize = @intCast(@max(l.win.width(), 0));
     const h: usize = @intCast(@max(l.win.height(), 0));
     if (w == 0 or h == 0) return;
     if (bgr.len < w * h or mask.len < w * h) return;
 
-    const fill = fillColor(pane_bg);
-    const border = borderColor(fill);
     const radius: f32 = @floatFromInt(m.radius);
     const bw: f32 = @floatFromInt(m.border);
     const blur: f32 = @floatFromInt(@max(m.shadow_blur, 1));

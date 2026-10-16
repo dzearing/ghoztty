@@ -3132,6 +3132,9 @@ pub extern "kernel32" fn ExpandEnvironmentStringsW(
 // -----------------------------------------------------------------------
 
 pub const WM_SETTINGCHANGE: u32 = 0x001A;
+/// A display's resolution changed (a Remote Desktop client resize or
+/// reconnect included). Broadcast to top-level windows only.
+pub const WM_DISPLAYCHANGE: u32 = 0x007E;
 /// Broadcast by DWM when the user changes their accent color. `wparam` carries
 /// the composed colorization color, which is NOT the accent (it is blended
 /// with the afterglow and the opacity slider) — treat the message as a signal
