@@ -121,6 +121,25 @@ Concretely, in order, with no stops in between:
      log as usual: it is under `merge=union` (T957), so a `pull --rebase` keeps
      both lanes' entries without a conflict (T1985; section F of
      `test\win32\ledger-dupes.ps1`).
+   - **Lane B is running as of 2026-10-16** (T1986). What it is and how to
+     drive it:
+     - The tree is `D:\git\ghoztty-b`, on a local branch `lane-b` that TRACKS
+       `origin/users/dzearing/windows-amd64` (git will not check one branch
+       out in two worktrees). Its turn is this file, word for word; the commit
+       guard pushes `HEAD:users/dzearing/windows-amd64` by name, so its
+       commits land on the shared trunk exactly like lane A's (W28c-f of
+       `test\win32\go-loop-guard.ps1`). Every turn's `git pull --rebase` picks
+       up the other lane's pushes.
+     - Its window is `main-b`, titled `[go-loop b]`; its supervisor is
+       `GhozttyGoLoopWatchdog-b` (Run entry + revive task), installed by
+       `D:\git\ghoztty-b\scripts\go-loop-watchdog.ps1 -Install`.
+     - Stop or resume one lane by running `go-loop-exec.ps1 stop|resume` from
+       THAT lane's tree; the other lane is untouched.
+     - Bring it up from scratch: `git worktree add --track -b lane-b
+       D:\git\ghoztty-b origin/users/dzearing/windows-amd64`, then the
+       `-Install` above, then `go-loop-watchdog.ps1 -Once -Force -RearmMinutes 0
+       -WaitForHeldSeconds 540` from the same tree (it opens the window in
+       the background, so it never takes the user's focus).
 
 0.5. **Daily digest** (user, 2026-08-05) — before picking a task, check
    `docs/design/windows-parity-digests/<today>.md` (local date). If it is
