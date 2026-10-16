@@ -695,6 +695,18 @@ ring/snapshot/gap-fill replay, HELLO handshake):
   and keep both robust, and a breaking change becomes a conscious, bounded cost
   rather than a corrupted-session incident.
 
+**The agent's info file is part of the contract too** (Windows `port.json`,
+`{"port":0,"pid":P,"pipe":"<name>","startedAt":MS}`), and it evolves under the
+same additive rule. Since T1975 it also carries `"job":{"inJob":B,"flags":N}`:
+the agent's own Windows job membership, measured once at startup, with `null`
+for anything it could not measure. The app copies it into `ghoztty.log` on every
+connect (`local agent pid N job: in_job=yes flags=0x2000 kill_on_close`). That
+line is at **warn** level when the job kills on close, which is the condition
+that loses every session at once (T1970/T1973). An agent from before T1975 omits
+the field and the app logs `not reported`. This line is the field evidence,
+because the detached agent's own stderr goes nowhere. Acceptance:
+`test\win32\agent-job-report.ps1`.
+
 ### The per-session PTY holder (Windows, T904+)
 
 The non-destructive agent upgrade (T705, design:

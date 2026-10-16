@@ -337,6 +337,19 @@ $GuardTable = @(
             'src\remote\agent\pty_child.zig'
         )
     },
+    # The agent's own job report (T1975): the only run that puts a REAL agent
+    # inside a kill-on-close job and reads what it wrote into port.json, its
+    # stderr and the adopting app's log. The unit lanes see the phrase and the
+    # parse, never an agent that is actually jailed.
+    [pscustomobject]@{
+        Name   = 'agent-job-report'
+        Script = 'test\win32\agent-job-report.ps1'
+        Stamp  = 'test\win32\agent-job-report.stamp.json'
+        Covers = @(
+            'test\win32\agent-job-report.ps1',
+            'src\apprt\win32\job_object.zig'
+        )
+    },
     # The overview action (T708): the only thing that proves a bound
     # `toggle_tab_overview` actually opens hero mode, from a terminal AND from
     # a focused viewer. Covers the harness, the forwarding decision it rides

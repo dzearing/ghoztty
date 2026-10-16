@@ -365,7 +365,7 @@ pub fn reconnectForRecovery(self: *LocalAgent) ?*connection.Connection {
 
     if (self.shared) |old| self.retire(old);
     self.shared = dialed;
-    self.shared_pid = if (self.readInfoFile()) |i| i.pid else 0;
+    self.noteSharedAgent();
     self.last_failure_ms = null;
     self.applyStateObserver();
     log.info("in-place recovery: re-dialed the local agent (pid {d})", .{self.shared_pid});
@@ -449,7 +449,7 @@ pub fn sharedConnection(self: *LocalAgent) ?*connection.Connection {
         return null;
     };
     self.shared = dialed;
-    self.shared_pid = if (self.readInfoFile()) |i| i.pid else 0;
+    self.noteSharedAgent();
     self.last_failure_ms = null;
     self.resolve_failure = null;
     self.applyStateObserver();
@@ -641,7 +641,7 @@ pub fn adoptIfUp(self: *LocalAgent) ?*connection.Connection {
     gui_pump.pump();
 
     self.shared = dialed;
-    self.shared_pid = if (self.readInfoFile()) |i| i.pid else 0;
+    self.noteSharedAgent();
     self.last_failure_ms = null;
     self.applyStateObserver();
     log.info("adopted the local agent that came up late (agent pid {d})", .{self.shared_pid});
@@ -1163,6 +1163,9 @@ const Info = struct {
     pid: i64 = 0,
     pipe_buf: [256]u8 = undefined,
     pipe_len: usize = 0,
+    /// The agent's own job membership as it measured it at startup (T1975).
+    /// Null when the agent did not report one, i.e. it predates the field.
+    job: ?job_object.SelfJob = null,
 };
 
 /// Read + parse `port.json`. Null when absent, unreadable, or not JSON — all of
@@ -1173,7 +1176,12 @@ fn readInfoFile(self: *LocalAgent) ?Info {
 
     const bytes = std.fs.cwd().readFileAlloc(self.alloc, info_path, 64 * 1024) catch return null;
     defer self.alloc.free(bytes);
-    var parsed = std.json.parseFromSlice(InfoFile, self.alloc, bytes, .{
+    return parseInfo(self.alloc, bytes);
+}
+
+/// The parse half of `readInfoFile`, pure so the field shapes are tested.
+fn parseInfo(alloc: Allocator, bytes: []const u8) ?Info {
+    var parsed = std.json.parseFromSlice(InfoFile, alloc, bytes, .{
         .ignore_unknown_fields = true,
     }) catch return null;
     defer parsed.deinit();
@@ -1185,16 +1193,51 @@ fn readInfoFile(self: *LocalAgent) ?Info {
             out.pipe_len = p.len;
         }
     }
+    if (parsed.value.job) |j| out.job = .{ .in_job = j.inJob, .flags = j.flags };
     return out;
 }
 
 /// The agent's `--port-file` body (T89c). A Windows named-pipe agent writes
 /// `{"port":0,"pid":P,"pipe":"<name>","startedAt":MS}`; we only need `pipe`.
+/// Since T1975 it adds `"job":{"inJob":B,"flags":N}` (either may be null).
 const InfoFile = struct {
     port: u16 = 0,
     pid: i64 = 0,
     pipe: ?[]const u8 = null,
+    job: ?struct {
+        inJob: ?bool = null,
+        flags: ?u32 = null,
+    } = null,
 };
+
+/// Record which agent we are now riding, and copy into OUR log what it measured
+/// about its own job (T1975). The agent is detached with no stderr anyone
+/// reads, so this line in ghoztty.log is the only place a field report can show
+/// that every session sits inside somebody else's kill-on-close job (T1970,
+/// T1973) — the one condition that loses all of them at once.
+fn noteSharedAgent(self: *LocalAgent) void {
+    const info = self.readInfoFile();
+    self.shared_pid = if (info) |i| i.pid else 0;
+    const job: ?job_object.SelfJob = if (info) |i| i.job else null;
+
+    var buf: [160]u8 = undefined;
+    const phrase = agentJobPhrase(&buf, job);
+    if (job != null and job_object.killsOnClose(job.?)) {
+        log.warn(
+            "local agent pid {d} job: {s} - closing that job ends every session it hosts",
+            .{ self.shared_pid, phrase },
+        );
+    } else {
+        log.info("local agent pid {d} job: {s}", .{ self.shared_pid, phrase });
+    }
+}
+
+/// What `noteSharedAgent` logs for the job. An agent too old to report says so
+/// in words, rather than as `?`, which would read as "measured, unknowable".
+fn agentJobPhrase(buf: []u8, job: ?job_object.SelfJob) []const u8 {
+    const j = job orelse return "not reported (agent predates T1975)";
+    return job_object.describeSelf(buf, j);
+}
 
 /// Spawn `ghoztty-agent.exe` DETACHED so it outlives the app. Raw
 /// CreateProcessW (not std.process.Child, which inherits handles + would keep
@@ -1494,4 +1537,38 @@ test "T167: the spawned agent command line carries the sandbox's own dir and pip
     try std.testing.expect(std.mem.indexOf(u8, cmd, "-sbx1\\sessions.json") != null);
     // Still exactly 4 quoted tokens — the suffix must not add an argument.
     try std.testing.expectEqual(@as(usize, 8), std.mem.count(u8, cmd, "\""));
+}
+
+test "T1975: port.json job field parses, and its absence reads as not reported" {
+    const alloc = std.testing.allocator;
+
+    // What this release's agent writes from inside a nested kill-on-close job.
+    const with_job = parseInfo(alloc,
+        \\{"port":0,"pid":42,"pipe":"p","startedAt":1,"job":{"inJob":true,"flags":8192}}
+    ).?;
+    try std.testing.expectEqual(@as(i64, 42), with_job.pid);
+    try std.testing.expect(job_object.killsOnClose(with_job.job.?));
+    var buf: [160]u8 = undefined;
+    try std.testing.expectEqualStrings(
+        "in_job=yes flags=0x2000 kill_on_close",
+        agentJobPhrase(&buf, with_job.job),
+    );
+
+    // Measured, but unanswerable: nulls survive as unknowns, never a warning.
+    const unknown = parseInfo(alloc,
+        \\{"port":0,"pid":42,"pipe":"p","startedAt":1,"job":{"inJob":null,"flags":null}}
+    ).?;
+    try std.testing.expect(!job_object.killsOnClose(unknown.job.?));
+    try std.testing.expectEqualStrings("in_job=? flags=?", agentJobPhrase(&buf, unknown.job));
+
+    // An agent built before the field: still parses (pipe intact), and says so.
+    const old = parseInfo(alloc,
+        \\{"port":0,"pid":42,"pipe":"p","startedAt":1}
+    ).?;
+    try std.testing.expectEqualStrings("p", old.pipe_buf[0..old.pipe_len]);
+    try std.testing.expect(old.job == null);
+    try std.testing.expectEqualStrings(
+        "not reported (agent predates T1975)",
+        agentJobPhrase(&buf, old.job),
+    );
 }

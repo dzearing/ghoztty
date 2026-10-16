@@ -109,6 +109,26 @@ pub const SelfJob = struct {
     flags: ?u32 = null,
 };
 
+/// `SelfJob` as one log-ready phrase, e.g. `in_job=yes flags=0x2000
+/// kill_on_close`. Pure, so the agent's info file and the app's log line that
+/// repeats it (T1975) are asserted rather than eyeballed.
+pub fn describeSelf(buf: []u8, job: SelfJob) []const u8 {
+    var flag_buf: [64]u8 = undefined;
+    return std.fmt.bufPrint(buf, "in_job={s} flags={s}", .{
+        tri(job.in_job),
+        if (job.flags) |f| describeFlags(&flag_buf, f) else "?",
+    }) catch buf[0..0];
+}
+
+/// Is `job` the shape that loses every session at once (T1970/T1975): a member
+/// of a job whose limit flags say kill-on-close? Unknown flags are not that
+/// shape — the log line already says `?`, and a warning needs evidence.
+pub fn killsOnClose(job: SelfJob) bool {
+    const in = job.in_job orelse return false;
+    const f = job.flags orelse return false;
+    return in and f & limit_kill_on_job_close != 0;
+}
+
 pub fn selfJob() SelfJob {
     if (comptime builtin.os.tag != .windows) return .{};
 
@@ -480,6 +500,26 @@ test "describeFlags still prints a job with none of the interesting bits" {
     // An unrelated limit (ACTIVE_PROCESS 0x8) is shown as a number, not
     // silently dropped: the hex is the fact, the names are the reading of it.
     try testing.expectEqualStrings("0x8", describeFlags(&buf, 0x8));
+}
+
+test "describeSelf carries the T1973 nested-job shape and the unknowns" {
+    var buf: [128]u8 = undefined;
+    try testing.expectEqualStrings(
+        "in_job=yes flags=0x2000 kill_on_close",
+        describeSelf(&buf, .{ .in_job = true, .flags = 0x2000 }),
+    );
+    try testing.expectEqualStrings("in_job=no flags=?", describeSelf(&buf, .{ .in_job = false }));
+    try testing.expectEqualStrings("in_job=? flags=?", describeSelf(&buf, .{}));
+}
+
+test "killsOnClose warns only on evidence" {
+    try testing.expect(killsOnClose(.{ .in_job = true, .flags = 0x2800 }));
+    // In a job that does not kill on close (a plain accounting job).
+    try testing.expect(!killsOnClose(.{ .in_job = true, .flags = 0x800 }));
+    // Flags we could not read, or no job at all: never a warning.
+    try testing.expect(!killsOnClose(.{ .in_job = true }));
+    try testing.expect(!killsOnClose(.{ .in_job = false, .flags = 0x2000 }));
+    try testing.expect(!killsOnClose(.{}));
 }
 
 test "describe says ? rather than no for what it could not measure" {

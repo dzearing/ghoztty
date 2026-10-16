@@ -1,0 +1,14 @@
+{
+    "guard":  "agent-job-report",
+    "script":  "test/win32/agent-job-report.ps1",
+    "generated":  "2026-10-16T07:54:13-07:00",
+    "commit":  "99ebd53f9",
+    "uncommitted":  [
+                        "src/apprt/win32/job_object.zig",
+                        "test/win32/agent-job-report.ps1"
+                    ],
+    "files":  {
+                  "src/apprt/win32/job_object.zig":  "33642e779f1f12facb8014d1cac70b0e60677f145149876e79be44755c87d525",
+                  "test/win32/agent-job-report.ps1":  "cb2d781c08f461ada4719405be41efa795c3393c98ca7dcd0612b146cf9ebfef"
+              }
+}

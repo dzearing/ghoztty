@@ -138,6 +138,7 @@ const adopt = @import("adopt.zig");
 const single_instance = @import("single_instance.zig");
 const startup_error = @import("startup_error.zig");
 const agent_lineage = @import("../agent_lineage.zig");
+const job_object = @import("../../apprt/win32/job_object.zig");
 
 /// The agent's baked build version: `YYYYMMDD-<git short hash>` (commit date),
 /// or `"dev"` when git was unavailable at build time. Stamped by
@@ -1650,8 +1651,21 @@ fn runListenPipe(
     // {"port":0,"pid":P,"pipe":"<name>","startedAt":MS} — an old reader
     // ignores the unknown field (agent-contract rules). Written AFTER the bind
     // succeeds, atomically. Fatal on failure, as on the unix path.
+    //
+    // Measured once, here: a process never leaves a job, and the answer decides
+    // whether every session below survives the app that started us
+    // (T1970/T1975).
+    const job = job_object.selfJob();
+    {
+        var job_buf: [128]u8 = undefined;
+        const desc = job_object.describeSelf(&job_buf, job);
+        if (job_object.killsOnClose(job))
+            std.log.warn("agent job: {s} - closing that job ends every session this agent hosts", .{desc})
+        else
+            std.log.info("agent job: {s}", .{desc});
+    }
     if (port_file) |pf| {
-        writePipeFile(alloc, pf, name) catch |err| {
+        writePipeFile(alloc, pf, name, job) catch |err| {
             std.debug.print("ghoztty-agent: failed to write --port-file {s}: {s}\n", .{ pf, @errorName(err) });
             return err;
         };
@@ -1913,7 +1927,7 @@ fn shouldServe(enforce_same_uid: bool, peer_uid: ?posix.uid_t, our_uid: posix.ui
 /// `{"port":N,"pid":P,"startedAt":MS}` to `path`. Thin wrapper over
 /// `writeInfoFile` with no socket path (the endpoint is a port).
 fn writePortFile(alloc: Allocator, path: []const u8, port: u16) !void {
-    return writeInfoFile(alloc, path, port, null, null);
+    return writeInfoFile(alloc, path, port, null, null, null);
 }
 
 /// The ring-snapshot directory for a given `--sessions-file`: a `rings/` subdir
@@ -1943,7 +1957,7 @@ fn layoutsFileFor(alloc: Allocator, sessions_file: ?[]const u8) ?[]u8 {
 /// no port to advertise, so the supervisor dials the socket path instead; `pid`
 /// still lets it liveness-check a pre-existing agent.
 fn writeSocketFile(alloc: Allocator, path: []const u8, socket: []const u8) !void {
-    return writeInfoFile(alloc, path, 0, socket, null);
+    return writeInfoFile(alloc, path, 0, socket, null, null);
 }
 
 /// Atomically publish the named-pipe listener's pipe name for a supervisor:
@@ -1951,8 +1965,13 @@ fn writeSocketFile(alloc: Allocator, path: []const u8, socket: []const u8) !void
 /// The `pipe` field is ADDITIVE next to the unix path's `socket` — an old
 /// reader ignores it and sees a portless, socketless record it treats as
 /// no-endpoint, degrading gracefully per the agent-contract rules.
-fn writePipeFile(alloc: Allocator, path: []const u8, pipe: []const u8) !void {
-    return writeInfoFile(alloc, path, 0, null, pipe);
+///
+/// It also carries the agent's own job membership (T1975, additive the same
+/// way): the detached agent has no stderr anyone reads, so this file is how the
+/// app learns, and writes into ghoztty.log, whether every session it hosts
+/// would die with somebody else's kill-on-close job.
+fn writePipeFile(alloc: Allocator, path: []const u8, pipe: []const u8, job: job_object.SelfJob) !void {
+    return writeInfoFile(alloc, path, 0, null, pipe, job);
 }
 
 /// Atomically write the agent info file to `path` (staging sibling + rename,
@@ -1960,15 +1979,15 @@ fn writePipeFile(alloc: Allocator, path: []const u8, pipe: []const u8) !void {
 /// needed. `pid` lets the reader liveness-check the writer; `startedAt`
 /// (unix ms) lets it spot a stale file from a previous boot; `socket` (when
 /// set) carries the UDS path to dial.
-fn writeInfoFile(alloc: Allocator, path: []const u8, port: u16, socket: ?[]const u8, pipe: ?[]const u8) !void {
-    const content = try formatInfoFile(alloc, port, currentPid(), std.time.milliTimestamp(), socket, pipe);
+fn writeInfoFile(alloc: Allocator, path: []const u8, port: u16, socket: ?[]const u8, pipe: ?[]const u8, job: ?job_object.SelfJob) !void {
+    const content = try formatInfoFile(alloc, port, currentPid(), std.time.milliTimestamp(), socket, pipe, job);
     defer alloc.free(content);
     try atomic_write.writeChunks(alloc, path, &.{content}, .{});
 }
 
 /// The TCP info-file JSON body (pure — separated from the I/O for tests).
 fn formatPortFile(alloc: Allocator, port: u16, pid: i64, started_at_ms: i64) ![]u8 {
-    return formatInfoFile(alloc, port, pid, started_at_ms, null, null);
+    return formatInfoFile(alloc, port, pid, started_at_ms, null, null, null);
 }
 
 /// The info-file JSON body (pure — separated from the I/O for tests). With a
@@ -1976,8 +1995,10 @@ fn formatPortFile(alloc: Allocator, port: u16, pid: i64, started_at_ms: i64) ![]
 /// endpoint); with a `pipe` name it gains `"pipe":"<escaped>"` (the Windows
 /// named-pipe endpoint, T89c); without either it is the original TCP
 /// `{port,pid,startedAt}` shape. Both fields are additive — old readers
-/// ignore the one they don't know.
-fn formatInfoFile(alloc: Allocator, port: u16, pid: i64, started_at_ms: i64, socket: ?[]const u8, pipe: ?[]const u8) ![]u8 {
+/// ignore the one they don't know. A pipe body given a `job` also gains
+/// `"job":{"inJob":B,"flags":N}` (T1975), each `null` when it could not be
+/// measured, never `false`/`0`, which would read as an answer.
+fn formatInfoFile(alloc: Allocator, port: u16, pid: i64, started_at_ms: i64, socket: ?[]const u8, pipe: ?[]const u8, job: ?job_object.SelfJob) ![]u8 {
     if (socket) |s| {
         const esc = try jsonEscape(alloc, s);
         defer alloc.free(esc);
@@ -1990,10 +2011,15 @@ fn formatInfoFile(alloc: Allocator, port: u16, pid: i64, started_at_ms: i64, soc
     if (pipe) |p| {
         const esc = try jsonEscape(alloc, p);
         defer alloc.free(esc);
-        return std.fmt.allocPrint(
+        const j = job orelse return std.fmt.allocPrint(
             alloc,
             "{{\"port\":{d},\"pid\":{d},\"pipe\":\"{s}\",\"startedAt\":{d}}}\n",
             .{ port, pid, esc, started_at_ms },
+        );
+        return std.fmt.allocPrint(
+            alloc,
+            "{{\"port\":{d},\"pid\":{d},\"pipe\":\"{s}\",\"startedAt\":{d},\"job\":{{\"inJob\":{?},\"flags\":{?d}}}}}\n",
+            .{ port, pid, esc, started_at_ms, j.in_job, j.flags },
         );
     }
     return std.fmt.allocPrint(
@@ -3260,7 +3286,7 @@ test "listen-unix: bind creates a 0600 socket node (umask), probeUnixAlive sees 
 
 test "socket info file: JSON body carries port:0/pid/socket/startedAt" {
     const alloc = std.testing.allocator;
-    const body = try formatInfoFile(alloc, 0, 987, 1770000000000, "/tmp/agent.sock", null);
+    const body = try formatInfoFile(alloc, 0, 987, 1770000000000, "/tmp/agent.sock", null, null);
     defer alloc.free(body);
 
     const parsed = try std.json.parseFromSlice(std.json.Value, alloc, body, .{});
@@ -3277,7 +3303,7 @@ test "socket info file: path with quote/backslash stays well-formed JSON" {
     // A pathological path (quotes/backslashes are legal in POSIX filenames):
     // the escaper must keep the body parseable and the value byte-exact.
     const weird = "/tmp/a\"b\\c.sock";
-    const body = try formatInfoFile(alloc, 0, 1, 2, weird, null);
+    const body = try formatInfoFile(alloc, 0, 1, 2, weird, null, null);
     defer alloc.free(body);
 
     const parsed = try std.json.parseFromSlice(std.json.Value, alloc, body, .{});
@@ -3287,7 +3313,7 @@ test "socket info file: path with quote/backslash stays well-formed JSON" {
 
 test "pipe info file: JSON body carries port:0/pid/pipe/startedAt (T89c)" {
     const alloc = std.testing.allocator;
-    const body = try formatInfoFile(alloc, 0, 987, 1770000000000, null, "\\\\.\\pipe\\ghoztty-agent-test");
+    const body = try formatInfoFile(alloc, 0, 987, 1770000000000, null, "\\\\.\\pipe\\ghoztty-agent-test", null);
     defer alloc.free(body);
 
     const parsed = try std.json.parseFromSlice(std.json.Value, alloc, body, .{});
@@ -3299,6 +3325,36 @@ test "pipe info file: JSON body carries port:0/pid/pipe/startedAt (T89c)" {
     try std.testing.expectEqualStrings("\\\\.\\pipe\\ghoztty-agent-test", parsed.value.object.get("pipe").?.string);
     try std.testing.expectEqual(@as(i64, 1770000000000), parsed.value.object.get("startedAt").?.integer);
     try std.testing.expect(parsed.value.object.get("socket") == null);
+    // No job given: no job field, so the T89c shape is byte-for-byte unchanged.
+    try std.testing.expect(parsed.value.object.get("job") == null);
+}
+
+test "pipe info file: job membership rides additively, unknowns as null (T1975)" {
+    const alloc = std.testing.allocator;
+    const pipe = "\\\\.\\pipe\\ghoztty-agent-test";
+
+    // The T1973 shape: inside a kill-on-close job.
+    {
+        const body = try formatInfoFile(alloc, 0, 987, 1, null, pipe, .{ .in_job = true, .flags = 0x2000 });
+        defer alloc.free(body);
+        const parsed = try std.json.parseFromSlice(std.json.Value, alloc, body, .{});
+        defer parsed.deinit();
+        const job = parsed.value.object.get("job").?.object;
+        try std.testing.expect(job.get("inJob").?.bool);
+        try std.testing.expectEqual(@as(i64, 0x2000), job.get("flags").?.integer);
+        // The endpoint an old reader needs is untouched by the extra field.
+        try std.testing.expectEqualStrings(pipe, parsed.value.object.get("pipe").?.string);
+    }
+    // Could not measure: null, never false/0.
+    {
+        const body = try formatInfoFile(alloc, 0, 987, 1, null, pipe, .{});
+        defer alloc.free(body);
+        const parsed = try std.json.parseFromSlice(std.json.Value, alloc, body, .{});
+        defer parsed.deinit();
+        const job = parsed.value.object.get("job").?.object;
+        try std.testing.expect(job.get("inJob").? == .null);
+        try std.testing.expect(job.get("flags").? == .null);
+    }
 }
 
 test "socket info file: bind unix socket → write file → read back pid+socket" {

@@ -1,11 +1,10 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-16T06:59:13-07:00",
-    "commit":  "6a9be4081",
+    "generated":  "2026-10-16T07:53:59-07:00",
+    "commit":  "99ebd53f9",
     "uncommitted":  [
-                        "test/win32/agent-job-escape.ps1",
-                        "test/win32/relaunch-guard.ps1"
+                        "test/win32/agent-job-report.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -29,6 +28,7 @@
                   "test/win32/agent-instance-lineage.ps1":  "34eda44fae8650f2b41d9b9660f2cf1ee004da2c463650397a13fb2808961673",
                   "test/win32/agent-integrations.ps1":  "201c7424c1271d20322417b8f0881665be453f2dd6e9611f3fcf10f105310169",
                   "test/win32/agent-job-escape.ps1":  "a6865bdcc2ab5d0c98c316fc436599c5e325220d45290dbedab91bc18b1e03fc",
+                  "test/win32/agent-job-report.ps1":  "cb2d781c08f461ada4719405be41efa795c3393c98ca7dcd0612b146cf9ebfef",
                   "test/win32/agent-lineage-suites.ps1":  "2ae245733d72b0cf2a56d67f2f4c5de7360ac7e2423ac80f6a9688a590e08e84",
                   "test/win32/agent-open-refused.ps1":  "3202d2aca3fd95915800a970dea4d08e2b0d4b3c20d2153989cf8ce1127dfdba",
                   "test/win32/agent-pipe.ps1":  "fcfab69dd79283064318d330a5d630d97ebf57913feda6e98ce526e94fcc6b92",
