@@ -4119,16 +4119,32 @@ $GuardTable = @(
     },
     # The isolation meta-check (T680): the only thing that fails when a
     # test\win32 script drives the CLI with no private IPC endpoint - the
-    # defect class that reads the user's own panes. Covering the whole top
-    # level of the test tree is the point: the property must be re-proved
-    # whenever ANY script changes, and the scan is static text, well under a
-    # second, so the wide net costs nothing.
+    # defect class that reads the user's own panes. The property must be
+    # re-proved whenever ANY script changes; since T1962 the `harness-floor`
+    # row is what makes it so (see the note above).
+    #
+    # T1962 - WHY THE CORPUS AUDITS NO LONGER COVER `test\win32\*.ps1` THEMSELVES.
+    # Every row from here to `stderr-capture`, plus desktop-launch,
+    # command-resolve, argv-hazard, unroll-count, dip-rounding and seam-audit
+    # further down, is a harness-floor member, and the `harness-floor` row
+    # carries the corpus-wide net for all of them: any edit under test\win32\
+    # makes that row due, and its scoped run executes every turn-tier member.
+    # When each member ALSO watched the whole corpus, one script edit made
+    # fifteen rows due (28 of the last 36 feature commits), `acceptance-parallel
+    # due` ran each member on its own and then the floor ran it again, and the
+    # `daily` member command-resolve (~3 min) ran every turn in spite of T1958's
+    # tiering. A member row now names only its own family -
+    # its script, its analyzer library, any registry or baseline, and whatever
+    # OUTSIDE test\win32\ it reads (src\, scripts\), which the floor row does not
+    # cover. The corpus property is still re-proved on every test edit; it is
+    # proved once, by the floor, instead of twice.
     [pscustomobject]@{
         Name   = 'isolation-meta'
         Script = 'test\win32\isolation-meta.ps1'
         Stamp  = 'test\win32\isolation-meta.stamp.json'
         Covers = @(
-            'test\win32\*.ps1'
+            'test\win32\isolation-meta.ps1',
+            'test\win32\lib\Isolation.ps1'
         )
     },
     # The launch pre-flight meta-check (T1033): the only thing that fails when
@@ -4143,8 +4159,9 @@ $GuardTable = @(
         Script = 'test\win32\launch-preflight-audit.ps1'
         Stamp  = 'test\win32\launch-preflight-audit.stamp.json'
         Covers = @(
-            'test\win32\*.ps1',
-            'test\win32\lib\*.ps1'
+            'test\win32\launch-preflight-audit.ps1',
+            'test\win32\lib\BuildMode.ps1',
+            'test\win32\lib\TestDesktop.ps1'
         )
     },
     # The verdict/exit meta-check (T221, given a guard by T963): a script that
@@ -4160,8 +4177,8 @@ $GuardTable = @(
         Script = 'test\win32\verdict-exit-audit.ps1'
         Stamp  = 'test\win32\verdict-exit-audit.stamp.json'
         Covers = @(
-            'test\win32\*.ps1',
-            'test\win32\lib\*.ps1'
+            'test\win32\verdict-exit-audit.ps1',
+            'test\win32\lib\VerdictExitAudit.ps1'
         )
     },
     # The teardown meta-check (T1517): a harness's cleanup finishes in bounded
@@ -4178,8 +4195,8 @@ $GuardTable = @(
         Script = 'test\win32\job-teardown.ps1'
         Stamp  = 'test\win32\job-teardown.stamp.json'
         Covers = @(
-            'test\win32\*.ps1',
-            'test\win32\lib\*.ps1'
+            'test\win32\job-teardown.ps1',
+            'test\win32\lib\JobTeardown.ps1'
         )
     },
     # One shared kill for the app under test and its sibling agent (T351). T248
@@ -4195,8 +4212,9 @@ $GuardTable = @(
         Script = 'test\win32\cleanslate-audit.ps1'
         Stamp  = 'test\win32\cleanslate-audit.stamp.json'
         Covers = @(
-            'test\win32\*.ps1',
-            'test\win32\lib\*.ps1'
+            'test\win32\cleanslate-audit.ps1',
+            'test\win32\lib\CleanSlate.ps1',
+            'test\win32\lib\CleanSlateAudit.ps1'
         )
     },
     # The host-dependent capture meta-check (T883): a merged stream formatted
@@ -4228,7 +4246,7 @@ $GuardTable = @(
         Script = 'test\win32\persistence-flag.ps1'
         Stamp  = 'test\win32\persistence-flag.stamp.json'
         Covers = @(
-            'test\win32\*.ps1',
+            'test\win32\persistence-flag.ps1',
             'test\win32\lib\PersistenceSweep.ps1',
             'test\win32\lib\TestDesktop.ps1'
         )
@@ -4238,7 +4256,7 @@ $GuardTable = @(
         Script = 'test\win32\stderr-launch-capture.ps1'
         Stamp  = 'test\win32\stderr-launch-capture.stamp.json'
         Covers = @(
-            'test\win32\*.ps1',
+            'test\win32\stderr-launch-capture.ps1',
             'test\win32\lib\PersistenceSweep.ps1',
             'test\win32\lib\TestDesktop.ps1',
             'docs\claude\testing.md'
@@ -4249,8 +4267,8 @@ $GuardTable = @(
         Script = 'test\win32\stderr-capture-audit.ps1'
         Stamp  = 'test\win32\stderr-capture-audit.stamp.json'
         Covers = @(
-            'test\win32\*.ps1',
-            'test\win32\lib\*.ps1',
+            'test\win32\stderr-capture-audit.ps1',
+            'test\win32\lib\StderrCaptureAudit.ps1',
             'docs\claude\testing.md'
         )
     },
@@ -5095,10 +5113,10 @@ $GuardTable = @(
         )
     }
 
-    # T1193 - the user-desktop launch sweep. It covers the whole acceptance
-    # directory on purpose: the case it exists for is a NEW script that starts
-    # the app outside the harness, and a row that watched only the analyzer
-    # would go green on the day that script lands. It also covers
+    # T1193 - the user-desktop launch sweep. The case it exists for is a NEW
+    # script that starts the app outside the harness, so it must re-run when any
+    # script lands - which the `harness-floor` row sees to since T1962 (see the
+    # note at isolation-meta); this row is its own family only. It also covers
     # `src\cli\ghostty.zig`, because the "these verbs cannot create a process"
     # list is a claim about that enum and section C is what re-checks it.
     [pscustomobject]@{
@@ -5106,7 +5124,7 @@ $GuardTable = @(
         Script = 'test\win32\desktop-launch-audit.ps1'
         Stamp  = 'test\win32\desktop-launch-audit.stamp.json'
         Covers = @(
-            'test\win32\*.ps1',
+            'test\win32\desktop-launch-audit.ps1',
             'test\win32\lib\DesktopLaunchAudit.ps1',
             'test\win32\lib\TestDesktop.ps1',
             'src\cli\ghostty.zig'
@@ -5146,19 +5164,18 @@ $GuardTable = @(
         )
     }
 
-    # T586 - the sweep that answers "can this script even START?". It covers the
-    # whole acceptance directory AND its libraries, which makes it due whenever
-    # any script here is touched: that is the point, since the case it exists
-    # for is a script edited today that calls a helper nobody wrote, and the
-    # only other thing that would notice is somebody running that one script.
-    # It launches nothing and takes about twenty seconds.
+    # T586 - the sweep that answers "can this script even START?". It used to
+    # cover the whole acceptance directory, making it due on every script edit.
+    # It is a `daily` floor member since T1958 (about three minutes, 0 reds in
+    # 41 runs), so since T1962 a script edit waits for the daily full sweep -
+    # at most 26 hours - and this row fires only on its own family.
     [pscustomobject]@{
         Name   = 'command-resolve'
         Script = 'test\win32\command-resolve-audit.ps1'
         Stamp  = 'test\win32\command-resolve-audit.stamp.json'
         Covers = @(
-            'test\win32\*.ps1',
-            'test\win32\lib\*.ps1'
+            'test\win32\command-resolve-audit.ps1',
+            'test\win32\lib\CommandResolveAudit.ps1'
         )
     },
 
@@ -5174,10 +5191,10 @@ $GuardTable = @(
         Script = 'test\win32\argv-hazard-audit.ps1'
         Stamp  = 'test\win32\argv-hazard-audit.stamp.json'
         Covers = @(
+            'test\win32\argv-hazard-audit.ps1',
+            'test\win32\lib\ArgvHazardAudit.ps1',
             'scripts\*.ps1',
-            'scripts\lib\*.ps1',
-            'test\win32\*.ps1',
-            'test\win32\lib\*.ps1'
+            'scripts\lib\*.ps1'
         )
     },
 
@@ -5264,8 +5281,6 @@ $GuardTable = @(
             'test\win32\unroll-count-audit.ps1',
             'test\win32\lib\UnrollCountAudit.ps1',
             'test\win32\unroll-count-audit.baseline.json',
-            'test\win32\*.ps1',
-            'test\win32\lib\*.ps1',
             'scripts\*.ps1',
             'scripts\lib\*.ps1'
         )
@@ -5282,9 +5297,7 @@ $GuardTable = @(
         Covers = @(
             'test\win32\dip-rounding-audit.ps1',
             'test\win32\lib\DipRoundingAudit.ps1',
-            'test\win32\dip-rounding-audit.baseline.json',
-            'test\win32\*.ps1',
-            'test\win32\lib\*.ps1'
+            'test\win32\dip-rounding-audit.baseline.json'
         )
     },
 
@@ -5301,8 +5314,6 @@ $GuardTable = @(
             'test\win32\seam-audit.ps1',
             'test\win32\lib\SeamAudit.ps1',
             'test\win32\seam-audit.registry.json',
-            'test\win32\*.ps1',
-            'test\win32\lib\*.ps1',
             'src\apprt\win32\*.zig',
             'src\remote\*.zig',
             'src\remote\agent\*.zig',
