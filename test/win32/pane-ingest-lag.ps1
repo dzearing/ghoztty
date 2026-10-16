@@ -1,3 +1,4 @@
+# @timing-sensitive - it measures wall-clock cost, so it runs with nothing beside it (scripts/acceptance-parallel.ps1, T1960).
 # T1142 acceptance: how far behind its own child does a pane's SCREEN run?
 #
 #   powershell -NoProfile -File test\win32\pane-ingest-lag.ps1

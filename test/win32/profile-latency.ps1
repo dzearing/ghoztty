@@ -1,3 +1,4 @@
+# @timing-sensitive - it measures wall-clock cost, so it runs with nothing beside it (scripts/acceptance-parallel.ps1, T1960).
 # T53b interactive profiling: real-keyboard input latency + scrollback-seek
 # feel at 100k+ lines, idle and under same-pane streaming load.
 #

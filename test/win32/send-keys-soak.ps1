@@ -1,3 +1,4 @@
+# @timing-sensitive - it measures wall-clock cost, so it runs with nothing beside it (scripts/acceptance-parallel.ps1, T1960).
 # ON-DEMAND soak for `+send-keys` delivery integrity (T664). NOT part of the
 # P1-P3 floor: one pass is minutes long, and its job is to answer a question
 # the floor cannot — "can a text run lose bytes, ever?" — by repeating the

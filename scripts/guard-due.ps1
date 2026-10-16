@@ -2310,6 +2310,8 @@ $GuardTable = @(
         Name   = 'hook-json'
         Script = 'test\win32\hook-json.ps1'
         Stamp  = 'test\win32\hook-json.stamp.json'
+        # T1988: red on the upstream hook mirror's drift from origin/main.
+        KnownBlockedBy = 'T1988'
         Covers = @(
             'src\cli\json.zig',
             'src\apprt\win32\GhosttyAssets.zig',
@@ -2613,6 +2615,24 @@ $GuardTable = @(
             'scripts\lib\BuildCache.ps1',
             'scripts\build-cache.ps1',
             'test\win32\floor-lane-parallel.ps1'
+        )
+    },
+    # T1960: due acceptance runs four at a time, each worker in its own mirror
+    # of the repo. What breaks silently here is ISOLATION - one worker's
+    # clean-slate killing another's app reads as a flaky product test - and
+    # the schedule: a timing-sensitive script measured beside three GUI
+    # scripts. The harness plants both with stand-in processes and fixture
+    # scripts, in about a minute and a half, and never shows a window.
+    [pscustomobject]@{
+        Name   = 'acceptance-parallel'
+        Script = 'test\win32\acceptance-parallel.ps1'
+        Stamp  = 'test\win32\acceptance-parallel.stamp.json'
+        Covers = @(
+            'scripts\acceptance-parallel.ps1',
+            'scripts\lib\AcceptanceParallel.ps1',
+            'scripts\lib\RunVerdict.ps1',
+            'test\win32\lib\CleanSlate.ps1',
+            'test\win32\acceptance-parallel.ps1'
         )
     },
     # Lanes run on a background desktop, and a window a lane's tree shows on
@@ -3537,6 +3557,9 @@ $GuardTable = @(
         Covers = @(
             'scripts\suite-run.ps1',
             'scripts\lib\Duration.ps1',
+            # T1960: the verdict scorer and the timeout-declaration reader moved
+            # here so the parallel runner scores runs identically.
+            'scripts\lib\RunVerdict.ps1',
             'test\win32\suite-run.ps1',
             # T1098: the between-script modal sweep is the runner's, and section
             # M is the only thing that exercises it.
@@ -3659,6 +3682,8 @@ $GuardTable = @(
         Name   = 'layout-capture-cost'
         Script = 'test\win32\layout-capture-cost.ps1'
         Stamp  = 'test\win32\layout-capture-cost.stamp.json'
+        # T1989: red run alone since at least 2026-10-15 (last green 2026-09-03).
+        KnownBlockedBy = 'T1989'
         Covers = @(
             'src\apprt\win32\layout_cost.zig',
             'test\win32\layout-capture-cost.ps1'

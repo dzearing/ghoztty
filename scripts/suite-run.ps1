@@ -64,6 +64,15 @@
   a suite-wide change, filed as its own task rather than smuggled in here.
   Until then the honest number is the serial one, and this prints it.
 
+  T1960 found the shape that needs no script edits, and it lives in
+  scripts\acceptance-parallel.ps1 (the per-turn DUE set, about four at a
+  time): each worker runs from a mirror of the repo - junctions to the real
+  tree and its own hard-linked zig-out - so every path a script derives from
+  `$PSScriptRoot` names that worker's copy, and its own LOCALAPPDATA, agent
+  lineage and pipe suffix come from the environment. Scripts it cannot place
+  in a worker run one at a time beside them or with nothing beside them. This
+  runner stays the serial whole-suite sweep; the two share lib\RunVerdict.ps1.
+
   A RED ROW IS RE-RUN ONCE, ALONE, BEFORE THE RUN ENDS (T1137). "The feature is
   broken" and "the test is broken" produce the same red row, and the sweep of
   2026-08-22 had eight consecutive tasks filed at P1 as user-facing outages that
@@ -200,38 +209,6 @@ dot-sourced libraries and `artifacts\` holds fixtures, and neither has a verdict
 to score.
 #>
 <#
-A script's own declaration of how long it legitimately needs, read from a
-`# suite-timeout-sec: <N>` comment in its text. Returns 0 when it declares
-nothing, which means "use the run's -TimeoutSec".
-
-Why a declaration in the script rather than a table in this runner (T1125):
-`soak.ps1` runs a 30-minute soak by design and was killed at the 600s cap on
-every sweep and scored `stall` - a measurement artefact that read exactly like
-the app having hung. The number belongs beside the code that spends it, because
-a table here goes stale the moment somebody changes a script's -Minutes default
-and nobody edits the runner.
-
-Only the first match counts, and only a positive integer: a garbled declaration
-falls back to the run's cap rather than to "no bound", the same rule
-ipc_timeout.zig applies to its env var.
-#>
-function Get-ScriptTimeout {
-    param([string]$Text)
-    if (-not $Text) { return 0 }
-    # \r? before the anchor: `$` in .NET multiline matches before the \n, and a
-    # CRLF file leaves the \r inside the line - so a declaration in a CRLF script
-    # silently did not exist at all. soak.ps1 became CRLF in ce943e238 and went
-    # straight back to being killed at 600s and scored `stall`, which is the
-    # exact defect T1125 fixed.
-    $m = [regex]::Match($Text, '(?m)^[ \t]*#[ \t]*suite-timeout-sec[ \t]*:[ \t]*(\d+)[ \t]*\r?$')
-    if (-not $m.Success) { return 0 }
-    $v = 0
-    if (-not [int]::TryParse($m.Groups[1].Value, [ref]$v)) { return 0 }
-    if ($v -le 0) { return 0 }
-    return $v
-}
-
-<#
 The cap this run will actually enforce on one script: its declaration when it
 has one, else the run's -TimeoutSec, and never more than -MaxTimeoutSec when
 that is set. Kept separate from Get-ScriptTimeout so the report can say WHICH
@@ -318,73 +295,11 @@ function Sort-SuiteOrder {
 
 # ------------------------------------------------------------------- scoring
 
-<#
-Score one finished run from its exit code and its log.
-
-The exit code is the authority - the suite's own contract (T221/T271) is that a
-script printing failure exits failure - and the verdict LINE is what a human
-reads. They are recorded separately on purpose: a script whose two disagree is
-a defect this runner should be able to name, not paper over.
-#>
-function Get-VerdictLine {
-    param([string]$LogPath)
-
-    $line = ''
-    if (-not $LogPath) { return $line }
-    if (Test-Path -LiteralPath $LogPath) {
-        $tail = @(Get-Content -LiteralPath $LogPath -Tail 40 -ErrorAction SilentlyContinue)
-        for ($i = $tail.Count - 1; $i -ge 0; $i--) {
-            $t = $tail[$i].Trim()
-            if ($t) { $line = $t; break }
-        }
-        # Prefer an actual verdict line if one is in the tail but not last
-        # (a few scripts print a teardown note after their verdict).
-        for ($i = $tail.Count - 1; $i -ge 0; $i--) {
-            $t = $tail[$i].Trim()
-            if ($t -match 'ALL PASS|FAILURE\(S\)|ASSERTED (NOTHING|TOO LITTLE)|SKIP ALL') { $line = $t; break }
-        }
-    }
-    return $line
-}
-
-function Get-RunVerdict {
-    param([int]$ExitCode, [string]$LogPath, [bool]$TimedOut, [string]$AltLogPath)
-
-    # STDOUT decides the quoted line, and stderr is only the fallback for a
-    # script that said nothing there at all (T1125). The caller hands them in
-    # as two files on purpose: stderr is folded onto the END of the log, so
-    # scoring one merged file quotes the last stderr line as the verdict - which
-    # is how a soak killed 20 minutes into its silent sampling loop was reported
-    # as `Waiting for Ghoztty to answer '+list'`, a startup notice printed in its
-    # first seconds, and left a hung app as the leading hypothesis for a day.
-    $line = Get-VerdictLine -LogPath $LogPath
-    if (-not $line) { $line = Get-VerdictLine -LogPath $AltLogPath }
-
-    if ($TimedOut) { return @{ Kind = 'stall'; Line = $line } }
-
-    switch ($ExitCode) {
-        0 {
-            if ($line -match 'ALL PASS') { return @{ Kind = 'pass'; Line = $line } }
-            # A whole-script SKIP (T1100): the box could not answer the question
-            # this script asks - no composited pixels on a background desktop, no
-            # SendInput off the input desktop, an input lock owning the
-            # foreground. It asserted nothing and it did not fail, so it is
-            # neither `pass` nor red: scored apart, counted apart, and NOT
-            # re-run by the confirm pass, which exists to separate a product
-            # defect from an isolation artefact and has no such question to ask
-            # here. The capability is named in the line by
-            # lib\DesktopCapability.ps1, so the one line anybody reads says what
-            # could not be asked.
-            if ($line -match '^\s*SKIP ALL') { return @{ Kind = 'skip'; Line = $line } }
-            # Exit 0 with no pass verdict: either a script with no verdict at
-            # all, or the fall-through shape T221 exists to catch.
-            return @{ Kind = 'error'; Line = $(if ($line) { $line } else { '(exit 0, no verdict line)' }) }
-        }
-        1 { return @{ Kind = 'fail'; Line = $(if ($line) { $line } else { '(exit 1, no verdict line)' }) } }
-        2 { return @{ Kind = 'nothing'; Line = $(if ($line) { $line } else { '(exit 2, no verdict line)' }) } }
-        default { return @{ Kind = 'error'; Line = "exit $ExitCode - $line" } }
-    }
-}
+# Get-VerdictLine / Get-RunVerdict (and Get-ScriptTimeout, the
+# `# suite-timeout-sec:` reader) live in lib\RunVerdict.ps1 since T1960, so
+# the parallel due-set runner (scripts\acceptance-parallel.ps1) scores a run
+# exactly the way this one does.
+. (Join-Path $PSScriptRoot 'lib\RunVerdict.ps1')
 
 # -------------------------------------------------------------- leak sweeping
 

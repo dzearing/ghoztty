@@ -1,3 +1,4 @@
+# @timing-sensitive - it measures wall-clock cost, so it runs with nothing beside it (scripts/acceptance-parallel.ps1, T1960).
 # T1343 acceptance: what a splitter drag COSTS, measured, at several pane
 # counts, in both shapes of the frame wait.
 #

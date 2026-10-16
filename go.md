@@ -526,6 +526,20 @@ Concretely, in order, with no stops in between:
    `scripts\guard-due.ps1` is the whole cost of closing the same gap for the
    next harness that grows one.
 
+   **Run the due harnesses with one command, about four at a time** (T1960):
+
+   ```
+   powershell -NoProfile -File scripts\acceptance-parallel.ps1 due
+   ```
+
+   Each worker runs from its own mirror of the repo, so no worker's clean-slate
+   can kill another's app; scripts that cannot run in a worker run one at a time
+   beside them, and anything marked `# @timing-sensitive` (or touching the
+   clipboard, HKCU, the installer, a build) runs with nothing beside it. A row
+   red beside others is re-run alone, and `PARALLEL-SENSITIVE` means: mark that
+   script. Rules and the `-Width 1` serial baseline: `docs/claude/testing.md`.
+   Still never beside a floor LANE (the T401 rule above stands).
+
    **One of those rows is a whole family: `harness-floor`** (T725). The audits
    that sweep `test\win32\` for harness defects - exit codes, skips, verdicts,
    isolation, capture - are a single command now:

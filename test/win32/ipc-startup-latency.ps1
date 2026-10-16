@@ -1,3 +1,4 @@
+# @timing-sensitive - it measures wall-clock cost, so it runs with nothing beside it (scripts/acceptance-parallel.ps1, T1960).
 # T188 acceptance: the app must ANSWER IPC while it is still restoring, not
 # only after.
 #

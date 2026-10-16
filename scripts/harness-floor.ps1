@@ -1,3 +1,6 @@
+# suite-timeout-sec: 3600
+# (T1960: the full sweep runs 16-25 minutes; a runner that kills it at its own
+# default cap scores a working floor STALL.)
 <#
 .SYNOPSIS
   Run the standing harness audits - one command, one verdict line.

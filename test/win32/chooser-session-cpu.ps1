@@ -1,3 +1,4 @@
+# @timing-sensitive - it measures wall-clock cost, so it runs with nothing beside it (scripts/acceptance-parallel.ps1, T1960).
 # The machine chooser's per-session CPU meter (tracker T462).
 #
 # WHAT CHANGED. The agent has always measured each session's whole process tree

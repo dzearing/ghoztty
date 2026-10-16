@@ -1,3 +1,4 @@
+# @timing-sensitive - it measures wall-clock cost, so it runs with nothing beside it (scripts/acceptance-parallel.ps1, T1960).
 # Long-context soak harness (T53a/T53b): Claude-Code-like load against the
 # release-staging build, fully IPC-driven (no keyboard injection, safe to
 # run beside real work). Isolated on a run-unique '-soak<pid>' pipe suffix.

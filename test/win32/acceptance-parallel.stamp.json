@@ -1,0 +1,19 @@
+{
+    "guard":  "acceptance-parallel",
+    "script":  "test/win32/acceptance-parallel.ps1",
+    "generated":  "2026-10-15T16:45:23-07:00",
+    "commit":  "96abceb9e",
+    "uncommitted":  [
+                        "scripts/acceptance-parallel.ps1",
+                        "scripts/lib/AcceptanceParallel.ps1",
+                        "scripts/lib/RunVerdict.ps1",
+                        "test/win32/acceptance-parallel.ps1"
+                    ],
+    "files":  {
+                  "scripts/acceptance-parallel.ps1":  "3c35c6b0f8d90e98b0657dc7c89e8dab02a8024caade69d881fb0fe819d8eb89",
+                  "scripts/lib/AcceptanceParallel.ps1":  "819ddc7cc0fe7ff852123e13a153abaa5d1c73dbfef149534339d476fd3fc535",
+                  "scripts/lib/RunVerdict.ps1":  "a23842bebc540f3c3e7fb0477bad5816d3720e9adf91bfedd74a9ad0b5d6da07",
+                  "test/win32/acceptance-parallel.ps1":  "cab136c48d028d8c05e6558f0b53360e7651064a25dd4cd0cd4cb0def8cc8427",
+                  "test/win32/lib/CleanSlate.ps1":  "97b5dfd912243a94ef32ab285f4f905615a43767609d34fea3b27949e8d07860"
+              }
+}

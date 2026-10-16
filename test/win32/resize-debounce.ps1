@@ -1,3 +1,4 @@
+# @timing-sensitive - it measures wall-clock cost, so it runs with nothing beside it (scripts/acceptance-parallel.ps1, T1960).
 # T1835 acceptance: a divider drag or a window resize reaches the program in
 # the pane as a HANDFUL of resizes, not one per mouse move - and the last size
 # always arrives. Also: no "cols x rows" size overlay pops up by default.

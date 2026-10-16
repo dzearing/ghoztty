@@ -1,3 +1,4 @@
+# @timing-sensitive - it measures wall-clock cost, so it runs with nothing beside it (scripts/acceptance-parallel.ps1, T1960).
 # T1031 acceptance: resizing panes does not blank them first.
 #
 # THE DEFECT, because it decides what this script can honestly assert.

@@ -913,6 +913,43 @@ been asked. Acceptance: `test\win32\guard-due.ps1`, whose sections D and E
 measure the two forces against each other (the same staleness must fail
 `validate` and must not fail `claim`).
 
+**Run the due set four at a time, not one at a time** (T1960). The command that
+DOES run the harnesses `check` names is
+
+```
+powershell -NoProfile -File scripts\acceptance-parallel.ps1 due
+```
+
+which runs every blocking `GUARD DUE` row about four at a time (~16 minutes
+serial on T1874). Each worker runs from its own mirror of the repo under
+`<repo-parent>\.<repo>-par\w<n>` — a junction per top-level directory, a hard
+link per top-level file, and its own `zig-out` of hard links to the real build —
+so every path a script derives from `$PSScriptRoot` (the exe it launches, the
+prefix its clean-slate kills) names that worker's copy, and its own
+`LOCALAPPDATA`, `GHOZTTY_AGENT_INSTANCE` and `GHOZTTY_PIPE_SUFFIX` come from the
+environment. A script is classified from its code (comments stripped):
+**parallel** (in a worker), **main** (it hardcodes unscoped state such as
+`local-agent-debug`, so it runs from the real repo, one main script at a time,
+beside the workers), or **exclusive** (clipboard, HKCU, the installer, box-wide
+leak counts, builds, nested harnesses — nothing runs beside it). Rules for you:
+
+- **A script that measures wall-clock cost declares `# @timing-sensitive`** in
+  its header and then runs with nothing beside it; `# @parallel-unsafe` is the
+  general opt-out. `classify -Scripts x.ps1` shows how a script will be run and
+  why.
+- **A row red beside others is re-run alone before the run ends.** Red in the
+  pool and green alone prints `PARALLEL-SENSITIVE <name>` — add a marker to that
+  script (or fix what it shares); the alone verdict is the one that counts, and
+  only a green run stamps, as always.
+- `-Width 1` is the serial baseline (every script from the real repo, your
+  environment), for comparing verdicts. `SCHEDULE VIOLATION` / exit 3 is a
+  runner defect, never a script's. Acceptance: `test\win32\acceptance-parallel.ps1`
+  (the planted cross-worker kill, the schedule, serial-vs-parallel verdicts).
+- Worker roots persist between runs and are re-synced at the start of each.
+  Never delete one with `Remove-Item -Recurse`: PowerShell 5.1 follows the
+  junctions into the real repo. `Remove-AcceptanceWorkerRoot`
+  (`scripts\lib\AcceptanceParallel.ps1`) unlinks them first.
+
 **The audits above are one command, and one guard row** (T725). Every sweep in
 this section — exit-code, skip, verdict, asserted-nothing, body-complete,
 capture, resolve, reach, isolation, foreground — is a static read of the suite's

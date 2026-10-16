@@ -1,3 +1,4 @@
+# @timing-sensitive - it measures wall-clock cost, so it runs with nothing beside it (scripts/acceptance-parallel.ps1, T1960).
 # T412 acceptance: what one session-layout sync COSTS the UI thread, measured
 # on box at the pane counts the user actually runs.
 #
