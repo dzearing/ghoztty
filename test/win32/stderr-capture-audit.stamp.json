@@ -1,25 +1,15 @@
 {
     "guard":  "stderr-capture",
     "script":  "test/win32/stderr-capture-audit.ps1",
-    "generated":  "2026-10-15T16:42:19-07:00",
-    "commit":  "96abceb9e",
+    "generated":  "2026-10-15T18:03:25-07:00",
+    "commit":  "d07b76d8a",
     "uncommitted":  [
                         "docs/claude/testing.md",
-                        "test/win32/acceptance-parallel.ps1",
-                        "test/win32/chooser-session-cpu.ps1",
-                        "test/win32/drag-perf.ps1",
-                        "test/win32/ipc-startup-latency.ps1",
-                        "test/win32/layout-capture-cost.ps1",
-                        "test/win32/pane-ingest-lag.ps1",
-                        "test/win32/profile-latency.ps1",
-                        "test/win32/resize-debounce.ps1",
-                        "test/win32/resize-flicker.ps1",
-                        "test/win32/send-keys-soak.ps1",
-                        "test/win32/soak.ps1"
+                        "test/win32/acceptance-parallel.ps1"
                     ],
     "files":  {
-                  "docs/claude/testing.md":  "63173ee9c54b7ef95455e6b47d8d4b948bbb6418f12e15001c58e72a2c1676c7",
-                  "test/win32/acceptance-parallel.ps1":  "cab136c48d028d8c05e6558f0b53360e7651064a25dd4cd0cd4cb0def8cc8427",
+                  "docs/claude/testing.md":  "741704de8375e7035c10a01f7bfd4ded3fe872b0a0f3e15b9235fa69534691d6",
+                  "test/win32/acceptance-parallel.ps1":  "c62306ac56b6609c03a7b9e196de58522ff23d59fe305da1293603f56b708780",
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",

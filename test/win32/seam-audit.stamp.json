@@ -1,20 +1,10 @@
 {
     "guard":  "seam-audit",
     "script":  "test/win32/seam-audit.ps1",
-    "generated":  "2026-10-15T16:42:27-07:00",
-    "commit":  "96abceb9e",
+    "generated":  "2026-10-15T18:02:20-07:00",
+    "commit":  "d07b76d8a",
     "uncommitted":  [
-                        "test/win32/acceptance-parallel.ps1",
-                        "test/win32/chooser-session-cpu.ps1",
-                        "test/win32/drag-perf.ps1",
-                        "test/win32/ipc-startup-latency.ps1",
-                        "test/win32/layout-capture-cost.ps1",
-                        "test/win32/pane-ingest-lag.ps1",
-                        "test/win32/profile-latency.ps1",
-                        "test/win32/resize-debounce.ps1",
-                        "test/win32/resize-flicker.ps1",
-                        "test/win32/send-keys-soak.ps1",
-                        "test/win32/soak.ps1"
+                        "test/win32/acceptance-parallel.ps1"
                     ],
     "files":  {
                   "src/apprt/win32/about_links.zig":  "9bb9ec60b7b6099fda1350ec165c06d9404a32c4f53de1bb2fd0ce697a52683a",
@@ -498,7 +488,7 @@
                   "src/termio/stream_handler.zig":  "f4426909f86c1b03e535d7217515150cf6ad84f41473fa6af63309f7e7235fc9",
                   "src/termio/Termio.zig":  "d818faf248859686c323c9fb8dee428f4836f985af65971fe405cec2d781c5c5",
                   "src/termio/Thread.zig":  "d2cd2a4fab35b32e02897f3b987e7bd74b467cda59e7bb3e6ffac5c2453bbeae",
-                  "test/win32/acceptance-parallel.ps1":  "cab136c48d028d8c05e6558f0b53360e7651064a25dd4cd0cd4cb0def8cc8427",
+                  "test/win32/acceptance-parallel.ps1":  "c62306ac56b6609c03a7b9e196de58522ff23d59fe305da1293603f56b708780",
                   "test/win32/activity-help-tooltips.ps1":  "5744029beb6fc26846bb055c68a1ce983402967d1e46ab160c09272f8299dd5b",
                   "test/win32/activity-monitor.ps1":  "403d1cd3f79db316977253133c1681ae85a53526d0e0d9667be7a29ebc369205",
                   "test/win32/activity-monitor-dialed.ps1":  "b1140b8415d7b074f0a42e2d6331214073f54670ea8274eb48676b27cfa1ac48",
