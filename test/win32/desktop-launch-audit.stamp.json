@@ -1,13 +1,10 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-10-15T22:52:14-07:00",
-    "commit":  "55b5670dc",
+    "generated":  "2026-10-15T23:33:53-07:00",
+    "commit":  "ba87c3f0d",
     "uncommitted":  [
-                        "test/win32/daily-publish.ps1",
-                        "test/win32/deliver-windows-build.ps1",
-                        "test/win32/loop-lanes.ps1",
-                        "test/win32/parity-tasks-lanes.ps1"
+                        "test/win32/ledger-dupes.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "85048b74f8795c4f500ca8dd98fa52a24e92a94808ef1b16df34070b4cf6094d",
@@ -205,7 +202,7 @@
                   "test/win32/layout-blob-cross-lineage.ps1":  "8856f0fbe0bff9a2c4b6c71a138ac77a009a335a935f92a8892dd45b065fb6cb",
                   "test/win32/layout-blobs.ps1":  "d91f5b4afad56f13d8fba4d6f00abf44539b9a5e93afadd26acaec53c5413b75",
                   "test/win32/layout-capture-cost.ps1":  "696abf8e70b52d5032560e0654decd7f69ff08fc5563782e4e543ae42aaf121d",
-                  "test/win32/ledger-dupes.ps1":  "0af2ae7aac1c09692dc0f8a33164225a93808765fc732e91e4c6e9737df3935d",
+                  "test/win32/ledger-dupes.ps1":  "f693ddaeeb788720bcec7d91a74af3342bc299cea6746c4fecfc7e3930d65635",
                   "test/win32/lib/DesktopLaunchAudit.ps1":  "897d00a536c4707eca44bd869d7b86fb4c8e48eceb62b36c04009e33f3fc08a4",
                   "test/win32/lib/TestDesktop.ps1":  "4df62a685bd1ca98e2fdef08e1dee2650a5c5edc2574b322da7dd9b0024355a7",
                   "test/win32/local-split-no-command-rerun.ps1":  "ee277b6308cdb172e153fe92d0624732f8b64743418134ce466da5534138fae2",

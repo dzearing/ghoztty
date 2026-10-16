@@ -117,7 +117,10 @@ Concretely, in order, with no stops in between:
      `daily-publish.ps1` is a `LANE REFUSED` SKIP (exit 0, so the turn goes on;
      `-Request` and `-Status` stay open, and lane `a` ships what lane `b`
      pushed), and the tag, upgrade, launch and deliver scripts refuse outright.
-     Acceptance: `test\win32\loop-lanes.ps1`.
+     Acceptance: `test\win32\loop-lanes.ps1`. Both lanes append to the session
+     log as usual: it is under `merge=union` (T957), so a `pull --rebase` keeps
+     both lanes' entries without a conflict (T1985; section F of
+     `test\win32\ledger-dupes.ps1`).
 
 0.5. **Daily digest** (user, 2026-08-05) — before picking a task, check
    `docs/design/windows-parity-digests/<today>.md` (local date). If it is

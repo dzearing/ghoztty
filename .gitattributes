@@ -76,6 +76,13 @@ scripts/githooks/* text eol=lf
 # entry in the file twice (two seats holding the same entries in a different
 # order is enough), and it never says so: scripts/ledger-dupes.ps1 reads the
 # .md rows below and parity-tasks.ps1 validate fails on a doubled entry (T1025).
+# Two loop lanes (T1937) are the same race at a higher rate, and need nothing
+# more: lane b's `pull --rebase` replays its entries over lane a's whole, and
+# test/win32/ledger-dupes.ps1 section F proves it against the same race without
+# this line, which conflicts (T1985). One cosmetic cost: the blank line both
+# appends open with is shared, so union keeps one, and the later heading follows
+# the earlier entry's last line directly. Markdown still reads it as a heading
+# and the scanner still splits there.
 docs/design/windows-parity-log.md merge=union
 docs/design/windows-parity-feature-ideas.md merge=union
 

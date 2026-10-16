@@ -19,6 +19,9 @@
 #   D  a real union merge produces exactly what the scanner catches
 #   E  parity-tasks.ps1 validate is DRIVEN red through its relay, and quiet
 #      again once the duplicate is removed
+#   F  two loop lanes (T1937) appending at once: lane b's pull --rebase keeps
+#      every entry from both, and the same race without union conflicts
+#      (T1985)
 #
 # Static checks plus throwaway git repos under temp\ - no app, no CLI, safe on
 # the off-desktop harness.
@@ -297,6 +300,87 @@ try {
     Assert 'E5 premise: the repaired ledger holds each entry once' (([regex]::Matches($fixed, 'T2: f')).Count -eq 1) $fixed
     $v = Invoke-FixtureValidate
     Assert 'E6 a repaired ledger is not reported' ($v.Text -notmatch 'DUPLICATED LEDGER ENTRY') $v.Text
+
+    # -----------------------------------------------------------------------
+    ""
+    "== F: two loop lanes appending at once both survive a pull --rebase (T1985)"
+    # -----------------------------------------------------------------------
+    # The lane shape T1937 runs: lane a is the main worktree, lane b a linked
+    # worktree on its own local branch that rebases onto the shared branch and
+    # pushes HEAD to it. Lane b closes two tasks (two commits, each appending
+    # an entry) while lane a closes one and pushes first. Lane b's
+    # `pull --rebase` must replay both of its commits over lane a's entry with
+    # no conflict and nothing lost, and the control repeats the same race
+    # without the union attribute to prove the attribute is what carries it.
+    function New-LaneFixture([string]$Name, [bool]$Union) {
+        $root = Join-Path $fixtureDir $Name
+        New-Item -ItemType Directory -Force -Path $root | Out-Null
+        $null = Invoke-Git $root 'init -q --bare -b trunk origin.git'
+        $null = Invoke-Git $root 'clone -q origin.git lane-a'
+        $a = Join-Path $root 'lane-a'
+        $null = Invoke-Git $a 'config core.autocrlf false'
+        $null = Invoke-Git $a 'checkout -q -b trunk'
+        $attr = if ($Union) { 'log.md merge=union' } else { 'log.md text eol=lf' }
+        Write-Fixture (Join-Path $a '.gitattributes') @($attr)
+        Write-Fixture (Join-Path $a 'log.md') @('# L', '', '## 2026-10-15 - T1: base', '', '- body base')
+        $null = Invoke-Git $a 'add -A'
+        $null = Invoke-Git $a 'commit -qm base'
+        $null = Invoke-Git $a 'push -q origin trunk'
+        $null = Invoke-Git $a 'worktree add -q -b lane-b ../lane-b origin/trunk'
+        $b = Join-Path $root 'lane-b'
+        $null = Invoke-Git $b 'config core.autocrlf false'
+        return [pscustomobject]@{ A = $a; B = $b }
+    }
+    function Add-LaneEntry([string]$At, [string]$Heading, [string]$Body) {
+        $p = Join-Path $At 'log.md'
+        [System.IO.File]::AppendAllText($p, "`n$Heading`n`n$Body`n", (New-Object System.Text.UTF8Encoding($false)))
+        $null = Invoke-Git $At ("commit -qam " + ($Heading -replace '\W', ''))
+    }
+    $headA = '## 2026-10-15 - T2: lane a closes one'
+    $headB1 = '## 2026-10-15 - T3: lane b closes one'
+    $headB2 = '## 2026-10-15 - T4: lane b closes another'
+
+    $lanes = New-LaneFixture 'lanes-union' $true
+    Add-LaneEntry $lanes.B $headB1 '- body b1'
+    Add-LaneEntry $lanes.B $headB2 '- body b2'
+    Add-LaneEntry $lanes.A $headA '- body a'
+    $pushA = Invoke-Git $lanes.A 'push -q origin trunk'
+    Assert 'F0 premise: lane a pushed first' ($pushA -eq 0) "(exit $pushA)"
+    $rebaseCode = Invoke-Git $lanes.B 'pull -q --rebase origin trunk'
+    Assert 'F1 lane b''s pull --rebase replays both of its entries with no conflict' ($rebaseCode -eq 0) "(exit $rebaseCode)"
+    $gitDirB = (& git -C $lanes.B rev-parse --git-dir 2>$null | Out-String).Trim()
+    if (-not [System.IO.Path]::IsPathRooted($gitDirB)) { $gitDirB = Join-Path $lanes.B $gitDirB }
+    $midRebase = (Test-Path (Join-Path $gitDirB 'rebase-merge')) -or (Test-Path (Join-Path $gitDirB 'rebase-apply'))
+    $laneLog = [System.IO.File]::ReadAllText((Join-Path $lanes.B 'log.md'))
+    Assert 'F2 ...leaving no rebase in progress and no conflict markers' `
+        (-not $midRebase -and $laneLog -notmatch '(?m)^(<<<<<<<|=======|>>>>>>>)') $laneLog
+    $each = foreach ($h in @($headA, $headB1, $headB2)) {
+        [pscustomobject]@{ H = $h; N = ([regex]::Matches($laneLog, [regex]::Escape($h))).Count }
+    }
+    $wrong = @($each | Where-Object { $_.N -ne 1 } | ForEach-Object { "$($_.H) x$($_.N)" })
+    Assert 'F3 ...with every lane''s entry in the log exactly once' ($wrong.Count -eq 0) ($wrong -join '; ')
+    $bodies = @('- body base', '- body a', '- body b1', '- body b2' | Where-Object { $laneLog -notmatch ('(?m)^' + [regex]::Escape($_) + '$') })
+    Assert 'F4 ...each entry whole, body included' ($bodies.Count -eq 0) ("missing: " + ($bodies -join ', '))
+    $ia = $laneLog.IndexOf($headA); $ib1 = $laneLog.IndexOf($headB1); $ib2 = $laneLog.IndexOf($headB2)
+    Assert 'F5 ...in push order: the entry pushed first stays first' ($ia -ge 0 -and $ia -lt $ib1 -and $ib1 -lt $ib2) "(a=$ia b1=$ib1 b2=$ib2)"
+    $r = Invoke-Scan @((Join-Path $lanes.B 'log.md'))
+    Assert 'F6 the duplicate scanner reads the rebased log as four clean entries' `
+        ($r.Code -eq 0 -and $r.Text -match 'CLEAN: 4 entries') $r.Text
+    $pushB = Invoke-Git $lanes.B 'push -q origin HEAD:trunk'
+    Assert 'F7 lane b then pushes HEAD to the shared branch' ($pushB -eq 0) "(exit $pushB)"
+    $ffA = Invoke-Git $lanes.A 'pull -q --ff-only origin trunk'
+    $aLog = [System.IO.File]::ReadAllText((Join-Path $lanes.A 'log.md'))
+    Assert 'F8 ...and lane a fast-forwards to the same log' ($ffA -eq 0 -and $aLog -eq $laneLog) "(exit $ffA)"
+
+    # Control: the identical race without the union attribute must conflict.
+    # If it rebased cleanly, F1 would be measuring git's luck, not the driver.
+    $ctl = New-LaneFixture 'lanes-plain' $false
+    Add-LaneEntry $ctl.B $headB1 '- body b1'
+    Add-LaneEntry $ctl.A $headA '- body a'
+    $null = Invoke-Git $ctl.A 'push -q origin trunk'
+    $ctlCode = Invoke-Git $ctl.B 'pull -q --rebase origin trunk'
+    Assert 'F9 control: without merge=union the same race stops the rebase with a conflict' ($ctlCode -ne 0) "(exit $ctlCode)"
+    $null = Invoke-Git $ctl.B 'rebase --abort'
 
     # -----------------------------------------------------------------------
     # Negative control: the scanner must go RED on the REAL log's shape, not
