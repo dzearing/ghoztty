@@ -320,6 +320,9 @@ $ErrorActionPreference = 'Stop'
 # never reach the user's screen, and checks the input desktop to prove it
 # (T1813).
 . "$PSScriptRoot\lib\LaneDesktop.ps1"
+# T1982: the box-wide floor lock, so two loop lanes never sweep the harness
+# floor at once.
+. "$PSScriptRoot\lib\MachineLock.ps1"
 
 # Exit codes, named so a caller does not have to guess.
 $EXIT_PASS = 0
@@ -1679,6 +1682,18 @@ foreach ($l in $lanes) {
         # T1958: scoped unless -HarnessFull (the digest step's daily sweep).
         $harnessCmd = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$floorScript`" -Repo `"$Repo`"$(if (-not $HarnessFull) { ' -Scoped' })"
         if ($fakeCmd) { $harnessCmd = $fakeCmd }
+        # T1982: one harness sweep on the box at a time. The wait happens HERE,
+        # outside the lane watchdog, so it can never read as a stall or eat the
+        # sweep's own timeout; the child is told the lock is held so a direct
+        # harness-floor.ps1 run takes it and this one does not deadlock on it.
+        $floorLock = $null
+        if ($l -eq 'harness') {
+            $floorLock = Enter-MachineLock -Kind floor -Label "floor-lane -Lane harness ($Repo)"
+            if (-not $floorLock.Acquired) {
+                Write-Host "FLOOR LOCK: running the sweep anyway - two sweeps at once are slower, not wrong; a TIMEOUT below may be the other lane's load"
+            }
+            $env:GHOZTTY_FLOOR_LOCK_HELD = '1'
+        }
         for ($i = 1; $i -le $Repeat; $i++) {
             $r = Invoke-Lane -Name $l -Iteration $i -RawCommand $harnessCmd
             $summary += (Format-LaneSummaryToken -LaneName $l -Iteration $i -Result $r -LogPath $script:LastLaneLog)
@@ -1692,6 +1707,10 @@ foreach ($l in $lanes) {
                 'TIMEOUT' { if ($worst -lt $EXIT_TIMEOUT) { $worst = $EXIT_TIMEOUT } }
             }
             if ($r -ne 'PASS') { break }
+        }
+        if ($l -eq 'harness') {
+            Exit-MachineLock $floorLock
+            Remove-Item Env:GHOZTTY_FLOOR_LOCK_HELD -ErrorAction SilentlyContinue
         }
         continue
     }

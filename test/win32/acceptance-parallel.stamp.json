@@ -1,13 +1,10 @@
 {
     "guard":  "acceptance-parallel",
     "script":  "test/win32/acceptance-parallel.ps1",
-    "generated":  "2026-10-15T17:48:43-07:00",
-    "commit":  "d07b76d8a",
+    "generated":  "2026-10-15T18:54:25-07:00",
+    "commit":  "5163f7079",
     "uncommitted":  [
-                        "scripts/acceptance-parallel.ps1",
-                        "scripts/lib/AcceptanceFresh.ps1",
-                        "scripts/lib/AcceptanceParallel.ps1",
-                        "test/win32/acceptance-parallel.ps1"
+                        "test/win32/lib/CleanSlate.ps1"
                     ],
     "files":  {
                   "scripts/acceptance-parallel.ps1":  "fa57b71b7c629cd7fcafc92369af3839be80c785f43b51be79bafffb961525f7",
@@ -16,6 +13,6 @@
                   "scripts/lib/RunVerdict.ps1":  "a23842bebc540f3c3e7fb0477bad5816d3720e9adf91bfedd74a9ad0b5d6da07",
                   "test/win32/acceptance-parallel.ps1":  "c62306ac56b6609c03a7b9e196de58522ff23d59fe305da1293603f56b708780",
                   "test/win32/lib/BuildFresh.ps1":  "0314737dc6419b7d45d9421584a37dc009939b0384ae609378701c0cb306e31b",
-                  "test/win32/lib/CleanSlate.ps1":  "97b5dfd912243a94ef32ab285f4f905615a43767609d34fea3b27949e8d07860"
+                  "test/win32/lib/CleanSlate.ps1":  "80ada90e0245f817e902f45ae00944dd8f4d916864a49899ce0e0da07778788a"
               }
 }

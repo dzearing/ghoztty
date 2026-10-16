@@ -222,6 +222,16 @@ else {
         $OutDir = Join-Path $Repo ("temp\harness-floor\" + (Get-Date -Format 'yyyyMMdd-HHmmss'))
     }
     $suite = Join-Path $PSScriptRoot 'suite-run.ps1'
+    # T1982: one harness sweep on the box at a time. floor-lane.ps1 takes this
+    # outside its watchdog and says so through GHOZTTY_FLOOR_LOCK_HELD; a
+    # direct run takes it here. Released when this process exits.
+    if ($env:GHOZTTY_FLOOR_LOCK_HELD -ne '1') {
+        . (Join-Path $PSScriptRoot 'lib\MachineLock.ps1')
+        $floorLock = Enter-MachineLock -Kind floor -Label "harness-floor.ps1 ($Repo)"
+        if (-not $floorLock.Acquired) {
+            Write-Host "FLOOR LOCK: running the sweep anyway - two sweeps at once are slower, not wrong"
+        }
+    }
     Write-Host "harness floor: $($audits.Count) audit(s) via suite-run -> $OutDir"
     Write-Host ''
     & powershell -NoProfile -ExecutionPolicy Bypass -File $suite run `

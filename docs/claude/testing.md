@@ -937,6 +937,16 @@ leak counts, builds, nested harnesses — nothing runs beside it). Rules for you
   its header and then runs with nothing beside it; `# @parallel-unsafe` is the
   general opt-out. `classify -Scripts x.ps1` shows how a script will be run and
   why.
+- **The same marker takes a box-wide lock** (T1982), so a second loop lane's
+  compile cannot skew the measurement: `lib\CleanSlate.ps1` takes
+  `Global\GhozttyTimingTest` for any caller carrying the marker and holds it
+  until the script exits. A wait prints `TIMING LOCK WAIT` naming the holder,
+  is bounded (20 min, `GHOZTTY_TIMING_LOCK_WAIT_MIN`), and a run whose wait
+  ran out ends `ASSERTED NOTHING` (exit 2) without measuring. So a timing
+  script **must load CleanSlate.ps1** — `test\win32\machine-lock.ps1` section H
+  fails one that does not. `floor-lane.ps1 -Lane harness` likewise takes
+  `Global\GhozttyHarnessFloor` (45 min, then it sweeps anyway and says so).
+  Both live in `scripts\lib\MachineLock.ps1`.
 - **A row red beside others is re-run alone before the run ends.** Red in the
   pool and green alone prints `PARALLEL-SENSITIVE <name>` — add a marker to that
   script (or fix what it shares); the alone verdict is the one that counts, and

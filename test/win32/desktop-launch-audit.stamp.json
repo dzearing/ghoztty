@@ -1,10 +1,10 @@
 {
     "guard":  "desktop-launch",
     "script":  "test/win32/desktop-launch-audit.ps1",
-    "generated":  "2026-10-15T17:56:08-07:00",
-    "commit":  "d07b76d8a",
+    "generated":  "2026-10-15T18:47:49-07:00",
+    "commit":  "5163f7079",
     "uncommitted":  [
-                        "test/win32/acceptance-parallel.ps1"
+                        "test/win32/machine-lock.ps1"
                     ],
     "files":  {
                   "src/cli/ghostty.zig":  "85048b74f8795c4f500ca8dd98fa52a24e92a94808ef1b16df34070b4cf6094d",
@@ -209,6 +209,7 @@
                   "test/win32/log-append.ps1":  "61e904625bdcce9ad697d8d8ea6065dcd15673388768a1b306cf72902d255b11",
                   "test/win32/low-power-render.ps1":  "a2ee4464893854ed24d5409dd2af2febf4ec5d9b8033f5f7b6d5d4853d4b3a2f",
                   "test/win32/machine-chooser.ps1":  "c69e331b19e83e300b5f0c22860220ea1d2de144d587db1ee4ae4e797ce6b79e",
+                  "test/win32/machine-lock.ps1":  "95c57d9daef68bfb8403be792a5e21c87bfad2ee1f5dd0507feb2c51aaca32d5",
                   "test/win32/menu-bar.ps1":  "180015c8696ec61d25ea7bb5fd4249fb148201b86e3ce1fab799892899e53d37",
                   "test/win32/menu-f10-binding.ps1":  "2a0f0edd446c99a0ed1ffb5d1b0ce8e3e1a8ae8df140fd70fa5f6b5df37b8e22",
                   "test/win32/merge-terminology.ps1":  "7d155ca2da0de4866e7afab82df19ab046be33aa3c34655481192c1e158b5d25",

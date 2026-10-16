@@ -3429,6 +3429,22 @@ $GuardTable = @(
             'test\win32\parity-tasks-lanes.ps1'
         )
     },
+    # The box-wide timing and floor locks two loop lanes take turns on (T1982).
+    # A broken hook fails open - every timing script still runs, just beside
+    # the other lane's compile - so nothing red would ever say so; this harness
+    # (with its lock-off negative control) is the only proof the wait happens.
+    [pscustomobject]@{
+        Name   = 'machine-lock'
+        Script = 'test\win32\machine-lock.ps1'
+        Stamp  = 'test\win32\machine-lock.stamp.json'
+        Covers = @(
+            'scripts\lib\MachineLock.ps1',
+            'test\win32\lib\CleanSlate.ps1',
+            'scripts\harness-floor.ps1',
+            'scripts\floor-lane.ps1',
+            'test\win32\machine-lock.ps1'
+        )
+    },
     # The decisions CLI (T566), for the same reason as the row above: nothing
     # in the zig lanes or the P1-P3 floor executes a line of
     # `scripts\parity-decisions.ps1`, and its failure mode is not a red test

@@ -56,6 +56,15 @@ Set-StrictMode -Off
 # it at the source: a test never wants to inherit an endpoint.
 Remove-Item Env:GHOZTTY_IPC_SOCKET -ErrorAction SilentlyContinue
 
+# T1982: a script that declares `# @timing-sensitive` takes the box-wide timing
+# lock here, before it builds anything, and holds it for the rest of its run -
+# so a second loop lane's compile cannot skew what it measures. Every timing
+# script loads this file, which is why the hook lives here; a script without
+# the marker never waits. The wait is bounded and printed, and a wait that runs
+# out ends the run as ASSERTED NOTHING (exit 2). scripts\lib\MachineLock.ps1.
+. (Join-Path (Split-Path (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) -Parent) 'scripts\lib\MachineLock.ps1')
+Invoke-TimingLockForCaller
+
 # T350: the build-mode gate. `Assert-GhozttyUnderTest` below only catches a
 # FOREIGN app that is already answering; on a cold box nothing answers and the
 # script goes on to auto-launch a release build onto the user's own endpoints.

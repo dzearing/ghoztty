@@ -1,18 +1,14 @@
 {
     "guard":  "lane-parallel",
     "script":  "test/win32/floor-lane-parallel.ps1",
-    "generated":  "2026-10-15T08:39:02-07:00",
-    "commit":  "94e9c83cd",
+    "generated":  "2026-10-15T18:45:29-07:00",
+    "commit":  "5163f7079",
     "uncommitted":  [
-                        "scripts/build-cache.ps1",
-                        "scripts/floor-lane.ps1",
-                        "scripts/lib/BuildCache.ps1",
-                        "scripts/lib/CrashDiag.ps1",
-                        "test/win32/floor-lane-parallel.ps1"
+                        "scripts/floor-lane.ps1"
                     ],
     "files":  {
                   "scripts/build-cache.ps1":  "6b722bb49cbca0465bc1a2449d46d386b47a4be61efaaf37ce342b399b22ba68",
-                  "scripts/floor-lane.ps1":  "073c146e3d933884cd56e883b24f45974c81b4ce686074b5ff43d344348f97c7",
+                  "scripts/floor-lane.ps1":  "8dfd9a9dd7351f5b0c1a348239df4ea24ed7880df84da623661e09100a933a0b",
                   "scripts/lib/BuildCache.ps1":  "80ea732ee0458d094bf9eec6ae24d8260291db7f0211bfd2d048f1bb7fa2a20e",
                   "scripts/lib/CrashDiag.ps1":  "fe512622eae4215c4c4755fcbfe8552b4760ab9ee6174fe4c5aa80a71a76cdf4",
                   "test/win32/floor-lane-parallel.ps1":  "8405324d77254be1fc022b505cec25b3758849a5ffdd7f2e72fd49b500f815f0"

@@ -1,13 +1,13 @@
 {
     "guard":  "lane-releasesafe",
     "script":  "test/win32/floor-lane-releasesafe.ps1",
-    "generated":  "2026-10-15T08:03:06-07:00",
-    "commit":  "94e9c83cd",
+    "generated":  "2026-10-15T18:48:07-07:00",
+    "commit":  "5163f7079",
     "uncommitted":  [
                         "scripts/floor-lane.ps1"
                     ],
     "files":  {
-                  "scripts/floor-lane.ps1":  "073c146e3d933884cd56e883b24f45974c81b4ce686074b5ff43d344348f97c7",
+                  "scripts/floor-lane.ps1":  "8dfd9a9dd7351f5b0c1a348239df4ea24ed7880df84da623661e09100a933a0b",
                   "scripts/soak-daemon.ps1":  "9b573c837b02c45c2be053a2f2d6f9f1024363ba531b35a5bf7c25a86b8df3ad",
                   "test/win32/floor-lane-releasesafe.ps1":  "ecd2f326201dfeb9cd74d67f603ec6e06ea566182e28754acc08da1629784a84"
               }
