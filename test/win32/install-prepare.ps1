@@ -68,6 +68,10 @@ Set-StrictMode -Off
 # T1241: section L's holder and prepare steps run on the background test
 # desktop, not the user's.
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+# T1983: a run-unique app endpoint for the ghoztty.exe this script launches, so
+# nothing it starts can bind - or join - the default debug pipe another loop
+# lane's test app answers on.
+$env:GHOZTTY_PIPE_SUFFIX = "-instprep$PID"
 
 $script:passes = 0
 $script:failures = 0

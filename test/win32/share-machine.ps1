@@ -72,6 +72,10 @@ Assert-GhozttyIsolatedBuild -Exe $Exe
 
 # T248 shared reset, exact-exe scoped.
 . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+# T1983: a run-unique app endpoint. CleanSlate only drops the pane's socket, so
+# the app fell back to the build's default debug pipe - the one every debug
+# build on the box derives - and a second loop lane's launch joined this one.
+$env:GHOZTTY_PIPE_SUFFIX = "-sharemach$PID"
 # Bounded teardown for the fake-relay job (T1517).
 . (Join-Path $PSScriptRoot 'lib\JobTeardown.ps1')
 function Stop-DebugGhoztty { Reset-GhozttyTestState -Exe $Exe -SettleMs 800 | Out-Null }

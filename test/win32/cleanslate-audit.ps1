@@ -255,6 +255,7 @@ Copy-Item -Path (Join-Path $env:WINDIR 'System32\cmd.exe') -Destination $fakeExe
 # no std.log to lose and the assertion is about whether it is REAPED.
 # persistence: n/a - same reason: cmd.exe wearing our leaf name has no session
 # to restore, and the flag would not reach anything that reads it.
+# isolation: none - cmd.exe wearing our leaf name binds no pipe, so no lane can join it (T1983).
 $fake = Start-Process -FilePath $fakeExe -ArgumentList '/c', 'ping -n 30 127.0.0.1 > NUL' `
     -WindowStyle Hidden -PassThru
 Start-Sleep -Milliseconds 400

@@ -1,11 +1,10 @@
 {
     "guard":  "registration-sites",
     "script":  "test/win32/registration-sites.ps1",
-    "generated":  "2026-09-26T14:05:03-07:00",
-    "commit":  "9dbe3ddfb",
+    "generated":  "2026-10-15T21:18:23-07:00",
+    "commit":  "247760f2b",
     "uncommitted":  [
-                        "src/apprt/win32/LocalAgent.zig",
-                        "src/apprt/win32/url_scheme.zig"
+                        "test/win32/registration-sites.ps1"
                     ],
     "files":  {
                   "docs/design/windows-registration-sites.md":  "95e9aaae8436008f53d65507726bd09f9c80df929b3efabd0c3029f307d3a3fc",
@@ -16,6 +15,6 @@
                   "src/apprt/win32/url_scheme.zig":  "a6fd72d2b47f6dec0572d3e7fa4240f2de2d9814146289236e1a64d530e9201d",
                   "src/os/source_checkout.zig":  "63291415bd09a9c53edbbe6fe55533f749abfbf35894df04a1448dd8e64f14e7",
                   "src/remote/agent/adopt.zig":  "4c168a5c270f708e5e3d1dbde9fa03cb0d96f47ee6f55fb5c499a4b5fc80d984",
-                  "test/win32/registration-sites.ps1":  "98cd7d949f693dee766dc37e1c8457d5bcdc0dee2144581b3c9a30e35de44146"
+                  "test/win32/registration-sites.ps1":  "097f3ad7cf63fca685beb9eda6d4d2037f74a48ef14d417c8d868451ed9d04e1"
               }
 }

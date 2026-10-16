@@ -415,6 +415,9 @@ if ($PureOnly) {
     $script:skipped++
 } else {
     . (Join-Path $PSScriptRoot 'lib\CleanSlate.ps1')
+    # T1983: a run-unique endpoint for the app this section launches and the
+    # verbs it sends, instead of the default debug pipe every lane shares.
+    $env:GHOZTTY_PIPE_SUFFIX = "-urr$PID"
     $fExe = Join-Path $Repo 'zig-out\bin\ghoztty.exe'
     $fCom = Join-Path $Repo 'zig-out\bin\ghoztty.com'
     if (-not (Test-Path $fExe)) {
@@ -428,11 +431,16 @@ if ($PureOnly) {
         # not have the debug manifest's panes restored on top of it.
         # T689: this section drives a FRESHLY built app through a CLI verb; when
         # the window never appears, its stderr is the only account of why.
-        $fApp = Start-Process -FilePath $fExe -ArgumentList '--session-persistence=false' -PassThru `
-            -RedirectStandardError (Join-Path $root 'fresh-app.err.txt')
+        # T1983: on the background TEST desktop. A bare Start-Process put this
+        # window on the user's screen; the +new-window below goes through the
+        # harness too, so a slow start cannot auto-launch a second app there.
+        . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
+        $fDesk = New-TestDesktop
+        $fApp = (Start-OnTestDesktop -Exe $fExe -Arguments @('--session-persistence=false') `
+            -StdErr (Join-Path $root 'fresh-app.err.txt')).Process
         Start-Sleep -Seconds 3
         $fPane = 't663pane'
-        & $fExe +new-window "--target=$fPane" 2>&1 | Out-Null
+        [void](Invoke-OnTestDesktop -Exe $fExe -Arguments @('+new-window', "--target=$fPane") -TimeoutSec 30)
         Start-Sleep -Seconds 3
 
         $fCli = Resolve-GhozttyCliExe $fExe
@@ -464,6 +472,7 @@ if ($PureOnly) {
         Start-Sleep -Milliseconds 500
         if ($fApp -and -not $fApp.HasExited) { Stop-Process -Id $fApp.Id -Force -ErrorAction SilentlyContinue }
         Reset-GhozttyTestState -Exe $fExe -SettleMs 500 | Out-Null
+        Remove-TestDesktop -Desktop $fDesk
     }
 }
 

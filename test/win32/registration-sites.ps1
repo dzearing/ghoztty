@@ -260,6 +260,10 @@ if ($NoLaunch) {
 } else {
     . (Join-Path $PSScriptRoot 'lib\BuildMode.ps1')
     $null = Assert-GhozttyIsolatedBuild -Exe $exe
+    # T1983: the probe launches bind a run-unique pipe. On the default debug
+    # pipe a launch JOINS whatever debug app already answers there (the pipe is
+    # the single-instance lock), which on a two-lane box is the other lane's.
+    $env:GHOZTTY_PIPE_SUFFIX = "-regsites$PID"
 
     # T1240: the two probe launches land ON THE TEST DESKTOP. A window arrives
     # on the desktop of whoever started the process, so section D used to throw

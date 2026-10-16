@@ -45,7 +45,7 @@
     # persistence: launches no ghoztty GUI - sections A-D score source text, and
     # section E launches cmd.exe. Nothing here starts the terminal, so there is
     # no session to restore.
-    # isolation: none needed - no ghoztty binary is ever run, so there is no IPC
+    # isolation: none - no ghoztty binary is ever run, so there is no IPC
     # endpoint, no agent and no state directory to move off the user's.
 #>
 [CmdletBinding()]

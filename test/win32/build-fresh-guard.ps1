@@ -13,6 +13,8 @@
 # the same fixture with the timestamps the other way round. The real zig-out
 # exe still gets a positive control in section F: without it this file could
 # pass while the gate rejected every ordinary run.
+#
+# isolation: none - the only verb ever run is `+version`, which prints the build banner and opens no pipe; no app is launched.
 param(
     [string]$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe',
 

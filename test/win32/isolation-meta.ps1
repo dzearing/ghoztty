@@ -45,6 +45,8 @@
 # compliant script and requires the right verdict on both.
 #
 #   powershell -NoProfile -File test\win32\isolation-meta.ps1
+#
+# preflight: none - every Start-Process in this file is fixture text written to $env:TEMP and scanned; nothing is launched.
 param([string]$Repo)
 
 $ErrorActionPreference = 'Stop'
@@ -149,6 +151,73 @@ function Get-PinnedEnvViolation([string]$Path, [string]$Assign, [string]$What) {
     }
     if ($fixed.Count -eq 0) { return $null }
     return "pins a FIXED $What ($($fixed -join ', ')) - a leaked instance from an earlier run answers there"
+}
+
+# T1983: two loop lanes on one box (T1937) each build a DEBUG zig-out, and every
+# debug build derives the same default app pipe, `ghoztty-debug-<user>`. That
+# pipe is also the app's single-instance lock (IpcServer.zig), so an
+# unsuffixed launch in lane B does not start lane B's app at all: it JOINS lane
+# A's test app, opens its window there, and grades lane A's binary. Section B
+# could not see it, for two reasons this section closes:
+#
+#   * B only asks scripts that run a `+verb`. A script that LAUNCHES the app
+#     and reads it some other way (window probes, the registry, a log) was
+#     never asked anything.
+#   * B accepts dot-sourcing CleanSlate.ps1 as a claim. That protects the
+#     user's terminal - it drops the pane's baked `$GHOZTTY_IPC_SOCKET` - but
+#     the CLI then falls back to the build's own derivation, which is exactly
+#     the shared default pipe above.
+#
+# So for a script that launches the app OR drives the CLI, the claim has to be
+# one that moves the endpoint off the default: `Set-GhozttyTestIsolation`, a
+# `$env:GHOZTTY_PIPE_SUFFIX =` assignment (section C already holds that one to
+# `$PID`), or `# isolation: none - <why>` with the reason ON the marker line.
+#
+# WHAT COUNTS AS LAUNCHING: `Start-Process`, `Start-OnTestDesktop`,
+# `Invoke-OnTestDesktop` or `[Diagnostics.Process]::Start` on a line that names
+# a `ghoztty.exe` path, or a variable this script binds to one. The agent is not
+# the app (`ghoztty-agent.exe` does not match), and neither is a stub this
+# script binds to some other name.
+$script:LaunchVerbs = '(?i)(Start-Process|Start-OnTestDesktop|Invoke-OnTestDesktop|Diagnostics\.Process\]::Start)\b'
+$script:RunUniqueClaims = @(
+    'Set-GhozttyTestIsolation',
+    '(?m)^[^#\r\n]*\$env:GHOZTTY_PIPE_SUFFIX\s*=',
+    '#[^\S\r\n]*isolation:[^\S\r\n]*none[^\S\r\n]*-[^\S\r\n]*\S'
+)
+
+function Get-AppLaunchSite([string]$Text) {
+    $vars = @{}
+    foreach ($m in [regex]::Matches($Text, '(?i)\$(\w+)\s*=\s*[^\r\n]*?\bghoztty\.exe')) {
+        $vars[$m.Groups[1].Value.ToLower()] = $true
+    }
+    $sites = @()
+    $n = 0
+    foreach ($line in ($Text -split "`r?`n")) {
+        $n++
+        if ($line -match '^\s*#') { continue }
+        if ($line -notmatch $script:LaunchVerbs) { continue }
+        $hit = $line -match '(?i)\bghoztty\.exe'
+        if (-not $hit) {
+            foreach ($m in [regex]::Matches($line, '\$(\w+)')) {
+                if ($vars.ContainsKey($m.Groups[1].Value.ToLower())) { $hit = $true; break }
+            }
+        }
+        if ($hit) { $sites += "line $n" }
+    }
+    return $sites
+}
+
+function Get-LaneViolation([string]$Path) {
+    $text = Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+    if ([string]::IsNullOrEmpty($text)) { return $null }
+    $sites = @(Get-AppLaunchSite $text)
+    $drives = $text -match $VerbPattern
+    if ($sites.Count -eq 0 -and -not $drives) { return $null }
+    foreach ($claim in $script:RunUniqueClaims) {
+        if ($text -match $claim) { return $null }
+    }
+    $what = if ($sites.Count -gt 0) { "launches the app ($($sites[0]))" } else { 'drives the CLI (+verb)' }
+    return "$what on the shared default debug pipe - CleanSlate alone does not move it; set a run-unique GHOZTTY_PIPE_SUFFIX"
 }
 
 # ---------------------------------------------------------------------------
@@ -270,6 +339,91 @@ try {
     )
     Assert 'A13 a here-string interpolation is judged where its value is chosen' `
         ($null -eq (Get-InstanceUniquenessViolation $generated))
+
+    # T1983: section D's launcher rule. Each fixture is a shape the tree has
+    # had: the first four are the four scripts this task fixed.
+    function New-LaneFixture($name, [string[]]$lines) {
+        $p = Join-Path $fixDir "$name.ps1"
+        Set-Content -LiteralPath $p -Encoding ASCII -Value $lines
+        return $p
+    }
+    $rawLaunch = New-LaneFixture 'lane-raw' @(
+        '$exe = Join-Path $Repo ''zig-out\bin\ghoztty.exe''',
+        '$p = Start-Process -FilePath $exe -PassThru'
+    )
+    Assert 'A14 an app launch with no claim at all is flagged' `
+        ($null -ne (Get-LaneViolation $rawLaunch))
+
+    $deskClean = New-LaneFixture 'lane-desk-cleanslate' @(
+        '. (Join-Path $PSScriptRoot ''lib\CleanSlate.ps1'')',
+        '[string]$Exe = ''D:\git\ghoztty\zig-out\bin\ghoztty.exe''',
+        '$app = Start-OnTestDesktop -Exe $Exe -Arguments @(''--session-persistence=false'')'
+    )
+    Assert 'A15 a test-desktop launch whose only claim is CleanSlate is flagged' `
+        ($null -ne (Get-LaneViolation $deskClean))
+    Assert 'A15b ...which section B alone accepts (why D exists)' `
+        ($null -eq (Get-IsolationViolation $deskClean))
+
+    $cliClean = New-LaneFixture 'lane-cli-cleanslate' @(
+        '. (Join-Path $PSScriptRoot ''lib\CleanSlate.ps1'')',
+        '& $exe +new-window --target=x'
+    )
+    Assert 'A16 a CLI driver whose only claim is CleanSlate is flagged' `
+        ($null -ne (Get-LaneViolation $cliClean))
+
+    $invoke = New-LaneFixture 'lane-invoke' @(
+        '$Exe = ''D:\git\ghoztty\zig-out\bin\ghoztty.exe''',
+        '$r = Invoke-OnTestDesktop -Exe $Exe -Arguments @(''--install-prepare'')'
+    )
+    Assert 'A17 an Invoke-OnTestDesktop launch is a launch' `
+        ($null -ne (Get-LaneViolation $invoke))
+
+    $isoLaunch = New-LaneFixture 'lane-iso' @(
+        '[void](Set-GhozttyTestIsolation -Tag ''fixture'')',
+        '$exe = Join-Path $Repo ''zig-out\bin\ghoztty.exe''',
+        '$p = Start-Process -FilePath $exe -PassThru'
+    )
+    Assert 'A18 Set-GhozttyTestIsolation satisfies the launcher rule' `
+        ($null -eq (Get-LaneViolation $isoLaunch))
+
+    $sufLaunch = New-LaneFixture 'lane-suffix' @(
+        '$env:GHOZTTY_PIPE_SUFFIX = "-fixture$PID"',
+        '$exe = Join-Path $Repo ''zig-out\bin\ghoztty.exe''',
+        '$p = Start-Process -FilePath $exe -PassThru'
+    )
+    Assert 'A19 a hand-rolled suffix satisfies the launcher rule' `
+        ($null -eq (Get-LaneViolation $sufLaunch))
+
+    $commented = New-LaneFixture 'lane-commented' @(
+        '# $env:GHOZTTY_PIPE_SUFFIX = "-fixture$PID"',
+        '$exe = Join-Path $Repo ''zig-out\bin\ghoztty.exe''',
+        '$p = Start-Process -FilePath $exe -PassThru'
+    )
+    Assert 'A20 a commented-out suffix is not a claim' `
+        ($null -ne (Get-LaneViolation $commented))
+
+    $agentOnly = New-LaneFixture 'lane-agent' @(
+        '$AgentExe = ''D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe''',
+        'Start-Process -FilePath $AgentExe -PassThru | Out-Null'
+    )
+    Assert 'A21 an agent-only launch is not an app launch' `
+        ($null -eq (Get-LaneViolation $agentOnly))
+
+    $bareMark = New-LaneFixture 'lane-bare-mark' @(
+        '# isolation: none',
+        '$exe = Join-Path $Repo ''zig-out\bin\ghoztty.exe''',
+        '$p = Start-Process -FilePath $exe -PassThru'
+    )
+    Assert 'A22 an isolation: none marker with no reason does not excuse a launcher' `
+        ($null -ne (Get-LaneViolation $bareMark))
+
+    $reasonMark = New-LaneFixture 'lane-reason-mark' @(
+        '# isolation: none - the exe is a stub copy of cmd.exe, nothing binds a pipe',
+        '$exe = Join-Path $stub ''ghoztty.exe''',
+        '$p = Start-Process -FilePath $exe -PassThru'
+    )
+    Assert 'A23 an isolation: none marker WITH a reason excuses it' `
+        ($null -eq (Get-LaneViolation $reasonMark))
 } catch {
     # T1511: score the throw rather than unwinding past it to a green verdict.
     # Sections B/C read the real tree and do not depend on these fixtures, so
@@ -318,6 +472,25 @@ foreach ($s in $scripts) {
 foreach ($v in $pinnedLineage) { "  VIOLATION $v" }
 Assert 'C2 no script pins a fixed agent lineage (T903)' `
     ($pinnedLineage.Count -eq 0) "($($pinnedLineage.Count) violation(s))"
+
+# ---------------------------------------------------------------------------
+"== D: every app launcher holds an endpoint another loop lane cannot share (T1983)"
+# ---------------------------------------------------------------------------
+$launchers = 0
+$laneShared = @()
+foreach ($s in $scripts) {
+    $t = Get-Content -LiteralPath $s.FullName -Raw -ErrorAction SilentlyContinue
+    if ($t -and @(Get-AppLaunchSite $t).Count -gt 0) { $launchers++ }
+    $why = Get-LaneViolation $s.FullName
+    if ($null -ne $why) { $laneShared += "$($s.Name): $why" }
+}
+foreach ($v in $laneShared) { "  VIOLATION $v" }
+# A floor, not a census: the T1983 sweep counted 251 launchers. A detector that
+# silently stopped recognising launches would pass D2 over an empty set.
+Assert 'D1 the launch detector still finds the suite''s launchers' ($launchers -ge 150) `
+    "(found $launchers)"
+Assert 'D2 no launcher or CLI driver relies on the shared default debug pipe' `
+    ($laneShared.Count -eq 0) "($($laneShared.Count) violation(s))"
 
 # A clean green run stamps the covered files (T783) so scripts\guard-due.ps1
 # can answer "has this scan been run against the test tree as it now stands?".
