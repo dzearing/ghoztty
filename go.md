@@ -598,8 +598,9 @@ Concretely, in order, with no stops in between:
    changed since the floor was last verified green - every member except the
    two slow daily ones, plus any member whose own script you edited - and runs
    everything by itself when a shared library changed or the morning's full
-   sweep (step 0.6) did not happen. About 13 minutes instead of 24, or nothing
-   at all when nothing the floor reads changed.
+   sweep (step 0.6) did not happen. Since T1969 the five heaviest members read
+   only the scripts that changed, too. A scoped sweep is about 5 minutes instead of 24, or
+   nothing at all when nothing the floor reads changed.
 
    **Two lines you may see there mean something different** (T1189).
    `GUARD DUE (advisory) ...` is a row whose question this box cannot answer at

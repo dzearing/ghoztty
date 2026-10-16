@@ -514,10 +514,15 @@ CapturesStderr, StderrHow, Stmt.
 function Get-GhozttyLaunchSites {
     param(
         [Parameter(Mandatory = $true)][string]$Root,
-        [string[]]$Exclude = @()
+        [string[]]$Exclude = @(),
+        # T1969: score only these scripts (full paths) - a scoped sweep's
+        # changed files. Every judgement here reads one file, so a subset
+        # scores each of its files exactly as the whole sweep would.
+        [string[]]$Files
     )
     $rows = @()
-    foreach ($f in (Get-ChildItem (Join-Path $Root '*.ps1') | Sort-Object Name)) {
+    $pick = if ($Files) { @($Files | ForEach-Object { Get-Item -LiteralPath $_ }) } else { @(Get-ChildItem (Join-Path $Root '*.ps1')) }
+    foreach ($f in ($pick | Sort-Object Name)) {
         if ($Exclude -contains $f.Name) { continue }
         $text = Get-Content $f.FullName -Raw
         $lines = @(Get-Content $f.FullName)

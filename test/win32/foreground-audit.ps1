@@ -56,7 +56,12 @@
 #>
 [CmdletBinding()]
 param(
-    [switch]$TeethCheck
+    [switch]$TeethCheck,
+    # T1969: read only these changed top-level scripts in section C (repo-
+    # relative). scripts\harness-floor.ps1 -Scoped passes the same list through
+    # $env:GHOZTTY_HARNESS_FLOOR_ONLY; lib\HarnessScope.ps1 says when it is
+    # ignored and the whole suite is read instead.
+    [string[]]$Only
 )
 
 $ErrorActionPreference = 'Continue'
@@ -65,6 +70,12 @@ $Suite = Join-Path $Repo 'test\win32'
 
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\ForegroundAudit.ps1')
+. (Join-Path $PSScriptRoot 'lib\HarnessScope.ps1')
+$scope = Get-HarnessScope -Repo $Repo -Self $PSCommandPath -Only $Only
+if ($TeethCheck -and $scope.Scoped) {
+    # The teeth plant NEW files, which no changed-script list names.
+    $scope = [pscustomobject]@{ Scoped = $false; Files = @(); Rel = @(); Reason = '-TeethCheck reads the whole suite' }
+}
 
 $script:pass = 0
 $script:fail = 0
@@ -448,6 +459,7 @@ try {
 Write-Host ''
 Write-Host '== C: the sweep over the acceptance suite'
 # ===========================================================================
+Write-Host (Format-HarnessScopeLine $scope)
 
 $planted = @()
 if ($TeethCheck) {
@@ -484,6 +496,10 @@ try {
         $teethDecl = @(Get-ForegroundAuditDeclarations -Path (Join-Path $Suite 'lib\TestDesktop.ps1')) + @(
             [pscustomobject]@{ Script = 'zz-foreground-audit-teeth-ungated.ps1'; Reason = 'teeth'; Line = 0; Malformed = $false })
         $sweep = @(Get-ForegroundAuditFindings -Root $Suite -Declared $teethDecl)
+    } elseif ($scope.Scoped) {
+        # T1969: the changed scripts only. -Partial leaves a declaration naming
+        # an unchanged script alone - it was judged when the floor last read it.
+        $sweep = @(Get-ForegroundAuditFindings -Root $Suite -Files $scope.Files -Partial)
     } else {
         $sweep = @(Get-ForegroundAuditSweep $Suite)
     }
@@ -512,8 +528,14 @@ if ($TeethCheck) {
 
 # A sweep that read no files would report zero violations and look identical to
 # a clean one - the exact shape T271 exists for.
-$scanned = @(Get-ChildItem -LiteralPath $Suite -Filter *.ps1 -File).Count
-Assert 'C2 the sweep read the whole suite' ($scanned -gt 100)
+if ($scope.Scoped) {
+    $read = @(@($scope.Files) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+    Assert "C2 the scoped sweep read every changed script ($($read.Count) of $(@($scope.Rel).Count))" (
+        $read.Count -ge 1 -and $read.Count -eq @($scope.Rel).Count)
+} else {
+    $scanned = @(Get-ChildItem -LiteralPath $Suite -Filter *.ps1 -File).Count
+    Assert 'C2 the sweep read the whole suite' ($scanned -gt 100)
+}
 
 # And the harness with it (T780). A scope regression is silent by construction:
 # the findings stay at zero and nothing says fewer files were read.
@@ -551,4 +573,4 @@ Write-Host "  (screen-DC readers, all declared: $($screenDc -join ', '))"
 
 Write-Host ''
 Complete-TestBody  # T1039: the run reached the end of its body
-Write-TestVerdict -Label 'T272/T276/T780 ACCEPTANCE' -Pass $script:pass -Fail $script:fail -MinPass 50
+Write-TestVerdict -Label ('T272/T276/T780 ACCEPTANCE' + (Get-HarnessScopeLabel $scope)) -Pass $script:pass -Fail $script:fail -MinPass 50

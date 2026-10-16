@@ -547,3 +547,13 @@ function Get-HarnessFloorScope {
     $why = if ($skipped.Count -gt 0) { 'daily members wait for the daily sweep: ' + ($skipped -join ', ') } else { 'every member is selected' }
     return [pscustomobject]@{ Mode = 'scoped'; Reason = $why; Selected = $selected; Changed = @($changed) }
 }
+
+# T1969: the changed top-level scripts a SCOPED sweep hands its members
+# (through test\win32\lib\HarnessScope.ps1's environment variable), so the
+# heavy ones read only those. Empty for any other mode - a full sweep reads
+# everything. An Owns file (scripts\vt-escape-scan.ps1) is not a test script
+# and only its own member reads it, so it is not on the list.
+function Get-HarnessFloorOnlyList($Scope) {
+    if ($null -eq $Scope -or [string]$Scope.Mode -ne 'scoped') { return @() }
+    return @(@($Scope.Changed) | Where-Object { [string]$_ -match '^test\\win32\\[^\\]+\.ps1$' })
+}

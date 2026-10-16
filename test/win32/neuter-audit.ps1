@@ -66,13 +66,26 @@
 [CmdletBinding()]
 param(
     [string]$Repo,
-    [switch]$TeethCheck
+    [switch]$TeethCheck,
+    # T1969: the changed top-level scripts of a scoped harness-floor sweep
+    # (repo-relative; scripts\harness-floor.ps1 -Scoped passes the same list
+    # through $env:GHOZTTY_HARNESS_FLOOR_ONLY). This audit's subject is src\,
+    # which no such list can change - see section B.
+    [string[]]$Only
 )
 
 $ErrorActionPreference = 'Continue'
 if (-not $Repo) { $Repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\NeuterAudit.ps1')
+. (Join-Path $PSScriptRoot 'lib\HarnessScope.ps1')
+# Scoped against the suite's own repo, which is where the list's paths live;
+# -Repo only moves the src\ this audit reads.
+$scope = Get-HarnessScope -Repo (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) `
+    -Self $PSCommandPath -Only $Only
+if ($TeethCheck -and $scope.Scoped) {
+    $scope = [pscustomobject]@{ Scoped = $false; Files = @(); Rel = @(); Reason = '-TeethCheck reads the whole tree' }
+}
 
 $script:pass = 0
 $script:fail = 0
@@ -202,59 +215,70 @@ $fCross = Get-FixtureFindings $crossDir
 Assert 'A9 a predicate another module calls is live' (@($fCross).Count -eq 0) `
     ("named: " + (Get-Kinds $fCross))
 
-# ===========================================================================
-'== B: the sweep - src\ is at zero'
-# ===========================================================================
+# T1969: sections B and C read src\ and the controls' claim list. A scoped
+# harness-floor sweep runs only when no shared file changed, its list names only
+# top-level test scripts that still exist, and none of those can move src\ or
+# break a claim - so the whole read is left to a whole run: this audit's own
+# guard row re-runs it when src\apprt\win32\ changes, and the daily sweep reads
+# all of src\.
+Write-Host (Format-HarnessScopeLine $scope)
+if ($scope.Scoped) {
+    Write-Host '  SCOPED: B and C read src\, which no changed test script can move; left to the whole run'
+} else {
+    # ===========================================================================
+    '== B: the sweep - src\ is at zero'
+    # ===========================================================================
 
-$srcRoot = Join-Path $Repo 'src'
-$sweep = @(Get-NeuterSweep -Root $srcRoot -Fresh)
-foreach ($f in $sweep) {
-    Write-Host ("  FOUND {0}:{1} {2} {3} -- {4}" -f `
-        (Get-NeuterRelativePath $f.Path $Repo), $f.Line, $f.Flag, $f.Kind, $f.Detail)
-}
-Assert 'B1 no *_NEUTERED flag in src\ is unconsumed, unpinned or unclaimed' ($sweep.Count -eq 0) `
-    ("$($sweep.Count) finding(s) above")
-
-$inv = @(Get-NeuterInventory -Root $srcRoot -Fresh)
-Assert "B2 the sweep found the tree's negative controls ($($inv.Count))" ($inv.Count -ge 10) `
-    "found $($inv.Count)"
-
-# A sweep that looked at no file cannot report zero findings honestly. The
-# `AssertedNothing` failure mode (T271), stated as a positive number.
-$modules = @($inv | ForEach-Object { Get-NeuterRelativePath $_.Path $Repo } | Sort-Object -Unique)
-Assert "B3 the controls span more than one module ($($modules.Count))" ($modules.Count -ge 3) `
-    ("modules: " + ($modules -join ', '))
-
-# ===========================================================================
-'== C: the claim list is a contract'
-# ===========================================================================
-
-$missingClaim = New-Object System.Collections.ArrayList
-$measuredCount = 0
-foreach ($i in $inv) {
-    foreach ($c in @($i.Claims)) {
-        if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $c))) {
-            [void]$missingClaim.Add("$($i.Flag) -> $c")
-        }
+    $srcRoot = Join-Path $Repo 'src'
+    $sweep = @(Get-NeuterSweep -Root $srcRoot -Fresh)
+    foreach ($f in $sweep) {
+        Write-Host ("  FOUND {0}:{1} {2} {3} -- {4}" -f `
+            (Get-NeuterRelativePath $f.Path $Repo), $f.Line, $f.Flag, $f.Kind, $f.Detail)
     }
-    if ($i.Measured) { $measuredCount++ }
-}
-Assert 'C1 every script a control claims exists under test\win32' ($missingClaim.Count -eq 0) `
-    (($missingClaim -join '; '))
+    Assert 'B1 no *_NEUTERED flag in src\ is unconsumed, unpinned or unclaimed' ($sweep.Count -eq 0) `
+        ("$($sweep.Count) finding(s) above")
 
-# Reported, not enforced: what a flag's last real measurement was. T283 had to
-# read five task files to learn this. Enforcing an age here would mean a
-# rebuild and a GUI acceptance run per flag on every sweep, which is why the
-# task filed it as "consider" rather than as a fourth finding.
-foreach ($i in ($inv | Sort-Object Flag)) {
-    $m = if ($i.Measured) {
-        if ($i.Measured.Date) {
-            "{0} ({1}d ago)" -f $i.Measured.Text, [int]((Get-Date) - $i.Measured.Date).TotalDays
-        } else { $i.Measured.Text }
-    } else { 'never recorded' }
-    Write-Host ("  NOTE {0} guards [{1}] - {2}" -f $i.Flag, (@($i.Claims) -join ', '), $m)
+    $inv = @(Get-NeuterInventory -Root $srcRoot -Fresh)
+    Assert "B2 the sweep found the tree's negative controls ($($inv.Count))" ($inv.Count -ge 10) `
+        "found $($inv.Count)"
+
+    # A sweep that looked at no file cannot report zero findings honestly. The
+    # `AssertedNothing` failure mode (T271), stated as a positive number.
+    $modules = @($inv | ForEach-Object { Get-NeuterRelativePath $_.Path $Repo } | Sort-Object -Unique)
+    Assert "B3 the controls span more than one module ($($modules.Count))" ($modules.Count -ge 3) `
+        ("modules: " + ($modules -join ', '))
+
+    # ===========================================================================
+    '== C: the claim list is a contract'
+    # ===========================================================================
+
+    $missingClaim = New-Object System.Collections.ArrayList
+    $measuredCount = 0
+    foreach ($i in $inv) {
+        foreach ($c in @($i.Claims)) {
+            if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $c))) {
+                [void]$missingClaim.Add("$($i.Flag) -> $c")
+            }
+        }
+        if ($i.Measured) { $measuredCount++ }
+    }
+    Assert 'C1 every script a control claims exists under test\win32' ($missingClaim.Count -eq 0) `
+        (($missingClaim -join '; '))
+
+    # Reported, not enforced: what a flag's last real measurement was. T283 had to
+    # read five task files to learn this. Enforcing an age here would mean a
+    # rebuild and a GUI acceptance run per flag on every sweep, which is why the
+    # task filed it as "consider" rather than as a fourth finding.
+    foreach ($i in ($inv | Sort-Object Flag)) {
+        $m = if ($i.Measured) {
+            if ($i.Measured.Date) {
+                "{0} ({1}d ago)" -f $i.Measured.Text, [int]((Get-Date) - $i.Measured.Date).TotalDays
+            } else { $i.Measured.Text }
+        } else { 'never recorded' }
+        Write-Host ("  NOTE {0} guards [{1}] - {2}" -f $i.Flag, (@($i.Claims) -join ', '), $m)
+    }
+    Write-Host ("  NOTE $measuredCount of $($inv.Count) controls carry a Measured date")
 }
-Write-Host ("  NOTE $measuredCount of $($inv.Count) controls carry a Measured date")
 
 # ===========================================================================
 if ($TeethCheck) {
@@ -322,7 +346,8 @@ if ($TeethCheck) {
 # --- stamp (T783 / T478) ---------------------------------------------------
 # Only a CLEAN run stamps; a red one must stay due.
 Complete-TestBody
-if ($script:fail -eq 0) {
+# A scoped run (T1969) never read src\, so it stamps nothing.
+if ($script:fail -eq 0 -and -not $scope.Scoped) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard neuter-audit -Repo $Repo 2>&1 | ForEach-Object { "  $_" }
 }
@@ -330,4 +355,4 @@ if ($script:fail -eq 0) {
 Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 
 ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label (Get-HarnessScopeLabel $scope).Trim()

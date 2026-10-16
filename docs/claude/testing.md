@@ -1001,6 +1001,25 @@ powershell -NoProfile -File scripts\floor-lane.ps1 -Lane harness -HarnessFull   
   and the floor stamps `CURRENT`. The daily full sweep runs from the digest step
   (go.md 0.6); a green full sweep restarts that clock, a green scoped one only
   advances the fingerprint.
+- **And the heavy members of a scoped sweep read only the changed scripts**
+  (T1969). A scoped sweep only happens when no shared file changed, so every
+  unchanged top-level script still scores what it scored when the floor last
+  read it. The runner puts the changed top-level scripts in
+  `$env:GHOZTTY_HARNESS_FLOOR_ONLY` for its suite run, and `foreground-audit`,
+  `argv-hazard-audit`, `unroll-count-audit`, `neuter-audit` and
+  `persistence-flag` (~8 of the scoped sweep's ~13 minutes) read just those,
+  through `test\win32\lib\HarnessScope.ps1`. Each one also takes the list as
+  `-Only`. They read the whole suite anyway when the list names a non-top-level
+  file, names the audit's own script, or names a script that no longer exists.
+  A scoped run never stamps its own guard row, and its last line says
+  `(scoped: N script(s))`. What is left to the whole run: the ratchets'
+  unchanged files (unroll-count judges only the listed files against their
+  baseline entries, and keeps its cross-file index in
+  `temp\harness-floor\unroll-index-cache.json`, keyed by content hash, so
+  nothing goes stale), `scripts\` (argv-hazard and unroll-count each have their
+  own guard row over it), `src\` for neuter, and persistence-flag's live
+  restore control. `test\win32\harness-scope.ps1` proves each audit goes red on
+  a changed script and does not read an unchanged one.
 
 - **The set lives in `scripts\lib\HarnessFloor.ps1`**, one row per audit with
   the property it holds. Membership is a line: a static sweep over source or a

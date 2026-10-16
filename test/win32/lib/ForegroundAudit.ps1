@@ -463,11 +463,15 @@ function Get-ForegroundAuditFindings {
       -Files       the scripts to score (paths). Defaults to `$Root\*.ps1`.
       -Root        the acceptance directory (`test\win32`).
       -Declared    override the declaration list, for the self-test.
+      -Partial     -Files is a SUBSET of the suite (a scoped sweep, T1969): a
+                   declaration naming a script outside it is not judged, since
+                   that script is unchanged since the floor last read it.
     #>
     param(
         [string]$Root,
         [string[]]$Files,
-        [object[]]$Declared
+        [object[]]$Declared,
+        [switch]$Partial
     )
     $findings = New-Object System.Collections.ArrayList
 
@@ -559,6 +563,7 @@ function Get-ForegroundAuditFindings {
         if ($grabbers.ContainsKey($d.Script)) { continue }
         $exists = $null -ne ($Files | Where-Object {
             (Get-ForegroundAuditKey -Path $_ -Root $Root) -eq $d.Script })
+        if ($Partial -and -not $exists) { continue }
         $why = if ($exists) { 'no longer needs the input desktop' } else { 'no longer exists' }
         [void]$findings.Add([pscustomobject]@{
             Path = 'lib\TestDesktop.ps1'; Line = $d.Line; Kind = 'stale-declaration'

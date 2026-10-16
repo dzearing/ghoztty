@@ -4248,7 +4248,8 @@ $GuardTable = @(
         Covers = @(
             'test\win32\persistence-flag.ps1',
             'test\win32\lib\PersistenceSweep.ps1',
-            'test\win32\lib\TestDesktop.ps1'
+            'test\win32\lib\TestDesktop.ps1',
+            'test\win32\lib\HarnessScope.ps1'
         )
     },
     [pscustomobject]@{
@@ -5109,6 +5110,7 @@ $GuardTable = @(
         Covers = @(
             'test\win32\neuter-audit.ps1',
             'test\win32\lib\NeuterAudit.ps1',
+            'test\win32\lib\HarnessScope.ps1',
             'src\apprt\win32\*.zig'
         )
     }
@@ -5193,6 +5195,7 @@ $GuardTable = @(
         Covers = @(
             'test\win32\argv-hazard-audit.ps1',
             'test\win32\lib\ArgvHazardAudit.ps1',
+            'test\win32\lib\HarnessScope.ps1',
             'scripts\*.ps1',
             'scripts\lib\*.ps1'
         )
@@ -5268,6 +5271,33 @@ $GuardTable = @(
         )
     },
 
+    # T1969 - the scoped audits. A scoped harness-floor sweep hands its changed
+    # top-level scripts to five members, which then read only those; this
+    # proves each still catches a violator in a changed script, leaves one in
+    # an unchanged script to the daily sweep, and reads the whole suite when
+    # the list could hide a red.
+    [pscustomobject]@{
+        Name   = 'harness-scope'
+        Script = 'test\win32\harness-scope.ps1'
+        Stamp  = 'test\win32\harness-scope.stamp.json'
+        Covers = @(
+            'test\win32\harness-scope.ps1',
+            'test\win32\lib\HarnessScope.ps1',
+            'test\win32\foreground-audit.ps1',
+            'test\win32\lib\ForegroundAudit.ps1',
+            'test\win32\argv-hazard-audit.ps1',
+            'test\win32\lib\ArgvHazardAudit.ps1',
+            'test\win32\unroll-count-audit.ps1',
+            'test\win32\lib\UnrollCountAudit.ps1',
+            'test\win32\neuter-audit.ps1',
+            'test\win32\lib\NeuterAudit.ps1',
+            'test\win32\persistence-flag.ps1',
+            'test\win32\lib\PersistenceSweep.ps1',
+            'scripts\harness-floor.ps1',
+            'scripts\lib\HarnessFloor.ps1'
+        )
+    },
+
     # T794 - the vacuous-count sweep. It covers BOTH trees rather than just the
     # analyzer, because the case the rule exists for is a script arriving with
     # `(Get-Thing ...).Count` in it: the harness-floor row above watches
@@ -5280,6 +5310,7 @@ $GuardTable = @(
         Covers = @(
             'test\win32\unroll-count-audit.ps1',
             'test\win32\lib\UnrollCountAudit.ps1',
+            'test\win32\lib\HarnessScope.ps1',
             'test\win32\unroll-count-audit.baseline.json',
             'scripts\*.ps1',
             'scripts\lib\*.ps1'

@@ -168,6 +168,7 @@ function Save-Verified([datetime]$FullAt) {
 # ordinary run with -Include semantics (a scoped set) or none (a full sweep).
 $scopeMode = $null
 $scopeFullAt = $null
+$scopeChanged = @()
 if ($Scoped -and -not $Include -and -not $ScoreSummary) {
     $verified = Read-HarnessFloorRecord $VerifiedPath
     if ($null -eq $verified) {
@@ -199,6 +200,7 @@ if ($Scoped -and -not $Include -and -not $ScoreSummary) {
     }
     if ($scope.Mode -eq 'scoped') {
         $scopeFullAt = $verified.fullAt
+        $scopeChanged = @($scope.Changed)
         $Include = (@($scope.Selected) -join ',')
         $selected = @($scope.Selected)
         $audits = @($audits | Where-Object { $selected -contains [string]$_.Name })
@@ -233,9 +235,27 @@ else {
         }
     }
     Write-Host "harness floor: $($audits.Count) audit(s) via suite-run -> $OutDir"
+    # T1969: a scoped sweep tells its members which top-level scripts changed,
+    # so the heavy ones (foreground, argv-hazard, unroll-count, neuter,
+    # persistence-flag) read only those; test\win32\lib\HarnessScope.ps1 is the
+    # contract, including when a member ignores the list and reads everything.
+    # Any other run clears it, so a list inherited from a caller can never
+    # narrow a full sweep.
+    $onlyName = 'GHOZTTY_HARNESS_FLOOR_ONLY'
+    $only = @(Get-HarnessFloorOnlyList ([pscustomobject]@{ Mode = $scopeMode; Changed = $scopeChanged }))
+    if ($only.Count -gt 0) {
+        [Environment]::SetEnvironmentVariable($onlyName, ($only -join ';'))
+        Write-Host "  scoped members read only the changed script(s): $($only -join ', ')"
+    } else {
+        [Environment]::SetEnvironmentVariable($onlyName, $null)
+    }
     Write-Host ''
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $suite run `
-        -Repo $Repo -Include ($names -join ',') -OutDir $OutDir -TimeoutSec $TimeoutSec
+    try {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $suite run `
+            -Repo $Repo -Include ($names -join ',') -OutDir $OutDir -TimeoutSec $TimeoutSec
+    } finally {
+        [Environment]::SetEnvironmentVariable($onlyName, $null)
+    }
     # suite-run's exit code is deliberately NOT the floor's: a red row that is a
     # named pending exception is not a floor failure, and that judgement is the
     # whole point of this wrapper. The rows are what is read.

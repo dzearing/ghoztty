@@ -232,25 +232,75 @@ function Test-UnrollExternalName([string]$Name) {
 # Build the index of repo helpers whose output can be an array: name (lowered)
 # -> the relative path of the file that defines it. Roots are directories; every
 # *.ps1 under them is read.
+#
+# T1969: -CachePath keeps each file's array-returning function names keyed by
+# the file's SHA-256 and this analyzer's, because the index is a pure function
+# of those two. Half of a sweep's time was this index (450 parses), so a scoped
+# sweep that scores two changed scripts still paid for every unchanged one.
+# A run WITHOUT -UseCache derives every entry fresh and rewrites the cache, so
+# the whole sweep stays the ground truth; -UseCache trusts an entry whose hashes
+# match and parses only the files that do not.
+$script:UnrollCountAnalyzerPath = $PSCommandPath
+
 function Get-UnrollCountIndex {
-    param([string[]]$Roots)
+    param([string[]]$Roots, [string]$CachePath, [switch]$UseCache)
     $index = @{}
+    $analyzer = ''
+    if ($script:UnrollCountAnalyzerPath -and (Test-Path -LiteralPath $script:UnrollCountAnalyzerPath)) {
+        $analyzer = (Get-FileHash -LiteralPath $script:UnrollCountAnalyzerPath -Algorithm SHA256).Hash
+    }
+    $old = @{}
+    if ($CachePath -and $UseCache -and (Test-Path -LiteralPath $CachePath)) {
+        try {
+            $c = Get-Content -LiteralPath $CachePath -Raw | ConvertFrom-Json
+            if ($c.analyzer -eq $analyzer) {
+                foreach ($p in $c.files.PSObject.Properties) { $old[$p.Name] = $p.Value }
+            }
+        } catch { $old = @{} }
+    }
+    $new = [ordered]@{}
+    $script:UnrollCountIndexParsed = 0
     foreach ($root in @($Roots)) {
         if (-not (Test-Path -LiteralPath $root)) { continue }
         foreach ($f in @(Get-ChildItem -LiteralPath $root -Filter *.ps1 -File -Recurse)) {
-            $parsed = Get-UnrollCountAst -Path $f.FullName
-            if ($parsed.Errors.Count -gt 0) { continue }
-            foreach ($n in @($parsed.Ast.FindAll({ param($x)
-                            $x -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))) {
-                if (-not (Test-UnrollArrayReturning $n)) { continue }
-                $name = $n.Name.ToLower()
-                if (Test-UnrollExternalName $n.Name) { continue }
+            $key = $f.FullName.ToLowerInvariant()
+            $hash = if ($CachePath) { (Get-FileHash -LiteralPath $f.FullName -Algorithm SHA256).Hash } else { '' }
+            $names = $null
+            if ($old.ContainsKey($key) -and $old[$key].hash -eq $hash) {
+                $names = @(@($old[$key].names) | Where-Object { $_ })
+            } else {
+                $script:UnrollCountIndexParsed++
+                $names = @()
+                $parsed = Get-UnrollCountAst -Path $f.FullName
+                if ($parsed.Errors.Count -eq 0) {
+                    $names = @(foreach ($n in @($parsed.Ast.FindAll({ param($x)
+                                        $x -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true))) {
+                            if (Test-UnrollArrayReturning $n) { $n.Name }
+                        })
+                }
+            }
+            $new[$key] = [pscustomobject]@{ hash = $hash; names = @($names) }
+            foreach ($nm in @($names)) {
+                $name = ([string]$nm).ToLower()
+                if (Test-UnrollExternalName $nm) { continue }
                 if (-not $index.ContainsKey($name)) { $index[$name] = $f.Name }
             }
         }
     }
+    if ($CachePath) {
+        try {
+            $dir = Split-Path -Parent $CachePath
+            if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+            ([pscustomobject]@{ schema = 'ghoztty-unroll-index-cache/1'; analyzer = $analyzer; files = $new } |
+                ConvertTo-Json -Depth 5) | Set-Content -LiteralPath $CachePath -Encoding UTF8
+        } catch { }
+    }
     return $index
 }
+
+# How many files the last Get-UnrollCountIndex call actually parsed (the rest
+# came from the cache).
+function Get-UnrollCountIndexParsed { return [int]$script:UnrollCountIndexParsed }
 
 # The index of comma-returning helpers: name (lowered) -> file. Read from the
 # `lib` directories under the roots ONLY, because those are what a script

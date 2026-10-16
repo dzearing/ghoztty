@@ -46,7 +46,12 @@
 #>
 [CmdletBinding()]
 param(
-    [switch]$TeethCheck
+    [switch]$TeethCheck,
+    # T1969: sweep only these changed top-level scripts in section B (repo-
+    # relative), plus the files B4-B6 name. scripts\harness-floor.ps1 -Scoped
+    # passes the same list through $env:GHOZTTY_HARNESS_FLOOR_ONLY;
+    # lib\HarnessScope.ps1 says when it is ignored. A scoped run never stamps.
+    [string[]]$Only
 )
 
 $ErrorActionPreference = 'Continue'
@@ -54,6 +59,12 @@ $Repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\ArgvHazardAudit.ps1')
+. (Join-Path $PSScriptRoot 'lib\HarnessScope.ps1')
+$scope = Get-HarnessScope -Repo $Repo -Self $PSCommandPath -Only $Only
+if ($TeethCheck -and $scope.Scoped) {
+    # The teeth plant a NEW file, which no changed-script list names.
+    $scope = [pscustomobject]@{ Scoped = $false; Files = @(); Rel = @(); Reason = '-TeethCheck reads the whole suite' }
+}
 
 $script:pass = 0
 $script:fail = 0
@@ -292,13 +303,31 @@ function Get-SweepRoots {
     @($out)
 }
 
+# T1969: the files B4-B6 assert about, read in every run so a scoped one still
+# proves the analyzer sees the naive control and leaves the converted sites
+# alone.
+$anchors = @('scripts\go-loop-exec.ps1', 'scripts\go-loop-watchdog.ps1',
+    'scripts\watchdog-ghoztty-windows.ps1', 'test\win32\cli-argv-fidelity.ps1')
+
+Write-Host (Format-HarnessScopeLine $scope)
 Reset-ArgvHazardCache
-$roots = Get-SweepRoots
+if ($scope.Scoped) {
+    $roots = @(@($scope.Files) + @($anchors | ForEach-Object { Join-Path $Repo $_ } |
+            Where-Object { Test-Path -LiteralPath $_ }) | Sort-Object -Unique)
+} else {
+    $roots = Get-SweepRoots
+}
 $sweep = @(Get-ArgvHazardFindings -Repo $Repo -Paths $roots)
 $all = @(Get-ArgvHazardFindings -Repo $Repo -Paths $roots -IncludeExempt)
 
-Assert 'B1 the sweep actually looked at the tree' (@($roots).Count -ge 300) `
-    "$(@($roots).Count) scripts"
+if ($scope.Scoped) {
+    $read = @(@($scope.Files) | Where-Object { @($roots) -contains $_ })
+    Assert "B1 the scoped sweep read every changed script ($($read.Count) of $(@($scope.Rel).Count))" (
+        $read.Count -ge 1 -and $read.Count -eq @($scope.Rel).Count) "$(@($roots).Count) file(s) with the anchors"
+} else {
+    Assert 'B1 the sweep actually looked at the tree' (@($roots).Count -ge 300) `
+        "$(@($roots).Count) scripts"
+}
 Assert 'B2 no ghoztty call puts unexplained free text on a native argv' (
     $sweep.Count -eq 0)
 foreach ($f in $sweep) {
@@ -384,12 +413,13 @@ Complete-TestBody  # T1039: the run reached the end of its body
 
 # --- stamp (T783) ----------------------------------------------------------
 # Only a CLEAN green run records the covered files, and never a teeth check -
-# that run deliberately plants a violator.
-if ($script:fail -eq 0 -and -not $TeethCheck) {
+# that run deliberately plants a violator - or a scoped one, which read only the
+# changed scripts (T1969).
+if ($script:fail -eq 0 -and -not $TeethCheck -and -not $scope.Scoped) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard argv-hazard -Repo $Repo 2>&1 |
         ForEach-Object { Write-Host "  $($_.ToString())" }
 }
 
 Write-Host ''
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'ARGV HAZARD AUDIT' -MinPass 22
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label ('ARGV HAZARD AUDIT' + (Get-HarnessScopeLabel $scope)) -MinPass 22

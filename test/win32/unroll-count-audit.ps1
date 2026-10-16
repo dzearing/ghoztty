@@ -76,7 +76,12 @@
 [CmdletBinding()]
 param(
     [switch]$TeethCheck,
-    [switch]$UpdateBaseline
+    [switch]$UpdateBaseline,
+    # T1969: score only these changed top-level scripts in sections C/D (repo-
+    # relative), against their own baseline entries. scripts\harness-floor.ps1
+    # -Scoped passes the same list through $env:GHOZTTY_HARNESS_FLOOR_ONLY;
+    # lib\HarnessScope.ps1 says when it is ignored. A scoped run never stamps.
+    [string[]]$Only
 )
 
 $ErrorActionPreference = 'Continue'
@@ -84,6 +89,15 @@ $Repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 
 . (Join-Path $PSScriptRoot 'lib\TestScore.ps1')
 . (Join-Path $PSScriptRoot 'lib\UnrollCountAudit.ps1')
+. (Join-Path $PSScriptRoot 'lib\HarnessScope.ps1')
+$scope = Get-HarnessScope -Repo $Repo -Self $PSCommandPath -Only $Only
+if (($TeethCheck -or $UpdateBaseline) -and $scope.Scoped) {
+    # The teeth plant new files, and a baseline rewritten from two files would
+    # drop every other file's entry.
+    $scope = [pscustomobject]@{ Scoped = $false; Files = @(); Rel = @(); Reason = '-TeethCheck / -UpdateBaseline read the whole suite' }
+}
+# The index cache (T1969): a whole run rewrites it, a scoped run reads it.
+$IndexCachePath = Join-Path $Repo 'temp\harness-floor\unroll-index-cache.json'
 
 $script:pass = 0
 $script:fail = 0
@@ -388,8 +402,21 @@ Write-Host ''
 Write-Host '== C: the ratchet over test\win32 and scripts'
 # ===========================================================================
 
-$index = Get-UnrollCountIndex -Roots $Roots
-$sweep = @(Get-UnrollCountSweep -Roots $Roots -Index $index)
+Write-Host (Format-HarnessScopeLine $scope)
+$index = Get-UnrollCountIndex -Roots $Roots -CachePath $IndexCachePath -UseCache:($scope.Scoped)
+Write-Host "  index: $($index.Count) helper(s), $(Get-UnrollCountIndexParsed) file(s) parsed$(if ($scope.Scoped) { ' (the rest from the cache)' })"
+if ($scope.Scoped) {
+    $scopeComma = Get-UnrollCommaIndex -Roots $Roots
+    $sweep = @(foreach ($f in @($scope.Files)) {
+            Get-UnrollCountFindings -Path $f -Index $index -CommaIndex $scopeComma
+        })
+} else {
+    $sweep = @(Get-UnrollCountSweep -Roots $Roots -Index $index)
+}
+# The files the ratchet judges: every file, or only the changed ones - an
+# unchanged file still holds the count the floor last verified.
+$judged = $null
+if ($scope.Scoped) { $judged = @($scope.Rel) }
 $current = @{}
 foreach ($x in $sweep) {
     $rel = Get-UnrollCountRelativePath -Path $x.Path -Repo $Repo
@@ -424,6 +451,7 @@ foreach ($k in ($current.Keys | Sort-Object)) {
     elseif ($current[$k] -lt $was) { [void]$improved.Add("$k ($was -> $($current[$k]))") }
 }
 foreach ($k in ($baseFiles.Keys | Sort-Object)) {
+    if ($null -ne $judged -and @($judged | Where-Object { $_ -ieq $k }).Count -eq 0) { continue }
     if (-not $current.ContainsKey($k) -and $baseFiles[$k] -gt 0) {
         [void]$improved.Add("$k ($($baseFiles[$k]) -> 0)")
     }
@@ -452,12 +480,18 @@ Write-Host ''
 Write-Host '== D: the sweep is scoped the way the rule says'
 # ===========================================================================
 
-$ps1Count = 0
-foreach ($r in $Roots) { $ps1Count += @(Get-ChildItem -LiteralPath $r -Filter *.ps1 -File -Recurse).Count }
-Assert "D1 the sweep walked both trees ($ps1Count .ps1 files)" ($ps1Count -ge 400)
+if ($scope.Scoped) {
+    AssertEq "D1 the scoped sweep scored every changed script ($(@($scope.Rel).Count))" @($scope.Rel).Count `
+        @(@($scope.Files) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count
+} else {
+    $ps1Count = 0
+    foreach ($r in $Roots) { $ps1Count += @(Get-ChildItem -LiteralPath $r -Filter *.ps1 -File -Recurse).Count }
+    Assert "D1 the sweep walked both trees ($ps1Count .ps1 files)" ($ps1Count -ge 400)
+}
 
 $missing = New-Object System.Collections.ArrayList
 foreach ($rel in $Fixed) {
+    if ($null -ne $judged -and @($judged | Where-Object { $_ -ieq $rel }).Count -eq 0) { continue }
     if ($current.ContainsKey($rel)) { [void]$missing.Add("$rel ($($current[$rel]))") }
 }
 foreach ($m in $missing) { Write-Host "      STILL VACUOUS: $m" -ForegroundColor Red }
@@ -540,8 +574,8 @@ Complete-TestBody  # T1039: the run reached the end of its body
 # --- stamp (T783) ----------------------------------------------------------
 # Only a CLEAN green run records the covered files, and never a teeth check -
 # that run plants violators, so its verdict says nothing about the tree as it
-# stands.
-if ($script:fail -eq 0 -and -not $TeethCheck) {
+# stands - or a scoped one, which scored only the changed scripts (T1969).
+if ($script:fail -eq 0 -and -not $TeethCheck -and -not $scope.Scoped) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Repo 'scripts\guard-due.ps1') `
         update -Guard unroll-count -Repo $Repo 2>&1 |
         ForEach-Object { Write-Host "  $($_.ToString())" }
@@ -549,4 +583,4 @@ if ($script:fail -eq 0 -and -not $TeethCheck) {
 
 Write-Host ''
 Write-Host "  sweep: $($sweep.Count) site(s) still unwrapped across $($current.Keys.Count) file(s) (baseline; T1617 works them down)"
-Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label 'UNROLL COUNT AUDIT' -MinPass 20
+Write-TestVerdict -Pass $script:pass -Fail $script:fail -Label ('UNROLL COUNT AUDIT' + (Get-HarnessScopeLabel $scope)) -MinPass 20

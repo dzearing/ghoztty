@@ -39,7 +39,12 @@
 param(
     [string]$ExePath,
     [string]$AgentExe,
-    [switch]$Interactive
+    [switch]$Interactive,
+    # T1969: sweep only these changed top-level scripts in section A (repo-
+    # relative). scripts\harness-floor.ps1 -Scoped passes the same list through
+    # $env:GHOZTTY_HARNESS_FLOOR_ONLY; lib\HarnessScope.ps1 says when it is
+    # ignored. A scoped run never stamps.
+    [string[]]$Only
 )
 
 # T351: the shared reset/kill helpers (Stop-RepoGhoztty). Dot-sourced HERE, ahead
@@ -58,6 +63,8 @@ $script:fail = 0
 $root = Join-Path $env:TEMP "ghoztty-persistence-flag-$PID"
 
 . (Join-Path $PSScriptRoot 'lib\PersistenceSweep.ps1')
+. (Join-Path $PSScriptRoot 'lib\HarnessScope.ps1')
+$scope = Get-HarnessScope -Repo $repo -Self $PSCommandPath -Only $Only
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')
 # T652: "attached is not alive" - section C's restored pane is proved by typing
 # into it, not by finding it in a tree.
@@ -180,8 +187,16 @@ function Wait-PaneCount($target, $count, $timeoutSec = 45) {
 # A: the sweep over the real suite
 # ---------------------------------------------------------------------------
 Say '== A: every launch site in test\win32 declares its persistence intent'
-$sites = @(Get-GhozttyLaunchSites -Root $PSScriptRoot)
-Assert ($sites.Count -ge 100) "A0 the sweep found the suite's launch sites (found $($sites.Count))"
+Say (Format-HarnessScopeLine $scope)
+if ($scope.Scoped) {
+    $sites = @(Get-GhozttyLaunchSites -Root $PSScriptRoot -Files $scope.Files)
+    $read = @(@($scope.Files) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf })
+    Assert ($read.Count -ge 1 -and $read.Count -eq @($scope.Rel).Count) `
+        "A0 the scoped sweep read every changed script ($($read.Count) of $(@($scope.Rel).Count); $($sites.Count) launch site(s))"
+} else {
+    $sites = @(Get-GhozttyLaunchSites -Root $PSScriptRoot)
+    Assert ($sites.Count -ge 100) "A0 the sweep found the suite's launch sites (found $($sites.Count))"
+}
 $undeclared = @($sites | Where-Object { -not $_.Declared })
 foreach ($u in $undeclared) {
     Say ("      undeclared: {0}:{1}  {2}" -f $u.File, $u.Line, $u.Stmt)
@@ -420,113 +435,122 @@ Assert ($lateRow.Count -eq 1 -and -not $lateRow[0].Declared) `
     ("B15 and the same sentence written after the code starts is not a header, so it " +
         "declares nothing (got $($lateRow.Count) site(s), declared=$(if ($lateRow.Count) { $lateRow[0].Declared } else { 'n/a' }))")
 
-# ---------------------------------------------------------------------------
-# C: the class negative control, live
-# ---------------------------------------------------------------------------
-$savedLocalAppData = $env:LOCALAPPDATA
-$savedAgentBin = $env:GHOSTTY_LOCAL_AGENT_BIN
-$savedPipe = $env:GHOZTTY_PIPE_SUFFIX
-$env:GHOZTTY_PIPE_SUFFIX = "-t158flag$PID"
+# T1969: section C measures the PRODUCT (does the flag stop a restore), which no
+# changed test script can move, and it is the only part of this audit that
+# launches anything. A scoped harness-floor sweep leaves it to a whole run; this
+# audit's own guard row re-runs it when the code it covers changes.
+if ($scope.Scoped) {
+    Say '  SCOPED: C (the live restore control) measures the product, not the changed scripts; left to the whole run'
+    Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+} else {
+    # ---------------------------------------------------------------------------
+    # C: the class negative control, live
+    # ---------------------------------------------------------------------------
+    $savedLocalAppData = $env:LOCALAPPDATA
+    $savedAgentBin = $env:GHOSTTY_LOCAL_AGENT_BIN
+    $savedPipe = $env:GHOZTTY_PIPE_SUFFIX
+    $env:GHOZTTY_PIPE_SUFFIX = "-t158flag$PID"
 
-Stop-RepoInstances
-$tmp = Join-Path $root 'app'
-New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
-$env:LOCALAPPDATA = $tmp
-$env:GHOSTTY_LOCAL_AGENT_BIN = $agent
-
-Start-TestForegroundWatch
-$td = New-TestDesktop -Interactive:$Interactive
-
-try {
-    Assert (Test-Path $exe) 'C0 ghoztty exe exists in zig-out'
-    Assert (Test-Path $agent) 'C0 ghoztty-agent exe exists in zig-out'
-
-    Say '== C1: build a two-pane window under persistence'
-    # persistence: on, EXPLICITLY - this arm is the fixture the two relaunches
-    # below are measured against, so it must not depend on what the default
-    # happens to be.
-    $app = Start-OnTestDesktop -Exe $exe -Arguments @('--session-persistence=true') `
-        -StdErr (Join-Path $root 'app1.err.txt')
-    if ((Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
-        Say 'SETUP FAIL: no GhozttyWindow'; exit 1
-    }
-    $r = Invoke-Verb @('+new-window', '--target=t158-pair')
-    Assert ($r.Code -eq 0) "C1a +new-window --target=t158-pair exits 0 (got $($r.Code))"
-    $r = Invoke-Verb @('+split', '--target=t158-pair', '--direction=right')
-    Assert ($r.Code -eq 0) "C1b +split exits 0 (got $($r.Code))"
-    $panes = Wait-PaneCount 't158-pair' 2
-    Assert ($panes -eq 2) "C1c the fixture window has 2 panes (got $panes)"
-    # T1663. The fixture is not built until it is on DISK: everything below
-    # measures a relaunch, and a relaunch reads the manifest, not the window
-    # that was on screen a moment ago. Asserted rather than slept, so a write
-    # that stops happening fails HERE, naming the fixture, instead of three
-    # assertions later as a restore that did nothing.
-    $saved = Wait-Persisted 't158-pair' 2
-    Assert ($saved -eq 2) `
-        "C1d the fixture window is PERSISTED before the app is killed (2 leaves on disk, got $saved)"
-
-    Say '== C2: relaunch WITHOUT the flag - the panes come back'
-    Stop-AppOnly
-    $env:LOCALAPPDATA = $tmp
-    $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
-    # persistence: on (default) - this is the hazard being demonstrated.
-    $restored = Start-OnTestDesktop -Exe $exe -StdErr (Join-Path $root 'app2.err.txt')
-    if ((Wait-TestWindow -ProcessId $restored.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
-        Say 'SETUP FAIL: relaunched app has no GhozttyWindow'
-    }
-    $back = Wait-PaneCount 't158-pair' 2 60
-    $restoreWorked = ($back -eq 2)
-    Assert $restoreWorked `
-        "C2a a launch with no persistence flag RESTORES the previous run's window (2 panes, got $back)"
-    # T652: attached is not alive. A restored pane that came back as a frozen
-    # picture satisfies every assertion above, so type into it and require an
-    # answer - otherwise C3 could be passing against a restore that never worked.
-    Assert (Test-PaneLive -Exe $exe -Target 't158-pair' -Tmp $root -Tag 'T158') `
-        'C2b the restored pane is LIVE: input reaches its child and output returns'
-
-    Say '== C3: relaunch WITH --session-persistence=false - they do not'
-    Stop-AppOnly
-    $env:LOCALAPPDATA = $tmp
-    $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
-    $clean = Start-OnTestDesktop -Exe $exe -Arguments @('--session-persistence=false') `
-        -StdErr (Join-Path $root 'app3.err.txt')
-    if ((Wait-TestWindow -ProcessId $clean.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
-        Say 'SETUP FAIL: the non-persistent app has no GhozttyWindow'
-    }
-    # Give the restore the same wall-clock it had in C2 before concluding it did
-    # not happen: an assertion that fires immediately would pass on a slow box
-    # for the wrong reason.
-    $late = Wait-PaneCount 't158-pair' 2 20
-    # T1663: "nothing came back" is only evidence that the FLAG works if
-    # something would have come back without it. C2 answers that, so it is part
-    # of this assertion - otherwise a restore that is dead in both arms reads as
-    # a correct refusal, which is exactly how a dead restore hid here for a day.
-    Assert (($late -eq -1) -and $restoreWorked) `
-        ("C3a --session-persistence=false restores nothing, and C2 proved there was " +
-            "something to refuse (expected no t158-pair window, got $late pane(s); " +
-            "C2 restored=$restoreWorked)")
-    $wins = @(Get-Windows)
-    Assert ($wins.Count -eq 1) `
-        "C3b the non-persistent launch comes up with exactly its own window (got $($wins.Count))"
-
-} finally {
-    Say '== cleanup'
-    Remove-TestDesktop
     Stop-RepoInstances
-    $env:LOCALAPPDATA = $savedLocalAppData
-    if ($null -ne $savedAgentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin }
-    else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
-    $env:GHOZTTY_PIPE_SUFFIX = $savedPipe
-    if ($script:fail -eq 0) { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue }
-    else { Say "artifacts preserved at $root" }
-}
+    $tmp = Join-Path $root 'app'
+    New-Item -ItemType Directory -Force (Join-Path $tmp 'ghoztty\local-agent-debug') | Out-Null
+    $env:LOCALAPPDATA = $tmp
+    $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
 
-$fgSeen = @(Stop-TestForegroundWatch)
-if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
-    $launched = @(Get-TestLaunchedPids)
-    Assert ($fgSeen.Count -gt 0) 'Z1 the foreground watcher actually sampled (negative control)'
-    $leaked = @($launched | Where-Object { $fgSeen -contains $_ })
-    Assert ($leaked.Count -eq 0) 'Z2 no test-desktop app ever became foreground on the interactive desktop'
+    Start-TestForegroundWatch
+    $td = New-TestDesktop -Interactive:$Interactive
+
+    try {
+        Assert (Test-Path $exe) 'C0 ghoztty exe exists in zig-out'
+        Assert (Test-Path $agent) 'C0 ghoztty-agent exe exists in zig-out'
+
+        Say '== C1: build a two-pane window under persistence'
+        # persistence: on, EXPLICITLY - this arm is the fixture the two relaunches
+        # below are measured against, so it must not depend on what the default
+        # happens to be.
+        $app = Start-OnTestDesktop -Exe $exe -Arguments @('--session-persistence=true') `
+            -StdErr (Join-Path $root 'app1.err.txt')
+        if ((Wait-TestWindow -ProcessId $app.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
+            Say 'SETUP FAIL: no GhozttyWindow'; exit 1
+        }
+        $r = Invoke-Verb @('+new-window', '--target=t158-pair')
+        Assert ($r.Code -eq 0) "C1a +new-window --target=t158-pair exits 0 (got $($r.Code))"
+        $r = Invoke-Verb @('+split', '--target=t158-pair', '--direction=right')
+        Assert ($r.Code -eq 0) "C1b +split exits 0 (got $($r.Code))"
+        $panes = Wait-PaneCount 't158-pair' 2
+        Assert ($panes -eq 2) "C1c the fixture window has 2 panes (got $panes)"
+        # T1663. The fixture is not built until it is on DISK: everything below
+        # measures a relaunch, and a relaunch reads the manifest, not the window
+        # that was on screen a moment ago. Asserted rather than slept, so a write
+        # that stops happening fails HERE, naming the fixture, instead of three
+        # assertions later as a restore that did nothing.
+        $saved = Wait-Persisted 't158-pair' 2
+        Assert ($saved -eq 2) `
+            "C1d the fixture window is PERSISTED before the app is killed (2 leaves on disk, got $saved)"
+
+        Say '== C2: relaunch WITHOUT the flag - the panes come back'
+        Stop-AppOnly
+        $env:LOCALAPPDATA = $tmp
+        $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
+        # persistence: on (default) - this is the hazard being demonstrated.
+        $restored = Start-OnTestDesktop -Exe $exe -StdErr (Join-Path $root 'app2.err.txt')
+        if ((Wait-TestWindow -ProcessId $restored.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
+            Say 'SETUP FAIL: relaunched app has no GhozttyWindow'
+        }
+        $back = Wait-PaneCount 't158-pair' 2 60
+        $restoreWorked = ($back -eq 2)
+        Assert $restoreWorked `
+            "C2a a launch with no persistence flag RESTORES the previous run's window (2 panes, got $back)"
+        # T652: attached is not alive. A restored pane that came back as a frozen
+        # picture satisfies every assertion above, so type into it and require an
+        # answer - otherwise C3 could be passing against a restore that never worked.
+        Assert (Test-PaneLive -Exe $exe -Target 't158-pair' -Tmp $root -Tag 'T158') `
+            'C2b the restored pane is LIVE: input reaches its child and output returns'
+
+        Say '== C3: relaunch WITH --session-persistence=false - they do not'
+        Stop-AppOnly
+        $env:LOCALAPPDATA = $tmp
+        $env:GHOSTTY_LOCAL_AGENT_BIN = $agent
+        $clean = Start-OnTestDesktop -Exe $exe -Arguments @('--session-persistence=false') `
+            -StdErr (Join-Path $root 'app3.err.txt')
+        if ((Wait-TestWindow -ProcessId $clean.Pid -Class 'GhozttyWindow') -eq [IntPtr]::Zero) {
+            Say 'SETUP FAIL: the non-persistent app has no GhozttyWindow'
+        }
+        # Give the restore the same wall-clock it had in C2 before concluding it did
+        # not happen: an assertion that fires immediately would pass on a slow box
+        # for the wrong reason.
+        $late = Wait-PaneCount 't158-pair' 2 20
+        # T1663: "nothing came back" is only evidence that the FLAG works if
+        # something would have come back without it. C2 answers that, so it is part
+        # of this assertion - otherwise a restore that is dead in both arms reads as
+        # a correct refusal, which is exactly how a dead restore hid here for a day.
+        Assert (($late -eq -1) -and $restoreWorked) `
+            ("C3a --session-persistence=false restores nothing, and C2 proved there was " +
+                "something to refuse (expected no t158-pair window, got $late pane(s); " +
+                "C2 restored=$restoreWorked)")
+        $wins = @(Get-Windows)
+        Assert ($wins.Count -eq 1) `
+            "C3b the non-persistent launch comes up with exactly its own window (got $($wins.Count))"
+
+    } finally {
+        Say '== cleanup'
+        Remove-TestDesktop
+        Stop-RepoInstances
+        $env:LOCALAPPDATA = $savedLocalAppData
+        if ($null -ne $savedAgentBin) { $env:GHOSTTY_LOCAL_AGENT_BIN = $savedAgentBin }
+        else { Remove-Item env:GHOSTTY_LOCAL_AGENT_BIN -ErrorAction SilentlyContinue }
+        $env:GHOZTTY_PIPE_SUFFIX = $savedPipe
+        if ($script:fail -eq 0) { Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue }
+        else { Say "artifacts preserved at $root" }
+    }
+
+    $fgSeen = @(Stop-TestForegroundWatch)
+    if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
+        $launched = @(Get-TestLaunchedPids)
+        Assert ($fgSeen.Count -gt 0) 'Z1 the foreground watcher actually sampled (negative control)'
+        $leaked = @($launched | Where-Object { $fgSeen -contains $_ })
+        Assert ($leaked.Count -eq 0) 'Z2 no test-desktop app ever became foreground on the interactive desktop'
+    }
 }
 
 # --- stamp (T783/T1012) ----------------------------------------------------
@@ -534,13 +558,15 @@ if (-not $Interactive -and $env:GHOZTTY_TEST_INTERACTIVE -ne '1') {
 # scripts\guard-due.ps1 can answer "has anybody asked the suite as it now stands
 # whether every launch declares its intent?". Red stays due: only a green sweep
 # re-stamps. Nothing owned that question until now, which is how the undeclared
-# count went from 14 to 52 with no run in between.
-if ($script:fail -eq 0) {
+# count went from 14 to 52 with no run in between. A scoped run (T1969) read
+# only the changed scripts, so it stamps nothing.
+if ($script:fail -eq 0 -and -not $scope.Scoped) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo 'scripts\guard-due.ps1') `
         update -Guard persistence-flag -Repo $repo 2>&1 | ForEach-Object { "  $_" }
 }
 
 Say ''
-if ($script:fail -eq 0) { Say "ALL PASS ($script:pass)"; exit 0 }
-Say "$script:fail FAILURE(S) ($script:pass passed)"
+$scopeLabel = Get-HarnessScopeLabel $scope
+if ($script:fail -eq 0) { Say "ALL PASS ($script:pass)$scopeLabel"; exit 0 }
+Say "$script:fail FAILURE(S) ($script:pass passed)$scopeLabel"
 exit 1
