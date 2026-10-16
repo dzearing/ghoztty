@@ -2598,10 +2598,13 @@ fn ensureGlass(self: *PaneSidebar, w: i32, h: i32) bool {
         self.layer_glass = self.alloc.alloc(u32, n) catch return false;
     }
     // The column strip lies on the desk, as the rail's does; past it, the
-    // sheet is over nothing and the window manager puts the panes under it.
+    // sheet lies on the panes as a blur would leave them - the desk under
+    // their glass tint, colour without the text (T1939). A sheet over the
+    // live panes let their text and banners read straight through it.
     const under = self.alloc.alloc(u32, n) catch return false;
     defer self.alloc.free(under);
     copyDesk(under, w, h, desk, tint);
+    layer.frostPanes(under, w, h, shape.column_w, tint);
     const g = layer.Geometry.init(shape.column_w, self.openCardMetrics(w, h));
     layer.buildGlass(self.layer_glass, w, h, g, .{ .tint = tint, .scale = self.scale }, shape.column_w, under);
     self.glass_key = key;
@@ -2643,8 +2646,8 @@ fn presentCard(self: *PaneSidebar) void {
     const glass = self.ensureGlass(w, h);
     if (glass) {
         // Glass (T1887): the rows painted over black and over white give
-        // each pixel its own coverage; laid on the glass layer, the panes
-        // under the card show through everywhere the rows do not cover.
+        // each pixel its own coverage; laid on the glass layer, which is
+        // opaque inside the card (T1939) and lets only its shadow through.
         const white_px = self.alloc.alloc(u32, pixels.len) catch return;
         defer self.alloc.free(white_px);
         self.card_key = 0x00FF_FFFF;

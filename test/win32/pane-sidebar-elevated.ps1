@@ -258,15 +258,72 @@ try {
     $sb = Wait-SidebarWidth $top $railW
     Assert "back to the rail ($($sb.Width))" ($null -ne $sb -and [math]::Abs($sb.Width - $railW) -le 1)
 
-    "== 5: the card the unpin opens is a see-through glass sheet (T1887)"
+    "== 5: the card the unpin opens is a frosted glass sheet the panes cannot show through (T1887, T1939)"
     $gl = Get-GlassLine $errlog $logBefore; "  $gl"
     $gm = [regex]::Match([string]$gl, 'glass=(\w+) interior_alpha=(\d+)')
     Assert "the open card logged its layer" $gm.Success
     if ($gm.Success) {
         Assert "the open card is glass" ($gm.Groups[1].Value -eq 'true')
         $ia = [int]$gm.Groups[2].Value
-        Assert "its empty middle lets the panes through at Mac's 30% tint (alpha $ia of 255, want 70-100)" ($ia -ge 70 -and $ia -le 100)
+        # T1939: a 30% sheet with no blur behind it (alpha ~85) left the
+        # terminal's text and the pane banner legible through the card. The
+        # sheet now lies on the panes as a blur leaves them, so its middle is
+        # opaque and nothing behind it reaches the eye.
+        Assert "its empty middle is opaque - no terminal text can show through (alpha $ia of 255)" ($ia -eq 255)
     }
+
+    "== 5b: a banner shown while the card is open stays below the card (T1939)"
+    # A press held on the card keeps it open (`onCloseTimer`: capture) for
+    # as long as the probe below needs; it lands on the card's empty middle,
+    # where the glass line samples, so it activates nothing.
+    $am = [regex]::Match([string]$gl, ' at=(\d+),(\d+)')
+    Assert "setup: the glass line names the card's empty middle" $am.Success
+    Start-Sleep -Milliseconds 900   # section 5's card has contracted
+    [void](Click $top $sb.Hwnd (Get-RailPinCenter $sb))
+    $sb = Wait-SidebarWidth $top (Px 240)
+    Start-Sleep -Milliseconds 400
+    "  pinned again: column $($sb.Width) (want $(Px 240))"
+    Assert "setup: window is active for the card's press" (Set-TestActiveWindow -Window $top)
+    $mark5 = @(Get-Content $errlog -ErrorAction SilentlyContinue).Count
+    [void](Click $top $sb.Hwnd (Get-PanelPinCenter $sb))   # unpin: the card opens
+    # The press must beat the 280 ms grace period the open started, so it is
+    # the very next thing.
+    $card = Get-TestWindow -ProcessId $app.Pid -Class 'GhozttyPaneSidebarCard'
+    $held = $false
+    $px = 0; $py = 0
+    if ($card -ne [IntPtr]::Zero -and $am.Success) {
+        $ccr = Get-TestWindowRect -Window $card
+        $px = $ccr.Left + [int]$am.Groups[1].Value; $py = $ccr.Top + [int]$am.Groups[2].Value
+        $held = Send-TestMouse -Window $top -Target $card -X $px -Y $py -Action down
+    }
+    "  card=$card press=$px,$py"
+    Assert "setup: the press reached the open card" $held
+    $cli = [System.IO.Path]::ChangeExtension($Exe, '.com')
+    if (-not (Test-Path $cli)) { $cli = $Exe }
+    # The banner is SHOWN while the card is open. In the T1939 report its text
+    # crossed the card's rows; measured here (with and without a z-order fix),
+    # a banner shown under an open card stays BELOW it - its text came through
+    # the see-through sheet, as the terminal's did. This keeps that true.
+    & $cli +set-banner --target=window-1 '**T1939** banner shown under an open card' 2>$null | Out-Null
+    $bn = $null
+    for ($t = 0; $t -lt 25 -and -not $bn; $t++) {
+        $bn = @(Get-TestWindows -ProcessId $app.Pid -Class 'GhozttyBannerOverlay' | Where-Object Visible)[0]
+        if (-not $bn) { Start-Sleep -Milliseconds 200 }
+    }
+    Assert "setup: the banner is up" ($null -ne $bn)
+    Start-Sleep -Milliseconds 300
+    $closedEarly = @(Get-Content $errlog -ErrorAction SilentlyContinue | Select-Object -Skip $mark5 | Where-Object { $_ -match 'pane sidebar card close' }).Count
+    Assert "setup: the card stayed open through the banner ($closedEarly closes)" ($closedEarly -eq 0)
+    if ($null -ne $bn -and $card -ne [IntPtr]::Zero) {
+        $zCard = Get-TestZIndex -Window $card
+        $zBanner = Get-TestZIndex -Window ([IntPtr]$bn.Hwnd)
+        $zTop = Get-TestZIndex -Window $top
+        "  z-index (0 = top): card=$zCard banner=$zBanner window=$zTop"
+        Assert "the banner sits below the open card (card=$zCard < banner=$zBanner)" ($zCard -ge 0 -and $zBanner -ge 0 -and $zCard -lt $zBanner)
+        Assert "...and still above its own window (banner=$zBanner < window=$zTop)" ($zBanner -lt $zTop)
+    }
+    if ($held) { [void](Send-TestMouse -Window $top -Target $card -X $px -Y $py -Action up) }
+    & $cli +set-banner --target=window-1 --clear 2>$null | Out-Null
     Assert "no crash" (-not ($app.Process -and $app.Process.HasExited))
     [void](Stop-RepoGhoztty -Exe $Exe -AppOnly -SettleMs 500)
 

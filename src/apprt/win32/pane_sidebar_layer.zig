@@ -188,8 +188,10 @@ pub fn hits(g: Geometry, x: i32, y: i32) bool {
 // through). Under it, in the open card's case, are the glass panes; the
 // sheet is lighter than a pane's 40% because it stacks on them.
 //
-// The open card is a layered window, so the sheet really is see-through:
-// `buildGlass` lays the glass's own layers down premultiplied, and
+// The open card is a layered window. Its sheet is NOT see-through (T1939):
+// with no blur behind it, a 30% sheet left the panes' text legible, so the
+// sheet lies on the panes as a blur leaves them (`frostPanes`) and only its
+// shadow is translucent. `buildGlass` lays the glass's own layers down, and
 // `composeOver` puts the rows on it - painted twice, over black and over
 // white, which gives every content pixel its own alpha (text edges
 // included) rather than guessing it from a key colour.
@@ -247,6 +249,19 @@ pub const Pm = struct {
         return 0xFF00_0000 | (ch(self.r, under >> 16, k) << 16) | (ch(self.g, under >> 8, k) << 8) | ch(self.b, under, k);
     }
 
+    /// This over the opaque `0x00RRGGBB` pixel `under` held at alpha `cov`:
+    /// the card's backing as far as its shape covers the pixel (T1939).
+    fn overBacking(self: Pm, under: u32, cov: f32) Pm {
+        if (cov <= 0) return self;
+        const k = (1 - self.a) * cov;
+        return .{
+            .r = self.r + @as(f32, @floatFromInt((under >> 16) & 0xFF)) * k,
+            .g = self.g + @as(f32, @floatFromInt((under >> 8) & 0xFF)) * k,
+            .b = self.b + @as(f32, @floatFromInt(under & 0xFF)) * k,
+            .a = self.a + k,
+        };
+    }
+
     /// As a premultiplied `0xAARRGGBB` layer pixel.
     fn pack(self: Pm) u32 {
         const a: u32 = byte(self.a);
@@ -291,11 +306,33 @@ pub fn glassAt(g: Geometry, gl: Glass, x: i32, y: i32) Pm {
     return p;
 }
 
+/// What the open card's sheet lies on past the column (T1939): the glass
+/// panes as a blur leaves them - the desk with `GLASS_TINT` of the terminal
+/// background over it - rather than the live panes. Mac's card is tinted
+/// glass over a blurring material, so what is behind it reaches the eye as
+/// colour only; a see-through sheet with no blur left terminal text and the
+/// pane banner fully legible through a 30% tint. `under` is the desk
+/// (`0x00RRGGBB`, `w` wide); columns from `from_x` on are frosted in place.
+pub fn frostPanes(under: []u32, w: i32, h: i32, from_x: i32, tint: color_math.Rgb) void {
+    if (w <= 0 or h <= 0) return;
+    const uw: usize = @intCast(w);
+    const n = uw * @as(usize, @intCast(h));
+    if (under.len < n) return;
+    const x0: usize = @intCast(std.math.clamp(from_x, 0, w));
+    for (0..@intCast(h)) |row| {
+        for (under[row * uw + x0 .. (row + 1) * uw]) |*p| {
+            p.* = pane_elevation.glassMix(p.* & 0x00FF_FFFF, tint, pane_elevation.GLASS_TINT);
+        }
+    }
+}
+
 /// The glass layer of a `w` x `h` window into `out`. Pixels left of
 /// `opaque_w` are composited over `under` (opaque `0x00RRGGBB`, same size) -
 /// the desk the column strip shows, or for the rail the whole desk slice -
-/// and come out opaque `0xFFRRGGBB`; the rest are the layers alone,
-/// premultiplied, over nothing.
+/// and come out opaque `0xFFRRGGBB`. Past it, the sheet lies on `under` at
+/// its own coverage (T1939) - opaque inside the card, antialiased at its
+/// edge - so nothing behind the sheet shows through it; the shadows around
+/// the card are the layers alone, premultiplied, over the panes.
 pub fn buildGlass(out: []u32, w: i32, h: i32, g: Geometry, gl: Glass, opaque_w: i32, under: []const u32) void {
     if (w <= 0 or h <= 0) return;
     const uw: usize = @intCast(w);
@@ -317,14 +354,20 @@ pub fn buildGlass(out: []u32, w: i32, h: i32, g: Geometry, gl: Glass, opaque_w: 
             const fx = @as(f32, @floatFromInt(x)) + 0.5;
             const i = row * uw + col;
             const far = y_far or fx < g.card.left - reach or fx > g.card.right + reach;
-            const p: Pm = if (far) .{} else if (y_inside and fx >= g.card.left + inner and fx <= g.card.right - inner) blk: {
+            const interior = !far and y_inside and fx >= g.card.left + inner and fx <= g.card.right - inner;
+            const p: Pm = if (far) .{} else if (interior) blk: {
                 var s: Pm = .{};
                 s.over(gl.tint, OVERLAY_TINT);
                 s.over(white, banner_card.sheenAlpha(fx, fy, g.card));
                 s.over(black, shade);
                 break :blk s;
             } else glassAt(g, gl, x, y);
-            out[i] = if (x < opaque_w) p.onto(under[i]) else p.pack();
+            out[i] = if (x < opaque_w or interior)
+                p.onto(under[i])
+            else if (far)
+                p.pack()
+            else
+                p.overBacking(under[i], coverage(banner_card.sdRoundRect(fx, fy, g.card, g.radius))).pack();
         }
     }
 }
@@ -523,7 +566,7 @@ test "T1887: the rim lights the card's top edge" {
     try testing.expect(edge.r > below.r);
 }
 
-test "T1887: buildGlass is opaque over the desk in the column and see-through past it" {
+test "T1939: buildGlass is opaque over the desk in the column and frosted, not see-through, past it" {
     const w: i32 = 200;
     const h: i32 = 120;
     const g = Geometry.init(40, banner_card.Metrics.init(w, h, 1.0));
@@ -535,9 +578,15 @@ test "T1887: buildGlass is opaque over the desk in the column and see-through pa
     const col = out[60 * 200 + 20];
     try testing.expectEqual(@as(u32, 0xFF), col >> 24);
     try testing.expectEqual(glassAt(g, test_glass, 20, 60).onto(0x00305070), col);
-    // Past the column, the card is partial alpha - the panes show through.
+    // Past the column the sheet is opaque (T1939): it lies on the frosted
+    // panes, so nothing behind the card can show through it. Before, it was
+    // ~30% alpha over the live panes and their text stayed legible.
     const card = out[60 * 200 + 120];
-    try testing.expect(card >> 24 > 60 and card >> 24 < 100);
+    try testing.expectEqual(@as(u32, 0xFF), card >> 24);
+    try testing.expectEqual(glassAt(g, test_glass, 120, 60).onto(0x00305070), card);
+    // Beyond the card's edge the shadow is still partial alpha over the grid.
+    const shadow = out[@as(usize, @intFromFloat(g.card.bottom + 4)) * 200 + 120];
+    try testing.expect(shadow >> 24 > 0 and shadow >> 24 < 0xFF);
     // A valid premultiplied pixel everywhere.
     for (out) |p| {
         const a = p >> 24;
@@ -582,11 +631,96 @@ test "T1887: buildGlass's interior fast path is the per-pixel answer" {
         var x: i32 = 0;
         while (x < w) : (x += 3) {
             const p = glassAt(g, gl, x, y);
-            const want = if (x < 30) p.onto(0x00405060) else p.pack();
+            const fx = @as(f32, @floatFromInt(x)) + 0.5;
+            const fy = @as(f32, @floatFromInt(y)) + 0.5;
+            const cov = coverage(banner_card.sdRoundRect(fx, fy, g.card, g.radius));
+            const want = if (x < 30) p.onto(0x00405060) else p.overBacking(0x00405060, cov).pack();
             const got = out[@intCast(y * w + x)];
             // Far pixels skip the (vanishing) shadow tail: allow one level.
             const d = @max(got >> 24, want >> 24) - @min(got >> 24, want >> 24);
             try testing.expect(d <= 1);
+        }
+    }
+}
+
+test "T1939: frostPanes leaves the column and frosts the panes with the pane glass tint" {
+    var under = [_]u32{ 0x00102030, 0x00102030, 0x00102030, 0x00405060, 0x00405060, 0x00405060 };
+    const tint: color_math.Rgb = .{ .r = 40, .g = 44, .b = 52 };
+    frostPanes(&under, 3, 2, 1, tint);
+    try testing.expectEqual(@as(u32, 0x00102030), under[0]);
+    try testing.expectEqual(@as(u32, 0x00405060), under[3]);
+    try testing.expectEqual(pane_elevation.glassMix(0x00102030, tint, pane_elevation.GLASS_TINT), under[1]);
+    try testing.expectEqual(pane_elevation.glassMix(0x00405060, tint, pane_elevation.GLASS_TINT), under[5]);
+}
+
+test "T1939: nothing behind the open card's sheet can show through it" {
+    // Every pixel the card's shape wholly covers is opaque, so the panes
+    // under it - their text, their banners - contribute nothing at all
+    // (contrast 1:1). The shadow around it is still see-through.
+    const w: i32 = 260;
+    const h: i32 = 320;
+    const g = Geometry.init(36, banner_card.Metrics.init(w, h, 1.25));
+    const n: usize = @intCast(w * h);
+    const out = try testing.allocator.alloc(u32, n);
+    defer testing.allocator.free(out);
+    const under = try testing.allocator.alloc(u32, n);
+    defer testing.allocator.free(under);
+    @memset(under, 0x00203040);
+    frostPanes(under, w, h, 36, .{ .r = 30, .g = 30, .b = 30 });
+    const gl: Glass = .{ .tint = .{ .r = 30, .g = 30, .b = 30 }, .scale = 1.25 };
+    buildGlass(out, w, h, g, gl, 36, under);
+    var covered: usize = 0;
+    var shadow_partial: usize = 0;
+    for (0..@intCast(h)) |row| {
+        for (0..@intCast(w)) |col| {
+            const fx = @as(f32, @floatFromInt(col)) + 0.5;
+            const fy = @as(f32, @floatFromInt(row)) + 0.5;
+            const cov = coverage(banner_card.sdRoundRect(fx, fy, g.card, g.radius));
+            const a = out[row * @as(usize, @intCast(w)) + col] >> 24;
+            if (cov >= 1) {
+                covered += 1;
+                try testing.expectEqual(@as(u32, 0xFF), a);
+            } else if (cov == 0 and col >= 36 and a > 0 and a < 0xFF) shadow_partial += 1;
+        }
+    }
+    try testing.expect(covered > 10_000);
+    try testing.expect(shadow_partial > 100);
+}
+
+test "T1939: the rows read at 4.5:1 on the frosted card, dark and light, across the desk" {
+    const desk_palette = @import("desk_palette.zig");
+    const chrome_theme = @import("chrome_theme.zig");
+    const Case = struct { bg: color_math.Rgb, light: bool };
+    const cases = [_]Case{
+        .{ .bg = .{ .r = 0x28, .g = 0x2c, .b = 0x34 }, .light = false }, // Ghostty's default
+        .{ .bg = .{ .r = 0, .g = 0, .b = 0 }, .light = false },
+        .{ .bg = .{ .r = 0xff, .g = 0xff, .b = 0xff }, .light = true },
+        .{ .bg = .{ .r = 0xf4, .g = 0xf1, .b = 0xe8 }, .light = true },
+    };
+    for (cases) |c| {
+        const pal = desk_palette.Palette.ocean(c.light);
+        const ink = chrome_theme.textOn(banner_card.fillColor(c.bg));
+        var y: f32 = 0;
+        while (y <= 900) : (y += 150) {
+            var x: f32 = 0;
+            while (x <= 1600) : (x += 200) {
+                const desk = pal.at(x, y, 1600, 900).pack() & 0x00FF_FFFF;
+                var px = [_]u32{desk};
+                frostPanes(&px, 1, 1, 0, c.bg);
+                var s: Pm = .{};
+                s.over(c.bg, OVERLAY_TINT);
+                const card = s.onto(px[0]);
+                const card_rgb: color_math.Rgb = .{
+                    .r = @truncate(card >> 16),
+                    .g = @truncate(card >> 8),
+                    .b = @truncate(card),
+                };
+                const r = color_math.wcagContrastRatio(color_math.wcagLuminance(ink), color_math.wcagLuminance(card_rgb));
+                testing.expect(r >= 4.5) catch |e| {
+                    std.debug.print("T1939 contrast {d:.2} bg={any} card=#{x:0>6}\n", .{ r, c.bg, card & 0xFFFFFF });
+                    return e;
+                };
+            }
         }
     }
 }

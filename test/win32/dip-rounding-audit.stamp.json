@@ -1,19 +1,10 @@
 {
     "guard":  "dip-rounding",
     "script":  "test/win32/dip-rounding-audit.ps1",
-    "generated":  "2026-10-16T00:28:13-07:00",
-    "commit":  "282be2646",
+    "generated":  "2026-10-16T01:54:37-07:00",
+    "commit":  "6ca4be332",
     "uncommitted":  [
-                        "test/win32/acceptance-parallel.ps1",
-                        "test/win32/agent-attach-refused.ps1",
-                        "test/win32/agent-instance-lineage.ps1",
-                        "test/win32/agent-shell-integration.ps1",
-                        "test/win32/agent-upgrade.ps1",
-                        "test/win32/floor-lane-leak-sweep.ps1",
-                        "test/win32/floor-lane-parallel.ps1",
-                        "test/win32/ipc-under-load.ps1",
-                        "test/win32/session-resume-offset.ps1",
-                        "test/win32/upgrade-staleness.ps1"
+                        "test/win32/pane-sidebar-elevated.ps1"
                     ],
     "files":  {
                   "test/win32/acceptance-parallel.ps1":  "6a906164eb3ffc376a09e6a36ca9a21c741750bc1c9786c604a668a8018dedd5",
@@ -313,7 +304,7 @@
                   "test/win32/pane-sidebar-activity.ps1":  "1b0a5053db2c58cd2065c75a6e52e22c83185bf3146aeabb5c4224740d801455",
                   "test/win32/pane-sidebar-all-windows.ps1":  "691d17863eb97e0837927d258a38d7165bfe06d8e0214d0c3439eada259f5757",
                   "test/win32/pane-sidebar-drag.ps1":  "36eb78616d344e05dbeb5d760fdb19933e8f169593b4c588e2898bf2f5d257cd",
-                  "test/win32/pane-sidebar-elevated.ps1":  "222268f3bb7793fe727c9c4069131c24440265f1830c3d030f4d4b8330ae80c9",
+                  "test/win32/pane-sidebar-elevated.ps1":  "e953755fae424159b30d4ef08b54ec215b3cdec6e6c0516b63891efb54b58141",
                   "test/win32/pane-sidebar-persist.ps1":  "628855c842f0944b4ddb67d688f3fb34677dc4450e67ea512975b4c3556fd673",
                   "test/win32/pane-sidebar-resize.ps1":  "ce074ae17f3209e5630dab42c78ba539bba194fc048baa05f657ee415833e3f4",
                   "test/win32/pane-sidebar-scroll.ps1":  "5aa2f6aa4e7f30afde28ff9a030d6938b9ab8218497fa37eba0f1c2d47369956",
