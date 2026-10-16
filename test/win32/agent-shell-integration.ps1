@@ -149,7 +149,7 @@ $savedAgentBin = $env:GHOSTTY_LOCAL_AGENT_BIN
 Assert "ghoztty exe exists in zig-out" (Test-Path $Exe)
 Assert "agent exe exists in zig-out" (Test-Path $AgentExe)
 Assert "ghostty.ps1 is in the build's resources" `
-    (Test-Path 'D:\git\ghoztty\zig-out\share\ghostty\shell-integration\powershell\ghostty.ps1')
+    (Test-Path (Join-Path (Split-Path -Parent (Split-Path -Parent $Exe)) 'share\ghostty\shell-integration\powershell\ghostty.ps1'))
 if ($script:failures -gt 0) { "$($script:failures) FAILURE(S)"; exit 1 }
 
 $state = Join-Path $root 'state'
@@ -406,7 +406,7 @@ Assert "DN2 negative control: with the T512 prompt the resize DOES lose the outp
 "== C: --shell=<full git-bash path, spaces and all> gets the --posix rewrite (T513/T862)"
 # ============================================================================
 $bashPath = 'C:\Program Files\Git\bin\bash.exe'
-$bashRes = 'D:\git\ghoztty\zig-out\share\ghostty\shell-integration\bash\ghostty.bash'
+$bashRes = Join-Path (Split-Path -Parent (Split-Path -Parent $Exe)) 'share\ghostty\shell-integration\bash\ghostty.bash'  # T1993: the exe's own zig-out
 if (-not (Test-Path $bashPath)) {
     "  SKIP C: git-bash not found at $bashPath"
     $script:skips++

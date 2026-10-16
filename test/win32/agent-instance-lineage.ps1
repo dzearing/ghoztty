@@ -93,11 +93,14 @@ $root = Join-Path $env:TEMP "ghoztty-t167-$PID"
 # measured). The staging tree is not built by this script: building it here would
 # make one acceptance run take ten minutes, and the delivery scripts already own
 # that build.
-$DefaultDebugExe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe'
-$DefaultDebugAgent = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe'
+# T1993: the defaults of THIS checkout (the runner injects -Exe/-AgentExe
+# re-rooted, so a lane-B run must compare against lane B's paths).
+$LineageRepo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$DefaultDebugExe = Join-Path $LineageRepo 'zig-out\bin\ghoztty.exe'
+$DefaultDebugAgent = Join-Path $LineageRepo 'zig-out\bin\ghoztty-agent.exe'
 if ($Release) {
-    if ($Exe -eq $DefaultDebugExe) { $Exe = 'D:\git\ghoztty\zig-out-release\bin\ghoztty.exe' }
-    if ($AgentExe -eq $DefaultDebugAgent) { $AgentExe = 'D:\git\ghoztty\zig-out-release\bin\ghoztty-agent.exe' }
+    if ($Exe -eq $DefaultDebugExe) { $Exe = Join-Path $LineageRepo 'zig-out-release\bin\ghoztty.exe' }
+    if ($AgentExe -eq $DefaultDebugAgent) { $AgentExe = Join-Path $LineageRepo 'zig-out-release\bin\ghoztty-agent.exe' }
     if (-not (Test-Path $Exe) -or -not (Test-Path $AgentExe)) {
         $script:skipped++
         Write-Host "SKIP  -Release: no staging build at $(Split-Path $Exe). Build it with:"

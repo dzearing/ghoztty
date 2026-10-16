@@ -51,9 +51,48 @@
 # the one that counts. Interference makes runs red, never green, so that is the
 # direction that needs a second opinion.
 
+#
+# WHICH REPO A RUN TESTS (T1993). The scripts spell the repo as the literal
+# D:\git\ghoztty - 283 of them in a `-Exe`/`-Repo` parameter default. A second
+# loop lane runs from its own worktree (D:\git\ghoztty-b), and there that
+# default names LANE A's build. So the literal is a fixed spelling
+# ($script:ApRepoLiteral), never "whatever repo the runner is in", and EVERY
+# phase - worker, main, exclusive, serial, confirm - passes those parameters
+# explicitly, re-rooted at the checkout actually running (the worker root, or
+# -Repo). A script whose BODY still resolves the literal (Get-ApPinnedPaths)
+# cannot be re-rooted by a parameter: in any checkout other than the literal
+# one the runner refuses it, as a red `refused` row, rather than let it grade
+# the other lane's build and call that this lane's verdict.
+
 Set-StrictMode -Off
 
 . (Join-Path $PSScriptRoot 'RunVerdict.ps1')
+
+# The repo's path as the acceptance scripts spell it. Fixed: in lane B the
+# runner's own repo is D:\git\ghoztty-b, and a literal taken from it would not
+# recognise a single script's default (the T1983 finding).
+$script:ApRepoLiteral = 'D:\git\ghoztty'
+
+# A line carrying this marker holds the literal as DATA (a fixture string fed
+# to a pure function, an expected value), not as a path the script resolves.
+$script:ApLiteralFixtureMarker = '@repo-literal-fixture'
+
+function Test-ApUnderLiteral {
+    # True when $Value is the literal or a path below it - and NOT a sibling
+    # that merely shares the prefix (D:\git\ghoztty-b starts with D:\git\ghoztty).
+    param([string]$Value, [string]$Literal)
+    if (-not $Value -or -not $Value.StartsWith($Literal, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+    return ($Value.Length -eq $Literal.Length -or $Value[$Literal.Length] -eq '\')
+}
+
+function Test-ApSamePath {
+    param([string]$A, [string]$B)
+    try {
+        $x = [IO.Path]::GetFullPath($A).TrimEnd('\')
+        $y = [IO.Path]::GetFullPath($B).TrimEnd('\')
+        return [string]::Equals($x, $y, [StringComparison]::OrdinalIgnoreCase)
+    } catch { return $false }
+}
 
 # --------------------------------------------------------------- classifying
 
@@ -120,15 +159,21 @@ function Get-AcceptanceScriptClass {
     '<repo>\zig-out\...' }` fallback is ignored for the same reason (it fires
     only when the injected path is missing). Any OTHER literal repo path pins the
     script to main.
+
+    -RepoLiteral defaults to the fixed spelling ($script:ApRepoLiteral), never
+    to the repo the caller runs from (T1993). Pinned lists the places the BODY
+    resolves a path under the literal (Get-ApPinnedPaths): no parameter can
+    re-root those, so the runner refuses such a script in any other checkout.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$RepoLiteral
+        [string]$RepoLiteral = $script:ApRepoLiteral
     )
     $raw = [IO.File]::ReadAllText($Path)
     $parsed = Get-ApCodeText -Path $Path
     $chars = $parsed.Chars
     $inject = [ordered]@{}
+    $skip = @()
 
     $pb = $parsed.Ast.ParamBlock
     if ($pb) {
@@ -136,15 +181,18 @@ function Get-AcceptanceScriptClass {
             $dv = $p.DefaultValue
             if (-not ($dv -is [System.Management.Automation.Language.StringConstantExpressionAst])) { continue }
             $v = [string]$dv.Value
-            if (-not $v.StartsWith($RepoLiteral, [StringComparison]::OrdinalIgnoreCase)) { continue }
+            if (-not (Test-ApUnderLiteral -Value $v -Literal $RepoLiteral)) { continue }
             $rest = $v.Substring($RepoLiteral.Length).TrimStart('\')
             $inject[$p.Name.VariablePath.UserPath] = $rest
+            $skip += $dv.Extent
             for ($i = $dv.Extent.StartOffset - $parsed.Base; $i -lt ($dv.Extent.EndOffset - $parsed.Base); $i++) { $chars[$i] = ' ' }
         }
     }
     $code = -join $chars
     $lit = [regex]::Escape($RepoLiteral)
-    $code = [regex]::Replace($code, "(?i)if\s*\(\s*-not\s*\(\s*Test-Path\s+\`$\w+\s*\)\s*\)\s*\{\s*\`$\w+\s*=\s*'$lit\\zig-out\\[^']*'\s*\}", ' ')
+    $fallback = "(?i)if\s*\(\s*-not\s*\(\s*Test-Path\s+\`$\w+\s*\)\s*\)\s*\{\s*\`$\w+\s*=\s*'$lit\\zig-out\\[^']*'\s*\}"
+    $code = [regex]::Replace($code, $fallback, ' ')
+    $pinned = @(Get-ApPinnedPaths -Parsed $parsed -Literal $RepoLiteral -Skip $skip -Fallback $fallback)
 
     $exclusive = @()
     foreach ($m in $script:ApExclusiveMarkers) {
@@ -157,7 +205,7 @@ function Get-AcceptanceScriptClass {
     foreach ($k in $script:ApMainPatterns.Keys) {
         if ($code -match "(?i)$k") { $main += $script:ApMainPatterns[$k] }
     }
-    if ($code -match "(?i)$lit") { $main += "spells the repo's literal path ($RepoLiteral) outside an injectable parameter" }
+    if ($code -match "(?i)$lit(?![\w.-])") { $main += "spells the repo's literal path ($RepoLiteral) outside an injectable parameter" }
 
     $class = if ($exclusive.Count -gt 0) { 'exclusive' } elseif ($main.Count -gt 0) { 'main' } else { 'parallel' }
     return [pscustomobject]@{
@@ -166,7 +214,57 @@ function Get-AcceptanceScriptClass {
         Class   = $class
         Reasons = @($exclusive + $main)
         Inject  = $inject
+        Pinned  = $pinned
     }
+}
+
+function Get-ApPinnedPaths {
+    <#
+    .SYNOPSIS
+    Every string in a script's code that RESOLVES a path under the repo literal
+    outside an injectable parameter default - "line N: <value>" each (T1993).
+
+    .DESCRIPTION
+    A string counts when it is the literal or begins with `<literal>\` and is
+    path-shaped (no second colon, no newline, no < > | "). That is the line
+    between `$repo = 'D:\git\ghoztty'` (a path the script will open) and
+    "D:\git\ghoztty\src\main.zig:9:1: error" or "PS D:\git\ghoztty> " (text a
+    test feeds a parser). Excluded: the injectable parameter defaults (-Skip),
+    the Test-Path fallback (it fires only when the injected path is missing, and
+    the run's preflight refuses a missing exe), comments (the AST has none), and
+    any line marked `# @repo-literal-fixture` - the literal as data handed to a
+    pure function.
+    #>
+    param(
+        [Parameter(Mandatory = $true)]$Parsed,
+        [Parameter(Mandatory = $true)][string]$Literal,
+        [object[]]$Skip = @(),
+        [string]$Fallback
+    )
+    $lines = $Parsed.Ast.Extent.Text -split "`n"
+    $lineBase = $Parsed.Ast.Extent.StartLineNumber
+    $found = @()
+    $nodes = $Parsed.Ast.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+            $n -is [System.Management.Automation.Language.ExpandableStringExpressionAst]
+        }, $true)
+    foreach ($n in $nodes) {
+        $v = [string]$n.Value
+        if (-not (Test-ApUnderLiteral -Value $v -Literal $Literal)) { continue }
+        if ($v -match '[\r\n<>|"]' -or $v.IndexOf(':', 2) -ge 0) { continue }
+        $inSkip = $false
+        foreach ($s in $Skip) {
+            if ($n.Extent.StartOffset -ge $s.StartOffset -and $n.Extent.EndOffset -le $s.EndOffset) { $inSkip = $true; break }
+        }
+        if ($inSkip) { continue }
+        $ln = $n.Extent.StartLineNumber
+        $lineText = [string]$lines[$ln - $lineBase]
+        if ($lineText -match "#.*$([regex]::Escape($script:ApLiteralFixtureMarker))") { continue }
+        if ($Fallback -and $lineText -match $Fallback) { continue }
+        $found += "line ${ln}: $v"
+    }
+    return @($found | Select-Object -Unique)
 }
 
 # -------------------------------------------------------------- worker roots
@@ -431,21 +529,31 @@ function Invoke-AcceptanceRun {
         [switch]$FailFast,
         [scriptblock]$OnResult = { param($r) }
     )
-    if (-not $RepoLiteral) { $RepoLiteral = $Repo }
+    if (-not $RepoLiteral) { $RepoLiteral = $script:ApRepoLiteral }
     New-Item -ItemType Directory -Force $LogDir | Out-Null
+    # T1993: a checkout that is not the literal one (lane B's worktree) cannot
+    # run a script whose body resolves the literal - it would grade lane A.
+    $foreign = -not (Test-ApSamePath $Repo $RepoLiteral)
 
     $queue = New-Object System.Collections.ArrayList
+    $refusedItems = @()
     $i = 0
     foreach ($j in $Jobs) {
         $abs = Join-Path $Repo $j.Script
         $cls = Get-AcceptanceScriptClass -Path $abs -RepoLiteral $RepoLiteral
         $declared = Get-ScriptTimeout -Text ([IO.File]::ReadAllText($abs))
-        [void]$queue.Add([pscustomobject]@{
-                Seq = $i; Script = $j.Script; Args = [string]$j.Args; Name = $cls.Name
-                Class = $(if ($Width -le 1) { 'serial' } else { $cls.Class })
-                StaticClass = $cls.Class; Reasons = $cls.Reasons; Inject = $cls.Inject
-                Timeout = $(if ($declared -gt 0) { $declared } else { $TimeoutSec })
-            })
+        $item = [pscustomobject]@{
+            Seq = $i; Script = $j.Script; Args = [string]$j.Args; Name = $cls.Name
+            Class = $(if ($Width -le 1) { 'serial' } else { $cls.Class })
+            StaticClass = $cls.Class; Reasons = $cls.Reasons; Inject = $cls.Inject
+            Timeout = $(if ($declared -gt 0) { $declared } else { $TimeoutSec })
+        }
+        if ($foreign -and @($cls.Pinned).Count -gt 0) {
+            $item | Add-Member -NotePropertyName Pinned -NotePropertyValue @($cls.Pinned)
+            $refusedItems += $item
+        } else {
+            [void]$queue.Add($item)
+        }
         $i++
     }
 
@@ -468,6 +576,34 @@ function Invoke-AcceptanceRun {
     }
 
     $results = New-Object System.Collections.ArrayList
+    $stopped = $false
+    foreach ($item in $refusedItems) {
+        $now = Get-Date
+        $row = [pscustomobject]@{
+            Seq = $item.Seq; Name = $item.Name; Script = $item.Script; Args = $item.Args
+            Class = $item.Class; Slot = 0; Phase = 'refused'; Kind = 'refused'
+            Line = "REFUSED in $Repo - its body resolves $RepoLiteral (another checkout's build), which no parameter can re-root: $(@($item.Pinned)[0])$(if (@($item.Pinned).Count -gt 1) { " (+$(@($item.Pinned).Count - 1) more)" })"
+            ExitCode = -1; Started = $now; Ended = $now; Log = $null
+        }
+        & $OnResult $row | Out-Host
+        [void]$results.Add($row)
+        if ($FailFast) { $stopped = $true }
+    }
+    # T1993: the injected parameters go to EVERY phase, re-rooted at whichever
+    # checkout the child runs in. Before this only a pooled worker got them, so
+    # in lane B a main/exclusive/serial/confirm run took its param default and
+    # launched lane A's exe. A parameter the job's own arguments already name is
+    # left to them.
+    $addInject = {
+        param($item, [string]$root, [object[]]$argList)
+        $out = @($argList)
+        foreach ($k in $item.Inject.Keys) {
+            if (@($out | Where-Object { $_ -is [string] -and $_ -ieq "-$k" }).Count -gt 0) { continue }
+            $out += "-$k"
+            $out += $(if ($item.Inject[$k]) { Join-Path $root $item.Inject[$k] } else { $root })
+        }
+        return $out
+    }
     $runOne = {
         param($item, $slot, $phase)
         $suffix = $(if ($phase -eq 'confirm') { '.alone' } else { '' })
@@ -475,13 +611,11 @@ function Invoke-AcceptanceRun {
         $argList = @(Split-ApArgs $item.Args)
         if ($phase -eq 'pool' -and $item.Class -eq 'parallel') {
             $wk = $workers[$slot]
-            foreach ($k in $item.Inject.Keys) {
-                $argList += "-$k"
-                $argList += $(if ($item.Inject[$k]) { Join-Path $wk.Root $item.Inject[$k] } else { $wk.Root })
-            }
+            $argList = @(& $addInject $item $wk.Root $argList)
             $job = Start-ApJob -ScriptPath (Join-Path $wk.Root $item.Script) -ArgList $argList -LogBase $logBase `
                 -Env $wk.Env -Unset @('GHOZTTY_IPC_SOCKET') -WorkingDirectory $wk.Root
         } else {
+            $argList = @(& $addInject $item $Repo $argList)
             $job = Start-ApJob -ScriptPath (Join-Path $Repo $item.Script) -ArgList $argList -LogBase $logBase -WorkingDirectory $Repo
         }
         $job | Add-Member -NotePropertyName Item -NotePropertyValue $item
@@ -520,7 +654,6 @@ function Invoke-AcceptanceRun {
     }
 
     $isRed = { param($row) $row.Kind -notin @('pass', 'skip') }
-    $stopped = $false
     if ($Width -le 1) {
         foreach ($item in $queue) {
             if ($stopped) { break }
@@ -536,6 +669,7 @@ function Invoke-AcceptanceRun {
         $pending = New-Object System.Collections.ArrayList
         foreach ($q in @($queue | Where-Object { $_.Class -eq 'main' })) { [void]$pending.Add($q) }
         foreach ($q in @($queue | Where-Object { $_.Class -eq 'parallel' })) { [void]$pending.Add($q) }
+        if ($stopped) { $pending.Clear() }  # -FailFast over a refused row
         $running = New-Object System.Collections.ArrayList
         while ($pending.Count -gt 0 -or $running.Count -gt 0) {
             foreach ($pair in @(& $waitAll $running)) {
@@ -626,7 +760,7 @@ function Get-AcceptanceFinal {
     param([object[]]$Results)
     $out = @()
     foreach ($g in @($Results | Group-Object Seq)) {
-        $pool = @($g.Group | Where-Object { $_.Phase -eq 'pool' })[0]
+        $pool = @($g.Group | Where-Object { $_.Phase -in @('pool', 'refused') })[0]
         $alone = @($g.Group | Where-Object { $_.Phase -eq 'confirm' })[0]
         $final = if ($alone) { $alone } else { $pool }
         $sensitive = [bool]($alone -and $pool.Kind -notin @('pass', 'skip') -and $alone.Kind -in @('pass', 'skip'))
@@ -648,7 +782,7 @@ function Test-AcceptanceOverlap {
     #>
     param([object[]]$Results)
     $bad = @()
-    $rows = @($Results)
+    $rows = @($Results | Where-Object { $_.Phase -ne 'refused' })  # never ran
     for ($a = 0; $a -lt $rows.Count; $a++) {
         for ($b = $a + 1; $b -lt $rows.Count; $b++) {
             $x = $rows[$a]; $y = $rows[$b]

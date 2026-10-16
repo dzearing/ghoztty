@@ -161,11 +161,11 @@ AssertEq "A15 a directory that is not a repo yields no HEAD" '' (Get-RepoHeadCom
 # configure phase" under a build-runner stack trace. Every hand-run build here
 # exports the variable; a detached delivery child does not inherit that habit.
 AssertEq "A16 an unset cache defaults to the REPO's drive, not zig's %LOCALAPPDATA%" 'D:\zig-cache' `
-    (Get-ZigGlobalCacheDir -Repo 'D:\git\ghoztty')
+    (Get-ZigGlobalCacheDir -Repo 'D:\r')
 AssertEq "A17 a repo on another drive follows it there" 'E:\zig-cache' `
     (Get-ZigGlobalCacheDir -Repo 'E:\somewhere\else')
 AssertEq "A18 an explicit setting is never overridden" 'X:\my-own-cache' `
-    (Get-ZigGlobalCacheDir -Repo 'D:\git\ghoztty' -Current 'X:\my-own-cache')
+    (Get-ZigGlobalCacheDir -Repo 'D:\r' -Current 'X:\my-own-cache')
 $launcherSrc = Get-Content -LiteralPath (Join-Path $Repo 'scripts\launch-upgrade.ps1') -Raw
 Assert "A19 and the launcher actually applies it before building" `
     ($launcherSrc -match '\$env:ZIG_GLOBAL_CACHE_DIR\s*=\s*\$zigCache')

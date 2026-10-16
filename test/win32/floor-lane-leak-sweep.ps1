@@ -380,16 +380,16 @@ try {
     #        with nothing printed. The separator is the BUILD ROOT.
     Check 'an explicit --cache-dir is the run''s root' `
         (@(Get-LaneBuildRoot -Command 'zig build test --cache-dir D:\soak\none\zig-cache --prefix D:\soak\none\zig-out' `
-                -RepoPath 'D:\git\ghoztty') -contains 'D:\soak\none\zig-cache') ''
+                -RepoPath 'D:\r') -contains 'D:\soak\none\zig-cache') ''
     Check 'the repo is NOT a root once the command names its own cache' `
         (-not (@(Get-LaneBuildRoot -Command 'zig build test --cache-dir D:\soak\none\zig-cache' `
-                    -RepoPath 'D:\git\ghoztty') -contains 'D:\git\ghoztty')) ''
+                    -RepoPath 'D:\r') -contains 'D:\r')) ''
     Check 'a quoted cache path is read whole' `
         (@(Get-LaneBuildRoot -Command 'zig build test --cache-dir "D:\soak dir\zig-cache"' -RepoPath 'D:\r') `
             -contains 'D:\soak dir\zig-cache') ''
     Check 'a lane with no explicit cache builds under the repo' `
         (@(Get-LaneBuildRoot -Command 'set ZIG_GLOBAL_CACHE_DIR=D:\zig-global-cache && zig build test' `
-                -RepoPath 'D:\git\ghoztty') -contains 'D:\git\ghoztty') ''
+                -RepoPath 'D:\r') -contains 'D:\r') ''
     Check 'the SHARED global cache is never a root' `
         (-not (@(Get-LaneBuildRoot -Command 'zig build test --cache-dir D:\soak\c --global-cache-dir D:\zig-global-cache' `
                     -RepoPath 'D:\r') -contains 'D:\zig-global-cache')) ''

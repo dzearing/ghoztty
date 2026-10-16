@@ -186,9 +186,9 @@ Check 'a commit budget too small for two lanes runs them one at a time, and stil
 # ---- arms 13-17: crash records belong to their own lane ----------------------
 
 . (Join-Path $RepoRoot 'scripts\lib\CrashDiag.ps1')
-$laneRoot = 'D:\git\ghoztty\zig-lanes\none'
-$mine = 'D:\git\ghoztty\zig-lanes\none\.zig-cache\o\abc\ghostty-test.exe'
-$theirs = 'D:\git\ghoztty\zig-lanes\win32\.zig-cache\o\abc\ghostty-test.exe'
+$laneRoot = 'D:\r\zig-lanes\none'
+$mine = 'D:\r\zig-lanes\none\.zig-cache\o\abc\ghostty-test.exe'
+$theirs = 'D:\r\zig-lanes\win32\.zig-cache\o\abc\ghostty-test.exe'
 Check 'an isolated lane keeps a crash of its own test binary' `
     (Test-CrashRecordInLaneRoots -App 'ghostty-test.exe' -AppPath $mine -Roots @($laneRoot)) ''
 Check 'an isolated lane drops the same binary name crashing under ANOTHER lane''s root' `

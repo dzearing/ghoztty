@@ -176,9 +176,9 @@ $root = Join-Path $env:TEMP "ghoztty-agent-upgrade-$PID"
 # long. The STALE agent is different: nothing else in the tree owns it, and
 # without it a -Release run would measure no staleness at all, so this script
 # does build that one (agent-only, cached after the first).
-$DefaultDebugExe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe'
-$DefaultDebugAgent = 'D:\git\ghoztty\zig-out\bin\ghoztty-agent.exe'
 $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$DefaultDebugExe = Join-Path $RepoRoot 'zig-out\bin\ghoztty.exe'  # T1993: this checkout's
+$DefaultDebugAgent = Join-Path $RepoRoot 'zig-out\bin\ghoztty-agent.exe'
 $StaleStamp = '20200101-t772old'
 if ($Release) {
     if ($Exe -eq $DefaultDebugExe) { $Exe = Join-Path $RepoRoot 'zig-out-release\bin\ghoztty.exe' }

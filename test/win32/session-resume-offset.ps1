@@ -101,7 +101,7 @@ param(
 $ErrorActionPreference = 'Continue'
 $script:failures = 0
 $script:passes = 0
-$repo = 'D:\git\ghoztty'
+$repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)  # T1993: this checkout, not lane A's
 $root = Join-Path $env:TEMP "ghoztty-resume-offset-$PID"
 
 . (Join-Path $PSScriptRoot 'lib\TestDesktop.ps1')

@@ -18,12 +18,12 @@ param(
     [string]$ExePath = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe'
 )
 $ErrorActionPreference = 'Stop'
-$repo = 'D:\git\ghoztty'
+$repo = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)  # T1993: this checkout, not lane A's
 $exe = $ExePath
 if (-not (Test-Path $exe)) { Write-Host "SETUP FAIL: exe not found: $exe"; exit 1 }
 # Loud staleness check: grading a binary older than the newest build in the
 # repo is almost always an accident, and it reads as a product failure.
-$newest = Get-ChildItem 'D:\git\ghoztty\zig-out*\bin\ghoztty.exe' -ErrorAction SilentlyContinue |
+$newest = Get-ChildItem (Join-Path $repo 'zig-out*\bin\ghoztty.exe') -ErrorAction SilentlyContinue |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($newest -and $newest.FullName -ne (Resolve-Path $exe).Path -and
     $newest.LastWriteTime -gt (Get-Item $exe).LastWriteTime) {

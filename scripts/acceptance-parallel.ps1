@@ -93,13 +93,17 @@ switch ($Action) {
         } else {
             @(Get-ChildItem -LiteralPath (Join-Path $Repo 'test\win32') -Filter *.ps1 -File | Sort-Object Name | ForEach-Object { $_.FullName })
         }
-        $rows = @(foreach ($p in $paths) { Get-AcceptanceScriptClass -Path $p -RepoLiteral $Repo })
+        # The literal is the fixed spelling, never this repo (T1993): in lane B
+        # a literal taken from -Repo recognised none of the scripts' defaults.
+        $rows = @(foreach ($p in $paths) { Get-AcceptanceScriptClass -Path $p })
         if ($Json) { ConvertTo-Json -Depth 4 -InputObject @($rows); exit 0 }
         foreach ($r in $rows) {
             "{0,-10} {1}{2}" -f $r.Class, $r.Name, $(if ($r.Reasons.Count) { '  - ' + ($r.Reasons -join '; ') } else { '' })
+            foreach ($pin in @($r.Pinned)) { "           PINNED $pin" }
         }
         $g = $rows | Group-Object Class
-        "CLASSIFY {0} scripts: {1}" -f $rows.Count, (($g | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' ')
+        $pinnedN = @($rows | Where-Object { @($_.Pinned).Count -gt 0 }).Count
+        "CLASSIFY {0} scripts: {1} pinned={2}" -f $rows.Count, (($g | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' '), $pinnedN
         exit 0
     }
 }

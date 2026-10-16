@@ -41,6 +41,15 @@
        that relinks nothing still clears it once; -FailFast starts nothing
        after the first red and names what it skipped; `due` orders the most
        specific harness first.
+    G  T1993. A run from ANOTHER checkout (lane B's worktree) tests that
+       checkout: fixtures default -Exe to a different "lane A" checkout, and
+       every phase - worker, main, exclusive, serial, confirm - must launch the
+       running checkout's exe (the bare run is the negative control that the
+       default really names lane A). A script whose BODY resolves the literal is
+       the planted pin: refused, never started, scored red; pinned to its own
+       checkout it runs (positive control). The classifier's literal is the
+       fixed D:\git\ghoztty, a sibling `<literal>-b` path is neither pinned nor
+       injected, and a job that passes its own -Exe keeps it.
 
   The "app" here is a renamed copy of ping.exe started with no window, and the
   scripts are fixtures written into a throwaway repo under %TEMP%, so the run
@@ -267,7 +276,7 @@ function Save-Record([string]$verdictKind, [int]$others) {
     $priorInst = $env:GHOZTTY_AGENT_INSTANCE
     Remove-Item Env:GHOZTTY_AGENT_INSTANCE -ErrorAction SilentlyContinue
     $clock = [Diagnostics.Stopwatch]::StartNew()
-    $res4 = @(Invoke-AcceptanceRun -Repo $fake -Jobs $jobs -Width 4 -LogDir (Join-Path $fixLog 'w4') -TimeoutSec 120)
+    $res4 = @(Invoke-AcceptanceRun -Repo $fake -Jobs $jobs -Width 4 -LogDir (Join-Path $fixLog 'w4') -TimeoutSec 120 -RepoLiteral $fake)
     $clock.Stop()
     $wall4 = $clock.Elapsed.TotalSeconds
     $recs = @(Get-ChildItem -LiteralPath $fixLog -Filter *.json | ForEach-Object { Get-Content -Raw $_.FullName | ConvertFrom-Json } |
@@ -322,7 +331,7 @@ function Save-Record([string]$verdictKind, [int]$others) {
         ($badX.Count -eq 1 -and $badM.Count -eq 1 -and $badS.Count -eq 1 -and $good.Count -eq 0) "x=$($badX.Count) m=$($badM.Count) s=$($badS.Count) good=$($good.Count)"
 
     # ---- E: serial and parallel agree -----------------------------------------------
-    $res1 = @(Invoke-AcceptanceRun -Repo $fake -Jobs $jobs -Width 1 -LogDir (Join-Path $fixLog 'w1') -TimeoutSec 120)
+    $res1 = @(Invoke-AcceptanceRun -Repo $fake -Jobs $jobs -Width 1 -LogDir (Join-Path $fixLog 'w1') -TimeoutSec 120 -RepoLiteral $fake)
     $f1 = @(Get-AcceptanceFinal -Results $res1)
     $diff = @(foreach ($f in $f1) { if ($byName[$f.Name].Kind -ne $f.Kind) { "$($f.Name): serial=$($f.Kind) width4=$($byName[$f.Name].Kind)" } })
     Check 'E1 -Width 1 and -Width 4 score the same final verdicts' ($f1.Count -eq $f4.Count -and $diff.Count -eq 0) ($diff -join ' | ')
@@ -378,14 +387,14 @@ function Save-Record([string]$verdictKind, [int]$others) {
 
     # Fail fast: the first red stops anything new from starting.
     $ffJobs = @('red', 'p1', 'p2', 'p3', 'p4', 'excl') | ForEach-Object { [pscustomobject]@{ Script = "test\win32\$_.ps1"; Args = '' } }
-    $ff1 = @(Invoke-AcceptanceRun -Repo $fake -Jobs $ffJobs -Width 1 -LogDir (Join-Path $fixLog 'ff1') -TimeoutSec 120 -FailFast)
+    $ff1 = @(Invoke-AcceptanceRun -Repo $fake -Jobs $ffJobs -Width 1 -LogDir (Join-Path $fixLog 'ff1') -TimeoutSec 120 -RepoLiteral $fake -FailFast)
     Check 'F7 -FailFast at -Width 1: the red is the last thing that ran' ($ff1.Count -eq 1 -and $ff1[0].Name -eq 'red.ps1') (($ff1 | ForEach-Object { $_.Name }) -join ',')
-    $ff2 = @(Invoke-AcceptanceRun -Repo $fake -Jobs $ffJobs -Width 2 -LogDir (Join-Path $fixLog 'ff2') -TimeoutSec 120 -FailFast)
+    $ff2 = @(Invoke-AcceptanceRun -Repo $fake -Jobs $ffJobs -Width 2 -LogDir (Join-Path $fixLog 'ff2') -TimeoutSec 120 -RepoLiteral $fake -FailFast)
     $ran2 = @($ff2 | Where-Object { $_.Phase -eq 'pool' } | ForEach-Object { $_.Name })
     Check 'F8 -FailFast in the pool: the running neighbour finishes, nothing else starts, no exclusive, the red is still confirmed alone' `
         ($ran2.Count -eq 2 -and $ran2 -contains 'red.ps1' -and $ran2 -contains 'p1.ps1' -and $ran2 -notcontains 'excl.ps1' -and
         @($ff2 | Where-Object { $_.Phase -eq 'confirm' -and $_.Name -eq 'red.ps1' }).Count -eq 1) ("pool=" + ($ran2 -join ','))
-    $ffAll = @(Invoke-AcceptanceRun -Repo $fake -Jobs @($ffJobs | Select-Object -Skip 1) -Width 2 -LogDir (Join-Path $fixLog 'ff3') -TimeoutSec 120 -FailFast)
+    $ffAll = @(Invoke-AcceptanceRun -Repo $fake -Jobs @($ffJobs | Select-Object -Skip 1) -Width 2 -LogDir (Join-Path $fixLog 'ff3') -TimeoutSec 120 -RepoLiteral $fake -FailFast)
     Check 'F9 -FailFast with nothing red runs everything' (@($ffAll | Where-Object { $_.Phase -eq 'pool' }).Count -eq 5) "$($ffAll.Count)"
     $r = Invoke-Runner "run -Scripts 'red.ps1,probe.ps1' -Width 1 -FailFast"
     Check 'F10 the runner names what -FailFast never ran, and a skipped script is not GREEN' `
@@ -400,6 +409,76 @@ function Save-Record([string]$verdictKind, [int]$others) {
         [pscustomobject]@{ Kind = 'due'; Advisory = $false; Script = 'test\win32\feature2.ps1'; RunArgs = ''; Files = @('x', 'y', 'z') })
     $order = (@(Get-AcceptanceDueJobs -GuardJson $oj) | ForEach-Object { Split-Path -Leaf $_.Script }) -join ','
     Check 'F11 due runs the most specific harness first, ties in guard order' ($order -eq 'feature.ps1,feature2.ps1,mid.ps1,audit.ps1') $order
+
+    # ---- G: a run from ANOTHER checkout tests that checkout (T1993) ----------------
+    # The fixtures default -Exe to "lane A" ($litA, a checkout that is not this
+    # one), the way 283 real scripts default to D:\git\ghoztty while lane B runs
+    # from D:\git\ghoztty-b. Before T1993 only a pooled worker had its -Exe
+    # re-rooted: main, exclusive, serial and confirm runs launched lane A's exe.
+    $litA = "$fake-a"
+    $aExe = "$litA\zig-out\bin\ghoztty.exe"
+    $gParam = "param([string]`$Exe = '$aExe')`n"
+    $gx = [ordered]@{
+        'gpar'  = $gParam + $prologue + "Save-Record pass 0`n'ALL PASS'`n"
+        'gmain' = $gParam + $prologue + "`$d = 'local-agent-debug'`nSave-Record pass 0`n'ALL PASS'`n"
+        'gexcl' = "# @parallel-unsafe`n" + $gParam + $prologue + "Save-Record pass 0`n'ALL PASS'`n"
+        'gred'  = $gParam + $prologue + "Save-Record fail 0`n'1 FAILURE(S)'`nexit 1`n"
+        'gpin'  = $gParam + "`$repo = '$litA'`nSet-Content -LiteralPath (Join-Path `$env:AP_FIXTURE_LOG 'gpin-ran.txt') -Value ran`n'ALL PASS'`n"
+        'gself' = "`$repo = '$fake'`nSet-Content -LiteralPath (Join-Path `$env:AP_FIXTURE_LOG 'gself-ran.txt') -Value ran`n'ALL PASS'`n"
+        'gdata' = $gParam + "`$t = '$litA\src\main.zig:9:1: error'`n`$u = '$litA' # @repo-literal-fixture`n`$s = '$litA-b\x'`n'ALL PASS'`n"
+        'gsib'  = "param([string]`$Exe = '$litA-b\zig-out\bin\ghoztty.exe')`n'ALL PASS'`n"
+        'gdef'  = "param([string]`$Exe = 'D:\git\ghoztty\zig-out\bin\ghoztty.exe')`n'ALL PASS'`n"
+    }
+    foreach ($k in $gx.Keys) { Write-Fixture (Join-Path $fake "test\win32\$k.ps1") $gx[$k] }
+    $gpath = { param($n) Join-Path $fake "test\win32\$n.ps1" }
+    $readRecs = {
+        $r = @(Get-ChildItem -LiteralPath $fixLog -Filter *.json | ForEach-Object { Get-Content -Raw $_.FullName | ConvertFrom-Json })
+        Get-ChildItem -LiteralPath $fixLog -Filter *.json | Remove-Item -Force
+        return $r
+    }
+    [void](& $readRecs)
+
+    $cp = Get-AcceptanceScriptClass -Path (& $gpath 'gpin') -RepoLiteral $litA
+    $cd = Get-AcceptanceScriptClass -Path (& $gpath 'gdata') -RepoLiteral $litA
+    $cs = Get-AcceptanceScriptClass -Path (& $gpath 'gsib') -RepoLiteral $litA
+    $cdef = Get-AcceptanceScriptClass -Path (& $gpath 'gdef')
+    Check 'G1 a body that resolves the literal is PINNED; a parser fixture, a marked line and a sibling checkout are not' `
+        (@($cp.Pinned).Count -eq 1 -and @($cp.Pinned)[0] -match '^line 2: ' -and @($cd.Pinned).Count -eq 0 -and @($cs.Pinned).Count -eq 0) `
+        ("gpin=[$(@($cp.Pinned) -join ';')] gdata=[$(@($cd.Pinned) -join ';')] gsib=[$(@($cs.Pinned) -join ';')]")
+    Check 'G2 a sibling checkout''s path (<literal>-b) is not injected as if it were the literal' (-not $cs.Inject.Contains('Exe')) ''
+    Check 'G3 with no -RepoLiteral the literal is the fixed D:\git\ghoztty, not the caller''s repo' `
+        ($cdef.Inject['Exe'] -eq 'zig-out\bin\ghoztty.exe') ("inject=$(($cdef.Inject.Keys | ForEach-Object { "$_=$($cdef.Inject[$_])" }) -join ',')")
+
+    # The oracle can see the difference: run bare, the default IS lane A's exe.
+    $null = Invoke-Child "& '$(& $gpath 'gmain')'"
+    $bare = @(& $readRecs)
+    Check 'G4 negative control: run with no arguments, the fixture''s -Exe is lane A''s' `
+        ($bare.Count -eq 1 -and $bare[0].exe -eq $aExe) ("exe=$($bare[0].exe)")
+
+    $gJobs = @('gpar', 'gmain', 'gexcl', 'gred', 'gpin') | ForEach-Object { [pscustomobject]@{ Script = "test\win32\$_.ps1"; Args = '' } }
+    foreach ($wd in 4, 1) {
+        $gr = @(Invoke-AcceptanceRun -Repo $fake -Jobs $gJobs -Width $wd -LogDir (Join-Path $fixLog "g$wd") -TimeoutSec 120 -RepoLiteral $litA)
+        $recsG = @(& $readRecs)
+        $phases = @($gr | Where-Object { $_.Phase -ne 'refused' } | ForEach-Object { "$($_.Class)/$($_.Phase)" } | Sort-Object -Unique)
+        $leak = @($recsG | Where-Object { -not $_.exe -or $_.exe.StartsWith($litA, [StringComparison]::OrdinalIgnoreCase) -or -not $_.exeOk })
+        $want = $(if ($wd -gt 1) { 5 } else { 4 })  # width 4: gred pool + confirm
+        Check "G5 width ${wd}: every phase that ran ($($phases -join ', ')) launched THIS checkout's exe, none lane A's" `
+            ($recsG.Count -eq $want -and $leak.Count -eq 0) ("records=$($recsG.Count)/$want exes=" + (($recsG | ForEach-Object { "$($_.name)=$($_.exe)" }) -join ' '))
+        $pinRow = @($gr | Where-Object { $_.Name -eq 'gpin.ps1' })
+        $fin = @(Get-AcceptanceFinal -Results $gr | Where-Object { $_.Name -eq 'gpin.ps1' })
+        Check "G6 width ${wd}: THE PLANTED PIN is refused - never started, scored red, never confirmed" `
+            ($pinRow.Count -eq 1 -and $pinRow[0].Kind -eq 'refused' -and $pinRow[0].Line -match 'REFUSED.*line 2' -and
+            -not (Test-Path (Join-Path $fixLog 'gpin-ran.txt')) -and $fin.Count -eq 1 -and $fin[0].Kind -eq 'refused' -and
+            @(Test-AcceptanceOverlap -Results $gr).Count -eq 0) ("rows=$($pinRow.Count) kind=$($pinRow[0].Kind) line=$($pinRow[0].Line)")
+    }
+    $gs = @(Invoke-AcceptanceRun -Repo $fake -Jobs @([pscustomobject]@{ Script = 'test\win32\gself.ps1'; Args = '' }) -Width 1 -LogDir (Join-Path $fixLog 'gself') -TimeoutSec 120 -RepoLiteral $fake)
+    Check 'G7 positive control: a script pinned to the checkout it runs from is not refused' `
+        ($gs.Count -eq 1 -and $gs[0].Kind -eq 'pass' -and (Test-Path (Join-Path $fixLog 'gself-ran.txt'))) ("kind=$($gs[0].Kind) $($gs[0].Line)")
+    $own = Join-Path $fake 'zig-out\bin\ghoztty.exe'
+    $ga = @(Invoke-AcceptanceRun -Repo $fake -Jobs @([pscustomobject]@{ Script = 'test\win32\gpar.ps1'; Args = "-Exe $own" }) -Width 1 -LogDir (Join-Path $fixLog 'gargs') -TimeoutSec 120 -RepoLiteral $litA)
+    $ar = @(& $readRecs)
+    Check 'G8 a -Exe the job''s own arguments pass is obeyed, not doubled' `
+        ($ga.Count -eq 1 -and $ga[0].Kind -eq 'pass' -and $ar.Count -eq 1 -and $ar[0].exe -eq $own) ("kind=$($ga[0].Kind) $($ga[0].Line) exe=$($ar[0].exe)")
     if ($priorInst) { $env:GHOZTTY_AGENT_INSTANCE = $priorInst }
 }
 catch { Write-Host "FAIL  the harness threw: $($_.Exception.Message) at $($_.InvocationInfo.ScriptLineNumber)"; $script:Failures++ }
