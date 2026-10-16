@@ -1,10 +1,11 @@
 {
     "guard":  "harness-floor",
     "script":  "scripts/harness-floor.ps1",
-    "generated":  "2026-10-16T06:37:41-07:00",
-    "commit":  "0dbecf59b",
+    "generated":  "2026-10-16T06:59:13-07:00",
+    "commit":  "6a9be4081",
     "uncommitted":  [
-                        "test/win32/restore-dead-sessions.ps1"
+                        "test/win32/agent-job-escape.ps1",
+                        "test/win32/relaunch-guard.ps1"
                     ],
     "files":  {
                   "scripts/harness-floor.ps1":  "c11eb87231eb3410524f505cb34fafae23212a4e54b2984f39735830926ed33d",
@@ -27,7 +28,7 @@
                   "test/win32/agent-handoff.ps1":  "6ccd1314241e48120a71319b2782aec34e4ba29cbb8dcef144d4253fae43aa1f",
                   "test/win32/agent-instance-lineage.ps1":  "34eda44fae8650f2b41d9b9660f2cf1ee004da2c463650397a13fb2808961673",
                   "test/win32/agent-integrations.ps1":  "201c7424c1271d20322417b8f0881665be453f2dd6e9611f3fcf10f105310169",
-                  "test/win32/agent-job-escape.ps1":  "82bf8bd61876127927592d2331d338f849c8f7e4ca63bf986ac76048350351b4",
+                  "test/win32/agent-job-escape.ps1":  "a6865bdcc2ab5d0c98c316fc436599c5e325220d45290dbedab91bc18b1e03fc",
                   "test/win32/agent-lineage-suites.ps1":  "2ae245733d72b0cf2a56d67f2f4c5de7360ac7e2423ac80f6a9688a590e08e84",
                   "test/win32/agent-open-refused.ps1":  "3202d2aca3fd95915800a970dea4d08e2b0d4b3c20d2153989cf8ce1127dfdba",
                   "test/win32/agent-pipe.ps1":  "fcfab69dd79283064318d330a5d630d97ebf57913feda6e98ce526e94fcc6b92",
@@ -338,7 +339,7 @@
                   "test/win32/rearrange-viewer.ps1":  "ee522f1930125af3207f34809aaf274f7d85e981e312a7cf575e1580d4c6a9ff",
                   "test/win32/rearrange-window-drop.ps1":  "29818672031f65a697eeaff755d85ebdddf0b5669049a348d9ea189875a6c80a",
                   "test/win32/registration-sites.ps1":  "097f3ad7cf63fca685beb9eda6d4d2037f74a48ef14d417c8d868451ed9d04e1",
-                  "test/win32/relaunch-guard.ps1":  "89e7e6c52462a0c0af5ff17f5d228f265e4166a41fefc02b5ac0b20068aa15e9",
+                  "test/win32/relaunch-guard.ps1":  "57d4631599209336af68e48649fb30ad1da5246958c47a42a1604648586b9af9",
                   "test/win32/relay-account.ps1":  "f6c483dbdaad4d45c833f069c13a7ce96e5dba887dbbe164c70c04be9e6683d1",
                   "test/win32/relay-signin-live.ps1":  "f35a640bd8f1bd3dfb8eec671e051d3c5d061026fd7609c62326d3cff96a02fe",
                   "test/win32/release-artifacts.ps1":  "13f74ae4a6bdd94b67d051c25ef8ffd2ae4bc5315a86b85f16e10d363789c4a5",

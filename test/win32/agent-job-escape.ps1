@@ -123,6 +123,7 @@ public static class T426Job {
   }
   [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr CreateJobObject(IntPtr attrs, string name);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetInformationJobObject(IntPtr job, int cls, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION info, int len);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool QueryInformationJobObject(IntPtr job, int cls, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION info, int len, IntPtr retLen);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool TerminateJobObject(IntPtr job, uint exitCode);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool CloseHandle(IntPtr handle);
@@ -130,6 +131,28 @@ public static class T426Job {
 }
 '@
 Add-Type -TypeDefinition $jobSig -ErrorAction SilentlyContinue
+
+# A limit block carrying `$Flags`. NOT `$info.BasicLimitInformation.LimitFlags = X`:
+# BasicLimitInformation is a STRUCT, so PowerShell assigns into a temporary copy
+# and the job is created with no limits at all - which is what this script did
+# until T1974, so its "kill-on-close" job was neither kill-on-close nor
+# breakaway-permitting. Same fix as New-JobLimits in job-escape-startup.ps1 (T1970).
+function New-JobLimits([uint32]$Flags) {
+    $info = New-Object T426Job+JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    $basic = $info.BasicLimitInformation
+    $basic.LimitFlags = $Flags
+    $info.BasicLimitInformation = $basic
+    return $info
+}
+
+# The LimitFlags the kernel actually holds for $job, or $null if it will not say.
+function Get-JobLimitFlags($job) {
+    $q = New-Object T426Job+JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    $ok = [T426Job]::QueryInformationJobObject($job, 9, [ref]$q,
+        [System.Runtime.InteropServices.Marshal]::SizeOf($q), [IntPtr]::Zero)
+    if (-not $ok) { return $null }
+    return [uint32]$q.BasicLimitInformation.LimitFlags
+}
 
 # $true / $false / $null when the process is gone or unopenable.
 function Test-InJob($procId, $job) {
@@ -162,13 +185,17 @@ try {
     Say "== A: the app under test, jailed in a kill-on-close job"
     # ========================================================================
     $job = [T426Job]::CreateJobObject([IntPtr]::Zero, $null)
-    $jobInfo = New-Object T426Job+JOBOBJECT_EXTENDED_LIMIT_INFORMATION
     # KILL_ON_JOB_CLOSE (0x2000) + BREAKAWAY_OK (0x800): the measured production
     # shape (T524) - members die on teardown, breakaway is permitted.
-    $jobInfo.BasicLimitInformation.LimitFlags = 0x2800
+    $jobInfo = New-JobLimits 0x2800
     $jobLen = [System.Runtime.InteropServices.Marshal]::SizeOf($jobInfo)
     $jobSet = [T426Job]::SetInformationJobObject($job, 9, [ref]$jobInfo, $jobLen)
     Assert "A0 premise: a kill-on-close job exists" ($job -ne [IntPtr]::Zero -and $jobSet)
+    # Read the flags back from the kernel (T1974): "the call returned true" is
+    # what passed for two months over a job holding 0x0.
+    $heldFlags = Get-JobLimitFlags $job
+    Assert "A0b premise: the job really carries KILL_ON_JOB_CLOSE|BREAKAWAY_OK (held: $(if ($null -eq $heldFlags) { '?' } else { '0x{0:X}' -f $heldFlags }))" `
+        ($null -ne $heldFlags -and ($heldFlags -band 0x2800) -eq 0x2800)
 
     # The app's stderr is captured on EITHER path, because the TIER it reached
     # is the whole point of that arm and only the log names it (T689 gave the

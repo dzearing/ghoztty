@@ -318,6 +318,7 @@ public static class T524Job {
   }
   [DllImport("kernel32.dll", SetLastError=true)] public static extern IntPtr CreateJobObject(IntPtr attrs, string name);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool SetInformationJobObject(IntPtr job, int cls, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION info, int len);
+  [DllImport("kernel32.dll", SetLastError=true)] public static extern bool QueryInformationJobObject(IntPtr job, int cls, ref JOBOBJECT_EXTENDED_LIMIT_INFORMATION info, int len, IntPtr retLen);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool CloseHandle(IntPtr handle);
   [DllImport("kernel32.dll", SetLastError=true)] public static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
@@ -329,10 +330,33 @@ public static class T524Job {
     $jobInfo = New-Object T524Job+JOBOBJECT_EXTENDED_LIMIT_INFORMATION
     # KILL_ON_JOB_CLOSE (0x2000) + BREAKAWAY_OK (0x800): the measured
     # production shape - members die on teardown, but breakaway is permitted.
-    $jobInfo.BasicLimitInformation.LimitFlags = 0x2800
+    # NOT `$jobInfo.BasicLimitInformation.LimitFlags = X`: BasicLimitInformation
+    # is a STRUCT, so PowerShell assigns into a temporary copy and the job gets
+    # no limits at all - which is what this arm did until T1974, so F5's
+    # "survived the teardown" was measured against a CloseHandle that killed
+    # nobody. Copy out, set, copy back (as job-escape-startup.ps1, T1970).
+    $basicF = $jobInfo.BasicLimitInformation
+    $basicF.LimitFlags = 0x2800
+    $jobInfo.BasicLimitInformation = $basicF
     $jobLen = [System.Runtime.InteropServices.Marshal]::SizeOf($jobInfo)
     $jobSet = [T524Job]::SetInformationJobObject($job, 9, [ref]$jobInfo, $jobLen)
     Assert "F0 premise: a kill-on-close job exists" ($job -ne [IntPtr]::Zero -and $jobSet)
+    $jobHeld = New-Object T524Job+JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+    $heldFlags = $null
+    if ([T524Job]::QueryInformationJobObject($job, 9, [ref]$jobHeld, $jobLen, [IntPtr]::Zero)) {
+        $heldFlags = [uint32]$jobHeld.BasicLimitInformation.LimitFlags
+    }
+    Assert "F0b premise: the job really carries KILL_ON_JOB_CLOSE|BREAKAWAY_OK (held: $(if ($null -eq $heldFlags) { '?' } else { '0x{0:X}' -f $heldFlags }))" `
+        ($null -ne $heldFlags -and ($heldFlags -band 0x2800) -eq 0x2800)
+
+    # The negative control for F5: a plain member with no escape. If closing the
+    # job's handle did not kill IT, F5 would pass on a teardown that kills nobody.
+    $victimF = Start-Process -FilePath 'cmd.exe' -ArgumentList @('/c', 'ping -n 60 127.0.0.1 > nul') -PassThru -WindowStyle Hidden
+    Start-Sleep -Milliseconds 300
+    $victimJailed = $false
+    try { [T524Job]::AssignProcessToJobObject($job, $victimF.Handle) | Out-Null
+          [T524Job]::IsProcessInJob($victimF.Handle, $job, [ref]$victimJailed) | Out-Null } catch {}
+    Assert "F0c premise: a control process is inside the same job" $victimJailed
 
     $markerF = Join-Path $root 'guard-f.marker'
     Set-Content -LiteralPath $markerF -Value 'armed' -Encoding utf8
@@ -365,6 +389,8 @@ public static class T524Job {
     # Tear the job down the way production does: close its last handle.
     [T524Job]::CloseHandle($job) | Out-Null
     Start-Sleep -Seconds 3
+    $victimDead = ($null -eq (Get-Process -Id $victimF.Id -ErrorAction SilentlyContinue))
+    Assert "F5a the job teardown DID kill its own member (the control)" $victimDead
     $survived = ($appF2 -ne 0) -and ($null -ne (Get-Process -Id $appF2 -ErrorAction SilentlyContinue))
     Assert "F5 the relaunched app SURVIVED the job teardown" $survived
     $listF = (& $Exe +list 2>$null) | Out-String
