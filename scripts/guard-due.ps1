@@ -981,6 +981,19 @@ $GuardTable = @(
             'src\apprt\win32\session_layout.zig'
         )
     },
+    # A restart that finds every session of a window gone (T1978): the window
+    # is rebuilt at its frame with fresh shells instead of dropped. The rule is
+    # App.deadWindowDisposition; App.zig is not a Covers entry anywhere (it
+    # changes every day), so the manifest and reconcile code this reads is.
+    [pscustomobject]@{
+        Name   = 'restore-dead-sessions'
+        Script = 'test\win32\restore-dead-sessions.ps1'
+        Stamp  = 'test\win32\restore-dead-sessions.stamp.json'
+        Covers = @(
+            'test\win32\restore-dead-sessions.ps1',
+            'src\apprt\win32\session_layout.zig'
+        )
+    },
     # A restored or remembered window size crosses a change of SCALE (T1971):
     # frames and the placement memory are physical pixels plus the DPI they
     # were measured at, converted to the monitor the window lands on. Over
@@ -2310,8 +2323,8 @@ $GuardTable = @(
         Name   = 'hook-json'
         Script = 'test\win32\hook-json.ps1'
         Stamp  = 'test\win32\hook-json.stamp.json'
-        # T1988: red on the upstream hook mirror's drift from origin/main.
-        KnownBlockedBy = 'T1988'
+        # T2001 (was T1988, folded in): red on the upstream hook mirror's drift from origin/main.
+        KnownBlockedBy = 'T2001'
         Covers = @(
             'src\cli\json.zig',
             'src\apprt\win32\GhosttyAssets.zig',

@@ -4357,8 +4357,22 @@ fn restorePass(self: *App, only: ?[]const []const u8) bool {
                 "session-restore: '{s}' is open in another running instance; leaving it there",
                 .{win.id},
             );
-            if (carryable and (held or !positively_adjudicated)) self.carryUnrestoredWindow(win);
-            continue;
+            switch (deadWindowDisposition(held, positively_adjudicated, windowListHasKey(local_windows, win))) {
+                .carry => {
+                    if (carryable) self.carryUnrestoredWindow(win);
+                    continue;
+                },
+                .forget => continue,
+                // T1978: the window was open when the app went away and the
+                // agent has lost every session in it. Bring the window back
+                // anyway - its frame, tabs and splits - with each pane opening a
+                // fresh shell where it was, rather than handing the user one
+                // default window in place of their whole layout.
+                .rebuild_fresh => log.info(
+                    "session-restore: every session of '{s}' is gone; rebuilding the window with fresh shells",
+                    .{win.id},
+                ),
+            }
         }
         const tr: RestoreTransport = if (conn) |c| .local(c) else .agentless();
         self.restoreWindow(win, tr, attach_ptr) catch |err| {
@@ -4763,9 +4777,11 @@ fn pullAgentLayouts(self: *App, conn: *remote_connection.Connection) ?layout_blo
 
 /// Whether the window has at least one leaf we will ATTACH or re-open — i.e. not
 /// EVERY session-backed leaf is positively gone. A window with no attachable
-/// leaf (all its recorded sessions are gone from the roster) is dropped rather
-/// than restored as a wall of exited panes. A relaunchable tombstone counts as
-/// attachable (it RELAUNCHes), so a window of tombstones is kept (T89g).
+/// leaf (all its recorded sessions are gone from the roster) is not restored
+/// as an ordinary window: `deadWindowDisposition` decides whether it is
+/// carried, forgotten, or rebuilt with fresh shells (T1978). A relaunchable
+/// tombstone counts as attachable (it RELAUNCHes), so a window of tombstones is
+/// kept (T89g).
 ///
 /// With no agent at all (T398) `attach` is the EMPTY set, so this reads exactly
 /// as it does against an agent that knows none of the recorded sessions: the
@@ -4799,6 +4815,54 @@ pub fn restoreWindowHasAttachableLeaf(
     }
     // No leaves at all, or every session-backed leaf positively gone.
     return false;
+}
+
+/// What launch restore does with a window that has no attachable leaf.
+pub const DeadWindowDisposition = enum {
+    /// Keep its manifest entry for a later pass; build nothing now.
+    carry,
+    /// Drop it: nothing says it was on screen when the app went away.
+    forget,
+    /// Build it with a fresh shell in every pane (T1978).
+    rebuild_fresh,
+};
+
+/// The T1978 rule, pure so every lane can test it. A window another instance
+/// is showing, or one whose sessions were never positively adjudicated (no
+/// agent, failed probe), is carried - nothing is known about it yet. Past that,
+/// the LOCAL manifest is rewritten from the live windows, so a window in it was
+/// open when the app went away: the user expects it back, and a fresh shell in
+/// each pane is what a gone session already gets inside a restored window. A
+/// window only the AGENT's store remembers carries no such evidence (it may be
+/// one the user closed long ago), so it is still forgotten, as on Mac.
+pub fn deadWindowDisposition(
+    held: bool,
+    positively_adjudicated: bool,
+    from_local_manifest: bool,
+) DeadWindowDisposition {
+    if (held or !positively_adjudicated) return .carry;
+    return if (from_local_manifest) .rebuild_fresh else .forget;
+}
+
+/// Whether `windows` holds a window with `win`'s key.
+fn windowListHasKey(windows: []const session_layout.Window, win: session_layout.Window) bool {
+    const key = session_layout.windowKey(win);
+    for (windows) |w| {
+        if (std.mem.eql(u8, session_layout.windowKey(w), key)) return true;
+    }
+    return false;
+}
+
+test "deadWindowDisposition: a dead window from the local manifest is rebuilt, an agent-only one is forgotten (T1978)" {
+    // Positively adjudicated, not held: local rebuilds, agent-only forgets.
+    try std.testing.expectEqual(DeadWindowDisposition.rebuild_fresh, deadWindowDisposition(false, true, true));
+    try std.testing.expectEqual(DeadWindowDisposition.forget, deadWindowDisposition(false, true, false));
+    // Held by another instance: carried whatever its origin.
+    try std.testing.expectEqual(DeadWindowDisposition.carry, deadWindowDisposition(true, true, true));
+    try std.testing.expectEqual(DeadWindowDisposition.carry, deadWindowDisposition(true, true, false));
+    // No agent / failed probe: carried, never rebuilt as a wall of fresh shells (T398).
+    try std.testing.expectEqual(DeadWindowDisposition.carry, deadWindowDisposition(false, false, true));
+    try std.testing.expectEqual(DeadWindowDisposition.carry, deadWindowDisposition(false, false, false));
 }
 
 /// Whether any leaf of this window names a session a LIVE viewer holds (T851).
