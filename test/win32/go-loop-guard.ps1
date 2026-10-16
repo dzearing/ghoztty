@@ -1698,6 +1698,57 @@ $pLog = @(& git -C $pRepo log --oneline 2>$null | Where-Object { $_ })
 Assert 'W28 the other seat''s commit survived the rebase' `
     (@($pLog | Where-Object { $_ -match 'the other seat got there first' }).Count -gt 0)
 
+# T1986: loop lane B works in its own worktree on a LOCAL branch (lane-b) that
+# tracks the shared trunk, because git will not check one branch out twice. A
+# bare `git push` refuses that under push.default=simple, so before the fix every
+# lane B commit stayed on the box. The guard now pushes HEAD to the upstream it
+# tracks by name.
+$lRepo = Join-Path $root 'lane-b-repo'
+git clone -q $pBare $lRepo 2>$null
+git -C $lRepo config user.email 't@t' 2>$null; git -C $lRepo config user.name 't' 2>$null
+$lTrunk = (& git -C $lRepo symbolic-ref --short refs/remotes/origin/HEAD 2>$null | Select-Object -First 1)
+if (-not $lTrunk) { $lTrunk = 'origin/' + (& git -C $pRepo symbolic-ref --short HEAD 2>$null | Select-Object -First 1) }
+git -C $lRepo checkout -q -b lane-b --track $lTrunk 2>$null
+$lTrunkBranch = $lTrunk -replace '^origin/', ''
+# Negative control: the old bare push really is refused on this shape, so the
+# arm below is measuring the fix and not a git that happens to allow it.
+Set-Content -Path (Join-Path $lRepo 'bare-push.txt') -Value 'bare'
+git -C $lRepo add bare-push.txt 2>$null
+git -C $lRepo -c core.hooksPath= commit -q -m 'bare push control' 2>$null
+$eapL = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+$bareOut = (& git -C $lRepo -c push.default=simple push 2>&1 | ForEach-Object { $_.ToString() } | Out-String)
+$bareCode = $LASTEXITCODE
+$ErrorActionPreference = $eapL
+Assert 'W28c control: a bare push from a renamed tracking branch is refused' `
+    ($bareCode -ne 0 -and $bareOut -match 'does not match|upstream branch')
+Set-Content -Path (Join-Path $lRepo 'lane-b.txt') -Value 'from lane b'
+$r = & powershell -NoProfile -ExecutionPolicy Bypass -File $cgScript commit `
+    -Repo $lRepo -Paths 'lane-b.txt' -Message 'a lane b commit' 2>&1 |
+    ForEach-Object { $_.ToString() } | Out-String
+$lCode = $LASTEXITCODE
+$lRemote = (& git -C $pBare rev-parse "refs/heads/$lTrunkBranch" 2>$null | Select-Object -First 1)
+$lLocal = (& git -C $lRepo rev-parse HEAD 2>$null | Select-Object -First 1)
+Assert 'W28d a commit on a renamed tracking branch pushes to the trunk it tracks' `
+    ($lCode -eq 0 -and $r -match 'PUSHED' -and $lRemote -eq $lLocal)
+Assert 'W28e and no lane-b branch was created on the remote' `
+    (-not (& git -C $pBare rev-parse --verify --quiet refs/heads/lane-b 2>$null))
+# The rejected-push path uses the same destination: lane A moves the trunk, lane
+# B's push is rejected, rebased, and lands on the trunk.
+Set-Content -Path (Join-Path $pOther 'lane-a-moved.txt') -Value 'lane a'
+git -C $pOther pull -q --rebase 2>$null
+git -C $pOther add lane-a-moved.txt 2>$null
+git -C $pOther -c core.hooksPath= commit -q -m 'lane a moved the trunk' 2>$null
+git -C $pOther push -q origin HEAD 2>$null
+Set-Content -Path (Join-Path $lRepo 'lane-b-2.txt') -Value 'lane b again'
+$r = & powershell -NoProfile -ExecutionPolicy Bypass -File $cgScript commit `
+    -Repo $lRepo -Paths 'lane-b-2.txt' -Message 'lane b onto a moved trunk' 2>&1 |
+    ForEach-Object { $_.ToString() } | Out-String
+$lCode = $LASTEXITCODE
+$lRemote = (& git -C $pBare rev-parse "refs/heads/$lTrunkBranch" 2>$null | Select-Object -First 1)
+$lLocal = (& git -C $lRepo rev-parse HEAD 2>$null | Select-Object -First 1)
+Assert 'W28f a rejected lane b push is rebased onto the trunk and pushed there' `
+    ($lCode -eq 0 -and $r -match 'push rejected' -and $r -match 'PUSHED' -and $lRemote -eq $lLocal)
+
 # A branch nobody has ever pushed is the same problem with a longer tail.
 $oRepo = Join-Path $root 'no-upstream-repo'
 New-Item -ItemType Directory -Force $oRepo | Out-Null

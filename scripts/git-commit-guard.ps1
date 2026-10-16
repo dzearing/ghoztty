@@ -271,9 +271,32 @@ function Get-PushReport($st) {
 # output, it is part of the RETURN VALUE, and one stray line turns the result
 # hashtable into an array whose .Ok is a collection. That shape "worked" by
 # accident on the first run of this code.
+# The push names its destination instead of leaning on push.default (T1986).
+# Loop lane B lives in its own worktree, and git will not check out one branch in
+# two worktrees, so lane B works on a local branch (lane-b) that TRACKS
+# origin/users/dzearing/windows-amd64. A bare `git push` under the default
+# push.default=simple refuses that outright ("the upstream branch of your
+# current branch does not match the name of your current branch"), so every
+# lane B commit would have stayed on the box. `<remote> HEAD:<merge ref>` is
+# what simple does when the names match, so lane A pushes exactly as before; a
+# branch with no upstream keeps the bare push and its own error.
+function Get-PushArgs {
+    $b = Git-Run @('symbolic-ref', '--quiet', '--short', 'HEAD')
+    if ($b.Code -ne 0 -or -not $b.Out) { return @('push') }
+    $branch = ($b.Out -split "`r?`n")[0].Trim()
+    $r = Git-Run @('config', '--get', "branch.$branch.remote")
+    $m = Git-Run @('config', '--get', "branch.$branch.merge")
+    if ($r.Code -ne 0 -or $m.Code -ne 0 -or -not $r.Out -or -not $m.Out) { return @('push') }
+    $remote = ($r.Out -split "`r?`n")[0].Trim()
+    $merge = ($m.Out -split "`r?`n")[0].Trim()
+    if ($remote -eq '.' -or -not $merge.StartsWith('refs/heads/')) { return @('push') }
+    return @('push', $remote, "HEAD:$merge")
+}
+
 function Invoke-PushWithRebase {
     $lines = @()
-    $res = Git-Run @('push')
+    $pushArgs = Get-PushArgs
+    $res = Git-Run $pushArgs
     if ($res.Code -eq 0) { return @{ Ok = $true; Out = $res.Out; Rebased = $false; Lines = $lines } }
     if ($res.Out -notmatch 'non-fast-forward|fetch first|Updates were rejected|behind its remote') {
         return @{ Ok = $false; Out = $res.Out; Rebased = $false; Lines = $lines }
@@ -284,7 +307,7 @@ function Invoke-PushWithRebase {
         return @{ Ok = $false; Rebased = $true; Lines = $lines
             Out = ("push was rejected and the rebase did not run:`n" + $pull.Out) }
     }
-    $res2 = Git-Run @('push')
+    $res2 = Git-Run $pushArgs
     return @{ Ok = ($res2.Code -eq 0); Out = $res2.Out; Rebased = $true; Lines = $lines }
 }
 
