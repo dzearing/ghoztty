@@ -413,6 +413,12 @@ function Invoke-AcceptanceRun {
     (at most one main at a time, parallel ones each in their slot's worker
     root), then every exclusive script runs with nothing beside it, then every
     non-green row is re-run alone (-NoConfirm skips that).
+
+    -FailFast (T1961) stops STARTING scripts at the first red: whatever is
+    already running finishes and is scored, nothing else is launched (no more
+    pool jobs, no exclusive ones), and the red is still confirmed alone. The
+    jobs that never ran are simply absent from the result rows - the caller
+    names them by Seq.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Repo,
@@ -422,6 +428,7 @@ function Invoke-AcceptanceRun {
         [int]$TimeoutSec = 1800,
         [string]$RepoLiteral,
         [switch]$NoConfirm,
+        [switch]$FailFast,
         [scriptblock]$OnResult = { param($r) }
     )
     if (-not $RepoLiteral) { $RepoLiteral = $Repo }
@@ -512,11 +519,16 @@ function Invoke-AcceptanceRun {
         }
     }
 
+    $isRed = { param($row) $row.Kind -notin @('pass', 'skip') }
+    $stopped = $false
     if ($Width -le 1) {
         foreach ($item in $queue) {
+            if ($stopped) { break }
             $job = & $runOne $item 0 'pool'
             while (-not $job.Process.HasExited -and ((Get-Date) - $job.Started).TotalSeconds -le $item.Timeout) { Start-Sleep -Milliseconds 250 }
-            [void]$results.Add((& $finish $job (-not $job.Process.HasExited)))
+            $row = & $finish $job (-not $job.Process.HasExited)
+            [void]$results.Add($row)
+            if ($FailFast -and (& $isRed $row)) { $stopped = $true }
         }
     } else {
         # Pool: parallel + main. Main first in the queue so the one-at-a-time
@@ -527,8 +539,10 @@ function Invoke-AcceptanceRun {
         $running = New-Object System.Collections.ArrayList
         while ($pending.Count -gt 0 -or $running.Count -gt 0) {
             foreach ($pair in @(& $waitAll $running)) {
-                [void]$results.Add((& $finish $pair.Job $pair.TimedOut))
+                $row = & $finish $pair.Job $pair.TimedOut
+                [void]$results.Add($row)
                 [void]$running.Remove($pair.Job)
+                if ($FailFast -and (& $isRed $row)) { $stopped = $true; $pending.Clear() }
             }
             while ($running.Count -lt $Width -and $pending.Count -gt 0) {
                 $mainBusy = @($running | Where-Object { $_.Item.Class -eq 'main' }).Count -gt 0
@@ -550,9 +564,12 @@ function Invoke-AcceptanceRun {
             Start-Sleep -Milliseconds 250
         }
         foreach ($item in @($queue | Where-Object { $_.Class -eq 'exclusive' })) {
+            if ($stopped) { break }
             $job = & $runOne $item 0 'pool'
             while (-not $job.Process.HasExited -and ((Get-Date) - $job.Started).TotalSeconds -le $item.Timeout) { Start-Sleep -Milliseconds 250 }
-            [void]$results.Add((& $finish $job (-not $job.Process.HasExited)))
+            $row = & $finish $job (-not $job.Process.HasExited)
+            [void]$results.Add($row)
+            if ($FailFast -and (& $isRed $row)) { $stopped = $true }
         }
         if (-not $NoConfirm) {
             foreach ($r in @($results | Where-Object { $_.Phase -eq 'pool' -and $_.Class -ne 'exclusive' -and $_.Kind -notin @('pass', 'skip') })) {
@@ -578,6 +595,12 @@ function Get-AcceptanceDueJobs {
     whole array - and a loop over it sees one row whose `.Kind` is an array of
     every kind. The first cut of this runner did exactly that and answered
     "nothing is due" over 13 due rows. The ForEach-Object unrolls it.
+
+    ORDER (T1961): the most specific harness first - fewest covered files, ties
+    in guard order. A row covering three files of one feature is the changed
+    feature's own acceptance; a row covering 400 is an audit that any edit
+    makes due. With -FailFast that puts the red most likely to be THIS turn's
+    in front, before the sweeps that would only repeat it.
     #>
     param([Parameter(Mandatory = $true)][string]$GuardJson)
     $states = @($GuardJson | ConvertFrom-Json | ForEach-Object { $_ })
@@ -588,9 +611,9 @@ function Get-AcceptanceDueJobs {
         $key = "$($s.Script)|$($s.RunArgs)"
         if ($seen.ContainsKey($key)) { continue }
         $seen[$key] = $true
-        $jobs += [pscustomobject]@{ Script = [string]$s.Script; Args = [string]$s.RunArgs }
+        $jobs += [pscustomobject]@{ Script = [string]$s.Script; Args = [string]$s.RunArgs; Files = @($s.Files).Count; Order = $jobs.Count }
     }
-    return @($jobs)
+    return @($jobs | Sort-Object Files, Order | Select-Object Script, Args)
 }
 
 function Get-AcceptanceFinal {

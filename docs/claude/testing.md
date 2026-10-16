@@ -941,6 +941,16 @@ leak counts, builds, nested harnesses — nothing runs beside it). Rules for you
   pool and green alone prints `PARALLEL-SENSITIVE <name>` — add a marker to that
   script (or fix what it shares); the alone verdict is the one that counts, and
   only a green run stamps, as always.
+- **The build is settled once, before any script starts** (T1961,
+  `scripts\lib\AcceptanceFresh.ps1`). A `zig-out\bin\ghoztty.exe` older than
+  the sources (BuildFresh's test) is rebuilt once in Debug and the witness
+  written; a failed rebuild, or any stale exe under `-NoRebuild`, is
+  `BUILD STALE - REFUSED, nothing launched` and exit 4. The per-script gate
+  still stands behind it.
+- **`-FailFast` starts nothing after the first red**: running scripts finish,
+  the red is still confirmed alone, and `NOT RUN (...)` names the rest (exit 1 -
+  a run that skipped scripts is never GREEN). `due` orders the most specific
+  harness (fewest covered files) first. go.md step 3 has the turn's order.
 - `-Width 1` is the serial baseline (every script from the real repo, your
   environment), for comparing verdicts. `SCHEDULE VIOLATION` / exit 3 is a
   runner defect, never a script's. Acceptance: `test\win32\acceptance-parallel.ps1`

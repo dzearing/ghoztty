@@ -483,6 +483,25 @@ Concretely, in order, with no stops in between:
 2. **Build it.**
 3. **Test it** — the task's own Validation, plus the standing floor (both
    `zig build test` lanes, `zig build test-agent`, the `lib` compile, P1–P3).
+
+   **In this order, cheapest-to-be-wrong first, and stop at the first red**
+   (T1961). A red found after the lanes and the floor have run costs all of
+   them again; found first, it costs only itself.
+
+   1. **Build** (`-Doptimize=Debug`). The acceptance runner checks this for
+      you before any script starts: a `zig-out` older than the sources is
+      rebuilt once, and a failed rebuild refuses the run with exit 4 and
+      nothing launched (`-NoRebuild` refuses instead of building). Before
+      this, every worker met the same stale exe and the turn read a page of
+      red rows about one cause; T1936 lost 10–30 minutes to the re-run.
+   2. **The changed feature's own acceptance**, alone, failing fast:
+      `scripts\acceptance-parallel.ps1 run -Scripts <its harness> -FailFast`.
+      Red here ends the testing until it is fixed — do not go on to the lanes.
+   3. **The zig lanes** (`floor-lane.ps1 -Lane all`, below).
+   4. **Whatever else is due**: `acceptance-parallel.ps1 due -FailFast`, which
+      runs the most specific harness first (fewest covered files) and names
+      every script it never started.
+   5. **The harness floor**, only if it is due (below).
    Run the four zig lanes through `scripts\floor-lane.ps1 -Lane all` (T430)
    rather than bare. Since T1959 it runs them side by side, each in its own
    build root, and re-runs any lane that is not green there alone. That
@@ -529,7 +548,7 @@ Concretely, in order, with no stops in between:
    **Run the due harnesses with one command, about four at a time** (T1960):
 
    ```
-   powershell -NoProfile -File scripts\acceptance-parallel.ps1 due
+   powershell -NoProfile -File scripts\acceptance-parallel.ps1 due -FailFast
    ```
 
    Each worker runs from its own mirror of the repo, so no worker's clean-slate

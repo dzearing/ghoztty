@@ -28,12 +28,25 @@
   others and green alone is reported PARALLEL-SENSITIVE with the marker to add,
   and the alone verdict is the one that counts.
 
-  Exit 0: every script passed or skipped. Exit 1: something is red. Exit 3: the
-  schedule was violated (an exclusive script overlapped another) - a runner
-  defect, never a script's.
+  BEFORE ANY SCRIPT STARTS (T1961) the run settles whether zig-out is the code
+  under test: a stale or missing ghoztty.exe is rebuilt once (Debug), and a
+  failed rebuild - or any stale exe under -NoRebuild - refuses the whole run
+  with nothing launched. Without this every worker met the same stale exe and
+  the turn read a page of red rows about one cause.
+
+  -FailFast stops starting scripts at the first red (running ones finish, the
+  red is still confirmed alone) and names every script it never ran. `due`
+  orders the most specific harness first, so the changed feature's own
+  acceptance is the first to answer. The step-3 order is in go.md.
+
+  Exit 0: every script passed or skipped. Exit 1: something is red, or
+  -FailFast left scripts unrun. Exit 3: the schedule was violated (an exclusive
+  script overlapped another) - a runner defect, never a script's. Exit 4: the
+  build is stale and was not (or could not be) rebuilt - nothing ran.
 
 .EXAMPLE
   powershell -NoProfile -File scripts\acceptance-parallel.ps1 due
+  powershell -NoProfile -File scripts\acceptance-parallel.ps1 run -Scripts viewer-close.ps1 -FailFast
   powershell -NoProfile -File scripts\acceptance-parallel.ps1 run -Scripts kb-actions.ps1,viewer-close.ps1
   powershell -NoProfile -File scripts\acceptance-parallel.ps1 classify -Scripts drag-perf.ps1
 #>
@@ -50,6 +63,8 @@ param(
     [int]$TimeoutSec = 1800,
     [string]$LogDir,
     [switch]$NoConfirm,
+    [switch]$FailFast,
+    [switch]$NoRebuild,
     [switch]$Json,
     [string]$Repo
 )
@@ -60,6 +75,7 @@ Set-StrictMode -Off
 if (-not $Repo) { $Repo = Split-Path $PSScriptRoot -Parent }
 $Repo = (Resolve-Path $Repo).Path
 . (Join-Path $PSScriptRoot 'lib\AcceptanceParallel.ps1')
+. (Join-Path $PSScriptRoot 'lib\AcceptanceFresh.ps1')
 
 function Resolve-ApScript {
     param([string]$Name)
@@ -102,11 +118,16 @@ if ($Action -eq 'run') {
     if ($jobs.Count -eq 0) { "ACCEPTANCE DUE: nothing is due."; exit 0 }
 }
 
+# T1961: one freshness answer for the whole run, before anything launches.
+$fresh = Invoke-AcceptanceFreshPreflight -Repo $Repo -NoRebuild:$NoRebuild
+$fresh.Line
+if (-not $fresh.Ok) { exit 4 }
+
 if (-not $LogDir) { $LogDir = Join-Path $env:TEMP ("ghoztty-acceptance-parallel\" + (Get-Date -Format 'yyyyMMdd-HHmmss')) }
 "ACCEPTANCE {0}: {1} script(s), width {2}, logs {3}" -f $Action, $jobs.Count, $Width, $LogDir
 
 $clock = [Diagnostics.Stopwatch]::StartNew()
-$results = Invoke-AcceptanceRun -Repo $Repo -Jobs $jobs -Width $Width -LogDir $LogDir -TimeoutSec $TimeoutSec -NoConfirm:$NoConfirm -OnResult {
+$results = Invoke-AcceptanceRun -Repo $Repo -Jobs $jobs -Width $Width -LogDir $LogDir -TimeoutSec $TimeoutSec -NoConfirm:$NoConfirm -FailFast:$FailFast -OnResult {
     param($r)
     $where = switch ($r.Class) { 'parallel' { "w$($r.Slot)" } default { $r.Class } }
     $phase = if ($r.Phase -eq 'confirm') { ' alone' } else { '' }
@@ -115,13 +136,18 @@ $results = Invoke-AcceptanceRun -Repo $Repo -Jobs $jobs -Width $Width -LogDir $L
 $clock.Stop()
 
 $final = @(Get-AcceptanceFinal -Results $results)
+$ranSeq = @($final | ForEach-Object { $_.Seq })
+$notRun = @(for ($i = 0; $i -lt $jobs.Count; $i++) { if ($ranSeq -notcontains $i) { Split-Path -Leaf $jobs[$i].Script } })
 $overlap = @(Test-AcceptanceOverlap -Results $results)
 $busy = ($results | ForEach-Object { ($_.Ended - $_.Started).TotalSeconds } | Measure-Object -Sum).Sum
 
 $summary = [pscustomobject]@{
     action = $Action; width = $Width; repo = $Repo
-    commit = (git -C $Repo rev-parse --short HEAD 2>$null)
+    # PS 5.1 under Stop turns git's stderr into a terminating error, so a -Repo
+    # that is not a checkout (the harness's fixture) used to end the run here.
+    commit = $(try { & { $ErrorActionPreference = 'Continue'; git -C $Repo rev-parse --short HEAD 2>$null } } catch { $null })
     wallSeconds = [int]$clock.Elapsed.TotalSeconds; scriptSeconds = [int]$busy
+    build = $fresh.State; notRun = $notRun
     final = $final; runs = @($results | Select-Object Seq, Name, Class, Slot, Phase, Kind, Line, ExitCode,
             @{ n = 'Started'; e = { $_.Started.ToString('o') } }, @{ n = 'Ended'; e = { $_.Ended.ToString('o') } }, Log)
     scheduleViolations = $overlap
@@ -135,8 +161,10 @@ foreach ($v in $overlap) { "SCHEDULE VIOLATION: $v" }
 
 $red = @($final | Where-Object { $_.Kind -notin @('pass', 'skip') })
 $counts = ($final | Group-Object Kind | Sort-Object Name | ForEach-Object { "$($_.Name)=$($_.Count)" }) -join ' '
-"ACCEPTANCE {0}: {1} in {2:N0}s wall ({3:N0}s of script time, width {4}) - {5}" -f $(if ($red.Count -eq 0 -and $overlap.Count -eq 0) { 'GREEN' } else { 'RED' }),
+if ($notRun.Count -gt 0) { $counts += " not-run=$($notRun.Count)" }
+"ACCEPTANCE {0}: {1} in {2:N0}s wall ({3:N0}s of script time, width {4}) - {5}" -f $(if ($red.Count -eq 0 -and $overlap.Count -eq 0 -and $notRun.Count -eq 0) { 'GREEN' } else { 'RED' }),
     $final.Count, $clock.Elapsed.TotalSeconds, $busy, $Width, $counts
 foreach ($r in $red) { "  RED {0} ({1}): {2}" -f $r.Name, $r.Kind, $r.Line }
+if ($notRun.Count -gt 0) { "  NOT RUN (-FailFast stopped at the first red): {0}" -f ($notRun -join ', ') }
 if ($overlap.Count -gt 0) { exit 3 }
-exit ([int]($red.Count -gt 0))
+exit ([int]($red.Count -gt 0 -or $notRun.Count -gt 0))

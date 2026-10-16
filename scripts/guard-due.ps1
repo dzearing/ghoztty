@@ -2630,6 +2630,8 @@ $GuardTable = @(
         Covers = @(
             'scripts\acceptance-parallel.ps1',
             'scripts\lib\AcceptanceParallel.ps1',
+            'scripts\lib\AcceptanceFresh.ps1',
+            'test\win32\lib\BuildFresh.ps1',
             'scripts\lib\RunVerdict.ps1',
             'test\win32\lib\CleanSlate.ps1',
             'test\win32\acceptance-parallel.ps1'

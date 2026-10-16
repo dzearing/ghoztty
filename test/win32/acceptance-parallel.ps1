@@ -35,6 +35,12 @@
     E  The same fixture set at -Width 1 and -Width 4 scores the same final
        verdicts (criterion 1 at fixture level; the real due set is compared in
        T1960's own validation).
+    F  T1961. A STALE zig-out is refused before any script starts (planted:
+       a source newer than the exe; the probe script must never run), with the
+       fresh run as its positive control; a failed rebuild refuses, a rebuild
+       that relinks nothing still clears it once; -FailFast starts nothing
+       after the first red and names what it skipped; `due` orders the most
+       specific harness first.
 
   The "app" here is a renamed copy of ping.exe started with no window, and the
   scripts are fixtures written into a throwaway repo under %TEMP%, so the run
@@ -322,6 +328,78 @@ function Save-Record([string]$verdictKind, [int]$others) {
     Check 'E1 -Width 1 and -Width 4 score the same final verdicts' ($f1.Count -eq $f4.Count -and $diff.Count -eq 0) ($diff -join ' | ')
     Check 'E2 -Width 1 runs every script from the real repo, one at a time' `
         (@($res1 | Where-Object { $_.Class -eq 'serial' }).Count -eq $jobs.Count -and @(Test-AcceptanceOverlap -Results $res1).Count -eq 0) ''
+
+    # ---- F: stale build refused up front, fail fast (T1961) -------------------------
+    . (Join-Path $RepoRoot 'scripts\lib\AcceptanceFresh.ps1')
+    $fexe = Join-Path $fake 'zig-out\bin\ghoztty.exe'
+    $witness = Join-Path $fake 'zig-out\bin\.build-fresh-witness.json'
+    $marker = Join-Path $fixLog 'probe-ran.txt'
+    Write-Fixture (Join-Path $fake 'test\win32\probe.ps1') "Set-Content -LiteralPath (Join-Path `$env:AP_FIXTURE_LOG 'probe-ran.txt') -Value ran`n'ALL PASS'`n"
+    $now = Get-Date
+    function Set-FixtureAge([bool]$Stale) {
+        # Stale: the newest source is newer than the exe. Fresh: the reverse.
+        Remove-Item -LiteralPath $witness -Force -ErrorAction SilentlyContinue
+        foreach ($f in (Join-Path $fake 'src\a.txt'), (Join-Path $fake 'build.zig')) { (Get-Item $f).LastWriteTime = $now.AddHours(-2) }
+        (Get-Item $fexe).LastWriteTime = $now.AddHours(-1)
+        if ($Stale) { (Get-Item (Join-Path $fake 'src\a.txt')).LastWriteTime = $now.AddMinutes(-5) }
+    }
+    function Invoke-Runner([string]$ArgText) {
+        $ErrorActionPreference = 'Continue'
+        $out = @(& powershell -NoProfile -ExecutionPolicy Bypass -Command "& '$RepoRoot\scripts\acceptance-parallel.ps1' $ArgText -Repo '$fake' -LogDir '$fixLog\runner'; exit `$LASTEXITCODE" 2>&1 | ForEach-Object { "$_" })
+        return [pscustomobject]@{ Code = $LASTEXITCODE; Text = ($out -join "`n") }
+    }
+
+    Set-FixtureAge $true
+    $r = Invoke-Runner "run -Scripts probe.ps1 -Width 1 -NoRebuild"
+    Check 'F1 THE PLANTED STALE BUILD: the run is refused (exit 4) before any script starts' `
+        ($r.Code -eq 4 -and $r.Text -match 'BUILD STALE - REFUSED, nothing launched' -and $r.Text -match 'src\\a\.txt' -and -not (Test-Path $marker)) `
+        ("exit=$($r.Code) probeRan=$(Test-Path $marker) :: $($r.Text)")
+    Set-FixtureAge $false
+    $r = Invoke-Runner "run -Scripts probe.ps1 -Width 1 -NoRebuild"
+    Check 'F2 positive control: the same run over a fresh exe starts the script and passes' `
+        ($r.Code -eq 0 -and $r.Text -match 'BUILD FRESH' -and (Test-Path $marker)) ("exit=$($r.Code) :: $($r.Text)")
+    Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+
+    Set-FixtureAge $true
+    $p = Invoke-AcceptanceFreshPreflight -Repo $fake -Builder { param($x) $false }
+    Check 'F3 a stale exe whose rebuild FAILS refuses the run' ($p.State -eq 'refused' -and -not $p.Ok -and $p.Line -match 'rebuild FAILED') $p.Line
+    $script:builds = 0
+    $p = Invoke-AcceptanceFreshPreflight -Repo $fake -Builder { param($x) $script:builds++; $true }
+    $p2 = Invoke-AcceptanceFreshPreflight -Repo $fake -Builder { param($x) $script:builds++; $true }
+    Check 'F4 a stale exe is rebuilt ONCE; a build that relinked nothing still clears it (witness), so the next ask builds nothing' `
+        ($p.State -eq 'rebuilt' -and $p.Ok -and $p2.State -eq 'fresh' -and $script:builds -eq 1 -and (Test-Path $witness)) "first=$($p.State) second=$($p2.State) builds=$($script:builds)"
+    Set-FixtureAge $false
+    $p = Invoke-AcceptanceFreshPreflight -Repo $fake -Builder { throw 'a fresh exe must not be rebuilt' }
+    Check 'F5 a fresh exe is not rebuilt' ($p.State -eq 'fresh' -and $p.Ok) $p.Line
+    Rename-Item -LiteralPath $fexe -NewName 'ghoztty.exe.away'
+    $p = Invoke-AcceptanceFreshPreflight -Repo $fake -NoRebuild
+    Rename-Item -LiteralPath "$fexe.away" -NewName 'ghoztty.exe'
+    Check 'F6 a missing exe is refused, not waved through' ($p.State -eq 'refused' -and $p.Line -match 'no ghoztty.exe') $p.Line
+
+    # Fail fast: the first red stops anything new from starting.
+    $ffJobs = @('red', 'p1', 'p2', 'p3', 'p4', 'excl') | ForEach-Object { [pscustomobject]@{ Script = "test\win32\$_.ps1"; Args = '' } }
+    $ff1 = @(Invoke-AcceptanceRun -Repo $fake -Jobs $ffJobs -Width 1 -LogDir (Join-Path $fixLog 'ff1') -TimeoutSec 120 -FailFast)
+    Check 'F7 -FailFast at -Width 1: the red is the last thing that ran' ($ff1.Count -eq 1 -and $ff1[0].Name -eq 'red.ps1') (($ff1 | ForEach-Object { $_.Name }) -join ',')
+    $ff2 = @(Invoke-AcceptanceRun -Repo $fake -Jobs $ffJobs -Width 2 -LogDir (Join-Path $fixLog 'ff2') -TimeoutSec 120 -FailFast)
+    $ran2 = @($ff2 | Where-Object { $_.Phase -eq 'pool' } | ForEach-Object { $_.Name })
+    Check 'F8 -FailFast in the pool: the running neighbour finishes, nothing else starts, no exclusive, the red is still confirmed alone' `
+        ($ran2.Count -eq 2 -and $ran2 -contains 'red.ps1' -and $ran2 -contains 'p1.ps1' -and $ran2 -notcontains 'excl.ps1' -and
+        @($ff2 | Where-Object { $_.Phase -eq 'confirm' -and $_.Name -eq 'red.ps1' }).Count -eq 1) ("pool=" + ($ran2 -join ','))
+    $ffAll = @(Invoke-AcceptanceRun -Repo $fake -Jobs @($ffJobs | Select-Object -Skip 1) -Width 2 -LogDir (Join-Path $fixLog 'ff3') -TimeoutSec 120 -FailFast)
+    Check 'F9 -FailFast with nothing red runs everything' (@($ffAll | Where-Object { $_.Phase -eq 'pool' }).Count -eq 5) "$($ffAll.Count)"
+    $r = Invoke-Runner "run -Scripts 'red.ps1,probe.ps1' -Width 1 -FailFast"
+    Check 'F10 the runner names what -FailFast never ran, and a skipped script is not GREEN' `
+        ($r.Code -eq 1 -and $r.Text -match 'NOT RUN \(-FailFast stopped at the first red\): probe\.ps1' -and $r.Text -match 'ACCEPTANCE RED' -and -not (Test-Path $marker)) `
+        ("exit=$($r.Code) :: $($r.Text)")
+
+    # Most specific harness first: the changed feature's own row before the sweeps.
+    $oj = ConvertTo-Json -Depth 4 -InputObject @(
+        [pscustomobject]@{ Kind = 'due'; Advisory = $false; Script = 'test\win32\audit.ps1'; RunArgs = ''; Files = @(1..400 | ForEach-Object { "f$_" }) },
+        [pscustomobject]@{ Kind = 'due'; Advisory = $false; Script = 'test\win32\feature.ps1'; RunArgs = ''; Files = @('a', 'b', 'c') },
+        [pscustomobject]@{ Kind = 'due'; Advisory = $false; Script = 'test\win32\mid.ps1'; RunArgs = ''; Files = @(1..9 | ForEach-Object { "m$_" }) },
+        [pscustomobject]@{ Kind = 'due'; Advisory = $false; Script = 'test\win32\feature2.ps1'; RunArgs = ''; Files = @('x', 'y', 'z') })
+    $order = (@(Get-AcceptanceDueJobs -GuardJson $oj) | ForEach-Object { Split-Path -Leaf $_.Script }) -join ','
+    Check 'F11 due runs the most specific harness first, ties in guard order' ($order -eq 'feature.ps1,feature2.ps1,mid.ps1,audit.ps1') $order
     if ($priorInst) { $env:GHOZTTY_AGENT_INSTANCE = $priorInst }
 }
 catch { Write-Host "FAIL  the harness threw: $($_.Exception.Message) at $($_.InvocationInfo.ScriptLineNumber)"; $script:Failures++ }
