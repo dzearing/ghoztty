@@ -1139,6 +1139,12 @@ function loopCard(d) {
       h('span', { class: 'dot-live' + (L.running ? '' : ' stale') }),
       h('b', { text: L.running ? (L.checkpointStale ? 'Running — long turn' : 'Running') : 'Not running' }),
       h('span', { class: 'chip', text: 'turn ' + L.turn }),
+      (function () {
+        var since = inflight.length ? runningSince(inflight[0]) : null;
+        return since ? h('span', { class: 'chip live-dur', 'data-since': String(since),
+          title: inflight[0].id + ' claimed ' + fDate(since) + ' ' + fTime(since),
+          text: 'running ' + fClockDur(Date.now() - since) }) : null;
+      })(),
       h('span', { class: 'chip', text: 'last checkpoint ' + age + ' ago' })
     ])
   ];
@@ -1176,13 +1182,44 @@ function goalList(t) {
   })));
 }
 
+/* How long the in-flight task has been running (user, 2026-10-15). The
+   claim is the task's newest "claimed" progress line. `statusSince` comes
+   from COMMITTED history, so before the loop commits its claim it reads as
+   "now" and the chip showed "0s". Fall back to it only when there is no
+   claim line. */
+function runningSince(t) {
+  var p = t.progress || [];
+  for (var i = p.length - 1; i >= 0; i--) {
+    if (p[i].ts && /^claimed\b/i.test(p[i].text || '')) return p[i].ts;
+  }
+  return t.statusSince || null;
+}
+/* A stopwatch reading: 42s, 7m 05s, 1h 03m. */
+function fClockDur(ms) {
+  var s = Math.max(0, Math.floor(ms / 1000));
+  var hh = Math.floor(s / 3600), mm = Math.floor((s % 3600) / 60), ss = s % 60;
+  var p2 = function (n) { return (n < 10 ? '0' : '') + n; };
+  return hh ? hh + 'h ' + p2(mm) + 'm' : mm ? mm + 'm ' + p2(ss) + 's' : ss + 's';
+}
+/* One ticker for every live duration on the page: no re-render, just text. */
+setInterval(function () {
+  var els = document.querySelectorAll('.live-dur[data-since]');
+  for (var i = 0; i < els.length; i++) {
+    els[i].textContent = 'running ' + fClockDur(Date.now() - Number(els[i].getAttribute('data-since')));
+  }
+}, 1000);
+
 function inflightRow(t) {
   var kids = [
     h('div', { class: 'if-head' }, [
       h('span', { class: 'dec-id', text: t.id }),
       h('span', { class: 'pill in_progress' }, [h('i'), 'In progress']),
-      t.statusSince ? h('span', { class: 'chip', title: 'Since ' + fDate(t.statusSince) + ' ' + fTime(t.statusSince),
-        text: 'in flight ' + fDur(Date.now() - t.statusSince) }) : null,
+      (function () {
+        var since = runningSince(t);
+        return since ? h('span', { class: 'chip live-dur', 'data-since': String(since),
+          title: 'Claimed ' + fDate(since) + ' ' + fTime(since),
+          text: 'running ' + fClockDur(Date.now() - since) }) : null;
+      })(),
       t.stale ? h('span', { class: 'chip warn', text: 'stale — untouched ' + fDur(t.staleMs) } ) : null
     ].concat(tagChips(t.tags))),
     h('div', {
