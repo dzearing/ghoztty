@@ -3429,6 +3429,30 @@ $GuardTable = @(
             'test\win32\parity-tasks-lanes.ps1'
         )
     },
+    # One supervisor, marker and name set per loop lane, and lane A alone
+    # publishing and delivering (T1984). Its failure modes are all silent: lane
+    # B's watchdog exits on lane A's mutex and the lane has no supervisor, lane
+    # B's claim closes lane A's window as a "duplicate", or two lanes race a
+    # release tag. Only a real second worktree shows any of them.
+    [pscustomobject]@{
+        Name   = 'loop-lanes'
+        Script = 'test\win32\loop-lanes.ps1'
+        Stamp  = 'test\win32\loop-lanes.stamp.json'
+        Covers = @(
+            'scripts\lib\LoopLane.ps1',
+            'scripts\go-loop-watchdog.ps1',
+            'scripts\go-loop-boot.ps1',
+            'scripts\go-loop-exec.ps1',
+            'scripts\go-loop-health.ps1',
+            'scripts\daily-publish.ps1',
+            'scripts\publish-windows-tag.ps1',
+            'scripts\upgrade-ghoztty-windows.ps1',
+            'scripts\launch-upgrade.ps1',
+            'scripts\deliver-windows-build.ps1',
+            'scripts\task-dashboard.js',
+            'test\win32\loop-lanes.ps1'
+        )
+    },
     # The box-wide timing and floor locks two loop lanes take turns on (T1982).
     # A broken hook fails open - every timing script still runs, just beside
     # the other lane's compile - so nothing red would ever say so; this harness

@@ -159,7 +159,10 @@
 # Acceptance: test\win32\daily-publish.ps1
 [CmdletBinding(PositionalBinding = $false)]
 param(
-    [string]$Repo = 'D:\git\ghoztty',
+    # Resolved in the body: the worktree this copy lives in (T1984). The literal
+    # 'D:\git\ghoztty' it used to default to made lane B's step 6.5 publish lane
+    # A's checkout.
+    [string]$Repo,
     [string]$WatermarkPath = (Join-Path $env:LOCALAPPDATA 'ghoztty\daily-publish'),
     # Local hour on/after which a task-boundary push counts as "end of the day's
     # work". 17, so the day's fixes are published while the day is still today.
@@ -532,7 +535,10 @@ function Write-Confirmed-Watermark {
     }
 }
 
+if (-not $Repo) { $Repo = Split-Path -Parent $PSScriptRoot }
 Set-Location $Repo
+# Assert-LoopLaneOwnsDelivery (T1984). Functions only.
+. (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
 
 if (-not $RequestPath) { $RequestPath = "$WatermarkPath-request" }
 function Read-RequestFile {
@@ -616,6 +622,16 @@ if ($Status) {
         foreach ($line in $strandedLines) { Log "  $line" }
     }
     if ($req.Requested) { Log "REQUEST PENDING: $($req.Reason) (recorded $($req.At))" }
+    exit 0
+}
+
+# Lane A alone publishes (T1984). -Request and -Status above stay open to every
+# lane - a request is box-wide, so lane B's user-report closes still reach the
+# next release, which lane A's step 6.5 cuts. Everything from here on can tag,
+# push or rewrite the watermark, so a second lane stops here, as a SKIP: exit 0,
+# because step 6.5 must never stall a turn.
+if (-not (Assert-LoopLaneOwnsDelivery -Repo $Repo -What 'publish')) {
+    Log 'SKIP: this lane does not publish; lane a ships whatever lands on the branch, including this lane''s pushes'
     exit 0
 }
 

@@ -105,6 +105,11 @@ function Fail-Launch([string]$msg, [int]$code) {
     exit $code
 }
 
+# Lane A alone delivers (T1984), refused before the staging build so a lane-B
+# call costs nothing.
+. (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+if (-not (Assert-LoopLaneOwnsDelivery -Repo (Split-Path -Parent $PSScriptRoot) -What 'launch a delivery')) { exit 6 }
+
 . (Join-Path $PSScriptRoot 'lib\BuildCache.ps1')
 # Invoke-TornCacheRepair: the staging build heals a torn cache entry (T998).
 . (Join-Path $PSScriptRoot 'lib\CacheHeal.ps1')

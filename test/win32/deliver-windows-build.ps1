@@ -1,5 +1,9 @@
 # A delivery to install locations 2 and 3 must be MEASURED, not asserted (T198).
 #
+# @parallel-unsafe - in a worker mirror the B/C sections read a release build
+# the mirror does not carry (B1 subsystem 0, C1 exit 2) and go red; alone they
+# pass (acceptance-parallel, 2026-10-15, T1984).
+#
 # The standing bar is that a user-facing fix reaches all three install
 # locations. Only the installed release has ever been scripted; the Desktop
 # portable, the network share, the share's loose agent and the portable ZIP were

@@ -1,15 +1,16 @@
 {
     "guard":  "deliver-verify",
     "script":  "test/win32/deliver-windows-build.ps1",
-    "generated":  "2026-09-20T08:09:48-07:00",
-    "commit":  "ed60f5244",
+    "generated":  "2026-10-15T22:56:03-07:00",
+    "commit":  "55b5670dc",
     "uncommitted":  [
-                        "scripts/delivery-manifest.ps1"
+                        "scripts/deliver-windows-build.ps1",
+                        "test/win32/deliver-windows-build.ps1"
                     ],
     "files":  {
                   "scripts/deliver-audit.ps1":  "5598626fd46a8b8da014508f9d26c8f423cebddb4c741aec4e5fbe6d882149ce",
-                  "scripts/deliver-windows-build.ps1":  "95a8ca3b1ed3d0093181a8db090e7b106e11942bcdadaaa6bfaffd4c27bbd795",
+                  "scripts/deliver-windows-build.ps1":  "177c6421716f590b0b3a89ec32990512482a977657161155aa773db266b99aac",
                   "scripts/delivery-manifest.ps1":  "e985781584ffa1b524cf12bc0ed8b01cd952b8f18391e1a3fd2d229c15388a34",
-                  "test/win32/deliver-windows-build.ps1":  "137ec598dafcdad2b79248b5d5761fa742d92b0965e012f15c1e05c394f52307"
+                  "test/win32/deliver-windows-build.ps1":  "15c2564c8d36bdf0966076a094502ccd040e8e7b5c116a6db74e50288a8421eb"
               }
 }

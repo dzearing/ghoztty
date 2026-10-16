@@ -80,7 +80,7 @@ param(
     [string]$Repo,
     [string]$LedgerPath,
     [string]$WatchdogScript,
-    [string]$TaskName = 'GhozttyGoLoopWatchdog',
+    [string]$TaskName,
     [int]$ReviveMinutes = 10,
 
     # A session that appeared within this long after boot was not waiting for a
@@ -113,6 +113,11 @@ $ErrorActionPreference = 'Continue'
 if (-not $Repo) { $Repo = Split-Path -Parent $PSScriptRoot }
 if (-not $LedgerPath) { $LedgerPath = Join-Path (Join-Path $Repo 'temp') 'go-loop-boots.jsonl' }
 if (-not $WatchdogScript) { $WatchdogScript = Join-Path $PSScriptRoot 'go-loop-watchdog.ps1' }
+# Lane-qualified names (T1984): lane A keeps GhozttyGoLoopWatchdog, lane B is
+# GhozttyGoLoopWatchdog-b - the task, the Run entry and the mutex alike.
+. (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+$Lane = Get-LoopLaneId -Repo $Repo
+if (-not $TaskName) { $TaskName = Get-LoopLaneTaskName $Lane }
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 
 # Captured HERE, not inside the getters: $PSBoundParameters is per-scope, so a
@@ -432,7 +437,7 @@ $runEntry = [bool](Get-ItemProperty -Path $runKey -Name $TaskName -ErrorAction S
 
 $dogRunning = $false
 try {
-    $m = New-Object System.Threading.Mutex($false, 'Global\GhozttyGoLoopWatchdog')
+    $m = New-Object System.Threading.Mutex($false, (Get-LoopLaneWatchdogMutex $Lane))
     try { if ($m.WaitOne(0)) { $m.ReleaseMutex() } else { $dogRunning = $true } } finally { $m.Dispose() }
 } catch { }
 

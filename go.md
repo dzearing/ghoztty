@@ -104,6 +104,20 @@ Concretely, in order, with no stops in between:
      heartbeat is older than 30 min — is taken over automatically, so a crash
      never wedges the loop.
    - `scripts\go-loop-exec.ps1 list` shows every window and which are marked.
+   - **Each loop LANE has its own of all of this** (T1984). A second loop runs
+     in its own worktree (`D:\git\ghoztty-b` is lane `b`; the main worktree is
+     lane `a`; `scripts\lib\LoopLane.ps1` decides). The lock, stop flag and
+     watchdog state already lived under each worktree's `temp\`; the marker
+     (`[go-loop b]`), the watchdog's mutex, Run entry, revive task, log, shim and
+     re-entry window (`main-b`) are lane-qualified too, and lane `a` keeps every
+     historical name. So a lane's claim never closes the other lane's window,
+     `stop` stops one lane only, and `go-loop-health.ps1` (`lanes=`) and the
+     dashboard's loop card show every lane and the task each has claimed.
+     **Lane `a` alone publishes and delivers**: in any other lane step 6.5's
+     `daily-publish.ps1` is a `LANE REFUSED` SKIP (exit 0, so the turn goes on;
+     `-Request` and `-Status` stay open, and lane `a` ships what lane `b`
+     pushed), and the tag, upgrade, launch and deliver scripts refuse outright.
+     Acceptance: `test\win32\loop-lanes.ps1`.
 
 0.5. **Daily digest** (user, 2026-08-05) — before picking a task, check
    `docs/design/windows-parity-digests/<today>.md` (local date). If it is

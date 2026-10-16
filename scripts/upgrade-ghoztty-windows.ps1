@@ -168,6 +168,13 @@ function Log($m) { "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $m" | Add-Content 
 # Checked here, before anything is read or killed, and logged as well as printed
 # because this script normally runs detached with nobody reading its stdout.
 $ownership = Assert-NotUserInstall -Path $InstallDir -Who 'upgrade-ghoztty-windows.ps1' -Quiet
+# And the dev install is lane A's (T1984): two lanes swapping one install would
+# each kill the other's running build. Same refusal shape as the ownership one.
+. (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+if (-not (Assert-LoopLaneOwnsDelivery -Repo (Split-Path -Parent $PSScriptRoot) -What 'swap the dev install')) {
+    Log '=== upgrade start (refused: not lane a, T1984)'
+    exit 6
+}
 if ($ownership) {
     Log '=== upgrade start (refused)'
     foreach ($line in ($ownership -split "`n")) { Log $line }

@@ -51,7 +51,10 @@ param(
     [string]$PaneId = $env:GHOZTTY_PANE_ID,
     [int]$ClaudePid = 0,
     [string]$GhozttyExe,
-    [string]$Marker = '[go-loop]',
+    # Lane-derived in the body (T1984): '[go-loop]' for lane A, '[go-loop b]' for
+    # lane B. The duplicate test below is a StartsWith, so one shared marker made
+    # each lane's claim close the other lane's window as a duplicate.
+    [string]$Marker,
     [string]$Label = 'ghoztty parity',
     [int]$StaleMinutes = 30,
     [int]$GraceSeconds = 5,
@@ -71,6 +74,8 @@ param(
 $ErrorActionPreference = 'Continue'
 
 if (-not $Repo) { $Repo = Split-Path -Parent $PSScriptRoot }
+. (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+if (-not $Marker) { $Marker = Get-LoopLaneMarker (Get-LoopLaneId -Repo $Repo) }
 if (-not $LockPath) { $LockPath = Join-Path (Join-Path $Repo 'temp') 'go-loop.lock.json' }
 if (-not $GhozttyExe) {
     $GhozttyExe = 'ghoztty'

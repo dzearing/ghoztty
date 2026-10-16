@@ -104,6 +104,9 @@ if (-not $PublishRequest) { $PublishRequest = "$PublishWatermark-request" }
 if (-not $DeliverWatermark) { $DeliverWatermark = Join-Path $env:LOCALAPPDATA 'ghoztty\deliver-audit.json' }
 # Get-LoopStop. loop-session.ps1 is documented as free of load-time side effects.
 . (Join-Path $PSScriptRoot 'loop-session.ps1')
+# The lane overview (T1984). Functions only, both of them.
+. (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+. (Join-Path $PSScriptRoot 'lib\LoopLedger.ps1')
 $IsoFmt = 'yyyy-MM-ddTHH:mm:ssK'
 function Now-Iso { (Get-Date).ToString($IsoFmt) }
 
@@ -165,11 +168,59 @@ if ($lock -and $lock.state) {
 # A held lock with no [go-loop]-marked window is the shape the 2026-08-11
 # duplication left behind: the lock moved to a revived session while an older
 # window kept believing it was primary.
+#
+# Counted from `list`'s EXEC flag rather than by matching '[go-loop]' here, so
+# the count is THIS lane's marker (T1984): lane B's '[go-loop b]' window is not
+# a duplicate of lane A's, and the claim and this check must agree on that.
 $marked = 0
 try {
     $list = & powershell -NoProfile -File (Join-Path $PSScriptRoot 'go-loop-exec.ps1') list 2>$null
-    $marked = @($list | Where-Object { $_ -match '\[go-loop\]' }).Count
+    $marked = @($list | Where-Object { $_ -match '^EXEC ' }).Count
 } catch { }
+
+# --- every loop lane on the box (T1984) ---------------------------------------
+#
+# Each lane's own health run is the verdict on that lane; this is the overview
+# beside it, so one command shows both lanes, what each is working and whether
+# each has a supervisor. It never moves THIS lane's verdict: a lane that is down
+# says so on its own line, and stopping one lane must not read as the other one
+# degrading. A lane's task comes from the shared claim ledger (T1981), because a
+# claim made in another worktree is not in this worktree's task files until it
+# is pushed and pulled.
+$laneId = Get-LoopLaneId -Repo $Repo
+$lanes = @()
+try {
+    $claims = @{}
+    $ledgerPath = Get-LedgerPath
+    if ($ledgerPath) { $claims = Get-LedgerOtherLaneClaims -Lane '' -LedgerPath $ledgerPath }
+    foreach ($ln in @(Get-LoopLanes -Repo $Repo)) {
+        $st = 'free'
+        if ($ln.Self) { $st = $state }
+        elseif (Test-Path -LiteralPath $ln.LockPath) {
+            $lr = & powershell -NoProfile -File (Join-Path $PSScriptRoot 'go-loop-lock.ps1') status -Json `
+                -Repo $ln.Root -LockPath $ln.LockPath -NoPaneProbe -StaleMinutes $StaleMinutes 2>$null
+            try { $lj = ($lr | Out-String | ConvertFrom-Json); if ($lj -and $lj.state) { $st = [string]$lj.state } } catch { }
+        }
+        if (Get-LoopStop -Path $ln.StopPath) { $st = 'stopped' }
+        $rootKey = $ln.Root.ToLowerInvariant()
+        $tasks = @($claims.Keys | Where-Object {
+            $c = $claims[$_]
+            ([string]$c.lane).ToLowerInvariant() -eq $rootKey -or ([string]$c.root).TrimEnd('\').ToLowerInvariant() -eq $rootKey
+        } | Sort-Object)
+        $lanes += [pscustomobject]@{
+            id       = $ln.Id
+            root     = $ln.Root
+            self     = [bool]$ln.Self
+            state    = $st
+            tasks    = $tasks
+            watchdog = (Test-LoopLaneWatchdogRunning $ln.Id)
+        }
+    }
+} catch { }
+$lanesText = (@($lanes | ForEach-Object {
+    "$($_.id):$($_.state)/$(if ($_.tasks.Count) { $_.tasks -join '+' } else { '-' })/$(if ($_.watchdog) { 'dog' } else { 'nodog' })"
+}) -join ',')
+if (-not $lanesText) { $lanesText = 'unknown' }
 
 # --- the supervisor ---------------------------------------------------------
 
@@ -575,12 +626,14 @@ if ($Json) {
         deliver_problems = $deliverProblems
         deliver_summary  = $deliverSummary
         stopped        = [bool]$stopReq
+        lane           = $laneId
+        lanes          = @($lanes)
         notes          = $notes
     } | ConvertTo-Json -Depth 4
 } else {
     $task = if ($inProgress.Count) { $inProgress -join ',' } else { 'none' }
     "$(Now-Iso) $($verdict.ToUpper()) uptime=$uptime turn=$turn turn_age=$(Format-Age $turnAgeMin) state=$state pane=$pane pid=$loopPid " +
-    "task=$task decisions_open=$openDecisions digest=$digestState publish=$publishState deliver=$(if ($deliverState -eq 'wrong') { "wrong($deliverProblems)" } else { $deliverState }) blocked=$(if ($blocker.Blocked) { $blocker.Kind } else { 'no' }) windows=$marked watchdog=$watchdog dashboard=$dashboard"
+    "task=$task decisions_open=$openDecisions digest=$digestState publish=$publishState deliver=$(if ($deliverState -eq 'wrong') { "wrong($deliverProblems)" } else { $deliverState }) blocked=$(if ($blocker.Blocked) { $blocker.Kind } else { 'no' }) windows=$marked watchdog=$watchdog dashboard=$dashboard lane=$laneId lanes=$lanesText"
     foreach ($n in $notes) { "  - $n" }
 }
 
@@ -591,7 +644,7 @@ if ($Postmortem) {
     if (Test-Path $hist) { Get-Content $hist -Tail 20 } else { "(none yet: $hist)" }
     ''
     '=== watchdog log ==='
-    $wlog = Join-Path $env:TEMP 'ghoztty-go-loop-watchdog.log'
+    $wlog = Get-LoopLaneWatchdogLog $laneId
     if (Test-Path $wlog) { Get-Content $wlog -Tail 20 } else { "(none: $wlog)" }
     ''
     '=== the loop pane, last 30 lines (T1290) ==='

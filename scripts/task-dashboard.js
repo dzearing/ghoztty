@@ -1006,6 +1006,100 @@ function pidAlive(pid) {
 }
 
 /**
+ * Every loop LANE on the box, and what each is doing (T1984).
+ *
+ * Two go.md loops can run at once, each in its own git worktree (T1937). The
+ * card above is THIS worktree's lock, so on its own it can only ever show one
+ * of them. A lane is a worktree of this repository that has run the loop (its
+ * temp\ holds the lock or the lock's history); its id follows
+ * scripts\lib\LoopLane.ps1 — the main worktree is `a`, a linked one named
+ * `...-x` is `x`, any other linked one is `b`.
+ *
+ * Each lane's task comes from the shared claim ledger (T1981), not from the
+ * task files: a claim made in the other worktree is not in this worktree's
+ * files until it has been pushed and pulled. Liveness is the pid alone here —
+ * the pane probe costs a PowerShell spawn and is spent on this lane's card.
+ */
+const LEDGER_FILE = (() => {
+  const v = (process.env.GHOZTTY_LOOP_LEDGER || '').trim();
+  if (v === 'off') return null;
+  if (v) return path.resolve(v);
+  return process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'ghoztty', 'loop-ledger.json') : null;
+})();
+const LEDGER_TTL_MS = (Number(process.env.GHOZTTY_LOOP_LEDGER_TTL_MIN) || 60) * 60 * 1000;
+let laneRootCache = { at: 0, roots: null };
+
+function laneRoots() {
+  if (laneRootCache.roots && Date.now() - laneRootCache.at < 60 * 1000) return laneRootCache.roots;
+  let roots = [];
+  try {
+    roots = git(['worktree', 'list', '--porcelain'])
+      .split(/\r?\n/)
+      .filter((l) => l.startsWith('worktree '))
+      .map((l) => path.resolve(l.slice(9).trim()));
+  } catch {
+    roots = [];
+  }
+  if (!roots.length) roots = [REPO];
+  laneRootCache = { at: Date.now(), roots };
+  return roots;
+}
+
+function laneIdFor(root, isMain) {
+  if (isMain) return 'a';
+  const m = /-([a-z])$/i.exec(path.basename(root));
+  return m && m[1].toLowerCase() !== 'a' ? m[1].toLowerCase() : 'b';
+}
+
+function readJsonFile(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8').replace(/^﻿/, ''));
+  } catch {
+    return null;
+  }
+}
+
+function lanesState() {
+  const roots = laneRoots();
+  const ledger = LEDGER_FILE ? readJsonFile(LEDGER_FILE) : null;
+  const claims = (ledger && ledger.claims) || {};
+  const now = Date.now();
+  const seen = new Set();
+  const out = [];
+  roots.forEach((root, i) => {
+    const temp = path.join(root, 'temp');
+    const lockFile = path.join(temp, 'go-loop.lock.json');
+    const isSelf = path.resolve(root).toLowerCase() === path.resolve(REPO).toLowerCase();
+    if (!isSelf && !fs.existsSync(lockFile) && !fs.existsSync(path.join(temp, 'go-loop-history.jsonl'))) return;
+    const id = laneIdFor(root, i === 0);
+    if (seen.has(id)) return;
+    seen.add(id);
+    const lock = readJsonFile(lockFile);
+    const held = !!(lock && lock.state !== 'free' && lock.claude_pid);
+    const key = root.toLowerCase();
+    const tasks = Object.keys(claims).filter((tid) => {
+      const c = claims[tid] || {};
+      const touched = Date.parse(c.touched);
+      if (isNaN(touched) || now - touched >= LEDGER_TTL_MS) return false;
+      const lane = String(c.lane || '').toLowerCase();
+      const croot = String(c.root || '').replace(/[\\/]+$/, '').toLowerCase();
+      return lane === key || croot === key;
+    }).sort();
+    out.push({
+      id,
+      root,
+      self: isSelf,
+      running: held && pidAlive(lock.claude_pid),
+      turn: lock && lock.turn != null ? lock.turn : null,
+      stopped: fs.existsSync(path.join(temp, 'go-loop.stop.json')),
+      watchdog: watchdogState(path.join(temp, 'go-loop.watchdog.json')).running,
+      tasks,
+    });
+  });
+  return out.sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
+}
+
+/**
  * Created / last-modified time for EVERY task file, from ONE
  * `git log --name-only` walk over the tasks directory rather than 485
  * `git log -1` calls (which takes minutes on this box).
@@ -1178,6 +1272,7 @@ function freshenPayload(p) {
   p.generatedAt = now;
   p.loop = loopState();
   p.watchdog = watchdogState();
+  p.lanes = lanesState();
   p.boot = bootState();
   if (p.series.length) p.series[p.series.length - 1].ts = now;
   for (const t of p.tasks) {
@@ -1307,6 +1402,7 @@ function buildPayload() {
     taskDir: REL_TASK_DIR,
     loop,
     watchdog,
+    lanes: lanesState(),
     boot: bootState(),
     decisions,
     openDecisions: decisions.filter((d) => d.status !== 'resolved').length,
@@ -1674,7 +1770,7 @@ function main() {
   // bar's freshness rule is the part worth asserting three ways, and a harness
   // that pays 30s per assertion gets run once and then stops being run.
   if (argv.includes('--loop')) {
-    process.stdout.write(JSON.stringify({ loop: loopState(), watchdog: watchdogState(), boot: bootStateSync() }, null, 2) + '\n');
+    process.stdout.write(JSON.stringify({ loop: loopState(), watchdog: watchdogState(), lanes: lanesState(), boot: bootStateSync() }, null, 2) + '\n');
     return;
   }
   const pi = argv.indexOf('--port');

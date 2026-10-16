@@ -327,7 +327,7 @@ try {
     Assert 'D7 T1 still belongs to lane a' ((Get-ClaimLane 'T1') -eq 'a')
 
     # Lane a dies: its heartbeat stops and the claim ages past the TTL
-    # (default 180 min; well past it, so a TTL retune does not silently
+    # (default 60 min since T1984; well past it, so a TTL retune does not silently
     # turn this into "still live").
     $null = Set-ClaimTouchedAgo -Id 'T1' -Minutes 600
     $r = Task-Run @('ledger') $dirB 'b'

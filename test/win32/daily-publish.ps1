@@ -82,7 +82,14 @@ if (-not (Test-Path -LiteralPath $publishDecider -PathType Leaf)) {
 }
 
 $env:GHOZTTY_DAILY_PUBLISH_DOTSOURCE = '1'
-try { . $publishDecider } finally { Remove-Item Env:\GHOZTTY_DAILY_PUBLISH_DOTSOURCE -ErrorAction SilentlyContinue }
+# Dot-sourcing runs the script's param block in THIS scope, so its `$Repo`
+# (empty by default since T1984: the script resolves it from where it lives)
+# would overwrite this harness's. Keep ours across the load.
+$harnessRepo = $Repo
+try { . $publishDecider } finally {
+    Remove-Item Env:\GHOZTTY_DAILY_PUBLISH_DOTSOURCE -ErrorAction SilentlyContinue
+    $Repo = $harnessRepo
+}
 
 # ---- A. the due decision -------------------------------------------------
 "== A. due decision =="

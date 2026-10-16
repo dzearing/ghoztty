@@ -53,6 +53,11 @@ Set-Location $Repo
 
 function Fail([string]$m) { Write-Host "publish-windows-tag: $m"; exit 1 }
 
+# Lane A alone pushes release tags (T1984); -DryRun pushes nothing, so it stays
+# open to every lane.
+. (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+if (-not $DryRun -and -not (Assert-LoopLaneOwnsDelivery -Repo $Repo -What 'push release tags')) { exit 1 }
+
 if ($Version -notmatch '^\d+\.\d+\.\d+$') { Fail "Version must be X.Y.Z (got '$Version')" }
 $tag = "win-v$Version"
 

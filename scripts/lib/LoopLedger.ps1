@@ -26,7 +26,7 @@
 #   it was waiting for.
 # - Writes go to a temp file and are swapped in with File.Replace, so a reader
 #   never sees half a ledger.
-# - A claim is live while its `touched` is younger than the TTL (45 min,
+# - A claim is live while its `touched` is younger than the TTL (60 min,
 #   GHOZTTY_LOOP_LEDGER_TTL_MIN overrides). A lane that died stops touching its
 #   claim and the claim simply ages out - the ledger has no other notion of
 #   liveness, because the process that wrote a claim (`parity-tasks.ps1`) exits
@@ -39,14 +39,15 @@
 # ASCII only and PS 5.1 compatible: dot-sourced by scripts\parity-tasks.ps1
 # and by test\win32\parity-tasks-lanes.ps1.
 
-# 180 minutes matches go-loop-health's -TurnStaleMinutes. A claim is touched
-# only by `note` and `set-status`, and a turn can go an hour without either
-# (the harness floor alone runs ~50 min), so a short TTL would hand a live
-# lane's task to the other lane mid-turn. A long one costs little: a lane that
-# restarts reclaims its OWN task straight away, so the TTL only delays taking
-# work from a lane that is gone for good. T1984's watchdog adds a real
-# heartbeat touch.
-$script:LedgerDefaultTtlMinutes = 180
+# 60 minutes since T1984. A claim used to be touched only by `note` and
+# `set-status`, and a turn can go an hour without either (the harness floor
+# alone runs ~50 min), so the T1981 stopgap was 180. Each lane's watchdog now
+# touches its lane's claims on every HEALTHY tick (every 5 min), so a live lane
+# is refreshed twelve times inside the TTL, and only a lane that is gone - or a
+# lane whose supervisor is down, which health reports - ages out. 60 rather
+# than the lock's 30 leaves room for a watchdog self-restart and a slow tick. A
+# lane that restarts reclaims its OWN task straight away either way.
+$script:LedgerDefaultTtlMinutes = 60
 $script:LedgerDefaultWaitSeconds = 20
 
 # The ledger file, or $null when the ledger is switched off. `off` is the

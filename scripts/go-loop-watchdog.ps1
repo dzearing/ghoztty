@@ -90,7 +90,9 @@
 # "gone" without reading a log to find out whether the silence-watcher is
 # silent.
 param(
-    [string]$Repo = 'D:\git\ghoztty',
+    # Resolved in the body: the worktree this copy of the script lives in, so
+    # lane B's watchdog supervises lane B without being told (T1984).
+    [string]$Repo,
     [string]$LockPath,
     # One file per task (T479). The old -Tracker parameter pointed at
     # windows-parity-tasks.md, whose state table FROZE on 2026-07-29 when the
@@ -125,7 +127,10 @@ param(
     # loop prompt back into the controller's pane. The resume prompt resets
     # context before doing anything, so a fresh session loses nothing.
     [string]$ClaudeCommand = 'claude --dangerously-skip-permissions',
-    [string]$WindowTarget = 'main',
+    # Lane-derived in the body ('main' for lane A, 'main-b' for lane B, T1984):
+    # named targets are focused rather than recreated, so a shared name made lane
+    # B's recovery focus lane A's window and report success.
+    [string]$WindowTarget,
     [int]$PollSeconds = 300,
     [int]$StaleMinutes = 45,
     [int]$RearmMinutes = 20,
@@ -194,7 +199,9 @@ param(
     # Test seam only. The single-instance mutex is global by design; an
     # acceptance script that needs its own short-lived watchdog (hermetic state
     # file, 2s poll) would otherwise be refused by the user's real one.
-    [string]$MutexName = 'Global\GhozttyGoLoopWatchdog',
+    # Lane-derived in the body (T1984): Global\GhozttyGoLoopWatchdog for lane A,
+    # ...-b for lane B, so each lane gets its own supervisor.
+    [string]$MutexName,
     [switch]$Install,
     [switch]$Uninstall,
     [switch]$Status         # report autostart + liveness, change nothing
@@ -202,9 +209,19 @@ param(
 
 $ErrorActionPreference = 'Continue'
 
+# Which loop lane this watchdog supervises (T1984). Every name that used to be a
+# box-wide singleton - mutex, Run entry + revive task, log, resume shim, window
+# target - is lane-qualified here, and lane A's are the historical names.
+. (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+. (Join-Path $PSScriptRoot 'lib\LoopLedger.ps1')
+if (-not $Repo) { $Repo = Split-Path -Parent $PSScriptRoot }
+$Lane = Get-LoopLaneId -Repo $Repo
+if (-not $MutexName) { $MutexName = Get-LoopLaneWatchdogMutex $Lane }
+if (-not $WindowTarget) { $WindowTarget = Get-LoopLaneWindowTarget $Lane }
+
 if (-not $LockPath) { $LockPath = Join-Path (Join-Path $Repo 'temp') 'go-loop.lock.json' }
 if (-not $TaskDir) { $TaskDir = Join-Path $Repo 'docs\design\windows-parity-tasks' }
-if (-not $LogPath) { $LogPath = Join-Path $env:TEMP 'ghoztty-go-loop-watchdog.log' }
+if (-not $LogPath) { $LogPath = Get-LoopLaneWatchdogLog $Lane }
 if (-not $StatePath) { $StatePath = Join-Path (Join-Path $Repo 'temp') 'go-loop.watchdog.json' }
 
 $lockScript = Join-Path $PSScriptRoot 'go-loop-lock.ps1'
@@ -214,7 +231,7 @@ $probeScript = Join-Path $PSScriptRoot 'go-loop-pane-probe.ps1'
 # effects at load.
 . (Join-Path $PSScriptRoot 'loop-session.ps1')
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-$runValue = 'GhozttyGoLoopWatchdog'
+$runValue = Get-LoopLaneTaskName $Lane
 
 function Log($m) {
     $line = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') $m"
@@ -473,7 +490,7 @@ function Test-PaneProducing($paneId, $gapSeconds = $ProbeGapSeconds, $lines = $P
 # got wrong (its log shows `--continue read`, the prompt truncated at the first
 # space). A generated .cmd shim sidesteps every layer of quoting.
 function New-ResumeShim {
-    $path = Join-Path $env:TEMP 'ghoztty-go-loop-resume.cmd'
+    $path = Get-LoopLaneResumeShim $Lane
     $body = @(
         '@echo off',
         "cd /d `"$Repo`"",
@@ -588,6 +605,29 @@ function Get-MinutesSinceAction {
     catch { return [double]::PositiveInfinity }
 }
 
+# The ledger heartbeat (T1981 -> T1984). A lane's claim on its task is only
+# touched by `note` and `set-status`, and a turn can run an hour without either,
+# so the claim needs a pulse that does not depend on the turn remembering. This
+# is it, on a HEALTHY tick only: a dead lane's claim must age out, which is the
+# whole point of the TTL. It refreshes this lane's claim on each task its
+# worktree has in-progress; Update-LedgerClaimTouch refuses a claim another lane
+# holds, so it can never extend somebody else's. Returns a log suffix, never
+# throws.
+function Update-LaneClaimTouch {
+    if ($DryRun -or $Once) { return '' }
+    $ledger = Get-LedgerPath
+    if (-not $ledger) { return '' }
+    try {
+        $ids = @(Select-String -Path (Join-Path $TaskDir 'T*.md') -Pattern '^status:\s*"?in-progress' -List `
+                -ErrorAction SilentlyContinue | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_.Path) })
+        if ($ids.Count -eq 0) { return '' }
+        $ledgerLane = Get-LedgerLane -Root $Repo
+        $touched = @($ids | Where-Object { Update-LedgerClaimTouch -Id $_ -Lane $ledgerLane -LedgerPath $ledger })
+        if ($touched.Count) { return " ledger-touch=$($touched -join ',')" }
+        return ''
+    } catch { return " ledger-touch-failed($($_.Exception.Message))" }
+}
+
 # --- status ---------------------------------------------------------------
 
 if ($Status) {
@@ -602,6 +642,7 @@ if ($Status) {
     }
     $run = (Get-ItemProperty -Path $runKey -Name $runValue -ErrorAction SilentlyContinue)
     $lines = @(
+        "lane:       $Lane (mutex $MutexName, task $runValue, repo $Repo)",
         "running:    $(Test-WatchdogRunning)",
         "pids:       $((Get-WatchdogProcs).ProcessId -join ', ')",
         "last tick:  $tickAge (action=$(if ($s) { $s.last_tick } else { '-' }))",
@@ -705,7 +746,7 @@ function Invoke-Tick {
             -ComposerText $pane.Composer -PaneState $pane.Working `
             -BackgroundPending $bgPending.Count
         if (-not $verdict.Stalled) {
-            Log "healthy: pane=$($lock.pane_id) pid=$($lock.claude_pid) $clocks $seen remaining=$remaining"
+            Log "healthy: pane=$($lock.pane_id) pid=$($lock.claude_pid) $clocks $seen remaining=$remaining$(Update-LaneClaimTouch)"
             return 'none'
         }
         Log ("STALLED(by=$($verdict.Clock)): the lock reads held but $($verdict.Why) - " +
@@ -972,7 +1013,8 @@ if ($Once) {
 # So the process watches its own source. When the bytes change it re-execs and
 # lets the replacement pick up where it left off; a watchdog is exactly the
 # kind of thing that must not need a human to notice it is out of date.
-$WatchedScripts = @($PSCommandPath, (Join-Path $PSScriptRoot 'loop-session.ps1'))
+$WatchedScripts = @($PSCommandPath, (Join-Path $PSScriptRoot 'loop-session.ps1'),
+    (Join-Path $PSScriptRoot 'lib\LoopLane.ps1'))
 
 function Get-ScriptStamp {
     # Content hash, not mtime: `git pull` and `git checkout` both rewrite
@@ -1020,7 +1062,7 @@ foreach ($attempt in 1..10) {
 }
 if (-not $got) { Log 'another go-loop watchdog is running; exiting'; exit 0 }
 
-Log "=== go-loop watchdog start (poll=${PollSeconds}s, stale=${StaleMinutes}m, rearm=${RearmMinutes}m, repo=$Repo)"
+Log "=== go-loop watchdog start lane=$Lane (poll=${PollSeconds}s, stale=${StaleMinutes}m, rearm=${RearmMinutes}m, repo=$Repo, mutex=$MutexName)"
 Write-Health 'start'
 $ScriptStamp = Get-ScriptStamp
 Log "  watching own source ($($WatchedScripts.Count) files) for changes"

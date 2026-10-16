@@ -113,6 +113,11 @@ param(
 $ErrorActionPreference = 'Continue'
 . (Join-Path $PSScriptRoot 'delivery-version.ps1')
 . (Join-Path $PSScriptRoot 'delivery-manifest.ps1')
+# Lane A alone delivers (T1984). -DryRun and -VerifyOnly write nothing, so every
+# lane may still ask what is sitting in the install locations.
+. (Join-Path $PSScriptRoot 'lib\LoopLane.ps1')
+if (-not $DryRun -and -not $VerifyOnly -and
+    -not (Assert-LoopLaneOwnsDelivery -Repo (Split-Path -Parent $PSScriptRoot) -What 'deliver to the install locations')) { exit 6 }
 
 $script:problems = New-Object System.Collections.Generic.List[string]
 $script:skipped = New-Object System.Collections.Generic.List[string]
