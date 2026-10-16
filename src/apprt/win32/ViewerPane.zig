@@ -726,6 +726,12 @@ feedback_status: ?[]u8 = null,
 /// null when nothing is selected, which is also its state on a fresh page.
 page_selection: ?[]u8 = null,
 
+/// The colour a website or loose `.html` page paints its canvas with, as the
+/// injected blob last reported it (T1990); null until it reports, or when the
+/// page sets none and the browser's white shows. The card around the page
+/// takes this colour, so a dark page is not ringed in white.
+page_bg: ?color_math.Rgb = null,
+
 /// The table-of-contents card (T160). Created lazily the first time a
 /// document reports 2+ headings; null before that, and null when its window
 /// could not be created (a degradation, not a broken pane).
@@ -2983,7 +2989,32 @@ fn applyMessage(self: *ViewerPane, alloc: Allocator, message: bridge.Message) vo
         .image => |img| self.applyImageMessage(alloc, img),
         .find => |f| self.applyFindMessage(f),
         .diff_nav_overflow => |forward| self.diffNavOverflow(alloc, forward),
+        .page_background => |bg| self.setPageBackground(bg),
     }
+}
+
+/// Take the page's reported canvas colour (T1990) and, when it moved, have the
+/// window repaint the card around this pane in it. A translucent root is laid
+/// over the browser's white, the way the browser itself composites it.
+fn setPageBackground(self: *ViewerPane, bg: ?bridge.PageBackground) void {
+    const next: ?color_math.Rgb = if (bg) |c| pageCanvas(c) else null;
+    if (std.meta.eql(self.page_bg, next)) return;
+    self.page_bg = next;
+    const h = self.hwnd orelse return;
+    // The card is the parent's paint, outside this window.
+    if (w32.GetParent(h)) |parent| _ = w32.InvalidateRect(parent, null, 0);
+}
+
+/// A reported page colour as the opaque colour the user sees: over white,
+/// which is what WebView2 lays a website on.
+fn pageCanvas(c: bridge.PageBackground) color_math.Rgb {
+    const a = std.math.clamp(c.a, 0, 1);
+    const over = struct {
+        fn ch(v: u8, t: f64) u8 {
+            return @intFromFloat(@round(@as(f64, @floatFromInt(v)) * t + 255.0 * (1 - t)));
+        }
+    };
+    return .{ .r = over.ch(c.r, a), .g = over.ch(c.g, a), .b = over.ch(c.b, a) };
 }
 
 /// Remember what the user has selected in the page, so a report can say what
@@ -6645,9 +6676,10 @@ pub const CardColors = struct {
 };
 
 /// The page's own background once one is up: `viewer.css`'s light/dark body
-/// colour for the documents this app renders, and the browser's default white
-/// for a website or a loose `.html` file, which bring their own. Before a page
-/// exists (and over the error card) the host paints `bg`.
+/// colour for the documents this app renders, and for a website or a loose
+/// `.html` file the colour the page itself reported (T1990), the browser's
+/// default white until it does. Before a page exists (and over the error
+/// card) the host paints `bg`.
 pub fn cardColors(self: *const ViewerPane) CardColors {
     var head: ?color_math.Rgb = null;
     var head_px: i32 = 0;
@@ -6660,7 +6692,7 @@ pub fn cardColors(self: *const ViewerPane) CardColors {
         }
     };
     const page: color_math.Rgb = switch (self.mode) {
-        .web, .html => .{ .r = 0xFF, .g = 0xFF, .b = 0xFF },
+        .web, .html => self.page_bg orelse .{ .r = 0xFF, .g = 0xFF, .b = 0xFF },
         else => if (self.pageScheme() == .dark)
             .{ .r = 0x0D, .g = 0x11, .b = 0x17 }
         else
@@ -10968,6 +11000,40 @@ const ReloadPage = struct {
         }
     }
 };
+
+test "T1990: a website's card is the colour the page reports, not an assumed white" {
+    const alloc = testing.allocator;
+    var pane: ViewerPane = .{ .state = .ready, .mode = .web };
+    defer pane.deinit(alloc);
+    const white: color_math.Rgb = .{ .r = 0xFF, .g = 0xFF, .b = 0xFF };
+
+    // Before the page has said anything, the browser's default.
+    try testing.expectEqual(white, pane.cardColors().fill);
+
+    const apply = struct {
+        fn run(a: Allocator, p: *ViewerPane, json: []const u8) void {
+            const parsed = bridge.parse(a, json).?;
+            defer parsed.deinit();
+            p.applyMessage(a, parsed.message);
+        }
+    }.run;
+
+    // A dark dashboard: the card goes dark with it - the white ring is gone.
+    apply(alloc, &pane, "{\"type\":\"pageBackground\",\"r\":13,\"g\":17,\"b\":23,\"a\":1}");
+    try testing.expectEqual(color_math.Rgb{ .r = 13, .g = 17, .b = 23 }, pane.cardColors().fill);
+
+    // A loose .html file is the same rule.
+    pane.mode = .html;
+    try testing.expectEqual(color_math.Rgb{ .r = 13, .g = 17, .b = 23 }, pane.cardColors().fill);
+
+    // Half-transparent black over the browser's white.
+    apply(alloc, &pane, "{\"type\":\"pageBackground\",\"r\":0,\"g\":0,\"b\":0,\"a\":0.5}");
+    try testing.expectEqual(color_math.Rgb{ .r = 128, .g = 128, .b = 128 }, pane.cardColors().fill);
+
+    // A page that sets no colour shows the browser's white again.
+    apply(alloc, &pane, "{\"type\":\"pageBackground\"}");
+    try testing.expectEqual(white, pane.cardColors().fill);
+}
 
 test "page messages land on the pane, in the pane's own memory" {
     // The bridge's native half without a browser: what `onWebMessageReceived`

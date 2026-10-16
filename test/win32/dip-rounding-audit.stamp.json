@@ -1,11 +1,10 @@
 {
     "guard":  "dip-rounding",
     "script":  "test/win32/dip-rounding-audit.ps1",
-    "generated":  "2026-10-15T18:44:42-07:00",
-    "commit":  "5163f7079",
+    "generated":  "2026-10-15T20:19:54-07:00",
+    "commit":  "cb67773e1",
     "uncommitted":  [
-                        "test/win32/lib/CleanSlate.ps1",
-                        "test/win32/machine-lock.ps1"
+                        "test/win32/pane-elevation.ps1"
                     ],
     "files":  {
                   "test/win32/acceptance-parallel.ps1":  "c62306ac56b6609c03a7b9e196de58522ff23d59fe305da1293603f56b708780",
@@ -293,7 +292,7 @@
                   "test/win32/pane-banner.ps1":  "e6d14fb0d90c1f3a91c080e35344a21c86d3ca1508d6fecc29434fc6bd05a3ea",
                   "test/win32/pane-busy-light.ps1":  "68aa8bd7cb6981af57d13b334f9224386e4446f49430609eb87ada8b9d8a9332",
                   "test/win32/pane-capture.ps1":  "e3388a98b380901071b2050f9afa8cdaae4765ab1f4413b92ae26fd0edc8ca6f",
-                  "test/win32/pane-elevation.ps1":  "be44819e2bfe0b88ce4e0bcf7de0c99e848536c621d8eedc0f2bea1d3e6150bf",
+                  "test/win32/pane-elevation.ps1":  "387cad05b28297607883760e1f783f3873a1396647da1cbe8a36b7da60d53bf3",
                   "test/win32/pane-grab-handle.ps1":  "750e331e6cffdad15489ff1023167b296f6e171d5e08e4be2dc0b6cdac858011",
                   "test/win32/pane-hwnd-reap.ps1":  "93f787edbf5abb1a9841dfd3b52f05a076871ab29cb4dccde3c51489828d9dba",
                   "test/win32/pane-id.ps1":  "0c722d4f0cb52d3567b2d070362fa2cf825aafc952a81b1bcf01768203181161",

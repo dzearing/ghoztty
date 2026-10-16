@@ -145,6 +145,69 @@ pub const selection_tracker_js =
     \\
 ;
 
+/// The page's own background colour, reported whenever it settles or changes
+/// (T1990). Ours, not upstream's: Mac clips the web view to the card, so the
+/// page runs to the card's edge, while win32 sits the page a rim's width
+/// inside a card the window paints. That strip has to be the page's colour,
+/// and only the page knows it - a website or a loose `.html` file brings its
+/// own, which is why a dark dashboard was ringed in the white the card used to
+/// assume.
+///
+/// The colour is the one the browser paints the canvas with: the root
+/// element's background, else the body's (CSS propagates the body's to the
+/// canvas when the root's is transparent). Neither set posts a colourless
+/// report, which the pane reads as "the browser's default". It reads the
+/// computed style, so a stylesheet, a `prefers-color-scheme` rule or a class a
+/// script toggles all land the same way; and it posts only on a change.
+pub const page_background_js =
+    \\  var ghozttyLastBg = null;
+    \\  var ghozttyBgTimer = 0;
+    \\  var ghozttyReadBg = function (el) {
+    \\    if (!el) return null;
+    \\    var c = "";
+    \\    try { c = window.getComputedStyle(el).backgroundColor; } catch (e) { return null; }
+    \\    var m = /^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,\/]\s*([\d.]+)(%?))?\s*\)$/.exec(c || "");
+    \\    if (!m) return null;
+    \\    var a = m[4] === undefined ? 1 : parseFloat(m[4]) / (m[5] ? 100 : 1);
+    \\    if (!(a > 0)) return null;
+    \\    return { r: Math.round(+m[1]), g: Math.round(+m[2]), b: Math.round(+m[3]), a: Math.min(a, 1) };
+    \\  };
+    \\  var ghozttyPostBg = function () {
+    \\    ghozttyBgTimer = 0;
+    \\    var bg = ghozttyReadBg(document.documentElement) || ghozttyReadBg(document.body);
+    \\    var key = bg ? [bg.r, bg.g, bg.b, bg.a].join(",") : "none";
+    \\    if (key === ghozttyLastBg) return;
+    \\    ghozttyLastBg = key;
+    \\    var mh = window.webkit && window.webkit.messageHandlers;
+    \\    var h = mh && mh.
+++ handler_name ++
+    \\;
+    \\    if (!h) return;
+    \\    if (bg) h.postMessage({ type: "pageBackground", r: bg.r, g: bg.g, b: bg.b, a: bg.a });
+    \\    else h.postMessage({ type: "pageBackground" });
+    \\  };
+    \\  var ghozttyQueueBg = function () {
+    \\    if (ghozttyBgTimer) return;
+    \\    ghozttyBgTimer = window.setTimeout(ghozttyPostBg, 100);
+    \\  };
+    \\  var ghozttyWatchBg = function (el) {
+    \\    if (!el || !window.MutationObserver) return;
+    \\    try {
+    \\      new MutationObserver(ghozttyQueueBg).observe(el, { attributes: true, attributeFilter: ["class", "style", "data-theme"] });
+    \\    } catch (e) {}
+    \\  };
+    \\  ghozttyWatchBg(document.documentElement);
+    \\  document.addEventListener("DOMContentLoaded", function () {
+    \\    ghozttyWatchBg(document.body);
+    \\    ghozttyQueueBg();
+    \\  });
+    \\  window.addEventListener("load", ghozttyQueueBg);
+    \\  try {
+    \\    window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", ghozttyQueueBg);
+    \\  } catch (e) {}
+    \\
+;
+
 const epilogue = "\n})();\n";
 
 /// What win32 hands `AddScriptToExecuteOnDocumentCreated`: the P2 blob.
@@ -160,7 +223,7 @@ const epilogue = "\n})();\n";
 /// `selection.js`; nobody sets it.
 pub const injected_js =
     prologue ++ shim_js ++ selection_js ++ selection_tracker_js ++ links_js ++
-    find_js ++ epilogue;
+    find_js ++ page_background_js ++ epilogue;
 
 /// The SUBFRAME blob (T928): the shim, then `links.js`, and nothing else.
 ///
@@ -306,6 +369,18 @@ pub const Message = union(enum) {
     /// every step, and every re-scan after the page changed underneath an open
     /// search — so the card's "3/17" is live without the pane polling anything.
     find: Find,
+    /// The page's canvas colour (T1990), from `page_background_js`; null when
+    /// the page sets none and the browser's default shows.
+    page_background: ?PageBackground,
+};
+
+/// The colour the page paints its canvas with, alpha included (CSS allows a
+/// translucent root background, which the browser lays over its default).
+pub const PageBackground = struct {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: f64 = 1,
 };
 
 /// A parsed message and the arena its strings live in.
@@ -397,6 +472,22 @@ fn parseMessage(aa: Allocator, json_text: []const u8) ?Message {
         };
         if (dir == 0) return null;
         return .{ .diff_nav_overflow = dir > 0 };
+    }
+    if (std.mem.eql(u8, kind, "pageBackground")) {
+        // No channels at all is the page saying it sets no colour. Some but
+        // not all, or one out of range, is not a colour this side can paint,
+        // and any page may post anything here - so it is dropped.
+        if (obj.get("r") == null and obj.get("g") == null and obj.get("b") == null) {
+            return .{ .page_background = null };
+        }
+        const a = if (obj.get("a") == null) 1 else numberField(obj, "a");
+        if (!(a > 0) or a > 1) return null;
+        return .{ .page_background = .{
+            .r = channelField(obj, "r") orelse return null,
+            .g = channelField(obj, "g") orelse return null,
+            .b = channelField(obj, "b") orelse return null,
+            .a = a,
+        } };
     }
     if (std.mem.eql(u8, kind, "linkMenu")) {
         // No href is no link: the page suppressed its own menu for nothing, and
@@ -504,6 +595,16 @@ fn numberField(obj: std.json.ObjectMap, name: []const u8) f64 {
     };
 }
 
+/// A colour channel: a whole number 0-255, or null for anything else.
+fn channelField(obj: std.json.ObjectMap, name: []const u8) ?u8 {
+    const n = switch (obj.get(name) orelse return null) {
+        .integer => |i| i,
+        else => return null,
+    };
+    if (n < 0 or n > 255) return null;
+    return @intCast(n);
+}
+
 fn stringField(obj: std.json.ObjectMap, name: []const u8) ?[]const u8 {
     return switch (obj.get(name) orelse return null) {
         .string => |s| s,
@@ -540,7 +641,8 @@ test "selection.js is embedded VERBATIM — P1's whole point" {
     try testing.expect(std.mem.indexOf(u8, injected_js, selection_js) != null);
     try testing.expectEqual(
         prologue.len + shim_js.len + selection_js.len +
-            selection_tracker_js.len + links_js.len + find_js.len + epilogue.len,
+            selection_tracker_js.len + links_js.len + find_js.len +
+            page_background_js.len + epilogue.len,
         injected_js.len,
     );
     // And the shared file is the one on disk, not a copy under apprt/win32 —
@@ -1012,6 +1114,69 @@ test "parse: the result outlives the JSON it was parsed from" {
     @memset(source, 'X');
     testing.allocator.free(source);
     try testing.expectEqualStrings("section-two", parsed.message.active.?);
+}
+
+test "T1990: the main frame reports its page background, after the shim" {
+    const shim_at = std.mem.indexOf(u8, injected_js, shim_js).?;
+    const bg_at = std.mem.indexOf(u8, injected_js, page_background_js).?;
+    try testing.expect(shim_at < bg_at);
+    // Main frame only: a subframe's colour is not what rings the card.
+    try testing.expect(std.mem.indexOf(u8, subframe_js, "pageBackground") == null);
+    // The canvas rule: the root's colour first, the body's as the fallback.
+    try testing.expect(std.mem.indexOf(
+        u8,
+        page_background_js,
+        "ghozttyReadBg(document.documentElement) || ghozttyReadBg(document.body)",
+    ) != null);
+    // Quiet unless it changed, and through the one handler.
+    try testing.expect(std.mem.indexOf(u8, page_background_js, "if (key === ghozttyLastBg) return;") != null);
+    try testing.expect(std.mem.indexOf(u8, page_background_js, "mh && mh." ++ handler_name) != null);
+}
+
+test "T1990: parse: pageBackground carries the page's colour" {
+    const alloc = testing.allocator;
+    {
+        const parsed = parse(alloc, "{\"type\":\"pageBackground\",\"r\":13,\"g\":17,\"b\":23,\"a\":1}").?;
+        defer parsed.deinit();
+        const bg = parsed.message.page_background.?;
+        try testing.expectEqual(@as(u8, 13), bg.r);
+        try testing.expectEqual(@as(u8, 17), bg.g);
+        try testing.expectEqual(@as(u8, 23), bg.b);
+        try testing.expectApproxEqAbs(@as(f64, 1), bg.a, 1e-9);
+    }
+    {
+        // Translucent root, and a missing alpha is opaque.
+        const parsed = parse(alloc, "{\"type\":\"pageBackground\",\"r\":0,\"g\":0,\"b\":0,\"a\":0.5}").?;
+        defer parsed.deinit();
+        try testing.expectApproxEqAbs(@as(f64, 0.5), parsed.message.page_background.?.a, 1e-9);
+        const opaque_bg = parse(alloc, "{\"type\":\"pageBackground\",\"r\":1,\"g\":2,\"b\":3}").?;
+        defer opaque_bg.deinit();
+        try testing.expectApproxEqAbs(@as(f64, 1), opaque_bg.message.page_background.?.a, 1e-9);
+    }
+    {
+        // No colour at all: the page sets none, which is a real report.
+        const parsed = parse(alloc, "{\"type\":\"pageBackground\"}").?;
+        defer parsed.deinit();
+        try testing.expect(parsed.message.page_background == null);
+    }
+}
+
+test "T1990: parse: a pageBackground that is not a colour is dropped" {
+    for ([_][]const u8{
+        "{\"type\":\"pageBackground\",\"r\":1,\"g\":2}",
+        "{\"type\":\"pageBackground\",\"r\":256,\"g\":0,\"b\":0}",
+        "{\"type\":\"pageBackground\",\"r\":-1,\"g\":0,\"b\":0}",
+        "{\"type\":\"pageBackground\",\"r\":\"1\",\"g\":0,\"b\":0}",
+        "{\"type\":\"pageBackground\",\"r\":1.5,\"g\":0,\"b\":0}",
+        "{\"type\":\"pageBackground\",\"r\":1,\"g\":0,\"b\":0,\"a\":0}",
+        "{\"type\":\"pageBackground\",\"r\":1,\"g\":0,\"b\":0,\"a\":2}",
+    }) |case| {
+        if (parse(testing.allocator, case)) |p| {
+            p.deinit();
+            std.debug.print("expected a dropped message for: {s}\n", .{case});
+            return error.MessageShouldHaveBeenIgnored;
+        }
+    }
 }
 
 test "T1184: find.js is embedded VERBATIM, and it is the shared file" {

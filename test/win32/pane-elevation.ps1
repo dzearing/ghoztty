@@ -866,6 +866,50 @@ Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'viewer: no crash'
 Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
 Remove-Item $md -ErrorAction SilentlyContinue
 
+# T1990: a page that brings its own colour - a website, a loose .html file, the
+# task dashboard - rings its card in THAT colour. The card used to assume the
+# browser's white, so a dark page sat in a crisp white outline. The page here is
+# a colour neither white nor the terminal, and the card's bottom rim row has to
+# read as it.
+$pageRgb = [pscustomobject]@{ R = 32; G = 96; B = 64 }
+$white = [pscustomobject]@{ R = 255; G = 255; B = 255 }
+$html = Join-Path $env:TEMP "ghoztty-pane-elevation-$PID.html"
+Set-Content -Path $html -Value '<!doctype html><html style="background:#206040"><body style="margin:0;color:#fff">A dark page.</body></html>' -Encoding Ascii
+$g = Start-Gui 'page-colour' $vArgs
+$launched += $script:GhozttyTestDesktopPids
+$top = $g.Top
+$i = Get-InsetPx $g.Scale
+& $exe +split --direction=right "--view=$html" | Out-Null
+$vw = $null
+for ($t = 0; $t -lt 40 -and $null -eq $vw; $t++) {
+    Start-Sleep -Milliseconds 250
+    $vw = @(Get-TestChildWindows -Window $top -Class 'GhozttyViewer' | Where-Object Visible) | Select-Object -First 1
+}
+Assert ($null -ne $vw) 'page colour: the viewer pane is up'
+if ($null -ne $vw) {
+    $ok = $false
+    $px = $null
+    # The page reports its colour once it has loaded; the card follows.
+    for ($t = 0; $t -lt 40 -and -not $ok; $t++) {
+        Start-Sleep -Milliseconds 400
+        $shot = Get-TestWindowPixels -Window $top -Sync
+        try {
+            $px = Get-TestPixel -Shot $shot -X ([int](($vw.Left + $vw.Right) / 2)) -Y ([int]$vw.Bottom + $i - 1)
+        } finally { Close-TestWindowPixels $shot }
+        if ($null -ne $px) { $ok = ((Get-ColorDistance $px $pageRgb) -le 60) -and ((Get-ColorDistance $px $white) -ge 200) }
+    }
+    if ($null -ne $px) { Write-Host "      page-colour card bottom rim = $($px.R),$($px.G),$($px.B); page = 32,96,64" }
+    if ($NegativeControl) {
+        Write-Host 'NEGATIVE CONTROL: asserting the card is the assumed white - this run MUST fail'
+        Assert (($null -ne $px) -and ((Get-ColorDistance $px $white) -le 60)) 'page colour: the card is white (negative control)'
+    } else {
+        Assert $ok "page colour: a dark page's card is the page's own colour, not a white ring"
+    }
+}
+Assert (-not ($g.App.Process -and $g.App.Process.HasExited)) 'page colour: no crash'
+Stop-Process -Id $g.App.Pid -Force -ErrorAction SilentlyContinue
+Remove-Item $html -ErrorAction SilentlyContinue
+
 } catch {
     $script:fail++
     Write-Host "FAIL  the run terminated: $($_.Exception.Message)" -ForegroundColor Red
